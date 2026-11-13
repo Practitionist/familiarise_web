@@ -1,5 +1,7 @@
 import { Prisma } from "@prisma/client";
 
+import { settleLapsedProposal } from "@/lib/booking/reschedule-lapse";
+import { isReleasedForReschedule } from "@/utils/scheduling-engine/types";
 import prisma from "@/lib/prisma";
 import { liveParticipant, paidParticipant } from "@/lib/booking/participants";
 import { isPresenterRole } from "@/lib/collaborators/roles";
@@ -278,7 +280,15 @@ export async function resolveMeetingAccess(
   callId: string,
   userId: string,
 ): Promise<MeetingAccess> {
-  const meeting = await loadMeeting(callId);
+  let meeting = await loadMeeting(callId);
+  // A session whose move lapsed unanswered is the original again from that instant.
+  if (
+    meeting &&
+    isReleasedForReschedule(meeting.occurrence) &&
+    (await settleLapsedProposal(meeting.occurrence.appointment.id))
+  ) {
+    meeting = await loadMeeting(callId);
+  }
 
   if (!meeting) {
     return {

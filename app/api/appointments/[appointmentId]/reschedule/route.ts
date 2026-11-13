@@ -98,6 +98,10 @@ import {
   spansPlanWeeks,
 } from "@/lib/booking/release-weeks";
 import { bookingTransaction } from "@/lib/db/booking-transaction";
+import {
+  SETTLED_CONSULTATION,
+  SETTLED_SUBSCRIPTION,
+} from "@/lib/booking/approve-request";
 
 const RESCHEDULE_REALLOCATION_BUFFER_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -573,12 +577,31 @@ async function requestReschedule(
               );
             }
           }
+          // A proposed time must be one the accept can place: the allocate
+          // lead, 2 hours while the booking is still unpaid.
           const proposalLead = agreedShortNotice ? "allocate" : "reschedule";
+          const settled =
+            !agreedShortNotice ||
+            !proposedSlots?.length ||
+            (appointment.consultation
+              ? (await tx.consultation.count({
+                  where: {
+                    id: appointment.consultation.id,
+                    ...SETTLED_CONSULTATION,
+                  },
+                })) > 0
+              : !appointment.subscription ||
+                (await tx.subscription.count({
+                  where: {
+                    id: appointment.subscription.id,
+                    ...SETTLED_SUBSCRIPTION,
+                  },
+                })) > 0);
           if (
             proposedSlots?.some((s) =>
               isTooSoonFor(
                 proposalLead,
-                { settled: true },
+                { settled },
                 s.startsAt.getTime(),
                 now.getTime(),
               ),
@@ -586,7 +609,7 @@ async function requestReschedule(
           ) {
             throw Object.assign(
               new Error(
-                `New times must be at least ${leadLabel(leadMsFor(proposalLead))} away.`,
+                `New times must be at least ${leadLabel(leadMsFor(proposalLead, { settled }))} away.`,
               ),
               { httpStatus: 400, code: "PROPOSAL_TOO_SOON" },
             );

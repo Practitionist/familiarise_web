@@ -17,6 +17,7 @@ import {
   needsOtherSideAcceptance,
 } from "@/lib/booking/reschedule-proposals";
 import { ReleasedSessionsSchema } from "@/lib/booking/released-sessions";
+import { AllocationConflictError } from "@/utils/scheduling-engine/errors";
 import {
   AppointmentBusyError,
   BookingLockUnavailableError,
@@ -101,6 +102,19 @@ export async function tryAutoConfirmProposal(
         actorUserId: request.initiatedById,
         // AUTO_ACCEPTED commits with the move or not at all.
         inTx: async (tx, moved) => {
+          // Re-decided here, on this transaction's clock: a lock wait must not
+          // carry a move inside 24 hours without the other side's acceptance.
+          if (
+            needsOtherSideAcceptance(
+              released.data.map((s) => s.startsAt),
+              request.proposedTimes.map((p) => p.startsAt),
+            )
+          ) {
+            throw new AllocationConflictError(
+              "This move now needs the other person's acceptance.",
+              "NEEDS_ACCEPTANCE",
+            );
+          }
           await closeConfirmedProposal(tx, {
             where: { id: request.id },
             to: "AUTO_ACCEPTED",

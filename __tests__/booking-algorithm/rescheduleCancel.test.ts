@@ -354,9 +354,12 @@ function makeMockTx() {
       findUnique: jest.fn().mockResolvedValue({ status: "APPROVED" }),
       // B2 — the cancel/reschedule CAS guards use updateMany.
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      // Paid unless a case says otherwise (the proposal lead reads it).
+      count: jest.fn().mockResolvedValue(1),
     },
     subscription: {
       update: jest.fn(),
+      count: jest.fn().mockResolvedValue(1),
       findUnique: jest.fn().mockResolvedValue({ status: "APPROVED" }),
       // B2 — the cancel/reschedule CAS guards use updateMany.
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -736,6 +739,33 @@ describe("Reschedule Route Handler - POST", () => {
       );
     },
   );
+
+  it("refuses a proposed time an unpaid booking's acceptance could not place", async () => {
+    mockTx.consultation.count.mockResolvedValue(0);
+    mockTx.appointment.findUnique.mockResolvedValue(
+      makeConsultationAppointment({
+        occurrences: [makeSlot("slot-1", NEAR_DATE)],
+      }),
+    );
+    const startsAt = new Date(Date.now() + 60 * 60 * 1000);
+    const res = await rescheduleHandler(
+      makeRescheduleRequest("apt-1", "CONSULTATION", {
+        proposedSlots: [
+          {
+            startsAt: startsAt.toISOString(),
+            endsAt: new Date(startsAt.getTime() + 30 * 60 * 1000).toISOString(),
+          },
+        ],
+      }),
+      makeParams("apt-1"),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      code: "PROPOSAL_TOO_SOON",
+      error: "New times must be at least 2 hours away.",
+    });
+    expect(mockTx.rescheduleRequest.create).not.toHaveBeenCalled();
+  });
 
   // ─── CONSULTATION Reschedule ────────────────────────────────────────────
 

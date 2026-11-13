@@ -642,6 +642,43 @@ describe("#1340 — a confirmation keeps the proposal it is confirming", () => {
     },
   );
 
+  it("re-decides consent inside the transaction: a lock wait cannot carry a move inside 24 hours", async () => {
+    // Just over 24 hours when read; just under by the time the move commits.
+    mockRequestFindUnique.mockResolvedValue(learnerProposal(72, 24 + 1 / 3600));
+    let hookError: unknown;
+    mockAllocate.mockImplementation(
+      async (req: { inTx: (tx: unknown, moved: unknown) => Promise<void> }) => {
+        jest.setSystemTime(Date.now() + 2_000);
+        try {
+          await req.inTx(txStub, NOTHING_MOVED);
+        } catch (error) {
+          hookError = error;
+          return { success: false, errorCode: "NEEDS_ACCEPTANCE" };
+        }
+        return { success: true };
+      },
+    );
+    jest.useFakeTimers({
+      doNotFake: [
+        "nextTick",
+        "setImmediate",
+        "queueMicrotask",
+        "setTimeout",
+        "clearTimeout",
+        "setInterval",
+        "clearInterval",
+      ],
+    });
+    try {
+      const out = await tryAutoConfirmProposal(REQ, "consultation", "cons-1");
+      expect(out).toEqual({ confirmed: false, reason: "NEEDS_ACCEPTANCE" });
+      expect(hookError).toMatchObject({ errorCode: "NEEDS_ACCEPTANCE" });
+      expect(txStub.rescheduleRequest.updateMany).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it("auto-confirm names its own proposal to the allocator and then closes it AUTO_ACCEPTED", async () => {
     mockRequestFindUnique.mockResolvedValue(learnerProposal(72, 96));
 
