@@ -594,6 +594,21 @@ function deriveMoney(
       `${money(pending.amount, pending.currency)} due${rail ? ` · ${rail}` : ""}${until}`,
     );
   }
+  // A held trial or checkout whose order is minted only on the pay page.
+  if (
+    booking === "AWAITING_PAYMENT" &&
+    input.plan &&
+    Number(input.plan.pricePaise) > 0
+  ) {
+    const until = holdExpiresAt
+      ? ` · pay by ${dayTime(holdExpiresAt, zone)}`
+      : "";
+    return build(
+      "DUE",
+      "Due",
+      `${money(input.plan.pricePaise, input.plan.currency)} due${until}`,
+    );
+  }
   if (booking === "PAYMENT_LAPSED") {
     const on = holdExpiresAt ? ` on ${day(holdExpiresAt, zone)}` : "";
     return build(
@@ -689,7 +704,10 @@ function deriveNext(
   if (viewer === "CONSULTEE") {
     if (booking === "AWAITING_PAYMENT" && moneyState.state === "DUE") {
       const pending = input.payments.find((x) => x.paymentStatus === "PENDING");
-      const amount = pending ? money(pending.amount, pending.currency) : "";
+      let amount = "";
+      if (pending) amount = money(pending.amount, pending.currency);
+      else if (input.plan)
+        amount = money(input.plan.pricePaise, input.plan.currency);
       return {
         kind: "PAY",
         label: amount ? `Pay ${amount}` : "Pay now",

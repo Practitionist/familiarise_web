@@ -269,6 +269,7 @@ function mapTrial(t: TTrialWithPlan, now: Date): AppointmentVM {
   const status = normalizeStatus(t.status);
   return {
     id: `trial-${t.id}`,
+    trialId: t.id,
     appointmentId: t.appointment?.id ?? null,
     kind: "TRIAL",
     title: t.subscriptionPlan.title,

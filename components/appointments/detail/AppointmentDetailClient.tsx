@@ -122,6 +122,12 @@ const POST_APPROVAL = new Set<BookingStateKind>([
   "COMPLETED",
 ]);
 
+/** A trial or a pay-first checkout is the learner's own hold, never an approval. */
+function payFirstKind(vm: AppointmentVM): "trial" | "checkout" | null {
+  if (vm.kind === "TRIAL") return "trial";
+  return vm.bookingSource === "DIRECT_CHECKOUT" ? "checkout" : null;
+}
+
 function initials(name: string): string {
   return name
     .split(/\s+/)
@@ -696,7 +702,7 @@ export function AppointmentDetailClient({
         : "Session";
 
   let stickyCta: ReactNode = null;
-  if (nextAction.kind === "PAY" && pendingRow && payHref) {
+  if (nextAction.kind === "PAY" && payHref) {
     stickyCta = (
       <Button
         className="w-full bg-amber-500 text-white hover:bg-amber-600 dark:bg-amber-600 dark:hover:bg-amber-500"
@@ -1306,7 +1312,7 @@ export function AppointmentDetailClient({
 
           <NeedsYouCallout
             embedded
-            trial={vm.kind === "TRIAL"}
+            payFirst={payFirstKind(vm)}
             presentation={presentation}
             names={names}
             heldCount={heldCount}

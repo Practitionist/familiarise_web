@@ -356,6 +356,7 @@ function mapTrial(
     : undefined;
   return {
     id: `trial-${t.id}`,
+    trialId: t.id,
     // Always the viewing consultant: this is their own list.
     consultantProfileId: consultantId,
     appointmentId: t.appointment?.id ?? null,

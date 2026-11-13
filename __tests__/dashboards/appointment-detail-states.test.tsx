@@ -209,9 +209,7 @@ describe("consultee · AWAITING_PAYMENT subscription", () => {
     });
     const html = render("consultee");
     expect(html).toContain("Awaiting payment");
-    expect(html).toContain(
-      "Ethan approved. Pay ₹7,080.00 (₹6,000.00 + 18% GST) by ",
-    );
+    expect(html).toContain("Pay ₹7,080.00 (₹6,000.00 + 18% GST) by ");
     expect(html).toContain("to keep your 6 held slots.");
     expect(html).toContain("Pay ₹7,080.00");
     expect(html).toMatch(/21h 5\dm left/);

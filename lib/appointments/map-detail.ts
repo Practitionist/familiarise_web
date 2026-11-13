@@ -207,6 +207,11 @@ export function mapAppointmentDetail(
       : null,
     organizationId: appointment.organizationId ?? null,
     pendingPaymentUrl: facts.pendingPaymentUrl,
+    trialId: appointment.trial?.id ?? null,
+    bookingSource:
+      appointment.consultation?.bookingSource ??
+      appointment.subscription?.bookingSource ??
+      null,
     pendingPaymentId:
       appointment.consultation || appointment.subscription
         ? payablePaymentId(appointment.payment)

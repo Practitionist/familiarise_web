@@ -154,6 +154,8 @@ export interface AppointmentVM {
   /** #1775 P-1 — the payable Payment behind the pay-link; keys the pay page. */
   pendingPaymentId?: string | null;
   collaborators: Array<PersonVM & { role: string }>;
+  /** The Trial row's id, for its branded checkout page; null for other kinds. */
+  trialId?: string | null;
   /** DIRECT_CHECKOUT or REQUEST_SUBMITTED, where the read carries it. */
   bookingSource?: string | null;
   /** The viewer's own seat on a webinar or class. */
