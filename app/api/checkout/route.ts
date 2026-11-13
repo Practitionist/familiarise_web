@@ -194,9 +194,6 @@ export async function POST(req: NextRequest) {
       );
       if (replay instanceof NextResponse) return replay;
     }
-    // ZodError from the request schemas — the first issue's message and field
-    if (error instanceof ZodError) {
-      const firstIssue = error.issues[0];
     // A same-key double submit is answered with the first attempt's replay,
     // never as a taken time or a busy account.
     if (
@@ -214,6 +211,9 @@ export async function POST(req: NextRequest) {
       );
       if (replay instanceof NextResponse) return replay;
     }
+    // ZodError from the request schemas — the first issue's message and field
+    if (error instanceof ZodError) {
+      const firstIssue = error.issues[0];
       const firstMessage = firstIssue?.message ?? "Invalid request";
       const lowerMsg = firstMessage.toLowerCase();
       // #1583 E-P1-03 — a typed slot refusal (grid / lead time) rides

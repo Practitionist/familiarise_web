@@ -92,8 +92,8 @@ const REQUEST_RESPONSE_INCLUDE = {
 async function replayRequest(
   idempotencyKey: string | null,
   userId: string,
-): Promise<NextResponse | null> {
   asked: { consultationPlanId: string; startsAt: string; endsAt: string },
+): Promise<NextResponse | null> {
   if (!idempotencyKey) return null;
   const original = await prisma.consultation.findUnique({
     where: { requestIdempotencyKey: idempotencyKey },
@@ -193,11 +193,6 @@ export async function POST(req: NextRequest) {
       consultationPlanId,
       organizationId,
     } = parseResult.data;
-
-    // #1166 ORG-9 — org sponsorship was silently dropped by the approval flow:
-    // the request carried no org, so the approved booking billed the member's
-    // personal card with no wallet debit, seat consumption, or attribution.
-    // The request now carries it, stamped onto the Appointment below; the
     const asked = { consultationPlanId, startsAt, endsAt };
     const replayed = await replayRequest(
       idempotencyKey,
@@ -205,6 +200,11 @@ export async function POST(req: NextRequest) {
       asked,
     );
     if (replayed) return replayed;
+
+    // #1166 ORG-9 — org sponsorship was silently dropped by the approval flow:
+    // the request carried no org, so the approved booking billed the member's
+    // personal card with no wallet debit, seat consumption, or attribution.
+    // The request now carries it, stamped onto the Appointment below; the
     // approval pay-link and Payment row inherit it from there.
     if (organizationId) {
       const [org, membership] = await Promise.all([
@@ -417,12 +417,12 @@ export async function POST(req: NextRequest) {
       const replayedInLock = await replayRequest(
         idempotencyKey,
         session.user.id,
+        asked,
       );
       if (replayedInLock) return replayedInLock;
 
       // Anti-scalper cap (booking-journey audit B1): every PENDING request
       // holds a tentative slot that blocks the consultant's calendar. The
-        asked,
       // count runs INSIDE the consultee lock — outside it, two concurrent
       // submits both read n<3 and both insert, landing at 4+ active holds
       // (CodeRabbit triage on the TOCTOU).
@@ -704,12 +704,12 @@ export async function POST(req: NextRequest) {
           const replayedRace = await replayRequest(
             idempotencyKey,
             session.user.id,
+            asked,
           );
           if (replayedRace) return replayedRace;
         }
 
         // #1169 PR 1 — Redis-down fails closed with a structured 503; without
-            asked,
         // this branch the outage fell through to the generic 500 below.
         if (lockError instanceof BookingLockUnavailableError) {
           return NextResponse.json(
