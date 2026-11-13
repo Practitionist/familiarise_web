@@ -67,6 +67,7 @@ jest.mock("../../utils/contentValidation", () => ({
 import { NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
+import { SessionLookupFailedError } from "@/lib/auth/session-lookup-error";
 import {
   GET as consultationGet,
   PATCH as consultationPatch,
@@ -296,6 +297,13 @@ describe.each([
   it("is hidden from the public", async () => {
     mockedGetSession.mockResolvedValue(null);
     expect((await read()).status).toBe(404);
+  });
+
+  it("answers 503, not 404, when the session lookup fails", async () => {
+    mockedGetSession.mockRejectedValue(new SessionLookupFailedError("down"));
+    const res = await read();
+    expect(res.status).toBe(503);
+    expect(res.headers.get("Retry-After")).toBe("2");
   });
 
   it("is visible to its owner", async () => {

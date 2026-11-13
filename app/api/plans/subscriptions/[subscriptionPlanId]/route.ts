@@ -48,7 +48,11 @@ import {
   UNTOUCHED_SUBSCRIPTION_PLAN,
 } from "@/lib/booking/offering-delete";
 import { planConsultantSelect } from "@/lib/api/plans/consultant-projection";
-import { canViewPlanDetail } from "@/lib/data/plan-viewable";
+import { canViewPlanById } from "@/lib/data/plan-viewable";
+import {
+  SessionLookupFailedError,
+  sessionLookupFailedResponse,
+} from "@/lib/auth/session-lookup-error";
 /** A sold plan cannot switch between months and weeks. */
 class PlanLengthUnitLockedError extends Error {
   constructor() {
@@ -79,12 +83,8 @@ export async function GET(
       },
     });
 
-    // A draft or archived plan is readable by its author only; the session is
-    // read only when the plan is not public.
-    if (
-      !(await canViewPlanDetail(subscriptionPlan, null)) &&
-      !(await canViewPlanDetail(subscriptionPlan))
-    ) {
+    // A draft or archived plan is readable by its author only.
+    if (!(await canViewPlanById(subscriptionPlan))) {
       return NextResponse.json(
         { error: "Subscription plan not found" },
         { status: 404 },
@@ -110,6 +110,9 @@ export async function GET(
       { status: 200 },
     );
   } catch (error) {
+    if (error instanceof SessionLookupFailedError) {
+      return sessionLookupFailedResponse();
+    }
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2025"

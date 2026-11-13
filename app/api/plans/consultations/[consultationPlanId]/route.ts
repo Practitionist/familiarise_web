@@ -27,7 +27,11 @@ import {
 } from "@/lib/booking/offering-delete";
 import { planConsultantSelect } from "@/lib/api/plans/consultant-projection";
 import { freezeConsultationPrice } from "@/lib/booking/sold-terms";
-import { canViewPlanDetail } from "@/lib/data/plan-viewable";
+import { canViewPlanById } from "@/lib/data/plan-viewable";
+import {
+  SessionLookupFailedError,
+  sessionLookupFailedResponse,
+} from "@/lib/auth/session-lookup-error";
 import * as Sentry from "@sentry/nextjs";
 export async function GET(
   request: NextRequest,
@@ -46,12 +50,8 @@ export async function GET(
       },
     });
 
-    // A draft or archived plan is readable by its author only; the session is
-    // read only when the plan is not public.
-    if (
-      !(await canViewPlanDetail(consultationPlan, null)) &&
-      !(await canViewPlanDetail(consultationPlan))
-    ) {
+    // A draft or archived plan is readable by its author only.
+    if (!(await canViewPlanById(consultationPlan))) {
       return NextResponse.json(
         { error: "Consultation plan not found" },
         { status: 404 },
@@ -63,6 +63,9 @@ export async function GET(
       { status: 200 },
     );
   } catch (error) {
+    if (error instanceof SessionLookupFailedError) {
+      return sessionLookupFailedResponse();
+    }
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2025"
