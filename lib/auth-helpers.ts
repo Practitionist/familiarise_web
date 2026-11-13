@@ -628,6 +628,7 @@ async function findEventPlanOwner(
 /**
  * Host-side actor for an event: ADMIN/STAFF, the plan's own consultant, or an
  * operator of the plan's host org; `null` for anyone else, the consultee included.
+ * `asParty` judges only the party identity, so a privileged non-party is `null`.
  */
 export async function resolveEventHostActor(
   session: {
@@ -635,8 +636,9 @@ export async function resolveEventHostActor(
   },
   eventType: EventType,
   eventId: string,
+  { asParty = false }: { asParty?: boolean } = {},
 ): Promise<"staff" | "consultant" | "host-org" | null> {
-  if (isPrivileged(session.user.role)) return "staff";
+  if (!asParty && isPrivileged(session.user.role)) return "staff";
 
   const plan = await findEventPlanOwner(eventType, eventId);
   if (!plan) return null;

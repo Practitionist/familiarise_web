@@ -32,18 +32,19 @@ const open = {
 };
 const hostOrgOperators = new Set<string>();
 const mockSuspended = jest.fn(async () => false);
-// The real helper answers "staff" for a privileged role before it looks at the plan.
+// The real helper answers "staff" for a privileged role unless asked as a party.
 const mockHostActor = jest.fn(
-  async (session: {
-    user: {
-      id: string;
-      role: string | null;
-      consultantProfileId: string | null;
-    };
-  }) => {
-    if (session.user.role === "ADMIN" || session.user.role === "STAFF") {
-      return "staff";
-    }
+  async (
+    session: {
+      user: { id: string; role: string; consultantProfileId: string | null };
+    },
+    _eventType: string,
+    _eventId: string,
+    options: { asParty?: boolean } = {},
+  ) => {
+    const privileged =
+      session.user.role === "ADMIN" || session.user.role === "STAFF";
+    if (privileged && !options.asParty) return "staff";
     if (session.user.consultantProfileId === "cp-1") return "consultant";
     return hostOrgOperators.has(session.user.id) ? "host-org" : null;
   },

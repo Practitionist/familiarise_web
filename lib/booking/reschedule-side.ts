@@ -73,13 +73,11 @@ export async function actsForRescheduleSide(
   }
   const event = eventOf(appointment);
   if (!event) return false;
-  // Judged as a party only: without the role, a STAFF or ADMIN expert is still
-  // the expert, and a non-party operator answers null rather than "staff".
-  const host = await resolveEventHostActor(
-    { user: { ...session.user, role: null } },
-    event.type,
-    event.id,
-  );
+  // Judged as a party only: a STAFF or ADMIN expert is still the expert, and a
+  // non-party operator answers null rather than "staff".
+  const host = await resolveEventHostActor(session, event.type, event.id, {
+    asParty: true,
+  });
   return host === "consultant" || host === "host-org";
 }
 

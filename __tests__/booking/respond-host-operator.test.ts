@@ -89,10 +89,10 @@ describe("reschedule answers on org-hosted plans", () => {
     const res = await decline();
     expect(res.status).toBe(200);
     expect(mockHostActor).toHaveBeenCalledWith(
-      // Judged as a party: the side check passes the caller without the role.
-      { user: { ...session.current, role: null } },
+      expect.objectContaining({ user: session.current }),
       "consultation",
       "cons-1",
+      { asParty: true },
     );
     expect(mockDecline).toHaveBeenCalledWith({
       rescheduleRequestId: "req-1",
