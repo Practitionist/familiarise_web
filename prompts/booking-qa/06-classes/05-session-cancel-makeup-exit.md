@@ -4,7 +4,7 @@
 **Personas:** H2 (IST) host; B2 (Europe/London), B3 (America/Los_Angeles) learners; H3 (America/New_York); ST.
 **Docs under test:** `docs/decisions/2026-09-25-class-series-money-rules.md`; `lib/booking/class-sessions.ts` (`cancelClassSession`, `scheduleClassMakeUp`, `skipClassMakeUp`); `lib/booking/misses.ts` (`MAKEUP_WINDOW_DAYS = 14`, `missedAt`); `lib/booking/class-series.ts` (`exitRightFor`: 3 host misses inside any 30 days, or total misses ≥ max(3, 15 % of N)); `components/appointments/detail/ClassSessionControls.tsx`; `scripts/appointments/settle-cancelled-sessions.ts`.
 
-The host's controls are on the class detail page, per upcoming session: **Cancel this session** (confirm title "Cancel this session?", body "Learners are told; you have 14 days to schedule a make-up or each seat is refunded<unit>.", **Keep it**), then **Schedule make-up** (a `SingleSessionPicker`, purpose make-up: 1 h lead, starts after the 14-day deadline are **Not allowed**; label rules in 05's WE-02). The learner sees "Make-up for the <date> session is on <date>." and **Can't make it — refund this session** ("Refund this session?", "This session<unit> comes back to you instead of the make-up. You keep your seat for the rest of the series.").
+The host's controls are on the class detail page, per upcoming session: **Cancel this session** (confirm title "Cancel this session?", body "Learners are told; you have 14 days to schedule a make-up or each seat is refunded<unit>.", **Keep it**), then **Schedule make-up** (the host's `SingleTimePicker`, purpose make-up: 1 h lead, days after the 14-day deadline disabled and later starts not listed; picker rules in 05's WE-02). The learner sees "Make-up for the <date> session is on <date>." and **Can't make it — refund this session** ("Refund this session?", "This session<unit> comes back to you instead of the make-up. You keep your seat for the rest of the series.").
 
 Doors: `POST /api/appointments/[aid]/occurrences/[occ]/cancel`, `…/make-up` `{ startsAt }`, `…/skip-make-up`. Per-session refunds are keyed `occ:<occurrenceId>:pay:<paymentId>`. After every write: R-03, R-04 when money moves, R-05.
 
@@ -49,13 +49,13 @@ Doors: `POST /api/appointments/[aid]/occurrences/[occ]/cancel`, `…/make-up` `{
 
 **Steps:**
 
-1. As H2, on session 3, click **Schedule make-up**. Read the picker: today's labels, the last allowed day, the help text.
-2. Pick a Free start 5 days out. Schedule.
+1. As H2, on session 3, click **Schedule make-up**. Read the picker: today, the last allowed day in the month, the zone line.
+2. Pick a free start 5 days out. Schedule.
 3. As B2, B3, open the class.
 
 **Expect:**
 
-- Picker: starts inside 1 h **Too soon**; starts that would end after hostCancelledAt + 14 days **Not allowed** and the day strip stops there; H2's bookings **Busy**; help "Times are in Asia/Kolkata. … Each session lasts 60 minutes."
+- Picker: no start inside 1 h is listed; days after hostCancelledAt + 14 days are disabled in the month and a start that would end after it is not listed; H2's bookings are tagged **Booked**; "Times in Asia/Kolkata" under the day heading.
 - API: `POST …/occurrences/[occ]/make-up` `{ startsAt }` → 200. DB: a new occurrence with the **same ordinal** as session 3, same 60-minute length, `isTentative = false`; session 3's original row stays `CANCELLED`; `seatsSettledAt` set on the source (the make-up happened). R-05 zero rows.
 - Learners: notice "Make-up for the <date> session is on <date>."; the class lists the make-up in their zone (e.g. 18:00 IST = 12:30 London = 04:30 LA).
 
@@ -117,7 +117,7 @@ Doors: `POST /api/appointments/[aid]/occurrences/[occ]/cancel`, `…/make-up` `{
 
 **Steps:** schedule a make-up at T.
 
-**Expect:** the make-up picker folds H3's busy time in, so T reads Busy and cannot be picked; sent by hand, a make-up at T answers 409 `SCHEDULE_CONFLICT` naming a clash (record copy). A picker that shows T as Free is a **BUG** (P2).
+**Expect:** the make-up picker folds H3's busy time in, so T is tagged **Booked** and cannot be picked; sent by hand, a make-up at T answers 409 `SCHEDULE_CONFLICT` naming a clash (record copy). A picker that lists T as a free button is a **BUG** (P2).
 
 **Probe further:** same "your calendar" wording issue as WE-51/CL-48.
 
@@ -161,7 +161,7 @@ Doors: `POST /api/appointments/[aid]/occurrences/[occ]/cancel`, `…/make-up` `{
 
 **Steps:** `resize_page` 390×844; repeat CL-53's picker steps.
 
-**Expect:** the picker works without the desktop notice; the day strip scrolls; the start list is reachable.
+**Expect:** the picker works without the desktop notice; the month sits above the times with no horizontal scroll; day cells and time buttons are at least 40 px.
 
 ## CL-62 — The host can't cancel and move the same session at once
 

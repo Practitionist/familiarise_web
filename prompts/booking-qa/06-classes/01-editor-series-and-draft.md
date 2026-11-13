@@ -35,20 +35,23 @@ After every save: R-02 for the host, R-03 for the class appointment, R-05.
 - Thursday 18:00 is outside H2's Thursday hours (07:00–09:00). The editor said nothing. Is that fine for a class? (The pattern scheduler labels it, CL-14.)
 - Does any surface show all 8 dates before publishing? **MISSED-OPPORTUNITY** if the host commits blind.
 
-## CL-02 — The editor's Start date is read in the browser's zone
+## CL-02 — The editor's First session is picked in the host's profile zone
 
-**Why it matters:** decision 3 removed browser-zone `datetime-local` inputs for webinars; the class Start date is still one (`OfferingFields` renders kind `date` as `datetime-local`).
+**Why it matters:** the class's start used to be a `datetime-local` box read in the browser's zone; it is now the host's time picker (Sessions → **First session**), drawn in the profile zone whatever the browser says.
 
 **Steps:**
 
-1. Emulate the browser in `America/Los_Angeles` (DevTools MCP `emulate`). As H2 (profile IST), new class `qa-CL-02`, Start date next Monday 18:00 as typed. Publish.
+1. Emulate the browser in `America/Los_Angeles` (DevTools MCP `emulate`). As H2 (profile IST), new class `qa-CL-02`. In Sessions → **First session**, read the zone line, open next Monday and pick 18:00. Publish.
 2. Read the first occurrence.
+3. Reopen `qa-CL-02` in the editor and look at next Monday 18:00 in the picker. Save without edits.
 
-**Expect (per decision 3's intent):** the series at 18:00 IST.
+**Expect:**
 
-**Likely actual:** the typed 18:00 is read as 18:00 Los Angeles = 02:00Z next day = 07:30 IST Tuesday; the series becomes Tuesdays and Fridays 07:30 IST. Report **BUG** (P1: the host's class lands on the wrong day and time) with the SQL rows. If emulation isn't supported, mark BLOCKED and say why; 10 (`TZ-`) can retry.
+- Step 1: the picker says "Times in Asia/Kolkata"; Monday lists 18:00 as a free button (60-minute sessions inside 18:00–21:00).
+- Step 2: the series starts Monday 18:00 IST (12:30Z), whatever the browser zone. A series at 07:30 IST Tuesday (the browser's 18:00) is a **BUG** (P1) with the SQL rows. If emulation isn't supported, run step 1 without it and say so; 10 (`TZ-`) can retry.
+- Step 3: the class's own first session reads free, not **Booked** (the editor passes the saved class as a move), and the unchanged save leaves the occurrence where it was.
 
-**Probe further:** reopen the editor: does it show the stored instant back in the browser's zone (it should, per #1060), and does saving without edits leave it unchanged?
+**Probe further:** pick a time on a day with another H2 booking: is it tagged **Booked** and refused as a pick?
 
 ## CL-03 — A start date in the past or off the half hour
 

@@ -2,7 +2,7 @@
 
 **Needs:** the booking pages in each state (DB-01's ledger). A grid with picks (G-SUB from 02), an unsold class (pattern scheduler), a sold webinar (re-time), a sold class (series move), a class session (make-up), a cancellable booking.
 **Personas:** H1, H2, B1, B2.
-**Docs under test:** `docs/calendar/allocate-heatmap-ux.md` (keyboard model), `components/scheduling/SingleSessionPicker.tsx` (two `radiogroup`s: "Day" and "Start time"; each start's name "<time>, <state>"), `components/scheduling/ClassPatternScheduler.tsx` (row controls labelled "Day 1", "Time 1", "Remove day 1"), `components/ui/toast.tsx` (Radix toast), WCAG 2.2 AA.
+**Docs under test:** `docs/calendar/allocate-heatmap-ux.md` (keyboard model), `components/scheduling/SingleTimePicker.tsx` and `MonthGrid.tsx` (the month is an ARIA grid with one tab stop; each time is a button named "<start> to <end>, <state>" with `aria-pressed`; the buyer's taken times sit behind a disclosure button with `aria-expanded`), `components/scheduling/ClassPatternScheduler.tsx` (row controls labelled "Day 1", "Time 1", "Remove day 1"), `components/ui/toast.tsx` (Radix toast), WCAG 2.2 AA.
 
 **Tools:** `press_key` for every keyboard step (Tab, Shift+Tab, arrows, Home/End, PageUp/PageDown, Enter, Space, Escape); `take_snapshot` for the accessibility tree (names, roles, states); `resize_page` for viewports; `get_css_styles` or a screenshot for focus rings and contrast. No screen-reader software runs here: judge names, roles, states and live regions from the tree.
 
@@ -23,18 +23,18 @@
 
 **Probe further:** context chips: are they buttons or text? A chip that looks clickable but isn't, or the reverse. The zone switch's "Use my device's time zone" button: `aria-pressed` set (code: yes); is the change announced?
 
-## UX-89 — `SingleSessionPicker` by keyboard and in the tree
+## UX-89 — `SingleTimePicker` by keyboard and in the tree
 
-**Steps:** as H2, in the webinar editor's picker, the re-time dialog and the make-up dialog:
+**Steps:** as H2, in the webinar editor's picker, the re-time dialog and the make-up dialog; then as B2 in the expert page's **Book Now** dialog, on a day with taken times:
 
-1. Tab into the day strip. Use Left/Right, Home/End. Tab to the start list. Use Up/Down.
-2. Try to select a "Busy" and a "Too soon" start with Space and Enter.
-3. Read the tree: radiogroup names, each radio's name and `aria-checked`, `aria-disabled`.
-4. Use "Earlier days" / "Later days".
+1. Tab into the month. Use the arrow keys, Home/End, Page Up/Page Down; Enter picks a day. Tab to the times; Enter or Space picks one.
+2. As H2, try to pick a **Booked** start with Space and Enter. Switch on "Show times outside my hours" with the keyboard.
+3. As B2, Tab to "Show N taken times"; press Enter, then Space. Tab into the list and reach **Notify me**.
+4. Read the tree: the month grid's one tab stop and `aria-disabled` days; each time's name and `aria-pressed`; the disclosure's `aria-expanded` and `aria-controls`; the polite "N free times on <day>" line.
 
-**Expect:** each group is one tab stop with arrow keys moving inside it (ARIA radio pattern); disabled starts are skipped or announced as unavailable and can't be chosen; each start is named "<time>, <Free | Outside your hours | Busy | Too soon>".
+**Expect:** the month is one tab stop with arrow keys moving inside it; disabled days are announced as unavailable; a Booked start is `aria-disabled` and can't be chosen; each time is named "<start> to <end>, <free | booked | outside your hours | taken>"; the disclosure toggles between "Show N taken times" and "Hide taken times" with `aria-expanded` following; each taken row reads its time and "taken".
 
-**Probe further:** if Tab visits every radio (no roving), report **A11Y** (P2). Does the selected day/time stay announced when the list re-renders after a day change? The loading line ("Loading your …") in a live region?
+**Probe further:** if Tab visits every day (no roving), report **A11Y** (P2). Does the selected time stay announced when the list re-renders after a day change? Is focus kept on the disclosure button after it opens? Is the inline "That time was just taken — pick another." announced (`role="status"`)?
 
 ## UX-90 — Pattern scheduler by keyboard
 
@@ -93,7 +93,7 @@
 
 **Steps:** at each viewport, open: expert page and dialog, each checkout, allocate, Manage timings (grid and pattern), both reschedule pages, cancel dialogs, re-time and series move dialogs, appointment detail (both sides), inbox, consultee Home and Payments, org appointments.
 
-**Expect:** no horizontal scroll except intended strips (day strip, week grid); sticky actions visible; dialogs fit (scroll inside, never off-screen); tray docks right at ≥ 1280 px and under the grid below; phone allocate shows the desktop notice and "Auto-schedule this week"; phone reschedule shows the day list (HM-43).
+**Expect:** no horizontal scroll except the week grid (the single-time picker stacks its month above its times); sticky actions visible; dialogs fit (scroll inside, never off-screen); tray docks right at ≥ 1280 px and under the grid below; phone allocate shows the desktop notice and "Auto-schedule this week"; phone reschedule shows the day list (HM-43).
 
 **Probe further:** HM-49 owns grid readability. Here look for clipped buttons, overlapping toasts and sticky bars, text over 80 characters wide at 1440, and touch targets under 24×24 px at 390 (WCAG 2.5.8). Screenshot each failure.
 

@@ -76,15 +76,15 @@
 **Steps:**
 
 1. As H2, row menu → **Move to a new date**. Read the dialog.
-2. In the picker (purpose re-time), read today's and tomorrow's labels, and a day 3 days out.
-3. Pick a Free start 3 days out (e.g. Friday 19:00 IST = 13:30Z). Click **Move webinar**.
+2. In the picker (purpose re-time), look at today and tomorrow in the month, then a day 3 days out.
+3. Pick a free start 3 days out (e.g. Friday 19:00 IST = 13:30Z). Click **Move webinar**.
 4. Read the response. Run R-03.
 5. As B2 and B3, open the bell, the booking and the outbox (R-07).
 
 **Expect:**
 
 - Dialog: title "Move this webinar to a new date", text "Everyone enrolled is told and keeps their seat. Anyone who can't make the new time can leave with a full refund." and a link to **Cancel booking** for ending it instead. Buttons **Keep the date** / **Move webinar**.
-- Picker: every start before now + 24 h is **Too soon**; H2's other bookings **Busy**.
+- Picker: no start before now + 24 h is listed (today, and tomorrow before the same hour, show nothing or only later starts); H2's other bookings are tagged **Booked**; the webinar's own current session reads free (the dialog passes it as a move).
 - API: `POST /api/appointments/[aid]/retime` `{ startsAt }` → 200 with `retimeBy` and the clash count.
 - DB: the **same** occurrence id; `startsAt` 13:30Z, `endsAt` + 90 min; `movedAt` set; `Webinar.retimeBy` = min(now + 7 days, new start). Seats unchanged. R-05 zero rows.
 - Buyers: one notice each ("rescheduled", with a leave-by date); B2 sees Friday 13:30 London, B3 Friday 05:30 LA, both with the date they can leave by.

@@ -12,7 +12,7 @@ Fixtures: **T-1** = B4's free trial (TR-01, Tue D+8 09:00 IST). **T-2** = a free
 
 **Steps:**
 
-1. As B4 open T-1 → **Reschedule** (`/dashboard/consultee/[B4 uid]/appointments/[aid]/reschedule`). The picker is the buyer's `TrialSlotPicker` (30-min windows, 24-h lead).
+1. As B4 open T-1 → **Reschedule** (`/dashboard/consultee/[B4 uid]/appointments/[aid]/reschedule`). The page shows the zone switch and the light single-time picker (`SingleTimePicker`, buyer audience: a month, then the day's free 30-min times, 24-h lead; taken times behind "Show N taken times").
 2. Pick Thu D+10 10:00 IST (free, published). Submit.
 
 **Expect:** `RescheduleRequest` `AUTO_ACCEPTED` (`initiatorRole = 'CONSULTEE'`); the **same** occurrence id now at Thu D+10 04:30Z; `Trial.status` still `SCHEDULED`; payment untouched; the other party (H1) is notified through the outbox (`appointment-rescheduled` family naming the trial's parties) and B4, who moved it, is not.
@@ -52,14 +52,14 @@ Fixtures: **T-1** = B4's free trial (TR-01, Tue D+8 09:00 IST). **T-2** = a free
 
 **Steps:**
 
-1. As H1 open T-2 → reschedule (`TrialScheduleCalendar`). In the network panel, check the availability fetch sends `consulteeUserId` (B2) and `purpose=reschedule`. B2's own busy times are greyed.
+1. As H1 open T-2 → reschedule ("Propose a new trial time", the light single-time picker inside H1's published hours). In the network panel, check the availability fetch sends `consulteeUserId` (B2). B2's own busy times are not among the free times (they sit under "Show N taken times"), and nothing inside 24 h is listed.
 2. Propose Thu D+10 17:00 IST. Submit.
 3. As B2 read the `RescheduleProposalCard` ("Your consultant proposed new times", "Needs an answer by <London time>") and **Accept new times**.
 4. As H1 propose again.
 
 **Expect:** 2: `PENDING_REVIEW` (never auto, even though the time is free); session released (`RESCHEDULED`, tentative); `Trial` still `SCHEDULED`. 3: `ACCEPTED`; the same occurrence at 11:30Z. 4: 409 `EXPERT_RESCHEDULE_CAP` with the trial copy.
 
-**Probe further:** B2 has a booking elsewhere (create one if needed): is that time greyed in H1's calendar? If not, the consultee-busy feature is broken (FAIL).
+**Probe further:** B2 has a booking elsewhere (create one if needed): is that time missing from H1's free times and listed as taken? If it is offered as free, the consultee-busy feature is broken (FAIL).
 
 ## TR-25 — The learner declines the expert's proposal; the expert may propose again
 

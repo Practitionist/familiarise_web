@@ -4,7 +4,7 @@ Free and paid trials on subscription plans: the buyer picks the time, a free tri
 
 | File | Cases | What |
 | --- | --- | --- |
-| [01-book-free-and-paid.md](01-book-free-and-paid.md) | TR-01 – TR-18 | Free trial, modal gates, window refusals, paid hold, hold blocks others, capture confirms in place, short pay window, lapse sweep, capture after start, abandon, no manual confirm, one per pair, trial-disabled and draft plans, paused expert, no room, REQUEST mode, dual-role calendar, open-request cap |
+| [01-book-free-and-paid.md](01-book-free-and-paid.md) | TR-01 – TR-18 | Free trial, trial-step gates, window refusals, paid hold, hold blocks others, capture confirms in place, short pay window, lapse sweep, capture after start, abandon, no manual confirm, one per pair, trial-disabled and draft plans, paused expert, no room, REQUEST mode, dual-role calendar, open-request cap |
 | [02-reschedule-cancel-convert.md](02-reschedule-cancel-convert.md) | TR-19 – TR-41 | Learner move and cap, named time required, taken/unbookable, 24-h rule, expert proposal and cap, decline restores, expiry, party-only, unpaid can't move, expert cancel paid (refund + strike) and free (strike), staff cancel, learner cancel tiers with bound quote, frozen/delivered, PATCH refusals, cancel with open proposal, completion, conversion, 30-day window, expert's view, 15-minute trial lengths |
 
 **Fixtures:** S-11 (H1 weeks plan, free 30-min trial; needs `minTrialPriceInPaise = 0`), S-12 (H1 months plan, paid ₹100 30-min trial), F-AV1, F-BUSY. Each case names what it books. H4 is used once (TR-15) and restored.

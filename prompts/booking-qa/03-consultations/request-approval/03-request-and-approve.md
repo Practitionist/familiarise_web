@@ -6,7 +6,7 @@
 
 **Mode for this file:** at the start, as H1 set Settings → Booking → "Review requests first" (S-07) and record `bookingMode = 'REQUEST'`. CO-45 (end of 03-d) switches back. While H1 is in REQUEST mode, every new H1 consultation, subscription and trial comes in as a request: don't run 04 or 07 for H1 in parallel.
 
-How a request reaches H1: B picks a time on H1's expert page; under REQUEST mode every pill carries a "Request" tag and the CTA reads "Request this time" ("Request this time — the expert confirms before you pay."). The request is `POST /api/scheduling/request-for-approval`. H1 answers in `/dashboard/consultant/[H1 cid]/requests` (row actions "Approve", "Decline", later "Remind", "Withdraw approval") or on the allocate page (`…/requests/[rid]/allocate`: manual pick, Auto-schedule, Save picked times).
+How a request reaches H1: a request exists only when the expert reviews requests first (`bookingMode = 'REQUEST'`, Settings → Booking → "Review requests first"); an instant-booking expert's times go to checkout and the request door refuses them (CO-24). B presses **Book Now** on a plan card and picks a day in the month, then a time in the day's list (the dark single-time picker); under REQUEST mode the button reads **Request this time** with the line "Request this time — the expert confirms before you pay." Times already taken sit behind "Show N taken times", each with **Notify me**. The request is `POST /api/scheduling/request-for-approval`. H1 answers in `/dashboard/consultant/[H1 cid]/requests` (row actions "Approve", "Decline", later "Remind", "Withdraw approval") or on the allocate page (`…/requests/[rid]/allocate`: manual pick, Auto-schedule, Save picked times).
 
 After every case: R-03, R-04 (if money), R-05 (H1), R-07.
 
@@ -16,17 +16,18 @@ After every case: R-03, R-04 (if money), R-05 (H1), R-07.
 
 **Steps:**
 
-1. As B1 open H1's expert page → "qa-S-10 Deep dive" (90 min) → Book Now → Mon D+7 09:00 IST (03:30Z).
-2. Read the tag, the CTA, the sentence under it. Add note "qa-CO-20". Submit.
+1. As B1 open H1's expert page → "qa-S-10 Deep dive" (90 min) → **Book Now** → in the month pick Mon D+7, then 09:00 IST (03:30Z) in the day's list.
+2. Read the button and the line above it. Submit with **Request this time**.
 3. Read the confirmation and B1's appointments list and detail.
 4. As B2 open the same day on H1's page.
 
 **Expect:**
 
 - API: `POST /api/scheduling/request-for-approval` → 2xx.
-- DB: `Consultation` `PENDING`, `bookingSource = 'REQUEST_SUBMITTED'`, `requestNotes` contains "qa-CO-20"; an `Appointment` with a tentative occurrence 03:30Z–05:00Z (or the requested window stored on the request; record which); history `CREATED`.
+- API body: carries `availabilityWindowWeeklyId` (or `availabilityWindowCustomId`) for the picked row; a body without one is refused 400 "Must provide either weekly or custom slot availability ID".
+- DB: `Consultation` `PENDING`, `bookingSource = 'REQUEST_SUBMITTED'`, `requestNotes` starts "Request for approval - Slot:" and names the availability row; an `Appointment` with a tentative occurrence 03:30Z–05:00Z (or the requested window stored on the request; record which); history `CREATED`.
 - B1 sees "waiting for approval" wording (quote it), no pay button.
-- B2: 09:00 is no longer offered as instant; it shows as taken or as a contended "Request" (record).
+- B2: 09:00 is no longer among the free times; "Show N taken times" lists it with **Notify me**. Press **Notify me**: it reads "Waiting" with **Withdraw**; withdraw again before moving on.
 - Outbox/bell: H1 notified ("NEW_BOOKING_REQUEST").
 
 **Cross-check:** H1 Requests row: B1's name, the time in IST "Mon <d> 9:00 am IST", the amount line, a countdown to expiry ("Nd left" / "Nh Nm left").
@@ -54,7 +55,7 @@ After every case: R-03, R-04 (if money), R-05 (H1), R-07.
 - 5: 4xx `PLAN_NOT_PUBLISHED`.
 - No new `Consultation` rows (R-08).
 
-**Probe further:** the UI path for 1: does the expert page even list times inside 2 h for a REQUEST-mode priced plan (it shouldn't; the slot list uses the request lead)?
+**Probe further:** the UI path for 1: does the expert page even list times inside 2 h for a REQUEST-mode priced plan (it shouldn't; the picker uses the request lead, and those times are not in the taken list either)? For 4, through the UI: B2 picks a time B1's request holds before the page refreshes; the pick clears, "That time was just taken — pick another." shows and the taken list opens with that time.
 
 ## CO-22 — Request caps: consultee's three, the expert's queue limit, the pause
 
@@ -86,17 +87,27 @@ After every case: R-03, R-04 (if money), R-05 (H1), R-07.
 
 **Probe further:** the UI submit is disabled while in flight (count requests on a double click). Deep matrix: 09.
 
-## CO-24 — Instant mode still turns a contended time into a request
+## CO-24 — Instant mode never turns a held time into a request
 
-**Why it matters:** under "Instant booking", a time someone else is holding comes to the expert as a request ("Request for Approval"), never as a second paid booking.
+**Why it matters:** a request exists only for a review-first expert. Under "Instant booking", a time someone else holds is taken, with "Notify me"; it never becomes an unpaid request the expert must approve.
 
 **Setup:** switch H1 to "Instant booking" for this case only. CO-20's request holds Mon D+7 09:00.
 
-**Steps:** as B2 open H1's expert page → S-10 → Mon D+7. Read the 09:00 pill (if offered), its tag and CTA.
+**Steps:**
 
-**Expect:** either 09:00 isn't offered, or it carries "Request" with the CTA "Request for Approval" and "Someone else is asking for this time too — the expert confirms before you pay." No checkout path. Record which. Switch H1 back to "Review requests first".
+1. As B2 open H1's expert page → S-10 → **Book Now** → Mon D+7. Read the free times, the button and "Show N taken times".
+2. Open the taken list; read the 09:00 row.
+3. Via `evaluate_script`, send CO-20's request body for another free time to `POST /api/scheduling/request-for-approval`.
 
-**Probe further:** is "contended" ever shown for a time that's simply free (false positive)? Check two free pills.
+**Expect:**
+
+- 1: 09:00 is not among the free times; the button reads **Continue to Checkout** with no request line.
+- 2: 09:00 is listed greyed with **Notify me** and the line "You can wait on up to 3 times."
+- 3: 409 `REQUEST_NOT_OFFERED`, "This expert takes instant bookings. Pick a free time and continue to checkout."; no row.
+
+Switch H1 back to "Review requests first".
+
+**Probe further:** is a time that is simply free ever listed as taken (false positive)? Check two free times against the grid.
 
 ## CO-25 — Approve with "Use requested times" (priced): pay link and pre-allocation
 
