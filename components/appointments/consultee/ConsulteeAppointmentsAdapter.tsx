@@ -680,6 +680,21 @@ export function useConsulteeAppointmentsAdapter(options?: {
           throw new Error("Only webinars and classes support leave-event");
         }
         await leaveEvent(activeVm.kind, id, userId, activeVm.title);
+        // The seat is released, so its detail page no longer answers: go to the list, drop it.
+        closeDialog();
+        if (consulteeId) {
+          router.push(`/dashboard/consultee/${consulteeId}/appointments`);
+          void queryClient.invalidateQueries({
+            queryKey: ["consultee-events", consulteeId],
+          });
+        }
+        if (activeVm.appointmentId) {
+          queryClient.removeQueries({
+            queryKey: ["appointment-detail", activeVm.appointmentId],
+            exact: true,
+          });
+        }
+        return;
       }
       closeDialog();
       invalidateBookings();
