@@ -20,7 +20,7 @@ export async function POST(
   if (auth.error) return auth.error;
   const rl = await applyRateLimit(eventMutationLimiter, auth.session.user.id);
   if (rl) return rl;
-  return remindPaymentResponse("consultation", consultationId, {
+  return remindPaymentResponse(consultationId, {
     userId: auth.session.user.id,
     consultantProfileId: auth.session.user.consultantProfileId,
     privileged: isPrivileged(auth.session.user.role),

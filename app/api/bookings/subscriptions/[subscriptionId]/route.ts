@@ -329,18 +329,6 @@ export async function PATCH(
 
             // IDEMPOTENCY: Check if already in target state or processing
             if (status === AppointmentStatus.APPROVED) {
-              if (
-                currentSubscription.status ===
-                AppointmentStatus.APPROVED_PENDING_PAYMENT
-              ) {
-                // Already processing, return existing state
-                return {
-                  data: currentSubscription,
-                  message: "Approval already in progress",
-                  duplicate: true,
-                };
-              }
-
               if (currentSubscription.status === AppointmentStatus.APPROVED) {
                 return {
                   data: currentSubscription,

@@ -1,6 +1,6 @@
 /**
- * A subscription never enters SCHEDULED: the map gives it no edge, and no
- * caller's `fromIn` can widen it there. Consultation keeps its SCHEDULED edge.
+ * A subscription never enters SCHEDULED or APPROVED_PENDING_PAYMENT: the map gives
+ * it no edge, and no caller's `fromIn` can widen it into SCHEDULED.
  */
 import {
   REQUEST_ALLOWED_FROM,
@@ -38,8 +38,13 @@ describe("subscription status map", () => {
     expect(SUBSCRIPTION_ALLOWED_FROM.CANCELLED).toEqual([
       "PENDING",
       "APPROVED",
-      "APPROVED_PENDING_PAYMENT",
     ]);
+  });
+
+  it("never awaits payment: a plan is paid at checkout", () => {
+    expect(SUBSCRIPTION_ALLOWED_FROM.APPROVED_PENDING_PAYMENT).toEqual([]);
+    for (const from of Object.values(SUBSCRIPTION_ALLOWED_FROM))
+      expect(from).not.toContain("APPROVED_PENDING_PAYMENT");
   });
 
   it("refuses SCHEDULED even when the caller widens fromIn", async () => {

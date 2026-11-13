@@ -2134,35 +2134,8 @@ async function confirmApprovalStatus(
       });
     };
 
-    // Subscriptions only transition APPROVED_PENDING_PAYMENT → APPROVED; PENDING awaits slot allocation.
-    if (subscription.status === AppointmentStatus.APPROVED_PENDING_PAYMENT) {
-      try {
-        await transitionSubscriptionRequest(tx, {
-          where: { id: entityId },
-          to: AppointmentStatus.APPROVED,
-          fromIn: [AppointmentStatus.APPROVED_PENDING_PAYMENT],
-          reason: "payment captured",
-          appointmentId,
-        });
-        console.log(
-          `✅ Subscription ${entityId} payment completed - moving from APPROVED_PENDING_PAYMENT to APPROVED`,
-        );
-      } catch (err) {
-        if (!(err instanceof IllegalTransitionError)) throw err;
-        const fresh = await tx.subscription.findUnique({
-          where: { id: entityId },
-          select: { status: true },
-        });
-        const freshStatus = fresh?.status ?? subscription.status;
-        if (LIVE_REQUEST_STATUSES.has(freshStatus)) {
-          console.log(
-            `ℹ️ Subscription ${entityId} already ${freshStatus} when the capture landed — nothing to move`,
-          );
-        } else {
-          await flagTerminal(freshStatus);
-        }
-      }
-    } else if (!LIVE_REQUEST_STATUSES.has(subscription.status)) {
+    // A plan is paid at checkout: the capture moves no status, and allocation approves it.
+    if (!LIVE_REQUEST_STATUSES.has(subscription.status)) {
       await flagTerminal(subscription.status);
     } else {
       console.log(

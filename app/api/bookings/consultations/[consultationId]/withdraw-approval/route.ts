@@ -36,7 +36,6 @@ export async function POST(
     const rl = await applyRateLimit(eventMutationLimiter, auth.session.user.id);
     if (rl) return rl;
     const body = await withdrawApproval({
-      kind: "consultation",
       id: consultationId,
       actor: {
         userId: auth.session.user.id,

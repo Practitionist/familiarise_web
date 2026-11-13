@@ -105,12 +105,10 @@ jest.mock("../../lib/rate-limit", () => ({
 import prisma from "../../lib/prisma";
 import { lapseApprovedRequest } from "../../lib/booking/lapse-approved-request";
 import { POST as withdrawConsultation } from "../../app/api/bookings/consultations/[consultationId]/withdraw-approval/route";
-import { POST as withdrawSubscription } from "../../app/api/bookings/subscriptions/[subscriptionId]/withdraw-approval/route";
 import { NextRequest } from "next/server";
 
 // CUID-shaped, so `refuseMalformedEventId` lets the routes past the id gate.
 const C_ID = "clzzzzzzz000consultation1";
-const S_ID = "clzzzzzzz000subscription1";
 
 const db = prisma as unknown as Record<
   string,
@@ -221,13 +219,11 @@ describe("POST …/withdraw-approval (B-2)", () => {
   });
 
   it("withdraw-then-capture: the request is CANCELLED and its open order EXPIRED under the appointment lock, the consultee is told", async () => {
-    db.subscription.findUnique.mockResolvedValue({
-      ...consultationRow("APPROVED_PENDING_PAYMENT"),
-      id: S_ID,
-      subscriptionPlan: { consultantProfileId: "cp-1" },
-    });
-    db.subscription.updateMany.mockResolvedValue({ count: 1 });
-    const res = await post(withdrawSubscription, { subscriptionId: S_ID });
+    db.consultation.findUnique.mockResolvedValue(
+      consultationRow("APPROVED_PENDING_PAYMENT"),
+    );
+    db.consultation.updateMany.mockResolvedValue({ count: 1 });
+    const res = await post(withdrawConsultation, { consultationId: C_ID });
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toBe("no-store");
     // The route answers the word it wrote, not the word the sweeps use.
@@ -235,7 +231,7 @@ describe("POST …/withdraw-approval (B-2)", () => {
     expect(lockCalls).toEqual(["a-1"]);
     // #1319 — one renewal per attempt, with the grant the lock handed over.
     expect(lockRenewals).toEqual([{ key: "appointment-lock:a-1" }]);
-    expect(db.subscription.updateMany.mock.calls[0][0].data.status).toBe(
+    expect(db.consultation.updateMany.mock.calls[0][0].data.status).toBe(
       "CANCELLED",
     );
     // The tombstone a late capture lands on: the handler's EXPIRED→SUCCEEDED
@@ -250,7 +246,7 @@ describe("POST …/withdraw-approval (B-2)", () => {
       expect.objectContaining({
         appointmentId: "a-1",
         consulteeUserId: "u-buyer",
-        appointmentType: "SUBSCRIPTION",
+        appointmentType: "CONSULTATION",
       }),
     );
   });

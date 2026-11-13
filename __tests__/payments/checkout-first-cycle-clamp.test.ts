@@ -358,13 +358,7 @@ describe("double-buy guard", () => {
     const { where } = (tx.subscription.findMany as jest.Mock).mock.calls[0][0];
     expect(where.schedulingPeriodStartsAt).toBeUndefined();
     expect(where.OR).toBeUndefined();
-    expect(where.status.in).toEqual(
-      expect.arrayContaining([
-        "PENDING",
-        "APPROVED",
-        "APPROVED_PENDING_PAYMENT",
-      ]),
-    );
+    expect(where.status.in).toEqual(["PENDING", "APPROVED"]);
   });
 
   it("lets a spent plan be bought again (renewal as repurchase)", async () => {

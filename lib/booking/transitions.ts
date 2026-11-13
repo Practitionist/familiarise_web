@@ -257,19 +257,22 @@ export async function transitionConsultationRequest(
 export const LIVE_SUBSCRIPTION_STATUSES: AppointmentStatus[] = [
   "PENDING",
   "APPROVED",
-  "APPROVED_PENDING_PAYMENT",
 ];
 
-// A subscription goes from APPROVED straight to COMPLETED; it never enters
-// SCHEDULED (Consultation keeps that state for the incident rebook).
+// A plan is paid at checkout, so it never awaits payment, and it goes from APPROVED
+// straight to COMPLETED (SCHEDULED is the consultation's incident-rebook state).
 export const SUBSCRIPTION_ALLOWED_FROM: Record<
   AppointmentStatus,
   AppointmentStatus[]
 > = {
-  ...REQUEST_ALLOWED_FROM,
+  PENDING: [],
+  APPROVED: ["PENDING"],
+  APPROVED_PENDING_PAYMENT: [],
   SCHEDULED: [],
   COMPLETED: ["APPROVED"],
-  CANCELLED: ["PENDING", "APPROVED", "APPROVED_PENDING_PAYMENT"],
+  REJECTED: ["PENDING"],
+  CANCELLED: ["PENDING", "APPROVED"],
+  EXPIRED: ["PENDING", "APPROVED"],
 };
 
 export async function transitionSubscriptionRequest(

@@ -496,7 +496,7 @@ describe("cancelPendingCheckout — subscription parent", () => {
     });
     state.subscriptions.set("sub-1", {
       id: "sub-1",
-      status: "APPROVED_PENDING_PAYMENT",
+      status: "PENDING",
     });
     state.slots.push({
       id: "slot-s",
