@@ -87,7 +87,7 @@ export interface NeedsYouCalloutProps {
   onHelp: () => void;
   /** Extra content for JOIN / RATE — the existing button or stars. */
   children?: ReactNode;
-  /** Drawn inside the page header, which already offers Get help in its menu. */
+  /** The detail page offers Get help in its own rail, so the banner omits it. */
   embedded?: boolean;
   /** The answers the routes accept from this viewer on an open reschedule. */
   moveAnswers?: {
@@ -125,7 +125,7 @@ function Shell({
         "border",
         surface,
         embedded
-          ? "mt-5 scroll-mt-24 rounded-xl p-3.5 sm:p-4"
+          ? "scroll-mt-24 rounded-2xl p-4 sm:p-5"
           : "rounded-2xl p-4 shadow-sm sm:p-5",
       )}
     >

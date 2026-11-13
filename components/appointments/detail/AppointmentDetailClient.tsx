@@ -456,7 +456,8 @@ export function AppointmentDetailClient({
       sponsorOrgName: paidRow ? sponsorOf(paidRow) : orgName,
     }),
     role === "consultant" ? "CONSULTANT" : "CONSULTEE",
-    { joinWindowMs },
+    // Every deadline and time on the page reads in the viewer's profile zone.
+    { joinWindowMs, viewerZone },
   );
   const { bookingState, moneyState, nextAction } = presentation;
   const postApproval = POST_APPROVAL.has(bookingState.state);
@@ -626,6 +627,8 @@ export function AppointmentDetailClient({
   const payHref = bookingPayHref(vm);
   const openPendingPayment = () => {
     if (!payHref) return;
+    // Coming back from the pay page reads the paid state, not this cache.
+    refreshDetail();
     if (isExternalPayHref(payHref)) {
       window.open(payHref, "_blank", "noopener,noreferrer");
       return;
@@ -1184,6 +1187,58 @@ export function AppointmentDetailClient({
           </Link>
         </Button>
 
+        {/* The one banner: shown whenever this viewer must act. */}
+        <NeedsYouCallout
+          embedded
+          payFirst={payFirstKind(vm)}
+          presentation={presentation}
+          names={names}
+          heldCount={heldCount}
+          pending={pendingRow}
+          onPay={payHref ? openPendingPayment : undefined}
+          onExitSeries={
+            role === "consultee" && detail.appointment.class && viewerId
+              ? () =>
+                  exitClassSeries(detail.appointment.class!.id, viewerId).then(
+                    refreshDetail,
+                  )
+              : undefined
+          }
+          requestAgainHref={
+            vm.consultantProfileId
+              ? `/explore/experts/${vm.consultantProfileId}`
+              : null
+          }
+          decision={decision}
+          awaitingPayment={
+            role === "consultant" && requestPath
+              ? {
+                  remind: remindMutation.mutateAsync,
+                  withdraw: withdrawMutation.mutateAsync,
+                  onChanged: refreshDetail,
+                }
+              : undefined
+          }
+          moveAnswers={
+            moveAnswers.length > 0
+              ? { answers: moveAnswers, control: moveControl }
+              : undefined
+          }
+          onHelp={() => openHelp()}
+        >
+          {/* The Next up panel carries Join; without a next session time
+              the callout keeps it. */}
+          {nextAction.kind === "JOIN" && canJoinNow && !vm.nextAt ? (
+            <RowPrimaryAction action={action} size="default" />
+          ) : nextAction.kind === "RATE" && rateableSole ? (
+            <SoleSessionRating
+              appointmentId={appointmentId}
+              session={rateableSole}
+              role={role}
+              feedback={sessionFeedback}
+            />
+          ) : null}
+        </NeedsYouCallout>
         <header className="rounded-2xl border border-border/80 bg-card p-5 sm:p-7">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
             <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
@@ -1339,59 +1394,6 @@ export function AppointmentDetailClient({
               <RatingsUnavailable onRetry={() => sessionFeedback.retry()} />
             </div>
           )}
-
-          <NeedsYouCallout
-            embedded
-            payFirst={payFirstKind(vm)}
-            presentation={presentation}
-            names={names}
-            heldCount={heldCount}
-            pending={pendingRow}
-            onPay={payHref ? openPendingPayment : undefined}
-            onExitSeries={
-              role === "consultee" && detail.appointment.class && viewerId
-                ? () =>
-                    exitClassSeries(
-                      detail.appointment.class!.id,
-                      viewerId,
-                    ).then(refreshDetail)
-                : undefined
-            }
-            requestAgainHref={
-              vm.consultantProfileId
-                ? `/explore/experts/${vm.consultantProfileId}`
-                : null
-            }
-            decision={decision}
-            awaitingPayment={
-              role === "consultant" && requestPath
-                ? {
-                    remind: remindMutation.mutateAsync,
-                    withdraw: withdrawMutation.mutateAsync,
-                    onChanged: refreshDetail,
-                  }
-                : undefined
-            }
-            moveAnswers={
-              moveAnswers.length > 0
-                ? { answers: moveAnswers, control: moveControl }
-                : undefined
-            }
-            onHelp={() => openHelp()}
-          >
-            {/* The Next up panel carries Join; without a next session time
-                the callout keeps it. */}
-            {nextAction.kind === "JOIN" && canJoinNow && !vm.nextAt ? (
-              <RowPrimaryAction action={action} size="default" />
-            ) : nextAction.kind === "RATE" && rateableSole ? (
-              <SoleSessionRating
-                appointmentId={appointmentId}
-                session={rateableSole}
-                role={role}
-                feedback={sessionFeedback}
-              />
-            ) : null}
-          </NeedsYouCallout>
         </header>
 
         <div
@@ -1450,22 +1452,22 @@ export function AppointmentDetailClient({
           {compactLayout ? (
             <>
               <div className="flex min-w-0 flex-col gap-4">
-                {paymentCard}
                 {detailsCard}
                 {timelineCard}
               </div>
               <div className="flex min-w-0 flex-col gap-4">
                 {resourcesCard}
                 {helpCard}
+                {paymentCard}
               </div>
             </>
           ) : (
             <aside className="flex min-w-0 flex-col gap-4">
-              {paymentCard}
               {detailsCard}
               {resourcesCard}
-              {timelineCard}
               {helpCard}
+              {paymentCard}
+              {timelineCard}
             </aside>
           )}
         </div>

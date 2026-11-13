@@ -660,7 +660,10 @@ export function useConsulteeAppointmentsAdapter(options?: {
     const destructive = consulteeDestructiveAction(activeVm.kind);
 
     if (destructive === "cancel-booking") {
-      if (await actions.handleCancelConfirm(quote)) closeDialog();
+      if (await actions.handleCancelConfirm(quote)) {
+        invalidateBookings();
+        closeDialog();
+      }
       return;
     }
 
