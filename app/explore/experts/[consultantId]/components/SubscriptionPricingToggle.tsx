@@ -233,10 +233,13 @@ export default function SubscriptionPricingToggle({
     setIsDialogOpen(true);
   }, []);
 
-  // ?action=trial opens the mentorship dialog on its trial step.
+  // ?action=trial opens the mentorship dialog on its trial step, once.
+  const [autoTrialHandled, setAutoTrialHandled] = useState(false);
   useEffect(() => {
-    if (autoOpenTrial && trialOpen) openTrialStep();
-  }, [autoOpenTrial, trialOpen, openTrialStep]);
+    if (!autoOpenTrial || !trialOpen || autoTrialHandled) return;
+    setAutoTrialHandled(true);
+    openTrialStep();
+  }, [autoOpenTrial, trialOpen, autoTrialHandled, openTrialStep]);
 
   // #1766 — the buyer picks a START only; the window is the first cycle and
   // the server derives it again in the consultant's zone. Shown here in the
