@@ -9,6 +9,7 @@
  * depending on which offering you were editing.
  */
 
+import type { AriaAttributes } from "react";
 import {
   get,
   useWatch,
@@ -152,12 +153,22 @@ function renderControl<T extends FieldValues = FieldValues>(
 function MinutesChoice<T extends FieldValues = FieldValues>({
   spec,
   field,
-}: Readonly<{ spec: FieldSpec; field: ControllerRenderProps<T, never> }>) {
+  ...control
+}: Readonly<
+  {
+    spec: FieldSpec;
+    field: ControllerRenderProps<T, never>;
+    // FormControl's id, description and error state, forwarded to the group.
+    id?: string;
+  } & Pick<AriaAttributes, "aria-describedby" | "aria-invalid">
+>) {
   const choices = spec.minuteChoices ?? [];
   const current = typeof field.value === "number" ? field.value : null;
   return (
     <div className="space-y-2">
       <RadioGroup
+        {...control}
+        aria-label={spec.label}
         className="flex h-9 items-center gap-4"
         value={current === null ? "" : String(current)}
         onValueChange={(value) => field.onChange(Number(value))}
