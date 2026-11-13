@@ -5,6 +5,15 @@ import { useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   SingleTimePicker,
   type SingleTimeValue,
 } from "@/components/scheduling/SingleTimePicker";
@@ -85,8 +94,8 @@ function pairs(sessions: ClassSessionRow[]) {
  * #1780 row 4 — the per-session controls of a class. The host cancels one
  * future session from that session's row and schedules its make-up within
  * 14 days (E-6); a seat holder who cannot make a make-up takes that session
- * back (E-3b). Row actions go to the session list; the make-up work, which
- * needs a time or a decision, renders as notices above it.
+ * back (E-3b). Row actions go to the session list: the host schedules a
+ * make-up from the cancelled session's row in a dialog.
  */
 export function useClassSessionActions({
   appointmentId,
@@ -118,6 +127,7 @@ export function useClassSessionActions({
     Record<string, SingleTimeValue | null>
   >({});
   const [pending, setPending] = useState<PendingConfirm | null>(null);
+  const [makeUpFor, setMakeUpFor] = useState<string | null>(null);
   const base = `/api/appointments/${appointmentId}/occurrences`;
   const done = (title: string) => () => {
     toast({ title });
@@ -209,75 +219,106 @@ export function useClassSessionActions({
       )
       .map((s) => s.id),
   );
-  const rowActions = (occurrenceId: string): SessionRowAction[] =>
-    cancellable.has(occurrenceId)
-      ? [
-          {
-            key: "cancel-session",
-            label: "Cancel this session",
-            destructive: true,
-            disabled: cancel.isPending,
-            onSelect: () =>
-              setPending({
-                title: "Cancel this session?",
-                body: `Learners are told; you have ${MAKEUP_WINDOW_DAYS} days to schedule a make-up or each seat is refunded${refundUnit}.`,
-                confirmLabel: "Cancel this session",
-                onConfirm: () => cancel.mutate(occurrenceId),
-              }),
-          },
-        ]
-      : [];
+  const owed = new Map(
+    open.filter((p) => !p.makeUp).map((p) => [p.source.id, p.source]),
+  );
+  const rowActions = (occurrenceId: string): SessionRowAction[] => {
+    const actions: SessionRowAction[] = [];
+    if (owed.has(occurrenceId)) {
+      actions.push({
+        key: "make-up",
+        label: "Schedule make-up",
+        disabled: makeUp.isPending,
+        onSelect: () => setMakeUpFor(occurrenceId),
+      });
+    }
+    if (cancellable.has(occurrenceId)) {
+      actions.push({
+        key: "cancel-session",
+        label: "Cancel this session",
+        destructive: true,
+        disabled: cancel.isPending,
+        onSelect: () =>
+          setPending({
+            title: "Cancel this session?",
+            body: `Learners are told; you have ${MAKEUP_WINDOW_DAYS} days to schedule a make-up or each seat is refunded${refundUnit}.`,
+            confirmLabel: "Cancel this session",
+            onConfirm: () => cancel.mutate(occurrenceId),
+          }),
+      });
+    }
+    return actions;
+  };
 
-  const owed = open.filter((p) => !p.makeUp);
-  const notices =
-    owed.length === 0 ? null : (
-      <div className="space-y-2">
-        {owed.map(({ source }) => {
-          const by = new Date(
-            toDate(missedAt(source)!).getTime() + MAKEUP_WINDOW_DAYS * DAY_MS,
-          );
-          return (
-            <div
-              key={source.id}
-              className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50/60 p-3 text-sm dark:border-amber-900/40 dark:bg-amber-950/20"
+  const source = makeUpFor ? owed.get(makeUpFor) : undefined;
+  const by = source
+    ? new Date(
+        toDate(missedAt(source)!).getTime() + MAKEUP_WINDOW_DAYS * DAY_MS,
+      )
+    : null;
+  const picked = source ? (makeUpAt[source.id] ?? null) : null;
+  const makeUpDialog = (
+    <Dialog
+      open={!!source}
+      onOpenChange={(isOpen) => !isOpen && setMakeUpFor(null)}
+    >
+      {source && by && (
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Schedule a make-up</DialogTitle>
+            <DialogDescription>
+              {source.voidedAt ? "Missed" : "Cancelled"} {when(source.startsAt)}{" "}
+              — make up by {when(by)}.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogBody>
+            {consultantProfileId && (
+              <SingleTimePicker
+                className="w-full"
+                consultantId={consultantProfileId}
+                zone={viewer.zone}
+                theme="light"
+                audience="host"
+                sessionMinutes={sessionMinutesOf(source)}
+                purpose="makeup"
+                event={classId ? { classId } : undefined}
+                allowedEnd={by}
+                value={picked}
+                onChange={(next) =>
+                  setMakeUpAt((m) => ({ ...m, [source.id]: next }))
+                }
+              />
+            )}
+          </DialogBody>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setMakeUpFor(null)}>
+              Not now
+            </Button>
+            <Button
+              disabled={!picked || makeUp.isPending}
+              onClick={() => {
+                if (!picked) return;
+                makeUp.mutate(
+                  { id: source.id, startsAt: picked.startsAt },
+                  { onSuccess: () => setMakeUpFor(null) },
+                );
+              }}
             >
-              <span className="flex-1">
-                {source.voidedAt ? "Missed" : "Cancelled"}{" "}
-                {when(source.startsAt)} — make up by {when(by)}.
-              </span>
-              {consultantProfileId && (
-                <SingleTimePicker
-                  className="w-full"
-                  consultantId={consultantProfileId}
-                  zone={viewer.zone}
-                  theme="light"
-                  audience="host"
-                  sessionMinutes={sessionMinutesOf(source)}
-                  purpose="makeup"
-                  event={classId ? { classId } : undefined}
-                  allowedEnd={by}
-                  value={makeUpAt[source.id] ?? null}
-                  onChange={(picked) =>
-                    setMakeUpAt((m) => ({ ...m, [source.id]: picked }))
-                  }
-                />
-              )}
-              <Button
-                size="sm"
-                disabled={!makeUpAt[source.id] || makeUp.isPending}
-                onClick={() => {
-                  const picked = makeUpAt[source.id];
-                  if (picked) {
-                    makeUp.mutate({ id: source.id, startsAt: picked.startsAt });
-                  }
-                }}
-              >
-                Schedule make-up
-              </Button>
-            </div>
-          );
-        })}
-      </div>
-    );
-  return { rowActions, notices, dialog };
+              Schedule make-up
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      )}
+    </Dialog>
+  );
+  return {
+    rowActions,
+    notices: null,
+    dialog: (
+      <>
+        {dialog}
+        {makeUpDialog}
+      </>
+    ),
+  };
 }
