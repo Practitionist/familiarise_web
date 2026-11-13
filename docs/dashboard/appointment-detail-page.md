@@ -4,13 +4,16 @@ This page explains how the appointment detail page is laid out and why. The page
 
 ## The layout
 
-The page has three parts, read top to bottom.
+The page has four parts, read top to bottom.
 
-1. **The header.** An eyebrow names the kind ("Class", "Subscription") beside the one status chip; the title follows, then the other party with their avatar and the session count. Under it, a **Next up** panel shows the next session as a day tile, the time range, the full date and a live countdown. When the other party's saved time zone differs from the viewer's, the panel adds their wall clock ("Mon 5:30 AM for Hannah (GMT)"), so neither side converts a time in their head. The panel also carries the next session's **Join** button the whole time: disabled with "Opens at 9:45 AM" until the join window opens (15 minutes before the start for both sides, `CONSULTEE_JOIN_WINDOW_MS` and `CONSULTANT_JOIN_WINDOW_MS` in `lib/appointments/occurrences.ts`), then Join, then Rejoin, so nobody hunts for it at the last minute. Session rows don't repeat a disabled Join; a row shows Join only while that session is joinable. The needs-you callout (Pay, Approve, Rate) and the chat and schedule buttons sit inside the header, because they are the page's primary actions.
-2. **The main column.** Notices, the open reschedule proposal, the review nudge, then the **Sessions** card and, for the host, the participants.
-3. **The right rail.** Payment, details, resources, the timeline and help, in that order. The rail stays narrow (280–340 px) so the sessions keep the width.
+1. **The banner.** One amber banner sits at the very top whenever the viewer must act: pay (with the hold's deadline and Pay), accept or decline new times (the other party of an open reschedule), approve or decline a request, or place a paid plan's sessions. It carries the deadline, a countdown and the primary button, and there is never a second banner (`NeedsYouCallout` in `components/appointments/detail/`). A learner waiting on a request sees a quiet grey line instead, and a joinable session or a session to rate uses the same slot.
+2. **The header.** An eyebrow names the kind ("Class", "Subscription") beside the one status badge, and under the badge one plain reason line ("Payment was not completed in time.", "Hannah proposed Tue 18 Nov, 10:00 am; originally Mon 17 Nov, 9:00 am."). The badge and the line come from `bookingStatus` (`lib/appointments/booking-status.ts`) through `deriveBookingPresentation`, so they read the same as the Appointments list. The title follows, then the other party with their avatar and the session count. Under it, a **Next up** panel shows the next session as a day tile, the time range, the full date and a live countdown. When the other party's saved time zone differs from the viewer's, the panel adds their wall clock ("Mon 5:30 AM for Hannah (GMT)"). The panel also carries the next session's **Join** button the whole time: disabled with "Opens at 9:45 AM" until the join window opens (15 minutes before the start for both sides, `CONSULTEE_JOIN_WINDOW_MS` and `CONSULTANT_JOIN_WINDOW_MS` in `lib/appointments/occurrences.ts`), then Join, then Rejoin. A held seat whose payment never succeeded has no Join.
+3. **The main column.** Notices (the trial's "Continue with {expert}" card, quiet before the session and prominent once it is completed), the open reschedule proposal (its times and expiry; the proposer withdraws here), the review nudge, then the **Sessions** card and, for the host, the participants (attendees only; the host and co-hosts are not counted).
+4. **The right rail.** Details, Resources, Help, Payment and the timeline, in that order. The rail stays narrow (280–340 px) so the sessions keep the width. A session inside a plan or class is never paid on its own, so the Payment card shows the plan-level or seat-level payment.
 
-**Decided 2026-11-12, planned; not built.** The Payment card will always sit in the right rail under Resources and Help, and one amber banner at the top will show whenever the viewer must act (pay, accept or decline new times, approve a request), with the deadline and the primary button. Today `NeedsYouCallout` carries the payment hold countdown, and the rail order is as listed above. A session inside a subscription or class is never paid on its own, so the page will show the plan-level payment. While a reschedule is open both sides will see "Being moved" with the original time. See [the booking follow-up train](../decisions/2026-11-12-booking-follow-up-train.md).
+**One zone.** Every deadline and time on the page, the Payment card's "link valid until" and the timeline included, is in the viewer's profile zone (the page passes `viewerZone` to the derivation).
+
+**Fresh after an action.** Withdrawing, cancelling or answering a reschedule refetches the page; opening Pay marks it stale so the return shows the paid state. A successful seat leave goes to the Appointments list instead, because the released seat can no longer read the page.
 
 Destructive booking actions (Cancel booking, Withdraw request) stay in the "Manage booking" row at the foot of the page, after Get help, so they never lead the page.
 
@@ -19,7 +22,8 @@ Destructive booking actions (Cancel booking, Withdraw request) stay in the "Mana
 The Sessions card renders `SessionSchedule` (`components/appointments/detail/SessionSchedule.tsx`), which replaces the old pair of a compact timeline plus a second list of the same dates carrying "Cancel this session" or "Return to plan" buttons.
 
 - **Rows.** Each row is a day tile, the time range, a detail line ("Session 4", the length when lengths differ, "Same day as another session") and the row's status.
-- **Status.** Upcoming is the default and carries no word. The next session shows its countdown, a session in its join window shows Join, and only the states a reader must notice carry a word and a dot: Done, Cut short, No-show, Verifying, No record, Live now. Colour is kept for those exceptions; the colour palette itself is a separate pass.
+- **Status.** Upcoming is the default and carries no word. The next session shows its countdown, a session in its join window shows Join, and only the states a reader must notice carry a word and a dot: Done, Cut short, No-show, Verifying, No record, Live now, Cancelled. Colour is kept for those exceptions; the colour palette itself is a separate pass.
+- **Cancelled class sessions stay listed.** A session the host cancelled keeps its row with its state ("Cancelled by the host · make-up owed", "· make-up Tue 18 Nov, 4:00 pm", "· refunded instead"), so a week with only a cancelled session no longer reads "No sessions this week".
 - **Per-session actions.** A row's actions come from `rowActions(session)`. The first enabled, non-destructive action also shows inline on hover or keyboard focus; every action is in the row's menu. A blocked action stays in the menu, disabled, with its reason under the label (for example why a session can't be returned to the plan). Confirmation goes through one shared `SessionConfirmDialog`.
   - The host's "Cancel this session" for a class comes from `useClassSessionActions` (`ClassSessionControls.tsx`). Make-up work, which needs a time or a decision, renders as notices above the list; the host picks the make-up time with `SingleSessionPicker`, which labels each start Free, Outside your hours, Busy or Too soon and keeps it inside the 14-day make-up window.
   - The consultee's "Return to plan" for a subscription comes from `useSubscriptionReturnActions` (`SubscriptionReturnControls.tsx`), with the rule and the returns used as a footnote under the list.
@@ -30,13 +34,16 @@ The Sessions card renders `SessionSchedule` (`components/appointments/detail/Ses
 
 ## Money on a group event
 
-The host's Payments card for a webinar or class counts seats, not amounts. A paid seat that cost nothing (a free event or a full discount) is counted as a free seat, and when every paid seat was free the card says "Nothing — every paid seat was free" instead of a bare "₹0.00 collected".
+The host's Payments card for a webinar or class counts attendee seats, not amounts. A seat that cost nothing (a free event or a full discount) reads "Free" (not "Paid") and is counted as a free seat, not a paid one; when every seat was free the card says "Nothing — every paid seat was free" instead of a bare "₹0.00 collected". The learner's money door reads "Problem with this charge" only when they were charged (a succeeded payment above zero), otherwise "Problem with this booking".
 
 ## The public class schedule
 
 The class listing's schedule (`BatchSchedule` under `app/explore/programs/plans/classes/[classPlanId]/components/`) follows the same rules. It names the zone once per batch, shows no status pill on upcoming sessions, groups by week in the page's zone through the same `buildScheduleModel`, and shows a session's length only when lengths differ. When fewer sessions are on the calendar than the plan sells, the enrolment line says so: "Join now for ₹X · all 24 sessions (12 scheduled so far)".
 
 ## Deprecated & Superseded Approaches
+
+- **The rail order Payment, details, resources, timeline, help, and the needs-you callout inside the header.** The banner now leads the page and the Payment card sits under Help.
+- **Per-surface status words.** The header badge used the learner's list chip for a confirmed booking and the derivation's own words otherwise; both now come from `bookingStatus`.
 
 - **A second list of session actions.** `ClassSessionControls` and `SubscriptionReturnControls` used to render their own list of upcoming dates under the Sessions card, each with a button. The same dates appeared twice. The actions now live on the session rows.
 - **`SessionTimeline` on the detail page.** The compact timeline with uppercase status words (UPCOMING, COMPLETED) and emoji icons is still used by `AppointmentSheet`, but the detail page no longer renders it.
