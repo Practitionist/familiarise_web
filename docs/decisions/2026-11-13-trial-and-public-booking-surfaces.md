@@ -90,6 +90,7 @@ Hannah Anderson offers a free 30-minute consultation. Charlotte Brown books Mond
 
 ## Honest limits
 
+- **The subscription checkout's first cycle is computed in the buyer's zone**, while the server derives the saved cycle in the expert's scheduling zone, so near a month edge the shown end date can differ by a day. The plan read (`planConsultantSelect`) does not expose the expert's zone; showing the server's cycle needs that field, a follow-up.
 
 - **`TrialScheduleCalendar` remains** behind the expert's "accept a trial" dialog (`TrialAcceptDialog`), which is being removed in a separate pull request; the file goes with it.
 - **A trial with a `free_` ₹0 payment and a zero list price** would still restore through the trial door (`lib/trials/cancellation.ts` was not changed). It cannot occur today: a free trial carries no payment.
