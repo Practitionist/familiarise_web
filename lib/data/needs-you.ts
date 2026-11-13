@@ -180,7 +180,7 @@ export function holdingSince(
 /**
  * The request cap's count, across every tenant: real submitted requests
  * (PENDING, REQUEST_SUBMITTED, still inside their hold, not a booking being
- * moved) plus PENDING trial requests. No appointment arm, so an unallocated
+ * moved); a trial never waits on the expert. No appointment arm, so an unallocated
  * request counts, and no direct checkout ever does. Call it inside the cap
  * lock with `tx`.
  */

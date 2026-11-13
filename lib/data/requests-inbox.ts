@@ -9,7 +9,7 @@
  * Sources per type: consultation requests in PENDING and
  * APPROVED_PENDING_PAYMENT, subscription requests in PENDING (the needs-you
  * predicates), subscriptions whose
- * live cycle is finished, trials in PENDING / AWAITING_PAYMENT, and unpaid
+ * live cycle is finished, trials in AWAITING_PAYMENT, and unpaid
  * direct checkouts still inside their pay window (listed, never counted).
  * Chips narrow the sources server-side. A time sort over one source pages in
  * SQL by the request clock; every other view pages a bounded window sorted
@@ -685,8 +685,7 @@ function trialRow(
 ): InboxRowInput {
   const request = lifecycleOf({ trial: t });
   const facts = wrapperFacts(t.appointment, "TRIAL");
-  // A paid trial's pay link runs to paymentDueAt; a request has no clock of
-  // its own (no sweep expires a PENDING trial), so the bucket treats it as due.
+  // A listed trial is a paid one awaiting payment; its pay link runs to paymentDueAt.
   const deadline =
     pendingPayLinkDeadline(t.appointment) ??
     (t.status === "AWAITING_PAYMENT" ? t.paymentDueAt : null);

@@ -519,7 +519,7 @@ async function completeConsultations(
     Date.now() - COMPLETION_BUFFER_HOURS * 60 * 60 * 1000,
   );
 
-  // Find APPROVED or SCHEDULED consultations where all slots have ended
+  // Find APPROVED consultations where all slots have ended
   const consultationsToComplete = await prisma.consultation.findMany({
     orderBy: { updatedAt: "asc" },
     take: maxParents,

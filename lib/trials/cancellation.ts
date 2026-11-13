@@ -60,7 +60,7 @@ export type TrialRefundOutcome = {
 };
 
 /**
- * Retire the appointment behind a cancelled or rejected trial.
+ * Retire the appointment behind a cancelled trial.
  *
  * Soft-delete rather than delete: the tombstone (`Appointment.deletedAt`,
  * mirrored on the slots) is the sanctioned removal for anything money rows hang
@@ -345,7 +345,7 @@ export function assertTrialQuoteConfirmed(
 }
 
 /**
- * The refund a cancelled or declined trial owes under its quote, or null when
+ * The refund a cancelled trial owes under its quote, or null when
  * the quote pays nothing. The caller stamps it in the commit that ends the trial.
  */
 export function trialRefundOwed(args: {
