@@ -69,11 +69,13 @@ interface AppointmentRow {
   occurrences: AppointmentSlot[];
   consultation: {
     status: string;
+    bookingSource?: string | null;
     consultationPlan: { title: string };
     requestedBy: { user: { id: string; name: string | null; email: string } };
   } | null;
   subscription: {
     status: string;
+    bookingSource?: string | null;
     subscriptionPlan: { title: string };
     requestedBy: { user: { id: string; name: string | null; email: string } };
   } | null;
@@ -172,6 +174,8 @@ function rowStatus(row: AppointmentRow): { label: string; tone: Tone } {
         row.subscription?.status ??
         row.webinar?.status ??
         row.class?.status,
+      source:
+        row.consultation?.bookingSource ?? row.subscription?.bookingSource,
       sessions: {
         live: live.length,
         allTentative: live.length > 0 && live.every((o) => o.isTentative),

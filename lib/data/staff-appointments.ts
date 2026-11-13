@@ -53,6 +53,8 @@ export type StaffAppointment = {
   endsAt?: string;
   duration: number;
   status: string;
+  /** DIRECT_CHECKOUT or REQUEST_SUBMITTED for a 1:1 or plan; null otherwise. */
+  bookingSource: string | null;
   hasIssue: boolean;
   issueType: string | null;
   payment: AppointmentPayment;
@@ -303,6 +305,7 @@ export async function getStaffAppointments(
           select: {
             id: true,
             status: true,
+            bookingSource: true,
             consultationPlan: {
               select: {
                 id: true,
@@ -320,6 +323,7 @@ export async function getStaffAppointments(
           select: {
             id: true,
             status: true,
+            bookingSource: true,
             subscriptionPlan: {
               select: {
                 id: true,
@@ -330,6 +334,18 @@ export async function getStaffAppointments(
               },
             },
             requestedBy: { select: { userId: true } },
+          },
+        },
+        trial: {
+          select: {
+            status: true,
+            subscriptionPlan: {
+              select: {
+                title: true,
+                consultantProfile: { select: { userId: true } },
+              },
+            },
+            consulteeProfile: { select: { userId: true } },
           },
         },
         webinar: {
@@ -406,6 +422,8 @@ export async function getStaffAppointments(
       apt.subscription?.requestedBy.userId,
       apt.webinar?.webinarPlan.consultantProfile?.userId,
       apt.class?.classPlan.consultantProfile?.userId,
+      apt.trial?.subscriptionPlan.consultantProfile.userId,
+      apt.trial?.consulteeProfile.userId,
     ]) {
       if (id) userIds.add(id);
     }
@@ -431,7 +449,18 @@ export async function getStaffAppointments(
     let duration = 0;
     const attendeeCount = apt._count.participants;
 
+    let bookingSource: string | null = null;
     switch (apt.appointmentType) {
+      case "TRIAL":
+        if (apt.trial) {
+          consultant = userOf(
+            apt.trial.subscriptionPlan.consultantProfile.userId,
+          );
+          consultee = userOf(apt.trial.consulteeProfile.userId);
+          title = apt.trial.subscriptionPlan.title;
+          aptStatus = apt.trial.status;
+        }
+        break;
       case "CONSULTATION":
         if (apt.consultation) {
           consultant = userOf(
@@ -440,6 +469,7 @@ export async function getStaffAppointments(
           consultee = userOf(apt.consultation.requestedBy.userId);
           title = apt.consultation.consultationPlan.title;
           aptStatus = apt.consultation.status;
+          bookingSource = apt.consultation.bookingSource;
           duration = apt.consultation.consultationPlan.durationInHours * 60;
         }
         break;
@@ -451,6 +481,7 @@ export async function getStaffAppointments(
           consultee = userOf(apt.subscription.requestedBy.userId);
           title = apt.subscription.subscriptionPlan.title;
           aptStatus = apt.subscription.status;
+          bookingSource = apt.subscription.bookingSource;
         }
         break;
       case "WEBINAR":
@@ -528,6 +559,7 @@ export async function getStaffAppointments(
       endsAt: slot?.endsAt ? slot.endsAt.toISOString() : undefined,
       duration,
       status: displayStatus,
+      bookingSource,
       hasIssue,
       issueType: hasIssue
         ? displayStatus === "cancelled"

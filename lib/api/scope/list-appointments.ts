@@ -272,6 +272,7 @@ export async function listAppointmentsScoped(
         consultation: {
           select: {
             status: true,
+            bookingSource: true,
             consultationPlan: {
               select: {
                 title: true,
@@ -292,6 +293,7 @@ export async function listAppointmentsScoped(
         subscription: {
           select: {
             status: true,
+            bookingSource: true,
             subscriptionPlan: {
               select: {
                 title: true,

@@ -69,11 +69,12 @@ const getTypeIcon = (type: string) => {
 };
 
 /** The row's one status: a 1:1 by its booking words, a webinar or class as an event. */
-function staffStatus(appointment: StaffAppointment) {
+export function staffStatus(appointment: StaffAppointment) {
   const { label, tone } = bookingStatus(
     {
       kind: appointment.type.toUpperCase(),
       status: appointment.status.toUpperCase(),
+      source: appointment.bookingSource,
       paid: appointment.payment?.status === "SUCCEEDED",
       eventView: true,
       reschedule: appointment.reschedule
