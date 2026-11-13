@@ -6,6 +6,7 @@ import { streamLogger } from "@/lib/stream-logger";
 import { bookingOrgId } from "@/lib/stream-utils";
 import { addSeatHoldersToOpenCalls } from "@/lib/meetings/seat-call-members";
 import { reportSentryError } from "@/lib/observability/report";
+import { fenceSeatGrants } from "@/lib/stream/access-revocation";
 
 export interface EnsureChannelsResult {
   /** True when every buyer's channel exists and the appointment is stamped. */
@@ -90,6 +91,10 @@ async function ensureChannelsForBuyers(args: {
         extra: { appointmentId },
       });
     }
+  }
+  if (eventChannelSpec) {
+    // A seat that ended after the roster read was granted anyway; one batched re-check takes chat, DMs and rooms back.
+    await fenceSeatGrants(appointmentId, buyerIds);
   }
   return incomplete ? "incomplete" : "ensured";
 }

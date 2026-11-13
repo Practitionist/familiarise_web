@@ -4,17 +4,25 @@
 
 /**
  * A registration syncs the event's chat and call from seats holding access
- * (`paidParticipant`), never from payments, which outlive the seat they bought.
+ * (`paidParticipant`), never from payments, which outlive the seat they bought,
+ * and fences what it granted so a seat that ends mid-sync is taken back.
  */
 
 import { matchesWhere, type Row, type Where } from "../fixtures/mem-db";
 
-const mockStreamMembers = new Set<string>();
-const mockState = { channelExists: true };
-const mockAddSeatHoldersToOpenCalls = jest.fn();
+const mockChat = new Set<string>();
+const mockCall = new Set<string>();
+const mockState: {
+  channelExists: boolean;
+  meetings: { streamCallId: string }[];
+  adds: string[];
+  onAdd: (ids: string[]) => void;
+} = { channelExists: true, meetings: [], adds: [], onAdd: () => undefined };
 const mockCreateDirectMessageChannel = jest.fn();
 const mockAppointmentFindUnique = jest.fn();
 const mockEventFindUnique = jest.fn();
+const mockParticipantFindMany = jest.fn();
+const mockIntentCreateMany = jest.fn();
 
 const memberIds = (spec: unknown[] = []) =>
   spec.map((m) =>
@@ -28,9 +36,19 @@ jest.mock("@/lib/prisma", () => ({
       findUnique: (args: unknown) => mockAppointmentFindUnique(args),
       updateMany: async () => ({ count: 1 }),
     },
+    appointmentParticipant: {
+      findMany: (args: unknown) => mockParticipantFindMany(args),
+    },
     webinar: { findUnique: (args: unknown) => mockEventFindUnique(args) },
     class: { findUnique: (args: unknown) => mockEventFindUnique(args) },
     collaborator: { findFirst: async () => null },
+    user: { findMany: async () => [] },
+    meeting: { findMany: async () => mockState.meetings },
+    streamRevocationRetry: {
+      updateMany: async () => ({ count: 0 }),
+      createMany: (args: unknown) => mockIntentCreateMany(args),
+      findMany: async () => [],
+    },
   },
 }));
 
@@ -39,19 +57,44 @@ jest.mock("@/lib/stream-client", () => ({
     channel: (_type: string, _id: string, data?: { members?: unknown[] }) => ({
       addMembers: async (spec: unknown[]) => {
         if (!mockState.channelExists) throw new Error("channel not found");
-        memberIds(spec).forEach((id) => mockStreamMembers.add(id));
+        const ids = memberIds(spec);
+        mockState.onAdd(ids);
+        mockState.adds.push(...ids);
+        ids.forEach((id) => mockChat.add(id));
+        return {};
+      },
+      removeMembers: async (ids: string[]) => {
+        ids.forEach((id) => mockChat.delete(id));
         return {};
       },
       create: async () => {
         mockState.channelExists = true;
-        memberIds(data?.members).forEach((id) => mockStreamMembers.add(id));
+        memberIds(data?.members).forEach((id) => mockChat.add(id));
         return {};
       },
       assignRoles: async () => ({}),
     }),
   }),
+  getStreamVideoClient: () => ({
+    video: {
+      call: () => ({
+        updateCallMembers: async (req: {
+          update_members?: { user_id: string }[];
+          remove_members?: string[];
+        }) => {
+          req.update_members?.forEach((m) => mockCall.add(m.user_id));
+          req.remove_members?.forEach((id) => mockCall.delete(id));
+          return {};
+        },
+        get: async () => ({ call: { ended_at: null } }),
+      }),
+    },
+  }),
   withStreamCircuitBreaker: (fn: () => unknown) => fn(),
   isExpectedStreamError: () => false,
+  isStreamConfigured: () => true,
+  streamHttpStatus: () => null,
+  streamErrorCode: () => null,
   StreamUnavailableError: class extends Error {},
 }));
 
@@ -73,9 +116,9 @@ jest.mock("@/actions/stream/chat/channel.action", () => ({
     mockCreateDirectMessageChannel(...args),
 }));
 
-jest.mock("@/lib/meetings/seat-call-members", () => ({
-  addSeatHoldersToOpenCalls: (...args: unknown[]) =>
-    mockAddSeatHoldersToOpenCalls(...args),
+jest.mock("@/lib/stream/dm-eligibility", () => ({
+  ...jest.requireActual("@/lib/stream/dm-eligibility"),
+  isDmContextEligible: async () => false,
 }));
 
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
@@ -94,6 +137,7 @@ const pay = (over: Row = {}): Row => ({
   ...over,
 });
 const seat = (userId: string, status: string, payment: Row | null): Row => ({
+  appointmentId: "appt-1",
   userId,
   role: "CONSULTEE",
   status,
@@ -119,8 +163,14 @@ function seatsWith(newcomerPayment: Row): Row[] {
 const plan = {
   title: "Event",
   organizationId: null,
-  consultantProfile: { user: { id: "host" } },
-  collaborators: [{ role: "CO_HOST", consultantProfile: { userId: "collab" } }],
+  consultantProfile: { userId: "host", user: { id: "host" } },
+  collaborators: [
+    {
+      role: "CO_HOST",
+      tier: "PRESENTER",
+      consultantProfile: { userId: "collab" },
+    },
+  ],
 };
 
 function arrange(kind: "WEBINAR" | "CLASS", seats: Row[]) {
@@ -129,13 +179,15 @@ function arrange(kind: "WEBINAR" | "CLASS", seats: Row[]) {
       .filter((s) => matchesWhere(s, where))
       .map((s) => ({ userId: s.userId }));
   const planKey = kind === "WEBINAR" ? "webinarPlan" : "classPlan";
+  const event = { id: "event-1", status: "SCHEDULED", [planKey]: plan };
+  mockParticipantFindMany.mockImplementation(async (args: { where: Where }) =>
+    pick(args.where),
+  );
   mockEventFindUnique.mockImplementation(
     async (args: {
       include: { appointment: { include: { participants: { where: Where } } } };
     }) => ({
-      id: "event-1",
-      status: "SCHEDULED",
-      [planKey]: plan,
+      ...event,
       appointment: {
         organizationId: null,
         participants: pick(args.include.appointment.include.participants.where),
@@ -143,46 +195,42 @@ function arrange(kind: "WEBINAR" | "CLASS", seats: Row[]) {
     }),
   );
   mockAppointmentFindUnique.mockImplementation(
-    async (args: { select: { participants: { where: Where } } }) => ({
-      id: "appt-1",
-      appointmentType: kind,
-      organizationId: null,
-      // Every buyer's payment is still SUCCEEDED, as it is after a leave or a refund.
-      payment: seats
-        .filter((s) => s.role === "CONSULTEE")
-        .map((s) => ({ userId: s.userId })),
-      participants: pick(args.select.participants.where),
-      consultation: null,
-      subscription: null,
-      webinar:
-        kind === "WEBINAR"
-          ? {
-              id: "event-1",
-              webinarPlan: {
-                organizationId: null,
-                consultantProfile: { userId: "host" },
-              },
-            }
-          : null,
-      class:
-        kind === "CLASS"
-          ? {
-              id: "event-1",
-              classPlan: {
-                organizationId: null,
-                consultantProfile: { userId: "host" },
-              },
-            }
-          : null,
-      trial: null,
-    }),
+    async (args: { select: { participants?: { where: Where } } }) => {
+      const base = {
+        id: "appt-1",
+        deletedAt: null,
+        organizationId: null,
+        occurrences: [],
+        consultation: null,
+        subscription: null,
+        trial: null,
+        webinar: kind === "WEBINAR" ? event : null,
+        class: kind === "CLASS" ? event : null,
+      };
+      // The fence's seat context reads the same row without the roster.
+      if (!args.select.participants) return base;
+      return {
+        ...base,
+        appointmentType: kind,
+        // Every buyer's payment is still SUCCEEDED, as it is after a leave or a refund.
+        payment: seats
+          .filter((s) => s.role === "CONSULTEE")
+          .map((s) => ({ userId: s.userId })),
+        participants: pick(args.select.participants.where),
+      };
+    },
   );
 }
 
 describe("event chat and call membership follows seats holding access", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockStreamMembers.clear();
+    mockChat.clear();
+    mockCall.clear();
+    mockState.channelExists = true;
+    mockState.meetings = [{ streamCallId: "call-1" }];
+    mockState.adds = [];
+    mockState.onAdd = () => undefined;
   });
 
   it.each([
@@ -191,24 +239,58 @@ describe("event chat and call membership follows seats holding access", () => {
     ["CLASS", "free", pay({ amountPaise: 0, isMockPayment: true })],
     ["CLASS", "paid", pay({ amountPaise: 50_000 })],
   ] as const)(
-    "a %s registration (%s) adds only live seats to the chat, the DMs and the call",
+    "a %s registration (%s) adds each live seat once to the chat, the DMs and the call",
     async (kind, _path, newcomerPayment) => {
       arrange(kind, seatsWith(newcomerPayment));
-      mockState.channelExists = true;
 
       await expect(ensureChannelsForAppointment("appt-1")).resolves.toEqual({
         ensured: true,
       });
 
-      expect([...mockStreamMembers].sort()).toEqual(["newcomer", "stays"]);
-      expect(mockAddSeatHoldersToOpenCalls).toHaveBeenCalledWith("appt-1", [
-        "stays",
-        "newcomer",
-      ]);
+      expect(mockState.adds).toEqual(["stays", "newcomer"]);
+      expect([...mockChat].sort()).toEqual(["newcomer", "stays"]);
+      expect([...mockCall].sort()).toEqual(["newcomer", "stays"]);
       const dmUsers = mockCreateDirectMessageChannel.mock.calls.map(
         (c) => c[1],
       );
       expect(dmUsers).toEqual(["stays", "newcomer"]);
+      expect(mockIntentCreateMany).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["no open call", false],
+    ["an open call", true],
+  ] as const)(
+    "a seat that ends mid-sync is taken back from chat and rooms with %s",
+    async (_label, callOpen) => {
+      const seats = seatsWith(pay());
+      arrange("WEBINAR", seats);
+      mockState.meetings = callOpen ? [{ streamCallId: "call-1" }] : [];
+      // The leave commits, and its own revocation runs, just before this user's chat add lands.
+      mockState.onAdd = (ids) => {
+        if (ids.includes("stays")) {
+          const row = seats.find((s) => s.userId === "stays");
+          if (row) row.status = "CANCELLED";
+        }
+      };
+
+      await ensureChannelsForAppointment("appt-1");
+
+      expect([...mockChat]).toEqual(["newcomer"]);
+      expect([...mockCall]).toEqual(callOpen ? ["newcomer"] : []);
+      expect(mockIntentCreateMany).toHaveBeenCalledWith({
+        data: [expect.objectContaining({ userId: "stays", planId: "appt-1" })],
+        skipDuplicates: true,
+      });
+      // One batched seat read for every buyer the sync granted.
+      expect(mockParticipantFindMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            userId: { in: ["stays", "newcomer"] },
+          }),
+        }),
+      );
     },
   );
 
@@ -220,7 +302,7 @@ describe("event chat and call membership follows seats holding access", () => {
 
       await ensureChannelsForAppointment("appt-1");
 
-      expect([...mockStreamMembers].sort()).toEqual([
+      expect([...mockChat].sort()).toEqual([
         "collab",
         "host",
         "newcomer",
@@ -240,13 +322,13 @@ describe("event chat and call membership follows seats holding access", () => {
 
       await create("event-1", null);
 
-      expect([...mockStreamMembers].sort()).toEqual([
+      expect([...mockChat].sort()).toEqual([
         "collab",
         "host",
         "newcomer",
         "stays",
       ]);
-      for (const ended of ENDED) expect(mockStreamMembers).not.toContain(ended);
+      for (const ended of ENDED) expect(mockChat).not.toContain(ended);
     },
   );
 });
