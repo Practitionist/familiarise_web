@@ -13,6 +13,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { Loader2, AlertTriangle } from "lucide-react";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { EXPERT_CANCEL_RELIABILITY_LINE } from "@/lib/booking/expert-reliability-rules";
 import {
   payerSentence,
   FREE_BOOKING_REFUND_LINE,
@@ -204,8 +205,8 @@ export function CancelConfirmationDialog({
     dialogTitle = `Cancel ${appointmentType}?`;
   }
 
-  // The consultant's line names the client's full refund and the reliability
-  // cost; the cost stands even when the quote could not be loaded.
+  // The consultant's line names the client's full refund; the reliability line
+  // below it stands even when the quote could not be loaded.
   const consultantRefundLine = (quoted?: {
     paise: number;
     currency: string;
@@ -221,7 +222,7 @@ export function CancelConfirmationDialog({
       ) : (
         <>If they paid, {consultant} gets a full refund</>
       )}
-      . Cancelling a paid booking counts against your reliability.
+      .
     </p>
   );
 
@@ -381,6 +382,11 @@ export function CancelConfirmationDialog({
                   appointmentType === "Trial"
                     ? renderRefundLine()
                     : null}
+                  {asConsultant && (
+                    <p className="text-muted-foreground text-sm">
+                      {EXPERT_CANCEL_RELIABILITY_LINE}
+                    </p>
+                  )}
                 </>
               )}
             </div>

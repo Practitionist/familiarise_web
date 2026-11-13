@@ -10,7 +10,7 @@ import {
 import { useZonedFormat } from "@/lib/time/zoned-format";
 
 /**
- * D10 — experts with reliability strikes (expert cancels of paid bookings,
+ * D10 — experts with reliability strikes (expert cancels of confirmed bookings,
  * consultant no-shows) in the last 90 days. Read-only: no money is taken.
  */
 export function ExpertStrikesCard() {

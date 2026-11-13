@@ -495,6 +495,22 @@ describe("a consultant cancelling always refunds in full", () => {
   });
 });
 
+describe("an expert's cancel of a free confirmed booking", () => {
+  it("records a strike though no payment exists", async () => {
+    mockGetSession.mockResolvedValue(sessionAs("consultant"));
+    mockAppointmentFindUnique.mockResolvedValue(consultationAppointment());
+    mockAppointmentFindMany.mockImplementation(async () =>
+      bookingRows({ liveSlotHours: [48], noPayment: true }),
+    );
+
+    const res = await cancelHandler(makeRequest(), makeParams(APPT));
+
+    expect(res.status).toBe(200);
+    expect(mockRefundBookingPayment).not.toHaveBeenCalled();
+    expect(txStub.systemEvent.create).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("a platform cancellation is not the buyer's choice", () => {
   it("settles an admin cancellation at the consultant tier", async () => {
     // Requiring the actor to BE the consultant meant an admin cancelling in

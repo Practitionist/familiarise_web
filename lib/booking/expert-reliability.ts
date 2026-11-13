@@ -1,7 +1,8 @@
 /**
- * Expert reliability strikes: one SystemEvent per expert-side cancel of a paid
- * booking or consultant no-show, on the `expert-reliability:` correlation (the
- * class-series flag keeps its own `class-reliability:` one). No money moves.
+ * Expert reliability strikes: one SystemEvent per expert-side cancel of a
+ * confirmed booking, free or paid, or consultant no-show, on the
+ * `expert-reliability:` correlation (the class-series flag keeps its own
+ * `class-reliability:` one). No money moves.
  */
 import type { Prisma } from "@prisma/client";
 import { z } from "zod";

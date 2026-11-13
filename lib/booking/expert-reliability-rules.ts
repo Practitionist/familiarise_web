@@ -8,6 +8,10 @@ export const EXPERT_STRIKE_WINDOW_DAYS = 90;
 /** Operations review an expert at this many strikes in the window; strikes never reach a public page. */
 export const EXPERT_STRIKE_THRESHOLD = 3;
 
+/** Said to an expert before they cancel; the cancel route records the strike it describes. */
+export const EXPERT_CANCEL_RELIABILITY_LINE =
+  "Cancelling a confirmed booking, free or paid, is recorded on your reliability record. Only you and our team see it.";
+
 const DAY_MS = 86_400_000;
 
 export const strikeWindowStart = (

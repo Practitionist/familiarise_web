@@ -479,21 +479,17 @@ type AttendeesByRail = {
   payerOf: Map<string, string>;
 };
 
-/**
- * #1780 R-3 — every attendee of a group event, sorted by how their seat was
- * funded: a paid seat by its payment's rail, a seat with no payment as free.
- * Read off the seats as well as the payments, so a free seat is not skipped.
- */
-/** A seat still held under a SUCCEEDED payment, read on the cancel's own transaction. */
-async function hasPaidLiveSeat(
+/** A buyer seat that is confirmed, or held under a SUCCEEDED payment, read on the cancel's own transaction. */
+async function hasConfirmedSeat(
   tx: Tx,
   appointmentId: string,
 ): Promise<boolean> {
   const seats = await tx.appointmentParticipant.findMany({
     where: { appointmentId, role: "CONSULTEE", ...liveParticipant() },
-    select: { userId: true },
+    select: { userId: true, status: true },
   });
   if (seats.length === 0) return false;
+  if (seats.some((seat) => seat.status !== "HELD")) return true;
   const paid = await tx.payment.count({
     where: {
       appointmentId,
@@ -504,6 +500,11 @@ async function hasPaidLiveSeat(
   return paid > 0;
 }
 
+/**
+ * #1780 R-3 — every attendee of a group event, sorted by how their seat was
+ * funded: a paid seat by its payment's rail, a seat with no payment as free.
+ * Read off the seats as well as the payments, so a free seat is not skipped.
+ */
 async function eventAttendeesByRail(
   appointmentId: string,
 ): Promise<AttendeesByRail> {
@@ -1096,14 +1097,16 @@ export async function POST(
                   now: cancellationData.cancelledAt,
                 });
               }
-              // An expert's own cancel of a paid booking or paid live seat records a
-              // strike; strikes are private to the expert and to operations.
+              // An expert's own cancel of a confirmed booking or seat, free or paid,
+              // records a strike; strikes are private to the expert and to operations.
               if (
                 isExpertSideCancel &&
                 hostProfileId &&
                 (paidPayment !== null ||
+                  observedStatus === "APPROVED" ||
+                  observedStatus === "SCHEDULED" ||
                   (eventKind !== null &&
-                    (await hasPaidLiveSeat(tx, appointmentId))))
+                    (await hasConfirmedSeat(tx, appointmentId))))
               ) {
                 const cancelledSessions =
                   await tx.appointmentOccurrence.findMany({

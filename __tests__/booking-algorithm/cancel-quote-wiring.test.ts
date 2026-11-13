@@ -91,7 +91,7 @@ describe("the consultant cancels someone else's booking", () => {
       dialog.indexOf("const renderRefundLine"),
     );
     expect(consultantArm).toContain("gets a full refund");
-    expect(consultantArm).toContain("counts against your reliability");
+    expect(dialog).toContain("{EXPERT_CANCEL_RELIABILITY_LINE}");
     expect(consultantArm).not.toContain("You paid");
   });
 });
