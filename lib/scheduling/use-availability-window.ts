@@ -299,6 +299,9 @@ export function monthKeyOf(monthStart: Date): string {
 }
 
 /** The first to last instant of the calendar month `monthStart` names, read in `timezone`. */
+/** The month read runs this far into the next day, so a session starting on the last evening can cross midnight; it stays inside the route's 32-day cap. */
+const MONTH_READ_TAIL_MS = 12 * 60 * 60 * 1000;
+
 export function monthBounds(
   monthStart: Date,
   timezone: string,
@@ -362,7 +365,7 @@ export function useAvailabilityMonth({
       return fetchWindow(
         consultantId as string,
         start,
-        end,
+        new Date(end.getTime() + MONTH_READ_TAIL_MS),
         zone,
         noStore,
         consulteeUserId,
