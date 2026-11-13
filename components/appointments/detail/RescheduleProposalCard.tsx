@@ -210,7 +210,7 @@ interface RescheduleProposalCardProps {
   /** The answers the routes accept from this viewer (`rescheduleAnswersFor`). */
   answers: RescheduleAnswer[];
   control: RescheduleAnswerControl;
-  /** Suspended org member (#1527 decision 6): no answers; the API refuses too. */
+  /** A suspended organisation member answers nothing; the API refuses too. */
   readOnly?: boolean;
 }
 
