@@ -211,7 +211,7 @@ export function toPresentationInput(
     holdExpiresAt,
     history: a.statusHistory,
     source,
-    reschedule: openReschedule(a),
+    reschedule: openReschedule(a, args.viewerId),
     seatStatus:
       a.webinar || a.class
         ? (a.participants.find(
@@ -226,7 +226,10 @@ export function toPresentationInput(
 }
 
 /** The open proposal with the original start it would move; null when none is open. */
-function openReschedule(a: Detail): BookingPresentationInput["reschedule"] {
+function openReschedule(
+  a: Detail,
+  viewerId: string | null,
+): BookingPresentationInput["reschedule"] {
   const open = a.rescheduleRequests[0];
   if (!open) return null;
   const original = normalizeOccurrences(a.occurrences).find(
@@ -234,6 +237,7 @@ function openReschedule(a: Detail): BookingPresentationInput["reschedule"] {
   );
   return {
     by: open.initiatorRole === "CONSULTANT" ? "CONSULTANT" : "REQUESTER",
+    mine: !!viewerId && open.initiatedById === viewerId,
     proposedStartsAt: open.proposedTimes[0]?.startsAt ?? null,
     originalStartsAt: original?.startsAt ?? null,
     expiresAt: open.expiresAt,
@@ -311,4 +315,22 @@ export function presentationNames(
     (viewer.role === "consultee" ? viewer.name : null) ??
     "The attendee";
   return { payer, consultant };
+}
+
+/**
+ * A learner whose seat on this webinar or class was given back, reaching the
+ * page only through their old payment: they read "no longer registered", not
+ * the event (the API refuses them the detail).
+ */
+export function viewerSeatReleased(
+  detail: TAppointmentDetail,
+  userId: string,
+): boolean {
+  const a = detail.appointment;
+  if (!a.webinar && !a.class) return false;
+  const live = a.participants.some((p) => p.userId === userId);
+  const host = a.participants.some(
+    (p) => p.userId === userId && p.role !== "CONSULTEE",
+  );
+  return !live && !host && a.payment.some((p) => p.userId === userId);
 }

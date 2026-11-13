@@ -28,6 +28,7 @@ import {
   useConsulteeAppointmentsAdapter,
 } from "@/components/appointments/consultee/ConsulteeAppointmentsAdapter";
 import { DisplayZoneProvider } from "@/lib/time/zoned-format";
+import { seatLapsedOrReleased } from "@/lib/appointments/status";
 import { IncidentRemedyBanner } from "@/components/appointments/consultee/IncidentRemedyBanner";
 
 /** Sessions worth putting in a calendar: booked (not held), live, not over. */
@@ -218,14 +219,15 @@ function deriveConsulteeActionMeta(vm: AppointmentVM) {
   const canRebook =
     Boolean(vm.consultantProfileId) &&
     (vm.bucket === "past" || vm.bucket === "cancelled");
-  const canAddToCalendar = calendarSessions(vm).length > 0;
+  const seatGone = seatLapsedOrReleased(vm);
+  const canAddToCalendar = !seatGone && calendarSessions(vm).length > 0;
   const expertName = vm.counterpart.name || "Expert";
 
   const rawAppt = vm.raw.appointment;
   const rawSub = rawAppt?.subscription ?? undefined;
   const rawConsultation = rawAppt?.consultation ?? undefined;
 
-  const expertUserId = consultantUserIdOf(vm);
+  const expertUserId = seatGone ? null : consultantUserIdOf(vm);
 
   const subscriptionPlanId =
     rawSub?.subscriptionPlan?.id ?? rawSub?.subscriptionPlanId ?? null;
@@ -264,8 +266,10 @@ function deriveConsulteeActionMeta(vm: AppointmentVM) {
   const isVerifiedUnpaid =
     Array.isArray(rawAppt?.payment) &&
     rawAppt.payment.every((p) => p.paymentStatus !== "SUCCEEDED");
+  // A submitted request only: a pay-first hold has no expert answer to wait for.
   const isUnpaidRequested =
     (vm.kind === "CONSULTATION" || vm.kind === "SUBSCRIPTION") &&
+    vm.bookingSource !== "DIRECT_CHECKOUT" &&
     isPendingRequestEntity &&
     isVerifiedUnpaid;
 

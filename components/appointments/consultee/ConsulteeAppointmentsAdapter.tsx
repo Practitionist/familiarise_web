@@ -37,6 +37,7 @@ import {
   isInactiveStatus,
   isPendingPaymentStatus,
   isUnpaidSeat,
+  seatLapsedOrReleased,
 } from "@/lib/appointments/status";
 import type {
   AppointmentVM,
@@ -422,6 +423,8 @@ export function useConsulteeAppointmentsAdapter(options?: {
 
   const overflowItems = (vm: AppointmentVM): OverflowItem[] => {
     const items: OverflowItem[] = [];
+    // A seat that no longer holds a place offers no chat, calendar or leave.
+    if (seatLapsedOrReleased(vm)) return items;
     const inactive = isInactiveStatus(vm.status);
     const slots = vm.raw.rawOccurrences ?? [];
     // #1163 — a live proposal outranks every other action: until it is
@@ -683,7 +686,9 @@ export function useConsulteeAppointmentsAdapter(options?: {
         // The seat is released, so its detail page no longer answers: go to the list, drop it.
         closeDialog();
         if (consulteeId) {
-          router.push(`/dashboard/consultee/${consulteeId}/appointments`);
+          router.push(
+            `/dashboard/consultee/${consulteeId}/appointments?tab=cancelled`,
+          );
           void queryClient.invalidateQueries({
             queryKey: ["consultee-events", consulteeId],
           });

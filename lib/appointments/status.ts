@@ -104,3 +104,19 @@ export function ownSeatStatusOf(
 ): string | null {
   return appointment?.participants?.[0]?.status ?? null;
 }
+
+/** The viewer's seat no longer holds a place: given back, or held on a payment whose window closed. */
+export function seatLapsedOrReleased(
+  vm: {
+    seatStatus?: string | null;
+    paid?: boolean;
+    payDeadline?: Date | null;
+  },
+  now: Date = new Date(),
+): boolean {
+  if (isReleasedSeat(vm.seatStatus)) return true;
+  return (
+    isUnpaidSeat(vm) &&
+    !(vm.payDeadline && vm.payDeadline.getTime() > now.getTime())
+  );
+}
