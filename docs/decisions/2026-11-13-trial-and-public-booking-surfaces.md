@@ -1,6 +1,6 @@
 # ADR: Trial and public booking surfaces — free checkout, private strikes, free cancels without a refund record, and two trial lengths
 
-- **Status**: Accepted (owner decisions 2026-11-12 and 2026-11-13). Decisions 1 to 15 are **built**; decision 16 records a rule for a case that cannot occur today on the branch that carries this record (`feat/train2-single-time-picker`); decisions 10 to 14 are the time pickers.
+- **Status**: Accepted (owner decisions 2026-11-12 and 2026-11-13). Decisions 1 to 15 and 17 are **built**; decision 16 records a rule for a case that cannot occur today on the branch that carries this record (`feat/train2-single-time-picker`); decisions 10 to 14 are the time pickers.
 - **Date**: 2026-11-13
 - **Author**: Platform engineering
 - **Related**: [The booking follow-up train](2026-11-12-booking-follow-up-train.md) (decisions 2, 8 and 9), [Scheduling surfaces and feasibility](2026-11-09-scheduling-surfaces-and-feasibility.md) (decision 17), [Cancellation flow](../booking/08-cancellation-flow.md), [Trial sessions](../booking/09-trials.md), [Checkout and payment integration](../booking/10-checkout-payment-integration.md), the tracking issue [#2720](https://github.com/Practitionist/familiarise_web/issues/2720) (train 2)
@@ -92,6 +92,11 @@ Hannah Anderson offers a free 30-minute consultation. Charlotte Brown books Mond
     - **Why nothing is built.** A discount code, the welcome discount and referral credits together are capped by `platformFundedCapPaise` (`lib/payments/pricing/platform-funded-cap.ts`): the platform fee minus the gateway estimate, always below the list price. A remainder of 1 to 99 paise is refused at checkout (`MINIMUM_CHECKOUT_AMOUNT_PAISE` in `lib/payments/checkout/pricing.ts`). On 2026-11-13 all 176 `free_` ₹0 payments in the shared database had a zero list price.
     - **The rule if a pricing change makes it reachable.** Keep the ₹0 refund record, because its cascade (`applyRefundCascade`) reverses the expert's earnings, which are created on the list price; send no refund notice, and tell the learner only that nothing was paid so there is nothing to refund.
     - **Options not chosen.** Treating such a booking as fully free with no refund record (its earnings would stand). Keeping the record and the "₹0.00" refund notice with accurate dialog copy.
+
+17. **A free order needs no billing state** (owner decision 2026-11-13, built).
+    - **The rule.** Checkout requires the buyer's GST state only when the order will get a consumer tax invoice: an amount is charged or referral credit is spent. A genuinely free order (₹0, no credit) is confirmed without one, because the consumer invoice series never issues an invoice for it (`CONSUMER_INVOICEABLE_PAYMENT_WHERE` in `lib/payments/billing/consumer-invoice.ts`). Paid and credit-funded orders are unchanged, and org-funded and export orders still need none. Before this, the state was required before pricing, so every domestic free order was refused for a field the free checkout does not show.
+    - **Enforced by** the buyer-state check in `lib/payments/checkout/orchestrate.ts`, which now runs after pricing; `__tests__/payments/checkout-buyer-state.test.ts` pins a free domestic order with no state.
+    - **Options not chosen.** Putting the billing-state field back on the free checkout: it would ask for a fact no document uses. Sending the profile's saved state silently and asking only when none is saved: a learner with no saved state would still meet the field on a free order.
 
 ## Honest limits
 
