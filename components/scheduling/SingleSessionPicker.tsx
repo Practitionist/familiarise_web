@@ -60,10 +60,10 @@ const ARROW_STEP: Record<string, number> = {
 
 const STATE_CLASS: Record<SingleSessionOption["state"], string> = {
   free: "border-emerald-600 bg-emerald-50 text-emerald-950 hover:bg-emerald-100",
-  outsideHours: "border-border bg-background text-foreground hover:bg-muted",
-  busy: "border-slate-300 bg-slate-100 text-slate-500 line-through",
-  tooSoon: "border-dashed border-slate-300 text-slate-400",
-  outsideWindow: "border-dashed border-slate-300 text-slate-400",
+  "outside-hours": "border-border bg-background text-foreground hover:bg-muted",
+  taken: "border-slate-300 bg-slate-100 text-slate-500 line-through",
+  contended: "border-slate-300 bg-slate-100 text-slate-500 line-through",
+  "too-soon": "border-dashed border-slate-300 text-slate-400",
 };
 
 /**
@@ -126,7 +126,7 @@ export function SingleSessionPicker({
     allowedStartMs: allowedStart?.getTime(),
     allowedEndMs: allowedEnd?.getTime(),
   });
-  const pickable = options.filter((option) => option.state !== "outsideWindow");
+  const pickable = options;
   const isoOf = (option: SingleSessionOption) =>
     new Date(option.startMs).toISOString();
   // One tab stop for the time radios: the chosen time, else the first one that can be picked.

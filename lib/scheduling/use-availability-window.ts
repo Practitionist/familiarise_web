@@ -328,35 +328,48 @@ export function useAvailabilityMonth({
   monthStart,
   timezone,
   consulteeUserId,
+  event,
+  bypassRef,
   enabled = true,
 }: {
   consultantId: string | undefined;
   monthStart: Date;
   timezone: string | null;
   consulteeUserId?: string;
+  /** The event being placed or moved. */
+  event?: AvailabilityEvent;
+  /** Set to true to send the next read past the browser cache once. */
+  bypassRef?: MutableRefObject<boolean>;
   enabled?: boolean;
 }) {
   const etagCacheRef = useRef<EtagCacheEntry | null>(null);
   const pollOptions = useGridPollOptions();
   const ready = enabled && !!consultantId && !!timezone;
   const monthKey = monthKeyOf(monthStart);
-  const queryKey = consulteeUserId
+  const eventQuery = eventQueryOf(event);
+  const baseKey = consulteeUserId
     ? ["availability-month", consultantId, monthKey, timezone, consulteeUserId]
     : ["availability-month", consultantId, monthKey, timezone];
+  const queryKey = eventQuery ? [...baseKey, `event:${eventQuery}`] : baseKey;
   const activeQueryKey = ready ? queryKey : ["availability-month", "disabled"];
   return useQuery({
     queryKey: activeQueryKey,
     queryFn: () => {
       const zone = timezone as string;
       const { start, end } = monthBounds(monthStart, zone);
+      const noStore = bypassRef?.current ?? false;
+      if (bypassRef) bypassRef.current = false;
       return fetchWindow(
         consultantId as string,
         start,
         end,
         zone,
-        false,
+        noStore,
         consulteeUserId,
         etagCacheRef,
+        undefined,
+        undefined,
+        eventQuery,
       );
     },
     enabled: ready,
