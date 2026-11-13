@@ -17,6 +17,7 @@ import {
   isDeadOccurrence,
 } from "@/lib/appointments/occurrences";
 import { sessionsTotalOf } from "@/lib/booking/entitlement";
+import { subscriptionUnpaidError } from "@/lib/booking/booking-rule-error";
 import { AllocationIdempotencyMismatchError } from "@/utils/scheduling-engine/errors";
 import { getEventRelationField } from "@/lib/booking/allocation/identity";
 import type { AppointmentWithSlots } from "@/lib/booking/allocation/types";
@@ -103,6 +104,10 @@ export async function replayOutcome(
           })
         : null;
   if (row?.status === AppointmentStatus.APPROVED_PENDING_PAYMENT) {
+    // A plan is paid at purchase and never gets a pay link: answer as a fresh allocation does.
+    if (eventType === "subscription") {
+      throw subscriptionUnpaidError();
+    }
     return "awaiting_payment";
   }
   if (row?.status === AppointmentStatus.APPROVED) return "approved";

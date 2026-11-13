@@ -1604,3 +1604,9 @@ ALTER TABLE "Trial" DROP CONSTRAINT IF EXISTS "trial_agreed_price_valid";
 -- SPLIT
 ALTER TABLE "Trial" ADD CONSTRAINT "trial_agreed_price_valid"
   CHECK ("agreedPricePaise" IS NULL OR "agreedPricePaise" >= 0);
+-- SPLIT
+-- NULL means no limit on live 1:1 plan clients; a set limit is at least one.
+ALTER TABLE "ConsultantProfile" DROP CONSTRAINT IF EXISTS "consultant_profile_max_active_plan_clients_min";
+-- SPLIT
+ALTER TABLE "ConsultantProfile" ADD CONSTRAINT "consultant_profile_max_active_plan_clients_min"
+  CHECK ("maxActivePlanClients" IS NULL OR "maxActivePlanClients" >= 1);

@@ -74,6 +74,8 @@ export const ErrorTypes = {
   SUBSCRIPTION_ALREADY_ACTIVE: "SUBSCRIPTION_ALREADY_ACTIVE_ERROR",
   // The expert's hours can't hold even the first week of the plan.
   NOT_PLACEABLE: "NOT_PLACEABLE_ERROR",
+  // The expert's limit on live plan clients is reached.
+  PLAN_CLIENTS_FULL: "PLAN_CLIENTS_FULL_ERROR",
   CURRENCY_UNSUPPORTED: "CURRENCY_UNSUPPORTED_ERROR",
   CREDIT_SHORTFALL: "CREDIT_SHORTFALL_ERROR",
   DISCOUNT_CURRENCY_MISMATCH: "DISCOUNT_CURRENCY_MISMATCH_ERROR",
@@ -481,6 +483,11 @@ const BUSINESS_ERROR_ENTRIES = [
   {
     code: "NOT_PLACEABLE",
     errorType: ErrorTypes.NOT_PLACEABLE,
+    httpStatus: 409,
+  },
+  {
+    code: "PLAN_CLIENTS_FULL",
+    errorType: ErrorTypes.PLAN_CLIENTS_FULL,
     httpStatus: 409,
   },
   // #1564 — a non-INR plan price or settlement is a configuration the platform

@@ -14,6 +14,7 @@ import {
   ErrorTypes,
   type ErrorType,
 } from "../classification/payment-error-classification";
+import { PLAN_CLIENTS_FULL_MESSAGE } from "@/schemas/plan-clients";
 
 // ============================================================================
 // Toast message definitions
@@ -194,6 +195,10 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
   [ErrorTypes.NOT_PLACEABLE]: {
     title: "No Free Time In The First Week",
     description: null,
+  },
+  [ErrorTypes.PLAN_CLIENTS_FULL]: {
+    title: "This Expert Is Fully Booked",
+    description: PLAN_CLIENTS_FULL_MESSAGE,
   },
   [ErrorTypes.CURRENCY_UNSUPPORTED]: {
     title: "Currency Not Supported",

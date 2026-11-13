@@ -127,32 +127,15 @@ const MINT_PLAN_SELECT = {
   },
 } as const;
 
-async function readForMint(kind: "consultation" | "subscription", id: string) {
-  if (kind === "consultation") {
-    return prisma.consultation.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        status: true,
-        pendingPaymentUrl: true,
-        requestNotes: true,
-        consultationPlan: MINT_PLAN_SELECT,
-        ...MINT_PARTY_SELECT,
-      },
-    });
-  }
-  return prisma.subscription.findUnique({
+function readForMint(id: string) {
+  return prisma.consultation.findUnique({
     where: { id },
     select: {
       id: true,
       status: true,
       pendingPaymentUrl: true,
       requestNotes: true,
-      schedulingPeriodStartsAt: true,
-      schedulingPeriodEndsAt: true,
-      subscriptionPlan: {
-        select: { ...MINT_PLAN_SELECT.select, durationInMonths: true },
-      },
+      consultationPlan: MINT_PLAN_SELECT,
       ...MINT_PARTY_SELECT,
     },
   });
@@ -175,7 +158,7 @@ function report(error: unknown): void {
  * the next approval reuses the same PENDING intent (#1181).
  */
 async function persistPayLink(
-  kind: "consultation" | "subscription",
+  kind: "consultation",
   id: string,
   requestNotes: string | null,
   paymentResult: { paymentIntentId: string; checkoutUrl: string },
@@ -195,10 +178,7 @@ async function persistPayLink(
           : `[System] Payment link generated and sent to user.`,
       },
     };
-    const persisted =
-      kind === "consultation"
-        ? await prisma.consultation.updateMany(persist)
-        : await prisma.subscription.updateMany(persist);
+    const persisted = await prisma.consultation.updateMany(persist);
     if (persisted.count > 0) return paymentResult.checkoutUrl;
     const outcome = await reconcile({
       kind,
@@ -226,10 +206,10 @@ async function persistPayLink(
  * no longer awaiting payment, or already carries a link, mints nothing.
  */
 export async function mintApprovalPaymentAfterCommit(args: {
-  kind: "consultation" | "subscription";
+  kind: "consultation";
   id: string;
 }): Promise<MintApprovalOutcome> {
-  const row = await readForMint(args.kind, args.id);
+  const row = await readForMint(args.id);
   if (!row || row.status !== AppointmentStatus.APPROVED_PENDING_PAYMENT) {
     return { status: "not_delivered" };
   }
@@ -256,34 +236,12 @@ export async function mintApprovalPaymentAfterCommit(args: {
     await import("@/lib/booking/pay-link-persist");
 
   const slot = row.appointment?.occurrences[0];
-  // The kind-specific half of the mint params: the consultation's held slot
-  // times, or the subscription's scheduling period (already committed by the
-  // approval; recomputing it would drift the gateway metadata off the row).
-  const { plan, timing } =
-    "consultationPlan" in row
-      ? {
-          plan: row.consultationPlan,
-          timing: {
-            consultationId: row.id,
-            startsAt: slot?.startsAt.toISOString(),
-            endsAt: slot?.endsAt?.toISOString(),
-          },
-        }
-      : {
-          plan: row.subscriptionPlan,
-          timing: {
-            subscriptionId: row.id,
-            schedulingPeriodStartsAt:
-              row.schedulingPeriodStartsAt.toISOString(),
-            schedulingPeriodEndsAt: row.schedulingPeriodEndsAt.toISOString(),
-          },
-        };
+  const plan = row.consultationPlan;
   let paymentResult;
   try {
     paymentResult = await createApprovalPaymentIntent({
       userId: row.requestedBy.user.id,
-      appointmentType:
-        args.kind === "consultation" ? "CONSULTATION" : "SUBSCRIPTION",
+      appointmentType: "CONSULTATION",
       // #1181 / #1554 — the request-time appointment (or the purchase
       // wrapper): capture confirms THAT row and the duplicate guard sees it.
       appointmentId: row.appointment?.id ?? undefined,
@@ -292,7 +250,9 @@ export async function mintApprovalPaymentAfterCommit(args: {
       paymentGateway: PaymentGateway.RAZORPAY,
       // #1166 ORG-9 — org sponsorship survives the approval flow.
       organizationId: row.appointment?.organizationId ?? undefined,
-      ...timing,
+      consultationId: row.id,
+      startsAt: slot?.startsAt.toISOString(),
+      endsAt: slot?.endsAt?.toISOString(),
       notes: row.requestNotes ?? undefined,
     });
   } catch (linkError) {
@@ -345,8 +305,7 @@ export async function mintApprovalPaymentAfterCommit(args: {
         amount: paymentResult.amount,
         currency: paymentResult.currency,
         consultantName,
-        appointmentType:
-          args.kind === "consultation" ? "CONSULTATION" : "SUBSCRIPTION",
+        appointmentType: "CONSULTATION",
         planTitle: plan.title,
         paymentUrl: email.emailPayUrl(paymentResult.paymentId, paymentUrl),
         expiresAt,

@@ -1,5 +1,6 @@
 import { cache } from "react";
 import prisma from "@/lib/prisma";
+import { planBuyBlockedFor } from "@/lib/booking/plan-demand";
 import { seatHoldingParticipant } from "@/utils/scheduling-engine/occupancyPolicy";
 import { toPlain } from "@/lib/data/serialize";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
@@ -227,6 +228,15 @@ export async function fetchSubscriptionPlanDetail(subscriptionPlanId: string) {
 
 /** Cached wrapper for Server Components. */
 export const getSubscriptionPlanDetail = cache(fetchSubscriptionPlanDetail);
+
+/**
+ * Whether this viewer is turned away by the expert's plan-client limit: the
+ * limit is reached and they hold none of the expert's plans. Per request only.
+ */
+export const getPlanBuyBlockedFor = cache(
+  (consultantProfileId: string, viewerUserId: string | null) =>
+    planBuyBlockedFor(prisma, consultantProfileId, viewerUserId),
+);
 
 // ---------------------------------------------------------------------------
 // Consultation plan detail

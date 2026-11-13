@@ -38,7 +38,7 @@ import {
   transitionWebinarEvent,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
-import { BookingRuleError } from "@/lib/booking/booking-rule-error";
+import { subscriptionUnpaidError } from "@/lib/booking/booking-rule-error";
 import {
   SETTLED_CONSULTATION,
   SETTLED_SUBSCRIPTION,
@@ -187,10 +187,7 @@ export async function updateEventStatus(
             },
           });
           if (unpaid > 0) {
-            throw new BookingRuleError(
-              "SUBSCRIPTION_UNPAID",
-              "This plan is paid at purchase — the request has no successful payment.",
-            );
+            throw subscriptionUnpaidError();
           }
         },
         undefined,

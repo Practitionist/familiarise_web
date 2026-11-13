@@ -10,26 +10,16 @@ import { convertCompletedTrial } from "@/lib/trials/conversion";
 import type { Tx } from "@/lib/prisma";
 import type { CheckoutInput } from "@/schemas/checkout";
 import {
-  firstCycleWindow,
-  purchaseTermsOf,
   soldTermsOf,
   subscriptionEntitlement,
-  subscriptionPlanEnd,
 } from "@/lib/booking/entitlement";
 import { AppointmentsType, Prisma, AppointmentStatus } from "@prisma/client";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
-import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
-import {
-  assessExpertFeasibility,
-  firstWeekPlaceable,
-} from "@/lib/booking/feasibility";
-import { leadMsFor } from "@/lib/booking/lead-time";
-import { MAX_SUBSCRIPTION_SESSIONS_PER_DAY } from "@/utils/scheduling-engine/sessionCaps";
 import type { SubscriptionCheckoutResult } from "@/lib/payments/checkout/schema";
 import {
-  resolvePlanStart,
-  resolvePriorSubscriptionForRenewal,
-} from "@/lib/payments/checkout/renewal";
+  assertSubscriptionDemandRoom,
+  resolveSubscriptionPurchase,
+} from "@/lib/payments/checkout/subscription-demand";
 
 export async function handleSubscriptionCheckout(
   tx: Tx,
@@ -42,57 +32,23 @@ export async function handleSubscriptionCheckout(
   cancellationPolicyId: string,
   precomputedSchedulingPeriod?: { startsAt: Date; endsAt: Date } | null,
 ): Promise<SubscriptionCheckoutResult> {
-  const plan = await tx.subscriptionPlan.findUnique({
-    where: { id: data.planId },
-    include: {
-      consultantProfile: {
-        include: { user: true },
-      },
-    },
-  });
-
-  if (!plan) {
-    throw new Error("Subscription plan not found");
-  }
-
-  // #1743 — validate renewal source when renewsSubscriptionId is provided.
-  const priorSubscription = await resolvePriorSubscriptionForRenewal(
+  const purchase = await resolveSubscriptionPurchase(
     tx,
-    data.renewsSubscriptionId,
+    data,
     consulteeProfileId,
-    plan.id,
+    precomputedSchedulingPeriod,
   );
-
+  const {
+    plan,
+    priorSubscription,
+    schedulingTimezone,
+    startDate,
+    endDate,
+    terms,
+  } = purchase;
   const isSchedulingPeriodRequest = Boolean(
     data.schedulingPeriodStartsAt || data.renewsSubscriptionId,
   );
-  // The persisted window is the first cycle; a client end is ignored. A
-  // renewal starts no earlier than the prior plan's end, and the plan end is
-  // fixed here once, from the start.
-  const schedulingTimezone = resolveSchedulingTimezone(
-    plan.consultantProfile?.user?.timezone,
-  );
-  const priorPlanEnd = priorSubscription
-    ? subscriptionPlanEnd(priorSubscription)
-    : null;
-  const { start: startDate, end: endDate } =
-    precomputedSchedulingPeriod &&
-    (!priorPlanEnd || precomputedSchedulingPeriod.startsAt >= priorPlanEnd)
-      ? {
-          start: precomputedSchedulingPeriod.startsAt,
-          end: precomputedSchedulingPeriod.endsAt,
-        }
-      : firstCycleWindow(
-          plan,
-          resolvePlanStart(
-            data.schedulingPeriodStartsAt,
-            priorPlanEnd,
-            new Date(),
-          ),
-          schedulingTimezone,
-        );
-  // The plan's terms are frozen here once; plan edits apply to new buyers only.
-  const terms = purchaseTermsOf(plan, startDate, schedulingTimezone);
 
   // #1766 — the double-buy guard follows the entitlement, not the window: a
   // live row with sessions left blocks; a spent one is a renewal-as-repurchase.
@@ -157,29 +113,9 @@ export async function handleSubscriptionCheckout(
     );
   }
 
-  // A plan whose first week the expert's hours can't hold at all is not sold;
-  // a thin one is, because the buyer was shown the room-for-N notice.
-  const firstWeek = await assessExpertFeasibility(tx, {
-    consultantProfileId: plan.consultantProfileId,
-    zone: schedulingTimezone,
-    sessionMinutes: terms.sessionMinutes,
-    sessionsPerWeek: terms.sessionsPerWeek,
-    perDayCap: MAX_SUBSCRIPTION_SESSIONS_PER_DAY,
-    notBeforeMs: Math.max(
-      startDate.getTime(),
-      Date.now() + leadMsFor("allocate", { settled: true }),
-    ),
-    weeks: 1,
-    countBookings: true,
-  });
-  if (firstWeekPlaceable(firstWeek) === 0) {
-    throw Object.assign(
-      new Error(
-        "This expert has no free time in the first week of this plan right now. Pick a later start date, or ask them to open more hours.",
-      ),
-      { httpStatus: 409, code: "NOT_PLACEABLE", reasons: firstWeek.reasons },
-    );
-  }
+  // Authoritative: orchestrate pre-checks before the gateway mint, and this
+  // re-check under the same lock sees any sale committed since.
+  await assertSubscriptionDemandRoom(tx, purchase, consulteeProfileId);
 
   // Create subscription - consultant will allocate slots via Requests tab
   let subscription: Prisma.SubscriptionGetPayload<Record<string, never>>;

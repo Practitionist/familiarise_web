@@ -21,6 +21,7 @@ import {
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { experienceValidation } from "@/schemas/shared";
+import { maxActivePlanClientsSchema } from "@/schemas/plan-clients";
 import { checkActiveAppointments } from "../utils/consultant-appointments";
 import { getSession } from "@/lib/auth-server";
 import { purgeExpertSurfaces } from "@/lib/data/public-cache";
@@ -94,6 +95,7 @@ const bookingRequestFields = z
     bookingMode: z.nativeEnum(BookingMode).optional(),
     acceptingRequests: z.boolean().optional(),
     maxOpenRequests: z.number().int().min(1).max(50).nullable().optional(),
+    maxActivePlanClients: maxActivePlanClientsSchema.optional(),
   })
   .strict();
 
@@ -176,6 +178,7 @@ const BOOKING_SETTINGS_SELECT = {
   bookingMode: true,
   acceptingRequests: true,
   maxOpenRequests: true,
+  maxActivePlanClients: true,
 } as const;
 
 /** The caller's own profile's owner, or the 401/403 response to return. */
@@ -264,6 +267,8 @@ export async function GET(
       where: { id },
       select: {
         ...consultantPublicScalars,
+        // The plan-client limit is the owner's private setting.
+        maxActivePlanClients: isPrivilegedAccess,
         user: isPrivilegedAccess
           ? {
               // Full user data for own profile or admin
@@ -642,8 +647,17 @@ export async function PATCH(
 
     const parsed = bookingRequestSettingsSchema.safeParse(await request.json());
     if (!parsed.success) {
+      // The plan-client limit's own sentence; anything else is a stale or hand-built body.
+      const limitIssue = parsed.error.issues.find((issue) =>
+        issue.path.includes("maxActivePlanClients"),
+      );
       return NextResponse.json(
-        { error: "Validation failed", details: parsed.error.format() },
+        {
+          error:
+            limitIssue?.message ??
+            "These booking settings could not be saved. Reload the page and try again.",
+          details: parsed.error.format(),
+        },
         { status: 400 },
       );
     }
@@ -656,6 +670,9 @@ export async function PATCH(
       }),
       ...("maxOpenRequests" in set && {
         maxOpenRequests: expect.maxOpenRequests,
+      }),
+      ...("maxActivePlanClients" in set && {
+        maxActivePlanClients: expect.maxActivePlanClients,
       }),
     };
     const written = await prisma.consultantProfile.updateMany({

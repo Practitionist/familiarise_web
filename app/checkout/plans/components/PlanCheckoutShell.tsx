@@ -138,6 +138,8 @@ export interface CheckoutPlanAdapter {
   /** Null hides the Razorpay button (nothing to buy yet). */
   checkoutPlanFields: CheckoutPlanFields | null;
   soldOut: boolean;
+  /** The disabled pay button's label when `soldOut`; event seats read "Sold out". */
+  soldOutLabel?: string;
   /** Runs after billing-state validation; false stops the payment. */
   beforePay?: () => Promise<boolean> | boolean;
   /** A refusal only this plan type handles; true when it did. */
@@ -290,7 +292,7 @@ function PaymentGatewayCards({
               </div>
               {adapter.soldOut ? (
                 <Button variant="outline" disabled>
-                  Sold out
+                  {adapter.soldOutLabel ?? "Sold out"}
                 </Button>
               ) : gateway.isActive ? (
                 <div className="flex gap-2">
@@ -448,7 +450,7 @@ export function PlanCheckoutShell({
         // The same string arrives as `code` on the body and titles a typed refusal.
         handleApiError({
           error: error.description ?? error.message ?? error.reason,
-          errorType: error.code,
+          errorType: error.errorType ?? error.code,
           code: error.code,
         });
         return;

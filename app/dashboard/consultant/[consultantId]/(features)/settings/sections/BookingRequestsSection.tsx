@@ -7,11 +7,23 @@ import { RadioGroup, RadioGroupItem } from "components/ui/radio-group";
 import { Separator } from "components/ui/separator";
 import { Switch } from "components/ui/switch";
 import type { Dispatch, SetStateAction } from "react";
+import {
+  limitDraftFromInput,
+  MAX_ACTIVE_PLAN_CLIENTS_RANGE,
+} from "@/schemas/plan-clients";
 import type { BookingRequestSettings } from "../settings";
 
 interface BookingRequestsSectionProps {
   value: BookingRequestSettings;
   onChange: Dispatch<SetStateAction<BookingRequestSettings>>;
+  /** Distinct buyers holding one of your plans now; null while it loads. */
+  activePlanClients: number | null;
+  /** The plan-client limit exactly as typed, and why it is refused (null when valid). */
+  limitDraft: string | null;
+  limitError: string | null;
+  /** The limit the count line names: a valid typed value, else the saved one. */
+  countLimit: number | null;
+  onLimitDraftChange: (raw: string | null) => void;
 }
 
 /** The cap's accepted range; blank means no limit (#1703 D4). */
@@ -34,6 +46,15 @@ export function parseMaxOpenRequests(
   );
 }
 
+/** "3 of 5 active plan clients", or "3 active plan clients" with no limit. */
+export function planClientsLine(active: number, limit: number | null): string {
+  const noun = (n: number) =>
+    n === 1 ? "active plan client" : "active plan clients";
+  return limit === null
+    ? `${active} ${noun(active)}`
+    : `${active} of ${limit} ${noun(limit)}`;
+}
+
 /**
  * "Booking mode" settings. Presentational: the form saves the changed
  * fields through the booking-settings PATCH.
@@ -41,6 +62,11 @@ export function parseMaxOpenRequests(
 export function BookingRequestsSection({
   value: formData,
   onChange: setFormData,
+  activePlanClients,
+  limitDraft,
+  limitError,
+  countLimit,
+  onLimitDraftChange,
 }: Readonly<BookingRequestsSectionProps>) {
   return (
     <div className="space-y-6">
@@ -144,6 +170,47 @@ export function BookingRequestsSection({
           Once this many requests are waiting on you, new ones are refused until
           you answer some. Leave blank for no limit.
         </p>
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="max-active-plan-clients">
+          Limit mentorship plan clients to
+        </Label>
+        <Input
+          id="max-active-plan-clients"
+          type="number"
+          inputMode="numeric"
+          min={MAX_ACTIVE_PLAN_CLIENTS_RANGE.min}
+          max={MAX_ACTIVE_PLAN_CLIENTS_RANGE.max}
+          step={1}
+          placeholder="No limit"
+          className="max-w-[10rem]"
+          value={limitDraft ?? ""}
+          aria-invalid={limitError !== null}
+          aria-describedby={
+            limitError ? "max-active-plan-clients-error" : undefined
+          }
+          onChange={(e) => onLimitDraftChange(limitDraftFromInput(e.target))}
+        />
+        {limitError && (
+          <p
+            id="max-active-plan-clients-error"
+            role="alert"
+            className="text-sm text-destructive"
+          >
+            {limitError}
+          </p>
+        )}
+        <p className="text-sm text-muted-foreground">
+          Once this many people hold one of your plans, your plans show as fully
+          booked and new buyers are refused before they pay. Current clients
+          keep their plans. Leave blank for no limit.
+        </p>
+        {activePlanClients !== null && (
+          <p className="text-sm font-medium" aria-live="polite">
+            {planClientsLine(activePlanClients, countLimit)}
+          </p>
+        )}
       </div>
     </div>
   );

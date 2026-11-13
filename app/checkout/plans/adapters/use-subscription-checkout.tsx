@@ -11,7 +11,11 @@ import {
   planPriceLabel,
 } from "@/lib/offerings/plan-length-copy";
 import { useViewerZone } from "@/lib/time/use-viewer-zone";
-import { planFeasibilitySchema } from "@/schemas/plan-feasibility";
+import {
+  planFeasibilitySchema,
+  subscriptionCheckoutBlocked,
+} from "@/schemas/plan-feasibility";
+import { PLAN_CLIENTS_FULL_MESSAGE } from "@/schemas/plan-clients";
 import {
   subscriptionSearchParamsSchema,
   type SubscriptionSearchParams,
@@ -222,6 +226,7 @@ export function useSubscriptionCheckout(
     detailsBanner:
       effectiveSearchParams?.renewsSubscriptionId ||
       feasibility?.notice ||
+      feasibility?.fullyBooked ||
       feasibility?.firstWeekPlaceable === 0 ? (
         <div className="space-y-2">
           {effectiveSearchParams?.renewsSubscriptionId && (
@@ -230,7 +235,14 @@ export function useSubscriptionCheckout(
               immediately after your current subscription ends
             </div>
           )}
-          {feasibility?.firstWeekPlaceable === 0 ? (
+          {feasibility?.fullyBooked ? (
+            <div
+              role="alert"
+              className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-foreground"
+            >
+              {PLAN_CLIENTS_FULL_MESSAGE}
+            </div>
+          ) : feasibility?.firstWeekPlaceable === 0 ? (
             <div
               role="alert"
               className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-foreground"
@@ -347,7 +359,9 @@ export function useSubscriptionCheckout(
       </>
     ),
     checkoutPlanFields,
-    soldOut: false,
+    // The server's per-viewer answer: an existing client of the expert is never blocked.
+    soldOut: subscriptionCheckoutBlocked(feasibility),
+    soldOutLabel: "Fully booked",
     mockFlow: {
       kind: "direct",
       successTitle: "✅ Subscription Activated Successfully!",

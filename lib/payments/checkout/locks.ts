@@ -15,6 +15,9 @@ import {
   unlockSlotBooking,
   lockEventCheckout,
   unlockEventCheckout,
+  lockRequestCap,
+  RequestCapBusyError,
+  EventCheckoutBusyError,
   CHECKOUT_LOCK_TTL_MS,
   ApprovalLock,
   type SlotBatchGrant,
@@ -53,6 +56,27 @@ export async function lockBuyerSeatAtoms(
     CHECKOUT_LOCK_TTL_MS[appointmentType],
     CHECKOUT_WAIT_RETRY_CONFIG,
   );
+}
+
+/**
+ * One expert's plan sales, on the consultant-tier `request-cap:` key: held from
+ * the sold-plan counts through the new hold's commit. Contention reads as a
+ * busy plan checkout, which the client retries once.
+ */
+export async function lockExpertPlanSales(
+  consultantProfileId: string,
+): Promise<ApprovalLock> {
+  try {
+    return await lockRequestCap(
+      consultantProfileId,
+      CHECKOUT_LOCK_TTL_MS.SUBSCRIPTION,
+    );
+  } catch (error) {
+    if (error instanceof RequestCapBusyError) {
+      throw new EventCheckoutBusyError("SUBSCRIPTION");
+    }
+    throw error;
+  }
 }
 
 /**

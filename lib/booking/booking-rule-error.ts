@@ -25,6 +25,7 @@ export type BookingRuleCode =
   | "WINDOW_DURATION_MISMATCH"
   | "SEAT_REBUY_UNSUPPORTED"
   | "NOT_ACCEPTING_BOOKINGS"
+  | "PLAN_CLIENTS_FULL"
   | "EXPERT_NOT_VERIFIED"
   | "ALREADY_REGISTERED"
   | "RETURN_WINDOW_CLOSED"
@@ -62,6 +63,14 @@ export class BookingRuleError extends Error {
     super(message);
     this.name = "BookingRuleError";
   }
+}
+
+/** A subscription approved without a successful payment: a plan is paid at purchase. */
+export function subscriptionUnpaidError(): BookingRuleError {
+  return new BookingRuleError(
+    "SUBSCRIPTION_UNPAID",
+    "This plan is paid at purchase — the request has no successful payment.",
+  );
 }
 
 /** Another buyer holds this 1:1 window; codeless so the classifier still answers it by message. */

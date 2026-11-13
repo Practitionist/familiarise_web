@@ -192,10 +192,7 @@ export async function handleAllocate(
       // re-approving reuses the same PENDING intent (#1181).
       const awaitingPayment = result.outcome === "awaiting_payment";
       let payExpiresAt: Date | null = null;
-      if (
-        awaitingPayment &&
-        (eventType === "consultation" || eventType === "subscription")
-      ) {
+      if (awaitingPayment && eventType === "consultation") {
         const mint = await mintApprovalPaymentAfterCommit({
           kind: eventType,
           id: eventId,

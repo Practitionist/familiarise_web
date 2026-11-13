@@ -3356,11 +3356,15 @@ model ConsultantProfile {
 
   // #1703 D1 — INSTANT pays on a free slot; REQUEST routes every slot through
   // approval. Rationale: docs/booking/21-schema-reference.md.
-  bookingMode       BookingMode @default(INSTANT)
+  bookingMode          BookingMode @default(INSTANT)
   // #1703 D4 — the pause toggle and the optional open-PENDING cap (null = off);
   // the request route refuses with a typed 409 when either bites.
-  acceptingRequests Boolean     @default(true)
-  maxOpenRequests   Int?
+  acceptingRequests    Boolean     @default(true)
+  maxOpenRequests      Int?
+  /// The most distinct buyers with a live 1:1 plan this expert takes at once;
+  /// null = no limit. Private: public surfaces get only a "fully booked" flag.
+  /// Checkout refuses a new client at it; CHECK >= 1 lives in prisma/sql.
+  maxActivePlanClients Int?
 
   // India statutory (compliance stubs read these; PAN lives encrypted on ConsultantTaxInfo)
   /// @deprecated Legacy plaintext PAN retained for pre-reset read compatibility (#2006); dropped in PR-6 reset batch.

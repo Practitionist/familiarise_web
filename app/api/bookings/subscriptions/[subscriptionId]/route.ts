@@ -3,11 +3,7 @@ import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import prisma from "@/lib/prisma";
 import { Prisma, AppointmentStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
-import {
-  approvalMintConflict,
-  mintApprovalPaymentAfterCommit,
-  SETTLED_SUBSCRIPTION,
-} from "@/lib/booking/approve-request";
+import { SETTLED_SUBSCRIPTION } from "@/lib/booking/approve-request";
 import {
   APPROVAL_LOCK_TTL_MS,
   ApprovalLockLostError,
@@ -41,7 +37,10 @@ import {
 } from "@/lib/booking/rejection-refund";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { platformCancelDoorRefusal } from "@/lib/booking/platform-cancel";
-import { BookingRuleError } from "@/lib/booking/booking-rule-error";
+import {
+  BookingRuleError,
+  subscriptionUnpaidError,
+} from "@/lib/booking/booking-rule-error";
 import { assertNoLiveCheckoutHold } from "@/lib/booking/request-cohort";
 import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
 import { isExclusionViolation } from "@/lib/db/pg-errors";
@@ -427,10 +426,7 @@ export async function PATCH(
                 where: { id: subscriptionId, ...SETTLED_SUBSCRIPTION },
               });
               if (settled === 0) {
-                throw new BookingRuleError(
-                  "SUBSCRIPTION_UNPAID",
-                  "This plan is paid at purchase — the request has no successful payment.",
-                );
+                throw subscriptionUnpaidError();
               }
               // Confirm existing tentative sessions. RESCHEDULED rows keep their
               // ORIGINAL startsAt; flipping them re-confirms the time the
@@ -472,83 +468,11 @@ export async function PATCH(
         "holdNotices" in result ? result.holdNotices : null,
       );
 
-      // If duplicate, return early — EXCEPT an APPROVED_PENDING_PAYMENT whose
-      // pay-link mint previously failed (#1169 PR 2): fall through so a
-      // re-approval restores the link.
-      const needsLinkRetry =
-        result.duplicate &&
-        result.data.status === AppointmentStatus.APPROVED_PENDING_PAYMENT &&
-        !result.data.pendingPaymentUrl;
-      if (result.duplicate && !needsLinkRetry) {
+      if (result.duplicate) {
         return NextResponse.json({
           data: result.data,
           message: result.message,
         });
-      }
-
-      // #1169 PR 2 — mint the pay-link AFTER the transaction commits (a
-      // gateway round-trip inside the Serializable tx pinned a connection and
-      // left a live link on rollback). #1775 B-9 — the block is the shared
-      // post-commit mint every approval writer calls: it reuses a live
-      // PENDING intent on a retry (#1181), CASes the link onto the row,
-      // tombstones an orphaned order and mails only a live link.
-      let mintedLink: {
-        paymentUrl: string;
-        paymentAmount?: number;
-        paymentCurrency?: string;
-      } | null = null;
-      // Legacy in-flight APPROVED_PENDING_PAYMENT rows only (#1775 C-1).
-      if (needsLinkRetry) {
-        const mint = await mintApprovalPaymentAfterCommit({
-          kind: "subscription",
-          id: subscriptionId,
-        });
-        // A lapsed approval is not a retryable mint failure (#1319 review):
-        // the dead intent's request has already been swept.
-        if (mint.status === "lapsed") {
-          return NextResponse.json(
-            {
-              data: result.data,
-              error: mint.message,
-              requiresPayment: true,
-              paymentUrl: null,
-            },
-            { status: 409 },
-          );
-        }
-        // #1780 R-4 — a conflict is a 409 with its code, never a 502.
-        const conflict =
-          mint.status === "mint_failed"
-            ? approvalMintConflict(mint.error)
-            : null;
-        if (conflict) {
-          return NextResponse.json(
-            { data: result.data, error: conflict.message, code: conflict.code },
-            { status: 409 },
-          );
-        }
-        // The 502 invites a retry; the retry reuses the same PENDING payment.
-        if (mint.status === "mint_failed") {
-          return NextResponse.json(
-            {
-              data: result.data,
-              error:
-                "The approval was recorded, but generating the payment link failed. Approve again to retry generating the link.",
-              requiresPayment: true,
-              paymentUrl: null,
-            },
-            { status: 502 },
-          );
-        }
-        if (mint.status === "minted") {
-          mintedLink = {
-            paymentUrl: mint.paymentUrl,
-            paymentAmount: mint.paymentAmount,
-            paymentCurrency: mint.paymentCurrency,
-          };
-        } else if (mint.status === "already_live") {
-          mintedLink = { paymentUrl: mint.paymentUrl };
-        }
       }
 
       // #1004 — a rejected request that was already paid for has to give the
@@ -661,7 +585,6 @@ export async function PATCH(
       // Return success response (exclude emailData from response)
       return NextResponse.json({
         ...result,
-        ...mintedLink,
         refund: rejectionRefund,
       });
     } catch (error) {
