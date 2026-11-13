@@ -413,11 +413,14 @@ last column; do not weaken a row without changing its enforcer in the same PR.
 
 See the decision record `docs/decisions/2026-11-03-booking-v2-direction.md`. A 1:1 plan that ends with unused sessions will offer the client up to 4 extra weeks (if the expert has open hours and agrees) or a refund, defaulting to a refund after 7 days; no-shows and late cancels are not compensated (#2561 / #2568). A missed class session keeps today's make-up-within-14-days-or-refund rule. A class with many misses keeps each learner's exit right, and at half the class missed a support case opens (support may cancel for everyone; nothing cancels automatically). Decided 2026-11-04 (#2563): a learner's class exit right is 3 host misses in any rolling 30 days or max(3, 15% of N) misses in total, kept once tripped unless an ops correction withdraws it before it is used (built: `exitRightFor`, `exitThresholdFor` in `lib/booking/class-series.ts`), with the support case at twice that or 3 misses in a row; an ADMIN executes a class-wide cancel (refund of unheld sessions, no second admin); staff can grant a no-money make-up ("add N sessions" / "add up to 4 weeks"); a half-missed class holds only that class's unpaid host earnings. Apart from the exit right, until these ship, don't write compensation copy.
 
+## Three time pickers (built 2026-11-13)
+
+One per job; do not add a fourth, and do not give a new surface its own picker (`docs/calendar/allocate-heatmap-ux.md` §9). **Pick one time:** `SingleTimePicker` with `MonthGrid` (`components/scheduling/`), options from `lib/scheduling/single-session-options.ts`; the caller passes its writer's `purpose`, so the lead is `leadMsFor` or `eventLeadMs`, never restated. A buyer gets free times inside published hours, a door-reported held time as "Taken" with "Notify me", and a count of booked times; a host gets free and "Booked" times and an "outside my hours" switch. **Place many sessions on a week:** `UnifiedCalendar`/`WeekGrid`/`SessionTray`, `MobileDayListPicker` on a phone. **A repeating class pattern:** `ClassPatternScheduler`. On an instant-booking expert a held 1:1 time is taken, never a request: `consultationCtaFor(mode)` and 409 `REQUEST_NOT_OFFERED` at the request door.
+
 ## Decided, not yet built (2026-11-12)
 
 Do not build against the older direction. The reasoning and the rejected options are in `docs/decisions/2026-11-12-booking-follow-up-train.md`; the tracking issue is #2720.
 
-- Three time pickers, one per job (a month calendar with a times list, the heat-map grid with its phone day list, the pattern form), replacing the eight that exist. Do not add a ninth, and do not give a new host surface its own picker.
 - Removing availability under live bookings stays allowed, with a confirm dialog first; do not make it a lock. Only a Weekly/Custom switch is refused (`checkActiveAppointments`).
 - One status vocabulary from one function (Requested, Awaiting payment, Confirmed, Being moved, Completed, Cancelled, Refunded); do not add a fifth label map.
 - Detail page: one amber must-act banner and the Payment card in the right rail.
@@ -449,7 +452,9 @@ Recognise these leftovers and delete them; never reintroduce them.
 - `EVENT_WAITLIST_RENOTIFY_COOLDOWN_MS` and `EVENT_WAITLIST_RETENTION_MS`: replaced by `INTEREST_RENOTIFY_COOLDOWN_MS` and `INTEREST_RETENTION_MS` in `lib/booking/interest/lifecycle.ts`, which slot backup interest now shares (it used to notify a row once ever and never purge).
 - A capacity PATCH that wrote the submitted value as the instance override on every save, so an untouched field pinned an override: an override equal to the plan's default is stored as null (`capacityOverrideFor`).
 - Re-planning a live webinar or class through Manage timings: refused with 409 `USE_RETIME`; a webinar is re-timed and a class moves as a series (`retimeClassSeries`).
-- `datetime-local` event times in the webinar editor and the class make-up, and the re-time dialog's blind date + time select (`retimeStartsOn`): replaced by `SingleSessionPicker` and `event-time-rules.ts`.
+- `datetime-local` event times in the webinar editor and the class make-up, and the re-time dialog's blind date + time select (`retimeStartsOn`): replaced by the single-time picker and `event-time-rules.ts`.
+- `SingleSessionPicker`, `TrialSlotPicker`, `TrialBookingModal`, the expert page's `SlotList`/`slot-list-policy`/`day-state`, and the class editor's and organisation allocate dialog's `datetime-local` boxes: replaced by `SingleTimePicker`.
+- The INSTANT "contended → request" arm of `consultationCtaFor`: a held time is taken; the request door refuses instant-booking experts.
 - Server-local `setDate` series generation in the class `crud-with-plan` POST: replaced by `seriesStartsFrom`.
 - The monthly `CycleUnit` arm (`cycleUnit`, month-based `planCycleStart`/`planCycleIndex`): deleted; plans pace in plan weeks.
 - A weeks plan ending at the purchase's wall time 7×N days on (a sub-day stub week): replaced by the zone midnight that closes week N.

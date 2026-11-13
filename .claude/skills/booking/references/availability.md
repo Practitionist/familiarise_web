@@ -388,7 +388,7 @@ already busy (AE-2, #784).
 ## 7. Grid states, and how they are painted
 
 `lib/scheduling/interval-status-tokens.ts` is the single status vocabulary the
-dashboard heat map, the mobile day list, the trial picker and the legend
+dashboard heat map, the mobile day list, `TrialScheduleCalendar` and the legend
 (`components/scheduling/SlotStatusLegend.tsx`) all read, so a swatch can never
 document a paint the cells do not use. Every state carries a colour **and** a
 non-colour cue (a pattern, a border style or an icon), so no two states differ
@@ -467,11 +467,14 @@ subscription reschedule clamps the picker to `rescheduleWindow`
 (`lib/booking/entitlement.ts`), the allocator's own window computed with the
 moved sessions released, so a pick the auto-confirm would drop is never offered.
 
-The expert page's slot list (`windowsForDay` in `lib/scheduling/booking-windows.ts`)
-takes the same lead: a priced plan in REQUEST mode uses the 2-hour request lead.
-`isBookableWindow` offers a window only when its `bookingStatus` is `available`;
-a partly booked window is never offered to a buyer, because every writer refuses
-a half-taken half-hour.
+The single-time picker (`components/scheduling/SingleTimePicker.tsx`) takes the
+same lead for its caller's purpose: a priced plan in REQUEST mode uses the 2-hour
+request lead (`singleTimeLeadMs` in `lib/scheduling/single-session-options.ts`).
+A buyer's free times are exactly `windowsForDay` windows that `isBookableWindow`
+accepts, which requires `bookingStatus` `available`; a partly booked window is
+never offered to a buyer, because every writer refuses a half-taken half-hour.
+A time over a booking is counted as taken; one the request door reported held
+is shown taken with "Notify me". It reads one month through `useAvailabilityMonth`.
 
 The consultant's allocate and availability grids stay desktop-only behind
 `DesktopOnlyNotice`. On a phone the allocate page shows "Auto-schedule in my open
@@ -513,3 +516,6 @@ auto-mode allocation of a consultation or subscription, with `topUp` (and
   the per-day slices in §6.
 - **A single-instant overlap probe.** The allocator once probed one span from
   the earliest to the latest pick, so a session between two picks read as taken.
+- **The expert page's slot list and day marks** (`SlotList`, `slot-list-policy`,
+  `day-state`) and the trial day strip (`TrialSlotPicker`). Replaced by the
+  single-time picker and `monthSummary`.

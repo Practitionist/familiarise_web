@@ -126,7 +126,7 @@ Reading the grid with the DevTools MCP:
 1. G-SUB allocate (settled, paid plan): the first non-Too-soon cell today.
 2. G-REQ allocate (unpaid approval of a priced request): same.
 3. F-BUSY consultee reschedule as B3 (`/dashboard/consultee/[B3 uid]/appointments/[F-BUSY aid]/reschedule`): same.
-4. H1's expert page as B1, today, 60-min plan (book purpose, slot list).
+4. H1's expert page as B1, today, 60-min plan (book purpose, the dialog's times pane).
 5. Click one Too soon cell on each grid.
 
 **Expect:**
