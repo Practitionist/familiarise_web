@@ -9,6 +9,7 @@ import {
 
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { restoreEarningsHold } from "@/lib/payments/payouts/earnings-hold";
+import { ReleasedSessionsSchema } from "./released-sessions";
 import {
   HISTORY_FROM_UNKNOWN,
   transitionConsultationRequest,
@@ -218,6 +219,22 @@ async function settleParentAfterReschedule(
   }
 }
 
+/** The released ids that were unconfirmed holds when released, from the release record. */
+async function heldAtRelease(
+  tx: Pick<Tx, "rescheduleRequest">,
+  request: Pick<RestorableRequest, "id" | "releasedOccurrenceIds">,
+): Promise<ReadonlySet<string>> {
+  const row = await tx.rescheduleRequest.findUnique({
+    where: { id: request.id },
+    select: { releasedSessions: true },
+  });
+  const parsed = ReleasedSessionsSchema.safeParse(row?.releasedSessions);
+  if (!parsed.success) return new Set();
+  return new Set(
+    request.releasedOccurrenceIds.filter((_, i) => parsed.data[i]?.tentative),
+  );
+}
+
 /**
  * Restore the released slots and the parent request on the caller's
  * transaction. The caller has already ended the proposal through its CAS, so
@@ -237,15 +254,24 @@ export async function restoreRescheduledBooking(
   // No appointmentId: a whole-subscription reschedule releases slots across
   // sibling appointments, so each row's history belongs to the appointment it
   // actually sits on, not to the one the proposal was opened against.
-  const restored = await transitionOccurrenceCompletion(tx, {
-    actorUserId: meta.actorUserId,
-    reason: meta.reason,
-    where: { id: { in: request.releasedOccurrenceIds } },
-    to: "SCHEDULED",
-    data: { isTentative: false },
-    fromIn: ["RESCHEDULED"],
-    allowZero: true,
-  });
+  // Each row goes back as the release found it: firm, or an unpaid hold.
+  const held = await heldAtRelease(tx, request);
+  let restored = 0;
+  for (const isTentative of [false, true]) {
+    const ids = request.releasedOccurrenceIds.filter(
+      (id) => held.has(id) === isTentative,
+    );
+    if (ids.length === 0) continue;
+    restored += await transitionOccurrenceCompletion(tx, {
+      actorUserId: meta.actorUserId,
+      reason: meta.reason,
+      where: { id: { in: ids } },
+      to: "SCHEDULED",
+      data: { isTentative },
+      fromIn: ["RESCHEDULED"],
+      allowZero: true,
+    });
+  }
 
   await settleParentAfterReschedule(tx, request, meta);
   if (restored > 0) {
