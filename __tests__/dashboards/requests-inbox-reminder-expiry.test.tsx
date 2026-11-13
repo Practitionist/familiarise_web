@@ -4,7 +4,7 @@
  * from the page.
  */
 
-const mockSubscription = { findMany: jest.fn(), count: jest.fn() };
+const mockConsultation = { findMany: jest.fn(), count: jest.fn() };
 // The inbox reaches payout setup, whose clawback notices load the email stack (unloadable in jsdom).
 jest.mock("@/lib/payments/payouts/clawback-notifications", () => ({
   stageClawbackNotice: jest.fn(),
@@ -14,10 +14,13 @@ jest.mock("@/lib/payments/payouts/clawback-notifications", () => ({
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    consultation: { findMany: jest.fn(), count: jest.fn() },
+    consultation: {
+      findMany: (...args: unknown[]) => mockConsultation.findMany(...args),
+      count: (...args: unknown[]) => mockConsultation.count(...args),
+    },
     subscription: {
-      findMany: (...args: unknown[]) => mockSubscription.findMany(...args),
-      count: (...args: unknown[]) => mockSubscription.count(...args),
+      findMany: jest.fn(async () => []),
+      count: jest.fn(async () => 0),
     },
     trial: { findMany: jest.fn(), count: jest.fn() },
   },
@@ -34,7 +37,7 @@ import { toStampDate } from "@/lib/dashboard/requests-inbox-state";
 import {
   CP,
   NOW,
-  awaitingSubscription,
+  awaitingConsultation,
   serve,
 } from "../fixtures/requests-inbox";
 
@@ -43,12 +46,12 @@ afterEach(() => {
 });
 
 it("drops Remind when the pay window closes while the inbox stays open", async () => {
-  const served = serve([awaitingSubscription]);
-  mockSubscription.findMany.mockImplementation(served.findMany);
-  mockSubscription.count.mockImplementation(served.count);
+  const served = serve([awaitingConsultation]);
+  mockConsultation.findMany.mockImplementation(served.findMany);
+  mockConsultation.count.mockImplementation(served.count);
   const { rows } = await readRequestsInbox({
     consultantProfileId: CP,
-    type: "subscription",
+    type: "consultation",
     sort: "priority",
     page: 1,
     now: NOW,

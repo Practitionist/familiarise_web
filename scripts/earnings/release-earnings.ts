@@ -7,18 +7,11 @@
  * period to READY status. Earnings are held for a period after payment so a
  * refund or dispute lands before the money is payable.
  *
- * #1471 — the organization arm used to be missing here, and because every
- * scheduled entry point (the GitHub Actions job, the cleanup HTTP twin, the
- * admin system-jobs runner) imports THIS module, `OrganizationEarnings` rows
- * never left PENDING and a host org's retained share could never be picked up
- * by `createOrgPayoutBatch`, which only selects READY rows.
+ * Both arms run in one pass, so a host organisation's retained share reaches
+ * READY for `createOrgPayoutBatch` like a consultant's.
  *
- * This module exports functions that can be used by:
- * - Local development: `npm run scripts:release-earnings`
- * - GitHub Actions: `jobs/release-earnings.ts`
- * - API routes: Can import and call functions directly
- *
- * Schedule: Runs hourly via GitHub Actions
+ * Registered as `release-earnings` in lib/cron/cleanup-registry.ts and run by
+ * the ticker every 15 minutes (`TARGET_EVERY_MINUTES` in lib/cron/schedule.ts).
  */
 
 import { AWAITING_HUMAN, EARNINGS_HOLDING_MISS } from "@/lib/booking/misses";

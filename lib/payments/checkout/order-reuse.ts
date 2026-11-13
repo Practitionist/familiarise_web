@@ -539,7 +539,7 @@ export async function releaseSupersededHolds(params: {
           await transitionSubscriptionRequest(tx, {
             where: { id: appointment.subscription.id },
             to: "CANCELLED",
-            fromIn: ["PENDING", "APPROVED_PENDING_PAYMENT"],
+            fromIn: ["PENDING"],
             actorUserId: params.userId,
             reason: SUPERSEDED_HOLD_NOTE,
             data: {

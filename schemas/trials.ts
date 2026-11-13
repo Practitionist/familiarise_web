@@ -24,15 +24,6 @@ export const CreateTrialSchema = z.object({
 
 export const UpdateTrialSchema = z.object({
   status: TrialSessionStatusEnum.optional(),
-  scheduledTime: z.string().optional(),
-  slotData: z
-    .object({
-      startsAt: z.string(),
-      endsAt: z.string(),
-      availabilityWindowId: z.string(),
-      slotType: z.enum(["WEEKLY", "CUSTOM"]),
-    })
-    .optional(),
   notes: z.string().max(MAX_TEXT_LENGTH).optional(), // #831
   // Required when status = CONVERTED — the subscription created via checkout
   subscriptionId: z.string().optional(),

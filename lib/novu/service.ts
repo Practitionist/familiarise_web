@@ -615,10 +615,6 @@ export const notifyNewReview = defineSingleNotifier<ReviewPayload>(
 );
 
 // Trials
-export const notifyTrialRequested = defineZonedSingleNotifier(
-  W.TRIAL_SESSION_REQUESTED,
-  trialWire,
-);
 export const notifyTrialScheduled = defineZonedSingleNotifier(
   W.TRIAL_SESSION_SCHEDULED,
   trialWire,

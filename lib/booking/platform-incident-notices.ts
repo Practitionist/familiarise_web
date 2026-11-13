@@ -23,7 +23,7 @@ import { postOpsChat } from "@/lib/observability/ops-chat";
 import {
   DEAD_LETTER_PREFIX,
   MAX_REMEDY_ATTEMPTS,
-  REBOOKABLE_PARENT_STATUSES,
+  isRebookableParent,
 } from "./incident-keys";
 
 const DIGEST_LEARNERS_PER_RUN = 500;
@@ -96,9 +96,9 @@ function digestItem(row: DigestRow): IncidentDigestItem {
       row.kind === "REFUND_AT_DUE" &&
       row.doneAt === null &&
       row.dueAt > new Date() &&
-      REBOOKABLE_PARENT_STATUSES.has(
-        (appt.consultation ?? appt.trial)?.status ?? "",
-      ),
+      (appt.trial
+        ? isRebookableParent("trial", appt.trial.status)
+        : isRebookableParent("consultation", appt.consultation?.status)),
     planTitle:
       appt.consultation?.consultationPlan.title ??
       appt.trial?.subscriptionPlan.title ??

@@ -34,7 +34,7 @@ import {
 } from "@/utils/appointmentlock";
 import { BookingRuleError } from "./booking-rule-error";
 import { createMakeUpOccurrence } from "./class-sessions";
-import { REBOOKABLE_PARENT_STATUSES, incidentRefundKey } from "./incident-keys";
+import { incidentRefundKey, isRebookableParent } from "./incident-keys";
 import { rescheduleNotificationVariant } from "./reschedule-proposals";
 import { transitionConsultationRequest, transitionTrial } from "./transitions";
 
@@ -273,7 +273,7 @@ async function assertNoIncidentRefund(
   if (marker?.refundOwedKey === key || refund) throw closed();
 }
 
-/** A booking completed before the void goes back to SCHEDULED, so the rebooked session completes and cancels normally. */
+/** A completed booking reopens (a 1:1 to APPROVED, a trial to SCHEDULED) so the rebooked session completes and cancels normally. */
 async function reopenBooking(
   tx: Tx,
   ctx: RebookContext,
@@ -296,13 +296,14 @@ async function reopenBooking(
           where: { id: booking.id },
           select: { status: true },
         });
-  if (!live || !REBOOKABLE_PARENT_STATUSES.has(live.status)) throw closed();
+  if (!live || !isRebookableParent(booking.kind, live.status)) throw closed();
+  // A confirmed booking stays as it is; only a completed one reopens.
   if (live.status !== "COMPLETED") return;
   if (booking.kind === "consultation") {
     await transitionConsultationRequest(tx, {
       ...meta,
       where: { id: booking.id },
-      to: "SCHEDULED",
+      to: "APPROVED",
       fromIn: ["COMPLETED"],
     });
     return;
@@ -462,7 +463,7 @@ export async function rebookIncidentRemedy(args: {
   const remedy = await readRemedy(args.remedyId);
   assertOpenFor(remedy, args.userId, now);
   const booking = bookingOf(remedy);
-  if (!booking || !REBOOKABLE_PARENT_STATUSES.has(booking.status))
+  if (!booking || !isRebookableParent(booking.kind, booking.status))
     throw closed();
   assertStartAllowed(args.startsAt, now);
   const voided = remedy.occurrence;
@@ -593,7 +594,8 @@ export async function readOpenIncidentRemedies(
   });
   return rows.flatMap((row) => {
     const booking = bookingOf(row);
-    if (!booking || !REBOOKABLE_PARENT_STATUSES.has(booking.status)) return [];
+    if (!booking || !isRebookableParent(booking.kind, booking.status))
+      return [];
     return [
       {
         id: row.id,

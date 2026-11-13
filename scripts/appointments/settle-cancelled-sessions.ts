@@ -116,10 +116,7 @@ type CancelledSession = Prisma.AppointmentOccurrenceGetPayload<{
 export const planEndRefundKey = (subscriptionId: string, paymentId: string) =>
   `plan-end:${subscriptionId}:pay:${paymentId}`;
 const PLAN_ENDED_HISTORY_REASON = "PLAN_ENDED";
-const PLAN_LIVE_STATUSES: AppointmentStatus[] = [
-  AppointmentStatus.APPROVED,
-  AppointmentStatus.SCHEDULED,
-];
+const PLAN_LIVE_STATUSES: AppointmentStatus[] = [AppointmentStatus.APPROVED];
 
 // #476 — one lock for every entry; fail-closed because this sweep refunds.
 export async function settleCancelledSessions(

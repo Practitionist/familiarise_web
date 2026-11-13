@@ -252,7 +252,7 @@ export async function GET(req: NextRequest) {
     const webinars = await prisma.webinar.findMany({
       where: {
         webinarPlan: { consultantProfileId },
-        status: { in: ["SCHEDULED", "IN_PROGRESS", "COMPLETED"] },
+        status: { in: ["SCHEDULED", "COMPLETED"] },
         ...(userSearchWhere
           ? { appointment: { participants: { some: participantFilter } } }
           : {}),
@@ -268,7 +268,7 @@ export async function GET(req: NextRequest) {
     const classes = await prisma.class.findMany({
       where: {
         classPlan: { consultantProfileId },
-        status: { in: ["SCHEDULED", "IN_PROGRESS", "COMPLETED"] },
+        status: { in: ["SCHEDULED", "COMPLETED"] },
         ...(userSearchWhere
           ? { appointment: { participants: { some: participantFilter } } }
           : {}),

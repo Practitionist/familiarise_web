@@ -26,8 +26,14 @@ jest.mock("../../../utils/contentValidation", () =>
   jest.requireActual("../../fixtures/content-validation-stub"),
 );
 
-import { PATCH as webinarPatch } from "../../../app/api/bookings/webinars/crud-with-plan/route";
-import { PATCH as classPatch } from "../../../app/api/bookings/classes/crud-with-plan/route";
+import {
+  PATCH as webinarPatch,
+  POST as webinarPost,
+} from "../../../app/api/bookings/webinars/crud-with-plan/route";
+import {
+  PATCH as classPatch,
+  POST as classPost,
+} from "../../../app/api/bookings/classes/crud-with-plan/route";
 
 const request = (body: unknown) =>
   ({ json: async () => body }) as unknown as Parameters<typeof webinarPatch>[0];
@@ -35,7 +41,7 @@ const request = (body: unknown) =>
 beforeEach(() => jest.clearAllMocks());
 
 describe("crud-with-plan PATCH refuses a cancel-shaped status", () => {
-  it.each(["CANCELLED", "COMPLETED", "IN_PROGRESS"])(
+  it.each(["CANCELLED", "COMPLETED"])(
     "webinar and class: status %s -> 409 USE_CANCEL_ROUTE, nothing read or written",
     async (status) => {
       for (const patch of [webinarPatch, classPatch]) {
@@ -58,3 +64,18 @@ describe("crud-with-plan PATCH refuses a cancel-shaped status", () => {
     expect(webinarPlanFindUnique).toHaveBeenCalled();
   });
 });
+
+it.each(["CANCELLED", "COMPLETED"])(
+  "a webinar or class is created only as a draft or published, never %s",
+  async (status) => {
+    for (const post of [webinarPost, classPost]) {
+      const res = await post(request({ status }) as never);
+      expect(res.status).toBe(400);
+      const { details } = await res.json();
+      expect(details).toContainEqual(
+        expect.objectContaining({ path: ["status"] }),
+      );
+    }
+    expect(transaction).not.toHaveBeenCalled();
+  },
+);

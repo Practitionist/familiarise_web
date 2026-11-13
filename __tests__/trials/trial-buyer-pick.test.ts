@@ -35,33 +35,23 @@ const START = new Date("2026-11-12T10:00:00.000Z");
 const END = new Date("2026-11-12T10:30:00.000Z");
 
 function fakeTx() {
-  const state = { status: "PENDING" };
   const tx = {
     appointment: { create: jest.fn(async () => ({ id: "apt-1" })) },
     trial: {
-      create: jest.fn(async () => ({ id: "trial-1", status: "PENDING" })),
-      findUnique: jest.fn(async () => ({
-        status: state.status,
+      create: jest.fn(async ({ data }: { data: { status: string } }) => ({
+        id: "trial-1",
+        status: data.status,
         appointmentId: "apt-1",
       })),
-      updateMany: jest.fn(
-        async ({
-          where,
-          data,
-        }: {
-          where: { status: { in: string[] } };
-          data: { status: string };
-        }) => {
-          if (!where.status.in.includes(state.status)) return { count: 0 };
-          state.status = data.status;
-          return { count: 1 };
-        },
-      ),
+      updateMany: jest.fn(),
     },
     bookingStatusHistory: { create: jest.fn(async () => ({})) },
   };
-  return { tx, state };
+  return { tx };
 }
+
+const createdData = (tx: ReturnType<typeof fakeTx>["tx"]) =>
+  (tx.trial.create.mock.calls[0] as unknown as [{ data: object }])[0].data;
 
 const args = (paid: boolean) => ({
   consulteeProfileId: "cee-1",
@@ -84,7 +74,7 @@ beforeEach(() => {
 });
 
 it("a free pick writes a confirmed session and moves the trial straight to SCHEDULED", async () => {
-  const { tx, state } = fakeTx();
+  const { tx } = fakeTx();
   const out = await bookTrialInTx(tx as unknown as Tx, args(false));
 
   expect(tx.appointment.create).toHaveBeenCalledWith({
@@ -108,22 +98,25 @@ it("a free pick writes a confirmed session and moves the trial straight to SCHED
     expect.any(Array),
     expect.objectContaining({ status: "CONFIRMED" }),
   );
-  expect(tx.trial.updateMany).toHaveBeenCalledWith(
-    expect.objectContaining({
-      where: expect.objectContaining({ status: { in: ["PENDING"] } }),
-      data: { status: "SCHEDULED" },
-    }),
-  );
-  expect(state.status).toBe("SCHEDULED");
+  // Born in its final state: no PENDING row and no transition.
+  expect(createdData(tx)).toMatchObject({ status: "SCHEDULED" });
+  expect(createdData(tx)).not.toHaveProperty("paymentDueAt");
+  expect(tx.trial.updateMany).not.toHaveBeenCalled();
   expect(out).toEqual(
     expect.objectContaining({ status: "SCHEDULED", appointmentId: "apt-1" }),
   );
-  // The creation row and the transition row, both in this transaction.
-  expect(tx.bookingStatusHistory.create).toHaveBeenCalledTimes(2);
+  // One creation row, in this transaction.
+  expect(tx.bookingStatusHistory.create).toHaveBeenCalledTimes(1);
+  expect(tx.bookingStatusHistory.create).toHaveBeenCalledWith({
+    data: expect.objectContaining({
+      fromStatus: "CREATED",
+      toStatus: "SCHEDULED",
+    }),
+  });
 });
 
 it("a paid pick holds the time tentatively, AWAITING_PAYMENT, with the pay window pinned to the start", async () => {
-  const { tx, state } = fakeTx();
+  const { tx } = fakeTx();
   await bookTrialInTx(tx as unknown as Tx, args(true));
 
   expect(tx.appointment.create).toHaveBeenCalledWith(
@@ -144,12 +137,10 @@ it("a paid pick holds the time tentatively, AWAITING_PAYMENT, with the pay windo
   const dueAt = payWindowEnd(NOW, START);
   // 24 h from now ends before the session, so the window is the full 24 h.
   expect(dueAt.toISOString()).toBe("2026-11-11T08:00:00.000Z");
-  expect(tx.trial.updateMany).toHaveBeenCalledWith(
-    expect.objectContaining({
-      data: { status: "AWAITING_PAYMENT", paymentDueAt: dueAt },
-    }),
-  );
-  expect(state.status).toBe("AWAITING_PAYMENT");
+  expect(createdData(tx)).toMatchObject({
+    status: "AWAITING_PAYMENT",
+    paymentDueAt: dueAt,
+  });
 });
 
 it("a pick close to the start closes the pay window 15 minutes before it", () => {

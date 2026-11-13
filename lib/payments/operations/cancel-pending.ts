@@ -224,7 +224,7 @@ export async function cancelPendingCheckout(args: {
             await transitionSubscriptionRequest(tx, {
               where: { id: appt.subscription.id },
               to: "CANCELLED",
-              fromIn: ["PENDING", "APPROVED_PENDING_PAYMENT"],
+              fromIn: ["PENDING"],
               data: {
                 cancellationNotes: CANCEL_NOTE,
                 cancelledAt: new Date(),

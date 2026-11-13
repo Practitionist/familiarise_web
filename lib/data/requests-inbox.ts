@@ -6,9 +6,10 @@
  * way the payment history builds its own (lifecycleOf / planOf), so the inbox,
  * Home and the detail page cannot disagree about a booking.
  *
- * Sources per type: consultation and subscription requests in PENDING and
- * APPROVED_PENDING_PAYMENT (the needs-you predicates), subscriptions whose
- * live cycle is finished, trials in PENDING / AWAITING_PAYMENT, and unpaid
+ * Sources per type: consultation requests in PENDING and
+ * APPROVED_PENDING_PAYMENT, subscription requests in PENDING (the needs-you
+ * predicates), subscriptions whose
+ * live cycle is finished, trials in AWAITING_PAYMENT, and unpaid
  * direct checkouts still inside their pay window (listed, never counted).
  * Chips narrow the sources server-side. A time sort over one source pages in
  * SQL by the request clock; every other view pages a bounded window sorted
@@ -55,6 +56,7 @@ import {
   inboxBucketOf,
   isCursorSort,
   sortInboxRows,
+  tentativeAtomsOf,
   toStampDate,
   type InboxBucket,
   type InboxChip,
@@ -632,7 +634,7 @@ function subscriptionRow(
     ? entitlement.cycle.nextBatch * slotsPerSession
     : null;
   const requiredSlots =
-    facts.tentativeSlotCount > 0 ? facts.tentativeSlotCount : freshBatch;
+    facts.tentativeSlotCount > 0 ? tentativeAtomsOf(facts.slots) : freshBatch;
   return finish(
     {
       id: s.id,
@@ -684,8 +686,7 @@ function trialRow(
 ): InboxRowInput {
   const request = lifecycleOf({ trial: t });
   const facts = wrapperFacts(t.appointment, "TRIAL");
-  // A paid trial's pay link runs to paymentDueAt; a request has no clock of
-  // its own (no sweep expires a PENDING trial), so the bucket treats it as due.
+  // A listed trial is a paid one awaiting payment; its pay link runs to paymentDueAt.
   const deadline =
     pendingPayLinkDeadline(t.appointment) ??
     (t.status === "AWAITING_PAYMENT" ? t.paymentDueAt : null);
@@ -990,17 +991,12 @@ function planSources(
     return byChip[key] ?? [];
   }
   if (type === "subscription") {
+    // A plan is paid at checkout, so it is never awaiting payment.
     const pending = pendingSubscriptionWhere(cp, scope);
-    const awaiting = subscriptionSource(
-      cp,
-      subscriptionRequestWhere(cp, scope, "APPROVED_PENDING_PAYMENT"),
-      now,
-    );
     const nextCycle = nextCycleSource(cp, scope, now);
     const byChip: Partial<Record<ChipKey, InboxSource[]>> = {
       all: [
         subscriptionSource(cp, pending, now),
-        awaiting,
         nextCycle,
         subscriptionSource(
           cp,
@@ -1021,7 +1017,6 @@ function planSources(
           now,
         ),
       ],
-      "awaiting-payment": [awaiting],
       "next-cycle": [nextCycle],
       declined: [
         subscriptionSource(
@@ -1033,14 +1028,10 @@ function planSources(
     };
     return byChip[key] ?? [];
   }
-  // A trial has no hold clock, so "answer today" is every pending one.
-  const trialStatuses: Partial<
-    Record<ChipKey, ("PENDING" | "AWAITING_PAYMENT" | "REJECTED")[]>
-  > = {
-    all: ["PENDING", "AWAITING_PAYMENT"],
-    "answer-today": ["PENDING"],
+  // A trial never waits on the expert: the only one listed is a paid trial awaiting payment.
+  const trialStatuses: Partial<Record<ChipKey, "AWAITING_PAYMENT"[]>> = {
+    all: ["AWAITING_PAYMENT"],
     "awaiting-payment": ["AWAITING_PAYMENT"],
-    declined: ["REJECTED"],
   };
   const statuses = trialStatuses[key];
   return statuses

@@ -1,6 +1,6 @@
 /**
  * Chat actions carry a chat target, a class or webinar DM follows the event's
- * openable states (IN_PROGRESS included), and the list quick view opens the
+ * openable states, and the list quick view opens the
  * chat sheet instead of linking to Messages.
  */
 import * as React from "react";
@@ -30,7 +30,7 @@ const classVm = {
   title: "Algebra 101",
   counterpart: { name: "Asha", image: null },
   consultantProfileId: "cp-1",
-  status: "IN_PROGRESS",
+  status: "SCHEDULED",
   bucket: "upcoming",
   needsActionReason: null,
   nextAt: null,

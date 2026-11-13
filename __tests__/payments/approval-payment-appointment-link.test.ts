@@ -185,6 +185,16 @@ jest.mock("../../lib/payments/checkout/gateway-intent", () => ({
     mockTombstone(input),
 }));
 
+// Direct checkout's pricing refuses a review-first expert; the pay link must never reach it.
+jest.mock("../../lib/payments/checkout/pricing", () => ({
+  __esModule: true,
+  calculateAmountAndValidate: jest.fn(async () => {
+    throw Object.assign(new Error("review first"), {
+      code: "REQUEST_APPROVAL_REQUIRED",
+    });
+  }),
+}));
+
 import { Prisma } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import {
@@ -293,6 +303,13 @@ describe("approval mint threads appointmentId (#1181)", () => {
     expect(intentArg.metadata).not.toHaveProperty("appointmentId");
     expect(mockedPaymentCreate.mock.calls[0][0].data.appointmentId).toBeNull();
   });
+});
+
+it("an approved request's pay link mints without direct checkout's review-first refusal", async () => {
+  await expect(
+    createApprovalPaymentIntent(mintParams()),
+  ).resolves.toMatchObject({ paymentIntentId: "order_new" });
+  expect(mockCreatePaymentIntent).toHaveBeenCalledTimes(1);
 });
 
 describe("a request is charged its agreed price", () => {

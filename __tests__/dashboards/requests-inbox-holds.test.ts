@@ -25,6 +25,9 @@ import {
   pendingSubscriptionWhere,
 } from "@/lib/data/needs-you";
 import { readRequestsInbox } from "@/lib/data/requests-inbox";
+import { assertExpectedTentativeSlotCount } from "@/lib/booking/allocation/guards";
+import { tentativeSlotCountOf } from "@/lib/booking/allocation/counts";
+import type { AppointmentWithSlots } from "@/lib/booking/allocation/types";
 import {
   isDialogFreeApproval,
   rowActions,
@@ -173,4 +176,67 @@ describe("direct checkout holds", () => {
       expect(where.AND).toContainEqual(ANSWERABLE_CONSULTATION);
     }
   });
+});
+
+describe("approving a request's own times", () => {
+  const request = (id: string, minutes: number) => ({
+    ...inFlight,
+    id,
+    requestedAt: hoursAgo(1),
+    bookingSource: "REQUEST_SUBMITTED",
+    consultationPlan: {
+      ...inFlight.consultationPlan,
+      durationInHours: minutes / 60,
+    },
+    appointment: {
+      ...inFlight.appointment,
+      id: `a-${id}`,
+      occurrences: [
+        {
+          ...inFlight.appointment.occurrences[0],
+          id: `a-${id}-o0`,
+          endsAt: new Date(hoursAhead(48).getTime() + minutes * 60_000),
+        },
+      ],
+      payment: [],
+    },
+  });
+
+  it.each([30, 60, 90])(
+    "a %i-minute request is approved on its requested time, and the allocate route's count agrees",
+    async (minutes) => {
+      const fixture = request(`c-${minutes}`, minutes);
+      const one = serve([fixture]);
+      m.consultation.findMany.mockImplementation(one.findMany);
+      m.consultation.count.mockImplementation(one.count);
+      const { rows } = await readRequestsInbox({
+        consultantProfileId: CP,
+        type: "consultation",
+        sort: "priority",
+        page: 1,
+        now: NOW,
+      });
+      const [row] = rows;
+      expect(isDialogFreeApproval(row)).toBe(true);
+      const presentation = deriveBookingPresentation(
+        row.presentation,
+        "CONSULTANT",
+        { now: NOW },
+      );
+      expect(rowActions(row, presentation).primary).toEqual({
+        kind: "approve",
+        mode: "requested",
+      });
+      // The approval posts this count as expectedTentativeSlotCount; the route compares rows.
+      expect(() =>
+        assertExpectedTentativeSlotCount(
+          // The fixture carries the occurrence fields the count reads.
+          tentativeSlotCountOf([
+            fixture.appointment,
+          ] as unknown as AppointmentWithSlots[]),
+          row.tentativeSlotCount,
+        ),
+      ).not.toThrow();
+    },
+  );
 });

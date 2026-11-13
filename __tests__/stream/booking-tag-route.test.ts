@@ -94,7 +94,7 @@ const consultation = {
   ],
   participants: [],
   consultation: {
-    status: "SCHEDULED",
+    status: "APPROVED",
     requestedBy: { userId: "consultee-u" },
     consultationPlan: {
       title: "Career coaching",

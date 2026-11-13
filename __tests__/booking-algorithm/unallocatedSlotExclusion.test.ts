@@ -37,92 +37,74 @@ describe("buildOccupiedAppointmentFilter", () => {
     expect(filters).toHaveLength(5);
   });
 
-  it("should include consultation filter with correct statuses", () => {
-    const filters = buildOccupiedAppointmentFilter("cp-001");
-    const consultationFilter = filters[0] as any;
+  const occupyingTrial = expect.arrayContaining([
+    TrialStatus.SCHEDULED,
+    TrialStatus.AWAITING_PAYMENT,
+  ]);
 
-    expect(consultationFilter.consultation).toBeDefined();
-    expect(consultationFilter.consultation.status.in).toEqual(
-      OCCUPIED_REQUEST_STATUSES,
-    );
-    expect(
-      consultationFilter.consultation.consultationPlan.consultantProfileId,
-    ).toBe("cp-001");
+  it("should include consultation filter with correct statuses", () => {
+    expect(buildOccupiedAppointmentFilter("cp-001")[0]).toMatchObject({
+      consultation: {
+        status: { in: OCCUPIED_REQUEST_STATUSES },
+        consultationPlan: { consultantProfileId: "cp-001" },
+      },
+    });
   });
 
   it("should include subscription filter with correct statuses", () => {
-    const filters = buildOccupiedAppointmentFilter("cp-001");
-    const subscriptionFilter = filters[1] as any;
-
-    expect(subscriptionFilter.subscription).toBeDefined();
-    expect(subscriptionFilter.subscription.status.in).toEqual(
-      OCCUPIED_REQUEST_STATUSES,
-    );
-    expect(
-      subscriptionFilter.subscription.subscriptionPlan.consultantProfileId,
-    ).toBe("cp-001");
+    expect(buildOccupiedAppointmentFilter("cp-001")[1]).toMatchObject({
+      subscription: {
+        status: { in: OCCUPIED_REQUEST_STATUSES },
+        subscriptionPlan: { consultantProfileId: "cp-001" },
+      },
+    });
   });
 
-  it("should include webinar filter with SCHEDULED and IN_PROGRESS", () => {
-    const filters = buildOccupiedAppointmentFilter("cp-001");
-    const webinarFilter = filters[2] as any;
-
-    expect(webinarFilter.webinar).toBeDefined();
-    expect(webinarFilter.webinar.status.in).toEqual([
-      ...OCCUPIED_EVENT_STATUSES,
-    ]);
-    expect(webinarFilter.webinar.webinarPlan.consultantProfileId).toBe(
-      "cp-001",
-    );
+  it("should include webinar filter with the occupied event statuses", () => {
+    expect(buildOccupiedAppointmentFilter("cp-001")[2]).toMatchObject({
+      webinar: {
+        status: { in: [...OCCUPIED_EVENT_STATUSES] },
+        webinarPlan: { consultantProfileId: "cp-001" },
+      },
+    });
   });
 
-  it("should include class filter with SCHEDULED and IN_PROGRESS", () => {
-    const filters = buildOccupiedAppointmentFilter("cp-001");
-    const classFilter = filters[3] as any;
-
-    expect(classFilter.class).toBeDefined();
-    expect(classFilter.class.status.in).toEqual([...OCCUPIED_EVENT_STATUSES]);
-    expect(classFilter.class.classPlan.consultantProfileId).toBe("cp-001");
+  it("should include class filter with the occupied event statuses", () => {
+    expect(buildOccupiedAppointmentFilter("cp-001")[3]).toMatchObject({
+      class: {
+        status: { in: [...OCCUPIED_EVENT_STATUSES] },
+        classPlan: { consultantProfileId: "cp-001" },
+      },
+    });
   });
 
   it("should include trial session filter for occupying statuses", () => {
-    const filters = buildOccupiedAppointmentFilter("cp-001");
-    const trialFilter = filters[4] as any;
-
-    expect(trialFilter.trial).toBeDefined();
-    expect(trialFilter.trial.is.consultantProfileId).toBe("cp-001");
-    // AWAITING_PAYMENT occupies too: a paid trial reserves its slot the moment
-    // the consultant accepts and holds it while the learner pays. Matching only
-    // SCHEDULED let someone else book the slot mid-payment, after which the
-    // capture webhook would confirm the trial into a double booking.
-    expect(trialFilter.trial.is.status.in).toEqual(
-      expect.arrayContaining([
-        TrialStatus.SCHEDULED,
-        TrialStatus.AWAITING_PAYMENT,
-      ]),
-    );
+    // AWAITING_PAYMENT occupies too: a paid trial holds its slot while the learner pays.
+    expect(buildOccupiedAppointmentFilter("cp-001")[4]).toMatchObject({
+      trial: {
+        is: { consultantProfileId: "cp-001", status: { in: occupyingTrial } },
+      },
+    });
   });
 
   it("should omit consultantProfileId scoping when not provided", () => {
-    const filters = buildOccupiedAppointmentFilter();
-    const consultationFilter = filters[0] as any;
-
-    // When no consultantProfileId, the filter should not scope by consultant
-    expect(consultationFilter.consultation.consultationPlan).toBeUndefined();
-    expect(consultationFilter.consultation.status).toBeDefined();
+    const [consultation] = buildOccupiedAppointmentFilter();
+    expect(consultation).toMatchObject({
+      consultation: { status: expect.anything() },
+    });
+    expect(consultation).not.toMatchObject({
+      consultation: { consultationPlan: expect.anything() },
+    });
   });
 
   it("should include trial filter without consultantProfileId when not provided", () => {
-    const filters = buildOccupiedAppointmentFilter();
-    const trialFilter = filters[4] as any;
-
-    expect(trialFilter.trial.is.status.in).toEqual(
-      expect.arrayContaining([
-        TrialStatus.SCHEDULED,
-        TrialStatus.AWAITING_PAYMENT,
-      ]),
-    );
-    expect(trialFilter.trial.is.consultantProfileId).toBeUndefined();
+    const trial = buildOccupiedAppointmentFilter()[4];
+    expect(trial).toMatchObject({
+      trial: { is: { status: { in: occupyingTrial } } },
+    });
+    expect(trial).not.toMatchObject({
+      trial: { is: { consultantProfileId: expect.anything() } },
+    });
   });
 });
 
@@ -131,13 +113,12 @@ describe("buildOccupiedAppointmentFilter", () => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe("OCCUPIED_REQUEST_STATUSES", () => {
-  it("should include PENDING, APPROVED, APPROVED_PENDING_PAYMENT, SCHEDULED", () => {
+  it("should include PENDING, APPROVED, APPROVED_PENDING_PAYMENT", () => {
     expect(OCCUPIED_REQUEST_STATUSES).toContain(AppointmentStatus.PENDING);
     expect(OCCUPIED_REQUEST_STATUSES).toContain(AppointmentStatus.APPROVED);
     expect(OCCUPIED_REQUEST_STATUSES).toContain(
       AppointmentStatus.APPROVED_PENDING_PAYMENT,
     );
-    expect(OCCUPIED_REQUEST_STATUSES).toContain(AppointmentStatus.SCHEDULED);
   });
 
   it("should NOT include terminal statuses", () => {
@@ -151,8 +132,8 @@ describe("OCCUPIED_REQUEST_STATUSES", () => {
     expect(OCCUPIED_REQUEST_STATUSES).not.toContain(AppointmentStatus.EXPIRED);
   });
 
-  it("should have exactly 4 statuses", () => {
-    expect(OCCUPIED_REQUEST_STATUSES).toHaveLength(4);
+  it("should have exactly 3 statuses", () => {
+    expect(OCCUPIED_REQUEST_STATUSES).toHaveLength(3);
   });
 });
 
@@ -161,13 +142,8 @@ describe("OCCUPIED_REQUEST_STATUSES", () => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe("OCCUPIED_EVENT_STATUSES", () => {
-  it("should include SCHEDULED and IN_PROGRESS", () => {
-    expect(OCCUPIED_EVENT_STATUSES).toContain("SCHEDULED");
-    expect(OCCUPIED_EVENT_STATUSES).toContain("IN_PROGRESS");
-  });
-
-  it("should have exactly 2 statuses", () => {
-    expect(OCCUPIED_EVENT_STATUSES).toHaveLength(2);
+  it("is exactly SCHEDULED: a published event stays SCHEDULED until it completes", () => {
+    expect(OCCUPIED_EVENT_STATUSES).toEqual(["SCHEDULED"]);
   });
 });
 

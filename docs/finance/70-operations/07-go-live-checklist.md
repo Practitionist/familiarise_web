@@ -213,6 +213,14 @@ Email and in-app notifications do not move money, but a wrong cutover silently d
 
 Owner steps in GitHub, from [the CI decision](../../decisions/2026-11-07-ci-before-and-at-launch.md): move the `Practitionist` organisation to Team with one seat per active contributor (the count is kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend)), cancel the personal Pro on `teetangh` only once nothing personal depends on it (for example a private personal repository that relies on branch protection), pay with an eligible Indian credit card (a debit card works only for a one-time "Pay now" fallback), set the Actions budget to about $15 with stop-usage, and require the `Release checks` status check on `prod`.
 
+## Part 6: booking rows at the lifecycle release
+
+The release that carries the booking lifecycle change drops four enum values the production code before it still writes. Before that pull request merges to `dev`, before the `dev` → `prod` promotion and before the enum-drop push:
+
+- [ ] Run the read in [Rows holding a removed value](../../prisma/README.md#rows-holding-a-removed-value) and expect no rows.
+- [ ] Cancel a `PENDING` trial it finds through the trial cancel door on the production deploy, as an operator, which refunds a paid one in full; never edit a row by hand. Take any other row to the owner ([decision 8](../../decisions/2026-11-13-product-lifecycles.md#decisions)).
+- [ ] Run the read in [A refund the deleted retry still owed](../../prisma/README.md#a-refund-the-deleted-retry-still-owed). If a row exists, run the old `expire-unpaid-trials` job once on production before the promotion, which sends the keyed full refund.
+
 ## Where in code
 
 | Concern                                             | File                                                                                                           |

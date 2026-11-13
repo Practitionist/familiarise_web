@@ -877,7 +877,7 @@ export interface TrialLifecycleEmailArgs {
   userIds: string[];
   kind: Extract<
     TrialAndSubscriptionEmailKind,
-    "TRIAL_REQUESTED" | "TRIAL_COMPLETED" | "TRIAL_CANCELLED" | "TRIAL_REJECTED"
+    "TRIAL_COMPLETED" | "TRIAL_CANCELLED"
   >;
   planTitle: string;
   consultantUserId?: string;

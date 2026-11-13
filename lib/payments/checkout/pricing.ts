@@ -5,6 +5,7 @@ import { seatHoldingParticipant } from "@/utils/scheduling-engine/occupancyPolic
 import prisma from "@/lib/prisma";
 import type { CheckoutInput } from "@/schemas/checkout";
 import {
+  type BookingMode,
   type Currency,
   type OfferingPlanStatus,
   type OrgPlanVisibility,
@@ -32,7 +33,10 @@ import {
   planSaleRefusal,
 } from "@/lib/api/plans/visibility";
 import { classEnrolmentFrom } from "@/lib/booking/class-enrolment";
-import { BookingRuleError } from "@/lib/booking/booking-rule-error";
+import {
+  BookingRuleError,
+  assertExpertTakesDirectCheckout,
+} from "@/lib/booking/booking-rule-error";
 import { assertWindowMatchesPlanDuration } from "@/lib/booking/slot-validation";
 import {
   holdsSettledSeat,
@@ -112,21 +116,16 @@ export async function calculateAmountAndValidate(
         consultantProfile: {
           verificationStatus: string;
           acceptingRequests: boolean;
+          bookingMode: BookingMode;
         } | null;
       },
       label: string,
     ) => {
-      // A paused expert takes no new 1:1 booking; webinar and class seats keep
-      // selling, and approved pay-links are minted elsewhere.
-      const oneToOne =
-        validatedData.appointmentType === "CONSULTATION" ||
-        validatedData.appointmentType === "SUBSCRIPTION";
-      if (oneToOne && p.consultantProfile?.acceptingRequests === false) {
-        throw new BookingRuleError(
-          "NOT_ACCEPTING_BOOKINGS",
-          "This expert is not taking new 1:1 bookings right now. Pick another expert, or try again later.",
-        );
-      }
+      // Webinar and class seats keep selling; approved pay links are minted elsewhere.
+      assertExpertTakesDirectCheckout(
+        validatedData.appointmentType,
+        p.consultantProfile,
+      );
       // #1527 Q4 — new sales only. Pay-links minted for approved requests
       // (approval-payment.ts) deliberately skip this, so unpublishing a plan
       // never strands a booking the consultant already accepted.

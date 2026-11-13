@@ -27,7 +27,7 @@
 Stream Chat channels are created and reconciled exclusively on the server across two complementary paths:
 
 1. **Eager Provisioning on Confirmed Payment / Approval (`ensureChannelsForAppointment` in `lib/payments/webhooks/ensure-channels.ts`, called from `lib/payments/webhooks/handlers.ts`)**:
-   - When a paid **Consultation** or **Subscription** transitions into `DM_ELIGIBLE_STATUSES` (`APPROVED`, `SCHEDULED`, `COMPLETED`), the server provisions or reuses the pair's canonical 1:1 DM channel (`createDirectMessageChannel(consultantUserId, consulteeUserId, organizationId)`).
+   - When a paid **Consultation** or **Subscription** transitions into `DM_ELIGIBLE_STATUSES` (`APPROVED`, `COMPLETED`), the server provisions or reuses the pair's canonical 1:1 DM channel (`createDirectMessageChannel(consultantUserId, consulteeUserId, organizationId)`).
    - When a **Webinar** or **Class** enrollment is confirmed, the server adds the enrollee to the group `team` channel (`webinar-<id>` / `class-<id>`) **and** provisions the 1:1 DM channel between the consultant and the enrollee.
    - **Free Trials (`TRIAL`)** are skipped: the function stamps `chatChannelEnsuredAt`, creates no channel and returns `skipped: "trial_chat_blocked"`. The DM gate also excludes trial-backed bookings (see the trial policy below).
    - If adopting an existing event channel fails to add the buyer, `addUserToEventChannel` returns `success: false` with `reason: "member_not_added"`, and `ensureChannelsForAppointment` returns `event_channel_member_not_added` without stamping `chatChannelEnsuredAt`, so the `reconcile-orphaned-confirmations` sweep retries. A Stream or consent refusal (`reason: "account_refused"`) is a deliberate skip and does not block the stamp.
@@ -108,10 +108,10 @@ Familiarise enforces a deterministic 4-part communication policy across all book
      - **B2B Enterprise Organization Scope**: `dmo-${sha256(orgId).slice(0, 12)}-${sha256(`${orgId}:${a}:${b}`).slice(0, 36)}` with `custom.organization_id = orgId`.
    - Consultee-to-consultee peer DMs are prohibited (`canDirectMessage` requires at least one eligible consultant ↔ consultee link).
 2. **Paid / Confirmed Eligibility Gate (`DM_ELIGIBLE_STATUSES`)**:
-   - `DM_ELIGIBLE_STATUSES = ["APPROVED", "SCHEDULED", "COMPLETED"]` (`lib/stream/dm-eligibility-statuses.ts`).
+   - `DM_ELIGIBLE_STATUSES = ["APPROVED", "COMPLETED"]` (`lib/stream/dm-eligibility-statuses.ts`).
    - Unpaid or unconfirmed bookings (`PENDING`, `APPROVED_PENDING_PAYMENT`, `CANCELLED`, `REJECTED`, `EXPIRED`) are **excluded** — direct messaging opens only after payment settles or an appointment is confirmed without pending payment, and remains open through `COMPLETED` for post-session follow-up until the retention window expires.
 3. **Webinars & Classes Provision Both Group Event Channels and 1:1 Host DMs**:
-   - Enrolling in a confirmed `WEBINAR` or `CLASS` (`OPENABLE_EVENT_STATUSES = ["SCHEDULED", "IN_PROGRESS", "COMPLETED"]`) provisions **both**:
+   - Enrolling in a confirmed `WEBINAR` or `CLASS` (`OPENABLE_EVENT_STATUSES = ["SCHEDULED", "COMPLETED"]`) provisions **both**:
      1. The shared `team` channel (`webinar-${webinarId}` or `class-${classId}`), whose roster includes the plan owner, all `ACCEPTED` `PlanCollaborator` co-hosts, and all live `AppointmentParticipant` enrollees.
      2. The 1:1 personal DM (`dm-` or `dmo-`) between the hosting consultant and each confirmed enrollee (`hasWebinarLink` and `hasClassLink` in `lib/stream/dm-eligibility.ts`).
 4. **A Free Trial (`TRIAL`) Never Grants Chat**:

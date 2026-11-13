@@ -161,7 +161,6 @@ describe("withdrawApproval re-grants it too", () => {
     // though the CAS below then refuses (this request is not
     // APPROVED_PENDING_PAYMENT at write time) and the route answers 409.
     await withdrawApproval({
-      kind: "consultation",
       id: "consult-1",
       actor: {
         userId: "consultant-1",

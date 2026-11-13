@@ -37,7 +37,7 @@ const COMPLETED_LIKE_STATUSES = new Set(["COMPLETED", "CONVERTED"]);
 // both a locked-in state (uploads/joining enabled — isConfirmedStatus) and a
 // distinct pre-scheduling phase some surfaces branch on (isApprovedStatus is
 // a strict subset check of isConfirmedStatus).
-const CONFIRMED_STATUSES = new Set(["APPROVED", "SCHEDULED", "IN_PROGRESS"]);
+const CONFIRMED_STATUSES = new Set(["APPROVED", "SCHEDULED"]);
 
 export const normalizeStatus = (status: string | null | undefined): string =>
   status?.toUpperCase() ?? "";

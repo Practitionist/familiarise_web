@@ -163,7 +163,7 @@ beforeEach(() => {
   });
   mockedCreate.mockResolvedValue({
     id: "trial-1",
-    status: TrialStatus.PENDING,
+    status: TrialStatus.SCHEDULED,
     consulteeProfile: { user: { id: "user-1", name: "Learner" } },
     consultantProfile: { user: { id: "expert-1", name: "Expert" } },
   });
@@ -186,7 +186,7 @@ describe("duplicate trial requests (defect 7)", () => {
     // A live trial already exists — no race, the read-side gate catches it.
     mockedFindUnique.mockResolvedValue({
       id: "trial-existing",
-      status: TrialStatus.PENDING,
+      status: TrialStatus.AWAITING_PAYMENT,
     });
 
     const res = await POST(request());
@@ -206,14 +206,14 @@ describe("duplicate trial requests (defect 7)", () => {
   });
 
   it("answers 409, not 500, when the rival clears the freed row first", async () => {
-    // A declined trial frees the pair, so both requests read it and both go to
+    // A cancelled trial frees the pair, so both requests read it and both go to
     // clear it. `delete` would raise P2025 on the loser and fall into the
     // generic catch as a 500 — one statement earlier than the unique violation
     // this route already answers calmly. `deleteMany` reports a count of zero
     // instead, and the insert stays the arbiter.
     mockedFindUnique.mockResolvedValue({
       id: "trial-freed",
-      status: TrialStatus.REJECTED,
+      status: TrialStatus.CANCELLED,
     });
     mockedDeleteMany.mockResolvedValue({ count: 0 });
     mockedCreate.mockRejectedValue(uniqueViolation());

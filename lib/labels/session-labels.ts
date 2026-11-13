@@ -97,11 +97,6 @@ export const APPOINTMENT_STATUS_BADGE: Record<
     className: "bg-orange-100 text-orange-900 border-orange-200",
     dotClassName: "bg-orange-500",
   },
-  SCHEDULED: {
-    label: "Scheduled",
-    className: "bg-emerald-100 text-emerald-900 border-emerald-200",
-    dotClassName: "bg-emerald-500",
-  },
   COMPLETED: {
     label: "Completed",
     className: "bg-green-100 text-green-900 border-green-200",
@@ -131,14 +126,7 @@ export const appointmentStatusBadge = (
 // ───────────────────────────── TrialStatus ─────────────────────────────
 
 export const TRIAL_STATUS_BADGE: Record<TrialStatus, StatusBadgeStyle> = {
-  PENDING: {
-    label: "Pending",
-    className: "bg-amber-100 text-amber-900 border-amber-200",
-    dotClassName: "bg-amber-500",
-  },
-  // Accepted by the consultant, waiting on the learner to pay. Amber like
-  // PENDING because both are "waiting", but the label names who we're
-  // waiting on — that distinction is the whole reason this status exists.
+  // A paid trial holding its picked time until the learner pays.
   AWAITING_PAYMENT: {
     label: "Awaiting payment",
     className: "bg-amber-100 text-amber-900 border-amber-200",
@@ -164,11 +152,6 @@ export const TRIAL_STATUS_BADGE: Record<TrialStatus, StatusBadgeStyle> = {
     className: "bg-zinc-100 text-zinc-600 border-zinc-200",
     dotClassName: "bg-zinc-400",
   },
-  REJECTED: {
-    label: "Rejected",
-    className: "bg-red-100 text-red-900 border-red-200",
-    dotClassName: "bg-red-500",
-  },
 };
 
 export const trialStatusBadge = (
@@ -189,11 +172,6 @@ export const EVENT_STATUS_BADGE: Record<WebinarStatus, StatusBadgeStyle> = {
     label: "Scheduled",
     className: "bg-emerald-100 text-emerald-900 border-emerald-200",
     dotClassName: "bg-emerald-500",
-  },
-  IN_PROGRESS: {
-    label: "In progress",
-    className: "bg-blue-100 text-blue-900 border-blue-200",
-    dotClassName: "bg-blue-500",
   },
   COMPLETED: {
     label: "Completed",

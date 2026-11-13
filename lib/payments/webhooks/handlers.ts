@@ -906,31 +906,14 @@ export async function handlePaymentSuccess(
               }),
             );
 
-            const paidAtRequest =
-              scheduled.count === 0
-                ? await tx.trial.updateMany({
-                    where: {
-                      id: metadata.trialId,
-                      status: TrialStatus.PENDING,
-                      paymentId: null,
-                    },
-                    data: {
-                      paymentId: payment.id,
-                      pendingPaymentUrl: null,
-                      paymentDueAt: null,
-                    },
-                  })
-                : { count: 0 };
-
-            if (scheduled.count === 0 && paidAtRequest.count === 0) {
+            if (scheduled.count === 0) {
               const trial = await tx.trial.findUnique({
                 where: { id: metadata.trialId },
                 select: { status: true, paymentId: true },
               });
               const alreadyOurs =
                 trial?.paymentId === payment.id
-                  ? trial.status === TrialStatus.SCHEDULED ||
-                    trial.status === TrialStatus.PENDING
+                  ? trial.status === TrialStatus.SCHEDULED
                   : trial?.status === TrialStatus.SCHEDULED &&
                     trial.paymentId === null;
               if (!alreadyOurs) {
@@ -1845,7 +1828,6 @@ const LIVE_REQUEST_STATUSES: ReadonlySet<AppointmentStatus> = new Set([
   AppointmentStatus.PENDING,
   AppointmentStatus.APPROVED_PENDING_PAYMENT,
   AppointmentStatus.APPROVED,
-  AppointmentStatus.SCHEDULED,
   AppointmentStatus.COMPLETED,
 ]);
 
@@ -2098,7 +2080,6 @@ async function confirmApprovalStatus(
       const freshStatus = fresh?.status ?? consultation.status;
       if (
         freshStatus !== AppointmentStatus.APPROVED &&
-        freshStatus !== AppointmentStatus.SCHEDULED &&
         freshStatus !== AppointmentStatus.COMPLETED
       ) {
         capturedAfterTerminal = true;
@@ -2134,35 +2115,8 @@ async function confirmApprovalStatus(
       });
     };
 
-    // Subscriptions only transition APPROVED_PENDING_PAYMENT → APPROVED; PENDING awaits slot allocation.
-    if (subscription.status === AppointmentStatus.APPROVED_PENDING_PAYMENT) {
-      try {
-        await transitionSubscriptionRequest(tx, {
-          where: { id: entityId },
-          to: AppointmentStatus.APPROVED,
-          fromIn: [AppointmentStatus.APPROVED_PENDING_PAYMENT],
-          reason: "payment captured",
-          appointmentId,
-        });
-        console.log(
-          `✅ Subscription ${entityId} payment completed - moving from APPROVED_PENDING_PAYMENT to APPROVED`,
-        );
-      } catch (err) {
-        if (!(err instanceof IllegalTransitionError)) throw err;
-        const fresh = await tx.subscription.findUnique({
-          where: { id: entityId },
-          select: { status: true },
-        });
-        const freshStatus = fresh?.status ?? subscription.status;
-        if (LIVE_REQUEST_STATUSES.has(freshStatus)) {
-          console.log(
-            `ℹ️ Subscription ${entityId} already ${freshStatus} when the capture landed — nothing to move`,
-          );
-        } else {
-          await flagTerminal(freshStatus);
-        }
-      }
-    } else if (!LIVE_REQUEST_STATUSES.has(subscription.status)) {
+    // A plan is paid at checkout: the capture moves no status, and allocation approves it.
+    if (!LIVE_REQUEST_STATUSES.has(subscription.status)) {
       await flagTerminal(subscription.status);
     } else {
       console.log(
@@ -2381,7 +2335,7 @@ export async function confirmExistingAppointment(
     }
   }
 
-  const BENIGN_EVENT_STATUSES = ["SCHEDULED", "IN_PROGRESS", "COMPLETED"];
+  const BENIGN_EVENT_STATUSES = ["SCHEDULED", "COMPLETED"];
 
   if (appointment.class && userId) {
     const classId = appointment.class.id;

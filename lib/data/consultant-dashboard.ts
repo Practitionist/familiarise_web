@@ -162,7 +162,7 @@ function expertNameOf(a: {
 }
 
 /** A webinar or class still to deliver, as the other live-event readers count it. */
-const LIVE_EVENT = { in: ["SCHEDULED" as const, "IN_PROGRESS" as const] };
+const LIVE_EVENT = { in: ["SCHEDULED" as const] };
 
 const consultantDeliveryArms = (
   consultantProfileId: string,

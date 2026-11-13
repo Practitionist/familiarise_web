@@ -7,6 +7,7 @@ import {
   LIVE_SUBSCRIPTION_STATUSES,
 } from "@/lib/booking/transitions";
 import { convertCompletedTrial } from "@/lib/trials/conversion";
+import { assertExpertTakesDirectCheckout } from "@/lib/booking/booking-rule-error";
 import type { Tx } from "@/lib/prisma";
 import type { CheckoutInput } from "@/schemas/checkout";
 import {
@@ -37,6 +38,11 @@ export async function handleSubscriptionCheckout(
     data,
     consulteeProfileId,
     precomputedSchedulingPeriod,
+  );
+  // A switch flipped while the order was minted refuses here; the abort tombstones that order.
+  assertExpertTakesDirectCheckout(
+    "SUBSCRIPTION",
+    purchase.plan.consultantProfile,
   );
   const {
     plan,

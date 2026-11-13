@@ -116,7 +116,7 @@ beforeEach(() => {
 describe("the aged-park predicate", () => {
   it("carries the money, status, open-proposal and both deadlines", () => {
     const where = agedParkedConsultationWhere(NOW);
-    expect(where.status).toEqual({ in: ["APPROVED", "SCHEDULED"] });
+    expect(where.status).toEqual({ in: ["APPROVED"] });
     expect(where.appointment).toMatchObject({
       payment: { some: { paymentStatus: "SUCCEEDED", deletedAt: null } },
       rescheduleRequests: { none: { status: { in: ["PENDING_REVIEW"] } } },
@@ -143,7 +143,7 @@ describe("cancelAgedParkedConsultations", () => {
       { where: Record<string, unknown>; to: string; fromIn: string[] },
     ];
     expect(cas.to).toBe("CANCELLED");
-    expect(cas.fromIn).toEqual(["APPROVED", "SCHEDULED"]);
+    expect(cas.fromIn).toEqual(["APPROVED"]);
     expect(cas.where).toEqual({
       id: "c1",
       ...agedParkedConsultationWhere(NOW),

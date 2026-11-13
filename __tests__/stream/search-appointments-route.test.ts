@@ -272,7 +272,7 @@ describe("what the query asks of the database", () => {
     await search({ q: "workshop" });
     const and = mockWebinars.mock.calls[0][0].where.AND;
     expect(and[1]).toEqual({
-      status: { in: ["SCHEDULED", "IN_PROGRESS", "COMPLETED"] },
+      status: { in: ["SCHEDULED", "COMPLETED"] },
     });
     expect(and[2].OR).toHaveLength(3);
   });

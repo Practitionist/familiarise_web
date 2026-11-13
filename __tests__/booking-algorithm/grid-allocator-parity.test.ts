@@ -105,14 +105,11 @@ describe("buildConsultantOccupancyWhere", () => {
     // A lapsed checkout hold occupies nothing, for every caller.
     expect(and[2]).toEqual({ NOT: buildDeadHoldFilter(NOW) });
     // Sanity-check the policy itself hasn't quietly widened.
-    expect(OCCUPIED_REQUEST_STATUSES).toEqual(
-      expect.arrayContaining([
-        "PENDING",
-        "APPROVED",
-        "APPROVED_PENDING_PAYMENT",
-        "SCHEDULED",
-      ]),
-    );
+    expect(OCCUPIED_REQUEST_STATUSES).toEqual([
+      "PENDING",
+      "APPROVED",
+      "APPROVED_PENDING_PAYMENT",
+    ]);
   });
 
   it("falls back to participation alone when no profile id is known", () => {
@@ -175,7 +172,7 @@ describe("live-hold filtering is shared by grid and allocator", () => {
     expect(
       isOccupiedByLiveAppointment(
         {
-          consultation: { status: "SCHEDULED" },
+          consultation: { status: "APPROVED" },
           subscription: null,
           payment: [{ paymentStatus: "PENDING", expiresAt: past }],
         },

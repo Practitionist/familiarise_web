@@ -16,6 +16,7 @@ import {
 import { TRIAL_WINDOW_REFUSAL_COPY } from "@/lib/trials/slot-check";
 import { reportSentryError } from "@/lib/observability/report";
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { prepareTrialScheduledEmail } from "@/lib/email/senders/booking";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { CreateTrialSchema } from "@/schemas/trials";
@@ -56,7 +57,18 @@ export async function GET(request: NextRequest) {
   const consultantProfileId = searchParams.get("consultantProfileId");
   const consulteeProfileId = searchParams.get("consulteeProfileId");
   const subscriptionPlanId = searchParams.get("subscriptionPlanId");
-  const status = searchParams.get("status") as TrialStatus | null;
+  // An unknown or removed status is the caller's error, never a Prisma one.
+  const statusParse = z
+    .nativeEnum(TrialStatus)
+    .nullable()
+    .safeParse(searchParams.get("status"));
+  if (!statusParse.success) {
+    return NextResponse.json(
+      { error: "Invalid trial status" },
+      { status: 400 },
+    );
+  }
+  const status = statusParse.data;
   const page = parseInt(searchParams.get("page") || "1");
   const limit = parseInt(searchParams.get("limit") || "10");
   const search = searchParams.get("search");
@@ -420,11 +432,8 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    // Only a live or already-delivered trial blocks a new request. A declined,
-    // withdrawn or lapsed-unpaid trial frees the pair — never paying isn't the
-    // same as having used your trial. The freed row must be deleted rather than
-    // left in place, because the pair is @@unique. See lib/trials/eligibility.ts
-    // for the abuse trade-off and how to tighten it if this gets gamed.
+    // Only a live or delivered trial blocks a new request; a cancelled or lapsed
+    // one frees the pair and its row is deleted, because the pair is @@unique.
     if (existingTrial) {
       if (blocksNewTrialRequest(existingTrial.status)) {
         return NextResponse.json(

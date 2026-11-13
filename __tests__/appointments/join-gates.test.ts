@@ -81,9 +81,8 @@ describe("#1270 — a consultant needs a CONFIRMED booking, not just an open win
   // the status is the only thing deciding the answer.
   const live = at("10:20");
 
-  it("lets a scheduled or in-progress booking through", () => {
+  it("lets a scheduled booking through", () => {
     expect(consultantMayJoin("SCHEDULED", live)).toBe(true);
-    expect(consultantMayJoin("IN_PROGRESS", live)).toBe(true);
     // Approved is confirmed for join purposes: the money is in and the
     // consultee holds the time.
     expect(consultantMayJoin("APPROVED", live)).toBe(true);

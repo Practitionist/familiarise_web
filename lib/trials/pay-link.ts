@@ -63,9 +63,8 @@ export async function persistTrialPayLink(args: {
   return outcome.url;
 }
 
-/** #1775 C-7 — a paid trial is payable while PENDING (charged at request) or AWAITING_PAYMENT. */
+/** A paid trial is payable only while it holds its time awaiting payment. */
 export const TRIAL_PAYABLE_STATUSES: TrialStatus[] = [
-  TrialStatus.PENDING,
   TrialStatus.AWAITING_PAYMENT,
 ];
 

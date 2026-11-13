@@ -25,7 +25,7 @@ describe("Consultant group-event counterpart resolution", () => {
         },
       ],
       webinar: {
-        status: "IN_PROGRESS",
+        status: "SCHEDULED",
         webinarPlan: {
           id: "wp_1",
           title: "Expert Workshop Webinar",
@@ -52,7 +52,7 @@ describe("Consultant group-event counterpart resolution", () => {
         },
       ],
       class: {
-        status: "IN_PROGRESS",
+        status: "SCHEDULED",
         classPlan: {
           id: "clp_1",
           title: "System Design Cohort",
@@ -111,7 +111,7 @@ describe("Consultant group-event counterpart resolution", () => {
         },
       ],
       webinar: {
-        status: "IN_PROGRESS",
+        status: "SCHEDULED",
         webinarPlan: {
           id: "wp_collab",
           title: "Co-hosted Workshop",
@@ -178,7 +178,7 @@ describe("Consultant group-event counterpart resolution", () => {
         },
       ],
       webinar: {
-        status: "IN_PROGRESS",
+        status: "SCHEDULED",
         webinarPlan: {
           id: "wp_running",
           title: "Live Webinar Session",

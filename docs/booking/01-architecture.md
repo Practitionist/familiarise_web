@@ -252,7 +252,7 @@ sequenceDiagram
     SA->>SV: validate() again inside transaction
     SA->>DB: Delete old appointments
     SA->>DB: Create Appointment + AppointmentOccurrence records
-    SA->>DB: Update event status to APPROVED/SCHEDULED
+    SA->>DB: Update event status to APPROVED
     SA-->>AL: {success: true, appointments: [...]}
     AL-->>UI: Allocation result
 ```

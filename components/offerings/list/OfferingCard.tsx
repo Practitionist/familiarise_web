@@ -62,7 +62,7 @@ export interface OfferingCardProps {
   duplicateHref: string | null;
   /** Signed expert share link whose `?via=<token>` param is appended to owned offering links. */
   shareAttributionHref?: string | null;
-  trials?: { href: string; pending: number };
+  trials?: { href: string };
   /** Where an owned, unscheduled webinar or class gets its times. */
   scheduleHref?: string | null;
   join?: { canJoin: boolean; isJoining: boolean; onJoin: () => void };
@@ -358,9 +358,7 @@ export function OfferingCard({
           className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-foreground underline-offset-4 hover:underline"
         >
           <Gift className="h-3.5 w-3.5" aria-hidden />
-          {trials.pending > 0
-            ? `${trials.pending} trial ${trials.pending === 1 ? "request" : "requests"}`
-            : "Trial requests"}
+          Trials
         </Link>
       )}
 

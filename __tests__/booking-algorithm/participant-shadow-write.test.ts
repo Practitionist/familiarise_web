@@ -108,12 +108,12 @@ describe("every creation path records the participant edge (#1544 / #1554)", () 
     fs.readFileSync(path.join(process.cwd(), f), "utf8");
   // The allocator and the four checkout handlers assert their roster writes behaviourally in their own suites.
   const writers: Array<[string, RegExp]> = [
-    ["app/api/trials/[trialId]/route.ts", /recordParticipants\(/],
     // #1544 — the one creation path that never wrote the roster until #1554.
     [
       "app/api/scheduling/request-for-approval/route.ts",
       /recordParticipants\(/,
     ],
+    ["lib/trials/book-trial.ts", /recordParticipants\(/],
     // #1554 — the planner mints the wrapper itself for a webinar or class and
     // must seat the consultant, or the reconcile sweep reads it as drift.
     [

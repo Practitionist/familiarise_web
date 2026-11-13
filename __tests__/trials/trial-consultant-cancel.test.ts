@@ -330,8 +330,8 @@ describe("cancels that record no strike", () => {
     expect(recordExpertStrike).not.toHaveBeenCalled();
   });
 
-  it("a pending trial the expert never confirmed", async () => {
-    state.trialStatus = "PENDING";
+  it("a trial still awaiting payment", async () => {
+    state.trialStatus = "AWAITING_PAYMENT";
     state.paid = false;
     const res = await del();
     expect(res.status).toBe(200);
@@ -384,9 +384,7 @@ describe("an operator who is not a party", () => {
   );
 
   it.each([
-    ["PENDING", "REJECTED"],
-    ["PENDING", "CANCELLED"],
-    ["PENDING", "SCHEDULED"],
+    ["AWAITING_PAYMENT", "CANCELLED"],
     ["SCHEDULED", "COMPLETED"],
   ])("is refused moving a %s trial to %s", async (from, to) => {
     asOperator("STAFF");

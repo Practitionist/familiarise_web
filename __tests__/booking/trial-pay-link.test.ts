@@ -104,7 +104,7 @@ describe("persistTrialPayLink", () => {
     expect(db.trial.updateMany).toHaveBeenCalledWith({
       where: {
         id: "trial-1",
-        status: { in: ["PENDING", "AWAITING_PAYMENT"] },
+        status: { in: ["AWAITING_PAYMENT"] },
         paymentId: null,
         pendingPaymentUrl: null,
       },

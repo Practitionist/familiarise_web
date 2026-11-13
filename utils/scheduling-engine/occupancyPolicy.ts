@@ -27,21 +27,15 @@ import { liveParticipant } from "@/lib/booking/participants";
  * - PENDING: User submitted, awaiting consultant approval (tentative hold)
  * - APPROVED: Consultant approved (confirmed)
  * - APPROVED_PENDING_PAYMENT: Approved but payment not yet completed
- * - SCHEDULED: Fully scheduled and confirmed
  */
 export const OCCUPIED_REQUEST_STATUSES: AppointmentStatus[] = [
   AppointmentStatus.PENDING,
   AppointmentStatus.APPROVED,
   AppointmentStatus.APPROVED_PENDING_PAYMENT,
-  AppointmentStatus.SCHEDULED,
 ];
 
-/**
- * Webinar/Class statuses that count as "slot occupied"
- * - SCHEDULED: Event is scheduled (confirmed)
- * - IN_PROGRESS: Event is currently happening
- */
-export const OCCUPIED_EVENT_STATUSES = ["SCHEDULED", "IN_PROGRESS"] as const;
+/** Webinar/Class statuses that count as "slot occupied": a published event stays SCHEDULED until it completes. */
+export const OCCUPIED_EVENT_STATUSES = ["SCHEDULED"] as const;
 
 /**
  * An occurrence row that still holds its time. A host-cancelled session keeps its row for make-up and

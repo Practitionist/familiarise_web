@@ -10,7 +10,6 @@ import type { AppointmentStatus, Prisma, TrialStatus } from "@prisma/client";
 /** Paid, accepted request states; anything else (requested, awaiting payment, closed) is not a buyer. */
 export const PAID_REQUEST_STATUSES: AppointmentStatus[] = [
   "APPROVED",
-  "SCHEDULED",
   "COMPLETED",
 ];
 

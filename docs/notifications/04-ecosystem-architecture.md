@@ -121,7 +121,7 @@ flowchart TB
     %% Trigger → Pipeline 2 (Novu)
     T_BOOK -->|"notifyAppointmentBooked\nnotifyPaymentSuccess/Failed\nnotifyAppointmentCancelled"| P2_SVC
     T_SUPPORT -->|"notifySupportTicketCreated\nnotifyNewReview"| P2_SVC
-    T_TRIAL -->|"notifyTrialRequested\nnotifyVerificationStatusChanged\nnotifyNewConsultantApplication"| P2_SVC
+    T_TRIAL -->|"notifyTrialScheduled\nnotifyVerificationStatusChanged\nnotifyNewConsultantApplication"| P2_SVC
     T_ADMIN -->|"announcement postToInbox → stagePages"| P2_OUTBOX
     T_CRON -->|"notifyAppointmentReminder\nnotifyAppointmentCompleted"| P2_SVC
     T_STREAM -->|"notifyRecordingAvailable"| P2_SVC
