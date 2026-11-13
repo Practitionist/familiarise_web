@@ -130,6 +130,7 @@ export async function acceptProposal(args: {
     // proposal these released slots carry, and this one is being ACCEPTED, not
     // superseded.
     excludeRescheduleRequestId: request.id,
+    actorUserId: args.resolvedById,
     // ACCEPTED commits with the move or not at all.
     inTx: async (tx, moved) => {
       await closeConfirmedProposal(tx, {

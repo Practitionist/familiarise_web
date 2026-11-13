@@ -154,12 +154,14 @@ export interface AllocationRequest {
    * or sponsor org operator, or a door that does not say) is a one-off.
    */
   byConsultant?: boolean;
+  /** The person who placed the times, recorded on the approval's history row; null for a sweep. */
+  actorUserId?: string | null;
 }
 
 /** The per-call extras every allocation mode threads into its transaction. */
 export type AllocationTxOptions = Pick<
   AllocationRequest,
-  "approvableFrom" | "inTx"
+  "approvableFrom" | "inTx" | "actorUserId"
 > & {
   /** The `reason` the approval's history row records (`scheduleReason`). */
   historyReason?: string;

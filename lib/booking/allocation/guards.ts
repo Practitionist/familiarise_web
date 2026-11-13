@@ -72,11 +72,31 @@ export async function assertNoConfirmedSlots(
   });
   if (confirmed > 0) {
     throw new AllocationConflictError(
-      `This ${eventType} was already allocated in another session ` +
-        `(${confirmed} confirmed slot(s) exist).`,
+      eventType === "consultation"
+        ? ALREADY_SCHEDULED_COPY
+        : `This ${eventType} was already allocated in another session ` +
+            `(${confirmed} confirmed slot(s) exist).`,
       "ALREADY_ALLOCATED",
+      { confirmed },
     );
   }
+}
+
+export const ALREADY_SCHEDULED_COPY =
+  "This booking already has a time. Use Reschedule to move it.";
+
+/**
+ * Whether the allocation must find no confirmed session. A consultation with
+ * one is moved only through reschedule, whatever the client sends.
+ */
+export function mustBeUnscheduled(
+  eventType: EventType,
+  initialAllocation: boolean | undefined,
+): boolean {
+  return (
+    eventType === "consultation" ||
+    (initialAllocation === true && eventType !== "subscription")
+  );
 }
 
 /**

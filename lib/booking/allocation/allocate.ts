@@ -282,6 +282,7 @@ export async function dispatch(
   const txOptions: AllocationTxOptions = {
     approvableFrom: request.approvableFrom,
     inTx: request.inTx,
+    actorUserId: request.actorUserId,
     historyReason: scheduleReason({
       mode:
         request.mode === "auto" || request.mode === "manual"

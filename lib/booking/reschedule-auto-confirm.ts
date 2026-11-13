@@ -39,6 +39,7 @@ export async function tryAutoConfirmProposal(
       id: true,
       appointmentId: true,
       initiatorRole: true,
+      initiatedById: true,
       status: true,
       releasedOccurrenceIds: true,
       proposedTimes: {
@@ -81,6 +82,7 @@ export async function tryAutoConfirmProposal(
         // as DECLINED, because placing times supersedes them. THIS proposal is the
         // one being confirmed, not superseded, so it is excluded.
         excludeRescheduleRequestId: request.id,
+        actorUserId: request.initiatedById,
         // AUTO_ACCEPTED commits with the move or not at all.
         inTx: async (tx, moved) => {
           await closeConfirmedProposal(tx, {

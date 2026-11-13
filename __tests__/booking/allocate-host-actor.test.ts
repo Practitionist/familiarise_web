@@ -161,6 +161,28 @@ describe("allocate rule-waiving flags", () => {
     expect(allocate.mock.calls[0][0].byConsultant).toBe(true);
   });
 
+  it("records the actor, and an org audit row for a host-org operator", async () => {
+    apiUser = { id: "u-op", role: "CONSULTEE" };
+    membershipFindUnique.mockResolvedValue({
+      id: "mem-op",
+      status: "ACTIVE",
+      role: "OWNER",
+      organization: { status: "ACTIVE" },
+    });
+    await patch();
+    const [request] = allocate.mock.calls[0];
+    expect(request.actorUserId).toBe("u-op");
+    const orgAuditLog = { create: jest.fn() };
+    await request.inTx({ orgAuditLog });
+    expect(orgAuditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        organizationId: "org-host",
+        actorMembershipId: "mem-op",
+        action: "APPOINTMENT_ALLOCATED_FOR_ORG",
+      }),
+    });
+  });
+
   it("honours them for the plan's own consultant", async () => {
     apiUser = {
       id: "u-cp",
@@ -221,6 +243,7 @@ describe("sponsor-org allocate", () => {
       expect.objectContaining({
         approvableFrom: ["APPROVED"],
         initialAllocation: true,
+        actorUserId: "u-payer-owner",
       }),
     );
   });

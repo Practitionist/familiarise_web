@@ -69,6 +69,7 @@ import {
   assertExpectedTentativeSlotCountInTx,
   assertNoConfirmedSlots,
   guardAllocationInTx,
+  mustBeUnscheduled,
   assertGroupEventUnsoldInTx,
   probeConfirmedOverlap,
 } from "@/lib/booking/allocation/guards";
@@ -200,7 +201,7 @@ export async function manualAllocate(
     // Multi-tab guard: a fresh dialog allocation must 409 if another
     // session already allocated this event (re-checked in-txn below).
     // #1766 — a subscription decides after its rows are read (see below).
-    if (initialAllocation && eventType !== "subscription") {
+    if (mustBeUnscheduled(eventType, initialAllocation)) {
       await assertNoConfirmedSlots(prisma, eventType, eventId);
     }
 
@@ -320,7 +321,9 @@ export async function manualAllocate(
     // serialises two tabs of the same event.
     const isFreshAllocation =
       !isTopUp &&
-      (initialAllocation === true || existingNonTentativeSlotCount === 0);
+      (mustBeUnscheduled(eventType, initialAllocation) ||
+        initialAllocation === true ||
+        existingNonTentativeSlotCount === 0);
 
     // What to leave out of conflict detection and the weekly/daily limits
     // (#1554 — see autoAllocate: a reschedule excludes the tentative
@@ -635,6 +638,7 @@ export async function manualAllocate(
           config,
           txOptions.approvableFrom,
           txOptions.historyReason,
+          txOptions.actorUserId,
         );
         await holdUntilPaid(tx, appointments, outcome);
 

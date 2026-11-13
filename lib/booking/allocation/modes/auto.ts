@@ -73,6 +73,7 @@ import {
   assertExpectedTentativeSlotCountInTx,
   assertNoConfirmedSlots,
   guardAllocationInTx,
+  mustBeUnscheduled,
   assertGroupEventUnsoldInTx,
 } from "@/lib/booking/allocation/guards";
 import {
@@ -165,7 +166,7 @@ export async function autoAllocate(
     // session already allocated this event (re-checked in-txn below).
     // #1766 — a subscription decides after its rows are read: with held
     // sessions the next cycle appends, so the flag is ignored there.
-    if (initialAllocation && eventType !== "subscription") {
+    if (mustBeUnscheduled(eventType, initialAllocation)) {
       await assertNoConfirmedSlots(prisma, eventType, eventId);
     }
 
@@ -227,7 +228,9 @@ export async function autoAllocate(
     // "not allocated yet" condition; the in-txn advisory lock this gates
     // serialises two tabs of the same event.
     const isFreshAllocation =
-      initialAllocation === true || existingNonTentativeSlotCount === 0;
+      mustBeUnscheduled(eventType, initialAllocation) ||
+      initialAllocation === true ||
+      existingNonTentativeSlotCount === 0;
 
     const slotsPerCall = ScheduleCalculationService.getSlotsPerCall(
       config.sessionDurationInHours || config.durationInHours || 1,
@@ -655,6 +658,7 @@ export async function autoAllocate(
           config,
           txOptions.approvableFrom,
           txOptions.historyReason,
+          txOptions.actorUserId,
         );
         await holdUntilPaid(tx, appointments, outcome);
 

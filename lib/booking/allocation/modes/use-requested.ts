@@ -420,6 +420,7 @@ export async function useRequestedSlots(
           config,
           txOptions.approvableFrom,
           txOptions.historyReason,
+          txOptions.actorUserId,
         );
 
         // CRITICAL FIX: Clear isTentative flag on all slots after approval

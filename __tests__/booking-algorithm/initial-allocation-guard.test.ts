@@ -187,6 +187,35 @@ describe("manual allocation with initialAllocation", () => {
   });
 });
 
+describe("a consultation that already has a time (server-derived)", () => {
+  it.each(["manual", "auto"] as const)(
+    "%s mode refuses with ALREADY_ALLOCATED whatever the client sends",
+    async (mode) => {
+      (
+        prisma as unknown as { consultation: { findUnique: jest.Mock } }
+      ).consultation.findUnique.mockResolvedValue({
+        consultationPlan: { consultantProfileId: "cp-1" },
+        requestedBy: { user: { id: "user-1" } },
+      });
+      mockPrisma.appointmentOccurrence.count.mockResolvedValue(1);
+
+      const result = await allocate({
+        eventType: "consultation",
+        eventId: "con-1",
+        mode,
+        slots: mode === "manual" ? FUTURE_SLOTS : undefined,
+      });
+
+      expect(result.httpStatus).toBe(409);
+      expect(result.errorCode).toBe("ALREADY_ALLOCATED");
+      expect(result.error).toBe(
+        "This booking already has a time. Use Reschedule to move it.",
+      );
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    },
+  );
+});
+
 describe("manual allocation: transaction race window", () => {
   it("409s when the pre-lock count sees zero but the in-txn count sees confirmed slots", async () => {
     // Tab B commits between tab A's out-of-txn guard and its write txn: the
