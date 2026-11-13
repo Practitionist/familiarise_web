@@ -29,7 +29,7 @@ export const AVAILABILITY_READ_FAILED_MESSAGE =
   "We couldn't load the available times. Check your connection and try again.";
 
 /** A failed grid read. `message` is user copy; the server's own text stays in `detail`. */
-export class AvailabilityReadError extends Error {
+class AvailabilityReadError extends Error {
   readonly status: number;
   readonly detail: unknown;
   constructor(status: number, detail: unknown) {

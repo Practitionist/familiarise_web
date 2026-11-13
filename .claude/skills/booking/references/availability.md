@@ -387,7 +387,7 @@ already busy (AE-2, #784).
 ## 7. Grid states, and how they are painted
 
 `lib/scheduling/interval-status-tokens.ts` is the single status vocabulary the
-dashboard heat map, the mobile day list, `TrialScheduleCalendar` and the legend
+dashboard heat map, the mobile day list and the legend
 (`components/scheduling/SlotStatusLegend.tsx`) all read, so a swatch can never
 document a paint the cells do not use. Every state carries a colour **and** a
 non-colour cue (a pattern, a border style or an icon), so no two states differ

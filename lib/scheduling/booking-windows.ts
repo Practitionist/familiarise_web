@@ -116,17 +116,6 @@ export function isBookableWindow(slot: SlotWithStatus): boolean {
   );
 }
 
-/** The same time window, whatever object identity the latest read gave it. */
-export function sameWindow(
-  a: Pick<TIntervalTiming, "startsAt" | "endsAt">,
-  b: Pick<TIntervalTiming, "startsAt" | "endsAt">,
-): boolean {
-  return (
-    new Date(a.startsAt).getTime() === new Date(b.startsAt).getTime() &&
-    new Date(a.endsAt).getTime() === new Date(b.endsAt).getTime()
-  );
-}
-
 /**
  * The earliest window a buyer could take, across days keyed by calendar date
  * (`yyyy-MM-dd`, which sorts chronologically). Reads the same windows and the

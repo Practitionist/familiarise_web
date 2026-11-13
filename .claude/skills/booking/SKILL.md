@@ -415,7 +415,7 @@ See the decision record `docs/decisions/2026-11-03-booking-v2-direction.md`. A 1
 
 ## Three time pickers (built 2026-11-13)
 
-One per job; do not add a fourth, and do not give a new surface its own picker (`docs/calendar/allocate-heatmap-ux.md` §9). **Pick one time:** `SingleTimePicker` with `MonthGrid` (`components/scheduling/`), options from `lib/scheduling/single-session-options.ts`; the caller passes its writer's `purpose`, so the lead is `leadMsFor` or `eventLeadMs`, never restated. A buyer gets free times inside published hours, a door-reported held time as "Taken" with "Notify me", and a count of booked times; a host gets free and "Booked" times and an "outside my hours" switch. **Place many sessions on a week:** `UnifiedCalendar`/`WeekGrid`/`SessionTray`, `MobileDayListPicker` on a phone. **A repeating class pattern:** `ClassPatternScheduler`. On an instant-booking expert a held 1:1 time is taken, never a request: `consultationCtaFor(mode)` and 409 `REQUEST_NOT_OFFERED` at the request door.
+One per job; do not add a fourth, and do not give a new surface its own picker (`docs/calendar/allocate-heatmap-ux.md` §9). **Pick one time:** `SingleTimePicker` with `MonthGrid` (`components/scheduling/`), options from `lib/scheduling/single-session-options.ts`; the caller passes its writer's `purpose`, so the lead is `leadMsFor` or `eventLeadMs`, never restated. A buyer gets free times inside published hours, and the day's taken times behind "Show N taken times", each with "Notify me" in the One-time dialog; a host gets free and "Booked" times and an "outside my hours" switch. **Place many sessions on a week:** `UnifiedCalendar`/`WeekGrid`/`SessionTray`, `MobileDayListPicker` on a phone. **A repeating class pattern:** `ClassPatternScheduler`. On an instant-booking expert a held 1:1 time is taken, never a request: `consultationCtaFor(mode)` and 409 `REQUEST_NOT_OFFERED` at the request door.
 
 ## Decided, not yet built (2026-11-12)
 
@@ -453,7 +453,7 @@ Recognise these leftovers and delete them; never reintroduce them.
 - A capacity PATCH that wrote the submitted value as the instance override on every save, so an untouched field pinned an override: an override equal to the plan's default is stored as null (`capacityOverrideFor`).
 - Re-planning a live webinar or class through Manage timings: refused with 409 `USE_RETIME`; a webinar is re-timed and a class moves as a series (`retimeClassSeries`).
 - `datetime-local` event times in the webinar editor and the class make-up, and the re-time dialog's blind date + time select (`retimeStartsOn`): replaced by the single-time picker and `event-time-rules.ts`.
-- `SingleSessionPicker`, `TrialSlotPicker`, `TrialBookingModal`, the expert page's `SlotList`/`slot-list-policy`/`day-state`, and the class editor's and organisation allocate dialog's `datetime-local` boxes: replaced by `SingleTimePicker`.
+- `SingleSessionPicker`, `TrialSlotPicker`, `TrialScheduleCalendar`, `TrialBookingModal`, the expert page's `SlotList`/`slot-list-policy`/`day-state`, and the class editor's and organisation allocate dialog's `datetime-local` boxes: replaced by `SingleTimePicker`.
 - The INSTANT "contended → request" arm of `consultationCtaFor`: a held time is taken; the request door refuses instant-booking experts.
 - Server-local `setDate` series generation in the class `crud-with-plan` POST: replaced by `seriesStartsFrom`.
 - The monthly `CycleUnit` arm (`cycleUnit`, month-based `planCycleStart`/`planCycleIndex`): deleted; plans pace in plan weeks.
