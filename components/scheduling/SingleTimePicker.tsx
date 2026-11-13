@@ -304,6 +304,19 @@ export function SingleTimePicker({
         )
       : undefined;
   const valueLive = valueOption?.selectable === true;
+  // An availability save can re-id the row under a still-free time; the pick follows it.
+  const liveWindowId = valueLive ? valueOption?.window?.id : undefined;
+  const liveWindowType = valueLive ? valueOption?.window?.type : undefined;
+  useEffect(() => {
+    if (!value || !liveWindowId || !liveWindowType) return;
+    if (
+      value.window?.id === liveWindowId &&
+      value.window.type === liveWindowType
+    ) {
+      return;
+    }
+    onChange({ ...value, window: { id: liveWindowId, type: liveWindowType } });
+  }, [value, liveWindowId, liveWindowType, onChange]);
   const [seenLiveStart, setSeenLiveStart] = useState<number | null>(null);
   if (valueLive && valueStartMs !== seenLiveStart) {
     setSeenLiveStart(valueStartMs);

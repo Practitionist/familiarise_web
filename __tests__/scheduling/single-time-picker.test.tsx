@@ -151,3 +151,22 @@ it("drops the pick when another day is chosen", () => {
   fireEvent.click(screen.getByRole("button", { name: /\b5 November/ }));
   expect(picks.at(-1)).toBeNull();
 });
+
+it("keeps the pick's availability row current when a save re-ids it", () => {
+  const withRow = (id: string) =>
+    atoms(9, 13).map((cell) => ({
+      ...cell,
+      availabilityWindowId: id,
+      type: "WEEKLY",
+    }));
+  mockMonth = { "2026-11-04": withRow("row-a") };
+  const picks: (SingleTimeValue | null)[] = [];
+  const { rerender } = render(<Harness onPick={(v) => picks.push(v)} />);
+  fireEvent.click(time(/^9:30 am to 10:30 am, free/));
+  expect(picks.at(-1)?.window?.id).toBe("row-a");
+  mockMonth = { "2026-11-04": withRow("row-b") };
+  act(() => {
+    rerender(<Harness onPick={(v) => picks.push(v)} />);
+  });
+  expect(picks.at(-1)?.window).toEqual({ id: "row-b", type: "WEEKLY" });
+});
