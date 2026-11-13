@@ -5,26 +5,3 @@ import type { getConsultantDetail } from "@/lib/data/consultant-detail";
 export type ConsultantDetailData = NonNullable<
   Awaited<ReturnType<typeof getConsultantDetail>>
 >;
-
-type OriginalSlotData = {
-  id: string;
-  startsAt: string;
-  endsAt: string;
-};
-
-// #1554 — the expert-page picker item: an interval with its localised display strings.
-export interface PickerInterval {
-  id: string;
-  localStartTime: string;
-  localEndTime: string;
-  originalSlot: OriginalSlotData;
-  isAllocated?: boolean;
-  bookingStatus?: "available" | "partially-booked" | "fully-booked";
-  startsAt?: string;
-  endsAt?: string;
-  type?: "WEEKLY" | "CUSTOM";
-  /** Starts inside the minimum booking lead time. */
-  tooSoon?: boolean;
-  /** The viewer's plan limit is used up here. */
-  limitReached?: boolean;
-}

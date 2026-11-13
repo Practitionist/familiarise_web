@@ -141,11 +141,9 @@ does not cut a block at the viewer's midnight: `breakDownSlotsByDuration` snaps
 each window start up to the absolute UTC half-hour lattice and keys the window by
 the viewer day its own start falls on (`dateInISO`, `dayOfWeek`), so a block that
 crosses midnight keeps every atom and a viewer in a :45 zone (Kathmandu, Eucla)
-sees on-lattice cells. Both merge functions
-— `mergeConsecutiveSlots` for booking and `mergeConsecutiveSlotsForDisplay`
-(`app/explore/experts/[consultantId]/utils/mergeSlots.ts`) for the expert page —
-require exact adjacency, and differ only in which atoms are eligible; a
-tolerance on either side advertises a seam no row publishes (#1416).
+sees on-lattice cells. The merge (`mergeConsecutiveSlots`) requires exact
+adjacency; a tolerance advertises a seam no row publishes. The expert page reads
+the same windows through `windowsForDay`, with no merge of its own.
 
 The grid is `GET /api/scheduling/availability-with-allocation/[consultantId]` with
 `startDateInUtc`, `endDateInUtc` and `timezone`, public in `middleware.ts`. The
