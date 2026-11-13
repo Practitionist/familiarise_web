@@ -75,6 +75,8 @@ export type NextActionKind =
   | "ALLOCATE"
   /** #1780 row 6 — the host's misses give the learner a full-refund exit. */
   | "EXIT_SERIES"
+  /** The other side's proposed new times wait on this viewer. */
+  | "RESPOND_TO_MOVE"
   | "PAY"
   | "REQUEST_AGAIN"
   | "JOIN"
@@ -674,6 +676,19 @@ function deriveNext(
       !isOccurrencePastGrace(o, now)
     );
   });
+  const move = input.reschedule;
+  if (booking === "BEING_MOVED" && move) {
+    const counterparty =
+      (move.by === "REQUESTER" && viewer === "CONSULTANT") ||
+      (move.by === "CONSULTANT" && viewer === "CONSULTEE");
+    return counterparty
+      ? {
+          kind: "RESPOND_TO_MOVE",
+          label: "Accept new times",
+          deadline: toDateOrNull(move.expiresAt) ?? undefined,
+        }
+      : none;
+  }
   if (viewer === "CONSULTANT") {
     if (booking === "REQUESTED")
       return { kind: "APPROVE_OR_DECLINE", label: "Approve", deadline };

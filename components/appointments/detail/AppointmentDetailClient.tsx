@@ -98,7 +98,14 @@ import { useClassSessionActions } from "./ClassSessionControls";
 import { useSubscriptionReturnActions } from "./SubscriptionReturnControls";
 import { SessionSchedule, type SessionRowAction } from "./SessionSchedule";
 import { SessionAttendance } from "./SessionAttendance";
-import { RescheduleProposalCard } from "./RescheduleProposalCard";
+import {
+  RescheduleProposalCard,
+  useRescheduleAnswer,
+} from "./RescheduleProposalCard";
+import {
+  rescheduleAnswersFor,
+  type RescheduleSide,
+} from "@/lib/appointments/reschedule-answer";
 import { LazyAppointmentChatSheet } from "../LazyAppointmentChatSheet";
 import { caseKeyOf } from "@/lib/support/case-key";
 import { AppointmentSupportStatusCard } from "@/components/support/AppointmentSupportStatusCard";
@@ -375,6 +382,7 @@ export function AppointmentDetailClient({
       detail?.appointment.subscription?.status === "APPROVED",
   });
 
+  const moveControl = useRescheduleAnswer(appointmentId, role);
   const payments = detail?.appointment.payment ?? [];
   // #1527 — one request page, two doors: "Get help" opens on the intent
   // options, "Problem with this charge" already on PAYMENT_STATUS.
@@ -547,6 +555,28 @@ export function AppointmentDetailClient({
   // confirmation" never offered.
   const openProposal = detail.appointment.rescheduleRequests?.[0] ?? null;
   const showSeatSummary = role === "consultant" && isGroup;
+  // Which side of a 1:1 the viewer is a party to; an operator is neither.
+  const requesterUserId =
+    detail.appointment.consultation?.requestedBy?.userId ??
+    detail.appointment.subscription?.requestedBy?.userId ??
+    detail.appointment.trial?.consulteeProfile?.userId;
+  const hostUserId =
+    detail.appointment.consultation?.consultationPlan?.consultantProfile
+      ?.userId ??
+    detail.appointment.subscription?.subscriptionPlan?.consultantProfile
+      ?.userId ??
+    detail.appointment.trial?.subscriptionPlan?.consultantProfile?.userId;
+  let viewerSide: RescheduleSide | null = null;
+  if (viewerId && viewerId === requesterUserId) viewerSide = "CONSULTEE";
+  else if (viewerId && viewerId === hostUserId) viewerSide = "CONSULTANT";
+  const moveAnswers = openProposal
+    ? rescheduleAnswersFor({
+        viewerId,
+        viewerSide,
+        proposal: openProposal,
+        readOnly: adapter.readOnly,
+      })
+    : [];
   // Sponsorship is what the money says, not the org tag: checkout stamps
   // `Appointment.organizationId` on a PERSONAL-funded booking too, and that
   // member paid their own card. A group event keeps the tag as its label.
@@ -1342,6 +1372,11 @@ export function AppointmentDetailClient({
                   }
                 : undefined
             }
+            moveAnswers={
+              moveAnswers.length > 0
+                ? { answers: moveAnswers, control: moveControl }
+                : undefined
+            }
             onHelp={() => openHelp()}
           >
             {/* The Next up panel carries Join; without a next session time
@@ -1376,9 +1411,10 @@ export function AppointmentDetailClient({
             {renderNotices?.(vm)}
             {openProposal && (
               <RescheduleProposalCard
-                appointmentId={appointmentId}
                 proposal={openProposal}
                 role={role}
+                answers={moveAnswers}
+                control={moveControl}
                 readOnly={adapter.readOnly}
               />
             )}
@@ -1446,6 +1482,7 @@ export function AppointmentDetailClient({
       {/* Mounted HERE, not by each caller: this component renders the
           actions whose clicks open these dialogs. */}
       {adapter.renderDialogs()}
+      {moveControl.dialog}
       {classActions.dialog}
       {returnActions.dialog}
       <LazyAppointmentChatSheet target={chatTarget} onClose={closeChat} />

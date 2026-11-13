@@ -42,6 +42,8 @@ import {
 import { ApiResponseError } from "@/lib/fetch-helpers";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { cn } from "@/utils/tailwind";
+import type { RescheduleAnswer } from "@/lib/appointments/reschedule-answer";
+import type { RescheduleAnswerControl } from "./RescheduleProposalCard";
 
 /** The consultant's answer to a request, wired to the Requests page's mutations. */
 export interface RequestDecision {
@@ -87,6 +89,11 @@ export interface NeedsYouCalloutProps {
   children?: ReactNode;
   /** Drawn inside the page header, which already offers Get help in its menu. */
   embedded?: boolean;
+  /** The answers the routes accept from this viewer on an open reschedule. */
+  moveAnswers?: {
+    answers: RescheduleAnswer[];
+    control: RescheduleAnswerControl;
+  };
   /** A trial or a pay-first checkout: the learner's own hold, never an approval. */
   payFirst?: "trial" | "checkout" | null;
 }
@@ -711,6 +718,52 @@ function CalloutBody(props: Omit<NeedsYouCalloutProps, "embedded">) {
           }
         >
           {line}
+        </Shell>
+      );
+    }
+    case "RESPOND_TO_MOVE": {
+      const move = props.moveAnswers;
+      if (!move) return null;
+      const { answers, control } = move;
+      return (
+        <Shell
+          onHelp={onHelp}
+          actions={
+            <>
+              {deadline && <TimeLeft deadline={deadline} />}
+              {answers.includes("accept") && (
+                <Button
+                  size="sm"
+                  disabled={control.busy}
+                  onClick={() => control.answer("accept")}
+                >
+                  {control.busy && (
+                    <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                  )}
+                  {nextAction.label}
+                </Button>
+              )}
+              {answers.includes("decline") && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  disabled={control.busy}
+                  onClick={() => control.answer("decline")}
+                >
+                  Decline…
+                </Button>
+              )}
+            </>
+          }
+        >
+          {bookingState.why}
+          {deadline && (
+            <span className="block text-xs text-muted-foreground">
+              Answer by {format(deadline, "EEE d MMM HH:mm")}, or the original
+              time stands where it is still free.
+            </span>
+          )}
         </Shell>
       );
     }
