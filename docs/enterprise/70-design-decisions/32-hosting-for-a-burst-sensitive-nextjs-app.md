@@ -109,7 +109,9 @@ The end-to-end column was measured from outside India and is not comparable with
 - **A warm instance is warm only for the code it has loaded.** The third row had already served `probe-bare` and still took 4.8–6.1 s on its first request that loads the `lib/auth` graph. A keep-warm ping of a light route therefore does not help a signed-in user, and an instance the ticker keeps alive through a `CRON_SECRET` route may still pay this cost (not measured).
 - **The warm pool is the ticker.** The 2026-11-06 burst found no cold instance in production; this one found a single warm instance, because the fleet is paused ([the pause record](../../decisions/2026-11-06-pause-scheduled-jobs-prelaunch.md)).
 
-One caution on the 2,048 MB prediction above. Module loading is single-threaded, so one full core is the ceiling for most of the boot. At 0.58–0.62 CPU-seconds per second, a 6.3–7.1 s boot is about 3.7–4.4 CPU-seconds, which puts cold `probe-full` nearer 3.5–4 s than 3.1 s at any setting of one core or more. That is still an estimate. The measurement remains open, and [the 2026-11-13 review](../../infrastructure/08-jobs-runtime-and-cold-start-review.md) sets it beside the other levers.
+One caution on the 2,048 MB prediction above. Module loading is single-threaded, so one full core is the ceiling for most of the boot. At 0.58–0.62 CPU-seconds per second, a 6.3–7.1 s boot is about 3.7–4.4 CPU-seconds, which puts cold `probe-full` nearer 3.5–4 s than 3.1 s at any setting of one core or more. That is still an estimate.
+
+**The 2,048 MB test cannot run on the current plan.** On 2026-11-13 a throwaway deploy preview that set `[functions."___netlify-server-handler"] memory = 2048` failed before it deployed, with Netlify's message "Configuring function memory requires a Pro plan or higher with credit-based pricing". The same key was accepted on 2026-08-22. The measurement therefore waits on the billing-plan decision (`.claude/skills/billing-guardrails/references/netlify.md`), and that decision should count this lever. [The 2026-11-13 review](../../infrastructure/08-jobs-runtime-and-cold-start-review.md) sets it beside the other levers.
 
 ## Sources
 
