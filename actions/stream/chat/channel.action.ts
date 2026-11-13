@@ -41,6 +41,7 @@ import {
   forEachChunk,
 } from "@/lib/stream/batch";
 import { collabChannelId } from "@/lib/stream-channel-ids";
+import { fenceSeatGrants } from "@/lib/stream/access-revocation";
 
 // Input validation schemas
 const channelTypeSchema = z.enum(["messaging", "team"]);
@@ -357,6 +358,9 @@ async function loadEventChannelData(
         consultantId,
         members,
         moderatorIds,
+        appointmentId: webinar.appointment?.id ?? null,
+        seatHolderIds:
+          webinar.appointment?.participants.map((p) => p.userId) ?? [],
         name: webinar.webinarPlan.title,
         organizationId: bookingOrgId({
           webinarPlan: webinar.webinarPlan,
@@ -417,6 +421,9 @@ async function loadEventChannelData(
         consultantId,
         members,
         moderatorIds,
+        appointmentId: classData.appointment?.id ?? null,
+        seatHolderIds:
+          classData.appointment?.participants.map((p) => p.userId) ?? [],
         name: classData.classPlan.title,
         organizationId: bookingOrgId({
           classPlan: classData.classPlan,
@@ -535,6 +542,16 @@ export async function getEventChannelData(
   }
 }
 
+/** Takes back a seat that ended between the roster read and the channel write. */
+async function fenceRosterSeats(data: {
+  appointmentId?: string | null;
+  seatHolderIds?: string[];
+}): Promise<void> {
+  if (data.appointmentId && data.seatHolderIds) {
+    await fenceSeatGrants(data.appointmentId, data.seatHolderIds);
+  }
+}
+
 /**
  * Create a webinar channel with all participants (host, accepted collaborators,
  * and seats holding access).
@@ -555,16 +572,20 @@ export async function createWebinarChannel(
   const resolvedOrgId =
     organizationId === undefined ? data.organizationId : organizationId;
 
-  return createChannel({
-    channelType: "team",
-    channelId: `webinar-${webinarId}`,
-    channelName: data.name,
-    members: allMembers,
-    createdById: data.consultantId,
-    moderatorIds: data.moderatorIds,
-    additionalData: { webinar_id: webinarId },
-    organizationId: resolvedOrgId,
-  });
+  try {
+    return await createChannel({
+      channelType: "team",
+      channelId: `webinar-${webinarId}`,
+      channelName: data.name,
+      members: allMembers,
+      createdById: data.consultantId,
+      moderatorIds: data.moderatorIds,
+      additionalData: { webinar_id: webinarId },
+      organizationId: resolvedOrgId,
+    });
+  } finally {
+    await fenceRosterSeats(data);
+  }
 }
 
 /**
@@ -587,16 +608,20 @@ export async function createClassChannel(
   const resolvedOrgId =
     organizationId === undefined ? data.organizationId : organizationId;
 
-  return createChannel({
-    channelType: "team",
-    channelId: `class-${classId}`,
-    channelName: data.name,
-    members: allMembers,
-    createdById: data.consultantId,
-    moderatorIds: data.moderatorIds,
-    additionalData: { class_id: classId },
-    organizationId: resolvedOrgId,
-  });
+  try {
+    return await createChannel({
+      channelType: "team",
+      channelId: `class-${classId}`,
+      channelName: data.name,
+      members: allMembers,
+      createdById: data.consultantId,
+      moderatorIds: data.moderatorIds,
+      additionalData: { class_id: classId },
+      organizationId: resolvedOrgId,
+    });
+  } finally {
+    await fenceRosterSeats(data);
+  }
 }
 
 /**

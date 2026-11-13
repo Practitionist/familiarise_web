@@ -66,37 +66,48 @@ async function ensureChannelsForBuyers(args: {
 
   const syncedBuyerIds: string[] = [];
   let incomplete = false;
-  for (const userId of buyerIds) {
+  try {
+    for (const userId of buyerIds) {
+      if (eventChannelSpec) {
+        const joined = await addUserToEventChannel(
+          eventChannelSpec.kind,
+          eventChannelSpec.id,
+          userId,
+        );
+        if (joined.success) syncedBuyerIds.push(userId);
+        // A refused account is a deliberate skip; a missing member is retried by the sweep.
+        if (joined.reason === "member_not_added") incomplete = true;
+      }
+      if (consultantUserId !== userId) {
+        await createDirectMessageChannel(consultantUserId, userId, dmOrgId);
+      }
+    }
+    if (eventChannelSpec && syncedBuyerIds.length > 0) {
+      try {
+        await addSeatHoldersToOpenCalls(appointmentId, syncedBuyerIds);
+      } catch (error) {
+        reportSentryError(error, {
+          subsystem: "stream",
+          op: "ensureChannels.seatCallMembers",
+          extra: { appointmentId },
+        });
+      }
+    }
+  } finally {
     if (eventChannelSpec) {
-      const joined = await addUserToEventChannel(
-        eventChannelSpec.kind,
-        eventChannelSpec.id,
-        userId,
-      );
-      if (joined.success) syncedBuyerIds.push(userId);
-      // A refused account is a deliberate skip; a missing member is retried by the sweep.
-      if (joined.reason === "member_not_added") incomplete = true;
+      // Runs even when a grant throws: a seat that ended after the roster read is taken back from chat, DMs and rooms.
+      await fenceSeatGrants(appointmentId, buyerIds);
     }
-    if (consultantUserId !== userId) {
-      await createDirectMessageChannel(consultantUserId, userId, dmOrgId);
-    }
-  }
-  if (eventChannelSpec && syncedBuyerIds.length > 0) {
-    try {
-      await addSeatHoldersToOpenCalls(appointmentId, syncedBuyerIds);
-    } catch (error) {
-      reportSentryError(error, {
-        subsystem: "stream",
-        op: "ensureChannels.seatCallMembers",
-        extra: { appointmentId },
-      });
-    }
-  }
-  if (eventChannelSpec) {
-    // A seat that ended after the roster read was granted anyway; one batched re-check takes chat, DMs and rooms back.
-    await fenceSeatGrants(appointmentId, buyerIds);
   }
   return incomplete ? "incomplete" : "ensured";
+}
+
+// A stamp means ensured or intentionally skipped, so the sweep never revisits the row.
+async function stampChannelsEnsured(appointmentId: string): Promise<void> {
+  await prisma.appointment.updateMany({
+    where: { id: appointmentId, chatChannelEnsuredAt: null },
+    data: { chatChannelEnsuredAt: new Date() },
+  });
 }
 
 /**
@@ -191,11 +202,7 @@ export async function ensureChannelsForAppointment(
 
   const eventType = appointment.appointmentType;
   if (eventType === "TRIAL" || appointment.trial) {
-    // A stamp means ensured or intentionally skipped, so the sweep never revisits the row.
-    await prisma.appointment.updateMany({
-      where: { id: appointmentId, chatChannelEnsuredAt: null },
-      data: { chatChannelEnsuredAt: new Date() },
-    });
+    await stampChannelsEnsured(appointmentId);
     return { ensured: true, skipped: "trial_chat_blocked" };
   }
 
@@ -208,6 +215,11 @@ export async function ensureChannelsForAppointment(
   const paidBuyerIds = isGroupEvent
     ? appointment.participants.map((p) => p.userId)
     : (appointment.payment?.map((p) => p.userId) ?? []);
+  if (isGroupEvent && paidBuyerIds.length === 0) {
+    // No seat holds access, so nothing is owed; the next registration runs its own sync.
+    await stampChannelsEnsured(appointmentId);
+    return { ensured: true, skipped: "no_seat_holding_access" };
+  }
   const buyerIds = resolveBuyerIds(paidBuyerIds, buyerUserIds);
   if (buyerIds.length === 0) {
     return {
@@ -242,11 +254,7 @@ export async function ensureChannelsForAppointment(
     return { ensured: false, reason: "event_channel_member_not_added" };
   }
 
-  // A stamp means ensured or intentionally skipped, so the sweep never revisits the row.
-  await prisma.appointment.updateMany({
-    where: { id: appointmentId, chatChannelEnsuredAt: null },
-    data: { chatChannelEnsuredAt: new Date() },
-  });
+  await stampChannelsEnsured(appointmentId);
 
   streamLogger.info("Stream channels ensured for appointment", {
     appointmentType: eventType,

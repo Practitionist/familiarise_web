@@ -17,7 +17,15 @@ const mockState: {
   meetings: { streamCallId: string }[];
   adds: string[];
   onAdd: (ids: string[]) => void;
-} = { channelExists: true, meetings: [], adds: [], onAdd: () => undefined };
+  onCreate: () => void;
+} = {
+  channelExists: true,
+  meetings: [],
+  adds: [],
+  onAdd: () => undefined,
+  onCreate: () => undefined,
+};
+const mockAppointmentUpdateMany = jest.fn();
 const mockCreateDirectMessageChannel = jest.fn();
 const mockAppointmentFindUnique = jest.fn();
 const mockEventFindUnique = jest.fn();
@@ -34,7 +42,7 @@ jest.mock("@/lib/prisma", () => ({
   default: {
     appointment: {
       findUnique: (args: unknown) => mockAppointmentFindUnique(args),
-      updateMany: async () => ({ count: 1 }),
+      updateMany: (args: unknown) => mockAppointmentUpdateMany(args),
     },
     appointmentParticipant: {
       findMany: (args: unknown) => mockParticipantFindMany(args),
@@ -68,6 +76,7 @@ jest.mock("@/lib/stream-client", () => ({
         return {};
       },
       create: async () => {
+        mockState.onCreate();
         mockState.channelExists = true;
         memberIds(data?.members).forEach((id) => mockChat.add(id));
         return {};
@@ -124,6 +133,8 @@ jest.mock("@/lib/stream/dm-eligibility", () => ({
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 
 import { ensureChannelsForAppointment } from "@/lib/payments/webhooks/ensure-channels";
+import { addUserToEventChannel } from "@/lib/stream/event-channel-service";
+import { DmNotPermittedError } from "@/lib/stream/dm-eligibility";
 import {
   createClassChannel,
   createWebinarChannel,
@@ -189,6 +200,7 @@ function arrange(kind: "WEBINAR" | "CLASS", seats: Row[]) {
     }) => ({
       ...event,
       appointment: {
+        id: "appt-1",
         organizationId: null,
         participants: pick(args.include.appointment.include.participants.where),
       },
@@ -222,6 +234,12 @@ function arrange(kind: "WEBINAR" | "CLASS", seats: Row[]) {
   );
 }
 
+/** The leave commits, and its own revocation runs, just before the sync's grant lands. */
+const endSeat = (seats: Row[], userId: string) => () => {
+  const row = seats.find((s) => s.userId === userId);
+  if (row) row.status = "CANCELLED";
+};
+
 describe("event chat and call membership follows seats holding access", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -231,6 +249,8 @@ describe("event chat and call membership follows seats holding access", () => {
     mockState.meetings = [{ streamCallId: "call-1" }];
     mockState.adds = [];
     mockState.onAdd = () => undefined;
+    mockState.onCreate = () => undefined;
+    mockAppointmentUpdateMany.mockResolvedValue({ count: 1 });
   });
 
   it.each([
@@ -267,12 +287,8 @@ describe("event chat and call membership follows seats holding access", () => {
       const seats = seatsWith(pay());
       arrange("WEBINAR", seats);
       mockState.meetings = callOpen ? [{ streamCallId: "call-1" }] : [];
-      // The leave commits, and its own revocation runs, just before this user's chat add lands.
       mockState.onAdd = (ids) => {
-        if (ids.includes("stays")) {
-          const row = seats.find((s) => s.userId === "stays");
-          if (row) row.status = "CANCELLED";
-        }
+        if (ids.includes("stays")) endSeat(seats, "stays")();
       };
 
       await ensureChannelsForAppointment("appt-1");
@@ -331,4 +347,82 @@ describe("event chat and call membership follows seats holding access", () => {
       for (const ended of ENDED) expect(mockChat).not.toContain(ended);
     },
   );
+  it("a refused host DM still runs the fence, so a seat that ended mid-sync is taken back", async () => {
+    const seats = seatsWith(pay());
+    arrange("WEBINAR", seats);
+    mockState.meetings = [];
+    mockState.onAdd = (ids) => {
+      if (ids.includes("stays")) endSeat(seats, "stays")();
+    };
+    mockCreateDirectMessageChannel.mockImplementation(
+      async (_host: string, userId: string) => {
+        if (userId === "stays") throw new DmNotPermittedError("host", userId);
+      },
+    );
+
+    await expect(ensureChannelsForAppointment("appt-1")).rejects.toThrow(
+      DmNotPermittedError,
+    );
+
+    expect(mockChat).not.toContain("stays");
+    expect(mockIntentCreateMany).toHaveBeenCalledWith({
+      data: [expect.objectContaining({ userId: "stays", planId: "appt-1" })],
+      skipDuplicates: true,
+    });
+  });
+
+  it.each(["WEBINAR", "CLASS"] as const)(
+    "a %s with no seat holding access is stamped done, so the repair queue does not retry it",
+    async (kind) => {
+      arrange(
+        kind,
+        seatsWith(pay()).filter(
+          (s) => s.userId !== "stays" && s.userId !== "newcomer",
+        ),
+      );
+
+      await expect(ensureChannelsForAppointment("appt-1")).resolves.toEqual({
+        ensured: true,
+        skipped: "no_seat_holding_access",
+      });
+
+      expect(mockAppointmentUpdateMany).toHaveBeenCalledWith({
+        where: { id: "appt-1", chatChannelEnsuredAt: null },
+        data: { chatChannelEnsuredAt: expect.any(Date) },
+      });
+      expect(mockChat.size).toBe(0);
+    },
+  );
+
+  it.each([
+    ["WEBINAR", createWebinarChannel],
+    ["CLASS", createClassChannel],
+  ] as const)(
+    "the %s create route takes back a seat that ended while the channel was created",
+    async (kind, create) => {
+      const seats = seatsWith(pay());
+      arrange(kind, seats);
+      mockState.channelExists = false;
+      mockState.onCreate = endSeat(seats, "stays");
+
+      await create("event-1", null);
+
+      expect([...mockChat].sort()).toEqual(["collab", "host", "newcomer"]);
+      expect(mockIntentCreateMany).toHaveBeenCalledWith({
+        data: [expect.objectContaining({ userId: "stays", planId: "appt-1" })],
+        skipDuplicates: true,
+      });
+    },
+  );
+
+  it("a first join that creates the channel takes back a seat that ended meanwhile", async () => {
+    const seats = seatsWith(pay());
+    arrange("CLASS", seats);
+    mockState.channelExists = false;
+    mockState.onCreate = endSeat(seats, "stays");
+
+    await addUserToEventChannel("class", "event-1", "newcomer");
+
+    expect([...mockChat].sort()).toEqual(["collab", "host", "newcomer"]);
+  });
 });

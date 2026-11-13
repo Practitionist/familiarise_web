@@ -305,6 +305,12 @@ export async function addUserToEventChannel(
     }
 
     await addRemainingMembers(channelWithData, syncedMembers);
+    if ("seatHolderIds" in eventData && eventData.appointmentId) {
+      // A seat that ended between the roster read and the create is taken back.
+      const { fenceSeatGrants } =
+        await import("@/lib/stream/access-revocation");
+      await fenceSeatGrants(eventData.appointmentId, eventData.seatHolderIds);
+    }
 
     const roleAssignments = Array.from(
       new Set([
@@ -440,6 +446,7 @@ function buildGroupEventData(
     }[];
   },
   appointment: {
+    id: string;
     organizationId: string | null;
     participants: { userId: string }[];
   } | null,
@@ -465,6 +472,8 @@ function buildGroupEventData(
     consultantId,
     members,
     moderatorIds,
+    appointmentId: appointment?.id ?? null,
+    seatHolderIds: appointment?.participants.map((p) => p.userId) ?? [],
     name: plan.title,
     organizationId,
   };
