@@ -143,8 +143,9 @@ currently hold:
   follows the `dev` → `prod` promotion, the database keeps the extra enum values
   and the `Trial.status` default of `PENDING`. The new code must never meet a row
   holding a removed value: on 2026-11-13 no row held one (the four webinars,
-  three classes and two trials that did were moved first), and the released code
-  writes none. The rest of each swap (the `BEGIN`/`COMMIT` wrapper,
+  three classes and two trials that did were moved first), and the branch writes
+  none. Production keeps creating trials as `PENDING` until the release, so
+  repeat the zero-row read immediately before the promotion and before the push. The rest of each swap (the `BEGIN`/`COMMIT` wrapper,
   `CREATE TYPE …_new`, the column retypes and renames, and the `Trial.status`
   default drop) is listed there too, so the daily drift check stays green while
   the swap waits. Move the four `DROP TYPE` entries to

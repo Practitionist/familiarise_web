@@ -317,18 +317,18 @@ Users can disable trial notifications via `NotificationPreference.trialNotificat
 
 ## API Reference
 
-| Method   | Endpoint                                    | Auth Required               | Purpose                                                                                    |
-| -------- | ------------------------------------------- | --------------------------- | ------------------------------------------------------------------------------------------ |
-| `GET`    | `/api/trials`                               | Yes (session)               | List trials (paginated, filterable)                                                        |
-| `POST`   | `/api/trials`                               | Yes (session)               | Book a trial at the picked `slot` (free: confirmed; paid: held, returns `checkoutUrl`)     |
-| `GET`    | `/api/trials/[trialId]`                     | Yes (session)               | Get a specific trial session                                                               |
-| `PATCH`  | `/api/trials/[trialId]`                     | Yes (session)               | Schedule a trial without a time, reject, complete, convert; cancel only an unconfirmed one |
-| `DELETE` | `/api/trials/[trialId]`                     | Yes (session)               | Cancel an AWAITING_PAYMENT or SCHEDULED trial; a paid one needs `confirmedRefundPaise`     |
-| `GET`    | `/api/trials/[trialId]/cancel/preview`      | Yes (session)               | Refund quote for cancelling the trial now, for the caller's side                           |
-| `POST`   | `/api/appointments/[id]/reschedule`         | Yes (session, party)        | Move the trial once per side to a named window (see "Rescheduling a trial")                |
-| `POST`   | `/api/appointments/[id]/reschedule/respond` | Yes (session, counterparty) | Accept or decline the other side's proposed trial time                                     |
-| `GET`    | `/api/trials/check-eligibility`             | Yes (session)               | Check if consultee can request a trial                                                     |
-| `GET`    | `/api/trials/stats`                         | Yes (session + ownership)   | Trial session statistics (own profile only)                                                |
+| Method   | Endpoint                                    | Auth Required               | Purpose                                                                                |
+| -------- | ------------------------------------------- | --------------------------- | -------------------------------------------------------------------------------------- |
+| `GET`    | `/api/trials`                               | Yes (session)               | List trials (paginated, filterable)                                                    |
+| `POST`   | `/api/trials`                               | Yes (session)               | Book a trial at the picked `slot` (free: confirmed; paid: held, returns `checkoutUrl`) |
+| `GET`    | `/api/trials/[trialId]`                     | Yes (session)               | Get a specific trial session                                                           |
+| `PATCH`  | `/api/trials/[trialId]`                     | Yes (session)               | Update notes, cancel an unpaid trial, complete or convert                              |
+| `DELETE` | `/api/trials/[trialId]`                     | Yes (session)               | Cancel an AWAITING_PAYMENT or SCHEDULED trial; a paid one needs `confirmedRefundPaise` |
+| `GET`    | `/api/trials/[trialId]/cancel/preview`      | Yes (session)               | Refund quote for cancelling the trial now, for the caller's side                       |
+| `POST`   | `/api/appointments/[id]/reschedule`         | Yes (session, party)        | Move the trial once per side to a named window (see "Rescheduling a trial")            |
+| `POST`   | `/api/appointments/[id]/reschedule/respond` | Yes (session, counterparty) | Accept or decline the other side's proposed trial time                                 |
+| `GET`    | `/api/trials/check-eligibility`             | Yes (session)               | Check if consultee can request a trial                                                 |
+| `GET`    | `/api/trials/stats`                         | Yes (session + ownership)   | Trial session statistics (own profile only)                                            |
 
 **Note**: `/api/trials/stats` was previously in `PUBLIC_API_PREFIXES` (no auth required). It now requires authentication and enforces an ownership check -- users can only view stats for their own consultant profile.
 
