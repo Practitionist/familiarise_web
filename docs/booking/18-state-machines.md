@@ -12,7 +12,7 @@ through `transitionConsultationRequest` / `transitionSubscriptionRequest`
 (doctrine rule 1); a miss rolls back / matches zero rows instead of
 corrupting state.
 
-The table below is `REQUEST_ALLOWED_FROM` as of 2026-09-18 (#1703), row by target state and column by the state the row must currently be in.
+The table below is `REQUEST_ALLOWED_FROM`, row by target state and column by the state the row must currently be in. A plan (`Subscription`) is guarded by the narrower `SUBSCRIPTION_ALLOWED_FROM` described after it.
 
 | To ↓ From →                  | PENDING                                         | APPROVED                                                     | APPROVED_PENDING_PAYMENT                                                                                                                                                                             | SCHEDULED | COMPLETED | REJECTED | CANCELLED | EXPIRED |
 | ---------------------------- | ----------------------------------------------- | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- | --------- | -------- | --------- | ------- |
@@ -25,9 +25,9 @@ The table below is `REQUEST_ALLOWED_FROM` as of 2026-09-18 (#1703), row by targe
 | **CANCELLED**                | ✓                                               | ✓                                                            | ✓                                                                                                                                                                                                    | ✓         |           |          |           |         |
 | **EXPIRED**                  | ✓ (48 h consultation / 30 d subscription sweep) | ✓ (PR 2c: APPROVED-unallocated cohort)                       | ✓ (the 24 h pay-link sweep with a consultee notice; the 7 d `updatedAt` fallback in `expirePaymentPendingRequests`; and since #1775 the consultant's own Withdraw, reason `WITHDRAWN_BY_CONSULTANT`) |           |           |          |           |         |
 
-The `APPROVED_PENDING_PAYMENT → EXPIRED` edge has three writers that share one body since #1775: the 24 h pay-link sweep, the 7-day fallback and the consultant-initiated Withdraw all go through `lapseApprovedRequest` in `lib/booking/lapse-approved-request.ts`, which writes the history row with reason `PAYMENT_LAPSED` or `WITHDRAWN_BY_CONSULTANT`, keeps the money predicate in the CAS WHERE, tombstones the open PENDING order and releases the tentative holds by status. Two rows deserve a note. `PENDING` is reachable only from `APPROVED_PENDING_PAYMENT` in the map; the reschedule route's move to `PENDING` goes through `transitionConsultationRequest` with `fromIn` pinned to the status it read. `SCHEDULED` is legal for consultations only: the incident rebook (`lib/booking/incident-rebook.ts`) writes it. A subscription never enters it. `transitionSubscriptionRequest` guards with `SUBSCRIPTION_ALLOWED_FROM`, which is this map with no `SCHEDULED` row or column (so `COMPLETED` is reached from `APPROVED` only), and it refuses `to: SCHEDULED` even when a caller widens `fromIn`. Allocation re-stamps `APPROVED` and completion goes `APPROVED → COMPLETED`.
+The `APPROVED_PENDING_PAYMENT → EXPIRED` edge has three writers that share one body since #1775: the 24 h pay-link sweep, the 7-day fallback and the consultant-initiated Withdraw all go through `lapseApprovedRequest` in `lib/booking/lapse-approved-request.ts`, which writes the history row with reason `PAYMENT_LAPSED` or `WITHDRAWN_BY_CONSULTANT`, keeps the money predicate in the CAS WHERE, tombstones the open PENDING order and releases the tentative holds by status. Two rows deserve a note. `PENDING` is reachable only from `APPROVED_PENDING_PAYMENT` in the map; the reschedule route's move to `PENDING` goes through `transitionConsultationRequest` with `fromIn` pinned to the status it read. No code moves a consultation from `APPROVED` to `SCHEDULED`: the one writer of `SCHEDULED` is the incident rebook (`reopenBooking` in `lib/booking/incident-rebook.ts`), which reopens a `COMPLETED` consultation whose session a declared platform incident voided, with `fromIn: [COMPLETED]`. A consultation is otherwise `APPROVED` from capture or approval until it completes.
 
-Since #1775 a subscription never enters `APPROVED_PENDING_PAYMENT` through a live writer: a plan is paid at purchase, so both the detail PATCH and the allocate path refuse an unpaid plan with `409 SUBSCRIPTION_UNPAID`, and the edge survives only for rows already in flight. A paid plan has one extra `PENDING → EXPIRED` writer, `expireUnallocatedPaidSubscriptions`, which fires 48 hours after the capture when no session has been allocated and records the history reason `UNALLOCATED_48H`; the 30-day `PENDING` arm skips paid rows so the two arms never share one.
+A plan is paid at checkout, so it never awaits payment and never enters `SCHEDULED`. `transitionSubscriptionRequest` guards with `SUBSCRIPTION_ALLOWED_FROM`, which has no edge into or out of either status: `PENDING` (paid, waiting for cycle 1) moves to `APPROVED` (placed), `REJECTED` (declined), `CANCELLED` or `EXPIRED`; `APPROVED` moves to `COMPLETED`, `CANCELLED` or `EXPIRED`. The helper also refuses `to: SCHEDULED` when a caller widens `fromIn`. `LIVE_SUBSCRIPTION_STATUSES` is `PENDING` and `APPROVED`. The detail PATCH accepts only `APPROVED` and `REJECTED` and refuses an unpaid plan with `409 SUBSCRIPTION_UNPAID`, as does the allocate path. A paid plan has one extra `PENDING → EXPIRED` writer, `expireUnallocatedPaidSubscriptions`, which fires 48 hours after the capture when no session has been allocated and records the history reason `UNALLOCATED_48H`; the 30-day `PENDING` arm skips paid rows so the two arms never share one.
 
 ### Subscription entitlement and fill-order cycles (#1766)
 
@@ -40,7 +40,7 @@ Two consequences follow for the maps above. The `APPROVED` self-edge is what eve
 Special sets:
 
 - `ALLOCATION_APPROVABLE_FROM = [PENDING, APPROVED_PENDING_PAYMENT, APPROVED]`
-  — allocation re-stamps APPROVED with the self-edge legal there only.
+  — allocation re-stamps APPROVED with the self-edge legal there only; for a plan only `PENDING` and `APPROVED` can occur.
 - The sponsoring-organisation allocate route passes `approvableFrom: [APPROVED]` to the allocator, which narrows the approval compare-and-swap for that call only. `ALLOCATION_APPROVABLE_FROM` itself is unchanged, so a sponsor can place times on a booking the expert has already approved but can never move a `PENDING` or `APPROVED_PENDING_PAYMENT` request to `APPROVED`. The host allocate route (`lib/scheduling/allocate-route.ts`) refuses a caller who is not the expert, a host-organisation operator or staff with 403 `ALLOCATE_FORBIDDEN`, so a consultee can no longer approve their own request.
 - `RESCHEDULABLE_FROM = [PENDING, APPROVED, APPROVED_PENDING_PAYMENT,
 SCHEDULED]` — which bookings may open a reschedule.
@@ -51,16 +51,18 @@ SCHEDULED]` — which bookings may open a reschedule.
 `EVENT_ALLOWED_FROM` / `CLASS_EVENT_ALLOWED_FROM` (identical maps), via
 `transitionWebinarEvent` / `transitionClassEvent`:
 
-| To ↓ From →   | DRAFT                                                              | SCHEDULED                       | IN_PROGRESS | COMPLETED | CANCELLED |
-| ------------- | ------------------------------------------------------------------ | ------------------------------- | ----------- | --------- | --------- |
-| **SCHEDULED** | — (publishing is its own edge: `EVENT_PUBLISHABLE_FROM = [DRAFT]`) | ✓ self (re-allocation re-stamp) | ✓           |           |           |
-| **COMPLETED** |                                                                    | ✓                               | ✓           |           |           |
-| **CANCELLED** | ✓ (a draft with placed sessions is cancellable)                    | ✓                               | ✓           |           |           |
+| To ↓ From →   | DRAFT                                                              | SCHEDULED                       | COMPLETED | CANCELLED |
+| ------------- | ------------------------------------------------------------------ | ------------------------------- | --------- | --------- |
+| **SCHEDULED** | — (publishing is its own edge: `EVENT_PUBLISHABLE_FROM = [DRAFT]`) | ✓ self (re-allocation re-stamp) |           |           |
+| **COMPLETED** |                                                                    | ✓                               |           |           |
+| **CANCELLED** | ✓ (a draft with placed sessions is cancellable)                    | ✓                               |           |           |
+
+A published event stays `SCHEDULED` while its sessions run, and the auto-complete pass moves it to `COMPLETED` once every session ended more than an hour ago.
 
 DRAFT keeps its status through allocation (B2/#1060): "add a session, then
 publish" is the editor flow. A draft is cancellable (`DRAFT → CANCELLED`) so a host with placed sessions is never stuck with it; `SCHEDULED` stays unreachable from `DRAFT` except by publishing, because a reschedule re-stamp must never publish an offering as a side effect.
 
-No route other than the transition helpers writes an event status. The webinar and class `PUT` bodies are parsed by a Zod schema (`schemas/event-instance.ts`), and a body carrying `status` is refused with 409 `USE_CANCEL_ROUTE`, so cancelling always goes through the cancel route, which refunds and writes history. The allocator's own status writes go through `transitionWebinarEvent` and `transitionClassEvent`, which write history rows.
+No route other than the transition helpers writes an event status after creation. The `crud-with-plan` create body accepts `status` only as `DRAFT` or `SCHEDULED` (`EventEditorStatusSchema` in `schemas/event-instance.ts`); the webinar and class `PUT` bodies are parsed by a Zod schema in the same file, and a body carrying `status` is refused with 409 `USE_CANCEL_ROUTE`, so cancelling always goes through the cancel route, which refunds and writes history. The allocator's own status writes go through `transitionWebinarEvent` and `transitionClassEvent`, which write history rows.
 
 ## Class batch enrolment (#1819)
 
@@ -68,7 +70,16 @@ A class batch's enrolment state is derived, not stored, by `classEnrolmentFrom` 
 
 ## Trials
 
-`TrialStatus`, guarded by `TRIAL_ALLOWED_FROM` through `transitionTrial`. The learner picks the time at request (`bookTrialInTx`): the row is created `PENDING` and moved in the same transaction to `SCHEDULED` (free) or `AWAITING_PAYMENT` (paid, holding a tentative session), and the capture webhook moves `AWAITING_PAYMENT → SCHEDULED`. A reschedule leaves the trial `SCHEDULED` and moves only its session (a booking with a live `PENDING` payment cannot be rescheduled, 409 `PAY_LINK_LIVE`); every door that ends a held trial (`DELETE`, the `PATCH` cancel and decline, the expire-unpaid-trials sweep) expires its `PENDING` payment in the same transaction before the trial moves; trial `DELETE` is the one door from `SCHEDULED` to `CANCELLED`. A `PENDING` trial without a time is scheduled by the consultant with `paymentId` not null repeated in the CAS WHERE for a paid one. A paid `PENDING` trial the consultant never answers moves `PENDING → CANCELLED` after 48 hours with the history reason `TRIAL_UNANSWERED` and is refunded in full; an unpaid trial past its pay window moves from `PENDING` or `AWAITING_PAYMENT` to `CANCELLED` with `paymentId` null repeated in the CAS WHERE, and no money moves.
+`TrialStatus` has five values, guarded by `TRIAL_ALLOWED_FROM` through `transitionTrial`:
+
+| To ↓ From →   | AWAITING_PAYMENT | SCHEDULED | COMPLETED |
+| ------------- | ---------------- | --------- | --------- |
+| **SCHEDULED** | ✓ (capture)      |           |           |
+| **COMPLETED** |                  | ✓         |           |
+| **CONVERTED** |                  |           | ✓         |
+| **CANCELLED** | ✓                | ✓         |           |
+
+The learner picks the time at request and the expert is never asked: `bookTrialInTx` (`lib/trials/book-trial.ts`) creates the row directly in its final state with one creation history row, `SCHEDULED` with a confirmed session for a free trial, or `AWAITING_PAYMENT` with a tentative session and a `paymentDueAt` 15 minutes before the start at the latest for a paid one. `AWAITING_PAYMENT` therefore has no edge into it. The capture webhook moves `AWAITING_PAYMENT → SCHEDULED`. A reschedule leaves the trial `SCHEDULED` and moves only its session (a booking with a live `PENDING` payment cannot be rescheduled, 409 `PAY_LINK_LIVE`). Every door that ends a held trial (`DELETE`, the `PATCH` cancel, the expire-unpaid-trials sweep) expires its `PENDING` payment in the same transaction before the trial moves; the `PATCH` cancels only an unpaid trial, and trial `DELETE` is the one door from `SCHEDULED` to `CANCELLED`. An unpaid trial past its pay window moves `AWAITING_PAYMENT → CANCELLED` with `paymentId` null repeated in the CAS WHERE, and no money moves.
 
 ## Class sessions the host cancels (#1780 row 4)
 
@@ -185,7 +196,7 @@ Every booking status write goes through a `transition*` helper or `transitionPar
 
 - Origin `PENDING` — the parent never left PENDING, so withdraw writes nothing.
 - Origin `APPROVED_PENDING_PAYMENT` — restores to `APPROVED_PENDING_PAYMENT`, so the pay-link expiry cohort keeps the row rather than seeing an unpaid booking that looks paid-for.
-- Origin `APPROVED` (or a consultation's `SCHEDULED`) — restores to `APPROVED`.
+- Origin `APPROVED` — restores to `APPROVED`; a consultation's `SCHEDULED` (the incident rebook's state) restores to `SCHEDULED`.
 - Origin missing (no `originStatus` and no history entry, or `readRescheduleOrigin`'s own `"UNKNOWN"` fallback) — the restore refuses to guess. A consultation writes nothing, exactly like the subscription arm, and reports once through `reportSentryMessage` with `expected: true`. The booking stays where it is until an operator or a new allocation settles it; it is never restored to `APPROVED` on a guess, because that could confirm an unpaid booking.
 
 All restores keep `fromIn: ["PENDING"]`, so a parent that moved out of PENDING under the withdraw (a concurrent answer) throws `IllegalTransitionError` rather than being re-stamped.
@@ -200,7 +211,7 @@ Deliberately NOT migrated: payout/dispute/ledger state machines live under
 3. **Closing a reschedule proposal in a second transaction after the move.** Replaced by the in-transaction hook above.
 4. **Restoring an unknown origin to `APPROVED`.** Replaced by refusing to write.
 5. **`COUNTERED`** as a reschedule state was removed from the enum because nothing ever built the round-two counter-offer.
-6. **Dead states pending removal in Wave 3:** `SCHEDULED` stays in `AppointmentStatus` because consultations use it; the subscription edge into it was removed in code (`SUBSCRIPTION_ALLOWED_FROM`). `IN_PROGRESS` on webinars and classes is not dead: the `crud-with-plan` `PATCH` routes accept it and write it through `transitionWebinarEvent` and `transitionClassEvent`, although nothing sets it automatically when a session starts.
+6. **Removed stored values.** `IN_PROGRESS` on webinars and classes (nothing set it; the create body could), the trial's `PENDING` "awaiting the expert" state with its accept, decline (`REJECTED`) and 48-hour `TRIAL_UNANSWERED` sweep arm, and the plan's edges into and out of `APPROVED_PENDING_PAYMENT`. `AppointmentStatus.SCHEDULED` stays because the incident rebook writes it.
 7. **Classifying an outage with no presence evidence as a learner absence.** The classifier used to run its absence verdicts before any outage rule, so a platform-wide outage could forfeit a learner's session. A declared incident window now wins first.
 8. **A raw-status-writer inventory.** The cancel route, the reschedule route and `expire-stale-requests` were once listed as CAS-guarded raw writers; all of them go through the transition helpers now.
 9. **A per-void `void-unused:` refund at the scheduling period's end.** A subscription void is settled inside the plan-end refund.

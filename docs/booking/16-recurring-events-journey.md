@@ -527,7 +527,7 @@ The shared catalog in `lib/cron/schedule.ts` owns runtime ticker cadences. Recor
 | **Capacity**          | No (1:1)                                                 | Yes (per-instance `maxParticipants`; full means sold out)                                                 |
 | **Curriculum model**  | `SubscriptionContent` (session-by-session)               | `ClassContent` (ordered, with `hoursAllotted`)                                                            |
 | **Scheduling field**  | `sessionsPerWeek`                                        | `sessionsPerWeek`                                                                                         |
-| **Request model**     | `Subscription.status` (PENDING -> APPROVED -> SCHEDULED) | `Class.status` (SCHEDULED -> IN_PROGRESS -> COMPLETED)                                                    |
+| **Request model**     | `Subscription.status` (PENDING -> APPROVED -> COMPLETED) | `Class.status` (DRAFT -> SCHEDULED -> COMPLETED)                                                          |
 | **Hold period**       | 168h (7 days)                                            | 24h                                                                                                       |
 
 ---

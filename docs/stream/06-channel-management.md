@@ -111,7 +111,7 @@ Familiarise enforces a deterministic 4-part communication policy across all book
    - `DM_ELIGIBLE_STATUSES = ["APPROVED", "SCHEDULED", "COMPLETED"]` (`lib/stream/dm-eligibility-statuses.ts`).
    - Unpaid or unconfirmed bookings (`PENDING`, `APPROVED_PENDING_PAYMENT`, `CANCELLED`, `REJECTED`, `EXPIRED`) are **excluded** — direct messaging opens only after payment settles or an appointment is confirmed without pending payment, and remains open through `COMPLETED` for post-session follow-up until the retention window expires.
 3. **Webinars & Classes Provision Both Group Event Channels and 1:1 Host DMs**:
-   - Enrolling in a confirmed `WEBINAR` or `CLASS` (`OPENABLE_EVENT_STATUSES = ["SCHEDULED", "IN_PROGRESS", "COMPLETED"]`) provisions **both**:
+   - Enrolling in a confirmed `WEBINAR` or `CLASS` (`OPENABLE_EVENT_STATUSES = ["SCHEDULED", "COMPLETED"]`) provisions **both**:
      1. The shared `team` channel (`webinar-${webinarId}` or `class-${classId}`), whose roster includes the plan owner, all `ACCEPTED` `PlanCollaborator` co-hosts, and all live `AppointmentParticipant` enrollees.
      2. The 1:1 personal DM (`dm-` or `dmo-`) between the hosting consultant and each confirmed enrollee (`hasWebinarLink` and `hasClassLink` in `lib/stream/dm-eligibility.ts`).
 4. **A Free Trial (`TRIAL`) Never Grants Chat**:

@@ -292,6 +292,11 @@ gate a concurrent writer walked through:
   route all call it, so a 6-hour window can no longer be sold at a 1-hour price.
 - A paused expert (`acceptingRequests = false`) refuses direct checkout and
   trials with 409 `NOT_ACCEPTING_BOOKINGS`; existing bookings are unaffected.
+- A review-first expert (`bookingMode = REQUEST`) refuses a direct consultation
+  checkout with 409 `REQUEST_APPROVAL_REQUIRED` on every rail (card,
+  zero-amount, organisation-funded), before any gateway order; plans, trials and
+  event seats are unaffected. The approved request's pay link
+  (`createApprovalPaymentIntent`) never passes through checkout pricing.
 - Slot conflicts, via `validateSlotAvailability`, checkout's own in-transaction
   re-check. It subtracts `buildDeadHoldFilter(new Date())` from the occupancy
   query so a lapsed hold no longer blocks, and the consultee-side conflict reads

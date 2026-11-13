@@ -52,7 +52,7 @@ Channel provisioning and eligibility follow a strict **4-Part DM & Trial Policy*
    - `DM_ELIGIBLE_STATUSES = ["APPROVED", "SCHEDULED", "COMPLETED"]`.
    - `APPROVED_PENDING_PAYMENT` and `PENDING` are excluded — no DM channel can be created, searched, or opened until payment succeeds or an appointment is approved without pending payment.
 3. **Webinars & Classes provision both the group event channel and a 1:1 personal DM**:
-   - Confirmed enrollment (`OPENABLE_EVENT_STATUSES = ["SCHEDULED", "IN_PROGRESS", "COMPLETED"]`) provisions both the shared `team` channel (`webinar-${id}` / `class-${id}`) **and** a 1:1 DM (`dm-` / `dmo-`) between the hosting consultant and each confirmed enrollee (`hasWebinarLink`, `hasClassLink`).
+   - Confirmed enrollment (`OPENABLE_EVENT_STATUSES = ["SCHEDULED", "COMPLETED"]`) provisions both the shared `team` channel (`webinar-${id}` / `class-${id}`) **and** a 1:1 DM (`dm-` / `dmo-`) between the hosting consultant and each confirmed enrollee (`hasWebinarLink`, `hasClassLink`).
    - `ACCEPTED` `PlanCollaborator` co-hosts (`consultantProfile.deletedAt: null`) are included in the group channel roster (`lib/stream/event-channel-service.ts`) and in `syncUserEventChannels`'s expected-set so co-hosts are never evicted during reconciliation.
 4. **A free trial never grants chat**. Three separate checks enforce it:
    - **No provisioning.** `ensureChannelsForAppointment` (`lib/payments/webhooks/ensure-channels.ts`) stamps `chatChannelEnsuredAt` on a `TRIAL` appointment so the sweep never revisits it, creates nothing, and returns `skipped: "trial_chat_blocked"`.
@@ -264,7 +264,7 @@ It builds the expected-set from:
 
 1. **Webinars (`getWebinarIdsForUser`)**: Active webinars (`OPENABLE_EVENT_STATUSES`) not past retention where the user is the host (`webinarPlan.consultantProfile.userId`), an `ACCEPTED` `PlanCollaborator`, or a live `AppointmentParticipant`.
 2. **Classes (`getClassIdsForUser`)**: Active classes (`OPENABLE_EVENT_STATUSES`) not past retention where the user is the host (`classPlan.consultantProfile.userId`), an `ACCEPTED` `PlanCollaborator`, or a live `AppointmentParticipant`.
-3. **Direct Messages (`getDmPairsForUser`)**: Canonical `dm-` / `dmo-` channel IDs for every consultant ↔ consultee pair linked by a consultation or subscription in `DM_ELIGIBLE_STATUSES` (`APPROVED`, `SCHEDULED`, `COMPLETED`) or a webinar/class in `OPENABLE_EVENT_STATUSES` (`SCHEDULED`, `IN_PROGRESS`, `COMPLETED`). It applies the same trial exclusion as `canDirectMessage`, so a trial never keeps a DM in the expected set. The sync never creates a DM; it only keeps or removes them.
+3. **Direct Messages (`getDmPairsForUser`)**: Canonical `dm-` / `dmo-` channel IDs for every consultant ↔ consultee pair linked by a consultation or subscription in `DM_ELIGIBLE_STATUSES` (`APPROVED`, `SCHEDULED`, `COMPLETED`) or a webinar/class in `OPENABLE_EVENT_STATUSES` (`SCHEDULED`, `COMPLETED`). It applies the same trial exclusion as `canDirectMessage`, so a trial never keeps a DM in the expected set. The sync never creates a DM; it only keeps or removes them.
 4. **Collaborator channels (`collab-`)**: The `collab-{webinar|class}-{planId}` channel of every plan the user hosts or holds an `ACCEPTED` collaboration on, plus the presenter DM pairs those collaborations imply.
 
 Excluding events where `isPastRetention` is true prevents resurrection: Postgres

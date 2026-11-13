@@ -1903,11 +1903,11 @@ Every enum in the schema and its values.
 | `OccurrenceCompletionStatus`   | SCHEDULED, COMPLETED, UNVERIFIED, CANCELLED, RESCHEDULED, VOIDED                                                                                                           |
 | `RescheduleRequestStatus`      | PENDING_REVIEW, ACCEPTED, AUTO_ACCEPTED, DECLINED, WITHDRAWN, EXPIRED                                                                                                      |
 | `BookingSource`                | DIRECT_CHECKOUT, REQUEST_SUBMITTED                                                                                                                                         |
-| `TrialStatus`                  | PENDING, AWAITING_PAYMENT, SCHEDULED, COMPLETED, CONVERTED, CANCELLED, REJECTED                                                                                            |
+| `TrialStatus`                  | AWAITING_PAYMENT, SCHEDULED, COMPLETED, CONVERTED, CANCELLED                                                                                                               |
 | `NewsletterStatus`             | PENDING, SUBSCRIBED, UNSUBSCRIBED, BOUNCED (the `NewsletterSubscriber` list)                                                                                               |
 | `NewsletterSource`             | LANDING_PAGE, FOOTER, BLOG, USE_CASE_PAGE, IMPORT                                                                                                                          |
-| `WebinarStatus`                | SCHEDULED, IN_PROGRESS, COMPLETED, CANCELLED                                                                                                                               |
-| `ClassStatus`                  | SCHEDULED, IN_PROGRESS, COMPLETED, CANCELLED                                                                                                                               |
+| `WebinarStatus`                | DRAFT, SCHEDULED, COMPLETED, CANCELLED                                                                                                                                     |
+| `ClassStatus`                  | DRAFT, SCHEDULED, COMPLETED, CANCELLED                                                                                                                                     |
 | `DayOfWeek`                    | MONDAY, TUESDAY, WEDNESDAY, THURSDAY, FRIDAY, SATURDAY, SUNDAY                                                                                                             |
 | `ScheduleType`                 | WEEKLY, CUSTOM                                                                                                                                                             |
 | `Platform`                     | ZOOM, GOOGLE_MEET, MICROSOFT_TEAMS, STREAM, CUSTOM                                                                                                                         |
