@@ -55,6 +55,7 @@ jest.mock("../../lib/topics", () => ({
 
 import prisma from "@/lib/prisma";
 import { PATCH } from "@/app/api/bookings/webinars/crud-with-plan/route";
+import { findOrCreateTopics } from "@/lib/topics";
 
 const base = prisma as unknown as Record<string, Record<string, jest.Mock>>;
 
@@ -198,10 +199,13 @@ describe("webinar PATCH on an organisation's plan", () => {
     "refuses the named expert whose membership is %s",
     async (status) => {
       memberships.push(member(status));
-      const response = await PATCH(request({ id: "plan-1", price: 99_900 }));
+      const response = await PATCH(
+        request({ id: "plan-1", price: 99_900, topics: ["new-topic"] }),
+      );
       expect(response.status).toBe(403);
       expect((await response.json()).code).toBe("NOT_ACTIVE_ORG_EXPERT");
       expect(transaction).not.toHaveBeenCalled();
+      expect(findOrCreateTopics).not.toHaveBeenCalled();
     },
   );
 

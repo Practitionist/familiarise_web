@@ -13,10 +13,7 @@ import {
   withHostSlotBatch,
 } from "@/lib/booking/host-slot-batch";
 import prisma from "@/lib/prisma";
-import {
-  isActiveOrgExpert,
-  NOT_ACTIVE_ORG_EXPERT_REFUSAL,
-} from "@/lib/enterprise/membership-guards";
+import { orgPlanEditRefusal } from "@/lib/enterprise/membership-guards";
 import { recordParticipants } from "@/lib/booking/participants";
 import {
   expireEventWaitlistForPlan,
@@ -586,18 +583,12 @@ export async function PATCH(request: NextRequest) {
       shareRecordingsWithAllAttendees,
     } = validatedData;
 
-    // Find or create topics by name if provided
-    let topicIds: string[] | undefined;
-    if (topicNames !== undefined) {
-      topicIds = await findOrCreateTopics(topicNames);
-    }
-
     console.log("Validated fields for update:", {
       id,
       webinarId,
       title,
       durationInHours,
-      topicIds: topicIds ? `[${topicIds.length} topics]` : "undefined",
+      topics: topicNames ? `[${topicNames.length} topics]` : "undefined",
       status,
       scheduledAt,
     });
@@ -643,16 +634,12 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
-    if (
-      existingPlan.organizationId &&
-      !(await isActiveOrgExpert(
-        prisma,
-        existingPlan.organizationId,
-        existingPlan.consultantProfile.id,
-      ))
-    ) {
-      return NextResponse.json(NOT_ACTIVE_ORG_EXPERT_REFUSAL, { status: 403 });
-    }
+    const orgRefusal = await orgPlanEditRefusal(
+      prisma,
+      existingPlan,
+      existingPlan.consultantProfile.id,
+    );
+    if (orgRefusal) return NextResponse.json(orgRefusal, { status: 403 });
 
     const reassignmentRefusal = await refuseForeignProfileReassignment(
       session.user.id,
@@ -660,6 +647,12 @@ export async function PATCH(request: NextRequest) {
       consultantProfileId,
     );
     if (reassignmentRefusal) return reassignmentRefusal;
+
+    // Topics are created only once the edit is authorised.
+    const topicIds =
+      topicNames === undefined
+        ? undefined
+        : await findOrCreateTopics(topicNames);
 
     // A supplied webinarId must name an instance of this plan; otherwise use its first.
     const webinarToUpdate = webinarId

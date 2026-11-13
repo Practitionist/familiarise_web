@@ -79,6 +79,18 @@ export const NOT_ACTIVE_ORG_EXPERT_REFUSAL = {
     "Only an active expert of the organisation that owns this plan can change it.",
 } as const;
 
+/** Null when the plan's expert may edit it; the refusal when an org plan's expert is no longer an active member. */
+export async function orgPlanEditRefusal(
+  db: PrismaLike,
+  plan: { organizationId: string | null },
+  consultantProfileId: string,
+): Promise<typeof NOT_ACTIVE_ORG_EXPERT_REFUSAL | null> {
+  if (!plan.organizationId) return null;
+  return (await isActiveOrgExpert(db, plan.organizationId, consultantProfileId))
+    ? null
+    : NOT_ACTIVE_ORG_EXPERT_REFUSAL;
+}
+
 export async function isActiveOrgExpert(
   db: PrismaLike,
   organizationId: string,
