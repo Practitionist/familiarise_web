@@ -259,8 +259,9 @@ export default function RazorpayCheckout({
       id: data.paymentIntent.id,
       paymentId:
         typeof data.paymentId === "string" ? data.paymentId : undefined,
-      amount: data.paymentIntent.amount,
-      currency: data.paymentIntent.currency,
+      // A resumed or replayed order carries its amount and currency at the top level.
+      amount: data.paymentIntent.amount ?? data.amount,
+      currency: data.paymentIntent.currency ?? data.currency,
       // #1771 row 1 — the server echoes a Customer only while saved cards are on.
       customerId: data.paymentIntent.customerId,
       holdExpiresAt: data.holdExpiresAt,

@@ -138,3 +138,40 @@ it("shows the button busy from the click and ignores a second press while the pr
   expect(button.textContent).toBe("Pay with Razorpay");
   act(() => root.unmount());
 });
+
+it("passes a resumed order's amount and currency to the price-change notice, opening nothing", async () => {
+  const Razorpay = jest.fn();
+  Object.assign(window, { Razorpay });
+  global.fetch = jest.fn(async () => ({
+    ok: true,
+    json: async () => ({
+      success: true,
+      reused: true,
+      paymentId: "pay-1",
+      paymentIntent: { id: "order_1", client_secret: null },
+      amount: 117941,
+      currency: "INR",
+    }),
+  })) as unknown as typeof fetch;
+  const onPaidWhenFree = jest.fn();
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  await act(async () =>
+    root.render(
+      <RazorpayCheckout
+        checkoutData={{} as CheckoutInput}
+        onPaymentSuccess={jest.fn()}
+        onPaymentError={jest.fn()}
+        onPaidWhenFree={onPaidWhenFree}
+        label="Confirm booking"
+      />,
+    ),
+  );
+  await act(async () => container.querySelector("button")?.click());
+  expect(onPaidWhenFree).toHaveBeenCalledWith({
+    amount: 117941,
+    currency: "INR",
+  });
+  expect(Razorpay).not.toHaveBeenCalled();
+  act(() => root.unmount());
+});
