@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, type ReactNode } from "react";
+import { createContext, useContext, useMemo, type ReactNode } from "react";
 import { useWatch, type Control, type FieldValues } from "react-hook-form";
 
 import {
@@ -16,20 +16,34 @@ import {
   FormMessage,
   RequiredMark,
 } from "@/components/ui/form";
+import type { AvailabilityEvent } from "@/lib/scheduling/use-availability-window";
 import { useViewerZone } from "@/lib/time/use-viewer-zone";
 import type { FieldSpec } from "./manifest";
 
-/** The host whose calendar labels an offering's session times; absent outside the editor. */
+/**
+ * The host whose calendar labels an offering's session times, and the saved
+ * webinar or class being edited, whose own sessions read free; absent outside the editor.
+ */
 const SessionHostContext = createContext<{
   consultantProfileId: string;
+  event?: AvailabilityEvent;
 } | null>(null);
 
 export function SessionHostProvider({
   consultantProfileId,
+  event,
   children,
-}: Readonly<{ consultantProfileId: string; children: ReactNode }>) {
+}: Readonly<{
+  consultantProfileId: string;
+  event?: AvailabilityEvent;
+  children: ReactNode;
+}>) {
+  const value = useMemo(
+    () => ({ consultantProfileId, event }),
+    [consultantProfileId, event],
+  );
   return (
-    <SessionHostContext.Provider value={{ consultantProfileId }}>
+    <SessionHostContext.Provider value={value}>
       {children}
     </SessionHostContext.Provider>
   );
@@ -80,6 +94,7 @@ export function SessionTimeField<T extends FieldValues = FieldValues>({
                 audience="host"
                 sessionMinutes={Math.round(hours * 60)}
                 purpose="create"
+                event={host.event}
                 value={toValue(field.value, Math.round(hours * 60))}
                 onChange={(picked) => field.onChange(picked?.startsAt ?? null)}
               />

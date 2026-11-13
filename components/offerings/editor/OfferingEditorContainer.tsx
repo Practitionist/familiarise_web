@@ -50,6 +50,7 @@ import { useSession } from "@/lib/auth-client";
 import { activeClientsNotice } from "@/lib/booking/entitlement";
 import { activeClientsOf, withPricingNotice } from "./sold-terms-notice";
 import { sellHomeHref } from "@/lib/dashboard/sell-pages";
+import type { AvailabilityEvent } from "@/lib/scheduling/use-availability-window";
 import { SessionHostProvider } from "./session-time-field";
 import {
   feasibilityRefusalOf,
@@ -162,6 +163,14 @@ export function OfferingEditorContainer({
   const saveCtx: OfferingSaveContext = (initialEvent ??
     {}) as OfferingSaveContext;
   const isEvent = type === "webinar" || type === "class";
+  // The saved event's own sessions read free in its time picker.
+  const instanceId = saveCtx.instanceId;
+  const ownEvent = React.useMemo<AvailabilityEvent | undefined>(() => {
+    if (!instanceId) return undefined;
+    if (type === "webinar") return { webinarId: instanceId, moving: true };
+    if (type === "class") return { classId: instanceId, moving: true };
+    return undefined;
+  }, [instanceId, type]);
 
   // Wave-9 (#1230) — org-context pricing hint. A creator with an ACTIVE
   // canSponsor org membership is probably authoring an offering members will
@@ -391,7 +400,7 @@ export function OfferingEditorContainer({
     <WaitingCountProvider
       value={{ plan: planWaiting, instance: instanceWaiting }}
     >
-      <SessionHostProvider consultantProfileId={consultantId}>
+      <SessionHostProvider consultantProfileId={consultantId} event={ownEvent}>
         {publishRefusal && (
           <Alert variant="destructive" className="mb-4">
             <AlertTitle>
