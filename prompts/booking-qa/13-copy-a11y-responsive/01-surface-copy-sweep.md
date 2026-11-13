@@ -20,13 +20,13 @@ Quote every finding verbatim with its route and the element.
 
 | Area | Surfaces |
 | --- | --- |
-| Discovery and booking | expert page and booking dialog (instant slot list, request slot list, trial picker), program pages, event pages (webinar, class), waitlist control |
+| Discovery and booking | expert page and booking dialog (the single-time picker for instant and review-first experts, "Show N taken times" and "Notify me", the mentorship dialog's start-date and trial steps), program pages, event pages (webinar, class), waitlist control |
 | Checkout | `/checkout/plans/{consultation,subscription,webinar,class}/[planId]`, `/checkout/plans/trial/[trialId]`, `/checkout/pay/[paymentId]`, success pages, org payer selector |
 | Consultant scheduling | allocate page (grid, tray, context chips, partial dialog, phone notice), Manage timings (grid, pattern scheduler, stop panel), Move to a new date dialog, Move upcoming sessions dialog, class session cancel and make-up dialogs, consultant reschedule page |
 | Consultee scheduling | reschedule page (grid and phone day list), proposal card, free rebook page, return-a-session dialog |
 | Cancelling | consultation cancel dialog, subscription cancel dialog, seat leave dialog, trial cancel dialog, expert cancel dialog, request withdraw, approval withdraw, decline |
 | Settings | availability editor (weekly, custom), booking mode ("Review requests first"), account zone select and convert prompt, notification preferences |
-| Plan editors | subscription, webinar (with `SingleSessionPicker`), class (start date, late join, window) |
+| Plan editors | subscription, webinar (with the host's single-time picker), class (first session picker, late join, window) |
 | Dashboards | consultant Home, Requests inbox (tabs, rows, batch approve bar), Appointments list and calendar, appointment detail (both sides), earnings, consultee Home, Payments and payment detail, org appointments, requests, my program, compensation |
 | Back office | staff appointments, payment detail, refunds, stuck work, class-series doors, admin maintenance and system jobs |
 | Messages | bell, emails (via `FailedEmail.htmlBody`), toasts |

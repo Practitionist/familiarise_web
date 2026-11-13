@@ -458,7 +458,7 @@ export function createRazorpayCheckoutHandlers(
       // No order id = credits covered the whole price, so there is nothing to
       // verify and the booking is already confirmed.
       toast({
-        title: "Payment Successful",
+        title: "Booking confirmed",
         description:
           response.message ??
           "Your booking is confirmed. Redirecting to your dashboard...",

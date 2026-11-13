@@ -12,7 +12,7 @@ Fixtures: **T-1** = B4's free trial (TR-01, Tue D+8 09:00 IST). **T-2** = a free
 
 **Steps:**
 
-1. As B4 open T-1 → **Reschedule** (`/dashboard/consultee/[B4 uid]/appointments/[aid]/reschedule`). The picker is the buyer's `TrialSlotPicker` (30-min windows, 24-h lead).
+1. As B4 open T-1 → **Reschedule** (`/dashboard/consultee/[B4 uid]/appointments/[aid]/reschedule`). The page shows the zone switch and the light single-time picker (`SingleTimePicker`, buyer audience: a month, then the day's free 30-min times, 24-h lead; taken times behind "Show N taken times").
 2. Pick Thu D+10 10:00 IST (free, published). Submit.
 
 **Expect:** `RescheduleRequest` `AUTO_ACCEPTED` (`initiatorRole = 'CONSULTEE'`); the **same** occurrence id now at Thu D+10 04:30Z; `Trial.status` still `SCHEDULED`; payment untouched; the other party (H1) is notified through the outbox (`appointment-rescheduled` family naming the trial's parties) and B4, who moved it, is not.
@@ -52,14 +52,14 @@ Fixtures: **T-1** = B4's free trial (TR-01, Tue D+8 09:00 IST). **T-2** = a free
 
 **Steps:**
 
-1. As H1 open T-2 → reschedule (`TrialScheduleCalendar`). In the network panel, check the availability fetch sends `consulteeUserId` (B2) and `purpose=reschedule`. B2's own busy times are greyed.
+1. As H1 open T-2 → reschedule ("Propose a new trial time", the light single-time picker inside H1's published hours). In the network panel, check the availability fetch sends `consulteeUserId` (B2). B2's own busy times are not among the free times (they sit under "Show N taken times"), and nothing inside 24 h is listed.
 2. Propose Thu D+10 17:00 IST. Submit.
 3. As B2 read the `RescheduleProposalCard` ("Your consultant proposed new times", "Needs an answer by <London time>") and **Accept new times**.
 4. As H1 propose again.
 
 **Expect:** 2: `PENDING_REVIEW` (never auto, even though the time is free); session released (`RESCHEDULED`, tentative); `Trial` still `SCHEDULED`. 3: `ACCEPTED`; the same occurrence at 11:30Z. 4: 409 `EXPERT_RESCHEDULE_CAP` with the trial copy.
 
-**Probe further:** B2 has a booking elsewhere (create one if needed): is that time greyed in H1's calendar? If not, the consultee-busy feature is broken (FAIL).
+**Probe further:** B2 has a booking elsewhere (create one if needed): is that time missing from H1's free times and listed as taken? If it is offered as free, the consultee-busy feature is broken (FAIL).
 
 ## TR-25 — The learner declines the expert's proposal; the expert may propose again
 
@@ -97,11 +97,11 @@ Fixtures: **T-1** = B4's free trial (TR-01, Tue D+8 09:00 IST). **T-2** = a free
 
 **Probe further:** at 10 min before start the same cancel → 409 `SESSION_IN_PROGRESS`. Does H1's dialog warn about the strike, as the consultation dialog does?
 
-## TR-30 — The expert cancels a free trial: no money, but a strike (pending owner confirmation)
+## TR-30 — The expert cancels a free trial: no money, but a strike
 
 **Steps:** as H1 cancel T-2 (free, ≥ 24 h away).
 
-**Expect:** `CANCELLED`, no refund, **one strike** for H1 (the doc says "for a free trial too"). Flag this for the owner: a free consultation cancelled by the expert records **no** strike (CO-82), a free trial does. One of the two is probably unintended.
+**Expect:** `CANCELLED`, no refund, **one strike** for H1. A free confirmed consultation cancelled by the expert records one strike too (CO-82; decision 6 of the trial and public booking surfaces record), so the two agree.
 
 **Probe further:** B2's pair with H1 is freed (CANCELLED frees it): B2 may request a new trial. Is that the intended outcome after an expert cancel? Record.
 
@@ -186,8 +186,11 @@ Fixtures: **T-1** = B4's free trial (TR-01, Tue D+8 09:00 IST). **T-2** = a free
 
 ## TR-41 — Trial lengths off the 30-minute grid
 
-**Why it matters:** the plan editor allows trial lengths in 15-minute steps (15–120). Everything else books whole 30-minute atoms.
+**Why it matters:** a new trial is 30 or 60 minutes (the editor's two radio buttons; the plan routes refuse any other length with "A trial is 30 or 60 minutes."). A plan saved earlier at another length (45 minutes exists in practice data) keeps booking at it.
 
-**Steps:** as H1 edit a non-sold subscription plan (or create "qa-TR-41") with a 45-min free trial; publish. As B2 book it. Look at H1's grid (HM-26) and try a learner move.
+**Steps:**
 
-**Expect:** record the outcome: the booking may succeed with a 45-min session (then the third half hour paints "Partly booked" and the quarter hour after is unsellable), or be refused (`WINDOW_DURATION_MISMATCH` / off-grid). Report as an open question: should trial lengths be on the 30-minute grid like every other plan field? Archive the plan afterwards.
+1. As H1 try to create "qa-TR-41" with a 45-minute trial (via `evaluate_script`, since the editor offers only 30 and 60), then try to change an existing plan's trial to 45.
+2. Find a legacy plan stored at 45 minutes (`SELECT id, "trialDurationMinutes" FROM "SubscriptionPlan" WHERE "trialDurationMinutes" NOT IN (30, 60);`). As B2 book its trial, look at H1's grid (HM-26) and try a learner move.
+
+**Expect:** step 1 is refused with "A trial is 30 or 60 minutes." both times; nothing is saved. Step 2 books a 45-minute session (its second half hour paints "Partly booked") and the move offers 45-minute windows. Archive any plan you created.

@@ -4,7 +4,10 @@ import { useMutation } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
-import { SingleSessionPicker } from "@/components/scheduling/SingleSessionPicker";
+import {
+  SingleTimePicker,
+  type SingleTimeValue,
+} from "@/components/scheduling/SingleTimePicker";
 import { useToast } from "@/hooks/use-toast";
 import { useViewerZone } from "@/lib/time/use-viewer-zone";
 import { formatForViewer } from "@/lib/time/viewer-zone";
@@ -111,7 +114,9 @@ export function useClassSessionActions({
 } {
   const { toast } = useToast();
   const viewer = useViewerZone();
-  const [makeUpAt, setMakeUpAt] = useState<Record<string, string>>({});
+  const [makeUpAt, setMakeUpAt] = useState<
+    Record<string, SingleTimeValue | null>
+  >({});
   const [pending, setPending] = useState<PendingConfirm | null>(null);
   const base = `/api/appointments/${appointmentId}/occurrences`;
   const done = (title: string) => () => {
@@ -241,29 +246,31 @@ export function useClassSessionActions({
                 {when(source.startsAt)} — make up by {when(by)}.
               </span>
               {consultantProfileId && (
-                <SingleSessionPicker
+                <SingleTimePicker
                   className="w-full"
                   consultantId={consultantProfileId}
                   zone={viewer.zone}
+                  theme="light"
+                  audience="host"
                   sessionMinutes={sessionMinutesOf(source)}
                   purpose="makeup"
                   event={classId ? { classId } : undefined}
                   allowedEnd={by}
                   value={makeUpAt[source.id] ?? null}
-                  onChange={(iso) =>
-                    setMakeUpAt((m) => ({ ...m, [source.id]: iso ?? "" }))
+                  onChange={(picked) =>
+                    setMakeUpAt((m) => ({ ...m, [source.id]: picked }))
                   }
                 />
               )}
               <Button
                 size="sm"
                 disabled={!makeUpAt[source.id] || makeUp.isPending}
-                onClick={() =>
-                  makeUp.mutate({
-                    id: source.id,
-                    startsAt: makeUpAt[source.id],
-                  })
-                }
+                onClick={() => {
+                  const picked = makeUpAt[source.id];
+                  if (picked) {
+                    makeUp.mutate({ id: source.id, startsAt: picked.startsAt });
+                  }
+                }}
               >
                 Schedule make-up
               </Button>

@@ -2,7 +2,6 @@
 
 import Image from "next/image";
 import {
-  AlertTriangle,
   Star,
   MapPin,
   Briefcase,
@@ -23,15 +22,12 @@ interface ProfileHeaderProps {
   userDetails: User;
   consultantDetails: ConsultantDetailData;
   reviewCount: number;
-  /** Shown only at or above the public strike threshold; null hides it. */
-  reliabilityStrikes: number | null;
 }
 
 export function ProfileHeader({
   userDetails,
   consultantDetails,
   reviewCount,
-  reliabilityStrikes,
 }: ProfileHeaderProps) {
   const headlineScore = displayedScore(consultantDetails);
   // #1566 — a published score is always shown with its own denominator; the total
@@ -122,16 +118,6 @@ export function ProfileHeader({
                 : `${reviewCount} reviews`}
             </span>
           </div>
-
-          {reliabilityStrikes !== null && (
-            <p className="mb-4 flex items-center gap-2 text-sm text-amber-700 dark:text-amber-400">
-              <AlertTriangle className="w-4 h-4" aria-hidden />
-              <span>
-                Reliability: {reliabilityStrikes} expert cancellations or
-                no-shows in the last 90 days
-              </span>
-            </p>
-          )}
 
           {/* Meta */}
           <div className="flex flex-wrap gap-4 text-sm">

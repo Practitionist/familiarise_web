@@ -23,4 +23,4 @@ Availability editing edge cases and the scheduling grid (heat map) on every page
 - "Rebook" is the free rebook of an **outage-voided** session, not a rebook of a completed consultation (HM-46).
 - `references/availability.md` §9 calls the phone button "Auto-schedule in my open hours"; the code says "Auto-schedule this week" / "Auto-schedule" (HM-49).
 - `notEnoughConsecutive` reads "Each session requires 1 hours (2 consecutive slots)" for a 60-min plan (HM-31).
-- Trial lengths step by 15 minutes (15–120), which can create off-grid occupancy ("Partly booked", HM-26).
+- Trial lengths are 30 or 60 minutes on every new save; only a plan saved earlier with another length (45 exists) can still create off-grid occupancy ("Partly booked", HM-26).

@@ -40,11 +40,11 @@ let txCommitted = false;
 const txStub = {
   consultation: {
     updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-    findUnique: jest.fn().mockResolvedValue({ status: "SCHEDULED" }),
+    findUnique: jest.fn().mockResolvedValue({ status: "APPROVED" }),
   },
   subscription: {
     updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-    findUnique: jest.fn().mockResolvedValue({ status: "SCHEDULED" }),
+    findUnique: jest.fn().mockResolvedValue({ status: "APPROVED" }),
   },
   webinar: {
     updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -194,6 +194,7 @@ import { POST as cancelHandler } from "@/app/api/appointments/[appointmentId]/ca
 import { RefundGatewayError } from "@/lib/payments/operations/refund";
 import { grantPlatformCancel } from "@/lib/booking/platform-cancel";
 import { createMockRevocationRetryTable } from "../fixtures/stream-mocks";
+import { notifyAppointmentCancelled } from "@/lib/novu";
 
 const HOUR = 3_600_000;
 const APPT = "appt-1";
@@ -282,6 +283,8 @@ function bookingRows(opts: {
   /** Defaults to a gateway-funded payment. */
   paymentAmount?: number;
   paymentIntent?: string;
+  /** The plan price before discounts and credits; zero on a free booking. */
+  listPricePaise?: number;
   /**
    * #1766 — the plan entitlement the unused-session quote measures against.
    * Defaults to every slot the fixture holds, which is the pre-Z2 denominator.
@@ -322,6 +325,7 @@ function bookingRows(opts: {
             {
               id: "pay-1",
               amount: opts.paymentAmount ?? GROSS,
+              originalAmount: opts.listPricePaise ?? GROSS,
               paymentIntent: opts.paymentIntent ?? "pi_gateway_1",
               refunds: opts.paymentRefunds ?? [],
               disputes: [],
@@ -492,6 +496,52 @@ describe("a consultant cancelling always refunds in full", () => {
         correlationId: `expert-reliability:${CONSULTANT_PROFILE}`,
       }),
     });
+  });
+});
+
+describe("an expert's cancel of a free confirmed booking", () => {
+  it("records a strike though no payment exists", async () => {
+    mockGetSession.mockResolvedValue(sessionAs("consultant"));
+    mockAppointmentFindUnique.mockResolvedValue(consultationAppointment());
+    mockAppointmentFindMany.mockImplementation(async () =>
+      bookingRows({ liveSlotHours: [48], noPayment: true }),
+    );
+
+    const res = await cancelHandler(makeRequest(), makeParams(APPT));
+
+    expect(res.status).toBe(200);
+    expect(mockRefundBookingPayment).not.toHaveBeenCalled();
+    expect(txStub.systemEvent.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("writes no refund record for a free checkout booking and still strikes", async () => {
+    mockGetSession.mockResolvedValue(sessionAs("consultant"));
+    mockAppointmentFindUnique.mockResolvedValue(consultationAppointment());
+    mockAppointmentFindMany.mockImplementation(async () =>
+      bookingRows({
+        liveSlotHours: [48],
+        paymentAmount: 0,
+        listPricePaise: 0,
+        paymentIntent: "free_1",
+      }),
+    );
+
+    const res = await cancelHandler(makeRequest(), makeParams(APPT));
+    const body = await res.json();
+
+    expect(mockRefundBookingPayment).not.toHaveBeenCalled();
+    expect(txStub.payment.updateMany).not.toHaveBeenCalled();
+    expect(body.refund).toMatchObject({ amountRefundedPaise: 0 });
+    expect(body.refund.rail).toBeUndefined();
+    expect(txStub.systemEvent.create).toHaveBeenCalledTimes(1);
+    // Both sides still hear about the cancellation; only the refund notice is dropped.
+    expect(notifyAppointmentCancelled).toHaveBeenCalledWith(
+      expect.arrayContaining([CONSULTANT_USER]),
+      expect.objectContaining({ appointmentId: APPT }),
+    );
+    expect(
+      (notifyAppointmentCancelled as jest.Mock).mock.calls[0][0],
+    ).toHaveLength(2);
   });
 });
 

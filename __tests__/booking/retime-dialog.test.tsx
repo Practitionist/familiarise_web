@@ -10,13 +10,20 @@ jest.mock("../../lib/time/use-viewer-zone", () => ({
 }));
 
 const pickerProps: Array<Record<string, unknown>> = [];
-jest.mock("../../components/scheduling/SingleSessionPicker", () => ({
-  SingleSessionPicker: (props: { onChange: (iso: string | null) => void }) => {
+jest.mock("../../components/scheduling/SingleTimePicker", () => ({
+  SingleTimePicker: (props: {
+    onChange: (value: { startsAt: string; endsAt: string } | null) => void;
+  }) => {
     pickerProps.push(props);
     return (
       <button
         type="button"
-        onClick={() => props.onChange("2099-12-10T06:00:00.000Z")}
+        onClick={() =>
+          props.onChange({
+            startsAt: "2099-12-10T06:00:00.000Z",
+            endsAt: "2099-12-10T07:30:00.000Z",
+          })
+        }
       >
         pick a time
       </button>
@@ -47,6 +54,8 @@ describe("RetimeDialog", () => {
       zone: "Asia/Kathmandu",
       sessionMinutes: 90,
       purpose: "retime",
+      audience: "host",
+      theme: "light",
       value: null,
     });
     expect(screen.getByRole("button", { name: "Move webinar" })).toBeDisabled();

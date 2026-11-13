@@ -178,23 +178,31 @@ describe("customer-facing copy never prints a raw enum", () => {
   });
 });
 
-describe("the subscription checkout details", () => {
-  const source = fs.readFileSync(
-    path.join(
-      ROOT,
-      "app/checkout/plans/adapters/use-subscription-checkout.tsx",
-    ),
-    "utf8",
+describe("the checkout details", () => {
+  const ADAPTERS = ["consultation", "subscription", "webinar", "class"];
+  const read = (kind: string) =>
+    fs.readFileSync(
+      path.join(ROOT, `app/checkout/plans/adapters/use-${kind}-checkout.tsx`),
+      "utf8",
+    );
+
+  it.each(ADAPTERS)(
+    "the %s adapter prints the level through its label, never the enum",
+    (kind) => {
+      const source = read(kind);
+      expect(source).not.toMatch(/\{\s*[\w?.]*\?\.(level|emailSupport)\b/);
+      expect(source).toContain("planLevelLabel(");
+      expect(source).not.toMatch(/toLocale(Date|Time)String\(/);
+    },
   );
 
-  it("prints the level and email support through their labels, never the enum", () => {
-    expect(source).not.toMatch(/\{\s*plan\?\.(level|emailSupport)\b/);
-    expect(source).toContain("planLevelLabel(");
-    expect(source).toContain("PLAN_EMAIL_SUPPORT_LABEL[");
+  it("prints email support through its label", () => {
+    expect(read("subscription")).toContain("PLAN_EMAIL_SUPPORT_LABEL[");
   });
 
   it("labels every plan level and email support tier", () => {
     expect(planLevelLabel("BEGINNER")).toBe("Beginner");
+    expect(planLevelLabel(null)).toBe("All levels");
     expect(PLAN_EMAIL_SUPPORT_LABEL.GENERAL).toBe("General");
     expect(Object.values(PLAN_EMAIL_SUPPORT_LABEL)).toEqual([
       "General",

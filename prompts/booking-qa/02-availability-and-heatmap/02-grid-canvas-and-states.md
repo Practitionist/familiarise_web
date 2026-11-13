@@ -126,7 +126,7 @@ Reading the grid with the DevTools MCP:
 1. G-SUB allocate (settled, paid plan): the first non-Too-soon cell today.
 2. G-REQ allocate (unpaid approval of a priced request): same.
 3. F-BUSY consultee reschedule as B3 (`/dashboard/consultee/[B3 uid]/appointments/[F-BUSY aid]/reschedule`): same.
-4. H1's expert page as B1, today, 60-min plan (book purpose, slot list).
+4. H1's expert page as B1, today, 60-min plan (book purpose, the dialog's times pane).
 5. Click one Too soon cell on each grid.
 
 **Expect:**
@@ -202,9 +202,9 @@ Reading the grid with the DevTools MCP:
 **Steps:**
 
 1. Look for any H1 occurrence not on :00/:30 UTC: `SELECT id, "startsAt", "endsAt" FROM "AppointmentOccurrence" WHERE "consultantProfileId" = :h1 AND "deletedAt" IS NULL AND (extract(minute FROM "startsAt")::int % 30 <> 0 OR extract(minute FROM "endsAt")::int % 30 <> 0);`
-2. Check whether a trial length of 15 or 45 minutes is allowed (the subscription editor's "Trial length (minutes)" steps by 15 between 15 and 120). If 07 creates a 45-min trial on H1, view its last half hour on H1's grid.
+2. New trial lengths are 30 or 60 minutes only (the subscription editor's "Trial length" is two radio buttons; the plan routes refuse any other value with "A trial is 30 or 60 minutes."). A plan saved earlier with another length (45 minutes exists in practice data) still books at that length: find one with `SELECT id, "trialDurationMinutes" FROM "SubscriptionPlan" WHERE "trialDurationMinutes" NOT IN (30, 60);` and, if a trial was booked on it for H1, view its last half hour on H1's grid.
 
-**Expect:** if a 45-min trial exists, its third half-hour paints Partly booked (amber hatch, not selectable) and click toasts "Partly booked" / "Part of this half-hour is taken — choose another time." If no off-grid occupancy can exist, record "unreachable" and flag the 15-minute trial step as a question for 07 (a 45-min trial on a 30-min grid wastes a quarter hour of the host's time).
+**Expect:** a booked 45-min trial starting on the half hour paints its second half-hour Partly booked (amber hatch, not selectable) and a click toasts "Partly booked" / "Part of this half-hour is taken — choose another time." With no such legacy trial and no off-lattice row from step 1, record "unreachable".
 
 ## HM-27 — Just taken `[two-browser]` `[local]`
 

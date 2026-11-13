@@ -31,7 +31,7 @@ import { loadPublishedCoverage } from "../../utils/scheduling-engine/availabilit
 import { weeklyZoneRefusal } from "../../lib/scheduling/availability-contract";
 import { resolveWeeklyTimezone } from "../../lib/scheduling/weeklyUtcOffset";
 import { processAvailabilitySlots } from "../../utils/scheduling-engine/intervals";
-import { zonedWeekWindow } from "../../app/explore/experts/[consultantId]/utils/time";
+import { dayRangeBounds } from "../../lib/time/grid-zone";
 import type { Tx } from "../../lib/prisma";
 
 const row = (
@@ -190,7 +190,11 @@ describe("overnight rows and window edges", () => {
   });
 
   it("offers the last 23:30 atom of a zoned week window", () => {
-    const window = zonedWeekWindow(new Date("2026-09-07T06:00:00Z"), 0, IST);
+    const window = dayRangeBounds(
+      new Date(2026, 8, 7, 12),
+      new Date(2026, 8, 13, 12),
+      IST,
+    );
     expect(window.start.toISOString()).toBe("2026-09-06T18:30:00.000Z");
     expect(window.end.toISOString()).toBe("2026-09-13T18:30:00.000Z");
     const sundayLate = { id: "late", ...row(IST, "SUNDAY", 1380, 0, "MONDAY") };

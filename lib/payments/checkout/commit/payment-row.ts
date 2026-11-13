@@ -10,6 +10,7 @@ import { PaymentStatus } from "@prisma/client";
 import { ENABLE_HOST_ORGS } from "@/lib/feature-flags";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import { markEventWaitlistBooked } from "@/lib/booking/event-waitlist";
+import { markAppointmentWindowsBooked } from "@/lib/booking/backup-interest";
 import { tombstonePriorIntent } from "@/lib/payments/operations/prior-intent-tombstone";
 import {
   assertSeatRemintable,
@@ -259,6 +260,9 @@ export async function writeCheckoutPayment(
           userId,
           new Date(),
         );
+      } else {
+        // No capture follows a booking confirmed here, so its waits close now.
+        await markAppointmentWindowsBooked(tx, createdAppointment.id, userId);
       }
     }
   }

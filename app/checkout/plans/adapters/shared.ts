@@ -56,3 +56,12 @@ export function eventMockErrorCopy(words: {
     };
   };
 }
+
+/** The "Includes" lines: what the expert listed, then facts the plan's own fields state. */
+export function planIncludes(
+  whatsIncluded: readonly string[] | null | undefined,
+  derived: ReadonlyArray<string | false | null | undefined>,
+): string[] {
+  const listed = (whatsIncluded ?? []).map((s) => s.trim()).filter(Boolean);
+  return [...listed, ...derived.filter((s): s is string => !!s)];
+}

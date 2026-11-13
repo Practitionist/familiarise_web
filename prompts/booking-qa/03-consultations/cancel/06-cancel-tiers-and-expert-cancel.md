@@ -143,8 +143,8 @@ After every case: R-03, R-04 (refund rows, `refundOwedKey` set then cleared), R-
 Rules under test (from code):
 
 - An expert-side cancel refunds 100 % at any notice before the frozen window.
-- A strike is recorded only when the cancelled booking was **paid** (`paidPayment !== null`), as a `SystemEvent` (`category = 'BOOKING'`, `message = 'Expert reliability strike: EXPERT_CANCEL'`, `context.strike`, `context.consultantProfileId`, `context.appointmentId`, `context.occurrenceIds`).
-- The public profile shows a reliability notice at 3 strikes in 90 days.
+- A strike is recorded when the expert cancels a **confirmed** booking, free or paid (a paid payment, or `APPROVED`), as a `SystemEvent` (`category = 'BOOKING'`, `message = 'Expert reliability strike: EXPERT_CANCEL'`, `context.strike`, `context.consultantProfileId`, `context.appointmentId`, `context.occurrenceIds`).
+- Strikes never show on the public profile; the expert sees them on Settings → Booking ("Your reliability"), staff in the strike review card (3 in 90 days reads "needs review").
 - Inside the frozen window the host is told: "This session is in progress — end the call and we'll settle it from what happened."
 
 Strike query (run before and after each case):
@@ -165,7 +165,7 @@ ORDER BY "createdAt" DESC;
 **Steps:**
 
 1. As H1 open the booking (`/dashboard/consultant/[H1 cid]/appointments/[aid]`) → **Cancel booking**.
-2. Read the dialog: "<B1 name> gets a full refund of ₹<amount>. Cancelling a paid booking counts against your reliability." and the buttons.
+2. Read the dialog: "<B1 name> gets a full refund of ₹<amount>." then "Cancelling a confirmed booking, free or paid, is recorded on your reliability record. Only you and our team see it." and the buttons.
 3. Confirm.
 
 **Expect:**
@@ -178,17 +178,15 @@ ORDER BY "createdAt" DESC;
 
 **Probe further:** does H1's dialog say how many strikes H1 already has, or what 3 means? MISSED-OPPORTUNITY if it only says "counts against". Does it offer "Reschedule instead"?
 
-## CO-82 — The expert cancels a free booking: no money, no strike
+## CO-82 — The expert cancels a free booking: no money, one strike
 
-**Why it matters:** the code records a strike only for paid bookings; trials differ (07 flags free-trial strikes for owner confirmation).
+**Why it matters:** an expert's cancel of any confirmed booking, free or paid, is a strike (owner decision 2026-11-12), and a free cancel writes no refund record.
 
 **Setup:** B4 books S-09 (free), preview OK.
 
 **Steps:** as H1 cancel it. Read the dialog.
 
-**Expect:** no refund line (nothing paid; the dialog must not claim a refund of ₹0 or call it "full refund"); `CANCELLED`; strike count unchanged.
-
-**Probe further:** report the free-consultation vs free-trial strike difference as an open question for the owner (is a no-show-risking cancel of a free session a reliability event or not?).
+**Expect:** the dialog says "Nothing was paid for this, so there is nothing to refund." and the reliability line, and its button reads "Cancel booking"; `CANCELLED`; one new `EXPERT_CANCEL` strike; no `Refund` row, no refund marker on the payment, no `REFUND_PROCESSED` email, and B4's cancellation email has no refund sentence.
 
 ## CO-83 — The expert can't cancel a session under way
 
@@ -210,17 +208,17 @@ ORDER BY "createdAt" DESC;
 
 **Expect:** booking `CANCELLED`, proposal `DECLINED` (closed by `declineOpenReschedules`), 100 % refund, one strike. B3's view shows the cancellation, not a pending proposal.
 
-## CO-85 — Three strikes in 90 days show on the public profile
+## CO-85 — Strikes stay private: the expert's own record and the staff review
 
-**Why it matters:** salvaged from old 020 Phases 3–4. Buyers are warned about unreliable experts; the threshold must be exact.
+**Why it matters:** strikes are never public (owner decision 2026-11-12); the expert and staff see them.
 
 **Setup:** use H3 (keep H1's record small). Create three paid H3 bookings `[local]` (H3 needs a priced consultation: create "qa-CO-85" 60 min) and cancel each as H3. Between the second and third, check the profile.
 
-**Steps:** after 2 strikes, open `/explore/experts/[H3 cid]` as B1. After 3, reload. As ST/AD look for the strike review list in the back office (search "reliability" or "strikes" in staff/admin nav; record where it lives or that it doesn't).
+**Steps:** after 3 strikes, open `/explore/experts/[H3 cid]` as B1. As H3 open Settings → Booking. As ST/AD open the expert strike review card in the back office.
 
-**Expect:** no notice at 2; a reliability notice at 3 (quote it). `showsReliabilityNotice(strikes >= 3)` in a 90-day window. Staff review lists H3 with 3 strikes and the last strike time.
+**Expect:** the public profile shows no reliability line at any count. H3's "Your reliability" card reads "3 recorded in the last 90 days" with each cause and date. Staff review lists H3 with 3 strikes, "needs review", and the last strike time. `GET /api/user/consultants/[H3 cid]/strikes` answers 403 for anyone but H3.
 
-**Probe further:** is the notice fair and specific (counts, period) or vague? Does the notice disappear after 90 days (can't test live; state the rule)? Can H3 see their own strike count anywhere? Archive the plan afterwards.
+**Probe further:** is H3's card plain about what counts and who sees it? Archive the plan afterwards.
 
 ## CO-86 — Expert-side cancel by an org admin (payer side) and by staff
 

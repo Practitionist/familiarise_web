@@ -70,6 +70,8 @@ export type BookingRefundContext = {
     amountPaise: number;
     /** #1161 — free_ (credit-funded) detection for the restoration rail. */
     paymentIntent: string;
+    /** The plan price before discounts, credits and tax; zero on a free booking. */
+    listPricePaise: number;
     /**
      * Gross less anything already given back. Callers must clamp to this: a
      * percentage of the gross overshoots on a payment with an earlier partial
@@ -191,6 +193,7 @@ export async function resolveBookingRefundContext(
           // #1161 — free_ detection: a fully-credit-funded payment refunds as
           // credit restoration, which the amount-based tier math cannot see.
           paymentIntent: true,
+          originalAmount: true,
           ...REFUNDABLE_BALANCE_SELECT,
         },
         orderBy: { createdAt: "asc" },
@@ -250,6 +253,7 @@ export async function resolveBookingRefundContext(
         id: payment.id,
         amountPaise: Number(payment.amount),
         paymentIntent: payment.paymentIntent,
+        listPricePaise: Number(payment.originalAmount),
         refundablePaise: refundableBalancePaise(
           Number(payment.amount),
           payment,

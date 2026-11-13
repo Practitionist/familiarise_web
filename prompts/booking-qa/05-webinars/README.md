@@ -1,6 +1,6 @@
 # 05 · Webinars (`WE-`)
 
-One-session group events: finding the editor, the host time picker (`SingleSessionPicker`) and the event-time rules, drafts and "Schedule now", free and paid seats, capacity and the waitlist, the sold-event rule (re-time, never re-plan), leaving and cancelling, co-hosts and completion.
+One-session group events: finding the editor, the host time picker (`SingleTimePicker`, host audience) and the event-time rules, drafts and "Schedule now", free and paid seats, capacity and the waitlist, the sold-event rule (re-time, never re-plan), leaving and cancelling, co-hosts and completion.
 
 Read `../README.md` and `../_shared/*.md` first.
 

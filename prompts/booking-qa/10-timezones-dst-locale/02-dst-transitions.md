@@ -156,8 +156,8 @@ Never 5:00 pm or 7:00 pm for H3.
 
 **Steps:**
 
-1. As H3, open the webinar editor's time picker (`SingleSessionPicker`) and move the day strip to Sun 2027-03-14. Read the start list between 12:00 am and 4:00 am.
-2. Pick 1:30 am, 90 minutes. Publish (or `POST` through the editor's API with `scheduledAt: "2027-03-14T06:30:00Z"` if the strip can't reach March).
+1. As H3, open the webinar editor's time picker (`SingleTimePicker`, host audience) and page the month to March 2027; pick Sun 14. Switch on **Show times outside my hours** and read the starts between 12:00 am and 4:00 am.
+2. Pick 1:30 am, 90 minutes. Publish (or `POST` through the editor's API with `scheduledAt: "2027-03-14T06:30:00Z"` if the month can't reach March).
 3. Read the end time everywhere: editor, H3's Appointments, B2's public page.
 
 **Expect:**
@@ -167,17 +167,17 @@ Never 5:00 pm or 7:00 pm for H3.
 
 **Probe further:** does any surface compute the end as start wall clock + 90 min ("3:00 am", false) instead of the instant? Does any label say "1 h 30 min" next to "1:30–4:00"? A reader might think it's an error; is there a cue?
 
-## TZ-28 — A nonexistent local time typed into the class editor
+## TZ-28 — A nonexistent local time in the class editor and the pattern scheduler
 
-**Why it matters:** the class editor's start date is a browser `datetime-local` (CL-02). A time inside the gap has no instant.
+**Why it matters:** a time inside the spring-forward gap has no instant. The class editor's **First session** is the host's time picker (CL-02), which lists instants, so it should never offer one.
 
 **Steps:**
 
-1. As H3, with the browser emulated in America/New_York, new class `qa-TZ-28`: 1/week, 1 month, 60 min, Start date 2027-03-14 02:30. Save as draft or publish.
+1. As H3, with the browser emulated in America/New_York, new class `qa-TZ-28`: 1/week, 1 month, 60 min. In **First session**, open Sun 2027-03-14 with **Show times outside my hours** on and read the starts around 2:00 am; pick 3:00 am. Save as draft or publish.
 2. Read what the form shows after save and what the DB holds.
 3. Open the pattern scheduler (Manage timings → weekly pattern) for an unscheduled H3 class; add a row Sunday 02:30, first day 2027-03-07, 4 sessions. Read the preview.
 
-**Expect:** a defined rule, applied the same way in both doors and said to the host. The ADR rule for weekly rows is "skip, never shift"; for a typed single time, record what happens: `2027-03-14T07:30:00Z` (Chrome resolves forward to 3:30 am EDT), a refusal, or 06:30Z.
+**Expect:** a defined rule, applied the same way in both doors and said to the host. Step 1: the picker lists 1:30 am then 3:00 am, with no 2:00 or 2:30 am; the saved first session is `2027-03-14T07:00:00Z`. The ADR rule for weekly rows is "skip, never shift"; record what the pattern scheduler does with 2:30 am.
 
 **Probe further:** pattern preview for 14 March: skipped (and the series extended to keep N), shifted to 3:30 am, or listed as 2:30 am with a 07:30Z instant? Any session shown as "2:30 am" on 14 March is **FALSE-INFO** (that time doesn't exist). No warning at all is **MISSED-OPPORTUNITY**.
 

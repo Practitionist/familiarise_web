@@ -177,7 +177,7 @@ export function ClassPatternScheduler({
       start,
       label: SINGLE_SESSION_STATE_LABEL[option.state],
       blocking: !option.selectable,
-      outside: option.state === "outsideHours",
+      outside: option.state === "outside-hours",
     };
   });
   const busyCount = labelled.filter((row) => row.blocking).length;

@@ -103,6 +103,8 @@ type RemoveParticipantResult = {
     refundPct: number;
     /** Null when nothing moved. See the toast: only GATEWAY reaches them. */
     rail?: "GATEWAY" | "INTERNAL" | "CREDITS" | null;
+    /** The seat was free: nothing was paid, so nothing was refunded. */
+    freeBooking?: true;
   } | null;
 };
 
@@ -122,6 +124,8 @@ class RemovalRefusedError extends Error {
     this.name = "RemovalRefusedError";
   }
 }
+
+const FREE_SEAT_LINE = "Their seat was free, so there is nothing to refund.";
 
 const refusalBody = z.object({ error: z.string().min(1) });
 
@@ -187,6 +191,8 @@ export default function EventParticipantsPage() {
       } else if (!result.refund) {
         description =
           "No payment was found for this seat, so nothing was refunded.";
+      } else if (result.refund.freeBooking) {
+        description = FREE_SEAT_LINE;
       } else if (result.refund.amountRefundedPaise > 0) {
         // INR: settlement is INR-only by design, and the refund summary
         // carries no currency of its own.
@@ -354,6 +360,13 @@ export default function EventParticipantsPage() {
     },
   ];
 
+  // A seat on a free event with nothing paid owes nothing; the dialog says so before the click.
+  const pendingSeat = pendingRemoval
+    ? seatPayments.get(pendingRemoval.id)
+    : undefined;
+  const removingFreeSeat =
+    plan.price === 0 && (!pendingSeat || Number(pendingSeat.amount) === 0);
+
   const renderRegisteredActions = (participant: RegisteredParticipant) => (
     <Button
       variant="outline"
@@ -399,10 +412,8 @@ export default function EventParticipantsPage() {
         </CardContent>
       </Card>
 
-      {/* Removing someone spends money: the seat is refunded under the
-          organiser tier, which is a full refund at any notice. One click with
-          no confirmation and no mention of the refund is not a decision the
-          organiser got to make. */}
+      {/* A paid seat is refunded in full under the organiser tier; the host
+          confirms knowing that, or knowing a free seat refunds nothing. */}
       <AlertDialog
         open={pendingRemoval !== null}
         onOpenChange={(open) => {
@@ -420,12 +431,16 @@ export default function EventParticipantsPage() {
                   They lose access to {plan.title} and their seat is released
                   back to the event.
                 </p>
-                <p>
-                  Because you are removing them, their seat is refunded in full
-                  under the organiser tier of the cancellation policy — at any
-                  notice, including after the session has started. A seat that
-                  was never paid for refunds nothing.
-                </p>
+                {removingFreeSeat ? (
+                  <p>{FREE_SEAT_LINE}</p>
+                ) : (
+                  <p>
+                    Because you are removing them, their seat is refunded in
+                    full under the organiser tier of the cancellation policy —
+                    at any notice, including after the session has started. A
+                    seat that was never paid for refunds nothing.
+                  </p>
+                )}
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -435,7 +450,7 @@ export default function EventParticipantsPage() {
               className="bg-red-600 text-white hover:bg-red-700"
               onClick={handleConfirmRemoval}
             >
-              Remove and refund
+              {removingFreeSeat ? "Remove attendee" : "Remove and refund"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
