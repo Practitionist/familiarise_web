@@ -111,3 +111,30 @@ it("never offers to cancel a pay-link order minted elsewhere", async () => {
 
   expect(dismissToast.action).toBeUndefined();
 });
+
+it("shows the button busy from the click and ignores a second press while the pre-check runs", async () => {
+  let release: (ok: boolean) => void = () => undefined;
+  const onBeforeCheckout = jest.fn(
+    () => new Promise<boolean>((resolve) => (release = resolve)),
+  );
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  await act(async () =>
+    root.render(
+      <RazorpayCheckout
+        checkoutData={{} as CheckoutInput}
+        onBeforeCheckout={onBeforeCheckout}
+        onPaymentSuccess={jest.fn()}
+        onPaymentError={jest.fn()}
+      />,
+    ),
+  );
+  const button = container.querySelector("button")!;
+  await act(async () => button.click());
+  await act(async () => button.click());
+  expect(button.textContent).toBe("Processing...");
+  expect(onBeforeCheckout).toHaveBeenCalledTimes(1);
+  await act(async () => release(false));
+  expect(button.textContent).toBe("Pay with Razorpay");
+  act(() => root.unmount());
+});

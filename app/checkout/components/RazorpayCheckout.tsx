@@ -6,7 +6,7 @@ import { ToastAction } from "@/components/ui/toast";
 import { useToast } from "@/hooks/use-toast";
 import { loadScript } from "../plans/utils";
 import { CheckoutInput } from "@/schemas/checkout";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   buildCheckoutOptions,
   holdTimeoutSeconds,
@@ -148,16 +148,20 @@ export default function RazorpayCheckout({
   const { toast } = useToast();
   const { emiEnabled } = useCheckoutFlags();
   const [isProcessing, setIsProcessing] = useState(false);
+  // Synchronous re-entry guard: state updates land a render later than a second click.
+  const inFlight = useRef(false);
   const attemptKey = useCheckoutAttemptKey();
 
   const handleCheckout = async () => {
-    // Before the spinner, so an abort leaves the button exactly as it was.
-    if (onBeforeCheckout && !(await onBeforeCheckout())) return;
+    if (inFlight.current) return;
+    inFlight.current = true;
+    // Busy from the click, so a slow pre-check never reads as an ignored press.
     setIsProcessing(true);
     // While the gateway sheet is up it owns the button; only its own exits
     // (dismiss, failure, verified success) may re-enable it.
     let gatewayOpened = false;
     try {
+      if (onBeforeCheckout && !(await onBeforeCheckout())) return;
       const order = existingOrder
         ? {
             id: existingOrder.orderId,
@@ -179,6 +183,7 @@ export default function RazorpayCheckout({
       });
     } finally {
       if (!gatewayOpened) setIsProcessing(false);
+      inFlight.current = false;
     }
   };
 
