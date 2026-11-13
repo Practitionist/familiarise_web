@@ -23,6 +23,7 @@ import {
   liveOccurrencesOf,
 } from "@/lib/appointments/occurrences";
 import { deriveBucket } from "@/lib/appointments/bucket";
+import { isReleasedSeat, ownSeatStatusOf } from "@/lib/appointments/status";
 import { payLinkHref, payablePaymentId } from "@/lib/payments/pay-link-href";
 import { isOrgFundedPaymentMethod } from "@/lib/payments/org-funded";
 import { formatInViewerZone } from "@/lib/time/viewer-zone";
@@ -407,6 +408,8 @@ function processWebinar(
   webinar: TConsulteeWebinar,
   now: Date = new Date(),
 ): ProcessedEvent | null {
+  // A seat the learner no longer holds belongs to the Appointments list's Cancelled tab, not Home.
+  if (isReleasedSeat(ownSeatStatusOf(webinar.appointment))) return null;
   const allSlots: SlotWithContext[] = [];
   const appointmentId = webinar.appointment?.id ?? "";
 
@@ -482,6 +485,8 @@ function processClass(
   classEvent: TConsulteeClass,
   now: Date = new Date(),
 ): ProcessedEvent | null {
+  // A seat the learner no longer holds belongs to the Appointments list's Cancelled tab, not Home.
+  if (isReleasedSeat(ownSeatStatusOf(classEvent.appointment))) return null;
   // #1554 — one wrapper per class, N occurrences.
   const nextAppointment = classEvent.appointment;
   const allSlots: SlotWithContext[] = nextAppointment

@@ -88,3 +88,19 @@ export function isUnpaidSeat(vm: {
 }): boolean {
   return normalizeStatus(vm.seatStatus) === "HELD" && vm.paid !== true;
 }
+
+/** The viewer's own seat was given back: they left, were removed, or the event was cancelled. */
+export function isReleasedSeat(seatStatus: string | null | undefined): boolean {
+  const s = normalizeStatus(seatStatus);
+  return s === "CANCELLED" || s === "REFUNDED";
+}
+
+/** The viewer's own seat status on a webinar or class read scoped to their participant row. */
+export function ownSeatStatusOf(
+  appointment:
+    | { id: string; participants?: ReadonlyArray<{ status: string }> }
+    | null
+    | undefined,
+): string | null {
+  return appointment?.participants?.[0]?.status ?? null;
+}

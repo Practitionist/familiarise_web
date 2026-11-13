@@ -26,7 +26,8 @@ import {
   liveOccurrences,
   occurrencesOfAppointment,
 } from "./occurrences";
-import { normalizeStatus } from "./status";
+import { isReleasedSeat, normalizeStatus, ownSeatStatusOf } from "./status";
+import { bookingStatus } from "./booking-status";
 import { payablePaymentId } from "@/lib/payments/pay-link-href";
 import { trialMeta } from "./trial-labels";
 import { openProposalTarget } from "./consultee-affordances";
@@ -95,16 +96,6 @@ function groupProgress(
     total: live.length,
     completed: live.filter((s) => isOccurrenceOver(s, now)).length,
   };
-}
-
-/** The viewer's own seat status on a webinar or class row. */
-function ownSeatStatus(
-  appointment:
-    | { id: string; participants?: ReadonlyArray<{ status: string }> }
-    | null
-    | undefined,
-): string | null {
-  return appointment?.participants?.[0]?.status ?? null;
 }
 
 /** What a list row knows about payment and an open reschedule, for its status chip. */
@@ -215,10 +206,57 @@ function mapSubscription(s: TSubscriptionWithPlan, now: Date): AppointmentVM {
   };
 }
 
-function mapWebinar(w: TConsulteeWebinar, now: Date): AppointmentVM {
+/**
+ * A seat the learner gave back (left, removed or the event cancelled) lists
+ * under Cancelled with its reason, with no link, Join or chat: the detail page
+ * no longer admits a released seat.
+ */
+function withReleasedSeat(
+  vm: AppointmentVM,
+  eventStatus: string | null | undefined,
+  appointment:
+    | {
+        id: string;
+        participants?: ReadonlyArray<{
+          status: string;
+          updatedAt?: Date | string;
+        }>;
+      }
+    | null
+    | undefined,
+  zone?: string,
+): AppointmentVM {
+  const seat = appointment?.participants?.[0];
+  if (!isReleasedSeat(seat?.status)) return vm;
+  const line = bookingStatus(
+    {
+      kind: vm.kind,
+      status: eventStatus,
+      seatStatus: seat?.status,
+      seatReleasedAt: seat?.updatedAt ?? null,
+    },
+    "CONSULTEE",
+    { zone },
+  ).line;
+  return {
+    ...vm,
+    appointmentId: null,
+    status: "CANCELLED",
+    bucket: "cancelled",
+    needsActionReason: null,
+    meta: line,
+    raw: { ...vm.raw, rawOccurrences: [] },
+  };
+}
+
+function mapWebinar(
+  w: TConsulteeWebinar,
+  now: Date,
+  zone?: string,
+): AppointmentVM {
   const occurrences = occurrencesOfAppointment(w.appointment);
   const status = normalizeStatus(w.status?.toString());
-  return {
+  const vm: AppointmentVM = {
     id: `webinar-${w.id}`,
     appointmentId: w.appointment?.id ?? null,
     kind: "WEBINAR",
@@ -233,7 +271,7 @@ function mapWebinar(w: TConsulteeWebinar, now: Date): AppointmentVM {
     meta: null,
     organizationId: w.appointment?.organizationId ?? null,
     pendingPaymentUrl: null,
-    seatStatus: ownSeatStatus(w.appointment),
+    seatStatus: ownSeatStatusOf(w.appointment),
     ...listStatusFacts(w.appointment, occurrences),
     collaborators: collaborators(w.webinarPlan.collaborators),
     collaboratorRole: null,
@@ -243,14 +281,15 @@ function mapWebinar(w: TConsulteeWebinar, now: Date): AppointmentVM {
       source: w,
     },
   };
+  return withReleasedSeat(vm, w.status, w.appointment, zone);
 }
 
-function mapClass(c: TConsulteeClass, now: Date): AppointmentVM {
+function mapClass(c: TConsulteeClass, now: Date, zone?: string): AppointmentVM {
   // #1554 — one wrapper per class, N occurrences.
   const target = c.appointment ?? undefined;
   const occurrences = occurrencesOfAppointment(target);
   const status = normalizeStatus(c.status?.toString());
-  return {
+  const vm: AppointmentVM = {
     id: `class-${c.id}`,
     appointmentId: target?.id ?? null,
     kind: "CLASS",
@@ -265,7 +304,7 @@ function mapClass(c: TConsulteeClass, now: Date): AppointmentVM {
     meta: null,
     organizationId: target?.organizationId ?? null,
     pendingPaymentUrl: null,
-    seatStatus: ownSeatStatus(target),
+    seatStatus: ownSeatStatusOf(target),
     ...listStatusFacts(target, occurrences),
     collaborators: collaborators(c.classPlan.collaborators),
     collaboratorRole: null,
@@ -276,6 +315,7 @@ function mapClass(c: TConsulteeClass, now: Date): AppointmentVM {
       source: c,
     },
   };
+  return withReleasedSeat(vm, c.status, target, zone);
 }
 
 function mapTrial(t: TTrialWithPlan, now: Date): AppointmentVM {
@@ -322,13 +362,15 @@ function mapTrial(t: TTrialWithPlan, now: Date): AppointmentVM {
 export function mapConsulteeEvents(
   data: TConsulteeEventsResponse | undefined,
   now: Date = new Date(),
+  /** The viewer's profile zone, for the dates in a released seat's reason line. */
+  zone?: string,
 ): AppointmentVM[] {
   if (!data) return [];
   return [
     ...(data.consultations ?? []).map((c) => mapConsultation(c, now)),
     ...(data.subscriptions ?? []).map((s) => mapSubscription(s, now)),
-    ...(data.webinars ?? []).map((w) => mapWebinar(w, now)),
-    ...(data.classes ?? []).map((c) => mapClass(c, now)),
+    ...(data.webinars ?? []).map((w) => mapWebinar(w, now, zone)),
+    ...(data.classes ?? []).map((c) => mapClass(c, now, zone)),
     ...(data.trials ?? []).map((t) => mapTrial(t, now)),
   ];
 }

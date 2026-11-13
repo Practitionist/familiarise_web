@@ -32,7 +32,11 @@ export default function AppointmentsPageClient({
 
   const adapter = useConsulteeAppointmentsAdapter();
 
-  const vms = useMemo(() => mapConsulteeEvents(eventsData), [eventsData]);
+  const zone = viewerZone.zone;
+  const vms = useMemo(
+    () => mapConsulteeEvents(eventsData, new Date(), zone),
+    [eventsData, zone],
+  );
 
   return (
     <DashboardErrorBoundary>
