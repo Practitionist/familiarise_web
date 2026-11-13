@@ -130,6 +130,14 @@ const POST_APPROVAL = new Set<BookingStateKind>([
   "COMPLETED",
 ]);
 
+/** Before confirmation a trial or a pay-first hold is cancelled; a submitted request is withdrawn. */
+function preApprovalCancelLabel(vm: AppointmentVM): string {
+  if (vm.kind === "TRIAL") return "Cancel trial";
+  return vm.bookingSource === "DIRECT_CHECKOUT"
+    ? "Cancel booking"
+    : "Withdraw request";
+}
+
 /** A trial or a pay-first checkout is the learner's own hold, never an approval. */
 function payFirstKind(vm: AppointmentVM): "trial" | "checkout" | null {
   if (vm.kind === "TRIAL") return "trial";
@@ -477,12 +485,14 @@ export function AppointmentDetailClient({
     .filter(
       (item) => item.key !== "cancel" || postApproval || role === "consultee",
     )
+    // A hold whose pay window closed is over; the sweep ends it.
+    .filter(
+      (item) =>
+        item.key !== "cancel" || bookingState.state !== "PAYMENT_LAPSED",
+    )
     .map((item) =>
       item.key === "cancel" && !postApproval
-        ? {
-            ...item,
-            label: vm.kind === "TRIAL" ? "Cancel trial" : "Withdraw request",
-          }
+        ? { ...item, label: preApprovalCancelLabel(vm) }
         : item,
     );
   const heldCount = detail.appointment.occurrences.filter(
@@ -1228,11 +1238,6 @@ export function AppointmentDetailClient({
                     refreshDetail,
                   )
               : undefined
-          }
-          requestAgainHref={
-            vm.consultantProfileId
-              ? `/explore/experts/${vm.consultantProfileId}`
-              : null
           }
           decision={decision}
           awaitingPayment={

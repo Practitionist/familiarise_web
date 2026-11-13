@@ -364,11 +364,14 @@ export function CancelConfirmationDialog({
   };
 
   // An expert's button promises a refund only when there is one to give.
+  const wholeEvent =
+    !!preview && "wholeEvent" in preview && !!preview.wholeEvent;
   const nothingToRefund =
     !!preview &&
     (preview.paid === false ||
       !!preview.freeBooking ||
-      ("expectedPaid" in preview && preview.expectedPaid === false));
+      ("expectedPaid" in preview && preview.expectedPaid === false) ||
+      (wholeEvent && (preview.attendeeCount ?? 0) === 0));
 
   /** What the click binds to: the quote shown, or the unpaid screen of an approval awaiting payment. */
   const shownQuote = (): ShownCancelQuote | undefined => {
@@ -451,7 +454,7 @@ export function CancelConfirmationDialog({
             ) : asConsultant && !nothingToRefund ? (
               "Cancel and refund"
             ) : (
-              `Cancel ${appointmentType === "Trial" ? "trial" : "booking"}`
+              `Cancel ${wholeEvent ? "event" : appointmentType === "Trial" ? "trial" : "booking"}`
             )}
           </AlertDialogAction>
         </AlertDialogFooter>

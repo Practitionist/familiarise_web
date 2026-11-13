@@ -82,7 +82,6 @@ export interface NeedsYouCalloutProps {
   onPay?: () => void;
   /** #1780 E-5 — leave the class with a full refund of the remaining sessions. */
   onExitSeries?: () => Promise<void>;
-  requestAgainHref: string | null;
   decision?: RequestDecision;
   onHelp: () => void;
   /** Extra content for JOIN / RATE — the existing button or stars. */
@@ -616,7 +615,6 @@ function CalloutBody(props: Omit<NeedsYouCalloutProps, "embedded">) {
     heldCount,
     pending,
     onPay,
-    requestAgainHref,
     decision,
     awaitingPayment,
     onHelp,
@@ -767,23 +765,9 @@ function CalloutBody(props: Omit<NeedsYouCalloutProps, "embedded">) {
         </Shell>
       );
     }
+    // Nothing to do: the badge's reason line explains, and "Book again" sits in the header.
     case "REQUEST_AGAIN":
-      return (
-        <Shell
-          onHelp={onHelp}
-          actions={
-            requestAgainHref ? (
-              <Button size="sm" variant="outline" asChild>
-                <Link href={requestAgainHref}>{nextAction.label}</Link>
-              </Button>
-            ) : null
-          }
-        >
-          {bookingState.state === "PAYMENT_LAPSED"
-            ? `Your payment link expired${deadline ? ` on ${format(deadline, "EEE d MMM")}` : ""}.`
-            : `${names.consultant} declined this request.`}
-        </Shell>
-      );
+      return null;
     case "JOIN":
     case "RATE":
       return children ? (
@@ -793,19 +777,8 @@ function CalloutBody(props: Omit<NeedsYouCalloutProps, "embedded">) {
             : "How did it go?"}
         </Shell>
       ) : null;
+    // The banner shows only when the viewer must act; a wait is the reason line's job.
     case "NONE":
-      // #1675 (owner decision 2026-09-20) — the consultee's own REQUESTED
-      // page had nothing here; that read as the request vanishing. A plain
-      // wait line, no button, replaces the silence without inviting an action.
-      if (bookingState.state === "REQUESTED") {
-        const consultantFirstName = names.consultant.split(" ")[0];
-        return (
-          <Shell tone="neutral" onHelp={onHelp} actions={null}>
-            Waiting for {consultantFirstName} to respond — usually within 48
-            hours.
-          </Shell>
-        );
-      }
       return null;
     default:
       return null;

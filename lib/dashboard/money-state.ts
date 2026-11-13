@@ -406,12 +406,15 @@ function rowLabel(
   booking: BookingStateKind,
   holdExpiresAt: Date | null,
   now: Date,
+  payFirst: boolean,
 ): string {
   if (o.deletedAt || normalizeStatus(o.completionStatus) === "CANCELLED")
     return "Cancelled";
   if (normalizeStatus(o.completionStatus) === "RESCHEDULED") return "Released";
   if (o.isTentative) {
-    if (booking === "AWAITING_PAYMENT") return "Held · link sent";
+    // A pay-first hold is the learner's own checkout; only an approval sends a link.
+    if (booking === "AWAITING_PAYMENT")
+      return payFirst ? "Held" : "Held · link sent";
     if (
       booking === "PAYMENT_LAPSED" ||
       booking === "CANCELLED" ||
@@ -1032,7 +1035,14 @@ export function deriveBookingPresentation(
     moneyState,
     nextAction,
     timeline,
-    sessionRowLabel: (o) => rowLabel(o, b.state, holdExpiresAt, now),
+    sessionRowLabel: (o) =>
+      rowLabel(
+        o,
+        b.state,
+        holdExpiresAt,
+        now,
+        normalizeStatus(input.source) === "DIRECT_CHECKOUT",
+      ),
     sessionProgress,
     settled,
   };

@@ -53,6 +53,8 @@ export type HistoryEdgeInput = {
 /** An open reschedule: who proposed it, the first proposed and the original start. */
 export interface OpenRescheduleInput {
   by: "CONSULTANT" | "REQUESTER";
+  /** The viewer proposed it; undefined when the read cannot say (then the side decides). */
+  mine?: boolean;
   proposedStartsAt: Date | string | null;
   originalStartsAt: Date | string | null;
   expiresAt: Date | string | null;
@@ -280,6 +282,7 @@ function reasonOf(
   f: BookingStatusFacts,
   viewer: StatusViewer,
   zone: string,
+  now: Date,
 ): string {
   const consultant = f.names?.consultant ?? "the expert";
   const payer = f.names?.payer ?? "the learner";
@@ -322,6 +325,11 @@ function reasonOf(
           ? `Paid. Place the first sessions by ${dayTime(by)}.`
           : "Place the sessions on the calendar.";
       }
+      if (f.planWait === "CYCLE_1" && by && by.getTime() <= now.getTime()) {
+        return isLearner
+          ? `Paid. ${cap(consultant)} has not arranged times yet; they were due by ${dayTime(by)}. You can cancel this plan from this page.`
+          : `Paid. ${cap(consultant)} has not arranged times yet; they were due by ${dayTime(by)}.`;
+      }
       return f.planWait === "CYCLE_1"
         ? isLearner
           ? "Paid. Your expert is arranging times (within 48 hours)."
@@ -332,8 +340,9 @@ function reasonOf(
       const r = f.reschedule;
       if (!r) return "";
       const mine =
-        (r.by === "CONSULTANT" && isExpert) ||
-        (r.by === "REQUESTER" && isLearner);
+        r.mine ??
+        ((r.by === "CONSULTANT" && isExpert) ||
+          (r.by === "REQUESTER" && isLearner));
       const who = cap(
         mine ? "you" : r.by === "CONSULTANT" ? consultant : payer,
       );
@@ -440,7 +449,7 @@ export function bookingStatus(
     stage,
     label: word,
     tone: WORD_TONE[word],
-    line: reasonOf(stage, cause, word, f, viewer, zone),
+    line: reasonOf(stage, cause, word, f, viewer, zone, now),
   };
 }
 

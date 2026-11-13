@@ -232,13 +232,13 @@ describe("consultee · AWAITING_PAYMENT subscription", () => {
 });
 
 describe("consultee · REQUESTED subscription (#1675 owner decision 2026-09-20)", () => {
-  it("shows a neutral waiting line, no review prompt, and Withdraw after Get help", () => {
+  it("says the wait in the reason line, draws no action banner, and puts Withdraw after Get help", () => {
     viewerId = "u-rachel";
     currentDetail = subscriptionDetail({ status: "PENDING" });
     const html = render("consultee");
-    expect(html).toContain(
-      "Waiting for Ethan to respond — usually within 48 hours.",
-    );
+    // A wait is not an action: the badge's reason line says it, the banner stays away.
+    expect(html).toContain("Waiting for Ethan to answer (within 48 hours).");
+    expect(html).not.toContain('aria-label="Needs you"');
     // Nothing was ever held or completed, so the profile-review nudge does
     // not appear before there is anything to review.
     expect(html).not.toContain("Reviewed this expert");

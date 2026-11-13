@@ -64,7 +64,7 @@ function signalLines(
       case "OPEN_REQUESTS":
         return d.maxOpenRequests === null
           ? `${plural(d.openRequests, "request is", "requests are")} waiting for your answer.`
-          : `${d.openRequests} of your ${d.maxOpenRequests} open requests are taken.`;
+          : `You have ${d.openRequests} open requests; your limit is ${d.maxOpenRequests}.`;
       case "REQUEST_EXPIRING":
         return `A request lapses at ${when(d.nearestRequestExpiry)} unless you answer it.`;
       case "PLANS_UNPLACED":
@@ -89,14 +89,18 @@ export function DemandBanner({
   const router = useRouter();
   const queryClient = useQueryClient();
   const save = useSaveBookingRequestSettings(consultantId);
-  const [dismissal, setDismissal] = useState<Dismissal | null>(null);
+  // Undefined until mounted: the banner reads the browser's storage and clock,
+  // so the server render and the first client render both draw nothing.
+  const [dismissal, setDismissal] = useState<Dismissal | null | undefined>(
+    undefined,
+  );
   useEffect(() => {
     setDismissal(readDismissal(consultantId));
   }, [consultantId]);
 
   const { data } = useExpertDemand(consultantId);
 
-  if (!data) return null;
+  if (!data || dismissal === undefined) return null;
   const now = new Date();
   const signals = demandSignals(data, now);
   if (signals.length === 0 || dismissalHolds(dismissal, signals, now)) {
