@@ -346,9 +346,12 @@ export default function EventParticipantsPage() {
         return (
           <span className="inline-flex items-center gap-2">
             <StatusBadge {...seatPaymentBadge(seat)} size="sm" />
-            <span className="text-xs tabular-nums text-muted-foreground">
-              {formatCurrencyAmount(Number(seat.amount), seat.currency)}
-            </span>
+            {/* A free seat says "Free" alone, never an amount of nothing. */}
+            {Number(seat.amount) > 0 && (
+              <span className="text-xs tabular-nums text-muted-foreground">
+                {formatCurrencyAmount(Number(seat.amount), seat.currency)}
+              </span>
+            )}
           </span>
         );
       },
