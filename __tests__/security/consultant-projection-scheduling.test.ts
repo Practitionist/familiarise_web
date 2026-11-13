@@ -91,6 +91,20 @@ describe("scheduling consultant projection (behavioural)", () => {
       profiles.map((p) => Object.keys((p as { select: object }).select)),
     ).toEqual(profiles.map(() => ["id", "userId", "user"]));
   });
+
+  it("the appointments list answers 400 for a request status the enum no longer has", async () => {
+    mockRequireApiAuth.mockResolvedValue({
+      session: { user: { id: "admin", role: "ADMIN" } },
+    });
+    const { GET } = await import("../../app/api/scheduling/appointments/route");
+    const res = await GET(
+      new Request(
+        "http://x/api/scheduling/appointments?consultationStatus=SCHEDULED",
+      ) as never,
+    );
+    expect(res.status).toBe(400);
+    expect(mockAppointmentFindMany).not.toHaveBeenCalled();
+  });
 });
 
 describe("scheduling consultant projection (source)", () => {

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { AppointmentsType } from "@prisma/client";
+import { AppointmentStatus, AppointmentsType } from "@prisma/client";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 import { resolveOrgScope } from "@/lib/api/scope/parse";
 import {
@@ -80,16 +80,7 @@ export async function GET(request: NextRequest) {
 
   // Validate statuses — consultation/subscription use AppointmentStatus enum,
   // webinar/class use their own event lifecycle statuses
-  const validRequestStatuses = [
-    "PENDING",
-    "APPROVED",
-    "APPROVED_PENDING_PAYMENT",
-    "SCHEDULED",
-    "COMPLETED",
-    "REJECTED",
-    "CANCELLED",
-    "EXPIRED",
-  ];
+  const validRequestStatuses: string[] = Object.values(AppointmentStatus);
   const validEventStatuses = ["SCHEDULED", "COMPLETED", "CANCELLED"];
   if (
     consultationStatus &&
