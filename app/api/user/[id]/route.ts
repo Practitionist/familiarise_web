@@ -54,6 +54,22 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** The owner edits their own profile; an ADMIN edits another's only on a fresh session. */
+async function authorizeProfileEdit(id: string) {
+  const auth = await requireApiAuth({ expectUser: true });
+  if (auth.error) return { error: auth.error };
+  const { session } = auth;
+  if (session.user.id !== id && session.user.role !== "ADMIN") {
+    return {
+      error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
+    };
+  }
+  const adminEdit = session.user.id !== id;
+  const stale = adminEdit ? requireFreshSession(session) : null;
+  if (stale) return { error: stale };
+  return { error: null, session, adminEdit };
+}
+
 /** An admin's edit of another user's profile writes one operator audit row. */
 function recordAdminProfileEdit(
   tx: Tx,
@@ -118,17 +134,9 @@ export async function PUT(
   try {
     const { id } = await params;
 
-    const auth = await requireApiAuth({ expectUser: true });
+    const auth = await authorizeProfileEdit(id);
     if (auth.error) return auth.error;
-    const { session } = auth;
-    if (session.user.id !== id && session.user.role !== "ADMIN") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    const adminEdit = session.user.id !== id;
-    if (adminEdit) {
-      const stale = requireFreshSession(session);
-      if (stale) return stale;
-    }
+    const { session, adminEdit } = auth;
 
     // Never `role` or `email`, whatever the body says. A self-edit that set
     // role made any consultee an ADMIN, and an email rewrite skips
@@ -246,17 +254,9 @@ export async function PATCH(
   try {
     const { id } = await params;
 
-    const auth = await requireApiAuth({ expectUser: true });
+    const auth = await authorizeProfileEdit(id);
     if (auth.error) return auth.error;
-    const { session } = auth;
-    if (session.user.id !== id && session.user.role !== "ADMIN") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    const adminEdit = session.user.id !== id;
-    if (adminEdit) {
-      const stale = requireFreshSession(session);
-      if (stale) return stale;
-    }
+    const { session, adminEdit } = auth;
 
     const body = await req.json();
 
