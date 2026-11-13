@@ -11,6 +11,7 @@ import {
   getInitialBookingRequestSettings,
 } from "../settings";
 import { useSaveBookingRequestSettings } from "../use-save-booking-request-settings";
+import { useExpertDemand } from "../use-expert-demand";
 import { usePlanClients } from "../use-plan-clients";
 import {
   parsePlanClientLimitInput,
@@ -50,6 +51,7 @@ export function BookingRequestsForm({
   );
   const limitCheck = parsePlanClientLimitInput(limitDraft);
   const planClients = usePlanClients(consultant.id);
+  const demand = useExpertDemand(consultant.id);
   // New server values (a save, or a change made elsewhere) replace the form.
   useEffect(() => {
     setSettings({
@@ -104,6 +106,7 @@ export function BookingRequestsForm({
             value={settings}
             onChange={setSettings}
             activePlanClients={planClients.data?.activePlanClients ?? null}
+            openRequests={demand.data?.openRequests ?? null}
             limitDraft={limitDraft}
             limitError={limitCheck.ok ? null : limitCheck.error}
             countLimit={shownPlanClientLimit(limitDraft, maxActivePlanClients)}

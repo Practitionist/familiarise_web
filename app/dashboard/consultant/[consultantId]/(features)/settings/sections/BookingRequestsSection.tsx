@@ -18,6 +18,8 @@ interface BookingRequestsSectionProps {
   onChange: Dispatch<SetStateAction<BookingRequestSettings>>;
   /** Distinct buyers holding one of your plans now; null while it loads. */
   activePlanClients: number | null;
+  /** Requests waiting on you now; null while it loads. */
+  openRequests: number | null;
   /** The plan-client limit exactly as typed, and why it is refused (null when valid). */
   limitDraft: string | null;
   limitError: string | null;
@@ -55,6 +57,14 @@ export function planClientsLine(active: number, limit: number | null): string {
     : `${active} of ${limit} ${noun(limit)}`;
 }
 
+/** "6 open requests now", or "6 of 10 open requests now" against a limit. */
+export function openRequestsLine(open: number, limit: number | null): string {
+  const noun = open === 1 && limit === null ? "open request" : "open requests";
+  return limit === null
+    ? `${open} ${noun} now`
+    : `${open} of ${limit} open requests now`;
+}
+
 /**
  * "Booking mode" settings. Presentational: the form saves the changed
  * fields through the booking-settings PATCH.
@@ -63,6 +73,7 @@ export function BookingRequestsSection({
   value: formData,
   onChange: setFormData,
   activePlanClients,
+  openRequests,
   limitDraft,
   limitError,
   countLimit,
@@ -170,6 +181,11 @@ export function BookingRequestsSection({
           Once this many requests are waiting on you, new ones are refused until
           you answer some. Leave blank for no limit.
         </p>
+        {openRequests !== null && (
+          <p className="text-sm font-medium" aria-live="polite">
+            {openRequestsLine(openRequests, formData.maxOpenRequests)}
+          </p>
+        )}
       </div>
 
       <div className="space-y-2">
