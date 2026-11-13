@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 
-// A domestic buyer-paid checkout carries the buyer's GST state; org-funded and export checkouts need none.
+// A domestic buyer-paid checkout carries the buyer's GST state; org-funded, export and free checkouts need none.
 
 import { runAsRegisteredPlatform } from "../fixtures/gst-registered";
 import "../booking-algorithm/setup";
@@ -88,6 +88,19 @@ describe("the buyer's GST state at checkout", () => {
       "buyer",
     );
     expect(result).toMatchObject({ success: true, skipPayment: true });
+    expect(storedStateCode()).toBeNull();
+  });
+
+  it("a free domestic checkout needs no state: no consumer invoice is issued for it", async () => {
+    resetDouble({
+      ...buyerPaidWebinar,
+      "webinar.findUnique": () => ({
+        ...webinar,
+        webinarPlan: { ...webinar.webinarPlan, price: 0 },
+      }),
+    });
+    const result = await handleCheckout(webinarInput(), "buyer");
+    expect(result).toMatchObject({ success: true, isZeroAmountPayment: true });
     expect(storedStateCode()).toBeNull();
   });
 
