@@ -68,6 +68,13 @@ function callerPaymentsInclude(userId: string) {
       createdAt: true,
       // The pay window of a held booking or seat, so the list can tell a live hold from a lapsed one.
       expiresAt: true,
+      // Landed refunds, so the list says "Refunded" where the detail page does.
+      amount: true,
+      currency: true,
+      refunds: {
+        where: { status: "SUCCEEDED", deletedAt: null },
+        select: { amountPaise: true, updatedAt: true },
+      },
     },
   } satisfies Prisma.Appointment$paymentArgs;
 }

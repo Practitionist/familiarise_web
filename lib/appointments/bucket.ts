@@ -28,6 +28,10 @@ export interface BucketInput {
   isUnscheduled?: boolean;
   /** A consultation is one agreed session, so losing it means re-timing it. */
   kind?: string;
+  /** DIRECT_CHECKOUT marks a pay-first hold: the learner's to pay, not the expert's to answer. */
+  source?: string | null;
+  /** Whether that hold's pay window is still open; undefined when the read does not say. */
+  holdOpen?: boolean;
   now?: Date;
 }
 
@@ -61,6 +65,15 @@ export function deriveBucket(
   }
   if (isPendingPaymentStatus(status)) {
     // The consultant can't act on an unpaid approval here — Requests owns it.
+    return {
+      bucket: viewer === "consultant" ? "inRequests" : "needsAction",
+      needsActionReason: "PAY_NOW",
+    };
+  }
+  if (isPendingStatus(status) && input.source === "DIRECT_CHECKOUT") {
+    if (input.holdOpen === false) {
+      return { bucket: "cancelled", needsActionReason: null };
+    }
     return {
       bucket: viewer === "consultant" ? "inRequests" : "needsAction",
       needsActionReason: "PAY_NOW",

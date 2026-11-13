@@ -98,6 +98,11 @@ function groupProgress(
   };
 }
 
+/** Whether a hold's pay window is open at `now`; a read with no open payment says no. */
+function holdOpenAt(deadline: Date | null | undefined, now: Date): boolean {
+  return !!deadline && deadline.getTime() > now.getTime();
+}
+
 /** What a list row knows about payment and an open reschedule, for its status chip. */
 function listStatusFacts(
   appointment:
@@ -106,13 +111,27 @@ function listStatusFacts(
         payment?: ReadonlyArray<{
           paymentStatus: string;
           expiresAt?: Date | string | null;
+          amount?: number | string | bigint;
+          currency?: string;
+          refunds?: ReadonlyArray<{
+            amountPaise: number | string | bigint;
+            updatedAt: Date | string;
+          }>;
         }> | null;
       }
     | null
     | undefined,
   occurrences: OccurrenceVM[],
-): Pick<AppointmentVM, "paid" | "payDeadline" | "reschedule"> {
+): Pick<AppointmentVM, "paid" | "payDeadline" | "reschedule" | "refunded"> {
   const payments = appointment?.payment ?? [];
+  const charged = payments.filter(
+    (p) => p.paymentStatus === "SUCCEEDED" && Number(p.amount ?? 0) > 0,
+  );
+  const landed = charged.flatMap((p) => p.refunds ?? []);
+  const refundedPaise = landed.reduce((t, r) => t + Number(r.amountPaise), 0);
+  const refundedAt = landed
+    .map((r) => toDate(r.updatedAt))
+    .sort((a, b) => b.getTime() - a.getTime())[0];
   const open = payments
     .filter((p) => p.paymentStatus === "PENDING" && p.expiresAt)
     .map((p) => toDate(p.expiresAt!))
@@ -122,6 +141,14 @@ function listStatusFacts(
     (o) => o.isTentative && o.completionStatus === "RESCHEDULED",
   );
   return {
+    refunded:
+      refundedPaise > 0
+        ? {
+            paise: refundedPaise,
+            currency: charged[0]?.currency ?? "INR",
+            at: refundedAt ?? null,
+          }
+        : null,
     paid: payments.some((p) => p.paymentStatus === "SUCCEEDED"),
     payDeadline: open[0] ?? null,
     reschedule: proposal
@@ -141,6 +168,7 @@ function listStatusFacts(
 function mapConsultation(c: TConsultationWithPlan, now: Date): AppointmentVM {
   const occurrences = occurrencesOfAppointment(c.appointment);
   const status = normalizeStatus(c.status?.toString());
+  const facts = listStatusFacts(c.appointment, occurrences);
   return {
     id: `consultation-${c.id}`,
     appointmentId: c.appointment?.id ?? null,
@@ -150,7 +178,14 @@ function mapConsultation(c: TConsultationWithPlan, now: Date): AppointmentVM {
     consultantProfileId: c.consultationPlan.consultantProfile?.id ?? null,
     status,
     ...deriveBucket(
-      { status, occurrences, kind: "CONSULTATION", now },
+      {
+        status,
+        occurrences,
+        kind: "CONSULTATION",
+        now,
+        source: c.bookingSource,
+        holdOpen: holdOpenAt(facts.payDeadline, now),
+      },
       "consultee",
     ),
     nextAt: getAnchorTime(occurrences, now),
@@ -161,7 +196,7 @@ function mapConsultation(c: TConsultationWithPlan, now: Date): AppointmentVM {
     pendingPaymentUrl: c.pendingPaymentUrl ?? null,
     pendingPaymentId: payablePaymentId(c.appointment?.payment),
     bookingSource: c.bookingSource,
-    ...listStatusFacts(c.appointment, occurrences),
+    ...facts,
     collaborators: [],
     collaboratorRole: null,
     raw: {
@@ -177,6 +212,7 @@ function mapSubscription(s: TSubscriptionWithPlan, now: Date): AppointmentVM {
   const target = s.appointment ?? undefined;
   const occurrences = occurrencesOfAppointment(target);
   const status = normalizeStatus(s.status?.toString());
+  const facts = listStatusFacts(target, occurrences);
   return {
     id: `subscription-${s.id}`,
     appointmentId: target?.id ?? null,
@@ -185,7 +221,16 @@ function mapSubscription(s: TSubscriptionWithPlan, now: Date): AppointmentVM {
     counterpart: person(s.subscriptionPlan.consultantProfile?.user),
     consultantProfileId: s.subscriptionPlan.consultantProfile?.id ?? null,
     status,
-    ...deriveBucket({ status, occurrences, now }, "consultee"),
+    ...deriveBucket(
+      {
+        status,
+        occurrences,
+        now,
+        source: s.bookingSource,
+        holdOpen: holdOpenAt(facts.payDeadline, now),
+      },
+      "consultee",
+    ),
     nextAt: getAnchorTime(occurrences, now),
     occurrences,
     group: groupProgress(occurrences, now),
@@ -194,7 +239,7 @@ function mapSubscription(s: TSubscriptionWithPlan, now: Date): AppointmentVM {
     pendingPaymentUrl: s.pendingPaymentUrl ?? null,
     pendingPaymentId: payablePaymentId(target?.payment),
     bookingSource: s.bookingSource,
-    ...listStatusFacts(target, occurrences),
+    ...facts,
     collaborators: [],
     collaboratorRole: null,
     raw: {

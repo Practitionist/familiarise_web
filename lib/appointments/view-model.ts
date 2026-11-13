@@ -1,5 +1,5 @@
 import type { TAppointment } from "@/types/appointment";
-import type { OpenRescheduleInput } from "./booking-status";
+import type { BookingStatusFacts, OpenRescheduleInput } from "./booking-status";
 
 /**
  * Normalized appointment view-model shared by the consultant and consultee
@@ -165,6 +165,8 @@ export interface AppointmentVM {
   /** When the unpaid pay window closes; null when none is open, undefined when not read. */
   payDeadline?: Date | null;
   reschedule?: OpenRescheduleInput | null;
+  /** Refunds that have landed on the booking, summed; null when none. */
+  refunded?: BookingStatusFacts["refunded"];
   /** Consultant view: the viewer's own role on a collaborative event. */
   collaboratorRole: string | null;
   raw: AppointmentVMRaw;

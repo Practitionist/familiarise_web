@@ -608,6 +608,7 @@ export function appointmentStatusChip(
         | "paid"
         | "payDeadline"
         | "reschedule"
+        | "refunded"
       >
     >,
   role: "consultee" | "consultant",
@@ -623,6 +624,7 @@ export function appointmentStatusChip(
         paid: vm.paid,
         payDeadline: vm.payDeadline,
         reschedule: vm.reschedule,
+        refunded: vm.refunded,
         sessions:
           vm.occurrences && live
             ? listSessions(vm.occurrences, live)
