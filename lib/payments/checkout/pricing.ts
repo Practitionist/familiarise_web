@@ -35,7 +35,7 @@ import {
 import { classEnrolmentFrom } from "@/lib/booking/class-enrolment";
 import {
   BookingRuleError,
-  REQUEST_APPROVAL_REQUIRED_MESSAGE,
+  assertExpertTakesDirectCheckout,
 } from "@/lib/booking/booking-rule-error";
 import { assertWindowMatchesPlanDuration } from "@/lib/booking/slot-validation";
 import {
@@ -121,27 +121,11 @@ export async function calculateAmountAndValidate(
       },
       label: string,
     ) => {
-      // A paused expert takes no new 1:1 booking; webinar and class seats keep
-      // selling, and approved pay-links are minted elsewhere.
-      const oneToOne =
-        validatedData.appointmentType === "CONSULTATION" ||
-        validatedData.appointmentType === "SUBSCRIPTION";
-      if (oneToOne && p.consultantProfile?.acceptingRequests === false) {
-        throw new BookingRuleError(
-          "NOT_ACCEPTING_BOOKINGS",
-          "This expert is not taking new 1:1 bookings right now. Pick another expert, or try again later.",
-        );
-      }
-      // A review-first expert's 1:1 is requested, approved, then paid by its pay link, never bought here.
-      if (
-        validatedData.appointmentType === "CONSULTATION" &&
-        p.consultantProfile?.bookingMode === "REQUEST"
-      ) {
-        throw new BookingRuleError(
-          "REQUEST_APPROVAL_REQUIRED",
-          REQUEST_APPROVAL_REQUIRED_MESSAGE,
-        );
-      }
+      // Webinar and class seats keep selling; approved pay links are minted elsewhere.
+      assertExpertTakesDirectCheckout(
+        validatedData.appointmentType,
+        p.consultantProfile,
+      );
       // #1527 Q4 — new sales only. Pay-links minted for approved requests
       // (approval-payment.ts) deliberately skip this, so unpublishing a plan
       // never strands a booking the consultant already accepted.

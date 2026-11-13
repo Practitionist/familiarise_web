@@ -15,7 +15,7 @@ import {
 } from "./repro/checkout-harness/mocks/setup";
 
 import { handleCheckout } from "../../lib/payments/checkout";
-import { resetDouble } from "./repro/checkout-harness/setup";
+import { calls, resetDouble } from "./repro/checkout-harness/setup";
 import type { CheckoutInput } from "../../schemas/checkout";
 
 const START = new Date(Date.now() + 72 * 3600_000);
@@ -114,3 +114,73 @@ it.each<[CheckoutInput["appointmentType"], "REQUEST" | "INSTANT", object]>([
     expect(refusal?.code).not.toBe("REQUEST_APPROVAL_REQUIRED");
   },
 );
+
+// Each switch is re-read under the lock (before any gateway order) and again in the commit.
+describe.each([
+  ["review-first", "REQUEST_APPROVAL_REQUIRED", { bookingMode: "REQUEST" }],
+  ["pause", "NOT_ACCEPTING_BOOKINGS", { acceptingRequests: false }],
+])("the %s switch flipped after pricing", (_label, code, flip) => {
+  function stageFlip(when: "lock" | "mint" | "never") {
+    const plan = planFor("INSTANT");
+    let flipped = false;
+    const read = (args: unknown) => {
+      const lockRead = (args as { select?: { consultantProfile?: unknown } })
+        .select?.consultantProfile;
+      if (when === "lock" && lockRead) flipped = true;
+      return flipped
+        ? { ...plan, consultantProfile: { ...plan.consultantProfile, ...flip } }
+        : plan;
+    };
+    const end = new Date(START.getTime() + 3600_000);
+    resetDouble({
+      "user.findUnique": () => buyerRow(),
+      "consultationPlan.findUnique": read,
+      "cancellationPolicy.findUnique": () => ({ id: "platform-policy" }),
+      "availabilityWindowCustom.findUnique": () => ({
+        consultantProfile: plan.consultantProfile,
+      }),
+      "consultantProfile.findUnique": () => ({
+        scheduleType: "CUSTOM",
+        deletedAt: null,
+      }),
+      "availabilityWindowCustom.findMany": () => [
+        { startsAt: START, endsAt: end },
+      ],
+    });
+    createPaymentIntent.mockImplementation(async () => {
+      if (when === "mint") flipped = true;
+      return { id: "order_flip", client_secret: "s" };
+    });
+  }
+  const consultationsCreated = () =>
+    calls.filter((c) => c.path === "consultation.create").length;
+  const checkout = () =>
+    codeOf(
+      buildCheckoutInput({
+        appointmentType: "CONSULTATION",
+        availabilityWindowCustomId: "row-1",
+        startsAt: slot.startsAt,
+        endsAt: slot.endsAt,
+      }),
+    );
+
+  it("before the lock's re-read is refused before any gateway order", async () => {
+    stageFlip("lock");
+    expect(await checkout()).toMatchObject({ code, httpStatus: 409 });
+    expect(createPaymentIntent).not.toHaveBeenCalled();
+    expect(consultationsCreated()).toBe(0);
+  });
+
+  it("while the order is minted is refused by the commit, which writes no booking", async () => {
+    stageFlip("mint");
+    expect(await checkout()).toMatchObject({ code, httpStatus: 409 });
+    expect(createPaymentIntent).toHaveBeenCalledTimes(1);
+    expect(consultationsCreated()).toBe(0);
+  });
+
+  it("never flipped, the checkout books as before", async () => {
+    stageFlip("never");
+    expect(await checkout()).toBeNull();
+    expect(consultationsCreated()).toBe(1);
+  });
+});

@@ -26,6 +26,8 @@ jest.mock("../../../../../utils/appointmentlock", () => ({
   ConsulteeBookingBusyError: class extends Error {},
   lockSlotBooking: jest.fn(async () => ({ key: "k" })),
   unlockSlotBooking: jest.fn(),
+  lockSlotBatch: jest.fn(async () => ({ keys: ["slot"], token: "t" })),
+  unlockSlotInterval: jest.fn(),
   lockEventCheckout: jest.fn(async () => ({ key: "k" })),
   unlockEventCheckout: jest.fn(),
   lockConsulteeBooking: jest.fn(async () => ({ key: "k" })),
