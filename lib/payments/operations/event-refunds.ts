@@ -732,6 +732,8 @@ export async function refundRemovedAttendeeSeat(args: {
    * wallet, accrual or licence, which the attendee never held.
    */
   rail: FundingRail | null;
+  /** Set when the seat was free: nothing was paid, so nothing is refunded. */
+  freeBooking?: true;
 } | null> {
   const eventFilter =
     args.kind === "webinar"
@@ -774,7 +776,12 @@ export async function refundRemovedAttendeeSeat(args: {
     if (!payment) return null;
     // A free seat owes nothing and writes no refund record.
     if (isPriceFreeSeat(payment)) {
-      return { amountRefundedPaise: 0, refundPct: 100, rail: null };
+      return {
+        amountRefundedPaise: 0,
+        refundPct: 100,
+        rail: null,
+        freeBooking: true,
+      };
     }
     organizationId = payment.organizationId;
     const dedupeKey = args.dedupeKey
