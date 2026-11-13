@@ -1,7 +1,10 @@
 import { cache } from "react";
 import { reportSentryError } from "@/lib/observability/report";
 import prisma from "@/lib/prisma";
-import { oneOnOnePlanDiscoverableWhere } from "@/lib/api/plans/visibility";
+import {
+  eventPlanDiscoverableWhere,
+  oneOnOnePlanDiscoverableWhere,
+} from "@/lib/api/plans/visibility";
 import { planClientsFull } from "@/lib/booking/plan-demand";
 import type { TReviewTrackPresence } from "@/types/review";
 import {
@@ -108,8 +111,23 @@ export const getConsultantDetail = cache(async (consultantId: string) => {
           },
         },
       },
-      webinarPlans: true,
-      classPlans: true,
+      webinarPlans: { where: eventPlanDiscoverableWhere() },
+      classPlans: {
+        where: eventPlanDiscoverableWhere(),
+        include: {
+          // The next scheduled batch only, so the card can say when it starts.
+          classes: {
+            where: {
+              status: "SCHEDULED",
+              deletedAt: null,
+              schedulingPeriodStartsAt: { gt: new Date() },
+            },
+            orderBy: { schedulingPeriodStartsAt: "asc" },
+            take: 1,
+            select: { id: true, schedulingPeriodStartsAt: true },
+          },
+        },
+      },
     },
   });
   if (!consultant) return null;

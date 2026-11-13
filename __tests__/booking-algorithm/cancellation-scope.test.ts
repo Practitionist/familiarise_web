@@ -155,6 +155,7 @@ describe("resolveBookingRefundContext", () => {
     expect(ctx.paidPayment).toEqual({
       id: "pay-1",
       amountPaise: 100_000,
+      listPricePaise: expect.any(Number),
       refundablePaise: 100_000,
     });
   });
@@ -470,6 +471,7 @@ describe("resolveBookingRefundContext", () => {
     expect(ctx.paidPayment).toEqual({
       id: "pay-c",
       amountPaise: 250_000,
+      listPricePaise: expect.any(Number),
       refundablePaise: 250_000,
     });
     expect(ctx.sessionsCompleted).toBe(0);

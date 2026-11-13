@@ -47,6 +47,9 @@ export interface OrgActorDetailProps {
     status: AppointmentStatus | null;
     expertName: string | null;
     learnerName: string | null;
+    /** The delivering expert and one session's length, for the allocate picker. */
+    consultantProfileId: string | null;
+    sessionMinutes: number | null;
     sessions: { id: string; startsAt: Date; endsAt: Date | null }[];
   };
   canCancel: boolean;
@@ -275,15 +278,19 @@ export function OrgActorDetail({
 
         {acting && (
           <div className="flex flex-wrap gap-2">
-            {showAllocate && (
-              <AllocateOrgBookingDialog
-                orgId={orgId}
-                appointmentId={appointmentId}
-                planTitle={meta.title}
-                expertName={meta.expertName}
-                learnerName={meta.learnerName}
-              />
-            )}
+            {showAllocate &&
+              meta.consultantProfileId &&
+              meta.sessionMinutes !== null && (
+                <AllocateOrgBookingDialog
+                  orgId={orgId}
+                  appointmentId={appointmentId}
+                  planTitle={meta.title}
+                  expertName={meta.expertName}
+                  learnerName={meta.learnerName}
+                  consultantProfileId={meta.consultantProfileId}
+                  sessionMinutes={meta.sessionMinutes}
+                />
+              )}
             {canReschedule && !opsHref && (
               <ConfirmDialog
                 title="Ask to reschedule?"

@@ -20,7 +20,11 @@ import { AppointmentStatus } from "@prisma/client";
 import { orgOwnedAppointmentWhere } from "@/lib/api/scope/list-appointments";
 import { ORG_FUNDING_PAYMENT_STATUSES } from "@/lib/booking/org-actor";
 import { orgFundedPaymentWhere } from "@/lib/data/org-sponsored-seats";
-import { liveOccurrenceWhere } from "@/lib/appointments/occurrences";
+import {
+  bookedSessionMinutes,
+  liveOccurrenceWhere,
+} from "@/lib/appointments/occurrences";
+import { soldSessionMinutes } from "@/lib/booking/entitlement";
 
 export interface OrgPendingRequest {
   id: string;
@@ -29,6 +33,10 @@ export interface OrgPendingRequest {
   planTitle: string;
   learnerName: string | null;
   expertName: string | null;
+  /** The delivering expert, whose calendar the allocate picker reads. */
+  consultantProfileId: string;
+  /** One session's length, the window each allocated start must fit. */
+  sessionMinutes: number;
   /** ISO — this crosses into a Client Component. */
   requestedAt: string;
   /** Only an APPROVED booking can be allocated by the org; anything else waits on the expert. */
@@ -63,10 +71,9 @@ export async function readOrgPendingRequests(
     ],
   };
   const planSelect = {
-    select: {
-      title: true,
-      consultantProfile: { select: { user: { select: { name: true } } } },
-    },
+    title: true,
+    consultantProfileId: true,
+    consultantProfile: { select: { user: { select: { name: true } } } },
   } as const;
   const learnerSelect = {
     select: { user: { select: { name: true } } },
@@ -79,8 +86,22 @@ export async function readOrgPendingRequests(
         id: true,
         status: true,
         requestedAt: true,
-        appointment: { select: { id: true } },
-        consultationPlan: planSelect,
+        appointment: {
+          select: {
+            id: true,
+            occurrences: {
+              select: {
+                startsAt: true,
+                endsAt: true,
+                deletedAt: true,
+                completionStatus: true,
+              },
+            },
+          },
+        },
+        consultationPlan: {
+          select: { ...planSelect, durationInHours: true },
+        },
         requestedBy: learnerSelect,
       },
       orderBy: [{ requestedAt: "desc" }, { id: "desc" }],
@@ -93,7 +114,10 @@ export async function readOrgPendingRequests(
         status: true,
         requestedAt: true,
         appointment: { select: { id: true } },
-        subscriptionPlan: planSelect,
+        sessionMinutes: true,
+        subscriptionPlan: {
+          select: { ...planSelect, sessionDurationInHours: true },
+        },
         requestedBy: learnerSelect,
       },
       orderBy: [{ requestedAt: "desc" }, { id: "desc" }],
@@ -109,6 +133,11 @@ export async function readOrgPendingRequests(
       planTitle: c.consultationPlan.title,
       learnerName: c.requestedBy.user.name,
       expertName: c.consultationPlan.consultantProfile.user.name,
+      consultantProfileId: c.consultationPlan.consultantProfileId,
+      // The booked session's length, as the allocator reads it; the plan's only with no session row.
+      sessionMinutes:
+        bookedSessionMinutes(c.appointment?.occurrences ?? []) ??
+        Math.round(c.consultationPlan.durationInHours * 60),
       requestedAt: c.requestedAt.toISOString(),
       awaitingExpertApproval: c.status !== AppointmentStatus.APPROVED,
     })),
@@ -119,6 +148,8 @@ export async function readOrgPendingRequests(
       planTitle: s.subscriptionPlan.title,
       learnerName: s.requestedBy.user.name,
       expertName: s.subscriptionPlan.consultantProfile.user.name,
+      consultantProfileId: s.subscriptionPlan.consultantProfileId,
+      sessionMinutes: soldSessionMinutes(s),
       requestedAt: s.requestedAt.toISOString(),
       awaitingExpertApproval: s.status !== AppointmentStatus.APPROVED,
     })),

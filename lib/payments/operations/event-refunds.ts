@@ -26,6 +26,7 @@ import {
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import {
   isFreeCreditIntent,
+  isPriceFreePayment,
   type FundingRail,
 } from "@/lib/payments/funding-rail";
 import { computeRefundPct } from "./cancellation-policy";
@@ -67,13 +68,29 @@ export type WholeEventRefundSummary = {
   skippedAlreadyRefunded: number;
   /** Seats stamped owed but left for the retry sweep once the inline bite was spent. */
   deferred: number;
-  /** Every seat was a skip: nothing issued, deferred or failed. */
+  /** Seats nobody paid for: settled with nothing owed, never "already refunded". */
+  freeSeats: number;
+  /** Every seat was a skip and at least one had been refunded: nothing issued, deferred or failed. */
   alreadyRefunded: boolean;
+  /** Every seat was free, so there was nothing to refund. */
+  nothingToRefund: boolean;
 };
 
 /** Seats refunded inline before the rest is left to the retry sweep. */
 const INLINE_SEAT_LIMIT = 10;
 const INLINE_BUDGET_MS = 10_000;
+
+function isPriceFreeSeat(p: {
+  paymentIntent: string;
+  amount: number | bigint;
+  originalAmount: number | bigint;
+}): boolean {
+  return isPriceFreePayment({
+    paymentIntent: p.paymentIntent,
+    amountPaise: Number(p.amount),
+    listPricePaise: Number(p.originalAmount),
+  });
+}
 
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -81,7 +98,7 @@ function errMsg(e: unknown): string {
 
 export type EventSeatPlan =
   | { kind: "owe"; marker: RefundOwedMarker }
-  | { kind: "settled" }
+  | { kind: "settled"; free?: true }
   | { kind: "escalate"; delivered: number; partlyReturned: boolean };
 
 type EventRefundArgs = {
@@ -129,6 +146,7 @@ async function planEventSeats(
       id: true,
       userId: true,
       amount: true,
+      originalAmount: true,
       currency: true,
       paymentIntent: true,
       ...REFUNDABLE_BALANCE_SELECT,
@@ -147,6 +165,11 @@ async function planEventSeats(
     : new Map<string, number>();
   const plans = new Map<string, EventSeatPlan>();
   for (const p of payments) {
+    // A free seat owes nothing and writes no refund record.
+    if (isPriceFreeSeat(p)) {
+      plans.set(p.id, { kind: "settled", free: true });
+      continue;
+    }
     if (!liveSeats.has(p.id)) {
       plans.set(p.id, { kind: "settled" });
       continue;
@@ -382,7 +405,9 @@ export async function refundWholeEventPayments(
     failures: [],
     skippedAlreadyRefunded: 0,
     deferred: 0,
+    freeSeats: 0,
     alreadyRefunded: false,
+    nothingToRefund: false,
   };
   const { plans: stamped, ...rest } = opts;
   const args: EventRefundArgs = { kind, eventId, reason, ...rest };
@@ -394,7 +419,9 @@ export async function refundWholeEventPayments(
 
   const owing: string[] = [];
   for (const [paymentId, plan] of plans) {
-    if (plan.kind === "settled") {
+    if (plan.kind === "settled" && plan.free) {
+      summary.freeSeats += 1;
+    } else if (plan.kind === "settled") {
       summary.skippedAlreadyRefunded += 1;
     } else if (plan.kind === "escalate") {
       summary.failures.push({
@@ -490,11 +517,13 @@ export async function refundWholeEventPayments(
     });
   }
 
-  summary.alreadyRefunded =
+  const allSkipped =
     summary.refundsIssued === 0 &&
     summary.failures.length === 0 &&
     summary.deferred === 0 &&
-    summary.skippedAlreadyRefunded === plans.size;
+    summary.skippedAlreadyRefunded + summary.freeSeats === plans.size;
+  summary.nothingToRefund = allSkipped && summary.freeSeats === plans.size;
+  summary.alreadyRefunded = allSkipped && summary.skippedAlreadyRefunded > 0;
 
   return summary;
 }
@@ -703,6 +732,8 @@ export async function refundRemovedAttendeeSeat(args: {
    * wallet, accrual or licence, which the attendee never held.
    */
   rail: FundingRail | null;
+  /** Set when the seat was free: nothing was paid, so nothing is refunded. */
+  freeBooking?: true;
 } | null> {
   const eventFilter =
     args.kind === "webinar"
@@ -734,6 +765,7 @@ export async function refundRemovedAttendeeSeat(args: {
       select: {
         id: true,
         amount: true,
+        originalAmount: true,
         paymentIntent: true,
         currency: true,
         organizationId: true,
@@ -742,6 +774,15 @@ export async function refundRemovedAttendeeSeat(args: {
       },
     });
     if (!payment) return null;
+    // A free seat owes nothing and writes no refund record.
+    if (isPriceFreeSeat(payment)) {
+      return {
+        amountRefundedPaise: 0,
+        refundPct: 100,
+        rail: null,
+        freeBooking: true,
+      };
+    }
     organizationId = payment.organizationId;
     const dedupeKey = args.dedupeKey
       ? `${args.dedupeKey}:pay:${payment.id}`

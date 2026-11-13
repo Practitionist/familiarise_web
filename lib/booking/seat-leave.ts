@@ -33,6 +33,7 @@ import {
   refundableBalancePaise,
 } from "@/lib/payments/refundable-balance";
 import { refundRemovedAttendeeSeat } from "@/lib/payments/operations/event-refunds";
+import { isPriceFreePayment } from "@/lib/payments/funding-rail";
 import {
   driveRefundOwed,
   heldMarkerRefusal,
@@ -48,6 +49,7 @@ import {
   revokeEndedSeatAccess,
 } from "@/lib/stream/access-revocation";
 import { scheduleAfter } from "@/lib/api/after-safe";
+import { notifyFreeSeatRemoved } from "./seat-removed-notice";
 import { BookingRuleError } from "./booking-rule-error";
 import {
   occurrenceRefundsPaise,
@@ -145,6 +147,8 @@ function seatPayment(tx: Tx, kind: EventKind, eventId: string, userId: string) {
     select: {
       id: true,
       amount: true,
+      originalAmount: true,
+      paymentIntent: true,
       currency: true,
       createdAt: true,
       ...REFUNDABLE_BALANCE_SELECT,
@@ -347,6 +351,8 @@ export type SeatLeaveQuote =
       /** Class sessions the seat gives up; null for a webinar. */
       remainingSessions: number | null;
       currency: string;
+      /** Nothing was paid for the seat, so leaving refunds nothing (`seatRefundOwed`'s rule). */
+      freeBooking: boolean;
     };
 
 /**
@@ -382,6 +388,13 @@ export async function quoteSeatLeave(
       seated: true as const,
       currency: payment?.currency ?? "INR",
       remainingSessions: null as number | null,
+      freeBooking:
+        payment !== null &&
+        isPriceFreePayment({
+          paymentIntent: payment.paymentIntent,
+          amountPaise: Number(payment.amount),
+          listPricePaise: Number(payment.originalAmount),
+        }),
     };
     try {
       const plan = await planSelfLeave(tx, kind, eventId, userId, seat);
@@ -537,6 +550,17 @@ export async function leaveEventSeat(args: {
     [args.userId],
     released.seatRevocation,
   );
+  // A removed attendee who is owed nothing hears no refund notice, so tell them here.
+  if (!args.isSelfLeave && !released.owed && !refund?.rail) {
+    await scheduleAfter(
+      () =>
+        notifyFreeSeatRemoved({
+          appointmentId: eventAppointment.id,
+          attendeeUserId: args.userId,
+        }),
+      "seat-leave.removed-notice",
+    );
+  }
   return { refund };
 }
 
@@ -549,6 +573,15 @@ function seatRefundOwed(
   plan: SeatRefundPlan,
   key: string,
 ): RefundOwedMarker | null {
+  // A free seat owes nothing and writes no refund record.
+  if (
+    isPriceFreePayment({
+      paymentIntent: payment.paymentIntent,
+      amountPaise: Number(payment.amount),
+      listPricePaise: Number(payment.originalAmount),
+    })
+  )
+    return null;
   const balance = refundableBalancePaise(Number(payment.amount), payment);
   const amountPaise =
     "mode" in plan ? null : Math.min(plan.amountPaise, balance);

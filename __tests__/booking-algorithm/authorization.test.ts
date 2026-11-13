@@ -365,6 +365,8 @@ function makeMockTx(appointmentData: unknown = null) {
       // The reschedule caps count past release acts.
       groupBy: jest.fn().mockResolvedValue([]),
     },
+    // An expert's cancel of a confirmed booking records a reliability strike.
+    systemEvent: { create: jest.fn().mockResolvedValue({}) },
     streamRevocationRetry: createMockRevocationRetryTable(),
     // Cancel closes any live reschedule proposal so the appointment's
     // openForAppointmentId reservation is released.

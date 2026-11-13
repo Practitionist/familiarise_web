@@ -2,7 +2,7 @@
 
 Recurring group events: the class editor and its start-date series, drafts and "Schedule now", the weekly-pattern scheduler (Manage timings' default view) and the calendar view with auto-schedule, enrolling and late join, the sold-event rule (a sold class moves only as a series), cancelling one session with its make-up or skip, the learners' exit right, whole-class cancel, completion and class-end refunds.
 
-Read `../README.md` and `../_shared/*.md` first. Picker label rules (Free / Outside your hours / Busy / Too soon) are owned by 05 (WE-02 to WE-04); cases here test only what is class-specific.
+Read `../README.md` and `../_shared/*.md` first. Picker rules (free buttons, **Booked**, **Outside your hours** behind a switch, nothing listed inside the lead) are owned by 05 (WE-02 to WE-04); cases here test only what is class-specific.
 
 ## Files
 

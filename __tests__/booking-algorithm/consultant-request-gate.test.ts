@@ -85,6 +85,7 @@ const mockTrialCount = jest.fn(async () => 0);
 const mockProfile = {
   id: "cp_1",
   acceptingRequests: true,
+  bookingMode: "REQUEST" as "REQUEST" | "INSTANT",
   maxOpenRequests: null as number | null,
   user: { id: "user_consultant", name: "Olivia" },
 };
@@ -99,6 +100,11 @@ jest.mock("../../lib/prisma", () => {
   const db: Record<string, unknown> = {
     consulteeProfile: {
       findUnique: jest.fn(async () => ({ id: "cs_1", user: {} })),
+    },
+    consultantProfile: {
+      findUnique: jest.fn(async () => ({
+        bookingMode: mockProfile.bookingMode,
+      })),
     },
     availabilityWindowWeekly: jest.requireActual(
       "../fixtures/request-door-hours",
@@ -160,6 +166,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   jest.spyOn(console, "log").mockImplementation(() => {});
   mockProfile.acceptingRequests = true;
+  mockProfile.bookingMode = "REQUEST";
   mockProfile.maxOpenRequests = null;
 });
 afterEach(() => jest.restoreAllMocks());
@@ -171,6 +178,29 @@ describe("consultant request gate", () => {
     expect(res.status).toBe(409);
     expect((await res.json()).code).toBe("CONSULTANT_PAUSED");
     expect(mockLockSlotBooking).not.toHaveBeenCalled();
+  });
+
+  it("an instant-booking expert takes no request → 409 REQUEST_NOT_OFFERED", async () => {
+    mockProfile.bookingMode = "INSTANT";
+    const res = await POST(request());
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({
+      code: "REQUEST_NOT_OFFERED",
+      error:
+        "This expert takes instant bookings. Pick a free time and continue to checkout.",
+    });
+    expect(mockLockSlotBooking).not.toHaveBeenCalled();
+  });
+
+  it("a switch to instant booking while the request waits for its lock → 409, nothing written", async () => {
+    mockLockRequestCap.mockImplementationOnce(async () => {
+      mockProfile.bookingMode = "INSTANT";
+      return { key: "request-cap" };
+    });
+    const res = await POST(request());
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("REQUEST_NOT_OFFERED");
+    expect(mockedPrisma.consultation.create).not.toHaveBeenCalled();
   });
 
   it("at cap → 409 CONSULTANT_AT_CAPACITY, counted inside the slot lock", async () => {

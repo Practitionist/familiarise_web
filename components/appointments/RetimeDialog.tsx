@@ -13,7 +13,10 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { SingleSessionPicker } from "@/components/scheduling/SingleSessionPicker";
+import {
+  SingleTimePicker,
+  type SingleTimeValue,
+} from "@/components/scheduling/SingleTimePicker";
 import { useViewerZone } from "@/lib/time/use-viewer-zone";
 
 interface RetimeDialogProps {
@@ -48,7 +51,7 @@ export function RetimeDialog({
   isLoading = false,
 }: Readonly<RetimeDialogProps>) {
   const { zone } = useViewerZone();
-  const [picked, setPicked] = useState<string | null>(null);
+  const [picked, setPicked] = useState<SingleTimeValue | null>(null);
 
   const close = () => {
     setPicked(null);
@@ -57,7 +60,7 @@ export function RetimeDialog({
 
   return (
     <AlertDialog open={isOpen} onOpenChange={(open) => !open && close()}>
-      <AlertDialogContent className="max-w-2xl grid-cols-[minmax(0,1fr)]">
+      <AlertDialogContent className="max-h-[calc(100dvh-1.5rem)] max-w-3xl grid-cols-[minmax(0,1fr)] overflow-y-auto">
         <AlertDialogHeader>
           <AlertDialogTitle className="flex items-center gap-2">
             <CalendarClock className="h-5 w-5 text-amber-500" />
@@ -80,9 +83,11 @@ export function RetimeDialog({
             </div>
           </AlertDialogDescription>
         </AlertDialogHeader>
-        <SingleSessionPicker
+        <SingleTimePicker
           consultantId={consultantId}
           zone={zone}
+          theme="light"
+          audience="host"
           sessionMinutes={sessionMinutes}
           purpose="retime"
           event={webinarId ? { webinarId, moving: true } : undefined}
@@ -96,7 +101,7 @@ export function RetimeDialog({
           <Button
             onClick={() => {
               if (!picked) return;
-              void onConfirm(picked).then((moved) => {
+              void onConfirm(picked.startsAt).then((moved) => {
                 if (moved) setPicked(null);
               });
             }}

@@ -8,12 +8,17 @@ import { motion, AnimatePresence } from "framer-motion";
 import ProgramRow from "@/app/explore/programs/components/ProgramRow";
 import {
   generateProgramImageUrl,
+  type ClassInstance,
   type ClassPlanProgram,
   type WebinarPlanProgram,
 } from "@/lib/explore/programs";
 
 // price is number at runtime via the extended client (#780)
-type ClassPlanRow = Omit<ClassPlan, "price"> & { price: number };
+type ClassPlanRow = Omit<ClassPlan, "price"> & {
+  price: number;
+  /** The next scheduled batch, which the card names as the start date. */
+  classes: ClassInstance[];
+};
 type WebinarPlanRow = Omit<WebinarPlan, "price"> & { price: number };
 
 interface ClassesAndWebinarsProps {
@@ -48,7 +53,7 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
       classPlans.map((plan) => ({
         ...plan,
         type: "class" as const,
-        classes: [],
+        classes: plan.classes,
         imageUrl: generateProgramImageUrl(plan.imageUrl),
         isRegistered: enrolledClassPlanIds.has(plan.id),
       })),

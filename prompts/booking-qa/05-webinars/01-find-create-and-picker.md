@@ -1,14 +1,14 @@
 # 05-a · Webinars: finding the editor, the host time picker and the event-time rules
 
-**Needs:** F-AV2 (H2), F-AV4 (H4), F-PL2 webinars. At least one confirmed H2 session in the next week (B2's `qa-SU-14` sessions from 04, or F-PL2's class series) for the Busy cases. Preview OK (no money).
+**Needs:** F-AV2 (H2), F-AV4 (H4), F-PL2 webinars. At least one confirmed H2 session in the next week (B2's `qa-SU-14` sessions from 04, or F-PL2's class series) for the Booked cases. Preview OK (no money).
 **Personas:** H2 (IST) host; H4 (Asia/Kathmandu) for the lattice; OH (LearnPro owner) for the org catalog door; B2 (Europe/London) and B3 (America/Los_Angeles) to read the public page.
-**Docs under test:** decisions 1–3 of `docs/decisions/2026-11-09-scheduling-surfaces-and-feasibility.md`; `lib/booking/event-time-rules.ts`; `lib/scheduling/single-session-options.ts`; `components/scheduling/SingleSessionPicker.tsx`; `app/api/bookings/webinars/crud-with-plan/route.ts`.
+**Docs under test:** decisions 1–3 of `docs/decisions/2026-11-09-scheduling-surfaces-and-feasibility.md`; `lib/booking/event-time-rules.ts`; `lib/scheduling/single-session-options.ts`; `components/scheduling/SingleTimePicker.tsx` (host audience, light theme), `components/offerings/editor/session-time-field.tsx`; `app/api/bookings/webinars/crud-with-plan/route.ts`.
 
 H2's published hours (IST): Mon/Wed/Fri 18:00–21:00, Tue/Thu 07:00–09:00. Zone line for this file: Wed 18:00 IST = 12:30Z = 12:30 London = 04:30 Los Angeles = 07:30 New York; Tue 07:00 IST = 01:30Z = Monday 17:30 in Los Angeles.
 
 **The event-time rules (server):** a host-set start sits on the UTC half hour and at least 1 hour ahead (24 hours for a re-time); the end is start + duration in minutes. A refusal is 400 `{ error, code: "EVENT_TIME_INVALID" }` with one of: "Pick a start time on the hour or half hour.", "Pick a start time at least 1 hour from now.", "The start time could not be read. Pick the date and time again."
 
-**The picker labels:** every half-hour start of the chosen day is listed with **Free** (inside published hours, nothing booked), **Outside your hours** (pickable), **Busy** (overlaps a booking; not pickable), **Too soon** (inside the lead; not pickable), or **Not allowed** (outside an allowed window; make-ups and re-times only). Help text: "Times are in <zone>. Free means inside your published hours with nothing booked; you can still run an event outside your hours. Each session lasts <N> minutes."
+**The picker:** a month on the left and the chosen day's times on the right (stacked below 768 px), the day heading with "Times in <zone>" under it, times grouped Morning / Afternoon / Evening. Days before the first allowed day, and after the last allowed day for a make-up or re-time, are disabled; a day with a free time carries a dot. The month is a keyboard grid: arrow keys by day and week, Home and End, Page Up and Page Down by month. A free start (inside published hours, nothing booked) is a plain button; a start over a booking is greyed and tagged **Booked** and cannot be picked. Starts outside published hours are hidden behind the switch **Show times outside my hours**, with the line "N more times are outside your hours."; switched on, they show tagged **Outside your hours** and can be picked. Starts inside the lead (1 hour; 24 hours for a re-time) or outside an allowed window are not listed at all. A selected start fills and shows a check (`aria-pressed`). When a day has nothing free the pane says "No free times on this day" with "Next free: <date>".
 
 These label rules are owned here; 06 (class make-up and pattern rows) references them.
 
@@ -41,23 +41,23 @@ These label rules are owned here; 06 (class make-up and pattern rows) references
 **Steps:**
 
 1. As H2, open the webinar editor (new webinar `qa-WE-02`, Duration 1.5 h). Go to **Sessions** → **Scheduled for**.
-2. Read the help text. Move through the day strip with **Earlier days** / **Later days**.
-3. On next Monday, read the label of every start from 17:00 to 21:00.
-4. On next Saturday, read a few labels.
-5. Tab into the day strip and the time list; use arrow keys.
+2. Read the day heading and the zone line. Move through the month with the arrows and Page Down.
+3. On a Monday with no H2 booking (if next Monday carries WE-04's confirmed session, use the Monday after), read every listed start from 17:00 to 21:00, then switch on **Show times outside my hours** and read them again.
+4. On next Saturday, read the pane with the switch off and on.
+5. Tab into the month grid and the time list; use the arrow keys, Enter and Space.
 
 **Expect:**
 
-- Help text: "Times are in Asia/Kolkata. Free means inside your published hours with nothing booked; you can still run an event outside your hours. Each session lasts 90 minutes."
-- Monday: 17:00 and 17:30 **Outside your hours** (the session starts before 18:00); 18:00, 18:30, 19:00, 19:30 **Free** (they end by 21:00); 20:00 and later **Outside your hours** (they run past 21:00). Times shown in IST.
-- Saturday: every start **Outside your hours** (no Saturday hours), all pickable.
-- The selected start is visibly marked and has an accessible "selected" state; the day strip and the list are reachable by keyboard.
+- "Times in Asia/Kolkata" under the day heading.
+- Monday, switch off: 18:00, 18:30, 19:00 and 19:30 listed as free buttons (they end by 21:00), and a line counting the rest as outside your hours. Switch on: 17:00 and 17:30 tagged **Outside your hours** (the session starts before 18:00), 20:00 and later tagged **Outside your hours** (they run past 21:00), all pickable. Times shown in IST.
+- Saturday, switch off: "No free times on this day" and the outside-hours line; switch on: every start tagged **Outside your hours**, all pickable.
+- The selected start fills, shows a check and reads `aria-pressed="true"`; the month and the list are reachable by keyboard.
 
 **Probe further:**
 
 - Change Duration to 1 h after picking 19:30: do the labels recompute (19:30 → 20:30 Free, 20:00 → 21:00 Free)?
-- At 390×844, is the picker usable without horizontal scroll (beyond the intended day strip)? 13 owns the full sweep.
-- Is "Outside your hours" visually distinct from "Busy" without colour alone?
+- At 390×844, is the picker usable without horizontal scroll, with the month above the times? 13 owns the full sweep.
+- Is "Outside your hours" visually distinct from "Booked" without colour alone (both carry a word tag)?
 
 ## WE-03 — Too soon: nothing inside the hour
 
@@ -65,11 +65,11 @@ These label rules are owned here; 06 (class make-up and pattern rows) references
 
 1. As H2, in the editor's picker, open **today**. Read the labels around now.
 
-**Expect:** every start earlier than now + 1 hour is **Too soon** and not selectable; the first start at or after now + 1 h (on the half hour) is selectable. Past starts are Too soon too (record whether past starts are listed at all).
+**Expect:** no start earlier than now + 1 hour is listed, past or not; the first listed start is the first half hour after now + 1 h. Days before today are disabled in the month.
 
 **Probe further:** leave the editor open for 20 minutes, then save: if the picked start has fallen inside the hour, the server answers 400 "Pick a start time at least 1 hour from now." Does the editor show that in words and refresh the labels?
 
-## WE-04 — Busy: the host's own bookings are unpickable, inside or outside published hours
+## WE-04 — Booked: the host's own bookings are unpickable, inside or outside published hours
 
 **Why it matters:** the picker must never offer a time the server will refuse for a clash.
 
@@ -82,10 +82,11 @@ These label rules are owned here; 06 (class make-up and pattern rows) references
 
 **Expect:**
 
-- Monday: any 90-minute start overlapping 18:00–20:30 is **Busy** and not selectable (16:30 → 18:00 is not Busy; 17:00 is).
-- Saturday: 10:00, 10:30, 11:00, 11:30 are **Busy** (the booked webinar shows as a synthesized booked cell even outside published hours); 09:30 is Outside your hours.
+- Monday: any 90-minute start overlapping 18:00–20:30 is tagged **Booked**, shows with the switch off and cannot be picked; that includes 17:00, which starts outside hours (a booked start is Booked whether or not it is inside hours). 16:30, ending at 18:00, is not Booked: it appears only with the switch on, tagged Outside your hours.
+- Saturday: 10:00, 10:30, 11:00, 11:30 are **Booked** (the booked webinar shows as a booked cell even outside published hours); with the switch on, 09:30 is Outside your hours.
+- Open `qa-WE-04` itself in the editor: its own Saturday 11:00 start reads free, not Booked (the editor passes the saved webinar as a move, so its own session is left out), and saving it unchanged succeeds.
 
-**Probe further:** reload after 05's or 06's activity has added sessions: does the picker refresh on focus, or can it be stale? If you pick a stale Free start that is now booked, the save returns 409 (WE-12).
+**Probe further:** reload after 05's or 06's activity has added sessions: does the picker refresh on focus, or can it be stale? If you pick a stale free start that is now booked, the pick is cleared and the pane says "That time was just taken — pick another."; sent anyway, the save returns 409 (WE-12).
 
 ## WE-05 — Publish a 90-minute priced webinar
 
@@ -212,7 +213,7 @@ These label rules are owned here; 06 (class make-up and pattern rows) references
 
 **Steps:**
 
-1. In the picker, confirm Monday 18:00 is Busy.
+1. In the picker, confirm Monday 18:00 is tagged Booked.
 2. Via `evaluate_script`, POST a new webinar with `scheduledAt` = that Monday 18:00 IST (12:30Z), 60 minutes.
 
 **Expect:**

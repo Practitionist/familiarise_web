@@ -8,6 +8,7 @@ import { useSlotJustTaken } from "@/app/explore/experts/[consultantId]/hooks/use
 import { CancellationPolicyNote } from "@/components/booking/CancellationPolicyNote";
 import { useToast } from "@/hooks/use-toast";
 import { useSession } from "@/lib/auth-client";
+import { planLevelLabel } from "@/lib/labels/plan-labels";
 import { ErrorTypes } from "@/lib/errors/classification/payment-error-classification";
 import { Refusal } from "@/lib/errors/refusal";
 import {
@@ -16,6 +17,7 @@ import {
   MINIMUM_BOOKING_LEAD_TIME_MS,
 } from "@/lib/payments/constants";
 import { useViewerZone } from "@/lib/time/use-viewer-zone";
+import { formatInViewerZone, zoneLabel } from "@/lib/time/viewer-zone";
 import {
   consultationSearchParamsSchema,
   type ConsultationSearchParams,
@@ -30,7 +32,7 @@ import {
 } from "../components/PlanCheckoutShell";
 import { CheckoutTotalNotes } from "../components/CheckoutTotals";
 import { reportPaymentsError, type CheckoutApiError } from "../utils";
-import { loadErrorMessage, searchParamsKey } from "./shared";
+import { loadErrorMessage, planIncludes, searchParamsKey } from "./shared";
 
 // price arrives as number: extended client + JSON serialization
 type ConsultationPlanWithConsultant = Omit<ConsultationPlan, "price"> & {
@@ -69,7 +71,7 @@ function gatewaylessConfirmationText(data: {
   isMockPayment?: boolean;
 }): string {
   if (data.isZeroAmountPayment) {
-    return "Payment completed via referral credits. Your consultation has been confirmed.";
+    return "Nothing to pay. Your consultation has been confirmed.";
   }
   if (data.isMockPayment) {
     return "Mock payment processed. Your consultation has been confirmed. Check your dashboard for details.";
@@ -343,24 +345,16 @@ export function useConsultationCheckout(
       <>
         <CheckoutDetailRow label="Date">
           {validatedSearchParams
-            ? new Date(validatedSearchParams.startsAt).toLocaleDateString(
-                undefined,
-                {
-                  weekday: "long",
-                  year: "numeric",
-                  month: "long",
-                  day: "numeric",
-                },
+            ? formatInViewerZone(
+                validatedSearchParams.startsAt,
+                viewer.zone,
+                "EEEE, d MMMM yyyy",
               )
             : "—"}
         </CheckoutDetailRow>
         <CheckoutDetailRow label="Time">
           {validatedSearchParams
-            ? `${new Date(
-                validatedSearchParams.startsAt,
-              ).toLocaleTimeString()} - ${new Date(
-                validatedSearchParams.endsAt,
-              ).toLocaleTimeString()} (${Intl.DateTimeFormat().resolvedOptions().timeZone})`
+            ? `${formatInViewerZone(validatedSearchParams.startsAt, viewer.zone, "h:mm a")} - ${formatInViewerZone(validatedSearchParams.endsAt, viewer.zone, "h:mm a")} (${zoneLabel(validatedSearchParams.startsAt, viewer.zone)})`
             : "—"}
         </CheckoutDetailRow>
         <CheckoutDetailRow label="Duration">
@@ -370,7 +364,7 @@ export function useConsultationCheckout(
           {eventData?.data?.language || "English"}
         </CheckoutDetailRow>
         <CheckoutDetailRow label="Level">
-          {eventData?.data?.level || "Beginner"}
+          {planLevelLabel(eventData?.data?.level)}
         </CheckoutDetailRow>
         <CheckoutDetailRow label="Prerequisites">
           {eventData?.data?.prerequisites || "None"}
@@ -384,15 +378,9 @@ export function useConsultationCheckout(
     basePricePaise: eventData?.data?.price || 0,
     pricingTitle: "Consultation Pricing",
     feeLabel: "Session Fee",
-    includes: (
-      <>
-        <li>One-on-one session</li>
-        <li>Personalized guidance</li>
-        <li>Session notes</li>
-        <li>Follow-up resources</li>
-        {eventData?.data?.recordingEnabled && <li>Session recording</li>}
-      </>
-    ),
+    includes: planIncludes(eventData?.data?.whatsIncluded, [
+      eventData?.data?.recordingEnabled && "Session recording",
+    ]),
     renderFooter: (ctx) => (
       <>
         <CheckoutTotalNotes

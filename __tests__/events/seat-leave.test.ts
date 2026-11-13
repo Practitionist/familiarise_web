@@ -22,6 +22,10 @@ jest.mock("@/lib/booking/event-waitlist", () => ({
   expireEventWaitlist: jest.fn(async () => ({ expired: 0, purged: 0 })),
   hasLapsedEventWaitlist: jest.fn(async () => false),
 }));
+const notifyFreeSeatRemoved = jest.fn(async (..._a: unknown[]) => undefined);
+jest.mock("@/lib/booking/seat-removed-notice", () => ({
+  notifyFreeSeatRemoved: (...a: unknown[]) => notifyFreeSeatRemoved(...a),
+}));
 jest.mock("../../lib/payments/operations/event-refunds", () => ({
   refundRemovedAttendeeSeat: (...a: unknown[]) => refundSeat(...(a as [])),
 }));
@@ -68,6 +72,8 @@ jest.mock("../../lib/prisma", () => {
       findFirst: jest.fn(async () => ({
         id: "pay-1",
         amount: 100_000,
+        originalAmount: 100_000,
+        paymentIntent: "order_1",
         currency: "INR",
         createdAt: joinedAt,
         refunds: [],
@@ -219,6 +225,41 @@ it("leaves an organiser removal untouched (full, organiser-initiated)", async ()
   await leave(false);
   expect(refundSeat).toHaveBeenCalledWith(
     expect.objectContaining({ mode: "full", initiatedBy: "organiser" }),
+  );
+});
+
+it("tells an attendee removed from a free seat, who gets no refund notice", async () => {
+  slot.startsAt = inHours(1);
+  await leave(false);
+  expect(notifyFreeSeatRemoved).not.toHaveBeenCalled();
+  const { default: db } = jest.requireMock("../../lib/prisma") as {
+    default: {
+      $transaction: (fn: (t: unknown) => unknown) => Promise<unknown>;
+    };
+  };
+  const tx = (await db.$transaction((t) => t)) as {
+    payment: { findFirst: jest.Mock };
+  };
+  tx.payment.findFirst.mockResolvedValueOnce({
+    id: "pay-free",
+    amount: 0,
+    originalAmount: 0,
+    paymentIntent: "free_1",
+    currency: "INR",
+    createdAt: joinedAt,
+    refunds: [],
+    disputes: [],
+    appointment: { cancellationPolicy: null },
+  });
+  refundSeat.mockResolvedValueOnce({
+    amountRefundedPaise: 0,
+    refundPct: 100,
+    rail: null as unknown as string,
+  });
+  await leave(false);
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(notifyFreeSeatRemoved).toHaveBeenCalledWith(
+    expect.objectContaining({ attendeeUserId: "u-1" }),
   );
 });
 

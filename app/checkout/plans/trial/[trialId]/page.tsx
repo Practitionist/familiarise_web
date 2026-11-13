@@ -9,6 +9,11 @@ import { getSession } from "@/lib/auth-server";
 import prisma from "@/lib/prisma";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { payLinkHref } from "@/lib/payments/pay-link-href";
+import {
+  describeViewerZone,
+  formatInViewerZone,
+  zoneLabel,
+} from "@/lib/time/viewer-zone";
 
 import {
   needsTrialPayLinkRemint,
@@ -16,7 +21,6 @@ import {
 } from "@/lib/trials/pay-link";
 
 import { TrialPayButton } from "./TrialPayButton";
-import { ViewerLocalTime } from "./ViewerLocalTime";
 
 /**
  * Branded checkout page for a paid trial.
@@ -130,6 +134,12 @@ export default async function TrialCheckoutPage({
   }
 
   const startsAt = trial.appointment?.occurrences[0]?.startsAt ?? null;
+  // Times read in the learner's profile zone, named, as the picker showed them.
+  const { zone } = describeViewerZone({
+    userTimezone: session.user.timezone ?? null,
+  });
+  const inViewerZone = (date: Date) =>
+    `${formatInViewerZone(date, zone, "EEE, d MMM yyyy, h:mm a")} (${zoneLabel(date, zone)})`;
   // Prefer the frozen charge; fall back to the plan only before a payment
   // exists, where the plan price genuinely IS the quote.
   const amountPaise = Number(
@@ -149,7 +159,8 @@ export default async function TrialCheckoutPage({
     (!trial.paymentDueAt || trial.paymentDueAt > new Date());
 
   return (
-    <main className="mx-auto max-w-xl px-4 py-16">
+    // Spans both columns of the checkout grid, so the single card sits centred.
+    <main className="col-span-full mx-auto w-full max-w-xl px-4 py-16">
       <Card>
         <CardHeader>
           <CardTitle>
@@ -190,10 +201,9 @@ export default async function TrialCheckoutPage({
                   <CalendarClock className="h-3.5 w-3.5" />
                   Session
                 </span>
-                <ViewerLocalTime
-                  value={startsAt.toISOString()}
-                  className="text-foreground"
-                />
+                <span className="text-foreground">
+                  {inViewerZone(startsAt)}
+                </span>
               </div>
             )}
           </div>
@@ -203,8 +213,7 @@ export default async function TrialCheckoutPage({
               <TrialPayButton href={payHref!} />
               {trial.paymentDueAt && (
                 <p className="text-center text-xs text-muted-foreground">
-                  Your slot is held until{" "}
-                  <ViewerLocalTime value={trial.paymentDueAt.toISOString()} />.
+                  Your slot is held until {inViewerZone(trial.paymentDueAt)}.
                   After that it is released to other learners.
                 </p>
               )}

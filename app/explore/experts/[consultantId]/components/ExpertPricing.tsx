@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { User } from "@prisma/client";
 import type { ConsultantDetailData } from "../types";
-import { TIntervalTiming } from "@/types/slots";
+import type { SingleTimeValue } from "@/components/scheduling/SingleTimePicker";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import ConsultationPricingToggle from "./ConsultationPricingToggle";
 import SubscriptionPricingToggle from "./SubscriptionPricingToggle";
@@ -15,7 +15,7 @@ import {
   CheckCircle,
 } from "lucide-react";
 import { motion } from "framer-motion";
-import { useState } from "react";
+import { useState, type MutableRefObject } from "react";
 
 import { PricingOption } from "../defaults";
 import { bookingModeBadge } from "@/lib/booking/booking-mode";
@@ -32,21 +32,17 @@ const getSubscriptionDurationLabel = (durationInMonths: number): string => {
 interface ExpertPricingProps {
   userDetails: User;
   consultantDetails: ConsultantDetailData;
-  handleConsultationBooking: (consultationPlanId: string) => Promise<void>;
+  handleConsultationBooking: (
+    consultationPlanId: string,
+    pick: SingleTimeValue,
+  ) => void;
   handleSubscriptionBooking: (
     option: PricingOption,
     schedulingPeriod: { startDate: Date; endDate: Date },
   ) => Promise<void>;
-  selectedDate: Date | null;
-  setSelectedDate: (date: Date | null) => void;
-  currentDate: Date;
-  setCurrentDate: (date: Date) => void;
-  renderCalendar: () => JSX.Element[];
-  slotTimings: TIntervalTiming[];
-  slotsReady: boolean;
-  selectedSlot: TIntervalTiming | null;
-  setSelectedSlot: (slot: TIntervalTiming | null) => void;
   displayZone: DisplayZone;
+  consulteeUserId?: string;
+  bypassRef?: MutableRefObject<boolean>;
   autoOpenTrial?: boolean;
   onRefreshSlots?: () => void;
   onDurationChange?: (durationInHours: number) => void;
@@ -59,16 +55,9 @@ export function ExpertPricing({
   consultantDetails,
   handleConsultationBooking,
   handleSubscriptionBooking,
-  selectedDate,
-  setSelectedDate,
-  currentDate,
-  setCurrentDate,
-  renderCalendar,
-  slotTimings,
-  slotsReady,
-  selectedSlot,
-  setSelectedSlot,
   displayZone,
+  consulteeUserId,
+  bypassRef,
   autoOpenTrial,
   onRefreshSlots,
   onDurationChange,
@@ -307,16 +296,9 @@ export function ExpertPricing({
                 consultationOptions={consultationOptions}
                 consultantDetails={consultantDetails}
                 handleConsultationBooking={handleConsultationBooking}
-                selectedDate={selectedDate}
-                setSelectedDate={setSelectedDate}
-                currentDate={currentDate}
-                setCurrentDate={setCurrentDate}
-                renderCalendar={renderCalendar}
-                slotTimings={slotTimings}
-                slotsReady={slotsReady}
-                selectedSlot={selectedSlot}
-                setSelectedSlot={setSelectedSlot}
                 displayZone={displayZone}
+                consulteeUserId={consulteeUserId}
+                bypassRef={bypassRef}
                 onRefreshSlots={onRefreshSlots}
                 onDurationChange={onDurationChange}
               />
@@ -336,16 +318,9 @@ export function ExpertPricing({
             consultationOptions={consultationOptions}
             consultantDetails={consultantDetails}
             handleConsultationBooking={handleConsultationBooking}
-            selectedDate={selectedDate}
-            setSelectedDate={setSelectedDate}
-            currentDate={currentDate}
-            setCurrentDate={setCurrentDate}
-            renderCalendar={renderCalendar}
-            slotTimings={slotTimings}
-            slotsReady={slotsReady}
-            selectedSlot={selectedSlot}
-            setSelectedSlot={setSelectedSlot}
             displayZone={displayZone}
+            consulteeUserId={consulteeUserId}
+            bypassRef={bypassRef}
             onRefreshSlots={onRefreshSlots}
             onDurationChange={onDurationChange}
           />

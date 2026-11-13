@@ -15,6 +15,12 @@ import type {
   FieldSpec,
   OfferingManifest,
 } from "@/components/offerings/editor/manifest";
+import { SubscriptionPlanSchema } from "@/schemas/plans";
+
+// schemas/plans loads the ESM-only bad-words checker; its validations are not under test here.
+jest.mock("../../utils/contentValidation", () =>
+  jest.requireActual("../fixtures/content-validation-stub"),
+);
 
 const ALL = [
   CONSULTATION_MANIFEST,
@@ -90,6 +96,20 @@ describe("offering manifests", () => {
       expect(fieldNames(manifest)).toContain("sessionDurationInHours");
       expect(fieldNames(manifest)).toContain("sessionsPerWeek");
     }
+  });
+
+  it("offers a trial of 30 or 60 minutes as a two-choice control, refused otherwise on save", () => {
+    const field = fieldsOf(SUBSCRIPTION_MANIFEST).find(
+      (f) => f.name === "trialDurationMinutes",
+    );
+    expect(field).toMatchObject({
+      kind: "minutesChoice",
+      minuteChoices: [30, 60],
+    });
+    const length = SubscriptionPlanSchema.shape.trialDurationMinutes;
+    expect(length.safeParse(30).success).toBe(true);
+    expect(length.safeParse(60).success).toBe(true);
+    expect(length.safeParse(45).success).toBe(false);
   });
 
   it("puts the class start date in the form rather than beside it", () => {

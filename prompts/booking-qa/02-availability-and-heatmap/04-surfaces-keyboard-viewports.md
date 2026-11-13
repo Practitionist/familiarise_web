@@ -85,24 +85,25 @@ Each grid page sets a policy: submit label, hint line, lead time and mode. Read 
 
 **Probe further:** the page title is "Rebook free — Familiarise"; does the page say when the automatic refund happens if the learner does nothing (`dueAt`)? MISSED-OPPORTUNITY if not.
 
-## HM-47 — Expert page booking dialog (instant and request slot lists)
+## HM-47 — Expert page booking dialog (the dark single-time picker)
 
 **Why it matters:** the buyer's first contact with availability; it reads the same endpoint as the grid.
 
 **Steps:**
 
-1. As B2 (Europe/London) open `/explore/experts/[H1 cid]` → S-08 → **Book Now**. Read the month calendar's day cells, the **Today** button and the slot list for Tue D+1.
-2. Pick a past day, a Sunday, Tue D+1.
-3. As H1 switch to "Review requests first"; reload B2's dialog. Read the tags and the sentence under the button. Switch H1 back.
+1. As B2 (Europe/London) open `/explore/experts/[H1 cid]` → S-08 → **Book Now**. Read the month grid (day marks, the **Today** control), the times pane heading and the times for Tue D+1.
+2. Pick a past day, a Sunday, Tue D+1. With the keyboard, Tab into the month and use the arrows, Home/End and Page Up/Page Down.
+3. As H1 switch to "Review requests first"; reload B2's dialog. Read the button and the sentence under it. Switch H1 back.
+4. Open the second plan card's **Book Now** (a plan of another length) and confirm the dialog title names that plan.
 
 **Expect:**
 
-- Day cells: past dimmed and not clickable; Sunday plain grey ("none"); bookable days ringed with a bold number; today has a dot.
-- Tue D+1 list: F-BUSY's time missing from the list and a muted line "1 times on this day are already taken" (grammar: report "1 times" if seen) or "N times …"; times in London time (18:00 IST = 12:30 GMT).
-- REQUEST mode: every pill carries a "Request" tag and the sentence explains "the expert confirms before you pay". INSTANT: no tags except a contended slot.
-- Monochrome: no emerald/amber/rose classes in the list (inspect classes).
+- Month: past days disabled; Sunday unmarked but selectable, showing "No free times on this day" and a "Next free: <date>" button; days with a free time carry a dot and ring; today has a dashed ring. Arrow keys move one day or week, Page Down moves a month.
+- Times pane: headed with the date and "Times in Europe/London"; times grouped Morning/Afternoon/Evening; F-BUSY's time missing from the free times, and a button "Show 1 taken time" (`aria-expanded="false"`; past and too-soon times are not counted); opening it lists F-BUSY's time greyed with **Notify me** and the line "You can wait on up to 3 times."; 18:00 IST reads 12:30 pm.
+- REQUEST mode: the button reads "Request this time" and the sentence says "the expert confirms before you pay". INSTANT: "Continue to Checkout", no sentence.
+- Every time button announces its range and state (inspect the `aria-label`), and the selected one has `aria-pressed="true"` and a check.
 
-**Probe further:** pick a time, wait past the 15-min lead boundary, then continue: the checkout must refuse with a clear message (`SLOT_NOT_ON_GRID` or a lead refusal; record the code). If marks fail to load, the notice "Couldn't load availability marks — pick a day to see its times".
+**Probe further:** pick a time, wait past the 15-min lead boundary: the pick clears and the pane says "That time was just taken — pick another." On an INSTANT expert, `POST /api/scheduling/request-for-approval` by hand answers 409 `REQUEST_NOT_OFFERED`.
 
 ## HM-48 — Keyboard navigation and screen-reader cues on the week grid
 

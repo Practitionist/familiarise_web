@@ -32,6 +32,8 @@ export interface StashedPurchaseIntent {
     type?: "WEEKLY" | "CUSTOM";
     availabilityWindowId?: string;
   };
+  /** Set when the visitor pressed "Notify me" on this taken time; the dialog reopens on it. */
+  waitOn?: boolean;
 }
 
 const STORAGE_KEY = "familiarise:pendingPurchaseIntent";

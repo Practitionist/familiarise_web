@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { isPrivileged, requireApiAuth } from "@/lib/auth-helpers";
 import { reportSentryError } from "@/lib/observability/report";
+import { creditStillUsedPaise } from "@/lib/payments/operations/credit-plan-return";
 import prisma from "@/lib/prisma";
 import {
   quoteTrialRefund,
@@ -79,8 +80,14 @@ export async function GET(
         session.user.consulteeProfileId !== trial.consulteeProfileId,
     });
 
+    // A `free_` ₹0 payment covers a free trial and a credit-funded one; only credit still held tells them apart.
+    const freeBooking =
+      !!quote &&
+      quote.fundingRail === "CREDITS" &&
+      quote.grossPaise === 0 &&
+      (await creditStillUsedPaise(prisma, quote.paymentId)) === 0;
     return NextResponse.json(
-      quote ? { paid: true, ...quote } : { paid: false },
+      quote ? { paid: true, ...quote, freeBooking } : { paid: false },
       NO_STORE,
     );
   } catch (error) {
