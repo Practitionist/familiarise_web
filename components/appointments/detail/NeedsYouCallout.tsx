@@ -87,6 +87,8 @@ export interface NeedsYouCalloutProps {
   children?: ReactNode;
   /** Drawn inside the page header, which already offers Get help in its menu. */
   embedded?: boolean;
+  /** A trial is booked by the learner, so its pay line names no approval. */
+  trial?: boolean;
 }
 
 const EmbeddedContext = createContext(false);
@@ -612,6 +614,7 @@ function CalloutBody(props: Omit<NeedsYouCalloutProps, "embedded">) {
     awaitingPayment,
     onHelp,
     children,
+    trial = false,
   } = props;
   const { nextAction, bookingState } = presentation;
   const deadline = nextAction.deadline;
@@ -697,12 +700,18 @@ function CalloutBody(props: Omit<NeedsYouCalloutProps, "embedded">) {
             </>
           }
         >
-          {names.consultant} approved. Pay {amount}
-          {gstSplit(pending)}
-          {deadline ? ` by ${format(deadline, "EEE d MMM HH:mm")}` : ""}
-          {heldCount > 0
-            ? ` to keep your ${heldCount === 1 ? "held slot" : `${heldCount} held slots`}.`
-            : " to confirm the booking."}
+          {trial ? (
+            `Your trial time is held${deadline ? ` until ${format(deadline, "EEE d MMM HH:mm")}` : ""}. Pay ${amount}${gstSplit(pending)} to confirm it.`
+          ) : (
+            <>
+              {names.consultant} approved. Pay {amount}
+              {gstSplit(pending)}
+              {deadline ? ` by ${format(deadline, "EEE d MMM HH:mm")}` : ""}
+              {heldCount > 0
+                ? ` to keep your ${heldCount === 1 ? "held slot" : `${heldCount} held slots`}.`
+                : " to confirm the booking."}
+            </>
+          )}
         </Shell>
       );
     }

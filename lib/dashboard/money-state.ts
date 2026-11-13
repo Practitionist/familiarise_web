@@ -895,11 +895,18 @@ function deriveTimeline(
           : null;
   const refunds = refundTimeline(input);
 
+  // A trial is booked by the learner: one entry, never a request or an approval.
+  const booked: TimelineEvent = {
+    ...requested,
+    label: viewer === "CONSULTEE" ? "Booked (you)" : `Booked by ${p}`,
+  };
   // Pay-first checkout (#1586): the money landed before the answer.
   const steps =
-    paidDone && booking === "REQUESTED"
-      ? [requested, paid, approved]
-      : [requested, approved, paid];
+    normalizeStatus(input.appointmentType) === "TRIAL"
+      ? [booked, paid]
+      : paidDone && booking === "REQUESTED"
+        ? [requested, paid, approved]
+        : [requested, approved, paid];
   if (moneyState.state === "FREE") steps.splice(steps.indexOf(paid), 1);
   const events = [
     ...steps.filter((e) => e.done || !terminal),

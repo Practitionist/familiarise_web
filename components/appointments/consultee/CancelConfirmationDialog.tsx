@@ -367,8 +367,9 @@ export function CancelConfirmationDialog({
                 renderLeaveLine()
               ) : isPendingPayment ? (
                 <p className="text-muted-foreground">
-                  You haven&apos;t been charged — this releases the approved
-                  request without any payment.
+                  {appointmentType === "Trial"
+                    ? "You haven't been charged — this cancels the held trial and frees its time."
+                    : "You haven't been charged — this releases the approved request without any payment."}
                 </p>
               ) : (
                 <>

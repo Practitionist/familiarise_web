@@ -1302,6 +1302,7 @@ export function AppointmentDetailClient({
 
           <NeedsYouCallout
             embedded
+            trial={vm.kind === "TRIAL"}
             presentation={presentation}
             names={names}
             heldCount={heldCount}
