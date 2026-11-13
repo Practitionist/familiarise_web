@@ -25,6 +25,9 @@ import {
   pendingSubscriptionWhere,
 } from "@/lib/data/needs-you";
 import { readRequestsInbox } from "@/lib/data/requests-inbox";
+import { assertExpectedTentativeSlotCount } from "@/lib/booking/allocation/guards";
+import { tentativeSlotCountOf } from "@/lib/booking/allocation/counts";
+import type { AppointmentWithSlots } from "@/lib/booking/allocation/types";
 import {
   isDialogFreeApproval,
   rowActions,
@@ -199,10 +202,11 @@ describe("approving a request's own times", () => {
     },
   });
 
-  it.each([30, 60])(
-    "a %i-minute request is approved on its requested time, not sent to the grid",
+  it.each([30, 60, 90])(
+    "a %i-minute request is approved on its requested time, and the allocate route's count agrees",
     async (minutes) => {
-      const one = serve([request(`c-${minutes}`, minutes)]);
+      const fixture = request(`c-${minutes}`, minutes);
+      const one = serve([fixture]);
       m.consultation.findMany.mockImplementation(one.findMany);
       m.consultation.count.mockImplementation(one.count);
       const { rows } = await readRequestsInbox({
@@ -223,6 +227,16 @@ describe("approving a request's own times", () => {
         kind: "approve",
         mode: "requested",
       });
+      // The approval posts this count as expectedTentativeSlotCount; the route compares rows.
+      expect(() =>
+        assertExpectedTentativeSlotCount(
+          // The fixture carries the occurrence fields the count reads.
+          tentativeSlotCountOf([
+            fixture.appointment,
+          ] as unknown as AppointmentWithSlots[]),
+          row.tentativeSlotCount,
+        ),
+      ).not.toThrow();
     },
   );
 });

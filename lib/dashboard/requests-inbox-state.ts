@@ -82,6 +82,24 @@ export interface InboxSlot {
   completionStatus: string | null;
 }
 
+/** The 30-minute atoms the tentative rows hold, the unit `requiredSlots` counts in. */
+export function tentativeAtomsOf(slots: readonly InboxSlot[]): number {
+  return slots
+    .filter((s) => s.isTentative)
+    .reduce(
+      (n, s) =>
+        n +
+        Math.max(
+          1,
+          Math.ceil(
+            (new Date(s.endsAt).getTime() - new Date(s.startsAt).getTime()) /
+              1_800_000,
+          ),
+        ),
+      0,
+    );
+}
+
 export interface InboxProposal {
   id: string;
   status: string;
@@ -118,6 +136,7 @@ export interface InboxRowInput {
   slots: InboxSlot[];
   /** 30-minute atoms one approval must place; null when the plan cannot say. */
   requiredSlots: number | null;
+  /** Tentative rows, the unit the allocate route's stale-tab check compares. */
   tentativeSlotCount: number;
   rescheduledSlotCount: number;
   /** The live reschedule proposal, if the consultee named times. */

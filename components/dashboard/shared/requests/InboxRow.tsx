@@ -29,6 +29,7 @@ import {
   type MoneyState,
 } from "@/lib/dashboard/money-state";
 import {
+  tentativeAtomsOf,
   toStampDate,
   type InboxRowInput,
   type Stamp,
@@ -122,7 +123,7 @@ export function isDialogFreeApproval(row: InboxRowInput): boolean {
     row.proposal === null &&
     row.requiredSlots !== null &&
     row.tentativeSlotCount > 0 &&
-    row.tentativeSlotCount >= row.requiredSlots
+    tentativeAtomsOf(row.slots) >= row.requiredSlots
   );
 }
 

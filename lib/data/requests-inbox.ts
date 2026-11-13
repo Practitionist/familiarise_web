@@ -56,6 +56,7 @@ import {
   inboxBucketOf,
   isCursorSort,
   sortInboxRows,
+  tentativeAtomsOf,
   toStampDate,
   type InboxBucket,
   type InboxChip,
@@ -392,21 +393,7 @@ function wrapperFacts(a: AppointmentRow | null, appointmentType: string) {
       isTentative: s.isTentative,
       completionStatus: s.completionStatus,
     })),
-    // Half-hour grid slots, the unit requiredSlots counts in, not occurrences.
-    tentativeSlotCount: slots
-      .filter((s) => s.isTentative)
-      .reduce(
-        (n, s) =>
-          n +
-          Math.max(
-            1,
-            Math.ceil(
-              (s.endsAt.getTime() - s.startsAt.getTime()) /
-                (SLOT_HOURS * 3_600_000),
-            ),
-          ),
-        0,
-      ),
+    tentativeSlotCount: slots.filter((s) => s.isTentative).length,
     rescheduledSlotCount: slots.filter(isReleasedForReschedule).length,
     proposal: a?.rescheduleRequests[0]
       ? {
@@ -647,7 +634,7 @@ function subscriptionRow(
     ? entitlement.cycle.nextBatch * slotsPerSession
     : null;
   const requiredSlots =
-    facts.tentativeSlotCount > 0 ? facts.tentativeSlotCount : freshBatch;
+    facts.tentativeSlotCount > 0 ? tentativeAtomsOf(facts.slots) : freshBatch;
   return finish(
     {
       id: s.id,
