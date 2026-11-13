@@ -14,7 +14,10 @@ import {
   readAppointmentDetail,
   type TAppointmentDetail,
 } from "@/lib/data/appointment-detail";
-import { isDeadOccurrence } from "@/lib/appointments/occurrences";
+import {
+  bookedSessionMinutes,
+  isDeadOccurrence,
+} from "@/lib/appointments/occurrences";
 import { soldSessionMinutes } from "@/lib/booking/entitlement";
 import { operatorOpsHref } from "@/lib/backoffice/booking-href";
 
@@ -29,8 +32,9 @@ type Appointment = TAppointmentDetail["appointment"];
 /** One session's length for the org's allocate picker; only a 1:1 booking is allocated. */
 function allocateSessionMinutes(appointment: Appointment): number | null {
   if (appointment.consultation) {
-    return Math.round(
-      appointment.consultation.consultationPlan.durationInHours * 60,
+    return (
+      bookedSessionMinutes(appointment.occurrences) ??
+      Math.round(appointment.consultation.consultationPlan.durationInHours * 60)
     );
   }
   if (appointment.subscription)

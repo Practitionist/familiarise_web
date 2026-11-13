@@ -20,7 +20,10 @@ import { AppointmentStatus } from "@prisma/client";
 import { orgOwnedAppointmentWhere } from "@/lib/api/scope/list-appointments";
 import { ORG_FUNDING_PAYMENT_STATUSES } from "@/lib/booking/org-actor";
 import { orgFundedPaymentWhere } from "@/lib/data/org-sponsored-seats";
-import { liveOccurrenceWhere } from "@/lib/appointments/occurrences";
+import {
+  bookedSessionMinutes,
+  liveOccurrenceWhere,
+} from "@/lib/appointments/occurrences";
 import { soldSessionMinutes } from "@/lib/booking/entitlement";
 
 export interface OrgPendingRequest {
@@ -83,7 +86,19 @@ export async function readOrgPendingRequests(
         id: true,
         status: true,
         requestedAt: true,
-        appointment: { select: { id: true } },
+        appointment: {
+          select: {
+            id: true,
+            occurrences: {
+              select: {
+                startsAt: true,
+                endsAt: true,
+                deletedAt: true,
+                completionStatus: true,
+              },
+            },
+          },
+        },
         consultationPlan: {
           select: { ...planSelect, durationInHours: true },
         },
@@ -119,7 +134,10 @@ export async function readOrgPendingRequests(
       learnerName: c.requestedBy.user.name,
       expertName: c.consultationPlan.consultantProfile.user.name,
       consultantProfileId: c.consultationPlan.consultantProfileId,
-      sessionMinutes: Math.round(c.consultationPlan.durationInHours * 60),
+      // The booked session's length, as the allocator reads it; the plan's only with no session row.
+      sessionMinutes:
+        bookedSessionMinutes(c.appointment?.occurrences ?? []) ??
+        Math.round(c.consultationPlan.durationInHours * 60),
       requestedAt: c.requestedAt.toISOString(),
       awaitingExpertApproval: c.status !== AppointmentStatus.APPROVED,
     })),
