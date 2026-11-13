@@ -56,7 +56,7 @@ describe("no consultee door returns a session inside 24 h", () => {
     ).toBeNull();
   });
 
-  it("gates every released session on 24 h of notice before the release writes", () => {
+  it("gates every released session inside 24 h before the release writes: times and acceptance, or refused", () => {
     expect(RESCHEDULE_MIN_LEAD_HOURS).toBe(24);
     const src = read(
       "app/api/appointments/[appointmentId]/reschedule/route.ts",
@@ -69,11 +69,11 @@ describe("no consultee door returns a session inside 24 h", () => {
     expect(src.slice(gate - 400, gate)).toContain(
       "for (const slot of slotsToReschedule)",
     );
-    // One boundary: the shared lead-time predicate decides, then the typed refusal.
-    const after = src.slice(gate, gate + 500);
-    expect(after).toContain("isTooSoonFor(");
-    expect(after).toContain('"reschedule"');
+    // One boundary decides; a release inside it needs named times, else a typed refusal.
+    const after = src.slice(gate, gate + 900);
+    expect(after).toContain("isShortNotice(");
     expect(after).toContain("ReschedulePolicyError");
+    expect(after).toContain("proposedSlots?.length");
   });
 
   it("offers no single-session cancel on a subscription", () => {
