@@ -83,7 +83,6 @@ import {
 import { useNowTick } from "@/hooks/use-now-tick";
 import {
   CONSULTEE_JOIN_WINDOW_MS,
-  appointmentStatusChip,
   getOccurrenceVMJoinState,
   isDeadOccurrence,
   isDeliberateEnd,
@@ -119,6 +118,7 @@ const SCHEDULE_KEYS = new Set(["reschedule", "new-time", "retime", "timings"]);
 const POST_APPROVAL = new Set<BookingStateKind>([
   "CONFIRMED",
   "AWAITING_ALLOCATION",
+  "BEING_MOVED",
   "COMPLETED",
 ]);
 
@@ -446,11 +446,7 @@ export function AppointmentDetailClient({
   );
   const { bookingState, moneyState, nextAction } = presentation;
   const postApproval = POST_APPROVAL.has(bookingState.state);
-  // A confirmed booking wears the learner's Appointments chip; other states say why.
-  const headerChip =
-    role === "consultee" && bookingState.state === "CONFIRMED"
-      ? appointmentStatusChip(vm, role)
-      : toneBadge(bookingState.tone, bookingState.label);
+  const headerChip = toneBadge(bookingState.tone, bookingState.label);
   // #1163 — the proposal card below IS the answer surface; the adapter's
   // "Review reschedule request" list affordance would only link back here.
   // "Report issue" opens the same per-appointment support thread as the
@@ -1159,6 +1155,11 @@ export function AppointmentDetailClient({
             </span>
             <StatusBadge {...headerChip} withDot size="sm" />
           </div>
+          {bookingState.why && (
+            <p className="mt-1.5 text-xs text-muted-foreground">
+              {bookingState.why}
+            </p>
+          )}
           <h1 className="mt-2 text-xl font-semibold leading-tight tracking-tight text-foreground sm:text-2xl">
             {vm.title}
           </h1>

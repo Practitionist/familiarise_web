@@ -26,7 +26,8 @@ import { Label } from "@/components/ui/label";
 import { PageHeader } from "@/components/dashboard/PageScaffold";
 import { Stat, StatRow } from "@/components/dashboard/Stat";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
-import { humanizeEnum, type Tone } from "@/lib/ui/tone";
+import { humanizeEnum } from "@/lib/ui/tone";
+import { bookingStatus } from "@/lib/appointments/booking-status";
 import { AwaitingPaymentPanel } from "./AwaitingPaymentPanel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -67,13 +68,30 @@ const getTypeIcon = (type: string) => {
   }
 };
 
-/** #1527 — display status → tone (the derived tabs: scheduled/completed/issue). */
-const STATUS_TONE: Record<string, Tone> = {
-  scheduled: "info",
-  in_progress: "info",
-  completed: "success",
-  cancelled: "neutral",
-};
+/** The row's one status: a 1:1 by its booking words, a webinar or class as an event. */
+function staffStatus(appointment: StaffAppointment) {
+  const { label, tone } = bookingStatus(
+    {
+      kind: appointment.type.toUpperCase(),
+      status: appointment.status.toUpperCase(),
+      paid: appointment.payment?.status === "SUCCEEDED",
+      eventView: true,
+      reschedule: appointment.reschedule
+        ? {
+            by:
+              appointment.reschedule.initiatorRole === "CONSULTANT"
+                ? "CONSULTANT"
+                : "REQUESTER",
+            proposedStartsAt: null,
+            originalStartsAt: null,
+            expiresAt: appointment.reschedule.expiresAt,
+          }
+        : null,
+    },
+    "STAFF",
+  );
+  return { label, tone };
+}
 
 const TABS = [
   "all",
@@ -373,26 +391,11 @@ export function OperatorAppointmentsClient({
                                 <Badge variant="outline">
                                   {humanizeEnum(appointment.type)}
                                 </Badge>
-                                <StatusBadge
-                                  label={humanizeEnum(appointment.status)}
-                                  tone={
-                                    STATUS_TONE[appointment.status] ?? "neutral"
-                                  }
-                                />
+                                <StatusBadge {...staffStatus(appointment)} />
                                 {appointment.hasIssue && (
                                   <StatusBadge
                                     label={appointment.issueType ?? "Issue"}
                                     tone="warning"
-                                  />
-                                )}
-                                {/* #1486 — a reschedule waiting on a party.
-                                    One label, not two: the query filters to the
-                                    open statuses, and since the counter-round was
-                                    retired the only open status is PENDING_REVIEW. */}
-                                {appointment.reschedule && (
-                                  <StatusBadge
-                                    label="Reschedule proposed"
-                                    tone="caution"
                                   />
                                 )}
                               </div>
@@ -533,10 +536,7 @@ export function OperatorAppointmentsClient({
               <div className="space-y-4">
                 {/* Status */}
                 <div className="flex items-center gap-2">
-                  <StatusBadge
-                    label={humanizeEnum(selectedAppointment.status)}
-                    tone={STATUS_TONE[selectedAppointment.status] ?? "neutral"}
-                  />
+                  <StatusBadge {...staffStatus(selectedAppointment)} />
                   <Badge variant="outline">
                     {humanizeEnum(selectedAppointment.type)}
                   </Badge>

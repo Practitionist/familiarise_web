@@ -67,6 +67,8 @@ function callerPaymentsInclude(userId: string) {
       paymentStatus: true,
       paymentMethod: true,
       createdAt: true,
+      // The pay window of a held booking or seat, so the list can tell a live hold from a lapsed one.
+      expiresAt: true,
     },
   } satisfies Prisma.Appointment$paymentArgs;
 }

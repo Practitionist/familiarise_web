@@ -415,7 +415,7 @@ export function CancelConfirmationDialog({
             ) : asConsultant ? (
               "Cancel and refund"
             ) : (
-              "Cancel booking"
+              `Cancel ${appointmentType === "Trial" ? "trial" : "booking"}`
             )}
           </AlertDialogAction>
         </AlertDialogFooter>

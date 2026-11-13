@@ -233,8 +233,8 @@ function ApproveOrDecline({
         result.awaitingPayment
           ? {
               title: result.payExpiresAt
-                ? `Approved — the client has until ${format(result.payExpiresAt, "EEE d MMM HH:mm")} to pay`
-                : "Approved — waiting for the client to pay",
+                ? `Awaiting payment — the client has until ${format(result.payExpiresAt, "EEE d MMM HH:mm")} to pay`
+                : "Awaiting payment — the client was sent the pay link",
               description: `${names.payer} was sent the payment link; the times are held until it is paid.`,
             }
           : timesConfirmed(),

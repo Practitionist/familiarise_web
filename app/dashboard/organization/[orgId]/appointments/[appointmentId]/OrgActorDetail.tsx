@@ -16,7 +16,10 @@ import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { errorMessageFromBody } from "@/lib/fetch-helpers";
-import { appointmentStatusBadge } from "@/lib/labels/session-labels";
+import {
+  bookingStatus,
+  bookingStatusBadge,
+} from "@/lib/appointments/booking-status";
 import { humanizeEnum } from "@/lib/ui/tone";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import {
@@ -160,7 +163,11 @@ export function OrgActorDetail({
   const [rescheduleKeyFor] = useState(createSubmissionKeys);
   const showAllocate = Boolean(canAllocate);
   const acting = ((canCancel || canReschedule) && !opsHref) || showAllocate;
-  const status = meta.status ? appointmentStatusBadge(meta.status) : null;
+  const status = meta.status
+    ? bookingStatusBadge(
+        bookingStatus({ kind: meta.kind, status: meta.status }, "ORG_ADMIN"),
+      )
+    : null;
 
   const queryClient = useQueryClient();
   const cancel = async () => {

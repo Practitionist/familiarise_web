@@ -47,6 +47,10 @@ import {
 import { isDeadOccurrence } from "@/lib/appointments/occurrences";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { humanizeEnum, type Tone } from "@/lib/ui/tone";
+import {
+  BOOKING_WORDS,
+  bookingStatus,
+} from "@/lib/appointments/booking-status";
 
 interface AppointmentSlot {
   id: string;
@@ -64,15 +68,17 @@ interface AppointmentRow {
   organizationId: string | null;
   occurrences: AppointmentSlot[];
   consultation: {
+    status: string;
     consultationPlan: { title: string };
     requestedBy: { user: { id: string; name: string | null; email: string } };
   } | null;
   subscription: {
+    status: string;
     subscriptionPlan: { title: string };
     requestedBy: { user: { id: string; name: string | null; email: string } };
   } | null;
-  webinar: { webinarPlan: { title: string } } | null;
-  class: { classPlan: { title: string } } | null;
+  webinar: { status: string; webinarPlan: { title: string } } | null;
+  class: { status: string; classPlan: { title: string } } | null;
   /**
    * Seats in this session that THIS org funded, pre-filtered server-side to the
    * viewing org. Present on the "Everyone" scope only; a group event shares one
@@ -105,25 +111,8 @@ const APPOINTMENT_TYPES = [
   "CLASS",
 ] as const;
 
-/** OccurrenceCompletionStatus, plus the derived TENTATIVE state. */
-const STATUS_OPTIONS = [
-  "SCHEDULED",
-  "COMPLETED",
-  "CANCELLED",
-  "RESCHEDULED",
-  "UNVERIFIED",
-  "TENTATIVE",
-] as const;
-
-// #1762-4 — labels + tones instead of raw OccurrenceCompletionStatus.
-const STATUS: Record<string, { label: string; tone: Tone }> = {
-  SCHEDULED: { label: "Scheduled", tone: "info" },
-  COMPLETED: { label: "Completed", tone: "success" },
-  CANCELLED: { label: "Cancelled", tone: "neutral" },
-  RESCHEDULED: { label: "Rescheduled", tone: "caution" },
-  UNVERIFIED: { label: "Awaiting outcome", tone: "caution" },
-  TENTATIVE: { label: "Time not confirmed", tone: "caution" },
-};
+/** The booking words a row can show, in lifecycle order, for the filter. */
+const STATUS_OPTIONS = BOOKING_WORDS;
 
 function getPlanTitle(row: AppointmentRow): string {
   return (
@@ -172,13 +161,30 @@ function displaySlot(slots: AppointmentSlot[]): AppointmentSlot | null {
   return upcoming ?? sorted[sorted.length - 1];
 }
 
-function rowStatus(row: AppointmentRow): string {
-  const slot = displaySlot(row.occurrences);
-  if (!slot) return "—";
-  // isTentative predates the RESCHEDULED enum value and still drives the
-  // pending-reallocation state, so it takes precedence in display.
-  if (slot.isTentative) return "TENTATIVE";
-  return slot.completionStatus ?? "SCHEDULED";
+/** The row's one booking status, as the organisation sees it. */
+function rowStatus(row: AppointmentRow): { label: string; tone: Tone } {
+  const live = row.occurrences.filter((o) => !isDeadOccurrence(o));
+  const { label, tone } = bookingStatus(
+    {
+      kind: row.appointmentType,
+      status:
+        row.consultation?.status ??
+        row.subscription?.status ??
+        row.webinar?.status ??
+        row.class?.status,
+      sessions: {
+        live: live.length,
+        allTentative: live.length > 0 && live.every((o) => o.isTentative),
+        done:
+          live.length > 0 &&
+          live.every(
+            (o) => new Date(o.endsAt ?? o.startsAt).getTime() < Date.now(),
+          ),
+      },
+    },
+    "ORG_ADMIN",
+  );
+  return { label, tone };
 }
 
 function rowSessionDate(row: AppointmentRow): string {
@@ -231,17 +237,7 @@ function columns(orgId: string): Column<AppointmentRow>[] {
     },
     {
       header: "Status",
-      accessor: (r) => {
-        const status = rowStatus(r);
-        if (status === "—") return "—";
-        const s = STATUS[status];
-        return (
-          <StatusBadge
-            label={s?.label ?? humanizeEnum(status)}
-            tone={s?.tone ?? "neutral"}
-          />
-        );
-      },
+      accessor: (r) => <StatusBadge {...rowStatus(r)} />,
     },
     {
       header: "Booked",
@@ -318,7 +314,7 @@ export function AppointmentsPageClient({ orgId }: { orgId: string }) {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return items.filter((row) => {
-      if (status !== "all" && rowStatus(row) !== status) return false;
+      if (status !== "all" && rowStatus(row).label !== status) return false;
       if (!q) return true;
       return (
         getPlanTitle(row).toLowerCase().includes(q) ||
@@ -370,7 +366,7 @@ export function AppointmentsPageClient({ orgId }: { orgId: string }) {
             <SelectItem value="all">Any status</SelectItem>
             {STATUS_OPTIONS.map((s) => (
               <SelectItem key={s} value={s}>
-                {STATUS[s].label}
+                {s}
               </SelectItem>
             ))}
           </SelectContent>

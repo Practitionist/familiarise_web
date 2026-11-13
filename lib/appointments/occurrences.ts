@@ -24,7 +24,7 @@ import {
   type OccurrenceVM,
 } from "./view-model";
 import { normalizeOccurrences, type AnomalySink } from "./normalize";
-import { eventUnionStatusBadge, isConfirmedStatus } from "./status";
+import { bookingStatus, bookingStatusBadge } from "./booking-status";
 import type { StatusBadgeStyle } from "@/lib/labels/session-labels";
 
 /** The engine's unit of arithmetic: every interval and duration is a multiple. */
@@ -565,27 +565,46 @@ export function getProximityLabel(
   return `in ${weeks} ${weeks === 1 ? "week" : "weeks"}`;
 }
 
-/**
- * The learner's chip on every surface: a booked webinar or class reads
- * "Registered" and a booked 1:1 "Confirmed".
- */
+/** The status chip on every appointments surface, from the one status function. */
 export function appointmentStatusChip(
-  vm: Pick<AppointmentVM, "status" | "kind" | "bucket">,
+  vm: Pick<AppointmentVM, "status" | "kind"> &
+    Partial<
+      Pick<
+        AppointmentVM,
+        | "occurrences"
+        | "bookingSource"
+        | "seatStatus"
+        | "paid"
+        | "payDeadline"
+        | "reschedule"
+      >
+    >,
   role: "consultee" | "consultant",
 ): StatusBadgeStyle {
-  const badge = eventUnionStatusBadge(vm.status);
-  if (
-    role !== "consultee" ||
-    vm.bucket !== "upcoming" ||
-    !isConfirmedStatus(vm.status)
-  ) {
-    return badge;
-  }
-  const group = vm.kind === "WEBINAR" || vm.kind === "CLASS";
-  return {
-    ...eventUnionStatusBadge("SCHEDULED"),
-    label: group ? "Registered" : "Confirmed",
-  };
+  const live = vm.occurrences ? liveOccurrences(vm.occurrences) : null;
+  return bookingStatusBadge(
+    bookingStatus(
+      {
+        kind: vm.kind,
+        status: vm.status,
+        source: vm.bookingSource,
+        seatStatus: vm.seatStatus,
+        paid: vm.paid,
+        payDeadline: vm.payDeadline,
+        reschedule: vm.reschedule,
+        sessions:
+          live && vm.occurrences
+            ? {
+                live: live.length,
+                allTentative:
+                  live.length > 0 && live.every((s) => s.isTentative),
+                done: live.length > 0 && allOccurrencesOver(vm.occurrences),
+              }
+            : undefined,
+      },
+      role === "consultant" ? "CONSULTANT" : "CONSULTEE",
+    ),
+  );
 }
 
 export interface OccurrenceSourceAppointment {

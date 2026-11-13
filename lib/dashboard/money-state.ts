@@ -34,23 +34,25 @@ import {
 } from "@/lib/appointments/payment-display";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { PLAN_END_REFUND_REASON } from "@/lib/payments/refund-reasons";
+import {
+  BOOKING_STAGES,
+  bookingStatus,
+  expertApproval,
+  type BookingStage,
+  type BookingStatusFacts,
+  type HistoryEdgeInput,
+  type OpenRescheduleInput,
+} from "@/lib/appointments/booking-status";
+
+export type { HistoryEdgeInput, OpenRescheduleInput };
 
 export type Viewer = "CONSULTANT" | "CONSULTEE" | "ORG_ADMIN";
 
 // The tones moved to lib/ui/tone.ts (#1527); re-exported so importers keep working.
 export { TONE_CLASS, type Tone } from "@/lib/ui/tone";
 
-export const BOOKING_STATE_KINDS = [
-  "REQUESTED",
-  "AWAITING_PAYMENT",
-  "PAYMENT_LAPSED",
-  "CONFIRMED",
-  "AWAITING_ALLOCATION",
-  "COMPLETED",
-  "CANCELLED",
-  "DECLINED",
-] as const;
-export type BookingStateKind = (typeof BOOKING_STATE_KINDS)[number];
+export const BOOKING_STATE_KINDS = BOOKING_STAGES;
+export type BookingStateKind = BookingStage;
 
 export const MONEY_STATE_KINDS = [
   "NOT_DUE",
@@ -153,23 +155,6 @@ export type RefundInput = {
 };
 
 export type DisputeInput = { status: string };
-
-/** One lifecycle edge; `by` is the side that wrote it, null for the system. */
-export type HistoryEdgeInput = {
-  fromStatus: string;
-  toStatus: string;
-  reason?: string | null;
-  by?: "CONSULTANT" | "REQUESTER" | "OTHER" | null;
-  createdAt?: Date | string | null;
-};
-
-/** An open reschedule: who proposed it, the first proposed and the original start. */
-export interface OpenRescheduleInput {
-  by: "CONSULTANT" | "REQUESTER";
-  proposedStartsAt: Date | string | null;
-  originalStartsAt: Date | string | null;
-  expiresAt: Date | string | null;
-}
 
 export interface BookingPresentationInput {
   appointmentType: string;
@@ -292,8 +277,6 @@ export function requestHoldDeadline(
   return new Date(toDate(requestedAt).getTime() + ms);
 }
 
-const PRE_APPROVAL = new Set(["PENDING", "APPROVED_PENDING_PAYMENT"]);
-
 // #1775 C-3 — a paid plan's cycle 1 must be allocated within 48 h of capture.
 // Mirrored, not imported: expire-stale-requests.ts loads Prisma.
 const ALLOCATE_WINDOW_MS = 48 * 60 * 60 * 1000;
@@ -358,25 +341,12 @@ function planEndedShortWhy(input: BookingPresentationInput): string | null {
   }
   return head;
 }
-const CONFIRMED_FAMILY = new Set(["APPROVED", "SCHEDULED"]);
-const COMPLETED_FAMILY = new Set(["COMPLETED", "CONVERTED"]);
 const OPEN_DISPUTES = new Set([
   "WARNING_NEEDS_RESPONSE",
   "WARNING_UNDER_REVIEW",
   "NEEDS_RESPONSE",
   "UNDER_REVIEW",
 ]);
-
-const BOOKING_LABEL: Record<BookingStateKind, { label: string; tone: Tone }> = {
-  REQUESTED: { label: "Requested", tone: "caution" },
-  AWAITING_PAYMENT: { label: "Awaiting payment", tone: "warning" },
-  PAYMENT_LAPSED: { label: "Payment lapsed", tone: "neutral" },
-  CONFIRMED: { label: "Confirmed", tone: "success" },
-  AWAITING_ALLOCATION: { label: "Awaiting schedule", tone: "info" },
-  COMPLETED: { label: "Completed", tone: "success" },
-  CANCELLED: { label: "Cancelled", tone: "neutral" },
-  DECLINED: { label: "Declined", tone: "critical" },
-};
 
 const MONEY_TONE: Record<MoneyStateKind, Tone> = {
   NOT_DUE: "neutral",
@@ -452,146 +422,56 @@ function rowLabel(
   return isOccurrencePastGrace(o, now) ? "Completed" : "Scheduled";
 }
 
-function deriveBooking(
+const paidOf = (input: BookingPresentationInput) =>
+  input.payments.find((x) => x.paymentStatus === "SUCCEEDED");
+
+/** The stored facts the one status function reads, from the presentation input. */
+function statusFacts(
   input: BookingPresentationInput,
   live: OccurrenceInput[],
   paid: boolean,
-  holdExpiresAt: Date | null,
   now: Date,
-  zone?: string | null,
-): { state: BookingStateKind; label?: string; why: string } {
-  const status = normalizeStatus(input.request?.status);
-  const kind = normalizeStatus(input.request?.kind || input.appointmentType);
-  const c = input.names.consultant;
-  const p = input.names.payer;
-  if (status === "REJECTED")
-    return { state: "DECLINED", why: `${c} declined this request.` };
-  if (status === "CANCELLED") {
-    // #1846 — the consultant's Withdraw approval ends a live, still-payable
-    // approval in CANCELLED (`lib/booking/lapse-approved-request.ts`), where it
-    // used to land on EXPIRED and so arrive here through the lapsed-pay-link
-    // arm below. CANCELLED is the honest word for it, but the generic sentence
-    // — "This booking was cancelled." — then hides WHO ended a booking the buyer
-    // is looking for an explanation of, and reads as though they or the
-    // consultant had cancelled a paid session. So the withdrawal is named.
-    //
-    // Read off the history edge's `reason` rather than inferred from the
-    // status: CANCELLED is also written by the buyer's abandon and by a
-    // decline's restore, and guessing between them would put a false accusation
-    // in front of one of them. `WITHDRAWN_BY_CONSULTANT` is the `LapseReason`
-    // the writer passes; the literal is repeated rather than imported because
-    // importing that module would pull prisma into a client-safe file.
-    const withdrawn = input.history?.some(
-      (h) =>
-        normalizeStatus(h.toStatus) === "CANCELLED" &&
-        h.reason === "WITHDRAWN_BY_CONSULTANT",
-    );
-    return withdrawn
-      ? {
-          state: "CANCELLED",
-          label: "Withdrawn",
-          why: `${c} withdrew this approval before it was paid, so the held times were released. No payment was taken.`,
-        }
-      : { state: "CANCELLED", why: "This booking was cancelled." };
-  }
-  if (status === "EXPIRED") {
-    const edges =
-      input.history?.filter((h) => normalizeStatus(h.toStatus) === "EXPIRED") ??
-      [];
-    const lapsedLink =
-      edges.length > 0
-        ? edges.some(
-            (h) => normalizeStatus(h.fromStatus) === "APPROVED_PENDING_PAYMENT",
-          )
-        : input.payments.some(
-            (x) => x.paymentStatus !== "SUCCEEDED" && !!x.expiresAt,
-          );
-    return lapsedLink
-      ? {
-          state: "PAYMENT_LAPSED",
-          why: "The payment link expired before it was paid.",
-        }
-      : {
-          state: "CANCELLED",
-          label: "Expired",
-          why: "The request lapsed unanswered.",
-        };
-  }
-  if (COMPLETED_FAMILY.has(status))
-    return {
-      state: "COMPLETED",
-      why: planEndedShortWhy(input) ?? "Every session has been held.",
-    };
-  const wait = allocationWait(input, live, paid, now);
-  if (wait === "CYCLE_1") {
-    const by = allocateDeadline(input.payments);
-    return {
-      state: "AWAITING_ALLOCATION",
-      why: `Paid · ${c} has until ${by ? dayTime(by, zone) : "48 h after payment"} to schedule cycle 1.`,
-    };
-  }
-  if (wait === "NEXT_CYCLE") {
-    return {
-      state: "AWAITING_ALLOCATION",
-      why: `Week done · the next ${input.entitlement?.nextBatch ?? 0} to be scheduled.`,
-    };
-  }
-  if (status === "DRAFT")
-    return {
-      state: "AWAITING_ALLOCATION",
-      label: "Not published",
-      why: "Publish it once a session is set.",
-    };
-  if (PRE_APPROVAL.has(status) || status === "AWAITING_PAYMENT") {
-    if (paid)
-      return {
-        state: "REQUESTED",
-        why: `Paid; ${c} is asked to approve next.`,
-      };
-    if (status === "PENDING")
-      return { state: "REQUESTED", why: `${p} is waiting for ${c} to answer.` };
-    if (holdExpiresAt && holdExpiresAt <= now) {
-      return {
-        state: "PAYMENT_LAPSED",
-        why: "The payment link expired before it was paid.",
-      };
-    }
-    return {
-      state: "AWAITING_PAYMENT",
-      why: `${c} approved; the booking confirms once it is paid.`,
-    };
-  }
-  if (live.length === 0) {
-    return {
-      state: "AWAITING_ALLOCATION",
-      why: `${c} has not placed the sessions on the calendar yet.`,
-    };
-  }
-  if (CONFIRMED_FAMILY.has(status) || status === "") {
-    if (live.every((o) => o.isTentative)) {
-      return paid
+): BookingStatusFacts {
+  const paidRow = paidOf(input);
+  const landed =
+    paidRow && !isFreePayment(paidRow)
+      ? input.refunds.filter((r) => normalizeStatus(r.status) === "SUCCEEDED")
+      : [];
+  const landedAt = landed
+    .map((r) => toDateOrNull(r.updatedAt ?? r.createdAt))
+    .filter((d): d is Date => d !== null)
+    .sort((a, b) => b.getTime() - a.getTime())[0];
+  return {
+    kind: input.request?.kind || input.appointmentType,
+    status: input.request?.status,
+    source: input.source,
+    seatStatus: input.seatStatus,
+    paid,
+    payDeadline: input.holdExpiresAt,
+    unpaidLinkSeen: input.payments.some(
+      (x) => x.paymentStatus !== "SUCCEEDED" && !!x.expiresAt,
+    ),
+    reschedule: input.reschedule,
+    refunded:
+      landed.length > 0 && paidRow
         ? {
-            state: "CONFIRMED",
-            why: "Payment received; the sessions are being locked in.",
+            paise: landed.reduce((t, r) => t + Number(r.amountPaise), 0),
+            currency: paidRow.currency,
+            at: landedAt ?? null,
           }
-        : {
-            state: "AWAITING_PAYMENT",
-            why: "The slots are held until the booking is paid.",
-          };
-    }
-    if (live.every((o) => isOccurrencePastGrace(o, now))) {
-      return {
-        state: "COMPLETED",
-        why: planEndedShortWhy(input) ?? "Every session has been held.",
-      };
-    }
-    const noun =
-      kind === "CONSULTATION" || kind === "TRIAL"
-        ? "session is"
-        : "sessions are";
-    return { state: "CONFIRMED", why: `The ${noun} on the calendar.` };
-  }
-  return { state: "CONFIRMED", why: "" };
+        : null,
+    sessions: {
+      live: live.length,
+      allTentative: live.length > 0 && live.every((o) => o.isTentative),
+      done: live.length > 0 && live.every((o) => isOccurrencePastGrace(o, now)),
+    },
+    planWait: allocationWait(input, live, paid, now),
+    allocateBy: allocateDeadline(input.payments),
+    nextBatch: input.entitlement?.nextBatch ?? 0,
+    history: input.history,
+    completedNote: planEndedShortWhy(input),
+    names: input.names,
+  };
 }
 
 function deriveMoney(
@@ -759,9 +639,6 @@ function deriveMoney(
   );
 }
 
-const paidOf = (input: BookingPresentationInput) =>
-  input.payments.find((x) => x.paymentStatus === "SUCCEEDED");
-
 function deriveNext(
   input: BookingPresentationInput,
   booking: BookingStateKind,
@@ -787,7 +664,11 @@ function deriveNext(
       return { kind: "APPROVE_OR_DECLINE", label: "Approve", deadline };
     // #1775 — the deadline is the pay order's own clock (the live PENDING
     // row's expiresAt), the same one the consultee's PAY carries.
-    if (booking === "AWAITING_PAYMENT")
+    // An approved request's pay link; a pay-first checkout hold is the buyer's own.
+    if (
+      booking === "AWAITING_PAYMENT" &&
+      normalizeStatus(input.source) !== "DIRECT_CHECKOUT"
+    )
       return { kind: "REMIND_OR_WITHDRAW", label: "Remind", deadline };
     const wait = allocationWait(input, live, !!paidOf(input), now);
     if (booking === "AWAITING_ALLOCATION" && wait === "CYCLE_1")
@@ -858,17 +739,23 @@ function deriveTimeline(
     label: viewer === "CONSULTEE" ? "Requested (you)" : `Requested by ${p}`,
     done: true,
   };
-  const approvedDone =
-    !["REQUESTED", "DECLINED"].includes(booking) &&
-    !(booking === "CANCELLED" && !paidAt);
-  const approved: TimelineEvent = {
-    at: null,
-    actor: c,
-    label: approvedDone
-      ? `Approved (${consultant})`
-      : `${cap(consultant)} approve${consultant === "you" ? "" : "s"}`,
-    done: approvedDone,
-  };
+  // "Approved" only when the history shows the expert approving a request.
+  const approval = expertApproval(input);
+  const approved: TimelineEvent | null = approval
+    ? {
+        at: toDateOrNull(approval.createdAt),
+        actor: c,
+        label: `Approved (${consultant})`,
+        done: true,
+      }
+    : booking === "REQUESTED"
+      ? {
+          at: null,
+          actor: c,
+          label: `${cap(consultant)} approve${consultant === "you" ? "" : "s"}`,
+          done: false,
+        }
+      : null;
   const paidDone = [
     "PAID",
     "SPONSORED",
@@ -918,18 +805,21 @@ function deriveTimeline(
           : null;
   const refunds = refundTimeline(input);
 
-  // A trial is booked by the learner: one entry, never a request or an approval.
+  // A trial or a pay-first checkout is booked by the learner: no request, no approval.
   const booked: TimelineEvent = {
     ...requested,
     label: viewer === "CONSULTEE" ? "Booked (you)" : `Booked by ${p}`,
   };
-  // Pay-first checkout (#1586): the money landed before the answer.
-  const steps =
-    normalizeStatus(input.appointmentType) === "TRIAL"
-      ? [booked, paid]
-      : paidDone && booking === "REQUESTED"
-        ? [requested, paid, approved]
-        : [requested, approved, paid];
+  const payFirst =
+    normalizeStatus(input.appointmentType) === "TRIAL" ||
+    normalizeStatus(input.source) === "DIRECT_CHECKOUT";
+  const requestSteps =
+    paidDone && booking === "REQUESTED"
+      ? [requested, paid, approved]
+      : [requested, approved, paid];
+  const steps = payFirst
+    ? [booked, paid]
+    : requestSteps.filter((e): e is TimelineEvent => e !== null);
   if (moneyState.state === "FREE") steps.splice(steps.indexOf(paid), 1);
   const events = [
     ...steps.filter((e) => e.done || !terminal),
@@ -1030,12 +920,17 @@ export function deriveBookingPresentation(
     input.payments.find((x) => x.paymentStatus === "SUCCEEDED") ?? null;
   const holdExpiresAt = toDateOrNull(input.holdExpiresAt);
 
-  const b = deriveBooking(input, live, !!paidRow, holdExpiresAt, now, zone);
+  const status = bookingStatus(
+    statusFacts(input, live, !!paidRow, now),
+    viewer,
+    { now, zone },
+  );
+  const b = { state: status.stage };
   const bookingState: BookingState = {
-    state: b.state,
-    label: b.label ?? BOOKING_LABEL[b.state].label,
-    tone: BOOKING_LABEL[b.state].tone,
-    why: b.why,
+    state: status.stage,
+    label: status.label,
+    tone: status.tone,
+    why: status.line,
   };
   const moneyState = deriveMoney(input, b.state, viewer, holdExpiresAt, zone);
   const nextAction = deriveNext(

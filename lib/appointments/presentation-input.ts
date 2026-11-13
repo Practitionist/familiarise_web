@@ -184,10 +184,14 @@ export function toPresentationInput(
       .filter((p) => p.paymentStatus === "PENDING" && p.expiresAt)
       .map((p) => new Date(p.expiresAt!))
       .sort((x, y) => x.getTime() - y.getTime())[0] ?? null;
+  const source =
+    a.consultation?.bookingSource ?? a.subscription?.bookingSource ?? null;
+  // A submitted request holds its time while the expert answers; a pay-first
+  // hold has only its payment's own clock.
   const holdExpiresAt =
     pendingDeadline ??
     a.trial?.paymentDueAt ??
-    (request?.status === "PENDING"
+    (request?.status === "PENDING" && source !== "DIRECT_CHECKOUT"
       ? requestHoldDeadline(request.kind, request.requestedAt)
       : null);
   const sponsored = a.payment.some(isSponsoredPayment);
@@ -206,8 +210,7 @@ export function toPresentationInput(
     sponsorOrgName: sponsored ? args.sponsorOrgName : null,
     holdExpiresAt,
     history: a.statusHistory,
-    source:
-      a.consultation?.bookingSource ?? a.subscription?.bookingSource ?? null,
+    source,
     reschedule: openReschedule(a),
     seatStatus:
       a.webinar || a.class

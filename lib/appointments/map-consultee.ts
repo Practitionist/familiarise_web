@@ -29,6 +29,7 @@ import {
 import { normalizeStatus } from "./status";
 import { payablePaymentId } from "@/lib/payments/pay-link-href";
 import { trialMeta } from "./trial-labels";
+import { openProposalTarget } from "./consultee-affordances";
 import {
   toDate,
   type AppointmentVM,
@@ -96,6 +97,46 @@ function groupProgress(
   };
 }
 
+/** What a list row knows about payment and an open reschedule, for its status chip. */
+function listStatusFacts(
+  appointment:
+    | {
+        id: string;
+        payment?: ReadonlyArray<{
+          paymentStatus: string;
+          expiresAt?: Date | string | null;
+        }> | null;
+      }
+    | null
+    | undefined,
+  occurrences: OccurrenceVM[],
+): Pick<AppointmentVM, "paid" | "payDeadline" | "reschedule"> {
+  const payments = appointment?.payment ?? [];
+  const open = payments
+    .filter((p) => p.paymentStatus === "PENDING" && p.expiresAt)
+    .map((p) => toDate(p.expiresAt!))
+    .sort((a, b) => a.getTime() - b.getTime());
+  const proposal = openProposalTarget([appointment])?.proposal;
+  const original = occurrences.find(
+    (o) => o.isTentative && o.completionStatus === "RESCHEDULED",
+  );
+  return {
+    paid: payments.some((p) => p.paymentStatus === "SUCCEEDED"),
+    payDeadline: open[0] ?? null,
+    reschedule: proposal
+      ? {
+          by:
+            proposal.initiatorRole === "CONSULTANT"
+              ? "CONSULTANT"
+              : "REQUESTER",
+          proposedStartsAt: proposal.proposedTimes[0]?.startsAt ?? null,
+          originalStartsAt: original?.startsAt ?? null,
+          expiresAt: proposal.expiresAt,
+        }
+      : null,
+  };
+}
+
 function mapConsultation(c: TConsultationWithPlan, now: Date): AppointmentVM {
   const occurrences = occurrencesOfAppointment(c.appointment);
   const status = normalizeStatus(c.status?.toString());
@@ -118,6 +159,8 @@ function mapConsultation(c: TConsultationWithPlan, now: Date): AppointmentVM {
     organizationId: c.appointment?.organizationId ?? null,
     pendingPaymentUrl: c.pendingPaymentUrl ?? null,
     pendingPaymentId: payablePaymentId(c.appointment?.payment),
+    bookingSource: c.bookingSource,
+    ...listStatusFacts(c.appointment, occurrences),
     collaborators: [],
     collaboratorRole: null,
     raw: {
@@ -149,6 +192,8 @@ function mapSubscription(s: TSubscriptionWithPlan, now: Date): AppointmentVM {
     organizationId: target?.organizationId ?? null,
     pendingPaymentUrl: s.pendingPaymentUrl ?? null,
     pendingPaymentId: payablePaymentId(target?.payment),
+    bookingSource: s.bookingSource,
+    ...listStatusFacts(target, occurrences),
     collaborators: [],
     collaboratorRole: null,
     raw: {

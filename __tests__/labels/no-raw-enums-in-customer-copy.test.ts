@@ -17,6 +17,11 @@ import {
   planLevelLabel,
 } from "@/lib/labels/plan-labels";
 import ALREADY_WORDS from "./raw-enum-already-words.json";
+import {
+  BOOKING_WORDS,
+  bookingStatus,
+  type StatusViewer,
+} from "@/lib/appointments/booking-status";
 
 const ROOT = path.resolve(__dirname, "../..");
 
@@ -201,5 +206,48 @@ describe("the subscription checkout details", () => {
       "Priority",
       "Dedicated",
     ]);
+  });
+});
+
+describe("the one booking status", () => {
+  const KINDS = ["CONSULTATION", "SUBSCRIPTION", "WEBINAR", "CLASS", "TRIAL"];
+  const STATUSES = [
+    "PENDING",
+    "APPROVED_PENDING_PAYMENT",
+    "APPROVED",
+    "AWAITING_PAYMENT",
+    "SCHEDULED",
+    "COMPLETED",
+    "CONVERTED",
+    "REJECTED",
+    "CANCELLED",
+    "EXPIRED",
+    "DRAFT",
+  ];
+  const VIEWERS: StatusViewer[] = [
+    "CONSULTEE",
+    "CONSULTANT",
+    "ORG_ADMIN",
+    "STAFF",
+  ];
+  const EVENT_WORDS = ["Draft", "Scheduled", "Completed", "Cancelled"];
+
+  it("speaks only the seven words (or a host's event words) and plain reason lines", () => {
+    for (const kind of KINDS) {
+      for (const status of STATUSES) {
+        for (const viewer of VIEWERS) {
+          for (const source of ["DIRECT_CHECKOUT", "REQUEST_SUBMITTED"]) {
+            const s = bookingStatus({ kind, status, source }, viewer);
+            const host =
+              viewer === "CONSULTANT" &&
+              (kind === "WEBINAR" || kind === "CLASS");
+            expect([...BOOKING_WORDS, ...(host ? EVENT_WORDS : [])]).toContain(
+              s.label,
+            );
+            expect(s.line).not.toMatch(/\b[A-Z]+_[A-Z_]+\b/);
+          }
+        }
+      }
+    }
   });
 });
