@@ -42,7 +42,7 @@ These label rules are owned here; 06 (class make-up and pattern rows) references
 
 1. As H2, open the webinar editor (new webinar `qa-WE-02`, Duration 1.5 h). Go to **Sessions** → **Scheduled for**.
 2. Read the day heading and the zone line. Move through the month with the arrows and Page Down.
-3. On next Monday, read every listed start from 17:00 to 21:00, then switch on **Show times outside my hours** and read them again.
+3. On a Monday with no H2 booking (if next Monday carries WE-04's confirmed session, use the Monday after), read every listed start from 17:00 to 21:00, then switch on **Show times outside my hours** and read them again.
 4. On next Saturday, read the pane with the switch off and on.
 5. Tab into the month grid and the time list; use the arrow keys, Enter and Space.
 
@@ -82,7 +82,7 @@ These label rules are owned here; 06 (class make-up and pattern rows) references
 
 **Expect:**
 
-- Monday: any 90-minute start overlapping 18:00–20:30 is tagged **Booked** and cannot be picked (16:30, ending at 18:00, is not Booked; 17:00 is). Booked times show with the switch off.
+- Monday: any 90-minute start overlapping 18:00–20:30 is tagged **Booked**, shows with the switch off and cannot be picked; that includes 17:00, which starts outside hours (a booked start is Booked whether or not it is inside hours). 16:30, ending at 18:00, is not Booked: it appears only with the switch on, tagged Outside your hours.
 - Saturday: 10:00, 10:30, 11:00, 11:30 are **Booked** (the booked webinar shows as a booked cell even outside published hours); with the switch on, 09:30 is Outside your hours.
 - Open `qa-WE-04` itself in the editor: its own Saturday 11:00 start reads free, not Booked (the editor passes the saved webinar as a move, so its own session is left out), and saving it unchanged succeeds.
 

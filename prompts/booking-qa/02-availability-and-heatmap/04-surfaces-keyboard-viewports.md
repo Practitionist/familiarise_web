@@ -99,7 +99,7 @@ Each grid page sets a policy: submit label, hint line, lead time and mode. Read 
 **Expect:**
 
 - Month: past days disabled; Sunday unmarked but selectable, showing "No free times on this day" and a "Next free: <date>" button; days with a free time carry a dot and ring; today has a dashed ring. Arrow keys move one day or week, Page Down moves a month.
-- Times pane: headed with the date and "Times in Europe/London"; times grouped Morning/Afternoon/Evening; F-BUSY's time missing and one line "1 time already taken" (past and too-soon times are not counted); 18:00 IST reads 12:30 pm.
+- Times pane: headed with the date and "Times in Europe/London"; times grouped Morning/Afternoon/Evening; F-BUSY's time missing from the free times, and a button "Show 1 taken time" (`aria-expanded="false"`; past and too-soon times are not counted); opening it lists F-BUSY's time greyed with **Notify me** and the line "You can wait on up to 3 times."; 18:00 IST reads 12:30 pm.
 - REQUEST mode: the button reads "Request this time" and the sentence says "the expert confirms before you pay". INSTANT: "Continue to Checkout", no sentence.
 - Every time button announces its range and state (inspect the `aria-label`), and the selected one has `aria-pressed="true"` and a check.
 

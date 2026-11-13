@@ -204,7 +204,7 @@ Reading the grid with the DevTools MCP:
 1. Look for any H1 occurrence not on :00/:30 UTC: `SELECT id, "startsAt", "endsAt" FROM "AppointmentOccurrence" WHERE "consultantProfileId" = :h1 AND "deletedAt" IS NULL AND (extract(minute FROM "startsAt")::int % 30 <> 0 OR extract(minute FROM "endsAt")::int % 30 <> 0);`
 2. New trial lengths are 30 or 60 minutes only (the subscription editor's "Trial length" is two radio buttons; the plan routes refuse any other value with "A trial is 30 or 60 minutes."). A plan saved earlier with another length (45 minutes exists in practice data) still books at that length: find one with `SELECT id, "trialDurationMinutes" FROM "SubscriptionPlan" WHERE "trialDurationMinutes" NOT IN (30, 60);` and, if a trial was booked on it for H1, view its last half hour on H1's grid.
 
-**Expect:** a booked 45-min trial paints its third half-hour Partly booked (amber hatch, not selectable) and a click toasts "Partly booked" / "Part of this half-hour is taken — choose another time." With no such legacy trial and no off-lattice row from step 1, record "unreachable".
+**Expect:** a booked 45-min trial starting on the half hour paints its second half-hour Partly booked (amber hatch, not selectable) and a click toasts "Partly booked" / "Part of this half-hour is taken — choose another time." With no such legacy trial and no off-lattice row from step 1, record "unreachable".
 
 ## HM-27 — Just taken `[two-browser]` `[local]`
 
