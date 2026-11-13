@@ -141,7 +141,9 @@ it("books the second card's plan, and reads a held time as taken", async () => {
   });
   render(<Dialog mode="REQUEST" />);
   bookNow(1);
-  expect(screen.getByRole("heading", { name: /Book B Consultation/ }));
+  expect(
+    screen.getByRole("heading", { name: /Book B Consultation/ }),
+  ).toBeVisible();
   fireEvent.click(time(/^11:00 am to 11:30 am, free/));
   fireEvent.click(screen.getByRole("button", { name: "Request this time" }));
   await waitFor(() => expect(fetchMock).toHaveBeenCalled());
