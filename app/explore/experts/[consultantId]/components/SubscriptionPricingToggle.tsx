@@ -15,18 +15,22 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { motion } from "framer-motion";
 import { CheckCircle2, Gift, BookOpen } from "lucide-react";
 import { useSession } from "@/lib/auth-client";
-import { zoneDisplayLabel } from "@/lib/time/viewer-zone";
+import { formatInViewerZone, zoneDisplayLabel } from "@/lib/time/viewer-zone";
 import Link from "next/link";
 import { useState, useMemo, useEffect, useCallback } from "react";
+import { useSearchParams } from "next/navigation";
 import { PricingOption } from "../defaults";
 import { useToast } from "@/hooks/use-toast";
-import { format } from "date-fns";
 import { firstCycleWindow, lastInstantBefore } from "@/lib/booking/entitlement";
 import { useBuyerPrice } from "@/components/pricing/BuyerPriceProvider";
 import { buyerDisplayPricePaise } from "@/lib/payments/pricing/display-price";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { MonthGrid } from "@/components/scheduling/MonthGrid";
-import { calendarDateKey, calendarDayOf } from "@/lib/time/grid-zone";
+import {
+  calendarDateKey,
+  calendarDayOf,
+  dayRangeBounds,
+} from "@/lib/time/grid-zone";
 import { MentorshipTrialStep } from "./MentorshipTrialStep";
 import { usePlanBuyBlocked } from "../hooks/usePlanBuyBlocked";
 
@@ -99,6 +103,20 @@ export default function SubscriptionPricingToggle({
   // 3-month subscriptions) remain independently selectable and bookable.
   const [activeSubscriptionOption, setActiveSubscriptionOption] =
     useState<string>(subscriptionOptions[0]?.id ?? "");
+  // Back from sign-in on the trial step (?action=trial&plan=…): that plan is the active one.
+  const returnPlanId = useSearchParams()?.get("plan") ?? null;
+  const [appliedReturnPlan, setAppliedReturnPlan] = useState<string | null>(
+    null,
+  );
+  if (
+    autoOpenTrial &&
+    returnPlanId &&
+    returnPlanId !== appliedReturnPlan &&
+    subscriptionOptions.some((opt) => opt.id === returnPlanId)
+  ) {
+    setAppliedReturnPlan(returnPlanId);
+    setActiveSubscriptionOption(returnPlanId);
+  }
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   // Step one chooses the start; step two picks a trial's time.
   const [step, setStep] = useState<"start" | "trial">("start");
@@ -223,6 +241,7 @@ export default function SubscriptionPricingToggle({
   // #1766 — the buyer picks a START only; the window is the first cycle and
   // the server derives it again in the consultant's zone. Shown here in the
   // viewer's zone so the summary reads in their own calendar.
+  // The picked calendar day starts at midnight in the viewer's zone.
   const firstCycle = useMemo(() => {
     if (!schedulingStartDate || !selectedOption) return null;
     return firstCycleWindow(
@@ -230,7 +249,7 @@ export default function SubscriptionPricingToggle({
         sessionsPerWeek: selectedOption.sessionsPerWeek ?? 1,
         durationInMonths: selectedOption.durationInMonths ?? 1,
       },
-      schedulingStartDate,
+      dayRangeBounds(schedulingStartDate, schedulingStartDate, timezone).start,
       timezone,
     );
   }, [schedulingStartDate, selectedOption, timezone]);
@@ -248,12 +267,8 @@ export default function SubscriptionPricingToggle({
     return { valid: true };
   }, [schedulingStartDate, todayKey]);
 
-  /** Local midnight of a calendar date, the start instant checkout derives from. */
-  const startOfDay = (day: Date) =>
-    new Date(day.getFullYear(), day.getMonth(), day.getDate());
-
   const handleChoosePlan = () => {
-    setSchedulingStartDate(startOfDay(today));
+    setSchedulingStartDate(today);
     setStartMonth(null);
     setStep("start");
     setIsDialogOpen(true);
@@ -276,7 +291,7 @@ export default function SubscriptionPricingToggle({
 
     // The end travels for the checkout URL's shape only; the server ignores it.
     handleSubscriptionBooking(selectedOption, {
-      startDate: schedulingStartDate,
+      startDate: firstCycle.start,
       endDate: firstCycle.end,
     });
 
@@ -546,7 +561,7 @@ export default function SubscriptionPricingToggle({
                         ? calendarDateKey(schedulingStartDate)
                         : null
                     }
-                    onSelect={(day) => setSchedulingStartDate(startOfDay(day))}
+                    onSelect={setSchedulingStartDate}
                     today={today}
                     isDisabled={(day) => calendarDateKey(day) < todayKey}
                     canGoBack={
@@ -564,9 +579,15 @@ export default function SubscriptionPricingToggle({
                   <div className="p-4 bg-zinc-800/50 rounded-xl border border-zinc-700/50">
                     <p className="text-sm text-zinc-500 mb-1">First cycle:</p>
                     <p className="text-white font-semibold text-lg">
-                      {format(firstCycle.start, "MMM dd, yyyy")} →{" "}
-                      {format(
+                      {formatInViewerZone(
+                        firstCycle.start,
+                        timezone,
+                        "MMM dd, yyyy",
+                      )}{" "}
+                      →{" "}
+                      {formatInViewerZone(
                         lastInstantBefore(firstCycle.end),
+                        timezone,
                         "MMM dd, yyyy",
                       )}
                     </p>

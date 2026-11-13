@@ -110,11 +110,11 @@ export function MentorshipTrialStep({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
 
-  // Back on this expert with the trial step open after sign-in (?action=trial).
+  // Back on this expert with this plan's trial step open after sign-in.
   const signInHref = useMemo(() => {
-    const returnTo = `${pathname}?action=trial`;
+    const returnTo = `${pathname}?${new URLSearchParams({ action: "trial", plan: subscriptionPlanId }).toString()}`;
     return `/auth/signin?callbackUrl=${encodeURIComponent(returnTo)}`;
-  }, [pathname]);
+  }, [pathname, subscriptionPlanId]);
 
   const handleSubmit = async () => {
     if (!session?.user?.id) {
