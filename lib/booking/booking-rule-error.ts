@@ -25,6 +25,7 @@ export type BookingRuleCode =
   | "WINDOW_DURATION_MISMATCH"
   | "SEAT_REBUY_UNSUPPORTED"
   | "NOT_ACCEPTING_BOOKINGS"
+  | "REQUEST_APPROVAL_REQUIRED"
   | "PLAN_CLIENTS_FULL"
   | "EXPERT_NOT_VERIFIED"
   | "ALREADY_REGISTERED"
@@ -64,6 +65,10 @@ export class BookingRuleError extends Error {
     this.name = "BookingRuleError";
   }
 }
+
+/** A direct 1:1 checkout refused because the expert reviews requests first. */
+export const REQUEST_APPROVAL_REQUIRED_MESSAGE =
+  "This expert reviews requests before you pay. Send a request for this time instead. You have not been charged.";
 
 /** A subscription approved without a successful payment: a plan is paid at purchase. */
 export function subscriptionUnpaidError(): BookingRuleError {

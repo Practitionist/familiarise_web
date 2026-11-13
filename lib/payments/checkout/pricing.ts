@@ -5,6 +5,7 @@ import { seatHoldingParticipant } from "@/utils/scheduling-engine/occupancyPolic
 import prisma from "@/lib/prisma";
 import type { CheckoutInput } from "@/schemas/checkout";
 import {
+  type BookingMode,
   type Currency,
   type OfferingPlanStatus,
   type OrgPlanVisibility,
@@ -32,7 +33,10 @@ import {
   planSaleRefusal,
 } from "@/lib/api/plans/visibility";
 import { classEnrolmentFrom } from "@/lib/booking/class-enrolment";
-import { BookingRuleError } from "@/lib/booking/booking-rule-error";
+import {
+  BookingRuleError,
+  REQUEST_APPROVAL_REQUIRED_MESSAGE,
+} from "@/lib/booking/booking-rule-error";
 import { assertWindowMatchesPlanDuration } from "@/lib/booking/slot-validation";
 import {
   holdsSettledSeat,
@@ -112,6 +116,7 @@ export async function calculateAmountAndValidate(
         consultantProfile: {
           verificationStatus: string;
           acceptingRequests: boolean;
+          bookingMode: BookingMode;
         } | null;
       },
       label: string,
@@ -125,6 +130,16 @@ export async function calculateAmountAndValidate(
         throw new BookingRuleError(
           "NOT_ACCEPTING_BOOKINGS",
           "This expert is not taking new 1:1 bookings right now. Pick another expert, or try again later.",
+        );
+      }
+      // A review-first expert's 1:1 is requested, approved, then paid by its pay link, never bought here.
+      if (
+        validatedData.appointmentType === "CONSULTATION" &&
+        p.consultantProfile?.bookingMode === "REQUEST"
+      ) {
+        throw new BookingRuleError(
+          "REQUEST_APPROVAL_REQUIRED",
+          REQUEST_APPROVAL_REQUIRED_MESSAGE,
         );
       }
       // #1527 Q4 — new sales only. Pay-links minted for approved requests

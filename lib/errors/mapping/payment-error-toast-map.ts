@@ -15,6 +15,7 @@ import {
   type ErrorType,
 } from "../classification/payment-error-classification";
 import { PLAN_CLIENTS_FULL_MESSAGE } from "@/schemas/plan-clients";
+import { REQUEST_APPROVAL_REQUIRED_MESSAGE } from "@/lib/booking/booking-rule-error";
 
 // ============================================================================
 // Toast message definitions
@@ -199,6 +200,10 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
   [ErrorTypes.PLAN_CLIENTS_FULL]: {
     title: "This Expert Is Fully Booked",
     description: PLAN_CLIENTS_FULL_MESSAGE,
+  },
+  [ErrorTypes.REQUEST_APPROVAL_REQUIRED]: {
+    title: "This Expert Reviews Requests First",
+    description: REQUEST_APPROVAL_REQUIRED_MESSAGE,
   },
   [ErrorTypes.CURRENCY_UNSUPPORTED]: {
     title: "Currency Not Supported",
