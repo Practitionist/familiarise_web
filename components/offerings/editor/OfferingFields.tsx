@@ -35,6 +35,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Label } from "@/components/ui/label";
 import { PriceField } from "@/components/planner/components/form-fields/PriceField";
 import { LanguageLevelFields } from "@/components/planner/components/form-fields/LanguageLevelFields";
 import { LearningOutcomesField } from "@/components/planner/components/form-fields/LearningOutcomesField";
@@ -149,6 +151,8 @@ function renderControl<T extends FieldValues = FieldValues>(
       return (
         <Switch checked={!!field.value} onCheckedChange={field.onChange} />
       );
+    case "minutesChoice":
+      return <MinutesChoice spec={spec} field={field} />;
     case "image":
       return coverImage ? (
         <PlanImageUploader
@@ -171,6 +175,39 @@ function renderControl<T extends FieldValues = FieldValues>(
         />
       );
   }
+}
+
+/** A few fixed lengths as radio buttons; a stored length outside them is named until it is changed. */
+function MinutesChoice<T extends FieldValues = FieldValues>({
+  spec,
+  field,
+}: Readonly<{ spec: FieldSpec; field: ControllerRenderProps<T, never> }>) {
+  const choices = spec.minuteChoices ?? [];
+  const current = typeof field.value === "number" ? field.value : null;
+  return (
+    <div className="space-y-2">
+      <RadioGroup
+        className="flex h-9 items-center gap-4"
+        value={current === null ? "" : String(current)}
+        onValueChange={(value) => field.onChange(Number(value))}
+      >
+        {choices.map((minutes) => (
+          <div key={minutes} className="flex items-center gap-2">
+            <RadioGroupItem
+              value={String(minutes)}
+              id={`${spec.name}-${minutes}`}
+            />
+            <Label htmlFor={`${spec.name}-${minutes}`}>{minutes} minutes</Label>
+          </div>
+        ))}
+      </RadioGroup>
+      {current !== null && !choices.includes(current) && (
+        <p className="text-xs text-muted-foreground">
+          Saved as {current} minutes. Choose one of these to save changes.
+        </p>
+      )}
+    </div>
+  );
 }
 
 /** The cover-image change staged until save; absent while creating (no plan id to attach to). */

@@ -18,6 +18,7 @@ import {
   Video,
 } from "lucide-react";
 import { MAX_GROUP_SESSION_PARTICIPANTS } from "@/lib/events/capacity";
+import { TRIAL_DURATION_MINUTES } from "@/schemas/trial-length";
 import type { FieldSpec, OfferingManifest, SectionSpec } from "./manifest";
 
 /** Identity and framing. Identical for all four types. */
@@ -344,12 +345,9 @@ const trialSection: SectionSpec = {
     },
     {
       name: "trialDurationMinutes",
-      kind: "number",
-      label: "Trial length (minutes)",
-      min: 15,
-      max: 120,
-      step: 15,
-      description: "From 15 to 120 minutes.",
+      kind: "minutesChoice",
+      label: "Trial length",
+      minuteChoices: TRIAL_DURATION_MINUTES,
       span: 3,
     },
     {

@@ -41,7 +41,8 @@ export type FieldKind =
   | "languageLevel"
   | "planLength"
   | "image"
-  | "sessionTime";
+  | "sessionTime"
+  | "minutesChoice";
 
 export interface FieldSpec {
   /** react-hook-form path. */
@@ -62,6 +63,8 @@ export interface FieldSpec {
   step?: number;
   /** `select` only. */
   options?: { value: string; label: string }[];
+  /** `minutesChoice` only: the lengths offered, in minutes. */
+  minuteChoices?: readonly number[];
   /** `sessionTime` only — the sibling holding the session length in hours. */
   durationName?: string;
   /** `price` only — the sibling holding the currency code. */

@@ -6,6 +6,7 @@ import {
   isProfanityFree,
 } from "@/utils/contentValidation";
 import { experienceValidation } from "./shared";
+import { TRIAL_DURATION_MINUTES } from "./trial-length";
 import { MAX_GROUP_SESSION_PARTICIPANTS } from "@/lib/events/capacity";
 import { isOnEventLattice } from "@/lib/booking/event-time-rules";
 
@@ -368,11 +369,12 @@ export const SubscriptionPlanSchema = z.object({
   price: priceSchema,
   priceCurrency: z.nativeEnum(Currency).default(Currency.INR),
   trialEnabled: z.boolean().optional(),
+  // Checked on write only: a stored length outside the two keeps booking as it is.
   trialDurationMinutes: z
     .number()
-    .int("Trial duration must be a whole number of minutes")
-    .min(15, "Trial duration must be at least 15 minutes")
-    .max(120, "Trial duration cannot exceed 120 minutes")
+    .refine((m) => TRIAL_DURATION_MINUTES.some((allowed) => allowed === m), {
+      message: "A trial is 30 or 60 minutes.",
+    })
     .optional(),
   // ₹0 stays allowed — the plan form adds deliberate friction instead.
   trialPriceInPaise: z
