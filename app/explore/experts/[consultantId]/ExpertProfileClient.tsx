@@ -48,8 +48,6 @@ interface ExpertProfileClientProps {
   userDetails: TUserWithProfessionalBackground;
   reviews: TPublicConsultantReview[];
   reviewTracks: TReviewTrackPresence;
-  /** Strikes in the last 90 days, only when they reach the public threshold. */
-  reliabilityStrikes: number | null;
   digitalProducts: PublicProductCard[];
 }
 
@@ -58,7 +56,6 @@ export function ExpertProfileClient({
   userDetails,
   reviews,
   reviewTracks,
-  reliabilityStrikes,
   digitalProducts,
 }: ExpertProfileClientProps) {
   const searchParams = useSearchParams();
@@ -477,7 +474,6 @@ export function ExpertProfileClient({
                 userDetails={userDetails}
                 consultantDetails={consultantDetails}
                 reviewCount={consultantDetails._count.reviews}
-                reliabilityStrikes={reliabilityStrikes}
               />
 
               <div id="about" className={PROFILE_SECTION_SCROLL_MARGIN}>

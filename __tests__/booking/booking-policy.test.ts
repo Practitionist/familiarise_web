@@ -130,12 +130,12 @@ jest.mock("../../lib/email/senders/booking", () => ({
 
 import { returnSessionToPlan } from "@/lib/booking/session-return";
 import { subscriptionEntitlement } from "@/lib/booking/entitlement";
-import { recordExpertStrike } from "@/lib/booking/expert-reliability";
-import { POST as returnRoute } from "@/app/api/appointments/[appointmentId]/occurrences/[occurrenceId]/return/route";
 import {
-  showsReliabilityNotice,
-  strikeWindowStart,
-} from "@/lib/booking/expert-reliability-rules";
+  readOwnStrikes,
+  recordExpertStrike,
+} from "@/lib/booking/expert-reliability";
+import { POST as returnRoute } from "@/app/api/appointments/[appointmentId]/occurrences/[occurrenceId]/return/route";
+import { strikeWindowStart } from "@/lib/booking/expert-reliability-rules";
 import { NextRequest } from "next/server";
 
 const run = () =>
@@ -267,9 +267,7 @@ describe("the return route", () => {
 });
 
 describe("expert reliability strikes", () => {
-  it("shows the profile notice only at 3 or more strikes in 90 days", () => {
-    expect(showsReliabilityNotice(2)).toBe(false);
-    expect(showsReliabilityNotice(3)).toBe(true);
+  it("counts strikes over the last 90 days", () => {
     expect(strikeWindowStart(NOW)).toEqual(
       new Date(NOW.getTime() - 90 * 24 * HOUR),
     );
@@ -299,6 +297,30 @@ describe("expert reliability strikes", () => {
       }),
     });
   });
+  it("reads the expert's own record newest first, in the expert's words", async () => {
+    const strike = (strike: string, at: string) => ({
+      createdAt: new Date(at),
+      context: { strike, appointmentId: "appt-1", occurrenceIds: ["occ-1"] },
+    });
+    const db = {
+      systemEvent: {
+        findMany: jest.fn(async () => [
+          strike("CONSULTANT_NO_SHOW", "2026-10-30T10:00:00Z"),
+          strike("EXPERT_CANCEL", "2026-10-20T10:00:00Z"),
+        ]),
+      },
+      platformIncident: { findMany: jest.fn(async () => []) },
+    } as never;
+    await expect(readOwnStrikes("cp-1", { now: NOW, db })).resolves.toEqual({
+      windowDays: 90,
+      count: 2,
+      recent: [
+        { at: "2026-10-30T10:00:00.000Z", cause: "CONSULTANT_NO_SHOW" },
+        { at: "2026-10-20T10:00:00.000Z", cause: "EXPERT_CANCEL" },
+      ],
+    });
+  });
+
   it("records the judged occurrence on a no-show strike", async () => {
     const create = jest.fn(async () => ({}));
     await recordExpertStrike({ systemEvent: { create } } as never, {

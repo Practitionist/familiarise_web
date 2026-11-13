@@ -46,9 +46,7 @@ export function ExpertStrikesCard() {
             <span>
               {row.name ?? row.consultantProfileId} · {row.strikes} strike
               {row.strikes === 1 ? "" : "s"}
-              {row.strikes >= EXPERT_STRIKE_THRESHOLD
-                ? " · shown on profile"
-                : ""}
+              {row.strikes >= EXPERT_STRIKE_THRESHOLD ? " · needs review" : ""}
             </span>
             {row.lastStrikeAt && (
               <span className="text-muted-foreground">

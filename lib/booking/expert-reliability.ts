@@ -8,8 +8,10 @@ import { z } from "zod";
 
 import prisma, { type Tx } from "@/lib/prisma";
 import {
+  EXPERT_STRIKE_WINDOW_DAYS,
   strikeWindowStart,
   type ExpertStrikeReviewRow,
+  type OwnStrikes,
 } from "./expert-reliability-rules";
 
 const PREFIX = "expert-reliability:";
@@ -159,6 +161,40 @@ export async function countExpertStrikes(
   });
   if (rows.length === 0) return 0;
   return (await countableStrikes(db, rows, since)).length;
+}
+
+const ownStrikeCauseSchema = z.object({
+  strike: z.enum(["EXPERT_CANCEL", "CONSULTANT_NO_SHOW"]),
+});
+const OWN_RECENT_LIMIT = 10;
+
+/** The expert's own strikes in the window, newest first, less those a declared incident voided. */
+export async function readOwnStrikes(
+  consultantProfileId: string,
+  opts: { now?: Date; db?: StrikeReader } = {},
+): Promise<OwnStrikes> {
+  const db = opts.db ?? prisma;
+  const since = strikeWindowStart(opts.now ?? new Date());
+  const rows = await db.systemEvent.findMany({
+    where: {
+      correlationId: expertReliabilityCorrelationId(consultantProfileId),
+      createdAt: { gte: since },
+    },
+    orderBy: { createdAt: "desc" },
+    select: { createdAt: true, context: true },
+    take: STRIKE_READ_CAP,
+  });
+  const counted = await countableStrikes(db, rows, since);
+  return {
+    windowDays: EXPERT_STRIKE_WINDOW_DAYS,
+    count: counted.length,
+    recent: counted.slice(0, OWN_RECENT_LIMIT).flatMap((row) => {
+      const parsed = ownStrikeCauseSchema.safeParse(row.context);
+      return parsed.success
+        ? [{ at: row.createdAt.toISOString(), cause: parsed.data.strike }]
+        : [];
+    }),
+  };
 }
 
 /** The ops review list: experts with strikes in the window, most first. */
