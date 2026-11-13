@@ -177,6 +177,20 @@ export function holdingSince(
   return new Date(2 * now.getTime() - releasesAt.getTime());
 }
 
+/** A submitted 1:1 request still waiting on the expert inside its hold. */
+export function openConsultationRequestWhere(
+  consultantProfileId: string,
+  now: Date,
+): Prisma.ConsultationWhereInput {
+  return {
+    status: "PENDING",
+    bookingSource: "REQUEST_SUBMITTED",
+    consultationPlan: { consultantProfileId },
+    requestedAt: { gte: holdingSince("CONSULTATION", now) },
+    NOT: { appointment: BEING_MOVED },
+  };
+}
+
 /**
  * The request cap's count, across every tenant: real submitted requests
  * (PENDING, REQUEST_SUBMITTED, still inside their hold, not a booking being
@@ -192,13 +206,7 @@ export async function countOpenRequestsForCap(
   const [consultations, subscriptions] = await runBounded([
     () =>
       db.consultation.count({
-        where: {
-          status: "PENDING",
-          bookingSource: "REQUEST_SUBMITTED",
-          consultationPlan: { consultantProfileId },
-          requestedAt: { gte: holdingSince("CONSULTATION", now) },
-          NOT: { appointment: BEING_MOVED },
-        },
+        where: openConsultationRequestWhere(consultantProfileId, now),
       }),
     () =>
       db.subscription.count({

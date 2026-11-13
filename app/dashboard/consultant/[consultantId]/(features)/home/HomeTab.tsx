@@ -47,6 +47,7 @@ import {
 } from "../../utils/appointmentHelpers";
 
 import { ActionRequiredPanel } from "@/components/dashboard/ActionRequiredPanel";
+import { DemandBanner } from "../requests/DemandBanner";
 import { SetupChecklist } from "@/components/dashboard/SetupChecklist";
 import { deriveConsultantActionItems } from "@/lib/dashboard/action-items";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
@@ -273,6 +274,8 @@ export function HomeTab({
             heading="Needs you"
             className="space-y-2"
           />
+
+          <DemandBanner consultantId={consultantId} />
 
           {/* Main Content Grid */}
           <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
