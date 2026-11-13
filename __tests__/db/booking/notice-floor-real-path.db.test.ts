@@ -5,32 +5,12 @@
  * session far ahead. The shorter notice they gave when moving it is the notice
  * that prices the cancel.
  */
+import "./harness-cancel-route";
+import { sessionUser } from "./harness-session";
 import { NextRequest } from "next/server";
 import prisma from "../../../lib/prisma";
 import { HOUR_MS, seedConsultee, seedHost, seedOneToOne } from "./harness";
 import { publishEveryHour } from "./harness-host";
-
-const sessionUser = { current: null as null | Record<string, unknown> };
-jest.mock("../../../lib/auth-helpers", () => ({
-  ...jest.requireActual("../../../lib/auth-helpers"),
-  requireApiAuth: async () => ({ session: { user: sessionUser.current } }),
-  isPrivileged: () => false,
-}));
-jest.mock("../../../lib/rate-limit", () => ({
-  ...jest.requireActual("../../../lib/rate-limit"),
-  applyRateLimit: async () => null,
-}));
-jest.mock("../../../lib/novu", () => {
-  const noop = jest.fn(async () => []);
-  return new Proxy(
-    {},
-    { get: (_target, prop) => (prop === "__esModule" ? true : noop) },
-  );
-});
-jest.mock("../../../lib/stream/access-revocation", () => ({
-  revokeEndedSeatAccess: jest.fn(async () => undefined),
-  persistSeatRevocation: jest.fn(async () => undefined),
-}));
 
 import { POST as reschedule } from "../../../app/api/appointments/[appointmentId]/reschedule/route";
 import { POST as cancel } from "../../../app/api/appointments/[appointmentId]/cancel/route";

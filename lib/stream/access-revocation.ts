@@ -250,6 +250,8 @@ const eventPlanSelect = {
 
 function loadSeatContext(appointmentId: string) {
   return prisma.appointment.findUnique({
+    // One joined statement; the default per-relation reads cost one round trip each.
+    relationLoadStrategy: "join",
     where: { id: appointmentId },
     select: {
       deletedAt: true,
@@ -747,20 +749,43 @@ async function driveSeatRevocation(
 
 const intentNotBefore = () => new Date(Date.now() + INTENT_SWEEP_GRACE_MS);
 
+/** Writes intents through the caller's transaction at a fresh generation, which it returns. */
+async function enqueueInTx(
+  tx: Tx,
+  targets: AccessRevocationTarget[],
+): Promise<Date> {
+  const generation = intentNotBefore();
+  await enqueueStreamRevocationRetries(targets, generation, tx);
+  return generation;
+}
+
+/** One seat intent per distinct user of the appointment. */
+function seatTargets(
+  appointmentId: string,
+  userIds: string[],
+): AccessRevocationTarget[] {
+  return Array.from(new Set(userIds.filter(Boolean)), (userId) => ({
+    kind: "SEAT_ACCESS_REVOKE" as const,
+    userId,
+    planId: appointmentId,
+  }));
+}
+
 /**
  * Ends the Stream access an ended seat or booking no longer justifies: the
  * event channel, the host and presenter DMs, and every room the appointment
- * provisioned. The obligation is persisted before any lookup or vendor call and
- * driven inside the request's budget; `retry-moderation-enforcement` owns the
- * rest. Never throws.
+ * provisioned. Without the `generation` the ending transaction wrote, the
+ * obligation is persisted before any lookup or vendor call; it is driven inside
+ * the request's budget and `retry-moderation-enforcement` owns the rest. Never throws.
  */
 export async function revokeEndedSeatAccess(
   appointmentId: string,
   userIds: string[],
+  generation?: Date | null,
 ): Promise<void> {
   const ids = Array.from(new Set(userIds.filter(Boolean)));
   if (ids.length === 0) return;
-  const generation = await persistSeatRevocation(appointmentId, ids);
+  const owned = generation ?? (await persistSeatRevocation(appointmentId, ids));
   let pending: Map<string, string>;
   try {
     pending = await driveSeatRevocation(
@@ -780,7 +805,7 @@ export async function revokeEndedSeatAccess(
     "SEAT_ACCESS_REVOKE",
     appointmentId,
     ids.filter((id) => !pending.has(id)),
-    generation,
+    owned,
   );
 }
 
@@ -793,17 +818,24 @@ export async function persistSeatRevocation(
   appointmentId: string,
   userIds: string[],
 ): Promise<Date | null> {
-  const ids = Array.from(new Set(userIds.filter(Boolean)));
-  if (ids.length === 0) return null;
-  return enqueueOrReport(
-    ids.map((userId) => ({
-      kind: "SEAT_ACCESS_REVOKE" as const,
-      userId,
-      planId: appointmentId,
-    })),
-    "seat.persistRevocation",
-    { nextRetryAt: intentNotBefore() },
-  );
+  const targets = seatTargets(appointmentId, userIds);
+  if (targets.length === 0) return null;
+  return enqueueOrReport(targets, "seat.persistRevocation", {
+    nextRetryAt: intentNotBefore(),
+  });
+}
+
+/**
+ * Writes the seat revocation through the transaction that ends the seats, so both
+ * commit or roll back together. Returns the rows' generation, or null when no user is given.
+ */
+export async function persistSeatRevocationInTx(
+  tx: Tx,
+  appointmentId: string,
+  userIds: string[],
+): Promise<Date | null> {
+  const targets = seatTargets(appointmentId, userIds);
+  return targets.length === 0 ? null : enqueueInTx(tx, targets);
 }
 
 /** How long provisioning waits on Stream to take back an unsaved room's members. */
@@ -1008,9 +1040,7 @@ export async function persistRefundRevocationInTx(
   tx: Tx,
   intent: RefundRevocationIntent,
 ): Promise<Date> {
-  const generation = intentNotBefore();
-  await enqueueStreamRevocationRetries([refundTarget(intent)], generation, tx);
-  return generation;
+  return enqueueInTx(tx, [refundTarget(intent)]);
 }
 
 /**

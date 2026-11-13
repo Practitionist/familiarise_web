@@ -33,11 +33,15 @@ jest.mock("../../lib/payments/operations/refund-owed", () => ({
   driveRefundOwed: (...a: unknown[]) => driveRefundOwed(...(a as [])),
 }));
 
-const persistSeatRevocation = jest.fn(async () => undefined);
+const generation = new Date("2026-09-01T00:02:00Z");
+const persistSeatRevocationInTx = jest.fn(
+  async (..._a: unknown[]): Promise<Date | null> => generation,
+);
+const revokeEndedSeatAccess = jest.fn(async (..._a: unknown[]) => undefined);
 jest.mock("../../lib/stream/access-revocation", () => ({
-  persistSeatRevocation: (...a: unknown[]) =>
-    persistSeatRevocation(...(a as [])),
-  revokeEndedSeatAccess: jest.fn(async () => undefined),
+  persistSeatRevocationInTx: (...a: unknown[]) =>
+    persistSeatRevocationInTx(...a),
+  revokeEndedSeatAccess: (...a: unknown[]) => revokeEndedSeatAccess(...a),
 }));
 
 const joinedAt = new Date("2026-09-01T00:00:00Z");
@@ -153,13 +157,39 @@ it("stamps the refund owed in the release commit, so a crash after it is re-driv
   expect(driveRefundOwed).not.toHaveBeenCalled();
 });
 
-it("persists the seat revocation before the refund can throw", async () => {
+it("writes the seat revocation through the release transaction, so a stalled refund cannot lose it", async () => {
   slot.startsAt = inHours(30);
   refundSeat.mockRejectedValueOnce(new Error("refund stalled"));
   await expect(leave()).rejects.toThrow("refund stalled");
-  expect(persistSeatRevocation).toHaveBeenCalledWith("apt-1", ["u-1"]);
-  expect(persistSeatRevocation.mock.invocationCallOrder[0]).toBeLessThan(
-    refundSeat.mock.invocationCallOrder[0],
+  expect(persistSeatRevocationInTx).toHaveBeenCalledWith(
+    expect.objectContaining({ appointmentParticipant: expect.anything() }),
+    "apt-1",
+    ["u-1"],
+  );
+  const written = persistSeatRevocationInTx.mock.invocationCallOrder[0];
+  expect(release.mock.invocationCallOrder[0]).toBeLessThan(written);
+  expect(written).toBeLessThan(refundSeat.mock.invocationCallOrder[0]);
+  expect(revokeEndedSeatAccess).not.toHaveBeenCalled();
+});
+
+it("drives nothing when the release transaction throws after the write", async () => {
+  slot.startsAt = inHours(30);
+  jest
+    .mocked(stageSeatOpenedNotices)
+    .mockRejectedValueOnce(new Error("staging failed"));
+  await expect(leave()).rejects.toThrow("staging failed");
+  expect(persistSeatRevocationInTx).toHaveBeenCalledTimes(1);
+  expect(refundSeat).not.toHaveBeenCalled();
+  expect(revokeEndedSeatAccess).not.toHaveBeenCalled();
+});
+
+it("drives the seat row the release committed, at its generation", async () => {
+  slot.startsAt = inHours(30);
+  await leave();
+  expect(revokeEndedSeatAccess).toHaveBeenCalledWith(
+    "apt-1",
+    ["u-1"],
+    generation,
   );
 });
 

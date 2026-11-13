@@ -106,3 +106,9 @@ export const createMockUserCache = () => ({
 export const createMockRoleMapper = () => ({
   mapRoleToStream: jest.fn().mockReturnValue("user"),
 });
+
+/** A transaction's `streamRevocationRetry` delegate, for the seat intents a cancel or leave writes in its commit. */
+export const createMockRevocationRetryTable = () => ({
+  updateMany: jest.fn(async () => ({ count: 0 })),
+  createMany: jest.fn(async () => ({ count: 1 })),
+});

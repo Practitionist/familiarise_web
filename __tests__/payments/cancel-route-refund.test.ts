@@ -73,6 +73,7 @@ const txStub = {
   refund: { findMany: jest.fn().mockResolvedValue([]) },
   // An expert-side cancel of a paid booking writes a reliability strike.
   systemEvent: { create: jest.fn().mockResolvedValue({}) },
+  streamRevocationRetry: createMockRevocationRetryTable(),
   // #1851 decision 2 — an act-for-org cancel writes the org's audit row.
   orgAuditLog: { create: jest.fn().mockResolvedValue({}) },
   // transitionOccurrenceCompletion reads the from-status, then moves the cohort with
@@ -192,6 +193,7 @@ jest.mock("../../lib/enterprise/system-events", () => {
 import { POST as cancelHandler } from "@/app/api/appointments/[appointmentId]/cancel/route";
 import { RefundGatewayError } from "@/lib/payments/operations/refund";
 import { grantPlatformCancel } from "@/lib/booking/platform-cancel";
+import { createMockRevocationRetryTable } from "../fixtures/stream-mocks";
 
 const HOUR = 3_600_000;
 const APPT = "appt-1";
