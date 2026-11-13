@@ -100,7 +100,6 @@ export const RequestStatusEnum = z.enum([
   "PENDING",
   "APPROVED",
   "APPROVED_PENDING_PAYMENT",
-  "SCHEDULED",
   "COMPLETED",
   "REJECTED",
   "CANCELLED",

@@ -62,9 +62,6 @@ describe("parseRequestListQuery", () => {
         AppointmentStatus.APPROVED_PENDING_PAYMENT,
       ),
     ).toBe(true);
-    expect(APPROVAL_STATUSES_DETAIL_ONLY.has(AppointmentStatus.SCHEDULED)).toBe(
-      true,
-    );
     expect(APPROVAL_STATUSES_DETAIL_ONLY.has(AppointmentStatus.REJECTED)).toBe(
       false,
     );

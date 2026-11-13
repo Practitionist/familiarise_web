@@ -1,6 +1,6 @@
 /**
  * The exit for a consultation parked after a reschedule whose restore could
- * not land: APPROVED (or SCHEDULED), paid, every session released and none
+ * not land: APPROVED, paid, every session released and none
  * re-placed, no proposal open. If nobody places a time within 7 days of the
  * park, or by 48 h after the released session's original start (whichever is
  * first), the booking is cancelled with a full refund.
@@ -59,10 +59,7 @@ export const PARKED_CONSULTATION_PAST_START_HOURS = 48;
 /** Rows one run may cancel; the next run continues oldest first. */
 const PARKED_PER_RUN = 25;
 
-const CANCELLABLE_PARKED: AppointmentStatus[] = [
-  AppointmentStatus.APPROVED,
-  AppointmentStatus.SCHEDULED,
-];
+const CANCELLABLE_PARKED: AppointmentStatus[] = [AppointmentStatus.APPROVED];
 
 const PARK_ENDINGS: RescheduleRequestStatus[] = [
   RescheduleRequestStatus.DECLINED,

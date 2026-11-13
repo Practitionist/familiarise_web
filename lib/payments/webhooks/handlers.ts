@@ -1828,7 +1828,6 @@ const LIVE_REQUEST_STATUSES: ReadonlySet<AppointmentStatus> = new Set([
   AppointmentStatus.PENDING,
   AppointmentStatus.APPROVED_PENDING_PAYMENT,
   AppointmentStatus.APPROVED,
-  AppointmentStatus.SCHEDULED,
   AppointmentStatus.COMPLETED,
 ]);
 
@@ -2081,7 +2080,6 @@ async function confirmApprovalStatus(
       const freshStatus = fresh?.status ?? consultation.status;
       if (
         freshStatus !== AppointmentStatus.APPROVED &&
-        freshStatus !== AppointmentStatus.SCHEDULED &&
         freshStatus !== AppointmentStatus.COMPLETED
       ) {
         capturedAfterTerminal = true;

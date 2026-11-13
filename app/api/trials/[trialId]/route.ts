@@ -572,7 +572,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
         if (
           subscription.status &&
-          !["APPROVED", "SCHEDULED", "COMPLETED"].includes(subscription.status)
+          !["APPROVED", "COMPLETED"].includes(subscription.status)
         ) {
           return NextResponse.json(
             {
@@ -612,7 +612,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           !currentSub ||
           currentSub.deletedAt ||
           (currentSub.status &&
-            !["APPROVED", "SCHEDULED", "COMPLETED"].includes(currentSub.status))
+            !["APPROVED", "COMPLETED"].includes(currentSub.status))
         ) {
           subscriptionBecameInactive = true;
           return null;

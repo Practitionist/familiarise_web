@@ -43,7 +43,6 @@ export async function checkActiveAppointments(
     "PENDING",
     "APPROVED",
     "APPROVED_PENDING_PAYMENT",
-    "SCHEDULED",
   ] as const;
 
   const futureLiveOccurrence = {

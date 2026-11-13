@@ -158,7 +158,7 @@ export default async function AllocateSlotsPage({
             This request is no longer available for allocation
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            {request.status === "SCHEDULED" || request.status === "COMPLETED"
+            {request.status === "COMPLETED"
               ? "Its sessions already have times."
               : "It was cancelled, declined, or expired."}{" "}
             <a className="underline" href={backHref}>

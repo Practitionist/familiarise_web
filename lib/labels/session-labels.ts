@@ -97,11 +97,6 @@ export const APPOINTMENT_STATUS_BADGE: Record<
     className: "bg-orange-100 text-orange-900 border-orange-200",
     dotClassName: "bg-orange-500",
   },
-  SCHEDULED: {
-    label: "Scheduled",
-    className: "bg-emerald-100 text-emerald-900 border-emerald-200",
-    dotClassName: "bg-emerald-500",
-  },
   COMPLETED: {
     label: "Completed",
     className: "bg-green-100 text-green-900 border-green-200",

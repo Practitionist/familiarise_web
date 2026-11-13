@@ -109,9 +109,6 @@ function restoreTargetFor(
       return AppointmentStatus.APPROVED_PENDING_PAYMENT;
     case AppointmentStatus.APPROVED:
       return AppointmentStatus.APPROVED;
-    // An incident rebook leaves a consultation SCHEDULED; it goes back there.
-    case AppointmentStatus.SCHEDULED:
-      return AppointmentStatus.SCHEDULED;
     default:
       return null;
   }

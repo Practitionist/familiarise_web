@@ -154,7 +154,7 @@ function completableClassWhere(settled: SettledAnd) {
 
 function completableConsultationWhere(bufferTime: Date) {
   return {
-    status: { in: [AppointmentStatus.APPROVED, AppointmentStatus.SCHEDULED] },
+    status: AppointmentStatus.APPROVED,
     // A voided consultation is owed its make-up or refund first.
     appointment: {
       AND: [
@@ -169,7 +169,7 @@ function completableConsultationWhere(bufferTime: Date) {
 /** Every live session ended and decided, and no void left unsettled: otherwise plan-end settlement owns completion. */
 function completableSubscriptionWhere(settled: SettledAnd) {
   return {
-    status: { in: [AppointmentStatus.APPROVED, AppointmentStatus.SCHEDULED] },
+    status: AppointmentStatus.APPROVED,
     appointment: { AND: settled },
   } satisfies Prisma.SubscriptionWhereInput;
 }

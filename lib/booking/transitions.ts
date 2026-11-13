@@ -159,11 +159,8 @@ function liveWrapperId(
 
 //////////////////////////////////////////////// Consultation / Subscription ////////////////////////////////////////////////
 
-// PENDING is the entry state; its only legal re-entry is the payment-link
-// expiry/regeneration reset (#836). Reschedule also re-enters PENDING but
-// from the wider RESCHEDULABLE_FROM set below — that flow owns its own edge
-// because rescheduling a SCHEDULED booking back to PENDING is policy-gated
-// (24h window), not a generic transition.
+// PENDING is the entry state; its only map re-entry is the payment-link reset.
+// Reschedule re-enters PENDING from RESCHEDULABLE_FROM through its own policy-gated edge.
 export const REQUEST_ALLOWED_FROM: Record<
   AppointmentStatus,
   AppointmentStatus[]
@@ -171,10 +168,9 @@ export const REQUEST_ALLOWED_FROM: Record<
   PENDING: ["APPROVED_PENDING_PAYMENT"],
   APPROVED: ["PENDING", "APPROVED_PENDING_PAYMENT"],
   APPROVED_PENDING_PAYMENT: ["PENDING", "APPROVED"],
-  SCHEDULED: ["APPROVED", "APPROVED_PENDING_PAYMENT"],
-  COMPLETED: ["APPROVED", "SCHEDULED"],
+  COMPLETED: ["APPROVED"],
   REJECTED: ["PENDING", "APPROVED_PENDING_PAYMENT"],
-  CANCELLED: ["PENDING", "APPROVED", "APPROVED_PENDING_PAYMENT", "SCHEDULED"],
+  CANCELLED: ["PENDING", "APPROVED", "APPROVED_PENDING_PAYMENT"],
   // PR 2c (allocation-resilience money fix) — APPROVED joins EXPIRED's
   // allowed-from: a PAID subscription whose consultant never allocated any
   // session was previously immortal (no sweep cohort could touch it), leaving
@@ -191,7 +187,6 @@ export const RESCHEDULABLE_FROM: AppointmentStatus[] = [
   "PENDING",
   "APPROVED",
   "APPROVED_PENDING_PAYMENT",
-  "SCHEDULED",
 ];
 
 // Allocation re-stamps APPROVED when re-allocating an already-approved event
@@ -259,8 +254,7 @@ export const LIVE_SUBSCRIPTION_STATUSES: AppointmentStatus[] = [
   "APPROVED",
 ];
 
-// A plan is paid at checkout, so it never awaits payment, and it goes from APPROVED
-// straight to COMPLETED (SCHEDULED is the consultation's incident-rebook state).
+// A plan is paid at checkout, so it never awaits payment, and goes from APPROVED to COMPLETED.
 export const SUBSCRIPTION_ALLOWED_FROM: Record<
   AppointmentStatus,
   AppointmentStatus[]
@@ -268,7 +262,6 @@ export const SUBSCRIPTION_ALLOWED_FROM: Record<
   PENDING: [],
   APPROVED: ["PENDING"],
   APPROVED_PENDING_PAYMENT: [],
-  SCHEDULED: [],
   COMPLETED: ["APPROVED"],
   REJECTED: ["PENDING"],
   CANCELLED: ["PENDING", "APPROVED"],
@@ -299,13 +292,7 @@ export async function transitionSubscriptionRequest(
   const res = await tx.subscription.updateMany({
     where: {
       ...args.where,
-      // No fromIn widens a subscription into SCHEDULED.
-      status: {
-        in:
-          args.to === "SCHEDULED"
-            ? []
-            : (args.fromIn ?? SUBSCRIPTION_ALLOWED_FROM[args.to]),
-      },
+      status: { in: args.fromIn ?? SUBSCRIPTION_ALLOWED_FROM[args.to] },
     },
     data: { status: args.to, ...args.data },
   });

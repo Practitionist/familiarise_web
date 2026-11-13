@@ -113,13 +113,12 @@ describe("buildOccupiedAppointmentFilter", () => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe("OCCUPIED_REQUEST_STATUSES", () => {
-  it("should include PENDING, APPROVED, APPROVED_PENDING_PAYMENT, SCHEDULED", () => {
+  it("should include PENDING, APPROVED, APPROVED_PENDING_PAYMENT", () => {
     expect(OCCUPIED_REQUEST_STATUSES).toContain(AppointmentStatus.PENDING);
     expect(OCCUPIED_REQUEST_STATUSES).toContain(AppointmentStatus.APPROVED);
     expect(OCCUPIED_REQUEST_STATUSES).toContain(
       AppointmentStatus.APPROVED_PENDING_PAYMENT,
     );
-    expect(OCCUPIED_REQUEST_STATUSES).toContain(AppointmentStatus.SCHEDULED);
   });
 
   it("should NOT include terminal statuses", () => {
@@ -133,8 +132,8 @@ describe("OCCUPIED_REQUEST_STATUSES", () => {
     expect(OCCUPIED_REQUEST_STATUSES).not.toContain(AppointmentStatus.EXPIRED);
   });
 
-  it("should have exactly 4 statuses", () => {
-    expect(OCCUPIED_REQUEST_STATUSES).toHaveLength(4);
+  it("should have exactly 3 statuses", () => {
+    expect(OCCUPIED_REQUEST_STATUSES).toHaveLength(3);
   });
 });
 

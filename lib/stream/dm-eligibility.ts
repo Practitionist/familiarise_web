@@ -320,7 +320,7 @@ export type ContextAppointmentRow = {
 };
 
 const ELIGIBLE_STATUS_SET = new Set<string>(DM_ELIGIBLE_STATUSES);
-const EVENT_ELIGIBLE_STATUS_SET = new Set<string>(DM_ELIGIBLE_STATUSES);
+const EVENT_ELIGIBLE_STATUS_SET = new Set<string>(OPENABLE_EVENT_STATUSES);
 
 function isMatchingUserPair(
   userId: string,
