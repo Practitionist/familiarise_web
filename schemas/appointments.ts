@@ -128,6 +128,8 @@ const CancelRefundQuoteSchema = z.object({
   grossPaise: z.number().optional(),
   /** The credits rail restores whole; echoed back with the click. */
   creditRestoresInFull: z.boolean().optional(),
+  /** Nothing was paid, in money or referral credit: the dialog says so instead of naming a rail. */
+  freeBooking: z.boolean().optional(),
   /** A credit-funded plan with sessions held: our team returns the rest by hand. */
   creditReturnNeedsReview: z.boolean().optional(),
   /** Whether a captured payment funds the 1:1 booking; echoed back with the click. */

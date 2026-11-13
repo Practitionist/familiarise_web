@@ -14,13 +14,19 @@
 
 // Type-only: a label table has no business pulling the Prisma client runtime
 // into every consumer (it breaks jsdom tests, which have no TextEncoder).
-import type { PlanLevel } from "@prisma/client";
+import type { PlanEmailSupport, PlanLevel } from "@prisma/client";
 
 export const PLAN_LEVEL_LABEL: Record<PlanLevel, string> = {
   BEGINNER: "Beginner",
   INTERMEDIATE: "Intermediate",
   ADVANCED: "Advanced",
   ALL_LEVELS: "All levels",
+};
+
+export const PLAN_EMAIL_SUPPORT_LABEL: Record<PlanEmailSupport, string> = {
+  GENERAL: "General",
+  PRIORITY: "Priority",
+  DEDICATED: "Dedicated",
 };
 
 /** Easiest to hardest, with the catch-all last. */

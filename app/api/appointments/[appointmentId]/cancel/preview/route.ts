@@ -163,6 +163,12 @@ async function quoteIndividualBooking(
   });
 
   const fundingRail = fundingRailForIntent(bookingPayment?.paymentIntent);
+  // A `free_` intent covers a ₹0 booking and a credit-funded one; only the
+  // referral credit still held tells them apart.
+  const creditUsedPaise =
+    fundingRail === "CREDITS" && bookingPayment
+      ? await creditStillUsedPaise(prisma, bookingPayment.id)
+      : 0;
   return {
     refundPct: quote.refundPct,
     estimatedRefundPaise: quote.refundPaise,
@@ -173,9 +179,11 @@ async function quoteIndividualBooking(
     // A credit-funded plan with sessions held: the rest is returned by hand,
     // unless no referral credit is still consumed (a 100% discount).
     creditReturnNeedsReview:
-      quote.creditReturnNeedsReview &&
-      !!bookingPayment &&
-      (await creditStillUsedPaise(prisma, bookingPayment.id)) > 0,
+      quote.creditReturnNeedsReview && creditUsedPaise > 0,
+    freeBooking:
+      fundingRail === "CREDITS" &&
+      (ctx.paidPayment?.amountPaise ?? 0) === 0 &&
+      creditUsedPaise === 0,
     currency: bookingPayment?.currency ?? "INR",
     hoursUntilNextSession: ctx.hoursUntilNextSession,
     // Only true when proration actually moves the number — an untouched

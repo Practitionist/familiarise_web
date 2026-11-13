@@ -29,6 +29,7 @@ import {
   shownQuoteBody,
   type ShownCancelQuote,
 } from "@/lib/appointments/cancel-requote";
+import { FREE_BOOKING_REFUND_LINE } from "@/lib/appointments/payment-display";
 import { fetchWithIdentity } from "@/lib/auth/identity-header";
 import {
   rescheduleTimesTaken,
@@ -120,9 +121,10 @@ type CancelRefund = {
   rail?: "GATEWAY" | "INTERNAL" | "CREDITS";
 } | null;
 
-function describeRefund(refund: CancelRefund): string {
+function describeRefund(refund: CancelRefund, freeBooking = false): string {
   // A free booking has no money to speak about.
   if (!refund) return "";
+  if (freeBooking) return FREE_BOOKING_REFUND_LINE;
 
   // Branch on what the route SAYS happened, never on the amount: zero is
   // equally "the policy owes nothing", "the balance was already exhausted" and
@@ -395,7 +397,7 @@ export function useEventActions({
         title: "Appointment cancelled",
         description: [
           `Your ${type.toLowerCase()} "${title}" has been cancelled.`,
-          describeRefund(data.refund ?? null),
+          describeRefund(data.refund ?? null, quote?.freeBooking),
         ]
           .filter(Boolean)
           .join(" "),

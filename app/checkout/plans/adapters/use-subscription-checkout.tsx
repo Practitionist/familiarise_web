@@ -5,6 +5,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { CancellationPolicyNote } from "@/components/booking/CancellationPolicyNote";
 import { Separator } from "@/components/ui/separator";
+import {
+  PLAN_EMAIL_SUPPORT_LABEL,
+  planLevelLabel,
+} from "@/lib/labels/plan-labels";
 import { firstCycleWindow, lastInstantBefore } from "@/lib/booking/entitlement";
 import {
   planDurationText,
@@ -301,13 +305,13 @@ export function useSubscriptionCheckout(
           {plan?.totalHours || computedSessions * sessionDurationInHours} hours
         </CheckoutDetailRow>
         <CheckoutDetailRow label="Email Support">
-          {plan?.emailSupport || "General"}
+          {PLAN_EMAIL_SUPPORT_LABEL[plan?.emailSupport ?? "GENERAL"]}
         </CheckoutDetailRow>
         <CheckoutDetailRow label="Language">
           {plan?.language || "English"}
         </CheckoutDetailRow>
         <CheckoutDetailRow label="Level">
-          {plan?.level || "Beginner"}
+          {planLevelLabel(plan?.level ?? "BEGINNER")}
         </CheckoutDetailRow>
         <CheckoutDetailRow label="Prerequisites">
           {plan?.prerequisites || "None"}
@@ -329,7 +333,10 @@ export function useSubscriptionCheckout(
         </li>
         <li>{sessionsPerWeek} sessions per week</li>
         <li>{sessionDurationInHours} hour sessions</li>
-        <li>{plan?.emailSupport || "General"} email support</li>
+        <li>
+          {PLAN_EMAIL_SUPPORT_LABEL[plan?.emailSupport ?? "GENERAL"]} email
+          support
+        </li>
         <li>Learning materials</li>
       </>
     ),
