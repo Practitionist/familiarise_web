@@ -71,7 +71,7 @@ export function TrialRescheduleClient({
         undefined,
         atoms,
         undefined,
-        undefined,
+        zone.zone,
         submissionKeyFor(atoms),
       )
       .then((moved) => {
