@@ -467,7 +467,10 @@ export function AppointmentDetailClient({
     )
     .map((item) =>
       item.key === "cancel" && !postApproval
-        ? { ...item, label: "Withdraw request" }
+        ? {
+            ...item,
+            label: vm.kind === "TRIAL" ? "Cancel trial" : "Withdraw request",
+          }
         : item,
     );
   const heldCount = detail.appointment.occurrences.filter(
