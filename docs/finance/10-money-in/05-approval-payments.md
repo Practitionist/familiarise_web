@@ -8,11 +8,11 @@ last-reviewed: 2026-10-23
 
 # Approval payments
 
-Some bookings are paid after the expert says yes. A buyer sends a request for a consultation, or a trial is accepted, and only then does the buyer get a pay link. A subscription plan is always paid at purchase and never gets one. This page explains how that link is minted without ever leaving an order and a row out of step, how long it lives, and how an unpaid approval ends. Direct checkout, where the buyer pays first, is in [checkout and pricing](01-checkout-and-pricing.md); both flows end in the same confirmation path ([capture confirmation](02-capture-confirmation-and-webhooks.md)).
+Some bookings are paid after the expert says yes. A buyer sends a request for a consultation, or a trial is accepted, and only then does the buyer get a pay link. A subscription plan never gets one: a paid plan is charged at checkout, a free plan needs no charge, and approving or allocating a subscription that has no successful payment is refused with `SUBSCRIPTION_UNPAID`. This page explains how that link is minted without ever leaving an order and a row out of step, how long it lives, and how an unpaid approval ends. Direct checkout, where the buyer pays first, is in [checkout and pricing](01-checkout-and-pricing.md); both flows end in the same confirmation path ([capture confirmation](02-capture-confirmation-and-webhooks.md)).
 
 ## 1. The shape of the flow
 
-An approval can land in two places. A request whose booking already carries a `SUCCEEDED` payment, or whose plan is free, goes straight to `APPROVED`. Any other request goes to `APPROVED_PENDING_PAYMENT` and mints a pay order after the approval commits. The predicates for both arms live in `lib/booking/approve-request.ts` and ride inside the compare-and-swap `WHERE` of the approving write, so an approval can never confirm a booking nobody paid for. Every writer that approves (the detail `PATCH` routes, the allocation handler and the allocation page) calls `mintApprovalPaymentAfterCommit` afterwards.
+A consultation approval can land in two places. A request whose booking already carries a `SUCCEEDED` payment, or whose plan is free, goes straight to `APPROVED`. Any other consultation request goes to `APPROVED_PENDING_PAYMENT` and mints a pay order after the approval commits. A subscription approval only ever lands in `APPROVED`. The predicates for both arms live in `lib/booking/approve-request.ts` and ride inside the compare-and-swap `WHERE` of the approving write, so an approval can never confirm a booking nobody paid for. Every writer that approves a consultation (the detail `PATCH` route, the allocation handler and the allocation page) calls `mintApprovalPaymentAfterCommit` afterwards.
 
 ```mermaid
 stateDiagram-v2

@@ -34,7 +34,10 @@ import {
   stampRejectionRefundOwed,
 } from "@/lib/booking/rejection-refund";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
-import { BookingRuleError } from "@/lib/booking/booking-rule-error";
+import {
+  BookingRuleError,
+  subscriptionUnpaidError,
+} from "@/lib/booking/booking-rule-error";
 import { assertNoLiveCheckoutHold } from "@/lib/booking/request-cohort";
 import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
 import { isExclusionViolation } from "@/lib/db/pg-errors";
@@ -407,10 +410,7 @@ export async function PATCH(
                 where: { id: subscriptionId, ...SETTLED_SUBSCRIPTION },
               });
               if (settled === 0) {
-                throw new BookingRuleError(
-                  "SUBSCRIPTION_UNPAID",
-                  "This plan is paid at purchase — the request has no successful payment.",
-                );
+                throw subscriptionUnpaidError();
               }
               // Confirm existing tentative sessions. RESCHEDULED rows keep their
               // ORIGINAL startsAt; flipping them re-confirms the time the

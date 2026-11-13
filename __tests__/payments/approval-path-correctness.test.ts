@@ -89,10 +89,7 @@ describe("no gateway call inside the approval transaction", () => {
     expect(src).toContain("needsLinkRetry");
   });
 
-  it("a plan is paid at purchase: its approval never mints a pay-link", () => {
-    expect(subscriptionsRoute).not.toContain("mintApprovalPaymentAfterCommit");
-    expect(subscriptionsRoute).not.toContain("needsLinkRetry");
-  });
+  // A plan never mints: pinned by behaviour in subscription-approval-no-pay-link.test.ts.
 });
 
 describe("#1165 — approval gateway unified on RAZORPAY", () => {
