@@ -2,6 +2,7 @@ import type { RescheduleInitiatorRole } from "@prisma/client";
 import type { Session } from "@/lib/auth";
 import { resolveEventHostActor } from "@/lib/auth-helpers";
 import { isOrgAdminOfAppointment } from "@/lib/booking/org-actor";
+import { isSuspendedInFundingOrg } from "@/lib/enterprise/suspended-member-sessions";
 
 /** The booking fields an open reschedule's side check reads. */
 export const RESCHEDULE_SIDE_APPOINTMENT_SELECT = {
@@ -29,6 +30,16 @@ type SideAppointment = {
     consulteeProfile: { userId: string };
   } | null;
 };
+
+function eventOf(appointment: SideAppointment) {
+  if (appointment.consultationId) {
+    return { type: "consultation" as const, id: appointment.consultationId };
+  }
+  if (appointment.subscriptionId) {
+    return { type: "subscription" as const, id: appointment.subscriptionId };
+  }
+  return null;
+}
 
 export function consulteeUserIdOf(
   appointment: SideAppointment | null | undefined,
@@ -60,12 +71,25 @@ export async function actsForRescheduleSide(
       session.user.consultantProfileId === appointment.trial.consultantProfileId
     );
   }
-  const event = appointment.consultationId
-    ? { type: "consultation" as const, id: appointment.consultationId }
-    : appointment.subscriptionId
-      ? { type: "subscription" as const, id: appointment.subscriptionId }
-      : null;
+  const event = eventOf(appointment);
   if (!event) return false;
-  const host = await resolveEventHostActor(session, event.type, event.id);
+  // Judged as a party only: without the role, a STAFF or ADMIN expert is still
+  // the expert, and a non-party operator answers null rather than "staff".
+  const host = await resolveEventHostActor(
+    { user: { ...session.user, role: null } },
+    event.type,
+    event.id,
+  );
   return host === "consultant" || host === "host-org";
+}
+
+/** The booking's learner is suspended in the organisation funding it, so moves nothing. */
+export async function isSuspendedLearnerOf(
+  appointment: SideAppointment | null | undefined,
+  userId: string,
+): Promise<boolean> {
+  return (
+    userId === consulteeUserIdOf(appointment) &&
+    isSuspendedInFundingOrg(userId, appointment?.organizationId)
+  );
 }

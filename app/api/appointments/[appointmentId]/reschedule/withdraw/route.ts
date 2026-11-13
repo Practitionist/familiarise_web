@@ -10,8 +10,10 @@ import { apiError } from "@/lib/errors";
 import { withdrawRescheduleRequest } from "@/lib/booking/reschedule-withdraw";
 import {
   actsForRescheduleSide,
+  isSuspendedLearnerOf,
   RESCHEDULE_SIDE_APPOINTMENT_SELECT,
 } from "@/lib/booking/reschedule-side";
+import { membershipSuspendedResponse } from "@/lib/enterprise/suspended-member-sessions";
 import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
 import {
   AppointmentBusyError,
@@ -101,6 +103,11 @@ export async function POST(
         },
         { status: 403 },
       );
+    }
+
+    // A suspended learner on an org-funded booking moves nothing, as on open and respond.
+    if (await isSuspendedLearnerOf(open.appointment, session.user.id)) {
+      return membershipSuspendedResponse();
     }
 
     const result = await withdrawRescheduleRequest({

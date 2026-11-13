@@ -4,7 +4,8 @@
 
 /**
  * Only the initiator withdraws an open reschedule, and only while they still
- * act for the side they opened it from.
+ * act for the side they opened it from: an expert whose account is STAFF is
+ * still the expert, and a learner suspended in the funding org moves nothing.
  */
 
 const caller = {
@@ -29,7 +30,24 @@ const open = {
     },
   },
 };
-const mockHostActor = jest.fn();
+const hostOrgOperators = new Set<string>();
+const mockSuspended = jest.fn(async () => false);
+// The real helper answers "staff" for a privileged role before it looks at the plan.
+const mockHostActor = jest.fn(
+  async (session: {
+    user: {
+      id: string;
+      role: string | null;
+      consultantProfileId: string | null;
+    };
+  }) => {
+    if (session.user.role === "ADMIN" || session.user.role === "STAFF") {
+      return "staff";
+    }
+    if (session.user.consultantProfileId === "cp-1") return "consultant";
+    return hostOrgOperators.has(session.user.id) ? "host-org" : null;
+  },
+);
 const mockWithdraw = jest.fn(async () => ({ withdrawn: true }));
 
 jest.mock("../../lib/prisma", () => ({
@@ -40,7 +58,13 @@ jest.mock("../../lib/prisma", () => ({
 }));
 jest.mock("../../lib/auth-helpers", () => ({
   requireApiAuth: jest.fn(async () => ({ session: { user: caller.current } })),
-  resolveEventHostActor: (...a: unknown[]) => mockHostActor(...a),
+  resolveEventHostActor: (...a: Parameters<typeof mockHostActor>) =>
+    mockHostActor(...a),
+}));
+jest.mock("../../lib/enterprise/suspended-member-sessions", () => ({
+  isSuspendedInFundingOrg: (...a: unknown[]) => mockSuspended(...(a as [])),
+  membershipSuspendedResponse: () =>
+    Response.json({ code: "MEMBERSHIP_SUSPENDED" }, { status: 403 }),
 }));
 jest.mock("../../lib/booking/org-actor", () => ({
   isOrgAdminOfAppointment: jest.fn(async () => false),
@@ -80,16 +104,17 @@ beforeEach(() => {
     initiatedById: "u-ops",
     initiatorRole: "CONSULTANT",
   };
+  hostOrgOperators.clear();
+  mockSuspended.mockResolvedValue(false);
 });
 
 it("lets a host-org operator who still holds the role withdraw", async () => {
-  mockHostActor.mockResolvedValue("host-org");
+  hostOrgOperators.add("u-ops");
   expect((await withdraw()).status).toBe(200);
   expect(mockWithdraw).toHaveBeenCalled();
 });
 
 it("refuses an initiator who has since left the host org", async () => {
-  mockHostActor.mockResolvedValue(null);
   const res = await withdraw();
   expect(res.status).toBe(403);
   expect((await res.json()).code).toBe("NO_LONGER_A_PARTY");
@@ -117,5 +142,38 @@ it("answers 404 to anyone but the initiator", async () => {
     consultantProfileId: null,
   };
   expect((await withdraw()).status).toBe(404);
+  expect(mockWithdraw).not.toHaveBeenCalled();
+});
+
+it.each(["STAFF", "ADMIN"])(
+  "lets the expert whose account is %s withdraw their own proposal",
+  async (role) => {
+    caller.current = { id: "u-ops", role, consultantProfileId: "cp-1" };
+    expect((await withdraw()).status).toBe(200);
+    expect(mockWithdraw).toHaveBeenCalled();
+  },
+);
+
+it("refuses a non-party STAFF initiator", async () => {
+  caller.current = { id: "u-ops", role: "STAFF", consultantProfileId: null };
+  expect((await withdraw()).status).toBe(403);
+  expect(mockWithdraw).not.toHaveBeenCalled();
+});
+
+it("refuses a buyer suspended in the organisation funding the booking", async () => {
+  caller.current = {
+    id: "u-buyer",
+    role: "CONSULTEE",
+    consultantProfileId: null,
+  };
+  open.current = {
+    ...open.current,
+    initiatedById: "u-buyer",
+    initiatorRole: "CONSULTEE",
+  };
+  mockSuspended.mockResolvedValue(true);
+  const res = await withdraw();
+  expect(res.status).toBe(403);
+  expect((await res.json()).code).toBe("MEMBERSHIP_SUSPENDED");
   expect(mockWithdraw).not.toHaveBeenCalled();
 });
