@@ -142,3 +142,12 @@ it("clears a pick a later read shows taken, and says so", () => {
     screen.getByRole("button", { name: "Hide taken times" }),
   ).toHaveAttribute("aria-expanded", "true");
 });
+
+it("drops the pick when another day is chosen", () => {
+  const picks: (SingleTimeValue | null)[] = [];
+  render(<Harness onPick={(v) => picks.push(v)} />);
+  fireEvent.click(time(/^9:30 am to 10:30 am, free/));
+  expect(picks.at(-1)).not.toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: /\b5 November/ }));
+  expect(picks.at(-1)).toBeNull();
+});

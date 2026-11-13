@@ -390,13 +390,17 @@ export function SingleTimePicker({
       ...(option.window ? { window: option.window } : {}),
     });
   };
+  // A pick belongs to the day on screen; moving to another day or month drops it.
   const changeMonth = (target: Date) => {
     setShownMonth(monthStartOf(target));
     setPickedKey(null);
+    if (value) onChange(null);
   };
   const selectDay = (day: Date) => {
-    setPickedKey(calendarDateKey(day));
+    const key = calendarDateKey(day);
+    setPickedKey(key);
     if (!sameMonth(day, month)) setShownMonth(monthStartOf(day));
+    if (value && key !== valueDayKey) onChange(null);
   };
 
   if (!mounted) {
