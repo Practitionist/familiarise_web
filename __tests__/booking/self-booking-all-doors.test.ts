@@ -83,6 +83,7 @@ const mockTrialCount = jest.fn(async () => 0);
 const mockProfile = {
   id: "cp_1",
   acceptingRequests: true,
+  bookingMode: "REQUEST" as "REQUEST" | "INSTANT",
   maxOpenRequests: null as number | null,
   user: { id: "user_consultant", name: "Olivia" },
 };
