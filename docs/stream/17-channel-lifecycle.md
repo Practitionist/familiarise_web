@@ -264,7 +264,7 @@ It builds the expected-set from:
 
 1. **Webinars (`getWebinarIdsForUser`)**: Active webinars (`OPENABLE_EVENT_STATUSES`) not past retention where the user is the host (`webinarPlan.consultantProfile.userId`), an `ACCEPTED` `PlanCollaborator`, or a live `AppointmentParticipant`.
 2. **Classes (`getClassIdsForUser`)**: Active classes (`OPENABLE_EVENT_STATUSES`) not past retention where the user is the host (`classPlan.consultantProfile.userId`), an `ACCEPTED` `PlanCollaborator`, or a live `AppointmentParticipant`.
-3. **Direct Messages (`getDmPairsForUser`)**: Canonical `dm-` / `dmo-` channel IDs for every consultant ↔ consultee pair linked by a consultation or subscription in `DM_ELIGIBLE_STATUSES` (`APPROVED`, `SCHEDULED`, `COMPLETED`) or a webinar/class in `OPENABLE_EVENT_STATUSES` (`SCHEDULED`, `COMPLETED`). It applies the same trial exclusion as `canDirectMessage`, so a trial never keeps a DM in the expected set. The sync never creates a DM; it only keeps or removes them.
+3. **Direct Messages (`getDmPairsForUser`)**: Canonical `dm-` / `dmo-` channel IDs for every consultant ↔ consultee pair linked by a consultation or subscription in `DM_ELIGIBLE_STATUSES` (`APPROVED`, `COMPLETED`) or a webinar/class in `OPENABLE_EVENT_STATUSES` (`SCHEDULED`, `COMPLETED`). It applies the same trial exclusion as `canDirectMessage`, so a trial never keeps a DM in the expected set. The sync never creates a DM; it only keeps or removes them.
 4. **Collaborator channels (`collab-`)**: The `collab-{webinar|class}-{planId}` channel of every plan the user hosts or holds an `ACCEPTED` collaboration on, plus the presenter DM pairs those collaborations imply.
 
 Excluding events where `isPastRetention` is true prevents resurrection: Postgres

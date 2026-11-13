@@ -69,13 +69,13 @@ Five other sweeps keep their cohorts moving past rows they cannot finish. `clean
 
 **Records affected**:
 
-| Entity       | Source Statuses         | Target Status | Criteria                                                                   |
-| ------------ | ----------------------- | ------------- | -------------------------------------------------------------------------- |
-| Webinar      | `SCHEDULED`             | `COMPLETED`   | All slots ended > 1h ago                                                   |
-| Class        | `SCHEDULED`             | `COMPLETED`   | All slots across all appointments ended > 1h ago; stamps class-end refunds |
-| Consultation | `APPROVED`, `SCHEDULED` | `COMPLETED`   | All slots ended > 1h ago, unless the consultant never joined (see below)   |
-| Subscription | `APPROVED`              | `COMPLETED`   | All slots across all appointments ended > 1h ago                           |
-| Trial        | `SCHEDULED`             | `COMPLETED`   | All slots ended > 1h ago; also sets `completedAt`                          |
+| Entity       | Source Statuses | Target Status | Criteria                                                                   |
+| ------------ | --------------- | ------------- | -------------------------------------------------------------------------- |
+| Webinar      | `SCHEDULED`     | `COMPLETED`   | All slots ended > 1h ago                                                   |
+| Class        | `SCHEDULED`     | `COMPLETED`   | All slots across all appointments ended > 1h ago; stamps class-end refunds |
+| Consultation | `APPROVED`      | `COMPLETED`   | All slots ended > 1h ago, unless the consultant never joined (see below)   |
+| Subscription | `APPROVED`      | `COMPLETED`   | All slots across all appointments ended > 1h ago                           |
+| Trial        | `SCHEDULED`     | `COMPLETED`   | All slots ended > 1h ago; also sets `completedAt`                          |
 
 **The consultant no-show handoff (#1504).** A consultation that the consultant never joined is not this job's to close. The only path that cancels such a booking and refunds the consultee in full is the no-show detector described in section g, and that detector only considers bookings that are still `APPROVED` or `SCHEDULED`. Because this job's buffer is one hour and the detector's grace window is two, this job used to reach every unattended consultation first and mark it `COMPLETED`, which removed it from the detector's candidate set permanently; the platform's promised refund could therefore never fire in production.
 

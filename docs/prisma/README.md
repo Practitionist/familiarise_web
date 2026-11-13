@@ -133,6 +133,19 @@ currently hold:
   `prod` re-breaks the SLA sweep, the privacy export and staff support
   metrics.** Tracked in #2271. This is why `npm run db:preflight` still refuses
   a push: correctly.
+- **`knownDivergences` — the four booking enum swaps of the lifecycle PR**
+  (`DROP TYPE "public"."<X>Status_old"` for `ClassStatus`, `WebinarStatus`,
+  `RequestStatus` and `TrialStatus`). The branch removes `IN_PROGRESS` from
+  webinars and classes, `SCHEDULED` from consultations and plans, and `PENDING`
+  and `REJECTED` from trials, but `origin/prod` still filters on `IN_PROGRESS`
+  and creates trials as `PENDING`, so the swap waits for the release. That pull
+  request therefore merges **without a push**; until the reconcile push that
+  follows the `dev` → `prod` promotion, the database keeps the extra enum values
+  and the `Trial.status` default of `PENDING`. The new code must never meet a row
+  holding a removed value: on 2026-11-13 no row held one (the four webinars,
+  three classes and two trials that did were moved first), and the released code
+  writes none. Move the four entries to `destructiveStatementsAllowed` once the
+  release is on prod, then preflight, push, sidecars, assert.
 - **`destructiveStatementsAllowed` — the pre-#2041 recording-storage columns and
   their enum, plus six indexes the schema no longer declares** (13 statements).
   No schema declares them and no code reads them, so they are dead and a push

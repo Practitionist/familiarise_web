@@ -268,7 +268,7 @@ sequenceDiagram
 
     rect rgb(240, 230, 255)
         Note over DB: Auto-complete pass (every 30 minutes)
-        DB->>DB: Find APPROVED/SCHEDULED consultations<br/>where all slots ended > 1 hour ago
+        DB->>DB: Find APPROVED consultations<br/>where all slots ended > 1 hour ago
         DB->>DB: UPDATE Consultation status = COMPLETED
     end
 ```
@@ -375,7 +375,7 @@ sequenceDiagram
 
     rect rgb(240, 230, 255)
         Note over DB: Auto-complete pass (every 30 minutes)
-        DB->>DB: Find APPROVED/SCHEDULED subscriptions<br/>where ALL appointments' ALL slots ended > 1hr ago
+        DB->>DB: Find APPROVED subscriptions<br/>where ALL appointments' ALL slots ended > 1hr ago
         DB->>DB: UPDATE Subscription status = COMPLETED
     end
 ```
@@ -934,9 +934,7 @@ stateDiagram-v2
     APPROVED --> COMPLETED: Auto-complete after every session ended + 1 hour
     APPROVED --> CANCELLED: Either party cancels
 
-    COMPLETED --> SCHEDULED: Incident rebook reopens a voided consultation
-    SCHEDULED --> COMPLETED: Auto-complete after the rebooked session
-    SCHEDULED --> CANCELLED: Either party cancels
+    COMPLETED --> APPROVED: Incident rebook reopens a voided consultation
 
     COMPLETED --> [*]
     REJECTED --> [*]
@@ -946,7 +944,7 @@ stateDiagram-v2
 
 **Enum values** (from `prisma/schema.prisma`): `PENDING`, `APPROVED`, `APPROVED_PENDING_PAYMENT`, `SCHEDULED`, `COMPLETED`, `REJECTED`, `CANCELLED`, `EXPIRED`.
 
-**Important nuance for subscriptions**: a plan is paid at checkout and stays `PENDING` after the capture; the capture moves no plan status. The move to `APPROVED` happens when the consultant places the first cycle (`allocate()`). A plan never enters `APPROVED_PENDING_PAYMENT` or `SCHEDULED` (`SUBSCRIPTION_ALLOWED_FROM`). A consultation is never moved from `APPROVED` to `SCHEDULED` either: `SCHEDULED` is written only by the incident rebook (`reopenBooking` in `lib/booking/incident-rebook.ts`), which reopens a `COMPLETED` consultation whose session a declared platform incident voided.
+**Important nuance for subscriptions**: a plan is paid at checkout and stays `PENDING` after the capture; the capture moves no plan status. The move to `APPROVED` happens when the consultant places the first cycle (`allocate()`). A plan never enters `APPROVED_PENDING_PAYMENT` (`SUBSCRIPTION_ALLOWED_FROM`). Neither a consultation nor a plan has a `SCHEDULED` status: a confirmed booking is `APPROVED` until it completes, and the incident rebook (`reopenBooking` in `lib/booking/incident-rebook.ts`) moves a `COMPLETED` consultation whose session a declared platform incident voided back to `APPROVED`.
 
 ### 8b. TrialStatus
 
@@ -1217,13 +1215,13 @@ The auto-complete cron (`autoCompleteAppointments()`) runs five separate queries
 | ------------------------- | ---------------------------------------------------------------------------- | ------------------- | ------------------ |
 | `completeWebinars()`      | SCHEDULED webinars where every slot's endsAt < bufferTime                    | Status -> COMPLETED | None               |
 | `completeClasses()`       | SCHEDULED classes where every appointment's every slot's endsAt < bufferTime | Status -> COMPLETED | None               |
-| `completeConsultations()` | APPROVED or SCHEDULED consultations where every slot's endsAt < bufferTime   | status -> COMPLETED | None               |
+| `completeConsultations()` | APPROVED consultations where every slot's endsAt < bufferTime                | status -> COMPLETED | None               |
 | `completeSubscriptions()` | APPROVED subscriptions whose entitlement is used up                          | status -> COMPLETED | None               |
 | `completeTrials()`        | SCHEDULED trials where every slot's endsAt < bufferTime                      | status -> COMPLETED | Sets `completedAt` |
 
 **Buffer time**: 1 hour. The reason for the buffer is to give participants time for post-session activities (filling feedback forms, downloading materials) before the system considers the session complete. The `COMPLETION_BUFFER_HOURS` constant is defined at the top of the auto-complete script.
 
-**Why APPROVED or SCHEDULED for consultations?** A consultation is `APPROVED` once paid; it is `SCHEDULED` only after an incident rebook reopened it. Both are live bookings that should be auto-completed. A consultation in `PENDING` or `APPROVED_PENDING_PAYMENT` is not completed, because its session was never confirmed.
+**Why APPROVED for consultations?** A consultation is `APPROVED` once paid, and an incident rebook returns a completed one to `APPROVED`. A consultation in `PENDING` or `APPROVED_PENDING_PAYMENT` is not completed, because its session was never confirmed.
 
 ### Automation Timeline
 

@@ -68,7 +68,7 @@ mcp__streamio__app_get_rate_limits   {}
    - **B2C Personal Scope**: `dm-<a>-<b>` (or `dmh-<sha256>` if $> 64$ chars).
    - **B2B Enterprise Org Scope**: `dmo-<orgHash>-<pairHash>` with `custom.organization_id = orgId`.
    - Consultee-to-consultee peer DMs are prohibited (`canDirectMessage` in `lib/stream/dm-eligibility.ts`).
-2. **Paid / Confirmed Gate (`DM_ELIGIBLE_STATUSES = ["APPROVED", "SCHEDULED", "COMPLETED"]`)**:
+2. **Paid / Confirmed Gate (`DM_ELIGIBLE_STATUSES = ["APPROVED", "COMPLETED"]`)**:
    - Confirmed webinar/class enrollments (`OPENABLE_EVENT_STATUSES`) provision both the group `team` channel (`webinar-<id>` / `class-<id>`) and a 1:1 personal DM with the host, preserving `ACCEPTED` collaborators in `syncUserEventChannels`.
 3. **A Free Trial (`TRIAL`) Never Grants Chat**:
    - No provisioning: `ensureChannelsForAppointment` (`lib/payments/webhooks/ensure-channels.ts`, not `handlers.ts`) stamps and returns `skipped: "trial_chat_blocked"`.

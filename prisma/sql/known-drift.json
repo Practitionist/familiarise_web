@@ -104,24 +104,6 @@
       "reason": "Pre-#2041 recording-storage column and its enum. No schema declares them and no code reads them.",
       "trackedBy": "#2270",
       "expires": "2026-11-21"
-    },
-    {
-      "statement": "DROP TYPE \"public\".\"ClassStatus_old\"",
-      "reason": "The rename-swap Prisma uses to drop IN_PROGRESS, which nothing wrote from ClassStatus. Move the live rows holding a removed value first, or the column cast fails.",
-      "trackedBy": "#2746",
-      "expires": "2026-11-27"
-    },
-    {
-      "statement": "DROP TYPE \"public\".\"TrialStatus_old\"",
-      "reason": "The rename-swap Prisma uses to drop PENDING and REJECTED, which no live path commits from TrialStatus. Move the live rows holding a removed value first, or the column cast fails.",
-      "trackedBy": "#2746",
-      "expires": "2026-11-27"
-    },
-    {
-      "statement": "DROP TYPE \"public\".\"WebinarStatus_old\"",
-      "reason": "The rename-swap Prisma uses to drop IN_PROGRESS, which nothing wrote from WebinarStatus. Move the live rows holding a removed value first, or the column cast fails.",
-      "trackedBy": "#2746",
-      "expires": "2026-11-27"
     }
   ],
   "knownDivergences": [
@@ -262,6 +244,30 @@
       "reason": "Legacy pre-#2257 support-ticket tables, re-created empty as a stop-gap for origin/prod. Dropped by the reconcile push once dev is promoted to prod.",
       "trackedBy": "#2271",
       "expires": "2026-11-21"
+    },
+    {
+      "statement": "DROP TYPE \"public\".\"ClassStatus_old\"",
+      "reason": "The enum swap that drops IN_PROGRESS from ClassStatus. origin/prod still reads and writes the value, so the swap waits: move this to destructiveStatementsAllowed once the release carrying the change is on prod.",
+      "trackedBy": "#2746",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "DROP TYPE \"public\".\"RequestStatus_old\"",
+      "reason": "The enum swap that drops SCHEDULED from RequestStatus. origin/prod still reads and writes the value, so the swap waits: move this to destructiveStatementsAllowed once the release carrying the change is on prod.",
+      "trackedBy": "#2746",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "DROP TYPE \"public\".\"TrialStatus_old\"",
+      "reason": "The enum swap that drops PENDING and REJECTED from TrialStatus. origin/prod still reads and writes the value, so the swap waits: move this to destructiveStatementsAllowed once the release carrying the change is on prod.",
+      "trackedBy": "#2746",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "DROP TYPE \"public\".\"WebinarStatus_old\"",
+      "reason": "The enum swap that drops IN_PROGRESS from WebinarStatus. origin/prod still reads and writes the value, so the swap waits: move this to destructiveStatementsAllowed once the release carrying the change is on prod.",
+      "trackedBy": "#2746",
+      "expires": "2026-12-31"
     }
   ]
 }

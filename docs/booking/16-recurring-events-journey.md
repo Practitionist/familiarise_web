@@ -190,7 +190,7 @@ Webhook handler (lib/payments/webhooks/handlers.ts):
     |-- Call createEarningsFromPayment() -> creates ConsultantEarnings
     |-- Call createInvoiceFromPayment() -> creates Invoice with GST
     |-- Send payment success notification (Novu + email)
-    |-- For Subscription: update status to APPROVED or SCHEDULED
+    |-- For Subscription: update status to APPROVED
 ```
 
 **Important:** The two-phase commit pattern is used here. Appointments are created with tentative slots (`isTentative = true`) before payment confirmation. The webhook atomically confirms them. See `docs/booking/06-booking-lifecycle.md` for the full pattern explanation.
