@@ -2381,7 +2381,7 @@ export async function confirmExistingAppointment(
     }
   }
 
-  const BENIGN_EVENT_STATUSES = ["SCHEDULED", "IN_PROGRESS", "COMPLETED"];
+  const BENIGN_EVENT_STATUSES = ["SCHEDULED", "COMPLETED"];
 
   if (appointment.class && userId) {
     const classId = appointment.class.id;

@@ -90,12 +90,7 @@ export async function GET(request: NextRequest) {
     "CANCELLED",
     "EXPIRED",
   ];
-  const validEventStatuses = [
-    "SCHEDULED",
-    "IN_PROGRESS",
-    "COMPLETED",
-    "CANCELLED",
-  ];
+  const validEventStatuses = ["SCHEDULED", "COMPLETED", "CANCELLED"];
   if (
     consultationStatus &&
     !validRequestStatuses.includes(consultationStatus)

@@ -329,9 +329,7 @@ export async function transitionSubscriptionRequest(
 //////////////////////////////////////////////// Webinar / Class ////////////////////////////////////////////////
 
 // WebinarStatus and ClassStatus are enum-identical; one map serves both.
-// SCHEDULED←SCHEDULED is reschedule re-entry. The sets are deliberately the
-// exact complement of the old `notIn: [CANCELLED, COMPLETED]` guards —
-// explicit allowed-from is robust against future enum additions (#837).
+// SCHEDULED←SCHEDULED is the re-time re-entry; a live event stays SCHEDULED until it completes.
 export const EVENT_ALLOWED_FROM: Record<WebinarStatus, WebinarStatus[]> = {
   // Nothing returns to DRAFT: publishing is one-way. Unpublishing is what
   // archivedAt is for, so an offering that has ever been buyable keeps a stable
@@ -340,11 +338,10 @@ export const EVENT_ALLOWED_FROM: Record<WebinarStatus, WebinarStatus[]> = {
   // Deliberately NOT reachable from DRAFT. This set is what reschedule
   // re-stamps, and a reschedule must never be able to publish an unpublished
   // offering as a side effect. Publishing has its own edge below.
-  SCHEDULED: ["SCHEDULED", "IN_PROGRESS"],
-  IN_PROGRESS: ["SCHEDULED"],
-  COMPLETED: ["SCHEDULED", "IN_PROGRESS"],
+  SCHEDULED: ["SCHEDULED"],
+  COMPLETED: ["SCHEDULED"],
   // A draft with placed sessions is cancellable, so its host is never stuck with it.
-  CANCELLED: ["DRAFT", "SCHEDULED", "IN_PROGRESS"],
+  CANCELLED: ["DRAFT", "SCHEDULED"],
 };
 // Type-level proof the two enums stay in lockstep.
 export const CLASS_EVENT_ALLOWED_FROM: Record<ClassStatus, ClassStatus[]> =

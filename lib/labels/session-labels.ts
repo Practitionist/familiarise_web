@@ -190,11 +190,6 @@ export const EVENT_STATUS_BADGE: Record<WebinarStatus, StatusBadgeStyle> = {
     className: "bg-emerald-100 text-emerald-900 border-emerald-200",
     dotClassName: "bg-emerald-500",
   },
-  IN_PROGRESS: {
-    label: "In progress",
-    className: "bg-blue-100 text-blue-900 border-blue-200",
-    dotClassName: "bg-blue-500",
-  },
   COMPLETED: {
     label: "Completed",
     className: "bg-green-100 text-green-900 border-green-200",

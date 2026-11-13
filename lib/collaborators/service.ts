@@ -631,7 +631,7 @@ function fetchActivePlanEvents(
   planType: PlanType,
   planId: string,
 ): Promise<{ id: string }[]> {
-  const activeStatuses = ["SCHEDULED", "IN_PROGRESS", "COMPLETED"] as const;
+  const activeStatuses = ["SCHEDULED", "COMPLETED"] as const;
   if (planType === "webinar") {
     if (!prisma.webinar?.findMany) return Promise.resolve([]);
     return prisma.webinar.findMany({
@@ -1301,7 +1301,7 @@ export async function getMyCollaborations(consultantProfileId: string) {
                 orderBy: { createdAt: "asc" },
               },
               webinars: {
-                where: { status: { in: ["SCHEDULED", "IN_PROGRESS"] } },
+                where: { status: { in: ["SCHEDULED"] } },
                 include: {
                   appointment: {
                     include: {
@@ -1374,7 +1374,7 @@ export async function getMyCollaborations(consultantProfileId: string) {
                 orderBy: { createdAt: "asc" },
               },
               classes: {
-                where: { status: { in: ["SCHEDULED", "IN_PROGRESS"] } },
+                where: { status: { in: ["SCHEDULED"] } },
                 include: {
                   appointment: {
                     include: {
@@ -1525,7 +1525,7 @@ async function hostedCollaborationsWhere(
           orderBy: { createdAt: "asc" },
         },
         webinars: {
-          where: { status: { in: ["SCHEDULED", "IN_PROGRESS"] } },
+          where: { status: { in: ["SCHEDULED"] } },
           include: {
             appointment: {
               include: {
@@ -1581,7 +1581,7 @@ async function hostedCollaborationsWhere(
           orderBy: { createdAt: "asc" },
         },
         classes: {
-          where: { status: { in: ["SCHEDULED", "IN_PROGRESS"] } },
+          where: { status: { in: ["SCHEDULED"] } },
           include: {
             appointment: {
               include: {

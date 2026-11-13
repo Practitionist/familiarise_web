@@ -24,11 +24,7 @@ import {
   type OccurrenceVM,
 } from "./view-model";
 import { normalizeOccurrences, type AnomalySink } from "./normalize";
-import {
-  eventUnionStatusBadge,
-  isConfirmedStatus,
-  normalizeStatus,
-} from "./status";
+import { eventUnionStatusBadge, isConfirmedStatus } from "./status";
 import type { StatusBadgeStyle } from "@/lib/labels/session-labels";
 
 /** The engine's unit of arithmetic: every interval and duration is a multiple. */
@@ -571,13 +567,11 @@ export function getProximityLabel(
 
 /**
  * The learner's chip on every surface: a booked webinar or class reads
- * "Registered" and a booked 1:1 "Confirmed", until a live event reaches the
- * join window of its next session and reads "In progress".
+ * "Registered" and a booked 1:1 "Confirmed".
  */
 export function appointmentStatusChip(
-  vm: Pick<AppointmentVM, "status" | "kind" | "nextAt" | "bucket">,
+  vm: Pick<AppointmentVM, "status" | "kind" | "bucket">,
   role: "consultee" | "consultant",
-  now = new Date(),
 ): StatusBadgeStyle {
   const badge = eventUnionStatusBadge(vm.status);
   if (
@@ -587,10 +581,6 @@ export function appointmentStatusChip(
   ) {
     return badge;
   }
-  const joinable =
-    vm.nextAt === null ||
-    vm.nextAt.getTime() - now.getTime() <= CONSULTEE_JOIN_WINDOW_MS;
-  if (normalizeStatus(vm.status) === "IN_PROGRESS" && joinable) return badge;
   const group = vm.kind === "WEBINAR" || vm.kind === "CLASS";
   return {
     ...eventUnionStatusBadge("SCHEDULED"),

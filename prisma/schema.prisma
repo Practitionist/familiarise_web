@@ -4541,7 +4541,6 @@ enum WebinarStatus {
   /// nothing to join.
   DRAFT
   SCHEDULED
-  IN_PROGRESS
   COMPLETED
   CANCELLED
 }
@@ -4724,7 +4723,6 @@ enum ClassStatus {
   /// See WebinarStatus.DRAFT.
   DRAFT
   SCHEDULED
-  IN_PROGRESS
   COMPLETED
   CANCELLED
 }

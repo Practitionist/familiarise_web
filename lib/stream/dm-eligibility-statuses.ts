@@ -81,8 +81,4 @@ export function excludeNonDmDirectBooking() {
  * Deliberately narrower than the DM set: CANCELLED events must not be
  * openable, and DRAFT is author-only.
  */
-export const OPENABLE_EVENT_STATUSES = [
-  "SCHEDULED",
-  "IN_PROGRESS",
-  "COMPLETED",
-] as const;
+export const OPENABLE_EVENT_STATUSES = ["SCHEDULED", "COMPLETED"] as const;

@@ -335,7 +335,7 @@ function planEndedShortWhy(input: BookingPresentationInput): string | null {
   }
   return head;
 }
-const CONFIRMED_FAMILY = new Set(["APPROVED", "SCHEDULED", "IN_PROGRESS"]);
+const CONFIRMED_FAMILY = new Set(["APPROVED", "SCHEDULED"]);
 const COMPLETED_FAMILY = new Set(["COMPLETED", "CONVERTED"]);
 const OPEN_DISPUTES = new Set([
   "WARNING_NEEDS_RESPONSE",

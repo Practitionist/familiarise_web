@@ -303,7 +303,7 @@ function seatsRemaining(view: EventView): number {
     : getClassCapacity({ ...params, classInstance: instance }).remaining;
 }
 
-const CLASS_SELLABLE = new Set(["SCHEDULED", "IN_PROGRESS"]);
+const CLASS_SELLABLE = new Set(["SCHEDULED"]);
 
 /** The event, its plan and its host are live; nothing about timing yet. */
 function eventLive(view: EventView): boolean {

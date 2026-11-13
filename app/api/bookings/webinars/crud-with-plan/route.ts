@@ -30,7 +30,8 @@ import { eventEndOf, eventTimeRefusal } from "@/lib/booking/event-time-rules";
 import { z } from "zod";
 import { WebinarPlanSchema } from "@/schemas/plans";
 import { editorStatusOrRefusal } from "@/lib/api/plans/event-status";
-import { Prisma, WebinarStatus } from "@prisma/client";
+import { EventEditorStatusSchema } from "@/schemas/event-instance";
+import { Prisma } from "@prisma/client";
 import {
   EVENT_PUBLISHABLE_FROM,
   transitionWebinarEvent,
@@ -110,10 +111,8 @@ const PostWebinarWithPlanBodySchema = WebinarPlanSchema.omit({
     .refine((val) => !val || !isNaN(Date.parse(val)), {
       message: "Invalid date format for scheduledAt",
     }),
-  status: z
-    .nativeEnum(WebinarStatus)
-    .optional()
-    .default(WebinarStatus.SCHEDULED),
+  // Create saves a draft or publishes; every other status is server-written.
+  status: EventEditorStatusSchema.optional().default("SCHEDULED"),
 });
 
 // Schema for PATCH request body

@@ -89,16 +89,14 @@ const KIND_OF: Record<ProcessedEvent["type"], AppointmentKind> = {
 };
 
 /** The shared Appointments chip; Home lists only bookings that can still happen. */
-function homeStatusChip(event: ProcessedEvent, now: Date) {
+function homeStatusChip(event: ProcessedEvent) {
   return appointmentStatusChip(
     {
       status: event.status.toUpperCase(),
       kind: KIND_OF[event.type],
-      nextAt: event.startsAt,
       bucket: event.needsActionReason ? "needsAction" : "upcoming",
     },
     "consultee",
-    now,
   );
 }
 
@@ -302,7 +300,7 @@ function NextUpCard({
           <span className="text-[11px] font-medium text-muted-foreground">
             {TYPE_LABEL[event.type]}
           </span>
-          <StatusBadge {...homeStatusChip(event, now)} withDot size="sm" />
+          <StatusBadge {...homeStatusChip(event)} withDot size="sm" />
         </div>
         {/* #1775 P-1 — the processor resolves the target: our pay page for a
             Razorpay order id (in-app), or a hosted https link (new tab). */}

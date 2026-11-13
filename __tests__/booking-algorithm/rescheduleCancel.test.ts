@@ -1368,7 +1368,7 @@ describe("Cancel Route Handler - POST", () => {
       expect(mockTx.webinar.updateMany).toHaveBeenCalledWith({
         where: {
           id: "web-1",
-          status: { in: ["DRAFT", "SCHEDULED", "IN_PROGRESS"] },
+          status: { in: ["DRAFT", "SCHEDULED"] },
         },
         data: { status: "CANCELLED" },
       });
@@ -1392,7 +1392,7 @@ describe("Cancel Route Handler - POST", () => {
       expect(mockTx.class.updateMany).toHaveBeenCalledWith({
         where: {
           id: "cls-1",
-          status: { in: ["DRAFT", "SCHEDULED", "IN_PROGRESS"] },
+          status: { in: ["DRAFT", "SCHEDULED"] },
         },
         data: { status: "CANCELLED" },
       });

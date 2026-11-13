@@ -36,12 +36,8 @@ export const OCCUPIED_REQUEST_STATUSES: AppointmentStatus[] = [
   AppointmentStatus.SCHEDULED,
 ];
 
-/**
- * Webinar/Class statuses that count as "slot occupied"
- * - SCHEDULED: Event is scheduled (confirmed)
- * - IN_PROGRESS: Event is currently happening
- */
-export const OCCUPIED_EVENT_STATUSES = ["SCHEDULED", "IN_PROGRESS"] as const;
+/** Webinar/Class statuses that count as "slot occupied": a published event stays SCHEDULED until it completes. */
+export const OCCUPIED_EVENT_STATUSES = ["SCHEDULED"] as const;
 
 /**
  * An occurrence row that still holds its time. A host-cancelled session keeps its row for make-up and
