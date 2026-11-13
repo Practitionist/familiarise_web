@@ -2,7 +2,8 @@
  * The single-time picker's options: a host sees free, booked and outside-hours
  * starts on the half-hour lattice; a buyer is offered only the windows
  * `windowsForDay` makes bookable, sees a held window as contended, and the
- * "already taken" count ignores past and too-soon times. A session that
+ * taken list (booked or held, in published hours) leaves out past and
+ * too-soon times. A session that
  * crosses midnight is one option on the day it starts.
  */
 
@@ -13,8 +14,8 @@ import {
   optionsForDay,
   singleSessionOptions,
   singleTimeLeadMs,
-  takenTimesCount,
-  takenTimesLine,
+  takenTimes,
+  takenTimesToggleLabel,
 } from "@/lib/scheduling/single-session-options";
 
 const HOUR = 3_600_000;
@@ -77,7 +78,7 @@ describe("buyerTimeOptions", () => {
     leadMs: singleTimeLeadMs("book"),
   };
 
-  it("offers free windows, marks held ones contended and counts only real bookings as taken", () => {
+  it("offers free windows and lists booked and held ones as taken, in time order", () => {
     // 09:00–14:00 published; 12:00–12:30 booked; now is 09:40.
     const options = buyerTimeOptions({
       ...base,
@@ -94,9 +95,12 @@ describe("buyerTimeOptions", () => {
     expect(state(12)).toBe("taken");
     expect(state(13)).toBe("contended");
     expect(state(13.5)).toBeUndefined(); // runs past published hours
-    expect(takenTimesCount(options)).toBe(2);
-    expect(takenTimesLine(2)).toBe("2 times already taken");
-    expect(takenTimesLine(0)).toBeNull();
+    expect(
+      takenTimes(options).map((o) => (o.startMs - DAY_START) / HOUR),
+    ).toEqual([11.5, 12, 13]);
+    expect(takenTimesToggleLabel(3, false)).toBe("Show 3 taken times");
+    expect(takenTimesToggleLabel(1, false)).toBe("Show 1 taken time");
+    expect(takenTimesToggleLabel(1, true)).toBe("Hide taken times");
   });
 
   it("keeps a session across midnight on the day it starts", () => {

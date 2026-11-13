@@ -1,8 +1,9 @@
 /**
  * The single-time picker: the month is a keyboard grid; a host sees booked
  * times labelled and reveals outside-hours times with a switch; a buyer sees
- * a held time as taken with "Notify me" and a count of real bookings; a pick
- * a later read shows gone is cleared and the pane says so.
+ * free times, and booked or held ones behind "Show N taken times", each with
+ * "Notify me"; a pick a later read shows gone is cleared, the pane says so and
+ * the taken list opens.
  */
 import * as React from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
@@ -18,7 +19,7 @@ jest.mock("@/lib/scheduling/use-availability-window", () => ({
   }),
 }));
 jest.mock("@/components/booking/NotifyWhenFreeButton", () => ({
-  NotifyWhenFreeButton: () => <span>Notify me if this time opens</span>,
+  NotifyWhenFreeButton: () => <span>Notify me</span>,
 }));
 
 import {
@@ -90,7 +91,7 @@ it("moves through the month with the keyboard", () => {
   expect(screen.getByRole("button", { name: /15 December/ })).toHaveFocus();
 });
 
-it("shows a buyer free times, a held time as taken with Notify me, and counts bookings", () => {
+it("shows a buyer free times and lists booked and held ones behind a disclosure", () => {
   render(
     <Harness
       heldStarts={new Set([DAY + 9 * HOUR])}
@@ -98,14 +99,22 @@ it("shows a buyer free times, a held time as taken with Notify me, and counts bo
     />,
   );
   expect(screen.getByText("Times in UTC")).toBeVisible();
-  expect(time(/^9:00 am to 10:00 am, taken, someone else/)).toHaveAttribute(
-    "aria-disabled",
-    "true",
-  );
-  expect(screen.getByText("Notify me if this time opens")).toBeVisible();
   expect(time(/^9:30 am to 10:30 am, free/)).toBeEnabled();
-  expect(screen.queryByRole("button", { name: /^11:00 am/ })).toBeNull();
-  expect(screen.getByText("2 times already taken")).toBeVisible();
+  expect(screen.queryByRole("button", { name: /^9:00 am/ })).toBeNull();
+  const toggle = screen.getByRole("button", { name: "Show 3 taken times" });
+  expect(toggle).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByText("Notify me")).toBeNull();
+  fireEvent.click(toggle);
+  expect(toggle).toHaveAttribute("aria-expanded", "true");
+  expect(toggle).toHaveTextContent("Hide taken times");
+  const rows = screen.getAllByRole("listitem");
+  expect(rows.map((row) => row.textContent)).toEqual([
+    expect.stringMatching(/^9:00 am to 10:00 am, taken, someone else/),
+    expect.stringMatching(/^10:30 am to 11:30 am, taken/),
+    expect.stringMatching(/^11:00 am to 12:00 pm, taken/),
+  ]);
+  expect(screen.getAllByText("Notify me")).toHaveLength(3);
+  expect(screen.getByText("You can wait on up to 3 times.")).toBeVisible();
 });
 
 it("lets a host reveal times outside their hours", () => {
@@ -129,4 +138,7 @@ it("clears a pick a later read shows taken, and says so", () => {
   });
   expect(picks.at(-1)).toBeNull();
   expect(screen.getByRole("status")).toHaveTextContent(TIME_JUST_TAKEN_MESSAGE);
+  expect(
+    screen.getByRole("button", { name: "Hide taken times" }),
+  ).toHaveAttribute("aria-expanded", "true");
 });

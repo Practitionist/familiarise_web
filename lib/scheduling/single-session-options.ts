@@ -6,7 +6,8 @@
  * usual hours. A buyer books inside the expert's published hours only: the
  * free windows are exactly the ones `windowsForDay` and `isBookableWindow`
  * offer, a window the door said someone else holds is contended, and a
- * window over a booking is counted as taken. The lead and the lattice are
+ * window over a booking is taken; both are listed behind a disclosure, each
+ * with "Notify me". The lead and the lattice are
  * the writers' own rules (`leadMsFor`, `eventLeadMs`), never restated here.
  */
 
@@ -171,9 +172,9 @@ export function singleSessionOptions(input: {
 
 /**
  * A buyer's options for one day: the bookable windows, the windows the door
- * reported held by someone else (`heldStarts`), and, for the count line, the
- * windows inside published hours that overlap a booking. Past and too-soon
- * starts are neither offered nor counted.
+ * reported held by someone else (`heldStarts`), and the windows inside
+ * published hours that overlap a booking. Past and too-soon starts are
+ * neither offered nor listed.
  */
 export function buyerTimeOptions(input: {
   /** The day's grid atoms followed by the next day's, so a session may cross midnight. */
@@ -309,17 +310,19 @@ export function monthSummary(
   return summary;
 }
 
-/** How many of a day's times are taken by a booking; past and too-soon times never count. */
-export function takenTimesCount(
+/** A day's times inside published hours that are booked or held, in time order; past and too-soon times never appear. */
+export function takenTimes(
   options: readonly SingleSessionOption[],
-): number {
-  return options.filter((option) => option.state === "taken").length;
+): SingleSessionOption[] {
+  return options.filter(
+    (option) => option.state === "taken" || option.state === "contended",
+  );
 }
 
-/** "N times already taken", or null when none are. */
-export function takenTimesLine(count: number): string | null {
-  if (count <= 0) return null;
-  return count === 1 ? "1 time already taken" : `${count} times already taken`;
+/** The buyer's disclosure button: "Show N taken times", or "Hide taken times" while open. */
+export function takenTimesToggleLabel(count: number, open: boolean): string {
+  if (open) return "Hide taken times";
+  return count === 1 ? "Show 1 taken time" : `Show ${count} taken times`;
 }
 
 export type DayPeriod = "Morning" | "Afternoon" | "Evening";

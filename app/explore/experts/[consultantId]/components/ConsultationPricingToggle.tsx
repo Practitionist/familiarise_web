@@ -3,7 +3,6 @@
 import { HELD_BY_SOMEONE_ELSE } from "@/components/booking/NotifyWhenFreeButton";
 import {
   SingleTimePicker,
-  TIME_JUST_TAKEN_MESSAGE,
   type SingleTimeValue,
 } from "@/components/scheduling/SingleTimePicker";
 import { Button } from "@/components/ui/button";
@@ -106,6 +105,8 @@ export default function ConsultationPricingToggle({
     () => new Set(),
   );
   const [isRequestingApproval, setIsRequestingApproval] = useState(false);
+  // A taken time the visitor asked to wait on before signing in.
+  const [revealTakenAt, setRevealTakenAt] = useState<string | null>(null);
 
   const activePlanOption = useMemo(
     () =>
@@ -150,6 +151,14 @@ export default function ConsultationPricingToggle({
     if (!intentPlan) return;
     setActiveConsultationOption(intentPlan.id);
     setDialogPlanId(intentPlan.id);
+    if (intent.waitOn) {
+      setRevealTakenAt(intent.slot.startsAt);
+      toast({
+        title: "Welcome back",
+        description: "Press Notify me on the time you wanted.",
+      });
+      return;
+    }
     const { startsAt, endsAt, type, availabilityWindowId } = intent.slot;
     setPick({
       startsAt,
@@ -163,6 +172,25 @@ export default function ConsultationPricingToggle({
       description: "The time you picked before signing in is selected.",
     });
   }, [userId, consultantDetails.id, consultationOptions, toast]);
+
+  const sendToSignIn = () => {
+    const callbackUrl = `${window.location.pathname}${window.location.search}`;
+    router.push(`/auth/signin?callbackUrl=${encodeURIComponent(callbackUrl)}`);
+  };
+
+  // A signed-out "Notify me" signs in first and comes back to this dialog.
+  const notifyAfterSignIn = (planId: string) =>
+    session?.user?.id
+      ? undefined
+      : (taken: SingleTimeValue) => {
+          stashPurchaseIntent({
+            consultantId: consultantDetails.id,
+            consultationPlanId: planId,
+            slot: { startsAt: taken.startsAt, endsAt: taken.endsAt },
+            waitOn: true,
+          });
+          sendToSignIn();
+        };
 
   const handleRequestForApproval = async (planId: string) => {
     if (!pick) {
@@ -183,10 +211,7 @@ export default function ConsultationPricingToggle({
           availabilityWindowId: pick.window?.id,
         },
       });
-      const callbackUrl = `${window.location.pathname}${window.location.search}`;
-      router.push(
-        `/auth/signin?callbackUrl=${encodeURIComponent(callbackUrl)}`,
-      );
+      sendToSignIn();
       return;
     }
 
@@ -249,10 +274,10 @@ export default function ConsultationPricingToggle({
         HELD_BY_SOMEONE_ELSE.has(error.code)
       ) {
         const heldAt = Date.parse(pick.startsAt);
+        // The picker says so inline and opens its taken times.
         setHeldStarts((held) => new Set([...held, heldAt]));
         setPick(null);
         onRefreshSlots?.();
-        toast({ title: TIME_JUST_TAKEN_MESSAGE, variant: "destructive" });
         return;
       }
       // A modelled refusal carries a sentence written for the buyer; anything
@@ -457,7 +482,9 @@ export default function ConsultationPricingToggle({
                         notifyPlan={{
                           planKind: "CONSULTATION",
                           planId: option.id,
+                          onSignIn: notifyAfterSignIn(option.id),
                         }}
+                        revealTakenAt={revealTakenAt}
                         bypassRef={bypassRef}
                         value={pick}
                         onChange={setPick}

@@ -1,7 +1,8 @@
 /**
  * The public One-time dialog: a poll that takes the selected time clears the
  * pick and disables the button; "Book Now" on a second plan card books that
- * card's plan; a time the request door says is held reads taken.
+ * card's plan; a time the request door says is held clears the pick, says so
+ * inline and opens the taken list with "Notify me".
  */
 import * as React from "react";
 import {
@@ -41,7 +42,7 @@ jest.mock("@/components/pricing/BuyerPriceProvider", () => ({
 }));
 jest.mock("@/components/booking/NotifyWhenFreeButton", () => ({
   HELD_BY_SOMEONE_ELSE: new Set(["SLOT_TAKEN", "LOCK_CONTENTION"]),
-  NotifyWhenFreeButton: () => <span>Notify me if this time opens</span>,
+  NotifyWhenFreeButton: () => <span>Notify me</span>,
 }));
 jest.mock("@/utils/purchase-intent", () => ({
   consumePurchaseIntent: () => null,
@@ -125,7 +126,9 @@ it("clears a pick a poll shows taken and disables the button", () => {
   act(() => rerender(<Dialog />));
   expect(cta).toBeDisabled();
   expect(screen.queryByRole("button", { name: /^10:00 am/ })).toBeNull();
-  expect(screen.getByText("1 time already taken")).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "Hide taken times" }),
+  ).toHaveAttribute("aria-expanded", "true");
 });
 
 it("books the second card's plan, and reads a held time as taken", async () => {
@@ -150,10 +153,16 @@ it("books the second card's plan, and reads a held time as taken", async () => {
   const [, init] = fetchMock.mock.calls[0];
   expect(JSON.parse(init.body).consultationPlanId).toBe("plan-b");
   await waitFor(() =>
-    expect(time(/^11:00 am to 11:30 am, taken, someone else/)).toHaveAttribute(
-      "aria-disabled",
-      "true",
-    ),
+    expect(
+      screen.getByRole("button", { name: "Hide taken times" }),
+    ).toHaveAttribute("aria-expanded", "true"),
   );
-  expect(screen.getByText("Notify me if this time opens")).toBeVisible();
+  expect(screen.getByRole("status")).toHaveTextContent(/just taken/);
+  expect(screen.getByRole("listitem")).toHaveTextContent(
+    /^11:00 am to 11:30 am, taken, someone else/,
+  );
+  expect(screen.getByText("Notify me")).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "Request this time" }),
+  ).toBeDisabled();
 });

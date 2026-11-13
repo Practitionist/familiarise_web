@@ -3,22 +3,24 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useState,
   type MutableRefObject,
 } from "react";
-import { Check } from "lucide-react";
+import { Check, ChevronDown } from "lucide-react";
 
 import { NotifyWhenFreeButton } from "@/components/booking/NotifyWhenFreeButton";
 import { Switch } from "@/components/ui/switch";
 import { useNowTick } from "@/hooks/use-now-tick";
+import { BACKUP_INTEREST_CAP } from "@/lib/booking/interest/backup-interest-list";
 import {
   dayPeriodOf,
   monthSummary,
   optionsForDay,
   singleTimeLeadMs,
-  takenTimesCount,
-  takenTimesLine,
+  takenTimes,
+  takenTimesToggleLabel,
   type AvailabilityWindowRef,
   type DayOptionsInput,
   type DayPeriod,
@@ -65,10 +67,16 @@ export interface SingleTimePickerProps {
   consulteeUserId?: string;
   /** The event being placed or moved: a move frees its own sessions. */
   event?: AvailabilityEvent;
-  /** Starts the booking door reported as held by someone else. */
+  /** Starts the booking door reported as held by someone else; a new one opens the taken list. */
   heldStarts?: ReadonlySet<number>;
-  /** The plan a "Notify me" on a held time registers for. */
-  notifyPlan?: { planKind: "CONSULTATION" | "SUBSCRIPTION"; planId: string };
+  /** The plan a "Notify me" on a taken time registers for; `onSignIn` is set for a signed-out visitor. */
+  notifyPlan?: {
+    planKind: "CONSULTATION" | "SUBSCRIPTION";
+    planId: string;
+    onSignIn?: (window: SingleTimeValue) => void;
+  };
+  /** A taken time to bring into view with the taken list open (back from sign-in). */
+  revealTakenAt?: string | null;
   /** Set to true to send the next read past the browser cache once. */
   bypassRef?: MutableRefObject<boolean>;
   value: SingleTimeValue | null;
@@ -131,7 +139,6 @@ const STATE_WORDS: Record<
 const VISIBLE_TAG: Partial<
   Record<PickerAudience, Partial<Record<SingleSessionOption["state"], string>>>
 > = {
-  buyer: { contended: "Taken" },
   host: { taken: "Booked", "outside-hours": "Outside your hours" },
 };
 
@@ -155,6 +162,7 @@ export function SingleTimePicker({
   event,
   heldStarts,
   notifyPlan,
+  revealTakenAt = null,
   bypassRef,
   value,
   onChange,
@@ -198,6 +206,27 @@ export function SingleTimePicker({
   const month = shownMonth ?? monthStartOf(keyToDay(firstOpenKey));
   const [showOutside, setShowOutside] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [takenOpen, setTakenOpen] = useState(false);
+  const takenListId = useId();
+  // A start the door newly refused: say so and show the taken times.
+  const [seenHeld, setSeenHeld] = useState(heldStarts);
+  if (heldStarts !== seenHeld) {
+    setSeenHeld(heldStarts);
+    if ([...(heldStarts ?? [])].some((start) => !seenHeld?.has(start))) {
+      setNotice(TIME_JUST_TAKEN_MESSAGE);
+      setTakenOpen(true);
+    }
+  }
+  const [syncedReveal, setSyncedReveal] = useState<string | null>(null);
+  if (revealTakenAt !== syncedReveal) {
+    setSyncedReveal(revealTakenAt);
+    if (revealTakenAt) {
+      const key = calendarDateKey(calendarDayOf(new Date(revealTakenAt), zone));
+      setPickedKey(key);
+      setShownMonth(monthStartOf(keyToDay(key)));
+      setTakenOpen(true);
+    }
+  }
 
   const query = useAvailabilityMonth({
     consultantId,
@@ -286,6 +315,7 @@ export function SingleTimePicker({
   const dropTaken = useCallback(() => {
     onChange(null);
     setNotice(TIME_JUST_TAKEN_MESSAGE);
+    setTakenOpen(true);
   }, [onChange]);
   const justTaken = useJustTaken(
     stale && value ? [value.startsAt] : [],
@@ -334,9 +364,7 @@ export function SingleTimePicker({
   ]);
 
   const shown = options.filter((option) => {
-    if (audience === "buyer") {
-      return option.state === "free" || option.state === "contended";
-    }
+    if (audience === "buyer") return option.state === "free";
     if (option.state === "outside-hours") return showOutside;
     return option.state === "free" || option.state === "taken";
   });
@@ -348,8 +376,7 @@ export function SingleTimePicker({
         }
       : null;
   const freeCount = options.filter((option) => option.state === "free").length;
-  const takenLine =
-    audience === "buyer" ? takenTimesLine(takenTimesCount(options)) : null;
+  const taken = audience === "buyer" ? takenTimes(options) : [];
   const outsideCount = options.filter(
     (option) => option.state === "outside-hours",
   ).length;
@@ -571,19 +598,6 @@ export function SingleTimePicker({
                               tag && <span className="text-xs">{tag}</span>
                             )}
                           </button>
-                          {option.state === "contended" && notifyPlan && (
-                            <NotifyWhenFreeButton
-                              window={{
-                                consultantProfileId: consultantId,
-                                windowStart: new Date(
-                                  option.startMs,
-                                ).toISOString(),
-                                windowEnd: new Date(option.endMs).toISOString(),
-                                planKind: notifyPlan.planKind,
-                                planId: notifyPlan.planId,
-                              }}
-                            />
-                          )}
                         </div>
                       );
                     })}
@@ -591,8 +605,89 @@ export function SingleTimePicker({
                 </div>
               );
             })}
-            {takenLine && (
-              <p className={cn("text-xs", tokens.muted)}>{takenLine}</p>
+            {taken.length > 0 && (
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  aria-expanded={takenOpen}
+                  aria-controls={takenListId}
+                  onClick={() => setTakenOpen((open) => !open)}
+                  className={cn(
+                    "inline-flex min-h-10 items-center gap-1 rounded-sm text-sm font-medium underline-offset-4 hover:underline",
+                    tokens.heading,
+                    tokens.focus,
+                  )}
+                >
+                  {takenTimesToggleLabel(taken.length, takenOpen)}
+                  <ChevronDown
+                    aria-hidden="true"
+                    className={cn(
+                      "h-4 w-4 transition-transform",
+                      takenOpen && "rotate-180",
+                    )}
+                  />
+                </button>
+                {takenOpen && (
+                  <div id={takenListId} className="space-y-2">
+                    {notifyPlan && (
+                      <p className={cn("text-xs", tokens.muted)}>
+                        You can wait on up to {BACKUP_INTEREST_CAP} times.
+                      </p>
+                    )}
+                    <ul className="space-y-2">
+                      {taken.map((option) => {
+                        const start = formatClockTime(
+                          new Date(option.startMs),
+                          { zone },
+                        );
+                        const end = formatClockTime(new Date(option.endMs), {
+                          zone,
+                        });
+                        const takenSlot: SingleTimeValue = {
+                          startsAt: new Date(option.startMs).toISOString(),
+                          endsAt: new Date(option.endMs).toISOString(),
+                        };
+                        const onSignIn = notifyPlan?.onSignIn;
+                        return (
+                          <li
+                            key={option.startMs}
+                            data-state={option.state}
+                            className={cn(
+                              "flex min-h-10 flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm",
+                              tokens.takenRow,
+                            )}
+                          >
+                            <span>
+                              {start} to {end}
+                              <span className="sr-only">
+                                , {STATE_WORDS.buyer[option.state]}
+                              </span>
+                            </span>
+                            {notifyPlan && (
+                              <NotifyWhenFreeButton
+                                window={{
+                                  consultantProfileId: consultantId,
+                                  windowStart: takenSlot.startsAt,
+                                  windowEnd: takenSlot.endsAt,
+                                  planKind: notifyPlan.planKind,
+                                  planId: notifyPlan.planId,
+                                }}
+                                timeLabel={start}
+                                onSignIn={
+                                  onSignIn
+                                    ? () => onSignIn(takenSlot)
+                                    : undefined
+                                }
+                                errorClassName={tokens.error}
+                              />
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                )}
+              </div>
             )}
             {audience === "host" && !showOutside && outsideCount > 0 && (
               <p className={cn("text-xs", tokens.muted)}>

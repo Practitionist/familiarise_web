@@ -25,6 +25,10 @@ export interface PickerTokens {
   focus: string;
   skeleton: string;
   notice: string;
+  /** A taken time listed under "Show taken times". */
+  takenRow: string;
+  /** A refusal shown inline, such as the cap on waiting. */
+  error: string;
 }
 
 const SHARED_FOCUS = "focus-visible:outline-none focus-visible:ring-2";
@@ -51,6 +55,8 @@ export const PICKER_TOKENS: Record<PickerTheme, PickerTokens> = {
     focus: `${SHARED_FOCUS} focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-900`,
     skeleton: "bg-zinc-700/60",
     notice: "border-zinc-700 bg-zinc-900/60 text-zinc-200",
+    takenRow: "border-dashed border-white/[0.12] text-zinc-400",
+    error: "text-red-300",
   },
   light: {
     pane: "rounded-xl border border-border bg-muted/40 p-3 sm:p-5",
@@ -73,5 +79,7 @@ export const PICKER_TOKENS: Record<PickerTheme, PickerTokens> = {
     focus: `${SHARED_FOCUS} focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background`,
     skeleton: "bg-muted",
     notice: "border-border bg-background text-foreground",
+    takenRow: "border-dashed border-border bg-muted text-muted-foreground",
+    error: "text-destructive",
   },
 };

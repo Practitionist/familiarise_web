@@ -20,6 +20,7 @@ import {
   type StagedRecipientEmail,
 } from "@/lib/email/senders/booking";
 import { BookingRuleError } from "./booking-rule-error";
+import { BACKUP_INTEREST_CAP } from "./interest/backup-interest-list";
 import {
   OPEN_INTEREST,
   notifiableInterest,
@@ -27,9 +28,6 @@ import {
   purgeableBackupInterestWhere,
   renoticeBucket,
 } from "./interest/lifecycle";
-
-/** A learner may wait on at most this many windows at once. */
-export const BACKUP_INTEREST_CAP = 3;
 
 export interface BackupWindow {
   consultantProfileId: string;
