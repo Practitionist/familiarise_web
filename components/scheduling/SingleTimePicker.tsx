@@ -19,6 +19,7 @@ import {
   singleTimeLeadMs,
   takenTimesCount,
   takenTimesLine,
+  type AvailabilityWindowRef,
   type DayOptionsInput,
   type DayPeriod,
   type PickerAudience,
@@ -41,6 +42,8 @@ import { PICKER_TOKENS, type PickerTheme } from "./single-time-theme";
 export interface SingleTimeValue {
   startsAt: string;
   endsAt: string;
+  /** A buyer's pick carries the availability row it was cut from. */
+  window?: AvailabilityWindowRef;
 }
 
 export interface SingleTimePickerProps {
@@ -357,6 +360,7 @@ export function SingleTimePicker({
     onChange({
       startsAt: new Date(option.startMs).toISOString(),
       endsAt: new Date(option.endMs).toISOString(),
+      ...(option.window ? { window: option.window } : {}),
     });
   };
   const changeMonth = (target: Date) => {

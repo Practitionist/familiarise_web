@@ -20,6 +20,7 @@ import * as Sentry from "@sentry/nextjs";
 import { motion } from "framer-motion";
 import { CheckCircle2 } from "lucide-react";
 import { useSession } from "@/lib/auth-client";
+import { requestForApprovalBody } from "@/lib/booking/picked-time";
 import { ApiResponseError, requireJsonResponse } from "@/lib/fetch-helpers";
 import {
   isExpectedRefusal,
@@ -149,7 +150,14 @@ export default function ConsultationPricingToggle({
     if (!intentPlan) return;
     setActiveConsultationOption(intentPlan.id);
     setDialogPlanId(intentPlan.id);
-    setPick({ startsAt: intent.slot.startsAt, endsAt: intent.slot.endsAt });
+    const { startsAt, endsAt, type, availabilityWindowId } = intent.slot;
+    setPick({
+      startsAt,
+      endsAt,
+      ...(type && availabilityWindowId
+        ? { window: { id: availabilityWindowId, type } }
+        : {}),
+    });
     toast({
       title: "Welcome back",
       description: "The time you picked before signing in is selected.",
@@ -168,7 +176,12 @@ export default function ConsultationPricingToggle({
       stashPurchaseIntent({
         consultantId: consultantDetails.id,
         consultationPlanId: planId,
-        slot: { startsAt: pick.startsAt, endsAt: pick.endsAt },
+        slot: {
+          startsAt: pick.startsAt,
+          endsAt: pick.endsAt,
+          type: pick.window?.type,
+          availabilityWindowId: pick.window?.id,
+        },
       });
       const callbackUrl = `${window.location.pathname}${window.location.search}`;
       router.push(
@@ -204,12 +217,13 @@ export default function ConsultationPricingToggle({
           "Content-Type": "application/json",
           "Idempotency-Key": requestAttemptRef.current.key,
         },
-        body: JSON.stringify({
-          consultantProfileId: consultantDetails.id,
-          startsAt: pick.startsAt,
-          endsAt: pick.endsAt,
-          consultationPlanId: activePlan.id,
-        }),
+        body: JSON.stringify(
+          requestForApprovalBody({
+            consultantProfileId: consultantDetails.id,
+            consultationPlanId: activePlan.id,
+            pick,
+          }),
+        ),
       });
 
       // Never bare response.json(): an edge 504/HTML page would throw a

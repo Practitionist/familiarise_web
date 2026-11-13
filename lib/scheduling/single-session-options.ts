@@ -29,12 +29,20 @@ const ATOM_MS = 30 * 60_000;
 export type SingleSessionState =
   "free" | "taken" | "contended" | "outside-hours" | "too-soon";
 
+/** The published availability row a buyer's window was cut from; checkout and the request door name it. */
+export interface AvailabilityWindowRef {
+  id: string;
+  type: "WEEKLY" | "CUSTOM";
+}
+
 export interface SingleSessionOption {
   startMs: number;
   endMs: number;
   state: SingleSessionState;
   /** Whether the option can be chosen at all. */
   selectable: boolean;
+  /** Set on a buyer's free option. */
+  window?: AvailabilityWindowRef;
 }
 
 /** How a host reads each state. */
@@ -181,7 +189,7 @@ export function buyerTimeOptions(input: {
   allowedEndMs?: number;
 }): SingleSessionOption[] {
   const sessionMs = Math.max(ATOM_MS, input.sessionMinutes * 60_000);
-  const free = new Set(
+  const free = new Map<number, AvailabilityWindowRef>(
     windowsForDay(
       input.atoms,
       input.sessionMinutes / 60,
@@ -190,7 +198,10 @@ export function buyerTimeOptions(input: {
       input.leadMs,
     )
       .filter(isBookableWindow)
-      .map((window) => Date.parse(window.startsAt)),
+      .map((window) => [
+        Date.parse(window.startsAt),
+        { id: window.availabilityWindowId, type: window.type },
+      ]),
   );
   const index = atomIndex({ day: input.atoms });
   const first = Math.ceil(input.dayStartMs / ATOM_MS) * ATOM_MS;
@@ -211,8 +222,16 @@ export function buyerTimeOptions(input: {
       const { published, booked } = coverOf(index, startMs, endMs);
       if (published && booked) state = "taken";
     }
-    if (state !== null) {
-      options.push({ startMs, endMs, state, selectable: state === "free" });
+    if (state === "free") {
+      options.push({
+        startMs,
+        endMs,
+        state,
+        selectable: true,
+        window: free.get(startMs),
+      });
+    } else if (state !== null) {
+      options.push({ startMs, endMs, state, selectable: false });
     }
   }
   return options;

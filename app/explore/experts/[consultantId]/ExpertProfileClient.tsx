@@ -15,6 +15,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { ArrowLeft } from "lucide-react";
 import { useSession } from "@/lib/auth-client";
+import { consultationCheckoutHref } from "@/lib/booking/picked-time";
 import { AboutSection } from "./components/AboutSection";
 import { ClassesAndWebinars } from "./components/ClassesAndWebinars";
 import { DigitalProductsSection } from "./components/DigitalProductsSection";
@@ -140,11 +141,7 @@ export function ExpertProfileClient({
         return;
       }
 
-      const params = new URLSearchParams({
-        startsAt: pick.startsAt,
-        endsAt: pick.endsAt,
-      });
-      const checkoutUrl = `/checkout/plans/consultation/${activePlan.id}?${params.toString()}`;
+      const checkoutUrl = consultationCheckoutHref(activePlan.id, pick);
       // Guests go through sign-in explicitly, carrying the full checkout URL
       // (plan and time) as the callback, so the purchase resumes untouched.
       if (!session?.user?.id) {

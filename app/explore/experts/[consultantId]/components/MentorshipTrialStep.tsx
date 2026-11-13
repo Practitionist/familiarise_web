@@ -18,6 +18,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { FREE_TRIAL_LABEL } from "@/lib/appointments/trial-labels";
 import { useSession } from "@/lib/auth-client";
+import { trialCreateBody } from "@/lib/booking/picked-time";
 import {
   isExpectedRefusal,
   userMessageFrom,
@@ -175,13 +176,15 @@ export function MentorshipTrialStep({
       const response = await fetch("/api/trials", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          consulteeProfileId,
-          consultantProfileId,
-          subscriptionPlanId,
-          notes: notes.trim() || undefined,
-          slot: { startsAt: pick.startsAt, endsAt: pick.endsAt },
-        }),
+        body: JSON.stringify(
+          trialCreateBody({
+            consulteeProfileId,
+            consultantProfileId,
+            subscriptionPlanId,
+            notes: notes.trim() || undefined,
+            pick,
+          }),
+        ),
       });
       // A paid trial holds the time while the buyer pays: straight to checkout.
       const createdBody = createdAnswerSchema.safeParse(
