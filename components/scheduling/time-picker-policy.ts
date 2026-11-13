@@ -171,15 +171,20 @@ export interface TimePickerSubject {
 type PolicyHandlers = Pick<TimePickerPolicy, "onSubmit"> &
   Partial<Pick<TimePickerPolicy, "onConflict">>;
 
-/** A consultant placing a pending request that has never been scheduled. */
+/**
+ * A consultant placing a pending request, or released sessions; released ones
+ * keep 24 hours' notice, as the allocator holds them (`replacementLeadMs`).
+ */
 export function allocatePolicy(
   handlers: PolicyHandlers,
-  { settled }: { settled: boolean },
+  { settled, replacing = false }: { settled: boolean; replacing?: boolean },
 ): TimePickerPolicy {
   return {
     kind: "ALLOCATE",
     minLeadHours: 0,
-    lead: { purpose: "allocate", unpaid: !settled },
+    lead: replacing
+      ? { purpose: "reschedule" }
+      : { purpose: "allocate", unpaid: !settled },
     showReleasedSlots: false,
     submitLabel: "Save times",
     allowReleaseWithoutTime: false,

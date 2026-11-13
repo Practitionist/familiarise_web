@@ -417,6 +417,7 @@ describe("accept re-validates through the allocator before anything is written",
       // #1340 — the allocator must not close this proposal as superseded by
       // its own times.
       excludeRescheduleRequestId: REQ,
+      actorUserId: CONSULTEE_USER,
       inTx: expect.any(Function),
     });
   });
@@ -583,19 +584,41 @@ describe("#1340 — a confirmation keeps the proposal it is confirming", () => {
     expect(args.data).toMatchObject({ status: "ACCEPTED" });
   });
 
+  const learnerProposal = (releasedInHours: number, proposedInHours: number) =>
+    proposalRow({
+      initiatorRole: "CONSULTEE",
+      releasedOccurrenceIds: ["released-slot-1"],
+      releasedSessions: [
+        {
+          ordinal: 1,
+          startsAt: new Date(Date.now() + releasedInHours * HOUR).toISOString(),
+        },
+      ],
+      proposedTimes: [
+        {
+          startsAt: new Date(Date.now() + proposedInHours * HOUR),
+          endsAt: new Date(Date.now() + (proposedInHours + 1) * HOUR),
+        },
+      ],
+    });
+
+  it.each([
+    ["the session", 10, 72],
+    ["the new time", 72, 10],
+  ])(
+    "never auto-confirms when %s is under 24 hours away",
+    async (_what, releasedInHours, proposedInHours) => {
+      mockRequestFindUnique.mockResolvedValue(
+        learnerProposal(releasedInHours, proposedInHours),
+      );
+      const out = await tryAutoConfirmProposal(REQ, "consultation", "cons-1");
+      expect(out).toEqual({ confirmed: false, reason: "NEEDS_ACCEPTANCE" });
+      expect(mockAllocate).not.toHaveBeenCalled();
+    },
+  );
+
   it("auto-confirm names its own proposal to the allocator and then closes it AUTO_ACCEPTED", async () => {
-    mockRequestFindUnique.mockResolvedValue(
-      proposalRow({
-        initiatorRole: "CONSULTEE",
-        releasedOccurrenceIds: ["released-slot-1"],
-        proposedTimes: [
-          {
-            startsAt: new Date("2026-09-01T10:00:00.000Z"),
-            endsAt: new Date("2026-09-01T11:00:00.000Z"),
-          },
-        ],
-      }),
-    );
+    mockRequestFindUnique.mockResolvedValue(learnerProposal(72, 96));
 
     const out = await tryAutoConfirmProposal(REQ, "consultation", "cons-1");
 

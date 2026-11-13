@@ -42,7 +42,6 @@ import {
   SlotShortageError,
 } from "@/utils/scheduling-engine/errors";
 import { stageAllocationNotices } from "@/lib/booking/allocation/notify";
-import { leadMsFor } from "@/lib/booking/lead-time";
 import { checkoutInProgressError } from "@/lib/booking/request-cohort";
 import {
   slotTakenRefusal,
@@ -80,6 +79,7 @@ import {
   resolveConsumedPreferenceRequests,
   findAllocationPreference,
 } from "@/lib/booking/allocation/preference";
+import { replacementLeadMs } from "@/lib/booking/reschedule-proposals";
 import { findIdempotentAllocation } from "@/lib/booking/allocation/idempotency";
 import { assertCollaboratorsFree } from "@/lib/booking/allocation/collaborators";
 import { findAvailableSlots } from "@/lib/booking/allocation/search/find-available-slots";
@@ -190,7 +190,6 @@ export async function autoAllocate(
       settled,
     } = eventData;
     if (eventData.checkoutInProgress) throw checkoutInProgressError();
-    const leadTimeMs = leadMsFor("allocate", { settled });
 
     // CRITICAL FIX: Check for existing appointments to detect reschedule scenario
     // If tentative slots exist, this is a reschedule and we should preserve the original slot count
@@ -219,6 +218,11 @@ export async function autoAllocate(
     // A reschedule is a live RELEASE (tentative + RESCHEDULED), not mere
     // tentativeness: fresh requests already carry tentative holds.
     const isReschedule = releasedSessionCountOf(existingAppointments) > 0;
+    const leadTimeMs = replacementLeadMs(
+      isReschedule,
+      excludeRescheduleRequestId,
+      settled,
+    );
 
     // ADR B10, derived rather than trusted. The client set initialAllocation
     // only when tentativeSlotCount === 0, but EVERY pending request already

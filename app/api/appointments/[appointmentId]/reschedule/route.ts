@@ -1,6 +1,9 @@
 import { PROFILE_OWNER_SELECT } from "@/lib/booking/list-selects";
 import {
+  isShortNotice,
   isTooSoonFor,
+  leadLabel,
+  leadMsFor,
   RESCHEDULE_MIN_LEAD_HOURS,
 } from "@/lib/booking/lead-time";
 import * as Sentry from "@sentry/nextjs";
@@ -144,8 +147,8 @@ function roleOf(
  * them it is preference-only ("any time works") and the consultant places the
  * time; a trial always names its one new window and moves once per side.
  * Either way the request expires back to the original time. Webinars
- * re-time and class sessions cancel + make-up instead. No session within 24 h
- * moves, and no new time is within 24 h.
+ * re-time and class sessions cancel + make-up instead. A 1:1 move from or to a
+ * time inside 24 h needs proposed times and the other side's acceptance.
  */
 export async function POST(
   request: NextRequest,
@@ -547,28 +550,33 @@ async function requestReschedule(
             }
           }
 
+          // A party's 1:1 move inside 24 hours is allowed only as a proposal
+          // the other side accepts; a trial or an operator keeps the 24 hours.
           const now = new Date();
+          const agreedShortNotice = initiatorRole !== null && !isTrial;
           for (const slot of slotsToReschedule) {
             const startMs = new Date(slot.startsAt).getTime();
-            const hoursUntilSlot = (startMs - now.getTime()) / (1000 * 60 * 60);
-            if (
-              isTooSoonFor(
-                "reschedule",
-                { settled: true },
-                startMs,
-                now.getTime(),
-              )
-            ) {
+            if (!isShortNotice(startMs, now.getTime())) continue;
+            if (!agreedShortNotice || startMs <= now.getTime()) {
               throw new ReschedulePolicyError(
-                hoursUntilSlot,
+                (startMs - now.getTime()) / (1000 * 60 * 60),
                 RESCHEDULE_MIN_LEAD_HOURS,
               );
             }
+            if (!proposedSlots?.length) {
+              throw Object.assign(
+                new Error(
+                  "This session starts within 24 hours. To move it, propose new times; the other person has to accept one before the session starts.",
+                ),
+                { httpStatus: 409, code: "RESCHEDULE_WINDOW" },
+              );
+            }
           }
+          const proposalLead = agreedShortNotice ? "allocate" : "reschedule";
           if (
             proposedSlots?.some((s) =>
               isTooSoonFor(
-                "reschedule",
+                proposalLead,
                 { settled: true },
                 s.startsAt.getTime(),
                 now.getTime(),
@@ -577,7 +585,7 @@ async function requestReschedule(
           ) {
             throw Object.assign(
               new Error(
-                `New times must be at least ${RESCHEDULE_MIN_LEAD_HOURS} hours away.`,
+                `New times must be at least ${leadLabel(leadMsFor(proposalLead))} away.`,
               ),
               { httpStatus: 400, code: "PROPOSAL_TOO_SOON" },
             );
@@ -894,8 +902,7 @@ async function requestReschedule(
               slotsToReschedule.map((s) => new Date(s.startsAt)),
             );
             if (!expiresAt) {
-              // The 24-hour policy gate above should already have rejected this,
-              // so reaching here means the two rules have drifted apart.
+              // The gate above refuses a started session, so this is drift.
               throw Object.assign(
                 new Error(
                   "This session is too close to propose a new time for.",

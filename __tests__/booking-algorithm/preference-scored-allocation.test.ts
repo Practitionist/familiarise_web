@@ -843,4 +843,24 @@ describe("#1340 — resolveConsumedPreferenceRequests and the confirming proposa
     // exclusion is opt-in and must not weaken that.
     expect(declined.sort()).toEqual([SELF, STALE].sort());
   });
+
+  it("refuses to place over the expert's bare release of a paid session", async () => {
+    const { tx } = makeTx([]);
+    tx.rescheduleRequest.findMany.mockImplementation(async () => [
+      {
+        id: STALE,
+        initiatorRole: "CONSULTANT",
+        appointmentId: "appt-1",
+        _count: { proposedTimes: 0 },
+      },
+    ]);
+    const paid = { payment: { count: jest.fn(async () => 1) } };
+
+    await expect(
+      runSweep({ ...tx, ...paid }, ["released-slot-1"]),
+    ).rejects.toMatchObject({
+      errorCode: "PROPOSE_TIMES_REQUIRED",
+      message: "Propose new times so your client can accept one.",
+    });
+  });
 });

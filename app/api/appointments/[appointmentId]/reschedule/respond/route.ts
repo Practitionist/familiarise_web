@@ -36,7 +36,7 @@ const ACCEPT_FAILURE_COPY: Record<string, string> = {
   NO_PROPOSED_TIMES:
     "This request proposes no concrete times — place times on the calendar instead.",
   PROPOSAL_EXPIRED:
-    "This proposal has expired. The released times are back with the consultant to place.",
+    "This proposal has expired, so the session keeps its original time.",
   RESCHEDULE_NO_LONGER_OPEN:
     "This proposal was answered or expired while it was being accepted, so the booking did not move.",
   TIMES_TAKEN:

@@ -694,6 +694,49 @@ describe("Reschedule Route Handler - POST", () => {
     expect(res.status).toBe(409);
   });
 
+  it.each([
+    ["learner", { consultantProfileId: undefined }],
+    ["expert", { consulteeProfileId: undefined }],
+  ])(
+    "lets the %s propose times inside 24 hours; the proposal lapses at the session's start",
+    async (_side, profile) => {
+      (getSession as jest.Mock).mockResolvedValue({
+        user: {
+          id: "user-1",
+          consulteeProfileId: "ce-1",
+          consultantProfileId: "cp-1",
+          ...profile,
+        },
+      });
+      mockTx.appointment.findUnique.mockResolvedValue(
+        makeConsultationAppointment({
+          occurrences: [makeSlot("slot-1", NEAR_DATE)],
+        }),
+      );
+      const startsAt = new Date(NEAR_DATE.getTime() + 2 * 60 * 60 * 1000);
+      const res = await rescheduleHandler(
+        makeRescheduleRequest("apt-1", "CONSULTATION", {
+          proposedSlots: [
+            {
+              startsAt: startsAt.toISOString(),
+              endsAt: new Date(
+                startsAt.getTime() + 30 * 60 * 1000,
+              ).toISOString(),
+            },
+          ],
+        }),
+        makeParams("apt-1"),
+      );
+
+      expect(res.status).toBe(200);
+      expect(mockTx.rescheduleRequest.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ expiresAt: NEAR_DATE }),
+        }),
+      );
+    },
+  );
+
   // ─── CONSULTATION Reschedule ────────────────────────────────────────────
 
   describe("CONSULTATION", () => {

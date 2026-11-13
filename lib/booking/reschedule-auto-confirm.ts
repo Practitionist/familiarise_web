@@ -12,7 +12,11 @@ import type { EventType } from "@/utils/scheduling-engine/types";
 import { allocate } from "@/lib/booking/allocation";
 import { closeConfirmedProposal } from "@/lib/booking/reschedule-confirm";
 import { stageNoticesForFreedWindows } from "@/lib/booking/backup-interest";
-import { mayAutoConfirm } from "@/lib/booking/reschedule-proposals";
+import {
+  mayAutoConfirm,
+  needsOtherSideAcceptance,
+} from "@/lib/booking/reschedule-proposals";
+import { ReleasedSessionsSchema } from "@/lib/booking/released-sessions";
 import {
   AppointmentBusyError,
   BookingLockUnavailableError,
@@ -42,6 +46,7 @@ export async function tryAutoConfirmProposal(
       initiatedById: true,
       status: true,
       releasedOccurrenceIds: true,
+      releasedSessions: true,
       proposedTimes: {
         orderBy: { startsAt: "asc" },
         select: { startsAt: true, endsAt: true },
@@ -55,6 +60,17 @@ export async function tryAutoConfirmProposal(
   }
   if (!mayAutoConfirm(request.initiatorRole)) {
     return { confirmed: false, reason: "CONSULTANT_INITIATED" };
+  }
+  // A move from or to a time under 24 hours away waits for the other side.
+  const released = ReleasedSessionsSchema.safeParse(request.releasedSessions);
+  if (
+    !released.success ||
+    needsOtherSideAcceptance(
+      released.data.map((s) => s.startsAt),
+      request.proposedTimes.map((p) => p.startsAt),
+    )
+  ) {
+    return { confirmed: false, reason: "NEEDS_ACCEPTANCE" };
   }
   // Deliberately NOT comparing proposed count to released count. The allocator
   // is handed the times as a set and validates them as one; pairing them

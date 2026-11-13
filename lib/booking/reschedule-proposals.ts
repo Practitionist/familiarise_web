@@ -21,7 +21,12 @@ import type { AppointmentsType, RescheduleInitiatorRole } from "@prisma/client";
 import type { RescheduleOutcomeFields } from "@/lib/novu/workflows";
 import { SCHEDULING_INTERVAL_MS } from "@/lib/appointments/occurrences";
 import type { AppointmentKind } from "@/lib/appointments/view-model";
-import { RESCHEDULE_MIN_LEAD_HOURS } from "@/lib/booking/lead-time";
+import {
+  isShortNotice,
+  leadMsFor,
+  RESCHEDULE_MIN_LEAD_HOURS,
+} from "@/lib/booking/lead-time";
+import { AllocationConflictError } from "@/utils/scheduling-engine/errors";
 
 type ReleasableRow = {
   startsAt: Date | string;
@@ -30,7 +35,7 @@ type ReleasableRow = {
   deletedAt?: Date | string | null;
 };
 
-/** A party may release only a confirmed SCHEDULED session at least the lead time out. */
+/** A confirmed SCHEDULED session at least the 24-hour lead time out. */
 export function rescheduleReleasable(
   rows: ReadonlyArray<ReleasableRow>,
   now: Date = new Date(),
@@ -57,25 +62,16 @@ export function allowsRetime(
 /** Ceiling on how long an unanswered proposal may sit. */
 export const PROPOSAL_MAX_LIFETIME_HOURS = 72;
 
-/**
- * A proposal must resolve before the session it concerns arrives, with the same
- * margin the reschedule policy itself demands.
- */
+/** A proposal opened with more notice resolves this long before the session. */
 export const PROPOSAL_RESOLVE_BEFORE_SESSION_HOURS = 24;
 
 const HOUR_MS = 3_600_000;
 
 /**
- * When an unanswered proposal lapses.
- *
- * Two bounds, whichever comes first. A proposal about a session three months
- * out can safely wait days; one about a session this week has to be answered
- * before the session itself happens, or the booking silently stands and nobody
- * attends. A single fixed timer gets one of those two cases wrong.
- *
- * Returns null when the earliest released session is already inside the resolve
- * margin — such a reschedule should have been rejected by the 24-hour policy
- * gate before reaching here, so a caller seeing null has a bug upstream.
+ * When an unanswered proposal lapses and the original time is restored: the
+ * earlier of 72 hours and 24 hours before the earliest released session; a
+ * short-notice proposal (opened inside those 24 hours) lapses at that session's
+ * start. Null when the session has already started.
  */
 export function computeProposalExpiry(
   releasedSlotStarts: Date[],
@@ -83,22 +79,33 @@ export function computeProposalExpiry(
 ): Date | null {
   if (releasedSlotStarts.length === 0) return null;
 
-  // Seeded rather than relying on the length guard above: an unseeded reduce on
-  // an empty array throws, and a future caller reordering these two lines would
-  // turn a null return into a crash.
   const earliest = releasedSlotStarts.reduce(
     (a, b) => (a < b ? a : b),
     releasedSlotStarts[0],
   );
+  if (earliest <= now) return null;
   const mustResolveBy = new Date(
     earliest.getTime() - PROPOSAL_RESOLVE_BEFORE_SESSION_HOURS * HOUR_MS,
   );
+  if (mustResolveBy <= now) return earliest;
   const lifetimeCap = new Date(
     now.getTime() + PROPOSAL_MAX_LIFETIME_HOURS * HOUR_MS,
   );
+  return mustResolveBy < lifetimeCap ? mustResolveBy : lifetimeCap;
+}
 
-  const expiry = mustResolveBy < lifetimeCap ? mustResolveBy : lifetimeCap;
-  return expiry <= now ? null : expiry;
+/**
+ * A move that only the other side may confirm: a released session or a
+ * proposed time less than 24 hours away. It never confirms itself.
+ */
+export function needsOtherSideAcceptance(
+  releasedStarts: ReadonlyArray<Date | string>,
+  proposedStarts: ReadonlyArray<Date | string>,
+  now: Date = new Date(),
+): boolean {
+  return [...releasedStarts, ...proposedStarts].some((start) =>
+    isShortNotice(new Date(start).getTime(), now.getTime()),
+  );
 }
 
 /**
@@ -384,6 +391,13 @@ export function rescheduleProposeOutcome(args: {
       message: "Your new time has been sent to the attendee to confirm.",
     };
   }
+  if (autoConfirmReason === "NEEDS_ACCEPTANCE") {
+    return {
+      code: "AWAITING_ANSWER",
+      message:
+        "Your new time has been sent. The expert has to accept it before the session starts; if they don't, the session keeps its original time.",
+    };
+  }
   if (!autoConfirmRefusalIsFinal(autoConfirmReason)) {
     return {
       code: "AWAITING_ANSWER",
@@ -401,3 +415,32 @@ export function rescheduleProposeOutcome(args: {
 
 /** Where a decline left the released sessions (respond route's outcome code). */
 export type RescheduleRespondCode = "DECLINED" | "RELEASED";
+
+/**
+ * Released sessions placed without an accepted proposal keep 24 hours'
+ * notice; an accepted proposal, or a first placement, uses the allocate lead.
+ */
+export function replacementLeadMs(
+  isReschedule: boolean,
+  acceptedRequestId: string | undefined,
+  settled: boolean,
+): number {
+  return isReschedule && !acceptedRequestId
+    ? leadMsFor("reschedule")
+    : leadMsFor("allocate", { settled });
+}
+
+/** A new time under 24 hours away for a released session needs the other side's acceptance. */
+export function assertReplacementNotice(
+  isReschedule: boolean,
+  acceptedRequestId: string | undefined,
+  slots: readonly Date[],
+  now: Date = new Date(),
+): void {
+  if (!isReschedule || acceptedRequestId) return;
+  if (!slots.some((s) => isShortNotice(s.getTime(), now.getTime()))) return;
+  throw new AllocationConflictError(
+    "A new time less than 24 hours away has to be accepted by the other person. Pick a time at least 24 hours away.",
+    "NEEDS_ACCEPTANCE",
+  );
+}

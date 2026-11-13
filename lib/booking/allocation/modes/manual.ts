@@ -37,7 +37,6 @@ import {
   SlotShortageError,
 } from "@/utils/scheduling-engine/errors";
 import { stageAllocationNotices } from "@/lib/booking/allocation/notify";
-import { leadMsFor } from "@/lib/booking/lead-time";
 import { checkoutInProgressError } from "@/lib/booking/request-cohort";
 import {
   slotTakenRefusal,
@@ -73,6 +72,10 @@ import {
   assertGroupEventUnsoldInTx,
   probeConfirmedOverlap,
 } from "@/lib/booking/allocation/guards";
+import {
+  assertReplacementNotice,
+  replacementLeadMs,
+} from "@/lib/booking/reschedule-proposals";
 import { resolveConsumedPreferenceRequests } from "@/lib/booking/allocation/preference";
 import { findIdempotentAllocation } from "@/lib/booking/allocation/idempotency";
 import { assertCollaboratorsFree } from "@/lib/booking/allocation/collaborators";
@@ -222,7 +225,6 @@ export async function manualAllocate(
       settled,
     } = eventData;
     if (eventData.checkoutInProgress) throw checkoutInProgressError();
-    const leadTimeMs = leadMsFor("allocate", { settled });
 
     // Convert to Date objects with validation
     const slots = slotStrings.map((s, i) => {
@@ -291,6 +293,12 @@ export async function manualAllocate(
     // A reschedule is a live RELEASE (tentative + RESCHEDULED), not mere
     // tentativeness: fresh requests already carry tentative holds.
     const isReschedule = releasedSessionCountOf(existingAppointments) > 0;
+    const leadTimeMs = replacementLeadMs(
+      isReschedule,
+      excludeRescheduleRequestId,
+      settled,
+    );
+    assertReplacementNotice(isReschedule, excludeRescheduleRequestId, slots);
 
     // Intervals, not rows — see autoAllocate.
     const existingNonTentativeSlotCount =
