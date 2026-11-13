@@ -26,6 +26,7 @@ import { useBuyerPrice } from "@/components/pricing/BuyerPriceProvider";
 import { buyerDisplayPricePaise } from "@/lib/payments/pricing/display-price";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { TrialBookingModal } from "./TrialBookingModal";
+import { usePlanBuyBlocked } from "../hooks/usePlanBuyBlocked";
 
 interface SubscriptionContentItem {
   id?: string;
@@ -85,6 +86,11 @@ export default function SubscriptionPricingToggle({
   autoOpenTrial,
 }: Readonly<SubscriptionPricingToggleProps>) {
   const { data: session } = useSession();
+  const buyBlocked = usePlanBuyBlocked(
+    consultantDetails.id,
+    consultantDetails.planClientsFull === true,
+    session?.user?.id,
+  );
   const { toast } = useToast();
   const { gstRegistered, noteFor } = useBuyerPrice();
   // Track the active plan by id so plans that share a duration (e.g. two
@@ -469,13 +475,11 @@ export default function SubscriptionPricingToggle({
                 <Button
                   className="w-full bg-white text-zinc-900 hover:bg-zinc-100 font-semibold rounded-xl h-12 text-sm tracking-wide transition-all duration-200 hover:shadow-[0_0_20px_rgba(255,255,255,0.15)]"
                   onClick={handleChoosePlan}
-                  disabled={consultantDetails.planClientsFull === true}
+                  disabled={buyBlocked}
                 >
-                  {consultantDetails.planClientsFull
-                    ? "Fully booked"
-                    : "Start mentorship"}
+                  {buyBlocked ? "Fully booked" : "Start mentorship"}
                 </Button>
-                {consultantDetails.planClientsFull && (
+                {buyBlocked && (
                   <p className="text-center text-xs text-zinc-400">
                     This expert isn&apos;t taking new mentorship clients right
                     now.

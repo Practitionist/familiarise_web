@@ -18,3 +18,8 @@ export const planClientsReadSchema = z.object({
 });
 
 export type PlanClientsRead = z.infer<typeof planClientsReadSchema>;
+
+/** The signed-in viewer's own answer: they already hold one of this expert's plans. */
+export const viewerPlanClientSchema = z.object({ holdsPlan: z.boolean() });
+
+export type ViewerPlanClient = z.infer<typeof viewerPlanClientSchema>;

@@ -5,7 +5,7 @@ import { getSession } from "@/lib/auth-server";
 import { reportSentryError } from "@/lib/observability/report";
 import type { Metadata } from "next";
 import {
-  getExpertPlanClientsFull,
+  getPlanBuyBlockedFor,
   getSubscriptionPlanDetail,
 } from "@/lib/data/plan-details";
 import { SubscriptionDetails } from "./components/SubscriptionDetails";
@@ -66,7 +66,10 @@ export default async function SubscriptionDetailsPage({
   }
 
   // Read per request (the page is dynamic), so the flag is never stale.
-  const fullyBooked = await getExpertPlanClientsFull(plan.consultantProfileId);
+  const fullyBooked = await getPlanBuyBlockedFor(
+    plan.consultantProfileId,
+    session?.user?.id ?? null,
+  );
 
   return (
     <>

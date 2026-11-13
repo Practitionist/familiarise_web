@@ -11,6 +11,7 @@
 import type { Prisma } from "@prisma/client";
 import type { Tx } from "@/lib/prisma";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
+import type { ReservedSessions } from "@/lib/booking/feasibility";
 import {
   soldSessionMinutes,
   soldTermsOf,
@@ -34,12 +35,11 @@ export function heldPlanWhere(
 }
 
 /**
- * Minutes of sold sessions not yet placed, per assessed week: for each held
- * plan whose window overlaps the week, its frozen weekly cadence less the
- * sessions it already holds there, never more than its unplaced entitlement.
- * Placed sessions are busy time already, so they are not counted again here.
+ * Sold sessions not yet placed, per held plan and assessed week: its frozen
+ * weekly cadence less the sessions it already holds there, never more than its
+ * unplaced entitlement. Placed sessions are busy time already, so not counted here.
  */
-export async function readUnplacedPlanMinutes(
+export async function readUnplacedPlanSessions(
   db: Pick<Tx, "subscription">,
   params: {
     consultantProfileId: string;
@@ -48,15 +48,16 @@ export async function readUnplacedPlanMinutes(
     excludeSubscriptionIds: readonly string[];
     now: Date;
   },
-): Promise<number[]> {
+): Promise<ReservedSessions[]> {
   const { weekStarts, now } = params;
-  const reserved = new Array<number>(weekStarts.length - 1).fill(0);
-  if (reserved.length === 0) return reserved;
+  const weeks = weekStarts.length - 1;
+  const reserved: ReservedSessions[] = [];
+  if (weeks <= 0) return reserved;
   const rows = await db.subscription.findMany({
     where: {
       ...heldPlanWhere(params.consultantProfileId, now),
       id: { notIn: [...params.excludeSubscriptionIds] },
-      schedulingPeriodStartsAt: { lt: new Date(weekStarts[reserved.length]) },
+      schedulingPeriodStartsAt: { lt: new Date(weekStarts[weeks]) },
       OR: [
         { planEndsAt: null },
         { planEndsAt: { gt: new Date(weekStarts[0]) } },
@@ -108,8 +109,8 @@ export async function readUnplacedPlanMinutes(
       planEndsAt: row.planEndsAt,
       now,
     }).remaining;
-    const minutes = soldSessionMinutes(row);
-    for (let week = 0; week < reserved.length && unplaced > 0; week += 1) {
+    const sessionMinutes = soldSessionMinutes(row);
+    for (let week = 0; week < weeks && unplaced > 0; week += 1) {
       const from = weekStarts[week];
       const to = weekStarts[week + 1];
       if (planStartMs >= to || planEndMs <= from) continue;
@@ -126,7 +127,7 @@ export async function readUnplacedPlanMinutes(
         Math.max(0, terms.sessionsPerWeek - placed),
         unplaced,
       );
-      reserved[week] += owed * minutes;
+      if (owed > 0) reserved.push({ week, sessionMinutes, count: owed });
       unplaced -= owed;
     }
   }
@@ -161,6 +162,22 @@ export async function planClientsFull(
   if (limit === null) return false;
   const clients = await activePlanClientIds(db, consultantProfileId, now);
   return clients.length >= limit;
+}
+
+/** Whether this user already holds one of the expert's plans, so the limit never refuses them. */
+export async function holdsPlanWith(
+  db: Pick<Tx, "subscription">,
+  consultantProfileId: string,
+  userId: string,
+  now: Date = new Date(),
+): Promise<boolean> {
+  const held = await db.subscription.count({
+    where: {
+      ...heldPlanWhere(consultantProfileId, now),
+      requestedBy: { userId },
+    },
+  });
+  return held > 0;
 }
 
 /**

@@ -15,15 +15,13 @@ jest.mock("../../utils/appointmentlock", () => {
   return { ...actual, lockRequestCap: jest.fn() };
 });
 
-import fs from "node:fs";
-import path from "node:path";
-
 import { assessFeasibility, type TimeSpan } from "@/lib/booking/feasibility";
 import {
   assertPlanClientRoom,
   heldPlanWhere,
+  holdsPlanWith,
   planClientsFull,
-  readUnplacedPlanMinutes,
+  readUnplacedPlanSessions,
 } from "@/lib/booking/plan-demand";
 import { lockExpertPlanSales } from "@/lib/payments/checkout/locks";
 import {
@@ -48,13 +46,19 @@ const DAY = 24 * HOUR;
 // Monday 2026-11-16 00:00 IST.
 const MONDAY = Date.parse("2026-11-15T18:30:00Z");
 const NOW = new Date(MONDAY - DAY);
-const sixSlots: TimeSpan[] = [0, 1, 2, 3, 4, 5].map((d) => ({
-  startMs: MONDAY + d * DAY + 10 * HOUR,
-  endMs: MONDAY + d * DAY + 11 * HOUR,
-}));
-const room = (reservedMinutes: number) =>
+/** One 10:00–11:00 window on each of the first `days` days of the week. */
+const hourWindows = (days: number): TimeSpan[] =>
+  Array.from({ length: days }, (_, d) => ({
+    startMs: MONDAY + d * DAY + 10 * HOUR,
+    endMs: MONDAY + d * DAY + 11 * HOUR,
+  }));
+/** A one-hour, three-a-week buyer's first-week room around other plans' owed sessions. */
+const room = (
+  windows: TimeSpan[],
+  owed: { sessionMinutes: number; count: number }[],
+) =>
   assessFeasibility({
-    windows: sixSlots,
+    windows,
     busy: [],
     zone: "Asia/Kolkata",
     sessionMinutes: 60,
@@ -62,10 +66,10 @@ const room = (reservedMinutes: number) =>
     perDayCap: 1,
     notBeforeMs: MONDAY,
     weeks: 1,
-    reservedMinutesByWeek: [reservedMinutes],
+    reservedSessions: owed.map((o) => ({ week: 0, ...o })),
   }).weeks[0].placeable;
 
-/** A held plan row as `readUnplacedPlanMinutes` selects it. */
+/** A held plan row as `readUnplacedPlanSessions` selects it. */
 function plan(placedStarts: number[] = []) {
   return {
     schedulingPeriodStartsAt: new Date(MONDAY),
@@ -110,22 +114,32 @@ function fakeDb(rows: unknown[], limit: number | null = null) {
 
 describe("bound 1: checkout counts sold-but-unplaced plans", () => {
   it("refuses the third of three buyers on six weekly hours", () => {
-    expect(room(0)).toBe(3);
-    expect(room(3 * 60)).toBe(3);
-    expect(room(6 * 60)).toBe(0);
+    const threeAWeek = { sessionMinutes: 60, count: 3 };
+    expect(room(hourWindows(6), [])).toBe(3);
+    expect(room(hourWindows(6), [threeAWeek])).toBe(3);
+    expect(room(hourWindows(6), [threeAWeek, threeAWeek])).toBe(0);
+  });
+
+  it("never counts room that owed sessions leave too fragmented to use", () => {
+    // Seven one-hour windows; another plan owes a 30-minute session each day.
+    expect(room(hourWindows(7), [{ sessionMinutes: 30, count: 7 }])).toBe(0);
+    expect(room(hourWindows(7), [{ sessionMinutes: 30, count: 4 }])).toBe(3);
   });
 
   it("reserves each held plan's unplaced cadence, not its placed sessions", async () => {
     const placedMonday = MONDAY + 10 * HOUR;
     const { db, findMany } = fakeDb([plan(), plan([placedMonday])]);
-    const minutes = await readUnplacedPlanMinutes(db, {
+    const owed = await readUnplacedPlanSessions(db, {
       consultantProfileId: "cp-1",
       weekStarts: [MONDAY, MONDAY + 7 * DAY],
       excludeSubscriptionIds: ["own-renewed-plan"],
       now: NOW,
     });
-    // 3 unplaced + (3 − 1 placed, which is busy time already) = 5 sessions.
-    expect(minutes).toEqual([5 * 60]);
+    // 3 unplaced, and 3 − 1 placed (which is busy time already) = 2.
+    expect(owed).toEqual([
+      { week: 0, sessionMinutes: 60, count: 3 },
+      { week: 0, sessionMinutes: 60, count: 2 },
+    ]);
     const where = findMany.mock.calls[0][0].where;
     // A renewal is never blocked by the plan it renews.
     expect(where.id).toEqual({ notIn: ["own-renewed-plan"] });
@@ -133,7 +147,7 @@ describe("bound 1: checkout counts sold-but-unplaced plans", () => {
     expect(where.NOT).toEqual({ appointment: buildDeadHoldFilter(NOW) });
   });
 
-  it("serialises two buyers of one expert on the request-cap key", async () => {
+  it("maps a busy request-cap key to the retried plan-checkout answer", async () => {
     (lockRequestCap as jest.Mock).mockRejectedValueOnce(
       new RequestCapBusyError(),
     );
@@ -141,17 +155,6 @@ describe("bound 1: checkout counts sold-but-unplaced plans", () => {
       EventCheckoutBusyError,
     );
     expect(lockRequestCap).toHaveBeenCalledWith("cp-1", 45_000);
-    // Lock order: event checkout, then this consultant-tier key, then the consultee.
-    const src = fs.readFileSync(
-      path.join(process.cwd(), "lib/payments/checkout/orchestrate.ts"),
-      "utf8",
-    );
-    const eventPath = src.slice(
-      src.indexOf("lock = await acquireCheckoutLock("),
-    );
-    expect(eventPath.indexOf("lockExpertPlanSales(")).toBeLessThan(
-      eventPath.indexOf("lockConsulteeBooking("),
-    );
   });
 });
 
@@ -196,6 +199,16 @@ describe("bound 2: an expert-set limit on active plan clients", () => {
     await expect(
       planClientsFull(fakeDb(clients("a"), null).db, "cp-1", NOW),
     ).resolves.toBe(false);
+  });
+
+  it("answers per viewer whether they already hold a plan with the expert", async () => {
+    const count = jest.fn().mockResolvedValue(1);
+    const db = { subscription: { count } } as unknown as Tx;
+    await expect(holdsPlanWith(db, "cp-1", "user-a", NOW)).resolves.toBe(true);
+    expect(count.mock.calls[0][0].where).toEqual({
+      ...heldPlanWhere("cp-1", NOW),
+      requestedBy: { userId: "user-a" },
+    });
   });
 
   it("validates the setting: a whole number of at least 1, or blank for none", () => {

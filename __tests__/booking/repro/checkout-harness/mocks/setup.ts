@@ -30,6 +30,9 @@ jest.mock("../../../../../utils/appointmentlock", () => ({
   unlockEventCheckout: jest.fn(),
   lockConsulteeBooking: jest.fn(async () => ({ key: "k" })),
   unlockConsulteeBooking: jest.fn(),
+  RequestCapBusyError: class extends Error {},
+  lockRequestCap: jest.fn(async () => ({ key: "cap" })),
+  unlockRequestCap: jest.fn(),
   extendLock: jest.fn(async () => true),
   extendSlotInterval: jest.fn(async () => true),
 }));

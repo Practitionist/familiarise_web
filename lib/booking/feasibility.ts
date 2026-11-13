@@ -15,7 +15,7 @@
 
 import type { Tx } from "@/lib/prisma";
 import { dayStartInstant } from "@/lib/time/grid-zone";
-import { readUnplacedPlanMinutes } from "@/lib/booking/plan-demand";
+import { readUnplacedPlanSessions } from "@/lib/booking/plan-demand";
 import { customRowDaySlices } from "@/lib/booking/allocation/search/recurrence";
 import { reportIncompleteWeeklyRows } from "@/lib/scheduling/incomplete-weekly-rows";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
@@ -57,8 +57,15 @@ export interface FeasibilityInput {
   weeks: number;
   /** Where week one starts, e.g. the plan week being filled; `notBeforeMs` when absent. */
   weeksFromMs?: number;
-  /** Per week, minutes other sold plans still need there; each week's room shrinks by it. */
-  reservedMinutesByWeek?: readonly number[];
+  /** Other sold plans' unplaced sessions, placed first so the buyer gets only what is left. */
+  reservedSessions?: readonly ReservedSessions[];
+}
+
+/** One sold plan's sessions still owed in one assessed week (zero-based). */
+export interface ReservedSessions {
+  week: number;
+  sessionMinutes: number;
+  count: number;
 }
 
 export interface WeekCapacity {
@@ -167,6 +174,52 @@ function sessionsByStartDay(
   return counts;
 }
 
+/** The earliest lattice start in `spans` that begins on [fromMs, dayEndMs) and fits `sessionMs`. */
+function earliestStart(
+  spans: readonly TimeSpan[],
+  fromMs: number,
+  dayEndMs: number,
+  sessionMs: number,
+): number | null {
+  for (const span of spans) {
+    const start = ceilAtom(Math.max(span.startMs, fromMs));
+    if (start >= dayEndMs) break;
+    if (start + sessionMs <= floorAtom(span.endMs)) return start;
+  }
+  return null;
+}
+
+/**
+ * Places other plans' owed sessions earliest-first, one a day per plan (the
+ * allocator's auto order), and returns the time they take. Sessions that fit
+ * nowhere take nothing.
+ */
+function placeReservedSessions(
+  free: readonly TimeSpan[],
+  days: readonly number[],
+  reservations: readonly ReservedSessions[],
+  notBeforeMs: number,
+): TimeSpan[] {
+  const taken: TimeSpan[] = [];
+  for (const reservation of reservations) {
+    const sessionMs = reservation.sessionMinutes * 60_000;
+    let left = reservation.count;
+    const lastDay = Math.min(reservation.week * 7 + 7, days.length - 1);
+    for (let day = reservation.week * 7; day < lastDay && left > 0; day += 1) {
+      const start = earliestStart(
+        subtractSpans(free, taken),
+        Math.max(days[day], notBeforeMs),
+        days[day + 1],
+        sessionMs,
+      );
+      if (start === null) continue;
+      taken.push({ startMs: start, endMs: start + sessionMs });
+      left -= 1;
+    }
+  }
+  return taken;
+}
+
 function clip(
   spans: readonly TimeSpan[],
   from: number,
@@ -238,8 +291,14 @@ export function assessFeasibility(input: FeasibilityInput): FeasibilityReport {
     input.perDayCap,
     input.notBeforeMs,
   );
-  const placeableByDay = sessionsByStartDay(
+  const reservedTime = placeReservedSessions(
     free,
+    days,
+    input.reservedSessions ?? [],
+    input.notBeforeMs,
+  );
+  const placeableByDay = sessionsByStartDay(
+    reservedTime.length > 0 ? subtractSpans(free, reservedTime) : free,
     days,
     sessionMs,
     input.perDayCap,
@@ -247,21 +306,6 @@ export function assessFeasibility(input: FeasibilityInput): FeasibilityReport {
   );
   const weekTotal = (byDay: readonly number[], week: number) =>
     byDay.slice(week * 7, week * 7 + 7).reduce((sum, n) => sum + n, 0);
-  // Sold-but-unplaced sessions take time, not the buyer's day cap: room is the
-  // free time's uncapped session count less those minutes in this plan's lengths.
-  const reserved = input.reservedMinutesByWeek ?? [];
-  const freeUncappedByDay = reserved.some((minutes) => minutes > 0)
-    ? sessionsByStartDay(free, days, sessionMs, Infinity, input.notBeforeMs)
-    : null;
-  const roomInWeek = (week: number) => {
-    const minutes = reserved[week] ?? 0;
-    if (!freeUncappedByDay || minutes <= 0) return Infinity;
-    return Math.max(
-      0,
-      weekTotal(freeUncappedByDay, week) -
-        Math.ceil(minutes / input.sessionMinutes),
-    );
-  };
 
   const weeks: WeekCapacity[] = [];
   let bestWeekPublishedSessions = 0;
@@ -274,7 +318,6 @@ export function assessFeasibility(input: FeasibilityInput): FeasibilityReport {
       placeable: Math.min(
         input.sessionsPerWeek,
         weekTotal(placeableByDay, week),
-        roomInWeek(week),
       ),
     });
   }
@@ -312,7 +355,7 @@ export function assessFeasibility(input: FeasibilityInput): FeasibilityReport {
   if (shortWeeks > 0) {
     reasons.push({
       code: "WEEKS_SHORT",
-      message: `${shortWeeks} of the next ${weeks.length} weeks can't fit ${input.sessionsPerWeek} sessions${input.busy.length > 0 || freeUncappedByDay ? " around existing bookings" : ""}.`,
+      message: `${shortWeeks} of the next ${weeks.length} weeks can't fit ${input.sessionsPerWeek} sessions${input.busy.length > 0 || reservedTime.length > 0 ? " around existing bookings" : ""}.`,
     });
   }
   if (
@@ -418,10 +461,7 @@ export async function readFeasibilitySpans(
 /** Read and assess in one call: the shape every caller (editor, checkout, tray) uses. */
 export async function assessExpertFeasibility(
   db: Pick<Tx, "consultantProfile" | "appointmentOccurrence" | "subscription">,
-  params: Omit<
-    FeasibilityInput,
-    "windows" | "busy" | "reservedMinutesByWeek"
-  > & {
+  params: Omit<FeasibilityInput, "windows" | "busy" | "reservedSessions"> & {
     consultantProfileId: string;
     /** Plan editing ignores today's bookings; a buyer's checkout counts them. */
     countBookings: boolean;
@@ -439,9 +479,9 @@ export async function assessExpertFeasibility(
     { fromMs: fromMs - DAY_MS, toMs },
     now,
   );
-  const reservedMinutesByWeek =
+  const reservedSessions =
     params.countBookings && params.planDemand
-      ? await readUnplacedPlanMinutes(db, {
+      ? await readUnplacedPlanSessions(db, {
           consultantProfileId: params.consultantProfileId,
           weekStarts: zoneDayBoundaries(
             weeksFromMs,
@@ -456,7 +496,7 @@ export async function assessExpertFeasibility(
     ...params,
     windows: spans.windows,
     busy: params.countBookings ? spans.busy : [],
-    reservedMinutesByWeek,
+    reservedSessions,
   });
 }
 

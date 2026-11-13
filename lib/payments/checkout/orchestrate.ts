@@ -76,6 +76,10 @@ import {
 } from "@/lib/payments/checkout/org-funding";
 import { commitCheckout } from "@/lib/payments/checkout/commit";
 import {
+  assertSubscriptionDemandRoom,
+  resolveSubscriptionPurchase,
+} from "@/lib/payments/checkout/subscription-demand";
+import {
   assertOrgBillingAvailable,
   currentGstRegime,
 } from "@/lib/payments/tax/gst-regime";
@@ -482,11 +486,13 @@ export async function handleCheckout(
       CHECKOUT_LOCK_TTL_MS[validatedData.appointmentType] ?? 60_000,
       checkoutTxTimeoutMs + 10_000,
     );
+    // Each held lock renews on its own: a renewal-only plan checkout has no primary lock.
     const renewOrAbort = async (ttl: number): Promise<void> => {
-      if (!lock) return;
-      const renewed = Array.isArray(lock)
-        ? await extendSlotInterval(lock, ttl)
-        : await extendLock(lock, ttl);
+      const renewed =
+        !lock ||
+        (Array.isArray(lock)
+          ? await extendSlotInterval(lock, ttl)
+          : await extendLock(lock, ttl));
       if (!renewed) {
         throw new Error(
           "Checkout took too long and its hold expired — another checkout for this slot may be already in progress. Please try again.",
@@ -512,6 +518,22 @@ export async function handleCheckout(
       }
     };
     await renewOrAbort(perAttemptTtl);
+
+    // A full expert is refused before any gateway order exists; the commit
+    // re-checks under the same lock. No transaction is open here.
+    if (appointmentType === "SUBSCRIPTION") {
+      const purchase = await resolveSubscriptionPurchase(
+        prisma,
+        validatedData,
+        priced.consulteeProfileId,
+        subscriptionSchedulingPeriod,
+      );
+      await assertSubscriptionDemandRoom(
+        prisma,
+        purchase,
+        priced.consulteeProfileId,
+      );
+    }
 
     // #1861 L1 — one deadline for the gateway's capture window and the
     // PENDING row, so a Serializable retry cannot push the row past the order.
