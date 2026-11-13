@@ -144,8 +144,12 @@ currently hold:
   and the `Trial.status` default of `PENDING`. The new code must never meet a row
   holding a removed value: on 2026-11-13 no row held one (the four webinars,
   three classes and two trials that did were moved first), and the released code
-  writes none. Move the four entries to `destructiveStatementsAllowed` once the
-  release is on prod, then preflight, push, sidecars, assert.
+  writes none. The rest of each swap (the `BEGIN`/`COMMIT` wrapper,
+  `CREATE TYPE …_new`, the column retypes and renames, and the `Trial.status`
+  default drop) is listed there too, so the daily drift check stays green while
+  the swap waits. Move the four `DROP TYPE` entries to
+  `destructiveStatementsAllowed` once the release is on prod, then preflight,
+  push, sidecars, assert, and delete every `#2746` entry.
 - **`destructiveStatementsAllowed` — the pre-#2041 recording-storage columns and
   their enum, plus six indexes the schema no longer declares** (13 statements).
   No schema declares them and no code reads them, so they are dead and a push

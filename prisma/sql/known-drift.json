@@ -268,6 +268,180 @@
       "reason": "The enum swap that drops IN_PROGRESS from WebinarStatus. origin/prod still reads and writes the value, so the swap waits: move this to destructiveStatementsAllowed once the release carrying the change is on prod.",
       "trackedBy": "#2746",
       "expires": "2026-12-31"
+    },
+    {
+      "statement": "BEGIN",
+      "reason": "The transaction wrapper Prisma emits around each of the four booking enum swaps below. Tolerated by the drift check only until the reconcile push that follows the release.",
+      "trackedBy": "#2746",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "CREATE TYPE \"ClassStatus_new\" AS ENUM ('DRAFT', 'SCHEDULED', 'COMPLETED', 'CANCELLED')",
+      "reason": "Part of the ClassStatus enum swap (see the DROP TYPE \"public\".\"ClassStatus_old\" entry). Not destructive, so only the drift check reads it; it goes with the reconcile push that follows the release.",
+      "trackedBy": "#2746",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "ALTER TABLE \"public\".\"Class\" ALTER COLUMN \"status\" DROP DEFAULT",
+      "reason": "Part of the ClassStatus enum swap (see the DROP TYPE \"public\".\"ClassStatus_old\" entry). Not destructive, so only the drift check reads it; it goes with the reconcile push that follows the release.",
+      "trackedBy": "#2746",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "ALTER TABLE \"Class\" ALTER COLUMN \"status\" TYPE \"ClassStatus_new\" USING (\"status\"::text::\"ClassStatus_new\")",
+      "reason": "Part of the ClassStatus enum swap (see the DROP TYPE \"public\".\"ClassStatus_old\" entry). Not destructive, so only the drift check reads it; it goes with the reconcile push that follows the release.",
+      "trackedBy": "#2746",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "ALTER TYPE \"ClassStatus\" RENAME TO \"ClassStatus_old\"",
+      "reason": "Part of the ClassStatus enum swap (see the DROP TYPE \"public\".\"ClassStatus_old\" entry). Not destructive, so only the drift check reads it; it goes with the reconcile push that follows the release.",
+      "trackedBy": "#2746",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "ALTER TYPE \"ClassStatus_new\" RENAME TO \"ClassStatus\"",
+      "reason": "Part of the ClassStatus enum swap (see the DROP TYPE \"public\".\"ClassStatus_old\" entry). Not destructive, so only the drift check reads it; it goes with the reconcile push that follows the release.",
+      "trackedBy": "#2746",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "ALTER TABLE \"Class\" ALTER COLUMN \"status\" SET DEFAULT 'SCHEDULED'",
+      "reason": "Part of the ClassStatus enum swap (see the DROP TYPE \"public\".\"ClassStatus_old\" entry). Not destructive, so only the drift check reads it; it goes with the reconcile push that follows the release.",
+      "trackedBy": "#2746",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "COMMIT",
+      "reason": "The transaction wrapper Prisma emits around each of the four booking enum swaps below. Tolerated by the drift check only until the reconcile push that follows the release.",
+      "trackedBy": "#2746",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "CREATE TYPE \"RequestStatus_new\" AS ENUM ('PENDING', 'APPROVED', 'APPROVED_PENDING_PAYMENT', 'COMPLETED', 'REJECTED', 'CANCELLED', 'EXPIRED')",
+      "reason": "Part of the RequestStatus enum swap (see the DROP TYPE \"public\".\"RequestStatus_old\" entry). Not destructive, so only the drift check reads it; it goes with the reconcile push that follows the release.",
+      "trackedBy": "#2746",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "ALTER TABLE \"public\".\"Consultation\" ALTER COLUMN \"requestStatus\" DROP DEFAULT",
+      "reason": "Part of the RequestStatus enum swap (see the DROP TYPE \"public\".\"RequestStatus_old\" entry). Not destructive, so only the drift check reads it; it goes with the reconcile push that follows the release.",
+      "trackedBy": "#2746",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "ALTER TABLE \"public\".\"Subscription\" ALTER COLUMN \"requestStatus\" DROP DEFAULT",
+      "reason": "Part of the RequestStatus enum swap (see the DROP TYPE \"public\".\"RequestStatus_old\" entry). Not destructive, so only the drift check reads it; it goes with the reconcile push that follows the release.",
+      "trackedBy": "#2746",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "ALTER TABLE \"Consultation\" ALTER COLUMN \"requestStatus\" TYPE \"RequestStatus_new\" USING (\"requestStatus\"::text::\"RequestStatus_new\")",
+      "reason": "Part of the RequestStatus enum swap (see the DROP TYPE \"public\".\"RequestStatus_old\" entry). Not destructive, so only the drift check reads it; it goes with the reconcile push that follows the release.",
+      "trackedBy": "#2746",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "ALTER TABLE \"Subscription\" ALTER COLUMN \"requestStatus\" TYPE \"RequestStatus_new\" USING (\"requestStatus\"::text::\"RequestStatus_new\")",
+      "reason": "Part of the RequestStatus enum swap (see the DROP TYPE \"public\".\"RequestStatus_old\" entry). Not destructive, so only the drift check reads it; it goes with the reconcile push that follows the release.",
+      "trackedBy": "#2746",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "ALTER TYPE \"RequestStatus\" RENAME TO \"RequestStatus_old\"",
+      "reason": "Part of the RequestStatus enum swap (see the DROP TYPE \"public\".\"RequestStatus_old\" entry). Not destructive, so only the drift check reads it; it goes with the reconcile push that follows the release.",
+      "trackedBy": "#2746",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "ALTER TYPE \"RequestStatus_new\" RENAME TO \"RequestStatus\"",
+      "reason": "Part of the RequestStatus enum swap (see the DROP TYPE \"public\".\"RequestStatus_old\" entry). Not destructive, so only the drift check reads it; it goes with the reconcile push that follows the release.",
+      "trackedBy": "#2746",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "ALTER TABLE \"Consultation\" ALTER COLUMN \"requestStatus\" SET DEFAULT 'PENDING'",
+      "reason": "Part of the RequestStatus enum swap (see the DROP TYPE \"public\".\"RequestStatus_old\" entry). Not destructive, so only the drift check reads it; it goes with the reconcile push that follows the release.",
+      "trackedBy": "#2746",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "ALTER TABLE \"Subscription\" ALTER COLUMN \"requestStatus\" SET DEFAULT 'PENDING'",
+      "reason": "Part of the RequestStatus enum swap (see the DROP TYPE \"public\".\"RequestStatus_old\" entry). Not destructive, so only the drift check reads it; it goes with the reconcile push that follows the release.",
+      "trackedBy": "#2746",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "CREATE TYPE \"TrialStatus_new\" AS ENUM ('AWAITING_PAYMENT', 'SCHEDULED', 'COMPLETED', 'CONVERTED', 'CANCELLED')",
+      "reason": "Part of the TrialStatus enum swap (see the DROP TYPE \"public\".\"TrialStatus_old\" entry). Not destructive, so only the drift check reads it; it goes with the reconcile push that follows the release.",
+      "trackedBy": "#2746",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "ALTER TABLE \"public\".\"Trial\" ALTER COLUMN \"status\" DROP DEFAULT",
+      "reason": "Part of the TrialStatus enum swap (see the DROP TYPE \"public\".\"TrialStatus_old\" entry). Not destructive, so only the drift check reads it; it goes with the reconcile push that follows the release.",
+      "trackedBy": "#2746",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "ALTER TABLE \"Trial\" ALTER COLUMN \"status\" TYPE \"TrialStatus_new\" USING (\"status\"::text::\"TrialStatus_new\")",
+      "reason": "Part of the TrialStatus enum swap (see the DROP TYPE \"public\".\"TrialStatus_old\" entry). Not destructive, so only the drift check reads it; it goes with the reconcile push that follows the release.",
+      "trackedBy": "#2746",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "ALTER TYPE \"TrialStatus\" RENAME TO \"TrialStatus_old\"",
+      "reason": "Part of the TrialStatus enum swap (see the DROP TYPE \"public\".\"TrialStatus_old\" entry). Not destructive, so only the drift check reads it; it goes with the reconcile push that follows the release.",
+      "trackedBy": "#2746",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "ALTER TYPE \"TrialStatus_new\" RENAME TO \"TrialStatus\"",
+      "reason": "Part of the TrialStatus enum swap (see the DROP TYPE \"public\".\"TrialStatus_old\" entry). Not destructive, so only the drift check reads it; it goes with the reconcile push that follows the release.",
+      "trackedBy": "#2746",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "CREATE TYPE \"WebinarStatus_new\" AS ENUM ('DRAFT', 'SCHEDULED', 'COMPLETED', 'CANCELLED')",
+      "reason": "Part of the WebinarStatus enum swap (see the DROP TYPE \"public\".\"WebinarStatus_old\" entry). Not destructive, so only the drift check reads it; it goes with the reconcile push that follows the release.",
+      "trackedBy": "#2746",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "ALTER TABLE \"public\".\"Webinar\" ALTER COLUMN \"status\" DROP DEFAULT",
+      "reason": "Part of the WebinarStatus enum swap (see the DROP TYPE \"public\".\"WebinarStatus_old\" entry). Not destructive, so only the drift check reads it; it goes with the reconcile push that follows the release.",
+      "trackedBy": "#2746",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "ALTER TABLE \"Webinar\" ALTER COLUMN \"status\" TYPE \"WebinarStatus_new\" USING (\"status\"::text::\"WebinarStatus_new\")",
+      "reason": "Part of the WebinarStatus enum swap (see the DROP TYPE \"public\".\"WebinarStatus_old\" entry). Not destructive, so only the drift check reads it; it goes with the reconcile push that follows the release.",
+      "trackedBy": "#2746",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "ALTER TYPE \"WebinarStatus\" RENAME TO \"WebinarStatus_old\"",
+      "reason": "Part of the WebinarStatus enum swap (see the DROP TYPE \"public\".\"WebinarStatus_old\" entry). Not destructive, so only the drift check reads it; it goes with the reconcile push that follows the release.",
+      "trackedBy": "#2746",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "ALTER TYPE \"WebinarStatus_new\" RENAME TO \"WebinarStatus\"",
+      "reason": "Part of the WebinarStatus enum swap (see the DROP TYPE \"public\".\"WebinarStatus_old\" entry). Not destructive, so only the drift check reads it; it goes with the reconcile push that follows the release.",
+      "trackedBy": "#2746",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "ALTER TABLE \"Webinar\" ALTER COLUMN \"status\" SET DEFAULT 'SCHEDULED'",
+      "reason": "Part of the WebinarStatus enum swap (see the DROP TYPE \"public\".\"WebinarStatus_old\" entry). Not destructive, so only the drift check reads it; it goes with the reconcile push that follows the release.",
+      "trackedBy": "#2746",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "ALTER TABLE \"Trial\" ALTER COLUMN \"status\" DROP DEFAULT",
+      "reason": "Trial.status loses its PENDING default with the TrialStatus swap, so the default stays until the reconcile push that follows the release.",
+      "trackedBy": "#2746",
+      "expires": "2026-12-31"
     }
   ]
 }
