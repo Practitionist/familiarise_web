@@ -10,7 +10,12 @@
  */
 
 import type { PaymentStatus } from "@prisma/client";
-import type { PaymentDisplayStatus } from "@/lib/labels/session-labels";
+import {
+  paymentStatusBadge,
+  type PaymentDisplayStatus,
+  type StatusBadgeStyle,
+} from "@/lib/labels/session-labels";
+import { toneClass } from "@/lib/ui/tone";
 
 export type SeatPaymentRow = {
   userId: string;
@@ -130,4 +135,16 @@ export function summarizeSeatPayments(
     }
   }
   return summary;
+}
+
+/** A seat's payment badge; a settled seat that cost nothing reads "Free", not "Paid". */
+export function seatPaymentBadge(
+  row: Pick<SeatPaymentRow, "paymentStatus" | "amount"> &
+    Partial<Pick<SeatPaymentRow, "refunds">>,
+): StatusBadgeStyle {
+  const status = paymentDisplayStatus({ ...row, refunds: row.refunds ?? [] });
+  if (status === "SUCCEEDED" && Number(row.amount) === 0) {
+    return { label: "Free", ...toneClass("neutral") };
+  }
+  return paymentStatusBadge(status);
 }

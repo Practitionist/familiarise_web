@@ -77,6 +77,7 @@ import {
 } from "@/lib/appointments/payment-display";
 import {
   paymentDisplayStatus,
+  seatPaymentBadge,
   seatPaymentsByUser,
   summarizeSeatPayments,
 } from "@/lib/appointments/seat-payments";
@@ -527,9 +528,12 @@ export function AppointmentDetailClient({
           },
         }
       : undefined;
+  // Attendees only: the host and co-hosts sit on the roster but hold no seat.
   const participants = Array.from(
     new Map(
-      detail.appointment.participants.map((seat) => [seat.user.id, seat.user]),
+      detail.appointment.participants
+        .filter((seat) => seat.role === "CONSULTEE")
+        .map((seat) => [seat.user.id, seat.user]),
     ).values(),
   );
   const previewParticipants = participants.slice(0, PARTICIPANTS_PREVIEW);
@@ -583,11 +587,13 @@ export function AppointmentDetailClient({
   // member paid their own card. A group event keeps the tag as its label.
   const sponsoredBy =
     orgName && (isGroup || payments.some(isSponsoredPayment)) ? orgName : null;
-  // Did the viewer pay anything on this page themselves? Names the money door.
+  // Was the viewer actually charged (a succeeded charge above zero)? Names the money door.
+  const charged = (p: { paymentStatus: string; amount: number | string }) =>
+    p.paymentStatus === "SUCCEEDED" && Number(p.amount) > 0;
   const hasOwnCharge = payments.some(
     (p) =>
-      !isSponsoredPayment(p) ||
-      p.childPayments.some((c) => c.userId === viewerId),
+      (charged(p) && !isSponsoredPayment(p)) ||
+      p.childPayments.some((c) => c.userId === viewerId && charged(c)),
   );
   const liveVmOccurrences = vm.occurrences.filter((s) => !isDeadOccurrence(s));
   // A single-sitting booking's one confirmed session is already the header's
@@ -930,9 +936,7 @@ export function AppointmentDetailClient({
           {previewParticipants.map((u) => {
             const seat = isGroup ? seatPayments.get(u.id) : undefined;
             const seatStatus = seat ? paymentDisplayStatus(seat) : null;
-            const seatBadge = seatStatus
-              ? paymentStatusBadge(seatStatus)
-              : null;
+            const seatBadge = seat ? seatPaymentBadge(seat) : null;
             return (
               <span
                 key={u.id}
@@ -1006,7 +1010,7 @@ export function AppointmentDetailClient({
             <div className="flex items-baseline justify-between gap-3">
               <dt className="text-muted-foreground">Seats paid</dt>
               <dd className="font-medium text-foreground tabular-nums">
-                {seatSummary.paid} of {participants.length} seat
+                {seatSummary.paid - freeSeats} of {participants.length} seat
                 {participants.length === 1 ? "" : "s"} paid
               </dd>
             </div>

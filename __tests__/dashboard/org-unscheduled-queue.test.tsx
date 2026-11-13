@@ -93,6 +93,6 @@ it("offers Allocate only on the approved row", async () => {
   );
   // The table renders a desktop and a mobile layout, so ids repeat per layout.
   expect(new Set(allocateIds)).toEqual(new Set(["appt-approved"]));
-  expect(host.textContent).toContain("Awaiting expert approval");
+  expect(host.textContent).toContain("Requested");
   act(() => root.unmount());
 });

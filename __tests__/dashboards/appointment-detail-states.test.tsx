@@ -215,7 +215,8 @@ describe("consultee · AWAITING_PAYMENT subscription", () => {
     expect(html).toMatch(/21h 5\dm left/);
     expect(html).toContain("Held · link sent");
     expect(html).toContain("₹7,080.00 due · Razorpay · link valid until ");
-    expect(html).toContain("Problem with this charge");
+    // Nothing has been charged yet, so the money door names the booking.
+    expect(html).toContain("Problem with this booking");
     expect(html).not.toContain("Program progress");
     expect(html).not.toContain("Cancel booking");
     expect(html).toContain("Withdraw request");

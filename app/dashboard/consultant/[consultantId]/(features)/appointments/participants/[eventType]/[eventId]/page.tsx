@@ -39,10 +39,8 @@ import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import { effectiveMaxParticipants } from "@/lib/events/capacity";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
-import {
-  participantStatusBadge,
-  paymentStatusBadge,
-} from "@/lib/labels/session-labels";
+import { participantStatusBadge } from "@/lib/labels/session-labels";
+import { seatPaymentBadge } from "@/lib/appointments/seat-payments";
 
 import type { ClassEvent, WebinarEvent } from "@/types/planner-events";
 
@@ -341,10 +339,7 @@ export default function EventParticipantsPage() {
         }
         return (
           <span className="inline-flex items-center gap-2">
-            <StatusBadge
-              {...paymentStatusBadge(seat.paymentStatus)}
-              size="sm"
-            />
+            <StatusBadge {...seatPaymentBadge(seat)} size="sm" />
             <span className="text-xs tabular-nums text-muted-foreground">
               {formatCurrencyAmount(Number(seat.amount), seat.currency)}
             </span>
