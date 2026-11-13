@@ -222,6 +222,7 @@ export function useSubscriptionCheckout(
     detailsBanner:
       effectiveSearchParams?.renewsSubscriptionId ||
       feasibility?.notice ||
+      feasibility?.fullyBooked ||
       feasibility?.firstWeekPlaceable === 0 ? (
         <div className="space-y-2">
           {effectiveSearchParams?.renewsSubscriptionId && (
@@ -230,7 +231,16 @@ export function useSubscriptionCheckout(
               immediately after your current subscription ends
             </div>
           )}
-          {feasibility?.firstWeekPlaceable === 0 ? (
+          {feasibility?.fullyBooked ? (
+            <div
+              role="alert"
+              className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-foreground"
+            >
+              This expert isn&apos;t taking new mentorship clients right now.
+              Pick another expert, or try again later. You have not been
+              charged.
+            </div>
+          ) : feasibility?.firstWeekPlaceable === 0 ? (
             <div
               role="alert"
               className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-foreground"

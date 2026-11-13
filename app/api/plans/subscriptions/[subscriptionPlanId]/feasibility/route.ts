@@ -11,6 +11,7 @@ import {
   PLAN_FEASIBILITY_WEEKS,
 } from "@/lib/booking/feasibility";
 import { isHiddenDraft } from "@/lib/api/plans/draft-access";
+import { planBuyBlockedFor } from "@/lib/booking/plan-demand";
 import { leadMsFor } from "@/lib/booking/lead-time";
 import { applyRateLimit, checkoutContextLimiter } from "@/lib/rate-limit";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
@@ -93,6 +94,12 @@ export async function GET(
         firstWeekPlaceable: firstWeekPlaceable(report),
         sessionsPerWeek: plan.sessionsPerWeek,
         notice: buyerFeasibilityNotice(report, plan.sessionsPerWeek),
+        // The checkout's own PLAN_CLIENTS_FULL answer, shown before the buyer pays.
+        fullyBooked: await planBuyBlockedFor(
+          prisma,
+          plan.consultantProfileId,
+          session.user.id,
+        ),
       },
       { headers: { "Cache-Control": "private, no-store" } },
     );

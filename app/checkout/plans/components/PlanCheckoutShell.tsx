@@ -448,7 +448,7 @@ export function PlanCheckoutShell({
         // The same string arrives as `code` on the body and titles a typed refusal.
         handleApiError({
           error: error.description ?? error.message ?? error.reason,
-          errorType: error.code,
+          errorType: error.errorType ?? error.code,
           code: error.code,
         });
         return;

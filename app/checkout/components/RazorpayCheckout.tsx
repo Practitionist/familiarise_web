@@ -30,6 +30,8 @@ interface RazorpayPaymentResponse {
 interface RazorpayPaymentError {
   description?: string;
   code?: string;
+  /** The route's coarse bucket when `code` is a rule code with no toast of its own. */
+  errorType?: string;
   reason?: string;
   message?: string;
 }
@@ -207,6 +209,7 @@ export default function RazorpayCheckout({
         // availability bucket, and a buyer who dawdled on the pay page is told
         // the listing went away when only their chosen minute did.
         code: errorData.code || errorData.errorType,
+        errorType: errorData.errorType,
       });
       return null;
     }
@@ -217,6 +220,7 @@ export default function RazorpayCheckout({
       onPaymentError({
         description: data.error || "Payment initialization failed",
         code: data.code || data.errorType,
+        errorType: data.errorType,
       });
       return null;
     }

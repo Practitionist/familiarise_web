@@ -180,6 +180,20 @@ export async function holdsPlanWith(
   return held > 0;
 }
 
+/** Whether the limit turns this viewer away: reached, and they hold none of the expert's plans. */
+export async function planBuyBlockedFor(
+  db: Pick<Tx, "consultantProfile" | "subscription">,
+  consultantProfileId: string,
+  viewerUserId: string | null,
+  now: Date = new Date(),
+): Promise<boolean> {
+  if (!(await planClientsFull(db, consultantProfileId, now))) return false;
+  return !(
+    viewerUserId !== null &&
+    (await holdsPlanWith(db, consultantProfileId, viewerUserId, now))
+  );
+}
+
 /**
  * Refuses a new plan client once the expert's limit is reached. A buyer who
  * already holds a plan with this expert (a renewal, a second plan) is not a

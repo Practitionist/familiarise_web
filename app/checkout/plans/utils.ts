@@ -469,19 +469,24 @@ export function createRazorpayCheckoutHandlers(
     onPaymentError: (error: {
       description?: string;
       code?: string;
+      errorType?: string;
       reason?: string;
       message?: string;
     }) => {
-      // Booking-conflict errors from /api/checkout (slot taken/relinquished,
-      // event expired) carry our own errorType in `code` — surface the precise
-      // toast instead of the gateway card-decline heuristics.
-      if (
-        error.code &&
-        (Object.values(ErrorTypes) as string[]).includes(error.code)
-      ) {
+      // A refusal from /api/checkout carries our own errorType (and maybe a
+      // rule code): surface its toast instead of the card-decline heuristics.
+      const isKnown = (value?: string): value is string =>
+        !!value && (Object.values(ErrorTypes) as string[]).includes(value);
+      const bucket = isKnown(error.errorType)
+        ? error.errorType
+        : isKnown(error.code)
+          ? error.code
+          : null;
+      if (bucket) {
         const { title, description } = getErrorToast(
-          error.code,
+          bucket,
           error.description ?? error.message,
+          error.code,
         );
         toast({ title, description, variant: "destructive" });
         return;
@@ -502,7 +507,7 @@ export function createRazorpayCheckoutHandlers(
                 ? "Payment timed out due to a connection issue. Please check your internet and try again."
                 : errorDescription.includes("invalid")
                   ? "Invalid payment details. Please check your information and try again."
-                  : `${errorDescription}. Please try again or contact your bank for assistance.`;
+                  : `${errorDescription.replace(/\.$/, "")}. Please try again or contact your bank for assistance.`;
 
       toast({
         title: "Payment Failed",

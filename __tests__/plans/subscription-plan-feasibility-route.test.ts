@@ -16,6 +16,11 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: { subscriptionPlan: { findUnique: jest.fn() } },
 }));
+const mockPlanBuyBlockedFor = jest.fn(async () => false);
+jest.mock("../../lib/booking/plan-demand", () => ({
+  ...jest.requireActual("../../lib/booking/plan-demand"),
+  planBuyBlockedFor: (...a: unknown[]) => mockPlanBuyBlockedFor(...(a as [])),
+}));
 jest.mock("../../lib/booking/feasibility", () => {
   const actual = jest.requireActual("../../lib/booking/feasibility");
   return { ...actual, assessExpertFeasibility: jest.fn() };
@@ -77,6 +82,7 @@ it("tells the buyer about thin weeks, counting today's bookings", async () => {
     sessionsPerWeek: 3,
     notice:
       "This expert currently has room for about 1 of 3 sessions a week. Sessions that can't be scheduled before the plan ends are refunded.",
+    fullyBooked: false,
   });
   expect(assessExpertFeasibility).toHaveBeenCalledWith(
     expect.anything(),
@@ -101,6 +107,24 @@ it("says nothing when every week fits", async () => {
   });
   const body = await (await read()).json();
   expect(body.notice).toBeNull();
+});
+
+it("tells a buyer the expert's plan-client limit turns them away, before they pay", async () => {
+  (assessExpertFeasibility as jest.Mock).mockResolvedValue({
+    verdict: "ok",
+    weeks: [week(3), week(3), week(3), week(3)],
+    longestWindowMinutes: 240,
+    bestWeekPublishedSessions: 5,
+    reasons: [],
+  });
+  mockPlanBuyBlockedFor.mockResolvedValueOnce(true);
+  const body = await (await read()).json();
+  expect(body.fullyBooked).toBe(true);
+  expect(mockPlanBuyBlockedFor).toHaveBeenCalledWith(
+    expect.anything(),
+    "profile-1",
+    "buyer",
+  );
 });
 
 it("rejects a malformed start", async () => {

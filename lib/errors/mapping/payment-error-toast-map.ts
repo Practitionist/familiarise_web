@@ -195,6 +195,11 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
     title: "No Free Time In The First Week",
     description: null,
   },
+  [ErrorTypes.PLAN_CLIENTS_FULL]: {
+    title: "This Expert Is Fully Booked",
+    description:
+      "This expert isn't taking new mentorship clients right now. Pick another expert, or try again later. You have not been charged.",
+  },
   [ErrorTypes.CURRENCY_UNSUPPORTED]: {
     title: "Currency Not Supported",
     description: null,
