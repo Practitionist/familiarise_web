@@ -392,7 +392,21 @@ function wrapperFacts(a: AppointmentRow | null, appointmentType: string) {
       isTentative: s.isTentative,
       completionStatus: s.completionStatus,
     })),
-    tentativeSlotCount: slots.filter((s) => s.isTentative).length,
+    // Half-hour grid slots, the unit requiredSlots counts in, not occurrences.
+    tentativeSlotCount: slots
+      .filter((s) => s.isTentative)
+      .reduce(
+        (n, s) =>
+          n +
+          Math.max(
+            1,
+            Math.ceil(
+              (s.endsAt.getTime() - s.startsAt.getTime()) /
+                (SLOT_HOURS * 3_600_000),
+            ),
+          ),
+        0,
+      ),
     rescheduledSlotCount: slots.filter(isReleasedForReschedule).length,
     proposal: a?.rescheduleRequests[0]
       ? {

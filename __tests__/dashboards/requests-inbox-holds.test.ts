@@ -174,3 +174,55 @@ describe("direct checkout holds", () => {
     }
   });
 });
+
+describe("approving a request's own times", () => {
+  const request = (id: string, minutes: number) => ({
+    ...inFlight,
+    id,
+    requestedAt: hoursAgo(1),
+    bookingSource: "REQUEST_SUBMITTED",
+    consultationPlan: {
+      ...inFlight.consultationPlan,
+      durationInHours: minutes / 60,
+    },
+    appointment: {
+      ...inFlight.appointment,
+      id: `a-${id}`,
+      occurrences: [
+        {
+          ...inFlight.appointment.occurrences[0],
+          id: `a-${id}-o0`,
+          endsAt: new Date(hoursAhead(48).getTime() + minutes * 60_000),
+        },
+      ],
+      payment: [],
+    },
+  });
+
+  it.each([30, 60])(
+    "a %i-minute request is approved on its requested time, not sent to the grid",
+    async (minutes) => {
+      const one = serve([request(`c-${minutes}`, minutes)]);
+      m.consultation.findMany.mockImplementation(one.findMany);
+      m.consultation.count.mockImplementation(one.count);
+      const { rows } = await readRequestsInbox({
+        consultantProfileId: CP,
+        type: "consultation",
+        sort: "priority",
+        page: 1,
+        now: NOW,
+      });
+      const [row] = rows;
+      expect(isDialogFreeApproval(row)).toBe(true);
+      const presentation = deriveBookingPresentation(
+        row.presentation,
+        "CONSULTANT",
+        { now: NOW },
+      );
+      expect(rowActions(row, presentation).primary).toEqual({
+        kind: "approve",
+        mode: "requested",
+      });
+    },
+  );
+});
