@@ -85,21 +85,36 @@ const REQUEST_RESPONSE_INCLUDE = {
   },
 } satisfies Prisma.ConsultationInclude;
 
-/** The original 201 for a retried key, or null when the key has created nothing yet. */
+/**
+ * The original 201 for a retried key, or null when the key has created nothing
+ * yet; the same key with another plan or time is the caller's 422.
+ */
 async function replayRequest(
   idempotencyKey: string | null,
   userId: string,
 ): Promise<NextResponse | null> {
+  asked: { consultationPlanId: string; startsAt: string; endsAt: string },
   if (!idempotencyKey) return null;
   const original = await prisma.consultation.findUnique({
     where: { requestIdempotencyKey: idempotencyKey },
     include: REQUEST_RESPONSE_INCLUDE,
   });
   if (!original) return null;
-  if (original.requestedBy.userId !== userId) {
+  const held = (original.appointment?.occurrences ?? []).filter(
+    (o) => !o.deletedAt,
+  );
+  const sameBody =
+    original.consultationPlanId === asked.consultationPlanId &&
+    held.length > 0 &&
+    Math.min(...held.map((o) => o.startsAt.getTime())) ===
+      Date.parse(asked.startsAt) &&
+    Math.max(...held.map((o) => o.endsAt.getTime())) ===
+      Date.parse(asked.endsAt);
+  if (original.requestedBy.userId !== userId || !sameBody) {
     return NextResponse.json(
       {
-        error: "This Idempotency-Key was already used for another request.",
+        error:
+          "This Idempotency-Key was already used with a different request body.",
         code: "IDEMPOTENCY_KEY_REUSED",
       },
       { status: 422 },
@@ -150,8 +165,6 @@ export async function POST(req: NextRequest) {
       );
     }
     const idempotencyKey = keyResult?.data ?? null;
-    const replayed = await replayRequest(idempotencyKey, session.user.id);
-    if (replayed) return replayed;
 
     const body = await req.json();
     const parseResult = RequestForApprovalSchema.safeParse(body);
@@ -185,6 +198,13 @@ export async function POST(req: NextRequest) {
     // the request carried no org, so the approved booking billed the member's
     // personal card with no wallet debit, seat consumption, or attribution.
     // The request now carries it, stamped onto the Appointment below; the
+    const asked = { consultationPlanId, startsAt, endsAt };
+    const replayed = await replayRequest(
+      idempotencyKey,
+      session.user.id,
+      asked,
+    );
+    if (replayed) return replayed;
     // approval pay-link and Payment row inherit it from there.
     if (organizationId) {
       const [org, membership] = await Promise.all([
@@ -402,6 +422,7 @@ export async function POST(req: NextRequest) {
 
       // Anti-scalper cap (booking-journey audit B1): every PENDING request
       // holds a tentative slot that blocks the consultant's calendar. The
+        asked,
       // count runs INSIDE the consultee lock — outside it, two concurrent
       // submits both read n<3 and both insert, landing at 4+ active holds
       // (CodeRabbit triage on the TOCTOU).
@@ -688,6 +709,7 @@ export async function POST(req: NextRequest) {
         }
 
         // #1169 PR 1 — Redis-down fails closed with a structured 503; without
+            asked,
         // this branch the outage fell through to the generic 500 below.
         if (lockError instanceof BookingLockUnavailableError) {
           return NextResponse.json(

@@ -328,12 +328,23 @@ describe("request-for-approval consultant projection", () => {
 
 describe("request-for-approval Idempotency-Key", () => {
   const SLOT = "2030-01-01T10:00:00.000Z";
+  const original = () => ({
+    id: "req_original",
+    consultationPlanId: "plan_1",
+    requestedBy: { userId: "user_consultee", user: { name: "Sam" } },
+    appointment: {
+      occurrences: [
+        {
+          startsAt: new Date(SLOT),
+          endsAt: new Date("2030-01-01T11:00:00.000Z"),
+          deletedAt: null,
+        },
+      ],
+    },
+  });
 
   it("a replay with the same key returns the original request and creates nothing", async () => {
-    mockedPrisma.consultation.findUnique.mockResolvedValueOnce({
-      id: "req_original",
-      requestedBy: { userId: "user_consultee", user: { name: "Sam" } },
-    });
+    mockedPrisma.consultation.findUnique.mockResolvedValueOnce(original());
     const res = await POST(
       request(SLOT, { "Idempotency-Key": "rq_attempt_1" }),
     );
@@ -346,6 +357,16 @@ describe("request-for-approval Idempotency-Key", () => {
     );
     expect(mockedPrisma.consultation.create).not.toHaveBeenCalled();
     expect(mockLockSlotBooking).not.toHaveBeenCalled();
+  });
+
+  it("the same key with another time is refused, not replayed", async () => {
+    mockedPrisma.consultation.findUnique.mockResolvedValueOnce(original());
+    const res = await POST(
+      request("2030-01-01T10:30:00.000Z", { "Idempotency-Key": "rq_attempt_1" }),
+    );
+    expect(res.status).toBe(422);
+    expect((await res.json()).code).toBe("IDEMPOTENCY_KEY_REUSED");
+    expect(mockedPrisma.consultation.create).not.toHaveBeenCalled();
   });
 
   it("a different key creates a new request that carries its key", async () => {

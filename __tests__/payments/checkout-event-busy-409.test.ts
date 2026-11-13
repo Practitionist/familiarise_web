@@ -110,3 +110,31 @@ it("answers event-lock contention 409 EVENT_CHECKOUT_BUSY with retryAfter", asyn
     yourCardWasNotCharged: true,
   });
 });
+
+it("answers a same-key double submit with the first attempt's replay, not busy", async () => {
+  const { NextResponse } = await import("next/server");
+  const { replayByIdempotencyKey } = jest.requireMock(
+    "../../lib/payments/operations/checkout-replay",
+  );
+  replayByIdempotencyKey
+    .mockResolvedValueOnce(null)
+    .mockResolvedValueOnce(NextResponse.json({ success: true, reused: true }));
+  acquireCheckoutLock.mockRejectedValue(new EventCheckoutBusyError("WEBINAR"));
+
+  const res = await POST(
+    new NextRequest("https://x.test/api/checkout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        appointmentType: "WEBINAR",
+        eventId: "web-1",
+        planId: "plan-1",
+        paymentGateway: "RAZORPAY",
+        clientIdempotencyKey: "key-1",
+      }),
+    }),
+  );
+
+  expect(res.status).toBe(200);
+  expect(await res.json()).toEqual({ success: true, reused: true });
+});
