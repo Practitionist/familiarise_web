@@ -7,6 +7,7 @@ import { FreeCancellationLine } from "@/components/events/FreeCancellationLine";
 import { CancellationPolicyNote } from "@/components/booking/CancellationPolicyNote";
 import { deriveBatchCards } from "@/lib/booking/batch-cards";
 import { sessionsBoughtLabel } from "@/lib/booking/class-enrolment";
+import { planLevelLabel } from "@/lib/labels/plan-labels";
 import { useViewerZone } from "@/lib/time/use-viewer-zone";
 import { formatForViewer } from "@/lib/time/viewer-zone";
 import { searchParamsSchema, type SearchParams } from "@/schemas/checkout";
@@ -279,7 +280,7 @@ export function useClassCheckout(
           {planDetails?.language || "English"}
         </CheckoutDetailRow>
         <CheckoutDetailRow label="Level">
-          {planDetails?.level || "All Levels"}
+          {planLevelLabel(planDetails?.level)}
         </CheckoutDetailRow>
         <CheckoutDetailRow label="Prerequisites">
           {planDetails?.prerequisites || "None"}

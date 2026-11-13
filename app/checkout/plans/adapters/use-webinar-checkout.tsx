@@ -7,6 +7,7 @@ import { FreeCancellationLine } from "@/components/events/FreeCancellationLine";
 import { CancellationPolicyNote } from "@/components/booking/CancellationPolicyNote";
 import { useToast } from "@/hooks/use-toast";
 import { eventCapacityFromCount } from "@/lib/events/capacity";
+import { planLevelLabel } from "@/lib/labels/plan-labels";
 import { useViewerZone } from "@/lib/time/use-viewer-zone";
 import { formatForViewer } from "@/lib/time/viewer-zone";
 import {
@@ -318,7 +319,7 @@ export function useWebinarCheckout(
           {planDetails?.language || "English"}
         </CheckoutDetailRow>
         <CheckoutDetailRow label="Level">
-          {planDetails?.level || "All Levels"}
+          {planLevelLabel(planDetails?.level)}
         </CheckoutDetailRow>
         <CheckoutDetailRow label="Prerequisites">
           {planDetails?.prerequisites || "None"}

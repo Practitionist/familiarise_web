@@ -15,6 +15,7 @@ import {
   planPriceLabel,
 } from "@/lib/offerings/plan-length-copy";
 import { useViewerZone } from "@/lib/time/use-viewer-zone";
+import { formatInViewerZone } from "@/lib/time/viewer-zone";
 import {
   planFeasibilitySchema,
   subscriptionCheckoutBlocked,
@@ -57,6 +58,8 @@ type SubscriptionPlanWithConsultant = Omit<SubscriptionPlan, "price"> & {
 type SubscriptionResponse = {
   data: SubscriptionPlanWithConsultant;
 };
+
+const DATE_PATTERN = "d MMM yyyy";
 
 const START_PASSED =
   "The start date has passed. Please go back and pick a new one.";
@@ -131,7 +134,7 @@ export function useSubscriptionCheckout(
     };
   }, [validatedSearchParams]);
 
-  // The first cycle as the buyer will see it, in the browser's zone (display
+  // The first cycle as the buyer will see it, in their profile zone (display
   // only; the persisted window is the server's).
   const firstCycle = useMemo(() => {
     const start = effectiveSearchParams?.schedulingPeriodStartsAt;
@@ -142,9 +145,13 @@ export function useSubscriptionCheckout(
         durationInMonths: planData.data.durationInMonths ?? 1,
       },
       new Date(start),
-      Intl.DateTimeFormat().resolvedOptions().timeZone,
+      viewer.zone,
     );
-  }, [planData?.data, effectiveSearchParams?.schedulingPeriodStartsAt]);
+  }, [
+    planData?.data,
+    effectiveSearchParams?.schedulingPeriodStartsAt,
+    viewer.zone,
+  ]);
 
   // The expert's room for this cadence over the first weeks, counting today's
   // bookings. Advisory: checkout itself refuses only an empty first week.
@@ -271,19 +278,30 @@ export function useSubscriptionCheckout(
           "string" && (
           <>
             <CheckoutDetailRow label="Starts" className="text-right text-sm">
-              {new Date(
+              {formatInViewerZone(
                 effectiveSearchParams.schedulingPeriodStartsAt,
-              ).toLocaleDateString()}
+                viewer.zone,
+                DATE_PATTERN,
+              )}
             </CheckoutDetailRow>
             {firstCycle && (
               <CheckoutDetailRow
                 label="First cycle"
                 className="text-right text-sm"
               >
-                {firstCycle.start.toLocaleDateString()} →{" "}
-                {lastInstantBefore(firstCycle.end).toLocaleDateString()} ·{" "}
-                {sessionsPerWeek} session{sessionsPerWeek === 1 ? "" : "s"} per
-                cycle · {plan?.totalSessions ?? "—"} in the plan
+                {formatInViewerZone(
+                  firstCycle.start,
+                  viewer.zone,
+                  DATE_PATTERN,
+                )}{" "}
+                →{" "}
+                {formatInViewerZone(
+                  lastInstantBefore(firstCycle.end),
+                  viewer.zone,
+                  DATE_PATTERN,
+                )}{" "}
+                · {sessionsPerWeek} session{sessionsPerWeek === 1 ? "" : "s"}{" "}
+                per cycle · {plan?.totalSessions ?? "—"} in the plan
               </CheckoutDetailRow>
             )}
             <Separator className="bg-border" />

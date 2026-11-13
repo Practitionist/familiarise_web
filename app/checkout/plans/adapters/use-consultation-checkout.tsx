@@ -8,6 +8,7 @@ import { useSlotJustTaken } from "@/app/explore/experts/[consultantId]/hooks/use
 import { CancellationPolicyNote } from "@/components/booking/CancellationPolicyNote";
 import { useToast } from "@/hooks/use-toast";
 import { useSession } from "@/lib/auth-client";
+import { planLevelLabel } from "@/lib/labels/plan-labels";
 import { ErrorTypes } from "@/lib/errors/classification/payment-error-classification";
 import { Refusal } from "@/lib/errors/refusal";
 import {
@@ -16,6 +17,7 @@ import {
   MINIMUM_BOOKING_LEAD_TIME_MS,
 } from "@/lib/payments/constants";
 import { useViewerZone } from "@/lib/time/use-viewer-zone";
+import { formatInViewerZone, zoneLabel } from "@/lib/time/viewer-zone";
 import {
   consultationSearchParamsSchema,
   type ConsultationSearchParams,
@@ -343,24 +345,16 @@ export function useConsultationCheckout(
       <>
         <CheckoutDetailRow label="Date">
           {validatedSearchParams
-            ? new Date(validatedSearchParams.startsAt).toLocaleDateString(
-                undefined,
-                {
-                  weekday: "long",
-                  year: "numeric",
-                  month: "long",
-                  day: "numeric",
-                },
+            ? formatInViewerZone(
+                validatedSearchParams.startsAt,
+                viewer.zone,
+                "EEEE, d MMMM yyyy",
               )
             : "—"}
         </CheckoutDetailRow>
         <CheckoutDetailRow label="Time">
           {validatedSearchParams
-            ? `${new Date(
-                validatedSearchParams.startsAt,
-              ).toLocaleTimeString()} - ${new Date(
-                validatedSearchParams.endsAt,
-              ).toLocaleTimeString()} (${Intl.DateTimeFormat().resolvedOptions().timeZone})`
+            ? `${formatInViewerZone(validatedSearchParams.startsAt, viewer.zone, "h:mm a")} - ${formatInViewerZone(validatedSearchParams.endsAt, viewer.zone, "h:mm a")} (${zoneLabel(validatedSearchParams.startsAt, viewer.zone)})`
             : "—"}
         </CheckoutDetailRow>
         <CheckoutDetailRow label="Duration">
@@ -370,7 +364,7 @@ export function useConsultationCheckout(
           {eventData?.data?.language || "English"}
         </CheckoutDetailRow>
         <CheckoutDetailRow label="Level">
-          {eventData?.data?.level || "Beginner"}
+          {planLevelLabel(eventData?.data?.level)}
         </CheckoutDetailRow>
         <CheckoutDetailRow label="Prerequisites">
           {eventData?.data?.prerequisites || "None"}
