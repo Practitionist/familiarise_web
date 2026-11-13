@@ -22,6 +22,7 @@
  * stay Dates.
  */
 
+import { isStaffNonParty, publicRequester } from "@/lib/booking/list-selects";
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import { AppointmentsType, AppointmentStatus, Prisma } from "@prisma/client";
@@ -129,6 +130,36 @@ async function olderThan(
  * AppointmentParticipant and no list consumer reads it).
  */
 export type ConsultantListAppointment = TAppointmentWithSeats;
+
+/** STAFF read the learner of a booking they are not a party to in the public shape. */
+export function withPublicRequesterForStaff(
+  row: ConsultantListAppointment,
+  viewer: {
+    role?: string | null;
+    consulteeProfileId?: string | null;
+    consultantProfileId?: string | null;
+  },
+) {
+  const request = row.consultation ?? row.subscription;
+  const hostProfileId =
+    row.consultation?.consultationPlan.consultantProfile.id ??
+    row.subscription?.subscriptionPlan.consultantProfile.id;
+  const isParty =
+    (!!request && request.requestedBy.id === viewer.consulteeProfileId) ||
+    (!!hostProfileId && hostProfileId === viewer.consultantProfileId);
+  if (!isStaffNonParty(viewer.role, isParty)) return row;
+  return {
+    ...row,
+    consultation: row.consultation && {
+      ...row.consultation,
+      requestedBy: publicRequester(row.consultation.requestedBy),
+    },
+    subscription: row.subscription && {
+      ...row.subscription,
+      requestedBy: publicRequester(row.subscription.requestedBy),
+    },
+  };
+}
 
 export async function getConsultantAppointments(
   args: GetConsultantAppointmentsArgs,

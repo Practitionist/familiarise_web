@@ -16,8 +16,16 @@
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    consultationPlan: { findUnique: jest.fn(), update: jest.fn() },
-    subscriptionPlan: { findUnique: jest.fn(), update: jest.fn() },
+    consultationPlan: {
+      findUnique: jest.fn(),
+      findUniqueOrThrow: jest.fn(),
+      update: jest.fn(),
+    },
+    subscriptionPlan: {
+      findUnique: jest.fn(),
+      findUniqueOrThrow: jest.fn(),
+      update: jest.fn(),
+    },
     webinarPlan: { findUnique: jest.fn(), update: jest.fn() },
     classPlan: { findUnique: jest.fn(), update: jest.fn() },
   },
@@ -59,8 +67,15 @@ jest.mock("../../utils/contentValidation", () => ({
 import { NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
-import { PATCH as consultationPatch } from "@/app/api/plans/consultations/[consultationPlanId]/route";
-import { PATCH as subscriptionPatch } from "@/app/api/plans/subscriptions/[subscriptionPlanId]/route";
+import { SessionLookupFailedError } from "@/lib/auth/session-lookup-error";
+import {
+  GET as consultationGet,
+  PATCH as consultationPatch,
+} from "@/app/api/plans/consultations/[consultationPlanId]/route";
+import {
+  GET as subscriptionGet,
+  PATCH as subscriptionPatch,
+} from "@/app/api/plans/subscriptions/[subscriptionPlanId]/route";
 import { PATCH as webinarPatch } from "@/app/api/plans/webinars/[webinarPlanId]/route";
 import { PATCH as classPatch } from "@/app/api/plans/classes/[classPlanId]/route";
 
@@ -246,3 +261,69 @@ describe.each(families)(
     });
   },
 );
+
+describe.each([
+  {
+    name: "consultation",
+    get: consultationGet,
+    find: prisma.consultationPlan.findUniqueOrThrow as jest.Mock,
+    paramKey: "consultationPlanId",
+  },
+  {
+    name: "subscription",
+    get: subscriptionGet,
+    find: prisma.subscriptionPlan.findUniqueOrThrow as jest.Mock,
+    paramKey: "subscriptionPlanId",
+  },
+])("$name plan GET of an archived plan", ({ get, find, paramKey }) => {
+  const read = () =>
+    get(new NextRequest("http://localhost/api/plans/x"), {
+      params: Promise.resolve({ [paramKey]: "plan-1" }) as never,
+    });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    find.mockResolvedValue({
+      id: "plan-1",
+      consultantProfileId: "cp-owner",
+      status: "PUBLISHED",
+      visibility: "PUBLIC",
+      organizationId: null,
+      archivedAt: new Date("2026-01-01T00:00:00.000Z"),
+      topics: [],
+    });
+  });
+
+  it("is hidden from the public", async () => {
+    mockedGetSession.mockResolvedValue(null);
+    expect((await read()).status).toBe(404);
+  });
+
+  it("answers 503, not 404, when the session lookup fails", async () => {
+    mockedGetSession.mockRejectedValue(new SessionLookupFailedError("down"));
+    const res = await read();
+    expect(res.status).toBe(503);
+    expect(res.headers.get("Retry-After")).toBe("2");
+  });
+
+  it("is visible to its owner", async () => {
+    mockedGetSession.mockResolvedValue({
+      user: { id: OWNER_USER_ID, consultantProfileId: "cp-owner" },
+    });
+    expect((await read()).status).toBe(200);
+  });
+
+  it("is shown to everyone once restored", async () => {
+    mockedGetSession.mockResolvedValue(null);
+    find.mockResolvedValue({
+      id: "plan-1",
+      consultantProfileId: "cp-owner",
+      status: "PUBLISHED",
+      visibility: "PUBLIC",
+      organizationId: null,
+      archivedAt: null,
+      topics: [],
+    });
+    expect((await read()).status).toBe(200);
+  });
+});

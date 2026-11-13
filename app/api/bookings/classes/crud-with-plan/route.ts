@@ -1,6 +1,7 @@
 import { PROFILE_OWNER_SELECT } from "@/lib/booking/list-selects";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
+import { orgPlanEditRefusal } from "@/lib/enterprise/membership-guards";
 import { refuseForeignProfileReassignment } from "@/lib/api/plans/profile-reassignment";
 import { recordParticipants } from "@/lib/booking/participants";
 import {
@@ -639,18 +640,12 @@ export async function PATCH(request: NextRequest) {
       lateJoinersGetPastRecordings,
     } = validatedData;
 
-    // Find or create topics by name if provided
-    let topicIds: string[] | undefined;
-    if (topicNames !== undefined) {
-      topicIds = await findOrCreateTopics(topicNames);
-    }
-
     console.log("Validated fields for update:", {
       id,
       classId,
       title,
       status,
-      topicIds,
+      topicNames,
     });
 
     // First, check if the class plan exists
@@ -682,12 +677,25 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
+    const orgRefusal = await orgPlanEditRefusal(
+      prisma,
+      existingPlan,
+      existingPlan.consultantProfile.id,
+    );
+    if (orgRefusal) return NextResponse.json(orgRefusal, { status: 403 });
+
     const reassignmentRefusal = await refuseForeignProfileReassignment(
       session.user.id,
       existingPlan.consultantProfileId,
       consultantProfileId,
     );
     if (reassignmentRefusal) return reassignmentRefusal;
+
+    // Topics are created only once the edit is authorised.
+    const topicIds =
+      topicNames === undefined
+        ? undefined
+        : await findOrCreateTopics(topicNames);
 
     const lateJoinRefusal = lateJoinCutoffRefusal(
       lateJoinUntilSession,

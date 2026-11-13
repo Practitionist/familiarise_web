@@ -7,6 +7,7 @@ import {
 import prisma from "../../lib/prisma";
 import { verifyDirectUploadedObject } from "../../lib/documents/storage-verify";
 import { deletePlanMaterial } from "../../lib/supabase";
+import { requireOrgAccess } from "../../lib/auth-helpers";
 
 const mockCreate = jest.fn();
 let mockUserId: string | null;
@@ -15,6 +16,8 @@ let mockPlanExists: boolean;
 let mockRows: PlanMaterial[];
 let mockInTransaction: boolean;
 let mockMaterialCount: number;
+let mockPlanOrgId: string | null;
+let mockActiveExpert: boolean;
 
 function mockFindMaterial(query: { where: Record<string, unknown> }) {
   return (
@@ -46,7 +49,7 @@ jest.mock("../../lib/prisma", () => {
         ? {
             id: where.id,
             consultantProfile: { id: "expert-profile", userId: mockOwnerId },
-            organizationId: null,
+            organizationId: mockPlanOrgId,
           }
         : null,
     ),
@@ -68,6 +71,7 @@ jest.mock("../../lib/prisma", () => {
         ),
         count: jest.fn(async () => mockRows.length),
       },
+      membership: { count: jest.fn(async () => (mockActiveExpert ? 1 : 0)) },
       $transaction: jest.fn(
         async (run: (client: typeof tx) => Promise<unknown>) => {
           mockInTransaction = true;
@@ -190,6 +194,8 @@ beforeEach(() => {
   mockRows = [];
   mockInTransaction = false;
   mockMaterialCount = 1;
+  mockPlanOrgId = null;
+  mockActiveExpert = false;
   mockCreate.mockResolvedValue(material());
   jest.mocked(verifyDirectUploadedObject).mockResolvedValue({
     ok: false,
@@ -366,4 +372,22 @@ it("retains the locked replay check for a concurrent first commit", async () => 
   expect(prisma.$transaction).toHaveBeenCalledTimes(1);
   expect(mockCreate).not.toHaveBeenCalled();
   expect(deletePlanMaterial).not.toHaveBeenCalled();
+});
+
+it("refuses the expert of an organisation's plan once no longer an active member", async () => {
+  mockPlanOrgId = "org-1";
+  jest.mocked(requireOrgAccess).mockResolvedValueOnce({
+    error: new Response(null, { status: 403 }),
+  } as never);
+  mockRows = [material()];
+  expect((await commit()).status).toBe(403);
+  expect(prisma.planMaterial.findFirst).not.toHaveBeenCalled();
+});
+
+it("lets an active expert member manage an organisation plan's materials", async () => {
+  mockPlanOrgId = "org-1";
+  mockActiveExpert = true;
+  mockRows = [material()];
+  expect((await commit()).status).toBe(200);
+  expect(requireOrgAccess).not.toHaveBeenCalled();
 });

@@ -42,6 +42,8 @@ import {
   HOST_PROFILE_SELECT,
   PARTY_PROFILE_SELECT,
   PARTY_USER_SELECT,
+  isStaffNonParty,
+  publicRequester,
 } from "@/lib/booking/list-selects";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import {
@@ -49,6 +51,7 @@ import {
   stampRejectionRefundOwed,
 } from "@/lib/booking/rejection-refund";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import { platformCancelDoorRefusal } from "@/lib/booking/platform-cancel";
 import {
   requireApiAuth,
   isPrivileged,
@@ -118,7 +121,13 @@ export async function GET(
       );
     }
 
-    return NextResponse.json({ data: consultationData }, { status: 200 });
+    const data = isStaffNonParty(session.user.role, isParticipant)
+      ? {
+          ...consultationData,
+          requestedBy: publicRequester(consultationData.requestedBy),
+        }
+      : consultationData;
+    return NextResponse.json({ data }, { status: 200 });
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -266,6 +275,13 @@ export async function PATCH(
         "You can only update consultations you are a participant in",
       );
     }
+
+    // An operator who is not a party answers requests only through the staff door.
+    const doorRefusal = platformCancelDoorRefusal(request, {
+      privileged: isPrivileged(session.user.role),
+      party: isParticipant,
+    });
+    if (doorRefusal) return doorRefusal;
 
     if (
       APPROVAL_STATUSES_DETAIL_ONLY.has(status) &&

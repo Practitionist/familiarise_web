@@ -1,9 +1,11 @@
 /**
  * A platform operator (STAFF or ADMIN) who is not a party to a booking cancels
  * it only through the audited door at `/api/staff/appointments/[id]/cancel`.
- * The door grants the participant cancel route one request object; the route
- * refuses a privileged non-participant whose request carries no grant.
+ * The door grants the participant cancel route one request object; that route,
+ * the request reject routes and the trial routes refuse an ungranted one.
  */
+
+import { NextResponse } from "next/server";
 
 import prisma from "@/lib/prisma";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
@@ -27,6 +29,27 @@ export function platformCancelGrant(
   request: Request,
 ): { opsActionId: string } | null {
   return grants.get(request) ?? null;
+}
+
+/**
+ * The 403 the participant cancel, request status and trial routes answer a
+ * privileged caller who is not a party and whose request carries no grant.
+ */
+export function platformCancelDoorRefusal(
+  request: Request,
+  caller: { privileged: boolean; party: boolean },
+): NextResponse | null {
+  if (!caller.privileged || caller.party || platformCancelGrant(request)) {
+    return null;
+  }
+  return NextResponse.json(
+    {
+      error:
+        "Only the learner or the expert can do this here. Operators act on bookings from the back office, so any refund is audited.",
+      code: "PLATFORM_CANCEL_DOOR_REQUIRED",
+    },
+    { status: 403 },
+  );
 }
 
 /**

@@ -32,6 +32,7 @@ import {
   stampRejectionRefundOwed,
 } from "@/lib/booking/rejection-refund";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import { platformCancelDoorRefusal } from "@/lib/booking/platform-cancel";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import { resolveOrgScope, scopeOrgId } from "@/lib/api/scope/parse";
 import { assertNoLiveCheckoutHold } from "@/lib/booking/request-cohort";
@@ -334,6 +335,13 @@ export async function PATCH(request: NextRequest) {
       isPrivileged(session.user.role),
     );
     if (patchError) return patchError;
+
+    // A decline refunds in full, so an operator who is not a party uses the staff door.
+    const doorRefusal = platformCancelDoorRefusal(request, {
+      privileged: isPrivileged(session.user.role),
+      party: isConsultant || isConsultee,
+    });
+    if (doorRefusal) return doorRefusal;
 
     try {
       // #836 — allowed-from guard rides the WHERE; updateMany returns no

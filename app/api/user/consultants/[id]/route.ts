@@ -8,6 +8,7 @@ import {
 import {
   consultantPublicScalars,
   consultantPublicApiSchema,
+  publicProfileUserSelect,
 } from "@/lib/data/consultant-public";
 import {
   BookingMode,
@@ -283,29 +284,7 @@ export async function GET(
                 },
               },
             }
-          : {
-              // Public fields only
-              select: {
-                id: true,
-                name: true,
-                image: true,
-                profileDisplayImage: true,
-                bio: true,
-                city: true,
-                country: true,
-                linkedinUrl: true,
-                timezone: true,
-                workExperiences: {
-                  orderBy: [{ isCurrent: "desc" }, { startDate: "desc" }],
-                },
-                education: {
-                  orderBy: { endYear: "desc" },
-                },
-                certifications: {
-                  orderBy: { issueDate: "desc" },
-                },
-              },
-            },
+          : { select: publicProfileUserSelect },
         domain: true,
         subDomains: true,
         tags: true,

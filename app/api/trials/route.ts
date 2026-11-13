@@ -1,3 +1,4 @@
+import { isStaffNonParty, publicRequester } from "@/lib/booking/list-selects";
 import prisma from "@/lib/prisma";
 import { blocksNewTrialRequest } from "@/lib/trials/eligibility";
 import { PaymentGateway, Prisma, TrialStatus } from "@prisma/client";
@@ -249,8 +250,21 @@ export async function GET(request: NextRequest) {
       prisma.trial.count({ where: whereClause }),
     ]);
 
+    // STAFF read the learner of a trial they are not a party to in the public shape.
+    const data = trials.map((trial) =>
+      isStaffNonParty(
+        session.user.role,
+        trial.consulteeProfileId === session.user.consulteeProfileId ||
+          trial.consultantProfileId === session.user.consultantProfileId,
+      )
+        ? {
+            ...trial,
+            consulteeProfile: publicRequester(trial.consulteeProfile),
+          }
+        : trial,
+    );
     return NextResponse.json({
-      data: trials,
+      data,
       meta: {
         total,
         page,

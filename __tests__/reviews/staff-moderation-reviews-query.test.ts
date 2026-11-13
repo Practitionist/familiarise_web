@@ -86,3 +86,35 @@ describe("GET /api/staff/moderation/reviews query validation", () => {
     );
   });
 });
+
+describe("GET /api/staff/moderation/reviews reviewer identity", () => {
+  it("neither reads nor returns the reviewer's email", async () => {
+    mockedFindMany.mockResolvedValue([
+      {
+        id: "rev-1",
+        rating: 5,
+        reviewDescription: "Great",
+        consultantProfile: {
+          id: "cp-1",
+          user: { name: "Hannah", email: "h@x.test", image: null },
+        },
+        consulteeProfile: { id: "cee-1", user: { name: "Priya", image: null } },
+        createdAt: new Date("2026-11-01T00:00:00Z"),
+        moderationActions: [],
+      },
+    ]);
+    mockedCount.mockResolvedValue(1);
+    const res = await GET(request(""));
+    expect(res.status).toBe(200);
+    const select = mockedFindMany.mock.calls[0][0].select;
+    expect(select.consulteeProfile.select.user.select).not.toHaveProperty(
+      "email",
+    );
+    const [review] = (await res.json()).reviews;
+    expect(review.reviewer).toEqual({
+      profileId: "cee-1",
+      name: "Priya",
+      image: null,
+    });
+  });
+});

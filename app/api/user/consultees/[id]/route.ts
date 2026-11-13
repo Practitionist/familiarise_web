@@ -8,6 +8,7 @@ import {
   forbiddenResponse,
 } from "@/lib/auth-helpers";
 import { PARTY_USER_SELECT } from "@/lib/booking/list-selects";
+import { publicProfileUserSelect } from "@/lib/data/consultant-public";
 import { checkConsulteeActiveBookings } from "../../consultants/utils/consultee-bookings";
 
 export async function GET(
@@ -23,30 +24,38 @@ export async function GET(
     const resolvedParams = await params;
     const { id } = resolvedParams;
 
-    // Check authorization: privileged users can access any, others only their own
-    const canAccess =
-      isPrivileged(session.user.role) ||
-      checkOwnership(session, id, "consultee");
-
-    if (!canAccess) {
+    // The owner and ADMIN read the whole profile; STAFF read the shared
+    // public-field selection; anyone else is refused.
+    const isOwner = checkOwnership(session, id, "consultee");
+    const fullRead = isOwner || session.user.role === "ADMIN";
+    if (!fullRead && !isPrivileged(session.user.role)) {
       return forbiddenResponse(
         "You can only access your own consultee profile",
       );
     }
 
-    const consultee = await prisma.consulteeProfile.findUnique({
-      where: { id: id },
-      include: {
-        user: {
+    const consultee = fullRead
+      ? await prisma.consulteeProfile.findUnique({
+          where: { id: id },
           include: {
-            workExperiences: {
-              orderBy: [{ isCurrent: "desc" }, { startDate: "desc" }],
+            user: {
+              include: {
+                workExperiences: {
+                  orderBy: [{ isCurrent: "desc" }, { startDate: "desc" }],
+                },
+                education: { orderBy: { endYear: "desc" } },
+              },
             },
-            education: { orderBy: { endYear: "desc" } },
           },
-        },
-      },
-    });
+        })
+      : await prisma.consulteeProfile.findUnique({
+          where: { id: id },
+          select: {
+            id: true,
+            userId: true,
+            user: { select: publicProfileUserSelect },
+          },
+        });
 
     if (!consultee) {
       return NextResponse.json(
@@ -76,74 +85,6 @@ export async function GET(
   }
 }
 
-export async function POST(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
-) {
-  try {
-    // Require authentication
-    const authResult = await requireApiAuth();
-    if (authResult.error) return authResult.error;
-    const { session } = authResult;
-
-    const resolvedParams = await params;
-    const { id } = resolvedParams;
-
-    // Check authorization: privileged users can create for any user, others only for themselves
-    const canCreate = isPrivileged(session.user.role) || session.user.id === id;
-
-    if (!canCreate) {
-      return forbiddenResponse(
-        "You can only create a consultee profile for yourself",
-      );
-    }
-
-    const body = await req.json();
-    const user = await prisma.user.findUnique({
-      where: { id: id },
-    });
-
-    if (!user) {
-      return NextResponse.json(
-        { error: "User not found. Cannot create consultee profile." },
-        { status: 404 },
-      );
-    }
-
-    const createdConsultee = await prisma.consulteeProfile.create({
-      data: {
-        aboutMe: body.aboutMe,
-        preferredLanguage: body.preferredLanguage,
-        goals: body.goals,
-        careerStage: body.careerStage,
-        skillsToDevelop: body.skillsToDevelop ?? [],
-        budgetPreference: body.budgetPreference,
-        user: { connect: { id: id } },
-      },
-      include: {
-        consultantReviews: { where: { deletedAt: null } },
-        user: PARTY_USER_SELECT,
-      },
-    });
-
-    return NextResponse.json(createdConsultee, { status: 201 });
-  } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "user" } },
-    );
-    console.error("Error creating consultee:", error);
-    return NextResponse.json(
-      {
-        error:
-          "An unexpected error occurred while creating the consultee profile",
-        details: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 },
-    );
-  }
-}
-
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -157,12 +98,8 @@ export async function PATCH(
     const resolvedParams = await params;
     const { id } = resolvedParams;
 
-    // Check authorization: privileged users can update any, others only their own
-    const canUpdate =
-      isPrivileged(session.user.role) ||
-      checkOwnership(session, id, "consultee");
-
-    if (!canUpdate) {
+    // The owner only; operators read a learner's profile but never edit it.
+    if (!checkOwnership(session, id, "consultee")) {
       return forbiddenResponse(
         "You can only update your own consultee profile",
       );

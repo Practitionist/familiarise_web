@@ -8,6 +8,7 @@ import { Prisma } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { isActiveOrgExpert } from "@/lib/enterprise/membership-guards";
 import {
   applyRateLimit,
   documentCommitLimiter,
@@ -63,8 +64,9 @@ interface MaterialPlan {
 }
 
 /**
- * Grants access to either the owning consultant or an organization operator
- * holding `materials.manage.orgPlan` over an org-owned plan.
+ * Grants access to either the owning consultant (on an org-owned plan, only
+ * while an ACTIVE EXPERT member) or an organization operator holding
+ * `materials.manage.orgPlan` over an org-owned plan.
  */
 async function resolvePlanAccess(
   userId: string,
@@ -74,7 +76,15 @@ async function resolvePlanAccess(
   if (!plan?.consultantProfile) {
     return { allowed: false, error: "Plan not found" };
   }
-  if (plan.consultantProfile.userId === userId) {
+  if (
+    plan.consultantProfile.userId === userId &&
+    (!plan.organizationId ||
+      (await isActiveOrgExpert(
+        prisma,
+        plan.organizationId,
+        plan.consultantProfile.id,
+      )))
+  ) {
     return {
       allowed: true,
       organizationId: plan.organizationId,

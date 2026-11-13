@@ -2,7 +2,10 @@
  * @jest-environment node
  */
 
-/** A PATCH's webinarId must name an instance of the plan being edited. */
+/**
+ * A PATCH's webinarId must name an instance of the plan being edited, and an
+ * organisation's plan is edited only by an ACTIVE EXPERT member of it.
+ */
 
 const mockTx = {
   webinarPlan: { update: jest.fn() },
@@ -15,6 +18,7 @@ const mockTx = {
 };
 
 const transaction = jest.fn();
+const memberships: Array<Record<string, string>> = [];
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
@@ -23,6 +27,14 @@ jest.mock("../../lib/prisma", () => ({
     webinarPlan: { findUnique: jest.fn() },
     consultantProfile: { findUnique: jest.fn() },
     webinar: { findFirst: jest.fn() },
+    membership: {
+      count: jest.fn(
+        async ({ where }: { where: Record<string, string> }) =>
+          memberships.filter((m) =>
+            Object.entries(where).every(([key, value]) => m[key] === value),
+          ).length,
+      ),
+    },
   },
 }));
 
@@ -43,6 +55,7 @@ jest.mock("../../lib/topics", () => ({
 
 import prisma from "@/lib/prisma";
 import { PATCH } from "@/app/api/bookings/webinars/crud-with-plan/route";
+import { findOrCreateTopics } from "@/lib/topics";
 
 const base = prisma as unknown as Record<string, Record<string, jest.Mock>>;
 
@@ -162,5 +175,50 @@ describe("webinar PATCH moves status only along the publish edge", () => {
       where: { id: "web-1", status: { in: ["DRAFT"] } },
       data: { status: "SCHEDULED" },
     });
+  });
+});
+
+describe("webinar PATCH on an organisation's plan", () => {
+  const member = (status: string) => ({
+    organizationId: "org-1",
+    consultantProfileId: "cp-1",
+    role: "EXPERT",
+    status,
+  });
+
+  beforeEach(() => {
+    memberships.length = 0;
+    base.webinar.findFirst.mockResolvedValue(WEBINAR);
+    base.webinarPlan.findUnique.mockResolvedValue({
+      ...PLAN,
+      organizationId: "org-1",
+    });
+  });
+
+  it.each(["REMOVED", "SUSPENDED"])(
+    "refuses the named expert whose membership is %s",
+    async (status) => {
+      memberships.push(member(status));
+      const response = await PATCH(
+        request({ id: "plan-1", price: 99_900, topics: ["new-topic"] }),
+      );
+      expect(response.status).toBe(403);
+      expect((await response.json()).code).toBe("NOT_ACTIVE_ORG_EXPERT");
+      expect(transaction).not.toHaveBeenCalled();
+      expect(findOrCreateTopics).not.toHaveBeenCalled();
+    },
+  );
+
+  it("lets an active expert member edit", async () => {
+    memberships.push(member("ACTIVE"));
+    const response = await PATCH(request({ id: "plan-1", title: "Renamed" }));
+    expect(response.status).toBe(200);
+  });
+
+  it("leaves a personal plan to its expert with no membership read", async () => {
+    base.webinarPlan.findUnique.mockResolvedValue(PLAN);
+    const response = await PATCH(request({ id: "plan-1", title: "Renamed" }));
+    expect(response.status).toBe(200);
+    expect(base.membership.count).not.toHaveBeenCalled();
   });
 });
