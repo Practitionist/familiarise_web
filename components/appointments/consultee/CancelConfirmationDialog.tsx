@@ -42,6 +42,7 @@ type SeatLeavePreview =
       estimatedRefundPaise: number;
       remainingSessions: number | null;
       currency: string;
+      freeBooking: boolean;
     };
 
 interface CancelConfirmationDialogProps {
@@ -169,6 +170,13 @@ export function CancelConfirmationDialog({
       return (
         <p className="text-red-600 text-sm font-medium">
           {seatPreview.message}
+        </p>
+      );
+    }
+    if (seatPreview?.seated && seatPreview.freeBooking) {
+      return (
+        <p className="text-muted-foreground text-sm">
+          {FREE_BOOKING_REFUND_LINE}
         </p>
       );
     }

@@ -350,6 +350,8 @@ export type SeatLeaveQuote =
       /** Class sessions the seat gives up; null for a webinar. */
       remainingSessions: number | null;
       currency: string;
+      /** Nothing was paid for the seat, so leaving refunds nothing (`seatRefundOwed`'s rule). */
+      freeBooking: boolean;
     };
 
 /**
@@ -385,6 +387,13 @@ export async function quoteSeatLeave(
       seated: true as const,
       currency: payment?.currency ?? "INR",
       remainingSessions: null as number | null,
+      freeBooking:
+        payment !== null &&
+        isPriceFreePayment({
+          paymentIntent: payment.paymentIntent,
+          amountPaise: Number(payment.amount),
+          listPricePaise: Number(payment.originalAmount),
+        }),
     };
     try {
       const plan = await planSelfLeave(tx, kind, eventId, userId, seat);
