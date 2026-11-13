@@ -445,6 +445,17 @@ function statusFacts(
     paidRow && !isFreePayment(paidRow)
       ? input.refunds.filter((r) => normalizeStatus(r.status) === "SUCCEEDED")
       : [];
+  // Completed by evidence, never by the clock: a recorded outcome, the host
+  // ending the call, the viewer's attendance (the rating gate) or the plan's end.
+  const done =
+    live.length > 0 &&
+    (!!input.entitlement?.planEnded ||
+      live.every(
+        (o) =>
+          isOccurrenceHeld(o) ||
+          isDeliberateEnd(o.meeting) ||
+          (!!o.id && !!held?.has(o.id)),
+      ));
   const landedAt = landed
     .map((r) => toDateOrNull(r.updatedAt ?? r.createdAt))
     .filter((d): d is Date => d !== null)
@@ -471,13 +482,11 @@ function statusFacts(
     sessions: {
       live: live.length,
       allTentative: live.length > 0 && live.every((o) => o.isTentative),
-      // Completed by outcome (a recorded result, the viewer's attendance) or the plan's end, not the clock.
-      done:
+      done,
+      awaitingOutcome:
+        !done &&
         live.length > 0 &&
-        (!!input.entitlement?.planEnded ||
-          live.every(
-            (o) => isOccurrenceHeld(o) || (!!o.id && !!held?.has(o.id)),
-          )),
+        live.every((o) => isOccurrencePastGrace(o, now)),
     },
     planWait: allocationWait(input, live, paid, now),
     allocateBy: allocateDeadline(input.payments),

@@ -516,12 +516,23 @@ export function isOccurrenceHeld(o: {
   );
 }
 
-/** True when the timeline has occurrences and every live one has its outcome recorded. */
+/** True when every live session's outcome is recorded or its call was ended by the host. */
 export function allOccurrencesHeld(occurrences: OccurrenceVM[]): boolean {
   const live = liveOccurrences(occurrences);
   if (occurrences.length === 0) return false;
   if (live.length === 0) return true;
-  return live.every(isOccurrenceHeld);
+  return live.every((o) => isOccurrenceHeld(o) || meetingClosedAt(o) !== null);
+}
+
+/** True when the timeline has occurrences and every live one is over by the clock. */
+export function allOccurrencesOver(
+  occurrences: OccurrenceVM[],
+  now = new Date(),
+): boolean {
+  const live = liveOccurrences(occurrences);
+  if (occurrences.length === 0) return false;
+  if (live.length === 0) return true;
+  return live.every((row) => isOccurrenceOver(row, now));
 }
 
 /**
@@ -573,6 +584,18 @@ export function getProximityLabel(
   return `in ${weeks} ${weeks === 1 ? "week" : "weeks"}`;
 }
 
+/** Held when the outcome is recorded or the host ended the call; past-but-undecided is told apart. */
+function listSessions(occurrences: OccurrenceVM[], live: OccurrenceVM[]) {
+  const done = live.length > 0 && allOccurrencesHeld(occurrences);
+  return {
+    live: live.length,
+    allTentative: live.length > 0 && live.every((s) => s.isTentative),
+    done,
+    awaitingOutcome:
+      !done && live.length > 0 && allOccurrencesOver(occurrences),
+  };
+}
+
 /** The status chip on every appointments surface, from the one status function. */
 export function appointmentStatusChip(
   vm: Pick<AppointmentVM, "status" | "kind"> &
@@ -601,13 +624,8 @@ export function appointmentStatusChip(
         payDeadline: vm.payDeadline,
         reschedule: vm.reschedule,
         sessions:
-          live && vm.occurrences
-            ? {
-                live: live.length,
-                allTentative:
-                  live.length > 0 && live.every((s) => s.isTentative),
-                done: live.length > 0 && allOccurrencesHeld(vm.occurrences),
-              }
+          vm.occurrences && live
+            ? listSessions(vm.occurrences, live)
             : undefined,
       },
       role === "consultant" ? "CONSULTANT" : "CONSULTEE",

@@ -67,6 +67,8 @@ export interface BookingStatusFacts {
   source?: string | null;
   /** The viewer's own seat on a webinar or class. */
   seatStatus?: string | null;
+  /** When that seat was given back, for its reason line. */
+  seatReleasedAt?: Date | string | null;
   /** The row is a whole webinar or class (a back-office list), not a seat. */
   eventView?: boolean;
   /** A charge on the booking succeeded. */
@@ -83,7 +85,13 @@ export interface BookingStatusFacts {
     at: Date | string | null;
   } | null;
   /** Live sessions on the calendar; omitted when the read carries none. */
-  sessions?: { live: number; allTentative: boolean; done: boolean };
+  sessions?: {
+    live: number;
+    allTentative: boolean;
+    done: boolean;
+    /** Every session's time has passed with no outcome recorded yet. */
+    awaitingOutcome?: boolean;
+  };
   /** A paid plan waiting for its first or its next placement. */
   planWait?: "CYCLE_1" | "NEXT_CYCLE" | null;
   allocateBy?: Date | string | null;
@@ -156,6 +164,7 @@ type EndCause =
   | "PAYMENT_LAPSED"
   | "REQUEST_WITHDRAWN"
   | "APPROVAL_WITHDRAWN"
+  | "SEAT_RELEASED"
   | "CANCELLED";
 
 /** Is this a host looking at their own webinar or class? */
@@ -338,8 +347,11 @@ function reasonOf(
         : `${asked}.`;
     }
     case "CONFIRMED":
-      return f.paid && f.sessions?.allTentative
-        ? "Payment received; the session is being locked in."
+      if (f.paid && f.sessions?.allTentative) {
+        return "Payment received; the session is being locked in.";
+      }
+      return f.sessions?.awaitingOutcome
+        ? "This session's time has passed. We're confirming what happened."
         : "";
     case "COMPLETED":
       return f.completedNote ?? "";
@@ -377,12 +389,20 @@ function endedReason(
       return isLearner
         ? "You withdrew this request."
         : `${cap(payer)} withdrew this request.`;
+    case "SEAT_RELEASED": {
+      // The seat row does not record whether the learner left or was removed.
+      const at = asDate(f.seatReleasedAt);
+      return `Your place on this event was released${at ? ` on ${day(at)}` : ""}.`;
+    }
     case "APPROVAL_WITHDRAWN":
       return isExpert
         ? "You withdrew the approval before it was paid."
         : `${cap(consultant)} withdrew the approval before it was paid.`;
     default: {
       const status = upper(f.status);
+      if (RELEASED_SEAT.has(upper(f.seatStatus))) {
+        return "This event was cancelled by the host.";
+      }
       const edge = edgeInto(f, status);
       const at = asDate(edge?.createdAt ?? f.cancelledAt);
       const by = edge?.by;

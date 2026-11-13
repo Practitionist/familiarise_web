@@ -78,4 +78,30 @@ describe("appointmentStatusChip", () => {
     );
     expect(chip({}, "consultant")).toBe("Confirmed");
   });
+
+  it("a session past its time with no outcome stays Confirmed; the host ending the call completes it", () => {
+    const past = new Date(Date.now() - 6 * 3_600_000);
+    const occurrence = {
+      occurrenceId: "o1",
+      appointmentId: "a1",
+      startsAt: past,
+      endsAt: new Date(past.getTime() + 3_600_000),
+      isTentative: false,
+      completionStatus: "SCHEDULED",
+      meetingEndedAt: null,
+      meetingEndedReason: null,
+    };
+    expect(chip({ occurrences: [occurrence] })).toBe("Confirmed");
+    expect(
+      chip({
+        occurrences: [
+          {
+            ...occurrence,
+            meetingEndedAt: new Date(past.getTime() + 1_800_000),
+            meetingEndedReason: "call_ended",
+          },
+        ],
+      }),
+    ).toBe("Completed");
+  });
 });

@@ -13,7 +13,7 @@ import {
   isPendingStatus,
   normalizeStatus,
 } from "./status";
-import { liveOccurrences, allOccurrencesHeld } from "./occurrences";
+import { liveOccurrences, allOccurrencesOver } from "./occurrences";
 import { sessionGapOf } from "./normalize";
 import type {
   AppointmentBucket,
@@ -47,6 +47,7 @@ export function deriveBucket(
   viewer?: BucketViewer,
 ): BucketResult {
   const { occurrences, isUnscheduled } = input;
+  const now = input.now ?? new Date();
   const status = normalizeStatus(input.status);
 
   if (isCancelledLikeStatus(status)) {
@@ -79,8 +80,8 @@ export function deriveBucket(
     liveRows: active.length,
   });
   if (gap) return { bucket: "needsAction", needsActionReason: gap };
-  // Past once every session's outcome is recorded, not when the clock passes.
-  if (allOccurrencesHeld(occurrences)) {
+  // Over by the clock: listed under Past, where the badge still waits for the outcome.
+  if (allOccurrencesOver(occurrences, now)) {
     return { bucket: "past", needsActionReason: null };
   }
 
