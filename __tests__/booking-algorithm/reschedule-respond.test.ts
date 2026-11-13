@@ -210,7 +210,10 @@ import {
   acceptProposal,
   declineProposal,
 } from "@/lib/booking/reschedule-respond";
-import { tryAutoConfirmProposal } from "@/lib/booking/reschedule-auto-confirm";
+import {
+  checkProposalPlaceable,
+  tryAutoConfirmProposal,
+} from "@/lib/booking/reschedule-auto-confirm";
 import {
   AppointmentBusyError,
   type ApprovalLock,
@@ -563,6 +566,28 @@ describe("accept re-validates through the allocator before anything is written",
  * explicit accept rethrew it as a 409 and never sent the MOVED notification.
  * Both callers now name their own proposal so the sweep skips exactly that row.
  */
+describe("an expert's proposal is checked when it is made", () => {
+  it("runs the accept's own allocator checks and writes nothing", async () => {
+    mockAllocate.mockResolvedValue({
+      success: false,
+      errorCode: "VALIDATION_ERROR",
+      error: "That time is outside the plan week.",
+    });
+    const out = await checkProposalPlaceable(REQ, "subscription", "sub-1");
+    expect(out).toMatchObject({
+      placeable: false,
+      reason: "VALIDATION_ERROR",
+    });
+    expect(mockAllocate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mode: "manual",
+        checkOnly: true,
+        excludeRescheduleRequestId: REQ,
+      }),
+    );
+  });
+});
+
 describe("#1340 — a confirmation keeps the proposal it is confirming", () => {
   it("accept names its own proposal to the allocator and then closes it ACCEPTED", async () => {
     const out = await acceptProposal({

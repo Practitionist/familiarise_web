@@ -491,6 +491,7 @@ export async function manualAllocate(
     if (!validation.isValid) {
       throw validationRefusal(validation.errors);
     }
+    if (txOptions.checkOnly) return { success: true, appointments: [] };
 
     if (consulteeLockUserId) {
       consulteeLock = await lockConsulteeBooking(

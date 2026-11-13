@@ -156,12 +156,14 @@ export interface AllocationRequest {
   byConsultant?: boolean;
   /** The person who placed the times, recorded on the approval's history row; null for a sweep. */
   actorUserId?: string | null;
+  /** Manual mode: run every check before the locks' write and stop; nothing is written. */
+  checkOnly?: boolean;
 }
 
 /** The per-call extras every allocation mode threads into its transaction. */
 export type AllocationTxOptions = Pick<
   AllocationRequest,
-  "approvableFrom" | "inTx" | "actorUserId"
+  "approvableFrom" | "inTx" | "actorUserId" | "checkOnly"
 > & {
   /** The `reason` the approval's history row records (`scheduleReason`). */
   historyReason?: string;

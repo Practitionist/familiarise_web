@@ -57,6 +57,7 @@ import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
 import {
+  checkProposalPlaceable,
   dropRefusedProposalTimes,
   tryAutoConfirmProposal,
 } from "@/lib/booking/reschedule-auto-confirm";
@@ -1071,6 +1072,38 @@ async function requestReschedule(
           );
           autoConfirmed = outcome.confirmed;
           autoConfirmReason = outcome.confirmed ? null : outcome.reason;
+          // An expert's proposal is checked as the client's Accept would check
+          // it; times that Accept would refuse are withdrawn now, not later.
+          if (!outcome.confirmed && outcome.reason === "CONSULTANT_INITIATED") {
+            const check = await checkProposalPlaceable(
+              result.rescheduleRequestId,
+              proposalTarget.type,
+              proposalTarget.id,
+            );
+            const taken =
+              !check.placeable && autoConfirmTimesTaken(check.reason);
+            if (
+              !check.placeable &&
+              (taken || autoConfirmRefusalIsFinal(check.reason))
+            ) {
+              const undone = await withdrawRescheduleRequest({
+                rescheduleRequestId: result.rescheduleRequestId,
+                withdrawnById: session.user.id,
+                notify: false,
+              });
+              if (undone.withdrawn) {
+                return NextResponse.json(
+                  {
+                    error: `${check.message} Your client couldn't accept that time, so the booking keeps its original time — pick another time.`,
+                    code: taken ? "TIMES_TAKEN" : "TIME_NOT_BOOKABLE",
+                    reason: check.reason,
+                    takenSlotStarts: check.takenSlotStarts ?? [],
+                  },
+                  { status: 409 },
+                );
+              }
+            }
+          }
           // Someone took those times a moment ago: put the booking back and
           // let the consultee pick again rather than leave a dead proposal.
           if (!outcome.confirmed && autoConfirmTimesTaken(outcome.reason)) {

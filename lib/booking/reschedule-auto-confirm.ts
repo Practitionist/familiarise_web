@@ -144,6 +144,55 @@ export async function tryAutoConfirmProposal(
 }
 
 /**
+ * Whether the counterparty's Accept would place this proposal's times: the
+ * allocator's own checks (plan week, published hours, calendars), nothing written.
+ */
+export async function checkProposalPlaceable(
+  rescheduleRequestId: string,
+  eventType: EventType,
+  eventId: string,
+): Promise<
+  | { placeable: true }
+  | {
+      placeable: false;
+      reason: string;
+      message: string;
+      takenSlotStarts?: string[];
+    }
+> {
+  const request = await prisma.rescheduleRequest.findUnique({
+    where: { id: rescheduleRequestId },
+    select: {
+      id: true,
+      proposedTimes: {
+        orderBy: { startsAt: "asc" },
+        select: { startsAt: true },
+      },
+    },
+  });
+  if (!request || request.proposedTimes.length === 0) {
+    return { placeable: true };
+  }
+  const result = await allocate({
+    eventType,
+    eventId,
+    mode: "manual",
+    slots: request.proposedTimes.map((p) => p.startsAt.toISOString()),
+    excludeRescheduleRequestId: request.id,
+    checkOnly: true,
+  });
+  if (result.success) return { placeable: true };
+  return {
+    placeable: false,
+    reason: result.errorCode ?? "VALIDATION_FAILED",
+    message: result.error ?? "That time can't be booked.",
+    ...(result.takenSlotStarts
+      ? { takenSlotStarts: result.takenSlotStarts }
+      : {}),
+  };
+}
+
+/**
  * Drop the times of a proposal whose auto-confirm was refused for the times
  * themselves: Accept would repeat the same refusal, so the request stays open
  * as preference-only and the consultant places the session. A request answered
