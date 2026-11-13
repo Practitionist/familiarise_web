@@ -143,7 +143,7 @@ After every case: R-03, R-04 (refund rows, `refundOwedKey` set then cleared), R-
 Rules under test (from code):
 
 - An expert-side cancel refunds 100 % at any notice before the frozen window.
-- A strike is recorded when the expert cancels a **confirmed** booking, free or paid (a paid payment, or `APPROVED` / `SCHEDULED`), as a `SystemEvent` (`category = 'BOOKING'`, `message = 'Expert reliability strike: EXPERT_CANCEL'`, `context.strike`, `context.consultantProfileId`, `context.appointmentId`, `context.occurrenceIds`).
+- A strike is recorded when the expert cancels a **confirmed** booking, free or paid (a paid payment, or `APPROVED`), as a `SystemEvent` (`category = 'BOOKING'`, `message = 'Expert reliability strike: EXPERT_CANCEL'`, `context.strike`, `context.consultantProfileId`, `context.appointmentId`, `context.occurrenceIds`).
 - Strikes never show on the public profile; the expert sees them on Settings → Booking ("Your reliability"), staff in the strike review card (3 in 90 days reads "needs review").
 - Inside the frozen window the host is told: "This session is in progress — end the call and we'll settle it from what happened."
 

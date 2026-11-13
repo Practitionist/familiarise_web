@@ -1120,7 +1120,6 @@ export async function POST(
                 hostProfileId &&
                 (paidPayment !== null ||
                   observedStatus === "APPROVED" ||
-                  observedStatus === "SCHEDULED" ||
                   (eventKind !== null &&
                     (await hasConfirmedSeat(tx, appointmentId))))
               ) {

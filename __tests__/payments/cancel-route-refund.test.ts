@@ -40,11 +40,11 @@ let txCommitted = false;
 const txStub = {
   consultation: {
     updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-    findUnique: jest.fn().mockResolvedValue({ status: "SCHEDULED" }),
+    findUnique: jest.fn().mockResolvedValue({ status: "APPROVED" }),
   },
   subscription: {
     updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-    findUnique: jest.fn().mockResolvedValue({ status: "SCHEDULED" }),
+    findUnique: jest.fn().mockResolvedValue({ status: "APPROVED" }),
   },
   webinar: {
     updateMany: jest.fn().mockResolvedValue({ count: 1 }),
