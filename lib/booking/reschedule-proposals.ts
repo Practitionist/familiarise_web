@@ -35,12 +35,18 @@ type ReleasableRow = {
   deletedAt?: Date | string | null;
 };
 
-/** A confirmed SCHEDULED session at least the 24-hour lead time out. */
+/**
+ * A confirmed SCHEDULED session the caller may move: at least 24 hours out,
+ * or, for a 1:1 (agreed short-notice moves), any that has not started.
+ */
 export function rescheduleReleasable(
   rows: ReadonlyArray<ReleasableRow>,
   now: Date = new Date(),
+  { agreedShortNotice = false }: { agreedShortNotice?: boolean } = {},
 ): boolean {
-  const earliest = now.getTime() + RESCHEDULE_MIN_LEAD_HOURS * 3_600_000;
+  const earliest = agreedShortNotice
+    ? now.getTime() + 1
+    : now.getTime() + RESCHEDULE_MIN_LEAD_HOURS * 3_600_000;
   return rows.some(
     (row) =>
       row.completionStatus === "SCHEDULED" &&
@@ -48,6 +54,11 @@ export function rescheduleReleasable(
       !row.deletedAt &&
       new Date(row.startsAt).getTime() >= earliest,
   );
+}
+
+/** The 1:1 kinds whose parties may agree a move inside 24 hours. */
+export function allowsAgreedShortNotice(kind: string): boolean {
+  return kind === "CONSULTATION" || kind === "SUBSCRIPTION";
 }
 
 /** A published webinar moves to a new date only while its session is confirmed and the lead time out. */

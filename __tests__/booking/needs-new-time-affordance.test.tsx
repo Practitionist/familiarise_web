@@ -192,10 +192,10 @@ describe("consultee overflow", () => {
     expect(items.find((i) => i.key === "reschedule")?.label).toBe("Reschedule");
   });
 
-  it("offers no Reschedule when the only session starts within 24 hours", () => {
+  it("offers Reschedule inside 24 hours: a 1:1 move there is agreed, not refused", () => {
     expect(
       keys(consulteeAdapter().overflowItems(vm([row(5, "SCHEDULED")]))),
-    ).not.toContain("reschedule");
+    ).toContain("reschedule");
   });
 
   it("offers no Reschedule on a booking whose sessions were all cancelled", () => {

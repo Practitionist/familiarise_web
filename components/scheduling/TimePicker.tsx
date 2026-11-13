@@ -3,7 +3,11 @@
 import { earliestWeekSessions } from "@/lib/booking/release-weeks";
 import { MobileAutoSchedule } from "./MobileAutoSchedule";
 import { rescheduleWindow } from "@/lib/booking/entitlement";
-import { leadMsFor } from "@/lib/booking/lead-time";
+import {
+  isShortNotice,
+  leadMsFor,
+  RESCHEDULE_MIN_LEAD_HOURS,
+} from "@/lib/booking/lead-time";
 import React from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -271,9 +275,24 @@ export function TimePicker({
     ? Math.max(selectedSessionCount, 1)
     : Math.max(sessions.length, 1);
 
+  // A session under 24 hours away moves only with named times the other side accepts.
+  const movingShortNotice = React.useMemo(() => {
+    const moving = picksSpecificSessions
+      ? sessions.filter((session) =>
+          session.slots.every((slot) => selectedSlotIds.includes(slot.id)),
+        )
+      : sessions;
+    return moving.some(
+      (session) =>
+        session.startTime.getTime() > openedAt.getTime() &&
+        isShortNotice(session.startTime.getTime(), openedAt.getTime()),
+    );
+  }, [picksSpecificSessions, sessions, selectedSlotIds, openedAt]);
+  const offersAnyTime = policy.allowReleaseWithoutTime && !movingShortNotice;
+
   /** Group events never reach the proposal path, so they state no preference. */
   const canStatePreference =
-    policy.allowReleaseWithoutTime && acceptsSlotPreference(subject.eventType);
+    offersAnyTime && acceptsSlotPreference(subject.eventType);
 
   const preference = (): SlotPreference | undefined => {
     if (!canStatePreference) return undefined;
@@ -378,19 +397,19 @@ export function TimePicker({
   );
   const gridContextChips = React.useMemo<ContextChip[]>(
     () => [
-      ...(policy.minLeadHours > 0
+      ...(policy.showReleasedSlots
         ? [
             {
               key: "notice",
               label: "Moves",
-              value: `not within ${policy.minLeadHours} h of the start · not refunded`,
-              title: `Sessions cannot be moved within ${policy.minLeadHours} hours of their start time, and rescheduling is not refunded.`,
+              value: `within ${RESCHEDULE_MIN_LEAD_HOURS} h only if accepted · not refunded`,
+              title: `A move from or to a time within ${RESCHEDULE_MIN_LEAD_HOURS} hours happens only if the other person accepts it before the session starts. Rescheduling is not refunded.`,
             },
           ]
         : []),
       ...(contextChips ?? []),
     ],
-    [policy.minLeadHours, contextChips],
+    [policy.showReleasedSlots, contextChips],
   );
 
   const grid = (
@@ -533,6 +552,11 @@ export function TimePicker({
           ? `Choose the times for ${subject.consulteeName}'s booking. Green is free for both of you; anything else is already taken.`
           : policy.pickerHint}
       </p>
+      {movingShortNotice && policy.shortNoticeHint && (
+        <p className="shrink-0 text-sm font-medium text-foreground">
+          {policy.shortNoticeHint}
+        </p>
+      )}
 
       {/* The grid carries the zone line in its context row; the day list needs its own. */}
       {useDayList && (
@@ -609,7 +633,7 @@ export function TimePicker({
 
           {/* Naming a time is an option, never a requirement: releasing without
               one hands the counterparty a request to place. */}
-          {policy.allowReleaseWithoutTime && (
+          {offersAnyTime && (
             <Button
               variant="outline"
               onClick={() => submit(false)}
@@ -633,7 +657,7 @@ export function TimePicker({
               selectionIncomplete,
               pickedTimes,
               neededTimes: sessionsBeingMoved,
-              allowReleaseWithoutTime: policy.allowReleaseWithoutTime,
+              allowReleaseWithoutTime: offersAnyTime,
             })}
           >
             {isSubmitting ? (
