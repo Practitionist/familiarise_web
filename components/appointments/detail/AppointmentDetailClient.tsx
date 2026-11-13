@@ -457,7 +457,7 @@ export function AppointmentDetailClient({
     }),
     role === "consultant" ? "CONSULTANT" : "CONSULTEE",
     // Every deadline and time on the page reads in the viewer's profile zone.
-    { joinWindowMs, viewerZone },
+    { joinWindowMs, viewerZone, heldOccurrenceIds: sessionFeedback.rateable },
   );
   const { bookingState, moneyState, nextAction } = presentation;
   const postApproval = POST_APPROVAL.has(bookingState.state);
@@ -670,12 +670,13 @@ export function AppointmentDetailClient({
         {scheduleItems.map(renderActionButton)}
       </div>
     ) : null;
+  // The review invite follows the outcome: a session this learner attended.
   const showReviewCard =
     role === "consultee" &&
     !!vm.consultantProfileId &&
     (bookingState.state === "COMPLETED" ||
-      detail.appointment.occurrences.some(
-        (o) => o.completionStatus === "COMPLETED",
+      detail.appointment.occurrences.some((o) =>
+        sessionFeedback.rateable.has(o.id),
       ));
   const showProgress =
     !!vm.group && vm.group.total > 0 && postApproval && !usesSessionProgress;

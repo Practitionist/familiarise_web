@@ -21,6 +21,7 @@ import {
   REJOIN_GRACE_MS,
   isDeadOccurrence,
   isDeliberateEnd,
+  isOccurrenceHeld,
 } from "@/lib/appointments/occurrences";
 import { isCompletedOccurrence } from "@/lib/booking/entitlement";
 import { normalizeStatus } from "@/lib/appointments/status";
@@ -124,10 +125,12 @@ export type RefundTimelineKind =
   | "refund-failed";
 
 export type OccurrenceInput = {
+  id?: string;
   startsAt: Date | string;
   endsAt?: Date | string | null;
   isTentative: boolean;
   completionStatus?: string | null;
+  outcome?: string | null;
   deletedAt?: Date | string | null;
   meeting?: {
     endedAt: Date | string | null;
@@ -254,6 +257,8 @@ export interface DeriveOptions {
   joinWindowMs?: number;
   /** Explicit IANA timezone when rendered server-side outside browser runtime. */
   viewerZone?: string | null;
+  /** Sessions the server says this viewer attended (the rating gate). */
+  heldOccurrenceIds?: ReadonlySet<string>;
 }
 
 const toDate = (v: Date | string): Date =>
@@ -281,7 +286,7 @@ export function requestHoldDeadline(
 
 // #1775 C-3 — a paid plan's cycle 1 must be allocated within 48 h of capture.
 // Mirrored, not imported: expire-stale-requests.ts loads Prisma.
-const ALLOCATE_WINDOW_MS = 48 * 60 * 60 * 1000;
+export const ALLOCATE_WINDOW_MS = 48 * 60 * 60 * 1000;
 
 /** capturedAt (or createdAt) of the settled payment + 48 h; null when unpaid. */
 export function allocateDeadline(
@@ -433,6 +438,7 @@ function statusFacts(
   live: OccurrenceInput[],
   paid: boolean,
   now: Date,
+  held?: ReadonlySet<string>,
 ): BookingStatusFacts {
   const paidRow = paidOf(input);
   const landed =
@@ -465,7 +471,13 @@ function statusFacts(
     sessions: {
       live: live.length,
       allTentative: live.length > 0 && live.every((o) => o.isTentative),
-      done: live.length > 0 && live.every((o) => isOccurrencePastGrace(o, now)),
+      // Completed by outcome (a recorded result, the viewer's attendance) or the plan's end, not the clock.
+      done:
+        live.length > 0 &&
+        (!!input.entitlement?.planEnded ||
+          live.every(
+            (o) => isOccurrenceHeld(o) || (!!o.id && !!held?.has(o.id)),
+          )),
     },
     planWait: allocationWait(input, live, paid, now),
     allocateBy: allocateDeadline(input.payments),
@@ -954,7 +966,7 @@ export function deriveBookingPresentation(
   const holdExpiresAt = toDateOrNull(input.holdExpiresAt);
 
   const status = bookingStatus(
-    statusFacts(input, live, !!paidRow, now),
+    statusFacts(input, live, !!paidRow, now, options.heldOccurrenceIds),
     viewer,
     { now, zone },
   );

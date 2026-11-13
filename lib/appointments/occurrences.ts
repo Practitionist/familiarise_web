@@ -25,6 +25,7 @@ import {
 } from "./view-model";
 import { normalizeOccurrences, type AnomalySink } from "./normalize";
 import { bookingStatus, bookingStatusBadge } from "./booking-status";
+import { isCompletedOccurrence } from "@/lib/booking/entitlement";
 import type { StatusBadgeStyle } from "@/lib/labels/session-labels";
 
 /** The engine's unit of arithmetic: every interval and duration is a multiple. */
@@ -505,15 +506,22 @@ export function isOccurrenceOver(
   return occurrenceEnd(occurrence) + graceMs < now.getTime();
 }
 
-/** True when the timeline has occurrences and every live one is over. */
-export function allOccurrencesOver(
-  occurrences: OccurrenceVM[],
-  now = new Date(),
-): boolean {
+/** A session's outcome is recorded: delivered, parked for a human, voided, or attended. */
+export function isOccurrenceHeld(o: {
+  completionStatus?: string | null;
+  outcome?: string | null;
+}): boolean {
+  return (
+    isCompletedOccurrence(o) || o.completionStatus === "VOIDED" || !!o.outcome
+  );
+}
+
+/** True when the timeline has occurrences and every live one has its outcome recorded. */
+export function allOccurrencesHeld(occurrences: OccurrenceVM[]): boolean {
   const live = liveOccurrences(occurrences);
   if (occurrences.length === 0) return false;
   if (live.length === 0) return true;
-  return live.every((row) => isOccurrenceOver(row, now));
+  return live.every(isOccurrenceHeld);
 }
 
 /**
@@ -598,7 +606,7 @@ export function appointmentStatusChip(
                 live: live.length,
                 allTentative:
                   live.length > 0 && live.every((s) => s.isTentative),
-                done: live.length > 0 && allOccurrencesOver(vm.occurrences),
+                done: live.length > 0 && allOccurrencesHeld(vm.occurrences),
               }
             : undefined,
       },
