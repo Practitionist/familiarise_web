@@ -95,12 +95,12 @@ After every save: R-02 for the host, R-03 for the class appointment, R-05.
 
 **Steps:**
 
-1. As H4 (Asia/Kathmandu; browser in Kathmandu if you can emulate it), new class `qa-CL-05`: 2/week, 1 month, 60 min, First session next Monday 10:15. Publish.
-2. Repeat with 10:00.
+1. As H4 (Asia/Kathmandu; browser in Kathmandu if you can emulate it), new class `qa-CL-05`: 2/week, 1 month, 60 min. In **First session**, open next Monday and read the starts the picker lists between 09:00 and 12:00; pick 10:15. Publish.
+2. Via `evaluate_script`, send the class POST with a first session at 10:00 local (04:15Z).
 
-**Expect:** 10:15 → 8 sessions at 04:30Z (10:15 local). 10:00 (04:15Z) typed in the editor is rounded up to 04:30Z (10:15 local) before it is sent; sent by hand it answers 400 `EVENT_TIME_INVALID` (see CL-03).
+**Expect:** step 1 lists only :15 and :45 starts (10:00 is not offered); 10:15 → 8 sessions at 04:30Z (10:15 local), matching the pick. Step 2 answers 400 `EVENT_TIME_INVALID` (see CL-03).
 
-**Probe further:** nothing in the editor tells a Kathmandu host to use :15/:45, though the pattern scheduler now offers only those (CL-17). Record whether the editor says why 10:00 became 10:15.
+**Probe further:** does anything tell a Kathmandu host why their starts sit at :15 and :45? The pattern scheduler offers only those too (CL-17).
 
 ## CL-06 — Totals follow sessions a week × months × 4
 

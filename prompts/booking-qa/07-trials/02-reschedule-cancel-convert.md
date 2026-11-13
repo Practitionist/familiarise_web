@@ -97,11 +97,11 @@ Fixtures: **T-1** = B4's free trial (TR-01, Tue D+8 09:00 IST). **T-2** = a free
 
 **Probe further:** at 10 min before start the same cancel → 409 `SESSION_IN_PROGRESS`. Does H1's dialog warn about the strike, as the consultation dialog does?
 
-## TR-30 — The expert cancels a free trial: no money, but a strike (pending owner confirmation)
+## TR-30 — The expert cancels a free trial: no money, but a strike
 
 **Steps:** as H1 cancel T-2 (free, ≥ 24 h away).
 
-**Expect:** `CANCELLED`, no refund, **one strike** for H1 (the doc says "for a free trial too"). Flag this for the owner: a free consultation cancelled by the expert records **no** strike (CO-82), a free trial does. One of the two is probably unintended.
+**Expect:** `CANCELLED`, no refund, **one strike** for H1. A free confirmed consultation cancelled by the expert records one strike too (CO-82; decision 6 of the trial and public booking surfaces record), so the two agree.
 
 **Probe further:** B2's pair with H1 is freed (CANCELLED frees it): B2 may request a new trial. Is that the intended outcome after an expert cancel? Record.
 
@@ -186,8 +186,11 @@ Fixtures: **T-1** = B4's free trial (TR-01, Tue D+8 09:00 IST). **T-2** = a free
 
 ## TR-41 — Trial lengths off the 30-minute grid
 
-**Why it matters:** the plan editor allows trial lengths in 15-minute steps (15–120). Everything else books whole 30-minute atoms.
+**Why it matters:** a new trial is 30 or 60 minutes (the editor's two radio buttons; the plan routes refuse any other length with "A trial is 30 or 60 minutes."). A plan saved earlier at another length (45 minutes exists in practice data) keeps booking at it.
 
-**Steps:** as H1 edit a non-sold subscription plan (or create "qa-TR-41") with a 45-min free trial; publish. As B2 book it. Look at H1's grid (HM-26) and try a learner move.
+**Steps:**
 
-**Expect:** record the outcome: the booking may succeed with a 45-min session (then the third half hour paints "Partly booked" and the quarter hour after is unsellable), or be refused (`WINDOW_DURATION_MISMATCH` / off-grid). Report as an open question: should trial lengths be on the 30-minute grid like every other plan field? Archive the plan afterwards.
+1. As H1 try to create "qa-TR-41" with a 45-minute trial (via `evaluate_script`, since the editor offers only 30 and 60), then try to change an existing plan's trial to 45.
+2. Find a legacy plan stored at 45 minutes (`SELECT id, "trialDurationMinutes" FROM "SubscriptionPlan" WHERE "trialDurationMinutes" NOT IN (30, 60);`). As B2 book its trial, look at H1's grid (HM-26) and try a learner move.
+
+**Expect:** step 1 is refused with "A trial is 30 or 60 minutes." both times; nothing is saved. Step 2 books a 45-minute session (its second half hour paints "Partly booked") and the move offers 45-minute windows. Archive any plan you created.

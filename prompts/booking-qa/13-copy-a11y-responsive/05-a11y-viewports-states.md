@@ -29,7 +29,7 @@
 
 1. Tab into the month. Use the arrow keys, Home/End, Page Up/Page Down; Enter picks a day. Tab to the times; Enter or Space picks one.
 2. As H2, try to pick a **Booked** start with Space and Enter. Switch on "Show times outside my hours" with the keyboard.
-3. As B2, Tab to "Show N taken times"; press Enter, then Space. Tab into the list and reach **Notify me**.
+3. As B2, Tab to "Show N taken times" and press Enter: it opens. Press Space: it closes. Press Space again so it is open, then Tab into the list and reach **Notify me**.
 4. Read the tree: the month grid's one tab stop and `aria-disabled` days; each time's name and `aria-pressed`; the disclosure's `aria-expanded` and `aria-controls`; the polite "N free times on <day>" line.
 
 **Expect:** the month is one tab stop with arrow keys moving inside it; disabled days are announced as unavailable; a Booked start is `aria-disabled` and can't be chosen; each time is named "<start> to <end>, <free | booked | outside your hours | taken>"; the disclosure toggles between "Show N taken times" and "Hide taken times" with `aria-expanded` following; each taken row reads its time and "taken".

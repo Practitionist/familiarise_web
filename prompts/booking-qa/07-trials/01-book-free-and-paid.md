@@ -25,7 +25,7 @@ Note before starting: S-11's trial is free only if `PlatformPricingConfig.minTri
 **Steps:**
 
 1. As B4 open `/explore/experts/[H1 cid]`, find "qa-S-11 Four-week sprint" and press **Book Trial (Free, 30 min)** (record the exact label). The dark dialog opens on its trial step.
-2. Read: the heading "Pick a time for a 30-minute trial.", the plan card with "Free trial", "Times in <zone>" under the day heading, the notes field ("What would you like to discuss? (Optional)"), "Your trial is confirmed as soon as you book it.", **Back** and **Book trial**. Press **Back** and return: the start date chosen on the first step is kept.
+2. Read: the heading "Pick a time for a 30-minute trial.", the plan card with "Free trial", "Times in <zone>" under the day heading, the notes field ("What would you like to discuss? (Optional)"), "Your trial is confirmed as soon as you book it.", **Back** and **Book trial**. Press **Back**: the start-date step ("When do you want to start?") opens; pick a start date there, press **Book Trial** to return, then **Back** again: the date you picked is still selected.
 3. In the month, pick Tue D+8, then 09:00 IST (30 min). Note "qa-TR-01". **Book trial**.
 
 **Expect:**
