@@ -20,6 +20,7 @@
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import { ORG_FUNDED_PAYMENT_METHODS } from "@/lib/payments/org-funded";
+import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
 import { readOrgOwnerUserIds } from "@/lib/enterprise/related-party";
 import type { AppointmentsType, Prisma } from "@prisma/client";
 import type { Scope } from "./parse";
@@ -267,8 +268,20 @@ export async function listAppointmentsScoped(
           orderBy: { startsAt: "asc" },
           take: LIST_UPCOMING_OCCURRENCES,
         },
+        // Settled charges, so a paid plan waiting for its times is not read as
+        // unpaid; joined into the same statement.
         _count: {
-          select: { occurrences: { where: { deletedAt: null } } },
+          select: {
+            occurrences: { where: { deletedAt: null } },
+            payment: { where: { paymentStatus: "SUCCEEDED", deletedAt: null } },
+          },
+        },
+        // The open move, so a booking being rescheduled reads "Being moved".
+        rescheduleRequests: {
+          where: { status: { in: RESCHEDULE_OPEN_STATUSES } },
+          orderBy: { createdAt: "desc" },
+          take: 1,
+          select: { initiatorRole: true, expiresAt: true },
         },
         consultation: {
           select: {

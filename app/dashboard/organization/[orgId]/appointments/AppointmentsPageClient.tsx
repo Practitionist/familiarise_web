@@ -54,6 +54,7 @@ import { humanizeEnum, type Tone } from "@/lib/ui/tone";
 import {
   BOOKING_WORDS,
   bookingStatus,
+  type OpenRescheduleInput,
 } from "@/lib/appointments/booking-status";
 
 interface AppointmentSlot {
@@ -67,8 +68,11 @@ interface AppointmentSlot {
   meeting?: { endedAt: string | null; endedReason: string | null } | null;
 }
 
-interface AppointmentRow {
+export interface AppointmentRow {
   id: string;
+  /** Settled charges on the booking; the open move, when there is one. */
+  _count?: { payment?: number };
+  rescheduleRequests?: { initiatorRole: string; expiresAt: string }[];
   appointmentType: string;
   createdAt: string;
   organizationId: string | null;
@@ -169,8 +173,20 @@ function displaySlot(slots: AppointmentSlot[]): AppointmentSlot | null {
   return upcoming ?? sorted[sorted.length - 1];
 }
 
+/** The row's open reschedule as the status function reads it. */
+function openMove(row: AppointmentRow): OpenRescheduleInput | null {
+  const open = row.rescheduleRequests?.[0];
+  if (!open) return null;
+  return {
+    by: open.initiatorRole === "CONSULTANT" ? "CONSULTANT" : "REQUESTER",
+    proposedStartsAt: null,
+    originalStartsAt: null,
+    expiresAt: open.expiresAt,
+  };
+}
+
 /** The row's one booking status, as the organisation sees it. */
-function rowStatus(row: AppointmentRow): { label: string; tone: Tone } {
+export function rowStatus(row: AppointmentRow): { label: string; tone: Tone } {
   const live = row.occurrences.filter((o) => !isDeadOccurrence(o));
   // Completed by evidence (a recorded outcome or a host-ended call), never the clock.
   const done =
@@ -188,6 +204,8 @@ function rowStatus(row: AppointmentRow): { label: string; tone: Tone } {
         row.class?.status,
       source:
         row.consultation?.bookingSource ?? row.subscription?.bookingSource,
+      paid: (row._count?.payment ?? 0) > 0,
+      reschedule: openMove(row),
       sessions: {
         live: live.length,
         allTentative: live.length > 0 && live.every((o) => o.isTentative),

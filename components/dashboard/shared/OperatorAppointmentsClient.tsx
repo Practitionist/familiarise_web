@@ -76,6 +76,10 @@ export function staffStatus(appointment: StaffAppointment) {
       status: appointment.status.toUpperCase(),
       source: appointment.bookingSource,
       paid: appointment.payment?.status === "SUCCEEDED",
+      // A lapsed hold reads Cancelled only on evidence: its payment expired or failed.
+      payLapsed:
+        appointment.payment?.status === "EXPIRED" ||
+        appointment.payment?.status === "FAILED",
       eventView: true,
       reschedule: appointment.reschedule
         ? {

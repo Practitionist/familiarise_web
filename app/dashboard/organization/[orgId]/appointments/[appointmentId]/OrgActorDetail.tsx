@@ -51,6 +51,7 @@ export interface OrgActorDetailProps {
     status: AppointmentStatus | null;
     /** DIRECT_CHECKOUT or REQUEST_SUBMITTED for a 1:1 or plan. */
     source?: string | null;
+    paid?: boolean;
     reschedule?: OpenRescheduleInput | null;
     expertName: string | null;
     learnerName: string | null;
@@ -177,6 +178,7 @@ export function OrgActorDetail({
             kind: meta.kind,
             status: meta.status,
             source: meta.source,
+            paid: meta.paid,
             reschedule: meta.reschedule,
           },
           "ORG_ADMIN",
