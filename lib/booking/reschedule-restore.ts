@@ -221,8 +221,11 @@ async function settleParentAfterReschedule(
 
 /** The released ids that were unconfirmed holds when released, from the release record. */
 async function heldAtRelease(
-  tx: Pick<Tx, "rescheduleRequest">,
-  request: Pick<RestorableRequest, "id" | "releasedOccurrenceIds">,
+  tx: Pick<Tx, "rescheduleRequest" | "payment">,
+  request: Pick<
+    RestorableRequest,
+    "id" | "appointmentId" | "releasedOccurrenceIds"
+  >,
 ): Promise<ReadonlySet<string>> {
   const row = await tx.rescheduleRequest.findUnique({
     where: { id: request.id },
@@ -230,9 +233,19 @@ async function heldAtRelease(
   });
   const parsed = ReleasedSessionsSchema.safeParse(row?.releasedSessions);
   if (!parsed.success) return new Set();
-  return new Set(
-    request.releasedOccurrenceIds.filter((_, i) => parsed.data[i]?.tentative),
+  const held = request.releasedOccurrenceIds.filter(
+    (_, i) => parsed.data[i]?.tentative,
   );
+  if (held.length === 0) return new Set();
+  // A hold paid for since the release comes back confirmed.
+  const paid = await tx.payment.count({
+    where: {
+      appointmentId: request.appointmentId,
+      paymentStatus: "SUCCEEDED",
+      deletedAt: null,
+    },
+  });
+  return paid > 0 ? new Set() : new Set(held);
 }
 
 /**

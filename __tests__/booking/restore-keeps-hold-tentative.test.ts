@@ -36,6 +36,7 @@ it("restores the hold tentative and the confirmed session firm", async () => {
       })),
       updateMany: jest.fn(),
     },
+    payment: { count: jest.fn(async () => 0) },
   };
 
   const restored = await restoreRescheduledBooking(
@@ -64,4 +65,35 @@ it("restores the hold tentative and the confirmed session firm", async () => {
       data: { isTentative: true },
     }),
   ]);
+});
+
+it("a hold paid for since the release comes back confirmed", async () => {
+  transitionOccurrenceCompletion.mockClear();
+  const tx = {
+    rescheduleRequest: {
+      findUnique: jest.fn(async () => ({
+        releasedSessions: [
+          { ordinal: 1, startsAt: "2030-01-01T10:00:00.000Z", tentative: true },
+        ],
+      })),
+      updateMany: jest.fn(),
+    },
+    payment: { count: jest.fn(async () => 1) },
+  };
+  await restoreRescheduledBooking(
+    tx as unknown as Tx,
+    {
+      id: "req-2",
+      appointmentId: "appt-2",
+      createdAt: new Date(),
+      originStatus: null,
+      releasedOccurrenceIds: ["hold-1"],
+      appointment: null,
+    },
+    { actorUserId: "u-1", reason: "reschedule withdrawn", op: "test" },
+  );
+  expect(transitionOccurrenceCompletion.mock.calls[0][1]).toMatchObject({
+    where: { id: { in: ["hold-1"] } },
+    data: { isTentative: false },
+  });
 });
