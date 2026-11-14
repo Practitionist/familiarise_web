@@ -172,9 +172,12 @@ describe("TimePicker for a subscription reschedule", () => {
     ).not.toBeInTheDocument();
     expect(
       screen.getByText(
-        /Your expert has to accept the new time at least 15 minutes before the session starts/,
+        /no new time confirms by itself: your expert has to accept it at least 15 minutes before the session starts/,
       ),
     ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/confirms straight away/),
+    ).not.toBeInTheDocument();
   });
 });
 

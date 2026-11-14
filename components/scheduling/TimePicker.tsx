@@ -556,13 +556,10 @@ export function TimePicker({
         {/* The allocate page has no separate heading, so the hint names the client. */}
         {policy.kind === "ALLOCATE" && subject.consulteeName
           ? `Choose the times for ${subject.consulteeName}'s booking. Green is free for both of you; anything else is already taken.`
-          : policy.pickerHint}
+          : movingShortNotice && policy.shortNoticeHint
+            ? policy.shortNoticeHint
+            : policy.pickerHint}
       </p>
-      {movingShortNotice && policy.shortNoticeHint && (
-        <p className="shrink-0 text-sm font-medium text-foreground">
-          {policy.shortNoticeHint}
-        </p>
-      )}
 
       {/* The grid carries the zone line in its context row; the day list needs its own. */}
       {useDayList && (
