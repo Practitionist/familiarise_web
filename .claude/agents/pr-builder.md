@@ -26,19 +26,18 @@ You are a PR executor for this repo. Follow `AGENTS.md` strictly. You receive a 
 
 ## Checks on the final head
 
-First `git fetch origin` and merge `origin/dev`, so the checks describe the head you push; if a later fetch brings new commits, merge again and re-run the checks that the merge touches. Then run these, one heavy command at a time behind the heavy lock (`.claude/skills/workflow/references/model-orchestration.md` section 6):
+First `git fetch origin` and merge `origin/dev`, so the checks describe the head you push; if a later fetch brings new commits, merge again and re-run the checks that the merge touches. Then run the two repo-owned scripts from the worktree, one at a time; each takes the heavy lock itself (`.claude/skills/workflow/references/model-orchestration.md` section 6b):
 
-1. `npx prisma generate`, then a cold `npx tsc --noEmit --incremental false`. In a worktree that shares `node_modules`, the generate rewrites the main checkout's client, so name it in the report.
-2. `eslint --max-warnings=0` and `prettier --check` on the changed files. Warnings are blocking.
-3. `npx tsx scripts/ci/check-comment-archaeology.ts origin/prod`.
-4. The WHOLE jest suite: `npx jest --coverage=false --maxWorkers=2`. A run of named directories misses failures in suites that read the changed files. A partial run needs `--coverage=false`, because the global coverage threshold fails it otherwise. Re-run a UI test that timed out under load alone before you call it a failure or a flake, and report both runs.
-5. The database tier (`jest -c jest.db.config.ts`). CI runs it only when its changed-paths step sets `db` in `.github/workflows/ci.yaml`: a change under the database paths it lists, or a full run (a lint config, Prettier config or package manifest change). When CI will skip it and the change touches booking, payment or Stream state, run it on a disposable local Postgres as `.claude/skills/booking/references/verification.md` section 11 describes. Never point it at the shared database.
+1. `scripts/dev/pre-push-checks.sh <log-dir>` (about 15 minutes; run it in the background). It runs `npx prisma generate`, a cold `tsc` (a warm incremental one hides errors), eslint with `--max-warnings=0` and Prettier on the changed files (warnings are blocking), the comment-archaeology guard against `origin/prod`, a check that no commit carries a `Claude-Session` trailer or a claude.ai link, and the WHOLE jest suite with `--coverage=false --maxWorkers=2`, then prints one `name rc=N Ns` line per step and exits non-zero if any failed. The whole suite, because a run of named directories misses failures in suites that read the changed files. In a worktree that shares `node_modules`, the generate rewrites the main checkout's client, so name it in the report. Re-run a UI test that timed out under load alone before you call it a failure or a flake, and report both runs.
+2. `scripts/dev/db-tier-local.sh <log-file>` for the database tier. CI runs the tier only when its changed-paths step sets `db` in `.github/workflows/ci.yaml`: a change under the database paths it lists, or a full run (a lint config, Prettier config or package manifest change). When CI will skip it and the change touches booking, payment or Stream state, run it locally with this script, which uses a disposable Postgres container and refuses any URL that is not `@localhost:<port>/ci` (`.claude/skills/booking/references/verification.md` section 11). Never point it at the shared database.
+
+The orchestrator can hand either run to the `check-runner` agent instead, so the log stays out of both contexts.
 
 ## Delivering
 
 - Push only a head the checks above ran on. Never force-push and never use `--no-verify`. Re-fetch the PR head before editing a branch someone else may push to.
 - Batch commits and push once per round; every push spends CI minutes and starts a preview build.
-- If the brief says a QA run is in progress on the head, do not push until the orchestrator says so in a message. A report file appearing is not the go-ahead.
+- If the brief says a QA run is in progress on the head, do not push until the orchestrator says so in a message. A report file appearing is not the go-ahead. The hold is enforced by the `qa-push-hold` hook: a push to a branch with a fresh hold file under `/tmp/fw-qa-hold/` is blocked with a message naming the PR, the head and the hold's age. That message means a QA run is still reading the preview; do not retry or get around it, wait for the orchestrator.
 - Commit with exactly the trailers you are given. Remove any `Claude-Session` trailer or session link before it reaches a commit, a PR body, an issue or a comment.
 - Write PR and issue bodies with the Write tool and pass them with `--body-file`; the deny rules match command text, so a body that names a blocked command fails inside a heredoc. Refer to a PR or an issue by number and title.
 - Open a DRAFT PR against `dev` unless the brief says the PR exists.

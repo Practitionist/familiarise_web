@@ -32,7 +32,7 @@ This is the catalogue the `independent-reviewer` agent hunts through, and a chec
 
 **How to look for it.** For each test the fix adds, ask where its input comes from. A hand-built object or a mock that returns whatever the test wants proves the function, not the screen; the screen gets only what its reader's `select` returns. Look for a test that feeds the real reader's projected output.
 
-**Example.** Pull request #2750 again. Commit `85f71b1c5` made a pay-first hold read "Awaiting payment" with a working Pay action and was tested through a hand-built detail input. On the expert's list the same hold still read Cancelled, because that reader selected no payment rows. Commit `c26337c4b` added a fixture (`__tests__/fixtures/prisma-projection.ts` on that branch) that projects one stored row through each real reader's `select`, so a mapper that reads an unselected field fails its test.
+**Example.** Pull request #2750 again. Commit `85f71b1c5` made a pay-first hold read "Awaiting payment" with a working Pay action and was tested through a hand-built detail input. On the expert's list the same hold still read Cancelled, because that reader selected no payment rows. Commit `c26337c4b` added a test fixture, `projectRow`, that projects one stored row through each real reader's `select`, so a mapper that reads an unselected field fails its test.
 
 ## f. A status transition that reads and then updates instead of comparing in the WHERE
 
