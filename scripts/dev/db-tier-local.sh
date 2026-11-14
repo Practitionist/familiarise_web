@@ -83,8 +83,10 @@ done
 
 # Blank every key the worktree's .env files name, so next/jest and
 # prisma.config.ts cannot load a live credential, then point at the container.
+# Templates are never loaded, and a blank would defeat jest.setup.ts's `??=`.
 for f in .env*; do
   [ -f "$f" ] || continue
+  case "$f" in *.sample | *.example | *.template) continue ;; esac
   while IFS= read -r key; do
     case "$key" in
       PATH | HOME | USER | SHELL | TMPDIR | PWD) continue ;;
