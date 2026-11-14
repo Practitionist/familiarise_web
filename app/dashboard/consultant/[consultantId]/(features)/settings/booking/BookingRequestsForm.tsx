@@ -107,6 +107,9 @@ export function BookingRequestsForm({
             onChange={setSettings}
             activePlanClients={planClients.data?.activePlanClients ?? null}
             openRequests={demand.data?.openRequests ?? null}
+            onRetryOpenRequests={
+              demand.isError ? () => void demand.refetch() : undefined
+            }
             limitDraft={limitDraft}
             limitError={limitCheck.ok ? null : limitCheck.error}
             countLimit={shownPlanClientLimit(limitDraft, maxActivePlanClients)}

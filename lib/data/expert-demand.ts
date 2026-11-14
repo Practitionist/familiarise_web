@@ -78,7 +78,6 @@ export async function readExpertDemand(
               },
             },
           },
-          take: 50,
           relationLoadStrategy: "join",
         }),
       () => readFeasibilitySpans(prisma, profile.id, horizon, now),
@@ -94,9 +93,9 @@ export async function readExpertDemand(
         }),
     ] as const);
 
+  // Every unplaced plan and every captured payment on it: the earliest capture sets the deadline.
   const paidAt = unplaced
-    .map((s) => s.appointment?.payment[0])
-    .filter((p): p is NonNullable<typeof p> => !!p)
+    .flatMap((s) => s.appointment?.payment ?? [])
     .map((p) => p.capturedAt ?? p.createdAt)
     .sort((a, b) => a.getTime() - b.getTime());
   const oldestPaid = paidAt[0] ?? null;

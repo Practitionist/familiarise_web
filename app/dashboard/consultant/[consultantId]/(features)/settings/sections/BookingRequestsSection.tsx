@@ -20,6 +20,8 @@ interface BookingRequestsSectionProps {
   activePlanClients: number | null;
   /** Requests waiting on you now; null while it loads. */
   openRequests: number | null;
+  /** Set when the count could not be read: retries the read. */
+  onRetryOpenRequests?: () => void;
   /** The plan-client limit exactly as typed, and why it is refused (null when valid). */
   limitDraft: string | null;
   limitError: string | null;
@@ -74,6 +76,7 @@ export function BookingRequestsSection({
   onChange: setFormData,
   activePlanClients,
   openRequests,
+  onRetryOpenRequests,
   limitDraft,
   limitError,
   countLimit,
@@ -185,6 +188,18 @@ export function BookingRequestsSection({
         {openRequests !== null && (
           <p className="text-sm font-medium" aria-live="polite">
             {openRequestsLine(openRequests, formData.maxOpenRequests)}
+          </p>
+        )}
+        {onRetryOpenRequests && (
+          <p className="text-sm text-muted-foreground" role="status">
+            Couldn&apos;t count your open requests.{" "}
+            <button
+              type="button"
+              className="font-medium text-foreground underline underline-offset-4"
+              onClick={onRetryOpenRequests}
+            >
+              Try again
+            </button>
           </p>
         )}
       </div>
