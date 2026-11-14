@@ -425,7 +425,8 @@ export function useConsulteeAppointmentsAdapter(options?: {
     const items: OverflowItem[] = [];
     // A seat that no longer holds a place offers no chat, calendar or leave.
     if (seatLapsedOrReleased(vm)) return items;
-    const inactive = isInactiveStatus(vm.status);
+    // A row the list files under Cancelled (a lapsed hold, a given-back seat) offers no live action.
+    const inactive = isInactiveStatus(vm.status) || vm.bucket === "cancelled";
     const slots = vm.raw.rawOccurrences ?? [];
     // #1163 — a live proposal outranks every other action: until it is
     // answered the row just says "awaiting confirmation". Navigation, not a

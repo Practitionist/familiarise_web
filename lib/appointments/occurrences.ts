@@ -596,45 +596,56 @@ function listSessions(occurrences: OccurrenceVM[], live: OccurrenceVM[]) {
   };
 }
 
+type ChipVM = Pick<AppointmentVM, "status" | "kind"> &
+  Partial<
+    Pick<
+      AppointmentVM,
+      | "occurrences"
+      | "bookingSource"
+      | "seatStatus"
+      | "paid"
+      | "payDeadline"
+      | "payLapsed"
+      | "reschedule"
+      | "refunded"
+    >
+  >;
+
+/** A list row's status, from the one status function and the facts the row carries. */
+function rowBookingStatus(vm: ChipVM, role: "consultee" | "consultant") {
+  const live = vm.occurrences ? liveOccurrences(vm.occurrences) : null;
+  return bookingStatus(
+    {
+      kind: vm.kind,
+      status: vm.status,
+      source: vm.bookingSource,
+      seatStatus: vm.seatStatus,
+      paid: vm.paid,
+      payDeadline: vm.payDeadline,
+      payLapsed: vm.payLapsed,
+      reschedule: vm.reschedule,
+      refunded: vm.refunded,
+      sessions:
+        vm.occurrences && live ? listSessions(vm.occurrences, live) : undefined,
+    },
+    role === "consultant" ? "CONSULTANT" : "CONSULTEE",
+  );
+}
+
 /** The status chip on every appointments surface, from the one status function. */
 export function appointmentStatusChip(
-  vm: Pick<AppointmentVM, "status" | "kind"> &
-    Partial<
-      Pick<
-        AppointmentVM,
-        | "occurrences"
-        | "bookingSource"
-        | "seatStatus"
-        | "paid"
-        | "payDeadline"
-        | "payLapsed"
-        | "reschedule"
-        | "refunded"
-      >
-    >,
+  vm: ChipVM,
   role: "consultee" | "consultant",
 ): StatusBadgeStyle {
-  const live = vm.occurrences ? liveOccurrences(vm.occurrences) : null;
-  return bookingStatusBadge(
-    bookingStatus(
-      {
-        kind: vm.kind,
-        status: vm.status,
-        source: vm.bookingSource,
-        seatStatus: vm.seatStatus,
-        paid: vm.paid,
-        payDeadline: vm.payDeadline,
-        payLapsed: vm.payLapsed,
-        reschedule: vm.reschedule,
-        refunded: vm.refunded,
-        sessions:
-          vm.occurrences && live
-            ? listSessions(vm.occurrences, live)
-            : undefined,
-      },
-      role === "consultant" ? "CONSULTANT" : "CONSULTEE",
-    ),
-  );
+  return bookingStatusBadge(rowBookingStatus(vm, role));
+}
+
+/** The chip's reason line ("Payment was not completed in time."), empty when the word says it all. */
+export function appointmentStatusLine(
+  vm: ChipVM,
+  role: "consultee" | "consultant",
+): string {
+  return rowBookingStatus(vm, role).line;
 }
 
 export interface OccurrenceSourceAppointment {
