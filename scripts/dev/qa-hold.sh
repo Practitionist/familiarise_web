@@ -27,7 +27,7 @@ take() { # take <branch> <PR> <head>
   local branch="$1"
   local pr="$2"
   local head_sha="$3"
-  local file line tmp
+  local file line tmp fresh
   file="$(hold_file "$branch")"
   line="$pr $head_sha $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   mkdir -p "$HOLD_DIR" || exit 1
@@ -35,7 +35,9 @@ take() { # take <branch> <PR> <head>
     printf '%s\n' "$line"
     return 0
   fi
-  if [[ -n "$(find "$file" -mmin -180 2>/dev/null)" ]]; then
+  # A failed age check must not read as stale and overwrite another run's hold.
+  fresh="$(find "$file" -mmin -180)" || exit 1
+  if [[ -n "$fresh" ]]; then
     echo "refused: a fresh hold already exists for $branch ($(cat "$file")); another QA run is on it" >&2
     exit 1
   fi

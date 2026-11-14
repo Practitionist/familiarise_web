@@ -29,7 +29,7 @@ You run checks for this repo and report their results. You receive a worktree pa
 Return only this, in this order, and write the same text to the report file if the brief names one:
 
 - Worktree, head at start, head at end.
-- Each script's exit status, and any `ABORT:` line `db-tier-local.sh` printed (it stops before jest when Docker is missing, a tool is missing, or the schema or a sidecar fails to load, so there are no totals to report).
+- Each script's exit status (for `db-tier-local.sh`, exit 3 means jest passed but `--log-statements` could not measure: copy its `statements: UNAVAILABLE (<reason>)` line), and any `ABORT:` line `db-tier-local.sh` printed (it stops before jest when Docker is missing, a tool is missing, or the schema or a sidecar fails to load, so there are no totals to report).
 - Any `warning:` line from the pre-push summary, word for word: uncommitted edits (the checks then describe more than the committed head) or `origin/dev` not merged.
 - One line per step: name, rc, seconds (copy the summary lines).
 - Jest: suites passed out of the total and tests passed out of the total, for the unit suite and for the database tier separately.

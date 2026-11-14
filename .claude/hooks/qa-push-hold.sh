@@ -6,8 +6,9 @@
 # A hold older than 3 hours is stale. Fails open: an error here allows the push.
 # The rule is deliberately conservative: a false block is cheap, a missed one is
 # not. Candidates are the branch checked out in every directory involved (cwd,
-# each `cd`/`-C` dir) plus every plain word after any `push`; --all, --mirror,
-# --branches, --repo, a `*` refspec or a bare `:` block on any fresh hold.
+# each absolute `cd`/`-C` dir) plus every plain word after any `push`; --all,
+# --mirror, --branches, --repo, a `*` refspec, a bare `:` or any relative
+# `cd`/`-C` dir block on any fresh hold.
 # A guard, not a boundary. Known limits: remote.*.push and push.default config,
 # git aliases, shell functions and variables that hide the word push; a quoted
 # string that merely contains 'git push' is blocked, harmlessly.
@@ -59,12 +60,14 @@ GIT_PUSH="(^|[^[:alnum:]_./-])git(([[:space:]]+-[Cc][[:space:]]+(\"[^\"]*\"|${SQ
 [[ "$CMD" =~ $GIT_PUSH ]] || exit 0
 
 DIRS=()
-add_dir() { # add_dir <dir as written>, relative to the call's cwd
+ANY_HOLD=false
+# A relative `cd`/`-C` depends on every earlier one, so it checks every hold.
+add_dir() { # add_dir <dir as written>
   local dir="$1"
   case "$dir" in
     /*) DIRS+=("$dir") ;;
     "~"*) DIRS+=("$HOME${dir#"~"}") ;;
-    *) DIRS+=("${CWD:-.}/$dir") ;;
+    *) ANY_HOLD=true ;;
   esac
 }
 [[ -n "$CWD" ]] && DIRS+=("$CWD")
@@ -83,7 +86,6 @@ WORDS=()
 read -r -a WORDS <<<"$FLAT"
 
 CANDIDATES=()
-ANY_HOLD=false
 AFTER_PUSH=false
 PREV=""
 for w in "${WORDS[@]+"${WORDS[@]}"}"; do

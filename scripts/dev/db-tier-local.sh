@@ -4,7 +4,8 @@
 # database: the URL it builds must be @localhost:<port>/ci.
 # Usage: scripts/dev/db-tier-local.sh [--log-statements] <log-file> [jest args...]
 # --log-statements runs Postgres with log_statement=all and writes the
-# statements jest issued to <log-file>.statements.
+# statements jest issued to <log-file>.statements; exit 3 when jest passed but
+# the count is unavailable (no log, no marker, no statements).
 set -u
 
 LOG_STATEMENTS=false
@@ -44,7 +45,7 @@ docker info >/dev/null 2>&1 || die "docker is not running"
 
 NAME="fw-dbtier-$$-$(date +%s)"
 WORK="$(mktemp -d)"
-LOCK=/tmp/fw-heavy.lock
+LOCK="${FW_HEAVY_LOCK:-/tmp/fw-heavy.lock}"
 HAVE_LOCK=false
 
 # The container, the scratch directory and the lock go on every exit.
@@ -89,21 +90,37 @@ done
 
 # Blank every key the worktree's .env files name, so next/jest and
 # prisma.config.ts cannot load a live credential, then point at the container.
-# Templates are never loaded, and a blank would defeat jest.setup.ts's `??=`.
+# Keys come from dotenv's own parser, the grammar next/jest loads; values are
+# never read out. Templates are never loaded, and a blank would defeat
+# jest.setup.ts's `??=`.
+ENV_FILES=()
 for f in .env*; do
   [[ -f "$f" ]] || continue
   case "$f" in
     *.sample | *.example | *.template) continue ;;
-    *) ;;
+    *) ENV_FILES+=("$f") ;;
   esac
+done
+if [[ "${#ENV_FILES[@]}" -gt 0 ]]; then
+  [[ -f node_modules/dotenv/package.json ]] || die "missing node_modules/dotenv: install or link node_modules in $ROOT first"
+  KEYS="$(node -e '
+    const fs = require("fs");
+    const dotenv = require("dotenv");
+    for (const file of process.argv.slice(1)) {
+      for (const key of Object.keys(dotenv.parse(fs.readFileSync(file)))) console.log(key);
+    }
+  ' "${ENV_FILES[@]}")" || die "could not parse ${ENV_FILES[*]} with dotenv"
   while IFS= read -r key; do
+    [[ -n "$key" ]] || continue
+    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] ||
+      die "cannot blank the .env key '$key': not a shell variable name"
     case "$key" in
       PATH | HOME | USER | SHELL | TMPDIR | PWD) continue ;;
       *) ;;
     esac
     export "$key="
-  done < <(sed -nE 's/^(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)=.*/\2/p' "$f")
-done
+  done <<<"$KEYS"
+fi
 export CI=true
 export BETTER_AUTH_SECRET=dummy-secret-for-local-db-tier-0123456789abcdef
 export DATABASE_URL="postgresql://postgres:postgres@localhost:$PORT/ci"
@@ -140,13 +157,29 @@ fi
 "$BIN/jest" -c jest.db.config.ts --maxWorkers=1 --coverage=false "$@"
 JEST_RC=$?
 
+# A measurement is a count read from the log after the marker; anything else is
+# UNAVAILABLE, never zero.
+STATEMENTS_NOTE=""
 if [[ "$LOG_STATEMENTS" == true ]]; then
-  # One line per statement after the marker; parameter DETAIL lines are dropped.
-  docker logs "$NAME" 2>&1 |
-    sed -n "/$MARKER/,\$p" |
-    grep -E 'LOG:  (statement|execute [^:]*): ' |
-    grep -v "$MARKER" >"$STATEMENTS_FILE"
-  echo "statements: $(wc -l <"$STATEMENTS_FILE" | tr -d ' ') lines in $STATEMENTS_FILE"
+  rm -f "$STATEMENTS_FILE"
+  if ! docker logs "$NAME" >"$WORK/postgres.log" 2>&1; then
+    STATEMENTS_NOTE="UNAVAILABLE (docker logs failed)"
+  elif ! grep -q "$MARKER" "$WORK/postgres.log"; then
+    STATEMENTS_NOTE="UNAVAILABLE (start marker not in the log)"
+  else
+    # One line per statement after the marker; parameter DETAIL lines are dropped.
+    sed -n "/$MARKER/,\$p" "$WORK/postgres.log" |
+      grep -E 'LOG:  (statement|execute [^:]*): ' |
+      grep -v "$MARKER" >"$STATEMENTS_FILE"
+    COUNT="$(wc -l <"$STATEMENTS_FILE" | tr -d ' ')"
+    if [[ "$COUNT" -gt 0 ]]; then
+      STATEMENTS_NOTE="$COUNT in $STATEMENTS_FILE"
+    else
+      rm -f "$STATEMENTS_FILE"
+      STATEMENTS_NOTE="UNAVAILABLE (no statements after the marker)"
+    fi
+  fi
+  echo "statements: $STATEMENTS_NOTE"
 fi
 
 HEAD_END="$(git rev-parse --short HEAD)"
@@ -158,10 +191,10 @@ echo "head end: $HEAD_END"
   echo "head start: $HEAD_START"
   grep -E '^(Test Suites|Tests):' "$LOG_FILE"
   echo "jest rc: $JEST_RC"
-  if [[ "$LOG_STATEMENTS" == true ]]; then
-    echo "statements: $(wc -l <"$STATEMENTS_FILE" | tr -d ' ') in $STATEMENTS_FILE"
-  fi
+  if [[ "$LOG_STATEMENTS" == true ]]; then echo "statements: $STATEMENTS_NOTE"; fi
   echo "head end: $HEAD_END"
   echo "log: $LOG_FILE"
 } >&3
+# Exit 3: jest passed but the statement measurement is unavailable.
+if [[ "$JEST_RC" -eq 0 && "$STATEMENTS_NOTE" == UNAVAILABLE* ]]; then exit 3; fi
 exit "$JEST_RC"

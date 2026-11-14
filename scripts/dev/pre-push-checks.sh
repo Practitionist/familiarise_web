@@ -66,8 +66,9 @@ run_on_files() { # run_on_files <nul-separated list> <command...>
 }
 
 no_session_links() {
-  local hits
-  hits="$(git log --format=%B origin/dev..HEAD | grep -cE 'Claude-Session|claude\.ai/')"
+  local bodies hits
+  bodies="$(git log --format=%B origin/dev..HEAD)" || return 1
+  hits="$(printf '%s\n' "$bodies" | grep -cE 'Claude-Session|claude\.ai/')"
   echo "commit body lines with a session trailer or claude.ai link: $hits"
   git log --format='%h %s' origin/dev..HEAD
   [[ "$hits" -eq 0 ]]

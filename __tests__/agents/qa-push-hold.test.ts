@@ -11,27 +11,34 @@ const KEY = "feat%2Fqa-held";
 
 let tmp: string;
 let repo: string;
+let free: string;
 let holds: string;
 
 beforeAll(() => {
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), "qa-push-hold-"));
   repo = path.join(tmp, "repo");
+  free = path.join(tmp, "free");
   holds = path.join(tmp, "holds");
-  fs.mkdirSync(repo);
-  const git = (...args: string[]) =>
-    execFileSync("git", ["-C", repo, ...args], { stdio: "ignore" });
-  git("init", "-q", "-b", BRANCH);
-  git(
-    "-c",
-    "user.name=t",
-    "-c",
-    "user.email=t@example.invalid",
-    "commit",
-    "-q",
-    "--allow-empty",
-    "-m",
-    "init",
-  );
+  for (const [dir, branch] of [
+    [repo, BRANCH],
+    [free, "feat/free"],
+  ]) {
+    fs.mkdirSync(dir);
+    const git = (...args: string[]) =>
+      execFileSync("git", ["-C", dir, ...args], { stdio: "ignore" });
+    git("init", "-q", "-b", branch);
+    git(
+      "-c",
+      "user.name=t",
+      "-c",
+      "user.email=t@example.invalid",
+      "commit",
+      "-q",
+      "--allow-empty",
+      "-m",
+      "init",
+    );
+  }
 });
 
 afterAll(() => fs.rmSync(tmp, { recursive: true, force: true }));
@@ -111,6 +118,19 @@ describe("qa-push-hold hook", () => {
   it("blocks --all while any fresh hold exists", () => {
     hold("feat%2Fother");
     expect(run("git push origin --all", undefined, tmp).status).toBe(2);
+  });
+
+  it.each([["cd .. && cd repo && git push"], ["git -C .. -C repo push"]])(
+    "blocks %s from an unheld checkout beside a held one",
+    (command) => {
+      hold(KEY);
+      expect(run(command, undefined, free).status).toBe(2);
+    },
+  );
+
+  it("allows an absolute -C to an unheld checkout", () => {
+    hold(KEY);
+    expect(run(`git -C ${free} push`, undefined, tmp).status).toBe(0);
   });
 
   it("refuses a second hold and keeps the first run's on a wrong release", () => {
