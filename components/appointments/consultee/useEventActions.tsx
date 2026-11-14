@@ -36,6 +36,7 @@ import {
   takenStartsFrom,
 } from "@/lib/scheduling/allocationMessages";
 import { takenSlotStartsOf } from "@/lib/scheduling/allocationService";
+import type { RescheduleProposeCode } from "@/lib/booking/reschedule-proposals";
 
 interface UseEventActionsOptions {
   appointmentId?: string;
@@ -72,30 +73,28 @@ function reportActionFailure(error: unknown, op: string): void {
 }
 
 /**
- * Which of the three reschedule outcomes happened.
- *
- * They must not read alike: the time is already yours, the consultant has been
- * asked, or nothing was proposed and they will pick. Lifted out of the handler
- * so the branching lives next to the copy it produces rather than inflating a
- * function that also does auth, fetch and error handling.
+ * The reschedule toast. The server's outcome code picks the title and its
+ * sentence is the reason, so a move waiting for acceptance reads as sent.
  */
 function rescheduleOutcomeToast(outcome: {
-  autoConfirmed: boolean;
-  proposedTimes: boolean;
+  code: RescheduleProposeCode | undefined;
+  message: string | undefined;
   sessionsAffected: number;
 }): { title: string; description: string } {
-  if (outcome.autoConfirmed) {
+  if (outcome.code === "AUTO_CONFIRMED") {
     return {
       title: "New time confirmed",
       description: "Your session has been moved. Nothing further is needed.",
     };
   }
-  if (outcome.proposedTimes) {
-    return {
-      title: "Request sent",
-      description:
-        "That time isn't free, so we've asked your consultant to confirm it.",
-    };
+  if (outcome.code === "AWAITING_ANSWER" && outcome.message) {
+    return { title: "Request sent", description: outcome.message };
+  }
+  if (
+    (outcome.code === "NOT_PLACEABLE" || outcome.code === "PROPOSAL_CLOSED") &&
+    outcome.message
+  ) {
+    return { title: "Time not confirmed", description: outcome.message };
   }
   return {
     title: "Ready to reschedule",
@@ -281,7 +280,8 @@ export function useEventActions({
       )) as {
         sessionsAffected?: number;
         slotsAffected?: number;
-        autoConfirmed?: boolean;
+        outcome?: RescheduleProposeCode;
+        message?: string;
       };
 
       // #448 — show the SESSION count, not the slot count: a 1-hour session is
@@ -292,8 +292,8 @@ export function useEventActions({
 
       toast(
         rescheduleOutcomeToast({
-          autoConfirmed: !!data.autoConfirmed,
-          proposedTimes: !!proposedSlots?.length,
+          code: data.outcome,
+          message: data.message,
           sessionsAffected,
         }),
       );
