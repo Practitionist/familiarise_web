@@ -8,11 +8,11 @@
 set -u
 
 LOG_STATEMENTS=false
-if [ "${1:-}" = "--log-statements" ]; then
+if [[ "${1:-}" == "--log-statements" ]]; then
   LOG_STATEMENTS=true
   shift
 fi
-if [ "$#" -lt 1 ]; then
+if [[ "$#" -lt 1 ]]; then
   echo "usage: $0 [--log-statements] <log-file> [jest args...]" >&2
   exit 2
 fi
@@ -34,6 +34,11 @@ die() {
   exit 1
 }
 
+# The installed binaries only: npx could fetch and run a package on demand.
+BIN=node_modules/.bin
+for tool in prisma jest; do
+  [[ -x "$BIN/$tool" ]] || die "missing $BIN/$tool: install or link node_modules in $ROOT first"
+done
 command -v docker >/dev/null || die "docker is not installed"
 docker info >/dev/null 2>&1 || die "docker is not running"
 
@@ -43,7 +48,7 @@ LOCK=/tmp/fw-heavy.lock
 HAVE_LOCK=false
 
 # The container, the scratch directory and the lock go on every exit.
-trap 'docker rm -f "$NAME" >/dev/null 2>&1; rm -rf "$WORK"; if [ "$HAVE_LOCK" = true ]; then rmdir "$LOCK"; fi' EXIT
+trap 'docker rm -f "$NAME" >/dev/null 2>&1; rm -rf "$WORK"; if [[ "$HAVE_LOCK" == true ]]; then rmdir "$LOCK"; fi' EXIT
 trap 'exit 130' INT TERM HUP
 
 # The heavy lock, as model-orchestration.md section 6b defines it.
@@ -58,7 +63,7 @@ echo "head start: $HEAD_START"
 START=$SECONDS
 
 PG_ARGS=()
-if [ "$LOG_STATEMENTS" = true ]; then PG_ARGS=(-c log_statement=all); fi
+if [[ "$LOG_STATEMENTS" == true ]]; then PG_ARGS=(-c log_statement=all); fi
 # An empty host port makes Docker pick a free one, so two runs never collide.
 docker run -d --name "$NAME" -p 127.0.0.1::5432 \
   -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=ci \
@@ -69,6 +74,7 @@ PORT="$(docker port "$NAME" 5432/tcp | head -n 1)"
 PORT="${PORT##*:}"
 case "$PORT" in
   '' | *[!0-9]*) die "could not read the container's port" ;;
+  *) ;;
 esac
 
 READY=false
@@ -79,17 +85,21 @@ for _ in $(seq 1 60); do
   fi
   sleep 1
 done
-[ "$READY" = true ] || die "Postgres did not become ready in 60 s"
+[[ "$READY" == true ]] || die "Postgres did not become ready in 60 s"
 
 # Blank every key the worktree's .env files name, so next/jest and
 # prisma.config.ts cannot load a live credential, then point at the container.
 # Templates are never loaded, and a blank would defeat jest.setup.ts's `??=`.
 for f in .env*; do
-  [ -f "$f" ] || continue
-  case "$f" in *.sample | *.example | *.template) continue ;; esac
+  [[ -f "$f" ]] || continue
+  case "$f" in
+    *.sample | *.example | *.template) continue ;;
+    *) ;;
+  esac
   while IFS= read -r key; do
     case "$key" in
       PATH | HOME | USER | SHELL | TMPDIR | PWD) continue ;;
+      *) ;;
     esac
     export "$key="
   done < <(sed -nE 's/^(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)=.*/\2/p' "$f")
@@ -108,10 +118,11 @@ done
 echo "target: host=localhost port=$PORT database=ci container=$NAME"
 
 psql_file() { # psql_file <sql-file>
-  docker exec -i "$NAME" psql -U postgres -d ci -v ON_ERROR_STOP=1 -q <"$1" >/dev/null
+  local sql_file="$1"
+  docker exec -i "$NAME" psql -U postgres -d ci -v ON_ERROR_STOP=1 -q <"$sql_file" >/dev/null
 }
 
-npx prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script \
+"$BIN/prisma" migrate diff --from-empty --to-schema prisma/schema.prisma --script \
   >"$WORK/schema.sql" || die "prisma migrate diff failed"
 psql_file "$WORK/schema.sql" || die "schema load failed"
 echo "schema loaded"
@@ -121,15 +132,15 @@ for sidecar in check-constraints ledger-triggers payment-legs-triggers analytics
 done
 
 MARKER=fw-dbtier-jest-start
-if [ "$LOG_STATEMENTS" = true ]; then
+if [[ "$LOG_STATEMENTS" == true ]]; then
   docker exec "$NAME" psql -U postgres -d ci -q -c "SELECT '$MARKER'" >/dev/null ||
     die "could not write the statement-log marker"
 fi
 
-npx jest -c jest.db.config.ts --maxWorkers=1 --coverage=false "$@"
+"$BIN/jest" -c jest.db.config.ts --maxWorkers=1 --coverage=false "$@"
 JEST_RC=$?
 
-if [ "$LOG_STATEMENTS" = true ]; then
+if [[ "$LOG_STATEMENTS" == true ]]; then
   # One line per statement after the marker; parameter DETAIL lines are dropped.
   docker logs "$NAME" 2>&1 |
     sed -n "/$MARKER/,\$p" |
@@ -147,7 +158,7 @@ echo "head end: $HEAD_END"
   echo "head start: $HEAD_START"
   grep -E '^(Test Suites|Tests):' "$LOG_FILE"
   echo "jest rc: $JEST_RC"
-  if [ "$LOG_STATEMENTS" = true ]; then
+  if [[ "$LOG_STATEMENTS" == true ]]; then
     echo "statements: $(wc -l <"$STATEMENTS_FILE" | tr -d ' ') in $STATEMENTS_FILE"
   fi
   echo "head end: $HEAD_END"
