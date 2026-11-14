@@ -72,8 +72,9 @@ export function ProfileForm({
       <AvailabilitySaveConfirm
         consultantId={consultant.id}
         preview={form.pendingSave?.preview ?? null}
+        saved={form.pendingSave?.saved ?? false}
         onConfirm={form.confirmPendingSave}
-        onCancel={form.cancelPendingSave}
+        onClose={form.cancelPendingSave}
       />
     </>
   );

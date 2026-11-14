@@ -89,6 +89,8 @@ export function useConsultantSettingsForm(
   const [pendingSave, setPendingSave] = useState<{
     payload: Record<string, unknown>;
     preview: AvailabilitySavePreview;
+    /** Saved: the dialog now lists the bookings with their links. */
+    saved: boolean;
   } | null>(null);
   const [isContentLoading, setIsContentLoading] = useState(content);
   const [contentError, setContentError] = useState(false);
@@ -471,7 +473,7 @@ export function useConsultantSettingsForm(
           ),
         );
       if (preview.sessions.length > 0 || preview.customDatesRemoved > 0) {
-        setPendingSave({ payload: updatedData, preview });
+        setPendingSave({ payload: updatedData, preview, saved: false });
         return;
       }
       await save(updatedData);
@@ -482,16 +484,22 @@ export function useConsultantSettingsForm(
     }
   };
 
-  /** The save the confirm dialog was holding. */
+  /**
+   * The save the confirm dialog was holding. On success the preview stays, so
+   * the dialog can offer the bookings outside the saved hours; a failure keeps
+   * the dialog asking, with the reason.
+   */
   const confirmPendingSave = async () => {
     if (!pendingSave) return;
-    const { payload } = pendingSave;
-    setPendingSave(null);
+    const { payload, preview } = pendingSave;
     setIsSaving(true);
     try {
       await save(payload);
+      setPendingSave(
+        preview.sessions.length > 0 ? { payload, preview, saved: true } : null,
+      );
     } catch (error) {
-      reportSaveFailure(error);
+      throw new Error(reportSaveFailure(error));
     } finally {
       setIsSaving(false);
     }
@@ -564,13 +572,11 @@ export function useConsultantSettingsForm(
       });
     }
     console.error("Error updating settings:", error);
-    toast({
-      title: "Error",
-      description: isExpectedRefusal(error)
-        ? userMessageFrom(error)
-        : "Failed to update settings. Please try again.",
-      variant: "destructive",
-    });
+    const description = isExpectedRefusal(error)
+      ? userMessageFrom(error)
+      : "Failed to update settings. Please try again.";
+    toast({ title: "Error", description, variant: "destructive" });
+    return description;
   };
 
   return {
