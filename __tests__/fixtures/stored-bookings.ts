@@ -188,3 +188,47 @@ export function storedTrial(open: boolean) {
     }),
   };
 }
+
+/**
+ * A paid request-mode 1:1 whose whole-booking move lapsed unanswered and is not
+ * settled yet: the parent still PENDING, its session still released.
+ */
+export function storedLapsedMove() {
+  const consultation = {
+    id: "c-1",
+    ...request("PENDING"),
+    bookingSource: "REQUEST_SUBMITTED",
+    consultationPlanId: "plan-1",
+    consultationPlan: plan,
+  };
+  const appointment = wrapper({
+    appointmentType: "CONSULTATION",
+    consultationId: "c-1",
+    occurrences: [
+      { ...occurrence(true), completionStatus: "RESCHEDULED", movedAt: null },
+    ],
+    payment: [payment("paid")],
+    rescheduleRequests: [
+      {
+        id: "rr-1",
+        status: "PENDING_REVIEW",
+        reason: null,
+        round: 1,
+        expiresAt: later(-60_000),
+        originStatus: "APPROVED",
+        initiatorRole: "CONSULTEE",
+        initiatedById: "u-l",
+        createdAt: later(-3_600_000),
+        preferredTimeOfDay: null,
+        preferredDays: [],
+        proposedTimes: [
+          {
+            startsAt: later(2 * 86_400_000),
+            endsAt: later(2 * 86_400_000 + 3_600_000),
+          },
+        ],
+      },
+    ],
+  });
+  return { consultation, appointment };
+}

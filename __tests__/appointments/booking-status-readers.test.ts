@@ -12,6 +12,7 @@ import {
   later,
   payment,
   storedConsultation,
+  storedLapsedMove,
   storedPaidPlanAwaitingTimes,
   storedSeat,
   storedTrial,
@@ -57,6 +58,7 @@ import { staffStatus } from "@/components/dashboard/shared/OperatorAppointmentsC
 import { mapConsultantAppointments } from "@/lib/appointments/map-consultant";
 import { mapConsulteeEvents } from "@/lib/appointments/map-consultee";
 import { appointmentStatusChip } from "@/lib/appointments/occurrences";
+import { openProposalTarget } from "@/lib/appointments/consultee-affordances";
 import { processAllEvents } from "@/app/dashboard/consultee/[consulteeId]/(features)/home/event-processor";
 import {
   rowStatus,
@@ -318,5 +320,62 @@ describe("sweep: the viewer's own facts before the host's or the clock's shortcu
       mockRows.consultation = [{ ...consultation, appointment }];
     });
     expect(vms[0].needsActionReason).not.toBe("PAY_NOW");
+  });
+});
+
+describe("a move past its deadline reads as the original on every list, before anything settles it", () => {
+  it("the learner's list and Home, the expert's list, the organisation list and the back office read Confirmed with nothing to answer", async () => {
+    const { events, vms } = await learnerVms(() => {
+      const { consultation, appointment } = storedLapsedMove();
+      mockRows.consultation = [{ ...consultation, appointment }];
+    });
+    expect(appointmentStatusChip(vms[0], "consultee").label).toBe("Confirmed");
+    expect(vms[0].reschedule).toBeFalsy();
+    expect(vms[0].bucket).not.toBe("needsAction");
+    expect(
+      openProposalTarget([events.consultations?.[0]?.appointment ?? null]),
+    ).toBeNull();
+    expect(processAllEvents(events, NOW)[0]).toMatchObject({
+      status: "APPROVED",
+      needsActionReason: null,
+    });
+
+    reset();
+    const lapsed = storedLapsedMove();
+    mockRows.appointment = [
+      { ...lapsed.appointment, consultation: lapsed.consultation },
+    ];
+    const page = await readConsultantAppointmentsPage({
+      consultantProfileId: "cp-1",
+      scope: { kind: "personal" },
+      now: NOW,
+    } as Parameters<typeof readConsultantAppointmentsPage>[0]);
+    const [expertRow] = mapConsultantAppointments(
+      {
+        consultantId: "cp-1",
+        appointments: page.rows.slice(0, 1),
+      } as unknown as Parameters<typeof mapConsultantAppointments>[0],
+      NOW,
+    );
+    expect(appointmentStatusChip(expertRow, "consultant").label).toBe(
+      "Confirmed",
+    );
+    expect(expertRow.reschedule).toBeFalsy();
+
+    expect(
+      await orgRow({
+        ...lapsed.appointment,
+        consultation: lapsed.consultation,
+      }),
+    ).toBe("Confirmed");
+
+    reset();
+    mockRows.appointment = [
+      { ...lapsed.appointment, consultation: lapsed.consultation },
+    ];
+    const { appointments } = await getStaffAppointments({
+      scope: { kind: "all" },
+    } as Parameters<typeof getStaffAppointments>[0]);
+    expect(staffStatus(appointments[0]).label).toBe("Confirmed");
   });
 });

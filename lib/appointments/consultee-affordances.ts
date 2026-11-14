@@ -4,6 +4,7 @@
  * Server routes already 403 impossible actions; the UI must not offer them.
  */
 
+import { moveHasLapsed } from "@/lib/appointments/lapsed-move";
 import type { AppointmentKind } from "@/lib/appointments/view-model";
 
 export type ConsulteeDestructiveAction =
@@ -78,7 +79,10 @@ export function openProposalTarget(
 ): { appointmentId: string; proposal: OpenRescheduleProposal } | null {
   for (const appointment of appointments) {
     const proposal = appointment?.rescheduleRequests?.[0];
-    if (proposal) return { appointmentId: appointment.id, proposal };
+    // Past its deadline the original stands; there is nothing to answer.
+    if (proposal && !moveHasLapsed(proposal.expiresAt)) {
+      return { appointmentId: appointment.id, proposal };
+    }
   }
   return null;
 }

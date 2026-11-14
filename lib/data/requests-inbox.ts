@@ -20,6 +20,7 @@
  * `consultantProfileId`, the page runs `requirePersonalProfileAccess`.
  */
 
+import { withLapsedRequestRestored } from "@/lib/appointments/lapsed-move";
 import prisma from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import { scopeToPlanHostWhere, type Scope } from "@/lib/api/scope/parse";
@@ -464,10 +465,12 @@ function finish(row: Omit<InboxRowInput, "bucket">, now: Date): InboxRowInput {
 }
 
 function consultationRow(
-  c: ConsultationRow,
+  stored: ConsultationRow,
   consultantProfileId: string,
   now: Date,
 ): InboxRowInput {
+  // A move past its deadline reads as the original until the sweep ends it.
+  const c = withLapsedRequestRestored(stored, now);
   const request = lifecycleOf({ consultation: c });
   const facts = wrapperFacts(c.appointment, "CONSULTATION");
   const holdDeadline =
@@ -595,11 +598,12 @@ function entitlementOf(
 }
 
 function subscriptionRow(
-  s: SubscriptionRow,
+  stored: SubscriptionRow,
   consultantProfileId: string,
   now: Date,
   kind: "subscription" | "next-cycle",
 ): InboxRowInput {
+  const s = withLapsedRequestRestored(stored, now);
   const request = lifecycleOf({ subscription: s });
   const facts = wrapperFacts(s.appointment, "SUBSCRIPTION");
   const entitlement = entitlementOf(s, now);

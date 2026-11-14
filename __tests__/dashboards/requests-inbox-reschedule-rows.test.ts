@@ -126,6 +126,46 @@ describe("Requests inbox rows for a booking being moved", () => {
   });
 });
 
+describe("a move past its deadline, before the sweep ends it", () => {
+  it("offers nothing to answer and reads by the status the restore writes", async () => {
+    const m = prisma as unknown as MockPrisma;
+    serveInboxFixture(m);
+    const moving = movingConsultation("CONSULTEE", true);
+    const lapsed = {
+      ...moving,
+      appointment: {
+        ...moving.appointment,
+        rescheduleRequests: moving.appointment.rescheduleRequests.map((r) => ({
+          ...r,
+          expiresAt: new Date(NOW.getTime() - 60_000),
+          originStatus: "APPROVED",
+        })),
+      },
+    };
+    const c = serve([lapsed]);
+    m.consultation.findMany.mockImplementation(c.findMany);
+    m.consultation.count.mockImplementation(c.count);
+    const { rows } = await readRequestsInbox({
+      consultantProfileId: CP,
+      type: "consultation",
+      sort: "priority",
+      page: 1,
+      now: NOW,
+    });
+    const row = rows.find((r) => r.id === "c-moving");
+    if (!row) return;
+    const actions = actionsOf(row);
+    const kinds = [actions.primary, ...actions.secondary].map((a) => a?.kind);
+    expect(kinds).not.toContain("accept-proposal");
+    expect(kinds).not.toContain("keep-original");
+    expect(row.proposal).toBeNull();
+    expect(
+      deriveBookingPresentation(row.presentation, "CONSULTANT", { now: NOW })
+        .bookingState.state,
+    ).not.toBe("BEING_MOVED");
+  });
+});
+
 describe("answering a reschedule from the inbox", () => {
   it("never claims the original time was kept when it was taken meanwhile", () => {
     expect(proposalAnswerToast("keep-original", "DECLINED")).toBe(

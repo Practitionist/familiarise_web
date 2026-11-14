@@ -24,6 +24,7 @@
  * hydrates without a fetch.
  */
 
+import { withLapsedMoveRestored } from "@/lib/appointments/lapsed-move";
 import { useMemo, useState } from "react";
 import { requireJsonResponse } from "@/lib/fetch-helpers";
 import Link from "next/link";
@@ -72,7 +73,11 @@ export interface AppointmentRow {
   id: string;
   /** Settled charges on the booking; the open move, when there is one. */
   _count?: { payment?: number };
-  rescheduleRequests?: { initiatorRole: string; expiresAt: string }[];
+  rescheduleRequests?: {
+    initiatorRole: string;
+    expiresAt: string;
+    originStatus?: string | null;
+  }[];
   appointmentType: string;
   createdAt: string;
   organizationId: string | null;
@@ -186,7 +191,12 @@ function openMove(row: AppointmentRow): OpenRescheduleInput | null {
 }
 
 /** The row's one booking status, as the organisation sees it. */
-export function rowStatus(row: AppointmentRow): { label: string; tone: Tone } {
+export function rowStatus(stored: AppointmentRow): {
+  label: string;
+  tone: Tone;
+} {
+  // A move past its deadline reads as the original until the sweep ends it.
+  const row = withLapsedMoveRestored(stored);
   const live = row.occurrences.filter((o) => !isDeadOccurrence(o));
   // Completed by evidence (a recorded outcome or a host-ended call), never the clock.
   const done =

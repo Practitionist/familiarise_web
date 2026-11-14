@@ -406,6 +406,7 @@ export async function readConsultantAppointmentsPage(
         status: true,
         reason: true,
         expiresAt: true,
+        originStatus: true,
         initiatorRole: true,
         initiatedById: true,
         proposedTimes: {
