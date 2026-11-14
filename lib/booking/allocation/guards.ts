@@ -15,6 +15,7 @@ import type { AppointmentWithSlots } from "@/lib/booking/allocation/types";
 import { tentativeSlotCountOf } from "@/lib/booking/allocation/counts";
 import { findIdempotentAllocation } from "@/lib/booking/allocation/idempotency";
 import { liveParticipant } from "@/lib/booking/participants";
+import { ALREADY_SCHEDULED_COPY } from "@/lib/scheduling/allocationMessages";
 
 /**
  * The allocation transaction's first statement: an advisory xact lock per
@@ -72,11 +73,28 @@ export async function assertNoConfirmedSlots(
   });
   if (confirmed > 0) {
     throw new AllocationConflictError(
-      `This ${eventType} was already allocated in another session ` +
-        `(${confirmed} confirmed slot(s) exist).`,
+      eventType === "consultation"
+        ? ALREADY_SCHEDULED_COPY
+        : `This ${eventType} was already allocated in another session ` +
+            `(${confirmed} confirmed slot(s) exist).`,
       "ALREADY_ALLOCATED",
+      { confirmed },
     );
   }
+}
+
+/**
+ * Whether the allocation must find no confirmed session. A consultation with
+ * one is moved only through reschedule, whatever the client sends.
+ */
+export function mustBeUnscheduled(
+  eventType: EventType,
+  initialAllocation: boolean | undefined,
+): boolean {
+  return (
+    eventType === "consultation" ||
+    (initialAllocation === true && eventType !== "subscription")
+  );
 }
 
 /**

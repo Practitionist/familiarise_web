@@ -7,6 +7,17 @@
  */
 
 import { projectRow } from "../fixtures/prisma-projection";
+import {
+  NOW,
+  later,
+  payment,
+  storedConsultation,
+  storedLapsedMove,
+  storedPaidPlanAwaitingTimes,
+  storedSeat,
+  storedTrial,
+  type Pay,
+} from "../fixtures/stored-bookings";
 
 type Row = Record<string, unknown>;
 const mockRows: Record<string, Row[]> = {};
@@ -47,159 +58,12 @@ import { staffStatus } from "@/components/dashboard/shared/OperatorAppointmentsC
 import { mapConsultantAppointments } from "@/lib/appointments/map-consultant";
 import { mapConsulteeEvents } from "@/lib/appointments/map-consultee";
 import { appointmentStatusChip } from "@/lib/appointments/occurrences";
+import { openProposalTarget } from "@/lib/appointments/consultee-affordances";
 import { processAllEvents } from "@/app/dashboard/consultee/[consulteeId]/(features)/home/event-processor";
 import {
   rowStatus,
   type AppointmentRow,
 } from "@/app/dashboard/organization/[orgId]/appointments/AppointmentsPageClient";
-
-const NOW = new Date();
-const later = (ms: number) => new Date(NOW.getTime() + ms);
-const user = (id: string, name: string) => ({
-  id,
-  name,
-  image: null,
-  email: `${id}@example.test`,
-});
-const expert = { id: "cp-1", userId: "u-e", user: user("u-e", "Hannah") };
-const learner = { id: "cee-1", userId: "u-l", user: user("u-l", "Charlotte") };
-
-type Pay = "live" | "lapsed" | "paid";
-const payment = (pay: Pay) => ({
-  id: "pay-1",
-  userId: "u-l",
-  paymentStatus: { live: "PENDING", lapsed: "EXPIRED", paid: "SUCCEEDED" }[pay],
-  paymentMethod: "CARD",
-  organizationId: null,
-  expiresAt: pay === "lapsed" ? later(-60_000) : later(15 * 60_000),
-  amount: 50_000,
-  currency: "INR",
-  createdAt: later(-60_000),
-  deletedAt: null,
-  refunds: [],
-});
-const occurrence = (tentative: boolean) => ({
-  id: "occ-1",
-  appointmentId: "appt-1",
-  ordinal: 1,
-  startsAt: later(86_400_000),
-  endsAt: later(90_000_000),
-  isTentative: tentative,
-  completionStatus: "SCHEDULED",
-  outcome: null,
-  deletedAt: null,
-  meeting: null,
-});
-const wrapper = (over: Row) => ({
-  id: "appt-1",
-  organizationId: null,
-  consultationId: null,
-  subscriptionId: null,
-  webinarId: null,
-  classId: null,
-  deletedAt: null,
-  createdAt: later(-60_000),
-  rescheduleRequests: [],
-  participants: [],
-  consultation: null,
-  subscription: null,
-  webinar: null,
-  class: null,
-  trial: null,
-  ...over,
-});
-const plan = {
-  id: "plan-1",
-  title: "Strategy call",
-  price: 50_000,
-  priceCurrency: "INR",
-  durationInHours: 1,
-  consultantProfileId: "cp-1",
-  consultantProfile: expert,
-};
-const request = (status: string) => ({
-  status,
-  bookingSource: "DIRECT_CHECKOUT",
-  requestedAt: later(-60_000),
-  pendingPaymentUrl: null,
-  requestNotes: null,
-  requestedById: "cee-1",
-  requestedBy: learner,
-});
-
-/** A 1:1 booked through checkout, as the stored rows hold it. */
-function storedConsultation(status: string, pay: Pay, moving = false) {
-  const consultation = {
-    id: "c-1",
-    ...request(status),
-    consultationPlanId: "plan-1",
-    consultationPlan: plan,
-  };
-  const appointment = wrapper({
-    appointmentType: "CONSULTATION",
-    consultationId: "c-1",
-    occurrences: [occurrence(pay !== "paid")],
-    payment: [payment(pay)],
-    rescheduleRequests: moving
-      ? [
-          {
-            id: "rr-1",
-            status: "PENDING_REVIEW",
-            reason: null,
-            round: 1,
-            expiresAt: later(86_400_000),
-            initiatorRole: "CONSULTANT",
-            initiatedById: "u-e",
-            createdAt: later(-60_000),
-            proposedTimes: [],
-          },
-        ]
-      : [],
-  });
-  return { consultation, appointment };
-}
-
-/** A plan paid at checkout whose first sessions are not placed yet. */
-function storedPaidPlanAwaitingTimes() {
-  const subscription = {
-    id: "s-1",
-    ...request("PENDING"),
-    deletedAt: null,
-    subscriptionPlanId: "plan-1",
-    subscriptionPlan: { ...plan, totalSessions: 4, sessionsPerWeek: 1 },
-  };
-  const appointment = wrapper({
-    appointmentType: "SUBSCRIPTION",
-    subscriptionId: "s-1",
-    occurrences: [],
-    payment: [payment("paid")],
-  });
-  return { subscription, appointment };
-}
-
-/** A webinar seat the learner holds, paid or not. */
-function storedSeat(pay: Pay) {
-  return {
-    id: "w-1",
-    status: "SCHEDULED",
-    createdAt: later(-60_000),
-    webinarPlan: { ...plan, collaborators: [] },
-    appointment: wrapper({
-      appointmentType: "WEBINAR",
-      webinarId: "w-1",
-      occurrences: [occurrence(false)],
-      payment: [payment(pay)],
-      participants: [
-        {
-          userId: "u-l",
-          role: "CONSULTEE",
-          status: pay === "paid" ? "CONFIRMED" : "HELD",
-          updatedAt: later(-60_000),
-        },
-      ],
-    }),
-  };
-}
 
 function reset() {
   for (const key of Object.keys(mockRows)) delete mockRows[key];
@@ -349,34 +213,6 @@ describe("the expert's list and the back office read what their queries select",
   );
 });
 
-/** A paid trial holding its time, its pay window open or closed. */
-function storedTrial(open: boolean) {
-  return {
-    id: "t-1",
-    status: "AWAITING_PAYMENT",
-    notes: null,
-    requestedAt: later(-60_000),
-    completedAt: null,
-    pendingPaymentUrl: null,
-    paymentDueAt: open ? later(15 * 60_000) : later(-60_000),
-    consultantProfileId: "cp-1",
-    consulteeProfileId: "cee-1",
-    subscriptionPlan: {
-      id: "plan-1",
-      title: "Mentorship",
-      trialDurationMinutes: 30,
-      trialPriceInPaise: 10_000,
-      consultantProfile: expert,
-    },
-    consulteeProfile: learner,
-    appointment: wrapper({
-      appointmentType: "TRIAL",
-      occurrences: [occurrence(true)],
-      payment: [{ ...payment(open ? "live" : "lapsed") }],
-    }),
-  };
-}
-
 describe("a trial's own pay window decides its row", () => {
   it("an open window is a Pay task; a closed one is Cancelled with no Pay, on the list and on Home", async () => {
     const live = await learnerVms(() => {
@@ -484,5 +320,62 @@ describe("sweep: the viewer's own facts before the host's or the clock's shortcu
       mockRows.consultation = [{ ...consultation, appointment }];
     });
     expect(vms[0].needsActionReason).not.toBe("PAY_NOW");
+  });
+});
+
+describe("a move past its deadline reads as the original on every list, before anything settles it", () => {
+  it("the learner's list and Home, the expert's list, the organisation list and the back office read Confirmed with nothing to answer", async () => {
+    const { events, vms } = await learnerVms(() => {
+      const { consultation, appointment } = storedLapsedMove();
+      mockRows.consultation = [{ ...consultation, appointment }];
+    });
+    expect(appointmentStatusChip(vms[0], "consultee").label).toBe("Confirmed");
+    expect(vms[0].reschedule).toBeFalsy();
+    expect(vms[0].bucket).not.toBe("needsAction");
+    expect(
+      openProposalTarget([events.consultations?.[0]?.appointment ?? null]),
+    ).toBeNull();
+    expect(processAllEvents(events, NOW)[0]).toMatchObject({
+      status: "APPROVED",
+      needsActionReason: null,
+    });
+
+    reset();
+    const lapsed = storedLapsedMove();
+    mockRows.appointment = [
+      { ...lapsed.appointment, consultation: lapsed.consultation },
+    ];
+    const page = await readConsultantAppointmentsPage({
+      consultantProfileId: "cp-1",
+      scope: { kind: "personal" },
+      now: NOW,
+    } as Parameters<typeof readConsultantAppointmentsPage>[0]);
+    const [expertRow] = mapConsultantAppointments(
+      {
+        consultantId: "cp-1",
+        appointments: page.rows.slice(0, 1),
+      } as unknown as Parameters<typeof mapConsultantAppointments>[0],
+      NOW,
+    );
+    expect(appointmentStatusChip(expertRow, "consultant").label).toBe(
+      "Confirmed",
+    );
+    expect(expertRow.reschedule).toBeFalsy();
+
+    expect(
+      await orgRow({
+        ...lapsed.appointment,
+        consultation: lapsed.consultation,
+      }),
+    ).toBe("Confirmed");
+
+    reset();
+    mockRows.appointment = [
+      { ...lapsed.appointment, consultation: lapsed.consultation },
+    ];
+    const { appointments } = await getStaffAppointments({
+      scope: { kind: "all" },
+    } as Parameters<typeof getStaffAppointments>[0]);
+    expect(staffStatus(appointments[0]).label).toBe("Confirmed");
   });
 });

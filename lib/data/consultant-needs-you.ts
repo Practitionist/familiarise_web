@@ -13,7 +13,7 @@ import {
   UNSETTLED_MISS,
   missedAt,
 } from "@/lib/booking/misses";
-import { countRequestsToAnswer } from "@/lib/data/needs-you";
+import { answerableBy, countRequestsToAnswer } from "@/lib/data/needs-you";
 import { countReviewsNeedingReply } from "@/lib/reviews-needs-reply";
 
 /**
@@ -65,11 +65,12 @@ const personalOneToOne = (
   ],
 });
 
-async function readRescheduleReplies(consultantProfileId: string) {
+async function readRescheduleReplies(consultantProfileId: string, now: Date) {
   const rows = await prisma.rescheduleRequest.findMany({
     where: {
       // Propose → accept or decline is the whole flow; the only open status.
       status: "PENDING_REVIEW",
+      ...answerableBy(now),
       initiatorRole: "CONSULTEE",
       appointment: personalOneToOne(consultantProfileId),
     },
@@ -150,7 +151,10 @@ export async function readConsultantNeedsYou(
   now: Date = new Date(),
 ): Promise<ConsultantNeedsYou> {
   const requestsToAnswer = await countRequestsToAnswer({ consultantProfileId });
-  const rescheduleReplies = await readRescheduleReplies(consultantProfileId);
+  const rescheduleReplies = await readRescheduleReplies(
+    consultantProfileId,
+    now,
+  );
   const owedMakeUps = await readOwedMakeUps(consultantProfileId, now);
   const documentsAwaitingReview = await prisma.appointmentDocument.count({
     where: {

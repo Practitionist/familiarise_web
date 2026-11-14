@@ -1,3 +1,4 @@
+import { readJsonBody } from "@/lib/api/parse";
 import { PROFILE_OWNER_SELECT } from "@/lib/booking/list-selects";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
@@ -44,7 +45,10 @@ import { getSession } from "@/lib/auth-server";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
 import { seriesStartsFrom } from "@/lib/booking/class-pattern";
 import { eventTimeRefusal } from "@/lib/booking/event-time-rules";
-import { buildOccurrence } from "@/lib/appointments/occurrences";
+import {
+  buildOccurrence,
+  liveOccurrenceWhere,
+} from "@/lib/appointments/occurrences";
 import {
   assertCollaboratorsAvailableForWindows,
   assertConsultantAvailableForWindows,
@@ -162,7 +166,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body = await request.json();
+    const read = await readJsonBody(request);
+    if (read.error) return read.error;
+    const body = read.body;
 
     // Verification check - consultant must be verified to create classes
     if (body.consultantProfileId) {
@@ -565,7 +571,9 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
-    const body = await request.json();
+    const read = await readJsonBody(request);
+    if (read.error) return read.error;
+    const body = read.body;
     console.log(
       "Received class update request body:",
       JSON.stringify(body, null, 2),
@@ -731,6 +739,26 @@ export async function PATCH(request: NextRequest) {
     ) {
       return NextResponse.json(
         { error: "Cannot update status or dates: no class instance found" },
+        { status: 400 },
+      );
+    }
+
+    // A class goes live only once it has sessions.
+    if (
+      status === "SCHEDULED" &&
+      classToUpdate?.status === "DRAFT" &&
+      (await prisma.appointmentOccurrence.count({
+        where: {
+          ...liveOccurrenceWhere,
+          appointment: { classId: classToUpdate.id, deletedAt: null },
+        },
+      })) === 0
+    ) {
+      return NextResponse.json(
+        {
+          error: "Set the class's times before you publish it.",
+          code: "EVENT_TIME_INVALID",
+        },
         { status: 400 },
       );
     }

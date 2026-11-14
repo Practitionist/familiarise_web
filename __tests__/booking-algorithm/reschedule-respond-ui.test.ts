@@ -99,6 +99,14 @@ describe("#1163 — cancel/reschedule invalidation reaches the detail hub", () =
   });
 });
 
+describe("the learner's reschedule toast", () => {
+  it("shows the server's outcome sentence, never a fixed cause", () => {
+    expect(eventActions).toContain("code: data.outcome");
+    expect(eventActions).toContain("message: data.message");
+    expect(eventActions).not.toContain("That time isn't free");
+  });
+});
+
 describe("#1163 — the consultant inbox answers proposals", () => {
   it("Approve routes an answerable proposal through respond-accept", () => {
     expect(inbox).toContain("answerableProposal");

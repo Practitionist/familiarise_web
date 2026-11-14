@@ -4,6 +4,7 @@
  * to ONE group row each; their per-session detail lives in vm.occurrences.
  */
 
+import { withLapsedRequestRestored } from "@/lib/appointments/lapsed-move";
 import type { TAppointment } from "@/types/appointment";
 import type {
   TConsulteeEventsResponse,
@@ -391,8 +392,12 @@ export function mapConsulteeEvents(
 ): AppointmentVM[] {
   if (!data) return [];
   return [
-    ...(data.consultations ?? []).map((c) => mapConsultation(c, now)),
-    ...(data.subscriptions ?? []).map((s) => mapSubscription(s, now)),
+    ...(data.consultations ?? []).map((c) =>
+      mapConsultation(withLapsedRequestRestored(c, now), now),
+    ),
+    ...(data.subscriptions ?? []).map((s) =>
+      mapSubscription(withLapsedRequestRestored(s, now), now),
+    ),
     ...(data.webinars ?? []).map((w) => mapWebinar(w, now, zone)),
     ...(data.classes ?? []).map((c) => mapClass(c, now, zone)),
     ...(data.trials ?? []).map((t) => mapTrial(t, now)),

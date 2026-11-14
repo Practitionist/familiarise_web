@@ -52,8 +52,10 @@ jest.mock(
 );
 
 const mockAccess = jest.fn();
+const mockOwns = jest.fn();
 jest.mock("../../lib/auth/personal-dashboard-access", () => ({
   requirePersonalProfileAccess: (...a: unknown[]) => mockAccess(...a),
+  viewerOwnsPersonalProfile: (...a: unknown[]) => mockOwns(...a),
 }));
 const mockGetSession = jest.fn();
 jest.mock("../../lib/auth-server", () => ({
@@ -90,7 +92,9 @@ import { OPS_HINT_LABEL } from "../../components/appointments/OperatorOpsHint";
 import { useConsulteeAppointmentsAdapter } from "../../components/appointments/consultee/ConsulteeAppointmentsAdapter";
 import { useConsultantAppointmentsAdapter } from "../../app/dashboard/consultant/[consultantId]/(features)/appointments/ConsultantAppointmentsAdapter";
 import { OrgActorDetail } from "../../app/dashboard/organization/[orgId]/appointments/[appointmentId]/OrgActorDetail";
-import ConsulteeReschedulePage from "../../app/dashboard/consultee/[consulteeId]/(features)/appointments/[appointmentId]/reschedule/page";
+import ConsulteeReschedulePage, {
+  generateMetadata as consulteeRescheduleMetadata,
+} from "../../app/dashboard/consultee/[consulteeId]/(features)/appointments/[appointmentId]/reschedule/page";
 
 const APPT = "8b2f6c1e-1d2a-4f3b-9c4d-5e6f7a8b9c0d";
 const OPS = `/dashboard/staff/appointments?open=${APPT}`;
@@ -254,6 +258,7 @@ describe("OrgActorDetail", () => {
       status: "APPROVED" as const,
       expertName: "Expert",
       learnerName: "Learner",
+      learnerUserId: "u-learner",
       consultantProfileId: "cp-1",
       sessionMinutes: 60,
       sessions: [],
@@ -337,5 +342,18 @@ describe("consultee reschedule page", () => {
     });
     await renderPage();
     expect(screen.getByText("time picker")).toBeInTheDocument();
+  });
+});
+
+describe("reschedule page metadata", () => {
+  it("names nothing to a viewer who does not own the profile in the URL", async () => {
+    mockOwns.mockResolvedValue(false);
+    mockReadDetail.mockClear();
+    const meta = await consulteeRescheduleMetadata({
+      params: Promise.resolve({ consulteeId: "ce-1", appointmentId: "a-1" }),
+      searchParams: Promise.resolve({}),
+    });
+    expect(meta).toEqual({ title: "Reschedule — Familiarise" });
+    expect(mockReadDetail).not.toHaveBeenCalled();
   });
 });

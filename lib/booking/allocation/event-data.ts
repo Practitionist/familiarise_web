@@ -16,6 +16,7 @@ import {
 import {
   bookedSessionMinutes,
   intervalStartsOf,
+  liveOccurrenceWhere,
 } from "@/lib/appointments/occurrences";
 import { isVoidRequestRow } from "@/lib/booking/allocation/counts";
 import { isLiveCheckoutHold } from "@/lib/booking/request-cohort";
@@ -92,6 +93,7 @@ export async function approveByMoney<
     fromIn: AppointmentStatus[];
     data?: D;
     reason?: string;
+    actorUserId?: string | null;
   }) => Promise<void>,
   settled: Omit<W, "id">,
   unpaid: Omit<W, "id"> | (() => Promise<void>),
@@ -99,9 +101,10 @@ export async function approveByMoney<
   approvableFrom: AppointmentStatus[] = ALLOCATION_APPROVABLE_FROM,
   /** Runs before the awaiting-payment write; a throw refuses the approval. */
   beforeUnpaid?: () => void,
-  /** Recorded on the history row: how the times were placed. */
-  reason?: string,
+  /** Recorded on the history row: how the times were placed, and by whom. */
+  history: { reason?: string; actorUserId?: string | null } = {},
 ): Promise<ApprovalOutcome> {
+  const { reason, actorUserId } = history;
   try {
     await transition({
       where: { id: eventId, ...settled } as W,
@@ -109,6 +112,7 @@ export async function approveByMoney<
       fromIn: approvableFrom,
       data,
       reason,
+      actorUserId,
     });
     return "approved";
   } catch (error) {
@@ -130,8 +134,48 @@ export async function approveByMoney<
     ].filter((status) => approvableFrom.includes(status)),
     data,
     reason,
+    actorUserId,
   });
   return "awaiting_payment";
+}
+
+/**
+ * A class's stored scheduling period starts at its first live session and
+ * reaches at least its last, so every reader of the period agrees with the sessions.
+ */
+export async function followClassSessions(
+  tx: Pick<Tx, "appointmentOccurrence" | "class">,
+  classId: string,
+): Promise<void> {
+  const live = {
+    ...liveOccurrenceWhere,
+    appointment: { classId, deletedAt: null },
+  };
+  const first = await tx.appointmentOccurrence.findFirst({
+    where: live,
+    orderBy: { startsAt: "asc" },
+    select: { startsAt: true },
+  });
+  const last = await tx.appointmentOccurrence.findFirst({
+    where: live,
+    orderBy: { endsAt: "desc" },
+    select: { endsAt: true },
+  });
+  if (!first || !last) return;
+  await tx.class.updateMany({
+    where: { id: classId },
+    data: { schedulingPeriodStartsAt: first.startsAt },
+  });
+  await tx.class.updateMany({
+    where: {
+      id: classId,
+      OR: [
+        { schedulingPeriodEndsAt: null },
+        { schedulingPeriodEndsAt: { lt: last.endsAt } },
+      ],
+    },
+    data: { schedulingPeriodEndsAt: last.endsAt },
+  });
 }
 
 /**
@@ -146,6 +190,8 @@ export async function updateEventStatus(
   approvableFrom?: AppointmentStatus[],
   /** How the times were placed (`scheduleReason`), for the history row. */
   reason?: string,
+  /** Who placed them; null for a sweep. */
+  actorUserId?: string | null,
 ): Promise<ApprovalOutcome | undefined> {
   switch (eventType) {
     // #836 — allocation racing a cancel/expiry must not resurrect the
@@ -168,7 +214,7 @@ export async function updateEventStatus(
         approvableFrom,
         // The client pays before the session: refuse a too-close first one.
         () => assertUnpaidApprovalFits(firstSlot),
-        reason,
+        { reason, actorUserId },
       );
 
     // #1775 C-1 — a plan is paid at purchase: an unpaid one is refused,
@@ -193,7 +239,7 @@ export async function updateEventStatus(
         undefined,
         approvableFrom,
         undefined,
-        reason,
+        { reason, actorUserId },
       );
 
     case "webinar": {
@@ -203,6 +249,7 @@ export async function updateEventStatus(
         await transitionWebinarEvent(tx, {
           where: { id: eventId },
           to: "SCHEDULED",
+          actorUserId,
         });
       } catch (error) {
         if (
@@ -237,6 +284,7 @@ export async function updateEventStatus(
           where: { id: eventId },
           to: "SCHEDULED",
           data: periodData,
+          actorUserId,
         });
       } catch (error) {
         if (
@@ -254,6 +302,7 @@ export async function updateEventStatus(
           });
         }
       }
+      await followClassSessions(tx, eventId);
       break;
     }
   }

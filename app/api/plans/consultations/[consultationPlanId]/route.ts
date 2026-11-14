@@ -1,3 +1,4 @@
+import { readJsonBody } from "@/lib/api/parse";
 import { PROFILE_OWNER_SELECT } from "@/lib/booking/list-selects";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
@@ -125,7 +126,9 @@ export async function PUT(
       );
     }
 
-    const body = await request.json();
+    const read = await readJsonBody(request);
+    if (read.error) return read.error;
+    const body = read.body;
 
     // Validate input with Zod schema (partial for updates)
     const validationResult = ConsultationPlanSchema.partial().safeParse(body);

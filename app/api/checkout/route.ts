@@ -1,3 +1,4 @@
+import { readJsonBody } from "@/lib/api/parse";
 import * as Sentry from "@sentry/nextjs";
 import { checkoutSchema } from "@/schemas/checkout";
 import { handleCheckout } from "@/lib/payments/checkout";
@@ -68,7 +69,9 @@ export async function POST(req: NextRequest) {
     if (rl) return rl;
 
     // Validate request body
-    const body = await req.json();
+    const read = await readJsonBody(req);
+    if (read.error) return read.error;
+    const body = read.body;
     const validatedData = checkoutSchema.parse(body);
 
     // Only allow mock payments in development — prevent client-side bypass in production
@@ -186,6 +189,23 @@ export async function POST(req: NextRequest) {
       replayUserId &&
       replayKey &&
       replayFingerprint
+    ) {
+      const replay = await replayByIdempotencyKey(
+        replayUserId,
+        replayKey,
+        replayFingerprint,
+      );
+      if (replay instanceof NextResponse) return replay;
+    }
+    // A same-key double submit is answered with the first attempt's replay,
+    // never as a taken time or a busy account.
+    if (
+      replayUserId &&
+      replayKey &&
+      replayFingerprint &&
+      (isSlotTaken(error) ||
+        error instanceof EventCheckoutBusyError ||
+        error instanceof ConsulteeBookingBusyError)
     ) {
       const replay = await replayByIdempotencyKey(
         replayUserId,

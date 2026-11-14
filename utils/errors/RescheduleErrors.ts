@@ -22,9 +22,12 @@ export class ReschedulePolicyError extends Refusal {
     super({
       code: "RESCHEDULE_WINDOW",
       httpStatus: 409,
+      // A party may move a 1:1 inside 24 hours by agreement; only a started session can't move.
       userMessage:
-        `Cannot reschedule within ${minimumHoursRequired} hours of the meeting. ` +
-        `The earliest meeting starts in ${Math.max(0, Math.floor(hoursUntilSlot))} hours.`,
+        hoursUntilSlot <= 0
+          ? "This session has already started, so it can no longer be moved."
+          : `Cannot reschedule within ${minimumHoursRequired} hours of the meeting. ` +
+            `The earliest meeting starts in ${Math.floor(hoursUntilSlot)} hours.`,
       context: { hoursUntilSlot, minimumHoursRequired },
     });
     this.name = "ReschedulePolicyError";

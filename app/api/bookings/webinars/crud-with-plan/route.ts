@@ -1,3 +1,4 @@
+import { readJsonBody } from "@/lib/api/parse";
 import { PROFILE_OWNER_SELECT } from "@/lib/booking/list-selects";
 import * as Sentry from "@sentry/nextjs";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
@@ -141,7 +142,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body = await request.json();
+    const read = await readJsonBody(request);
+    if (read.error) return read.error;
+    const body = read.body;
     console.log(
       "Received webinar creation request body:",
       JSON.stringify(body, null, 2),
@@ -532,7 +535,9 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
-    const body = await request.json();
+    const read = await readJsonBody(request);
+    if (read.error) return read.error;
+    const body = read.body;
     console.log(
       "Received webinar update request body:",
       JSON.stringify(body, null, 2),
@@ -753,6 +758,24 @@ export async function PATCH(request: NextRequest) {
           },
         );
       }
+    }
+
+    // A webinar goes live only once it has a time.
+    if (
+      status === "SCHEDULED" &&
+      webinarToUpdate?.status === "DRAFT" &&
+      !startTime &&
+      !webinarToUpdate.appointment?.occurrences?.some(
+        (s) => !isDeadOccurrence(s),
+      )
+    ) {
+      return NextResponse.json(
+        {
+          error: "Set a time for this webinar before you publish it.",
+          code: "EVENT_TIME_INVALID",
+        },
+        { status: 400 },
+      );
     }
 
     const effectiveDurationForSlots =

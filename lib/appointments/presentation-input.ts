@@ -237,7 +237,8 @@ function openReschedule(
   );
   return {
     by: open.initiatorRole === "CONSULTANT" ? "CONSULTANT" : "REQUESTER",
-    mine: !!viewerId && open.initiatedById === viewerId,
+    // Unknown until the session loads; the page's own side decides meanwhile.
+    mine: viewerId ? open.initiatedById === viewerId : undefined,
     proposedStartsAt: open.proposedTimes[0]?.startsAt ?? null,
     originalStartsAt: original?.startsAt ?? null,
     expiresAt: open.expiresAt,

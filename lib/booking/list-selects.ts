@@ -112,6 +112,7 @@ export const APPOINTMENT_LIST_SELECT = {
         status: true,
         reason: true,
         expiresAt: true,
+        originStatus: true,
         initiatorRole: true,
         // #1065 — only auto-allocate reads these; a consultant placing times by
         // hand on the grid would otherwise have no idea one was stated, which

@@ -1,5 +1,6 @@
 "use client";
 
+import { proposedSessionsOf } from "@/lib/booking/reschedule-proposals";
 import Image from "next/image";
 import Link from "next/link";
 import { MoreHorizontal, Timer, User } from "lucide-react";
@@ -133,17 +134,14 @@ const isDestructive = (action: RowAction) =>
 /**
  * A booking being moved is answered, never declined: the client's proposal is
  * accepted (or placed, when any time works) or turned down to keep the original
- * time; the consultant's own proposal can only be withdrawn; released sessions
- * with no proposal left need a new time.
+ * time; the consultant's own request, with times or without, is only withdrawn
+ * (the server never lets the expert place over it); released sessions with no
+ * request left need a new time.
  */
 function movingActions(row: InboxRowInput): RowActions | null {
   const proposal = openProposal(row);
   if (proposal?.initiatorRole === "CONSULTANT") {
-    return {
-      primary:
-        proposal.proposedTimes.length > 0 ? null : { kind: "place-new-time" },
-      secondary: [{ kind: "withdraw-proposal" }],
-    };
+    return { primary: null, secondary: [{ kind: "withdraw-proposal" }] };
   }
   if (proposal) {
     return {
@@ -310,14 +308,14 @@ export function proposalLine(
 ): string | null {
   const proposal = openProposal(row);
   if (!proposal) return null;
-  const [first, ...rest] = proposal.proposedTimes;
+  const [first, ...rest] = proposedSessionsOf(proposal.proposedTimes);
   const times = first
     ? `${formatDateTime(first.startsAt, viewer)}${rest.length > 0 ? ` +${rest.length} more` : ""}`
     : null;
   if (proposal.initiatorRole === "CONSULTANT") {
     return times
       ? `You asked to move this to ${times} · waiting for ${row.requester.name}`
-      : "You released this session · pick a new time";
+      : "You released this session without times · withdraw it, then propose new times";
   }
   return times
     ? `${row.requester.name} asked to move · proposed ${times}`

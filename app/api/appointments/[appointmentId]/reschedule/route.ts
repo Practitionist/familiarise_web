@@ -1,6 +1,9 @@
 import { PROFILE_OWNER_SELECT } from "@/lib/booking/list-selects";
 import {
+  isShortNotice,
   isTooSoonFor,
+  leadLabel,
+  leadMsFor,
   RESCHEDULE_MIN_LEAD_HOURS,
 } from "@/lib/booking/lead-time";
 import * as Sentry from "@sentry/nextjs";
@@ -54,6 +57,7 @@ import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
 import {
+  checkProposalPlaceable,
   dropRefusedProposalTimes,
   tryAutoConfirmProposal,
 } from "@/lib/booking/reschedule-auto-confirm";
@@ -94,6 +98,7 @@ import {
   spansPlanWeeks,
 } from "@/lib/booking/release-weeks";
 import { bookingTransaction } from "@/lib/db/booking-transaction";
+import { bookingSettled } from "@/lib/booking/settled";
 
 const RESCHEDULE_REALLOCATION_BUFFER_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -144,8 +149,8 @@ function roleOf(
  * them it is preference-only ("any time works") and the consultant places the
  * time; a trial always names its one new window and moves once per side.
  * Either way the request expires back to the original time. Webinars
- * re-time and class sessions cancel + make-up instead. No session within 24 h
- * moves, and no new time is within 24 h.
+ * re-time and class sessions cancel + make-up instead. A 1:1 move from or to a
+ * time inside 24 h needs proposed times and the other side's acceptance.
  */
 
 /** A booking still holding its time on an unpaid charge moves only once paid or cancelled. */
@@ -557,29 +562,43 @@ async function requestReschedule(
             }
           }
 
+          // A party's 1:1 move inside 24 hours is allowed only as a proposal
+          // the other side accepts; a trial or an operator keeps the 24 hours.
           const now = new Date();
+          const agreedShortNotice = initiatorRole !== null && !isTrial;
           for (const slot of slotsToReschedule) {
             const startMs = new Date(slot.startsAt).getTime();
-            const hoursUntilSlot = (startMs - now.getTime()) / (1000 * 60 * 60);
-            if (
-              isTooSoonFor(
-                "reschedule",
-                { settled: true },
-                startMs,
-                now.getTime(),
-              )
-            ) {
+            if (!isShortNotice(startMs, now.getTime())) continue;
+            if (!agreedShortNotice || startMs <= now.getTime()) {
               throw new ReschedulePolicyError(
-                hoursUntilSlot,
+                (startMs - now.getTime()) / (1000 * 60 * 60),
                 RESCHEDULE_MIN_LEAD_HOURS,
               );
             }
+            if (!proposedSlots?.length) {
+              throw Object.assign(
+                new Error(
+                  "This session starts within 24 hours. To move it, propose new times; the other person has to accept one at least 15 minutes before the session starts.",
+                ),
+                { httpStatus: 409, code: "RESCHEDULE_WINDOW" },
+              );
+            }
           }
+          // A proposed time must be one the accept can place: the allocate
+          // lead, 2 hours while the booking is still unpaid.
+          const proposalLead = agreedShortNotice ? "allocate" : "reschedule";
+          const settled =
+            !agreedShortNotice ||
+            !proposedSlots?.length ||
+            (await bookingSettled(tx, {
+              consultationId: appointment.consultation?.id,
+              subscriptionId: appointment.subscription?.id,
+            }));
           if (
             proposedSlots?.some((s) =>
               isTooSoonFor(
-                "reschedule",
-                { settled: true },
+                proposalLead,
+                { settled },
                 s.startsAt.getTime(),
                 now.getTime(),
               ),
@@ -587,7 +606,7 @@ async function requestReschedule(
           ) {
             throw Object.assign(
               new Error(
-                `New times must be at least ${RESCHEDULE_MIN_LEAD_HOURS} hours away.`,
+                `New times must be at least ${leadLabel(leadMsFor(proposalLead, { settled }))} away.`,
               ),
               { httpStatus: 400, code: "PROPOSAL_TOO_SOON" },
             );
@@ -899,8 +918,7 @@ async function requestReschedule(
               slotsToReschedule.map((s) => new Date(s.startsAt)),
             );
             if (!expiresAt) {
-              // The 24-hour policy gate above should already have rejected this,
-              // so reaching here means the two rules have drifted apart.
+              // A short-notice move must be answerable before the join window opens.
               throw Object.assign(
                 new Error(
                   "This session is too close to propose a new time for.",
@@ -1069,6 +1087,38 @@ async function requestReschedule(
           );
           autoConfirmed = outcome.confirmed;
           autoConfirmReason = outcome.confirmed ? null : outcome.reason;
+          // An expert's proposal is checked as the client's Accept would check
+          // it; times that Accept would refuse are withdrawn now, not later.
+          if (!outcome.confirmed && outcome.reason === "CONSULTANT_INITIATED") {
+            const check = await checkProposalPlaceable(
+              result.rescheduleRequestId,
+              proposalTarget.type,
+              proposalTarget.id,
+            );
+            const taken =
+              !check.placeable && autoConfirmTimesTaken(check.reason);
+            if (
+              !check.placeable &&
+              (taken || autoConfirmRefusalIsFinal(check.reason))
+            ) {
+              const undone = await withdrawRescheduleRequest({
+                rescheduleRequestId: result.rescheduleRequestId,
+                withdrawnById: session.user.id,
+                notify: false,
+              });
+              if (undone.withdrawn) {
+                return NextResponse.json(
+                  {
+                    error: `${check.message} Your client couldn't accept that time, so the booking keeps its original time — pick another time.`,
+                    code: taken ? "TIMES_TAKEN" : "TIME_NOT_BOOKABLE",
+                    reason: check.reason,
+                    takenSlotStarts: check.takenSlotStarts ?? [],
+                  },
+                  { status: 409 },
+                );
+              }
+            }
+          }
           // Someone took those times a moment ago: put the booking back and
           // let the consultee pick again rather than leave a dead proposal.
           if (!outcome.confirmed && autoConfirmTimesTaken(outcome.reason)) {

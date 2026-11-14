@@ -21,6 +21,7 @@ import type { Prisma } from "@prisma/client";
 import type { Scope } from "@/lib/api/scope/parse";
 import { scopeToWhereOrgId } from "@/lib/api/scope/parse";
 import { toPlain } from "@/lib/data/serialize";
+import { withLapsedRequestRestored } from "@/lib/appointments/lapsed-move";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import type { TConsulteeEventsResponse } from "@/types/consultee-events";
 
@@ -44,6 +45,7 @@ const liveProposalInclude = {
     reason: true,
     round: true,
     expiresAt: true,
+    originStatus: true,
     initiatorRole: true,
     initiatedById: true,
     proposedTimes: {
@@ -423,9 +425,11 @@ export async function readConsulteeEvents(
   // symbol; they must be plainified before crossing the RSC→Client
   // HydrationBoundary. The route path (NextResponse.json) drops symbols
   // anyway, so this only matters for the SSR prefetch. Preserves Dates.
+  // A move past its deadline reads as the original on every learner surface.
+  const now = new Date();
   return toPlain({
-    consultations,
-    subscriptions,
+    consultations: consultations.map((c) => withLapsedRequestRestored(c, now)),
+    subscriptions: subscriptions.map((s) => withLapsedRequestRestored(s, now)),
     webinars,
     classes,
     trials,

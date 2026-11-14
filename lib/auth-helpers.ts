@@ -651,3 +651,22 @@ export async function resolveEventHostActor(
     ? "host-org"
     : null;
 }
+
+/** The host-org membership a `host-org` actor acts through, for its audit row. */
+export async function resolveHostOrgMembership(
+  userId: string,
+  eventType: EventType,
+  eventId: string,
+): Promise<{ organizationId: string; membershipId: string } | null> {
+  const plan = await findEventPlanOwner(eventType, eventId);
+  if (!plan?.organizationId) return null;
+  const member = await prisma.membership.findUnique({
+    where: {
+      userId_organizationId: { userId, organizationId: plan.organizationId },
+    },
+    select: { id: true },
+  });
+  return member
+    ? { organizationId: plan.organizationId, membershipId: member.id }
+    : null;
+}

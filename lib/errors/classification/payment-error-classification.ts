@@ -649,6 +649,13 @@ const BUSINESS_ERROR_ENTRIES = [
     httpStatus: 409,
     userMessage: "This plan isn't available to book right now.",
   },
+  // A new sale against an archived plan.
+  {
+    code: "PLAN_ARCHIVED",
+    errorType: ErrorTypes.BOOKING_RULE,
+    httpStatus: 409,
+    userMessage: "This plan is no longer offered, so it can't be booked.",
+  },
   // A non-marketplace plan bought outside the org that offers it.
   {
     code: "PLAN_NOT_AVAILABLE_TO_ORG",

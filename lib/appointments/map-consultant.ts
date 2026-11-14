@@ -6,6 +6,7 @@
  * vm.occurrences.
  */
 
+import { withLapsedMoveRestored } from "@/lib/appointments/lapsed-move";
 import type { TAppointment, TAppointmentWithSeats } from "@/types/appointment";
 import { deriveBucket } from "./bucket";
 import {
@@ -510,7 +511,8 @@ export function mapConsultantAppointments(
   // Group subscription/class children under their parent (one row per
   // program); everything else is a row per appointment.
   const groups = new Map<string, TAppointmentWithSeats[]>();
-  for (const appointment of appointments ?? []) {
+  for (const row of appointments ?? []) {
+    const appointment = withLapsedMoveRestored(row, now);
     const key =
       appointment.appointmentType === "SUBSCRIPTION" &&
       appointment.subscriptionId

@@ -62,10 +62,11 @@ function isReleaseMode(value: string): value is ReleaseMode {
   return (RELEASE_MODES as readonly string[]).includes(value);
 }
 
+/** A session that has started never moves; with a lead, one inside it does not either. */
 function isWithinLeadTime(session: ReleasableSession, minLeadHours: number) {
-  if (minLeadHours <= 0) return false;
   return (
-    (session.startTime.getTime() - Date.now()) / (1000 * 60 * 60) < minLeadHours
+    (session.startTime.getTime() - Date.now()) / (1000 * 60 * 60) <
+    Math.max(minLeadHours, 0)
   );
 }
 
@@ -161,7 +162,7 @@ function SessionList({
             </div>
             {locked && (
               <span className="rounded bg-orange-100 px-2 py-0.5 text-xs text-orange-600 dark:bg-orange-900/30 dark:text-orange-300">
-                Within {minLeadHours}h
+                {minLeadHours > 0 ? `Within ${minLeadHours}h` : "Started"}
               </span>
             )}
           </button>

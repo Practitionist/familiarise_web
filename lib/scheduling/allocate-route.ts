@@ -27,7 +27,11 @@ import {
   requireApiAuth,
   authorizeEventAccess,
   resolveEventHostActor,
+  resolveHostOrgMembership,
 } from "@/lib/auth-helpers";
+import type { Tx } from "@/lib/prisma";
+import { recordOpsAction } from "@/lib/backoffice/ops-action-log";
+import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import {
   approvalMintConflict,
@@ -41,6 +45,48 @@ const LOG_LABEL: Record<EventType, string> = {
   webinar: "[Webinar Allocation]",
   class: "[Class Allocation]",
 };
+
+/**
+ * The operator row for an allocation made by staff or a host-org operator,
+ * written in the allocation's transaction; the plan's own consultant needs none.
+ */
+async function operatorAuditFor(
+  user: { id: string; role?: string | null },
+  hostActor: "staff" | "consultant" | "host-org",
+  eventType: EventType,
+  eventId: string,
+  mode: AllocationMode,
+): Promise<((tx: Tx) => Promise<void>) | undefined> {
+  if (hostActor === "staff") {
+    return async (tx) => {
+      await recordOpsAction(tx, {
+        actorUserId: user.id,
+        actorRole: String(user.role ?? "UNKNOWN"),
+        surface: "appointments.manage",
+        action: "booking.allocate",
+        targetKind: eventType,
+        targetId: eventId,
+        reason: "Set the booking's times",
+        after: { mode },
+      });
+    };
+  }
+  if (hostActor !== "host-org") return undefined;
+  const member = await resolveHostOrgMembership(user.id, eventType, eventId);
+  if (!member) return undefined;
+  return async (tx) => {
+    await tx.orgAuditLog.create({
+      data: {
+        organizationId: member.organizationId,
+        actorMembershipId: member.membershipId,
+        category: "MEMBER",
+        action: AUDIT_ACTIONS.MEMBER.APPOINTMENT_ALLOCATED_FOR_ORG,
+        description: "Set a booking's times for the organization",
+        details: { eventType, eventId, mode },
+      },
+    });
+  };
+}
 
 function resolveMode(body: {
   useRequestedSlots?: boolean;
@@ -128,6 +174,13 @@ export async function handleAllocate(
           ? 0
           : undefined);
 
+      const auditInTx = await operatorAuditFor(
+        authResult.session.user,
+        hostActor,
+        eventType,
+        eventId,
+        mode,
+      );
       const result = await Sentry.startSpan(
         { op: "booking.allocate", name: `allocate.${eventType}` },
         () =>
@@ -147,6 +200,8 @@ export async function handleAllocate(
             allowPartial: body.allowPartial === true && canOverride,
             topUp: body.topUp === true && canOverride,
             byConsultant: hostActor === "consultant",
+            actorUserId: authResult.session.user.id,
+            inTx: auditInTx,
           }),
       );
 

@@ -1,3 +1,4 @@
+import { readJsonBody } from "@/lib/api/parse";
 import { NextRequest, NextResponse } from "next/server";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import {
@@ -34,7 +35,7 @@ const ACCEPT_FAILURE_COPY: Record<string, string> = {
   NO_PROPOSED_TIMES:
     "This request proposes no concrete times — place times on the calendar instead.",
   PROPOSAL_EXPIRED:
-    "This proposal has expired. The released times are back with the consultant to place.",
+    "This proposal has expired, so the session keeps its original time.",
   RESCHEDULE_NO_LONGER_OPEN:
     "This proposal was answered or expired while it was being accepted, so the booking did not move.",
   TIMES_TAKEN:
@@ -78,7 +79,9 @@ export async function POST(
       `${session.user.id}:${appointmentId}`,
     );
     if (apptLimited) return apptLimited;
-    const parsed = RescheduleRespondSchema.safeParse(await request.json());
+    const read = await readJsonBody(request);
+    if (read.error) return read.error;
+    const parsed = RescheduleRespondSchema.safeParse(read.body);
     if (!parsed.success) {
       return NextResponse.json(
         { error: 'action must be "accept" or "decline"' },

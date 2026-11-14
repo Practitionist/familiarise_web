@@ -37,7 +37,6 @@ import {
   SlotShortageError,
 } from "@/utils/scheduling-engine/errors";
 import { stageAllocationNotices } from "@/lib/booking/allocation/notify";
-import { leadMsFor } from "@/lib/booking/lead-time";
 import { checkoutInProgressError } from "@/lib/booking/request-cohort";
 import {
   slotTakenRefusal,
@@ -69,9 +68,14 @@ import {
   assertExpectedTentativeSlotCountInTx,
   assertNoConfirmedSlots,
   guardAllocationInTx,
+  mustBeUnscheduled,
   assertGroupEventUnsoldInTx,
   probeConfirmedOverlap,
 } from "@/lib/booking/allocation/guards";
+import {
+  assertReplacementNotice,
+  replacementLeadMs,
+} from "@/lib/booking/reschedule-proposals";
 import { resolveConsumedPreferenceRequests } from "@/lib/booking/allocation/preference";
 import { findIdempotentAllocation } from "@/lib/booking/allocation/idempotency";
 import { assertCollaboratorsFree } from "@/lib/booking/allocation/collaborators";
@@ -200,7 +204,7 @@ export async function manualAllocate(
     // Multi-tab guard: a fresh dialog allocation must 409 if another
     // session already allocated this event (re-checked in-txn below).
     // #1766 — a subscription decides after its rows are read (see below).
-    if (initialAllocation && eventType !== "subscription") {
+    if (mustBeUnscheduled(eventType, initialAllocation)) {
       await assertNoConfirmedSlots(prisma, eventType, eventId);
     }
 
@@ -221,7 +225,6 @@ export async function manualAllocate(
       settled,
     } = eventData;
     if (eventData.checkoutInProgress) throw checkoutInProgressError();
-    const leadTimeMs = leadMsFor("allocate", { settled });
 
     // Convert to Date objects with validation
     const slots = slotStrings.map((s, i) => {
@@ -290,6 +293,12 @@ export async function manualAllocate(
     // A reschedule is a live RELEASE (tentative + RESCHEDULED), not mere
     // tentativeness: fresh requests already carry tentative holds.
     const isReschedule = releasedSessionCountOf(existingAppointments) > 0;
+    const leadTimeMs = replacementLeadMs(
+      isReschedule,
+      excludeRescheduleRequestId,
+      settled,
+    );
+    assertReplacementNotice(isReschedule, excludeRescheduleRequestId, slots);
 
     // Intervals, not rows — see autoAllocate.
     const existingNonTentativeSlotCount =
@@ -320,7 +329,9 @@ export async function manualAllocate(
     // serialises two tabs of the same event.
     const isFreshAllocation =
       !isTopUp &&
-      (initialAllocation === true || existingNonTentativeSlotCount === 0);
+      (mustBeUnscheduled(eventType, initialAllocation) ||
+        initialAllocation === true ||
+        existingNonTentativeSlotCount === 0);
 
     // What to leave out of conflict detection and the weekly/daily limits
     // (#1554 — see autoAllocate: a reschedule excludes the tentative
@@ -480,6 +491,7 @@ export async function manualAllocate(
     if (!validation.isValid) {
       throw validationRefusal(validation.errors);
     }
+    if (txOptions.checkOnly) return { success: true, appointments: [] };
 
     if (consulteeLockUserId) {
       consulteeLock = await lockConsulteeBooking(
@@ -635,6 +647,7 @@ export async function manualAllocate(
           config,
           txOptions.approvableFrom,
           txOptions.historyReason,
+          txOptions.actorUserId,
         );
         await holdUntilPaid(tx, appointments, outcome);
 
@@ -664,6 +677,7 @@ export async function manualAllocate(
             eventId,
             manualPartialInfo,
             outcome,
+            appointments.flatMap((a) => (a.occurrences ?? []).map((o) => o.id)),
           ),
         };
       },

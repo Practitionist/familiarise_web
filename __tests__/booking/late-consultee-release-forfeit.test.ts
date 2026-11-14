@@ -7,8 +7,8 @@
  * forfeits it: no consultee door can hand it back to the plan, so plan-end
  * settlement counts it as delivered and never refunds it.
  *  - A return to the plan needs 24 h of notice (`returnBlock`).
- *  - A reschedule release needs 24 h of notice on every session it moves,
- *    whoever asks (the reschedule route's `RESCHEDULE_MIN_LEAD_HOURS` gate).
+ *  - Inside 24 h a session moves only when the other side accepts proposed
+ *    times (rescheduleCancel.test.ts pins the route); otherwise it stands.
  *  - The only single-session cancel is the class host's; a subscription is
  *    cancelled whole, on the notice ladder, and never reaches plan end.
  *  - A consultee who simply misses the session is LEARNER_ABSENT, which the
@@ -23,7 +23,6 @@ import {
   isCompletedOccurrence,
   subscriptionEntitlement,
 } from "@/lib/booking/entitlement";
-import { RESCHEDULE_MIN_LEAD_HOURS } from "@/lib/booking/lead-time";
 import {
   RETURN_BLOCK_COPY,
   returnBlock,
@@ -54,26 +53,6 @@ describe("no consultee door returns a session inside 24 h", () => {
         rescheduleOpen: false,
       }),
     ).toBeNull();
-  });
-
-  it("gates every released session on 24 h of notice before the release writes", () => {
-    expect(RESCHEDULE_MIN_LEAD_HOURS).toBe(24);
-    const src = read(
-      "app/api/appointments/[appointmentId]/reschedule/route.ts",
-    );
-    const gate = src.indexOf(
-      "const startMs = new Date(slot.startsAt).getTime();",
-    );
-    expect(gate).toBeGreaterThan(-1);
-    // The gate loops over every slot being released, for consultee and expert alike.
-    expect(src.slice(gate - 400, gate)).toContain(
-      "for (const slot of slotsToReschedule)",
-    );
-    // One boundary: the shared lead-time predicate decides, then the typed refusal.
-    const after = src.slice(gate, gate + 500);
-    expect(after).toContain("isTooSoonFor(");
-    expect(after).toContain('"reschedule"');
-    expect(after).toContain("ReschedulePolicyError");
   });
 
   it("offers no single-session cancel on a subscription", () => {

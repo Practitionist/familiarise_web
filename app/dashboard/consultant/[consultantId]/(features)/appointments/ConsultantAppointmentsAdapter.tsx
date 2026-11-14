@@ -16,6 +16,7 @@ import {
 } from "@/lib/appointments/occurrences";
 import {
   allowsRetime,
+  allowsAgreedShortNotice,
   rescheduleReleasable,
 } from "@/lib/booking/reschedule-proposals";
 import { newTimeDoor } from "@/lib/appointments/new-time-door";
@@ -112,7 +113,9 @@ function canOfferReschedule(
     rescheduleStatusOk(vm.kind, vm.status) &&
     !timingsOk &&
     occurrencesAllowReschedule(rawOccurrences) &&
-    rescheduleReleasable(rawOccurrences),
+    rescheduleReleasable(rawOccurrences, new Date(), {
+      agreedShortNotice: allowsAgreedShortNotice(vm.kind),
+    }),
   );
 }
 

@@ -1,3 +1,4 @@
+import { readJsonBody } from "@/lib/api/parse";
 import {
   PROFILE_WITH_USER_SELECT,
   isStaffNonParty,
@@ -189,7 +190,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
   const { trialId } = await context.params;
 
   try {
-    const body = await request.json();
+    const read = await readJsonBody(request);
+    if (read.error) return read.error;
+    const body = read.body;
     const parseResult = UpdateTrialSchema.safeParse(body);
     if (!parseResult.success) {
       return NextResponse.json(

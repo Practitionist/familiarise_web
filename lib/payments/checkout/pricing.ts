@@ -145,7 +145,10 @@ export async function calculateAmountAndValidate(
         );
       }
       if (p.archivedAt) {
-        throw new Error(`${label} is no longer available`);
+        throw new BookingRuleError(
+          "PLAN_ARCHIVED",
+          `${label} is no longer offered, so it can't be booked.`,
+        );
       }
       // A non-marketplace plan sells only to its own org's sponsored buyers; a
       // plan whose org was cleared (onDelete: SetNull) sells to no sponsor.

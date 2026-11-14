@@ -25,6 +25,7 @@ import {
   maxParticipantsSchema,
   planLevelSchema,
   planPositioningShape,
+  sittingDurationInHoursSchema,
 } from "@/schemas/plans";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
 import { planTotalSessions } from "@/lib/booking/entitlement";
@@ -67,7 +68,7 @@ const BaseCreateSchema = z.object({
 const CreateBodySchema = z.discriminatedUnion("kind", [
   BaseCreateSchema.extend({
     kind: z.literal("WEBINAR"),
-    durationInHours: z.number().positive().default(1),
+    durationInHours: sittingDurationInHoursSchema.default(1),
   }),
   BaseCreateSchema.extend({
     kind: z.literal("CLASS"),

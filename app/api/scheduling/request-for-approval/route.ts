@@ -1,3 +1,5 @@
+import { readJsonBody } from "@/lib/api/parse";
+import { createHash } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { assertRequestLeadFits } from "@/lib/booking/lead-time";
 import prisma from "@/lib/prisma";
@@ -85,10 +87,39 @@ const REQUEST_RESPONSE_INCLUDE = {
   },
 } satisfies Prisma.ConsultationInclude;
 
-/** The original 201 for a retried key, or null when the key has created nothing yet. */
+interface AskedRequest {
+  consultationPlanId: string;
+  startsAt: string;
+  endsAt: string;
+  organizationId: string | null;
+}
+
+/** What the learner submitted, one spelling per instant, stored at creation. */
+function requestFingerprintOf(asked: AskedRequest): string {
+  const instant = (value: string) => {
+    const ms = Date.parse(value);
+    return Number.isNaN(ms) ? value : new Date(ms).toISOString();
+  };
+  return createHash("sha256")
+    .update(
+      JSON.stringify([
+        asked.consultationPlanId,
+        instant(asked.startsAt),
+        instant(asked.endsAt),
+        asked.organizationId ?? "",
+      ]),
+    )
+    .digest("hex");
+}
+
+/**
+ * The original 201 for a retried key, or null when the key has created nothing
+ * yet; the same key with another plan, time or organisation is the caller's 422.
+ */
 async function replayRequest(
   idempotencyKey: string | null,
   userId: string,
+  asked: AskedRequest,
 ): Promise<NextResponse | null> {
   if (!idempotencyKey) return null;
   const original = await prisma.consultation.findUnique({
@@ -96,10 +127,25 @@ async function replayRequest(
     include: REQUEST_RESPONSE_INCLUDE,
   });
   if (!original) return null;
-  if (original.requestedBy.userId !== userId) {
+  // Compared with what was submitted, never the booking's current times; a row
+  // created before the fingerprint compares its held times instead.
+  const held = (original.appointment?.occurrences ?? []).filter(
+    (o) => !o.deletedAt,
+  );
+  const sameBody = original.requestFingerprint
+    ? original.requestFingerprint === requestFingerprintOf(asked)
+    : original.consultationPlanId === asked.consultationPlanId &&
+      (original.appointment?.organizationId ?? null) === asked.organizationId &&
+      held.length > 0 &&
+      Math.min(...held.map((o) => o.startsAt.getTime())) ===
+        Date.parse(asked.startsAt) &&
+      Math.max(...held.map((o) => o.endsAt.getTime())) ===
+        Date.parse(asked.endsAt);
+  if (original.requestedBy.userId !== userId || !sameBody) {
     return NextResponse.json(
       {
-        error: "This Idempotency-Key was already used for another request.",
+        error:
+          "This Idempotency-Key was already used with a different request body.",
         code: "IDEMPOTENCY_KEY_REUSED",
       },
       { status: 422 },
@@ -150,10 +196,10 @@ export async function POST(req: NextRequest) {
       );
     }
     const idempotencyKey = keyResult?.data ?? null;
-    const replayed = await replayRequest(idempotencyKey, session.user.id);
-    if (replayed) return replayed;
 
-    const body = await req.json();
+    const read = await readJsonBody(req);
+    if (read.error) return read.error;
+    const body = read.body;
     const parseResult = RequestForApprovalSchema.safeParse(body);
     if (!parseResult.success) {
       // #1583 E-P1-03 — a typed refusal (grid / lead time) rides `params.code`.
@@ -180,6 +226,18 @@ export async function POST(req: NextRequest) {
       consultationPlanId,
       organizationId,
     } = parseResult.data;
+    const asked = {
+      consultationPlanId,
+      startsAt,
+      endsAt,
+      organizationId: organizationId ?? null,
+    };
+    const replayed = await replayRequest(
+      idempotencyKey,
+      session.user.id,
+      asked,
+    );
+    if (replayed) return replayed;
 
     // #1166 ORG-9 — org sponsorship was silently dropped by the approval flow:
     // the request carried no org, so the approved booking billed the member's
@@ -397,6 +455,7 @@ export async function POST(req: NextRequest) {
       const replayedInLock = await replayRequest(
         idempotencyKey,
         session.user.id,
+        asked,
       );
       if (replayedInLock) return replayedInLock;
 
@@ -557,6 +616,9 @@ export async function POST(req: NextRequest) {
                 status: AppointmentStatus.PENDING,
                 requestNotes: requestNotes,
                 requestIdempotencyKey: idempotencyKey,
+                requestFingerprint: idempotencyKey
+                  ? requestFingerprintOf(asked)
+                  : null,
                 agreedPricePaise: consultationPlan.price,
                 appointment: {
                   create: {
@@ -683,6 +745,7 @@ export async function POST(req: NextRequest) {
           const replayedRace = await replayRequest(
             idempotencyKey,
             session.user.id,
+            asked,
           );
           if (replayedRace) return replayedRace;
         }

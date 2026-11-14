@@ -36,7 +36,7 @@ describe("#1163 open proposal detection", () => {
     id: `req-${round}`,
     status: "PENDING_REVIEW",
     reason: null,
-    expiresAt: "2026-08-20T10:00:00.000Z",
+    expiresAt: "2099-08-20T10:00:00.000Z",
     initiatorRole: "CONSULTANT",
     initiatedById: "user-1",
     proposedTimes: [

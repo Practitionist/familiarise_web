@@ -31,8 +31,9 @@ jest.mock("../../lib/stream-client", () => ({
     video: {
       call: (_type: string, id: string) => ({
         getOrCreate: async (payload: unknown) => {
-          const { assertValidGetOrCreateCall } =
-            require("../../lib/stream/video-contracts") as typeof import("../../lib/stream/video-contracts");
+          const { assertValidGetOrCreateCall } = jest.requireActual<
+            typeof import("../../lib/stream/video-contracts")
+          >("../../lib/stream/video-contracts");
           assertValidGetOrCreateCall(payload);
           mockStreamCallsCreated.push(id);
           mockCallPayloads.push(payload as CallData);
@@ -283,13 +284,13 @@ function seed(
     }: {
       data: {
         streamCallId: string;
-        occurrence: { connect: { id: string } };
+        appointmentOccurrenceId: string;
       };
     }) => {
       const created = {
         id: `ms-${sessions.length + 1}`,
         streamCallId: data.streamCallId,
-        slotId: data.occurrence.connect.id,
+        slotId: data.appointmentOccurrenceId,
       };
       sessions.push(created);
       return created;
@@ -915,7 +916,7 @@ describe("organization scoping on Stream Call custom and DB Meeting row", () => 
     expect(db.meeting.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
-          organization: { connect: { id: "org-plan-77" } },
+          organizationId: "org-plan-77",
         }),
       }),
     );
@@ -934,7 +935,7 @@ describe("organization scoping on Stream Call custom and DB Meeting row", () => 
     expect(db.meeting.create).toHaveBeenLastCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
-          organization: { connect: { id: "org-from-plan" } },
+          organizationId: "org-from-plan",
         }),
       }),
     );

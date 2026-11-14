@@ -1,4 +1,6 @@
 import { cache } from "react";
+import prisma from "@/lib/prisma";
+import { bookingSettled } from "@/lib/booking/settled";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
@@ -11,7 +13,10 @@ import {
 } from "@/lib/data/appointment-detail";
 import { resolvePrimaryPlanOwnerIds } from "@/lib/booking/plan-owners";
 import { getSession } from "@/lib/auth-server";
-import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
+import {
+  requirePersonalProfileAccess,
+  viewerOwnsPersonalProfile,
+} from "@/lib/auth/personal-dashboard-access";
 import { operatorOpsHref } from "@/lib/backoffice/booking-href";
 import { buildRescheduleSubject } from "@/lib/scheduling/time-picker-subject";
 import { bookedSessionMinutes } from "@/lib/appointments/occurrences";
@@ -39,6 +44,10 @@ export async function generateMetadata({
   params,
 }: Readonly<PageProps>): Promise<Metadata> {
   const { consultantId, appointmentId } = await params;
+  // Bound to the viewer before any read: a non-owner learns nothing.
+  if (!(await viewerOwnsPersonalProfile("consultant", consultantId))) {
+    return { title: "Reschedule — Familiarise" };
+  }
   const detail = await loadDetail(appointmentId).catch(() => null);
   const owned =
     Boolean(consultantId) &&
@@ -139,6 +148,10 @@ export default async function ConsultantReschedulePage({
           typeLabel={resolved.typeLabel}
           subject={resolved.subject}
           backHref={backHref}
+          settled={await bookingSettled(prisma, {
+            consultationId: detail.appointment.consultation?.id,
+            subscriptionId: detail.appointment.subscription?.id,
+          })}
         />
       )}
     </DashboardViewportFill>

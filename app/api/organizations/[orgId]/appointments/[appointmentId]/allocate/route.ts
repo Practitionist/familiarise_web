@@ -164,6 +164,7 @@ export async function POST(
           allowPartial: false,
           topUp: false,
           approvableFrom: [AppointmentStatus.APPROVED],
+          actorUserId: access.session.user.id,
         }),
     );
 

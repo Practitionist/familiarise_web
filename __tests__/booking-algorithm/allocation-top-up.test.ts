@@ -317,7 +317,10 @@ describe("#1206 top-up allocation", () => {
     // #1697 item 5 — the booked notice is staged INSIDE the write transaction
     // (the `tx` option), attempted after commit, and never leaks to the caller.
     expect(notifyBooked).toHaveBeenCalledTimes(1);
-    expect(notifyBooked.mock.calls[0][2]).toEqual({ tx: mockTx });
+    expect(notifyBooked.mock.calls[0][2]).toEqual({
+      tx: mockTx,
+      dedupeKey: expect.stringMatching(/^allocation:apt-sub-topup:/),
+    });
     expect(result).not.toHaveProperty("stagedNotices");
     expect(attemptTrigger).toHaveBeenCalledWith(STAGED_ROW);
   });

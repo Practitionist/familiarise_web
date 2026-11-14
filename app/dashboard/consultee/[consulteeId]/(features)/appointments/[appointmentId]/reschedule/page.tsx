@@ -1,4 +1,5 @@
 import { cache } from "react";
+import { bookingSettled } from "@/lib/booking/settled";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
@@ -11,7 +12,10 @@ import {
   readAppointmentDetail,
 } from "@/lib/data/appointment-detail";
 import { getSession } from "@/lib/auth-server";
-import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
+import {
+  requirePersonalProfileAccess,
+  viewerOwnsPersonalProfile,
+} from "@/lib/auth/personal-dashboard-access";
 import { operatorOpsHref } from "@/lib/backoffice/booking-href";
 import { safeReturnTo } from "@/lib/navigation/safe-path";
 import { buildRescheduleSubject } from "@/lib/scheduling/time-picker-subject";
@@ -74,11 +78,15 @@ export async function generateMetadata({
   params,
 }: Readonly<PageProps>): Promise<Metadata> {
   const { consulteeId, appointmentId } = await params;
+  const generic = { title: "Reschedule — Familiarise" };
+  // Bound to the viewer before any read: a non-owner learns nothing.
+  if (!(await viewerOwnsPersonalProfile("consultee", consulteeId))) {
+    return generic;
+  }
   const [detail, profile] = await Promise.all([
     loadDetail(appointmentId).catch(() => null),
     loadConsulteeUserId(consulteeId).catch(() => null),
   ]);
-  const generic = { title: "Reschedule — Familiarise" };
   if (!detail || !profile) return generic;
   if (!consulteeOwns(detail.appointment, consulteeId, profile.userId)) {
     return generic;
@@ -191,6 +199,10 @@ export default async function RescheduleAppointmentPage({
           typeLabel={resolved.typeLabel}
           subject={resolved.subject}
           backHref={backHref}
+          settled={await bookingSettled(prisma, {
+            consultationId: detail.appointment.consultation?.id,
+            subscriptionId: detail.appointment.subscription?.id,
+          })}
         />
       )}
     </DashboardViewportFill>

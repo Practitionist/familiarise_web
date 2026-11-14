@@ -12,7 +12,12 @@ import type { EventType } from "@/utils/scheduling-engine/types";
 import { allocate } from "@/lib/booking/allocation";
 import { closeConfirmedProposal } from "@/lib/booking/reschedule-confirm";
 import { stageNoticesForFreedWindows } from "@/lib/booking/backup-interest";
-import { mayAutoConfirm } from "@/lib/booking/reschedule-proposals";
+import {
+  mayAutoConfirm,
+  needsOtherSideAcceptance,
+} from "@/lib/booking/reschedule-proposals";
+import { ReleasedSessionsSchema } from "@/lib/booking/released-sessions";
+import { AllocationConflictError } from "@/utils/scheduling-engine/errors";
 import {
   AppointmentBusyError,
   BookingLockUnavailableError,
@@ -39,8 +44,10 @@ export async function tryAutoConfirmProposal(
       id: true,
       appointmentId: true,
       initiatorRole: true,
+      initiatedById: true,
       status: true,
       releasedOccurrenceIds: true,
+      releasedSessions: true,
       proposedTimes: {
         orderBy: { startsAt: "asc" },
         select: { startsAt: true, endsAt: true },
@@ -54,6 +61,17 @@ export async function tryAutoConfirmProposal(
   }
   if (!mayAutoConfirm(request.initiatorRole)) {
     return { confirmed: false, reason: "CONSULTANT_INITIATED" };
+  }
+  // A move from or to a time under 24 hours away waits for the other side.
+  const released = ReleasedSessionsSchema.safeParse(request.releasedSessions);
+  if (
+    !released.success ||
+    needsOtherSideAcceptance(
+      released.data.map((s) => s.startsAt),
+      request.proposedTimes.map((p) => p.startsAt),
+    )
+  ) {
+    return { confirmed: false, reason: "NEEDS_ACCEPTANCE" };
   }
   // Deliberately NOT comparing proposed count to released count. The allocator
   // is handed the times as a set and validates them as one; pairing them
@@ -81,8 +99,22 @@ export async function tryAutoConfirmProposal(
         // as DECLINED, because placing times supersedes them. THIS proposal is the
         // one being confirmed, not superseded, so it is excluded.
         excludeRescheduleRequestId: request.id,
+        actorUserId: request.initiatedById,
         // AUTO_ACCEPTED commits with the move or not at all.
         inTx: async (tx, moved) => {
+          // Re-decided here, on this transaction's clock: a lock wait must not
+          // carry a move inside 24 hours without the other side's acceptance.
+          if (
+            needsOtherSideAcceptance(
+              released.data.map((s) => s.startsAt),
+              request.proposedTimes.map((p) => p.startsAt),
+            )
+          ) {
+            throw new AllocationConflictError(
+              "This move now needs the other person's acceptance.",
+              "NEEDS_ACCEPTANCE",
+            );
+          }
           await closeConfirmedProposal(tx, {
             where: { id: request.id },
             to: "AUTO_ACCEPTED",
@@ -123,6 +155,55 @@ export async function tryAutoConfirmProposal(
     }
     throw err;
   }
+}
+
+/**
+ * Whether the counterparty's Accept would place this proposal's times: the
+ * allocator's own checks (plan week, published hours, calendars), nothing written.
+ */
+export async function checkProposalPlaceable(
+  rescheduleRequestId: string,
+  eventType: EventType,
+  eventId: string,
+): Promise<
+  | { placeable: true }
+  | {
+      placeable: false;
+      reason: string;
+      message: string;
+      takenSlotStarts?: string[];
+    }
+> {
+  const request = await prisma.rescheduleRequest.findUnique({
+    where: { id: rescheduleRequestId },
+    select: {
+      id: true,
+      proposedTimes: {
+        orderBy: { startsAt: "asc" },
+        select: { startsAt: true },
+      },
+    },
+  });
+  if (!request || request.proposedTimes.length === 0) {
+    return { placeable: true };
+  }
+  const result = await allocate({
+    eventType,
+    eventId,
+    mode: "manual",
+    slots: request.proposedTimes.map((p) => p.startsAt.toISOString()),
+    excludeRescheduleRequestId: request.id,
+    checkOnly: true,
+  });
+  if (result.success) return { placeable: true };
+  return {
+    placeable: false,
+    reason: result.errorCode ?? "VALIDATION_FAILED",
+    message: result.error ?? "That time can't be booked.",
+    ...(result.takenSlotStarts
+      ? { takenSlotStarts: result.takenSlotStarts }
+      : {}),
+  };
 }
 
 /**

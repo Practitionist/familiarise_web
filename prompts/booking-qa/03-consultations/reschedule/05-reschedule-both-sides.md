@@ -7,9 +7,11 @@
 Rules under test (verified in code):
 
 - Each release opens a `RescheduleRequest` (with times or "Any time works"). One open request per booking (`openForAppointmentId`).
-- The session must start at least 24 h from now (409 `RESCHEDULE_WINDOW`: "Cannot reschedule within 24 hours of the meeting. The earliest meeting starts in N hours."), and each new time at least 24 h away (400 `PROPOSAL_TOO_SOON`).
-- Consultee picks a time where the expert is free and published ("green"): the move **auto-confirms** (`AUTO_ACCEPTED`). Otherwise it waits for the expert (`PENDING_REVIEW`).
-- A proposal's deadline is min(now + 72 h, the released session's start − 24 h).
+- Inside 24 h a move is an agreed move: a session less than 24 h away moves only with proposed times (no times: 409 `RESCHEDULE_WINDOW` "This session starts within 24 hours. To move it, propose new times; …"), each new time at least 15 min away (400 `PROPOSAL_TOO_SOON`), and it never confirms itself.
+- With 24 h or more on both ends, a consultee's pick where the expert is free and published ("green") **auto-confirms** (`AUTO_ACCEPTED`); otherwise, and always for the expert's proposals, it waits for the other side (`PENDING_REVIEW`).
+- A proposal's deadline is min(now + 72 h, the released session's start − 24 h), or 15 minutes before the session's start (its join window) when it was opened inside 24 h; an accept after it is refused (`PROPOSAL_EXPIRED`).
+- An expert's bare release of a paid session cannot be placed by the expert (409 `PROPOSE_TIMES_REQUIRED`); a released session is never placed under 24 h away without an accepted proposal (409 `NEEDS_ACCEPTANCE`).
+- Allocate on a consultation that already has a confirmed session is 409 `ALREADY_ALLOCATED` ("This booking already has a time. Use Reschedule to move it.") in every mode.
 - Caps: the consultee may move each session at most 2 times (422 `MAX_RESCHEDULES_EXCEEDED`); requests that moved nothing (withdrawn, declined or expired with a restore) don't count.
 - Payment is untouched by a move.
 
@@ -93,22 +95,25 @@ Fixtures for this file `[local]`: as B2 book S-08 at Thu D+3 10:00 IST (**R-1**)
 
 - After 1: `RescheduleRequest` `PENDING_REVIEW` with no proposed slots, preferences stored; R-3's occurrence released (`RESCHEDULED`, tentative).
 - After 2: the request closed by the allocator (`resolveConsumedPreferenceRequests`; status record), the occurrence at Tue D+8 03:30Z confirmed; history token `schedule:reschedule`.
+- Variant: H1 picks a time 20 h from now instead: 409 `NEEDS_ACCEPTANCE`, nothing written.
 
 **Probe further:** does B1 see the preferences echoed back? Does H1's allocate page show them (MISSED-OPPORTUNITY if H1 can't see "mornings, Tue/Wed")?
 
-## CO-52 — The 24-hour rule, both ends
+## CO-52 — Inside 24 hours: an agreed move, from both sides
 
-**Why it matters:** inside 24 h a move is refused; a new time inside 24 h is refused; the UI must say so before the click.
+**Why it matters:** inside 24 h either side may propose; it moves only if the other side accepts before the session starts, otherwise the session stands.
 
 **Steps:**
 
 1. Owner-approved: shift R-1's live occurrence to start in 23 h (UTC half hour).
-2. As B2 open the reschedule page; read what it shows. Try to submit any time (via `evaluate_script` if the page blocks it).
-3. Restore R-1 to ≥ 48 h away. As B2 propose a time 20 h from now.
+2. As B2 open the reschedule page; read what it shows. Submit "Any time works" via `evaluate_script` (the page hides it here). Then propose a time 2 days out.
+3. As H1 open R-1: Accept and Decline with the deadline. Accept.
+4. Repeat 1–2 on R-2 as H1 (expert proposes); as B3 do nothing. Owner-approved: set the request's `expiresAt` to 1 minute ago, run the expiry job.
+5. Restore R-3 to ≥ 48 h away. As B1 propose a time 20 h from now.
 
-**Expect:** 2: the page explains the 24-h rule up front (chip "not within 24 h of the start · not refunded"); the API answers 409 `RESCHEDULE_WINDOW` "Cannot reschedule within 24 hours of the meeting. The earliest meeting starts in 23 hours." 3: 400 `PROPOSAL_TOO_SOON` "New times must be at least 24 hours away." No request rows from either.
+**Expect:** 2: the page says the expert must accept at least 15 minutes before the session starts; the bare release answers 409 `RESCHEDULE_WINDOW`; the proposal answers 200 `AWAITING_ANSWER` (never `AUTO_CONFIRMED`), `expiresAt` = 15 minutes before the session's start. 3: the move commits (`ACCEPTED`). 4: `EXPIRED`, R-2's original time `SCHEDULED` again, both told; an accept now answers 409 `PROPOSAL_EXPIRED`. 5: 200 `AWAITING_ANSWER` (the new time is under 24 h, so it waits for H1).
 
-**Probe further:** what does the consultee do inside 24 h? The page should point to cancel (with its tier) or messaging. MISSED-OPPORTUNITY if it just disables.
+**Probe further:** does each side's copy say who must accept and by when, in their own zone?
 
 ## CO-53 — The consultee's cap: two moves per session
 
@@ -254,9 +259,15 @@ Fixtures `[local]`: as B2 book S-08 at Tue D+8 10:00 IST (**R-4**); as B3 book S
 
 **Steps:** on a fresh booking (B2, Fri D+11 10:00 IST), as H1 open its reschedule page, tick **Any time works**, submit. Then as H1 try to place a time via Manage timings.
 
-**Expect:** a `PENDING_REVIEW` request with no times. Record what placing does: either the allocator places and closes it (preference-only requests are closed by placement) or `PROPOSAL_AWAITING_CLIENT` (only for proposals that name times). Record which and whether B2 is asked to consent. If the expert can silently move a paid booking this way, report it as a product question (consent) with evidence.
+**Expect:** the expert's page offers no **Any time works**; sent by `evaluate_script`, a `PENDING_REVIEW` request with no times. Placing it answers 409 `PROPOSE_TIMES_REQUIRED` "Propose new times so your client can accept one." and writes nothing; the expiry restores the original time.
 
 **Probe further:** what does B2 see while H1's "any time" release is open: a booking with no time? Quote it.
+
+## CO-67a — Allocate on a scheduled consultation is refused
+
+**Steps:** on R-3 (confirmed), as H1 send `PATCH /api/bookings/consultations/<id>/allocate` with manual slots and no `initialAllocation`; then with `isAuto: true`; then `useRequestedSlots: true`. As ST repeat the manual one.
+
+**Expect:** 409 `ALREADY_ALLOCATED` "This booking already has a time. Use Reschedule to move it." every time; the occurrence untouched. On an allowed approval, the `BookingStatusHistory` row names the actor; ST's leaves an `ops_action_logs` row (`booking.allocate`).
 
 ## CO-68 — An expert proposal across zones and near the deadline
 

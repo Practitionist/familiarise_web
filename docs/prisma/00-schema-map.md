@@ -662,6 +662,7 @@ erDiagram
         AppointmentStatus status
         BookingSource bookingSource
         bigint agreedPricePaise
+        string requestFingerprint
         string pendingPaymentUrl
         CancellationReason cancellationReason
         datetime cancelledAt

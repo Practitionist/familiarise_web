@@ -1,3 +1,4 @@
+import { readJsonBody } from "@/lib/api/parse";
 import * as Sentry from "@sentry/nextjs";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import prisma from "@/lib/prisma";
@@ -188,7 +189,9 @@ export async function PATCH(
   if (rl) return rl;
 
   try {
-    const body = await request.json();
+    const read = await readJsonBody(request);
+    if (read.error) return read.error;
+    const body = read.body;
     const patchResult = PatchSubscriptionStatusSchema.safeParse(body);
     if (!patchResult.success) {
       return NextResponse.json(

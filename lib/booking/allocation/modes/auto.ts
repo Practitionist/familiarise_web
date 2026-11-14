@@ -42,7 +42,6 @@ import {
   SlotShortageError,
 } from "@/utils/scheduling-engine/errors";
 import { stageAllocationNotices } from "@/lib/booking/allocation/notify";
-import { leadMsFor } from "@/lib/booking/lead-time";
 import { checkoutInProgressError } from "@/lib/booking/request-cohort";
 import {
   slotTakenRefusal,
@@ -73,12 +72,14 @@ import {
   assertExpectedTentativeSlotCountInTx,
   assertNoConfirmedSlots,
   guardAllocationInTx,
+  mustBeUnscheduled,
   assertGroupEventUnsoldInTx,
 } from "@/lib/booking/allocation/guards";
 import {
   resolveConsumedPreferenceRequests,
   findAllocationPreference,
 } from "@/lib/booking/allocation/preference";
+import { replacementLeadMs } from "@/lib/booking/reschedule-proposals";
 import { findIdempotentAllocation } from "@/lib/booking/allocation/idempotency";
 import { assertCollaboratorsFree } from "@/lib/booking/allocation/collaborators";
 import { findAvailableSlots } from "@/lib/booking/allocation/search/find-available-slots";
@@ -165,7 +166,7 @@ export async function autoAllocate(
     // session already allocated this event (re-checked in-txn below).
     // #1766 — a subscription decides after its rows are read: with held
     // sessions the next cycle appends, so the flag is ignored there.
-    if (initialAllocation && eventType !== "subscription") {
+    if (mustBeUnscheduled(eventType, initialAllocation)) {
       await assertNoConfirmedSlots(prisma, eventType, eventId);
     }
 
@@ -189,7 +190,6 @@ export async function autoAllocate(
       settled,
     } = eventData;
     if (eventData.checkoutInProgress) throw checkoutInProgressError();
-    const leadTimeMs = leadMsFor("allocate", { settled });
 
     // CRITICAL FIX: Check for existing appointments to detect reschedule scenario
     // If tentative slots exist, this is a reschedule and we should preserve the original slot count
@@ -218,6 +218,11 @@ export async function autoAllocate(
     // A reschedule is a live RELEASE (tentative + RESCHEDULED), not mere
     // tentativeness: fresh requests already carry tentative holds.
     const isReschedule = releasedSessionCountOf(existingAppointments) > 0;
+    const leadTimeMs = replacementLeadMs(
+      isReschedule,
+      excludeRescheduleRequestId,
+      settled,
+    );
 
     // ADR B10, derived rather than trusted. The client set initialAllocation
     // only when tentativeSlotCount === 0, but EVERY pending request already
@@ -227,7 +232,9 @@ export async function autoAllocate(
     // "not allocated yet" condition; the in-txn advisory lock this gates
     // serialises two tabs of the same event.
     const isFreshAllocation =
-      initialAllocation === true || existingNonTentativeSlotCount === 0;
+      mustBeUnscheduled(eventType, initialAllocation) ||
+      initialAllocation === true ||
+      existingNonTentativeSlotCount === 0;
 
     const slotsPerCall = ScheduleCalculationService.getSlotsPerCall(
       config.sessionDurationInHours || config.durationInHours || 1,
@@ -655,6 +662,7 @@ export async function autoAllocate(
           config,
           txOptions.approvableFrom,
           txOptions.historyReason,
+          txOptions.actorUserId,
         );
         await holdUntilPaid(tx, appointments, outcome);
 
@@ -685,6 +693,7 @@ export async function autoAllocate(
               }
             : undefined,
           outcome,
+          appointments.flatMap((a) => (a.occurrences ?? []).map((o) => o.id)),
         );
 
         return {

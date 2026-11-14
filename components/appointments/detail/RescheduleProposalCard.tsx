@@ -1,5 +1,6 @@
 "use client";
 
+import { proposedSessionsOf } from "@/lib/booking/reschedule-proposals";
 import { useState } from "react";
 import { useZonedFormat } from "@/lib/time/zoned-format";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -225,8 +226,12 @@ export function RescheduleProposalCard({
   const format = useZonedFormat();
   const { data: session } = useSession();
   const viewerId = session?.user?.id;
-  const isInitiator = !!viewerId && viewerId === proposal.initiatedById;
-  const slots = proposal.proposedTimes;
+  // Before the session loads, the page's side stands in for the viewer.
+  const isInitiator = viewerId
+    ? viewerId === proposal.initiatedById
+    : (role === "consultant") === (proposal.initiatorRole === "CONSULTANT");
+  // One line per proposed session, not per stored 30-minute row.
+  const slots = proposedSessionsOf(proposal.proposedTimes);
 
   let heading: string;
   if (isInitiator) {
@@ -296,8 +301,6 @@ export function RescheduleProposalCard({
             proposal closes. Rendered in the SAME provider zone as the times
             above it, so the card never shows two zones. */}
         {format(new Date(proposal.expiresAt), "EEE, d MMM yyyy · h:mm a zzz")}.
-        If nobody answers by then, the request expires and the original times
-        are restored wherever they are still free.
       </p>
 
       {readOnly && (

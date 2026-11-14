@@ -15,6 +15,7 @@
  * just now also safe to dehydrate into the React Query cache.
  */
 
+import { withLapsedMoveRestored } from "@/lib/appointments/lapsed-move";
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
@@ -291,7 +292,12 @@ export async function getStaffAppointments(
           where: { status: { in: RESCHEDULE_OPEN_STATUSES } },
           orderBy: { createdAt: "desc" },
           take: 1,
-          select: { status: true, initiatorRole: true, expiresAt: true },
+          select: {
+            status: true,
+            initiatorRole: true,
+            expiresAt: true,
+            originStatus: true,
+          },
         },
         occurrences: {
           orderBy: { startsAt: "asc" },
@@ -447,7 +453,10 @@ export async function getStaffAppointments(
     (id && usersById.get(id)) || null;
 
   // Format appointments for frontend
-  const formattedAppointments = appointments.map((apt) => {
+  const now = new Date();
+  const formattedAppointments = appointments.map((row) => {
+    // A move past its deadline reads as the original until the sweep ends it.
+    const apt = withLapsedMoveRestored(row, now);
     // Get consultant and consultee info based on type
     let consultant = null;
     let consultee = null;

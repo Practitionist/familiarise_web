@@ -281,7 +281,7 @@ export async function listAppointmentsScoped(
           where: { status: { in: RESCHEDULE_OPEN_STATUSES } },
           orderBy: { createdAt: "desc" },
           take: 1,
-          select: { initiatorRole: true, expiresAt: true },
+          select: { initiatorRole: true, expiresAt: true, originStatus: true },
         },
         consultation: {
           select: {

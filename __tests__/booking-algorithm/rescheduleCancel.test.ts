@@ -354,9 +354,12 @@ function makeMockTx() {
       findUnique: jest.fn().mockResolvedValue({ status: "APPROVED" }),
       // B2 — the cancel/reschedule CAS guards use updateMany.
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      // Paid unless a case says otherwise (the proposal lead reads it).
+      count: jest.fn().mockResolvedValue(1),
     },
     subscription: {
       update: jest.fn(),
+      count: jest.fn().mockResolvedValue(1),
       findUnique: jest.fn().mockResolvedValue({ status: "APPROVED" }),
       // B2 — the cancel/reschedule CAS guards use updateMany.
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -433,9 +436,12 @@ describe("RescheduleErrors", () => {
       expect(err.message).toContain("5 hours");
     });
 
-    it("should clamp negative hours to 0", () => {
+    it("a session that has started is no longer movable, whatever the notice rule", () => {
       const err = new ReschedulePolicyError(-2, 24);
-      expect(err.message).toContain("0 hours");
+      expect(err.message).toBe(
+        "This session has already started, so it can no longer be moved.",
+      );
+      expect(err.message).not.toContain("24 hours");
     });
 
     it("should expose hoursUntilSlot and minimumHoursRequired properties", () => {
@@ -692,6 +698,78 @@ describe("Reschedule Route Handler - POST", () => {
     const res = await rescheduleHandler(req, makeParams("apt-1"));
 
     expect(res.status).toBe(409);
+  });
+
+  it.each([
+    ["learner", { consultantProfileId: undefined }],
+    ["expert", { consulteeProfileId: undefined }],
+  ])(
+    "lets the %s propose times inside 24 hours; the proposal lapses when the join window opens",
+    async (_side, profile) => {
+      (getSession as jest.Mock).mockResolvedValue({
+        user: {
+          id: "user-1",
+          consulteeProfileId: "ce-1",
+          consultantProfileId: "cp-1",
+          ...profile,
+        },
+      });
+      mockTx.appointment.findUnique.mockResolvedValue(
+        makeConsultationAppointment({
+          occurrences: [makeSlot("slot-1", NEAR_DATE)],
+        }),
+      );
+      const startsAt = new Date(NEAR_DATE.getTime() + 2 * 60 * 60 * 1000);
+      const res = await rescheduleHandler(
+        makeRescheduleRequest("apt-1", "CONSULTATION", {
+          proposedSlots: [
+            {
+              startsAt: startsAt.toISOString(),
+              endsAt: new Date(
+                startsAt.getTime() + 30 * 60 * 1000,
+              ).toISOString(),
+            },
+          ],
+        }),
+        makeParams("apt-1"),
+      );
+
+      expect(res.status).toBe(200);
+      expect(mockTx.rescheduleRequest.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            expiresAt: new Date(NEAR_DATE.getTime() - 15 * 60 * 1000),
+          }),
+        }),
+      );
+    },
+  );
+
+  it("refuses a proposed time an unpaid booking's acceptance could not place", async () => {
+    mockTx.consultation.count.mockResolvedValue(0);
+    mockTx.appointment.findUnique.mockResolvedValue(
+      makeConsultationAppointment({
+        occurrences: [makeSlot("slot-1", NEAR_DATE)],
+      }),
+    );
+    const startsAt = new Date(Date.now() + 60 * 60 * 1000);
+    const res = await rescheduleHandler(
+      makeRescheduleRequest("apt-1", "CONSULTATION", {
+        proposedSlots: [
+          {
+            startsAt: startsAt.toISOString(),
+            endsAt: new Date(startsAt.getTime() + 30 * 60 * 1000).toISOString(),
+          },
+        ],
+      }),
+      makeParams("apt-1"),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      code: "PROPOSAL_TOO_SOON",
+      error: "New times must be at least 2 hours away.",
+    });
+    expect(mockTx.rescheduleRequest.create).not.toHaveBeenCalled();
   });
 
   // ─── CONSULTATION Reschedule ────────────────────────────────────────────

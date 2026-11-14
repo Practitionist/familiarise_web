@@ -78,6 +78,10 @@ function toMetadata(appointment: Appointment): OrgActorDetailProps["meta"] {
     expertName: plan?.consultantProfile?.user?.name ?? null,
     consultantProfileId: plan?.consultantProfileId ?? null,
     sessionMinutes: allocateSessionMinutes(appointment),
+    learnerUserId:
+      booking?.requestedBy?.userId ??
+      appointment.trial?.consulteeProfile?.userId ??
+      null,
     learnerName:
       booking?.requestedBy?.user?.name ??
       appointment.trial?.consulteeProfile?.user?.name ??

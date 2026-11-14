@@ -28,6 +28,7 @@ import { useHoldCountdown } from "@/hooks/useHoldCountdown";
 import type { BookingPresentation } from "@/lib/dashboard/money-state";
 import {
   allocatedElsewhere,
+  alreadyScheduled,
   allocationFailed,
   allocationFailedWithCode,
   requestChangedElsewhere,
@@ -218,7 +219,11 @@ function ApproveOrDecline({
         return;
       }
       if (conflict === "genuine-conflict") {
-        toast(allocatedElsewhere());
+        toast(
+          decision.request.type === "CONSULTATION"
+            ? alreadyScheduled()
+            : allocatedElsewhere(),
+        );
         decision.onDecided();
         return;
       }
@@ -756,12 +761,6 @@ function CalloutBody(props: Omit<NeedsYouCalloutProps, "embedded">) {
           }
         >
           {bookingState.why}
-          {deadline && (
-            <span className="block text-xs text-muted-foreground">
-              Answer by {format(deadline, "EEE d MMM HH:mm")}, or the original
-              time stands where it is still free.
-            </span>
-          )}
         </Shell>
       );
     }

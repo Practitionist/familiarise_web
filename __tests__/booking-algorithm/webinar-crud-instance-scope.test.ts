@@ -38,6 +38,19 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
+// A published webinar's live run is checked against host and co-host time.
+jest.mock("../../lib/booking/host-slot-batch", () => ({
+  acceptedCohostProfileIds: async () => [],
+  hostBatchEntries: () => [],
+  withHostSlotBatch: (_entries: unknown, run: (renew: () => void) => unknown) =>
+    run(() => {}),
+}));
+jest.mock("../../lib/collaborators/availability", () => ({
+  ...jest.requireActual("../../lib/collaborators/availability"),
+  assertCollaboratorsAvailableForWindows: async () => {},
+  assertConsultantAvailableForWindows: async () => {},
+}));
+
 jest.mock("../../lib/auth-server", () => ({
   __esModule: true,
   getSession: jest.fn().mockResolvedValue({ user: { id: "user-1" } }),
@@ -156,8 +169,32 @@ describe("webinar PATCH only moves a plan to a profile the caller owns", () => {
 });
 
 describe("webinar PATCH moves status only along the publish edge", () => {
+  it("refuses to publish a DRAFT that has no time", async () => {
+    base.webinar.findFirst.mockResolvedValue({ ...WEBINAR, status: "DRAFT" });
+    const response = await PATCH(
+      request({ id: "plan-1", webinarId: "web-1", status: "SCHEDULED" }),
+    );
+    expect(response.status).toBe(400);
+    expect((await response.json()).code).toBe("EVENT_TIME_INVALID");
+    expect(mockTx.webinar.updateMany).not.toHaveBeenCalled();
+  });
+
   it("publishes a DRAFT through the CAS helper, matching DRAFT only", async () => {
-    const draft = { ...WEBINAR, status: "DRAFT" };
+    const draft = {
+      ...WEBINAR,
+      status: "DRAFT",
+      appointment: {
+        id: "appt-1",
+        occurrences: [
+          {
+            startsAt: new Date("2030-01-01T10:00:00.000Z"),
+            endsAt: new Date("2030-01-01T11:00:00.000Z"),
+            completionStatus: "SCHEDULED",
+            deletedAt: null,
+          },
+        ],
+      },
+    };
     base.webinar.findFirst.mockResolvedValue(draft);
     mockTx.webinar.findUnique.mockResolvedValue(draft);
     mockTx.webinar.updateMany.mockResolvedValue({ count: 1 });

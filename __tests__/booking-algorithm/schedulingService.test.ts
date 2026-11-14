@@ -189,6 +189,8 @@ function makeMockTx() {
       // #1554 — nextOrdinal for a genuinely NEW call on a reused wrapper:
       // one row already sits at ordinal 1, so a fresh call takes 2.
       aggregate: jest.fn().mockResolvedValue({ _max: { ordinal: 1 } }),
+      // A class's period follows its first and last live session.
+      findFirst: jest.fn().mockResolvedValue(null),
     },
     // pg_advisory_xact_lock inside guardAllocationInTx.
     $executeRaw: jest.fn().mockResolvedValue(1),

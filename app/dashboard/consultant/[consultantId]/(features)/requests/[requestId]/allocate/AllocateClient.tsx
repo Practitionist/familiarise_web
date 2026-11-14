@@ -52,7 +52,7 @@ export function AllocateClient({
       // Allocated elsewhere, or no longer allocatable: the list is the answer.
       onConflict: goBack,
     },
-    { settled },
+    { settled, replacing: subject.hasReleasedSlots === true },
   );
 
   return (

@@ -23,7 +23,10 @@ import {
   getJoinableOccurrence,
   occurrencesAllowReschedule,
 } from "@/lib/appointments/occurrences";
-import { rescheduleReleasable } from "@/lib/booking/reschedule-proposals";
+import {
+  allowsAgreedShortNotice,
+  rescheduleReleasable,
+} from "@/lib/booking/reschedule-proposals";
 import {
   consulteeDestructiveAction,
   consulteeMayReschedule,
@@ -453,7 +456,9 @@ export function useConsulteeAppointmentsAdapter(options?: {
       !inactive &&
       rescheduleStatusOk(vm.kind, vm.status) &&
       occurrencesAllowReschedule(slots) &&
-      rescheduleReleasable(slots),
+      rescheduleReleasable(slots, new Date(), {
+        agreedShortNotice: allowsAgreedShortNotice(vm.kind),
+      }),
     );
     const destructive = consulteeDestructiveAction(vm.kind);
     const mayCancel =

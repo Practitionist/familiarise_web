@@ -64,25 +64,27 @@ After every move: R-03 (occurrences and `RescheduleRequest`), R-05, R-06.
 
 **Probe further:** is the refusal copy shown in the picker before submit, or only as a toast after?
 
-## SU-64 — The 24-hour rule, both directions
+## SU-64 — Inside 24 hours: agreed moves only
 
-**Why it matters:** decision 9: a buyer can't release a session inside 24 hours; moves must also land at least 24 hours out.
+**Why it matters:** a session less than 24 hours away, or a new time less than 24 hours away, moves only when the other side accepts (owner decision 3, 2026-11-14).
 
 **Setup:** shift one of B3's sessions to start 23 hours from now (owner-approved, UTC half hour).
 
 **Steps:**
 
-1. As B3, open Reschedule. Try to select the 23-hour session.
-2. Replay the POST for it.
-3. Pick a session ≥ 24 h away and propose a new time 20 hours from now (replay if the picker blocks it).
+1. As B3, open Reschedule. Select the 23-hour session; read the copy; propose a time 3 days out.
+2. Replay the POST for it without `proposedSlots`.
+3. Pick a session ≥ 24 h away and propose a new time 20 hours from now.
+4. As H1, place a released session of B3's (after B3's "any time" release of a ≥ 24 h session) at a time 20 hours from now.
 
 **Expect:**
 
-- Step 1: the session is not selectable, with a reason (record copy).
-- Step 2: 409 `RESCHEDULE_WINDOW`, "Cannot reschedule within 24 hours of the meeting. The earliest meeting starts in 23 hours."
-- Step 3: 400 `PROPOSAL_TOO_SOON`, "New times must be at least 24 hours away."
+- Step 1: selectable; the copy says H1 must accept at least 15 minutes before the session starts; 200 `AWAITING_ANSWER` (not auto-confirmed), `expiresAt` = 15 minutes before the session's start.
+- Step 2: 409 `RESCHEDULE_WINDOW`, "This session starts within 24 hours. To move it, propose new times; the other person has to accept one before the session starts."
+- Step 3: 200 `AWAITING_ANSWER` (waits for H1; never `AUTO_CONFIRMED`).
+- Step 4: 409 `NEEDS_ACCEPTANCE`; the grid paints times under 24 hours as too soon.
 
-**Probe further:** the 23-hour session: can B3 still return it (no, SU-69) or cancel just it (no door, SU-70)? Does the UI say it will count as delivered if missed?
+**Probe further:** if H1 never answers step 1, the session stands at its time (restored by the expiry job, up to 15 minutes late); can B3 still return it (no, SU-69)?
 
 ## SU-65 — Buyer cap: each session moves at most twice
 

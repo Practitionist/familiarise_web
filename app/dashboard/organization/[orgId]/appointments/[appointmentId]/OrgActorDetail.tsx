@@ -55,6 +55,7 @@ export interface OrgActorDetailProps {
     reschedule?: OpenRescheduleInput | null;
     expertName: string | null;
     learnerName: string | null;
+    learnerUserId: string | null;
     /** The delivering expert and one session's length, for the allocate picker. */
     consultantProfileId: string | null;
     sessionMinutes: number | null;
@@ -308,6 +309,7 @@ export function OrgActorDetail({
                   planTitle={meta.title}
                   expertName={meta.expertName}
                   learnerName={meta.learnerName}
+                  learnerUserId={meta.learnerUserId}
                   consultantProfileId={meta.consultantProfileId}
                   sessionMinutes={meta.sessionMinutes}
                 />

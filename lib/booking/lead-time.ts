@@ -8,10 +8,12 @@ import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 /** An unpaid approval leaves the client time to pay before the session starts. */
 export const UNPAID_APPROVAL_LEAD_TIME_MS = 2 * 60 * 60_000;
 
-/** No session moves, from or to, closer than this to its start. */
+/**
+ * Short notice: a 1:1 move from or to a time closer than this needs the other
+ * side's acceptance; a webinar, a trial or an operator's move is refused.
+ */
 export const RESCHEDULE_MIN_LEAD_HOURS = 24;
 
-/** A moved session's new time is at least this far away. */
 export const RESCHEDULE_LEAD_TIME_MS = RESCHEDULE_MIN_LEAD_HOURS * 60 * 60_000;
 
 export const LEAD_PURPOSES = [
@@ -25,7 +27,7 @@ export type LeadPurpose = (typeof LEAD_PURPOSES)[number];
 /**
  * book: an instant checkout (15 min). request / allocate: 15 min once the
  * booking is settled (paid or free), 2 h while the client still has to pay.
- * reschedule: 24 h, whoever moves it.
+ * reschedule: 24 h, the notice a move confirmed by one side alone needs.
  */
 export function leadMsFor(
   purpose: LeadPurpose,
@@ -124,4 +126,9 @@ export function assertRequestLeadFits(
       `Your expert needs time to accept and you need time to pay — pick a time at least ${leadLabel(leadMsFor("request", { settled }))} away.`,
     );
   }
+}
+
+/** A start less than 24 hours away: a 1:1 move to or from it needs the other side's acceptance. */
+export function isShortNotice(startMs: number, nowMs: number): boolean {
+  return isTooSoonFor("reschedule", { settled: true }, startMs, nowMs);
 }

@@ -10,6 +10,7 @@
  *
  * Lock order: event checkout → appointment → host + co-host slot batch.
  */
+import { followClassSessions } from "@/lib/booking/allocation/event-data";
 import type { Prisma } from "@prisma/client";
 
 import prisma, { type Tx } from "@/lib/prisma";
@@ -325,6 +326,7 @@ export async function retimeClassSeries(args: {
                 schedulingTimezone,
               );
               await confirmMovedSessions(tx, appointmentId, windows, now);
+              await followClassSessions(tx, hosted.cls.id);
 
               const seats = await tx.appointmentParticipant.findMany({
                 where: { appointmentId, ...seatHoldingParticipant(now) },
