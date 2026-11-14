@@ -11,6 +11,7 @@
  * on the profile selects exist for the API route's ownership check.
  */
 
+import { moveHasLapsed } from "@/lib/appointments/lapsed-move";
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
@@ -107,7 +108,23 @@ const collaboratorsInclude = {
   },
 } as const;
 
+/**
+ * Every booking page, its API and the authz helper read through here: a move
+ * past its deadline is ended first, so the original session is what they see.
+ */
 export async function readAppointmentDetail(appointmentId: string) {
+  const detail = await loadAppointmentDetail(appointmentId);
+  const open = detail?.appointment.rescheduleRequests?.[0];
+  if (!open || !moveHasLapsed(open.expiresAt)) return detail;
+  // Loaded on use: settling takes the booking locks, which plain reads never need.
+  const { settleLapsedProposal } =
+    await import("@/lib/booking/reschedule-lapse");
+  return (await settleLapsedProposal(appointmentId))
+    ? loadAppointmentDetail(appointmentId)
+    : detail;
+}
+
+async function loadAppointmentDetail(appointmentId: string) {
   const appointment = await prisma.appointment.findUnique({
     where: { id: appointmentId },
     include: {

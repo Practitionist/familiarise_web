@@ -81,6 +81,12 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
+const mockSettleLapsed = jest.fn(async (_occurrenceId: string) => false);
+jest.mock("../../lib/booking/reschedule-lapse", () => ({
+  settleLapsedProposalForOccurrence: (occurrenceId: string) =>
+    mockSettleLapsed(occurrenceId),
+}));
+
 jest.mock("../../lib/stream-logger", () => ({
   streamLogger: {
     info: jest.fn(),
@@ -328,6 +334,70 @@ describe("provisionAppointmentMeeting", () => {
         }),
       }),
     );
+  });
+
+  it("opens the original session once an unanswered move has lapsed, with nothing else called", async () => {
+    const startsAt = new Date(Date.now() + 5 * 60 * 1000);
+    const endsAt = new Date(startsAt.getTime() + 30 * 60 * 1000);
+    mockGetSession.mockResolvedValue({
+      user: {
+        id: "host-1",
+        role: "CONSULTANT",
+        consultantProfileId: "cp-host",
+        banned: false,
+      },
+    });
+    mockMeetingFindUnique.mockResolvedValue(null);
+    mockAppointmentFindUnique.mockResolvedValue({ organizationId: null });
+    mockMeetingCreate.mockResolvedValue({
+      id: "meeting-1",
+      streamCallId: "occurrence-slot-1",
+    });
+    const slot = (released: boolean) => ({
+      id: "slot-1",
+      startsAt,
+      endsAt,
+      isTentative: released,
+      completionStatus: released ? "RESCHEDULED" : "SCHEDULED",
+      deletedAt: null,
+      appointmentId: "appt-1",
+      consultantProfileId: "cp-host",
+      appointment: {
+        appointmentType: "TRIAL",
+        organizationId: null,
+        deletedAt: null,
+        participants: [],
+        consultation: null,
+        subscription: null,
+        webinar: null,
+        class: null,
+        trial: {
+          status: "SCHEDULED",
+          subscriptionPlan: {
+            title: "Trial Session",
+            consultantProfile: {
+              id: "cp-host",
+              userId: "host-1",
+              user: { name: "Dr. Host" },
+            },
+          },
+        },
+      },
+    });
+    let lapsed = false;
+    mockSlotFindUnique.mockImplementation(async () => slot(!lapsed));
+    mockSettleLapsed.mockImplementation(async () => {
+      lapsed = true;
+      return true;
+    });
+    mockParticipantFindMany.mockResolvedValue([]);
+    mockUpsertUsersToStream.mockResolvedValue({ droppedIds: [] });
+    mockGetOrCreate.mockResolvedValue({});
+
+    const res = await provisionAppointmentMeeting({ id: "slot-1" });
+
+    expect(mockSettleLapsed).toHaveBeenCalledWith("slot-1");
+    expect(res).toEqual({ ok: true, streamCallId: "occurrence-slot-1" });
   });
 
   it("takes the new members back out of a room whose Meeting row could not be saved", async () => {

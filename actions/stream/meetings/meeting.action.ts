@@ -1,5 +1,6 @@
 "use server";
 
+import { settleLapsedProposalForOccurrence } from "@/lib/booking/reschedule-lapse";
 import * as Sentry from "@sentry/nextjs";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
@@ -381,6 +382,8 @@ async function provisionRoom(
   if (!authorized) {
     return { ok: false, refusal: "You are not a participant in this session." };
   }
+  // A move past its deadline is ended first, so the original session opens.
+  await settleLapsedProposalForOccurrence(anchorSlot.id);
 
   const refusal = await getMeetingCreationRefusal(anchorSlot, reuseExisting);
   if (refusal) return { ok: false, refusal };

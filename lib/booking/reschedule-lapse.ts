@@ -4,9 +4,7 @@ import {
   isRestoreMiss,
   restoreRescheduledBooking,
 } from "@/lib/booking/reschedule-restore";
-import { notifyRescheduleRestored } from "@/lib/booking/reschedule-outcome-notice";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
-import { EMAIL_BUDGET_MS } from "@/lib/email";
 import {
   AppointmentBusyError,
   BookingLockUnavailableError,
@@ -66,7 +64,27 @@ export async function settleLapsedProposal(
     throw error;
   }
   if (restored > 0) {
+    // Loaded on use: the booking readers import this module and must not load the notifier.
+    const [{ notifyRescheduleRestored }, { EMAIL_BUDGET_MS }] =
+      await Promise.all([
+        import("@/lib/booking/reschedule-outcome-notice"),
+        import("@/lib/email"),
+      ]);
     await notifyRescheduleRestored(row.id, "EXPIRED", EMAIL_BUDGET_MS.REQUEST);
   }
   return restored > 0;
+}
+
+/** The same, for the booking that holds this session (the meeting paths know only the session). */
+export async function settleLapsedProposalForOccurrence(
+  occurrenceId: string,
+  now: Date = new Date(),
+): Promise<boolean> {
+  const occurrence = await prisma.appointmentOccurrence.findUnique({
+    where: { id: occurrenceId },
+    select: { appointmentId: true },
+  });
+  return occurrence
+    ? settleLapsedProposal(occurrence.appointmentId, now)
+    : false;
 }
