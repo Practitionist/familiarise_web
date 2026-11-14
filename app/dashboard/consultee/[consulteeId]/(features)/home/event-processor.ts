@@ -454,13 +454,30 @@ function processSubscription(
 /**
  * Process a webinar into a ProcessedEvent
  */
+/** The learner's own held order on a seat, for its Pay link. */
+function payablePaymentIdOf(
+  appointment:
+    | {
+        payment?: ReadonlyArray<{
+          id: string;
+          paymentStatus: string;
+          createdAt?: Date | string;
+        }> | null;
+      }
+    | null
+    | undefined,
+): string | null {
+  return payablePaymentId(appointment?.payment);
+}
+
 /**
  * The learner's own seat decides a group card: a released or lapsed seat is
  * not on Home, and a held one they have not paid is a Pay task with no Join.
  */
 function seatGate(
   appointment: Parameters<typeof listStatusFacts>[0] &
-    Parameters<typeof ownSeatStatusOf>[0],
+    Parameters<typeof ownSeatStatusOf>[0] &
+    Parameters<typeof payablePaymentIdOf>[0],
   now: Date,
 ) {
   const seatStatus = ownSeatStatusOf(appointment);
@@ -471,7 +488,7 @@ function seatGate(
     skip: seatLapsedOrReleased(seat, now),
     unpaid: isUnpaidSeat(seat),
     payUrl: payLinkHref({
-      paymentId: payablePaymentId(appointment?.payment),
+      paymentId: payablePaymentIdOf(appointment),
       checkoutUrl: null,
     }),
   };
