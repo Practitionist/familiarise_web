@@ -21,7 +21,7 @@ You run checks for this repo and report their results. You receive a worktree pa
 2. Pre-push checks: `cd <worktree> && scripts/dev/pre-push-checks.sh <log-dir>`. It writes `<log-dir>/summary.txt` (one `name rc=N Ns` line per step, the jest totals, then `DONE`) and one log per step.
 3. Database tier: `cd <worktree> && scripts/dev/db-tier-local.sh <log-dir>/db-tier.log [jest args…]`. It prints the head at start and end, the jest totals and the log path.
 4. For each failing step, open its log and extract what the report needs. Do not paste whole logs.
-5. A jest test that failed with a timeout (`Exceeded timeout of`) in a UI suite (`.tsx`, or a test that renders) is re-run alone, behind the heavy lock: `bash -c 'until mkdir /tmp/fw-heavy.lock 2>/dev/null; do sleep 15; done; trap "rmdir /tmp/fw-heavy.lock" EXIT; npx jest <file> -t "<name>" --coverage=false'`.
+5. A jest test that failed with a timeout (`Exceeded timeout of`) in a UI suite (`.tsx`, or a test that renders) is re-run alone, behind the heavy lock. For a unit suite: `bash -c 'until mkdir /tmp/fw-heavy.lock 2>/dev/null; do sleep 15; done; trap "rmdir /tmp/fw-heavy.lock" EXIT; node_modules/.bin/jest <file> -t "<name>" --coverage=false'`. For a database-tier suite (`*.db.test.ts`), re-run it through the script, which brings up its own container and takes the lock: `scripts/dev/db-tier-local.sh <log-dir>/db-retry.log <file> -t "<name>"`. Plain jest cannot reach the first run's database.
 6. `git -C <worktree> rev-parse --short HEAD` again: the head at end. If it moved, say so first, because the results then describe a mix of two heads.
 
 ## Report

@@ -1,6 +1,6 @@
 # Review defect classes
 
-This is the catalogue the `independent-reviewer` agent hunts through, and a checklist for any reviewer of money, state or access code. Each class gives the pattern in one sentence, where it bites in the current code, and a concrete way to look for it in a diff.
+This is the catalogue the `independent-reviewer` agent hunts through, and a checklist for any reviewer of money, state or access code. Each class gives the pattern in one sentence, where it bites in the current code, and a concrete way to look for it in a diff. In the commands, `<base>` is the pull request's base branch and `<head>` the commit under review, never the worktree's `HEAD`.
 
 **Keep it current.** A builder who fixes a review finding that fits none of the classes below adds a new class here in the same pull request, in the same three parts. The reviewer's report ends with a "Defect class to record" section for exactly this.
 
@@ -10,7 +10,7 @@ This is the catalogue the `independent-reviewer` agent hunts through, and a chec
 
 **Where it bites now.** `grantEventChannelMember` in `lib/stream/event-channel-service.ts` adds a chat member that `fenceSeatGrants` (`lib/stream/access-revocation.ts`) must be able to take back. The fence is keyed by the event's appointment, so that appointment is read before any member is added, and a failed read returns `member_not_added` with nothing written.
 
-**How to look for it.** For each grant write in the diff (`addMembers`, `upsertUsers`, a seat or role insert), list every value its re-check reads, and ask: is each one read before the write, and does a failed read stop the write? `git diff origin/dev...HEAD -- lib/stream | grep -nE 'addMembers|fenceSeatGrants|finally'` finds the writes and the fences to compare.
+**How to look for it.** For each grant write in the diff (`addMembers`, `upsertUsers`, a seat or role insert), list every value its re-check reads, and ask: is each one read before the write, and does a failed read stop the write? `git diff origin/<base>...<head> -- lib/stream | grep -nE 'addMembers|fenceSeatGrants|finally'` finds the writes and the fences to compare.
 
 ## b. An exception between a write and its re-check skips the re-check
 
@@ -42,7 +42,7 @@ This is the catalogue the `independent-reviewer` agent hunts through, and a chec
 
 **Where it bites now.** The mappers in class c are tested in `__tests__/` suites that call `mapConsultantAppointments`, `mapConsulteeEvents` and `mapAppointmentDetail`. A test that builds their input by hand passes even when the real reader in `lib/data/` never selects the field the fix depends on.
 
-**How to look for it.** For each test the diff adds, ask where its input comes from. `git diff origin/dev...HEAD -- __tests__ | grep -nE 'mockResolvedValue|as unknown as'` shows hand-made returns. A state fix needs at least one test whose input is shaped by the real reader's `select`, or a preview case listed as not verified.
+**How to look for it.** For each test the diff adds, ask where its input comes from. `git diff origin/<base>...<head> -- __tests__ | grep -nE 'mockResolvedValue|as unknown as'` shows hand-made returns. A state fix needs at least one test whose input is shaped by the real reader's `select`, or a preview case listed as not verified.
 
 ## f. A status transition that reads and then updates instead of comparing in the WHERE
 
@@ -50,7 +50,7 @@ This is the catalogue the `independent-reviewer` agent hunts through, and a chec
 
 **Where it bites now.** The overage side-charge handlers in `lib/payments/webhooks/overage-handlers.ts` do it the right way: `handleOverageMemberFailure` moves a payment to `FAILED` only from `PENDING`, and returns before any side effect when `count` is zero. A capture that lands first therefore keeps `SUCCEEDED`.
 
-**How to look for it.** `git diff origin/dev...HEAD | grep -nE '\.(update|upsert)\(\{' ` and, for each hit on one of the four models, ask whether the `where` holds the prior status and whether `count === 0` is handled before anything else happens.
+**How to look for it.** `git diff origin/<base>...<head> | grep -nE '\.(update|upsert)\(\{' ` and, for each hit on one of the four models, ask whether the `where` holds the prior status and whether `count === 0` is handled before anything else happens.
 
 ## g. A helper inside `prisma.$transaction` that uses the global client
 
@@ -58,7 +58,7 @@ This is the catalogue the `independent-reviewer` agent hunts through, and a chec
 
 **Where it bites now.** `checkConsent` in `lib/compliance/dpdp.ts` takes the client as a parameter (`db = prisma`) because slot validation calls it inside the checkout transaction. `__tests__/payments/checkout-pool-1-nesting.test.ts` pins this with a global client that throws while a transaction is open.
 
-**How to look for it.** For each function the diff calls from inside a `$transaction` callback, follow it down and check that every query runs on the `tx` it was handed. `git diff origin/dev...HEAD | grep -nE '^\+.*\bprisma\.'` lists new global-client calls to check against the transactions they sit under.
+**How to look for it.** For each function the diff calls from inside a `$transaction` callback, follow it down and check that every query runs on the `tx` it was handed. `git diff origin/<base>...<head> | grep -nE '^\+.*\bprisma\.'` lists new global-client calls to check against the transactions they sit under.
 
 ## h. A lock wait or a retry that lets a request skip a consent or freshness check
 

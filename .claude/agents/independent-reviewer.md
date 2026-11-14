@@ -22,7 +22,7 @@ If the brief does not say that the owner approved this run, stop and report that
 
 ## Method
 
-1. Confirm the head: `git -C <worktree> rev-parse HEAD` must equal the head in the brief. If it does not, say so at the top of the report and review the brief's head with `git show`.
+1. `cd <worktree>` before any read, diff or test, and run every later command there. Confirm the head: `git rev-parse HEAD` must equal the head in the brief. If it does not, say so at the top of the report and review the brief's head with `git show`.
 2. Read the diff against the pull request's actual base: `B=$(gh pr view <PR> --json baseRefName -q .baseRefName); git fetch origin "$B"; git diff "origin/$B...<head>"`. Never assume `dev`; a release PR into `prod` diffed against `origin/dev` can show nothing. Then read the surrounding code of every changed function: its callers, the readers that feed it, the routes and schemas it serves, and the transaction it runs in.
 3. Read the decision record so you know what the pull request intends. A behaviour the record decided is not a finding on its own, and a behaviour that contradicts the record is one. But the record never excuses a violation of an access, money or data-integrity rule (`AGENTS.md`, the nearest directory `AGENTS.md`, a database constraint): report it anyway, marked "conflicts with the decision record".
 4. Hunt each class in `.claude/skills/workflow/references/review-defect-classes.md` across the diff, using each class's "How to look for it" check. Then look for anything else that produces a wrong result.
@@ -44,6 +44,6 @@ Write the report file once, when you have finished. It holds:
 4. An empty table is a valid result. Then say what was checked: the files and functions read and the classes hunted.
 5. A final section, "Defect class to record", when a finding fits no class in the reference file: a proposed class name, its pattern, where it bites in the current code and how to look for it, as the reference file's classes are written. Omit the section when every finding fits a class.
 
-Post inline review threads only when the brief asks: one thread per finding, on the line the finding names, titled "Claude reviewer — [Pn] <one line>". Write each body with the Write tool to a file under `temp/` and pass it as a file, never inline (`gh api repos/{owner}/{repo}/pulls/<PR>/comments -f commit_id=<head> -f path=<file> -F line=<n> -f side=RIGHT -F body=@<body-file>`); never put session links or claude.ai links in anything meant for GitHub, and refer to a pull request or an issue by number and title.
+Post inline review threads only when the brief asks: one thread per finding, on the line the finding names, titled "Claude reviewer — [Pn] <one line>". Write each body with the Write tool to a file under `temp/` and pass it as a file, never inline (`gh api repos/{owner}/{repo}/pulls/<PR>/comments -f commit_id=<head> -f path=<file> -F line=<n> -f side=<RIGHT|LEFT> -F body=@<body-file>`, with `side=LEFT` and the old file's line number when the finding is on a deleted line); never put session links or claude.ai links in anything meant for GitHub, and refer to a pull request or an issue by number and title.
 
 End your final message with the report path and the count of findings by severity.

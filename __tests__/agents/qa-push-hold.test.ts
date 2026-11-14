@@ -82,9 +82,25 @@ describe("qa-push-hold hook", () => {
     expect(run("git push").status).toBe(0);
   });
 
-  it("checks an explicit refspec's destination, not the checkout", () => {
+  it("blocks any push from a held checkout, even HEAD:other, by design", () => {
     hold(KEY);
-    expect(run("git push origin HEAD:feat/other").status).toBe(0);
+    const r = run("git push origin HEAD:feat/other");
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("run it from another worktree");
+  });
+
+  it("blocks a chained second push from a held checkout", () => {
+    hold(KEY);
+    const r = run("git push origin HEAD:feat/other && git push origin");
+    expect(r.status).toBe(2);
+  });
+
+  it.each([
+    ["git push --repo=origin HEAD:feat/x"],
+    ["git push origin 'refs/heads/*:refs/heads/*'"],
+  ])("blocks %s while any fresh hold exists", (command) => {
+    hold("feat%2Fother");
+    expect(run(command, undefined, tmp).status).toBe(2);
   });
 
   it("keeps a branch named with __ apart from one named with /", () => {

@@ -37,7 +37,7 @@ The orchestrator can hand either run to the `check-runner` agent instead, so the
 
 - Push only a head the checks above ran on. Never force-push and never use `--no-verify`. Re-fetch the PR head before editing a branch someone else may push to.
 - Batch commits and push once per round; every push spends CI minutes and starts a preview build.
-- If the brief says a QA run is in progress on the head, do not push until the orchestrator says so in a message. A report file appearing is not the go-ahead. The hold is enforced by the `qa-push-hold` hook: a push to a branch with a fresh hold file under `/tmp/fw-qa-hold/` is blocked with a message naming the PR, the head and the hold's age. That message means a QA run is still reading the preview; do not retry or get around it, wait for the orchestrator.
+- If the brief says a QA run is in progress on the head, do not push until the orchestrator says so in a message. A report file appearing is not the go-ahead. The hold is enforced by the `qa-push-hold` hook: a push to a branch with a fresh hold file under `/tmp/fw-qa-hold/`, or any push from a held checkout, is blocked with a message naming the PR, the head and the hold's age. That message means a QA run is still reading the preview; do not retry or get around it, wait for the orchestrator.
 - Commit with exactly the trailers you are given. Remove any `Claude-Session` trailer or session link before it reaches a commit, a PR body, an issue or a comment.
 - Write PR and issue bodies with the Write tool and pass them with `--body-file`; the deny rules match command text, so a body that names a blocked command fails inside a heredoc. Refer to a PR or an issue by number and title.
 - Open a DRAFT PR against `dev` unless the brief says the PR exists.

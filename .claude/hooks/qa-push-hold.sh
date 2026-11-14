@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
-# Claude Code PreToolUse hook for Bash: blocks a `git push` to a branch while a
-# preview QA run holds it. A hold is $FW_QA_HOLD_DIR/<key> (default
+# Claude Code PreToolUse hook for Bash: blocks a `git push` while a preview QA
+# run holds a branch it could touch. A hold is $FW_QA_HOLD_DIR/<key> (default
 # /tmp/fw-qa-hold), key = the branch with "%" as "%25" and "/" as "%2F", holding
 # "<PR> <head> <UTC ISO time>"; scripts/dev/qa-hold.sh writes and removes it.
 # A hold older than 3 hours is stale. Fails open: an error here allows the push.
-# A guard, not a boundary. Known limits: text that merely contains `git push`
-# inside quotes (echo 'git push x') can be treated as a push; only the first quoted
-# `cd`/`-C` directory is read; aliases, `sh -c` and variables are not followed.
+# The rule is deliberately conservative: a false block is cheap, a missed one is
+# not. Candidates are the branch checked out in every directory involved (cwd,
+# each `cd`/`-C` dir) plus every plain word after any `push`; --all, --mirror,
+# --branches, --repo, a `*` refspec or a bare `:` block on any fresh hold.
+# A guard, not a boundary. Known limits: remote.*.push and push.default config,
+# git aliases, shell functions and variables that hide the word push; a quoted
+# string that merely contains 'git push' is blocked, harmlessly.
 set -u
 
 HOLD_DIR="${FW_QA_HOLD_DIR:-/tmp/fw-qa-hold}"
@@ -65,7 +69,11 @@ add_dir() { # add_dir <dir as written>, relative to the call's cwd
 }
 [[ -n "$CWD" ]] && DIRS+=("$CWD")
 QUOTED_DIR="(^|[^[:alnum:]_-])(cd|-C)[[:space:]]+(\"([^\"]*)\"|${SQ}([^${SQ}]*)${SQ})"
-if [[ "$CMD" =~ $QUOTED_DIR ]]; then add_dir "${BASH_REMATCH[4]}${BASH_REMATCH[5]}"; fi
+REST="$CMD"
+while [[ "$REST" =~ $QUOTED_DIR ]]; do
+  add_dir "${BASH_REMATCH[4]}${BASH_REMATCH[5]}"
+  REST="${REST#*"${BASH_REMATCH[0]}"}"
+done
 
 # Words, with every command separator as its own ";" word and quotes dropped.
 FLAT="${CMD//$'\n'/ ; }"
@@ -74,12 +82,9 @@ FLAT="${FLAT//[\"${SQ}]/ }"
 WORDS=()
 read -r -a WORDS <<<"$FLAT"
 
-# After `push`: the first plain word is the remote and the rest are refspecs.
+CANDIDATES=()
+ANY_HOLD=false
 AFTER_PUSH=false
-REMOTE_SEEN=false
-SKIP_NEXT=false
-ALL_BRANCHES=false
-REFSPECS=()
 PREV=""
 for w in "${WORDS[@]+"${WORDS[@]}"}"; do
   if [[ "$w" == ";" ]]; then
@@ -87,48 +92,24 @@ for w in "${WORDS[@]+"${WORDS[@]}"}"; do
   elif [[ "$PREV" == "cd" || "$PREV" == "-C" ]]; then
     add_dir "$w"
   elif [[ "$AFTER_PUSH" == "true" ]]; then
-    if [[ "$SKIP_NEXT" == "true" ]]; then
-      SKIP_NEXT=false
-    else
-      case "$w" in
-        --all | --mirror | --branches) ALL_BRANCHES=true ;;
-        -o | --push-option | --repo | --receive-pack | --exec) SKIP_NEXT=true ;;
-        -*) ;;
-        *)
-          if [[ "$REMOTE_SEEN" == "true" ]]; then
-            REFSPECS+=("$w")
-          else
-            REMOTE_SEEN=true
-          fi
-          ;;
-      esac
-    fi
+    case "$w" in
+      --all | --mirror | --branches | --repo | --repo=* | :) ANY_HOLD=true ;;
+      -*) ;;
+      *"*"*) ANY_HOLD=true ;;
+      *)
+        w="${w#+}"
+        CANDIDATES+=("${w%%:*}" "${w#*:}")
+        ;;
+    esac
   elif [[ "$w" == "push" ]]; then
     AFTER_PUSH=true
   fi
   PREV="$w"
 done
 
-CHECKED_OUT=()
 for d in "${DIRS[@]+"${DIRS[@]}"}"; do
-  b="$(git -C "$d" rev-parse --abbrev-ref HEAD 2>/dev/null)" && CHECKED_OUT+=("$b")
+  b="$(git -C "$d" rev-parse --abbrev-ref HEAD 2>/dev/null)" && CANDIDATES+=("$b")
 done
-
-# An explicit refspec names its destinations; without one, the checkout is pushed.
-BRANCHES=()
-if [[ "${#REFSPECS[@]}" -gt 0 ]]; then
-  for r in "${REFSPECS[@]}"; do
-    r="${r#+}"
-    dst="${r#*:}"
-    if [[ "$dst" == "HEAD" ]]; then
-      BRANCHES+=("${CHECKED_OUT[@]+"${CHECKED_OUT[@]}"}")
-    else
-      BRANCHES+=("$dst")
-    fi
-  done
-else
-  BRANCHES=("${CHECKED_OUT[@]+"${CHECKED_OUT[@]}"}")
-fi
 
 mtime() {
   local file="$1"
@@ -148,18 +129,18 @@ check_hold() { # check_hold <hold file> <branch or description>; exits 2 on a fr
     echo "qa-push-hold: the hold on $what (PR ${pr:-?}, head ${head_sha:-?}) is $((age / 60)) min old, older than 3 hours, so it is stale; allowing the push" >&2
     return 0
   fi
-  echo "qa-push-hold: push blocked. A preview QA run holds $what: PR ${pr:-?} at head ${head_sha:-?}, hold set ${at:-?}, $((age / 60)) min ago. Pushing now would make the run describe two builds; wait for the QA run to end, or for the orchestrator to remove the hold file $hold." >&2
+  echo "qa-push-hold: push blocked. A preview QA run holds $what: PR ${pr:-?} at head ${head_sha:-?}, hold set ${at:-?}, $((age / 60)) min ago. Pushing now would make the run describe two builds; wait for the QA run to end, or for the orchestrator to remove the hold file $hold. If this push does not touch that branch, run it from another worktree, or ask the orchestrator." >&2
   exit 2
 }
 
-if [[ "$ALL_BRANCHES" == "true" ]]; then
+if [[ "$ANY_HOLD" == "true" ]]; then
   for hold in "$HOLD_DIR"/*; do
-    check_hold "$hold" "a branch this push sends (hold ${hold##*/})"
+    check_hold "$hold" "a branch this push can reach (hold ${hold##*/})"
   done
 fi
 
 PCT="%"
-for b in "${BRANCHES[@]+"${BRANCHES[@]}"}"; do
+for b in "${CANDIDATES[@]+"${CANDIDATES[@]}"}"; do
   b="${b#refs/heads/}"
   case "$b" in
     '' | HEAD) continue ;;
