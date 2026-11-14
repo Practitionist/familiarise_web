@@ -4043,6 +4043,9 @@ model Consultation {
   /// Price (paise) the buyer agreed to at request; plan edits never move it.
   /// Null = read the plan (rows created before the column).
   agreedPricePaise      BigInt?
+  /// Hash of what the learner submitted with requestIdempotencyKey (plan, window,
+  /// org); a retry replays only on a match. Null = compare the held times (rows created before the column).
+  requestFingerprint    String?             @db.VarChar(64)
   // Cancellation tracking
   cancellationReason    CancellationReason?
   cancellationNotes     String?             @db.Text

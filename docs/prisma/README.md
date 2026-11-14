@@ -221,6 +221,9 @@ before the column existed:
 | `RescheduleRequest.restoredAt`       | `timestamptz` | A withdraw, decline or expiry that restored         | Read as "not restored"; a legacy row has no release record, so it is not counted anyway.                                                         |
 | `Webinar.retimeBy`                   | `timestamptz` | A webinar re-time (the end of the free leave)       | No free leave is open; seat leave applies its normal refund window (`lib/booking/retime-leave.ts`, `lib/booking/seat-leave.ts`).                 |
 | `Class.retimeBy`                     | `timestamptz` | A class make-up (the end of the free leave)         | The same as `Webinar.retimeBy`.                                                                                                                  |
+| `Consultation.requestFingerprint`    | `varchar(64)` | The request door (the submitted request's hash)     | A same-key retry compares the held times, as before (`app/api/scheduling/request-for-approval/route.ts`).                                        |
+
+`Consultation.requestFingerprint` (the allocation and reschedule branch) cannot wait for a push: the four enum swaps above keep `db:push` refused, so it is applied alone with the statement `scripts/ci/check-db-schema-required.ts` prints, `ALTER TABLE "Consultation" ADD COLUMN "requestFingerprint" VARCHAR(64);`, before the branch's deploy reads it; then re-run that check and open one consultation detail page.
 
 After the push, smoke-test one full-row reader of each of the five models
 (lesson 6 above): a subscription detail, a checkout replay, a reschedule

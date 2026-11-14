@@ -1,4 +1,5 @@
 import { readJsonBody } from "@/lib/api/parse";
+import { createHash } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { assertRequestLeadFits } from "@/lib/booking/lead-time";
 import prisma from "@/lib/prisma";
@@ -86,19 +87,39 @@ const REQUEST_RESPONSE_INCLUDE = {
   },
 } satisfies Prisma.ConsultationInclude;
 
+interface AskedRequest {
+  consultationPlanId: string;
+  startsAt: string;
+  endsAt: string;
+  organizationId: string | null;
+}
+
+/** What the learner submitted, one spelling per instant, stored at creation. */
+function requestFingerprintOf(asked: AskedRequest): string {
+  const instant = (value: string) => {
+    const ms = Date.parse(value);
+    return Number.isNaN(ms) ? value : new Date(ms).toISOString();
+  };
+  return createHash("sha256")
+    .update(
+      JSON.stringify([
+        asked.consultationPlanId,
+        instant(asked.startsAt),
+        instant(asked.endsAt),
+        asked.organizationId ?? "",
+      ]),
+    )
+    .digest("hex");
+}
+
 /**
  * The original 201 for a retried key, or null when the key has created nothing
- * yet; the same key with another plan or time is the caller's 422.
+ * yet; the same key with another plan, time or organisation is the caller's 422.
  */
 async function replayRequest(
   idempotencyKey: string | null,
   userId: string,
-  asked: {
-    consultationPlanId: string;
-    startsAt: string;
-    endsAt: string;
-    organizationId: string | null;
-  },
+  asked: AskedRequest,
 ): Promise<NextResponse | null> {
   if (!idempotencyKey) return null;
   const original = await prisma.consultation.findUnique({
@@ -106,17 +127,20 @@ async function replayRequest(
     include: REQUEST_RESPONSE_INCLUDE,
   });
   if (!original) return null;
+  // Compared with what was submitted, never the booking's current times; a row
+  // created before the fingerprint compares its held times instead.
   const held = (original.appointment?.occurrences ?? []).filter(
     (o) => !o.deletedAt,
   );
-  const sameBody =
-    original.consultationPlanId === asked.consultationPlanId &&
-    (original.appointment?.organizationId ?? null) === asked.organizationId &&
-    held.length > 0 &&
-    Math.min(...held.map((o) => o.startsAt.getTime())) ===
-      Date.parse(asked.startsAt) &&
-    Math.max(...held.map((o) => o.endsAt.getTime())) ===
-      Date.parse(asked.endsAt);
+  const sameBody = original.requestFingerprint
+    ? original.requestFingerprint === requestFingerprintOf(asked)
+    : original.consultationPlanId === asked.consultationPlanId &&
+      (original.appointment?.organizationId ?? null) === asked.organizationId &&
+      held.length > 0 &&
+      Math.min(...held.map((o) => o.startsAt.getTime())) ===
+        Date.parse(asked.startsAt) &&
+      Math.max(...held.map((o) => o.endsAt.getTime())) ===
+        Date.parse(asked.endsAt);
   if (original.requestedBy.userId !== userId || !sameBody) {
     return NextResponse.json(
       {
@@ -592,6 +616,9 @@ export async function POST(req: NextRequest) {
                 status: AppointmentStatus.PENDING,
                 requestNotes: requestNotes,
                 requestIdempotencyKey: idempotencyKey,
+                requestFingerprint: idempotencyKey
+                  ? requestFingerprintOf(asked)
+                  : null,
                 agreedPricePaise: consultationPlan.price,
                 appointment: {
                   create: {
