@@ -55,6 +55,8 @@ export type StaffAppointment = {
   status: string;
   /** DIRECT_CHECKOUT or REQUEST_SUBMITTED for a 1:1 or plan; null otherwise. */
   bookingSource: string | null;
+  /** Nothing is charged for this booking, so it has no payment to wait for. */
+  free: boolean;
   hasIssue: boolean;
   issueType: string | null;
   payment: AppointmentPayment;
@@ -342,6 +344,7 @@ export async function getStaffAppointments(
             subscriptionPlan: {
               select: {
                 title: true,
+                trialPriceInPaise: true,
                 consultantProfile: { select: { userId: true } },
               },
             },
@@ -517,8 +520,11 @@ export async function getStaffAppointments(
     const slot = apt.occurrences[0];
     const payment = apt.payment[0];
 
-    // Determine status for display
-    let displayStatus = "scheduled";
+    // A wrapper whose lifecycle row is gone (a trial re-requested by the pair)
+    // has nothing live, so it reads cancelled rather than claiming a state.
+    let displayStatus = "cancelled";
+    if (!title && apt.appointmentType === "TRIAL")
+      title = "Trial (record removed)";
     if (aptStatus) {
       const statusStr = String(aptStatus).toLowerCase();
       if (statusStr === "cancelled") displayStatus = "cancelled";
@@ -528,9 +534,20 @@ export async function getStaffAppointments(
       else displayStatus = statusStr;
     }
 
+    // A free booking has no payment to be pending.
+    const free =
+      !payment &&
+      (apt.trial
+        ? Number(apt.trial.subscriptionPlan.trialPriceInPaise ?? 0) === 0
+        : Number(
+            apt.consultation?.consultationPlan.price ??
+              apt.subscription?.subscriptionPlan.price ??
+              -1,
+          ) === 0);
     // Check if there's an issue (cancelled, no payment, etc.)
     const hasIssue =
-      displayStatus === "cancelled" || (!payment && aptStatus !== "PENDING");
+      displayStatus === "cancelled" ||
+      (!payment && !free && aptStatus !== "PENDING");
 
     // Date→ISO so the payload is JSON-safe verbatim (matches NextResponse.json)
     const scheduledAtDate = slot?.startsAt || apt.createdAt;
@@ -560,6 +577,7 @@ export async function getStaffAppointments(
       duration,
       status: displayStatus,
       bookingSource,
+      free,
       hasIssue,
       issueType: hasIssue
         ? displayStatus === "cancelled"
