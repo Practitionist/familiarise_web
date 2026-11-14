@@ -107,6 +107,8 @@ interface SessionScheduleProps {
   profileZone?: string | null;
   /** Rendered under the list, e.g. a rule the row actions follow. */
   footnote?: ReactNode;
+  /** A cancelled session's state ("make-up owed"); a non-null note keeps the row listed. */
+  cancelledNote?: (session: OccurrenceVM) => string | null;
 }
 
 /**
@@ -163,22 +165,34 @@ function ScheduleBody({
   rowActions,
   sessionsPerWeek,
   footnote,
+  cancelledNote,
   zone,
 }: Readonly<SessionScheduleProps & { zone: string }>) {
   const format = useZonedFormat();
   const now = useNowTick();
   const [showPast, setShowPast] = useState(false);
 
+  const noteOf = (s: OccurrenceVM) =>
+    isDeadOccurrence(s) ? (cancelledNote?.(s) ?? null) : null;
+  // A cancelled session the viewer must still read stays in the schedule.
   const live = useMemo(
-    () => occurrences.filter((s) => !isDeadOccurrence(s)),
-    [occurrences],
+    () =>
+      occurrences.filter((s) => !isDeadOccurrence(s) || !!cancelledNote?.(s)),
+    [occurrences, cancelledNote],
   );
-  const held = live.filter((s) => s.isTentative).map(toRow);
+  const held = live
+    .filter((s) => s.isTentative && !isDeadOccurrence(s))
+    .map(toRow);
   const model = useMemo(
     () =>
-      buildScheduleModel(live.filter((s) => !s.isTentative).map(toRow), zone, {
-        sessionsPerWeek,
-      }),
+      buildScheduleModel(
+        live.filter((s) => !s.isTentative || isDeadOccurrence(s)).map(toRow),
+        zone,
+        {
+          sessionsPerWeek,
+          counts: (row) => !isDeadOccurrence(row.vm),
+        },
+      ),
     [live, zone, sessionsPerWeek],
   );
 
@@ -186,7 +200,9 @@ function ScheduleBody({
     slotStatus(s.session.vm, joinWindowMs, now);
   const past = model.sessions.filter((s) => PAST.has(statusOf(s)));
   const ahead = model.sessions.filter((s) => !PAST.has(statusOf(s)));
-  const nextKey = ahead.find((s) => statusOf(s) === "upcoming")?.session.key;
+  const nextKey = ahead.find(
+    (s) => statusOf(s) === "upcoming" && !noteOf(s.session.vm),
+  )?.session.key;
   const aheadKeys = new Set(ahead.map((s) => s.session.key));
   // Weeks are listed from the first one still ahead, empty weeks included,
   // so a gap in the schedule is visible rather than silently skipped.
@@ -208,6 +224,7 @@ function ScheduleBody({
       onJoinSession={onJoinSession}
       renderSessionExtra={renderSessionExtra}
       actions={rowActions?.(s.session.vm) ?? []}
+      cancelledNote={noteOf(s.session.vm)}
       format={format}
       now={now}
     />
@@ -287,7 +304,7 @@ function ScheduleBody({
                         </span>
                       ) : w.short && sessionsPerWeek ? (
                         <span className="font-normal normal-case tracking-normal text-amber-700 dark:text-amber-400">
-                          · {w.sessions.length} of {sessionsPerWeek} this week
+                          · {w.counted} of {sessionsPerWeek} this week
                         </span>
                       ) : null}
                     </h3>
@@ -340,10 +357,12 @@ function SessionRow({
   onJoinSession,
   renderSessionExtra,
   actions,
+  cancelledNote,
   format,
   now,
 }: Readonly<{
   entry: ScheduleSession<Row>;
+  cancelledNote: string | null;
   status: RowStatus;
   isNext: boolean;
   showLength: boolean;
@@ -355,13 +374,15 @@ function SessionRow({
   now: Date;
 }>) {
   const { session: row } = entry;
-  const canJoin = status === "joinable" && !!onJoinSession;
+  const cancelled = cancelledNote !== null;
+  const canJoin = !cancelled && status === "joinable" && !!onJoinSession;
   const inline = actions.find((a) => !a.destructive && !a.disabled);
-  const isPast = PAST.has(status);
+  const isPast = !cancelled && PAST.has(status);
   const details = [
     `Session ${entry.number}`,
     showLength ? lengthLabel(entry.minutes) : null,
     entry.sharesDay ? "Same day as another session" : null,
+    cancelledNote,
   ].filter(Boolean);
 
   return (
@@ -400,6 +421,14 @@ function SessionRow({
             )}
             {now.getTime() > row.startsAt.getTime() ? "Rejoin" : "Join"}
           </Button>
+        ) : cancelled ? (
+          <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span
+              aria-hidden
+              className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40"
+            />
+            Cancelled
+          </span>
         ) : isNext ? (
           <CountdownBadge
             targetDate={row.startsAt}

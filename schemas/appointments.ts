@@ -72,6 +72,11 @@ export const RescheduleProposalSchema = z
   })
   .passthrough();
 
+/** The counterparty's answer to an open reschedule proposal. */
+export const RescheduleRespondSchema = z.object({
+  action: z.enum(["accept", "decline"]),
+});
+
 /** The sessions a per-session subscription reschedule names; `slotId` is the legacy single form. */
 export const RescheduleSlotIdsSchema = z
   .object({

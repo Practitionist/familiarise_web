@@ -9,5 +9,4 @@ export {
   isPendingPaymentStatus,
   isApprovedStatus,
   isConfirmedStatus,
-  eventUnionStatusBadge,
 } from "@/lib/appointments/status";

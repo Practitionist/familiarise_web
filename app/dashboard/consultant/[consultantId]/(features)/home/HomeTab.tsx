@@ -47,13 +47,11 @@ import {
 } from "../../utils/appointmentHelpers";
 
 import { ActionRequiredPanel } from "@/components/dashboard/ActionRequiredPanel";
+import { DemandBanner } from "../requests/DemandBanner";
 import { SetupChecklist } from "@/components/dashboard/SetupChecklist";
 import { deriveConsultantActionItems } from "@/lib/dashboard/action-items";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
-import {
-  eventUnionStatusBadge,
-  isConfirmedStatus,
-} from "@/lib/appointments/status";
+import { isConfirmedStatus } from "@/lib/appointments/status";
 import {
   CONSULTANT_JOIN_WINDOW_MS,
   getJoinableOccurrence,
@@ -62,6 +60,10 @@ import {
   type OccurrenceJoinState,
 } from "@/lib/appointments/occurrences";
 import { getAppointmentLifecycleStatus } from "@/lib/appointments/map-consultant";
+import {
+  bookingStatus,
+  bookingStatusBadge,
+} from "@/lib/appointments/booking-status";
 import { TAppointment } from "@/types/appointment";
 import { useNowTick } from "@/hooks/use-now-tick";
 import { getInitials } from "@/utils/formatting";
@@ -73,6 +75,22 @@ import type {
   TConsultantDashboardResponse,
 } from "@/types/consultant-events";
 import { formatForViewer, type ViewerZone } from "@/lib/time/viewer-zone";
+
+/** A row's chip: the one booking status, as the expert sees it. */
+function homeStatusBadge(appointment: TAppointment) {
+  return bookingStatusBadge(
+    bookingStatus(
+      {
+        kind: appointment.appointmentType,
+        status: getAppointmentLifecycleStatus(appointment),
+        source:
+          appointment.consultation?.bookingSource ??
+          appointment.subscription?.bookingSource,
+      },
+      "CONSULTANT",
+    ),
+  );
+}
 
 /** One pattern for both Home lists; the zone label rides along when the
  * viewer has no saved zone (docs/booking/19-dst-and-timezone-posture.md). */
@@ -260,6 +278,8 @@ export function HomeTab({
             className="space-y-2"
           />
 
+          <DemandBanner consultantId={consultantId} />
+
           {/* Main Content Grid */}
           <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
             {/* Left Column - Today's Appointments + Upcoming Sessions */}
@@ -368,9 +388,7 @@ export function HomeTab({
 
                           <div className="flex flex-col items-end gap-0.5 flex-shrink-0">
                             <StatusBadge
-                              {...eventUnionStatusBadge(
-                                getAppointmentLifecycleStatus(appointment),
-                              )}
+                              {...homeStatusBadge(appointment)}
                               withDot
                               size="sm"
                             />
@@ -583,9 +601,7 @@ export function HomeTab({
 
                           <div className="flex flex-col items-end gap-0.5 flex-shrink-0">
                             <StatusBadge
-                              {...eventUnionStatusBadge(
-                                getAppointmentLifecycleStatus(firstAppointment),
-                              )}
+                              {...homeStatusBadge(firstAppointment)}
                               withDot
                               size="sm"
                             />

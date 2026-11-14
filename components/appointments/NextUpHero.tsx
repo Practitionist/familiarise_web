@@ -19,6 +19,8 @@ import { KIND_LABEL } from "./AppointmentRow";
 export interface HeroStat {
   label: string;
   value: number | string;
+  /** Opens the tab the count belongs to. */
+  onSelect?: () => void;
 }
 
 interface NextUpHeroProps {
@@ -166,28 +168,42 @@ function StatChips({
   if (stats.length === 0) return null;
   return (
     <>
-      {stats.map((stat) =>
-        vertical ? (
-          <div
-            key={stat.label}
-            className="flex-1 bg-card px-4 py-3 lg:py-0 lg:flex lg:flex-col lg:justify-center"
-          >
+      {stats.map((stat) => {
+        const body = vertical ? (
+          <>
             <p className="text-lg font-semibold text-foreground tabular-nums">
               {stat.value}
             </p>
             <p className="text-[11px] text-muted-foreground">{stat.label}</p>
-          </div>
+          </>
         ) : (
-          <div key={stat.label} className="text-right shrink-0 px-2">
+          <>
             <span className="text-sm font-semibold text-foreground tabular-nums mr-1">
               {stat.value}
             </span>
             <span className="text-[11px] text-muted-foreground">
               {stat.label}
             </span>
+          </>
+        );
+        const box = vertical
+          ? "flex-1 bg-card px-4 py-3 text-left lg:py-0 lg:flex lg:flex-col lg:justify-center"
+          : "text-right shrink-0 px-2";
+        return stat.onSelect ? (
+          <button
+            key={stat.label}
+            type="button"
+            onClick={stat.onSelect}
+            className={`${box} rounded-md hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring`}
+          >
+            {body}
+          </button>
+        ) : (
+          <div key={stat.label} className={box}>
+            {body}
           </div>
-        ),
-      )}
+        );
+      })}
     </>
   );
 }

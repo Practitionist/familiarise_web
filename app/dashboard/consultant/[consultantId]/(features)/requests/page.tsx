@@ -19,6 +19,7 @@ import prisma from "@/lib/prisma";
 import { getViewerZone } from "@/lib/time/viewer-zone-server";
 
 import { AcceptingRequestsToggle } from "./AcceptingRequestsToggle";
+import { DemandBanner } from "./DemandBanner";
 
 type PageProps = {
   params: Promise<{ consultantId: string }>;
@@ -98,6 +99,11 @@ export default async function RequestsPage({
             .
           </AlertDescription>
         </Alert>
+      )}
+      {profile?.acceptingRequests !== false && (
+        <div className="mt-6 empty:hidden">
+          <DemandBanner consultantId={consultantId} />
+        </div>
       )}
       <div className="pt-6">
         <HydrationBoundary state={dehydrate(queryClient)}>

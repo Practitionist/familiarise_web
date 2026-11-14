@@ -8,6 +8,11 @@
 
 import type { TAppointment, TAppointmentWithSeats } from "@/types/appointment";
 import { deriveBucket } from "./bucket";
+import {
+  holdOpenFrom,
+  listStatusFacts,
+  trialHoldFacts,
+} from "./list-status-facts";
 import { occurrencesOfAppointment } from "./occurrences";
 import {
   getAnchorTime,
@@ -29,6 +34,8 @@ import {
 export interface ConsultantTrialLike {
   id: string;
   status: string;
+  /** When a paid trial's held time releases unpaid. */
+  paymentDueAt?: Date | string | null;
   consulteeProfile: {
     id: string;
     user: { id: string; name: string; image: string | null };
@@ -257,6 +264,11 @@ function mapSingle(
   const occurrences = sortOccurrences(occurrencesOfAppointment(appointment));
   const { title, counterpart, status } = eventFacts(appointment, consultantId);
   const kind = appointment.appointmentType;
+  const source =
+    appointment.consultation?.bookingSource ??
+    appointment.subscription?.bookingSource ??
+    null;
+  const facts = listStatusFacts(appointment, occurrences);
   return {
     id: `appointment-${appointment.id}`,
     // Always the viewing consultant: this is their own list.
@@ -266,13 +278,27 @@ function mapSingle(
     title,
     counterpart,
     status,
-    ...deriveBucket({ status, occurrences, kind, now }, "consultant"),
+    ...deriveBucket(
+      {
+        status,
+        occurrences,
+        kind,
+        now,
+        source,
+        holdOpen: holdOpenFrom(facts, now),
+        paid: facts.paid,
+        moving: !!facts.reschedule,
+      },
+      "consultant",
+    ),
     nextAt: getAnchorTime(occurrences, now),
     occurrences,
     group: null,
     meta: null,
     organizationId: appointment.organizationId ?? null,
     pendingPaymentUrl: null,
+    bookingSource: source,
+    ...facts,
     collaborators: [],
     collaboratorRole: collaboratorRoleOf(appointment, consultantId),
     raw: {
@@ -297,6 +323,8 @@ function mapGroup(
   const live = liveOccurrences(occurrences);
   const completed = live.filter((s) => isOccurrenceOver(s, now)).length;
   const target = nextActionableChild(children, now);
+  const source = first.subscription?.bookingSource ?? null;
+  const facts = listStatusFacts(first, occurrences);
   const groupId =
     first.appointmentType === "SUBSCRIPTION"
       ? `subscription-${first.subscriptionId}`
@@ -310,7 +338,20 @@ function mapGroup(
     title,
     counterpart,
     status,
-    ...deriveBucket({ status, occurrences, now }, "consultant"),
+    ...deriveBucket(
+      {
+        status,
+        occurrences,
+        now,
+        source,
+        holdOpen: holdOpenFrom(facts, now),
+        paid: facts.paid,
+        moving: !!facts.reschedule,
+      },
+      "consultant",
+    ),
+    bookingSource: source,
+    ...facts,
     nextAt: getAnchorTime(occurrences, now),
     occurrences,
     group: { total: live.length, completed },
@@ -346,6 +387,7 @@ function mapTrial(
       : null,
   );
   const status = normalizeStatus(t.status);
+  const hold = trialHoldFacts(t as Parameters<typeof trialHoldFacts>[0]);
   const trialAppointment = t.appointment
     ? ({
         id: t.appointment.id,
@@ -356,6 +398,7 @@ function mapTrial(
     : undefined;
   return {
     id: `trial-${t.id}`,
+    trialId: t.id,
     // Always the viewing consultant: this is their own list.
     consultantProfileId: consultantId,
     appointmentId: t.appointment?.id ?? null,
@@ -363,7 +406,11 @@ function mapTrial(
     title: t.subscriptionPlan.title,
     counterpart: person(t.consulteeProfile.user),
     status,
-    ...deriveBucket({ status, occurrences, now }, "consultant"),
+    ...deriveBucket(
+      { status, occurrences, now, holdOpen: holdOpenFrom(hold, now) },
+      "consultant",
+    ),
+    ...hold,
     nextAt: getAnchorTime(occurrences, now),
     occurrences,
     group: null,

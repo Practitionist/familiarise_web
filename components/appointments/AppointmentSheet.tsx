@@ -17,6 +17,7 @@ import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { isApprovedStatus } from "@/lib/appointments/status";
 import {
   appointmentStatusChip,
+  appointmentStatusLine,
   isDeadOccurrence,
   isDeliberateEnd,
 } from "@/lib/appointments/occurrences";
@@ -116,6 +117,7 @@ export function AppointmentSheet({
   const overflow = adapter.overflowItems(vm);
   const detailHref = adapter.detailHref(vm);
   const payHref = bookingPayHref(vm);
+  const statusLine = appointmentStatusLine(vm, adapter.role);
   const anchorSession = vm.nextAt
     ? vm.occurrences.find((s) => s.startsAt.getTime() === vm.nextAt?.getTime())
     : undefined;
@@ -180,6 +182,9 @@ export function AppointmentSheet({
               </span>
             )}
           </div>
+          {statusLine && statusLine !== vm.meta && (
+            <p className="text-xs text-muted-foreground">{statusLine}</p>
+          )}
         </SheetHeader>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6 sm:py-6">

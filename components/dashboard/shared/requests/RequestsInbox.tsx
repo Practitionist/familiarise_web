@@ -240,6 +240,10 @@ export function RequestsInbox({
     void queryClient.invalidateQueries({
       queryKey: ["consultant-dashboard", consultantProfileId],
     });
+    // The demand banner and the Settings counts read the same open requests.
+    void queryClient.invalidateQueries({
+      queryKey: ["consultant-demand", consultantProfileId],
+    });
   }, [consultantProfileId, queryClient]);
 
   // "N new · Refresh": a return to the tab (throttled to a stale cache) reads

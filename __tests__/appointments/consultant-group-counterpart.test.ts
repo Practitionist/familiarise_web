@@ -15,6 +15,8 @@ describe("Consultant group-event counterpart resolution", () => {
     const webinarAppointment = {
       id: "appt_webinar_1",
       appointmentType: "WEBINAR",
+      payment: [],
+      participants: [],
       occurrences: [
         {
           id: "occ_webinar_1",
@@ -41,6 +43,8 @@ describe("Consultant group-event counterpart resolution", () => {
     const classAppointment = {
       id: "appt_class_1",
       appointmentType: "CLASS",
+      payment: [],
+      participants: [],
       classId: "cls_1",
       occurrences: [
         {
@@ -101,6 +105,8 @@ describe("Consultant group-event counterpart resolution", () => {
     const collabWebinar = {
       id: "appt_webinar_collab",
       appointmentType: "WEBINAR",
+      payment: [],
+      participants: [],
       occurrences: [
         {
           id: "occ_webinar_collab",
@@ -168,6 +174,8 @@ describe("Consultant group-event counterpart resolution", () => {
     const runningWebinar = {
       id: "appt_running_webinar",
       appointmentType: "WEBINAR",
+      payment: [],
+      participants: [],
       occurrences: [
         {
           id: "occ_running_1",

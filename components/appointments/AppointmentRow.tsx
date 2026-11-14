@@ -6,6 +6,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import {
   appointmentStatusChip,
+  appointmentStatusLine,
   getProximityLabel,
 } from "@/lib/appointments/occurrences";
 import { noSessionLabel } from "@/lib/appointments/bucket";
@@ -64,6 +65,9 @@ export function AppointmentRow({
   const action = adapter.primaryAction(vm);
   const overflow = adapter.overflowItems(vm);
   const badge = appointmentStatusChip(vm, adapter.role);
+  // An ended row says why, as its page does.
+  const endedLine =
+    vm.bucket === "cancelled" ? appointmentStatusLine(vm, adapter.role) : "";
   const proximity =
     vm.bucket === "past" || vm.bucket === "cancelled"
       ? null
@@ -141,6 +145,9 @@ export function AppointmentRow({
               </span>
             )}
             {vm.meta && <span className="truncate">{vm.meta}</span>}
+            {endedLine && endedLine !== vm.meta && (
+              <span className="truncate">{endedLine}</span>
+            )}
             {vm.group && (
               <span className="shrink-0 font-medium text-foreground/80">
                 {vm.group.completed}/{vm.group.total} sessions

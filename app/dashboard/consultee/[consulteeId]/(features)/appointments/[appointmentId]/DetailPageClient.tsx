@@ -28,6 +28,7 @@ import {
   useConsulteeAppointmentsAdapter,
 } from "@/components/appointments/consultee/ConsulteeAppointmentsAdapter";
 import { DisplayZoneProvider } from "@/lib/time/zoned-format";
+import { seatLapsedOrReleased } from "@/lib/appointments/status";
 import { IncidentRemedyBanner } from "@/components/appointments/consultee/IncidentRemedyBanner";
 
 /** Sessions worth putting in a calendar: booked (not held), live, not over. */
@@ -218,14 +219,15 @@ function deriveConsulteeActionMeta(vm: AppointmentVM) {
   const canRebook =
     Boolean(vm.consultantProfileId) &&
     (vm.bucket === "past" || vm.bucket === "cancelled");
-  const canAddToCalendar = calendarSessions(vm).length > 0;
+  const seatGone = seatLapsedOrReleased(vm);
+  const canAddToCalendar = !seatGone && calendarSessions(vm).length > 0;
   const expertName = vm.counterpart.name || "Expert";
 
   const rawAppt = vm.raw.appointment;
   const rawSub = rawAppt?.subscription ?? undefined;
   const rawConsultation = rawAppt?.consultation ?? undefined;
 
-  const expertUserId = consultantUserIdOf(vm);
+  const expertUserId = seatGone ? null : consultantUserIdOf(vm);
 
   const subscriptionPlanId =
     rawSub?.subscriptionPlan?.id ?? rawSub?.subscriptionPlanId ?? null;
@@ -255,7 +257,7 @@ function deriveConsulteeActionMeta(vm: AppointmentVM) {
     remainingSessions <= 1;
 
   const isCompletedOneOnOne =
-    (vm.kind === "CONSULTATION" || vm.kind === "TRIAL") &&
+    vm.kind === "CONSULTATION" &&
     (vm.status === "COMPLETED" || vm.bucket === "past") &&
     Boolean(vm.consultantProfileId);
 
@@ -264,8 +266,10 @@ function deriveConsulteeActionMeta(vm: AppointmentVM) {
   const isVerifiedUnpaid =
     Array.isArray(rawAppt?.payment) &&
     rawAppt.payment.every((p) => p.paymentStatus !== "SUCCEEDED");
+  // A submitted request only: a pay-first hold has no expert answer to wait for.
   const isUnpaidRequested =
     (vm.kind === "CONSULTATION" || vm.kind === "SUBSCRIPTION") &&
+    vm.bookingSource !== "DIRECT_CHECKOUT" &&
     isPendingRequestEntity &&
     isVerifiedUnpaid;
 
@@ -369,6 +373,45 @@ function ConsulteeExtraActions({
   );
 }
 
+/** A trial's next step with its expert: quiet before the session, prominent once it is completed. */
+function TrialContinueCard({ vm }: Readonly<{ vm: AppointmentVM }>) {
+  const live = vm.status === "SCHEDULED" || vm.status === "AWAITING_PAYMENT";
+  const completed = vm.status === "COMPLETED";
+  if (vm.kind !== "TRIAL" || !vm.consultantProfileId || !(live || completed)) {
+    return null;
+  }
+  const expertName = vm.counterpart.name || "your expert";
+  return (
+    <div
+      data-testid="trial-continue-card"
+      className={
+        completed
+          ? "flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-primary/40 bg-primary/5 px-5 py-4"
+          : "flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-card px-5 py-4"
+      }
+    >
+      <div className="min-w-0">
+        <p className="text-sm font-medium text-foreground">
+          {completed
+            ? `How was your trial? Continue with ${expertName}`
+            : `After your trial, continue with ${expertName}`}
+        </p>
+        <p className="text-xs text-muted-foreground">
+          {completed
+            ? `Pick a plan to keep working with ${expertName}.`
+            : `If the trial goes well, ${expertName}'s plans are one step away.`}
+        </p>
+      </div>
+      <Button size="sm" variant={completed ? "default" : "outline"} asChild>
+        <Link href={`/explore/experts/${vm.consultantProfileId}`}>
+          <ArrowRight className="mr-1.5 h-4 w-4" />
+          Continue with {expertName}
+        </Link>
+      </Button>
+    </div>
+  );
+}
+
 function ConsulteeNotices({
   vm,
   appointmentId,
@@ -461,6 +504,7 @@ export default function DetailPageClient({
           return (
             <>
               <ConsulteeNotices vm={vm} appointmentId={appointmentId} />
+              <TrialContinueCard vm={vm} />
               <IncidentRemedyBanner
                 consulteeId={consulteeId}
                 zone={viewerZone}

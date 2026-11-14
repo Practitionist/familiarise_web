@@ -16,7 +16,6 @@
 
 import { reportSentryError } from "@/lib/observability/report";
 import prisma from "@/lib/prisma";
-import { liveParticipant } from "@/lib/booking/participants";
 import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
 import type { Prisma } from "@prisma/client";
 import type { Scope } from "@/lib/api/scope/parse";
@@ -67,6 +66,15 @@ function callerPaymentsInclude(userId: string) {
       paymentStatus: true,
       paymentMethod: true,
       createdAt: true,
+      // The pay window of a held booking or seat, so the list can tell a live hold from a lapsed one.
+      expiresAt: true,
+      // Landed refunds, so the list says "Refunded" where the detail page does.
+      amount: true,
+      currency: true,
+      refunds: {
+        where: { status: "SUCCEEDED", deletedAt: null },
+        select: { amountPaise: true, updatedAt: true },
+      },
     },
   } satisfies Prisma.Appointment$paymentArgs;
 }
@@ -230,8 +238,8 @@ export async function readConsulteeEvents(
       prisma.webinar.findMany({
         where: {
           appointment: {
-            // TTFB bound: the user must hold a seat AND a call must be in-window.
-            participants: { some: liveParticipant(userId) },
+            // TTFB bound: the user held a seat (live or released) AND a call is in-window.
+            participants: { some: { userId, role: "CONSULTEE" } },
             occurrences: { some: { startsAt: { gte: since } } },
             ...(oneApptOrgWhere ?? {}),
           },
@@ -282,6 +290,11 @@ export async function readConsulteeEvents(
                 },
               },
               payment: callerPayments,
+              // The caller's own seat: a lapsed HELD seat is not registered, a released one lists under Cancelled.
+              participants: {
+                where: { userId },
+                select: { status: true, updatedAt: true },
+              },
             },
           },
         },
@@ -293,8 +306,8 @@ export async function readConsulteeEvents(
       prisma.class.findMany({
         where: {
           appointment: {
-            // TTFB bound: the user must hold a seat AND a call must be in-window.
-            participants: { some: liveParticipant(userId) },
+            // TTFB bound: the user held a seat (live or released) AND a call is in-window.
+            participants: { some: { userId, role: "CONSULTEE" } },
             occurrences: { some: { startsAt: { gte: since } } },
             ...(manyApptOrgWhere ?? {}),
           },
@@ -345,6 +358,11 @@ export async function readConsulteeEvents(
                 },
               },
               payment: callerPayments,
+              // The caller's own seat: a lapsed HELD seat is not registered, a released one lists under Cancelled.
+              participants: {
+                where: { userId },
+                select: { status: true, updatedAt: true },
+              },
             },
           },
         },

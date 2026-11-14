@@ -18,6 +18,10 @@ interface BookingRequestsSectionProps {
   onChange: Dispatch<SetStateAction<BookingRequestSettings>>;
   /** Distinct buyers holding one of your plans now; null while it loads. */
   activePlanClients: number | null;
+  /** Requests waiting on you now; null while it loads. */
+  openRequests: number | null;
+  /** Set when the count could not be read: retries the read. */
+  onRetryOpenRequests?: () => void;
   /** The plan-client limit exactly as typed, and why it is refused (null when valid). */
   limitDraft: string | null;
   limitError: string | null;
@@ -55,6 +59,14 @@ export function planClientsLine(active: number, limit: number | null): string {
     : `${active} of ${limit} ${noun(limit)}`;
 }
 
+/** "6 open requests now", or "6 of 10 open requests now" against a limit. */
+export function openRequestsLine(open: number, limit: number | null): string {
+  const noun = open === 1 && limit === null ? "open request" : "open requests";
+  return limit === null
+    ? `${open} ${noun} now`
+    : `${open} of ${limit} open requests now`;
+}
+
 /**
  * "Booking mode" settings. Presentational: the form saves the changed
  * fields through the booking-settings PATCH.
@@ -63,6 +75,8 @@ export function BookingRequestsSection({
   value: formData,
   onChange: setFormData,
   activePlanClients,
+  openRequests,
+  onRetryOpenRequests,
   limitDraft,
   limitError,
   countLimit,
@@ -101,8 +115,9 @@ export function BookingRequestsSection({
             <Label htmlFor="booking-mode-instant" className="font-normal">
               <span className="font-medium">Instant booking</span>
               <span className="block text-sm text-muted-foreground">
-                A free slot is paid and confirmed on the spot. Only a time
-                someone else is already holding comes to you as a request.
+                Learners pay for a free time and it is confirmed on the spot. A
+                time someone else holds shows as taken, with &quot;Notify
+                me&quot; for the learner; nothing comes to you as a request.
               </span>
             </Label>
           </div>
@@ -170,6 +185,23 @@ export function BookingRequestsSection({
           Once this many requests are waiting on you, new ones are refused until
           you answer some. Leave blank for no limit.
         </p>
+        {openRequests !== null && (
+          <p className="text-sm font-medium" aria-live="polite">
+            {openRequestsLine(openRequests, formData.maxOpenRequests)}
+          </p>
+        )}
+        {onRetryOpenRequests && (
+          <p className="text-sm text-muted-foreground" role="status">
+            Couldn&apos;t count your open requests.{" "}
+            <button
+              type="button"
+              className="font-medium text-foreground underline underline-offset-4"
+              onClick={onRetryOpenRequests}
+            >
+              Try again
+            </button>
+          </p>
+        )}
       </div>
 
       <div className="space-y-2">
