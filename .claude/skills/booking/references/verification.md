@@ -288,12 +288,21 @@ database named `ci`. Run it locally like this, and only like this:
 4. Run `CI=true DATABASE_URL=postgresql://ci@localhost:<port>/ci npx jest -c jest.db.config.ts <paths>`,
    then stop the server and delete its data directory.
 
-Known failures: three booking suites, `seat-races`, `notice-floor-real-path` and
-`seat-hold-grace` under `__tests__/db/booking/`, fail under Jest with "A dynamic
-import callback was invoked without --experimental-vm-modules" while rendering
-emails. The cause is the email stack being loaded through `import()` (as in
-`lib/novu/stage-then-attempt.ts`), which Jest's VM cannot run without that flag.
-The production runtime is unaffected.
+An agent cannot use step 2 as written: `.claude/settings.json` denies `prisma db push` and `npm run db:sidecars` in every permission mode, and a worktree usually has a `.env`. The same tier runs without either, on a disposable container:
+
+1. `docker run -d --name <name> -p <port>:5432 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=ci postgres:17`, and wait for `pg_isready`.
+2. Load the branch's own schema with the read-only diff: `npx prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script`, piped into `psql -v ON_ERROR_STOP=1` inside the container. Then apply the sidecar files the same way, in the order `db:sidecars` uses (`check-constraints`, `ledger-triggers`, `payment-legs-triggers`, `analytics-views`).
+3. For the jest process only, export every key named in any `.env*` file in the worktree (`.env`, `.env.local`, `.env.test`, `.env.test.local`) as an empty string, so `next/jest` cannot load a live credential, then set `CI=true`, a dummy `BETTER_AUTH_SECRET`, and `DATABASE_URL` and `DIRECT_URL` to `postgresql://postgres:postgres@localhost:<port>/ci`. Print the host, port and database name before running.
+4. `npx jest -c jest.db.config.ts --maxWorkers=1 --coverage=false`, then `docker rm -f <name>`.
+
+CI runs this tier inside its lint job only when its changed-paths step sets `db` in `.github/workflows/ci.yaml`: a change under the database paths it lists, or a full run. A PR that changes booking, payment or Stream state without either has not had the tier run until someone runs it this way.
+
+The whole tier passes without extra Node flags, here and in CI (63 suites, 267
+tests on 2026-11-14), including `seat-races`, `notice-floor-real-path` and
+`seat-hold-grace`, which once failed with "A dynamic import callback was invoked
+without --experimental-vm-modules" while rendering emails. If that error comes
+back, a suite is loading the email stack through a real `import()`; CI does not
+set the flag, so fix the suite, not the command.
 
 Most booking suites in `__tests__/db/booking/` make two writers meet at a real
 conflict and assert exactly one commit, one typed refusal, and a raw-SQL
