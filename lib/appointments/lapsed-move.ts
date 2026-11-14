@@ -23,7 +23,8 @@ type LapsableAppointment = {
 };
 
 /** The statuses a restore writes back (`restoreTargetFor`); any other origin leaves the parent as it is. */
-const RESTORABLE_ORIGINS = new Set(["APPROVED", "APPROVED_PENDING_PAYMENT"]);
+export const RESTORABLE_ORIGINS = ["APPROVED", "APPROVED_PENDING_PAYMENT"];
+const RESTORABLE = new Set(RESTORABLE_ORIGINS);
 
 function lapsedMoveOf(
   appointment: LapsableAppointment | null | undefined,
@@ -34,7 +35,7 @@ function lapsedMoveOf(
 }
 
 function parentStatus<S>(status: S, move: LapsableMove): S | string {
-  return move.originStatus && RESTORABLE_ORIGINS.has(move.originStatus)
+  return move.originStatus && RESTORABLE.has(move.originStatus)
     ? move.originStatus
     : status;
 }

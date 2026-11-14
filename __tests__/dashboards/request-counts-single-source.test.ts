@@ -114,6 +114,24 @@ describe("one requests-to-answer number", () => {
   });
 });
 
+/** The where-fragment a lapsed move restoring away from PENDING is excluded by. */
+const LAPSED =
+  /"originStatus":\{"in":\["APPROVED","APPROVED_PENDING_PAYMENT"\]\}/;
+
+describe("a move past its deadline is not a request to answer", () => {
+  it("both counts exclude it, with one statement each", async () => {
+    await countRequestsToAnswer({ consultantProfileId: "cp-1" });
+    expect(m.consultation.count).toHaveBeenCalledTimes(1);
+    expect(m.subscription.count).toHaveBeenCalledTimes(1);
+    for (const model of [m.consultation, m.subscription]) {
+      const [{ where }] = model.count.mock.calls[0];
+      const shape = JSON.stringify(where);
+      expect(shape).toMatch(LAPSED);
+      expect(shape).toContain('"expiresAt":{"lte"');
+    }
+  });
+});
+
 describe("countOpenRequestsForCap", () => {
   it("counts real submitted requests in every tenant, inside their hold; a trial is never one", async () => {
     const now = new Date("2026-10-27T12:00:00Z");

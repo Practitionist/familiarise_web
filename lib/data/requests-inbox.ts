@@ -947,7 +947,7 @@ function planSources(
 ): InboxSource[] {
   const key: ChipKey = chip ?? "all";
   if (type === "consultation") {
-    const pending = pendingConsultationWhere(cp, scope);
+    const pending = pendingConsultationWhere(cp, scope, now);
     const stranded = consultationSource(
       cp,
       strandedApprovedConsultationWhere(cp, scope),
@@ -996,7 +996,7 @@ function planSources(
   }
   if (type === "subscription") {
     // A plan is paid at checkout, so it is never awaiting payment.
-    const pending = pendingSubscriptionWhere(cp, scope);
+    const pending = pendingSubscriptionWhere(cp, scope, now);
     const nextCycle = nextCycleSource(cp, scope, now);
     const byChip: Partial<Record<ChipKey, InboxSource[]>> = {
       all: [

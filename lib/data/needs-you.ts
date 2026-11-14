@@ -10,6 +10,8 @@ import {
   ANSWERABLE_SUBSCRIPTION,
 } from "@/lib/booking/request-cohort";
 import { runBounded } from "@/lib/db/bounded";
+import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
+import { RESTORABLE_ORIGINS } from "@/lib/appointments/lapsed-move";
 import { requestHoldDeadline } from "@/lib/dashboard/money-state";
 import { readPayoutRequirements } from "@/lib/data/consultant-payout-setup";
 import type { PayoutRequirements } from "@/lib/payments/payouts/payout-requirements";
@@ -53,12 +55,30 @@ export interface NeedsYouSummary {
 export function pendingConsultationWhere(
   consultantProfileId: string,
   scope: Scope,
+  now: Date = new Date(),
 ): Prisma.ConsultationWhereInput {
   return {
     AND: [
       consultationRequestWhere(consultantProfileId, scope, "PENDING"),
       ANSWERABLE_CONSULTATION,
+      { NOT: { appointment: lapsedMoveWhere(now) } },
     ],
+  };
+}
+
+/**
+ * A booking whose open move passed its deadline and restores off PENDING: it
+ * reads as the original (withLapsedMoveRestored), so it is no request to answer.
+ */
+export function lapsedMoveWhere(now: Date): Prisma.AppointmentWhereInput {
+  return {
+    rescheduleRequests: {
+      some: {
+        status: { in: RESCHEDULE_OPEN_STATUSES },
+        expiresAt: { lte: now },
+        originStatus: { in: RESTORABLE_ORIGINS },
+      },
+    },
   };
 }
 
@@ -80,11 +100,13 @@ export function consultationRequestWhere(
 export function pendingSubscriptionWhere(
   consultantProfileId: string,
   scope: Scope,
+  now: Date = new Date(),
 ): Prisma.SubscriptionWhereInput {
   return {
     AND: [
       subscriptionRequestWhere(consultantProfileId, scope, "PENDING"),
       ANSWERABLE_SUBSCRIPTION,
+      { NOT: { appointment: lapsedMoveWhere(now) } },
     ],
     deletedAt: null,
   };

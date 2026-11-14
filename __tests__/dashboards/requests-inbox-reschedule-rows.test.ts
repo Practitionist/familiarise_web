@@ -166,6 +166,32 @@ describe("a move past its deadline, before the sweep ends it", () => {
   });
 });
 
+describe("the inbox's tab counts", () => {
+  it("leave out a move past its deadline, with the same counts issued", async () => {
+    const m = prisma as unknown as MockPrisma;
+    serveInboxFixture(m);
+    await readRequestsInbox({
+      consultantProfileId: CP,
+      type: "consultation",
+      sort: "priority",
+      page: 1,
+      now: NOW,
+    });
+    const wheres = m.consultation.count.mock.calls.map(([a]) =>
+      JSON.stringify(a.where),
+    );
+    // One count per tab source, as before the exclusion.
+    expect(wheres).toHaveLength(4);
+    expect(
+      wheres.some((w) =>
+        /"originStatus":\{"in":\["APPROVED","APPROVED_PENDING_PAYMENT"\]\}/.test(
+          w,
+        ),
+      ),
+    ).toBe(true);
+  });
+});
+
 describe("answering a reschedule from the inbox", () => {
   it("never claims the original time was kept when it was taken meanwhile", () => {
     expect(proposalAnswerToast("keep-original", "DECLINED")).toBe(
