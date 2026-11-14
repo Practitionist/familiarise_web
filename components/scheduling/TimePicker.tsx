@@ -275,6 +275,12 @@ export function TimePicker({
     ? Math.max(selectedSessionCount, 1)
     : Math.max(sessions.length, 1);
 
+  // The clock the short-notice rule reads; the focus above stays pinned.
+  const [nowMs, setNowMs] = React.useState(() => Date.now());
+  React.useEffect(() => {
+    const tick = window.setInterval(() => setNowMs(Date.now()), 60_000);
+    return () => window.clearInterval(tick);
+  }, []);
   // A session under 24 hours away moves only with named times the other side accepts.
   const movingShortNotice = React.useMemo(() => {
     const moving = picksSpecificSessions
@@ -284,10 +290,10 @@ export function TimePicker({
       : sessions;
     return moving.some(
       (session) =>
-        session.startTime.getTime() > openedAt.getTime() &&
-        isShortNotice(session.startTime.getTime(), openedAt.getTime()),
+        session.startTime.getTime() > nowMs &&
+        isShortNotice(session.startTime.getTime(), nowMs),
     );
-  }, [picksSpecificSessions, sessions, selectedSlotIds, openedAt]);
+  }, [picksSpecificSessions, sessions, selectedSlotIds, nowMs]);
   const offersAnyTime = policy.allowReleaseWithoutTime && !movingShortNotice;
 
   /** Group events never reach the proposal path, so they state no preference. */

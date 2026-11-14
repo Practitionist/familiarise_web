@@ -1127,6 +1127,13 @@ export function UnifiedCalendar({
   /** A free atom, or one of this booking's own upcoming ones: a session may take either. */
   const isExpandableAtom = useCallback(
     (startMs: number): boolean => {
+      // The request's own hold inside the allocate lead is never part of a session.
+      if (
+        holdStarts.has(startMs) &&
+        startMs <= Date.now() + (leadMs ?? MINIMUM_BOOKING_LEAD_TIME_MS)
+      ) {
+        return false;
+      }
       if (isFreeAtom(startMs)) return true;
       if (selectedStarts.has(startMs)) return false;
       const atom = describeAtom(startMs, startMs + ATOM_MS, atomContext);
@@ -1137,7 +1144,7 @@ export function UnifiedCalendar({
         !atom.isTentative
       );
     },
-    [isFreeAtom, selectedStarts, atomContext],
+    [isFreeAtom, selectedStarts, atomContext, holdStarts, leadMs],
   );
 
   /** Consecutive free atoms around a clicked one, to fill one whole session. */
