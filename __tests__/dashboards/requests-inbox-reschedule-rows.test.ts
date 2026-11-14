@@ -104,6 +104,14 @@ describe("Requests inbox rows for a booking being moved", () => {
     );
   });
 
+  it("the consultant's own 'any time works' offers no placement the server refuses", async () => {
+    const row = await rowFor("CONSULTANT", false);
+    expect(actionsOf(row)).toEqual({
+      primary: null,
+      secondary: [{ kind: "withdraw-proposal" }],
+    });
+  });
+
   it("no moving row ever offers Decline", async () => {
     for (const [by, times] of [
       ["CONSULTEE", true],
