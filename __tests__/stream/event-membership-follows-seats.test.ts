@@ -201,21 +201,15 @@ function arrange(kind: "WEBINAR" | "CLASS", seats: Row[]) {
   );
   mockEventFindUnique.mockImplementation(
     async (args: {
-      select?: unknown;
       include: { appointment: { include: { participants: { where: Where } } } };
-    }) =>
-      args.select
-        ? { appointment: { id: "appt-1" } }
-        : {
-            ...event,
-            appointment: {
-              id: "appt-1",
-              organizationId: null,
-              participants: pick(
-                args.include.appointment.include.participants.where,
-              ),
-            },
-          },
+    }) => ({
+      ...event,
+      appointment: {
+        id: "appt-1",
+        organizationId: null,
+        participants: pick(args.include.appointment.include.participants.where),
+      },
+    }),
   );
   mockAppointmentFindUnique.mockImplementation(
     async (args: { select: { participants?: { where: Where } } }) => {
@@ -499,12 +493,13 @@ describe("event chat and call membership follows seats holding access", () => {
     mockState.onAdd = (ids) => {
       if (ids.includes("stays")) endSeat(seats, "stays")();
     };
-    const roster = mockEventFindUnique.getMockImplementation();
-    mockEventFindUnique.mockImplementation(
-      async (args: { select?: unknown }) => {
-        if (args.select)
+    const appointmentRead = mockAppointmentFindUnique.getMockImplementation();
+    mockAppointmentFindUnique.mockImplementation(
+      async (args: { where: { classId?: string } }) => {
+        if (args.where.classId) {
           throw new Error("canceling statement due to statement timeout");
-        return roster?.(args);
+        }
+        return appointmentRead?.(args);
       },
     );
 

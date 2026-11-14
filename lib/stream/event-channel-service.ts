@@ -208,12 +208,12 @@ async function eventAppointmentId(
   eventType: "webinar" | "class",
   eventId: string,
 ): Promise<string | null> {
-  const select = { appointment: { select: { id: true } } };
-  const row =
-    eventType === "webinar"
-      ? await prisma.webinar.findUnique({ where: { id: eventId }, select })
-      : await prisma.class.findUnique({ where: { id: eventId }, select });
-  return row?.appointment?.id ?? null;
+  const row = await prisma.appointment.findUnique({
+    where:
+      eventType === "webinar" ? { webinarId: eventId } : { classId: eventId },
+    select: { id: true },
+  });
+  return row?.id ?? null;
 }
 
 /** Adds the user to the event channel, then fences every seat the join wrote, even when a write throws. */
