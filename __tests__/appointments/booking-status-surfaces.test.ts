@@ -114,12 +114,19 @@ describe("the one status on every surface", () => {
 
   it("a seat given back or lapsed holds no place, and its page knows it", () => {
     expect(seatLapsedOrReleased({ seatStatus: "CANCELLED" }, NOW)).toBe(true);
+    // Lapsed only on evidence: an expired payment, not an unknown window.
+    expect(
+      seatLapsedOrReleased(
+        { seatStatus: "HELD", paid: false, payDeadline: null, payLapsed: true },
+        NOW,
+      ),
+    ).toBe(true);
     expect(
       seatLapsedOrReleased(
         { seatStatus: "HELD", paid: false, payDeadline: null },
         NOW,
       ),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       seatLapsedOrReleased(
         {
