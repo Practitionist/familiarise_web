@@ -86,6 +86,9 @@ A time-limited suspension does not end a seat, so there is nothing for this sync
   - A `SEAT_ACCESS_REVOKE` intent written again for the person, through `persistSeatRevocation(appointmentId, [userId])` for the sweep or `revokeEndedSeatAccess` to drive it at once, removes them from the channel, the host DMs and the rooms. `driveSeatRevocation` re-reads the seat, and `admittedSeatHolders` no longer admits it. The partial unique index allows a new open row after a settled one. Writing that row is a database write, so the owner decides it.
   - The daily `reconcile-stream-memberships` job removes them from an open, in-retention event channel without any intent. It skips a channel when more than half of its human members would go (its brake), and it skips a cancelled or expired event, whose channel the lifecycle jobs own. The production job fleet is paused before launch, so it does not run there today.
 
+- **A grant that lands just before a total database failure is not re-checked.** Every path that adds an event chat or call member reads what its seat re-check needs before it writes, then re-checks the seat afterwards, and writes a retry intent when the re-check cannot read. If the seat ends in that instant and the database can then neither be read nor written, the member stays. The daily `reconcile-stream-memberships` job removes them from a chat channel; nothing removes them from a call.
+- **Decided (owner, 2026-11-14): extend the daily reconciler to event calls**, tracked in issue #2773. The two options not chosen were writing a grant intent before every chat open and every call join, which closes the gap fully but adds one database write to each of those requests, and accepting the gap with no follow-up.
+
 ## Consequences
 
 - A registration can no longer reverse a leave, a removal or a refund in chat or in the call.
