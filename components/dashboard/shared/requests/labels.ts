@@ -7,6 +7,7 @@
  */
 
 import type { SubscriptionEntitlement } from "@/lib/booking/entitlement";
+import { ALREADY_SCHEDULED_COPY } from "@/lib/scheduling/allocationMessages";
 import type {
   InboxBucket,
   InboxChip,
@@ -158,7 +159,7 @@ const CODE_SENTENCE: Record<string, string> = {
   REQUEST_CHANGED_ELSEWHERE: TOAST.changedElsewhere,
   ILLEGAL_TRANSITION: TOAST.changedElsewhere,
   RESCHEDULE_STATE_CHANGED: TOAST.changedElsewhere,
-  ALREADY_ALLOCATED: "This request was already allocated in another tab.",
+  ALREADY_ALLOCATED: ALREADY_SCHEDULED_COPY,
   VALIDATION_ERROR: "That request could not be read. Refresh and try again.",
   RATE_LIMITED: "Too many attempts — wait a moment, then retry.",
   ACCESS_DENIED: "You do not have access to this request.",

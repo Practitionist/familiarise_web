@@ -8,6 +8,7 @@
  */
 
 import { formatInViewerZone } from "@/lib/time/viewer-zone";
+import { isShortNotice } from "@/lib/booking/lead-time";
 import { eventStatusBadge } from "@/lib/labels/session-labels";
 import { toneClass, type Tone } from "@/lib/ui/tone";
 import { formatCurrencyAmount } from "@/utils/formatting";
@@ -370,9 +371,22 @@ function reasonOf(
       const asked = proposed
         ? `${who} proposed ${dayTime(proposed)}`
         : `${who} asked for a new time`;
-      return original
+      const line = original
         ? `${asked}; originally ${dayTime(original)}.`
         : `${asked}.`;
+      const by = asDate(r.expiresAt);
+      if (!by) return line;
+      const answerer = r.by === "CONSULTANT" ? payer : consultant;
+      const answersHere = !mine && (isExpert || isLearner);
+      const ask = answersHere
+        ? `Answer by ${dayTime(by)}.`
+        : `${cap(answerer)} has until ${dayTime(by)} to answer.`;
+      // A move opened inside 24 hours lapses before the join window and the original stands.
+      const otherwise =
+        original && isShortNotice(original.getTime(), now.getTime())
+          ? "If nobody answers by then, the original time stands."
+          : "If nobody answers by then, the original time stands where it is still free.";
+      return `${line} ${ask} ${otherwise}`;
     }
     case "CONFIRMED":
       if (f.paid && f.sessions?.allTentative) {

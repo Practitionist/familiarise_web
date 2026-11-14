@@ -11,6 +11,8 @@
 
 import "./setup";
 import fs from "fs";
+import { errorSentence } from "../../components/dashboard/shared/requests/labels";
+import { ALREADY_SCHEDULED_COPY } from "../../lib/scheduling/allocationMessages";
 
 // Mock prisma (relative path required — @/ aliases fail in jest.mock)
 jest.mock("../../lib/prisma", () => ({
@@ -217,7 +219,7 @@ describe("a consultation that already has a time (server-derived)", () => {
   );
 });
 
-it("the allocate page and the grid's refusal toast use the same sentence", () => {
+it("the allocate page, the grid, the inbox and the detail page use the same sentence", () => {
   const read = (rel: string) => fs.readFileSync(rel, "utf8");
   const page = read(
     "app/dashboard/consultant/[consultantId]/(features)/requests/[requestId]/allocate/page.tsx",
@@ -227,6 +229,10 @@ it("the allocate page and the grid's refusal toast use the same sentence", () =>
   expect(read("hooks/scheduling/useScheduling.ts")).toMatch(
     /eventType === "consultation"\s*\?\s*alreadyScheduled\(\)/,
   );
+  expect(read("components/appointments/detail/NeedsYouCallout.tsx")).toMatch(
+    /type === "CONSULTATION"\s*\?\s*alreadyScheduled\(\)/,
+  );
+  expect(errorSentence("ALREADY_ALLOCATED", "")).toBe(ALREADY_SCHEDULED_COPY);
 });
 
 describe("manual allocation: transaction race window", () => {
