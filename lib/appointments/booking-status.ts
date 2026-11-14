@@ -229,6 +229,13 @@ function stageOf(
       cause: status === "CANCELLED" ? "CANCELLED" : "SEAT_RELEASED",
     };
   }
+  // An unpaid seat on an event that has ended can no longer be paid for.
+  if (seat === "HELD" && !f.paid && status === "CANCELLED") {
+    return { stage: "CANCELLED", cause: "CANCELLED" };
+  }
+  if (seat === "HELD" && !f.paid && COMPLETED_FAMILY.has(status)) {
+    return { stage: "PAYMENT_LAPSED" };
+  }
   if (seat === "HELD" && !f.paid) {
     return lapsed ? { stage: "PAYMENT_LAPSED" } : { stage: "AWAITING_PAYMENT" };
   }

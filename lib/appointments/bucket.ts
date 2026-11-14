@@ -60,6 +60,16 @@ export function deriveBucket(
   const now = input.now ?? new Date();
   const status = normalizeStatus(input.status);
 
+  // The viewer's own lapsed seat decides placement before the host's event status;
+  // an unpaid seat on an ended event can no longer be paid for.
+  if (
+    input.unpaidSeat &&
+    (input.holdOpen === false ||
+      isCompletedLikeStatus(status) ||
+      isCancelledLikeStatus(status))
+  ) {
+    return { bucket: "cancelled", needsActionReason: null };
+  }
   if (isCancelledLikeStatus(status)) {
     return { bucket: "cancelled", needsActionReason: null };
   }
@@ -69,7 +79,12 @@ export function deriveBucket(
   if (isUnscheduled) {
     return { bucket: "needsAction", needsActionReason: "UNSCHEDULED" };
   }
-  if (isPendingPaymentStatus(status)) {
+  // A captured payment the status has not caught up with owes nothing.
+  if (isPendingPaymentStatus(status) && !input.paid) {
+    // A pay window known to be closed is over; nothing is left to pay.
+    if (input.holdOpen === false) {
+      return { bucket: "cancelled", needsActionReason: null };
+    }
     // The consultant can't act on an unpaid approval here — Requests owns it.
     return {
       bucket: viewer === "consultant" ? "inRequests" : "needsAction",
