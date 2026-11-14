@@ -132,7 +132,9 @@ bash -c 'until mkdir /tmp/fw-heavy.lock 2>/dev/null; do sleep 15; done; trap "rm
 
 Always release the lock, even when the command fails: put the whole thing in one `bash -c` and use `trap 'rmdir /tmp/fw-heavy.lock' EXIT` as `.claude/skills/workflow/SKILL.md` does. After a killed run or a reboot, check for a stale `/tmp/fw-heavy.lock` (and `/tmp/fw-browser.lock`) and remove it before resuming agents.
 
-c. **Memory reaper.** On this 8 GB machine, Claude Code's low-memory reaper kills idle background shells, and a repo-wide `jest --changedSince` was killed that way. Prefer a targeted suite list: the tests the branch touched, committed or not (`git diff --name-only origin/dev -- '__tests__/*'` covers commits plus staged and unstaged edits; add `git ls-files --others --exclude-standard -- __tests__` for new untracked suites) plus the suites that import the changed modules. CI does not run everything on every PR: a PR into `dev` runs only `jest --changedSince` (`ci.yaml`), and the full sharded suite runs only on release runs (PRs into `prod`, pushes to `staging` or `prod`). So a change with wide reach (a shared helper, a fixture, a dependency bump) needs its importers run locally or it is first fully tested on the release PR.
+c. **Memory reaper.** On this 8 GB machine, Claude Code's low-memory reaper kills idle background shells, and a repo-wide `jest --changedSince` was killed that way. While iterating, prefer a targeted suite list: the tests the branch touched, committed or not (`git diff --name-only origin/dev -- '__tests__/*'` covers commits plus staged and unstaged edits; add `git ls-files --others --exclude-standard -- __tests__` for new untracked suites) plus the suites that import the changed modules. CI does not run everything on every PR: a PR into `dev` runs only `jest --changedSince` (`ci.yaml`), and the full sharded suite runs only on release runs (PRs into `prod`, pushes to `staging` or `prod`). So a change with wide reach (a shared helper, a fixture, a dependency bump) needs its importers run locally or it is first fully tested on the release PR.
+
+On the final head, before a push, run the WHOLE suite once all the same: `npx jest --coverage=false --maxWorkers=2`, detached with `nohup` and behind the heavy lock, takes about 12 minutes on an idle machine, longer beside another job, and survives the reaper. In the 2026-11-13 trains a named-directory run missed a real failure three times, each in a suite outside the directories that looked relevant. A UI suite that times out at 5 seconds while Chrome or a second jest is running is re-run alone before it is called a failure.
 
 d. **Separate worktrees.** Parallel builders get separate worktrees and branches with disjoint file sets. Give them a rule for shared files, for example each builder adds its own block in a shared label file instead of editing common lines. The orchestrator merges the branches afterwards with `git merge --no-ff`. Symlink the main checkout's `node_modules` into each worktree (AGENTS.md section 3.1).
 
@@ -145,6 +147,14 @@ f. **Who gets what.**
 - Docs go to Sonnet at medium effort.
 
 g. **Verify the brief.** A builder's report can disprove the orchestrator's premises. In the 2026-11-08 session, two of the three claims in a money brief were wrong. The orchestrator re-checks any contradicted claim in code before acting on it, and corrects the brief before relaunching anyone.
+
+h. **A QA run pins the head.** While a preview QA run is in progress, nobody pushes to that branch: the builder waits for the orchestrator's message, never for a report file to appear, and the QA agent writes its report once, at the end, with the head recorded at the start and the end. A push in the middle of a run made one round describe two builds.
+
+i. **How many at once.** Two builders plus one heavy job is the limit on 8 GB; three builders, jest and Chrome together got jobs killed. A QA agent in the browser counts as the heavy job's neighbour, so expect UI test timeouts while it runs.
+
+j. **Reports go to files.** Each agent writes its result to a named file under `temp/` and returns a short summary. The orchestrator's context is summarised in a long session, and a result that lived only in a notification is lost with it.
+
+k. **An independent review is a gate.** Clean suites and passing previews did not catch what a second reviewer found on three PRs in a row. After a fix in access or money code, the builder sweeps the same class (every caller, every path that can throw between a write and its check) before the next review pass, instead of fixing the one line the reviewer named.
 
 ## Sources
 
