@@ -8,12 +8,11 @@ import {
 import { CALL_MEMBER_ROLE, STREAM_CALL_TYPE } from "@/lib/stream/call-cid";
 import { assertValidUpdateCallMembers } from "@/lib/stream/video-contracts";
 import { reportSentryError } from "@/lib/observability/report";
-import { fenceSeatGrants } from "@/lib/stream/access-revocation";
 
 /**
  * Adds confirmed webinar or class attendees to the Stream calls already provisioned for the
  * appointment, so their join skips the membership write. Best effort and post-commit: a missing
- * call is fine because the join route adds any member the call lacks.
+ * call is fine because the join route adds any member the call lacks. The caller fences the grants.
  */
 export async function addSeatHoldersToOpenCalls(
   appointmentId: string,
@@ -61,6 +60,4 @@ export async function addSeatHoldersToOpenCalls(
       extra: { appointmentId, failed: failures.length },
     });
   }
-  // A refund that committed while these writes were in flight found no membership to remove.
-  await fenceSeatGrants(appointmentId, userIds);
 }

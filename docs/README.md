@@ -183,6 +183,7 @@ Stream.io integration for messaging and video calls. This is the implemented mes
 - [13-recording-webhooks.md](./stream/13-recording-webhooks.md) - Recording webhooks
 - [19-recordings-lifecycle-and-access.md](./stream/19-recordings-lifecycle-and-access.md) - Recording lifecycle, retention and shared-run access
 - [troubleshooting.md](./stream/troubleshooting.md) - Troubleshooting
+- [2026-11-14-event-membership-follows-seats.md](./decisions/2026-11-14-event-membership-follows-seats.md) - Event chat and call members come from seats that hold access (`paidParticipant()`), never from payments, so a registration cannot re-add someone who left, was removed or was refunded
 
 ---
 

@@ -28,7 +28,7 @@ Stream Chat channels are created and reconciled exclusively on the server across
 
 1. **Eager Provisioning on Confirmed Payment / Approval (`ensureChannelsForAppointment` in `lib/payments/webhooks/ensure-channels.ts`, called from `lib/payments/webhooks/handlers.ts`)**:
    - When a paid **Consultation** or **Subscription** transitions into `DM_ELIGIBLE_STATUSES` (`APPROVED`, `COMPLETED`), the server provisions or reuses the pair's canonical 1:1 DM channel (`createDirectMessageChannel(consultantUserId, consulteeUserId, organizationId)`).
-   - When a **Webinar** or **Class** enrollment is confirmed, the server adds the enrollee to the group `team` channel (`webinar-<id>` / `class-<id>`) **and** provisions the 1:1 DM channel between the consultant and the enrollee.
+   - When a **Webinar** or **Class** enrollment is confirmed, the server adds every seat that still holds access to the group `team` channel (`webinar-<id>` / `class-<id>`), provisions each one's 1:1 DM with the consultant, and passes the same list to `addSeatHoldersToOpenCalls`. The list is the appointment's `CONSULTEE` seats matching `paidParticipant()`, never its `SUCCEEDED` payments: a payment outlives a leave, a removal or a refund, so a payment-built list put departed learners back on the next registration.
    - **Free Trials (`TRIAL`)** are skipped: the function stamps `chatChannelEnsuredAt`, creates no channel and returns `skipped: "trial_chat_blocked"`. The DM gate also excludes trial-backed bookings (see the trial policy below).
    - If adopting an existing event channel fails to add the buyer, `addUserToEventChannel` returns `success: false` with `reason: "member_not_added"`, and `ensureChannelsForAppointment` returns `event_channel_member_not_added` without stamping `chatChannelEnsuredAt`, so the `reconcile-orphaned-confirmations` sweep retries. A Stream or consent refusal (`reason: "account_refused"`) is a deliberate skip and does not block the stamp.
 2. **On-Demand Resolution (`POST /api/stream/channels/open`)**:
@@ -135,7 +135,16 @@ Stream's server-side API bypasses its own permission system whenever a valid API
 
 ### Participant Sources
 
-Event channel membership follows the event's confirmed `AppointmentParticipant` records plus the plan owner and `ACCEPTED` `PlanCollaborator` co-hosts:
+An event channel's members are the plan owner, the `ACCEPTED` collaborators whose profiles are not deleted, and the `CONSULTEE` seats that hold access. A seat holds access when it matches `paidParticipant()` (`lib/booking/participants.ts`), the same fulfilled entitlement the meeting gate admits. That means a `CONFIRMED` or `ATTENDED` seat whose payment is `SUCCEEDED` or which has no payment, or a `HELD` seat whose capture settled and is not being returned. A `CANCELLED` or `REFUNDED` seat is never a member.
+
+Every writer that sets or extends the roster reads this definition:
+
+- `ensureChannelsForAppointment` on each registration and in the `reconcile-orphaned-confirmations` sweep;
+- `getEventData` when the first join creates the channel;
+- `loadEventChannelData` behind `POST /api/stream/channels/create`;
+- `isEventParticipant` on the open route.
+
+Example: Charlotte leaves Hannah's free webinar and her seat becomes `CANCELLED`. When Daniel registers, the sync adds Daniel and every seat still `CONFIRMED`, and leaves Charlotte out, although her ₹0 payment is still `SUCCEEDED`. See [the decision record](../decisions/2026-11-14-event-membership-follows-seats.md).
 
 ```mermaid
 graph TB
@@ -722,6 +731,7 @@ if (existingChannel.name !== expectedName) {
 - **Unfreeze-on-Open for Collaborator Channels**: `createCollaboratorChannel` used to clear `frozen` on every open, undoing wind-down and moderation freezes. It is now get-or-create only and the open route refuses a frozen channel.
 - **Server-Posted Booking Cards (`booking-ctx-`, `system-booking-context`)**: Opening a DM from an appointment used to post a receipt card as a server user named "Familiarise". People read it as a support message, it showed a Get help link and a duplicate title line, its date was the first session rather than the next, and it was written for both people even when nobody replied. Replaced by the booking tag on the sender's next message. Old cards in Stream are hidden by `CustomMessage`, and `LEGACY_BOOKING_CONTEXT_USER_ID` survives only for that and to keep the user out of DM member counts.
 - **DM "Clear chat" and Manual Adds on Managed Channels**: Truncate wiped a DM thread for both sides, and any creator could add members by hand. Both are refused or hidden on managed channels.
+- **Event Rosters Built From Payments or Live Seats**: `ensureChannelsForAppointment` listed every `SUCCEEDED` payment's buyer, which re-added learners who had left, been removed or been refunded on the next registration; the create route's roster used `liveParticipant()`, which gave an unpaid hold chat. Both now read `paidParticipant()`.
 - **Opening DMs on `APPROVED_PENDING_PAYMENT` Bookings**: Retired so unpaid booking requests cannot initiate chat before payment settles.
 - **Unpaginated `queryChannels({ limit: 100 })` Reconciliation Loops**: Superseded by `queryChannelsPaged` (`lib/stream/batch.ts`), which pages at Stream's hard 30-channel per-request ceiling sorted by `created_at` ascending so memberships beyond the 30th channel are never silently skipped during revocation sweeps.
 - **Client-Side `channel.watch()` on Uncreated Channel IDs**: Superseded by server-side resolution in `POST /api/stream/channels/open` (`createDirectMessageChannel` / `addUserToEventChannel`), preventing the browser from creating memberless phantom channels.

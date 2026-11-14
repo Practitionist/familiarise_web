@@ -100,7 +100,8 @@ export async function POST(
           : null);
 
     await upsertUsersToStream([userId]);
-    const admitted = await withStreamCircuitBreaker(async () => {
+    const appointmentId = access.appointment?.id;
+    const grant = withStreamCircuitBreaker(async () => {
       const call = getStreamVideoClient().video.call(
         STREAM_CALL_TYPE,
         resolvedCallId,
@@ -160,6 +161,14 @@ export async function POST(
       }
       return true;
     });
+    let admitted: boolean;
+    try {
+      admitted = await grant;
+    } catch (error) {
+      // A membership that landed before a later write threw is re-checked like any other grant.
+      if (appointmentId) await fenceSeatGrants(appointmentId, [userId]);
+      throw error;
+    }
 
     if (!admitted) {
       if (isRepeatRoomRefusal(meetingId)) {
@@ -187,7 +196,6 @@ export async function POST(
     }
 
     // A cancel or refund that committed while this grant was in flight found no membership to remove.
-    const appointmentId = access.appointment?.id;
     const fence = appointmentId
       ? await fenceSeatGrants(appointmentId, [userId])
       : null;
