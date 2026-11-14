@@ -70,7 +70,7 @@ it("names the next live session on a subscription top-up", async () => {
 
 it("keys each placement batch apart, so week two is not deduplicated into week one", async () => {
   (notifyAppointmentBooked as jest.Mock).mockClear();
-  const week = (days: number) => [new Date(Date.UTC(2030, 0, days, 9))];
+  const week = (days: number) => [`occ-week-${days}`];
   await stageAllocationNotices(
     tx,
     "subscription",

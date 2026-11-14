@@ -677,9 +677,7 @@ export async function manualAllocate(
             eventId,
             manualPartialInfo,
             outcome,
-            appointments.flatMap((a) =>
-              (a.occurrences ?? []).map((o) => o.startsAt),
-            ),
+            appointments.flatMap((a) => (a.occurrences ?? []).map((o) => o.id)),
           ),
         };
       },
