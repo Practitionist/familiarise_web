@@ -493,4 +493,30 @@ describe("event chat and call membership follows seats holding access", () => {
       skipDuplicates: true,
     });
   });
+  it("a chat open whose revocation owner cannot be read is refused before anything is written", async () => {
+    const seats = seatsWith(pay());
+    arrange("CLASS", seats);
+    mockState.onAdd = (ids) => {
+      if (ids.includes("stays")) endSeat(seats, "stays")();
+    };
+    const roster = mockEventFindUnique.getMockImplementation();
+    mockEventFindUnique.mockImplementation(
+      async (args: { select?: unknown }) => {
+        if (args.select)
+          throw new Error("canceling statement due to statement timeout");
+        return roster?.(args);
+      },
+    );
+
+    await expect(
+      addUserToEventChannel("class", "event-1", "stays"),
+    ).resolves.toEqual({
+      success: false,
+      channelId: "class-event-1",
+      reason: "member_not_added",
+    });
+
+    expect(mockState.adds).toEqual([]);
+    expect(mockChat).not.toContain("stays");
+  });
 });

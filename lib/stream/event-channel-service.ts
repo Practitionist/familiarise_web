@@ -216,42 +216,24 @@ async function eventAppointmentId(
   return row?.appointment?.id ?? null;
 }
 
-/** Re-checks every seat a grant wrote and takes back any that ended meanwhile. Never throws. */
-export async function fenceEventChannelGrants(
-  eventType: EventType,
-  eventId: string,
-  granted: EventChannelGrants,
-): Promise<void> {
-  if (eventType !== "webinar" && eventType !== "class") return;
-  if (granted.userIds.length === 0) return;
-  try {
-    const appointmentId =
-      granted.appointmentId ?? (await eventAppointmentId(eventType, eventId));
-    if (!appointmentId) return;
-    // Loaded lazily: access-revocation imports this module.
-    const { fenceSeatGrants } = await import("@/lib/stream/access-revocation");
-    await fenceSeatGrants(appointmentId, Array.from(new Set(granted.userIds)));
-  } catch (error) {
-    streamLogger.warn("Could not fence event channel grants", {
-      eventType,
-      eventId,
-      users: granted.userIds.length,
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
-}
-
 /** Adds the user to the event channel, then fences every seat the join wrote, even when a write throws. */
 export async function addUserToEventChannel(
   eventType: EventType,
   eventId: string,
   userId: string,
 ): Promise<EventChannelJoin> {
+  // Loaded before any write, and lazily: access-revocation imports this module.
+  const { fenceSeatGrants } = await import("@/lib/stream/access-revocation");
   const granted: EventChannelGrants = { appointmentId: null, userIds: [] };
   try {
     return await grantEventChannelMember(eventType, eventId, userId, granted);
   } finally {
-    await fenceEventChannelGrants(eventType, eventId, granted);
+    if (granted.appointmentId && granted.userIds.length > 0) {
+      await fenceSeatGrants(
+        granted.appointmentId,
+        Array.from(new Set(granted.userIds)),
+      );
+    }
   }
 }
 
@@ -290,6 +272,23 @@ export async function grantEventChannelMember(
     ? [{ user_id: userId, channel_role: collaboratorChannelRole }]
     : [userId];
 
+  if (
+    granted.appointmentId === null &&
+    (eventType === "webinar" || eventType === "class")
+  ) {
+    // The fence needs the seats' appointment; a grant it could not check is never written.
+    try {
+      granted.appointmentId = await eventAppointmentId(eventType, eventId);
+    } catch (error) {
+      streamLogger.warn("Event channel join refused: seat owner unreadable", {
+        channelId,
+        userId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return { success: false, channelId, reason: "member_not_added" };
+    }
+  }
+
   try {
     const channel = client.channel(channelType, channelId);
 
@@ -320,9 +319,6 @@ export async function grantEventChannelMember(
     });
     const droppedIds = new Set(upsertResult?.droppedIds ?? []);
     const syncedMembers = allMembers.filter((id) => !droppedIds.has(id));
-    if ("appointmentId" in eventData) {
-      granted.appointmentId = eventData.appointmentId;
-    }
     granted.userIds.push(...syncedMembers);
 
     const eventChannelData = {
@@ -506,7 +502,6 @@ function buildGroupEventData(
     }[];
   },
   appointment: {
-    id: string;
     organizationId: string | null;
     participants: { userId: string }[];
   } | null,
@@ -532,7 +527,6 @@ function buildGroupEventData(
     consultantId,
     members,
     moderatorIds,
-    appointmentId: appointment?.id ?? null,
     name: plan.title,
     organizationId,
   };
