@@ -27,6 +27,7 @@ import type { OpenRescheduleInput } from "@/lib/appointments/booking-status";
 import {
   holdOpenFrom,
   listStatusFacts,
+  trialHoldFacts,
 } from "@/lib/appointments/list-status-facts";
 import {
   isUnpaidSeat,
@@ -281,6 +282,15 @@ function awaitingReason(
   return needsActionReason;
 }
 
+/** An unpaid hold whose window is known to be closed can no longer happen, so Home leaves it out. */
+function lapsedHold(
+  status: string | null | undefined,
+  facts: { paid?: boolean },
+  open: boolean | undefined,
+): boolean {
+  return open === false && !facts.paid && isPendingOrPayment(status);
+}
+
 function isPendingOrPayment(status: string | null | undefined): boolean {
   return isPendingStatus(status) || isPendingPaymentStatus(status);
 }
@@ -301,6 +311,11 @@ function processConsultation(
   // A fresh request has no occurrence yet; it used to vanish from Home while
   // the Appointments page showed it awaiting approval (#1703).
   const holdFacts = listStatusFacts(consultation.appointment, []);
+  if (
+    lapsedHold(consultation.status, holdFacts, holdOpenFrom(holdFacts, now))
+  ) {
+    return null;
+  }
   const needsActionReason = awaitingReason(
     consultation.status,
     slotContexts,
@@ -388,6 +403,11 @@ function processSubscription(
   // A paid subscription awaiting allocation has a wrapper and no occurrences;
   // it used to vanish from Home (#1703).
   const planFacts = listStatusFacts(nextAppointment, []);
+  if (
+    lapsedHold(subscription.status, planFacts, holdOpenFrom(planFacts, now))
+  ) {
+    return null;
+  }
   const needsActionReason = awaitingReason(subscription.status, allSlots, now, {
     source: subscription.bookingSource,
     open: holdOpenFrom(planFacts, now),
@@ -671,7 +691,15 @@ function processTrial(
   const appointmentId = trial.appointment?.id ?? "";
   const slotContexts = toSlotContexts(slots, appointmentId);
   const session = findNextSlot(slotContexts, now);
-  const needsActionReason = awaitingReason(trial.status, slotContexts, now);
+  const hold = trialHoldFacts(trial);
+  const holdOpen = holdOpenFrom(hold, now);
+  if (lapsedHold(trial.status, hold, holdOpen)) return null;
+  const needsActionReason = awaitingReason(trial.status, slotContexts, now, {
+    source: null,
+    open: holdOpen,
+    paid: hold.paid,
+    moving: false,
+  });
   if (!session && !needsActionReason) return null;
 
   const joinableAppointment: MeetingAppointment = {
@@ -699,17 +727,21 @@ function processTrial(
     slots: slotContexts.map(toEventSlot),
     appointmentId: appointmentId || undefined,
     needsActionReason,
+    ...hold,
+    // Only while the window is open: the checkout refuses a lapsed trial.
     pendingPaymentUrl:
-      payLinkHref({
-        paymentId: payablePaymentId(
-          (trial.appointment as { payment?: unknown } | null)?.payment as
-            Parameters<typeof payablePaymentId>[0] | undefined,
-        ),
-        checkoutUrl: trial.pendingPaymentUrl,
-      }) ??
-      (trial.status === "AWAITING_PAYMENT"
-        ? `/checkout/plans/trial/${trial.id}`
-        : null),
+      holdOpen === false
+        ? null
+        : (payLinkHref({
+            paymentId: payablePaymentId(
+              (trial.appointment as { payment?: unknown } | null)?.payment as
+                Parameters<typeof payablePaymentId>[0] | undefined,
+            ),
+            checkoutUrl: trial.pendingPaymentUrl,
+          }) ??
+          (trial.status === "AWAITING_PAYMENT"
+            ? `/checkout/plans/trial/${trial.id}`
+            : null)),
     joinableAppointment: session ? joinableAppointment : undefined,
     joinableSlot: session?.rawSlot,
     joinableOccurrence: session?.run ?? null,

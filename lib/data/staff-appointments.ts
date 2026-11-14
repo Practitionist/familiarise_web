@@ -36,6 +36,8 @@ type AppointmentPayment = {
   currency: string;
   status: string;
   gateway: string;
+  /** When a pending order's pay window closes. */
+  expiresAt?: string | null;
 } | null;
 
 /** Group events stand in for a person in the staff list — "12 attendees". */
@@ -390,6 +392,8 @@ export async function getStaffAppointments(
             currency: true,
             paymentStatus: true,
             paymentGateway: true,
+            // The pay window, so a pending order past it reads as lapsed.
+            expiresAt: true,
             createdAt: true,
           },
           take: 1,
@@ -591,6 +595,7 @@ export async function getStaffAppointments(
             currency: payment.currency,
             status: payment.paymentStatus,
             gateway: payment.paymentGateway,
+            expiresAt: payment.expiresAt?.toISOString() ?? null,
           }
         : null,
       reschedule: apt.rescheduleRequests[0]

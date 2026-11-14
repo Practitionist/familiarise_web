@@ -25,8 +25,8 @@ jest.mock("@/lib/prisma", () => {
     consultation: { findMany: (a: Row) => mockFind("consultation")(a) },
     subscription: { findMany: (a: Row) => mockFind("subscription")(a) },
     webinar: { findMany: (a: Row) => mockFind("webinar")(a) },
-    class: { findMany: () => Promise.resolve([]) },
-    trial: { findMany: () => Promise.resolve([]) },
+    class: { findMany: (a: Row) => mockFind("class")(a) },
+    trial: { findMany: (a: Row) => mockFind("trial")(a) },
     $transaction: (ops: Promise<unknown>[]) => Promise.all(ops),
   };
   return { __esModule: true, default: db };
@@ -347,4 +347,142 @@ describe("the expert's list and the back office read what their queries select",
       expect(staffStatus(appointments[0]).label).toBe(word);
     },
   );
+});
+
+/** A paid trial holding its time, its pay window open or closed. */
+function storedTrial(open: boolean) {
+  return {
+    id: "t-1",
+    status: "AWAITING_PAYMENT",
+    notes: null,
+    requestedAt: later(-60_000),
+    completedAt: null,
+    pendingPaymentUrl: null,
+    paymentDueAt: open ? later(15 * 60_000) : later(-60_000),
+    consultantProfileId: "cp-1",
+    consulteeProfileId: "cee-1",
+    subscriptionPlan: {
+      id: "plan-1",
+      title: "Mentorship",
+      trialDurationMinutes: 30,
+      trialPriceInPaise: 10_000,
+      consultantProfile: expert,
+    },
+    consulteeProfile: learner,
+    appointment: wrapper({
+      appointmentType: "TRIAL",
+      occurrences: [occurrence(true)],
+      payment: [{ ...payment(open ? "live" : "lapsed") }],
+    }),
+  };
+}
+
+describe("a trial's own pay window decides its row", () => {
+  it("an open window is a Pay task; a closed one is Cancelled with no Pay, on the list and on Home", async () => {
+    const live = await learnerVms(() => {
+      mockRows.trial = [storedTrial(true)];
+    });
+    expect(appointmentStatusChip(live.vms[0], "consultee").label).toBe(
+      "Awaiting payment",
+    );
+    expect(live.vms[0].needsActionReason).toBe("PAY_NOW");
+
+    const lapsed = await learnerVms(() => {
+      mockRows.trial = [storedTrial(false)];
+    });
+    const [vm] = lapsed.vms;
+    expect(appointmentStatusChip(vm, "consultee").label).toBe("Cancelled");
+    expect(vm.bucket).toBe("cancelled");
+    expect(vm.pendingPaymentUrl).toBeNull();
+    expect(processAllEvents(lapsed.events, NOW)).toHaveLength(0);
+  });
+
+  it("the expert's list reads a closed trial window as Cancelled", () => {
+    const t = storedTrial(false);
+    const [vm] = mapConsultantAppointments(
+      {
+        consultantId: "cp-1",
+        appointments: [],
+        scheduledTrials: [t],
+      } as unknown as Parameters<typeof mapConsultantAppointments>[0],
+      NOW,
+    );
+    expect(appointmentStatusChip(vm, "consultant").label).toBe("Cancelled");
+    expect(vm.bucket).toBe("cancelled");
+  });
+});
+
+describe("a learner's lapsed seat stays Cancelled after the host completes the event", () => {
+  it("a held seat whose order lapsed is Cancelled, not Past, on a completed webinar", async () => {
+    const { vms } = await learnerVms(() => {
+      mockRows.webinar = [{ ...storedSeat("lapsed"), status: "COMPLETED" }];
+    });
+    expect(appointmentStatusChip(vms[0], "consultee").label).toBe("Cancelled");
+    expect(vms[0].bucket).toBe("cancelled");
+  });
+
+  it("a paid seat on a completed webinar is Past", async () => {
+    const { vms } = await learnerVms(() => {
+      mockRows.webinar = [{ ...storedSeat("paid"), status: "COMPLETED" }];
+    });
+    expect(vms[0].bucket).toBe("past");
+  });
+});
+
+describe("Home leaves out a hold that can no longer be paid", () => {
+  it("a lapsed pay-first 1:1 is not on Home; a live one is a Pay task", async () => {
+    const lapsed = await learnerVms(() => {
+      const { consultation, appointment } = storedConsultation(
+        "PENDING",
+        "lapsed",
+      );
+      mockRows.consultation = [{ ...consultation, appointment }];
+    });
+    expect(processAllEvents(lapsed.events, NOW)).toHaveLength(0);
+    const live = await learnerVms(() => {
+      const { consultation, appointment } = storedConsultation(
+        "PENDING",
+        "live",
+      );
+      mockRows.consultation = [{ ...consultation, appointment }];
+    });
+    expect(processAllEvents(live.events, NOW)[0]).toMatchObject({
+      needsActionReason: "PAY_NOW",
+    });
+  });
+});
+
+describe("sweep: the viewer's own facts before the host's or the clock's shortcut", () => {
+  it("a held unpaid seat on a completed webinar is Cancelled on the badge and the tab", async () => {
+    const { vms } = await learnerVms(() => {
+      mockRows.webinar = [{ ...storedSeat("live"), status: "COMPLETED" }];
+    });
+    expect(appointmentStatusChip(vms[0], "consultee").label).toBe("Cancelled");
+    expect(vms[0].bucket).toBe("cancelled");
+  });
+
+  it("the back office reads a pending order past its expiry as Cancelled", async () => {
+    reset();
+    const { consultation, appointment } = storedConsultation("PENDING", "live");
+    const expired = {
+      ...appointment,
+      payment: [{ ...payment("live"), expiresAt: later(-60_000) }],
+    };
+    mockRows.appointment = [{ ...expired, consultation }];
+    const { appointments } = await getStaffAppointments({
+      scope: { kind: "all" },
+    } as Parameters<typeof getStaffAppointments>[0]);
+    expect(staffStatus(appointments[0]).label).toBe("Cancelled");
+  });
+
+  it("a captured payment the status has not caught up with is not a Pay task", async () => {
+    const { vms } = await learnerVms(() => {
+      const { consultation, appointment } = storedConsultation(
+        "APPROVED_PENDING_PAYMENT",
+        "paid",
+      );
+      mockRows.consultation = [{ ...consultation, appointment }];
+    });
+    expect(vms[0].needsActionReason).not.toBe("PAY_NOW");
+  });
 });

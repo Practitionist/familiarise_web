@@ -80,6 +80,10 @@ export function staffStatus(appointment: StaffAppointment) {
       payLapsed:
         appointment.payment?.status === "EXPIRED" ||
         appointment.payment?.status === "FAILED",
+      payDeadline:
+        appointment.payment?.status === "PENDING"
+          ? appointment.payment.expiresAt
+          : undefined,
       eventView: true,
       reschedule: appointment.reschedule
         ? {
