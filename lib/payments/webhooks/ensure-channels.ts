@@ -1,7 +1,11 @@
 import prisma from "@/lib/prisma";
 import { paidParticipant } from "@/lib/booking/participants";
-import { addUserToEventChannel } from "@/lib/stream/event-channel-service";
+import {
+  type EventChannelGrants,
+  grantEventChannelMember,
+} from "@/lib/stream/event-channel-service";
 import { createDirectMessageChannel } from "@/actions/stream/chat/channel.action";
+import { DmNotPermittedError } from "@/lib/stream/dm-eligibility";
 import { streamLogger } from "@/lib/stream-logger";
 import { bookingOrgId } from "@/lib/stream-utils";
 import { addSeatHoldersToOpenCalls } from "@/lib/meetings/seat-call-members";
@@ -65,21 +69,30 @@ async function ensureChannelsForBuyers(args: {
   }
 
   const syncedBuyerIds: string[] = [];
+  const granted: EventChannelGrants = { appointmentId, userIds: [] };
   let incomplete = false;
   try {
     for (const userId of buyerIds) {
       if (eventChannelSpec) {
-        const joined = await addUserToEventChannel(
+        const joined = await grantEventChannelMember(
           eventChannelSpec.kind,
           eventChannelSpec.id,
           userId,
+          granted,
         );
         if (joined.success) syncedBuyerIds.push(userId);
         // A refused account is a deliberate skip; a missing member is retried by the sweep.
         if (joined.reason === "member_not_added") incomplete = true;
       }
       if (consultantUserId !== userId) {
-        await createDirectMessageChannel(consultantUserId, userId, dmOrgId);
+        try {
+          await createDirectMessageChannel(consultantUserId, userId, dmOrgId);
+        } catch (error) {
+          // One attendee's refused DM settles only that pair; the other attendees are still owed theirs.
+          if (!eventChannelSpec || !(error instanceof DmNotPermittedError)) {
+            throw error;
+          }
+        }
       }
     }
     if (eventChannelSpec && syncedBuyerIds.length > 0) {
@@ -96,7 +109,10 @@ async function ensureChannelsForBuyers(args: {
   } finally {
     if (eventChannelSpec) {
       // Runs even when a grant throws: a seat that ended after the roster read is taken back from chat, DMs and rooms.
-      await fenceSeatGrants(appointmentId, buyerIds);
+      await fenceSeatGrants(
+        appointmentId,
+        Array.from(new Set([...buyerIds, ...granted.userIds])),
+      );
     }
   }
   return incomplete ? "incomplete" : "ensured";

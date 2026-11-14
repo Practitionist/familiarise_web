@@ -191,16 +191,77 @@ async function tryAddToExistingChannel(
 /** Why a join did not land: Stream refused the account, or the user is still not a member. */
 export type EventChannelJoinFailure = "account_refused" | "member_not_added";
 
-export async function addUserToEventChannel(
-  eventType: EventType,
-  eventId: string,
-  userId: string,
-): Promise<{
+export interface EventChannelJoin {
   success: boolean;
   channelId: string;
   created?: boolean;
   reason?: EventChannelJoinFailure;
-}> {
+}
+
+/** The users a grant wrote, recorded before each write so a throw still leaves them to fence. */
+export interface EventChannelGrants {
+  appointmentId: string | null;
+  userIds: string[];
+}
+
+async function eventAppointmentId(
+  eventType: "webinar" | "class",
+  eventId: string,
+): Promise<string | null> {
+  const select = { appointment: { select: { id: true } } };
+  const row =
+    eventType === "webinar"
+      ? await prisma.webinar.findUnique({ where: { id: eventId }, select })
+      : await prisma.class.findUnique({ where: { id: eventId }, select });
+  return row?.appointment?.id ?? null;
+}
+
+/** Re-checks every seat a grant wrote and takes back any that ended meanwhile. Never throws. */
+export async function fenceEventChannelGrants(
+  eventType: EventType,
+  eventId: string,
+  granted: EventChannelGrants,
+): Promise<void> {
+  if (eventType !== "webinar" && eventType !== "class") return;
+  if (granted.userIds.length === 0) return;
+  try {
+    const appointmentId =
+      granted.appointmentId ?? (await eventAppointmentId(eventType, eventId));
+    if (!appointmentId) return;
+    // Loaded lazily: access-revocation imports this module.
+    const { fenceSeatGrants } = await import("@/lib/stream/access-revocation");
+    await fenceSeatGrants(appointmentId, Array.from(new Set(granted.userIds)));
+  } catch (error) {
+    streamLogger.warn("Could not fence event channel grants", {
+      eventType,
+      eventId,
+      users: granted.userIds.length,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+/** Adds the user to the event channel, then fences every seat the join wrote, even when a write throws. */
+export async function addUserToEventChannel(
+  eventType: EventType,
+  eventId: string,
+  userId: string,
+): Promise<EventChannelJoin> {
+  const granted: EventChannelGrants = { appointmentId: null, userIds: [] };
+  try {
+    return await grantEventChannelMember(eventType, eventId, userId, granted);
+  } finally {
+    await fenceEventChannelGrants(eventType, eventId, granted);
+  }
+}
+
+/** `addUserToEventChannel` without the fence; the caller fences `granted` once after all its writes. */
+export async function grantEventChannelMember(
+  eventType: EventType,
+  eventId: string,
+  userId: string,
+  granted: EventChannelGrants,
+): Promise<EventChannelJoin> {
   eventTypeSchema.parse(eventType);
   eventIdSchema.parse(eventId);
   userIdSchema.parse(userId);
@@ -232,6 +293,7 @@ export async function addUserToEventChannel(
   try {
     const channel = client.channel(channelType, channelId);
 
+    granted.userIds.push(userId);
     if (
       await tryAddToExistingChannel(
         channel,
@@ -258,6 +320,10 @@ export async function addUserToEventChannel(
     });
     const droppedIds = new Set(upsertResult?.droppedIds ?? []);
     const syncedMembers = allMembers.filter((id) => !droppedIds.has(id));
+    if ("appointmentId" in eventData) {
+      granted.appointmentId = eventData.appointmentId;
+    }
+    granted.userIds.push(...syncedMembers);
 
     const eventChannelData = {
       name,
@@ -305,12 +371,6 @@ export async function addUserToEventChannel(
     }
 
     await addRemainingMembers(channelWithData, syncedMembers);
-    if ("seatHolderIds" in eventData && eventData.appointmentId) {
-      // A seat that ended between the roster read and the create is taken back.
-      const { fenceSeatGrants } =
-        await import("@/lib/stream/access-revocation");
-      await fenceSeatGrants(eventData.appointmentId, eventData.seatHolderIds);
-    }
 
     const roleAssignments = Array.from(
       new Set([
@@ -473,7 +533,6 @@ function buildGroupEventData(
     members,
     moderatorIds,
     appointmentId: appointment?.id ?? null,
-    seatHolderIds: appointment?.participants.map((p) => p.userId) ?? [],
     name: plan.title,
     organizationId,
   };

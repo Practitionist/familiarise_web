@@ -61,6 +61,8 @@ jest.mock("../../actions/stream/chat/channel.action", () => ({
 jest.mock("../../lib/stream/event-channel-service", () => ({
   addUserToEventChannel: (...args: unknown[]) =>
     mockAddUserToEventChannel(...args),
+  grantEventChannelMember: (type: string, id: string, userId: string) =>
+    mockAddUserToEventChannel(type, id, userId),
 }));
 
 describe("DM eligibility rules and channel provisioning", () => {

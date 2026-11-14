@@ -18,7 +18,9 @@ const mockState: {
   adds: string[];
   onAdd: (ids: string[]) => void;
   onCreate: () => void;
+  failRemainder: boolean;
 } = {
+  failRemainder: false,
   channelExists: true,
   meetings: [],
   adds: [],
@@ -65,6 +67,9 @@ jest.mock("@/lib/stream-client", () => ({
     channel: (_type: string, _id: string, data?: { members?: unknown[] }) => ({
       addMembers: async (spec: unknown[]) => {
         if (!mockState.channelExists) throw new Error("channel not found");
+        if (mockState.failRemainder && spec.length > 1) {
+          throw new Error("429 rate limited");
+        }
         const ids = memberIds(spec);
         mockState.onAdd(ids);
         mockState.adds.push(...ids);
@@ -196,15 +201,21 @@ function arrange(kind: "WEBINAR" | "CLASS", seats: Row[]) {
   );
   mockEventFindUnique.mockImplementation(
     async (args: {
+      select?: unknown;
       include: { appointment: { include: { participants: { where: Where } } } };
-    }) => ({
-      ...event,
-      appointment: {
-        id: "appt-1",
-        organizationId: null,
-        participants: pick(args.include.appointment.include.participants.where),
-      },
-    }),
+    }) =>
+      args.select
+        ? { appointment: { id: "appt-1" } }
+        : {
+            ...event,
+            appointment: {
+              id: "appt-1",
+              organizationId: null,
+              participants: pick(
+                args.include.appointment.include.participants.where,
+              ),
+            },
+          },
   );
   mockAppointmentFindUnique.mockImplementation(
     async (args: { select: { participants?: { where: Where } } }) => {
@@ -250,6 +261,7 @@ describe("event chat and call membership follows seats holding access", () => {
     mockState.adds = [];
     mockState.onAdd = () => undefined;
     mockState.onCreate = () => undefined;
+    mockState.failRemainder = false;
     mockAppointmentUpdateMany.mockResolvedValue({ count: 1 });
   });
 
@@ -347,7 +359,7 @@ describe("event chat and call membership follows seats holding access", () => {
       for (const ended of ENDED) expect(mockChat).not.toContain(ended);
     },
   );
-  it("a refused host DM still runs the fence, so a seat that ended mid-sync is taken back", async () => {
+  it("a refused host DM takes back the ended seat and still provisions the other attendees", async () => {
     const seats = seatsWith(pay());
     arrange("WEBINAR", seats);
     mockState.meetings = [];
@@ -360,11 +372,15 @@ describe("event chat and call membership follows seats holding access", () => {
       },
     );
 
-    await expect(ensureChannelsForAppointment("appt-1")).rejects.toThrow(
-      DmNotPermittedError,
-    );
+    await expect(ensureChannelsForAppointment("appt-1")).resolves.toEqual({
+      ensured: true,
+    });
 
-    expect(mockChat).not.toContain("stays");
+    expect([...mockChat]).toEqual(["newcomer"]);
+    expect(mockCreateDirectMessageChannel.mock.calls.map((c) => c[1])).toEqual([
+      "stays",
+      "newcomer",
+    ]);
     expect(mockIntentCreateMany).toHaveBeenCalledWith({
       data: [expect.objectContaining({ userId: "stays", planId: "appt-1" })],
       skipDuplicates: true,
@@ -424,5 +440,57 @@ describe("event chat and call membership follows seats holding access", () => {
     await addUserToEventChannel("class", "event-1", "newcomer");
 
     expect([...mockChat].sort()).toEqual(["collab", "host", "newcomer"]);
+  });
+  it("a first join whose remainder add throws still takes back an ended seat from the first chunk", async () => {
+    const seats = [
+      ...seatsWith(pay()),
+      ...Array.from({ length: 120 }, (_, i) =>
+        seat(`extra-${i}`, "CONFIRMED", pay()),
+      ),
+    ];
+    arrange("WEBINAR", seats);
+    mockState.channelExists = false;
+    mockState.onCreate = endSeat(seats, "stays");
+    mockState.failRemainder = true;
+
+    await expect(
+      addUserToEventChannel("webinar", "event-1", "newcomer"),
+    ).rejects.toThrow("429");
+
+    expect(mockChat).not.toContain("stays");
+    expect(mockIntentCreateMany).toHaveBeenCalledWith({
+      data: [expect.objectContaining({ userId: "stays", planId: "appt-1" })],
+      skipDuplicates: true,
+    });
+  });
+
+  it("a chat open by someone whose seat already ended takes them back out of the new channel", async () => {
+    arrange("WEBINAR", seatsWith(pay()));
+    mockState.channelExists = false;
+
+    await addUserToEventChannel("webinar", "event-1", "left");
+
+    expect([...mockChat].sort()).toEqual([
+      "collab",
+      "host",
+      "newcomer",
+      "stays",
+    ]);
+  });
+
+  it("a chat open into an existing channel takes the caller back when their seat ends meanwhile", async () => {
+    const seats = seatsWith(pay());
+    arrange("CLASS", seats);
+    mockState.onAdd = (ids) => {
+      if (ids.includes("stays")) endSeat(seats, "stays")();
+    };
+
+    await addUserToEventChannel("class", "event-1", "stays");
+
+    expect(mockChat).not.toContain("stays");
+    expect(mockIntentCreateMany).toHaveBeenCalledWith({
+      data: [expect.objectContaining({ userId: "stays", planId: "appt-1" })],
+      skipDuplicates: true,
+    });
   });
 });
