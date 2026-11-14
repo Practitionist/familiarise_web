@@ -190,6 +190,7 @@ function ScheduleBody({
         zone,
         {
           sessionsPerWeek,
+          counts: (row) => !isDeadOccurrence(row.vm),
         },
       ),
     [live, zone, sessionsPerWeek],
@@ -303,7 +304,7 @@ function ScheduleBody({
                         </span>
                       ) : w.short && sessionsPerWeek ? (
                         <span className="font-normal normal-case tracking-normal text-amber-700 dark:text-amber-400">
-                          · {w.sessions.length} of {sessionsPerWeek} this week
+                          · {w.counted} of {sessionsPerWeek} this week
                         </span>
                       ) : null}
                     </h3>

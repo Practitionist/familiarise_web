@@ -175,6 +175,8 @@ export async function readAppointmentDetail(appointmentId: string) {
       trial: {
         include: {
           consulteeProfile: consulteeProfileSelect,
+          // The trial's delivering expert, who answers its reschedules.
+          consultantProfile: consultantProfileSelect,
           subscriptionPlan: {
             include: { consultantProfile: consultantProfileSelect },
           },

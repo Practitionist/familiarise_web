@@ -49,11 +49,15 @@ export default function AppointmentsPageClient({
         {isLoading && !eventsData ? (
           <AppointmentsPageSkeleton />
         ) : error ? (
-          <ErrorState
-            title="Couldn't load appointments"
-            error={error}
-            onRetry={() => void refetch()}
-          />
+          <>
+            {/* The alerts read their own endpoints, so they stay usable. */}
+            <MyAlerts viewerZone={viewerZone} />
+            <ErrorState
+              title="Couldn't load appointments"
+              error={error}
+              onRetry={() => void refetch()}
+            />
+          </>
         ) : (
           <DisplayZoneProvider zone={viewerZone.zone}>
             <AppointmentsShell

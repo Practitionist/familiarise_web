@@ -8,6 +8,7 @@
 import { staffStatus } from "@/components/dashboard/shared/OperatorAppointmentsClient";
 import { bookingStatus } from "@/lib/appointments/booking-status";
 import { deriveBucket } from "@/lib/appointments/bucket";
+import { buildScheduleModel } from "@/lib/appointments/session-schedule";
 import { appointmentStatusChip } from "@/lib/appointments/occurrences";
 import { viewerSeatReleased } from "@/lib/appointments/presentation-input";
 import { seatLapsedOrReleased } from "@/lib/appointments/status";
@@ -138,5 +139,28 @@ describe("the one status on every surface", () => {
       },
     } as unknown as TAppointmentDetail;
     expect(viewerSeatReleased(detail, "u1")).toBe(true);
+  });
+
+  it("a plan is not Completed while it runs, even when its placed sessions are held", () => {
+    const held = { live: 2, allTentative: false, done: true };
+    const plan = { kind: "SUBSCRIPTION", status: "APPROVED", sessions: held };
+    expect(bookingStatus(plan, "CONSULTEE").label).toBe("Confirmed");
+    expect(bookingStatus({ ...plan, planEnded: true }, "CONSULTEE").label).toBe(
+      "Completed",
+    );
+  });
+
+  it("a cancelled session is listed in its week but does not count toward it", () => {
+    const at = (h: number) => new Date(Date.UTC(2026, 10, 16, h));
+    const rows = [
+      { key: "a", startsAt: at(9), endsAt: at(10), cancelled: false },
+      { key: "b", startsAt: at(12), endsAt: at(13), cancelled: true },
+    ];
+    const model = buildScheduleModel(rows, "UTC", {
+      sessionsPerWeek: 2,
+      counts: (r) => !r.cancelled,
+    });
+    expect(model.weeks[0]).toMatchObject({ counted: 1, short: true });
+    expect(model.weeks[0].sessions).toHaveLength(2);
   });
 });

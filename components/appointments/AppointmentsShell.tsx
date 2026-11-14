@@ -241,10 +241,10 @@ export function AppointmentsShell({
     },
     [viewer],
   );
-  const setView = (value: View) => {
+  const setView = useCallback((value: View) => {
     setLocalView(value);
     replaceQueryParam("view", value);
-  };
+  }, []);
   const [sheetVm, setSheetVm] = useState<AppointmentVM | null>(null);
   const [chatTarget, setChatTarget] = useState<AppointmentChatTarget | null>(
     null,
@@ -345,6 +345,14 @@ export function AppointmentsShell({
     );
   }, [vms]);
 
+  // The count is over every booking, so its tab opens as a list with no filter hiding them.
+  const openNeedsAction = useCallback(() => {
+    setTypeFilter("ALL");
+    setSearch("");
+    setDateRange({ from: "", to: "" });
+    setView("list");
+    setTab("needsAction");
+  }, [setTab, setView]);
   const stats: HeroStat[] = useMemo(() => {
     const weekEnd = Date.now() + 7 * 86_400_000;
     const thisWeek = vms.filter(
@@ -361,10 +369,10 @@ export function AppointmentsShell({
       {
         value: needsAction,
         label: "need action",
-        onSelect: () => setTab("needsAction"),
+        onSelect: openNeedsAction,
       },
     ];
-  }, [vms, setTab]);
+  }, [vms, openNeedsAction]);
 
   // Row/hero/calendar click → the summary Sheet. Track by id so the sheet
   // re-renders fresh data after a mutation invalidates the list query.

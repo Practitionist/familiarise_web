@@ -37,7 +37,9 @@ export interface ScheduleWeek<T extends ScheduleSessionInput> {
   firstDay: string;
   lastDay: string;
   sessions: ScheduleSession<T>[];
-  /** Fewer sessions than the plan's weekly count (only when one is given). */
+  /** Sessions that count toward the week (a cancelled one is listed, not counted). */
+  counted: number;
+  /** Fewer counted sessions than the plan's weekly count (only when one is given). */
   short: boolean;
 }
 
@@ -67,7 +69,11 @@ function addDays(day: string, days: number): string {
 export function buildScheduleModel<T extends ScheduleSessionInput>(
   input: readonly T[],
   zone: string,
-  opts: { sessionsPerWeek?: number | null } = {},
+  opts: {
+    sessionsPerWeek?: number | null;
+    /** Whether a session counts toward its week; all do when omitted. */
+    counts?: (session: T) => boolean;
+  } = {},
 ): ScheduleModel<T> {
   const sorted = [...input].sort(
     (a, b) => a.startsAt.getTime() - b.startsAt.getTime(),
@@ -99,15 +105,18 @@ export function buildScheduleModel<T extends ScheduleSessionInput>(
         firstDay: addDays(first, (w - 1) * 7),
         lastDay: addDays(first, (w - 1) * 7 + 6),
         sessions: [],
+        counted: 0,
         short: false,
       });
     }
     for (const s of sessions) {
-      weeks[Math.floor(dayDiff(first, s.localDay) / 7)].sessions.push(s);
+      const week = weeks[Math.floor(dayDiff(first, s.localDay) / 7)];
+      week.sessions.push(s);
+      if (!opts.counts || opts.counts(s.session)) week.counted += 1;
     }
     const perWeek = opts.sessionsPerWeek ?? 0;
     if (perWeek > 0) {
-      for (const w of weeks) w.short = w.sessions.length < perWeek;
+      for (const w of weeks) w.short = w.counted < perWeek;
     }
   }
 

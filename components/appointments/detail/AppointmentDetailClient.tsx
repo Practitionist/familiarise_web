@@ -580,6 +580,7 @@ export function AppointmentDetailClient({
       ?.userId ??
     detail.appointment.subscription?.subscriptionPlan?.consultantProfile
       ?.userId ??
+    detail.appointment.trial?.consultantProfile?.userId ??
     detail.appointment.trial?.subscriptionPlan?.consultantProfile?.userId;
   let viewerSide: RescheduleSide | null = null;
   if (viewerId && viewerId === requesterUserId) viewerSide = "CONSULTEE";
@@ -855,7 +856,9 @@ export function AppointmentDetailClient({
       {classControls && classActions.notices && (
         <div className="mb-4">{classActions.notices}</div>
       )}
-      {hasConfirmedSessions || hasTentativeSessions ? (
+      {hasConfirmedSessions ||
+      hasTentativeSessions ||
+      vm.occurrences.some((o) => classCancelledNote(o) !== null) ? (
         <SessionSchedule
           renderSessionExtra={(session) => {
             // The host side sees who attended each session.
