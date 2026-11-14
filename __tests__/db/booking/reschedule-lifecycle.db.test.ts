@@ -70,10 +70,9 @@ const post = (
     { params: Promise.resolve({ appointmentId }) },
   );
 
-async function paidConsultation() {
+async function paidConsultation(startsAt = hoursAhead(24 * 5)) {
   const host = await seedHost();
   const buyer = await seedConsultee();
-  const startsAt = hoursAhead(24 * 5);
   const booking = await seedOneToOne(
     "consultation",
     host,
@@ -249,24 +248,78 @@ describe("1:1 reschedule lifecycle on the database", () => {
     expect(fourth.status).toBe(200);
   });
 
-  it("refuses new times inside 24 hours, and an unpaid approval with a live pay link", async () => {
+  it("a new time inside 24 hours waits for acceptance; under the acceptance lead, or with a live pay link, it is refused", async () => {
+    const hourAt = (at: Date) =>
+      [0, 1].map((half) => ({
+        startsAt: new Date(at.getTime() + half * 30 * 60_000).toISOString(),
+        endsAt: new Date(at.getTime() + (half + 1) * 30 * 60_000).toISOString(),
+      }));
+
+    // A time 3 hours away is a request the other side answers, never a move.
     const { booking } = await paidConsultation();
-    const soon = hoursAhead(3);
+    const soon = await post(reschedule, "/reschedule", booking.appointmentId, {
+      proposedSlots: hourAt(hoursAhead(3)),
+    });
+    expect(soon.status).toBe(200);
+    expect(await soon.json()).toMatchObject({
+      autoConfirmed: false,
+      autoConfirmReason: "NEEDS_ACCEPTANCE",
+      outcome: "AWAITING_ANSWER",
+    });
+    const waiting = await bookingState(
+      booking.appointmentId,
+      booking.consultationId!,
+    );
+    expect(waiting.requests).toEqual([
+      expect.objectContaining({
+        status: "PENDING_REVIEW",
+        openForAppointmentId: booking.appointmentId,
+      }),
+    ]);
+    expect(waiting.occurrences).toEqual([
+      { completionStatus: "RESCHEDULED", isTentative: true },
+    ]);
+
+    // A session itself inside 24 hours: the proposal lapses 15 minutes before it.
+    const near = await paidConsultation(hoursAhead(6));
+    const nearRes = await post(
+      reschedule,
+      "/reschedule",
+      near.booking.appointmentId,
+      { proposedSlots: hourAt(hoursAhead(30)) },
+    );
+    expect(nearRes.status).toBe(200);
+    const nearRequest = await prisma.rescheduleRequest.findFirstOrThrow({
+      where: { appointmentId: near.booking.appointmentId },
+      select: { status: true, expiresAt: true },
+    });
+    expect(nearRequest.status).toBe("PENDING_REVIEW");
+    expect(nearRequest.expiresAt?.getTime()).toBe(
+      near.startsAt.getTime() - 15 * 60_000,
+    );
+
+    // A paid booking's proposed time still needs the 15-minute acceptance lead.
+    const late = await paidConsultation();
     const tooSoon = await post(
       reschedule,
       "/reschedule",
-      booking.appointmentId,
+      late.booking.appointmentId,
       {
-        proposedSlots: [0, 1].map((half) => ({
-          startsAt: new Date(soon.getTime() + half * 30 * 60_000).toISOString(),
-          endsAt: new Date(
-            soon.getTime() + (half + 1) * 30 * 60_000,
-          ).toISOString(),
-        })),
+        proposedSlots: hourAt(
+          new Date(Math.ceil((Date.now() + 5 * 60_000) / 60_000) * 60_000),
+        ),
       },
     );
     expect(tooSoon.status).toBe(400);
     expect((await tooSoon.json()).code).toBe("PROPOSAL_TOO_SOON");
+    expect(
+      (
+        await bookingState(
+          late.booking.appointmentId,
+          late.booking.consultationId!,
+        )
+      ).requests,
+    ).toEqual([]);
 
     const host = await seedHost();
     const buyer = await seedConsultee();
