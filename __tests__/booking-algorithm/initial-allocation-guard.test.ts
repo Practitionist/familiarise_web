@@ -10,6 +10,7 @@
  */
 
 import "./setup";
+import fs from "fs";
 
 // Mock prisma (relative path required — @/ aliases fail in jest.mock)
 jest.mock("../../lib/prisma", () => ({
@@ -213,6 +214,18 @@ describe("a consultation that already has a time (server-derived)", () => {
       );
       expect(mockPrisma.$transaction).not.toHaveBeenCalled();
     },
+  );
+});
+
+it("the allocate page and the grid's refusal toast use the same sentence", () => {
+  const read = (rel: string) => fs.readFileSync(rel, "utf8");
+  const page = read(
+    "app/dashboard/consultant/[consultantId]/(features)/requests/[requestId]/allocate/page.tsx",
+  );
+  expect(page).toContain("{ALREADY_SCHEDULED_COPY}");
+  expect(page).toContain("/reschedule`}");
+  expect(read("hooks/scheduling/useScheduling.ts")).toMatch(
+    /eventType === "consultation"\s*\?\s*alreadyScheduled\(\)/,
   );
 });
 

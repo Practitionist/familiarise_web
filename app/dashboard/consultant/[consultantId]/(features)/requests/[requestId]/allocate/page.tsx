@@ -9,6 +9,8 @@ import {
   RESCHEDULE_OPEN_STATUSES,
 } from "@/lib/booking/transitions";
 import { readAllocationRequest } from "@/lib/data/allocation-request";
+import { isDeadOccurrence } from "@/lib/appointments/occurrences";
+import { ALREADY_SCHEDULED_COPY } from "@/lib/scheduling/allocationMessages";
 import { getViewerZone } from "@/lib/time/viewer-zone-server";
 import { isEventIdFormat } from "@/schemas/slotAllocation/validationSchemas";
 
@@ -166,6 +168,32 @@ export default async function AllocateSlotsPage({
               : "It was cancelled, declined, or expired."}{" "}
             <a className="underline" href={backHref}>
               Back to requests
+            </a>
+          </p>
+        </div>
+      </DashboardViewportFill>
+    );
+  }
+
+  // The allocator refuses a consultation with a confirmed live session, so
+  // the grid is never offered for one.
+  const scheduledAppointmentId =
+    request.eventType === "consultation"
+      ? request.slots.find(
+          (slot) => !slot.isTentative && !isDeadOccurrence(slot),
+        )?.appointmentId
+      : null;
+  if (scheduledAppointmentId) {
+    return (
+      <DashboardViewportFill className="gap-4">
+        <div className="shrink-0 rounded-lg border border-border bg-card p-6">
+          <h1 className="text-lg font-semibold">{ALREADY_SCHEDULED_COPY}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            <a
+              className="underline"
+              href={`/dashboard/consultant/${encodeURIComponent(consultantId)}/appointments/${encodeURIComponent(scheduledAppointmentId)}/reschedule`}
+            >
+              Reschedule
             </a>
           </p>
         </div>

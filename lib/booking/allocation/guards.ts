@@ -15,6 +15,7 @@ import type { AppointmentWithSlots } from "@/lib/booking/allocation/types";
 import { tentativeSlotCountOf } from "@/lib/booking/allocation/counts";
 import { findIdempotentAllocation } from "@/lib/booking/allocation/idempotency";
 import { liveParticipant } from "@/lib/booking/participants";
+import { ALREADY_SCHEDULED_COPY } from "@/lib/scheduling/allocationMessages";
 
 /**
  * The allocation transaction's first statement: an advisory xact lock per
@@ -81,9 +82,6 @@ export async function assertNoConfirmedSlots(
     );
   }
 }
-
-export const ALREADY_SCHEDULED_COPY =
-  "This booking already has a time. Use Reschedule to move it.";
 
 /**
  * Whether the allocation must find no confirmed session. A consultation with

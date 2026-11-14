@@ -46,6 +46,7 @@ import {
   allocationFailed,
   allocationFailedWithCode,
   allocatedElsewhere,
+  alreadyScheduled,
   requestChangedElsewhere,
   rateLimited,
   schedulingDayBucket,
@@ -688,7 +689,13 @@ export function useEventSlotAllocation(
           toast(rateLimited());
           break;
         case "allocated-elsewhere":
-          toast(allocatedElsewhere());
+          // A consultation refuses any allocation once it has a confirmed time;
+          // for other events the code means a stale tab lost the race.
+          toast(
+            eventType === "consultation"
+              ? alreadyScheduled()
+              : allocatedElsewhere(),
+          );
           onConflict?.();
           break;
         case "request-changed":
@@ -749,6 +756,7 @@ export function useEventSlotAllocation(
     },
     [
       toast,
+      eventType,
       onConflict,
       onStaleData,
       onRequestChanged,
