@@ -35,6 +35,7 @@ const LIST_OCCURRENCE_SELECT = {
   endsAt: true,
   isTentative: true,
   completionStatus: true,
+  outcome: true,
   deletedAt: true,
   meeting: { select: { endedAt: true, endedReason: true } },
 } satisfies Prisma.AppointmentOccurrenceSelect;

@@ -19,6 +19,7 @@ import { errorMessageFromBody } from "@/lib/fetch-helpers";
 import {
   bookingStatus,
   bookingStatusBadge,
+  type OpenRescheduleInput,
 } from "@/lib/appointments/booking-status";
 import { humanizeEnum } from "@/lib/ui/tone";
 import { formatCurrencyAmount } from "@/utils/formatting";
@@ -48,6 +49,9 @@ export interface OrgActorDetailProps {
     title: string;
     kind: AppointmentsType;
     status: AppointmentStatus | null;
+    /** DIRECT_CHECKOUT or REQUEST_SUBMITTED for a 1:1 or plan. */
+    source?: string | null;
+    reschedule?: OpenRescheduleInput | null;
     expertName: string | null;
     learnerName: string | null;
     /** The delivering expert and one session's length, for the allocate picker. */
@@ -168,7 +172,15 @@ export function OrgActorDetail({
   const acting = ((canCancel || canReschedule) && !opsHref) || showAllocate;
   const status = meta.status
     ? bookingStatusBadge(
-        bookingStatus({ kind: meta.kind, status: meta.status }, "ORG_ADMIN"),
+        bookingStatus(
+          {
+            kind: meta.kind,
+            status: meta.status,
+            source: meta.source,
+            reschedule: meta.reschedule,
+          },
+          "ORG_ADMIN",
+        ),
       )
     : null;
 

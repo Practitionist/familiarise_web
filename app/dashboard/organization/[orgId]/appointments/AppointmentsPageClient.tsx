@@ -44,7 +44,11 @@ import {
   ScopedListTable,
   type Column,
 } from "@/components/dashboard/ScopedListTable";
-import { isDeadOccurrence } from "@/lib/appointments/occurrences";
+import {
+  isDeadOccurrence,
+  isDeliberateEnd,
+  isOccurrenceHeld,
+} from "@/lib/appointments/occurrences";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { humanizeEnum, type Tone } from "@/lib/ui/tone";
 import {
@@ -58,7 +62,9 @@ interface AppointmentSlot {
   endsAt: string | null;
   isTentative: boolean;
   completionStatus: string | null;
+  outcome?: string | null;
   deletedAt?: string | null;
+  meeting?: { endedAt: string | null; endedReason: string | null } | null;
 }
 
 interface AppointmentRow {
@@ -166,6 +172,12 @@ function displaySlot(slots: AppointmentSlot[]): AppointmentSlot | null {
 /** The row's one booking status, as the organisation sees it. */
 function rowStatus(row: AppointmentRow): { label: string; tone: Tone } {
   const live = row.occurrences.filter((o) => !isDeadOccurrence(o));
+  // Completed by evidence (a recorded outcome or a host-ended call), never the clock.
+  const done =
+    live.length > 0 &&
+    live.every((o) => isOccurrenceHeld(o) || isDeliberateEnd(o.meeting));
+  const timePassed = (o: AppointmentSlot) =>
+    new Date(o.endsAt ?? o.startsAt).getTime() < Date.now();
   const { label, tone } = bookingStatus(
     {
       kind: row.appointmentType,
@@ -179,11 +191,8 @@ function rowStatus(row: AppointmentRow): { label: string; tone: Tone } {
       sessions: {
         live: live.length,
         allTentative: live.length > 0 && live.every((o) => o.isTentative),
-        done:
-          live.length > 0 &&
-          live.every(
-            (o) => new Date(o.endsAt ?? o.startsAt).getTime() < Date.now(),
-          ),
+        done,
+        awaitingOutcome: !done && live.length > 0 && live.every(timePassed),
       },
     },
     "ORG_ADMIN",

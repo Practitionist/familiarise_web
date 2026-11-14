@@ -491,6 +491,7 @@ function statusFacts(
         live.length > 0 &&
         live.every((o) => isOccurrencePastGrace(o, now)),
     },
+    planEnded: !!input.entitlement?.planEnded,
     planWait: allocationWait(input, live, paid, now),
     allocateBy: allocateDeadline(input.payments),
     nextBatch: input.entitlement?.nextBatch ?? 0,

@@ -83,6 +83,9 @@ function homeStatusBadge(appointment: TAppointment) {
       {
         kind: appointment.appointmentType,
         status: getAppointmentLifecycleStatus(appointment),
+        source:
+          appointment.consultation?.bookingSource ??
+          appointment.subscription?.bookingSource,
       },
       "CONSULTANT",
     ),

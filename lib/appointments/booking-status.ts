@@ -94,6 +94,8 @@ export interface BookingStatusFacts {
     /** Every session's time has passed with no outcome recorded yet. */
     awaitingOutcome?: boolean;
   };
+  /** A plan's end has passed; until then held sessions never complete the plan. */
+  planEnded?: boolean;
   /** A paid plan waiting for its first or its next placement. */
   planWait?: "CYCLE_1" | "NEXT_CYCLE" | null;
   allocateBy?: Date | string | null;
@@ -246,7 +248,10 @@ function stageOf(
     if (sessions.allTentative) {
       return { stage: f.paid ? "CONFIRMED" : "AWAITING_PAYMENT" };
     }
-    if (sessions.done) return { stage: "COMPLETED" };
+    // A plan completes at its stored end or its plan end, not when the placed sessions are held.
+    if (sessions.done && (kind !== "SUBSCRIPTION" || f.planEnded)) {
+      return { stage: "COMPLETED" };
+    }
   }
   return { stage: "CONFIRMED" };
 }
