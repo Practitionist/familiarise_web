@@ -4,7 +4,10 @@ import { notFound, redirect } from "next/navigation";
 
 import { DashboardViewportFill } from "@/components/dashboard/DashboardViewportFill";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
-import { ALLOCATION_APPROVABLE_FROM } from "@/lib/booking/transitions";
+import {
+  ALLOCATION_APPROVABLE_FROM,
+  RESCHEDULE_OPEN_STATUSES,
+} from "@/lib/booking/transitions";
 import { readAllocationRequest } from "@/lib/data/allocation-request";
 import { getViewerZone } from "@/lib/time/viewer-zone-server";
 import { isEventIdFormat } from "@/schemas/slotAllocation/validationSchemas";
@@ -163,6 +166,48 @@ export default async function AllocateSlotsPage({
               : "It was cancelled, declined, or expired."}{" "}
             <a className="underline" href={backHref}>
               Back to requests
+            </a>
+          </p>
+        </div>
+      </DashboardViewportFill>
+    );
+  }
+
+  // The expert's own release of a paid session without times is answered with
+  // proposed times, never placed here (the allocator refuses it).
+  const bareExpertRelease = request.hasReleasedSlots
+    ? await prisma.rescheduleRequest.findFirst({
+        where: {
+          status: { in: RESCHEDULE_OPEN_STATUSES },
+          initiatorRole: "CONSULTANT",
+          proposedTimes: { none: {} },
+          appointment: {
+            ...(request.eventType === "consultation"
+              ? { consultationId: requestId }
+              : { subscriptionId: requestId }),
+            payment: { some: { paymentStatus: "SUCCEEDED", deletedAt: null } },
+          },
+        },
+        select: { appointmentId: true },
+      })
+    : null;
+  if (bareExpertRelease) {
+    return (
+      <DashboardViewportFill className="gap-4">
+        <div className="shrink-0 rounded-lg border border-border bg-card p-6">
+          <h1 className="text-lg font-semibold">
+            Propose new times so your client can accept one
+          </h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            You released this session without proposing times, so it can&apos;t
+            be placed here. Open the booking, withdraw your request, then
+            propose new times; if your client doesn&apos;t accept, the session
+            keeps its original time.{" "}
+            <a
+              className="underline"
+              href={`/dashboard/consultant/${encodeURIComponent(consultantId)}/appointments/${encodeURIComponent(bareExpertRelease.appointmentId)}`}
+            >
+              Open the booking
             </a>
           </p>
         </div>
