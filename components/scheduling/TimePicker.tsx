@@ -403,7 +403,7 @@ export function TimePicker({
               key: "notice",
               label: "Moves",
               value: `within ${RESCHEDULE_MIN_LEAD_HOURS} h only if accepted · not refunded`,
-              title: `A move from or to a time within ${RESCHEDULE_MIN_LEAD_HOURS} hours happens only if the other person accepts it before the session starts. Rescheduling is not refunded.`,
+              title: `A move from or to a time within ${RESCHEDULE_MIN_LEAD_HOURS} hours happens only if the other person accepts it at least 15 minutes before the session starts. Rescheduling is not refunded.`,
             },
           ]
         : []),

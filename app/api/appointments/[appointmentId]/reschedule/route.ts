@@ -98,10 +98,7 @@ import {
   spansPlanWeeks,
 } from "@/lib/booking/release-weeks";
 import { bookingTransaction } from "@/lib/db/booking-transaction";
-import {
-  SETTLED_CONSULTATION,
-  SETTLED_SUBSCRIPTION,
-} from "@/lib/booking/approve-request";
+import { bookingSettled } from "@/lib/booking/settled";
 
 const RESCHEDULE_REALLOCATION_BUFFER_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -571,7 +568,7 @@ async function requestReschedule(
             if (!proposedSlots?.length) {
               throw Object.assign(
                 new Error(
-                  "This session starts within 24 hours. To move it, propose new times; the other person has to accept one before the session starts.",
+                  "This session starts within 24 hours. To move it, propose new times; the other person has to accept one at least 15 minutes before the session starts.",
                 ),
                 { httpStatus: 409, code: "RESCHEDULE_WINDOW" },
               );
@@ -583,20 +580,10 @@ async function requestReschedule(
           const settled =
             !agreedShortNotice ||
             !proposedSlots?.length ||
-            (appointment.consultation
-              ? (await tx.consultation.count({
-                  where: {
-                    id: appointment.consultation.id,
-                    ...SETTLED_CONSULTATION,
-                  },
-                })) > 0
-              : !appointment.subscription ||
-                (await tx.subscription.count({
-                  where: {
-                    id: appointment.subscription.id,
-                    ...SETTLED_SUBSCRIPTION,
-                  },
-                })) > 0);
+            (await bookingSettled(tx, {
+              consultationId: appointment.consultation?.id,
+              subscriptionId: appointment.subscription?.id,
+            }));
           if (
             proposedSlots?.some((s) =>
               isTooSoonFor(
@@ -926,7 +913,7 @@ async function requestReschedule(
               slotsToReschedule.map((s) => new Date(s.startsAt)),
             );
             if (!expiresAt) {
-              // The gate above refuses a started session, so this is drift.
+              // A short-notice move must be answerable before the join window opens.
               throw Object.assign(
                 new Error(
                   "This session is too close to propose a new time for.",

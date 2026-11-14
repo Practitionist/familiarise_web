@@ -20,12 +20,15 @@ export function RescheduleClient({
   title,
   typeLabel,
   subject,
+  settled,
   backHref,
 }: Readonly<{
   appointmentId: string;
   title: string;
   typeLabel: BookingTypeLabel;
   subject: TimePickerSubject;
+  /** Paid or free; an unpaid booking's new times need the 2-hour lead. */
+  settled: boolean;
   backHref: string;
 }>) {
   const router = useRouter();
@@ -47,26 +50,29 @@ export function RescheduleClient({
     router.refresh();
   };
 
-  const policy = rescheduleConsulteePolicy({
-    onSubmit: async ({
-      slotIds,
-      proposedSlots,
-      preference,
-      displayZone,
-      idempotencyKey,
-    }) => {
-      const moved = await actions.handleReschedule(
+  const policy = rescheduleConsulteePolicy(
+    {
+      onSubmit: async ({
         slotIds,
         proposedSlots,
         preference,
         displayZone,
         idempotencyKey,
-      );
-      // A failure keeps the page (and the user's selection) so they can retry;
-      // the hook has already explained why in a toast.
-      if (moved) goBack();
+      }) => {
+        const moved = await actions.handleReschedule(
+          slotIds,
+          proposedSlots,
+          preference,
+          displayZone,
+          idempotencyKey,
+        );
+        // A failure keeps the page (and the user's selection) so they can retry;
+        // the hook has already explained why in a toast.
+        if (moved) goBack();
+      },
     },
-  });
+    { settled },
+  );
 
   return (
     <TimePicker

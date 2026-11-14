@@ -203,18 +203,20 @@ export function allocatePolicy(
  */
 export function rescheduleConsulteePolicy(
   handlers: PolicyHandlers,
+  { settled }: { settled: boolean },
 ): TimePickerPolicy {
   return {
     kind: "RESCHEDULE_CONSULTEE",
     minLeadHours: 0,
-    lead: { purpose: "allocate" },
+    // The lead the server's proposal check uses: 2 hours while unpaid.
+    lead: { purpose: "allocate", unpaid: !settled },
     showReleasedSlots: true,
     submitLabel: "Request this time",
     allowReleaseWithoutTime: true,
     calendarMode: "select",
     appliesInitialAllocationGuard: false,
     pickerHint: `Green means your expert is free. A green time at least ${RESCHEDULE_MIN_LEAD_HOURS} hours away confirms straight away; anything else is sent to your expert to accept.`,
-    shortNoticeHint: `This session starts within ${RESCHEDULE_MIN_LEAD_HOURS} hours. Your expert has to accept the new time before the session starts; if they don't, the session keeps its time.`,
+    shortNoticeHint: `This session starts within ${RESCHEDULE_MIN_LEAD_HOURS} hours. Your expert has to accept the new time at least 15 minutes before the session starts; if they don't, the session keeps its time.`,
     ...handlers,
   };
 }
@@ -222,11 +224,12 @@ export function rescheduleConsulteePolicy(
 /** A consultant moving a booking they deliver. */
 export function rescheduleConsultantPolicy(
   handlers: PolicyHandlers,
+  { settled }: { settled: boolean },
 ): TimePickerPolicy {
   return {
     kind: "RESCHEDULE_CONSULTANT",
     minLeadHours: 0,
-    lead: { purpose: "allocate" },
+    lead: { purpose: "allocate", unpaid: !settled },
     showReleasedSlots: true,
     submitLabel: "Propose this time",
     // The expert names times; the client accepts one or the session stays.
@@ -235,7 +238,7 @@ export function rescheduleConsultantPolicy(
     appliesInitialAllocationGuard: false,
     pickerHint:
       "Green means you are free. Whatever you propose is sent to your client to accept; until they do, the session keeps its time.",
-    shortNoticeHint: `This session starts within ${RESCHEDULE_MIN_LEAD_HOURS} hours. Your client has to accept the new time before the session starts; if they don't, the session keeps its time.`,
+    shortNoticeHint: `This session starts within ${RESCHEDULE_MIN_LEAD_HOURS} hours. Your client has to accept the new time at least 15 minutes before the session starts; if they don't, the session keeps its time.`,
     ...handlers,
   };
 }

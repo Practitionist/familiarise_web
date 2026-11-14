@@ -4,7 +4,7 @@
  * times works on a phone: the day list replaces the grid, and the release
  * step plus "Any time works" stay reachable.
  */
-import { isTooSoonFor } from "@/lib/booking/lead-time";
+import { isTooSoonFor, leadMsFor } from "@/lib/booking/lead-time";
 import React from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 
@@ -99,7 +99,10 @@ describe("TimePicker for a subscription reschedule", () => {
     setViewport(true);
     render(
       <TimePicker
-        policy={rescheduleConsulteePolicy({ onSubmit: jest.fn() })}
+        policy={rescheduleConsulteePolicy(
+          { onSubmit: jest.fn() },
+          { settled: true },
+        )}
         subject={subject}
         viewerZone="Asia/Kolkata"
       />,
@@ -122,7 +125,7 @@ describe("TimePicker for a subscription reschedule", () => {
     const onSubmit = jest.fn();
     render(
       <TimePicker
-        policy={rescheduleConsulteePolicy({ onSubmit })}
+        policy={rescheduleConsulteePolicy({ onSubmit }, { settled: true })}
         subject={subject}
         viewerZone="Asia/Kolkata"
       />,
@@ -146,7 +149,10 @@ describe("TimePicker for a subscription reschedule", () => {
     setViewport(false);
     render(
       <TimePicker
-        policy={rescheduleConsulteePolicy({ onSubmit: jest.fn() })}
+        policy={rescheduleConsulteePolicy(
+          { onSubmit: jest.fn() },
+          { settled: true },
+        )}
         subject={{
           ...subject,
           eventType: "consultation",
@@ -166,10 +172,29 @@ describe("TimePicker for a subscription reschedule", () => {
     ).not.toBeInTheDocument();
     expect(
       screen.getByText(
-        /Your expert has to accept the new time before the session starts/,
+        /Your expert has to accept the new time at least 15 minutes before the session starts/,
       ),
     ).toBeInTheDocument();
   });
+});
+
+describe("the reschedule grid offers only what the route accepts", () => {
+  it.each([
+    ["learner", rescheduleConsulteePolicy, true],
+    ["learner", rescheduleConsulteePolicy, false],
+    ["expert", rescheduleConsultantPolicy, true],
+    ["expert", rescheduleConsultantPolicy, false],
+  ] as const)(
+    "%s, settled %s: the grid's lead is the route's",
+    (_side, policyFor, settled) => {
+      const policy = policyFor({ onSubmit: jest.fn() }, { settled });
+      const gridLead = leadMsFor(policy.lead.purpose, {
+        settled: policy.lead.unpaid !== true,
+      });
+      // The reschedule route checks a party's proposed time with this lead.
+      expect(gridLead).toBe(leadMsFor("allocate", { settled }));
+    },
+  );
 });
 
 describe("the reschedule pages agree with the server inside 24 hours", () => {
@@ -179,7 +204,7 @@ describe("the reschedule pages agree with the server inside 24 hours", () => {
   ])(
     "the %s may pick a session and a new time under 24 hours away",
     (_side, policyFor) => {
-      const policy = policyFor({ onSubmit: jest.fn() });
+      const policy = policyFor({ onSubmit: jest.fn() }, { settled: true });
       const now = Date.now();
       expect(policy.minLeadHours).toBe(0);
       expect(
@@ -195,7 +220,7 @@ describe("the reschedule pages agree with the server inside 24 hours", () => {
 
   it("the expert always names times", () => {
     expect(
-      rescheduleConsultantPolicy({ onSubmit: jest.fn() })
+      rescheduleConsultantPolicy({ onSubmit: jest.fn() }, { settled: true })
         .allowReleaseWithoutTime,
     ).toBe(false);
   });

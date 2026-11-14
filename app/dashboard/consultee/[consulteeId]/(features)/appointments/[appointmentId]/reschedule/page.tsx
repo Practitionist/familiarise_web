@@ -1,4 +1,5 @@
 import { cache } from "react";
+import { bookingSettled } from "@/lib/booking/settled";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
@@ -198,6 +199,10 @@ export default async function RescheduleAppointmentPage({
           typeLabel={resolved.typeLabel}
           subject={resolved.subject}
           backHref={backHref}
+          settled={await bookingSettled(prisma, {
+            consultationId: detail.appointment.consultation?.id,
+            subscriptionId: detail.appointment.subscription?.id,
+          })}
         />
       )}
     </DashboardViewportFill>

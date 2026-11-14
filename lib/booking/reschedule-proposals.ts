@@ -19,7 +19,11 @@
 
 import type { AppointmentsType, RescheduleInitiatorRole } from "@prisma/client";
 import type { RescheduleOutcomeFields } from "@/lib/novu/workflows";
-import { SCHEDULING_INTERVAL_MS } from "@/lib/appointments/occurrences";
+import {
+  CONSULTANT_JOIN_WINDOW_MS,
+  CONSULTEE_JOIN_WINDOW_MS,
+  SCHEDULING_INTERVAL_MS,
+} from "@/lib/appointments/occurrences";
 import type { AppointmentKind } from "@/lib/appointments/view-model";
 import {
   isShortNotice,
@@ -79,10 +83,19 @@ export const PROPOSAL_RESOLVE_BEFORE_SESSION_HOURS = 24;
 const HOUR_MS = 3_600_000;
 
 /**
+ * A short-notice proposal is answered before its session's join window opens,
+ * so the original opens to both sides exactly as it would have.
+ */
+export const SHORT_NOTICE_ANSWER_BY_MS = Math.max(
+  CONSULTEE_JOIN_WINDOW_MS,
+  CONSULTANT_JOIN_WINDOW_MS,
+);
+
+/**
  * When an unanswered proposal lapses and the original time is restored: the
  * earlier of 72 hours and 24 hours before the earliest released session; a
- * short-notice proposal (opened inside those 24 hours) lapses at that session's
- * start. Null when the session has already started.
+ * short-notice proposal (opened inside those 24 hours) lapses when that
+ * session's join window opens. Null once that window is open.
  */
 export function computeProposalExpiry(
   releasedSlotStarts: Date[],
@@ -94,11 +107,12 @@ export function computeProposalExpiry(
     (a, b) => (a < b ? a : b),
     releasedSlotStarts[0],
   );
-  if (earliest <= now) return null;
+  const answerBy = new Date(earliest.getTime() - SHORT_NOTICE_ANSWER_BY_MS);
+  if (answerBy <= now) return null;
   const mustResolveBy = new Date(
     earliest.getTime() - PROPOSAL_RESOLVE_BEFORE_SESSION_HOURS * HOUR_MS,
   );
-  if (mustResolveBy <= now) return earliest;
+  if (mustResolveBy <= now) return answerBy;
   const lifetimeCap = new Date(
     now.getTime() + PROPOSAL_MAX_LIFETIME_HOURS * HOUR_MS,
   );
@@ -406,7 +420,7 @@ export function rescheduleProposeOutcome(args: {
     return {
       code: "AWAITING_ANSWER",
       message:
-        "Your new time has been sent. The expert has to accept it before the session starts; if they don't, the session keeps its original time.",
+        "Your new time has been sent. The expert has to accept it at least 15 minutes before the session starts; if they don't, the session keeps its original time.",
     };
   }
   if (!autoConfirmRefusalIsFinal(autoConfirmReason)) {
