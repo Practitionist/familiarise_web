@@ -81,7 +81,32 @@ git merge-base --is-ancestor origin/dev HEAD ||
 [[ -z "$(git status --porcelain --untracked-files=no)" ]] ||
   note "warning: uncommitted edits; the checks below include them"
 
-git diff -z --name-only --diff-filter=ACMR origin/dev...HEAD >"$LOG/changed.z"
+# The branch diff plus staged and unstaged tracked edits, deduplicated, keeping
+# only files that still exist. No list means no lint, so a failure stops the run.
+changed_files() {
+  local out="$1"
+  local part="$LOG/changed.part"
+  local f
+  : >"$part"
+  git diff -z --name-only --diff-filter=ACMR origin/dev...HEAD >>"$part" || return 1
+  git diff -z --name-only --diff-filter=ACMR --cached >>"$part" || return 1
+  git diff -z --name-only --diff-filter=ACMR >>"$part" || return 1
+  : >"$out"
+  while IFS= read -r -d '' f; do
+    if [[ -e "$f" ]]; then printf '%s\0' "$f" >>"$out"; fi
+  done < <(sort -zu "$part")
+  rm -f "$part"
+}
+
+begin
+changed_files "$LOG/changed.z" >"$LOG/changed-files.log" 2>&1
+CHANGED_RC=$?
+record changed-files "$CHANGED_RC"
+if [[ "$CHANGED_RC" -ne 0 ]]; then
+  note "stopped: no changed-file list (is origin/dev fetched, with a merge base?)"
+  note "DONE"
+  exit 1
+fi
 grep -zE '\.(js|jsx|mjs|cjs|ts|tsx|mts|cts)$' "$LOG/changed.z" >"$LOG/changed-src.z" || true
 note "changed files $(tr -cd '\0' <"$LOG/changed.z" | wc -c | tr -d ' '), source files $(tr -cd '\0' <"$LOG/changed-src.z" | wc -c | tr -d ' ')"
 

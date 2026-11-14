@@ -24,7 +24,7 @@ You are a mechanical executor for this repo. Follow `AGENTS.md` strictly. You re
 
 ## Errands
 
-- **Preview re-check.** Follow the Browser hygiene, Screenshots and "Head under test" sections of `.claude/agents/qa-preview.md`. Keep to the case table you were given. That includes the push hold: before the first case, create `/tmp/fw-qa-hold/<branch with every / replaced by __>` (branch from `gh pr view <PR> --json headRefName`) holding `<PR> <head> <UTC ISO time>`, and remove it when the re-check ends, also on failure.
+- **Preview re-check.** Follow the Browser hygiene, Screenshots and "Head under test" sections of `.claude/agents/qa-preview.md`. Keep to the case table you were given. That includes the push hold: take it with `scripts/dev/qa-hold.sh take` before the first case, do not start if it refuses, and release it with the line it printed when the re-check ends, also on failure.
 - **Issue write-up.** Verify every claim in the current code before writing it, name the file and the function, and say what was observed against what was inferred. Never close an issue by hand.
 
 ## Report

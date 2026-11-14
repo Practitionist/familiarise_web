@@ -23,9 +23,9 @@ If the brief does not say that the owner approved this run, stop and report that
 ## Method
 
 1. Confirm the head: `git -C <worktree> rev-parse HEAD` must equal the head in the brief. If it does not, say so at the top of the report and review the brief's head with `git show`.
-2. Read the diff against `origin/dev` (`git diff origin/dev...<head>`), then the surrounding code of every changed function: its callers, the readers that feed it, the routes and schemas it serves, and the transaction it runs in.
-3. Read the decision record so you know what the pull request intends. A behaviour the record decided is not a finding; a behaviour that contradicts the record is.
-4. Hunt each class in `.claude/skills/workflow/references/review-defect-classes.md` across the diff, using each class's "how to look for it" test. Then look for anything else that produces a wrong result.
+2. Read the diff against the pull request's actual base: `B=$(gh pr view <PR> --json baseRefName -q .baseRefName); git fetch origin "$B"; git diff "origin/$B...<head>"`. Never assume `dev`; a release PR into `prod` diffed against `origin/dev` can show nothing. Then read the surrounding code of every changed function: its callers, the readers that feed it, the routes and schemas it serves, and the transaction it runs in.
+3. Read the decision record so you know what the pull request intends. A behaviour the record decided is not a finding on its own, and a behaviour that contradicts the record is one. But the record never excuses a violation of an access, money or data-integrity rule (`AGENTS.md`, the nearest directory `AGENTS.md`, a database constraint): report it anyway, marked "conflicts with the decision record".
+4. Hunt each class in `.claude/skills/workflow/references/review-defect-classes.md` across the diff, using each class's "How to look for it" check. Then look for anything else that produces a wrong result.
 5. For each candidate, build a concrete failure: the inputs and the state, the order of events, and the wrong result. Mark it "verified by reading the code" only when you followed every step in the code; otherwise mark it "suspected".
 
 No style or naming nits, no praise, no summary of what the pull request does well.
@@ -34,14 +34,15 @@ No style or naming nits, no praise, no summary of what the pull request does wel
 
 Write the report file once, when you have finished. It holds:
 
-1. The pull request number and title, the head reviewed, and the base.
+1. The pull request number and title, the head reviewed, and the base ref and its commit.
 2. A findings table, most severe first, at most 10 rows, with the columns: Severity, File and function, Failure scenario, Failing test sketch, Confidence.
    - **Severity**: P0 money or data, P1 broken journey or access, P2 wrong status or copy with a workaround, P3 minor.
    - **Failure scenario**: concrete inputs and state, then the wrong result. "Could be racy" is not a scenario.
    - **Failing test sketch**: the suite, the arrange, the act and the assertion that would fail today.
    - **Confidence**: "verified by reading the code" or "suspected".
-3. An empty table is a valid result. Then say what was checked: the files and functions read and the classes hunted.
-4. A final section, "Defect class to record", when a finding fits no class in the reference file: a proposed class name, its one-line test, and the finding as its example. Omit the section when every finding fits a class.
+3. Findings beyond the 10 rows go after the table, one line each (severity, file and function, the wrong result), so none is dropped.
+4. An empty table is a valid result. Then say what was checked: the files and functions read and the classes hunted.
+5. A final section, "Defect class to record", when a finding fits no class in the reference file: a proposed class name, its pattern, where it bites in the current code and how to look for it, as the reference file's classes are written. Omit the section when every finding fits a class.
 
 Post inline review threads only when the brief asks: one thread per finding, on the line the finding names, titled "Claude reviewer — [Pn] <one line>". Write each body with the Write tool to a file under `temp/` and pass it as a file, never inline (`gh api repos/{owner}/{repo}/pulls/<PR>/comments -f commit_id=<head> -f path=<file> -F line=<n> -f side=RIGHT -F body=@<body-file>`); never put session links or claude.ai links in anything meant for GitHub, and refer to a pull request or an issue by number and title.
 

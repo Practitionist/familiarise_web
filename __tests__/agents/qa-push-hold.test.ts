@@ -5,8 +5,9 @@ import os from "node:os";
 import path from "node:path";
 
 const HOOK = path.join(__dirname, "../../.claude/hooks/qa-push-hold.sh");
+const HOLD = path.join(__dirname, "../../scripts/dev/qa-hold.sh");
 const BRANCH = "feat/qa-held";
-const KEY = "feat__qa-held";
+const KEY = "feat%2Fqa-held";
 
 let tmp: string;
 let repo: string;
@@ -44,12 +45,18 @@ function hold(name: string, ageSeconds = 0) {
   fs.utimesSync(file, at, at);
 }
 
-function run(command: string | null, raw?: string) {
+function run(command: string | null, raw?: string, cwd = repo) {
   const input =
-    raw ??
-    JSON.stringify({ cwd: repo, tool_input: { command, description: "x" } });
+    raw ?? JSON.stringify({ cwd, tool_input: { command, description: "x" } });
   return spawnSync("bash", [HOOK], {
     input,
+    encoding: "utf8",
+    env: { ...process.env, FW_QA_HOLD_DIR: holds },
+  });
+}
+
+function qaHold(...args: string[]) {
+  return spawnSync("bash", [HOLD, ...args], {
     encoding: "utf8",
     env: { ...process.env, FW_QA_HOLD_DIR: holds },
   });
@@ -60,8 +67,8 @@ describe("qa-push-hold hook", () => {
     expect(run("git push").status).toBe(0);
   });
 
-  it("blocks a push to the held branch with the hold's details", () => {
-    hold(KEY);
+  it("blocks a push to a branch held by qa-hold.sh, with the hold's details", () => {
+    expect(qaHold("take", BRANCH, "2779", "abc1234").status).toBe(0);
     const r = run("git push -u origin HEAD");
     expect(r.status).toBe(2);
     expect(r.stderr).toContain("PR 2779 at head abc1234");
@@ -71,8 +78,31 @@ describe("qa-push-hold hook", () => {
   });
 
   it("allows a push when the hold is on another branch", () => {
-    hold("feat__other");
+    hold("feat%2Fother");
     expect(run("git push").status).toBe(0);
+  });
+
+  it("checks an explicit refspec's destination, not the checkout", () => {
+    hold(KEY);
+    expect(run("git push origin HEAD:feat/other").status).toBe(0);
+  });
+
+  it("keeps a branch named with __ apart from one named with /", () => {
+    hold(KEY);
+    expect(run("git push origin feat__qa-held", undefined, tmp).status).toBe(0);
+  });
+
+  it("blocks --all while any fresh hold exists", () => {
+    hold("feat%2Fother");
+    expect(run("git push origin --all", undefined, tmp).status).toBe(2);
+  });
+
+  it("refuses a second hold and keeps the first run's on a wrong release", () => {
+    const first = qaHold("take", BRANCH, "2779", "abc1234");
+    expect(qaHold("take", BRANCH, "2780", "def5678").status).toBe(1);
+    expect(qaHold("release", BRANCH, "2780 def5678 x").status).toBe(1);
+    expect(qaHold("release", BRANCH, first.stdout.trim()).status).toBe(0);
+    expect(fs.readdirSync(holds)).toEqual([]);
   });
 
   it("allows a push past a stale hold and says so", () => {
