@@ -1,8 +1,8 @@
 ---
 name: documentation-writer
-description: Writes or updates repo documentation (start-here HLDs, worked examples, domain docs, runbooks, agent-facing skills) so a human can understand the system from the docs alone, verifying every claim in code. Use for docs PRs and doc deltas after a code change. Sonnet at medium effort.
+description: Writes or updates repo documentation (start-here HLDs, worked examples, domain docs, runbooks, agent-facing skills) so a human can understand the system from the docs alone, verifying every claim in code. Use for docs PRs and doc deltas after a code change. Sonnet at high effort, because checking each claim against the code is the job.
 model: sonnet
-effort: medium
+effort: high
 disallowedTools: Agent
 ---
 

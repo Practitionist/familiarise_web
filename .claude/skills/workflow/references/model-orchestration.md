@@ -60,17 +60,18 @@ Escalate on evidence, not vibes. When a student or teacher report contradicts th
 
 ### 3.1 Role table
 
-| Role                                  | Model           | Effort | Why                                                                                  |
-| ------------------------------------- | --------------- | ------ | ------------------------------------------------------------------------------------ |
-| Advisor session (audit or design day) | fable           | xhigh  | Long-horizon synthesis. Above `high` the gain is task-dependent, so stop at `xhigh`. |
-| Advisor session (orchestration day)   | fable           | high   | Dispatch and spot-checks. Never leave it at Claude Code's `medium` default.          |
-| Advisor ceiling run (rare)            | fable           | max    | Only to measure the ceiling on one hard question, with the owner's go-ahead.         |
-| Teacher: build a PR, money code       | opus            | high   | Multi-file coherence and test writing; pair with a `codex review` round.             |
-| Teacher: triage review comments       | opus            | high   | Claim-versus-code verification needs care. Non-money triage can use medium.          |
-| Student: UI, labels, accessibility    | sonnet          | high   | Visible quality matters more than token savings.                                     |
-| Student: docs, E2E scenarios          | sonnet          | medium | Breadth over depth.                                                                  |
-| Student: preview QA                   | sonnet          | xhigh  | Many cases and long runs; see `.claude/agents/qa-preview.md`.                        |
-| Student: rename or lint sweep         | sonnet or haiku | low    | Mechanical.                                                                          |
+| Role                                           | Model           | Effort | Why                                                                                          |
+| ---------------------------------------------- | --------------- | ------ | -------------------------------------------------------------------------------------------- |
+| Advisor session (audit or design day)          | fable           | xhigh  | Long-horizon synthesis. Above `high` the gain is task-dependent, so stop at `xhigh`.         |
+| Advisor session (orchestration day)            | fable           | high   | Dispatch and spot-checks. Never leave it at Claude Code's `medium` default.                  |
+| Advisor ceiling run (rare)                     | fable           | max    | Only to measure the ceiling on one hard question, with the owner's go-ahead.                 |
+| Teacher: build a PR, money code                | opus            | high   | Multi-file coherence and test writing; pair with a `codex review` round.                     |
+| Teacher: triage review comments                | opus            | high   | Claim-versus-code verification needs care. Non-money triage can use medium.                  |
+| Student: UI, labels, accessibility             | sonnet          | high   | Visible quality matters more than token savings.                                             |
+| Student: docs that verify claims in code       | sonnet          | high   | Stale docs mislead the agents that read them; see `.claude/agents/documentation-writer.md`.  |
+| Student: E2E scenarios, lean preview re-checks | sonnet          | medium | Breadth over depth; see `.claude/agents/sweeper.md`.                                         |
+| Student: preview QA                            | sonnet          | xhigh  | Full rounds on state or money: many cases and long runs; see `.claude/agents/qa-preview.md`. |
+| Student: rename or lint sweep                  | sonnet or haiku | low    | Mechanical.                                                                                  |
 
 Choose the lowest effort that passes your checks. It is the biggest cost lever you control.
 
@@ -144,7 +145,8 @@ f. **Who gets what.**
 
 - Money work (`lib/payments/`, tax) goes to Opus at high effort, plus one `codex review --base origin/dev` round, posted on the PR as inline review threads.
 - UI, labels and accessibility go to Sonnet at high effort.
-- Docs go to Sonnet at medium effort.
+- Docs go to Sonnet at high effort (`documentation-writer`); a doc regenerated from a written verdict goes to Sonnet at low effort (`mechanic`).
+- A full preview QA round goes to Sonnet at extra-high effort (`qa-preview`); a lean re-check of a few cases goes to Sonnet at medium effort (`sweeper`).
 
 g. **Verify the brief.** A builder's report can disprove the orchestrator's premises. In the 2026-11-08 session, two of the three claims in a money brief were wrong. The orchestrator re-checks any contradicted claim in code before acting on it, and corrects the brief before relaunching anyone.
 
