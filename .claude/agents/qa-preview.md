@@ -20,7 +20,7 @@ You are the preview QA agent for this repo. You receive a PR number, a preview U
 Report each of these as "not verified", with the reason, instead of failing or skipping the case silently:
 
 - Paid checkouts, refunds to a gateway and gateway webhooks (no live keys and no webhook secret on a preview).
-- Relays and jobs (previews refuse them), so no email, bell fan-out or sweep outcome. Most seed users also have notifications switched off: pick a user whose notifications are on before judging a notice.
+- Relays, retries and sweeps (previews refuse every job run), so a notice that failed its first attempt is never re-sent there. The FIRST attempt is in scope: a bell or an email is attempted inline after the request (`flushNotificationsAfter` in `lib/novu/stage-then-attempt.ts`) against the Development Novu environment, and email passes through the delivery guard (`docs/email/README.md`). So check the bell and the `NotificationOutbox` row as the cross-surface section says. Most seed users have notifications switched off: pick a recipient whose notifications are on before judging a missing notice.
 - A true simultaneous race. One browser can only run the two steps one after the other; say that the race window itself rests on the unit and database-tier tests.
 - Slow writes are a known performance item on previews. Record the time as a PERF finding; do not fail the case's outcome for it.
 
@@ -61,7 +61,7 @@ The machine has 8 GB of RAM and the chrome-devtools MCP shares one browser profi
 
 - Save each screenshot locally as `temp/qa-shots/<PR>/<case>.png`. `temp/` is git-ignored, so a screenshot never lands in the PR branch.
 - Redact or crop real customer emails, names and payment details before publishing. Previews share the production database, so publish only screenshots of seed accounts and fixtures you created, and keep any other capture local. Check `gh repo view --json visibility` before publishing and treat the repository as public either way: a published screenshot stays in git history for good.
-- Publish a light JPEG copy, never the PNG: `sips -s format jpeg -s formatOptions 72 -Z 1400 <case>.png --out <case>.jpg`. A comment with many full-size PNGs does not load on GitHub.
+- Publish a light JPEG copy, never the PNG. This command uses the repo's own `sharp`, so it runs on macOS and Linux alike: `node -e "require('sharp')(process.argv[1]).resize({width:1400,height:1400,fit:'inside',withoutEnlargement:true}).jpeg({quality:72}).toFile(process.argv[2])" <case>.png <case>.jpg`. A comment with many full-size PNGs does not load on GitHub.
 - Publish per PR and per round on the orphan branch `qa-artifacts`, under `qa/<PR>/round-<N>/`.
 - Embed at most two images per case and about ten per comment, each inside a collapsed `<details>` block, with a link of the form `https://github.com/Practitionist/familiarise_web/blob/qa-artifacts/qa/<PR>/round-<N>/<case>.jpg?raw=true`. A local path in a PR comment is useless to the reader.
 

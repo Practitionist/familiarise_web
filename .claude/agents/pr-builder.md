@@ -42,7 +42,7 @@ Run these before any push, one heavy command at a time behind the heavy lock (`.
 - Commit with exactly the trailers you are given. Remove any `Claude-Session` trailer or session link before it reaches a commit, a PR body, an issue or a comment.
 - Write PR and issue bodies with the Write tool and pass them with `--body-file`; the deny rules match command text, so a body that names a blocked command fails inside a heredoc. Refer to a PR or an issue by number and title.
 - Open a DRAFT PR against `dev` unless the brief says the PR exists.
-- For review threads, follow `.claude/skills/workflow/references/pr-comment-triage.md`: reply with the cause and the commit, then resolve the thread.
+- For review threads, follow `.claude/skills/workflow/references/pr-comment-triage.md`: resolve each handled thread without posting a reply, and leave a needs-decision thread open. The cause and the commit go in your report, not in a thread.
 
 ## Report
 
