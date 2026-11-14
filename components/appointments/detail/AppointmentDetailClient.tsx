@@ -987,13 +987,19 @@ export function AppointmentDetailClient({
 
   // A paid seat that cost nothing (a free event, a full discount) is why a
   // host can read "1 of 2 seats paid" beside nothing collected; name it.
-  const freeSeats = Array.from(seatPayments.values()).filter((row) => {
-    const status = paymentDisplayStatus(row);
-    return (
-      (status === "SUCCEEDED" || status === "PARTIALLY_REFUNDED") &&
-      Number(row.amount) === 0
-    );
-  }).length;
+  // Paid and free seats count live attendee seats only, the same seats "Participants" counts.
+  const liveSeatIds = new Set(participants.map((u) => u.id));
+  const settledLiveSeats = Array.from(seatPayments.entries())
+    .filter(([userId]) => liveSeatIds.has(userId))
+    .map(([, row]) => row)
+    .filter((row) => {
+      const status = paymentDisplayStatus(row);
+      return status === "SUCCEEDED" || status === "PARTIALLY_REFUNDED";
+    });
+  const freeSeats = settledLiveSeats.filter(
+    (row) => Number(row.amount) === 0,
+  ).length;
+  const paidSeats = settledLiveSeats.length - freeSeats;
   const seatRows: Array<[string, number]> = [
     ["Free seats", freeSeats],
     ["Awaiting payment", seatSummary.pending],
@@ -1023,7 +1029,7 @@ export function AppointmentDetailClient({
             <div className="flex items-baseline justify-between gap-3">
               <dt className="text-muted-foreground">Seats paid</dt>
               <dd className="font-medium text-foreground tabular-nums">
-                {seatSummary.paid - freeSeats} of {participants.length} seat
+                {paidSeats} of {participants.length} seat
                 {participants.length === 1 ? "" : "s"} paid
               </dd>
             </div>
@@ -1031,8 +1037,8 @@ export function AppointmentDetailClient({
               <dt className="text-muted-foreground">Collected</dt>
               <dd className="font-medium text-foreground tabular-nums">
                 {seatSummary.collectedPaise === 0 &&
-                seatSummary.paid > 0 &&
-                freeSeats === seatSummary.paid
+                freeSeats > 0 &&
+                paidSeats === 0
                   ? "Nothing — every paid seat was free"
                   : `${formatCurrencyAmount(
                       seatSummary.collectedPaise,
