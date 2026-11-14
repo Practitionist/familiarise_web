@@ -362,7 +362,9 @@ describe("request-for-approval Idempotency-Key", () => {
   it("the same key with another time is refused, not replayed", async () => {
     mockedPrisma.consultation.findUnique.mockResolvedValueOnce(original());
     const res = await POST(
-      request("2030-01-01T10:30:00.000Z", { "Idempotency-Key": "rq_attempt_1" }),
+      request("2030-01-01T10:30:00.000Z", {
+        "Idempotency-Key": "rq_attempt_1",
+      }),
     );
     expect(res.status).toBe(422);
     expect((await res.json()).code).toBe("IDEMPOTENCY_KEY_REUSED");
