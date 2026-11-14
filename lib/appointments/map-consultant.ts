@@ -8,7 +8,11 @@
 
 import type { TAppointment, TAppointmentWithSeats } from "@/types/appointment";
 import { deriveBucket } from "./bucket";
-import { holdOpenFrom, listStatusFacts } from "./list-status-facts";
+import {
+  holdOpenFrom,
+  listStatusFacts,
+  trialHoldFacts,
+} from "./list-status-facts";
 import { occurrencesOfAppointment } from "./occurrences";
 import {
   getAnchorTime,
@@ -30,6 +34,8 @@ import {
 export interface ConsultantTrialLike {
   id: string;
   status: string;
+  /** When a paid trial's held time releases unpaid. */
+  paymentDueAt?: Date | string | null;
   consulteeProfile: {
     id: string;
     user: { id: string; name: string; image: string | null };
@@ -381,6 +387,7 @@ function mapTrial(
       : null,
   );
   const status = normalizeStatus(t.status);
+  const hold = trialHoldFacts(t as Parameters<typeof trialHoldFacts>[0]);
   const trialAppointment = t.appointment
     ? ({
         id: t.appointment.id,
@@ -399,7 +406,11 @@ function mapTrial(
     title: t.subscriptionPlan.title,
     counterpart: person(t.consulteeProfile.user),
     status,
-    ...deriveBucket({ status, occurrences, now }, "consultant"),
+    ...deriveBucket(
+      { status, occurrences, now, holdOpen: holdOpenFrom(hold, now) },
+      "consultant",
+    ),
+    ...hold,
     nextAt: getAnchorTime(occurrences, now),
     occurrences,
     group: null,

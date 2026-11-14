@@ -94,3 +94,18 @@ export function listStatusFacts(
       : null,
   };
 }
+
+/** A trial's hold: its own due time, else its order's expiry, and whether it lapsed. */
+export function trialHoldFacts(trial: {
+  paymentDueAt?: Date | string | null;
+  appointment?: Parameters<typeof listStatusFacts>[0];
+}): Pick<AppointmentVM, "paid" | "payDeadline" | "payLapsed"> {
+  const facts = listStatusFacts(trial.appointment, []);
+  return {
+    paid: facts.paid,
+    payDeadline: trial.paymentDueAt
+      ? toDate(trial.paymentDueAt)
+      : facts.payDeadline,
+    payLapsed: facts.payLapsed,
+  };
+}

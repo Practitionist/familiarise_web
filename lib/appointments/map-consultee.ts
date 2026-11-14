@@ -33,7 +33,11 @@ import {
   ownSeatStatusOf,
 } from "./status";
 import { bookingStatus } from "./booking-status";
-import { holdOpenFrom, listStatusFacts } from "./list-status-facts";
+import {
+  holdOpenFrom,
+  listStatusFacts,
+  trialHoldFacts,
+} from "./list-status-facts";
 import { payablePaymentId } from "@/lib/payments/pay-link-href";
 import { trialMeta } from "./trial-labels";
 import {
@@ -333,6 +337,8 @@ function mapClass(c: TConsulteeClass, now: Date, zone?: string): AppointmentVM {
 function mapTrial(t: TTrialWithPlan, now: Date): AppointmentVM {
   const occurrences = occurrencesOfAppointment(t.appointment);
   const status = normalizeStatus(t.status);
+  const hold = trialHoldFacts(t);
+  const holdOpen = holdOpenFrom(hold, now);
   return {
     id: `trial-${t.id}`,
     trialId: t.id,
@@ -342,7 +348,8 @@ function mapTrial(t: TTrialWithPlan, now: Date): AppointmentVM {
     counterpart: person(t.subscriptionPlan.consultantProfile?.user),
     consultantProfileId: t.subscriptionPlan.consultantProfile?.id ?? null,
     status,
-    ...deriveBucket({ status, occurrences, now }, "consultee"),
+    ...deriveBucket({ status, occurrences, now, holdOpen }, "consultee"),
+    ...hold,
     nextAt: getAnchorTime(occurrences, now),
     occurrences,
     group: null,
@@ -353,9 +360,14 @@ function mapTrial(t: TTrialWithPlan, now: Date): AppointmentVM {
     organizationId: t.appointment?.organizationId ?? null,
     // Paid trials carry a live pay-link while AWAITING_PAYMENT; fall back to
     // the branded trial checkout route when no hosted URL was stored.
+    // Only while the window is open: the checkout refuses a lapsed trial.
     pendingPaymentUrl:
-      t.pendingPaymentUrl ??
-      (status === "AWAITING_PAYMENT" ? `/checkout/plans/trial/${t.id}` : null),
+      holdOpen === false
+        ? null
+        : (t.pendingPaymentUrl ??
+          (status === "AWAITING_PAYMENT"
+            ? `/checkout/plans/trial/${t.id}`
+            : null)),
     pendingPaymentId: payablePaymentId(
       (t.appointment as { payment?: unknown } | null)?.payment as Parameters<
         typeof payablePaymentId
