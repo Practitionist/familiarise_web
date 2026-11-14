@@ -13,7 +13,7 @@ import {
   transitionParticipant,
   RELEASED_PARTICIPANT_STATUSES,
 } from "@/lib/booking/participants";
-import { markBackupInterestBooked } from "@/lib/booking/backup-interest";
+import { markAppointmentWindowsBooked } from "@/lib/booking/backup-interest";
 import { markEventWaitlistBooked } from "@/lib/booking/event-waitlist";
 import prisma, { type Tx } from "@/lib/prisma";
 import { isPreMintIntent } from "@/lib/payments/pre-mint-intent";
@@ -2435,7 +2435,7 @@ export async function confirmExistingAppointment(
       { appointmentId, status: "HELD" },
       "CONFIRMED",
     );
-    if (userId) await markBookedWindows(tx, appointmentId, userId);
+    if (userId) await markAppointmentWindowsBooked(tx, appointmentId, userId);
   }
 
   let capturedAfterTerminal = false;
@@ -2459,29 +2459,6 @@ export async function confirmExistingAppointment(
   }
 
   return { capturedAfterTerminal };
-}
-
-async function markBookedWindows(
-  tx: Tx,
-  appointmentId: string,
-  userId: string,
-) {
-  const windows = await tx.appointmentOccurrence.findMany({
-    where: {
-      appointmentId,
-      ...liveOccurrenceWhere,
-      consultantProfileId: { not: null },
-    },
-    select: { consultantProfileId: true, startsAt: true, endsAt: true },
-  });
-  for (const w of windows) {
-    if (!w.consultantProfileId) continue;
-    await markBackupInterestBooked(tx, userId, {
-      consultantProfileId: w.consultantProfileId,
-      windowStart: w.startsAt,
-      windowEnd: w.endsAt,
-    });
-  }
 }
 
 export async function settleAutoRefundMarker(paymentId: string): Promise<void> {

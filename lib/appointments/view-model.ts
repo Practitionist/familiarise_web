@@ -1,4 +1,5 @@
 import type { TAppointment } from "@/types/appointment";
+import type { BookingStatusFacts, OpenRescheduleInput } from "./booking-status";
 
 /**
  * Normalized appointment view-model shared by the consultant and consultee
@@ -153,6 +154,21 @@ export interface AppointmentVM {
   /** #1775 P-1 — the payable Payment behind the pay-link; keys the pay page. */
   pendingPaymentId?: string | null;
   collaborators: Array<PersonVM & { role: string }>;
+  /** The Trial row's id, for its branded checkout page; null for other kinds. */
+  trialId?: string | null;
+  /** DIRECT_CHECKOUT or REQUEST_SUBMITTED, where the read carries it. */
+  bookingSource?: string | null;
+  /** The viewer's own seat on a webinar or class. */
+  seatStatus?: string | null;
+  /** A charge on the booking succeeded; undefined when the read does not say. */
+  paid?: boolean;
+  /** When the unpaid pay window closes; null when none is open, undefined when not read. */
+  payDeadline?: Date | null;
+  /** The hold lapsed on evidence: its payment expired or failed with nothing payable left. */
+  payLapsed?: boolean;
+  reschedule?: OpenRescheduleInput | null;
+  /** Refunds that have landed on the booking, summed; null when none. */
+  refunded?: BookingStatusFacts["refunded"];
   /** Consultant view: the viewer's own role on a collaborative event. */
   collaboratorRole: string | null;
   raw: AppointmentVMRaw;

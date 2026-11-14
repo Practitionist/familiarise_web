@@ -14,7 +14,10 @@ import type {
   InboxSort,
   InboxType,
 } from "@/lib/dashboard/requests-inbox-state";
-import { toneBadge } from "@/lib/dashboard/money-state";
+import {
+  bookingStatus,
+  bookingStatusBadge,
+} from "@/lib/appointments/booking-status";
 import { formatDateTimeLabel, type DisplayOpts } from "@/lib/time/display";
 
 export const TYPE_LABEL: Record<InboxType, string> = {
@@ -76,8 +79,13 @@ export const EMPTY_STATE: Record<InboxType, { title: string; body: string }> = {
   },
 };
 
-/** The one badge the presentation cannot name: a finished cycle with sessions left (#1766). */
-export const NEXT_CYCLE_BADGE = toneBadge("info", "Next cycle open");
+/** A paid plan whose week is done and whose next sessions await placing. */
+export const NEXT_CYCLE_BADGE = bookingStatusBadge(
+  bookingStatus(
+    { kind: "SUBSCRIPTION", status: "APPROVED", planWait: "NEXT_CYCLE" },
+    "CONSULTANT",
+  ),
+);
 
 /** "Schedule the next 2 · 4 of 24 booked" — sessions, never slots (#1639). */
 export function nextCycleLine(entitlement: SubscriptionEntitlement): string {
@@ -101,7 +109,12 @@ export const RANKED_WINDOW_NOTE = (
   `Showing the ${shown} ${RANKED_WINDOW_KIND[sort]} of ${total} — pick a filter to see the rest`;
 
 /** A direct checkout the buyer is paying for right now: never answerable. */
-export const CHECKOUT_HOLD_BADGE = toneBadge("info", "Checkout in progress");
+export const CHECKOUT_HOLD_BADGE = bookingStatusBadge(
+  bookingStatus(
+    { kind: "CONSULTATION", status: "PENDING", source: "DIRECT_CHECKOUT" },
+    "CONSULTANT",
+  ),
+);
 export const CHECKOUT_HOLD_LINE =
   "The learner is paying now — nothing to do. The time stays held until then.";
 
@@ -111,8 +124,9 @@ export const REQUESTED_TIME_PASSED =
 
 /** One verb per toast. */
 export const TOAST = {
-  approved: "Approved",
-  approvedAwaitingPayment: "Approved — waiting for the learner to pay",
+  approved: "Confirmed",
+  approvedAwaitingPayment:
+    "Awaiting payment — the learner was sent the pay link",
   declined: "Declined",
   reminderSent: "Reminder sent",
   approvalWithdrawn: "Approval withdrawn",
@@ -204,7 +218,7 @@ export function approvedToast(
 ): string {
   if (result.awaitingPayment !== true) return TOAST.approved;
   return result.payExpiresAt
-    ? `Approved — the learner has until ${formatDateTimeLabel(result.payExpiresAt, opts)} to pay`
+    ? `Awaiting payment — the learner has until ${formatDateTimeLabel(result.payExpiresAt, opts)} to pay`
     : TOAST.approvedAwaitingPayment;
 }
 

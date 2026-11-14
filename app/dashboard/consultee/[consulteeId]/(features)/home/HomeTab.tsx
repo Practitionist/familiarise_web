@@ -54,6 +54,7 @@ import { deriveConsulteeActionItems } from "@/lib/dashboard/action-items";
 import { isExternalPayHref } from "@/lib/payments/pay-link-href";
 import { WaitingTimesStrip } from "@/components/booking/WaitingTimesStrip";
 import { isInactiveStatus, isConfirmedStatus } from "@/lib/appointments/status";
+import { bookingStatus } from "@/lib/appointments/booking-status";
 import {
   CONSULTEE_JOIN_WINDOW_MS,
   REJOIN_GRACE_MS,
@@ -94,7 +95,12 @@ function homeStatusChip(event: ProcessedEvent) {
     {
       status: event.status.toUpperCase(),
       kind: KIND_OF[event.type],
-      bucket: event.needsActionReason ? "needsAction" : "upcoming",
+      bookingSource: event.bookingSource,
+      seatStatus: event.seatStatus,
+      paid: event.paid,
+      payDeadline: event.payDeadline,
+      payLapsed: event.payLapsed,
+      reschedule: event.reschedule,
     },
     "consultee",
   );
@@ -128,17 +134,19 @@ interface HomeTabProps {
   viewerZone: ViewerZone;
 }
 
-/**
- * The card's corner badge. The Appointments row calls a slot-less booking
- * "Not scheduled" and the "Pay now" step "Payment required"; the same words
- * here so a request reads identically on both surfaces (#1703).
- */
+/** The card's corner badge, in the booking words the Appointments list uses. */
 function awaitingLabel(reason: NeedsActionReason | null): string {
   switch (reason) {
     case "PAY_NOW":
-      return "Payment required";
+      return bookingStatus(
+        { kind: "CONSULTATION", status: "APPROVED_PENDING_PAYMENT" },
+        "CONSULTEE",
+      ).label;
     case "PENDING_APPROVAL":
-      return "Pending";
+      return bookingStatus(
+        { kind: "CONSULTATION", status: "PENDING" },
+        "CONSULTEE",
+      ).label;
     default:
       return noSessionLabel(reason);
   }

@@ -20,7 +20,7 @@ export interface StatusBadgeProps {
  * a `lib/labels` style:
  *
  *   <StatusBadge label="Paid" tone="success" />
- *   <StatusBadge {...appointmentStatusBadge(booking.status)} />
+ *   <StatusBadge {...paymentStatusBadge(payment.status)} />
  *
  * Keeping it dumb (label + colour in, span out) means every status shares one
  * geometry, and colour semantics live in the tone module.

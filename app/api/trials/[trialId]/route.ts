@@ -48,7 +48,7 @@ import { recordExpertStrike } from "@/lib/booking/expert-reliability";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { isRefusal } from "@/lib/errors/refusal";
 import { notifyTrialCompleted, notifyTrialCancelled } from "@/lib/novu";
-import { UpdateTrialSchema } from "@/schemas/trials";
+import { TrialCancelBodySchema, UpdateTrialSchema } from "@/schemas/trials";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 import { platformCancelDoorRefusal } from "@/lib/booking/platform-cancel";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
@@ -1082,10 +1082,6 @@ async function readConfirmedRefund(
   request: NextRequest,
 ): Promise<number | undefined> {
   const body: unknown = await request.json().catch(() => null);
-  if (!body || typeof body !== "object") return undefined;
-  const value = (body as { confirmedRefundPaise?: unknown })
-    .confirmedRefundPaise;
-  return typeof value === "number" && Number.isInteger(value) && value >= 0
-    ? value
-    : undefined;
+  const parsed = TrialCancelBodySchema.safeParse(body);
+  return parsed.success ? parsed.data.confirmedRefundPaise : undefined;
 }

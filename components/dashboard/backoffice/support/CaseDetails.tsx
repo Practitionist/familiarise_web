@@ -10,12 +10,8 @@ import { Section } from "@/components/dashboard/Section";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { Badge } from "@/components/ui/badge";
 import { caseStatus } from "@/lib/labels/backoffice-labels";
-import {
-  appointmentStatusBadge,
-  eventStatusBadge,
-  paymentStatusBadge,
-  trialStatusBadge,
-} from "@/lib/labels/session-labels";
+import { paymentStatusBadge } from "@/lib/labels/session-labels";
+import { bookingStatus } from "@/lib/appointments/booking-status";
 import { buildEngineeringEscalationHref } from "@/lib/support/callback-info";
 import { formatDateLabel } from "@/lib/time/display";
 import { humanizeEnum } from "@/lib/ui/tone";
@@ -44,11 +40,8 @@ function Facts({ items }: Readonly<{ items: [string, ReactNode][] }>) {
 
 function bookingStatusLabel(booking: CaseBooking): string {
   if (!booking.status) return "—";
-  if (booking.kind === "TRIAL") return trialStatusBadge(booking.status).label;
-  if (booking.kind === "CLASS" || booking.kind === "WEBINAR") {
-    return eventStatusBadge(booking.status).label;
-  }
-  return appointmentStatusBadge(booking.status).label;
+  return bookingStatus({ kind: booking.kind, status: booking.status }, "STAFF")
+    .label;
 }
 
 function SentryIssuesSection({

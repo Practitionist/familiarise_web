@@ -193,11 +193,9 @@ export function useConsultantAppointmentsAdapter(
     );
   };
 
-  /** The trial row's own id, which its cancel door and quote are keyed by. */
+  /** The trial row's own id, which its cancel door and quote are keyed by (list and detail alike). */
   const trialIdOf = (vm: AppointmentVM): string | null =>
-    vm.kind === "TRIAL"
-      ? ((vm.raw.source as ConsultantTrialLike | undefined)?.id ?? null)
-      : null;
+    vm.kind === "TRIAL" ? (vm.trialId ?? null) : null;
 
   const joinableSlotOf = (vm: AppointmentVM) =>
     getJoinableOccurrence(
@@ -370,7 +368,8 @@ export function useConsultantAppointmentsAdapter(
   const overflowItems = (vm: AppointmentVM): OverflowItem[] => {
     const items: OverflowItem[] = [];
     const appointment = vm.raw.appointment;
-    const inactive = isInactiveStatus(vm.status);
+    // A row the list files under Cancelled (a lapsed hold, a given-back seat) offers no live action.
+    const inactive = isInactiveStatus(vm.status) || vm.bucket === "cancelled";
     const rawOccurrences = actionableRawSlots(vm);
     const lifecycleOk = canManageBookingLifecycle(vm, consultantId);
     const timingsOk = allowsManageTimings(

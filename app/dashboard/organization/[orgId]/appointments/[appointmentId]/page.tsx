@@ -58,10 +58,23 @@ function toMetadata(appointment: Appointment): OrgActorDetailProps["meta"] {
     appointment.class?.status ??
     appointment.trial?.status ??
     null) as OrgActorDetailProps["meta"]["status"];
+  const open = appointment.rescheduleRequests[0];
   return {
     title: plan?.title ?? "Session",
     kind: appointment.appointmentType,
     status,
+    source: booking?.bookingSource ?? null,
+    // A settled charge, so a paid plan waiting for its times is not read as unpaid.
+    paid: appointment.payment.some((p) => p.paymentStatus === "SUCCEEDED"),
+    // The live proposal, so the badge reads "Being moved" here as on every page.
+    reschedule: open
+      ? {
+          by: open.initiatorRole === "CONSULTANT" ? "CONSULTANT" : "REQUESTER",
+          proposedStartsAt: open.proposedTimes[0]?.startsAt ?? null,
+          originalStartsAt: null,
+          expiresAt: open.expiresAt,
+        }
+      : null,
     expertName: plan?.consultantProfile?.user?.name ?? null,
     consultantProfileId: plan?.consultantProfileId ?? null,
     sessionMinutes: allocateSessionMinutes(appointment),

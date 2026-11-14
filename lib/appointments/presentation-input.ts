@@ -14,6 +14,7 @@ import {
 import { isSponsoredPayment } from "./payment-display";
 import { normalizeOccurrences } from "./normalize";
 import { seriesLedgerFrom } from "@/lib/booking/class-series";
+import { isReleasedForReschedule } from "@/utils/scheduling-engine/types";
 import {
   requestHoldDeadline,
   type BookingPresentationInput,
@@ -183,10 +184,14 @@ export function toPresentationInput(
       .filter((p) => p.paymentStatus === "PENDING" && p.expiresAt)
       .map((p) => new Date(p.expiresAt!))
       .sort((x, y) => x.getTime() - y.getTime())[0] ?? null;
+  const source =
+    a.consultation?.bookingSource ?? a.subscription?.bookingSource ?? null;
+  // A submitted request holds its time while the expert answers; a pay-first
+  // hold has only its payment's own clock.
   const holdExpiresAt =
     pendingDeadline ??
     a.trial?.paymentDueAt ??
-    (request?.status === "PENDING"
+    (request?.status === "PENDING" && source !== "DIRECT_CHECKOUT"
       ? requestHoldDeadline(request.kind, request.requestedAt)
       : null);
   const sponsored = a.payment.some(isSponsoredPayment);
@@ -205,10 +210,37 @@ export function toPresentationInput(
     sponsorOrgName: sponsored ? args.sponsorOrgName : null,
     holdExpiresAt,
     history: a.statusHistory,
+    source,
+    reschedule: openReschedule(a, args.viewerId),
+    seatStatus:
+      a.webinar || a.class
+        ? (a.participants.find(
+            (p) => p.userId === args.viewerId && p.role === "CONSULTEE",
+          )?.status ?? null)
+        : null,
     plan: planOf(a),
     names: args.names,
     entitlement: entitlementSummary(detailEntitlement(a)),
     series: classSeriesSummary(a),
+  };
+}
+
+/** The open proposal with the original start it would move; null when none is open. */
+function openReschedule(
+  a: Detail,
+  viewerId: string | null,
+): BookingPresentationInput["reschedule"] {
+  const open = a.rescheduleRequests[0];
+  if (!open) return null;
+  const original = normalizeOccurrences(a.occurrences).find(
+    (o) => !o.deletedAt && isReleasedForReschedule(o),
+  );
+  return {
+    by: open.initiatorRole === "CONSULTANT" ? "CONSULTANT" : "REQUESTER",
+    mine: !!viewerId && open.initiatedById === viewerId,
+    proposedStartsAt: open.proposedTimes[0]?.startsAt ?? null,
+    originalStartsAt: original?.startsAt ?? null,
+    expiresAt: open.expiresAt,
   };
 }
 
@@ -283,4 +315,22 @@ export function presentationNames(
     (viewer.role === "consultee" ? viewer.name : null) ??
     "The attendee";
   return { payer, consultant };
+}
+
+/**
+ * A learner whose seat on this webinar or class was given back, reaching the
+ * page only through their old payment: they read "no longer registered", not
+ * the event (the API refuses them the detail).
+ */
+export function viewerSeatReleased(
+  detail: TAppointmentDetail,
+  userId: string,
+): boolean {
+  const a = detail.appointment;
+  if (!a.webinar && !a.class) return false;
+  const live = a.participants.some((p) => p.userId === userId);
+  const host = a.participants.some(
+    (p) => p.userId === userId && p.role !== "CONSULTEE",
+  );
+  return !live && !host && a.payment.some((p) => p.userId === userId);
 }

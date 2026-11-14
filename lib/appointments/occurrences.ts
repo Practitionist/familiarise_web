@@ -24,7 +24,8 @@ import {
   type OccurrenceVM,
 } from "./view-model";
 import { normalizeOccurrences, type AnomalySink } from "./normalize";
-import { eventUnionStatusBadge, isConfirmedStatus } from "./status";
+import { bookingStatus, bookingStatusBadge } from "./booking-status";
+import { isCompletedOccurrence } from "@/lib/booking/entitlement";
 import type { StatusBadgeStyle } from "@/lib/labels/session-labels";
 
 /** The engine's unit of arithmetic: every interval and duration is a multiple. */
@@ -505,7 +506,25 @@ export function isOccurrenceOver(
   return occurrenceEnd(occurrence) + graceMs < now.getTime();
 }
 
-/** True when the timeline has occurrences and every live one is over. */
+/** A session's outcome is recorded: delivered, parked for a human, voided, or attended. */
+export function isOccurrenceHeld(o: {
+  completionStatus?: string | null;
+  outcome?: string | null;
+}): boolean {
+  return (
+    isCompletedOccurrence(o) || o.completionStatus === "VOIDED" || !!o.outcome
+  );
+}
+
+/** True when every live session's outcome is recorded or its call was ended by the host. */
+export function allOccurrencesHeld(occurrences: OccurrenceVM[]): boolean {
+  const live = liveOccurrences(occurrences);
+  if (occurrences.length === 0) return false;
+  if (live.length === 0) return true;
+  return live.every((o) => isOccurrenceHeld(o) || meetingClosedAt(o) !== null);
+}
+
+/** True when the timeline has occurrences and every live one is over by the clock. */
 export function allOccurrencesOver(
   occurrences: OccurrenceVM[],
   now = new Date(),
@@ -565,27 +584,68 @@ export function getProximityLabel(
   return `in ${weeks} ${weeks === 1 ? "week" : "weeks"}`;
 }
 
-/**
- * The learner's chip on every surface: a booked webinar or class reads
- * "Registered" and a booked 1:1 "Confirmed".
- */
+/** Held when the outcome is recorded or the host ended the call; past-but-undecided is told apart. */
+function listSessions(occurrences: OccurrenceVM[], live: OccurrenceVM[]) {
+  const done = live.length > 0 && allOccurrencesHeld(occurrences);
+  return {
+    live: live.length,
+    allTentative: live.length > 0 && live.every((s) => s.isTentative),
+    done,
+    awaitingOutcome:
+      !done && live.length > 0 && allOccurrencesOver(occurrences),
+  };
+}
+
+type ChipVM = Pick<AppointmentVM, "status" | "kind"> &
+  Partial<
+    Pick<
+      AppointmentVM,
+      | "occurrences"
+      | "bookingSource"
+      | "seatStatus"
+      | "paid"
+      | "payDeadline"
+      | "payLapsed"
+      | "reschedule"
+      | "refunded"
+    >
+  >;
+
+/** A list row's status, from the one status function and the facts the row carries. */
+function rowBookingStatus(vm: ChipVM, role: "consultee" | "consultant") {
+  const live = vm.occurrences ? liveOccurrences(vm.occurrences) : null;
+  return bookingStatus(
+    {
+      kind: vm.kind,
+      status: vm.status,
+      source: vm.bookingSource,
+      seatStatus: vm.seatStatus,
+      paid: vm.paid,
+      payDeadline: vm.payDeadline,
+      payLapsed: vm.payLapsed,
+      reschedule: vm.reschedule,
+      refunded: vm.refunded,
+      sessions:
+        vm.occurrences && live ? listSessions(vm.occurrences, live) : undefined,
+    },
+    role === "consultant" ? "CONSULTANT" : "CONSULTEE",
+  );
+}
+
+/** The status chip on every appointments surface, from the one status function. */
 export function appointmentStatusChip(
-  vm: Pick<AppointmentVM, "status" | "kind" | "bucket">,
+  vm: ChipVM,
   role: "consultee" | "consultant",
 ): StatusBadgeStyle {
-  const badge = eventUnionStatusBadge(vm.status);
-  if (
-    role !== "consultee" ||
-    vm.bucket !== "upcoming" ||
-    !isConfirmedStatus(vm.status)
-  ) {
-    return badge;
-  }
-  const group = vm.kind === "WEBINAR" || vm.kind === "CLASS";
-  return {
-    ...eventUnionStatusBadge("SCHEDULED"),
-    label: group ? "Registered" : "Confirmed",
-  };
+  return bookingStatusBadge(rowBookingStatus(vm, role));
+}
+
+/** The chip's reason line ("Payment was not completed in time."), empty when the word says it all. */
+export function appointmentStatusLine(
+  vm: ChipVM,
+  role: "consultee" | "consultant",
+): string {
+  return rowBookingStatus(vm, role).line;
 }
 
 export interface OccurrenceSourceAppointment {
