@@ -23,6 +23,10 @@ import {
   liveOccurrencesOf,
 } from "@/lib/appointments/occurrences";
 import { deriveBucket } from "@/lib/appointments/bucket";
+import {
+  holdOpenAt,
+  listStatusFacts,
+} from "@/lib/appointments/list-status-facts";
 import { isReleasedSeat, ownSeatStatusOf } from "@/lib/appointments/status";
 import { payLinkHref, payablePaymentId } from "@/lib/payments/pay-link-href";
 import { isOrgFundedPaymentMethod } from "@/lib/payments/org-funded";
@@ -62,6 +66,8 @@ export interface ProcessedEvent {
   startsAt: Date | null;
   endsAt: Date | null;
   status: string;
+  /** DIRECT_CHECKOUT or REQUEST_SUBMITTED for a 1:1 or plan. */
+  bookingSource?: string | null;
   slots: ProcessedEventSlot[];
   appointmentId?: string;
   /** Same derivation the Appointments page uses (lib/appointments/bucket), so
@@ -237,9 +243,12 @@ function awaitingReason(
   status: string | null | undefined,
   slots: SlotWithContext[],
   now: Date = new Date(),
+  hold?: { source: string | null | undefined; open: boolean },
 ): NeedsActionReason | null {
   const { bucket, needsActionReason } = deriveBucket({
     status,
+    source: hold?.source,
+    holdOpen: hold?.open,
     occurrences: slots.map((slot) =>
       toOccurrenceVM({
         ...slot.rawSlot,
@@ -273,10 +282,18 @@ function processConsultation(
   const session = findNextSlot(slotContexts, now);
   // A fresh request has no occurrence yet; it used to vanish from Home while
   // the Appointments page showed it awaiting approval (#1703).
+  const holdDeadline = listStatusFacts(
+    consultation.appointment,
+    [],
+  ).payDeadline;
   const needsActionReason = awaitingReason(
     consultation.status,
     slotContexts,
     now,
+    {
+      source: consultation.bookingSource,
+      open: holdOpenAt(holdDeadline, now),
+    },
   );
   if (!session && !needsActionReason) return null;
 
@@ -316,6 +333,7 @@ function processConsultation(
     startsAt: session?.startsAt ?? null,
     endsAt: session?.endsAt ?? null,
     status: consultation.status ?? "PENDING",
+    bookingSource: consultation.bookingSource,
     slots: slotContexts.map(toEventSlot),
     appointmentId,
     needsActionReason,

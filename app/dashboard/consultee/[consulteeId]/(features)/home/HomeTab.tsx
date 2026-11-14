@@ -95,6 +95,7 @@ function homeStatusChip(event: ProcessedEvent) {
     {
       status: event.status.toUpperCase(),
       kind: KIND_OF[event.type],
+      bookingSource: event.bookingSource,
     },
     "consultee",
   );

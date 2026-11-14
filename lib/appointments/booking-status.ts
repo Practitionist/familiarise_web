@@ -220,8 +220,13 @@ function stageOf(
   const noOpenWindow = f.payDeadline === null;
   const lapsed = (!!deadline && deadline <= now) || noOpenWindow;
 
-  if (RELEASED_SEAT.has(seat))
-    return { stage: "CANCELLED", cause: "CANCELLED" };
+  // The host cancelling the event and the learner's own seat being released read differently.
+  if (RELEASED_SEAT.has(seat)) {
+    return {
+      stage: "CANCELLED",
+      cause: status === "CANCELLED" ? "CANCELLED" : "SEAT_RELEASED",
+    };
+  }
   if (seat === "HELD" && !f.paid) {
     return lapsed ? { stage: "PAYMENT_LAPSED" } : { stage: "AWAITING_PAYMENT" };
   }
