@@ -49,16 +49,17 @@ describe("computeProposalExpiry", () => {
     expect(expiry).toEqual(hoursFromNow(16));
   });
 
-  it("a short-notice proposal lapses at the session's start", () => {
+  it("a short-notice proposal lapses when the session's join window opens", () => {
     expect(computeProposalExpiry([hoursFromNow(10)], now)).toEqual(
-      hoursFromNow(10),
+      hoursFromNow(10 - 0.25),
     );
     expect(computeProposalExpiry([hoursFromNow(24)], now)).toEqual(
-      hoursFromNow(24),
+      hoursFromNow(24 - 0.25),
     );
   });
 
-  it("never returns an expiry for a session that has started", () => {
+  it("never returns an expiry once the join window is open", () => {
+    expect(computeProposalExpiry([hoursFromNow(0.2)], now)).toBeNull();
     expect(computeProposalExpiry([now], now)).toBeNull();
   });
 

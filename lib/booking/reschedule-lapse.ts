@@ -16,11 +16,10 @@ import {
 const LAPSE_REASON = "Proposal lapsed without an answer";
 
 /**
- * A proposal past its deadline is over the moment it lapses: the join gate and
- * the detail read end it and restore the booking here, under the appointment
- * lock, instead of waiting for the expiry job's next tick. Anything the job
- * handles better (a taken original time, a busy lock) is left to it.
- * Returns whether the booking was restored.
+ * A proposal past its deadline is over: the join gate and the detail read end
+ * it and restore the booking here, under the appointment lock, so the original
+ * opens exactly as it would have. A taken original time or a busy lock is left
+ * to the expiry job. Returns whether the booking was restored.
  */
 export async function settleLapsedProposal(
   appointmentId: string,

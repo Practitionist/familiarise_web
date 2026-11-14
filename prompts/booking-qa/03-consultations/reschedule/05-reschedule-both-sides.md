@@ -9,7 +9,7 @@ Rules under test (verified in code):
 - Each release opens a `RescheduleRequest` (with times or "Any time works"). One open request per booking (`openForAppointmentId`).
 - Inside 24 h a move is an agreed move: a session less than 24 h away moves only with proposed times (no times: 409 `RESCHEDULE_WINDOW` "This session starts within 24 hours. To move it, propose new times; …"), each new time at least 15 min away (400 `PROPOSAL_TOO_SOON`), and it never confirms itself.
 - With 24 h or more on both ends, a consultee's pick where the expert is free and published ("green") **auto-confirms** (`AUTO_ACCEPTED`); otherwise, and always for the expert's proposals, it waits for the other side (`PENDING_REVIEW`).
-- A proposal's deadline is min(now + 72 h, the released session's start − 24 h), or the session's start when it was opened inside 24 h; an accept after it is refused (`PROPOSAL_EXPIRED`).
+- A proposal's deadline is min(now + 72 h, the released session's start − 24 h), or 15 minutes before the session's start (its join window) when it was opened inside 24 h; an accept after it is refused (`PROPOSAL_EXPIRED`).
 - An expert's bare release of a paid session cannot be placed by the expert (409 `PROPOSE_TIMES_REQUIRED`); a released session is never placed under 24 h away without an accepted proposal (409 `NEEDS_ACCEPTANCE`).
 - Allocate on a consultation that already has a confirmed session is 409 `ALREADY_ALLOCATED` ("This booking already has a time. Use Reschedule to move it.") in every mode.
 - Caps: the consultee may move each session at most 2 times (422 `MAX_RESCHEDULES_EXCEEDED`); requests that moved nothing (withdrawn, declined or expired with a restore) don't count.
@@ -111,7 +111,7 @@ Fixtures for this file `[local]`: as B2 book S-08 at Thu D+3 10:00 IST (**R-1**)
 4. Repeat 1–2 on R-2 as H1 (expert proposes); as B3 do nothing. Owner-approved: set the request's `expiresAt` to 1 minute ago, run the expiry job.
 5. Restore R-3 to ≥ 48 h away. As B1 propose a time 20 h from now.
 
-**Expect:** 2: the page says the expert must accept before the session starts; the bare release answers 409 `RESCHEDULE_WINDOW`; the proposal answers 200 `AWAITING_ANSWER` (never `AUTO_CONFIRMED`), `expiresAt` = the session's start. 3: the move commits (`ACCEPTED`). 4: `EXPIRED`, R-2's original time `SCHEDULED` again, both told; an accept now answers 409 `PROPOSAL_EXPIRED`. 5: 200 `AWAITING_ANSWER` (the new time is under 24 h, so it waits for H1).
+**Expect:** 2: the page says the expert must accept at least 15 minutes before the session starts; the bare release answers 409 `RESCHEDULE_WINDOW`; the proposal answers 200 `AWAITING_ANSWER` (never `AUTO_CONFIRMED`), `expiresAt` = 15 minutes before the session's start. 3: the move commits (`ACCEPTED`). 4: `EXPIRED`, R-2's original time `SCHEDULED` again, both told; an accept now answers 409 `PROPOSAL_EXPIRED`. 5: 200 `AWAITING_ANSWER` (the new time is under 24 h, so it waits for H1).
 
 **Probe further:** does each side's copy say who must accept and by when, in their own zone?
 

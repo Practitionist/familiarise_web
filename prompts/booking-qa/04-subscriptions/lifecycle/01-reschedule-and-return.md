@@ -79,7 +79,7 @@ After every move: R-03 (occurrences and `RescheduleRequest`), R-05, R-06.
 
 **Expect:**
 
-- Step 1: selectable; the copy says H1 must accept before the session starts; 200 `AWAITING_ANSWER` (not auto-confirmed), `expiresAt` = the session's start.
+- Step 1: selectable; the copy says H1 must accept at least 15 minutes before the session starts; 200 `AWAITING_ANSWER` (not auto-confirmed), `expiresAt` = 15 minutes before the session's start.
 - Step 2: 409 `RESCHEDULE_WINDOW`, "This session starts within 24 hours. To move it, propose new times; the other person has to accept one before the session starts."
 - Step 3: 200 `AWAITING_ANSWER` (waits for H1; never `AUTO_CONFIRMED`).
 - Step 4: 409 `NEEDS_ACCEPTANCE`; the grid paints times under 24 hours as too soon.

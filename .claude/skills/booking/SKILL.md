@@ -113,7 +113,7 @@ nor does it place over the consultant's own bare release of a paid session
 (409 `PROPOSE_TIMES_REQUIRED`): the expert proposes times or the expiry restores.
 A move from or to a time less than 24 hours away is an agreed move: it needs
 proposed times, never auto-confirms (`needsOtherSideAcceptance`), expires at the
-session's start, and a released session is never placed under 24 hours away
+session's join window (15 minutes before the start), and a released session is never placed under 24 hours away
 without an accepted proposal (`assertReplacementNotice`, 409 `NEEDS_ACCEPTANCE`).
 An allocate on a consultation that already has a confirmed session is 409
 `ALREADY_ALLOCATED` whatever the client sends (`mustBeUnscheduled`): moving it is

@@ -701,7 +701,7 @@ describe("Reschedule Route Handler - POST", () => {
     ["learner", { consultantProfileId: undefined }],
     ["expert", { consulteeProfileId: undefined }],
   ])(
-    "lets the %s propose times inside 24 hours; the proposal lapses at the session's start",
+    "lets the %s propose times inside 24 hours; the proposal lapses when the join window opens",
     async (_side, profile) => {
       (getSession as jest.Mock).mockResolvedValue({
         user: {
@@ -734,7 +734,9 @@ describe("Reschedule Route Handler - POST", () => {
       expect(res.status).toBe(200);
       expect(mockTx.rescheduleRequest.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ expiresAt: NEAR_DATE }),
+          data: expect.objectContaining({
+            expiresAt: new Date(NEAR_DATE.getTime() - 15 * 60 * 1000),
+          }),
         }),
       );
     },

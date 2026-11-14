@@ -39,7 +39,7 @@ import { settleLapsedProposal } from "@/lib/booking/reschedule-lapse";
 
 const START = new Date("2030-05-01T10:30:00.000Z");
 
-it("at the session's start, an unanswered proposal ends and the original is restored", async () => {
+it("at its deadline (the join window's opening), an unanswered proposal ends and the original is restored", async () => {
   findFirst.mockResolvedValue({
     id: "req-1",
     appointmentId: "appt-1",

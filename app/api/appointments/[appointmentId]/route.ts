@@ -4,6 +4,7 @@
  * surface here — an org operator's grant never widens read access (ADR 20).
  */
 
+import { moveHasLapsed } from "@/lib/appointments/lapsed-move";
 import { settleLapsedProposal } from "@/lib/booking/reschedule-lapse";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
@@ -49,7 +50,7 @@ export async function GET(
     const open = auth.detail.appointment.rescheduleRequests?.[0];
     if (
       open &&
-      new Date(open.expiresAt).getTime() <= Date.now() &&
+      moveHasLapsed(open.expiresAt) &&
       (await settleLapsedProposal(appointmentId))
     ) {
       auth = await authorizeAppointment(appointmentId);

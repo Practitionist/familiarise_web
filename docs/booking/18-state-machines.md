@@ -175,7 +175,7 @@ export const PARTICIPANT_ALLOWED_FROM: Record<
   `openForAppointmentId @unique` enforces at most one live reschedule per
   appointment. `expiresAt` is stored at creation (`computeProposalExpiry`):
   the earlier of 72 hours and 24 hours before the earliest released session,
-  or that session's start when the request was opened inside those 24 hours.
+  or 15 minutes before that session's start (when its join window opens) for a request opened inside those 24 hours.
   An accept after `expiresAt` is refused (`PROPOSAL_EXPIRED`).
 - An expert's request with no proposed times on a paid booking is never
   answered by a placement: the allocator refuses it with 409
