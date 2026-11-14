@@ -607,6 +607,7 @@ export function appointmentStatusChip(
         | "seatStatus"
         | "paid"
         | "payDeadline"
+        | "payLapsed"
         | "reschedule"
         | "refunded"
       >
@@ -623,6 +624,7 @@ export function appointmentStatusChip(
         seatStatus: vm.seatStatus,
         paid: vm.paid,
         payDeadline: vm.payDeadline,
+        payLapsed: vm.payLapsed,
         reschedule: vm.reschedule,
         refunded: vm.refunded,
         sessions:

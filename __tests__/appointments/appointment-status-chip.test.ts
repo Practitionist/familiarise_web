@@ -53,7 +53,11 @@ describe("appointmentStatusChip", () => {
       payDeadline: new Date(Date.now() + 10 * 60_000),
     };
     expect(chip(hold)).toBe("Awaiting payment");
-    expect(chip({ ...hold, payDeadline: null })).toBe("Cancelled");
+    // An unknown window is still payable; only a lapsed payment ends it.
+    expect(chip({ ...hold, payDeadline: undefined })).toBe("Awaiting payment");
+    expect(chip({ ...hold, payDeadline: null, payLapsed: true })).toBe(
+      "Cancelled",
+    );
   });
 
   it("an open reschedule reads Being moved", () => {

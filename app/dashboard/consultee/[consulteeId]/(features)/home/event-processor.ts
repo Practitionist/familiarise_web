@@ -24,7 +24,7 @@ import {
 } from "@/lib/appointments/occurrences";
 import { deriveBucket } from "@/lib/appointments/bucket";
 import {
-  holdOpenAt,
+  holdOpenFrom,
   listStatusFacts,
 } from "@/lib/appointments/list-status-facts";
 import { isReleasedSeat, ownSeatStatusOf } from "@/lib/appointments/status";
@@ -243,7 +243,7 @@ function awaitingReason(
   status: string | null | undefined,
   slots: SlotWithContext[],
   now: Date = new Date(),
-  hold?: { source: string | null | undefined; open: boolean },
+  hold?: { source: string | null | undefined; open: boolean | undefined },
 ): NeedsActionReason | null {
   const { bucket, needsActionReason } = deriveBucket({
     status,
@@ -282,17 +282,14 @@ function processConsultation(
   const session = findNextSlot(slotContexts, now);
   // A fresh request has no occurrence yet; it used to vanish from Home while
   // the Appointments page showed it awaiting approval (#1703).
-  const holdDeadline = listStatusFacts(
-    consultation.appointment,
-    [],
-  ).payDeadline;
+  const holdFacts = listStatusFacts(consultation.appointment, []);
   const needsActionReason = awaitingReason(
     consultation.status,
     slotContexts,
     now,
     {
       source: consultation.bookingSource,
-      open: holdOpenAt(holdDeadline, now),
+      open: holdOpenFrom(holdFacts, now),
     },
   );
   if (!session && !needsActionReason) return null;

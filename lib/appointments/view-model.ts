@@ -164,6 +164,8 @@ export interface AppointmentVM {
   paid?: boolean;
   /** When the unpaid pay window closes; null when none is open, undefined when not read. */
   payDeadline?: Date | null;
+  /** The hold lapsed on evidence: its payment expired or failed with nothing payable left. */
+  payLapsed?: boolean;
   reschedule?: OpenRescheduleInput | null;
   /** Refunds that have landed on the booking, summed; null when none. */
   refunded?: BookingStatusFacts["refunded"];

@@ -75,8 +75,10 @@ export interface BookingStatusFacts {
   eventView?: boolean;
   /** A charge on the booking succeeded. */
   paid?: boolean;
-  /** When the unpaid pay window closes; null when none is open, undefined when not read. */
+  /** When the unpaid pay window closes; null or undefined when none is known. */
   payDeadline?: Date | string | null;
+  /** Evidence the hold lapsed: its payment expired or failed and nothing payable is open. */
+  payLapsed?: boolean;
   /** An unpaid pay link was minted at some point (reads a history-less EXPIRED row). */
   unpaidLinkSeen?: boolean;
   reschedule?: OpenRescheduleInput | null;
@@ -216,9 +218,9 @@ function stageOf(
   const kind = upper(f.kind);
   const seat = upper(f.seatStatus);
   const deadline = asDate(f.payDeadline);
-  // An undefined deadline is "not read"; null is "read, and nothing payable is open".
-  const noOpenWindow = f.payDeadline === null;
-  const lapsed = (!!deadline && deadline <= now) || noOpenWindow;
+  // Lapsed only on evidence: a known deadline passed, or the payment expired or failed.
+  // An unknown deadline reads "Awaiting payment" without a countdown.
+  const lapsed = (!!deadline && deadline <= now) || f.payLapsed === true;
 
   // The host cancelling the event and the learner's own seat being released read differently.
   if (RELEASED_SEAT.has(seat)) {

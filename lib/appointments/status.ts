@@ -111,12 +111,15 @@ export function seatLapsedOrReleased(
     seatStatus?: string | null;
     paid?: boolean;
     payDeadline?: Date | null;
+    payLapsed?: boolean;
   },
   now: Date = new Date(),
 ): boolean {
   if (isReleasedSeat(vm.seatStatus)) return true;
+  if (!isUnpaidSeat(vm)) return false;
+  // Lapsed only on evidence; an unknown window is still payable.
   return (
-    isUnpaidSeat(vm) &&
-    !(vm.payDeadline && vm.payDeadline.getTime() > now.getTime())
+    vm.payLapsed === true ||
+    (!!vm.payDeadline && vm.payDeadline.getTime() <= now.getTime())
   );
 }

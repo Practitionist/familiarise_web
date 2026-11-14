@@ -35,6 +35,7 @@ import {
 } from "@/lib/appointments/payment-display";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { PLAN_END_REFUND_REASON } from "@/lib/payments/refund-reasons";
+import { paymentsLapsed } from "@/lib/appointments/list-status-facts";
 import {
   BOOKING_STAGES,
   bookingStatus,
@@ -470,6 +471,7 @@ function statusFacts(
     seatStatus: input.seatStatus,
     paid,
     payDeadline: input.holdExpiresAt,
+    payLapsed: paymentsLapsed(input.payments),
     unpaidLinkSeen: input.payments.some(
       (x) => x.paymentStatus !== "SUCCEEDED" && !!x.expiresAt,
     ),

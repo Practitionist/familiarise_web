@@ -28,7 +28,7 @@ import {
 } from "./occurrences";
 import { isReleasedSeat, normalizeStatus, ownSeatStatusOf } from "./status";
 import { bookingStatus } from "./booking-status";
-import { holdOpenAt, listStatusFacts } from "./list-status-facts";
+import { holdOpenFrom, listStatusFacts } from "./list-status-facts";
 import { payablePaymentId } from "@/lib/payments/pay-link-href";
 import { trialMeta } from "./trial-labels";
 import {
@@ -117,7 +117,7 @@ function mapConsultation(c: TConsultationWithPlan, now: Date): AppointmentVM {
         kind: "CONSULTATION",
         now,
         source: c.bookingSource,
-        holdOpen: holdOpenAt(facts.payDeadline, now),
+        holdOpen: holdOpenFrom(facts, now),
       },
       "consultee",
     ),
@@ -160,7 +160,7 @@ function mapSubscription(s: TSubscriptionWithPlan, now: Date): AppointmentVM {
         occurrences,
         now,
         source: s.bookingSource,
-        holdOpen: holdOpenAt(facts.payDeadline, now),
+        holdOpen: holdOpenFrom(facts, now),
       },
       "consultee",
     ),

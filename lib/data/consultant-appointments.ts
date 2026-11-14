@@ -395,6 +395,21 @@ export async function readConsultantAppointmentsPage(
         },
       },
     },
+    // The newest payment rows, so a pay-first hold reads its own pay window
+    // (a 1:1 or plan has one buyer; a host's event view does not read them).
+    payment: {
+      where: { deletedAt: null },
+      orderBy: { createdAt: "desc" },
+      take: 3,
+      select: {
+        id: true,
+        paymentStatus: true,
+        expiresAt: true,
+        amount: true,
+        currency: true,
+        createdAt: true,
+      },
+    },
     consultation: {
       include: {
         consultationPlan: {

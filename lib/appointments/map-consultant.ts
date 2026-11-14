@@ -8,7 +8,7 @@
 
 import type { TAppointment, TAppointmentWithSeats } from "@/types/appointment";
 import { deriveBucket } from "./bucket";
-import { holdOpenAt, listStatusFacts } from "./list-status-facts";
+import { holdOpenFrom, listStatusFacts } from "./list-status-facts";
 import { occurrencesOfAppointment } from "./occurrences";
 import {
   getAnchorTime,
@@ -279,7 +279,7 @@ function mapSingle(
         kind,
         now,
         source,
-        holdOpen: holdOpenAt(facts.payDeadline, now),
+        holdOpen: holdOpenFrom(facts, now),
       },
       "consultant",
     ),
@@ -336,7 +336,7 @@ function mapGroup(
         occurrences,
         now,
         source,
-        holdOpen: holdOpenAt(facts.payDeadline, now),
+        holdOpen: holdOpenFrom(facts, now),
       },
       "consultant",
     ),

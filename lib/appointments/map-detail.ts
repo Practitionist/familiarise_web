@@ -26,6 +26,7 @@ import {
 import { normalizeStatus } from "./status";
 import { trialMeta } from "./trial-labels";
 import { payablePaymentId } from "@/lib/payments/pay-link-href";
+import { paymentsLapsed } from "./list-status-facts";
 import {
   sortOccurrences,
   toDate,
@@ -222,6 +223,7 @@ export function mapAppointmentDetail(
     seatStatus: ownSeat?.status ?? null,
     paid: appointment.payment.some((p) => p.paymentStatus === "SUCCEEDED"),
     payDeadline: pendingDeadline ?? null,
+    payLapsed: paymentsLapsed(appointment.payment),
     bookingSource:
       appointment.consultation?.bookingSource ??
       appointment.subscription?.bookingSource ??

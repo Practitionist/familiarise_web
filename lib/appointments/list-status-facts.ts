@@ -1,12 +1,31 @@
 import { openProposalTarget } from "./consultee-affordances";
 import { toDate, type AppointmentVM, type OccurrenceVM } from "./view-model";
 
-/** Whether a hold's pay window is open at `now`; a read with no open payment says no. */
-export function holdOpenAt(
-  deadline: Date | null | undefined,
+/**
+ * Whether a hold's pay window is open at `now`: false only on evidence (a
+ * lapsed payment, a passed deadline), undefined when the read does not say.
+ */
+export function holdOpenFrom(
+  facts: Pick<AppointmentVM, "payDeadline" | "payLapsed">,
   now: Date,
+): boolean | undefined {
+  if (facts.payLapsed) return false;
+  if (facts.payDeadline) return facts.payDeadline.getTime() > now.getTime();
+  return undefined;
+}
+
+/** A hold lapsed only on evidence: nothing paid, nothing payable open, and a payment that expired or failed. */
+export function paymentsLapsed(
+  payments: ReadonlyArray<{ paymentStatus: string }>,
 ): boolean {
-  return !!deadline && deadline.getTime() > now.getTime();
+  return (
+    !payments.some(
+      (p) => p.paymentStatus === "SUCCEEDED" || p.paymentStatus === "PENDING",
+    ) &&
+    payments.some(
+      (p) => p.paymentStatus === "EXPIRED" || p.paymentStatus === "FAILED",
+    )
+  );
 }
 
 /** What a list row knows about payment and an open reschedule, for its status chip. */
@@ -28,7 +47,10 @@ export function listStatusFacts(
     | null
     | undefined,
   occurrences: OccurrenceVM[],
-): Pick<AppointmentVM, "paid" | "payDeadline" | "reschedule" | "refunded"> {
+): Pick<
+  AppointmentVM,
+  "paid" | "payDeadline" | "payLapsed" | "reschedule" | "refunded"
+> {
   const payments = appointment?.payment ?? [];
   const charged = payments.filter(
     (p) => p.paymentStatus === "SUCCEEDED" && Number(p.amount ?? 0) > 0,
@@ -56,7 +78,9 @@ export function listStatusFacts(
           }
         : null,
     paid: payments.some((p) => p.paymentStatus === "SUCCEEDED"),
-    payDeadline: open[0] ?? null,
+    // A read without payments says nothing: an unknown deadline is never a lapse.
+    payDeadline: open[0] ?? (appointment?.payment ? null : undefined),
+    payLapsed: paymentsLapsed(payments),
     reschedule: proposal
       ? {
           by:
