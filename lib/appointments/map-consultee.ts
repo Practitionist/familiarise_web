@@ -26,7 +26,12 @@ import {
   liveOccurrences,
   occurrencesOfAppointment,
 } from "./occurrences";
-import { isReleasedSeat, normalizeStatus, ownSeatStatusOf } from "./status";
+import {
+  isReleasedSeat,
+  isUnpaidSeat,
+  normalizeStatus,
+  ownSeatStatusOf,
+} from "./status";
 import { bookingStatus } from "./booking-status";
 import { holdOpenFrom, listStatusFacts } from "./list-status-facts";
 import { payablePaymentId } from "@/lib/payments/pay-link-href";
@@ -118,6 +123,8 @@ function mapConsultation(c: TConsultationWithPlan, now: Date): AppointmentVM {
         now,
         source: c.bookingSource,
         holdOpen: holdOpenFrom(facts, now),
+        paid: facts.paid,
+        moving: !!facts.reschedule,
       },
       "consultee",
     ),
@@ -161,6 +168,8 @@ function mapSubscription(s: TSubscriptionWithPlan, now: Date): AppointmentVM {
         now,
         source: s.bookingSource,
         holdOpen: holdOpenFrom(facts, now),
+        paid: facts.paid,
+        moving: !!facts.reschedule,
       },
       "consultee",
     ),
@@ -233,6 +242,8 @@ function mapWebinar(
 ): AppointmentVM {
   const occurrences = occurrencesOfAppointment(w.appointment);
   const status = normalizeStatus(w.status?.toString());
+  const seatStatus = ownSeatStatusOf(w.appointment);
+  const facts = listStatusFacts(w.appointment, occurrences);
   const vm: AppointmentVM = {
     id: `webinar-${w.id}`,
     appointmentId: w.appointment?.id ?? null,
@@ -241,15 +252,26 @@ function mapWebinar(
     counterpart: person(w.webinarPlan.consultantProfile?.user),
     consultantProfileId: w.webinarPlan.consultantProfile?.id ?? null,
     status,
-    ...deriveBucket({ status, occurrences, now }, "consultee"),
+    ...deriveBucket(
+      {
+        status,
+        occurrences,
+        now,
+        unpaidSeat: isUnpaidSeat({ seatStatus, paid: facts.paid }),
+        holdOpen: holdOpenFrom(facts, now),
+      },
+      "consultee",
+    ),
     nextAt: getAnchorTime(occurrences, now),
     occurrences,
     group: null,
     meta: null,
     organizationId: w.appointment?.organizationId ?? null,
     pendingPaymentUrl: null,
-    seatStatus: ownSeatStatusOf(w.appointment),
-    ...listStatusFacts(w.appointment, occurrences),
+    seatStatus,
+    ...facts,
+    // The learner's own held order, so a seat they must pay has a Pay link.
+    pendingPaymentId: payablePaymentId(w.appointment?.payment),
     collaborators: collaborators(w.webinarPlan.collaborators),
     collaboratorRole: null,
     raw: {
@@ -266,6 +288,8 @@ function mapClass(c: TConsulteeClass, now: Date, zone?: string): AppointmentVM {
   const target = c.appointment ?? undefined;
   const occurrences = occurrencesOfAppointment(target);
   const status = normalizeStatus(c.status?.toString());
+  const seatStatus = ownSeatStatusOf(target);
+  const facts = listStatusFacts(target, occurrences);
   const vm: AppointmentVM = {
     id: `class-${c.id}`,
     appointmentId: target?.id ?? null,
@@ -274,15 +298,26 @@ function mapClass(c: TConsulteeClass, now: Date, zone?: string): AppointmentVM {
     counterpart: person(c.classPlan.consultantProfile?.user),
     consultantProfileId: c.classPlan.consultantProfile?.id ?? null,
     status,
-    ...deriveBucket({ status, occurrences, now }, "consultee"),
+    ...deriveBucket(
+      {
+        status,
+        occurrences,
+        now,
+        unpaidSeat: isUnpaidSeat({ seatStatus, paid: facts.paid }),
+        holdOpen: holdOpenFrom(facts, now),
+      },
+      "consultee",
+    ),
     nextAt: getAnchorTime(occurrences, now),
     occurrences,
     group: groupProgress(occurrences, now),
     meta: null,
     organizationId: target?.organizationId ?? null,
     pendingPaymentUrl: null,
-    seatStatus: ownSeatStatusOf(target),
-    ...listStatusFacts(target, occurrences),
+    seatStatus,
+    ...facts,
+    // The learner's own held order, so a seat they must pay has a Pay link.
+    pendingPaymentId: payablePaymentId(target?.payment),
     collaborators: collaborators(c.classPlan.collaborators),
     collaboratorRole: null,
     raw: {

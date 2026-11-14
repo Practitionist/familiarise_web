@@ -96,6 +96,11 @@ function homeStatusChip(event: ProcessedEvent) {
       status: event.status.toUpperCase(),
       kind: KIND_OF[event.type],
       bookingSource: event.bookingSource,
+      seatStatus: event.seatStatus,
+      paid: event.paid,
+      payDeadline: event.payDeadline,
+      payLapsed: event.payLapsed,
+      reschedule: event.reschedule,
     },
     "consultee",
   );
