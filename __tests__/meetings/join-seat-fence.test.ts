@@ -10,6 +10,7 @@
 
 const mockGuard = jest.fn();
 const mockUpdateCallMembers = jest.fn();
+const mockUpdateUserPermissions = jest.fn();
 const mockReport = jest.fn();
 
 jest.mock("../../lib/meetings/route-guard", () => ({
@@ -39,7 +40,8 @@ jest.mock("../../lib/stream-client", () => ({
         updateCallMembers: (payload: unknown) =>
           mockUpdateCallMembers(id, payload),
         queryMembers: jest.fn(async () => ({ members: [] })),
-        updateUserPermissions: jest.fn(async () => ({})),
+        updateUserPermissions: (payload: unknown) =>
+          mockUpdateUserPermissions(payload),
         get: jest.fn(async () => ({ call: {} })),
       }),
     },
@@ -133,6 +135,7 @@ const removals = () =>
 beforeEach(() => {
   jest.clearAllMocks();
   mockUpdateCallMembers.mockResolvedValue({});
+  mockUpdateUserPermissions.mockResolvedValue({});
   // The grant lands, then the database fails the post-write seat check.
   mockPrisma.appointment.findUnique.mockRejectedValueOnce(
     new Error("connection reset"),
@@ -213,5 +216,28 @@ describe("join when the post-grant seat check fails", () => {
     expect(removals()).toEqual([
       ["occurrence-1", { remove_members: ["attendee-1"] }],
     ]);
+  });
+  it("fences the landed membership when a later Stream write in the join throws", async () => {
+    admit("attendee-1", "participant");
+    mockUpdateUserPermissions.mockRejectedValueOnce(new Error("timeout"));
+
+    const res = await join();
+
+    expect(res.status).toBe(500);
+    expect(mockUpdateCallMembers).toHaveBeenCalledWith("occurrence-1", {
+      update_members: [{ user_id: "attendee-1", role: "call_member" }],
+    });
+    // The seat check could not be read, so the grant is left to the sweep as a durable intent.
+    expect(mockPrisma.streamRevocationRetry.createMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: [
+          expect.objectContaining({
+            kind: "SEAT_ACCESS_REVOKE",
+            userId: "attendee-1",
+            planId: "appt-1",
+          }),
+        ],
+      }),
+    );
   });
 });
