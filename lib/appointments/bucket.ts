@@ -32,6 +32,12 @@ export interface BucketInput {
   source?: string | null;
   /** Whether that hold's pay window is still open; undefined when the read does not say. */
   holdOpen?: boolean;
+  /** A charge on the booking succeeded: a paid plan waiting for its times owes nothing. */
+  paid?: boolean;
+  /** An open reschedule: the booking waits on the other side's answer, not on a payment. */
+  moving?: boolean;
+  /** The viewer's own webinar or class seat is held on a payment that has not succeeded. */
+  unpaidSeat?: boolean;
   now?: Date;
 }
 
@@ -70,7 +76,19 @@ export function deriveBucket(
       needsActionReason: "PAY_NOW",
     };
   }
-  if (isPendingStatus(status) && input.source === "DIRECT_CHECKOUT") {
+  // The viewer's own unpaid seat decides a group row: pay while it holds, else it is over.
+  if (input.unpaidSeat) {
+    return input.holdOpen === false
+      ? { bucket: "cancelled", needsActionReason: null }
+      : { bucket: "needsAction", needsActionReason: "PAY_NOW" };
+  }
+  // An unpaid pay-first hold is the learner's to pay; a paid one or a move is not.
+  if (
+    isPendingStatus(status) &&
+    input.source === "DIRECT_CHECKOUT" &&
+    !input.paid &&
+    !input.moving
+  ) {
     if (input.holdOpen === false) {
       return { bucket: "cancelled", needsActionReason: null };
     }

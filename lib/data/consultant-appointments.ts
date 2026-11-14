@@ -25,6 +25,7 @@
 import { isStaffNonParty, publicRequester } from "@/lib/booking/list-selects";
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
+import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
 import { AppointmentsType, AppointmentStatus, Prisma } from "@prisma/client";
 import { toPlain } from "@/lib/data/serialize";
 import { exactKeysetBand } from "@/lib/db/exact-keyset";
@@ -392,6 +393,25 @@ export async function readConsultantAppointmentsPage(
       include: {
         meeting: {
           select: { id: true, endedAt: true, endedReason: true },
+        },
+      },
+    },
+    // The open move, so a booking being rescheduled reads "Being moved" here too.
+    rescheduleRequests: {
+      where: { status: { in: RESCHEDULE_OPEN_STATUSES } },
+      orderBy: { createdAt: "desc" },
+      take: 1,
+      select: {
+        id: true,
+        status: true,
+        reason: true,
+        expiresAt: true,
+        initiatorRole: true,
+        initiatedById: true,
+        proposedTimes: {
+          orderBy: { startsAt: "asc" },
+          take: 1,
+          select: { startsAt: true, endsAt: true },
         },
       },
     },
