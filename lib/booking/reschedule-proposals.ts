@@ -163,6 +163,31 @@ export function supportsProposals(
   );
 }
 
+/**
+ * Proposed times are stored one 30-minute atom per row; a person reads one
+ * line per session, so back-to-back atoms are joined.
+ */
+export function proposedSessionsOf<
+  T extends { startsAt: Date | string; endsAt: Date | string },
+>(times: ReadonlyArray<T>): { startsAt: Date; endsAt: Date }[] {
+  const sorted = [...times]
+    .map((t) => ({
+      startsAt: new Date(t.startsAt),
+      endsAt: new Date(t.endsAt),
+    }))
+    .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
+  const sessions: { startsAt: Date; endsAt: Date }[] = [];
+  for (const time of sorted) {
+    const last = sessions[sessions.length - 1];
+    if (last && last.endsAt.getTime() === time.startsAt.getTime()) {
+      last.endsAt = time.endsAt;
+    } else {
+      sessions.push({ ...time });
+    }
+  }
+  return sessions;
+}
+
 /** A window either side of the atom count is measured in. */
 interface AtomWindow {
   startsAt: Date;

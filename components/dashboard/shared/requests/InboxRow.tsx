@@ -1,5 +1,6 @@
 "use client";
 
+import { proposedSessionsOf } from "@/lib/booking/reschedule-proposals";
 import Image from "next/image";
 import Link from "next/link";
 import { MoreHorizontal, Timer, User } from "lucide-react";
@@ -307,14 +308,14 @@ export function proposalLine(
 ): string | null {
   const proposal = openProposal(row);
   if (!proposal) return null;
-  const [first, ...rest] = proposal.proposedTimes;
+  const [first, ...rest] = proposedSessionsOf(proposal.proposedTimes);
   const times = first
     ? `${formatDateTime(first.startsAt, viewer)}${rest.length > 0 ? ` +${rest.length} more` : ""}`
     : null;
   if (proposal.initiatorRole === "CONSULTANT") {
     return times
       ? `You asked to move this to ${times} · waiting for ${row.requester.name}`
-      : "You released this session · pick a new time";
+      : "You released this session without times · withdraw it, then propose new times";
   }
   return times
     ? `${row.requester.name} asked to move · proposed ${times}`

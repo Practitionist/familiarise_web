@@ -13,6 +13,7 @@ import {
   computeProposalExpiry,
   mayAutoConfirm,
   needsOtherSideAcceptance,
+  proposedSessionsOf,
   proposalCountMatches,
   rescheduleNotificationVariant,
   supportsProposals,
@@ -96,6 +97,21 @@ describe("re-placing a released session without acceptance", () => {
     expect(() =>
       assertReplacementNotice(true, undefined, [hoursFromNow(30)], now),
     ).not.toThrow();
+  });
+});
+
+describe("proposedSessionsOf", () => {
+  it("reads a one-hour proposal as one session, not two half hours", () => {
+    expect(
+      proposedSessionsOf([
+        { startsAt: hoursFromNow(48), endsAt: hoursFromNow(48.5) },
+        { startsAt: hoursFromNow(48.5), endsAt: hoursFromNow(49) },
+        { startsAt: hoursFromNow(72), endsAt: hoursFromNow(72.5) },
+      ]),
+    ).toEqual([
+      { startsAt: hoursFromNow(48), endsAt: hoursFromNow(49) },
+      { startsAt: hoursFromNow(72), endsAt: hoursFromNow(72.5) },
+    ]);
   });
 });
 

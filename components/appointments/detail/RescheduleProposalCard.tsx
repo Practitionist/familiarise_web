@@ -1,5 +1,6 @@
 "use client";
 
+import { proposedSessionsOf } from "@/lib/booking/reschedule-proposals";
 import { useState } from "react";
 import { useZonedFormat } from "@/lib/time/zoned-format";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -124,7 +125,8 @@ export function RescheduleProposalCard({
 
   const viewerId = session?.user?.id;
   const isInitiator = !!viewerId && viewerId === proposal.initiatedById;
-  const slots = proposal.proposedTimes;
+  // One line per proposed session, not per stored 30-minute row.
+  const slots = proposedSessionsOf(proposal.proposedTimes);
 
   const mutation = useMutation({
     mutationFn: (kind: ProposalAnswer) => postAnswer(appointmentId, kind),
