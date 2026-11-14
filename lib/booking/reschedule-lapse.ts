@@ -74,17 +74,3 @@ export async function settleLapsedProposal(
   }
   return restored > 0;
 }
-
-/** The same, for the booking that holds this session (the meeting paths know only the session). */
-export async function settleLapsedProposalForOccurrence(
-  occurrenceId: string,
-  now: Date = new Date(),
-): Promise<boolean> {
-  const occurrence = await prisma.appointmentOccurrence.findUnique({
-    where: { id: occurrenceId },
-    select: { appointmentId: true },
-  });
-  return occurrence
-    ? settleLapsedProposal(occurrence.appointmentId, now)
-    : false;
-}

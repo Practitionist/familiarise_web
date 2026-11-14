@@ -81,10 +81,10 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
-const mockSettleLapsed = jest.fn(async (_occurrenceId: string) => false);
+const mockSettleLapsed = jest.fn(async (_appointmentId: string) => false);
 jest.mock("../../lib/booking/reschedule-lapse", () => ({
-  settleLapsedProposalForOccurrence: (occurrenceId: string) =>
-    mockSettleLapsed(occurrenceId),
+  settleLapsedProposal: (appointmentId: string) =>
+    mockSettleLapsed(appointmentId),
 }));
 
 jest.mock("../../lib/stream-logger", () => ({
@@ -323,6 +323,8 @@ describe("provisionAppointmentMeeting", () => {
     });
 
     expect(res).toEqual({ ok: true, streamCallId: "occurrence-slot-1" });
+    // A confirmed session never reaches the lapse check.
+    expect(mockSettleLapsed).not.toHaveBeenCalled();
     expect(mockGetOrCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
@@ -396,7 +398,7 @@ describe("provisionAppointmentMeeting", () => {
 
     const res = await provisionAppointmentMeeting({ id: "slot-1" });
 
-    expect(mockSettleLapsed).toHaveBeenCalledWith("slot-1");
+    expect(mockSettleLapsed).toHaveBeenCalledWith("appt-1");
     expect(res).toEqual({ ok: true, streamCallId: "occurrence-slot-1" });
   });
 

@@ -1,6 +1,7 @@
 "use server";
 
-import { settleLapsedProposalForOccurrence } from "@/lib/booking/reschedule-lapse";
+import { settleLapsedProposal } from "@/lib/booking/reschedule-lapse";
+import { isReleasedForReschedule } from "@/utils/scheduling-engine/types";
 import * as Sentry from "@sentry/nextjs";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
@@ -378,12 +379,24 @@ async function provisionRoom(
   // An existing row re-asserts its call below, so a row whose call is missing heals here.
   const reuseExisting = !!existingMeeting && !rebuildEndedEarly;
 
-  const authorized = await readSlotForCaller(anchorSlot.id);
+  let authorized = await readSlotForCaller(anchorSlot.id);
   if (!authorized) {
     return { ok: false, refusal: "You are not a participant in this session." };
   }
-  // A move past its deadline is ended first, so the original session opens.
-  await settleLapsedProposalForOccurrence(anchorSlot.id);
+  // A released session whose move has lapsed is the original again: end the
+  // move first. A session that is not released costs no extra read.
+  if (
+    isReleasedForReschedule(authorized.slot) &&
+    (await settleLapsedProposal(authorized.slot.appointmentId))
+  ) {
+    authorized = await readSlotForCaller(anchorSlot.id);
+    if (!authorized) {
+      return {
+        ok: false,
+        refusal: "You are not a participant in this session.",
+      };
+    }
+  }
 
   const refusal = await getMeetingCreationRefusal(anchorSlot, reuseExisting);
   if (refusal) return { ok: false, refusal };
