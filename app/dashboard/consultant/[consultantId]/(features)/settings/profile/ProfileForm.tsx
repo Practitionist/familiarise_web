@@ -45,33 +45,36 @@ export function ProfileForm({
   }
 
   return (
-    <form
-      onSubmit={form.handleSubmit}
-      className="space-y-6"
-      aria-label="Profile form"
-    >
-      <Card>
-        <CardContent className="p-6 space-y-8">
-          <ProfileSection
-            formData={form.formData}
-            setFormData={form.setFormData}
-            domains={form.domains}
-            subDomainOptions={form.subDomainOptions}
-            tagOptions={form.tagOptions}
-            onInputChange={form.handleInputChange}
-            onDomainChange={form.handleDomainChange}
-            onSubDomainChange={form.handleSubDomainChange}
-            onTagChange={form.handleTagChange}
-          />
-        </CardContent>
-      </Card>
-      <SettingsFormActions isSaving={form.isSaving} onReset={form.reset} />
+    <>
+      <form
+        onSubmit={form.handleSubmit}
+        className="space-y-6"
+        aria-label="Profile form"
+      >
+        <Card>
+          <CardContent className="p-6 space-y-8">
+            <ProfileSection
+              formData={form.formData}
+              setFormData={form.setFormData}
+              domains={form.domains}
+              subDomainOptions={form.subDomainOptions}
+              tagOptions={form.tagOptions}
+              onInputChange={form.handleInputChange}
+              onDomainChange={form.handleDomainChange}
+              onSubDomainChange={form.handleSubDomainChange}
+              onTagChange={form.handleTagChange}
+            />
+          </CardContent>
+        </Card>
+        <SettingsFormActions isSaving={form.isSaving} onReset={form.reset} />
+      </form>
+      {/* Outside the form: the dialog's own submit must not resubmit it. */}
       <AvailabilitySaveConfirm
         consultantId={consultant.id}
         preview={form.pendingSave?.preview ?? null}
         onConfirm={form.confirmPendingSave}
         onCancel={form.cancelPendingSave}
       />
-    </form>
+    </>
   );
 }

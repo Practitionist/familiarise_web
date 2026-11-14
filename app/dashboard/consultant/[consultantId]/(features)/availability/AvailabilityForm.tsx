@@ -20,40 +20,43 @@ export function AvailabilityForm({
   if (form.timezoneLoading) return <SettingsSkeleton />;
 
   return (
-    <form
-      onSubmit={form.handleSubmit}
-      className="space-y-6"
-      aria-label="Availability form"
-    >
-      <Card>
-        <CardContent className="p-6 space-y-8">
-          <AvailabilitySection
-            scheduleType={form.scheduleType}
-            canSwitchSchedule={form.canSwitchSchedule}
-            scheduleSwitchBlockedReason={form.scheduleSwitchBlockedReason}
-            onScheduleTypeChange={form.handleScheduleTypeChange}
-            weeklySlots={form.weeklySlots}
-            customSlots={form.customSlots}
-            currentDate={form.currentDate}
-            onPrevMonth={form.handlePrevMonth}
-            onNextMonth={form.handleNextMonth}
-            onToggleCustomDate={form.handleToggleCustomDate}
-            onAddSlot={form.handleAddSlot}
-            onUpdateSlot={form.handleUpdateSlot}
-            onDeleteSlot={form.handleDeleteSlot}
-            weeklyTimezone={form.weeklyTimezone}
-            profileTimezone={form.profileTimezone}
-            browserTimezone={form.browserTimezone}
-          />
-        </CardContent>
-      </Card>
-      <SettingsFormActions isSaving={form.isSaving} onReset={form.reset} />
+    <>
+      <form
+        onSubmit={form.handleSubmit}
+        className="space-y-6"
+        aria-label="Availability form"
+      >
+        <Card>
+          <CardContent className="p-6 space-y-8">
+            <AvailabilitySection
+              scheduleType={form.scheduleType}
+              canSwitchSchedule={form.canSwitchSchedule}
+              scheduleSwitchBlockedReason={form.scheduleSwitchBlockedReason}
+              onScheduleTypeChange={form.handleScheduleTypeChange}
+              weeklySlots={form.weeklySlots}
+              customSlots={form.customSlots}
+              currentDate={form.currentDate}
+              onPrevMonth={form.handlePrevMonth}
+              onNextMonth={form.handleNextMonth}
+              onToggleCustomDate={form.handleToggleCustomDate}
+              onAddSlot={form.handleAddSlot}
+              onUpdateSlot={form.handleUpdateSlot}
+              onDeleteSlot={form.handleDeleteSlot}
+              weeklyTimezone={form.weeklyTimezone}
+              profileTimezone={form.profileTimezone}
+              browserTimezone={form.browserTimezone}
+            />
+          </CardContent>
+        </Card>
+        <SettingsFormActions isSaving={form.isSaving} onReset={form.reset} />
+      </form>
+      {/* Outside the form: the dialog's own submit must not resubmit it. */}
       <AvailabilitySaveConfirm
         consultantId={consultant.id}
         preview={form.pendingSave?.preview ?? null}
         onConfirm={form.confirmPendingSave}
         onCancel={form.cancelPendingSave}
       />
-    </form>
+    </>
   );
 }

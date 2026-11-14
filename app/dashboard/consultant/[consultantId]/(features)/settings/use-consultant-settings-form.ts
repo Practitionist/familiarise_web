@@ -1,5 +1,6 @@
 "use client";
 
+import { z } from "zod";
 import { ScheduleType } from "@prisma/client";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "components/ui/use-toast";
@@ -35,10 +36,19 @@ import {
 import type { Option } from "./sections/ProfileSection";
 
 /** What a save would change under live bookings, shown before it runs. */
-export interface AvailabilitySavePreview {
-  sessions: { appointmentId: string; startsAt: string; held: boolean }[];
-  customDatesRemoved: number;
-}
+const AvailabilitySavePreviewSchema = z.object({
+  sessions: z.array(
+    z.object({
+      appointmentId: z.string(),
+      startsAt: z.string(),
+      held: z.boolean(),
+    }),
+  ),
+  customDatesRemoved: z.number().int().nonnegative(),
+});
+export type AvailabilitySavePreview = z.infer<
+  typeof AvailabilitySavePreviewSchema
+>;
 
 /**
  * Which extra reads a section needs on top of the profile it was given.
@@ -452,10 +462,14 @@ export function useConsultantSettingsForm(
           body: JSON.stringify(updatedData),
         },
       );
-      const { preview } = (await requireJsonResponse(
-        previewResponse,
-        "Failed to update settings",
-      )) as { preview: AvailabilitySavePreview };
+      const { preview } = z
+        .object({ preview: AvailabilitySavePreviewSchema })
+        .parse(
+          await requireJsonResponse(
+            previewResponse,
+            "Failed to update settings",
+          ),
+        );
       if (preview.sessions.length > 0 || preview.customDatesRemoved > 0) {
         setPendingSave({ payload: updatedData, preview });
         return;
