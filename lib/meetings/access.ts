@@ -282,11 +282,9 @@ export async function resolveMeetingAccess(
 ): Promise<MeetingAccess> {
   let meeting = await loadMeeting(callId);
   // A session whose move lapsed unanswered is the original again from that instant.
-  if (
-    meeting &&
-    isReleasedForReschedule(meeting.occurrence) &&
-    (await settleLapsedProposal(meeting.occurrence.appointment.id))
-  ) {
+  if (meeting && isReleasedForReschedule(meeting.occurrence)) {
+    // Reloaded either way: a concurrent join may have settled it first.
+    await settleLapsedProposal(meeting.occurrence.appointment.id);
     meeting = await loadMeeting(callId);
   }
 
