@@ -288,12 +288,22 @@ database named `ci`. Run it locally like this, and only like this:
 4. Run `CI=true DATABASE_URL=postgresql://ci@localhost:<port>/ci npx jest -c jest.db.config.ts <paths>`,
    then stop the server and delete its data directory.
 
-An agent cannot use step 2 as written: `.claude/settings.json` denies `prisma db push` and `npm run db:sidecars` in every permission mode, and a worktree usually has a `.env`. The same tier runs without either, on a disposable container:
+An agent cannot use step 2 as written: `.claude/settings.json` denies `prisma db push` and `npm run db:sidecars` in every permission mode, and a worktree usually has a `.env`. The same tier runs without either, on a disposable container. From the worktree, run:
 
-1. `docker run -d --name <name> -p <port>:5432 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=ci postgres:17`, and wait for `pg_isready`.
-2. Load the branch's own schema with the read-only diff: `npx prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script`, piped into `psql -v ON_ERROR_STOP=1` inside the container. Then apply the sidecar files the same way, in the order `db:sidecars` uses (`check-constraints`, `ledger-triggers`, `payment-legs-triggers`, `analytics-views`).
-3. For the jest process only, export every key named in any `.env*` file in the worktree (`.env`, `.env.local`, `.env.test`, `.env.test.local`) as an empty string, so `next/jest` cannot load a live credential, then set `CI=true`, a dummy `BETTER_AUTH_SECRET`, and `DATABASE_URL` and `DIRECT_URL` to `postgresql://postgres:postgres@localhost:<port>/ci`. Print the host, port and database name before running.
-4. `npx jest -c jest.db.config.ts --maxWorkers=1 --coverage=false`, then `docker rm -f <name>`.
+```bash
+scripts/dev/db-tier-local.sh <log-file> [jest args…]
+```
+
+It takes the heavy lock for the whole run (`.claude/skills/workflow/references/model-orchestration.md` section 6b), writes everything to `<log-file>` and prints the head at start and end, the jest totals and the log path. Extra arguments go to jest, so `scripts/dev/db-tier-local.sh /tmp/db.log __tests__/db/booking/cancel-money.db.test.ts` runs one suite. What it does, in order:
+
+1. Starts `postgres:17` in a container with a unique name, on a port Docker picks (`-p 127.0.0.1::5432`), so a second run never collides, and waits for `pg_isready`.
+2. Loads the branch's own schema with the read-only diff: `node_modules/.bin/prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script`, piped into `psql -v ON_ERROR_STOP=1` inside the container. Then it applies the sidecar files the same way, in the order `db:sidecars` uses (`check-constraints`, `ledger-triggers`, `payment-legs-triggers`, `analytics-views`). A load error aborts the run with an `ABORT:` line instead of testing a half-built schema.
+3. Exports every key named in any `.env*` file in the worktree as an empty string, so `next/jest` and `prisma.config.ts` cannot load a live credential. The keys come from `dotenv`'s own parser, the grammar `next/jest` loads, so `KEY = value`, an indented `export KEY=…` and quoted multi-line values are all covered; values are never read out. A file dotenv cannot read, or a key that is not a shell variable name, aborts the run. Templates (`.env.sample`, `.env.example`) are skipped: nothing loads them, and an empty `EMAIL_DELIVERY_MODE` would defeat the `??= "live"` default in `jest.setup.ts` and hold the relay suites' test emails. Then it sets `CI=true`, a dummy `BETTER_AUTH_SECRET`, and `DATABASE_URL` and `DIRECT_URL` to `postgresql://postgres:postgres@localhost:<port>/ci`. It refuses to go on unless both URLs contain `@localhost:` and end in `/ci`, and prints the host, port and database name (never a secret).
+4. Runs `node_modules/.bin/jest -c jest.db.config.ts --maxWorkers=1 --coverage=false` plus any extra arguments. It calls the installed binaries, never `npx`, and stops with an `ABORT:` line if either is missing. An `EXIT` trap removes the container and releases the lock however the run ends.
+
+With `--log-statements` first (`scripts/dev/db-tier-local.sh --log-statements <log-file> <test file> -t "<test name>"`), Postgres runs with `log_statement=all` and the script writes `<log-file>.statements`: one line per statement jest issued after the schema load, which the `statement-counter` agent groups and counts. The count includes the test's own fixture setup. When the log cannot be read, the start marker is missing or no statement follows it, the script prints `statements: UNAVAILABLE (<reason>)`, writes no statements file, and exits 3 even though jest passed, so an unavailable measurement can never read as a zero.
+
+The script never runs `prisma db push`, `migrate deploy` or an `npm run db:*` script.
 
 CI runs this tier inside its lint job only when its changed-paths step sets `db` in `.github/workflows/ci.yaml`: a change under the database paths it lists, or a full run. A PR that changes booking, payment or Stream state without either has not had the tier run until someone runs it this way.
 

@@ -193,10 +193,11 @@ jobs:
 
       - name: Shell syntax + shellcheck
         # scripts/ci/notify-ops-failure.sh is the alert path for every money cron;
-        # a script that does not parse is a dead sink nobody sees.
+        # a script that does not parse is a dead sink nobody sees. The dev check
+        # scripts and the Claude Code hooks are held to the same bar.
         run: |
-          for f in scripts/ci/*.sh; do bash -n "$f"; done
-          shellcheck scripts/ci/*.sh
+          for f in scripts/ci/*.sh scripts/dev/*.sh .claude/hooks/*.sh; do bash -n "$f"; done
+          shellcheck scripts/ci/*.sh scripts/dev/*.sh .claude/hooks/*.sh
 
       - name: Prettier Check
         id: prettier
