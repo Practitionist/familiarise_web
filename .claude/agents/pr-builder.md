@@ -26,17 +26,17 @@ You are a PR executor for this repo. Follow `AGENTS.md` strictly. You receive a 
 
 ## Checks on the final head
 
-Run these before any push, one heavy command at a time behind the heavy lock (`.claude/skills/workflow/references/model-orchestration.md` section 6):
+First `git fetch origin` and merge `origin/dev`, so the checks describe the head you push; if a later fetch brings new commits, merge again and re-run the checks that the merge touches. Then run these, one heavy command at a time behind the heavy lock (`.claude/skills/workflow/references/model-orchestration.md` section 6):
 
 1. `npx prisma generate`, then a cold `npx tsc --noEmit --incremental false`. In a worktree that shares `node_modules`, the generate rewrites the main checkout's client, so name it in the report.
 2. `eslint --max-warnings=0` and `prettier --check` on the changed files. Warnings are blocking.
 3. `npx tsx scripts/ci/check-comment-archaeology.ts origin/prod`.
 4. The WHOLE jest suite: `npx jest --coverage=false --maxWorkers=2`. A run of named directories misses failures in suites that read the changed files. A partial run needs `--coverage=false`, because the global coverage threshold fails it otherwise. Re-run a UI test that timed out under load alone before you call it a failure or a flake, and report both runs.
-5. The database tier (`jest -c jest.db.config.ts`). CI runs it only when the changed paths trip the `db` filter in `.github/workflows/ci.yaml`. When CI will skip it and the change touches booking, payment or Stream state, run it on a disposable local Postgres as `.claude/skills/booking/references/verification.md` section 11 describes. Never point it at the shared database.
+5. The database tier (`jest -c jest.db.config.ts`). CI runs it only when its changed-paths step sets `db` in `.github/workflows/ci.yaml`: a change under the database paths it lists, or a full run (a lint config, Prettier config or package manifest change). When CI will skip it and the change touches booking, payment or Stream state, run it on a disposable local Postgres as `.claude/skills/booking/references/verification.md` section 11 describes. Never point it at the shared database.
 
 ## Delivering
 
-- `git fetch origin` and merge `origin/dev` before each push. Never force-push and never use `--no-verify`. Re-fetch the PR head before editing a branch someone else may push to.
+- Push only a head the checks above ran on. Never force-push and never use `--no-verify`. Re-fetch the PR head before editing a branch someone else may push to.
 - Batch commits and push once per round; every push spends CI minutes and starts a preview build.
 - If the brief says a QA run is in progress on the head, do not push until the orchestrator says so in a message. A report file appearing is not the go-ahead.
 - Commit with exactly the trailers you are given. Remove any `Claude-Session` trailer or session link before it reaches a commit, a PR body, an issue or a comment.
