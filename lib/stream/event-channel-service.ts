@@ -191,16 +191,59 @@ async function tryAddToExistingChannel(
 /** Why a join did not land: Stream refused the account, or the user is still not a member. */
 export type EventChannelJoinFailure = "account_refused" | "member_not_added";
 
-export async function addUserToEventChannel(
-  eventType: EventType,
-  eventId: string,
-  userId: string,
-): Promise<{
+export interface EventChannelJoin {
   success: boolean;
   channelId: string;
   created?: boolean;
   reason?: EventChannelJoinFailure;
-}> {
+}
+
+/** The users a grant wrote, recorded before each write so a throw still leaves them to fence. */
+export interface EventChannelGrants {
+  appointmentId: string | null;
+  userIds: string[];
+}
+
+async function eventAppointmentId(
+  eventType: "webinar" | "class",
+  eventId: string,
+): Promise<string | null> {
+  const row = await prisma.appointment.findUnique({
+    where:
+      eventType === "webinar" ? { webinarId: eventId } : { classId: eventId },
+    select: { id: true },
+  });
+  return row?.id ?? null;
+}
+
+/** Adds the user to the event channel, then fences every seat the join wrote, even when a write throws. */
+export async function addUserToEventChannel(
+  eventType: EventType,
+  eventId: string,
+  userId: string,
+): Promise<EventChannelJoin> {
+  // Loaded before any write, and lazily: access-revocation imports this module.
+  const { fenceSeatGrants } = await import("@/lib/stream/access-revocation");
+  const granted: EventChannelGrants = { appointmentId: null, userIds: [] };
+  try {
+    return await grantEventChannelMember(eventType, eventId, userId, granted);
+  } finally {
+    if (granted.appointmentId && granted.userIds.length > 0) {
+      await fenceSeatGrants(
+        granted.appointmentId,
+        Array.from(new Set(granted.userIds)),
+      );
+    }
+  }
+}
+
+/** `addUserToEventChannel` without the fence; the caller fences `granted` once after all its writes. */
+export async function grantEventChannelMember(
+  eventType: EventType,
+  eventId: string,
+  userId: string,
+  granted: EventChannelGrants,
+): Promise<EventChannelJoin> {
   eventTypeSchema.parse(eventType);
   eventIdSchema.parse(eventId);
   userIdSchema.parse(userId);
@@ -229,9 +272,27 @@ export async function addUserToEventChannel(
     ? [{ user_id: userId, channel_role: collaboratorChannelRole }]
     : [userId];
 
+  if (
+    granted.appointmentId === null &&
+    (eventType === "webinar" || eventType === "class")
+  ) {
+    // The fence needs the seats' appointment; a grant it could not check is never written.
+    try {
+      granted.appointmentId = await eventAppointmentId(eventType, eventId);
+    } catch (error) {
+      streamLogger.warn("Event channel join refused: seat owner unreadable", {
+        channelId,
+        userId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return { success: false, channelId, reason: "member_not_added" };
+    }
+  }
+
   try {
     const channel = client.channel(channelType, channelId);
 
+    granted.userIds.push(userId);
     if (
       await tryAddToExistingChannel(
         channel,
@@ -258,6 +319,7 @@ export async function addUserToEventChannel(
     });
     const droppedIds = new Set(upsertResult?.droppedIds ?? []);
     const syncedMembers = allMembers.filter((id) => !droppedIds.has(id));
+    granted.userIds.push(...syncedMembers);
 
     const eventChannelData = {
       name,

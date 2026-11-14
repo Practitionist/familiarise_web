@@ -1,6 +1,5 @@
 import { readJsonBody } from "@/lib/api/parse";
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import {
   applyRateLimit,
@@ -29,8 +28,7 @@ import {
 } from "@/utils/appointmentlock";
 import type { EventType } from "@/utils/scheduling-engine/types";
 import { confirmTrialProposal } from "@/lib/booking/trial-reschedule";
-
-const RespondSchema = z.object({ action: z.enum(["accept", "decline"]) });
+import { RescheduleRespondSchema } from "@/schemas/appointments";
 
 /** Why an accept was refused, in the counterparty's words. */
 const ACCEPT_FAILURE_COPY: Record<string, string> = {
@@ -83,7 +81,7 @@ export async function POST(
     if (apptLimited) return apptLimited;
     const read = await readJsonBody(request);
     if (read.error) return read.error;
-    const parsed = RespondSchema.safeParse(read.body);
+    const parsed = RescheduleRespondSchema.safeParse(read.body);
     if (!parsed.success) {
       return NextResponse.json(
         { error: 'action must be "accept" or "decline"' },

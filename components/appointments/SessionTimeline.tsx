@@ -14,7 +14,7 @@ import {
 } from "@/lib/appointments/occurrences";
 import { useNowTick } from "@/hooks/use-now-tick";
 import type { OccurrenceVM } from "@/lib/appointments/view-model";
-import { TRIAL_STATUS_BADGE } from "@/lib/labels/session-labels";
+import { bookingStatus } from "@/lib/appointments/booking-status";
 import { CountdownBadge } from "./CountdownBadge";
 import { HeldSlotBadge } from "./HeldSlotBadge";
 
@@ -330,7 +330,12 @@ export function SessionTimeline({
               </button>
             ) : (
               <span className="text-[10px] font-medium uppercase text-muted-foreground/70">
-                {TRIAL_STATUS_BADGE.AWAITING_PAYMENT.label}
+                {
+                  bookingStatus(
+                    { kind: "TRIAL", status: "AWAITING_PAYMENT" },
+                    "CONSULTEE",
+                  ).label
+                }
               </span>
             )}
           </div>

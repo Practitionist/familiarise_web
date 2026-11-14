@@ -15,7 +15,11 @@ import { moveHasLapsed } from "@/lib/appointments/lapsed-move";
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
-import type { AppointmentFeedbackRole, RefundStatus } from "@prisma/client";
+import type {
+  AppointmentFeedbackRole,
+  BookingHistoryEntity,
+  RefundStatus,
+} from "@prisma/client";
 import { toPlain } from "@/lib/data/serialize";
 import {
   bookingAnomalies,
@@ -108,6 +112,27 @@ const collaboratorsInclude = {
   },
 } as const;
 
+const LIFECYCLE_HISTORY_ENTITIES: BookingHistoryEntity[] = [
+  "CONSULTATION",
+  "SUBSCRIPTION",
+  "TRIAL",
+  "WEBINAR",
+  "CLASS",
+];
+
+/** Which side wrote a history edge; a staff or system actor's id never leaves the server. */
+export type HistoryActorSide = "CONSULTANT" | "REQUESTER" | "OTHER" | null;
+
+function historyActorSide(
+  actorUserId: string | null,
+  sides: { requester: string | null; hosts: (string | undefined)[] },
+): HistoryActorSide {
+  if (!actorUserId) return null;
+  if (actorUserId === sides.requester) return "REQUESTER";
+  if (sides.hosts.includes(actorUserId)) return "CONSULTANT";
+  return "OTHER";
+}
+
 /**
  * Every booking page, its API and the authz helper read through here: a move
  * past its deadline is ended first, so the original session is what they see.
@@ -167,6 +192,8 @@ async function loadAppointmentDetail(appointmentId: string) {
       trial: {
         include: {
           consulteeProfile: consulteeProfileSelect,
+          // The trial's delivering expert, who answers its reschedules.
+          consultantProfile: consultantProfileSelect,
           subscriptionPlan: {
             include: { consultantProfile: consultantProfileSelect },
           },
@@ -219,21 +246,23 @@ async function loadAppointmentDetail(appointmentId: string) {
         },
       },
       occurrences: slotsInclude,
-      // EXPIRED edge: lapsed pay link vs unanswered request. CANCELLED +
-      // WITHDRAWN_BY_CONSULTANT: the withdraw copy (lib/dashboard/money-state.ts).
+      // The booking's own lifecycle edges: who approved, declined, withdrew or
+      // cancelled it, and when. The actor id is folded into a side below.
       statusHistory: {
-        where: {
-          OR: [
-            { toStatus: "EXPIRED" },
-            { toStatus: "CANCELLED", reason: "WITHDRAWN_BY_CONSULTANT" },
-          ],
+        where: { entity: { in: LIFECYCLE_HISTORY_ENTITIES } },
+        orderBy: { createdAt: "asc" },
+        select: {
+          fromStatus: true,
+          toStatus: true,
+          reason: true,
+          actorUserId: true,
+          createdAt: true,
         },
-        select: { fromStatus: true, toStatus: true, reason: true },
       },
       // #1554 — the roster: every live seat holder, with display fields.
       participants: {
         where: liveParticipant(),
-        select: { userId: true, role: true, user: userSelect },
+        select: { userId: true, role: true, status: true, user: userSelect },
       },
     },
     // ~28 relation nodes: one joined statement instead of one per node.
@@ -244,7 +273,31 @@ async function loadAppointmentDetail(appointmentId: string) {
 
   // #1554 — the whole programme is this one wrapper's occurrences; there are
   // no sibling appointments to fetch.
-  const detail = toPlain({ appointment });
+  const sides = {
+    requester:
+      appointment.consultation?.requestedBy.userId ??
+      appointment.subscription?.requestedBy.userId ??
+      appointment.trial?.consulteeProfile.userId ??
+      null,
+    hosts: [
+      appointment.consultation?.consultationPlan.consultantProfile.userId,
+      appointment.subscription?.subscriptionPlan.consultantProfile.userId,
+      appointment.trial?.subscriptionPlan.consultantProfile.userId,
+      appointment.webinar?.webinarPlan.consultantProfile?.userId,
+      appointment.class?.classPlan.consultantProfile?.userId,
+    ],
+  };
+  const detail = toPlain({
+    appointment: {
+      ...appointment,
+      statusHistory: appointment.statusHistory.map(
+        ({ actorUserId, ...edge }) => ({
+          ...edge,
+          by: historyActorSide(actorUserId, sides),
+        }),
+      ),
+    },
+  });
   // The read carries the live proposal, so a lost session can be judged here.
   scheduleAnomalyReport(
     bookingAnomalies([detail.appointment], {

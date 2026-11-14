@@ -77,13 +77,13 @@ import {
 } from "@/lib/appointments/payment-display";
 import {
   paymentDisplayStatus,
+  seatPaymentBadge,
   seatPaymentsByUser,
   summarizeSeatPayments,
 } from "@/lib/appointments/seat-payments";
 import { useNowTick } from "@/hooks/use-now-tick";
 import {
   CONSULTEE_JOIN_WINDOW_MS,
-  appointmentStatusChip,
   getOccurrenceVMJoinState,
   isDeadOccurrence,
   isDeliberateEnd,
@@ -99,7 +99,14 @@ import { useClassSessionActions } from "./ClassSessionControls";
 import { useSubscriptionReturnActions } from "./SubscriptionReturnControls";
 import { SessionSchedule, type SessionRowAction } from "./SessionSchedule";
 import { SessionAttendance } from "./SessionAttendance";
-import { RescheduleProposalCard } from "./RescheduleProposalCard";
+import {
+  RescheduleProposalCard,
+  useRescheduleAnswer,
+} from "./RescheduleProposalCard";
+import {
+  rescheduleAnswersFor,
+  type RescheduleSide,
+} from "@/lib/appointments/reschedule-answer";
 import { LazyAppointmentChatSheet } from "../LazyAppointmentChatSheet";
 import { caseKeyOf } from "@/lib/support/case-key";
 import { AppointmentSupportStatusCard } from "@/components/support/AppointmentSupportStatusCard";
@@ -119,8 +126,23 @@ const SCHEDULE_KEYS = new Set(["reschedule", "new-time", "retime", "timings"]);
 const POST_APPROVAL = new Set<BookingStateKind>([
   "CONFIRMED",
   "AWAITING_ALLOCATION",
+  "BEING_MOVED",
   "COMPLETED",
 ]);
+
+/** Before confirmation a trial or a pay-first hold is cancelled; a submitted request is withdrawn. */
+function preApprovalCancelLabel(vm: AppointmentVM): string {
+  if (vm.kind === "TRIAL") return "Cancel trial";
+  return vm.bookingSource === "DIRECT_CHECKOUT"
+    ? "Cancel booking"
+    : "Withdraw request";
+}
+
+/** A trial or a pay-first checkout is the learner's own hold, never an approval. */
+function payFirstKind(vm: AppointmentVM): "trial" | "checkout" | null {
+  if (vm.kind === "TRIAL") return "trial";
+  return vm.bookingSource === "DIRECT_CHECKOUT" ? "checkout" : null;
+}
 
 function initials(name: string): string {
   return name
@@ -369,6 +391,7 @@ export function AppointmentDetailClient({
       detail?.appointment.subscription?.status === "APPROVED",
   });
 
+  const moveControl = useRescheduleAnswer(appointmentId, role);
   const payments = detail?.appointment.payment ?? [];
   // #1527 — one request page, two doors: "Get help" opens on the intent
   // options, "Problem with this charge" already on PAYMENT_STATUS.
@@ -442,15 +465,12 @@ export function AppointmentDetailClient({
       sponsorOrgName: paidRow ? sponsorOf(paidRow) : orgName,
     }),
     role === "consultant" ? "CONSULTANT" : "CONSULTEE",
-    { joinWindowMs },
+    // Every deadline and time on the page reads in the viewer's profile zone.
+    { joinWindowMs, viewerZone, heldOccurrenceIds: sessionFeedback.rateable },
   );
   const { bookingState, moneyState, nextAction } = presentation;
   const postApproval = POST_APPROVAL.has(bookingState.state);
-  // A confirmed booking wears the learner's Appointments chip; other states say why.
-  const headerChip =
-    role === "consultee" && bookingState.state === "CONFIRMED"
-      ? appointmentStatusChip(vm, role)
-      : toneBadge(bookingState.tone, bookingState.label);
+  const headerChip = toneBadge(bookingState.tone, bookingState.label);
   // #1163 — the proposal card below IS the answer surface; the adapter's
   // "Review reschedule request" list affordance would only link back here.
   // "Report issue" opens the same per-appointment support thread as the
@@ -465,12 +485,14 @@ export function AppointmentDetailClient({
     .filter(
       (item) => item.key !== "cancel" || postApproval || role === "consultee",
     )
+    // A hold whose pay window closed is over; the sweep ends it.
+    .filter(
+      (item) =>
+        item.key !== "cancel" || bookingState.state !== "PAYMENT_LAPSED",
+    )
     .map((item) =>
       item.key === "cancel" && !postApproval
-        ? {
-            ...item,
-            label: vm.kind === "TRIAL" ? "Cancel trial" : "Withdraw request",
-          }
+        ? { ...item, label: preApprovalCancelLabel(vm) }
         : item,
     );
   const heldCount = detail.appointment.occurrences.filter(
@@ -516,9 +538,12 @@ export function AppointmentDetailClient({
           },
         }
       : undefined;
+  // Attendees only: the host and co-hosts sit on the roster but hold no seat.
   const participants = Array.from(
     new Map(
-      detail.appointment.participants.map((seat) => [seat.user.id, seat.user]),
+      detail.appointment.participants
+        .filter((seat) => seat.role === "CONSULTEE")
+        .map((seat) => [seat.user.id, seat.user]),
     ).values(),
   );
   const previewParticipants = participants.slice(0, PARTICIPANTS_PREVIEW);
@@ -545,16 +570,41 @@ export function AppointmentDetailClient({
   // confirmation" never offered.
   const openProposal = detail.appointment.rescheduleRequests?.[0] ?? null;
   const showSeatSummary = role === "consultant" && isGroup;
+  // Which side of a 1:1 the viewer is a party to; an operator is neither.
+  const requesterUserId =
+    detail.appointment.consultation?.requestedBy?.userId ??
+    detail.appointment.subscription?.requestedBy?.userId ??
+    detail.appointment.trial?.consulteeProfile?.userId;
+  const hostUserId =
+    detail.appointment.consultation?.consultationPlan?.consultantProfile
+      ?.userId ??
+    detail.appointment.subscription?.subscriptionPlan?.consultantProfile
+      ?.userId ??
+    detail.appointment.trial?.consultantProfile?.userId ??
+    detail.appointment.trial?.subscriptionPlan?.consultantProfile?.userId;
+  let viewerSide: RescheduleSide | null = null;
+  if (viewerId && viewerId === requesterUserId) viewerSide = "CONSULTEE";
+  else if (viewerId && viewerId === hostUserId) viewerSide = "CONSULTANT";
+  const moveAnswers = openProposal
+    ? rescheduleAnswersFor({
+        viewerId,
+        viewerSide,
+        proposal: openProposal,
+        readOnly: adapter.readOnly,
+      })
+    : [];
   // Sponsorship is what the money says, not the org tag: checkout stamps
   // `Appointment.organizationId` on a PERSONAL-funded booking too, and that
   // member paid their own card. A group event keeps the tag as its label.
   const sponsoredBy =
     orgName && (isGroup || payments.some(isSponsoredPayment)) ? orgName : null;
-  // Did the viewer pay anything on this page themselves? Names the money door.
+  // Was the viewer actually charged (a succeeded charge above zero)? Names the money door.
+  const charged = (p: { paymentStatus: string; amount: number | string }) =>
+    p.paymentStatus === "SUCCEEDED" && Number(p.amount) > 0;
   const hasOwnCharge = payments.some(
     (p) =>
-      !isSponsoredPayment(p) ||
-      p.childPayments.some((c) => c.userId === viewerId),
+      (charged(p) && !isSponsoredPayment(p)) ||
+      p.childPayments.some((c) => c.userId === viewerId && charged(c)),
   );
   const liveVmOccurrences = vm.occurrences.filter((s) => !isDeadOccurrence(s));
   // A single-sitting booking's one confirmed session is already the header's
@@ -594,6 +644,8 @@ export function AppointmentDetailClient({
   const payHref = bookingPayHref(vm);
   const openPendingPayment = () => {
     if (!payHref) return;
+    // Coming back from the pay page reads the paid state, not this cache.
+    refreshDetail();
     if (isExternalPayHref(payHref)) {
       window.open(payHref, "_blank", "noopener,noreferrer");
       return;
@@ -635,12 +687,13 @@ export function AppointmentDetailClient({
         {scheduleItems.map(renderActionButton)}
       </div>
     ) : null;
+  // The review invite follows the outcome: a session this learner attended.
   const showReviewCard =
     role === "consultee" &&
     !!vm.consultantProfileId &&
     (bookingState.state === "COMPLETED" ||
-      detail.appointment.occurrences.some(
-        (o) => o.completionStatus === "COMPLETED",
+      detail.appointment.occurrences.some((o) =>
+        sessionFeedback.rateable.has(o.id),
       ));
   const showProgress =
     !!vm.group && vm.group.total > 0 && postApproval && !usesSessionProgress;
@@ -700,7 +753,7 @@ export function AppointmentDetailClient({
         : "Session";
 
   let stickyCta: ReactNode = null;
-  if (nextAction.kind === "PAY" && pendingRow && payHref) {
+  if (nextAction.kind === "PAY" && payHref) {
     stickyCta = (
       <Button
         className="w-full bg-amber-500 text-white hover:bg-amber-600 dark:bg-amber-600 dark:hover:bg-amber-500"
@@ -718,6 +771,25 @@ export function AppointmentDetailClient({
     stickyCta = <RowPrimaryAction action={action} size="default" />;
   }
 
+  // A class session the host cancelled stays listed with its make-up state.
+  const classRows = detail.appointment.class
+    ? detail.appointment.occurrences
+    : [];
+  const classCancelledNote = (session: { occurrenceId: string }) => {
+    const row = classRows.find((r) => r.id === session.occurrenceId);
+    if (!row?.hostCancelledAt || row.deletedAt) return null;
+    if (row.seatsSettledAt) return "Cancelled by the host · refunded instead";
+    const makeUp = classRows.find(
+      (r) =>
+        r.ordinal === row.ordinal &&
+        r.id !== row.id &&
+        !isDeadOccurrence(r) &&
+        r.completionStatus !== "VOIDED",
+    );
+    return makeUp
+      ? `Cancelled by the host · make-up ${format(new Date(makeUp.startsAt), "EEE d MMM, h:mm a")}`
+      : "Cancelled by the host · make-up owed";
+  };
   // The plan's weekly count, so the schedule can call out a short week.
   const sessionsPerWeek =
     detail.appointment.subscription?.sessionsPerWeek ??
@@ -784,7 +856,9 @@ export function AppointmentDetailClient({
       {classControls && classActions.notices && (
         <div className="mb-4">{classActions.notices}</div>
       )}
-      {hasConfirmedSessions || hasTentativeSessions ? (
+      {hasConfirmedSessions ||
+      hasTentativeSessions ||
+      vm.occurrences.some((o) => classCancelledNote(o) !== null) ? (
         <SessionSchedule
           renderSessionExtra={(session) => {
             // The host side sees who attended each session.
@@ -838,6 +912,7 @@ export function AppointmentDetailClient({
           ]}
           sessionsPerWeek={sessionsPerWeek}
           footnote={returnActions.footnote}
+          cancelledNote={classCancelledNote}
         />
       ) : (
         <p className="text-sm text-muted-foreground">
@@ -874,9 +949,7 @@ export function AppointmentDetailClient({
           {previewParticipants.map((u) => {
             const seat = isGroup ? seatPayments.get(u.id) : undefined;
             const seatStatus = seat ? paymentDisplayStatus(seat) : null;
-            const seatBadge = seatStatus
-              ? paymentStatusBadge(seatStatus)
-              : null;
+            const seatBadge = seat ? seatPaymentBadge(seat) : null;
             return (
               <span
                 key={u.id}
@@ -914,13 +987,19 @@ export function AppointmentDetailClient({
 
   // A paid seat that cost nothing (a free event, a full discount) is why a
   // host can read "1 of 2 seats paid" beside nothing collected; name it.
-  const freeSeats = Array.from(seatPayments.values()).filter((row) => {
-    const status = paymentDisplayStatus(row);
-    return (
-      (status === "SUCCEEDED" || status === "PARTIALLY_REFUNDED") &&
-      Number(row.amount) === 0
-    );
-  }).length;
+  // Paid and free seats count live attendee seats only, the same seats "Participants" counts.
+  const liveSeatIds = new Set(participants.map((u) => u.id));
+  const settledLiveSeats = Array.from(seatPayments.entries())
+    .filter(([userId]) => liveSeatIds.has(userId))
+    .map(([, row]) => row)
+    .filter((row) => {
+      const status = paymentDisplayStatus(row);
+      return status === "SUCCEEDED" || status === "PARTIALLY_REFUNDED";
+    });
+  const freeSeats = settledLiveSeats.filter(
+    (row) => Number(row.amount) === 0,
+  ).length;
+  const paidSeats = settledLiveSeats.length - freeSeats;
   const seatRows: Array<[string, number]> = [
     ["Free seats", freeSeats],
     ["Awaiting payment", seatSummary.pending],
@@ -950,7 +1029,7 @@ export function AppointmentDetailClient({
             <div className="flex items-baseline justify-between gap-3">
               <dt className="text-muted-foreground">Seats paid</dt>
               <dd className="font-medium text-foreground tabular-nums">
-                {seatSummary.paid} of {participants.length} seat
+                {paidSeats} of {participants.length} seat
                 {participants.length === 1 ? "" : "s"} paid
               </dd>
             </div>
@@ -958,8 +1037,8 @@ export function AppointmentDetailClient({
               <dt className="text-muted-foreground">Collected</dt>
               <dd className="font-medium text-foreground tabular-nums">
                 {seatSummary.collectedPaise === 0 &&
-                seatSummary.paid > 0 &&
-                freeSeats === seatSummary.paid
+                freeSeats > 0 &&
+                paidSeats === 0
                   ? "Nothing — every paid seat was free"
                   : `${formatCurrencyAmount(
                       seatSummary.collectedPaise,
@@ -1152,6 +1231,53 @@ export function AppointmentDetailClient({
           </Link>
         </Button>
 
+        {/* The one banner: shown whenever this viewer must act. */}
+        <NeedsYouCallout
+          embedded
+          payFirst={payFirstKind(vm)}
+          presentation={presentation}
+          names={names}
+          heldCount={heldCount}
+          pending={pendingRow}
+          onPay={payHref ? openPendingPayment : undefined}
+          onExitSeries={
+            role === "consultee" && detail.appointment.class && viewerId
+              ? () =>
+                  exitClassSeries(detail.appointment.class!.id, viewerId).then(
+                    refreshDetail,
+                  )
+              : undefined
+          }
+          decision={decision}
+          awaitingPayment={
+            role === "consultant" && requestPath
+              ? {
+                  remind: remindMutation.mutateAsync,
+                  withdraw: withdrawMutation.mutateAsync,
+                  onChanged: refreshDetail,
+                }
+              : undefined
+          }
+          moveAnswers={
+            moveAnswers.length > 0
+              ? { answers: moveAnswers, control: moveControl }
+              : undefined
+          }
+          onHelp={() => openHelp()}
+        >
+          {/* The Next up panel carries Join; without a next session time
+              the callout keeps it. */}
+          {nextAction.kind === "JOIN" && canJoinNow && !vm.nextAt ? (
+            <RowPrimaryAction action={action} size="default" />
+          ) : nextAction.kind === "RATE" && rateableSole ? (
+            <SoleSessionRating
+              appointmentId={appointmentId}
+              session={rateableSole}
+              role={role}
+              feedback={sessionFeedback}
+            />
+          ) : null}
+        </NeedsYouCallout>
         <header className="rounded-2xl border border-border/80 bg-card p-5 sm:p-7">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
             <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
@@ -1159,6 +1285,11 @@ export function AppointmentDetailClient({
             </span>
             <StatusBadge {...headerChip} withDot size="sm" />
           </div>
+          {bookingState.why && (
+            <p className="mt-1.5 text-xs text-muted-foreground">
+              {bookingState.why}
+            </p>
+          )}
           <h1 className="mt-2 text-xl font-semibold leading-tight tracking-tight text-foreground sm:text-2xl">
             {vm.title}
           </h1>
@@ -1302,54 +1433,6 @@ export function AppointmentDetailClient({
               <RatingsUnavailable onRetry={() => sessionFeedback.retry()} />
             </div>
           )}
-
-          <NeedsYouCallout
-            embedded
-            trial={vm.kind === "TRIAL"}
-            presentation={presentation}
-            names={names}
-            heldCount={heldCount}
-            pending={pendingRow}
-            onPay={payHref ? openPendingPayment : undefined}
-            onExitSeries={
-              role === "consultee" && detail.appointment.class && viewerId
-                ? () =>
-                    exitClassSeries(
-                      detail.appointment.class!.id,
-                      viewerId,
-                    ).then(refreshDetail)
-                : undefined
-            }
-            requestAgainHref={
-              vm.consultantProfileId
-                ? `/explore/experts/${vm.consultantProfileId}`
-                : null
-            }
-            decision={decision}
-            awaitingPayment={
-              role === "consultant" && requestPath
-                ? {
-                    remind: remindMutation.mutateAsync,
-                    withdraw: withdrawMutation.mutateAsync,
-                    onChanged: refreshDetail,
-                  }
-                : undefined
-            }
-            onHelp={() => openHelp()}
-          >
-            {/* The Next up panel carries Join; without a next session time
-                the callout keeps it. */}
-            {nextAction.kind === "JOIN" && canJoinNow && !vm.nextAt ? (
-              <RowPrimaryAction action={action} size="default" />
-            ) : nextAction.kind === "RATE" && rateableSole ? (
-              <SoleSessionRating
-                appointmentId={appointmentId}
-                session={rateableSole}
-                role={role}
-                feedback={sessionFeedback}
-              />
-            ) : null}
-          </NeedsYouCallout>
         </header>
 
         <div
@@ -1369,9 +1452,10 @@ export function AppointmentDetailClient({
             {renderNotices?.(vm)}
             {openProposal && (
               <RescheduleProposalCard
-                appointmentId={appointmentId}
                 proposal={openProposal}
                 role={role}
+                answers={moveAnswers}
+                control={moveControl}
                 readOnly={adapter.readOnly}
               />
             )}
@@ -1407,22 +1491,22 @@ export function AppointmentDetailClient({
           {compactLayout ? (
             <>
               <div className="flex min-w-0 flex-col gap-4">
-                {paymentCard}
                 {detailsCard}
                 {timelineCard}
               </div>
               <div className="flex min-w-0 flex-col gap-4">
                 {resourcesCard}
                 {helpCard}
+                {paymentCard}
               </div>
             </>
           ) : (
             <aside className="flex min-w-0 flex-col gap-4">
-              {paymentCard}
               {detailsCard}
               {resourcesCard}
-              {timelineCard}
               {helpCard}
+              {paymentCard}
+              {timelineCard}
             </aside>
           )}
         </div>
@@ -1439,6 +1523,7 @@ export function AppointmentDetailClient({
       {/* Mounted HERE, not by each caller: this component renders the
           actions whose clicks open these dialogs. */}
       {adapter.renderDialogs()}
+      {moveControl.dialog}
       {classActions.dialog}
       {returnActions.dialog}
       <LazyAppointmentChatSheet target={chatTarget} onClose={closeChat} />

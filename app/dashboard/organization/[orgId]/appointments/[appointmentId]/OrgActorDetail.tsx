@@ -16,7 +16,11 @@ import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { errorMessageFromBody } from "@/lib/fetch-helpers";
-import { appointmentStatusBadge } from "@/lib/labels/session-labels";
+import {
+  bookingStatus,
+  bookingStatusBadge,
+  type OpenRescheduleInput,
+} from "@/lib/appointments/booking-status";
 import { humanizeEnum } from "@/lib/ui/tone";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import {
@@ -45,6 +49,10 @@ export interface OrgActorDetailProps {
     title: string;
     kind: AppointmentsType;
     status: AppointmentStatus | null;
+    /** DIRECT_CHECKOUT or REQUEST_SUBMITTED for a 1:1 or plan. */
+    source?: string | null;
+    paid?: boolean;
+    reschedule?: OpenRescheduleInput | null;
     expertName: string | null;
     learnerName: string | null;
     learnerUserId: string | null;
@@ -164,7 +172,20 @@ export function OrgActorDetail({
   const [rescheduleKeyFor] = useState(createSubmissionKeys);
   const showAllocate = Boolean(canAllocate);
   const acting = ((canCancel || canReschedule) && !opsHref) || showAllocate;
-  const status = meta.status ? appointmentStatusBadge(meta.status) : null;
+  const status = meta.status
+    ? bookingStatusBadge(
+        bookingStatus(
+          {
+            kind: meta.kind,
+            status: meta.status,
+            source: meta.source,
+            paid: meta.paid,
+            reschedule: meta.reschedule,
+          },
+          "ORG_ADMIN",
+        ),
+      )
+    : null;
 
   const queryClient = useQueryClient();
   const cancel = async () => {

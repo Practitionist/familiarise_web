@@ -142,8 +142,13 @@ it("schedules a make-up at the picked instant, unchanged", async () => {
       />
     </QueryClientProvider>,
   );
-  fireEvent.click(screen.getByRole("button", { name: "pick make-up time" }));
+  // The cancelled session's row opens the make-up dialog.
   fireEvent.click(screen.getByRole("button", { name: "Schedule make-up" }));
+  fireEvent.click(screen.getByRole("button", { name: "pick make-up time" }));
+  const scheduleButtons = screen.getAllByRole("button", {
+    name: "Schedule make-up",
+  });
+  fireEvent.click(scheduleButtons[scheduleButtons.length - 1]);
   await waitFor(() =>
     expect(mockFetchWithIdentity).toHaveBeenCalledWith(
       "/api/appointments/apt-1/occurrences/occ-1/make-up",

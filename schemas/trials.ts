@@ -28,3 +28,19 @@ export const UpdateTrialSchema = z.object({
   // Required when status = CONVERTED — the subscription created via checkout
   subscriptionId: z.string().optional(),
 });
+
+/** The trial cancel door's optional body: the refund the caller confirmed from its preview, in paise. */
+export const TrialCancelBodySchema = z.object({
+  confirmedRefundPaise: z.number().int().nonnegative().optional(),
+});
+
+/** What a trial cancel sends; the DELETE route parses the body with `TrialCancelBodySchema`. */
+export function trialCancelRequest(
+  trialId: string,
+  quote?: { estimatedRefundPaise: number },
+): { url: string; body: z.infer<typeof TrialCancelBodySchema> } {
+  return {
+    url: `/api/trials/${trialId}`,
+    body: quote ? { confirmedRefundPaise: quote.estimatedRefundPaise } : {},
+  };
+}

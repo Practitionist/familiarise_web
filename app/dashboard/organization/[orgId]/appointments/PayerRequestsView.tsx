@@ -4,6 +4,11 @@ import { useParams } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { ResponsiveTable } from "@/components/ui/responsive-table";
 import type { OrgPendingRequest } from "@/lib/data/org-pending-requests";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import {
+  bookingStatus,
+  bookingStatusBadge,
+} from "@/lib/appointments/booking-status";
 import { useOrgRole } from "../useOrgRole";
 import { AllocateOrgBookingDialog } from "./AllocateOrgBookingDialog";
 
@@ -86,17 +91,27 @@ export function PayerRequestsView({
           {
             key: "status",
             header: "Status",
-            cell: (row) =>
-              row.awaitingExpertApproval ? (
+            cell: (row) => {
+              const status = bookingStatus(
+                {
+                  kind: row.kind,
+                  status: row.awaitingExpertApproval ? "PENDING" : "APPROVED",
+                  source: "REQUEST_SUBMITTED",
+                  sessions: { live: 0, allTentative: false, done: false },
+                  names: {
+                    consultant: row.expertName ?? "the expert",
+                    payer: row.learnerName ?? "the learner",
+                  },
+                },
+                "ORG_ADMIN",
+              );
+              return (
                 <div className="space-y-0.5">
-                  <Badge variant="outline">Awaiting expert approval</Badge>
-                  <p className="text-xs text-muted-foreground">
-                    The expert must accept this request before times can be set.
-                  </p>
+                  <StatusBadge {...bookingStatusBadge(status)} />
+                  <p className="text-xs text-muted-foreground">{status.line}</p>
                 </div>
-              ) : (
-                <Badge variant="secondary">Approved — ready to schedule</Badge>
-              ),
+              );
+            },
           },
           {
             key: "requestedAt",

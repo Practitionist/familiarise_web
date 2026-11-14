@@ -36,6 +36,8 @@ type AppointmentPayment = {
   currency: string;
   status: string;
   gateway: string;
+  /** When a pending order's pay window closes. */
+  expiresAt?: string | null;
 } | null;
 
 /** Group events stand in for a person in the staff list — "12 attendees". */
@@ -53,6 +55,10 @@ export type StaffAppointment = {
   endsAt?: string;
   duration: number;
   status: string;
+  /** DIRECT_CHECKOUT or REQUEST_SUBMITTED for a 1:1 or plan; null otherwise. */
+  bookingSource: string | null;
+  /** Nothing is charged for this booking, so it has no payment to wait for. */
+  free: boolean;
   hasIssue: boolean;
   issueType: string | null;
   payment: AppointmentPayment;
@@ -303,6 +309,7 @@ export async function getStaffAppointments(
           select: {
             id: true,
             status: true,
+            bookingSource: true,
             consultationPlan: {
               select: {
                 id: true,
@@ -320,6 +327,7 @@ export async function getStaffAppointments(
           select: {
             id: true,
             status: true,
+            bookingSource: true,
             subscriptionPlan: {
               select: {
                 id: true,
@@ -330,6 +338,19 @@ export async function getStaffAppointments(
               },
             },
             requestedBy: { select: { userId: true } },
+          },
+        },
+        trial: {
+          select: {
+            status: true,
+            subscriptionPlan: {
+              select: {
+                title: true,
+                trialPriceInPaise: true,
+                consultantProfile: { select: { userId: true } },
+              },
+            },
+            consulteeProfile: { select: { userId: true } },
           },
         },
         webinar: {
@@ -371,6 +392,8 @@ export async function getStaffAppointments(
             currency: true,
             paymentStatus: true,
             paymentGateway: true,
+            // The pay window, so a pending order past it reads as lapsed.
+            expiresAt: true,
             createdAt: true,
           },
           take: 1,
@@ -406,6 +429,8 @@ export async function getStaffAppointments(
       apt.subscription?.requestedBy.userId,
       apt.webinar?.webinarPlan.consultantProfile?.userId,
       apt.class?.classPlan.consultantProfile?.userId,
+      apt.trial?.subscriptionPlan.consultantProfile.userId,
+      apt.trial?.consulteeProfile.userId,
     ]) {
       if (id) userIds.add(id);
     }
@@ -431,7 +456,18 @@ export async function getStaffAppointments(
     let duration = 0;
     const attendeeCount = apt._count.participants;
 
+    let bookingSource: string | null = null;
     switch (apt.appointmentType) {
+      case "TRIAL":
+        if (apt.trial) {
+          consultant = userOf(
+            apt.trial.subscriptionPlan.consultantProfile.userId,
+          );
+          consultee = userOf(apt.trial.consulteeProfile.userId);
+          title = apt.trial.subscriptionPlan.title;
+          aptStatus = apt.trial.status;
+        }
+        break;
       case "CONSULTATION":
         if (apt.consultation) {
           consultant = userOf(
@@ -440,6 +476,7 @@ export async function getStaffAppointments(
           consultee = userOf(apt.consultation.requestedBy.userId);
           title = apt.consultation.consultationPlan.title;
           aptStatus = apt.consultation.status;
+          bookingSource = apt.consultation.bookingSource;
           duration = apt.consultation.consultationPlan.durationInHours * 60;
         }
         break;
@@ -451,6 +488,7 @@ export async function getStaffAppointments(
           consultee = userOf(apt.subscription.requestedBy.userId);
           title = apt.subscription.subscriptionPlan.title;
           aptStatus = apt.subscription.status;
+          bookingSource = apt.subscription.bookingSource;
         }
         break;
       case "WEBINAR":
@@ -486,8 +524,11 @@ export async function getStaffAppointments(
     const slot = apt.occurrences[0];
     const payment = apt.payment[0];
 
-    // Determine status for display
-    let displayStatus = "scheduled";
+    // A wrapper whose lifecycle row is gone (a trial re-requested by the pair)
+    // has nothing live, so it reads cancelled rather than claiming a state.
+    let displayStatus = "cancelled";
+    if (!title && apt.appointmentType === "TRIAL")
+      title = "Trial (record removed)";
     if (aptStatus) {
       const statusStr = String(aptStatus).toLowerCase();
       if (statusStr === "cancelled") displayStatus = "cancelled";
@@ -497,9 +538,20 @@ export async function getStaffAppointments(
       else displayStatus = statusStr;
     }
 
+    // A free booking has no payment to be pending.
+    const free =
+      !payment &&
+      (apt.trial
+        ? Number(apt.trial.subscriptionPlan.trialPriceInPaise ?? 0) === 0
+        : Number(
+            apt.consultation?.consultationPlan.price ??
+              apt.subscription?.subscriptionPlan.price ??
+              -1,
+          ) === 0);
     // Check if there's an issue (cancelled, no payment, etc.)
     const hasIssue =
-      displayStatus === "cancelled" || (!payment && aptStatus !== "PENDING");
+      displayStatus === "cancelled" ||
+      (!payment && !free && aptStatus !== "PENDING");
 
     // Date→ISO so the payload is JSON-safe verbatim (matches NextResponse.json)
     const scheduledAtDate = slot?.startsAt || apt.createdAt;
@@ -528,6 +580,8 @@ export async function getStaffAppointments(
       endsAt: slot?.endsAt ? slot.endsAt.toISOString() : undefined,
       duration,
       status: displayStatus,
+      bookingSource,
+      free,
       hasIssue,
       issueType: hasIssue
         ? displayStatus === "cancelled"
@@ -541,6 +595,7 @@ export async function getStaffAppointments(
             currency: payment.currency,
             status: payment.paymentStatus,
             gateway: payment.paymentGateway,
+            expiresAt: payment.expiresAt?.toISOString() ?? null,
           }
         : null,
       reschedule: apt.rescheduleRequests[0]

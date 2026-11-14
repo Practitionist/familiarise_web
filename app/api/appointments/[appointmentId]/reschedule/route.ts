@@ -152,6 +152,16 @@ function roleOf(
  * re-time and class sessions cancel + make-up instead. A 1:1 move from or to a
  * time inside 24 h needs proposed times and the other side's acceptance.
  */
+
+/** A booking still holding its time on an unpaid charge moves only once paid or cancelled. */
+function payLinkLiveError(): Error {
+  return Object.assign(
+    new Error(
+      "This booking is still waiting for payment. Pay for it or cancel it first, then reschedule.",
+    ),
+    { httpStatus: 409, code: "PAY_LINK_LIVE" },
+  );
+}
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ appointmentId: string }> },
@@ -651,6 +661,8 @@ async function requestReschedule(
           const parentMovable = isTrial
             ? parentStatus === "SCHEDULED"
             : RESCHEDULABLE_FROM.some((status) => status === parentStatus);
+          // An unpaid trial hold is refused as the live pay link it is, not as ended.
+          if (parentStatus === "AWAITING_PAYMENT") throw payLinkLiveError();
           if (!parentStatus || !parentMovable) {
             throw Object.assign(
               new Error(
@@ -669,14 +681,7 @@ async function requestReschedule(
               OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
             },
           });
-          if (livePayLinks > 0) {
-            throw Object.assign(
-              new Error(
-                "This booking is still waiting for payment. Pay for it or cancel it first, then reschedule.",
-              ),
-              { httpStatus: 409, code: "PAY_LINK_LIVE" },
-            );
-          }
+          if (livePayLinks > 0) throw payLinkLiveError();
 
           if (isTrial && initiatorRole && !isPrivilegedUser) {
             const prior = await priorRescheduleCount(tx, {

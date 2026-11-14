@@ -21,6 +21,10 @@ import { useSession } from "@/lib/auth-client";
 import { type OpenRescheduleProposal } from "@/lib/appointments/consultee-affordances";
 import type { RescheduleRespondCode } from "@/lib/booking/reschedule-proposals";
 import { fetchWithIdentity } from "@/lib/auth/identity-header";
+import {
+  rescheduleAnswerRequest,
+  type RescheduleAnswer,
+} from "@/lib/appointments/reschedule-answer";
 
 /**
  * The open reschedule proposal on an appointment, with its answers (#1163).
@@ -40,8 +44,6 @@ import { fetchWithIdentity } from "@/lib/auth/identity-header";
  * the title only has to carry the one case worth distinguishing.
  */
 
-type ProposalAnswer = "accept" | "decline" | "withdraw";
-
 /**
  * Codes the propose route can answer, and what each one means for the person
  * who clicked. Only codes that change what the user does get an entry; the
@@ -59,16 +61,13 @@ const PROPOSAL_REFUSAL_TITLE: Record<string, string> = {
 
 async function postAnswer(
   appointmentId: string,
-  kind: ProposalAnswer,
+  kind: RescheduleAnswer,
 ): Promise<{ message?: string; outcome?: RescheduleRespondCode }> {
-  const url =
-    kind === "withdraw"
-      ? `/api/appointments/${appointmentId}/reschedule/withdraw`
-      : `/api/appointments/${appointmentId}/reschedule/respond`;
+  const { url, body } = rescheduleAnswerRequest(appointmentId, kind);
   const res = await fetchWithIdentity(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    ...(kind === "withdraw" ? {} : { body: JSON.stringify({ action: kind }) }),
+    ...(body ? { body: JSON.stringify(body) } : {}),
   });
   const data = (await res.json().catch(() => ({}))) as {
     message?: string;
@@ -96,47 +95,31 @@ async function postAnswer(
   return data;
 }
 
-const ANSWER_TOAST_TITLE: Record<ProposalAnswer, string> = {
+const ANSWER_TOAST_TITLE: Record<RescheduleAnswer, string> = {
   accept: "New times confirmed",
   decline: "Proposal declined",
   withdraw: "Request withdrawn",
 };
 
-interface RescheduleProposalCardProps {
-  appointmentId: string;
-  proposal: OpenRescheduleProposal;
-  /** Which detail page hosts the card — copy only, never authorization. */
-  role: "consultee" | "consultant";
-  /** Suspended org member (#1527 decision 6): no answers; the API refuses too. */
-  readOnly?: boolean;
-}
-
-export function RescheduleProposalCard({
-  appointmentId,
-  proposal,
-  role,
-  readOnly = false,
-}: Readonly<RescheduleProposalCardProps>) {
-  const format = useZonedFormat();
+/**
+ * Sends one reschedule answer and confirms a decline first. The detail page
+ * mounts it once: the banner offers accept and decline, the card withdraw.
+ */
+export function useRescheduleAnswer(
+  appointmentId: string,
+  role: "consultee" | "consultant",
+) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const { data: session } = useSession();
   const [confirmDecline, setConfirmDecline] = useState(false);
 
-  const viewerId = session?.user?.id;
-  const isInitiator = !!viewerId && viewerId === proposal.initiatedById;
-  // One line per proposed session, not per stored 30-minute row.
-  const slots = proposedSessionsOf(proposal.proposedTimes);
-
   const mutation = useMutation({
-    mutationFn: (kind: ProposalAnswer) => postAnswer(appointmentId, kind),
+    mutationFn: (kind: RescheduleAnswer) => postAnswer(appointmentId, kind),
     onSuccess: (data, kind) => {
       setConfirmDecline(false);
       toast({
         title:
-          // The one outcome the fixed title would misdescribe: a decline that
-          // could not put every released session back leaves real work for the
-          // consultant, and "Proposal declined" reads as a clean settle.
+          // A decline that could not restore every session leaves work for the consultant.
           kind === "decline" && data.outcome === "RELEASED"
             ? "Sessions need new times"
             : ANSWER_TOAST_TITLE[kind],
@@ -156,14 +139,96 @@ export function RescheduleProposalCard({
         description: error.message,
         variant: "destructive",
       });
-      // A 409 usually means the other side answered first — refetch so the
-      // card stops offering answers to a settled request.
+      // A 409 usually means the other side answered first.
       void queryClient.invalidateQueries({
         queryKey: ["appointment-detail", appointmentId],
       });
     },
   });
   const busy = mutation.isPending;
+
+  const dialog = (
+    <AlertDialog
+      open={confirmDecline}
+      onOpenChange={(open) => !open && setConfirmDecline(false)}
+    >
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Decline the proposed times?</AlertDialogTitle>
+          <AlertDialogDescription asChild>
+            <div className="space-y-2">
+              <p>
+                You are only turning down these times — you are not cancelling
+                the booking.
+              </p>
+              <p className="text-sm text-muted-foreground">
+                {role === "consultee"
+                  ? "Your original session times go back on your calendar. If one has been booked by somebody else in the meantime, your consultant places that session at a new time instead."
+                  : "The released sessions go back where they were. Any whose original time can no longer be restored stay in your allocate queue to place at new times."}
+              </p>
+            </div>
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={busy}>Keep deciding</AlertDialogCancel>
+          <AlertDialogAction
+            disabled={busy}
+            className="bg-red-600 text-white hover:bg-red-700 focus:ring-red-600"
+            onClick={(event) => {
+              // Keep the dialog open while in flight; onSuccess closes it.
+              event.preventDefault();
+              mutation.mutate("decline");
+            }}
+          >
+            {busy ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Declining...
+              </>
+            ) : (
+              "Decline proposal"
+            )}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+
+  return {
+    busy,
+    dialog,
+    answer: (kind: RescheduleAnswer) =>
+      kind === "decline" ? setConfirmDecline(true) : mutation.mutate(kind),
+  };
+}
+
+export type RescheduleAnswerControl = ReturnType<typeof useRescheduleAnswer>;
+
+interface RescheduleProposalCardProps {
+  proposal: OpenRescheduleProposal;
+  /** Which detail page hosts the card — copy only, never authorization. */
+  role: "consultee" | "consultant";
+  /** The answers the routes accept from this viewer (`rescheduleAnswersFor`). */
+  answers: RescheduleAnswer[];
+  control: RescheduleAnswerControl;
+  /** A suspended organisation member answers nothing; the API refuses too. */
+  readOnly?: boolean;
+}
+
+/** The open proposal's times and expiry; the proposer withdraws here, the other side answers in the banner. */
+export function RescheduleProposalCard({
+  proposal,
+  role,
+  answers,
+  control,
+  readOnly = false,
+}: Readonly<RescheduleProposalCardProps>) {
+  const format = useZonedFormat();
+  const { data: session } = useSession();
+  const viewerId = session?.user?.id;
+  const isInitiator = !!viewerId && viewerId === proposal.initiatedById;
+  // One line per proposed session, not per stored 30-minute row.
+  const slots = proposedSessionsOf(proposal.proposedTimes);
 
   let heading: string;
   if (isInitiator) {
@@ -244,90 +309,19 @@ export function RescheduleProposalCard({
         </p>
       )}
 
-      {viewerId && !readOnly && (
+      {answers.includes("withdraw") && (
         <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-border pt-4">
-          {isInitiator ? (
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={busy}
-              onClick={() => mutation.mutate("withdraw")}
-            >
-              {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Withdraw request
-            </Button>
-          ) : (
-            <>
-              {/* Accept needs concrete times; a preference-only request is
-                  answered on the calendar (the route 422s it). */}
-              {slots.length > 0 && (
-                <Button
-                  size="sm"
-                  disabled={busy}
-                  onClick={() => mutation.mutate("accept")}
-                >
-                  {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  Accept new times
-                </Button>
-              )}
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={busy}
-                className="text-red-600 border-red-200 hover:bg-red-50 dark:text-red-400 dark:border-red-900/40 dark:hover:bg-red-900/20"
-                onClick={() => setConfirmDecline(true)}
-              >
-                Decline
-              </Button>
-            </>
-          )}
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={control.busy}
+            onClick={() => control.answer("withdraw")}
+          >
+            {control.busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Withdraw request
+          </Button>
         </div>
       )}
-
-      <AlertDialog
-        open={confirmDecline}
-        onOpenChange={(open) => !open && setConfirmDecline(false)}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Decline the proposed times?</AlertDialogTitle>
-            <AlertDialogDescription asChild>
-              <div className="space-y-2">
-                <p>
-                  You are only turning down these times — you are not cancelling
-                  the booking.
-                </p>
-                <p className="text-sm text-muted-foreground">
-                  {role === "consultee"
-                    ? "Your original session times go back on your calendar. If one has been booked by somebody else in the meantime, your consultant places that session at a new time instead."
-                    : "The released sessions go back where they were. Any whose original time can no longer be restored stay in your allocate queue to place at new times."}
-                </p>
-              </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={busy}>Keep deciding</AlertDialogCancel>
-            <AlertDialogAction
-              disabled={busy}
-              className="bg-red-600 text-white hover:bg-red-700 focus:ring-red-600"
-              onClick={(event) => {
-                // Keep the dialog open while in flight; onSuccess closes it.
-                event.preventDefault();
-                mutation.mutate("decline");
-              }}
-            >
-              {busy ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Declining...
-                </>
-              ) : (
-                "Decline proposal"
-              )}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }

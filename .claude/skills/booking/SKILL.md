@@ -432,15 +432,18 @@ One per job; do not add a fourth, and do not give a new surface its own picker (
 Do not build against the older direction. The reasoning and the rejected options are in `docs/decisions/2026-11-12-booking-follow-up-train.md`; the tracking issue is #2720.
 
 - Removing availability under live bookings stays allowed, with a confirm dialog first; do not make it a lock. Only a Weekly/Custom switch is refused (`checkActiveAppointments`).
-- One status vocabulary from one function (Requested, Awaiting payment, Confirmed, Being moved, Completed, Cancelled, Refunded); do not add a fifth label map.
-- Detail page: one amber must-act banner and the Payment card in the right rail.
-- Free bookings notify like paid ones minus the receipt.
-- Trial to subscription: a "Continue with {expert}" card plus one bell and email on completion.
+- Free bookings notify like paid ones minus the receipt; strikes stay private (no public reliability line).
+- Trial to subscription: one bell and one email on completion (the "Continue with {expert}" card is built).
+
+## Booking states (built 2026-11-14)
+
+Every booking badge, for every viewer, comes from `bookingStatus` (`lib/appointments/booking-status.ts`): one of Requested, Awaiting payment, Confirmed (Registered for a seat), Being moved, Completed, Cancelled, Refunded, with one reason line. A host's own webinar or class keeps its event words. Never add a label map beside it; pass it more facts instead. "Approved" appears only as a timeline step, read from the history edge (`expertApproval`). A booking is Completed when its sessions' outcomes are recorded, not when the clock passes. The reschedule buttons come from `rescheduleAnswersFor` and send `rescheduleAnswerRequest`, pinned by `__tests__/booking-algorithm/reschedule-answer-contract.test.ts`. The record is `docs/decisions/2026-11-14-booking-states-and-demand-guidance.md`.
 
 ## Deprecated & Superseded
 
 Recognise these leftovers and delete them; never reintroduce them.
 
+- `APPOINTMENT_STATUS_BADGE`, `TRIAL_STATUS_BADGE`, `eventUnionStatusBadge`, `BOOKING_LABEL` and the organisation and operator status maps: replaced by `bookingStatus`.
 - `setParticipantStatus`: replaced by `transitionParticipant` (`lib/booking/participants.ts`).
 - Reschedule caps and the refund notice floor counted from `BookingStatusHistory`: both read the release records on `RescheduleRequest` now (`countedReleases`).
 - A reschedule release with no request behind it, and a decline that left the sessions released: every release opens a request, and every ending that can restore does.

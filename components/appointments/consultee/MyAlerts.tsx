@@ -145,7 +145,7 @@ export function MyAlerts({ viewerZone }: Readonly<{ viewerZone: ViewerZone }>) {
     <section
       aria-label="My alerts"
       data-testid="my-alerts"
-      className="mb-4 rounded-xl border border-border bg-card p-4"
+      className="rounded-xl border border-border bg-card px-4 py-3"
     >
       <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
         <BellRing className="h-4 w-4" aria-hidden />

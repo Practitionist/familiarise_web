@@ -46,16 +46,11 @@ const reschedulePage = read(
 );
 
 describe("#1163 — the proposal card answers through the lifecycle endpoints", () => {
-  it("calls respond with an action and withdraw without one", () => {
-    expect(proposalCard).toContain("/reschedule/respond");
-    expect(proposalCard).toContain("/reschedule/withdraw");
-    expect(proposalCard).toContain("JSON.stringify({ action: kind })");
-  });
-
   it("splits the affordances by identity: counterparty answers, initiator withdraws", () => {
-    expect(proposalCard).toContain("proposal.initiatedById");
-    expect(proposalCard).toContain('mutation.mutate("withdraw")');
-    expect(proposalCard).toContain('mutation.mutate("accept")');
+    expect(proposalCard).toContain('control.answer("withdraw")');
+    expect(proposalCard).toContain(
+      "rescheduleAnswerRequest(appointmentId, kind)",
+    );
     expect(proposalCard).toContain('mutation.mutate("decline")');
   });
 

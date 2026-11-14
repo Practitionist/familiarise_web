@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { trialCancelRequest } from "@/schemas/trials";
 import { z } from "zod";
 import * as Sentry from "@sentry/nextjs";
 import { useToast } from "@/hooks/use-toast";
@@ -435,12 +436,11 @@ export function useConsultantEventActions({
     const previewUrl = `/api/trials/${trialId}/cancel/preview`;
     setIsLoading(true);
     try {
-      const response = await fetchWithIdentity(`/api/trials/${trialId}`, {
+      const { url, body } = trialCancelRequest(trialId, quote);
+      const response = await fetchWithIdentity(url, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(
-          quote ? { confirmedRefundPaise: quote.estimatedRefundPaise } : {},
-        ),
+        body: JSON.stringify(body),
       });
       try {
         await requireJsonResponse(response, "Failed to cancel trial");
