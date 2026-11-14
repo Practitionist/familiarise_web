@@ -1,10 +1,10 @@
 "use server";
 
+import { isUniqueViolation } from "@/lib/db/pg-errors";
 import { settleLapsedProposal } from "@/lib/booking/reschedule-lapse";
 import { isReleasedForReschedule } from "@/utils/scheduling-engine/types";
 import * as Sentry from "@sentry/nextjs";
 import { z } from "zod";
-import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { isDeadOccurrence } from "@/lib/appointments/occurrences";
 import {
@@ -272,16 +272,14 @@ async function createDbMeeting(
       resolveAppointmentOrgId(authorized.appointment) ??
       (await readAppointmentOrganizationId(authorized.slot.appointmentId));
 
+    // Scalar keys, not `connect`: a second first visit then fails the plain
+    // unique on appointmentOccurrenceId, which the catch below answers.
     const meeting = await prisma.meeting.create({
       data: {
         streamCallId: validatedStreamCallId,
         platform: "STREAM",
-        occurrence: {
-          connect: { id: slot.id },
-        },
-        ...(organizationId
-          ? { organization: { connect: { id: organizationId } } }
-          : {}),
+        appointmentOccurrenceId: slot.id,
+        organizationId: organizationId ?? null,
       },
     });
 
@@ -293,10 +291,7 @@ async function createDbMeeting(
 
     return meeting;
   } catch (error) {
-    if (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === "P2002"
-    ) {
+    if (isUniqueViolation(error)) {
       streamLogger.info(
         "Meeting session already exists (concurrent creation), returning existing",
         { slotId: slot.id },
@@ -478,8 +473,9 @@ async function provisionRoom(
     return { ok: true, streamCallId };
   }
 
+  let saved: Meeting;
   try {
-    await createDbMeeting(
+    saved = await createDbMeeting(
       { ...anchorSlot, appointmentId: resolvedAppointmentId },
       streamCallId,
     );
@@ -489,5 +485,6 @@ async function provisionRoom(
     throw error;
   }
 
-  return { ok: true, streamCallId };
+  // A racing first visit may have saved the room first; its call is the room.
+  return { ok: true, streamCallId: saved.streamCallId };
 }
