@@ -226,7 +226,10 @@ export function RescheduleProposalCard({
   const format = useZonedFormat();
   const { data: session } = useSession();
   const viewerId = session?.user?.id;
-  const isInitiator = !!viewerId && viewerId === proposal.initiatedById;
+  // Before the session loads, the page's side stands in for the viewer.
+  const isInitiator = viewerId
+    ? viewerId === proposal.initiatedById
+    : (role === "consultant") === (proposal.initiatorRole === "CONSULTANT");
   // One line per proposed session, not per stored 30-minute row.
   const slots = proposedSessionsOf(proposal.proposedTimes);
 

@@ -44,11 +44,19 @@ jest.mock("@tanstack/react-query", () => ({
   useMutation: () => ({ mutate: jest.fn(), isPending: false }),
 }));
 let mockViewerId = "u-e";
+/** False renders the first paint: the client session has not loaded yet. */
+let mockSessionLoaded = true;
 jest.mock("../../lib/auth-client", () => ({
   useSession: () => ({
-    data: {
-      user: { id: mockViewerId, name: "Viewer", organizationMemberships: [] },
-    },
+    data: mockSessionLoaded
+      ? {
+          user: {
+            id: mockViewerId,
+            name: "Viewer",
+            organizationMemberships: [],
+          },
+        }
+      : null,
   }),
 }));
 jest.mock("../../hooks/useSessionFeedback", () => ({
@@ -222,3 +230,26 @@ describe.each([
     });
   },
 );
+
+describe("the first paint, before the session loads", () => {
+  afterEach(() => {
+    mockSessionLoaded = true;
+  });
+
+  it.each([
+    ["CONSULTANT", "consultant", "You proposed", "Charlotte has until"],
+    ["CONSULTEE", "consultee", "You proposed", "Hannah has until"],
+  ] as const)(
+    "a move proposed by the %s never tells the %s to answer it",
+    async (by, role, who, waits) => {
+      mockSessionLoaded = false;
+      const html = await page(by, role);
+      expect(html).toContain(`${who} ${at(proposed)}`);
+      expect(html).toContain(waits);
+      expect(html).not.toContain("Answer by");
+      expect(html).not.toContain("Needs an answer by");
+      expect(html).not.toContain(">Accept new times<");
+      expect(html).not.toContain(">Decline…<");
+    },
+  );
+});

@@ -436,9 +436,12 @@ describe("RescheduleErrors", () => {
       expect(err.message).toContain("5 hours");
     });
 
-    it("should clamp negative hours to 0", () => {
+    it("a session that has started is no longer movable, whatever the notice rule", () => {
       const err = new ReschedulePolicyError(-2, 24);
-      expect(err.message).toContain("0 hours");
+      expect(err.message).toBe(
+        "This session has already started, so it can no longer be moved.",
+      );
+      expect(err.message).not.toContain("24 hours");
     });
 
     it("should expose hoursUntilSlot and minimumHoursRequired properties", () => {

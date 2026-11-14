@@ -75,11 +75,18 @@ export function lapsedMoveWhere(now: Date): Prisma.AppointmentWhereInput {
     rescheduleRequests: {
       some: {
         status: { in: RESCHEDULE_OPEN_STATUSES },
-        expiresAt: { lte: now },
+        NOT: answerableBy(now),
         originStatus: { in: RESTORABLE_ORIGINS },
       },
     },
   };
+}
+
+/** A proposal still inside its deadline: past it the original stands and nothing is left to answer. */
+export function answerableBy(now: Date) {
+  return {
+    expiresAt: { gt: now },
+  } satisfies Prisma.RescheduleRequestWhereInput;
 }
 
 /** The pending predicate at any status; Home's "Awaiting payment" row reads

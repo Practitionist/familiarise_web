@@ -127,9 +127,21 @@ describe("a move past its deadline is not a request to answer", () => {
       const [{ where }] = model.count.mock.calls[0];
       const shape = JSON.stringify(where);
       expect(shape).toMatch(LAPSED);
-      expect(shape).toContain('"expiresAt":{"lte"');
+      expect(shape).toContain('"NOT":{"expiresAt":{"gt"');
     }
   });
+});
+
+it("Home's reschedule replies leave out a proposal past its deadline", async () => {
+  const now = new Date("2026-11-15T12:00:00Z");
+  await readConsultantNeedsYou("cp-1", now);
+  const [{ where }] = m.rescheduleRequest.findMany.mock.calls[0];
+  expect(where).toMatchObject({
+    status: "PENDING_REVIEW",
+    initiatorRole: "CONSULTEE",
+    expiresAt: { gt: now },
+  });
+  expect(m.rescheduleRequest.findMany).toHaveBeenCalledTimes(1);
 });
 
 describe("countOpenRequestsForCap", () => {
