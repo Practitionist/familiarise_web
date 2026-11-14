@@ -34,6 +34,8 @@ export const createMockPrisma = () => ({
     findFirst: jest.fn(),
     findMany: jest.fn(),
   },
+  // An event channel join reads the event's appointment before writing; none means no seats to fence.
+  appointment: { findUnique: jest.fn(async () => null) },
   // Collaboration reads run on every event-channel sync; default to "no co-hosts".
   collaborator: {
     findFirst: jest.fn(async () => null),
