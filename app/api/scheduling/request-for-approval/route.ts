@@ -93,7 +93,12 @@ const REQUEST_RESPONSE_INCLUDE = {
 async function replayRequest(
   idempotencyKey: string | null,
   userId: string,
-  asked: { consultationPlanId: string; startsAt: string; endsAt: string },
+  asked: {
+    consultationPlanId: string;
+    startsAt: string;
+    endsAt: string;
+    organizationId: string | null;
+  },
 ): Promise<NextResponse | null> {
   if (!idempotencyKey) return null;
   const original = await prisma.consultation.findUnique({
@@ -106,6 +111,7 @@ async function replayRequest(
   );
   const sameBody =
     original.consultationPlanId === asked.consultationPlanId &&
+    (original.appointment?.organizationId ?? null) === asked.organizationId &&
     held.length > 0 &&
     Math.min(...held.map((o) => o.startsAt.getTime())) ===
       Date.parse(asked.startsAt) &&
@@ -196,7 +202,12 @@ export async function POST(req: NextRequest) {
       consultationPlanId,
       organizationId,
     } = parseResult.data;
-    const asked = { consultationPlanId, startsAt, endsAt };
+    const asked = {
+      consultationPlanId,
+      startsAt,
+      endsAt,
+      organizationId: organizationId ?? null,
+    };
     const replayed = await replayRequest(
       idempotencyKey,
       session.user.id,
