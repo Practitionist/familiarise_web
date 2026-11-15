@@ -18,6 +18,14 @@ export function cancelRefundReason(
   return `cancellation (${refundPct}% per booking-time policy, ${side}-initiated)`;
 }
 
+/** A credit-funded 1:1 cancel restores the credit in full whatever the tier. */
+export function creditCancelRefundReason(
+  tierRefundPct: number,
+  side: CancelSide,
+): string {
+  return `cancellation (credit-funded booking, credit restored in full from the ${tierRefundPct}% tier, ${side}-initiated)`;
+}
+
 /** A paid trial's cancel reason; the credit-funded form names its tier. */
 export function trialCancelRefundReason(
   side: CancelSide,
@@ -103,6 +111,19 @@ export function refundNoticeKind(
     return "CLASS_SESSION_REFUNDED";
   }
   return null;
+}
+
+/**
+ * The reason a refund's notice is classified by: a hand refund that settles an
+ * owed refund announces that refund's cause; any other refund, its own reason.
+ */
+export function noticeReason(
+  settledOwed: { reason: string } | null | undefined,
+  reason: string | null | undefined,
+): string | null | undefined {
+  return settledOwed && refundNoticeKind(settledOwed.reason) !== null
+    ? settledOwed.reason
+    : reason;
 }
 
 /** The bell override for the payer of a refund with this reason. */

@@ -1,5 +1,6 @@
 /** Stale-request expiry core, shared by the cleanup registry and admin recovery door. */
 
+import { scrubStringValue } from "@/lib/observability/sentry-scrubber";
 import { nudgeUnplacedPlanWeeks } from "@/lib/booking/week-nudge";
 import prisma from "../../lib/prisma";
 import type { PrismaLike } from "../../lib/prisma";
@@ -2130,7 +2131,7 @@ async function alertExpiringRequests(
         }
         alerted += 1;
       } catch (error) {
-        const msg = `Expiry alert failed for consultation ${x.c.id}: ${error}`;
+        const msg = `Expiry alert failed for consultation ${x.c.id}: ${scrubStringValue(String(error))}`;
         console.error(`❌ ${msg}`);
         errors.push(msg);
       }
@@ -2138,7 +2139,7 @@ async function alertExpiringRequests(
     console.log(`✅ Sent ${alerted} request-expiring alerts`);
     return { alerted, errors };
   } catch (error) {
-    const msg = `Failed to alert expiring requests: ${error}`;
+    const msg = `Failed to alert expiring requests: ${scrubStringValue(String(error))}`;
     console.error(`❌ ${msg}`);
     errors.push(msg);
     return { alerted: 0, errors };

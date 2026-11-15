@@ -178,3 +178,26 @@ it("a seat-removal email says the learner was removed, never that the class was 
   expect(html).toContain("removed you from the class");
   expect(html).not.toMatch(/cancel/i);
 });
+
+it("a staging failure is logged as a scrubbed summary, never the error object", async () => {
+  const log = jest.spyOn(console, "error").mockImplementation(() => undefined);
+  mockTrialEmail.mockRejectedValueOnce(
+    new Error("insert failed for ravi@example.test"),
+  );
+
+  await stageTrialCompletedNotices({
+    trialId: "t1",
+    consultantUserId: "e",
+    consulteeUserId: "c",
+    consultantName: "Asha",
+    consulteeName: "Ravi",
+    planTitle: "Coaching",
+    subscriptionPlanId: "plan-1",
+    dashboardUrl: "/d",
+  });
+
+  expect(log).toHaveBeenCalledTimes(1);
+  expect(log.mock.calls[0]).toHaveLength(1);
+  expect(String(log.mock.calls[0][0])).not.toContain("ravi@example.test");
+  log.mockRestore();
+});

@@ -1050,9 +1050,13 @@ async function creditSeatRefund(
     });
     return { amountRefundedPaise: 0, refundPct: 0, rail: null };
   }
+  const organiser = (args.initiatedBy ?? "organiser") === "organiser";
   const r = await refundBookingPayment({
     paymentId,
-    reason: `left ${args.kind} ${args.eventId} — credits restored in full`,
+    // The organiser's removal keeps its cause, so its credit notice is required.
+    reason: organiser
+      ? seatRemovalRefundReason(args.kind, args.eventId, true, 100)
+      : `left ${args.kind} ${args.eventId} — credits restored in full`,
     initiatedByUserId: args.initiatedByUserId,
     dedupeKey,
   });

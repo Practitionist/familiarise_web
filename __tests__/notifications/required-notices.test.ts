@@ -41,6 +41,7 @@ import {
   CLASS_SESSION_REFUND_REASON,
   STAFF_CANCEL_REFUND_REASON,
   cancelRefundReason,
+  creditCancelRefundReason,
   refundNoticeKind,
   rejectionRefundReason,
   trialCancelRefundReason,
@@ -238,5 +239,19 @@ describe("copy", () => {
     const { create } = mockUpsert.mock.calls[0][0];
     expect(create.payload.respondByIso).toBe("2026-11-30T12:30:00.000Z");
     expect(create.payload.respondBy).toMatch(/30 Nov 2026.*6:00 PM/);
+  });
+});
+
+describe("credit-funded refunds keep their cause", () => {
+  it("a host's or staff cancel of a credit-funded booking is required; the learner's own is not", () => {
+    expect(refundNoticeKind(creditCancelRefundReason(100, "consultant"))).toBe(
+      "REFUND_FROM_HOST_CANCEL",
+    );
+    expect(refundNoticeKind(creditCancelRefundReason(100, "staff"))).toBe(
+      "REFUND_FROM_STAFF_CANCEL",
+    );
+    expect(
+      refundNoticeKind(creditCancelRefundReason(50, "consultee")),
+    ).toBeNull();
   });
 });

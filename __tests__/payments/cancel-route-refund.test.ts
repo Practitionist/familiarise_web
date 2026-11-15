@@ -193,6 +193,7 @@ jest.mock("../../lib/enterprise/system-events", () => {
 import { POST as cancelHandler } from "@/app/api/appointments/[appointmentId]/cancel/route";
 import { RefundGatewayError } from "@/lib/payments/operations/refund";
 import { grantPlatformCancel } from "@/lib/booking/platform-cancel";
+import { refundNoticeKind } from "@/lib/payments/operations/refund-cause";
 import { createMockRevocationRetryTable } from "../fixtures/stream-mocks";
 import { notifyAppointmentCancelled } from "@/lib/novu";
 
@@ -776,6 +777,24 @@ describe("#1161 — a credit-funded booking refunds as a credit restoration", ()
     expect(body.refund.status).toBe("REFUNDED");
     expect(body.refund.refundPct).toBe(100);
     expect(mockRecordSystemError).not.toHaveBeenCalled();
+  });
+
+  it("an expert's cancel of a credit-funded booking announces a required refund", async () => {
+    mockGetSession.mockResolvedValue(sessionAs("consultant"));
+    mockAppointmentFindUnique.mockResolvedValue(consultationAppointment());
+    mockAppointmentFindMany.mockImplementation(async () =>
+      bookingRows({ liveSlotHours: [120], ...freeFunded }),
+    );
+    mockRefundBookingPayment.mockResolvedValue({
+      refundId: "r-credits",
+      amountRefundedPaise: 0,
+      rail: "CREDITS",
+    });
+
+    await cancelHandler(makeRequest(), makeParams(APPT));
+
+    const { reason } = mockRefundBookingPayment.mock.calls[0][0];
+    expect(refundNoticeKind(reason)).toBe("REFUND_FROM_HOST_CANCEL");
   });
 
   it("restores nothing inside the zero tier, exactly as a card would (#1500)", async () => {

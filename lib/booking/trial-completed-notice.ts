@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import { scrubStringValue } from "@/lib/observability/sentry-scrubber";
 import { notifyTrialCompleted } from "@/lib/novu/service";
 import type { StagedTrigger } from "@/lib/novu/outbox";
 import { stageTrialLifecycleEmail } from "@/lib/email/senders/booking";
@@ -23,6 +24,12 @@ export function trialContinueUrl(subscriptionPlanId: string): string {
   return `${getAppUrl()}/checkout/plans/subscription/${encodeURIComponent(subscriptionPlanId)}`;
 }
 
+function scrubbedSummary(error: unknown): string {
+  return error instanceof Error
+    ? `${error.name}: ${scrubStringValue(error.message)}`
+    : "unknown error";
+}
+
 /**
  * A completed trial: the learner gets one bell and one email, "Continue with
  * {expert}", that open the plan; the expert gets a bell only. Stages without
@@ -43,8 +50,11 @@ export async function stageTrialCompletedNotices(
     status: "COMPLETED",
     ...(dateTime ? { dateTime } : {}),
   };
+  // console.* bypasses the Sentry scrubber: log a scrubbed name and message, never the error object.
   const fail = (what: string) => (error: unknown) => {
-    console.error(`[trial-completed] Failed to stage the ${what}:`, error);
+    console.error(
+      `[trial-completed] Failed to stage the ${what}: ${scrubbedSummary(error)}`,
+    );
     return [];
   };
   const learner = args.consulteeUserId;

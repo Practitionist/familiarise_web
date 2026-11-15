@@ -33,7 +33,11 @@
  * SUCCEEDED payment through.
  */
 
-import { refundNoticeKind, refundNoticeOverride } from "./refund-cause";
+import {
+  noticeReason,
+  refundNoticeKind,
+  refundNoticeOverride,
+} from "./refund-cause";
 import { Prisma, PaymentStatus, RefundStatus } from "@prisma/client";
 import { transitionParticipant } from "@/lib/booking/participants";
 import {
@@ -174,7 +178,7 @@ type StagedRefundNotice = {
 function refundReceiptArgs(
   payment: { id: string; userId: string; currency: string },
   amountPaise: number,
-  reason: string | undefined,
+  reason: string | null | undefined,
 ) {
   return {
     userId: payment.userId,
@@ -194,7 +198,7 @@ async function stageRefundNotice(
     currency: string;
   },
   amountPaise: number,
-  reason: string | undefined,
+  reason: string | null | undefined,
   receipt?: PreparedSpecEmails | null,
 ): Promise<StagedRefundNotice> {
   const bell = await notifyRefundProcessed(
@@ -566,7 +570,7 @@ async function refundFreeCreditPayment(
           tx,
           payment,
           restoredPaise,
-          input.reason,
+          noticeReason(settledOwed, input.reason),
         );
         return {
           result: {
@@ -758,7 +762,7 @@ export async function restoreSessionCredits(input: {
             tx,
             payment,
             restoredPaise,
-            input.reason,
+            noticeReason(settledOwed, input.reason),
           );
           return {
             refundId: refundRow.id,
@@ -1457,7 +1461,7 @@ async function refundInternalFundedPayment(
           tx,
           payment,
           requested,
-          input.reason,
+          noticeReason(settledOwed, input.reason),
           receipt,
         );
         return {

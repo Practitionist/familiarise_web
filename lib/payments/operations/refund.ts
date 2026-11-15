@@ -37,7 +37,11 @@
  * the paise.
  */
 
-import { refundNoticeKind, refundNoticeOverride } from "./refund-cause";
+import {
+  noticeReason,
+  refundNoticeKind,
+  refundNoticeOverride,
+} from "./refund-cause";
 import { casMiss } from "@/lib/cron/run-counters";
 import {
   reportSentryError,
@@ -852,13 +856,15 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
   };
   let stagedBell: StagedTrigger | null = null;
   let stagedEmails: StagedRecipientEmail[] = [];
+  // A hand refund that settled an owed refund is announced by that refund's cause.
+  const cause = noticeReason(settledOwed, input.reason);
   const receiptArgs = payment.userId
     ? {
         userId: payment.userId,
         paymentId: payment.id,
         amountPaise: requested,
         currency: payment.currency,
-        required: refundNoticeKind(input.reason) !== null,
+        required: refundNoticeKind(cause) !== null,
       }
     : null;
   // Rendered before the settling transaction; a failed pre-read renders inside it instead.
@@ -934,10 +940,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
                 {
                   tx,
                   entityRef: `payment:${payment.id}`,
-                  required: refundNoticeOverride(
-                    input.reason,
-                    receiptArgs.userId,
-                  ),
+                  required: refundNoticeOverride(cause, receiptArgs.userId),
                 },
               );
               stagedBell = bell?.staged ?? null;

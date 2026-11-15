@@ -84,6 +84,7 @@ import {
 import {
   cancelRefundReason,
   type CancelSide,
+  creditCancelRefundReason,
   wholeEventCancelRefundReason,
 } from "@/lib/payments/operations/refund-cause";
 import { hasActiveDisputeForAppointment } from "@/lib/payments/dispute-guard";
@@ -378,7 +379,7 @@ function cancelRefundOwed(
       paymentId,
       amountPaise: null,
       key: cancelRefundKey(appointmentId, paymentId),
-      reason: `cancellation (credit-funded booking, credit restored in full from the ${quote.tierRefundPct}% tier)`,
+      reason: creditCancelRefundReason(quote.tierRefundPct, side),
     };
   }
   if (quote.refundPaise <= 0) return null;
