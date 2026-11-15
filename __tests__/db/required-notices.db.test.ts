@@ -17,6 +17,18 @@ jest.mock("../../lib/novu/client", () => ({
   }),
 }));
 
+// react-email's renderer needs ESM dynamic import, which this tier's VM lacks; the row is what is pinned.
+jest.mock("../../lib/email/render", () => {
+  const { renderToStaticMarkup } =
+    jest.requireActual<typeof import("react-dom/server")>("react-dom/server");
+  return {
+    renderEmail: async (element: import("react").ReactElement) => {
+      const html = renderToStaticMarkup(element);
+      return { html, text: html };
+    },
+  };
+});
+
 import prisma from "../../lib/prisma";
 import { NOVU_WORKFLOWS, notificationScope } from "../../lib/novu/workflows";
 import { bellAudience, currentBellRecipients } from "../../lib/novu/policy";

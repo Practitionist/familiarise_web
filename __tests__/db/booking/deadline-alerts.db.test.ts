@@ -18,6 +18,18 @@ jest.mock("../../../lib/cron/with-cron-lock", () => ({
   withCronLock: (_job: string, _opts: unknown, fn: () => unknown) => fn(),
 }));
 
+// react-email's renderer needs ESM dynamic import, which this tier's VM lacks; the row is what is pinned.
+jest.mock("../../../lib/email/render", () => {
+  const { renderToStaticMarkup } =
+    jest.requireActual<typeof import("react-dom/server")>("react-dom/server");
+  return {
+    renderEmail: async (element: import("react").ReactElement) => {
+      const html = renderToStaticMarkup(element);
+      return { html, text: html };
+    },
+  };
+});
+
 import prisma from "../../../lib/prisma";
 import { NOVU_WORKFLOWS } from "../../../lib/novu/workflows";
 import { deriveTransactionId } from "../../../lib/novu/outbox";
