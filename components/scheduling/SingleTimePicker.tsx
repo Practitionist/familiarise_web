@@ -164,7 +164,7 @@ const VISIBLE_TAG: Partial<
 /**
  * Pick one time for one session: a month on the left, the chosen day's times
  * on the right, stacked when the picker itself is under 700 px wide; side by
- * side it fills its container and the times take the extra width. Controlled;
+ * side the month stops at 30rem and the times take the rest. Controlled;
  * the caller owns the button that acts on the pick. A pick the latest read
  * shows gone is cleared and the pane says so.
  */
@@ -201,7 +201,7 @@ export function SingleTimePicker({
   const rootClass = cn(
     "grid w-full min-w-0",
     sideBySide
-      ? "grid-cols-[minmax(22rem,2fr)_minmax(0,3fr)] gap-8"
+      ? "grid-cols-[minmax(22rem,min(30rem,40%))_minmax(0,1fr)] gap-8"
       : "grid-cols-1 gap-5",
     className,
   );
@@ -507,7 +507,6 @@ export function SingleTimePicker({
           canGoBack={canGoBack}
           canGoForward={canGoForward}
           theme={theme}
-          className={sideBySide ? "mx-auto max-w-md" : undefined}
         />
       </div>
       <section
