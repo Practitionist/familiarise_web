@@ -104,6 +104,30 @@
       "reason": "Pre-#2041 recording-storage column and its enum. No schema declares them and no code reads them.",
       "trackedBy": "#2270",
       "expires": "2026-11-21"
+    },
+    {
+      "statement": "DROP TYPE \"public\".\"ClassStatus_old\"",
+      "reason": "The enum swap that dropped the removed ClassStatus values. The release carrying #2746 is on prod (#2800); production no longer reads them.",
+      "trackedBy": "#2746",
+      "expires": "2026-11-30"
+    },
+    {
+      "statement": "DROP TYPE \"public\".\"RequestStatus_old\"",
+      "reason": "The enum swap that dropped the removed RequestStatus values. The release carrying #2746 is on prod (#2800); production no longer reads them.",
+      "trackedBy": "#2746",
+      "expires": "2026-11-30"
+    },
+    {
+      "statement": "DROP TYPE \"public\".\"TrialStatus_old\"",
+      "reason": "The enum swap that dropped the removed TrialStatus values. The release carrying #2746 is on prod (#2800); production no longer reads them.",
+      "trackedBy": "#2746",
+      "expires": "2026-11-30"
+    },
+    {
+      "statement": "DROP TYPE \"public\".\"WebinarStatus_old\"",
+      "reason": "The enum swap that dropped the removed WebinarStatus values. The release carrying #2746 is on prod (#2800); production no longer reads them.",
+      "trackedBy": "#2746",
+      "expires": "2026-11-30"
     }
   ],
   "knownDivergences": [
@@ -244,30 +268,6 @@
       "reason": "Legacy pre-#2257 support-ticket tables, re-created empty as a stop-gap for origin/prod. Dropped by the reconcile push once dev is promoted to prod.",
       "trackedBy": "#2271",
       "expires": "2026-11-21"
-    },
-    {
-      "statement": "DROP TYPE \"public\".\"ClassStatus_old\"",
-      "reason": "The enum swap that drops IN_PROGRESS from ClassStatus. origin/prod still reads and writes the value, so the swap waits: move this to destructiveStatementsAllowed once the release carrying the change is on prod.",
-      "trackedBy": "#2746",
-      "expires": "2026-12-31"
-    },
-    {
-      "statement": "DROP TYPE \"public\".\"RequestStatus_old\"",
-      "reason": "The enum swap that drops SCHEDULED from RequestStatus. origin/prod still reads and writes the value, so the swap waits: move this to destructiveStatementsAllowed once the release carrying the change is on prod.",
-      "trackedBy": "#2746",
-      "expires": "2026-12-31"
-    },
-    {
-      "statement": "DROP TYPE \"public\".\"TrialStatus_old\"",
-      "reason": "The enum swap that drops PENDING and REJECTED from TrialStatus. origin/prod still reads and writes the value, so the swap waits: move this to destructiveStatementsAllowed once the release carrying the change is on prod.",
-      "trackedBy": "#2746",
-      "expires": "2026-12-31"
-    },
-    {
-      "statement": "DROP TYPE \"public\".\"WebinarStatus_old\"",
-      "reason": "The enum swap that drops IN_PROGRESS from WebinarStatus. origin/prod still reads and writes the value, so the swap waits: move this to destructiveStatementsAllowed once the release carrying the change is on prod.",
-      "trackedBy": "#2746",
-      "expires": "2026-12-31"
     },
     {
       "statement": "BEGIN",
