@@ -280,9 +280,10 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       notice: TrialCancelNotice;
       pre: PreparedSpecEmails | null;
     } | null = null;
-    let cancelStaged: Awaited<
-      ReturnType<typeof stageTrialCancelNotice>
-    > | null = null;
+    // A holder, not a `let`: the transaction callback assigns it.
+    const cancelStaged: {
+      current: Awaited<ReturnType<typeof stageTrialCancelNotice>> | null;
+    } = { current: null };
 
     // Set when this PATCH cancels an unpaid trial; the appointment retirement
     // runs after the status write commits.
@@ -600,7 +601,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       }
       // The cancel notices commit with the cancel; a staging failure rolls it back.
       if (nextStatus === TrialStatus.CANCELLED && cancelNotice) {
-        cancelStaged = await stageTrialCancelNotice(
+        cancelStaged.current = await stageTrialCancelNotice(
           tx,
           cancelNotice.notice,
           cancelNotice.pre,
@@ -675,11 +676,13 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         console.error("[trial] post-commit effect failed", trialId, err);
       }
     }
-    if (cancelStaged) {
+    if (cancelStaged.current) {
       await flushNotificationsAfter(
         {
-          bells: cancelStaged.bells,
-          emails: [{ list: cancelStaged.emails, emailType: "TRIAL_CANCELLED" }],
+          bells: cancelStaged.current.bells,
+          emails: [
+            { list: cancelStaged.current.emails, emailType: "TRIAL_CANCELLED" },
+          ],
         },
         "trial.cancelled",
       );
