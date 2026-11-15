@@ -76,8 +76,7 @@ export async function handleWebinarCheckout(
     throw new Error(message);
   }
 
-  // FIX Issue #5: Validate webinar is scheduled before allowing booking
-  // Prevents slot timing from defaulting to new Date()
+  // A webinar with no live session is not on sale: its slot timing would default to now.
   if (!webinar.appointment?.occurrences?.[0]) {
     throw new Error(
       "This webinar has not been scheduled yet. Please wait for the consultant to set a date and time.",
