@@ -19,7 +19,9 @@ const bell = {
 };
 
 async function stagedTransactionIds(trialId: string): Promise<string[]> {
-  const createManyAndReturn = jest.fn(async () => []);
+  const createManyAndReturn = jest.fn(
+    async (_args: { data: { transactionId: string }[] }) => [],
+  );
   const tx = {
     notificationOutbox: { createManyAndReturn },
     failedEmail: { createManyAndReturn: jest.fn(async () => []) },
@@ -37,10 +39,9 @@ async function stagedTransactionIds(trialId: string): Promise<string[]> {
       screened: [],
     },
   });
-  const [{ data }] = createManyAndReturn.mock.calls[0] as unknown as [
-    { data: { transactionId: string }[] },
-  ];
-  return data.map((row) => row.transactionId);
+  return createManyAndReturn.mock.calls[0][0].data.map(
+    (row) => row.transactionId,
+  );
 }
 
 it("keys the bell to the trial, so a replacement trial is not skipped as a duplicate", async () => {

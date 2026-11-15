@@ -15,10 +15,8 @@
  * the same atomic unit (booking + profile creation either both commit
  * or neither do).
  *
- * The `upsert` + `user.update` pair is concurrency-safe via the
- * `ConsulteeProfile.userId @unique` constraint; a racing second caller
- * would hit the unique index, fall through to the `update: {}` branch,
- * and end up with the same id.
+ * A racing create is safe: `ConsulteeProfile.userId` is unique, so the loser's
+ * upsert takes the `update: {}` branch and returns the same id.
  */
 
 import type { PrismaLike } from "@/lib/prisma";
