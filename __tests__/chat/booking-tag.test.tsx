@@ -4,7 +4,13 @@
  * booking cards stay hidden; and event channels say who can read them.
  */
 import * as React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { format } from "date-fns";
 import {
@@ -216,10 +222,10 @@ describe("CustomMessage booking tag", () => {
     renderWithQuery(<CustomMessage />);
     const tag = await screen.findByTestId("booking-tag");
     expect(tag).toHaveTextContent(/^Career coaching$/);
-    expect(tag).toHaveAttribute(
-      "title",
-      `About: Career coaching · next session ${format(new Date(NEXT), "EEE, d MMM, h:mm a")}`,
-    );
+    const label = `About: Career coaching · next session ${format(new Date(NEXT), "EEE, d MMM, h:mm a")}`;
+    expect(tag).toHaveAccessibleName(label);
+    act(() => tag.focus());
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(label);
     expect(screen.queryByText(/Forged title/)).not.toBeInTheDocument();
     expect(screen.queryByText("Get help")).not.toBeInTheDocument();
   });

@@ -19,6 +19,12 @@ import {
 } from "@/lib/stream/booking-tag";
 import { cn } from "@/utils/tailwind";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 const CHIP_ROW =
   "flex items-center gap-2 border-t border-border bg-muted/40 px-4 py-2 text-xs";
@@ -65,18 +71,27 @@ export function MessageBookingTag({
   const format = useZonedFormat();
   const { data: tag } = useBookingTag(appointmentId, cid);
   if (!tag) return null;
+  const label = bookingTagLabel(tag, format);
   return (
-    <div
-      data-testid="booking-tag"
-      title={bookingTagLabel(tag, format)}
-      className={cn(
-        "mb-1 flex max-w-64 items-center gap-1.5 text-[11px]",
-        mine ? "text-primary-foreground/80" : "text-muted-foreground",
-      )}
-    >
-      <CalendarIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
-      <span className="truncate">{tag.title}</span>
-    </div>
+    <TooltipProvider delayDuration={150}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            data-testid="booking-tag"
+            aria-label={label}
+            className={cn(
+              "mb-1 flex max-w-64 items-center gap-1.5 rounded-sm text-left text-[11px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              mine ? "text-primary-foreground/80" : "text-muted-foreground",
+            )}
+          >
+            <CalendarIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
+            <span className="truncate">{tag.title}</span>
+          </button>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-xs">{label}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }
 
