@@ -12,9 +12,10 @@ Newsletter broadcasts, announcements versus newsletter, the appointment waitlist
 ## The model
 
 - Postgres is the transactional outbox (`FailedEmail`, `FailedEmailBatch`, `NotificationOutbox`) and the **only** owner of notification preferences (`NotificationPreference`). Workspace routing is removed: `OrgWorkspaceProfile.notificationRoutingMode` is unread until the next schema batch drops it, so never read or write it.
-- Resend sends email. Novu is a plain in-app transport: 16 workflow families (`lib/novu/templates/families.ts`), in-app only, `readOnly: true` preferences (`FAMILY_PREFERENCES` in `lib/novu/templates/index.ts`), no step `skip` conditions, no subscriber profile or preference data. 98 events: `Object.keys(NOVU_WORKFLOWS).length === Object.keys(EVENT_FAMILY).length`.
+- Resend sends email. Novu is a plain in-app transport: 16 workflow families (`lib/novu/templates/families.ts`), in-app only, `readOnly: true` preferences (`FAMILY_PREFERENCES` in `lib/novu/templates/index.ts`), no step `skip` conditions, no subscriber profile or preference data. 97 events: `Object.keys(NOVU_WORKFLOWS).length === Object.keys(EVENT_FAMILY).length`.
 - The inbox mounts only with a signed HMAC (`POST /api/novu/subscriber`, `lib/novu/inbox-auth.ts`) and `hideNav`, so Novu has no preference page.
 - The server gates every bell twice: when staged (`resolveRecipientBellPolicy`, `bellAudience` in `lib/novu/policy.ts`) and at the first attempt of each generation (`currentBellRecipients`). The personal switches are the only channel control for every user, operators included: `allNotifications` and `inAppEnabled` for bells, `allNotifications` and `emailEnabled` for optional email, then the category column. A template marked `required: true` (security, account, verification, moderation and compliance notices; always `category: null`) skips the switches for bells, as a null-category email does; only erasure stops it. `general-announcement` has no category but is not required.
+- A notice the other party causes is required per send, not per template (decision record `docs/decisions/2026-11-15-required-notices-and-deadline-alerts.md`): pass `required: { kind, recipients }` (`TriggerOptions`, `lib/novu/service.ts`; `stageBell` takes `required: kind`) and `requiredFor` on the email args. The kinds are `REQUIRED_NOTICE_KINDS` (`lib/notifications/required-notices.ts`): an expert's or host's cancel and its refund, a proposal to the non-proposer, a lapsed proposal's restored time, a class series move, a removed seat. Never add a kind without the owner, never mark a whole booking template `required`, and never use Novu's workflow-level critical flag. The bell row carries the kind as `payload.requiredNotice`, so `currentBellRecipients` honours it at the first attempt; the SQL twin `bellAllowedWhere` reads the same `gateOf`, so keep `bellAudience(..., { required })` and the JS rule in agreement. A refund's cause is read back from `Refund.reason` (`refundNoticeKind`, `lib/payments/operations/refund-cause.ts`): write a host-side refund reason only with its builders there. Erasure stops both channels (`loadEmailRecipients` drops an erased user).
 
 ## How a producer stages
 
@@ -28,9 +29,15 @@ Newsletter broadcasts, announcements versus newsletter, the appointment waitlist
 - **`tx` only:** inside `prisma.$transaction`, every helper receives and queries `tx`, never the global client. `PG_POOL_MAX=1` on Netlify deadlocks otherwise (`loadEmailRecipients(userIds, category, tx)`, `bellAudience(tx, ...)`).
 - Await every call. An un-awaited call is lost when the Netlify instance freezes after the response.
 
+## Deadline alerts, series moves and trials
+
+- Expert deadline alerts are variants of `new-booking-request`, run inside `expire-stale-requests`, follow the expert's switches and are claimed once by their outbox rows: `alertExpiringRequests` (6 h before a request lapses, `REQUEST_EXPIRY_ALERT_HOURS`, email `REQUEST_EXPIRING_SOON`) and the unscheduled-plan nudge at hours 12, 24 and 36 (with `refundAt`). Never add a job, route or scheduler for a deadline alert; add an arm to the sweep that reads the rows.
+- A class series move is one notice per seat holder: `moves` on the rescheduled input and email, at most `MOVES_SHOWN` (10) rows then "and N more" (`lib/booking/session-moves.ts`). A proposal's bell and email carry `respondBy`.
+- A completed trial goes through `stageTrialCompletedNotices` (`lib/booking/trial-completed-notice.ts`): the learner gets "Continue with {expert}" by bell and email, opening the plan; the expert gets a bell only.
+
 ## Decided, not yet built
 
-Free bookings will notify like paid ones minus the receipt, a free approval and every decline will notify the buyer, and a completed trial will send one bell and one email (`docs/decisions/2026-11-12-booking-follow-up-train.md`). Do not special-case free bookings out of a new booking notice.
+Free bookings will notify like paid ones minus the receipt, and a free approval and every decline will notify the buyer (`docs/decisions/2026-11-12-booking-follow-up-train.md`). Do not special-case free bookings out of a new booking notice.
 
 ## Add an event
 

@@ -220,20 +220,6 @@ export function openConsultationRequestWhere(
   };
 }
 
-/** Every expert's submitted requests whose hold ends within `withinMs` of `now`. */
-export function expiringConsultationRequestWhere(
-  now: Date,
-  withinMs: number,
-): Prisma.ConsultationWhereInput {
-  const since = holdingSince("CONSULTATION", now);
-  return {
-    status: "PENDING",
-    bookingSource: "REQUEST_SUBMITTED",
-    requestedAt: { gte: since, lt: new Date(since.getTime() + withinMs) },
-    NOT: { appointment: BEING_MOVED },
-  };
-}
-
 /**
  * The request cap's count, across every tenant: real submitted requests
  * (PENDING, REQUEST_SUBMITTED, still inside their hold, not a booking being

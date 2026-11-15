@@ -82,7 +82,12 @@ it("suspended: null category, delivered although email is switched off", async (
     5_000,
   );
 
-  expect(loadEmailRecipients).toHaveBeenCalledWith(["user_1"], null);
+  expect(loadEmailRecipients).toHaveBeenCalledWith(
+    ["user_1"],
+    null,
+    undefined,
+    undefined,
+  );
   expect(result).toEqual({ sent: 1, skipped: 0, failed: 0 });
   expect(mockDeliver).toHaveBeenCalledTimes(1);
   expect(mockDeliver).toHaveBeenCalledWith(

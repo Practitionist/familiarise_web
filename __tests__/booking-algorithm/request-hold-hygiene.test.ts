@@ -199,6 +199,8 @@ describe("48h PENDING consultation expiry releases pinned slots", () => {
     (prisma.consultation.findMany as jest.Mock).mockImplementation(
       async ({ where, select }: ConsultationExpiryRead) => {
         if (isIdOnlyProjection(select)) return [];
+        // The request-expiring alert's window read: nothing lapses soon here.
+        if (JSON.stringify(where).includes('"requestedAt":{"gte"')) return [];
         return where.status === "PENDING" ? expiredRows : [];
       },
     );

@@ -65,6 +65,7 @@ type UserRow = {
   email: string | null;
   name: string | null;
   timezone: string | null;
+  erasedAt: Date | null;
   notificationPreferences: PreferenceRow | null;
 };
 
@@ -109,6 +110,7 @@ async function fetchUsers(ids: string[], db: UserReader): Promise<UserRow[]> {
       email: true,
       name: true,
       timezone: true,
+      erasedAt: true,
       notificationPreferences: { select: EMAIL_PREFERENCE_SELECT },
     },
   });
@@ -117,8 +119,9 @@ async function fetchUsers(ids: string[], db: UserReader): Promise<UserRow[]> {
 /**
  * One query for every recipient of a message. Ids are deduped, input order is
  * preserved, and a user without an address is dropped because nothing can be
- * sent to them. `allowed` is decided here so callers never read the flags;
- * a recipient in `requiredFor` gets the message whatever their switches say.
+ * sent to them, as is an erased user. `allowed` is decided here so callers
+ * never read the flags; a recipient in `requiredFor` gets the message whatever
+ * their switches say.
  */
 export async function loadEmailRecipients(
   userIds: string[],
@@ -134,7 +137,8 @@ export async function loadEmailRecipients(
 
   return ids.flatMap((id) => {
     const user = byId.get(id);
-    if (!user?.email) return [];
+    // An erased user receives nothing, a required notice included.
+    if (!user?.email || user.erasedAt) return [];
     // A required send for this recipient is staged as a null-category notice.
     const effective = required.has(id) ? null : category;
     return [
@@ -164,6 +168,6 @@ export async function isEmailAllowed(
   db: UserReader = prisma,
 ): Promise<boolean> {
   const [user] = await fetchUsers([userId], db);
-  if (!user) return false;
+  if (!user || user.erasedAt) return false;
   return isEmailAllowedForUser(user, category);
 }

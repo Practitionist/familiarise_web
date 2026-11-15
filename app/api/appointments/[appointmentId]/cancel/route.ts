@@ -1462,12 +1462,15 @@ export async function POST(
               ? "consultee"
               : "system",
         },
-        {
-          required: {
-            kind: "CANCELLED_BY_HOST",
-            recipients: bookedUserIds,
-          },
-        }).catch((err) => {
+        bookedUserIds.length > 0
+          ? {
+              required: {
+                kind: "CANCELLED_BY_HOST",
+                recipients: bookedUserIds,
+              },
+            }
+          : undefined,
+        ).catch((err) => {
           console.error(
             "Failed to send appointment cancellation notification:",
             err,

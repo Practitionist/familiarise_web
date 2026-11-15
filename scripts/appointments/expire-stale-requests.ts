@@ -57,9 +57,6 @@ import {
   notifyRequestExpiringSoon,
   notifyUnscheduledSubscriptionNudge,
 } from "@/lib/novu/service";
-import { expiringConsultationRequestWhere } from "@/lib/data/needs-you";
-import { requestHoldDeadline } from "@/lib/dashboard/money-state";
-import { goHref } from "@/lib/dashboard/go";
 import { NOVU_WORKFLOWS, notificationScope } from "@/lib/novu/workflows";
 import { deriveTransactionId } from "@/lib/novu/outbox";
 import { stageBell } from "@/lib/novu/stage-bell";
@@ -367,10 +364,7 @@ export async function hasStaleRequestWork(
         unpaidLapsedConsultationWhere(
           new Date(at - PAYMENT_PENDING_EXPIRATION_DAYS * DAY_MS),
         ),
-        expiringConsultationRequestWhere(
-          now,
-          REQUEST_EXPIRY_ALERT_HOURS * HOUR_MS,
-        ),
+        expiringPendingConsultationWhere(now),
       ],
     },
     select: { id: true },
@@ -1996,6 +1990,20 @@ async function nudgeUnscheduledSubscriptions(
 /** The expert hears about an unanswered request this many hours before it lapses. */
 export const REQUEST_EXPIRY_ALERT_HOURS = 6;
 
+/** The expiry arm's cohort as it will stand within the alert window: lapsing, not yet lapsed. */
+function expiringPendingConsultationWhere(now: Date) {
+  const lapsesBefore = new Date(
+    now.getTime() - PENDING_CONSULTATION_EXPIRATION_HOURS * HOUR_MS,
+  );
+  const alertBefore = new Date(
+    lapsesBefore.getTime() + REQUEST_EXPIRY_ALERT_HOURS * HOUR_MS,
+  );
+  return {
+    ...stalePendingConsultationWhere(alertBefore),
+    requestedAt: { gte: lapsesBefore, lt: alertBefore },
+  } satisfies Prisma.ConsultationWhereInput;
+}
+
 /** The outbox key of one request's lapse alert; the guard and the trigger share it. */
 export function requestExpiringDedupeKey(consultationId: string): string {
   return `request-expiring:${consultationId}`;
@@ -2014,10 +2022,7 @@ async function alertExpiringRequests(
   const errors: string[] = [];
   try {
     const expiring = await prisma.consultation.findMany({
-      where: expiringConsultationRequestWhere(
-        now,
-        REQUEST_EXPIRY_ALERT_HOURS * HOUR_MS,
-      ),
+      where: expiringPendingConsultationWhere(now),
       select: {
         id: true,
         requestedAt: true,
@@ -2036,9 +2041,10 @@ async function alertExpiringRequests(
       take: limits.maxRequests,
     });
     const candidates = expiring.flatMap((c) => {
-      const expiresAt = requestHoldDeadline("CONSULTATION", c.requestedAt);
+      const expiresAt = new Date(
+        c.requestedAt.getTime() + PENDING_CONSULTATION_EXPIRATION_HOURS * HOUR_MS,
+      );
       const consultantUserId = c.consultationPlan.consultantProfile.user.id;
-      if (!expiresAt) return [];
       const dedupeKey = requestExpiringDedupeKey(c.id);
       return [
         {
@@ -2087,7 +2093,10 @@ async function alertExpiringRequests(
       try {
         const consulteeName = x.c.requestedBy.user.name ?? "A consultee";
         const planTitle = x.c.consultationPlan.title;
-        const reviewUrl = `${getAppUrl()}${goHref("expert", "requests")}`;
+        const reviewUrl = notificationHref(
+          x.c.appointment?.organizationId,
+          "requests",
+        );
         if (!bellDone) {
           await notifyRequestExpiringSoon(
             x.consultantUserId,

@@ -2,13 +2,13 @@
 
 ## Novu Workflows Overview
 
-All 98 event ids are defined in `lib/novu/workflows.ts` as the `NOVU_WORKFLOWS` constant, and every one is mapped to a family in `EVENT_FAMILY` (`lib/novu/templates/families.ts`). A unit test refuses an unmapped event. The event id is what application code triggers with; the Novu workflow that receives the trigger is the event's family, not a workflow with the event's name.
+All 97 event ids are defined in `lib/novu/workflows.ts` as the `NOVU_WORKFLOWS` constant, and every one is mapped to a family in `EVENT_FAMILY` (`lib/novu/templates/families.ts`). A unit test refuses an unmapped event. The event id is what application code triggers with; the Novu workflow that receives the trigger is the event's family, not a workflow with the event's name.
 
 ---
 
 ## Workflow families
 
-The Novu plan in use caps an environment at 20 workflows, and the application has 98 events, so a Novu workflow is a family — one per audience-and-opt-out combination — rather than one per event. The event id the application triggers is unchanged; `toWire` in `lib/novu/templates/index.ts` maps it to its family and adds `payload.event`, and the family's body branches on that field with a Liquid `case`. There are 16 families. Every family is in-app only, is synced with read-only preferences and no step conditions, and is gated by the server: the "Opt-out category" column is the `NotificationPreference` switch that `lib/novu/policy.ts` checks before a bell is staged (`none` means a system notice with no switch).
+The Novu plan in use caps an environment at 20 workflows, and the application has 97 events, so a Novu workflow is a family — one per audience-and-opt-out combination — rather than one per event. The event id the application triggers is unchanged; `toWire` in `lib/novu/templates/index.ts` maps it to its family and adds `payload.event`, and the family's body branches on that field with a Liquid `case`. There are 16 families. Every family is in-app only, is synced with read-only preferences and no step conditions, and is gated by the server: the "Opt-out category" column is the `NotificationPreference` switch that `lib/novu/policy.ts` checks before a bell is staged (`none` means a system notice with no switch).
 
 | Family ID        | Opt-out category | Events | Event ids                                                                                                                                                                                                                                                                                                                                                                                |
 | ---------------- | ---------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -19,7 +19,7 @@ The Novu plan in use caps an environment at 20 workflows, and the application ha
 | `payout`         | payments         | 3      | payout-processed, payout-failed, payout-clawback                                                                                                                                                                                                                                                                                                                                         |
 | `referral`       | payments         | 2      | referral-bonus-earned, referee-welcome-bonus                                                                                                                                                                                                                                                                                                                                             |
 | `subscription`   | subscriptions    | 4      | subscription-started, subscription-cancelled, subscription-renewed, subscription-unallocated-refunded                                                                                                                                                                                                                                                                                    |
-| `trial`          | trials           | 5      | trial-session-requested, trial-session-scheduled, trial-session-completed, trial-session-cancelled, trial-refunded                                                                                                                                                                                                                                                                       |
+| `trial`          | trials           | 4      | trial-session-scheduled, trial-session-completed, trial-session-cancelled, trial-refunded                                                                                                                                                                                                                                                                                                |
 | `support-ticket` | support          | 5      | support-ticket-created, support-ticket-received, support-ticket-activity, support-ticket-update, support-ticket-response                                                                                                                                                                                                                                                                 |
 | `feedback`       | feedback         | 5      | feedback-received, moderation-report-outcome, platform-feedback-update, new-review-received, review-excluded-from-rating                                                                                                                                                                                                                                                                 |
 | `account`        | none             | 7      | account-security-notice, verification-status-changed, new-consultant-application, moderation-warning, content-removed-notice, account-suspended, account-banned                                                                                                                                                                                                                          |
@@ -117,7 +117,9 @@ sequenceDiagram
 
 **AppointmentCancelledPayload** extends AppointmentPayload with: `reason` (required — a clause, or "No reason given"), `cancelledBy` (a capitalised name, or "The platform"), `cancelledByRole?` (the raw discriminator). Callers pass `AppointmentCancelledInput`, whose `cancelledBy` is still `"consultant" | "consultee" | "system"`.
 
-**AppointmentRescheduledPayload** extends AppointmentPayload with: `outcome` (`MOVED`, `PROPOSED`, `RELEASED`, `DECLINED`, `WITHDRAWN` or `EXPIRED`), `oldDateTime?`, `oldDateTimeIso?`, `newDateTime` (required — a phrase when the outcome has no destination time), `newDateTimeIso?`. Callers pass `AppointmentRescheduledInput`, whose `RescheduleOutcomeFields` union still forbids a destination time on the outcomes that have none.
+**AppointmentRescheduledPayload** extends AppointmentPayload with: `outcome` (`MOVED`, `PROPOSED`, `RELEASED`, `DECLINED`, `WITHDRAWN` or `EXPIRED`), `oldDateTime?`, `oldDateTimeIso?`, `newDateTime` (required — a phrase when the outcome has no destination time), `newDateTimeIso?`, `respondBy?` and `respondByIso?` (a proposal's lapse time, in the recipient's zone), and `movesText?` with `movedCount?` (a class series move: every moved session as "old → new", at most ten and then "and N more", built per recipient zone by `sessionMovesText` in `lib/novu/service.ts`). Callers pass `AppointmentRescheduledInput`, whose `RescheduleOutcomeFields` union still forbids a destination time on the outcomes that have none; they pass `respondBy` and `moves` as ISO strings.
+
+A series move (`retimeClassSeries`, `lib/booking/class-retime.ts`) sends one notice per seat holder, not one per session. The bell lists the moves in `movesText`, and the `APPOINTMENT_RESCHEDULED` email lists the same rows (`shownMoves`, `lib/booking/session-moves.ts`, keeps the two at ten) with a button that opens the booking itself. A reschedule proposal's bell ends "Please review it by {respondBy}, or the original time stands", and its email names the same time.
 
 ---
 
@@ -170,12 +172,13 @@ sequenceDiagram
 
 | Workflow ID               | Trigger Function                                 | Recipients   | Payload Type   |
 | ------------------------- | ------------------------------------------------ | ------------ | -------------- |
-| `trial-session-requested` | None: a trial never waits on the expert          | —            | `TrialPayload` |
 | `trial-session-scheduled` | `notifyTrialScheduled(consulteeUserId, payload)` | Consultee    | `TrialPayload` |
-| `trial-session-completed` | `notifyTrialCompleted(userIds[], payload)`       | Both parties | `TrialPayload` |
+| `trial-session-completed` | `stageTrialCompletedNotices(args)`               | Both parties | `TrialPayload` |
 | `trial-session-cancelled` | `notifyTrialCancelled(userIds[], payload)`       | Both parties | `TrialPayload` |
 
-**TrialPayload**: `consultantName`, `consulteeName`, `planTitle`, `dateTime?` (recipient-zone), `dateTimeIso?`, `status` (label), `statusCode?`, `dashboardUrl`. Callers pass `TrialInput`.
+**TrialPayload**: `consultantName`, `consulteeName`, `planTitle`, `dateTime?` (recipient-zone), `dateTimeIso?`, `status` (label), `statusCode?`, `dashboardUrl`, `continueWith?`. Callers pass `TrialInput`.
+
+A completed trial is announced by `stageTrialCompletedNotices` (`lib/booking/trial-completed-notice.ts`), which both completion paths call (the trial route and the auto-complete sweep). The learner's bell carries `continueWith` (the expert's name), reads "Continue with {expert}", and opens the plan's checkout page; the learner also gets the `TRIAL_COMPLETED` email with the same heading and button. The expert gets a bell only, which names the learner, and no email.
 
 ---
 
@@ -195,7 +198,7 @@ sequenceDiagram
 
 | Workflow ID                   | Trigger Function                                                       | Recipients | Payload Type            |
 | ----------------------------- | ---------------------------------------------------------------------- | ---------- | ----------------------- |
-| `new-booking-request`         | `notifyNewBookingRequest(consultantUserId, payload)`                   | Consultant | `BookingRequestPayload` |
+| `new-booking-request`         | `notifyNewBookingRequest(consultantUserId, payload)`; `notifyRequestExpiringSoon` and `notifyUnscheduledSubscriptionNudge` are its variants | Consultant | `BookingRequestPayload` |
 | `verification-status-changed` | `notifyVerificationStatusChanged(consultantUserId, payload)`           | Consultant | `VerificationPayload`   |
 | `payout-processed`            | `notifyPayoutProcessed(consultantUserId, payload)`                     | Consultant | `PayoutPayload`         |
 | `payout-failed`               | `notifyPayoutFailed(consultantUserId, payload)`                        | Consultant | `PayoutPayload`         |
@@ -361,6 +364,7 @@ How a save behaves:
 - The quiet-hour time fields save on blur, never per keystroke, and refuse an incomplete time or a start equal to the end before sending anything.
 - With **Optional notifications** (`allNotifications`) off, the channel, category, organisation and quiet-hour cards stay visible but disabled, and the saved choices apply again when it is turned back on.
 - Required notices ignore every switch: a template marked `required: true` in `lib/novu/templates/b2c.ts` (security, account, verification, moderation and compliance notices, all `category: null`) always rings, as a null-category email always sends. `general-announcement` has no category but is optional, so it follows the master and In-App switches.
+- A notice the other party causes is required for that send only: the producer passes `required: { kind, recipients }`, the kind is one of `REQUIRED_NOTICE_KINDS` (`lib/notifications/required-notices.ts`), and only the listed recipients skip the switches. The panel shows one line built from the same constant, under the master switch: "Always sent: changes the other person makes to your booking (…)". The kinds and the producers that pass them are listed in [Required notices the other party causes](#required-notices-the-other-party-causes).
 
 What the switches actually gate:
 
@@ -390,9 +394,39 @@ The evidence for each row:
 
 There is no marketing switch. Marketing email and the newsletter follow the account's DPDP `MARKETING_COMMS` consent, so the Categories card ends with a line linking to Settings › Account › Data consent & privacy rights (`accountSettingsHref(user, "account")` plus `#data-consent`). The strict PUT rejects `marketingEmails` with a 400. How the consent drives the `NewsletterSubscriber` row is in `docs/email/README.md`, "The newsletter follows marketing consent".
 
+### Required notices the other party causes
+
+The owner's decision of 2026-11-15 ([the decision record](../decisions/2026-11-15-required-notices-and-deadline-alerts.md)) makes a notice required when the other party changed the recipient's paid booking. These are service messages about the contract, so they reach the recipient whatever the master, In-App, Email or category switch says; erasure still stops them. A reminder, a digest, marketing and every notice about the recipient's own action stay switchable, which is why the override is passed per send and the template keeps its category.
+
+| Kind                      | What happened                                         | Producer and recipients                                                                                                                                                                                                                                  |
+| ------------------------- | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CANCELLED_BY_HOST`       | The expert or host cancelled the booking or event      | The cancel route (`app/api/appointments/[appointmentId]/cancel/route.ts`), for the buyer and every attendee when the host side cancelled; a host cancelling one class session (`cancelClassSession`, `lib/booking/class-sessions.ts`), for the seat holders |
+| `REFUND_FROM_HOST_CANCEL` | The refund that cancel caused                          | Every door that announces a refund (the inline settle in `refund.ts`, the rail refunds in `booking-refund.ts`, the `refund.processed` webhook, `reconcile-pending-refunds`), for the payer, when `Refund.reason` says the host side cancelled             |
+| `RESCHEDULE_PROPOSED`     | A new time was proposed                                | The reschedule route, for the party who did not propose it                                                                                                                                                                                               |
+| `PROPOSAL_LAPSED`         | Nobody answered, so the original time stands           | `notifyRescheduleRestored` (`lib/booking/reschedule-outcome-notice.ts`) with the `EXPIRED` outcome, for both parties; a withdrawal stays optional                                                                                                          |
+| `SERIES_MOVED`            | The host moved a class's upcoming sessions             | `retimeClassSeries` (`lib/booking/class-retime.ts`), for the seat holders; the co-hosts' copy stays optional                                                                                                                                               |
+| `SEAT_RELEASED`           | A host removed the recipient's seat                    | `notifyFreeSeatRemoved` (`lib/booking/seat-removed-notice.ts`) for a free seat, and the refund notice of a paid seat the organiser removed                                                                                                               |
+
+How each gate honours it:
+
+- **Bells.** The override is written into the outbox row's payload as `requiredNotice` (the kind; `REQUIRED_NOTICE_FIELD`). The staging gate (`resolveRecipientBellPolicy`) and the first-attempt recheck (`currentBellRecipients`, which reads the field back with `requiredNoticeOf`) pass it to the same `gateOf` in `lib/novu/policy.ts`, and the SQL twin `bellAllowedWhere` reads the same gate, so `bellAudience(..., { required: true })` and the JavaScript rule agree. `__tests__/db/required-notices.db.test.ts` pins the agreement on real Postgres.
+- **Email.** `loadEmailRecipients(userIds, category, db, requiredFor)` loads a listed recipient with no category, which is the existing marker of a required email: `isEmailAllowedForUser` lets it through, the staged `FailedEmail` row carries a null `deliveryCategory` so the relay's recheck lets it through again, and it has no unsubscribe link. A sender takes the list as `requiredFor` on its arguments (`RecipientEmailSpec.requiredFor`), or `required: true` on the refund receipt.
+- **The refund's cause.** A refund is announced well after the cancel (by the webhook or the reconcile job), so the cause is read back from the refund row. The doors that end a booking for the host side write their reasons with `cancelRefundReason`, `wholeEventCancelRefundReason` and `seatRemovalRefundReason` (`lib/payments/operations/refund-cause.ts`), and `refundNoticeKind` recognises exactly those reasons.
+
+A staff or admin cancel, a decline of a request, a webinar re-time and a direct move by an auto-confirmed reschedule are not in the list and stay optional.
+
+### Deadline alerts for the expert
+
+Two alerts tell the expert about their own pending action, so both follow the expert's switches (the `appointments` category). Both are variants of the `new-booking-request` event in the `appointment` family, and both run inside the `expire-stale-requests` job (`scripts/appointments/expire-stale-requests.ts`):
+
+- **A request about to lapse.** `alertExpiringRequests` reads the requests the expiry arm will expire within `REQUEST_EXPIRY_ALERT_HOURS` (6) and rings `notifyRequestExpiringSoon` (with `expiresAt`) and sends the `REQUEST_EXPIRING_SOON` email. It runs after the arm that expires lapsed requests.
+- **A paid plan still unplaced.** The unscheduled-plan nudge sends a bell and an email at hours 12, 24 and 36 after payment; each now names the refund time (`refundAt`, payment plus 48 hours) in the expert's zone. The hour-36 stage is the alert 12 hours before the automatic refund.
+
+Each is sent once per item. The bell's `NotificationOutbox` row is the claim: its `transactionId` comes from a dedupe key (`request-expiring:<consultationId>`, or `subscription-unscheduled:<subscriptionId>:h<stage>`), and the arm skips an item whose row exists. The email's claim is its `FailedEmail` row, found by email type and `entityRef`. An expert whose switches are off gets neither, and the arm looks again on the next run. `__tests__/db/booking/deadline-alerts.db.test.ts` pins both on real Postgres.
+
 ### Erased users
 
-Erasure stops every channel without a preference write. The bell relay drops an erased recipient at send time (`unerasedRecipients` for required bells and `currentBellRecipients` for the rest, both in `lib/novu/policy.ts`), so a `NotificationOutbox` row staged before the erasure never rings them. Queued email is dead-lettered and redacted inside the erasure transaction (`scrubMailFootprintTx`, `lib/compliance/erasure/mail-footprint.ts`).
+Erasure stops every channel without a preference write. The bell relay drops an erased recipient at send time (`unerasedRecipients` for required bells and `currentBellRecipients` for the rest, both in `lib/novu/policy.ts`), so a `NotificationOutbox` row staged before the erasure never rings them. Queued email is dead-lettered and redacted inside the erasure transaction (`scrubMailFootprintTx`, `lib/compliance/erasure/mail-footprint.ts`), and `loadEmailRecipients` drops an erased user, so a required notice staged after the erasure never reaches them either.
 
 ---
 
