@@ -18,6 +18,16 @@ export function cancelRefundReason(
   return `cancellation (${refundPct}% per booking-time policy, ${side}-initiated)`;
 }
 
+/** A paid trial's cancel reason; the credit-funded form names its tier. */
+export function trialCancelRefundReason(
+  side: CancelSide,
+  quote: { tierRefundPct: number; creditRestoresInFull: boolean },
+): string {
+  return quote.creditRestoresInFull
+    ? `trial cancellation (credit-funded trial, credit restored in full from the ${quote.tierRefundPct}% tier, ${side}-initiated)`
+    : `trial cancellation (${quote.tierRefundPct}% per booking-time policy, ${side}-initiated)`;
+}
+
 export function wholeEventCancelRefundReason(
   kind: string,
   reason: string,
@@ -61,7 +71,10 @@ export function refundNoticeKind(
   reason: string | null | undefined,
 ): RequiredNoticeKind | null {
   if (!reason) return null;
-  if (reason.startsWith("cancellation (")) {
+  if (
+    reason.startsWith("cancellation (") ||
+    reason.startsWith("trial cancellation (")
+  ) {
     if (reason.endsWith(", consultant-initiated)")) {
       return "REFUND_FROM_HOST_CANCEL";
     }

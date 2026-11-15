@@ -15,15 +15,17 @@ Three smaller gaps sat beside it: experts had no alert when a request was about 
 
 1. **A notice about a change someone else made to the recipient's booking reaches them whatever their switches say** (decided; built; widened by the owner later on 2026-11-15).
    - Required, whatever the master, In-App, Email or category switch says, and only when the actor is not the recipient:
-     - an expert's or host's cancel of the recipient's booking or event, and the refund notice that cancel causes (`CANCELLED_BY_HOST`, `REFUND_FROM_HOST_CANCEL`);
-     - a staff or admin cancel of the recipient's booking or event, including a moderation bulk-cancel and a maintenance freeze, and the refund notice it causes (`CANCELLED_BY_STAFF`, `REFUND_FROM_STAFF_CANCEL`);
+     - an expert's or host's cancel of the recipient's booking or event, a trial included, and the refund notice that cancel causes (`CANCELLED_BY_HOST`, `REFUND_FROM_HOST_CANCEL`);
+     - a staff or admin cancel of the recipient's booking or event, a trial included, as well as a moderation bulk-cancel and a maintenance freeze, and the refund notice it causes (`CANCELLED_BY_STAFF`, `REFUND_FROM_STAFF_CANCEL`);
      - an expert declining the recipient's request: a paid request's refund notice, and a declined reschedule proposal to the party who proposed it (`REQUEST_DECLINED`);
      - a reschedule proposal, sent to the party who did not propose it (`RESCHEDULE_PROPOSED`);
-     - a proposal that lapses so the original time stands (`PROPOSAL_LAPSED`);
+     - a proposal that lapses so the original time stands (`PROPOSAL_LAPSED`), and a proposal its proposer withdraws, to the other party (`PROPOSAL_WITHDRAWN`; the notice now says the original time stands);
      - a move that confirmed itself automatically (an auto-confirmed reschedule, an incident rebook), to the party who did not act (`MOVE_AUTO_CONFIRMED`);
      - a series move of a class, and a webinar moved to a new time, to the attendees (`SERIES_MOVED`, `EVENT_MOVED`);
      - a host releasing or removing the recipient's seat (`SEAT_RELEASED`);
      - the per-session class refund notice when the host caused it: a cancelled session, or a void the outcome sweep attributes to the host, never made up (`CLASS_SESSION_REFUNDED`).
+   - Applications of this rule decided after the first preview round (2026-11-15): the withdrawal (a muted learner heard nothing when the expert withdrew, and their bell still asked them to review the proposal), and a trial cancelled by the expert or by staff with the refund it causes (its reason, `trialCancelRefundReason`, names the side).
+   - A host removing a seat is a removal, not a cancellation: the bell (`seatRemoved`) and the email (`removedFrom`) say the host removed the learner from the class or webinar and never that it was cancelled.
    - Still switchable: reminders, marketing, digests, and every notice about the recipient's own action (a learner's own cancel, the expert's copy of the cancel they made, the proposer's copy of their own proposal, and a staff member cancelling a booking they are a party to).
    - Erasure still stops everything: an erased user receives nothing, required or not.
    - **Reason.** These are service messages about a contract the user paid for. India's Telecom Commercial Communications Customer Preference Regulations, 2018 (TCCCPR) separate transactional and service messages from promotional ones, and only promotional messages need the recipient's opt-in.
@@ -54,6 +56,8 @@ Three smaller gaps sat beside it: experts had no alert when a request was about 
 7. **Stale Novu definitions** (decided; built). Items 2 and 3 of #2781: the `trial-refunded` description now says a paid trial is refunded when the expert cancels it, and the `trial-session-requested` event, which had no sender, is deleted with its template and family mapping. Items 1 and 4 of that issue are out of scope. The Novu environments are not synced from the branch: after merge the owner runs the Novu sync, which rewrites the `trial` family (one branch fewer, the new description, the completed-trial copy) and the `appointment` family's copy (decisions 3, 5 and 6).
 
 8. **Experts' bells on the reschedule QA** (decided: no code without a cause). #2783 reported that experts saw no bell during the reschedule QA although the code stages one. No cause was found in the code while building this change, so it is listed for the preview round with a seed expert whose switches are on.
+
+9. **The timeline names when the booking was made** (fix included at the owner's request, 2026-11-15). The appointment timeline's "Booked by" (and "Requested by") row read `requestedAt`, which a move restarts as the request's hold clock, so it showed the time of the latest change. It now reads the lifecycle row's `createdAt` (`bookedAt` on the presentation input, `lib/appointments/presentation-input.ts`), falling back to `requestedAt` only for a reader that does not select it.
 
 ## Deprecated & Superseded Approaches
 

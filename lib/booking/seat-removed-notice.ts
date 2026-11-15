@@ -60,6 +60,7 @@ export async function notifyFreeSeatRemoved(args: {
         dateTime: startsAt?.toISOString(),
         dashboardUrl,
         cancelledBy: "consultant",
+        seatRemoved: true,
       },
       {
         required: { kind: "SEAT_RELEASED", recipients: [args.attendeeUserId] },
@@ -69,6 +70,13 @@ export async function notifyFreeSeatRemoved(args: {
       appointmentId: args.appointmentId,
       userIds: [args.attendeeUserId],
       requiredFor: [args.attendeeUserId],
+      removedFrom: {
+        eventLabel: appointment.class ? "class" : "webinar",
+        planTitle: planTitleOrSessionLabel(
+          plan?.title,
+          appointment.appointmentType,
+        ),
+      },
       startsAt,
       cancelledBy: consultantName,
       dashboardUrl,

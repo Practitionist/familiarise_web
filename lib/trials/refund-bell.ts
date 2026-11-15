@@ -2,6 +2,7 @@ import type { Tx } from "@/lib/prisma";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import { stageBell } from "@/lib/novu/stage-bell";
 import { goHref } from "@/lib/dashboard/go";
+import type { RequiredNoticeKind } from "@/lib/notifications/required-notices";
 
 /** The learner hears their paid trial was refunded (#1775 C-12). */
 export function stageTrialRefundedBell(
@@ -11,6 +12,8 @@ export function stageTrialRefundedBell(
     consulteeUserId: string;
     planTitle: string;
     consultantName: string | null;
+    /** The cancel came from the expert or staff, so the bell skips the learner's switches. */
+    required?: RequiredNoticeKind;
   },
 ) {
   return stageBell(tx, {
@@ -23,5 +26,6 @@ export function stageTrialRefundedBell(
       dashboardUrl: goHref("client", "payments"),
     },
     dedupeKey: `trial-refund:${trial.id}`,
+    ...(trial.required ? { required: trial.required } : {}),
   });
 }

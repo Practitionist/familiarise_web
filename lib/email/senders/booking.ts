@@ -176,6 +176,8 @@ export interface AppointmentCancelledEmailArgs {
   refundUserIds?: string[];
   /** Recipients the other party's change makes this a required notice for. */
   requiredFor?: readonly string[];
+  /** A host removed this one seat from a class or webinar; nothing was cancelled. */
+  removedFrom?: { eventLabel: string; planTitle: string };
   dashboardUrl: string;
 }
 
@@ -194,9 +196,11 @@ function buildCancelledEmail(args: AppointmentCancelledEmailArgs): {
       requiredFor: args.requiredFor,
       entityRef: `appointment:${args.appointmentId}`,
       subject: (r) =>
-        args.startsAt
-          ? `Your session on ${whenText(args.startsAt, r.zone)} was cancelled`
-          : "Your session was cancelled",
+        args.removedFrom
+          ? `You were removed from ${args.removedFrom.planTitle}`
+          : args.startsAt
+            ? `Your session on ${whenText(args.startsAt, r.zone)} was cancelled`
+            : "Your session was cancelled",
       render: (r) =>
         React.createElement(AppointmentCancelledEmail, {
           recipientName: greet(r),
@@ -206,6 +210,7 @@ function buildCancelledEmail(args: AppointmentCancelledEmailArgs): {
           cancelledBy: args.cancelledBy,
           reason: args.reason ?? undefined,
           refundText: showRefund(r) ? args.refundText : undefined,
+          removedFrom: args.removedFrom,
           dashboardUrl: absolute(args.dashboardUrl),
           unsubscribeUrl: r.unsubscribeUrl,
         }),
@@ -952,6 +957,8 @@ export interface TrialLifecycleEmailArgs {
   consultantName?: string;
   consulteeName?: string;
   startsAt?: EmailTimestampInput;
+  /** Recipients a change someone else made makes this a required notice for. */
+  requiredFor?: readonly string[];
   dashboardUrl: string;
 }
 
@@ -964,6 +971,7 @@ function buildTrialLifecycleEmail(args: TrialLifecycleEmailArgs): {
     spec: {
       emailType: args.kind,
       category: "trials",
+      requiredFor: args.requiredFor,
       entityRef: `trial:${args.trialId}`,
       subject: () =>
         trialAndSubscriptionSubject({

@@ -43,6 +43,7 @@ import {
   cancelRefundReason,
   refundNoticeKind,
   rejectionRefundReason,
+  trialCancelRefundReason,
   seatRemovalRefundReason,
   wholeEventCancelRefundReason,
 } from "@/lib/payments/operations/refund-cause";
@@ -182,6 +183,16 @@ describe("refund cause", () => {
       "CLASS_SESSION_REFUNDED",
     );
     expect(refundNoticeKind(CLASS_SESSION_REFUND_REASON.VOIDED)).toBeNull();
+    const tier = { tierRefundPct: 100, creditRestoresInFull: false };
+    expect(refundNoticeKind(trialCancelRefundReason("consultant", tier))).toBe(
+      "REFUND_FROM_HOST_CANCEL",
+    );
+    expect(refundNoticeKind(trialCancelRefundReason("staff", tier))).toBe(
+      "REFUND_FROM_STAFF_CANCEL",
+    );
+    expect(
+      refundNoticeKind(trialCancelRefundReason("consultee", tier)),
+    ).toBeNull();
   });
 });
 

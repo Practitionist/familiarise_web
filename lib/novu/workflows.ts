@@ -219,11 +219,14 @@ export type AppointmentCancelledPayload = AppointmentPayload & {
   reason: string;
   cancelledBy: string;
   cancelledByRole?: "consultant" | "consultee" | "system";
+  /** A host removed this one seat; the event itself goes ahead. */
+  seatRemoved?: boolean;
 };
 
 export type AppointmentCancelledInput = AppointmentPayloadInput & {
   reason?: string;
   cancelledBy: "consultant" | "consultee" | "system";
+  seatRemoved?: boolean;
 };
 
 export type RescheduleOutcomeFields =

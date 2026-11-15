@@ -169,10 +169,12 @@ async function stageKind(
         ? "MOVED"
         : kind === "REQUEST_DECLINED"
           ? "DECLINED"
-          : "EXPIRED";
+          : kind === "PROPOSAL_WITHDRAWN"
+            ? "WITHDRAWN"
+            : "EXPIRED";
   const bells = await notifyAppointmentRescheduled(
     [userId],
-    outcome === "EXPIRED" || outcome === "DECLINED"
+    outcome === "EXPIRED" || outcome === "DECLINED" || outcome === "WITHDRAWN"
       ? { ...APPOINTMENT, outcome }
       : {
           ...APPOINTMENT,

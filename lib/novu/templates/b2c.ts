@@ -42,11 +42,13 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
   {
     workflowId: W.APPOINTMENT_CANCELLED,
     name: "Appointment cancelled",
-    description: "Both parties. `cancelledBy` is a name or a capitalised role.",
+    description:
+      "Both parties. `cancelledBy` is a name or a capitalised role; with `seatRemoved`, the attendee a host removed from a class or webinar that goes ahead.",
     category: "appointments",
     inApp: {
-      subject: "Session cancelled",
-      body: "{{payload.cancelledBy}} cancelled the {{payload.appointmentType}} for {{payload.planTitle}}{% if payload.dateTime %} on {{payload.dateTime}}{% endif %}. Reason: {{payload.reason}}.",
+      subject:
+        "{% if payload.seatRemoved %}Removed from {{payload.planTitle}}{% else %}Session cancelled{% endif %}",
+      body: "{% if payload.seatRemoved %}{{payload.cancelledBy}} removed you from the {{payload.appointmentType}} {{payload.planTitle}}, so you no longer have a seat in it.{% else %}{{payload.cancelledBy}} cancelled the {{payload.appointmentType}} for {{payload.planTitle}}{% if payload.dateTime %} on {{payload.dateTime}}{% endif %}. Reason: {{payload.reason}}.{% endif %}",
       redirect: "dashboardUrl",
     },
   },
@@ -156,7 +158,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     category: "appointments",
     inApp: {
       subject: "Schedule change",
-      body: "{% if payload.outcome == 'MOVED' %}{% if payload.movesText %}{{payload.movedCount}} sessions of your {{payload.appointmentType}} for {{payload.planTitle}} moved: {{payload.movesText}}.{% else %}Your {{payload.appointmentType}} for {{payload.planTitle}} moved from {{payload.oldDateTime}} to {{payload.newDateTime}}.{% endif %}{% if payload.clash %} You already have a session then.{% endif %}{% if payload.leaveBy %} Keep your seat — nothing to do. Can't make it? Leave with a full refund until {{payload.leaveBy}}.{% endif %}{% elsif payload.outcome == 'PROPOSED' %}A new time was proposed for your {{payload.appointmentType}} for {{payload.planTitle}}: {{payload.newDateTime}} instead of {{payload.oldDateTime}}. Please review it{% if payload.respondBy %} by {{payload.respondBy}}, or the original time stands{% endif %}.{% elsif payload.outcome == 'RELEASED' %}The {{payload.appointmentType}} for {{payload.planTitle}}{% if payload.oldDateTime %} on {{payload.oldDateTime}}{% endif %} was released. You will be told once a new time is set.{% elsif payload.outcome == 'DECLINED' %}The proposed new time for your {{payload.appointmentType}} for {{payload.planTitle}} was declined{% if payload.oldDateTime %}; it stays on {{payload.oldDateTime}}{% endif %}.{% elsif payload.outcome == 'EXPIRED' %}The proposed new time for your {{payload.appointmentType}} for {{payload.planTitle}} expired, so your original time stands{% if payload.oldDateTime %}: {{payload.oldDateTime}}{% endif %}.{% else %}The reschedule request for your {{payload.appointmentType}} for {{payload.planTitle}} was withdrawn{% if payload.oldDateTime %}; it stays on {{payload.oldDateTime}}{% endif %}.{% endif %}",
+      body: "{% if payload.outcome == 'MOVED' %}{% if payload.movesText %}{{payload.movedCount}} sessions of your {{payload.appointmentType}} for {{payload.planTitle}} moved: {{payload.movesText}}.{% else %}Your {{payload.appointmentType}} for {{payload.planTitle}} moved from {{payload.oldDateTime}} to {{payload.newDateTime}}.{% endif %}{% if payload.clash %} You already have a session then.{% endif %}{% if payload.leaveBy %} Keep your seat — nothing to do. Can't make it? Leave with a full refund until {{payload.leaveBy}}.{% endif %}{% elsif payload.outcome == 'PROPOSED' %}A new time was proposed for your {{payload.appointmentType}} for {{payload.planTitle}}: {{payload.newDateTime}} instead of {{payload.oldDateTime}}. Please review it{% if payload.respondBy %} by {{payload.respondBy}}, or the original time stands{% endif %}.{% elsif payload.outcome == 'RELEASED' %}The {{payload.appointmentType}} for {{payload.planTitle}}{% if payload.oldDateTime %} on {{payload.oldDateTime}}{% endif %} was released. You will be told once a new time is set.{% elsif payload.outcome == 'DECLINED' %}The proposed new time for your {{payload.appointmentType}} for {{payload.planTitle}} was declined{% if payload.oldDateTime %}; it stays on {{payload.oldDateTime}}{% endif %}.{% elsif payload.outcome == 'EXPIRED' %}The proposed new time for your {{payload.appointmentType}} for {{payload.planTitle}} expired, so your original time stands{% if payload.oldDateTime %}: {{payload.oldDateTime}}{% endif %}.{% else %}The proposed new time for your {{payload.appointmentType}} for {{payload.planTitle}} was withdrawn, so your original time stands{% if payload.oldDateTime %}: {{payload.oldDateTime}}{% endif %}.{% endif %}",
       redirect: "dashboardUrl",
     },
   },

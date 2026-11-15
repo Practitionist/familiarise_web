@@ -56,7 +56,7 @@ function informationalBody(props: AppointmentRescheduledEmailProps): string {
     case "EXPIRED":
       return `The proposed new time for your ${appointmentType} expired, so your original time stands${oldStartsAtText ? `: ${oldStartsAtText}` : ""}.`;
     default:
-      return `The reschedule request for your ${appointmentType} was withdrawn${stays}.`;
+      return `The proposed new time for your ${appointmentType} was withdrawn, so your original time stands${oldStartsAtText ? `: ${oldStartsAtText}` : ""}.`;
   }
 }
 

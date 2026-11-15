@@ -50,6 +50,7 @@ import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { isRefusal } from "@/lib/errors/refusal";
 import { notifyTrialCancelled } from "@/lib/novu";
 import { stageTrialCompletedNotices } from "@/lib/booking/trial-completed-notice";
+import type { RequiredOverride } from "@/lib/notifications/required-notices";
 import { TrialCancelBodySchema, UpdateTrialSchema } from "@/schemas/trials";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 import { platformCancelDoorRefusal } from "@/lib/booking/platform-cancel";
@@ -67,6 +68,25 @@ interface RouteContext {
  * GET /api/trials/[trialId]
  * Get a specific trial session
  */
+
+/**
+ * A trial the expert or staff cancelled reaches everyone else whatever their
+ * switches say; the learner's own cancel stays switchable.
+ */
+function trialCancelOverride(
+  isLearner: boolean,
+  isExpert: boolean,
+  isPrivilegedUser: boolean,
+  recipients: string[],
+): RequiredOverride | undefined {
+  if (isLearner) return undefined;
+  const kind = isExpert
+    ? ("CANCELLED_BY_HOST" as const)
+    : isPrivilegedUser
+      ? ("CANCELLED_BY_STAFF" as const)
+      : null;
+  return kind && recipients.length > 0 ? { kind, recipients } : undefined;
+}
 export async function GET(request: NextRequest, context: RouteContext) {
   const authResult = await requireApiAuth();
   if (authResult.error) return authResult.error;
@@ -410,6 +430,12 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
             existingTrial.consultantProfile.user.id,
             existingTrial.consulteeProfile.user.id,
           ].filter((id) => id !== session.user.id);
+          const required = trialCancelOverride(
+            isTrialConsultee,
+            isTrialConsultant,
+            isPrivilegedUser,
+            userIds,
+          );
           const emailKind = "TRIAL_CANCELLED";
           const consultantName =
             existingTrial.consultantProfile.user.name || "Consultant";
@@ -427,7 +453,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
                   status,
                   dashboardUrl,
                 },
-                { deferAttempt: true },
+                { deferAttempt: true, required },
               ),
             ).catch((err) => {
               console.error(
@@ -440,6 +466,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
               trialId,
               userIds,
               kind: emailKind,
+              requiredFor: required?.recipients,
               planTitle: existingTrial.subscriptionPlan.title,
               consultantName,
               consulteeName,
@@ -822,6 +849,16 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     // expert cancelling a confirmed trial earns a strike; an operator does not.
     const isConsultantInitiated =
       session.user.consulteeProfileId !== existingTrial.consulteeProfileId;
+    const isTrialExpert =
+      session.user.consultantProfileId === existingTrial.consultantProfileId;
+    const isLearner = !isConsultantInitiated;
+    const staffCancel =
+      isPrivileged(session.user.role) && !isTrialExpert && !isLearner;
+    const cancelSide = staffCancel
+      ? "staff"
+      : isConsultantInitiated
+        ? "consultant"
+        : "consultee";
     const isExpertCancel =
       isConsultantInitiated &&
       session.user.consultantProfileId === existingTrial.consultantProfileId &&
@@ -893,7 +930,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
         isConsultantInitiated,
       });
       assertTrialQuoteConfirmed(quote, confirmedRefundPaise);
-      const owed = trialRefundOwed({ trialId, quote, isConsultantInitiated });
+      const owed = trialRefundOwed({ trialId, quote, side: cancelSide });
       return { quote, owed, cancelled: await cancelTrial(owed) };
     };
     const {
@@ -926,6 +963,9 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
         consulteeUserId: existingTrial.consulteeProfile.user.id,
         planTitle: existingTrial.subscriptionPlan.title,
         consultantName: existingTrial.consultantProfile.user.name,
+        required: staffCancel
+          ? "REFUND_FROM_STAFF_CANCEL"
+          : "REFUND_FROM_HOST_CANCEL",
       }).catch(() => undefined);
       await flushNotificationsAfter(
         { bells: [refundedBell] },
@@ -937,6 +977,12 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
       existingTrial.consultantProfile.user.id,
       existingTrial.consulteeProfile.user.id,
     ].filter((id) => id !== session.user.id);
+    const required = trialCancelOverride(
+      isLearner,
+      isTrialExpert,
+      isPrivileged(session.user.role),
+      userIds,
+    );
     const consultantName =
       existingTrial.consultantProfile.user.name || "Consultant";
     const consulteeName = existingTrial.consulteeProfile.user.name || "User";
@@ -952,7 +998,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
             status: TrialStatus.CANCELLED,
             dashboardUrl,
           },
-          { deferAttempt: true },
+          { deferAttempt: true, required },
         ),
       ).catch((err) => {
         console.error(
@@ -965,6 +1011,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
         trialId,
         userIds,
         kind: "TRIAL_CANCELLED",
+        requiredFor: required?.recipients,
         planTitle: existingTrial.subscriptionPlan.title,
         consultantName,
         consulteeName,

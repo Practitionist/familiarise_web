@@ -84,14 +84,19 @@ it("a host removing a free seat reaches the attendee whatever their switches say
   expect(mockCancelledBell.mock.calls[0][2]).toEqual({
     required: { kind: "SEAT_RELEASED", recipients: ["u1"] },
   });
+  // A removal, not a cancellation: the event goes ahead without this seat.
+  expect(mockCancelledBell.mock.calls[0][1]).toMatchObject({
+    seatRemoved: true,
+  });
   expect(mockCancelledEmail.mock.calls[0][1]).toMatchObject({
     requiredFor: ["u1"],
+    removedFrom: { eventLabel: "webinar", planTitle: "Talk" },
   });
 });
 
 it.each([
   ["EXPIRED", { kind: "PROPOSAL_LAPSED", recipients: ["c", "e"] }],
-  ["WITHDRAWN", undefined],
+  ["WITHDRAWN", { kind: "PROPOSAL_WITHDRAWN", recipients: ["e"] }],
 ] as const)(
   "a %s proposal's restored notice: required %p",
   async (outcome, required) => {
@@ -116,9 +121,7 @@ it.each([
 
     await notifyRescheduleRestored("r1", outcome, 1);
 
-    expect(mockRescheduledBell.mock.calls[0][2]).toEqual(
-      required ? { required } : undefined,
-    );
+    expect(mockRescheduledBell.mock.calls[0][2]).toEqual({ required });
     const email = mockRescheduledEmail.mock.calls[0][0] as {
       requiredFor?: string[];
     };
@@ -157,4 +160,21 @@ it("a completed trial: the learner's bell and email open the plan, the expert ge
     ),
   });
   expect(staged.bells).toHaveLength(2);
+});
+
+it("a seat-removal email says the learner was removed, never that the class was cancelled", async () => {
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const React = await import("react");
+  const { default: AppointmentCancelledEmail } =
+    await import("@/emails/booking/AppointmentCancelledEmail");
+  const html = renderToStaticMarkup(
+    React.createElement(AppointmentCancelledEmail, {
+      recipientName: "Ravi",
+      cancelledBy: "Asha",
+      removedFrom: { eventLabel: "class", planTitle: "Advanced Class" },
+      dashboardUrl: "https://example.test/d",
+    }),
+  );
+  expect(html).toContain("removed you from the class");
+  expect(html).not.toMatch(/cancel/i);
 });
