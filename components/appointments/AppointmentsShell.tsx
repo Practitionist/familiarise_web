@@ -38,7 +38,10 @@ import {
   type DateRange,
   type TypeFilter,
 } from "./AppointmentsFilterBar";
-import type { DateRangeDirection } from "@/components/dashboard/DateRangeMenu";
+import {
+  dateRangeToInstants,
+  type DateRangeDirection,
+} from "@/components/dashboard/DateRangeMenu";
 import { NextUpHero, type HeroStat } from "./NextUpHero";
 
 type TabValue = AppointmentBucket | "all";
@@ -179,12 +182,6 @@ function replaceQueryParam(name: string, value: string) {
   }
 }
 
-/** Local midnight of `YYYY-MM-DD`, shifted by `addDays`, in epoch ms. */
-function localDayStart(iso: string, addDays = 0): number {
-  const [y, m, d] = iso.split("-").map(Number);
-  return new Date(y, m - 1, d + addDays).getTime();
-}
-
 /** Date presets look forward on the to-do tabs and back on the done ones. */
 function dateDirectionOf(tab: TabValue, view: View): DateRangeDirection {
   if (view === "calendar" || tab === "all") return "any";
@@ -292,9 +289,9 @@ export function AppointmentsShell({
   // numbers always describe what the user would see on click.
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    // Range ends are local calendar days; `new Date("YYYY-MM-DD")` would be UTC midnight.
-    const fromMs = dateRange.from ? localDayStart(dateRange.from) : null;
-    const toMs = dateRange.to ? localDayStart(dateRange.to, 1) - 1 : null;
+    const bounds = dateRangeToInstants(dateRange);
+    const fromMs = bounds.from?.getTime() ?? null;
+    const toMs = bounds.to?.getTime() ?? null;
     return vms.filter((vm) => {
       if (!matchesTypeFilter(vm.kind, typeFilter)) return false;
       if (

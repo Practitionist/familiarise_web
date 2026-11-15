@@ -5,6 +5,7 @@ import { AppointmentsFilterBar } from "@/components/appointments/AppointmentsFil
 import type { TypeFilter } from "@/components/appointments/AppointmentsFilterBar";
 import {
   datePresets,
+  dateRangeToInstants,
   dateRangeLabel,
   type DateRange,
 } from "@/components/dashboard/DateRangeMenu";
@@ -228,5 +229,24 @@ describe("FilterMenu edge cases", () => {
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Clear role filter" }));
     expect(onChange).toHaveBeenLastCalledWith("ALL");
+  });
+});
+
+describe("dateRangeToInstants", () => {
+  it("spans whole local days: midnight of the first to the last millisecond of the last", () => {
+    const { from, to } = dateRangeToInstants({
+      from: "2026-11-11",
+      to: "2026-11-11",
+    });
+    expect(from).toEqual(new Date(2026, 10, 11, 0, 0, 0, 0));
+    expect(to).toEqual(new Date(2026, 10, 11, 23, 59, 59, 999));
+  });
+
+  it("leaves an open side null", () => {
+    expect(dateRangeToInstants({ from: "", to: "" })).toEqual({
+      from: null,
+      to: null,
+    });
+    expect(dateRangeToInstants({ from: "2026-11-11", to: "" }).to).toBeNull();
   });
 });

@@ -37,6 +37,26 @@ function addDays(d: Date, n: number): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
 }
 
+function localDay(iso: string, shift = 0): Date {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, m - 1, d + shift);
+}
+
+/**
+ * A picked range as instants for an API: `from` is local midnight of the first
+ * day, `to` the last millisecond of the last day. `new Date("YYYY-MM-DD")` is
+ * UTC midnight, which drops the last day and shifts the first by the zone offset.
+ */
+export function dateRangeToInstants(range: DateRange): {
+  from: Date | null;
+  to: Date | null;
+} {
+  return {
+    from: range.from ? localDay(range.from) : null,
+    to: range.to ? new Date(localDay(range.to, 1).getTime() - 1) : null,
+  };
+}
+
 /** Presets in the browser's calendar, matching the native date inputs they replace. */
 export function datePresets(
   direction: DateRangeDirection,
