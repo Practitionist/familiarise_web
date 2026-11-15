@@ -60,6 +60,7 @@ import {
   stageBuiltSpec,
   stageSpecGuarded,
   stageSpecOncePerRecipient,
+  stageSpecOncePerRecipientQuietly,
   whenText,
   type PreparedRecipientEmails,
   type PreparedSpecEmails,
@@ -73,6 +74,10 @@ export {
   type SendToRecipientsResult,
   type StagedRecipientEmail,
 };
+
+/** A send required for anyone traces its render failure instead of losing it. */
+const isRequired = (requiredFor: readonly string[] | undefined) =>
+  (requiredFor?.length ?? 0) > 0;
 
 export function refundOnItsWay(amountPaise: number, currency: string): string {
   return `A refund of ${money(amountPaise, currency)} is on its way`;
@@ -195,6 +200,7 @@ function buildCancelledEmail(args: AppointmentCancelledEmailArgs): {
       emailType: "APPOINTMENT_CANCELLED",
       category: "appointments",
       requiredFor: args.requiredFor,
+      traceRenderFailure: isRequired(args.requiredFor),
       entityRef: `appointment:${args.appointmentId}`,
       subject: (r) =>
         args.removedFrom
@@ -266,6 +272,7 @@ function buildRescheduledEmail(args: AppointmentRescheduledEmailArgs): {
       emailType: "APPOINTMENT_RESCHEDULED",
       category: "appointments",
       requiredFor: args.requiredFor,
+      traceRenderFailure: isRequired(args.requiredFor),
       entityRef: `appointment:${args.appointmentId}`,
       subject: () => subjects[args.outcome],
       render: (r) =>
@@ -538,31 +545,50 @@ export function unscheduledNudgeEntityRef(
   return `subscription:${subscriptionId}:h${nudgeHours}`;
 }
 
-export const sendUnscheduledSubscriptionNudgeEmail =
-  defineBudgetedEmailSender<UnscheduledSubscriptionNudgeEmailArgs>((args) => ({
-    userIds: [args.consultantUserId],
-    spec: {
-      emailType: SUBSCRIPTION_UNSCHEDULED_NUDGE_EMAIL_TYPE,
-      category: "appointments",
-      entityRef: unscheduledNudgeEntityRef(
-        args.subscriptionId,
-        args.nudgeHours,
-      ),
-      subject: () =>
-        `${args.consulteeName}'s subscription is waiting for session times`,
-      render: (r) =>
-        React.createElement(NewBookingRequestEmail, {
-          consultantName: greet(r),
-          consulteeName: args.consulteeName,
-          planTitle: args.planTitle,
-          appointmentType: "subscription",
-          reviewUrl: absolute(args.timingsUrl),
-          unsubscribeUrl: r.unsubscribeUrl,
-          nudgeHours: args.nudgeHours,
-          refundAtText: whenText(args.refundAt, r.zone),
-        }),
+function unscheduledNudgeSpec(
+  args: UnscheduledSubscriptionNudgeEmailArgs,
+): RecipientEmailSpec {
+  return {
+    emailType: SUBSCRIPTION_UNSCHEDULED_NUDGE_EMAIL_TYPE,
+    category: "appointments",
+    entityRef: unscheduledNudgeEntityRef(args.subscriptionId, args.nudgeHours),
+    subject: () =>
+      `${args.consulteeName}'s subscription is waiting for session times`,
+    render: (r) =>
+      React.createElement(NewBookingRequestEmail, {
+        consultantName: greet(r),
+        consulteeName: args.consulteeName,
+        planTitle: args.planTitle,
+        appointmentType: "subscription",
+        reviewUrl: absolute(args.timingsUrl),
+        unsubscribeUrl: r.unsubscribeUrl,
+        nudgeHours: args.nudgeHours,
+        refundAtText: whenText(args.refundAt, r.zone),
+      }),
+  };
+}
+
+/** A sweep's deadline email claim lasts past the deadline it announces. */
+const DEADLINE_EMAIL_CLAIM_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Stages the nudge once per stage; the claim commits with the row. */
+export function stageUnscheduledSubscriptionNudgeEmail(
+  args: UnscheduledSubscriptionNudgeEmailArgs,
+) {
+  const entityRef = unscheduledNudgeEntityRef(
+    args.subscriptionId,
+    args.nudgeHours,
+  );
+  return stageSpecOncePerRecipientQuietly(
+    unscheduledNudgeSpec(args),
+    [args.consultantUserId],
+    {
+      scope: SUBSCRIPTION_UNSCHEDULED_NUDGE_EMAIL_TYPE,
+      key: (userId) => `${entityRef}:${userId}`,
+      ttlMs: DEADLINE_EMAIL_CLAIM_MS,
     },
-  }));
+  );
+}
 
 // ── Request about to lapse ──────────────────────────────────────────────────
 
@@ -582,27 +608,41 @@ export function requestExpiringEntityRef(consultationId: string): string {
   return `request:${consultationId}:expiring`;
 }
 
-export const sendRequestExpiringEmail =
-  defineBudgetedEmailSender<RequestExpiringEmailArgs>((args) => ({
-    userIds: [args.consultantUserId],
-    spec: {
-      emailType: REQUEST_EXPIRING_EMAIL_TYPE,
-      category: "appointments",
-      entityRef: requestExpiringEntityRef(args.consultationId),
-      subject: (r) =>
-        `${args.consulteeName}'s request lapses at ${whenText(args.expiresAt, r.zone)}`,
-      render: (r) =>
-        React.createElement(NewBookingRequestEmail, {
-          consultantName: greet(r),
-          consulteeName: args.consulteeName,
-          planTitle: args.planTitle,
-          appointmentType: "consultation",
-          reviewUrl: absolute(args.reviewUrl),
-          unsubscribeUrl: r.unsubscribeUrl,
-          expiresAtText: whenText(args.expiresAt, r.zone),
-        }),
+function requestExpiringSpec(
+  args: RequestExpiringEmailArgs,
+): RecipientEmailSpec {
+  return {
+    emailType: REQUEST_EXPIRING_EMAIL_TYPE,
+    category: "appointments",
+    entityRef: requestExpiringEntityRef(args.consultationId),
+    subject: (r) =>
+      `${args.consulteeName}'s request lapses at ${whenText(args.expiresAt, r.zone)}`,
+    render: (r) =>
+      React.createElement(NewBookingRequestEmail, {
+        consultantName: greet(r),
+        consulteeName: args.consulteeName,
+        planTitle: args.planTitle,
+        appointmentType: "consultation",
+        reviewUrl: absolute(args.reviewUrl),
+        unsubscribeUrl: r.unsubscribeUrl,
+        expiresAtText: whenText(args.expiresAt, r.zone),
+      }),
+  };
+}
+
+/** Stages the alert once per request; the claim commits with the row. */
+export function stageRequestExpiringEmail(args: RequestExpiringEmailArgs) {
+  const entityRef = requestExpiringEntityRef(args.consultationId);
+  return stageSpecOncePerRecipientQuietly(
+    requestExpiringSpec(args),
+    [args.consultantUserId],
+    {
+      scope: REQUEST_EXPIRING_EMAIL_TYPE,
+      key: (userId) => `${entityRef}:${userId}`,
+      ttlMs: DEADLINE_EMAIL_CLAIM_MS,
     },
-  }));
+  );
+}
 
 export interface UnplacedWeekNudgeEmailArgs {
   consultantProfileId: string;
@@ -973,6 +1013,7 @@ function buildTrialLifecycleEmail(args: TrialLifecycleEmailArgs): {
       emailType: args.kind,
       category: "trials",
       requiredFor: args.requiredFor,
+      traceRenderFailure: isRequired(args.requiredFor),
       entityRef: `trial:${args.trialId}`,
       subject: () =>
         trialAndSubscriptionSubject({

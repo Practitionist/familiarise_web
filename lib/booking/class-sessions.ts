@@ -267,6 +267,7 @@ async function onExitRightTripped(
 export async function cancelClassSession(
   hosted: HostedClass,
   occurrenceId: string,
+  actorUserId: string | null,
 ) {
   const appointmentId = hosted.appointment.id;
   const result = await withAppointmentLock(appointmentId, () =>
@@ -308,27 +309,38 @@ export async function cancelClassSession(
       let cancelEmailArgs: AppointmentCancelledEmailArgs | null = null;
       let exitEmailArgs: ClassExitAvailableEmailArgs | null = null;
       if (seatUserIds.length > 0) {
+        const cancelPayload = (zone: string) => ({
+          planTitle: hosted.cls.classPlan.title,
+          consultantName: hostName,
+          dateTime: zoned(session.startsAt, zone),
+          makeUpBy: zoned(makeUpBy, zone),
+          // Every seat holder here is a consultee.
+          dashboardUrl,
+        });
+        // A seat holder who cancelled the session themself keeps their own switches.
+        const others = seatUserIds.filter((id) => id !== actorUserId);
+        const own = seatUserIds.filter((id) => id === actorUserId);
         bells.push(
           ...(await stageBellsByZone(
             tx,
             NOVU_WORKFLOWS.CLASS_SESSION_CANCELLED,
-            seatUserIds,
-            (zone) => ({
-              planTitle: hosted.cls.classPlan.title,
-              consultantName: hostName,
-              dateTime: zoned(session.startsAt, zone),
-              makeUpBy: zoned(makeUpBy, zone),
-              // #1527 — every seat holder here is a consultee.
-              dashboardUrl,
-            }),
+            others,
+            cancelPayload,
             `occ-cancel:${occurrenceId}`,
             "CANCELLED_BY_HOST",
+          )),
+          ...(await stageBellsByZone(
+            tx,
+            NOVU_WORKFLOWS.CLASS_SESSION_CANCELLED,
+            own,
+            cancelPayload,
+            `occ-cancel:${occurrenceId}`,
           )),
         );
         cancelEmailArgs = {
           appointmentId,
           userIds: seatUserIds,
-          requiredFor: seatUserIds,
+          requiredFor: others,
           startsAt: session.startsAt,
           cancelledBy: hostName,
           dashboardUrl,

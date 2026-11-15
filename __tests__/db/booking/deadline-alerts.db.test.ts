@@ -4,12 +4,14 @@
  * however often the sweep runs, an expert with every switch off gets neither,
  * and the hour-36 unplaced-plan nudge names the 48-hour refund time.
  */
-const mockTrigger = jest.fn(async () => ({ result: { status: "processed" } }));
+const mockTrigger = jest.fn(async (..._args: unknown[]) => ({
+  result: { status: "processed" },
+}));
 jest.mock("../../../lib/novu/client", () => ({
   __esModule: true,
   isNovuConfigured: () => true,
   getNovuClient: () => ({
-    trigger: (...args: unknown[]) => mockTrigger(...(args as [])),
+    trigger: (...args: unknown[]) => mockTrigger(...args),
     triggerBulk: jest.fn(),
   }),
 }));
@@ -36,6 +38,7 @@ import { deriveTransactionId } from "../../../lib/novu/outbox";
 import {
   REQUEST_EXPIRING_EMAIL_TYPE,
   requestExpiringEntityRef,
+  stageRequestExpiringEmail,
 } from "../../../lib/email/senders/booking";
 import {
   expireStaleRequests,
@@ -163,5 +166,28 @@ describe("paid plan still unplaced at hour 36", () => {
       nudgeHours: 36,
       refundAtIso: new Date(paidAt.getTime() + 48 * HOUR_MS).toISOString(),
     });
+  });
+});
+
+describe("overlapping sweeps", () => {
+  it("stage one alert email: the claim commits with the row", async () => {
+    const due = await seedRequest(43);
+    const args = {
+      consultationId: due.consultationId,
+      consultantUserId: due.host.userId,
+      consulteeName: "Learner",
+      planTitle: "Plan",
+      expiresAt: new Date(Date.now() + 5 * HOUR_MS),
+      reviewUrl: "/requests",
+    };
+
+    await Promise.all([
+      stageRequestExpiringEmail(args),
+      stageRequestExpiringEmail(args),
+    ]);
+
+    expect((await alertRows(due.host.userId, due.consultationId)).emails).toBe(
+      1,
+    );
   });
 });

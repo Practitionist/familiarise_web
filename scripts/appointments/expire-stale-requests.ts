@@ -66,12 +66,11 @@ import { stageAppointmentCancelledEmail } from "@/lib/email/senders/booking";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import type { Tx } from "@/lib/prisma";
 import {
-  EMAIL_BUDGET_MS,
   REQUEST_EXPIRING_EMAIL_TYPE,
   requestExpiringEntityRef,
   SUBSCRIPTION_UNSCHEDULED_NUDGE_EMAIL_TYPE,
-  sendRequestExpiringEmail,
-  sendUnscheduledSubscriptionNudgeEmail,
+  stageRequestExpiringEmail,
+  stageUnscheduledSubscriptionNudgeEmail,
   unscheduledNudgeEntityRef,
 } from "@/lib/email";
 import { getAppUrl } from "@/lib/url";
@@ -1918,6 +1917,7 @@ async function nudgeUnscheduledSubscriptions(
     ]);
 
     let nudged = 0;
+    let renderFailures = 0;
     for (const {
       sub,
       stage,
@@ -1950,26 +1950,21 @@ async function nudgeUnscheduledSubscriptions(
               refundAt: refundAt.toISOString(),
             },
             dedupeKey,
+            { deferAttempt: true },
           );
         }
         if (!emailDone) {
-          const mailed = await sendUnscheduledSubscriptionNudgeEmail(
-            {
-              subscriptionId: sub.id,
-              consultantUserId,
-              consulteeName,
-              planTitle,
-              nudgeHours: stage,
-              refundAt,
-              timingsUrl,
-            },
-            EMAIL_BUDGET_MS.JOB,
-          );
-          // Neither sent nor staged: no row guards it, so say so and let
-          // the next run retry the email arm alone.
-          if (mailed.failed > 0 && mailed.sent === 0) {
-            throw new Error("nudge email neither sent nor staged");
-          }
+          // Staged under its claim; the email relay sends it.
+          const mailed = await stageUnscheduledSubscriptionNudgeEmail({
+            subscriptionId: sub.id,
+            consultantUserId,
+            consulteeName,
+            planTitle,
+            nudgeHours: stage,
+            refundAt,
+            timingsUrl,
+          });
+          renderFailures += mailed.renderFailures;
         }
         nudged += 1;
       } catch (error) {
@@ -1977,6 +1972,12 @@ async function nudgeUnscheduledSubscriptions(
         console.error(`❌ ${msg}`);
         errors.push(msg);
       }
+    }
+    // Reported once per run, never per plan.
+    if (renderFailures > 0) {
+      errors.push(
+        `${renderFailures} unscheduled-plan nudge email(s) failed to render; retried next run`,
+      );
     }
     console.log(`✅ Sent ${nudged} unscheduled-subscription nudges`);
     return { nudged, errors };
@@ -2010,12 +2011,7 @@ export function requestExpiringDedupeKey(consultationId: string): string {
   return `request-expiring:${consultationId}`;
 }
 
-/**
- * Alert the expert once about a submitted request that lapses within
- * {@link REQUEST_EXPIRY_ALERT_HOURS}. State-as-outbox, as the nudge above: the
- * bell's NotificationOutbox row and the email's FailedEmail row are the
- * claims, so a re-run stages nothing. Both follow the expert's switches.
- */
+/** Alerts the expert once, by the outbox claims, about a request lapsing within the window; follows their switches. */
 async function alertExpiringRequests(
   limits: StaleRequestRunLimits,
   now: Date = new Date(),
@@ -2088,6 +2084,7 @@ async function alertExpiringRequests(
     ]);
 
     let alerted = 0;
+    let renderFailures = 0;
     for (const x of candidates) {
       const bellDone = bellStaged.has(x.transactionId);
       const emailDone = emailStaged.has(requestExpiringEntityRef(x.c.id));
@@ -2111,23 +2108,20 @@ async function alertExpiringRequests(
               expiresAt: x.expiresAt.toISOString(),
             },
             x.dedupeKey,
+            { deferAttempt: true },
           );
         }
         if (!emailDone) {
-          const mailed = await sendRequestExpiringEmail(
-            {
-              consultationId: x.c.id,
-              consultantUserId: x.consultantUserId,
-              consulteeName,
-              planTitle,
-              expiresAt: x.expiresAt,
-              reviewUrl,
-            },
-            EMAIL_BUDGET_MS.JOB,
-          );
-          if (mailed.failed > 0 && mailed.sent === 0) {
-            throw new Error("expiry alert email neither sent nor staged");
-          }
+          // Staged under its claim; the email relay sends it.
+          const mailed = await stageRequestExpiringEmail({
+            consultationId: x.c.id,
+            consultantUserId: x.consultantUserId,
+            consulteeName,
+            planTitle,
+            expiresAt: x.expiresAt,
+            reviewUrl,
+          });
+          renderFailures += mailed.renderFailures;
         }
         alerted += 1;
       } catch (error) {
@@ -2135,6 +2129,12 @@ async function alertExpiringRequests(
         console.error(`❌ ${msg}`);
         errors.push(msg);
       }
+    }
+    // Reported once per run, never per request.
+    if (renderFailures > 0) {
+      errors.push(
+        `${renderFailures} request-expiring email(s) failed to render; retried next run`,
+      );
     }
     console.log(`✅ Sent ${alerted} request-expiring alerts`);
     return { alerted, errors };

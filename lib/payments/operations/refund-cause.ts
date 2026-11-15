@@ -3,12 +3,7 @@ import type {
   RequiredOverride,
 } from "@/lib/notifications/required-notices";
 
-/**
- * The refund reasons written when someone other than the payer ended the
- * payer's booking. `Refund.reason` is the durable record of that cause, so
- * every door that announces the refund (the inline settle, the webhook,
- * reconcile) reads it back with {@link refundNoticeKind}.
- */
+/** Refund reasons keep the cancellation cause, which every later refund notice reads back. */
 export type CancelSide = "consultant" | "consultee" | "staff";
 
 export function cancelRefundReason(

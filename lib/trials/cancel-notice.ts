@@ -41,11 +41,7 @@ export function prepareTrialCancelNotice(
   return prepareTrialLifecycleEmail(emailArgs(n)).catch(() => null);
 }
 
-/**
- * Stages the cancel bell and email on the cancel's own transaction, so a
- * staging failure rolls the cancel back instead of losing the notice. The
- * caller attempts them after the commit.
- */
+/** Stages the cancel notices on the cancel's transaction, so a failure rolls the cancel back; attempt after commit. */
 export async function stageTrialCancelNotice(
   tx: Tx,
   n: TrialCancelNotice,

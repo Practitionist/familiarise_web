@@ -30,11 +30,7 @@ function scrubbedSummary(error: unknown): string {
     : "unknown error";
 }
 
-/**
- * A completed trial: the learner gets one bell and one email, "Continue with
- * {expert}", that open the plan; the expert gets a bell only. Stages without
- * attempting, so the caller flushes after its commit. Never throws.
- */
+/** The learner gets "Continue with {expert}" by bell and email, the expert a bell; staged only, never throws. */
 export async function stageTrialCompletedNotices(
   args: TrialCompletedParties,
 ): Promise<{

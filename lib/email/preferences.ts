@@ -117,11 +117,8 @@ async function fetchUsers(ids: string[], db: UserReader): Promise<UserRow[]> {
 }
 
 /**
- * One query for every recipient of a message. Ids are deduped, input order is
- * preserved, and a user without an address is dropped because nothing can be
- * sent to them, as is an erased user. `allowed` is decided here so callers
- * never read the flags; a recipient in `requiredFor` gets the message whatever
- * their switches say.
+ * One query for every recipient; an erased or address-less user is dropped,
+ * and a recipient in `requiredFor` is allowed whatever their switches say.
  */
 export async function loadEmailRecipients(
   userIds: string[],
