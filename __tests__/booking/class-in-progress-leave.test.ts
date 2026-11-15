@@ -46,17 +46,6 @@ function fakeTx(occurrences: LedgerOccurrence[], retimeBy: Date | null = null) {
         appointment: { id: "appt-class" },
       })),
     },
-    payment: {
-      findFirst: jest.fn(async () => ({
-        id: "pay-seat",
-        amount: SEAT_PAISE,
-        currency: "INR",
-        createdAt: JOINED,
-        refunds: [],
-        disputes: [],
-        appointment: { cancellationPolicy: null },
-      })),
-    },
     appointment: {
       findUnique: jest.fn(async () => ({
         class: { classPlan: { totalSessions: 8 } },
@@ -69,6 +58,19 @@ function fakeTx(occurrences: LedgerOccurrence[], retimeBy: Date | null = null) {
     refund: { findMany: jest.fn(async () => []) },
   } as unknown as Tx;
 }
+
+/** The seat's order as `seatPayment` selects it, read once by the leave. */
+const payment = {
+  id: "pay-seat",
+  amount: SEAT_PAISE,
+  originalAmount: SEAT_PAISE,
+  paymentIntent: "order_seat",
+  currency: "INR",
+  createdAt: JOINED,
+  refunds: [],
+  disputes: [],
+  appointment: { cancellationPolicy: null },
+};
 
 const seat = {
   id: "part-1",
@@ -85,8 +87,8 @@ describe("leaving a class while a session is under way", () => {
       fakeTx(weekly(-55 * 60_000)),
       "class",
       "cls-1",
-      "user-learner",
       seat,
+      payment,
       NOW,
     );
     expect(plan).toEqual({ amountPaise: 700_000, sessions: 7 });
@@ -98,8 +100,8 @@ describe("leaving a class while a session is under way", () => {
       fakeTx(weekly(-4 * 7 * DAY - 20 * 60_000)),
       "class",
       "cls-1",
-      "user-learner",
       seat,
+      payment,
       NOW,
     );
     expect(plan).toEqual({ amountPaise: 300_000, sessions: 3 });
@@ -117,8 +119,8 @@ describe("a next session the host moved inside the window", () => {
       fakeTx(movedSoon(), retimeBy),
       "class",
       "cls-1",
-      "user-learner",
       seat,
+      payment,
       NOW,
     );
 

@@ -19,6 +19,8 @@ export async function handleWebinarCheckout(
 ) {
   const webinar = await tx.webinar.findUnique({
     where: { id: data.eventId },
+    // One joined statement inside the Serializable commit, not one per relation.
+    relationLoadStrategy: "join",
     include: {
       webinarPlan: {
         include: {

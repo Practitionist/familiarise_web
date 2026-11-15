@@ -141,6 +141,8 @@ export async function bookTrialInTx(tx: Tx, args: BookTrialArgs) {
         ? { paymentDueAt: payWindowEnd(args.now ?? new Date(), args.startsAt) }
         : {}),
     },
+    // The include is read back in one joined statement, not one per relation.
+    relationLoadStrategy: "join",
     include: TRIAL_CREATED_INCLUDE,
   });
 

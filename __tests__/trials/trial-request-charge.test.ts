@@ -32,21 +32,12 @@ jest.mock("../../lib/rate-limit", () => ({
   trialRequestRefusal: (...a: unknown[]) => trialRequestRefusal(...(a as [])),
   spendTrialRequest: (...a: unknown[]) => spendTrialRequest(...(a as [])),
 }));
-jest.mock("../../lib/email/senders/booking", () => ({
-  prepareTrialScheduledEmail: jest.fn(async () => ({
-    emailType: "TRIAL_SESSION_SCHEDULED",
-    entityRef: "trial:pending",
-    messages: [],
-    skipped: 0,
-    failed: 0,
-  })),
-}));
-const stageNotices = jest.fn(async () => ({
-  consulteeBell: null,
-  consultantBell: null,
-  emails: [],
-}));
+const prepared = { bells: [], emails: { prepared: {}, screened: [] } };
+const prepareNotices = jest.fn(async () => prepared);
+const stageNotices = jest.fn(async () => ({ bells: [], emails: [] }));
 jest.mock("../../lib/trials/schedule-notices", () => ({
+  prepareTrialScheduledNotices: (...a: unknown[]) =>
+    prepareNotices(...(a as [])),
   stageTrialScheduledNotices: (...a: unknown[]) => stageNotices(...(a as [])),
 }));
 jest.mock("../../lib/novu/stage-then-attempt", () => ({
@@ -198,6 +189,7 @@ it("a paid trial holds the picked time and mints the order against its appointme
   expect(createIntent).toHaveBeenCalledWith(
     expect.objectContaining({ trialId: "trial-1", appointmentId: "apt-1" }),
   );
+  expect(prepareNotices).not.toHaveBeenCalled();
   expect(stageNotices).not.toHaveBeenCalled();
   expect((await res.json()).checkoutUrl).toBe("/checkout/plans/trial/trial-1");
   expect(release).toHaveBeenCalledTimes(1);
@@ -211,9 +203,13 @@ it("a free trial is confirmed with the request: notices staged, nothing minted",
     expect.anything(),
     expect.objectContaining({ paid: false }),
   );
+  expect(prepareNotices).toHaveBeenCalledWith(
+    expect.objectContaining({ startsAt: start }),
+  );
   expect(stageNotices).toHaveBeenCalledWith(
     expect.anything(),
-    expect.objectContaining({ trialId: "trial-1", startsAt: start }),
+    "trial-1",
+    prepared,
   );
   expect(createIntent).not.toHaveBeenCalled();
   expect((await res.json()).data.status).toBe("SCHEDULED");

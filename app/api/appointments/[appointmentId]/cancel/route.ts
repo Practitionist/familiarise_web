@@ -656,6 +656,8 @@ export async function POST(
     // Fetch appointment BEFORE transaction to avoid timeout on heavy queries
     const appointment = await prisma.appointment.findUnique({
       where: { id: appointmentId },
+      // Four optional booking branches: one joined statement, not one per level.
+      relationLoadStrategy: "join",
       include: {
         consultation: {
           include: {

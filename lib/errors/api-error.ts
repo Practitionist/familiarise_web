@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 
-import { classifyError } from "@/lib/errors/classification/payment-error-classification";
+import {
+  classifyError,
+  withErrorReference,
+} from "@/lib/errors/classification/payment-error-classification";
 import { reportSentryError } from "@/lib/observability/report";
 import { setSentryIdentity } from "@/lib/observability/identity";
 
@@ -84,7 +87,9 @@ export function apiError({
 
   return NextResponse.json(
     {
-      error: classified.errorMessage,
+      error: classified.isBusinessError
+        ? classified.errorMessage
+        : withErrorReference(classified.errorMessage, errorId),
       errorType: classified.errorType,
       ...(errorId ? { errorId } : {}),
     },
