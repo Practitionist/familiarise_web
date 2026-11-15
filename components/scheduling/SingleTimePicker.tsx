@@ -206,6 +206,11 @@ export function SingleTimePicker({
     className,
   );
   const paneClass = cn(tokens.pane, sideBySide ? "p-6" : "p-4");
+  // Days stay 40 px wide: (332 - 2 - 24 - 24) / 7 stacked, (352 - 2 - 40 - 24) / 7 at the 22rem minimum.
+  const monthPaneClass = cn(
+    tokens.pane,
+    sideBySide ? "px-5 py-6" : "px-3 py-4",
+  );
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
@@ -495,7 +500,9 @@ export function SingleTimePicker({
       className={rootClass}
     >
       {/* Side by side the month hugs its grid; the times pane stretches to at least its height. */}
-      <div className={cn(paneClass, "min-w-0", sideBySide && "self-start")}>
+      <div
+        className={cn(monthPaneClass, "min-w-0", sideBySide && "self-start")}
+      >
         <MonthGrid
           month={month}
           onMonthChange={changeMonth}
