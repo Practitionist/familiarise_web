@@ -288,7 +288,7 @@ export default function RefundPolicyPage() {
                 <li>Duplicate or erroneous charges</li>
                 <li>
                   You are removed from a webinar or class and support overturns
-                  the removal, or does not review it within 72 hours: whatever
+                  the removal, or does not decide it within 72 hours: whatever
                   is still unrefunded on your seat (see Terms 6.4)
                 </li>
               </ul>

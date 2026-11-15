@@ -126,13 +126,16 @@ it.each([
     caseReference: "SR-1",
     earningsHeld: true,
   });
-  expect(mockRemove).toHaveBeenCalledWith({
-    appointmentId: "appt-1",
-    targetUserId: "learner-2",
-    actorUserId: "caller",
-    reason: "DISRUPTIVE",
-    note: undefined,
-  });
+  expect(mockRemove).toHaveBeenCalledWith(
+    expect.objectContaining({
+      appointmentId: "appt-1",
+      targetUserId: "learner-2",
+      actorUserId: "caller",
+      reason: "DISRUPTIVE",
+      note: undefined,
+      authorizeTx: expect.any(Function),
+    }),
+  );
 });
 
 it.each([
@@ -144,3 +147,28 @@ it.each([
   expect(response.status).toBe(403);
   expect(mockRemove).not.toHaveBeenCalled();
 });
+
+it.each([["%20"], ["x".repeat(65)]])(
+  "refuses a malformed event id %#",
+  async (eventId) => {
+    mockSession.current = {
+      id: "caller",
+      role: "CONSULTANT",
+      consultantProfileId: "profile-host",
+    };
+    const prisma = jest.requireMock("@/lib/prisma").default as {
+      appointment: { findFirst: jest.Mock };
+    };
+    prisma.appointment.findFirst.mockClear();
+    const response = await handleGroupConductRemoval(
+      new Request("http://test/remove", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+      "webinar",
+      decodeURIComponent(eventId),
+    );
+    expect(response.status).toBe(400);
+    expect(prisma.appointment.findFirst).not.toHaveBeenCalled();
+  },
+);

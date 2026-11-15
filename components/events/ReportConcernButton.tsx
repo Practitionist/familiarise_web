@@ -28,15 +28,19 @@ export function ReportConcernButton({
 
   const open = async () => {
     if (pending) return;
+    // Opened inside the click, so a slow lookup cannot lose the browser's permission to open it.
+    const tab = window.open("", "_blank");
     setPending(true);
     try {
       const response = await fetch(endpoint);
       const parsed = linkResponse.safeParse(
         await response.json().catch(() => null),
       );
-      if (!response.ok || !parsed.success) throw new Error("no link");
-      window.open(parsed.data.href, "_blank", "noopener,noreferrer");
+      if (!response.ok || !parsed.success || !tab) throw new Error("no link");
+      tab.opener = null;
+      tab.location.href = parsed.data.href;
     } catch {
+      tab?.close();
       toast({
         title: "Could not open support",
         description: "Please try again, or use Get help from your dashboard.",

@@ -299,7 +299,7 @@ export default function EventParticipantsPage() {
       toast({
         title: result.removed ? "Participant removed" : "Already removed",
         description: result.removed
-          ? `They were told why. Support case ${result.caseReference ?? ""} reviews the removal within 72 hours${
+          ? `They were told why. Support case ${result.caseReference ?? ""} reviews the removal and decides within 72 hours${
               result.earningsHeld
                 ? ", and your earnings from this seat are held until it decides"
                 : ""

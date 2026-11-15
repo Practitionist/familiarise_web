@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 
 import { guardMeetingRoute } from "@/lib/meetings/route-guard";
+import prisma from "@/lib/prisma";
 import { meetingStageLimiter } from "@/lib/rate-limit";
 import { caseKeyOf } from "@/lib/support/case-key";
 
 /**
- * GET /api/meetings/[meetingId]/support — the support page for this room's
- * booking, for anyone the room admits who wants to report a concern.
+ * GET /api/meetings/[meetingId]/support — this booking's support request page
+ * in the caller's own dashboard: the host's expert tree, an attendee's client tree.
  */
 export async function GET(
   _request: Request,
@@ -25,7 +26,24 @@ export async function GET(
       { status: 404 },
     );
   }
-  return NextResponse.json({
-    href: `/dashboard/support/${caseKeyOf({ kind: "booking", id: appointmentId })}`,
+  const user = await prisma.user.findUnique({
+    where: { id: guard.userId },
+    select: { consultantProfileId: true, consulteeProfileId: true },
   });
+  const key = caseKeyOf({ kind: "booking", id: appointmentId });
+  const tree =
+    guard.access.role === "host" && user?.consultantProfileId
+      ? `/dashboard/consultant/${user.consultantProfileId}`
+      : user?.consulteeProfileId
+        ? `/dashboard/consultee/${user.consulteeProfileId}`
+        : user?.consultantProfileId
+          ? `/dashboard/consultant/${user.consultantProfileId}`
+          : null;
+  if (!tree) {
+    return NextResponse.json(
+      { error: "Open support from your dashboard." },
+      { status: 404 },
+    );
+  }
+  return NextResponse.json({ href: `${tree}/support/requests/${key}` });
 }

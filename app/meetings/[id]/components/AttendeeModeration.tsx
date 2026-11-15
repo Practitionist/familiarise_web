@@ -90,7 +90,7 @@ export function AttendeeModeration({
     }
     toast({
       title: `${target.name} was removed`,
-      description: `Support case ${result.caseReference ?? ""} reviews it within 72 hours${
+      description: `Support case ${result.caseReference ?? ""} reviews it and decides within 72 hours${
         result.earningsHeld
           ? "; your earnings from their seat are held until it decides"
           : ""

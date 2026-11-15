@@ -1,8 +1,4 @@
-/**
- * The support side of a host's conduct removal: the case it opens for the
- * removed attendee, the seat earnings it holds, what an overturn or a missed
- * review deadline owes, and the sweep arm that enforces the deadline.
- */
+/** The review case a conduct removal opens, its earnings hold, and what an overturn or the 72-hour lapse owes. */
 
 import type { Prisma } from "@prisma/client";
 
@@ -14,7 +10,6 @@ import prisma, {
 } from "@/lib/prisma";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { isPriceFreePayment } from "@/lib/payments/funding-rail";
-import { refundRemovedAttendeeSeat } from "@/lib/payments/operations/event-refunds";
 import {
   driveRefundOwed,
   markerFromRow,
@@ -65,7 +60,7 @@ function removalCaseBody(input: {
   if (input.note) lines.push(`Host's note: ${input.note}`);
   lines.push(
     "",
-    `Support reviews this within ${CONDUCT_REMOVAL_REVIEW_HOURS} hours. Reply here to give your side. If the removal is overturned, or support does not decide in time, whatever is still unrefunded on your seat is refunded to where you paid from.`,
+    `Support decides within ${CONDUCT_REMOVAL_REVIEW_HOURS} hours. Reply here to give your side. If the removal is overturned, or support does not decide in time, whatever is still unrefunded on your seat is refunded to where you paid from.`,
   );
   return lines.join("\n");
 }
@@ -186,9 +181,8 @@ function seatPayment(db: PrismaLike, appointmentId: string, userId: string) {
 }
 
 /**
- * Freezes the seat's unpaid earnings for the case. A payment another door's
- * refund already holds is left alone, and a payout already being sent cannot
- * be held: the case still opens and staff see why. Returns whether it held.
+ * Holds the seat's unpaid earnings for the case; a payment another refund holds, or a payout
+ * already sending, is left alone and the case says why. Returns whether it held.
  */
 export async function holdSeatEarningsTx(
   tx: Tx,
@@ -232,18 +226,13 @@ interface ConductRemovalRemedy {
   caseId: string;
   appointmentId: string;
   userId: string;
-  event: { kind: "webinar" | "class"; id: string } | null;
   /** Null when nothing is owed: a free seat, no payment, or another door's refund holds it. */
   marker: RefundOwedMarker | null;
   /** The unblock intent's generation; null when only the money is owed. */
   unblockGeneration: Date | null;
 }
 
-/**
- * Stamps the refund the removal now owes: whatever is still unrefunded on the
- * seat's payment (a full-balance marker), keyed on the removal case so an
- * overturn after a missed deadline never refunds twice. A free seat owes nothing.
- */
+/** Stamps the seat's unrefunded balance as owed, keyed on the removal case so it is refunded once. */
 async function stampRemovalRefundTx(
   tx: Tx,
   caseId: string,
@@ -278,30 +267,16 @@ async function stampRemovalRefundTx(
 async function removalTargetTx(db: PrismaLike, removalCaseId: string) {
   const removal = await db.supportCase.findUniqueOrThrow({
     where: { id: removalCaseId },
-    select: {
-      appointmentId: true,
-      requesterUserId: true,
-      appointment: { select: { webinarId: true, classId: true } },
-    },
+    select: { appointmentId: true, requesterUserId: true },
   });
   if (!removal.appointmentId) return null;
-  const { webinarId, classId } = removal.appointment ?? {};
   return {
     appointmentId: removal.appointmentId,
     userId: removal.requesterUserId,
-    event: webinarId
-      ? { kind: "webinar" as const, id: webinarId }
-      : classId
-        ? { kind: "class" as const, id: classId }
-        : null,
   };
 }
 
-/**
- * Inside the decision's transaction: an OVERTURNED decision on a removal case,
- * or on an appeal of one, owes the seat's unrefunded balance and an unblock.
- * Any other outcome changes nothing; support refunds through its own doors.
- */
+/** On the decision's tx: an OVERTURNED removal (or appeal of one) owes the unrefunded balance and an unblock. */
 export async function conductRemovalDecidedTx(
   tx: Tx,
   supportCase: {
@@ -326,11 +301,7 @@ export async function conductRemovalDecidedTx(
   await persistConductBlockInTx(tx, target.appointmentId, target.userId);
 }
 
-/**
- * After an OVERTURNED decision commits: reads what the removal still owes
- * (its refund marker and its open block intent) and settles it. A replayed
- * decision finds whatever an earlier attempt left. Never throws.
- */
+/** After an OVERTURNED decision commits: drives whatever marker and block intent are still owed. Never throws. */
 export async function settleDecidedRemoval(caseId: string): Promise<void> {
   try {
     const decided = await prisma.supportCase.findUnique({
@@ -375,32 +346,26 @@ export async function settleDecidedRemoval(caseId: string): Promise<void> {
     // The marker and the intent stay owed; retry-auto-refunds and the revocation sweep drive them.
     console.warn(
       `[conduct-removal] settling case ${caseId} failed:`,
-      error instanceof Error ? error.message : String(error),
+      error instanceof Error ? error.name : typeof error,
     );
   }
 }
 
-/**
- * After the commit: refunds what the marker owes on the seat's own rails (the
- * seat door returns credits, wallet or card as it was paid), then replays the
- * marker to clear it, and drives the unblock. A death before this leaves the
- * marker for retry-auto-refunds and the intent for the revocation sweep.
- */
+/** Drives the owed refund and the unblock; returns the refund failure for the caller to report. */
 async function settleConductRemovalRemedy(
   remedy: ConductRemovalRemedy,
-): Promise<void> {
-  if (remedy.marker && remedy.event) {
-    await refundRemovedAttendeeSeat({
-      kind: remedy.event.kind,
-      eventId: remedy.event.id,
-      attendeeUserId: remedy.userId,
-      initiatedByUserId: null,
-      initiatedBy: "organiser",
-      mode: "full",
-      dedupeKey: conductRemovalRefundKey(remedy.caseId),
-      paymentId: remedy.marker.paymentId,
-    });
-    await driveRefundOwed(remedy.marker);
+): Promise<string | null> {
+  let failure: string | null = null;
+  if (remedy.marker) {
+    const outcome = await driveRefundOwed(remedy.marker);
+    if (outcome.kind === "failed") {
+      failure =
+        outcome.error instanceof Error
+          ? outcome.error.message
+          : String(outcome.error);
+    } else if (outcome.kind === "blocked") {
+      failure = "refund blocked by a dispute or a changed marker";
+    }
   }
   if (remedy.unblockGeneration) {
     await syncConductCallBlock(
@@ -409,6 +374,7 @@ async function settleConductRemovalRemedy(
       remedy.unblockGeneration,
     );
   }
+  return failure;
 }
 
 /** Removal cases past their review deadline with no decision and no lapse recorded yet. */
@@ -438,9 +404,15 @@ async function lapseRemovalTx(
 ): Promise<ConductRemovalRemedy | null> {
   const still = await tx.supportCase.findFirst({
     where: { id: caseId, ...conductRemovalLapsedWhere(now) },
-    select: { id: true },
+    select: { updatedAt: true },
   });
   if (!still) return null;
+  // Compare-and-set on the version a decision also checks: an overlapping run or decision loses here.
+  const claimed = await tx.supportCase.updateMany({
+    where: { id: caseId, updatedAt: still.updatedAt },
+    data: { updatedAt: new Date() },
+  });
+  if (claimed.count === 0) return null;
   await tx.supportCaseEvent.create({
     data: {
       caseId,
@@ -473,11 +445,7 @@ interface ConductRemovalDeadlineResult {
   lapsed: number;
 }
 
-/**
- * The support SLA sweep's arm for conduct removals: once a removal passes
- * its 72-hour review deadline undecided, the seat's unrefunded balance is
- * refunded. Fires once per case; the block stays until support decides.
- */
+/** The SLA sweep's arm: a removal undecided at 72 hours owes its unrefunded balance, once per case. */
 export async function sweepConductRemovalDeadlines(opts: {
   limit: number;
   now: Date;
@@ -502,7 +470,10 @@ export async function sweepConductRemovalDeadlines(opts: {
       );
       if (!remedy) continue;
       lapsed++;
-      await settleConductRemovalRemedy(remedy);
+      // The marker stays owed for retry-auto-refunds; the sweep reports the failure once per run.
+      const failure = await settleConductRemovalRemedy(remedy);
+      if (failure)
+        opts.errors.push(`conduct-removal-deadline ${id}: ${failure}`);
     } catch (error) {
       opts.errors.push(
         `conduct-removal-deadline ${id}: ${error instanceof Error ? error.message : String(error)}`,

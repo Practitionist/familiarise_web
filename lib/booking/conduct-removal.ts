@@ -1,17 +1,11 @@
 /**
- * A host or co-host removing an attendee from a webinar or class for conduct.
- *
- * One Serializable transaction, `tx` everywhere: the seat ends (CAS on its live
- * statuses), a CONDUCT_REMOVAL support case opens for the attendee and records
- * who removed them and why, the seat's earnings are held, and the Stream
- * intents (seat access and the call block) are written. Nothing is refunded
- * here. After the commit the intents are driven; the revocation sweep owns
- * whatever a crash or a Stream failure leaves.
+ * The seat release, review case, earnings hold and Stream intents commit together on tx.
+ * Stream work follows the commit; the removal itself refunds nothing.
  */
 
 import { Prisma } from "@prisma/client";
 
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { scheduleAfter } from "@/lib/api/after-safe";
 import {
@@ -46,6 +40,8 @@ interface ConductRemovalInput {
   actorUserId: string;
   reason: ConductRemovalReason;
   note?: string | null;
+  /** The remover's authority, re-read on `tx` under the lock: a co-host revoked meanwhile is refused. */
+  authorizeTx: (tx: Tx) => Promise<boolean>;
 }
 
 interface ConductRemovalResult {
@@ -75,11 +71,7 @@ async function removableEvent(appointmentId: string) {
   return { title: plan?.title ?? null };
 }
 
-/**
- * Removes the attendee and opens the review. Returns null when they hold no
- * live seat (a repeat is a no-op). Serialised with seat leaves, whole-event
- * cancels and the settle sweep on the event's appointment lock.
- */
+/** Null when no live seat is left, so a repeat is a no-op; serialised on the event's appointment lock. */
 export async function removeAttendeeForConduct(
   input: ConductRemovalInput,
 ): Promise<ConductRemovalResult | null> {
@@ -92,6 +84,13 @@ export async function removeAttendeeForConduct(
       await renewAppointmentLock(lock);
       return prisma.$transaction(
         async (tx) => {
+          if (!(await input.authorizeTx(tx))) {
+            throw new BookingRuleError(
+              "REMOVAL_NOT_ALLOWED",
+              "Only the host or a co-host can remove attendees.",
+              403,
+            );
+          }
           const seatWhere = {
             appointmentId: input.appointmentId,
             ...liveParticipant(input.targetUserId),

@@ -2,7 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import type { Session } from "@/lib/auth";
-import prisma from "@/lib/prisma";
+import prisma, { type PrismaLike } from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import { readSeatPayments } from "@/lib/data/seat-payments";
 import {
@@ -30,6 +30,11 @@ import {
 } from "@/lib/auth/org-permissions";
 
 export type GroupEventKind = "webinar" | "class";
+
+const errorClass = (error: unknown) =>
+  error instanceof Error ? error.name : typeof error;
+
+const EVENT_ID = z.string().trim().min(1).max(64);
 
 const PARTICIPANT_USER_SELECT = {
   id: true,
@@ -375,14 +380,11 @@ async function executeGroupSeatLeave(opts: {
   });
 }
 
-/**
- * Who may remove an attendee for conduct: staff, the plan owner, an org
- * operator who may already remove attendees, or an accepted presenter-tier
- * co-host. Crew collaborators and attendees may not.
- */
+/** Staff, the plan owner, an org operator who may remove attendees, or an accepted presenter co-host. */
 async function canRemoveForConduct(
   session: Session,
   appointmentId: string,
+  db: PrismaLike = prisma,
 ): Promise<boolean> {
   const profileId = session.user.consultantProfileId ?? null;
   const planSelect = {
@@ -398,7 +400,7 @@ async function canRemoveForConduct(
       select: { id: true },
     },
   };
-  const appointment = await prisma.appointment.findFirst({
+  const appointment = await db.appointment.findFirst({
     where: { id: appointmentId, deletedAt: null },
     select: {
       webinar: { select: { webinarPlan: { select: planSelect } } },
@@ -412,7 +414,7 @@ async function canRemoveForConduct(
   if (profileId && plan.consultantProfileId === profileId) return true;
   if (plan.collaborators.length > 0) return true;
   if (!plan.organizationId) return false;
-  const membership = await prisma.membership.findFirst({
+  const membership = await db.membership.findFirst({
     where: {
       userId: session.user.id,
       organizationId: plan.organizationId,
@@ -465,6 +467,7 @@ export async function handleConductRemoval(
       actorUserId: session.user.id,
       reason,
       note,
+      authorizeTx: (tx) => canRemoveForConduct(session, appointmentId, tx),
     }).catch((error: unknown) => {
       if (error instanceof BookingRuleError) return error;
       throw error;
@@ -482,7 +485,8 @@ export async function handleConductRemoval(
       error instanceof Error ? error : new Error(String(error)),
       { tags: { subsystem: "bookings" } },
     );
-    console.error("[CONDUCT_REMOVAL]", error);
+    // Sentry carries the error through its scrubber; the console gets its class only.
+    console.error("[CONDUCT_REMOVAL]", errorClass(error));
     return new NextResponse("Internal error", { status: 500 });
   }
 }
@@ -498,8 +502,18 @@ export async function handleGroupConductRemoval(
   const { session } = authResult;
   const rl = await applyRateLimit(eventMutationLimiter, session.user.id);
   if (rl) return rl;
+  const parsedEventId = EVENT_ID.safeParse(eventId);
+  if (!parsedEventId.success) {
+    return NextResponse.json(
+      { error: "Event ID is required" },
+      { status: 400 },
+    );
+  }
   const appointment = await prisma.appointment.findFirst({
-    where: kind === "webinar" ? { webinarId: eventId } : { classId: eventId },
+    where:
+      kind === "webinar"
+        ? { webinarId: parsedEventId.data }
+        : { classId: parsedEventId.data },
     select: { id: true },
   });
   if (!appointment) {

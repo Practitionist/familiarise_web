@@ -857,6 +857,18 @@ export async function persistConductBlockInTx(
   return enqueueInTx(tx, [conductTarget(appointmentId, userId)]);
 }
 
+/** A fresh conduct block intent, so the sweep repairs a Stream write that went stale. */
+async function rearmConductBlock(
+  appointmentId: string,
+  userId: string,
+): Promise<void> {
+  await enqueueOrReport(
+    [conductTarget(appointmentId, userId)],
+    "conduct.rearmBlock",
+    { nextRetryAt: intentNotBefore() },
+  );
+}
+
 /**
  * Drives the conduct block intent its transaction wrote inside the request's
  * budget and settles that generation; the sweep owns the rest. Never throws.
@@ -876,6 +888,7 @@ export async function syncConductCallBlock(
       appointmentId,
       userId,
       Date.now() + SYNC_SEAT_REVOCATION_BUDGET_MS,
+      () => rearmConductBlock(appointmentId, userId),
     );
   } catch (thrown) {
     // The intent stays owed; the sweep re-drives it.
@@ -1207,7 +1220,9 @@ export async function redriveAccessRevocation(
     case "REFUND_ACCESS_REVOKE":
       return (await driveRefundRevocation(row.planId, deadlineMs)).error;
     case "CONDUCT_CALL_BLOCK":
-      return driveConductCallBlock(row.planId, row.userId, deadlineMs);
+      return driveConductCallBlock(row.planId, row.userId, deadlineMs, () =>
+        rearmConductBlock(row.planId, row.userId),
+      );
   }
 }
 

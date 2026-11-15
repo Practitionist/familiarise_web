@@ -8411,7 +8411,7 @@ model StreamRevocationRetry {
   nextRetryAt       DateTime?            @db.Timestamptz
   lastError         String?              @db.Text
   completedAt       DateTime?            @db.Timestamptz
-  /// SEAT_ACCESS_REVOKE only: the last Meeting id, in (createdAt, id) order, every room up to which the user is confirmed removed from.
+  /// SEAT_ACCESS_REVOKE and CONDUCT_CALL_BLOCK: the last Meeting id, in (createdAt, id) order, up to which every room is done for the user.
   resumeAfter       String?
   createdAt         DateTime             @default(now()) @db.Timestamptz
   updatedAt         DateTime             @updatedAt @db.Timestamptz

@@ -215,9 +215,10 @@ export function RemoveParticipantDialog({
               <p className="text-xs text-muted-foreground">
                 {attendeeName ?? "The attendee"} will see this reason and note,
                 and is blocked from this session&apos;s call. Your earnings from
-                this seat are held while support reviews it, within 72 hours. If
-                support overturns the removal or doesn&apos;t decide in time,
-                whatever is still unrefunded on their seat goes back to them.
+                this seat are held while support reviews it; support decides
+                within 72 hours. If support overturns the removal or
+                doesn&apos;t decide in time, whatever is still unrefunded on
+                their seat goes back to them.
               </p>
             </div>
           )}

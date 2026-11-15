@@ -154,6 +154,7 @@ const remove = (webinar: SeededWebinar, userId: string) =>
     targetUserId: userId,
     actorUserId: webinar.host.userId,
     reason: "HARASSMENT",
+    authorizeTx: async () => true,
     note: "Abusive messages in chat",
   });
 
