@@ -5,7 +5,10 @@ import { TrialStatus } from "@prisma/client";
 import prisma from "../../../lib/prisma";
 import { transitionTrial } from "../../../lib/booking/transitions";
 import { isUniqueViolationOn } from "../../../lib/db/unique-violation";
-import { bookTrialInTx } from "../../../lib/trials/book-trial";
+import {
+  bookTrialInTx,
+  TrialPairHeldError,
+} from "../../../lib/trials/book-trial";
 import {
   TRIAL_PAIR_BLOCKING_INDEX,
   TRIAL_REQUEST_BLOCKING_STATUSES,
@@ -13,13 +16,9 @@ import {
 import { futureAt, seedHost } from "./harness";
 import { publishEveryHour, seedBuyer } from "./harness-host";
 
-jest.mock("../../../lib/novu", () => {
-  const noop = jest.fn(async () => []);
-  return new Proxy(
-    {},
-    { get: (_target, prop) => (prop === "__esModule" ? true : noop) },
-  );
-});
+jest.mock("../../../lib/novu", () =>
+  jest.requireActual("../../fixtures/noop-module").noopModule(),
+);
 
 async function seedPair() {
   const host = await seedHost();
@@ -62,6 +61,20 @@ function book({ host, buyer, plan }: Pair, startsAt: Date) {
   );
 }
 
+/** Names the pair guard that refused; any other error is returned unchanged. */
+function refusal(error: unknown): unknown {
+  if (error instanceof TrialPairHeldError) return "in-transaction recheck";
+  if (isUniqueViolationOn(error, TRIAL_PAIR_BLOCKING_INDEX))
+    return "pair index";
+  return error;
+}
+
+function rejections(results: PromiseSettledResult<unknown>[]): unknown[] {
+  return results
+    .filter((r): r is PromiseRejectedResult => r.status === "rejected")
+    .map((r) => r.reason);
+}
+
 describe("trial history per pair (real Postgres)", () => {
   it("a request after a cancelled trial adds a row and leaves the first one untouched", async () => {
     const pair = await seedPair();
@@ -94,7 +107,7 @@ describe("trial history per pair (real Postgres)", () => {
     expect(second.appointmentId).not.toBe(first.appointmentId);
   });
 
-  it("two racing requests for one pair leave one live trial; the loser carries the index the route maps", async () => {
+  it("two racing requests for one pair leave one live trial, the loser refused by either pair guard", async () => {
     const pair = await seedPair();
 
     const results = await Promise.allSettled([
@@ -102,20 +115,31 @@ describe("trial history per pair (real Postgres)", () => {
       book(pair, futureAt(6, 10)),
     ]);
 
-    const rejected = results.filter((r) => r.status === "rejected");
-    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
-    expect(rejected).toHaveLength(1);
-    expect(
-      isUniqueViolationOn(
-        (rejected[0] as PromiseRejectedResult).reason,
-        TRIAL_PAIR_BLOCKING_INDEX,
-      ),
-    ).toBe(true);
+    const losers = rejections(results).map(refusal);
+    expect(losers).toHaveLength(1);
+    expect(["in-transaction recheck", "pair index"]).toContain(losers[0]);
     expect(
       await prisma.trial.count({
         where: { consulteeProfileId: pair.buyer.consulteeProfileId },
       }),
     ).toBe(1);
+  });
+
+  it("two competing inserts for one pair: the index refuses the second with the error the route maps", async () => {
+    const { host, buyer, plan } = await seedPair();
+    const insert = () =>
+      prisma.trial.create({
+        data: {
+          consulteeProfileId: buyer.consulteeProfileId,
+          consultantProfileId: host.consultantProfileId,
+          subscriptionPlanId: plan.id,
+          status: TrialStatus.SCHEDULED,
+        },
+      });
+
+    const results = await Promise.allSettled([insert(), insert()]);
+
+    expect(rejections(results).map(refusal)).toEqual(["pair index"]);
   });
 
   it("refuses a second blocking trial inside the booking transaction even without the pair index", async () => {
@@ -142,10 +166,10 @@ describe("trial history per pair (real Postgres)", () => {
         throw rollback;
       })
       .catch((error: unknown) =>
-        error === rollback ? "created" : (error as Error).name,
+        error === rollback ? "created" : refusal(error),
       );
 
-    expect(outcome).toBe("TrialPairHeldError");
+    expect(outcome).toBe("in-transaction recheck");
   });
 
   it.each(Object.values(TrialStatus))(

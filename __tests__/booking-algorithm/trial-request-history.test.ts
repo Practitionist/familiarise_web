@@ -19,47 +19,24 @@ jest.mock("../../lib/rate-limit", () => ({
   spendTrialRequest: jest.fn(async () => undefined),
 }));
 
-jest.mock("../../lib/trials/book-trial", () => ({
-  lockTrialPick: jest.fn(async () => async () => undefined),
-  // The booking's own insert stands in for the whole in-transaction write.
-  bookTrialInTx: jest.fn(
-    async (
-      tx: { trial: { create: (a: unknown) => Promise<object> } },
-      args: Record<string, unknown>,
-    ) => ({
-      ...(await tx.trial.create({ data: args })),
-      appointmentId: "apt-1",
-    }),
-  ),
-  TrialTimeRefusedError: class extends Error {},
-  TrialPairHeldError: class extends Error {},
-}));
-jest.mock("../../lib/trials/schedule-notices", () => ({
-  stageTrialScheduledNotices: jest.fn(async () => ({
-    consulteeBell: null,
-    consultantBell: null,
-    emails: [],
-  })),
-}));
-jest.mock("../../lib/email/senders/booking", () => ({
-  prepareTrialScheduledEmail: jest.fn(async () => ({
-    emailType: "TRIAL_SESSION_SCHEDULED",
-    entityRef: "trial:pending",
-    messages: [],
-    skipped: 0,
-    failed: 0,
-  })),
-}));
-jest.mock("../../lib/novu/stage-then-attempt", () => ({
-  flushNotificationsAfter: jest.fn(async () => undefined),
-}));
+jest.mock("../../lib/trials/book-trial", () =>
+  jest.requireActual("../fixtures/trial-request-mocks").bookTrialModule(),
+);
+jest.mock("../../lib/trials/schedule-notices", () =>
+  jest.requireActual("../fixtures/trial-request-mocks").scheduleNoticesModule(),
+);
+jest.mock("../../lib/email/senders/booking", () =>
+  jest.requireActual("../fixtures/trial-request-mocks").bookingEmailModule(),
+);
+jest.mock("../../lib/novu/stage-then-attempt", () =>
+  jest
+    .requireActual("../fixtures/trial-request-mocks")
+    .flushNotificationsModule(),
+);
 
-jest.mock("../../utils/appointmentlock", () => ({
-  lockRequestCap: jest.fn(async () => ({ key: "request-cap" })),
-  unlockRequestCap: jest.fn(async () => undefined),
-  RequestCapBusyError: class extends Error {},
-  BookingLockUnavailableError: class extends Error {},
-}));
+jest.mock("../../utils/appointmentlock", () =>
+  jest.requireActual("../fixtures/trial-request-mocks").requestCapLockModule(),
+);
 
 type TrialRow = {
   id: string;
@@ -249,9 +226,7 @@ describe("POST /api/trials keeps the pair's history", () => {
   });
 
   it("answers the same 409 when the in-transaction recheck finds the pair held", async () => {
-    (bookTrialInTx as jest.Mock).mockRejectedValueOnce(
-      new TrialPairHeldError(),
-    );
+    jest.mocked(bookTrialInTx).mockRejectedValueOnce(new TrialPairHeldError());
 
     const res = await POST(request());
 

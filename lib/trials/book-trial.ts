@@ -83,14 +83,8 @@ export interface BookTrialArgs {
   now?: Date;
 }
 
-/**
- * Writes the trial, its appointment and its one session on the caller's
- * transaction, after `trialWindowRefusal` passes on the same client. The
- * caller holds the consultee lock and the slot atoms for the window.
- * Throws `TrialPairHeldError` when the pair already holds a blocking trial,
- * `TrialTimeRefusedError` when the time is not open; a concurrent confirmed
- * overlap surfaces as the exclusion violation (free trial only).
- */
+/** Writes the trial, its appointment and its session on the caller's transaction;
+ *  the caller holds the consultee lock and the window's slot atoms. */
 export async function bookTrialInTx(tx: Tx, args: BookTrialArgs) {
   // Re-read under the caller's consultee lock, so a rival request for the pair has committed.
   const held = await tx.trial.findFirst({

@@ -32,15 +32,9 @@ jest.mock("../../lib/rate-limit", () => ({
   trialRequestRefusal: (...a: unknown[]) => trialRequestRefusal(...(a as [])),
   spendTrialRequest: (...a: unknown[]) => spendTrialRequest(...(a as [])),
 }));
-jest.mock("../../lib/email/senders/booking", () => ({
-  prepareTrialScheduledEmail: jest.fn(async () => ({
-    emailType: "TRIAL_SESSION_SCHEDULED",
-    entityRef: "trial:pending",
-    messages: [],
-    skipped: 0,
-    failed: 0,
-  })),
-}));
+jest.mock("../../lib/email/senders/booking", () =>
+  jest.requireActual("../fixtures/trial-request-mocks").bookingEmailModule(),
+);
 const stageNotices = jest.fn(async () => ({
   consulteeBell: null,
   consultantBell: null,
@@ -49,15 +43,14 @@ const stageNotices = jest.fn(async () => ({
 jest.mock("../../lib/trials/schedule-notices", () => ({
   stageTrialScheduledNotices: (...a: unknown[]) => stageNotices(...(a as [])),
 }));
-jest.mock("../../lib/novu/stage-then-attempt", () => ({
-  flushNotificationsAfter: jest.fn(async () => undefined),
-}));
-jest.mock("../../utils/appointmentlock", () => ({
-  lockRequestCap: jest.fn(async () => ({ key: "request-cap" })),
-  unlockRequestCap: jest.fn(async () => undefined),
-  RequestCapBusyError: class extends Error {},
-  BookingLockUnavailableError: class extends Error {},
-}));
+jest.mock("../../lib/novu/stage-then-attempt", () =>
+  jest
+    .requireActual("../fixtures/trial-request-mocks")
+    .flushNotificationsModule(),
+);
+jest.mock("../../utils/appointmentlock", () =>
+  jest.requireActual("../fixtures/trial-request-mocks").requestCapLockModule(),
+);
 const release = jest.fn(async () => undefined);
 const lockPick = jest.fn(async () => release);
 const bookTrial = jest.fn(async (_tx: unknown, args: { paid: boolean }) => ({
