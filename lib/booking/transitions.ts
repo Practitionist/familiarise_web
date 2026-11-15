@@ -81,7 +81,7 @@ async function appendHistory(
   toStatus: string,
   meta: HistoryMeta,
 ): Promise<void> {
-  if (fromStatus == null) {
+  if (fromStatus === null || fromStatus === undefined) {
     // An audit trail must not record "we don't know" quietly. The A12 pre-read
     // missed this row — `transitionOccurrenceCompletion` says so directly for a
     // row that entered the from-set after the pre-read — and the durable row is
@@ -159,11 +159,8 @@ function liveWrapperId(
 
 //////////////////////////////////////////////// Consultation / Subscription ////////////////////////////////////////////////
 
-// PENDING is the entry state; its only legal re-entry is the payment-link
-// expiry/regeneration reset (#836). Reschedule also re-enters PENDING but
-// from the wider RESCHEDULABLE_FROM set below — that flow owns its own edge
-// because rescheduling a SCHEDULED booking back to PENDING is policy-gated
-// (24h window), not a generic transition.
+// PENDING is the entry state; its only map re-entry is the payment-link reset.
+// Reschedule re-enters PENDING from RESCHEDULABLE_FROM through its own policy-gated edge.
 export const REQUEST_ALLOWED_FROM: Record<
   AppointmentStatus,
   AppointmentStatus[]
@@ -171,10 +168,9 @@ export const REQUEST_ALLOWED_FROM: Record<
   PENDING: ["APPROVED_PENDING_PAYMENT"],
   APPROVED: ["PENDING", "APPROVED_PENDING_PAYMENT"],
   APPROVED_PENDING_PAYMENT: ["PENDING", "APPROVED"],
-  SCHEDULED: ["APPROVED", "APPROVED_PENDING_PAYMENT"],
-  COMPLETED: ["APPROVED", "SCHEDULED"],
+  COMPLETED: ["APPROVED"],
   REJECTED: ["PENDING", "APPROVED_PENDING_PAYMENT"],
-  CANCELLED: ["PENDING", "APPROVED", "APPROVED_PENDING_PAYMENT", "SCHEDULED"],
+  CANCELLED: ["PENDING", "APPROVED", "APPROVED_PENDING_PAYMENT"],
   // PR 2c (allocation-resilience money fix) — APPROVED joins EXPIRED's
   // allowed-from: a PAID subscription whose consultant never allocated any
   // session was previously immortal (no sweep cohort could touch it), leaving
@@ -191,7 +187,6 @@ export const RESCHEDULABLE_FROM: AppointmentStatus[] = [
   "PENDING",
   "APPROVED",
   "APPROVED_PENDING_PAYMENT",
-  "SCHEDULED",
 ];
 
 // Allocation re-stamps APPROVED when re-allocating an already-approved event
@@ -257,19 +252,20 @@ export async function transitionConsultationRequest(
 export const LIVE_SUBSCRIPTION_STATUSES: AppointmentStatus[] = [
   "PENDING",
   "APPROVED",
-  "APPROVED_PENDING_PAYMENT",
 ];
 
-// A subscription goes from APPROVED straight to COMPLETED; it never enters
-// SCHEDULED (Consultation keeps that state for the incident rebook).
+// A plan is paid at checkout, so it never awaits payment, and goes from APPROVED to COMPLETED.
 export const SUBSCRIPTION_ALLOWED_FROM: Record<
   AppointmentStatus,
   AppointmentStatus[]
 > = {
-  ...REQUEST_ALLOWED_FROM,
-  SCHEDULED: [],
+  PENDING: [],
+  APPROVED: ["PENDING"],
+  APPROVED_PENDING_PAYMENT: [],
   COMPLETED: ["APPROVED"],
-  CANCELLED: ["PENDING", "APPROVED", "APPROVED_PENDING_PAYMENT"],
+  REJECTED: ["PENDING"],
+  CANCELLED: ["PENDING", "APPROVED"],
+  EXPIRED: ["PENDING", "APPROVED"],
 };
 
 export async function transitionSubscriptionRequest(
@@ -296,13 +292,7 @@ export async function transitionSubscriptionRequest(
   const res = await tx.subscription.updateMany({
     where: {
       ...args.where,
-      // No fromIn widens a subscription into SCHEDULED.
-      status: {
-        in:
-          args.to === "SCHEDULED"
-            ? []
-            : (args.fromIn ?? SUBSCRIPTION_ALLOWED_FROM[args.to]),
-      },
+      status: { in: args.fromIn ?? SUBSCRIPTION_ALLOWED_FROM[args.to] },
     },
     data: { status: args.to, ...args.data },
   });
@@ -329,9 +319,7 @@ export async function transitionSubscriptionRequest(
 //////////////////////////////////////////////// Webinar / Class ////////////////////////////////////////////////
 
 // WebinarStatus and ClassStatus are enum-identical; one map serves both.
-// SCHEDULED←SCHEDULED is reschedule re-entry. The sets are deliberately the
-// exact complement of the old `notIn: [CANCELLED, COMPLETED]` guards —
-// explicit allowed-from is robust against future enum additions (#837).
+// SCHEDULED←SCHEDULED is the re-time re-entry; a live event stays SCHEDULED until it completes.
 export const EVENT_ALLOWED_FROM: Record<WebinarStatus, WebinarStatus[]> = {
   // Nothing returns to DRAFT: publishing is one-way. Unpublishing is what
   // archivedAt is for, so an offering that has ever been buyable keeps a stable
@@ -340,10 +328,10 @@ export const EVENT_ALLOWED_FROM: Record<WebinarStatus, WebinarStatus[]> = {
   // Deliberately NOT reachable from DRAFT. This set is what reschedule
   // re-stamps, and a reschedule must never be able to publish an unpublished
   // offering as a side effect. Publishing has its own edge below.
-  SCHEDULED: ["SCHEDULED", "IN_PROGRESS"],
-  IN_PROGRESS: ["SCHEDULED"],
-  COMPLETED: ["SCHEDULED", "IN_PROGRESS"],
-  CANCELLED: ["SCHEDULED", "IN_PROGRESS"],
+  SCHEDULED: ["SCHEDULED"],
+  COMPLETED: ["SCHEDULED"],
+  // A draft with placed sessions is cancellable, so its host is never stuck with it.
+  CANCELLED: ["DRAFT", "SCHEDULED"],
 };
 // Type-level proof the two enums stay in lockstep.
 export const CLASS_EVENT_ALLOWED_FROM: Record<ClassStatus, ClassStatus[]> =
@@ -537,18 +525,14 @@ export async function transitionOccurrenceCompletion(
 
 //////////////////////////////////////////////// Trial ////////////////////////////////////////////////
 
-// #1319 — trials were the one lifecycle with no helper: accept, reject, cancel,
-// auto-complete and convert all wrote `status` bare. The capture webhook and
-// the unpaid-expiry sweep already narrowed their updateMany by status; this
-// makes the rest match. PENDING is entry-only. Keyed by TARGET.
+// A trial is created SCHEDULED (free) or AWAITING_PAYMENT (paid); neither entry state has an
+// edge into it. Keyed by TARGET.
 export const TRIAL_ALLOWED_FROM: Record<TrialStatus, TrialStatus[]> = {
-  PENDING: [],
-  AWAITING_PAYMENT: ["PENDING"],
-  SCHEDULED: ["PENDING", "AWAITING_PAYMENT"],
+  AWAITING_PAYMENT: [],
+  SCHEDULED: ["AWAITING_PAYMENT"],
   COMPLETED: ["SCHEDULED"],
   CONVERTED: ["COMPLETED"],
-  CANCELLED: ["PENDING", "AWAITING_PAYMENT", "SCHEDULED"],
-  REJECTED: ["PENDING"],
+  CANCELLED: ["AWAITING_PAYMENT", "SCHEDULED"],
 };
 
 export async function transitionTrial(
@@ -589,8 +573,7 @@ export async function transitionTrial(
       from: before?.status ?? null,
     });
   }
-  // A PENDING trial has no appointment yet, so the id is null until acceptance
-  // places the session — the scalar is nullable for exactly that reason.
+  // Every trial carries its appointment from creation; the scalar stays nullable for legacy rows.
   await appendHistory(tx, "TRIAL", args.where.id, before?.status, args.to, {
     ...args,
     appointmentId: args.appointmentId ?? before?.appointmentId ?? null,

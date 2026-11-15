@@ -85,7 +85,6 @@ const ARCHIVED: OfferingStatusChip = { label: "Archived", tone: "neutral" };
 const EVENT_STATUS: Record<WebinarStatus | ClassStatus, OfferingStatusChip> = {
   DRAFT,
   SCHEDULED: PUBLISHED,
-  IN_PROGRESS: { label: "Live", tone: "info" },
   COMPLETED: { label: "Completed", tone: "neutral" },
   CANCELLED: { label: "Cancelled", tone: "neutral" },
 };

@@ -8,6 +8,7 @@ import { EmptyState } from "@/components/dashboard/DataCard";
 import { SettingsSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import { ProfileSection } from "../sections/ProfileSection";
 import { SettingsFormActions } from "../SettingsFormActions";
+import { AvailabilitySaveConfirm } from "../AvailabilitySaveConfirm";
 import { useConsultantSettingsForm } from "../use-consultant-settings-form";
 
 /** The Profile section's form — the domain lists ride in with `content`. */
@@ -44,27 +45,37 @@ export function ProfileForm({
   }
 
   return (
-    <form
-      onSubmit={form.handleSubmit}
-      className="space-y-6"
-      aria-label="Profile form"
-    >
-      <Card>
-        <CardContent className="p-6 space-y-8">
-          <ProfileSection
-            formData={form.formData}
-            setFormData={form.setFormData}
-            domains={form.domains}
-            subDomainOptions={form.subDomainOptions}
-            tagOptions={form.tagOptions}
-            onInputChange={form.handleInputChange}
-            onDomainChange={form.handleDomainChange}
-            onSubDomainChange={form.handleSubDomainChange}
-            onTagChange={form.handleTagChange}
-          />
-        </CardContent>
-      </Card>
-      <SettingsFormActions isSaving={form.isSaving} onReset={form.reset} />
-    </form>
+    <>
+      <form
+        onSubmit={form.handleSubmit}
+        className="space-y-6"
+        aria-label="Profile form"
+      >
+        <Card>
+          <CardContent className="p-6 space-y-8">
+            <ProfileSection
+              formData={form.formData}
+              setFormData={form.setFormData}
+              domains={form.domains}
+              subDomainOptions={form.subDomainOptions}
+              tagOptions={form.tagOptions}
+              onInputChange={form.handleInputChange}
+              onDomainChange={form.handleDomainChange}
+              onSubDomainChange={form.handleSubDomainChange}
+              onTagChange={form.handleTagChange}
+            />
+          </CardContent>
+        </Card>
+        <SettingsFormActions isSaving={form.isSaving} onReset={form.reset} />
+      </form>
+      {/* Outside the form: the dialog's own submit must not resubmit it. */}
+      <AvailabilitySaveConfirm
+        consultantId={consultant.id}
+        preview={form.pendingSave?.preview ?? null}
+        saved={form.pendingSave?.saved ?? false}
+        onConfirm={form.confirmPendingSave}
+        onClose={form.cancelPendingSave}
+      />
+    </>
   );
 }

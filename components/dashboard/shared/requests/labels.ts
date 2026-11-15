@@ -7,6 +7,7 @@
  */
 
 import type { SubscriptionEntitlement } from "@/lib/booking/entitlement";
+import { ALREADY_SCHEDULED_COPY } from "@/lib/scheduling/allocationMessages";
 import type {
   InboxBucket,
   InboxChip,
@@ -14,7 +15,10 @@ import type {
   InboxSort,
   InboxType,
 } from "@/lib/dashboard/requests-inbox-state";
-import { toneBadge } from "@/lib/dashboard/money-state";
+import {
+  bookingStatus,
+  bookingStatusBadge,
+} from "@/lib/appointments/booking-status";
 import { formatDateTimeLabel, type DisplayOpts } from "@/lib/time/display";
 
 export const TYPE_LABEL: Record<InboxType, string> = {
@@ -71,13 +75,18 @@ export const EMPTY_STATE: Record<InboxType, { title: string; body: string }> = {
     body: "New plans, pay links and cycles to schedule land here.",
   },
   trial: {
-    title: "No trial requests",
-    body: "Trial requests from your plan pages land here.",
+    title: "No trials awaiting payment",
+    body: "Paid trials booked from your plan pages appear here until they are paid.",
   },
 };
 
-/** The one badge the presentation cannot name: a finished cycle with sessions left (#1766). */
-export const NEXT_CYCLE_BADGE = toneBadge("info", "Next cycle open");
+/** A paid plan whose week is done and whose next sessions await placing. */
+export const NEXT_CYCLE_BADGE = bookingStatusBadge(
+  bookingStatus(
+    { kind: "SUBSCRIPTION", status: "APPROVED", planWait: "NEXT_CYCLE" },
+    "CONSULTANT",
+  ),
+);
 
 /** "Schedule the next 2 · 4 of 24 booked" — sessions, never slots (#1639). */
 export function nextCycleLine(entitlement: SubscriptionEntitlement): string {
@@ -101,7 +110,12 @@ export const RANKED_WINDOW_NOTE = (
   `Showing the ${shown} ${RANKED_WINDOW_KIND[sort]} of ${total} — pick a filter to see the rest`;
 
 /** A direct checkout the buyer is paying for right now: never answerable. */
-export const CHECKOUT_HOLD_BADGE = toneBadge("info", "Checkout in progress");
+export const CHECKOUT_HOLD_BADGE = bookingStatusBadge(
+  bookingStatus(
+    { kind: "CONSULTATION", status: "PENDING", source: "DIRECT_CHECKOUT" },
+    "CONSULTANT",
+  ),
+);
 export const CHECKOUT_HOLD_LINE =
   "The learner is paying now — nothing to do. The time stays held until then.";
 
@@ -111,8 +125,9 @@ export const REQUESTED_TIME_PASSED =
 
 /** One verb per toast. */
 export const TOAST = {
-  approved: "Approved",
-  approvedAwaitingPayment: "Approved — waiting for the learner to pay",
+  approved: "Confirmed",
+  approvedAwaitingPayment:
+    "Awaiting payment — the learner was sent the pay link",
   declined: "Declined",
   reminderSent: "Reminder sent",
   approvalWithdrawn: "Approval withdrawn",
@@ -144,7 +159,7 @@ const CODE_SENTENCE: Record<string, string> = {
   REQUEST_CHANGED_ELSEWHERE: TOAST.changedElsewhere,
   ILLEGAL_TRANSITION: TOAST.changedElsewhere,
   RESCHEDULE_STATE_CHANGED: TOAST.changedElsewhere,
-  ALREADY_ALLOCATED: "This request was already allocated in another tab.",
+  ALREADY_ALLOCATED: ALREADY_SCHEDULED_COPY,
   VALIDATION_ERROR: "That request could not be read. Refresh and try again.",
   RATE_LIMITED: "Too many attempts — wait a moment, then retry.",
   ACCESS_DENIED: "You do not have access to this request.",
@@ -204,7 +219,7 @@ export function approvedToast(
 ): string {
   if (result.awaitingPayment !== true) return TOAST.approved;
   return result.payExpiresAt
-    ? `Approved — the learner has until ${formatDateTimeLabel(result.payExpiresAt, opts)} to pay`
+    ? `Awaiting payment — the learner has until ${formatDateTimeLabel(result.payExpiresAt, opts)} to pay`
     : TOAST.approvedAwaitingPayment;
 }
 

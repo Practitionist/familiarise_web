@@ -1,8 +1,10 @@
 "use server";
 
+import { isUniqueViolation } from "@/lib/db/pg-errors";
+import { settleLapsedProposal } from "@/lib/booking/reschedule-lapse";
+import { isReleasedForReschedule } from "@/utils/scheduling-engine/types";
 import * as Sentry from "@sentry/nextjs";
 import { z } from "zod";
-import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { isDeadOccurrence } from "@/lib/appointments/occurrences";
 import {
@@ -31,6 +33,10 @@ import {
 } from "@/lib/stream-client";
 import { STREAM_CALL_TYPE } from "@/lib/stream/call-cid";
 import { assertValidGetOrCreateCall } from "@/lib/stream/video-contracts";
+import {
+  fenceSeatGrants,
+  releaseUnsavedRoom,
+} from "@/lib/stream/access-revocation";
 
 interface MeetingSlot {
   id: string;
@@ -266,16 +272,14 @@ async function createDbMeeting(
       resolveAppointmentOrgId(authorized.appointment) ??
       (await readAppointmentOrganizationId(authorized.slot.appointmentId));
 
+    // Scalar keys, not `connect`: a second first visit then fails the plain
+    // unique on appointmentOccurrenceId, which the catch below answers.
     const meeting = await prisma.meeting.create({
       data: {
         streamCallId: validatedStreamCallId,
         platform: "STREAM",
-        occurrence: {
-          connect: { id: slot.id },
-        },
-        ...(organizationId
-          ? { organization: { connect: { id: organizationId } } }
-          : {}),
+        appointmentOccurrenceId: slot.id,
+        organizationId: organizationId ?? null,
       },
     });
 
@@ -287,10 +291,7 @@ async function createDbMeeting(
 
     return meeting;
   } catch (error) {
-    if (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === "P2002"
-    ) {
+    if (isUniqueViolation(error)) {
       streamLogger.info(
         "Meeting session already exists (concurrent creation), returning existing",
         { slotId: slot.id },
@@ -335,6 +336,37 @@ export type ProvisionedMeeting =
 export async function provisionAppointmentMeeting(
   slot: MeetingSlot,
 ): Promise<ProvisionedMeeting> {
+  const granted: RoomGrant = { appointmentId: null, userIds: [] };
+  const result = await provisionRoom(slot, granted);
+  // The room is created with its seat holders as members; a cancel that committed meanwhile found no room to clear.
+  if (result.ok && granted.appointmentId) {
+    await fenceSeatGrants(granted.appointmentId, granted.userIds);
+  }
+  return result;
+}
+
+/** Who the room's create payload made a member, under the caller's authorized appointment. */
+interface RoomGrant {
+  appointmentId: string | null;
+  userIds: string[];
+}
+
+/** A reused row keeps its call id; an early-ended row is rebuilt under a fresh one. */
+function resolveStreamCallId(
+  slotId: string,
+  existingMeeting: { streamCallId: string } | null | undefined,
+  rebuildEndedEarly: boolean,
+): string {
+  if (rebuildEndedEarly) {
+    return `occurrence-${slotId}-r${Date.now().toString(36)}`;
+  }
+  return existingMeeting?.streamCallId ?? `occurrence-${slotId}`;
+}
+
+async function provisionRoom(
+  slot: MeetingSlot,
+  granted: RoomGrant,
+): Promise<ProvisionedMeeting> {
   const anchorSlot: MeetingSlot = slot;
 
   const existingMeeting = await findDbMeetingBySlot(anchorSlot.id);
@@ -342,9 +374,23 @@ export async function provisionAppointmentMeeting(
   // An existing row re-asserts its call below, so a row whose call is missing heals here.
   const reuseExisting = !!existingMeeting && !rebuildEndedEarly;
 
-  const authorized = await readSlotForCaller(anchorSlot.id);
+  let authorized = await readSlotForCaller(anchorSlot.id);
   if (!authorized) {
     return { ok: false, refusal: "You are not a participant in this session." };
+  }
+  // A released session whose move has lapsed is the original again: end the
+  // move first. A session that is not released costs no extra read.
+  if (
+    isReleasedForReschedule(authorized.slot) &&
+    (await settleLapsedProposal(authorized.slot.appointmentId))
+  ) {
+    authorized = await readSlotForCaller(anchorSlot.id);
+    if (!authorized) {
+      return {
+        ok: false,
+        refusal: "You are not a participant in this session.",
+      };
+    }
   }
 
   const refusal = await getMeetingCreationRefusal(anchorSlot, reuseExisting);
@@ -357,17 +403,18 @@ export async function provisionAppointmentMeeting(
     return { ok: false, refusal: "Video is not available right now." };
   }
 
-  let streamCallId = `occurrence-${anchorSlot.id}`;
-  if (reuseExisting && existingMeeting) {
-    streamCallId = existingMeeting.streamCallId;
-  } else if (rebuildEndedEarly) {
-    streamCallId = `occurrence-${anchorSlot.id}-r${Date.now().toString(36)}`;
-  }
+  const streamCallId = resolveStreamCallId(
+    anchorSlot.id,
+    existingMeeting,
+    rebuildEndedEarly,
+  );
   const { authorUserId, payload } = await buildRoomCallPlan(authorized, {
     extendedSeconds: existingMeeting?.extendedSeconds ?? 0,
     extensionsUsed: existingMeeting?.extensionsUsed ?? 0,
   });
   const resolvedAppointmentId = authorized.slot.appointmentId;
+  granted.appointmentId = resolvedAppointmentId ?? null;
+  granted.userIds = payload.data.members?.map((m) => m.user_id) ?? [];
 
   try {
     await upsertUsersToStream([authorUserId], {
@@ -426,10 +473,18 @@ export async function provisionAppointmentMeeting(
     return { ok: true, streamCallId };
   }
 
-  await createDbMeeting(
-    { ...anchorSlot, appointmentId: resolvedAppointmentId },
-    streamCallId,
-  );
+  let saved: Meeting;
+  try {
+    saved = await createDbMeeting(
+      { ...anchorSlot, appointmentId: resolvedAppointmentId },
+      streamCallId,
+    );
+  } catch (error) {
+    // No Meeting row means no revocation can find this call, so its new members leave it.
+    await releaseUnsavedRoom(streamCallId, granted.userIds);
+    throw error;
+  }
 
-  return { ok: true, streamCallId };
+  // A racing first visit may have saved the room first; its call is the room.
+  return { ok: true, streamCallId: saved.streamCallId };
 }

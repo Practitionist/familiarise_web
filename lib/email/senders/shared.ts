@@ -36,6 +36,8 @@ export interface RecipientEmailSpec {
   render: (r: EmailRecipient) => ReactElement;
   /** A required notice: a render failure stages a `review:render_failed` row in its place, not a Sentry event. */
   traceRenderFailure?: boolean;
+  /** Recipients this send is required for (`lib/notifications/required-notices.ts`). */
+  requiredFor?: readonly string[];
 }
 
 export type SpecBuild<TArgs> = (args: TArgs) => {
@@ -85,7 +87,12 @@ export async function prepareSpecEmails(
   db?: StagingTx,
 ): Promise<PreparedRecipientEmails> {
   const traced = spec.traceRenderFailure === true;
-  const recipients = await loadEmailRecipients(userIds, spec.category, db);
+  const recipients = await loadEmailRecipients(
+    userIds,
+    spec.category,
+    db,
+    spec.requiredFor,
+  );
   return prepareRecipientEmails(
     {
       recipients,
@@ -146,7 +153,12 @@ export async function sendSpecGuarded(
   deferAttempt?: boolean,
 ): Promise<SendToRecipientsResult> {
   try {
-    const recipients = await loadEmailRecipients(userIds, spec.category);
+    const recipients = await loadEmailRecipients(
+      userIds,
+      spec.category,
+      undefined,
+      spec.requiredFor,
+    );
     return await sendToRecipients({
       recipients,
       emailType: spec.emailType,
@@ -196,8 +208,34 @@ export async function stageSpecOncePerRecipient(
   userIds: string[],
   claim: RecipientClaim,
 ): Promise<StagedRecipientEmail[]> {
-  const recipients = await loadEmailRecipients(userIds, spec.category);
-  if (recipients.length === 0) return [];
+  return (await stageOncePerRecipient(spec, userIds, claim, true)).staged;
+}
+
+/**
+ * {@link stageSpecOncePerRecipient} for a sweep: it never reports a render
+ * failure per row, and returns the count for the caller to report once per run.
+ */
+export async function stageSpecOncePerRecipientQuietly(
+  spec: RecipientEmailSpec,
+  userIds: string[],
+  claim: RecipientClaim,
+): Promise<{ staged: StagedRecipientEmail[]; renderFailures: number }> {
+  return stageOncePerRecipient(spec, userIds, claim, false);
+}
+
+async function stageOncePerRecipient(
+  spec: RecipientEmailSpec,
+  userIds: string[],
+  claim: RecipientClaim,
+  reportToSentry: boolean,
+): Promise<{ staged: StagedRecipientEmail[]; renderFailures: number }> {
+  const recipients = await loadEmailRecipients(
+    userIds,
+    spec.category,
+    undefined,
+    spec.requiredFor,
+  );
+  if (recipients.length === 0) return { staged: [], renderFailures: 0 };
   const taken = await prisma.idempotencyRecord.findMany({
     where: {
       scope: claim.scope,
@@ -207,23 +245,31 @@ export async function stageSpecOncePerRecipient(
   });
   const takenIds = new Set(taken.map((t) => t.userId));
   const pending: { userId: string; prepared: PreparedRecipientEmails }[] = [];
+  let renderFailures = 0;
   for (const recipient of recipients) {
     if (takenIds.has(recipient.userId)) continue;
-    const prepared = await prepareRecipientEmails({
-      recipients: [recipient],
-      emailType: spec.emailType,
-      from: spec.from ?? SENDERS.notifications,
-      subject: spec.subject,
-      render: spec.render,
-      entityRef: spec.entityRef,
-    });
+    const prepared = await prepareRecipientEmails(
+      {
+        recipients: [recipient],
+        emailType: spec.emailType,
+        from: spec.from ?? SENDERS.notifications,
+        subject: spec.subject,
+        render: spec.render,
+        entityRef: spec.entityRef,
+      },
+      { reportToSentry },
+    );
+    renderFailures += prepared.failed;
     if (prepared.messages.length > 0) {
       pending.push({ userId: recipient.userId, prepared });
     }
   }
-  if (pending.length === 0) return [];
+  if (pending.length === 0) return { staged: [], renderFailures };
 
-  return prisma.$transaction((tx) => claimAndStagePrepared(tx, claim, pending));
+  const staged = await prisma.$transaction((tx) =>
+    claimAndStagePrepared(tx, claim, pending),
+  );
+  return { staged, renderFailures };
 }
 
 /**

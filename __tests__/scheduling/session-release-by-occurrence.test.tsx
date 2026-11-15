@@ -4,13 +4,19 @@
  * times works on a phone: the day list replaces the grid, and the release
  * step plus "Any time works" stay reachable.
  */
+import { isTooSoonFor, leadMsFor } from "@/lib/booking/lead-time";
 import React from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 
 import type { OccurrenceLike } from "@/lib/appointments/view-model";
 
 jest.mock("@/components/scheduling/SafeUnifiedCalendar", () => ({
-  SafeUnifiedCalendar: () => <div data-testid="week-grid" />,
+  SafeUnifiedCalendar: (props: { contextChips?: { value: string }[] }) => (
+    <div
+      data-testid="week-grid"
+      data-chips={props.contextChips?.map((chip) => chip.value).join("|")}
+    />
+  ),
 }));
 jest.mock("@/components/scheduling/MobileDayListPicker", () => ({
   MobileDayListPicker: (props: { timesNeeded: number; zone: string }) => (
@@ -29,6 +35,7 @@ import { groupReleasableSessions } from "@/components/scheduling/SessionReleaseP
 import { TimePicker } from "@/components/scheduling/TimePicker";
 import {
   rescheduleConsulteePolicy,
+  rescheduleConsultantPolicy,
   type TimePickerSubject,
 } from "@/components/scheduling/time-picker-policy";
 
@@ -92,7 +99,10 @@ describe("TimePicker for a subscription reschedule", () => {
     setViewport(true);
     render(
       <TimePicker
-        policy={rescheduleConsulteePolicy({ onSubmit: jest.fn() })}
+        policy={rescheduleConsulteePolicy(
+          { onSubmit: jest.fn() },
+          { settled: true },
+        )}
         subject={subject}
         viewerZone="Asia/Kolkata"
       />,
@@ -103,6 +113,11 @@ describe("TimePicker for a subscription reschedule", () => {
       screen.getByText("All 3 sessions are released."),
     ).toBeInTheDocument();
     expect(screen.getByText(/Pick 3 times\./)).toBeInTheDocument();
+    // The notice rule rides the grid's context row, not a banner above it.
+    expect(screen.queryByText(/Note:/)).not.toBeInTheDocument();
+    expect(screen.getByTestId("week-grid").dataset.chips).toBe(
+      "within 24 h only if accepted · not refunded",
+    );
   });
 
   it("on a phone shows the day list, and Any time works stays reachable", async () => {
@@ -110,7 +125,7 @@ describe("TimePicker for a subscription reschedule", () => {
     const onSubmit = jest.fn();
     render(
       <TimePicker
-        policy={rescheduleConsulteePolicy({ onSubmit })}
+        policy={rescheduleConsulteePolicy({ onSubmit }, { settled: true })}
         subject={subject}
         viewerZone="Asia/Kolkata"
       />,
@@ -120,9 +135,96 @@ describe("TimePicker for a subscription reschedule", () => {
     expect(dayList).toHaveAttribute("data-zone", "Asia/Kolkata");
     expect(screen.queryByTestId("week-grid")).not.toBeInTheDocument();
     expect(screen.queryByText(/desktop/i)).not.toBeInTheDocument();
+    expect(screen.getByTestId("scheduling-context").textContent).toContain(
+      "within 24 h only if accepted",
+    );
+    expect(screen.getByTestId("zone-switch")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Any time works" }));
     expect(onSubmit).toHaveBeenCalledWith(
       expect.objectContaining({ proposedSlots: undefined }),
     );
+  });
+
+  it("a session under 24 hours away is moved only with named times", async () => {
+    setViewport(false);
+    render(
+      <TimePicker
+        policy={rescheduleConsulteePolicy(
+          { onSubmit: jest.fn() },
+          { settled: true },
+        )}
+        subject={{
+          ...subject,
+          eventType: "consultation",
+          slots: [
+            occurrence(0, {
+              startsAt: new Date(Date.now() + 5 * 60 * 60 * 1000).toISOString(),
+              endsAt: new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString(),
+            }),
+          ],
+        }}
+        viewerZone="Asia/Kolkata"
+      />,
+    );
+    await screen.findByTestId("day-list");
+    expect(
+      screen.queryByRole("button", { name: "Any time works" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /no new time confirms by itself: your expert has to accept it at least 15 minutes before the session starts/,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/confirms straight away/),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("the reschedule grid offers only what the route accepts", () => {
+  it.each([
+    ["learner", rescheduleConsulteePolicy, true],
+    ["learner", rescheduleConsulteePolicy, false],
+    ["expert", rescheduleConsultantPolicy, true],
+    ["expert", rescheduleConsultantPolicy, false],
+  ] as const)(
+    "%s, settled %s: the grid's lead is the route's",
+    (_side, policyFor, settled) => {
+      const policy = policyFor({ onSubmit: jest.fn() }, { settled });
+      const gridLead = leadMsFor(policy.lead.purpose, {
+        settled: policy.lead.unpaid !== true,
+      });
+      // The reschedule route checks a party's proposed time with this lead.
+      expect(gridLead).toBe(leadMsFor("allocate", { settled }));
+    },
+  );
+});
+
+describe("the reschedule pages agree with the server inside 24 hours", () => {
+  it.each([
+    ["learner", rescheduleConsulteePolicy],
+    ["expert", rescheduleConsultantPolicy],
+  ])(
+    "the %s may pick a session and a new time under 24 hours away",
+    (_side, policyFor) => {
+      const policy = policyFor({ onSubmit: jest.fn() }, { settled: true });
+      const now = Date.now();
+      expect(policy.minLeadHours).toBe(0);
+      expect(
+        isTooSoonFor(
+          policy.lead.purpose,
+          { settled: true },
+          now + 4 * 3_600_000,
+          now,
+        ),
+      ).toBe(false);
+    },
+  );
+
+  it("the expert always names times", () => {
+    expect(
+      rescheduleConsultantPolicy({ onSubmit: jest.fn() }, { settled: true })
+        .allowReleaseWithoutTime,
+    ).toBe(false);
   });
 });

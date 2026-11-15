@@ -157,7 +157,7 @@ function runningClass(seats: number, cutoff: number) {
     },
     cls: {
       id: "cls-1",
-      status: "IN_PROGRESS",
+      status: "SCHEDULED",
       deletedAt: null,
       maxParticipants: null,
       classPlan: {

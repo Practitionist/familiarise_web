@@ -5,8 +5,8 @@
  *
  * Returns enough context for the invite landing page to show a meaningful
  * "You've been invited to join Acme Corp as a Learner" message before the
- * visitor signs in. The token is 64-char random hex (256-bit entropy) so
- * exposing org name + role to the token-holder is safe.
+ * visitor signs in. The token is the invitation's cuid id: hard to guess but
+ * not a secret-grade random value, so the route is rate limited per IP.
  *
  * Deliberately returns the minimum: orgName, orgLogo, role, expiresAt.
  * Does NOT expose inviter identity, member counts, or billing info.
@@ -20,6 +20,11 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import {
+  applyRateLimit,
+  getClientIp,
+  invitePreviewLimiter,
+} from "@/lib/rate-limit";
 
 // Factory — a Response body is a one-shot stream; never reuse a Response instance
 // across multiple requests. Also sets Cache-Control: no-store so browsers and
@@ -35,6 +40,13 @@ function invalidResponse() {
 }
 
 export async function GET(req: NextRequest) {
+  const limited = await applyRateLimit(
+    invitePreviewLimiter,
+    getClientIp(req),
+    "invite-preview",
+  );
+  if (limited) return limited;
+
   const token = req.nextUrl.searchParams.get("token");
   if (!token || token.length < 16) {
     return invalidResponse();

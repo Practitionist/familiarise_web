@@ -29,27 +29,21 @@ jest.mock("../../../lib/compliance/dpdp", () => ({
   __esModule: true,
   checkConsent: jest.fn(async () => true),
 }));
-jest.mock("../../../lib/novu", () => {
-  const noop = jest.fn(async () => []);
-  return new Proxy(
-    {},
-    { get: (_target, prop) => (prop === "__esModule" ? true : noop) },
-  );
-});
+jest.mock("../../../lib/novu", () =>
+  jest.requireActual("../../fixtures/noop-module").noopModule(),
+);
 const sessionUser = { current: null as null | Record<string, unknown> };
 jest.mock("../../../lib/auth-helpers", () => ({
   ...jest.requireActual("../../../lib/auth-helpers"),
   requireApiAuth: async () => ({ session: { user: sessionUser.current } }),
   isPrivileged: () => false,
 }));
-jest.mock("../../../lib/rate-limit", () => ({
-  ...jest.requireActual("../../../lib/rate-limit"),
-  applyRateLimit: async () => null,
-}));
-jest.mock("../../../lib/stream/access-revocation", () => ({
-  revokeEndedBookingChatAccess: jest.fn(async () => undefined),
-  revokeEndedEventChatAccess: jest.fn(async () => undefined),
-}));
+jest.mock("../../../lib/rate-limit", () =>
+  jest.requireActual("./harness-edges").rateLimitMock(),
+);
+jest.mock("../../../lib/stream/access-revocation", () =>
+  jest.requireActual("./harness-edges").chatRevocationMock(),
+);
 
 import { handleCheckout } from "../../../lib/payments/checkout";
 import { POST as cancel } from "../../../app/api/appointments/[appointmentId]/cancel/route";

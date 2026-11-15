@@ -42,6 +42,8 @@ const row = (id: string, status: string) => ({
   appointment: { id: `appt-${id}` },
   consultationPlan: {
     title: "Plan",
+    consultantProfileId: "cp-1",
+    durationInHours: 1,
     consultantProfile: { user: { name: "Expert" } },
   },
   requestedBy: { user: { name: "Learner" } },
@@ -82,6 +84,31 @@ it("reads PENDING and APPROVED-unallocated rows on bookings the org owns", async
   ).toEqual({ pending: true, approved: false });
 });
 
+it("sizes a pick from the booked session, not a plan edited since", async () => {
+  consultationFindMany.mockResolvedValue([
+    {
+      ...row("approved", "APPROVED"),
+      appointment: {
+        id: "appt-approved",
+        occurrences: [
+          {
+            startsAt: new Date("2026-10-05T09:00:00Z"),
+            endsAt: new Date("2026-10-05T10:00:00Z"),
+            deletedAt: null,
+            completionStatus: "RESCHEDULED",
+          },
+        ],
+      },
+      consultationPlan: {
+        ...row("x", "APPROVED").consultationPlan,
+        durationInHours: 2,
+      },
+    },
+  ]);
+  const [approved] = await readOrgPendingRequests("o1");
+  expect(approved.sessionMinutes).toBe(60);
+});
+
 it("offers Allocate only on the approved row", async () => {
   const rows = await readOrgPendingRequests("o1");
   const host = document.createElement("div");
@@ -93,6 +120,6 @@ it("offers Allocate only on the approved row", async () => {
   );
   // The table renders a desktop and a mobile layout, so ids repeat per layout.
   expect(new Set(allocateIds)).toEqual(new Set(["appt-approved"]));
-  expect(host.textContent).toContain("Awaiting expert approval");
+  expect(host.textContent).toContain("Requested");
   act(() => root.unmount());
 });

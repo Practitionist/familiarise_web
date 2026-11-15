@@ -82,8 +82,9 @@ jest.mock("../../lib/compliance/dpdp", () => ({
   ConsentRequiredError: class ConsentRequiredError extends Error {},
 }));
 
+const mockOrgStreamConfigured = jest.fn(() => true);
 jest.mock("../../lib/stream-client", () => ({
-  isStreamConfigured: () => true,
+  isStreamConfigured: () => mockOrgStreamConfigured(),
   isStreamVideoConfigured: () => false,
   generateVideoToken: () => "video-token-123",
   generateChatToken: () => "chat-token-123",
@@ -289,6 +290,11 @@ describe("Stream security, consent gates, and organization boundaries", () => {
       mockGetSession.mockResolvedValueOnce({
         user: { id: "user-no-consent", role: "CONSULTEE" },
       });
+      mockPrisma.user.findUnique.mockResolvedValueOnce({
+        id: "user-no-consent",
+        erasedAt: null,
+        banned: false,
+      });
       mockCheckConsent.mockResolvedValueOnce(false);
 
       const { tokenProvider } =
@@ -354,6 +360,23 @@ describe("Stream security, consent gates, and organization boundaries", () => {
   });
 
   describe("Enterprise organization Stream revocation and wind-down", () => {
+    it("reports a member revocation as still owed when Stream is not configured", async () => {
+      mockOrgStreamConfigured.mockReturnValueOnce(false);
+      const { revokeMemberStreamAccess } =
+        await import("../../lib/stream/org-access-revocation");
+      const result = await revokeMemberStreamAccess({
+        orgId: "org-a",
+        userId: "user-a",
+      });
+      expect(result).toEqual({
+        channelsRemoved: 0,
+        tokenRevoked: false,
+        complete: false,
+        failures: ["Stream is not configured"],
+      });
+      expect(mockPrisma.webinar.findMany).not.toHaveBeenCalled();
+    });
+
     it("delegates a member-surface discovery failure to the invocation reporter", async () => {
       const error = new Error("surface lookup failed");
       mockPrisma.webinar.findMany.mockRejectedValueOnce(error);

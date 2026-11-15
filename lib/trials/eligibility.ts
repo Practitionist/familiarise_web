@@ -4,27 +4,17 @@ import type { TrialStatus } from "@prisma/client";
  * Which existing trial statuses block a fresh trial request.
  *
  * `Trial` is `@@unique([consulteeProfileId, consultantProfileId])`, so
- * exactly one row can exist per learner–consultant pair. Eligibility used to be
- * "no row at all", which meant ANY prior trial — including one the consultant
- * declined, one the learner cancelled, or (once paid trials landed) one that
- * simply lapsed unpaid — barred that learner from ever trialling that
- * consultant again. Never paying isn't the same as having used your trial.
- *
- * So only trials that are live or already delivered block a re-request. The
+ * exactly one row can exist per learner–consultant pair. Only trials that are
+ * live or already delivered block a re-request; never paying is not using a trial. The
  * terminal-without-delivery outcomes below free the pair, and the old row is
  * deleted when the new request is made (the unique constraint leaves no other
  * option).
  *
- * NOTE ON ABUSE: this is deliberately the permissive setting. It does allow
- * someone to repeatedly request → get declined → request again, which could be
- * used to pester a consultant, and to repeatedly hold slots without paying. If
- * that shows up in practice, tighten by moving REJECTED (pestering) and/or
- * CANCELLED (slot-holding) back into the blocking set — that single change
- * restores the old one-shot behaviour without touching any call site.
+ * This is deliberately permissive: a learner can hold a time, let it lapse unpaid
+ * and ask again. Moving CANCELLED into the blocking set makes a trial one-shot.
  */
 export const TRIAL_REQUEST_BLOCKING_STATUSES: TrialStatus[] = [
-  "PENDING", // awaiting the consultant
-  "AWAITING_PAYMENT", // accepted, pay-link live and not yet lapsed
+  "AWAITING_PAYMENT", // a paid trial holding its time, pay window open
   "SCHEDULED", // confirmed, upcoming
   "COMPLETED", // trial actually delivered — this is the real one-per-pair rule
   "CONVERTED", // delivered and subscribed
@@ -32,8 +22,7 @@ export const TRIAL_REQUEST_BLOCKING_STATUSES: TrialStatus[] = [
 
 /** Terminal outcomes where the learner never received a trial. */
 export const TRIAL_REQUEST_FREEING_STATUSES: TrialStatus[] = [
-  "CANCELLED", // withdrawn by the learner, or lapsed unpaid
-  "REJECTED", // declined by the consultant
+  "CANCELLED", // cancelled by either party, or lapsed unpaid
 ];
 
 export function blocksNewTrialRequest(status: TrialStatus): boolean {

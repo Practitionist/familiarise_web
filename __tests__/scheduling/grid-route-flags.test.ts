@@ -5,8 +5,8 @@
 /**
  * The availability grid route: a soft-deleted consultant publishes nothing
  * (and is never 304'd into a stale grid), cells inside the booking lead time
- * carry `tooSoon`, and the subscription quota overlay is authorized, painted
- * and folded into the ETag.
+ * carry `tooSoon`, the subscription quota overlay is authorized, painted
+ * and folded into the ETag, and only the host's own move frees the event's sessions.
  */
 
 jest.mock("../../lib/prisma", () => ({
@@ -18,6 +18,7 @@ jest.mock("../../lib/prisma", () => ({
     membership: { findFirst: jest.fn() },
     subscription: { findFirst: jest.fn() },
     appointmentOccurrence: { aggregate: jest.fn(), findMany: jest.fn() },
+    class: { findFirst: jest.fn() },
   },
 }));
 
@@ -409,5 +410,44 @@ describe("quota overlay", () => {
     const body = (await res.json()) as Record<string, unknown>;
     expect(body).not.toHaveProperty("quota");
     expect(mockedSubscription).not.toHaveBeenCalled();
+  });
+});
+
+describe("an event's own sessions on a move", () => {
+  it("leaves the class's appointment out of host and co-host busy time for its host only", async () => {
+    (prisma.class.findFirst as jest.Mock).mockResolvedValue({
+      appointment: { id: "appt-class" },
+      classPlan: {
+        collaborators: [
+          {
+            consultantProfileId: "cohost-1",
+            consultantProfile: { id: "cohost-1", userId: "user-cohost" },
+          },
+        ],
+      },
+    });
+    const query = `${DAY_QUERY}&classId=class-1&purpose=reschedule`;
+    const notMoving = { id: { not: "appt-class" } };
+    const busyWheres = () =>
+      mockedAppointments.mock.calls.map(
+        ([args]: [{ where: { AND: unknown[] } }]) => args.where.AND,
+      );
+
+    mockedSession.mockResolvedValue({
+      user: { id: "user-consultant", consultantProfileId: CONSULTANT_ID },
+    });
+    const own = await GET(request(query), { params });
+    expect(own.status).toBe(200);
+    expect(busyWheres()).toHaveLength(2);
+    for (const and of busyWheres()) expect(and).toContainEqual(notMoving);
+
+    mockedAppointments.mockClear();
+    mockedSession.mockResolvedValue({
+      user: { id: "user-other", consultantProfileId: "consultant-2" },
+    });
+    const other = await GET(request(query), { params });
+    expect(other.status).toBe(200);
+    for (const and of busyWheres()) expect(and).not.toContainEqual(notMoving);
+    expect(other.headers.get("ETag")).not.toBe(own.headers.get("ETag"));
   });
 });

@@ -2,6 +2,9 @@
  * Service for managing subscription plans
  */
 
+import { z } from "zod";
+
+import { requireJsonResponse } from "@/lib/fetch-helpers";
 import type { SubscriptionPlan } from "@/schemas/plans";
 import { SubscriptionPlanEvent } from "@/types/planner-events";
 import {
@@ -9,6 +12,19 @@ import {
   priceToPaise,
   recordingPayload,
 } from "@/components/planner/services/shared/plan-payload";
+
+type SavedPlan = SubscriptionPlanEvent["subscriptionPlan"];
+
+/** The only plan field this service reads; the rest passes through to the editor. */
+const SavedPlanIdSchema = z.object({ id: z.string().min(1) });
+
+/** The save envelope: the plan row plus what the publish check said about the expert's hours. */
+const SavedPlanSchema = z.object({
+  data: z.custom<SavedPlan>(
+    (value) => SavedPlanIdSchema.safeParse(value).success,
+  ),
+  feasibilityWarnings: z.array(z.object({ message: z.string() })).optional(),
+});
 
 export class SubscriptionService {
   /**
@@ -86,7 +102,9 @@ export class SubscriptionService {
   static async saveSubscriptionPlan(
     planData: Partial<SubscriptionPlanEvent>,
     consultantId: string,
-  ): Promise<SubscriptionPlanEvent> {
+  ): Promise<
+    SubscriptionPlanEvent & { feasibilityWarnings: { message: string }[] }
+  > {
     try {
       if (!planData.subscriptionPlan) {
         throw new Error("Subscription plan data is required");
@@ -136,21 +154,21 @@ export class SubscriptionService {
         body: JSON.stringify(requestBody),
       });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(
-          errorData.error ||
-            `Failed to ${isUpdate ? "update" : "create"} subscription plan`,
-        );
-      }
-
-      const { data: subscriptionPlan } = await response.json();
+      // A refusal keeps its status, code and body so the editor can show its reasons.
+      const saved = SavedPlanSchema.parse(
+        await requireJsonResponse(
+          response,
+          `Failed to ${isUpdate ? "update" : "create"} subscription plan`,
+        ),
+      );
+      const subscriptionPlan = saved.data;
 
       // API returns topics as strings, no transformation needed
       return {
         id: subscriptionPlan.id,
         type: "subscription" as const,
         subscriptionPlan,
+        feasibilityWarnings: saved.feasibilityWarnings ?? [],
       };
     } catch (error) {
       console.error("[SubscriptionService.saveSubscriptionPlan] Error:", error);

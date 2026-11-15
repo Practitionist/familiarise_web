@@ -12,7 +12,10 @@ import { forEachChunk } from "@/lib/stream/batch";
 import { toStreamUser } from "@/lib/stream/user-payload";
 import { streamLogger } from "@/lib/stream-logger";
 import { markUserSynced, isUserSynced } from "@/lib/stream-cache";
-import { dmEligibleStatusFilter } from "@/lib/stream/dm-eligibility-statuses";
+import {
+  dmEligibleStatusFilter,
+  excludeNonDmDirectBooking,
+} from "@/lib/stream/dm-eligibility-statuses";
 import { checkConsent, ConsentRequiredError } from "@/lib/compliance/dpdp";
 import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
 import type { UpsertRefusal } from "@/lib/stream/connect-failure";
@@ -454,6 +457,7 @@ export const searchUsersWithRelationships = async (searchTerm: string) => {
               },
               requestedById: { in: resultConsulteeProfileIds },
               status: dmEligibleStatusFilter(),
+              ...excludeNonDmDirectBooking(),
             },
             select: {
               requestedBy: { select: { user: { select: { id: true } } } },
@@ -478,6 +482,7 @@ export const searchUsersWithRelationships = async (searchTerm: string) => {
               },
               requestedById: { in: resultConsulteeProfileIds },
               status: dmEligibleStatusFilter(),
+              ...excludeNonDmDirectBooking(),
             },
             select: {
               requestedBy: { select: { user: { select: { id: true } } } },
@@ -506,6 +511,7 @@ export const searchUsersWithRelationships = async (searchTerm: string) => {
               },
               requestedById: currentUser.consulteeProfileId,
               status: dmEligibleStatusFilter(),
+              ...excludeNonDmDirectBooking(),
             },
             select: {
               consultationPlan: {
@@ -533,6 +539,7 @@ export const searchUsersWithRelationships = async (searchTerm: string) => {
               },
               requestedById: currentUser.consulteeProfileId,
               status: dmEligibleStatusFilter(),
+              ...excludeNonDmDirectBooking(),
             },
             select: {
               subscriptionPlan: {

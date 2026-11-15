@@ -215,14 +215,21 @@ designed, not a defect) or a finding to send back to the builder.
 
 ## 9. The agent-run E2E corpus
 
-`prompts/booking-algorithm-tests/` holds the numbered end-to-end cases, each a
-self-contained QA run that seeds via SQL, exercises the APIs, asserts database
-state and cleans up. Conventions (`prompts/README.md`): the database is the
-arbiter, each case suffixes its ids and emails with its agent number, and each
-carries its rules inline. Add a case when a bug would not have been caught by a
-unit test.
+`prompts/booking-qa/` holds the agent-run QA suite: folders `01-setup-and-smoke/`
+through `13-copy-a11y-responsive/`, one per area (consultations, subscriptions,
+webinars, classes, trials, money, concurrency, time zones, dashboards, sweeps,
+copy and accessibility). An agent drives the UI through the Chrome DevTools MCP
+(one browser, one tab, the `/tmp/fw-browser.lock` lock) and reads and seeds data
+through the Supabase MCP, whose writes need owner approval. Read its `README.md`
+and `_shared/` first: the personas and their time zones, base fixtures, SQL
+recipes (including the host overlap invariant), and the reporting taxonomy
+(verdicts plus finding types such as INCONSISTENCY, FALSE-INFO, COPY / AI-SLOP
+and MISSED-OPPORTUNITY). The database is the arbiter, every fixture is prefixed
+`qa-<caseId>`, and every state change is checked on each dashboard that shows
+it. When a booking behaviour changes, update the case that covers it in the same
+PR. Add a case when a bug would not have been caught by a unit test.
 
-## 10. QA hygiene when you drive the Wave 0 cases
+## 10. QA hygiene when you drive the agent-run cases
 
 - **Sentry may be quota-blind.** The free plan allows 5,000 errors a month, and a
   flood can leave a preview ingesting nothing. Before concluding "no error was
@@ -240,8 +247,8 @@ unit test.
   `error = 'permanent: qa fixture'` (the `permanent:` prefix is in
   `TERMINAL_ERROR_PREFIXES` in `lib/webhooks/event-log.ts`) on every synthetic
   row before cleanup so the sweep never re-drives it.
-- **Prefix every fixture** with the case's agent number and never touch a row a
-  real `Payment` points at; the database refuses the delete anyway.
+- **Prefix every fixture** with `qa-<caseId>` and never touch a row a real
+  `Payment` points at; the database refuses the delete anyway.
 - **Seed availability with its local columns.** A weekly row with NULL `timezone`
   or `local*` columns is refused by every reader, so a SQL-seeded row must set
   `timezone`, `localStartDay`, `localStartMinutes`, `localEndDay` and
@@ -281,12 +288,31 @@ database named `ci`. Run it locally like this, and only like this:
 4. Run `CI=true DATABASE_URL=postgresql://ci@localhost:<port>/ci npx jest -c jest.db.config.ts <paths>`,
    then stop the server and delete its data directory.
 
-Known failures: three booking suites, `seat-races`, `notice-floor-real-path` and
-`seat-hold-grace` under `__tests__/db/booking/`, fail under Jest with "A dynamic
-import callback was invoked without --experimental-vm-modules" while rendering
-emails. The cause is the email stack being loaded through `import()` (as in
-`lib/novu/stage-then-attempt.ts`), which Jest's VM cannot run without that flag.
-The production runtime is unaffected.
+An agent cannot use step 2 as written: `.claude/settings.json` denies `prisma db push` and `npm run db:sidecars` in every permission mode, and a worktree usually has a `.env`. The same tier runs without either, on a disposable container. From the worktree, run:
+
+```bash
+scripts/dev/db-tier-local.sh <log-file> [jest args…]
+```
+
+It takes the heavy lock for the whole run (`.claude/skills/workflow/references/model-orchestration.md` section 6b), writes everything to `<log-file>` and prints the head at start and end, the jest totals and the log path. Extra arguments go to jest, so `scripts/dev/db-tier-local.sh /tmp/db.log __tests__/db/booking/cancel-money.db.test.ts` runs one suite. What it does, in order:
+
+1. Starts `postgres:17` in a container with a unique name, on a port Docker picks (`-p 127.0.0.1::5432`), so a second run never collides, and waits for `pg_isready`.
+2. Loads the branch's own schema with the read-only diff: `node_modules/.bin/prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script`, piped into `psql -v ON_ERROR_STOP=1` inside the container. Then it applies the sidecar files the same way, in the order `db:sidecars` uses (`check-constraints`, `ledger-triggers`, `payment-legs-triggers`, `analytics-views`). A load error aborts the run with an `ABORT:` line instead of testing a half-built schema.
+3. Exports every key named in any `.env*` file in the worktree as an empty string, so `next/jest` and `prisma.config.ts` cannot load a live credential. The keys come from `dotenv`'s own parser, the grammar `next/jest` loads, so `KEY = value`, an indented `export KEY=…` and quoted multi-line values are all covered; values are never read out. A file dotenv cannot read, or a key that is not a shell variable name, aborts the run. Templates (`.env.sample`, `.env.example`) are skipped: nothing loads them, and an empty `EMAIL_DELIVERY_MODE` would defeat the `??= "live"` default in `jest.setup.ts` and hold the relay suites' test emails. Then it sets `CI=true`, a dummy `BETTER_AUTH_SECRET`, and `DATABASE_URL` and `DIRECT_URL` to `postgresql://postgres:postgres@localhost:<port>/ci`. It refuses to go on unless both URLs contain `@localhost:` and end in `/ci`, and prints the host, port and database name (never a secret).
+4. Runs `node_modules/.bin/jest -c jest.db.config.ts --maxWorkers=1 --coverage=false` plus any extra arguments. It calls the installed binaries, never `npx`, and stops with an `ABORT:` line if either is missing. An `EXIT` trap removes the container and releases the lock however the run ends.
+
+With `--log-statements` first (`scripts/dev/db-tier-local.sh --log-statements <log-file> <test file> -t "<test name>"`), Postgres runs with `log_statement=all` and the script writes `<log-file>.statements`: one line per statement jest issued after the schema load, which the `statement-counter` agent groups and counts. The count includes the test's own fixture setup. When the log cannot be read, the start marker is missing or no statement follows it, the script prints `statements: UNAVAILABLE (<reason>)`, writes no statements file, and exits 3 even though jest passed, so an unavailable measurement can never read as a zero.
+
+The script never runs `prisma db push`, `migrate deploy` or an `npm run db:*` script.
+
+CI runs this tier inside its lint job only when its changed-paths step sets `db` in `.github/workflows/ci.yaml`: a change under the database paths it lists, or a full run. A PR that changes booking, payment or Stream state without either has not had the tier run until someone runs it this way.
+
+The whole tier passes without extra Node flags, here and in CI (63 suites, 267
+tests on 2026-11-14), including `seat-races`, `notice-floor-real-path` and
+`seat-hold-grace`, which once failed with "A dynamic import callback was invoked
+without --experimental-vm-modules" while rendering emails. If that error comes
+back, a suite is loading the email stack through a real `import()`; CI does not
+set the flag, so fix the suite, not the command.
 
 Most booking suites in `__tests__/db/booking/` make two writers meet at a real
 conflict and assert exactly one commit, one typed refusal, and a raw-SQL

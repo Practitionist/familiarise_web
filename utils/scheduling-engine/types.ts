@@ -154,12 +154,16 @@ export interface AllocationRequest {
    * or sponsor org operator, or a door that does not say) is a one-off.
    */
   byConsultant?: boolean;
+  /** The person who placed the times, recorded on the approval's history row; null for a sweep. */
+  actorUserId?: string | null;
+  /** Manual mode: run every check before the locks' write and stop; nothing is written. */
+  checkOnly?: boolean;
 }
 
 /** The per-call extras every allocation mode threads into its transaction. */
 export type AllocationTxOptions = Pick<
   AllocationRequest,
-  "approvableFrom" | "inTx"
+  "approvableFrom" | "inTx" | "actorUserId" | "checkOnly"
 > & {
   /** The `reason` the approval's history row records (`scheduleReason`). */
   historyReason?: string;
@@ -225,6 +229,7 @@ export type AllocationErrorCode =
   | "NOT_FOUND" // event/consultant missing — 400
   | "INVALID_MODE" // unknown allocation mode — 400
   | "LOCK_CONTENTION" // Redis lock busy / replay in flight — 409
+  | "EVENT_CHECKOUT_BUSY" // a seat checkout holds the event while it is re-planned — 409
   | "ALREADY_ALLOCATED" // confirmed slots already exist for this event — 409
   | "RESCHEDULE_STATE_CHANGED" // #1012 stale-tab tentative count moved — 409
   | "SLOT_TAKEN" // a chosen time went to someone else mid-allocation — 409
@@ -243,7 +248,10 @@ export type AllocationErrorCode =
   | "TOO_CLOSE_TO_START" // an unpaid approval whose first session starts too soon to pay — 409
   | "RESCHEDULE_NO_LONGER_OPEN" // the confirmed proposal was answered or expired mid-move — 409
   | "PROPOSAL_AWAITING_CLIENT" // the consultant's own proposal with times is still open — 409
+  | "PROPOSE_TIMES_REQUIRED" // the expert's bare release of a paid session is answered by proposed times only — 409
+  | "NEEDS_ACCEPTANCE" // a re-placed time under 24 hours away needs the other side's acceptance — 409
   | "SESSION_HAS_REMEDY" // a session to be re-planned carries an incident remedy — 409
+  | "USE_RETIME" // a webinar or class with a live seat is re-timed, never re-planned — 409
   | "BOOKING_LOCK_UNAVAILABLE" // the locking service is down; retry shortly — 503
   | "SEARCH_TIMEOUT" // the auto search ran out of time before placing every session — 503
   | "UNKNOWN_ERROR"; // infra / unexpected — 500

@@ -30,7 +30,6 @@
  */
 
 import type {
-  AppointmentStatus,
   ConsultantVerificationStatus,
   DocumentReviewStatus,
   EarningStatus,
@@ -42,7 +41,6 @@ import type {
   OccurrenceCompletionStatus,
   OccurrenceOutcome,
   ParticipantStatus,
-  TrialStatus,
   NewsletterStatus,
   PlatformFeedbackStatus,
   WebinarStatus,
@@ -75,109 +73,9 @@ function resolve<K extends string>(
   };
 }
 
-// ───────────────────────────── AppointmentStatus ─────────────────────────────
-// Booking lifecycle for consultations / subscriptions (@@map RequestStatus).
-
-export const APPOINTMENT_STATUS_BADGE: Record<
-  AppointmentStatus,
-  StatusBadgeStyle
-> = {
-  PENDING: {
-    label: "Pending",
-    className: "bg-amber-100 text-amber-900 border-amber-200",
-    dotClassName: "bg-amber-500",
-  },
-  APPROVED: {
-    label: "Approved",
-    className: "bg-blue-100 text-blue-900 border-blue-200",
-    dotClassName: "bg-blue-500",
-  },
-  APPROVED_PENDING_PAYMENT: {
-    label: "Payment required",
-    className: "bg-orange-100 text-orange-900 border-orange-200",
-    dotClassName: "bg-orange-500",
-  },
-  SCHEDULED: {
-    label: "Scheduled",
-    className: "bg-emerald-100 text-emerald-900 border-emerald-200",
-    dotClassName: "bg-emerald-500",
-  },
-  COMPLETED: {
-    label: "Completed",
-    className: "bg-green-100 text-green-900 border-green-200",
-    dotClassName: "bg-green-500",
-  },
-  REJECTED: {
-    label: "Rejected",
-    className: "bg-red-100 text-red-900 border-red-200",
-    dotClassName: "bg-red-500",
-  },
-  CANCELLED: {
-    label: "Cancelled",
-    className: "bg-zinc-100 text-zinc-600 border-zinc-200",
-    dotClassName: "bg-zinc-400",
-  },
-  EXPIRED: {
-    label: "Expired",
-    className: "bg-zinc-100 text-zinc-500 border-zinc-200",
-    dotClassName: "bg-zinc-400",
-  },
-};
-
-export const appointmentStatusBadge = (
-  status: AppointmentStatus | string | null | undefined,
-): StatusBadgeStyle => resolve(APPOINTMENT_STATUS_BADGE, status);
-
-// ───────────────────────────── TrialStatus ─────────────────────────────
-
-export const TRIAL_STATUS_BADGE: Record<TrialStatus, StatusBadgeStyle> = {
-  PENDING: {
-    label: "Pending",
-    className: "bg-amber-100 text-amber-900 border-amber-200",
-    dotClassName: "bg-amber-500",
-  },
-  // Accepted by the consultant, waiting on the learner to pay. Amber like
-  // PENDING because both are "waiting", but the label names who we're
-  // waiting on — that distinction is the whole reason this status exists.
-  AWAITING_PAYMENT: {
-    label: "Awaiting payment",
-    className: "bg-amber-100 text-amber-900 border-amber-200",
-    dotClassName: "bg-amber-500",
-  },
-  SCHEDULED: {
-    label: "Scheduled",
-    className: "bg-emerald-100 text-emerald-900 border-emerald-200",
-    dotClassName: "bg-emerald-500",
-  },
-  COMPLETED: {
-    label: "Completed",
-    className: "bg-green-100 text-green-900 border-green-200",
-    dotClassName: "bg-green-500",
-  },
-  CONVERTED: {
-    label: "Converted",
-    className: "bg-purple-100 text-purple-900 border-purple-200",
-    dotClassName: "bg-purple-500",
-  },
-  CANCELLED: {
-    label: "Cancelled",
-    className: "bg-zinc-100 text-zinc-600 border-zinc-200",
-    dotClassName: "bg-zinc-400",
-  },
-  REJECTED: {
-    label: "Rejected",
-    className: "bg-red-100 text-red-900 border-red-200",
-    dotClassName: "bg-red-500",
-  },
-};
-
-export const trialStatusBadge = (
-  status: TrialStatus | string | null | undefined,
-): StatusBadgeStyle => resolve(TRIAL_STATUS_BADGE, status);
-
 // ───────────────────────────── Webinar / Class status ─────────────────────────────
-// WebinarStatus and ClassStatus are enum-identical; one map serves both
-// (same doctrine as EVENT_ALLOWED_FROM in lib/booking/transitions.ts).
+// A host's own event words; bookings and seats read `bookingStatus`
+// (lib/appointments/booking-status.ts). WebinarStatus and ClassStatus are enum-identical.
 
 export const EVENT_STATUS_BADGE: Record<WebinarStatus, StatusBadgeStyle> = {
   DRAFT: {
@@ -189,11 +87,6 @@ export const EVENT_STATUS_BADGE: Record<WebinarStatus, StatusBadgeStyle> = {
     label: "Scheduled",
     className: "bg-emerald-100 text-emerald-900 border-emerald-200",
     dotClassName: "bg-emerald-500",
-  },
-  IN_PROGRESS: {
-    label: "In progress",
-    className: "bg-blue-100 text-blue-900 border-blue-200",
-    dotClassName: "bg-blue-500",
   },
   COMPLETED: {
     label: "Completed",

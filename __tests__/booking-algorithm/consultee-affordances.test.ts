@@ -2,16 +2,24 @@ import {
   consulteeDestructiveAction,
   consulteeMayReschedule,
   openProposalTarget,
+  rescheduleStatusOk,
   type OpenRescheduleProposal,
 } from "@/lib/appointments/consultee-affordances";
 
 describe("#1005 consultee affordances", () => {
-  it("allows reschedule only for 1:1 kinds", () => {
+  it("allows reschedule only for 1:1 kinds, a trial included", () => {
     expect(consulteeMayReschedule("CONSULTATION")).toBe(true);
     expect(consulteeMayReschedule("SUBSCRIPTION")).toBe(true);
+    expect(consulteeMayReschedule("TRIAL")).toBe(true);
     expect(consulteeMayReschedule("WEBINAR")).toBe(false);
     expect(consulteeMayReschedule("CLASS")).toBe(false);
-    expect(consulteeMayReschedule("TRIAL")).toBe(false);
+  });
+
+  it("moves a confirmed trial or an approved request, nothing else", () => {
+    expect(rescheduleStatusOk("TRIAL", "SCHEDULED")).toBe(true);
+    expect(rescheduleStatusOk("TRIAL", "AWAITING_PAYMENT")).toBe(false);
+    expect(rescheduleStatusOk("CONSULTATION", "APPROVED")).toBe(true);
+    expect(rescheduleStatusOk("CONSULTATION", "PENDING")).toBe(false);
   });
 
   it("maps destructive actions by kind", () => {
@@ -28,7 +36,7 @@ describe("#1163 open proposal detection", () => {
     id: `req-${round}`,
     status: "PENDING_REVIEW",
     reason: null,
-    expiresAt: "2026-08-20T10:00:00.000Z",
+    expiresAt: "2099-08-20T10:00:00.000Z",
     initiatorRole: "CONSULTANT",
     initiatedById: "user-1",
     proposedTimes: [

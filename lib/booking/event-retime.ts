@@ -24,7 +24,7 @@ import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
 import { SCHEDULING_INTERVAL_MS } from "@/lib/appointments/occurrences";
 import { seatHoldingParticipant } from "@/utils/scheduling-engine/occupancyPolicy";
 import { BookingRuleError } from "./booking-rule-error";
-import { RESCHEDULE_MIN_LEAD_HOURS } from "./lead-time";
+import { isTooSoonFor, RESCHEDULE_MIN_LEAD_HOURS } from "./lead-time";
 import {
   acceptedCohostProfileIds,
   hostBatchEntries,
@@ -41,8 +41,6 @@ import {
   retimeLeaveUntil,
   splitByClash,
 } from "./retime-leave";
-
-const HOUR_MS = 3_600_000;
 
 export type RetimeResult = {
   occurrenceId: string;
@@ -112,17 +110,16 @@ export async function retimeWebinar(args: {
     );
   }
   const now = new Date();
-  const minLeadMs = RESCHEDULE_MIN_LEAD_HOURS * HOUR_MS;
-  if (session.startsAt.getTime() - now.getTime() < minLeadMs) {
+  // The one reschedule boundary: a start at or inside 24 hours is too soon.
+  const tooSoon = (at: Date) =>
+    isTooSoonFor("reschedule", { settled: true }, at.getTime(), now.getTime());
+  if (tooSoon(session.startsAt)) {
     throw refuse(
       "RETIME_TOO_SOON",
       `A webinar can't be re-timed within ${RESCHEDULE_MIN_LEAD_HOURS} hours of its start. Cancel it instead — everyone is refunded in full.`,
     );
   }
-  if (
-    startsAt.getTime() - now.getTime() < minLeadMs ||
-    startsAt.getTime() % SCHEDULING_INTERVAL_MS !== 0
-  ) {
+  if (tooSoon(startsAt) || startsAt.getTime() % SCHEDULING_INTERVAL_MS !== 0) {
     throw refuse(
       "RETIME_TOO_SOON",
       `Pick a new time on the half hour, at least ${RESCHEDULE_MIN_LEAD_HOURS} hours away.`,
@@ -207,8 +204,12 @@ export async function retimeWebinar(args: {
                   "This webinar changed while you were re-timing it. Refresh and try again.",
                 );
               }
-              const retimeBy = retimeLeaveUntil(now, startsAt);
-              await extendRetimeLeave(tx, "webinar", webinar.id, retimeBy);
+              const retimeBy = await extendRetimeLeave(
+                tx,
+                "webinar",
+                webinar.id,
+                retimeLeaveUntil(now, startsAt),
+              );
               await recomputeEarningsHold(tx, appointmentId);
               // The bells commit with the move; a crash after commit loses none.
               const groups = splitByClash(
@@ -233,7 +234,14 @@ export async function retimeWebinar(args: {
                     planTitle: planTitleOrSessionLabel(plan.title, "webinar"),
                     dashboardUrl,
                   },
-                  { tx, deferAttempt: true },
+                  {
+                    tx,
+                    deferAttempt: true,
+                    required: {
+                      kind: "EVENT_MOVED",
+                      recipients: group.userIds,
+                    },
+                  },
                 );
                 bells.push(...staged.map((r) => r.staged));
               }
@@ -261,6 +269,7 @@ export async function retimeWebinar(args: {
         leaveBy: result.retimeBy,
         clash: group.clash,
         proposedBy: plan.consultantProfile?.user.name ?? undefined,
+        requiredFor: group.userIds,
         dashboardUrl,
       }).catch(() => []),
     ),

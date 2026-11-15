@@ -25,9 +25,15 @@
 
 Rescheduling allows a consultee to request new time slots for an existing appointment without creating a new booking and without triggering any payment operation. The original payment is fully reused -- there is no charge, no refund, and no new invoice.
 
-**Who can trigger a reschedule:** For consultations and subscriptions, the consultee who booked (or the consultant on Manage Timings / allocate). Webinars, classes, and trials are **not** consultee-reschedulable (#1005); group events are organiser-managed.
+**Who can trigger a reschedule:** For consultations and subscriptions, the consultee who booked (or the consultant on Manage Timings / allocate). Webinars and classes are **not** consultee-reschedulable; group events are organiser-managed. A trial is moved once by each side, always to one named window, by `confirmTrialProposal` (see [09-trials.md](./09-trials.md) "Rescheduling a trial").
 
-**Minimum notice:** 24 hours before any affected slot (`MINIMUM_HOURS_BEFORE_RESCHEDULE = 24`). If any slot selected for rescheduling starts within 24 hours, the entire request is rejected.
+**Notice, and who must agree.** The threshold is 24 hours (`RESCHEDULE_MIN_LEAD_HOURS` in `lib/booking/lead-time.ts`, tested through `isShortNotice`). With 24 hours or more before the session and a new time 24 hours or more away, a learner's proposal inside the expert's published hours with both calendars free confirms itself, and an expert's proposal waits for the learner. A move from a session less than 24 hours away, or to a time less than 24 hours away, is an agreed move: either party may propose times (a release with no times is refused with 409 `RESCHEDULE_WINDOW`), it never confirms itself, and the other side must accept before the session's join window opens, 15 minutes before the start. A proposal still open then expires and the session stands as it was: the join gate and the detail read end it and restore the booking at that instant (`settleLapsedProposal`), the lists render it restored from then (`withLapsedMoveRestored`), and the expiry job writes the same on its next run. A proposed time must also clear the lead its acceptance needs: 15 minutes, or 2 hours while the booking is unpaid. A session that has started, a trial and a platform operator's release keep the plain 24-hour refusal. See the [decision record](../decisions/2026-11-14-allocation-reschedule-and-short-notice-moves.md), decision 3, for the full table and worked examples.
+
+**The 24-hour boundary.** A start exactly 24 hours away counts as short notice, because `isTooSoonFor("reschedule", ...)` (`lib/booking/lead-time.ts`) treats a start at or inside the lead as inside it. The reschedule route's release side and the webinar re-time (`retimeWebinar` in `lib/booking/event-retime.ts`) now use that one function, as the rest of the booking code does. Two readers still allow a start exactly 24 hours away: `rescheduleReleasable` (`lib/booking/reschedule-proposals.ts`) and the class series move (`lib/booking/class-retime.ts`). They differ from the route by one instant and are known leftovers.
+
+**The new window keeps the length the booking was sold at.** A 1:1's or a trial's session length is read from the session the booking holds (`bookedSessionMinutes` in `lib/appointments/occurrences.ts`: the live session, else the latest session row), not from the plan's length today; nothing stores a second copy. For example, Priya Anderson bought a 60-minute 1:1 from Hannah Anderson, and Hannah later edited the plan to 30 minutes. Priya's reschedule still needs a 60-minute window. A reschedule window may also cross midnight, because the consultation validator checks contiguity and exact length, not the calendar day.
+
+**A live payment blocks a reschedule.** A booking that holds its time on a `PENDING` payment which has not passed its `expiresAt` (a pay link, or a checkout still open) cannot be rescheduled: the route answers 409 `PAY_LINK_LIVE` with "This booking is still waiting for payment. Pay for it or cancel it first, then reschedule." The check runs inside the reschedule transaction, so a capture can never land on a booking that has already moved. For example, Hannah Anderson approves Daniel Brown's 60-minute consultation for Mon 10:00 IST and sends a pay link that is valid until Sat 15:00 IST; if Daniel asks to reschedule at Sat 14:00 IST he is refused, and at Sat 15:01 IST, once the link has lapsed, he is allowed. Only the trial's two parties (the expert and the learner of that trial) may start a trial move; anyone else, including a different organisation operator, gets 403 `TRIAL_PARTY_ONLY`.
 
 **Stale-tab guard (#1012):** Re-allocation after a reschedule must send `expectedTentativeSlotCount` matching the live tentative set. A second tab that submits after the first finished receives 409 instead of delete+recreating confirmed slots.
 
@@ -53,15 +59,11 @@ When a consultee reschedules, the system does **not** delete the old slots. Inst
 
 4. **No payment side effects.** Deleting slots could trigger cascading effects in the payment system (refund calculations, earnings adjustments). Marking as tentative keeps the payment records cleanly attached.
 
-### Why a 24-hour minimum window?
+### Why 24 hours, and why an agreed move inside it?
 
-The 24-hour restriction (`MINIMUM_HOURS_BEFORE_RESCHEDULE = 24`) exists because:
+With less than 24 hours' notice one side cannot be moved by the other alone: the expert has prepared, and the learner may have arranged their day. So inside 24 hours a move happens only when the other side accepts it (`needsOtherSideAcceptance` in `lib/booking/reschedule-proposals.ts`): no auto-confirm, no bare release, and no placement of a released session under 24 hours away without an accepted proposal (`assertReplacementNotice`, 409 `NEEDS_ACCEPTANCE`). An emergency move both sides agree to therefore needs no support step. Cancel tiers, refunds, strikes and no-show outcomes are unchanged.
 
-- Consultants need time to prepare for sessions. A same-day reschedule wastes their preparation time.
-- Calendar integrations and notifications need lead time to propagate changes.
-- It prevents abuse (repeatedly rescheduling to avoid sessions while keeping the booking active).
-
-The system checks **every** slot individually. If even one slot in the reschedule request starts within 24 hours, the entire request is rejected -- this is an all-or-nothing validation.
+Every released session is checked: a release that includes any session less than 24 hours away needs proposed times.
 
 ### Why does the subscription type need special handling?
 
@@ -209,7 +211,7 @@ After the consultee initiates a reschedule, the request appears on the consultan
 
 ### How Rescheduled Requests Appear
 
-The consultant's dashboard includes a **Requests** inbox (`components/dashboard/shared/requests/RequestsInbox.tsx` over `lib/data/requests-inbox.ts`). Its read returns consultations and subscriptions in `PENDING` and `APPROVED_PENDING_PAYMENT` as well as paid `APPROVED` consultations and subscriptions that still need occurrences placed (including bookings parked in `APPROVED` after a declined, withdrawn, or expired whole-booking reschedule could not restore its original slot). When a request is a reschedule (as opposed to a fresh booking), the system detects this by examining the slots with the canonical `isReleasedForReschedule` predicate (`utils/scheduling-engine/types.ts`): a row counts as released only when it is tentative **and** `completionStatus === "RESCHEDULED"` **and** live (`deletedAt == null`).
+The consultant's dashboard includes a **Requests** inbox (`components/dashboard/shared/requests/RequestsInbox.tsx` over `lib/data/requests-inbox.ts`). Its read returns consultations and subscriptions in `PENDING` and `APPROVED_PENDING_PAYMENT` as well as paid `APPROVED` consultations and subscriptions that still need occurrences placed (including bookings parked in `APPROVED` after a declined, withdrawn, or expired whole-booking reschedule could not restore its original slot). A paid consultation parked that way is not left there: if no new time is placed within 7 days of the park, or by 48 hours after the released session's original start, `cancelAgedParkedConsultations` (`lib/booking/parked-consultation-sweep.ts`, run by `expire-stale-requests`) cancels it with a full refund, records a strike when the consultant started the move, and tells both parties. When a request is a reschedule (as opposed to a fresh booking), the system detects this by examining the slots with the canonical `isReleasedForReschedule` predicate (`utils/scheduling-engine/types.ts`): a row counts as released only when it is tentative **and** `completionStatus === "RESCHEDULED"` **and** live (`deletedAt == null`).
 
 - Bare tentativeness is NOT the signal: every fresh request already carries tentative holds (request-for-approval and unpaid checkout create them that way), and tombstoned/stale duplicates linger. Counting bare `isTentative` over-counted reschedules (e.g. demanded 12 slots for a 4-session plan, #1739).
 - The ratio of **released** to total sessions determines the badge type.
@@ -741,7 +743,11 @@ The caller must be a party: the expert or a host-org operator, the consultee, or
 | `slotIds` | `string[]` | No       | Specific slot IDs to reschedule. Only meaningful for `SUBSCRIPTION` type. Omit for entire booking reschedule. |
 | `slotId`  | `string`   | No       | Legacy single-slot format. Converted to `[slotId]` array internally. Exists for backward compatibility.       |
 
-If the body is empty, unparseable, or missing the slot fields, the system treats it as "reschedule everything" (no specific slot selection).
+If the body is empty or carries no slot fields, the system treats it as "reschedule everything" (no specific slot selection). A body that is not JSON answers 400, and a `slotIds` or `slotId` of the wrong shape answers 400 `INVALID_SLOT_IDS` (`RescheduleSlotIdsSchema` in `schemas/appointments.ts`), so a malformed session list never widens into a whole-booking release.
+
+### Idempotency-Key
+
+The route runs inside `withIdempotency` (`lib/api/idempotency.ts`), scoped to `booking.reschedule:<appointmentId>` and the caller. A request that repeats an `Idempotency-Key` with the same body gets the committed 2xx answer replayed (header `Idempotent-Replay: true`) and releases nothing again; one that arrives while the first is still running answers 409 `IDEMPOTENCY_IN_FLIGHT`; the same key with a different body answers 422 `IDEMPOTENCY_KEY_REUSED`. A refusal (any non-2xx) frees the key, so the user can retry after fixing the cause. Every reschedule submit sends one: the time picker (`TimePicker`, through `createSubmissionKeys` in `lib/api/submission-key.ts`) reuses the key while the submission is unchanged and mints a new one when the picks change, ignores a submit while one is in flight, and passes it through `handleReschedule` in `useEventActions` and `useConsultantEventActions`; the org detail page's reason-only reschedule does the same. A request without the header behaves as before.
 
 ### Response (200)
 
@@ -763,15 +769,17 @@ If the body is empty, unparseable, or missing the slot fields, the system treats
 
 ### Error Responses
 
-| Status | Condition                               | Error Class                | Example Message                                                          |
-| ------ | --------------------------------------- | -------------------------- | ------------------------------------------------------------------------ |
-| 401    | Not authenticated                       | --                         | `Unauthorized`                                                           |
-| 403    | STAFF/ADMIN non-party without the door  | --                         | `PLATFORM_RESCHEDULE_DOOR_REQUIRED`                                      |
-| 400    | Invalid request body or missing `type`  | --                         | Varies                                                                   |
-| 400    | Slot within 24 hours                    | `ReschedulePolicyError`    | `Cannot reschedule: slot starts in 18 hours (minimum 24 hours required)` |
-| 404    | Appointment not found                   | `AppointmentNotFoundError` | `appointment not found: apt_123`                                         |
-| 404    | Slot ID not found in subscription       | `AppointmentNotFoundError` | `slot not found: slot_xyz, slot_abc`                                     |
-| 500    | Transaction failure or unexpected error | --                         | `Failed to request reschedule`                                           |
+| Status | Condition                                                                 | Error Class                | Example Message                                                                              |
+| ------ | ------------------------------------------------------------------------- | -------------------------- | -------------------------------------------------------------------------------------------- |
+| 401    | Not authenticated                                                         | --                         | `Unauthorized`                                                                               |
+| 403    | STAFF/ADMIN non-party without the door                                    | --                         | `PLATFORM_RESCHEDULE_DOOR_REQUIRED`                                                          |
+| 400    | Invalid request body or missing `type`                                    | --                         | Varies                                                                                       |
+| 409    | Session inside 24 hours, no times named                                   | --                         | `RESCHEDULE_WINDOW`: "This session starts within 24 hours. To move it, propose new times; …" |
+| 409    | Trial, operator or started session inside 24 hours                        | `ReschedulePolicyError`    | `RESCHEDULE_WINDOW`                                                                          |
+| 400    | A proposed time sooner than 15 minutes (24 hours for a trial or operator) | --                         | `PROPOSAL_TOO_SOON`                                                                          |
+| 404    | Appointment not found                                                     | `AppointmentNotFoundError` | `appointment not found: apt_123`                                                             |
+| 404    | Slot ID not found in subscription                                         | `AppointmentNotFoundError` | `slot not found: slot_xyz, slot_abc`                                                         |
+| 500    | Transaction failure or unexpected error                                   | --                         | `Failed to request reschedule`                                                               |
 
 ### Transaction Details
 
@@ -791,8 +799,8 @@ The entire operation runs inside a Prisma `$transaction` with a 60-second timeou
 | ---------------- | ------------------- | --------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Consultation** | No (always entire)  | `status`                          | `PENDING`        | Single session, single appointment. All slots marked tentative.                                                                                                                                                                            |
 | **Subscription** | Yes (via `slotIds`) | `status` (entire reschedule only) | `PENDING`        | Supports all three reschedule types. Only an entire reschedule (no `slotIds`) reverts `status` to `PENDING`; a partial reschedule of specific sessions leaves the subscription status unchanged and re-tentatives only the selected slots. |
-| **Webinar**      | No (always entire)  | `status`                          | `SCHEDULED`      | All slots marked tentative. Uses `status` not `status` because webinars have a different state model.                                                                                                                                      |
-| **Class**        | No (always entire)  | `status`                          | `SCHEDULED`      | Same as webinar. Uses `status` instead of `status`.                                                                                                                                                                                        |
+| **Webinar**      | Never rescheduled   | —                                 | —                | The reschedule route refuses it. The host re-times it (`retimeWebinar`, 24 h out, free leave until `retimeBy`; the button is "Move to a new date").                                                                                        |
+| **Class**        | Never rescheduled   | —                                 | —                | The reschedule route refuses it. The host moves every session 24 h or more away as a series (`retimeClassSeries`) or cancels one session and schedules a make-up.                                                                          |
 
 ### Why Different Status Fields?
 
@@ -963,26 +971,15 @@ The original payment covers the new slots once the consultant re-allocates. From
 
 ## Error Scenarios and Edge Cases
 
-### Scenario 1: Slot Within 24 Hours
+### Scenario 1: A Session Within 24 Hours
 
-**What happens:** Consultee tries to reschedule a session that starts in 18 hours.
+**What happens:** The learner (or the expert) wants to move a session that starts in 18 hours.
 
-**System behavior:** The API loops through every slot in `slotsToReschedule` and calculates the hours until each slot starts. When it finds one at 18 hours:
+**System behavior:** The route loops through every released session. One starts inside 24 hours, so the move is an agreed one: with proposed times the request opens and waits for the other side, whose deadline is the session's start (`computeProposalExpiry`); with no times it is refused.
 
-```typescript
-if (hoursUntilSlot < MINIMUM_HOURS_BEFORE_RESCHEDULE) {
-  throw new ReschedulePolicyError(
-    hoursUntilSlot,
-    MINIMUM_HOURS_BEFORE_RESCHEDULE,
-  );
-}
-```
+**Result:** With times, 200 with `outcome: "AWAITING_ANSWER"`. Without, 409 `RESCHEDULE_WINDOW`: "This session starts within 24 hours. To move it, propose new times; the other person has to accept one before the session starts." A trial, a platform operator's release and a session that has started keep the plain 24-hour refusal.
 
-**Result:** `400 Bad Request` with message: "Cannot reschedule: slot starts in 18 hours (minimum 24 hours required)."
-
-**Important detail:** This is all-or-nothing. If the consultee selects 5 sessions and 1 of them is within 24 hours, all 5 are rejected. The consultee must deselect the problematic session and try again.
-
-**Frontend handling:** Sessions within 24 hours have their checkboxes disabled in the UI, so this error should be rare. It acts as a server-side safety net.
+**Frontend handling:** Both reschedule pages list sessions inside 24 hours, hide "Any time works" for them, and say that the other person must accept at least 15 minutes before the session starts.
 
 ### Scenario 2: Slot ID Not Found
 
@@ -1004,21 +1001,11 @@ if (slotsToReschedule.length !== slotIds.length) {
 
 ### Scenario 3: Abandoned Reschedule
 
-**What happens:** Consultee initiates a reschedule (slots marked tentative), but the consultant never re-allocates.
+**What happens:** A party releases a session (with or without proposed times) and nobody answers or places it.
 
-**System behavior:** The tentative slots remain in the database indefinitely. The event status stays `PENDING`.
+**System behavior:** Every party release opens a `RescheduleRequest` with a stored `expiresAt`. The `expire-reschedule-proposals` sweep, every 15 minutes, expires it under the appointment lock and restores the booking as the release found it: the released sessions go back to `SCHEDULED` (an unpaid hold stays tentative) and the parent goes back to its origin status. Both parties are told. If the original time was booked meanwhile, the sweep expires the request without the restore and counts it as `proposalsExpiredUnrestored`; the parent is parked and the parked-consultation sweep refunds a consultation nobody places within 7 days.
 
-**Consequences:**
-
-- The consultee's booking appears "stuck" in a pending state.
-- The tentative slots still hold their old times, but those times are no longer valid.
-- The auto-allocation algorithm will continue to detect this as a reschedule (`tentativeSlotCount > 0`) on any future allocation attempt.
-
-**Current mitigation:** A cron job is designed to clean up tentative slots after 24 hours of inactivity (`TENTATIVE_EXPIRATION_HOURS = 24`). However, this cleanup is deletion-based, which means the subscription will then have fewer slots than expected.
-
-**Ideal future mitigation:** Instead of deleting, the cron should either (a) revert the tentative flags and restore the original status, or (b) notify both parties before taking action.
-
-**Update (2026-09-28, #1846):** For a reschedule that opened a proposal, the first half of this mitigation now exists. The hourly `expire-reschedule-proposals` sweep restores the released slots and the request's origin status when a proposal lapses unanswered, and it notifies both parties, as described in the section on expiry at the end of this document. The rest of this scenario therefore describes only a reschedule that never opened a proposal, and the "event status stays `PENDING`" line applies to the request kinds whose parent enters `PENDING` during a reschedule, not to every kind.
+**Example:** Priya releases Thursday 18:00 on Monday 10:00 with "Any time works". Hannah does not place it. The request expires on Wednesday 18:00 (24 hours before the session), and Thursday 18:00 is confirmed again.
 
 ### Scenario 4: Concurrent Reschedule Attempts
 
@@ -1163,9 +1150,9 @@ In practice, this edge case is unlikely because sessions rarely span midnight. B
 
 ## The response loop (2026-08-14, #1163 / #1169 PR 4)
 
-A proposal can now be answered by the other side. `POST /api/appointments/[appointmentId]/reschedule/respond` with `{ "action": "accept" }` re-validates the proposed times through the full allocator (manual mode under the consultant-wide lock — the same machinery auto-confirm uses, so nothing is written unless validation commits) and finalizes the request to `ACCEPTED`; `{ "action": "decline" }` is a guarded transition to `DECLINED` that deliberately leaves the released slots in the consultant's allocate queue, because the initiator still wants to move. The initiator's own exit remains `withdraw`, which restores the booking. Authorization is the counterparty alone, with the withdraw route's anti-oracle 404 discipline. The consultee's event reads now carry the live proposal (`rescheduleRequests` with `proposedSlots`), so a consultant-initiated reschedule finally renders on the consultee side instead of an indefinite "Awaiting schedule confirmation". Admins of the organization funding a booking may cancel and reschedule it, acting on the payer side of the policy tiers; their proposals carry the consultee role, so the same auto-confirm consent rules apply.
+A proposal can now be answered by the other side. `POST /api/appointments/[appointmentId]/reschedule/respond` with `{ "action": "accept" }` re-validates the proposed times through the full allocator (manual mode under the consultant-wide lock — the same machinery auto-confirm uses, so nothing is written unless validation commits) and finalizes the request to `ACCEPTED`; `{ "action": "decline" }` is a guarded transition to `DECLINED` that restores the released sessions to their original times (`restoreRescheduledBooking`), answered as `DECLINED`; when an original time was booked while the proposal was open, the decline still commits and those sessions stay released in the consultant's allocate queue, answered as `RELEASED`. The initiator's own exit remains `withdraw`, which restores the booking. Authorization is the counterparty alone, with the withdraw route's anti-oracle 404 discipline. Both routes judge a side with one helper, `actsForRescheduleSide` in `lib/booking/reschedule-side.ts`: respond asks it about the side that did not open the request, and withdraw asks it about the side that did, so an initiator who has since lost authority over the booking (an operator who left the host organization, for example) gets 403 `NO_LONGER_A_PARTY` instead of a withdrawal. The consultee's event reads now carry the live proposal (`rescheduleRequests` with `proposedSlots`), so a consultant-initiated reschedule finally renders on the consultee side instead of an indefinite "Awaiting schedule confirmation". Admins of the organization funding a booking may cancel and reschedule it, acting on the payer side of the policy tiers; their proposals carry the consultee role, so the same auto-confirm consent rules apply.
 
-Two refusals guard the accept path specifically, because accept is the action that moves the booking's slots to new times. A proposal that has passed its `expiresAt` is refused with `PROPOSAL_EXPIRED` before the allocator is asked for anything. The deadline cannot be inferred from the status alone: `expireRescheduleProposals` runs hourly, so a lapsed proposal remains `PENDING_REVIEW` for up to an hour after it stops being answerable. This matters beyond tidiness, because the deadline is `min(now + 72h, earliest released session − 24h)` — accepting a lapsed proposal is precisely how a booking would land inside the 24-hour window that the reschedule route itself refuses to move it into. The race between that check and the final transition needs no lock of its own, since `EXPIRED` is not an allowed from-state for `ACCEPTED` and a cron that wins the race therefore makes the transition fail rather than accept. A booking carrying a live payment dispute is refused with `DISPUTE_ACTIVE`, matching the freeze that the cancel and reschedule routes already apply: while a dispute is contested the booking's state is evidence and must not move. That guard sits deliberately after the counterparty check rather than before it, because answering `409` to an unauthorized caller would turn the endpoint into the dispute oracle that the surrounding 404 discipline exists to prevent. Decline is exempt from both refusals, as it moves nothing.
+Two refusals guard the accept path specifically, because accept is the action that moves the booking's slots to new times. A proposal that has passed its `expiresAt` is refused with `PROPOSAL_EXPIRED` before the allocator is asked for anything. The deadline cannot be inferred from the status alone: `expireRescheduleProposals` runs every 15 minutes, so a lapsed proposal remains `PENDING_REVIEW` for up to 15 minutes after it stops being answerable. The deadline is `min(now + 72h, earliest released session − 24h)`, or the session's start for a proposal opened inside 24 hours, so a late acceptance never moves a session after it was due to start. The race between that check and the final transition needs no lock of its own, since `EXPIRED` is not an allowed from-state for `ACCEPTED` and a cron that wins the race therefore makes the transition fail rather than accept. A booking carrying a live payment dispute is refused with `DISPUTE_ACTIVE`, matching the freeze that the cancel and reschedule routes already apply: while a dispute is contested the booking's state is evidence and must not move. That guard sits deliberately after the counterparty check rather than before it, because answering `409` to an unauthorized caller would turn the endpoint into the dispute oracle that the surrounding 404 discipline exists to prevent. Decline is exempt from both refusals, as it moves nothing.
 
 ## Confirming a proposal without declining it (2026-09-05, #1340)
 
@@ -1179,7 +1166,7 @@ Accept now also runs inside `withAppointmentLock`, the same per-appointment atom
 
 ## Expiry restores the booking, and withdraw can meet a taken time (2026-09-28, #1846)
 
-A proposal that nobody answers normally leaves the booking as it was before the reschedule (#1527 decision 9); the exception, an original time that was taken in the meantime, is described below. The restore moved into `lib/booking/reschedule-restore.ts`, and the initiator's withdrawal and the expiry sweep both call its `restoreRescheduledBooking`. The sweep expires each lapsed proposal under the appointment lock and restores the booking in the same transaction, so an answer or a cancel cannot interleave with the restore. Decline is still the one ending that leaves the slots released for the consultant's allocate queue.
+A proposal that nobody answers normally leaves the booking as it was before the reschedule (#1527 decision 9); the exception, an original time that was taken in the meantime, is described below. The restore moved into `lib/booking/reschedule-restore.ts`, and the initiator's withdrawal and the expiry sweep both call its `restoreRescheduledBooking`. The sweep expires each lapsed proposal under the appointment lock and restores the booking in the same transaction, so an answer or a cancel cannot interleave with the restore. Decline takes the same restore, and leaves the slots released for the consultant's allocate queue only when an original time was taken.
 
 A restore flips the released rows back to confirmed, and that can meet the `occurrence_no_confirmed_overlap` constraint (SQLSTATE 23P01) when the consultant's original time was booked while the proposal was open. The two callers answer that differently. Withdraw rolls back whole and answers 409 `ORIGINAL_TIME_TAKEN` instead of a raw 500, and the proposal stays open so that the parties can agree a new time. The sweep reports the miss, expires the proposal without the restore, leaves the slots released, and counts the row in its result as `proposalsExpiredUnrestored`.
 
@@ -1198,3 +1185,5 @@ The consultee limit of two reschedules per booking (`MAX_CONSULTEE_RESCHEDULES` 
 1. **Closing the proposal after the move in a second transaction.** Replaced by the in-transaction hook.
 2. **Restoring an unknown origin to `APPROVED`.** Replaced by refusing to write.
 3. **Leaving released slots released when a proposal expires.** Expiry now normally restores the booking as it was. The exception is an original time that was booked while the proposal was open: the restore then fails on the overlap constraint, and the slots stay released.
+4. **Re-planning a sold webinar or class with Manage timings.** It replaced live sessions with no notice and no free leave. The allocator now refuses it with 409 `USE_RETIME`; a webinar is re-timed and a class moves as a series.
+5. **A webinar or class row in the reschedule table that marked slots tentative.** Group events never went through the reschedule route in practice; the table now names the re-time and series-move doors.

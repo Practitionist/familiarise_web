@@ -131,11 +131,8 @@ describe("a scrubbed payload still drives the handlers (sweeper re-drive)", () =
       stored,
       JOINED.type,
       "evt-1",
-      undefined,
-      {
-        call_cid: JOINED.call_cid,
-      },
-      { claimAlreadyHeld: true, claim: { claimedAt: null } },
+      { call_cid: JOINED.call_cid },
+      { claimedAt: null },
     );
 
     expect(mockHandleSessionParticipantJoined).toHaveBeenCalledTimes(1);
@@ -155,11 +152,8 @@ describe("a scrubbed payload still drives the handlers (sweeper re-drive)", () =
       stored,
       CALL_ENDED.type,
       "evt-2",
-      undefined,
-      {
-        call_cid: CALL_ENDED.call_cid,
-      },
-      { claimAlreadyHeld: true, claim: { claimedAt: null } },
+      { call_cid: CALL_ENDED.call_cid },
+      { claimedAt: null },
     );
 
     expect(mockHandleCallEnded.mock.calls[0][0]).toMatchObject({
@@ -178,11 +172,8 @@ describe("a scrubbed payload still drives the handlers (sweeper re-drive)", () =
       stored,
       RECORDING_STARTED.type,
       "evt-3",
-      undefined,
-      {
-        call_cid: RECORDING_STARTED.call_cid,
-      },
-      { claimAlreadyHeld: true, claim: { claimedAt: null } },
+      { call_cid: RECORDING_STARTED.call_cid },
+      { claimedAt: null },
     );
 
     expect(mockHandleRecordingStarted.mock.calls[0][0]).toMatchObject({

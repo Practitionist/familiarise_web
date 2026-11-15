@@ -3,7 +3,11 @@
 import { earliestWeekSessions } from "@/lib/booking/release-weeks";
 import { MobileAutoSchedule } from "./MobileAutoSchedule";
 import { rescheduleWindow } from "@/lib/booking/entitlement";
-import { leadMsFor } from "@/lib/booking/lead-time";
+import {
+  isShortNotice,
+  leadMsFor,
+  RESCHEDULE_MIN_LEAD_HOURS,
+} from "@/lib/booking/lead-time";
 import React from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -36,9 +40,14 @@ import {
 import { useDisplayZone } from "@/lib/time/use-display-zone";
 import { useViewerZone } from "@/lib/time/use-viewer-zone";
 import { ZoneSwitch } from "@/components/scheduling/ZoneSwitch";
+import {
+  SchedulingContextBar,
+  type ContextChip,
+} from "@/components/scheduling/SchedulingContextBar";
 import { isReleasedForReschedule } from "@/utils/scheduling-engine/types";
 import { maxSessionsPerDayFor } from "@/utils/scheduling-engine/sessionCaps";
 import { cn } from "@/utils/tailwind";
+import { createSubmissionKeys } from "@/lib/api/submission-key";
 
 /**
  * The one surface for choosing times, shared by allocation, both reschedule
@@ -150,14 +159,16 @@ export interface TimePickerProps {
   /** Back out. Also wired to the allocate grid's own Cancel button. */
   onCancel?: () => void;
   className?: string;
-  /** "top" keeps the legend above the grid; "bottom" puts it above the footer. */
-  legendPosition?: "top" | "bottom";
   /** A caller-pinned instant that outranks the resolved focus. */
   focusAt?: Date;
   /** The viewer's zone from the page; the session hook supplies it otherwise. */
   viewerZone?: string | null;
   /** The request changed under this tab: reload the subject in place. */
   onRequestRefresh?: () => void;
+  /** Facts the page knows about what is being scheduled, for the context row. */
+  contextChips?: readonly ContextChip[];
+  /** Plan-level warnings for the session tray (feasibility). */
+  warnings?: string[];
 }
 
 export function TimePicker({
@@ -166,10 +177,11 @@ export function TimePicker({
   isSubmitting = false,
   onCancel,
   className,
-  legendPosition = "top",
   focusAt,
   viewerZone,
   onRequestRefresh,
+  contextChips,
+  warnings,
 }: Readonly<TimePickerProps>) {
   const sessionViewer = useViewerZone();
   const gridViewerZone =
@@ -263,9 +275,30 @@ export function TimePicker({
     ? Math.max(selectedSessionCount, 1)
     : Math.max(sessions.length, 1);
 
+  // The clock the short-notice rule reads; the focus above stays pinned.
+  const [nowMs, setNowMs] = React.useState(() => Date.now());
+  React.useEffect(() => {
+    const tick = window.setInterval(() => setNowMs(Date.now()), 60_000);
+    return () => window.clearInterval(tick);
+  }, []);
+  // A session under 24 hours away moves only with named times the other side accepts.
+  const movingShortNotice = React.useMemo(() => {
+    const moving = picksSpecificSessions
+      ? sessions.filter((session) =>
+          session.slots.every((slot) => selectedSlotIds.includes(slot.id)),
+        )
+      : sessions;
+    return moving.some(
+      (session) =>
+        session.startTime.getTime() > nowMs &&
+        isShortNotice(session.startTime.getTime(), nowMs),
+    );
+  }, [picksSpecificSessions, sessions, selectedSlotIds, nowMs]);
+  const offersAnyTime = policy.allowReleaseWithoutTime && !movingShortNotice;
+
   /** Group events never reach the proposal path, so they state no preference. */
   const canStatePreference =
-    policy.allowReleaseWithoutTime && acceptsSlotPreference(subject.eventType);
+    offersAnyTime && acceptsSlotPreference(subject.eventType);
 
   const preference = (): SlotPreference | undefined => {
     if (!canStatePreference) return undefined;
@@ -283,13 +316,19 @@ export function TimePicker({
   const requiredProposedSlots = sessionsBeingMoved * slotsPerSession;
   const pickedTimes = Math.floor(picked.length / slotsPerSession);
 
+  const [submissionKeyFor] = React.useState(createSubmissionKeys);
   const submit = (withTimes: boolean) => {
+    if (isSubmitting) return;
     const named = withTimes && picked.length > 0;
-    void policy.onSubmit({
+    const request = {
       slotIds: releasedOccurrenceIds,
       proposedSlots: named ? picked : undefined,
       preference: named ? undefined : preference(),
+    };
+    void policy.onSubmit({
+      ...request,
       displayZone: listZone,
+      idempotencyKey: submissionKeyFor(request),
     });
   };
 
@@ -353,10 +392,35 @@ export function TimePicker({
     [policy],
   );
 
+  const zoneLine = (
+    <ZoneSwitch
+      className="shrink-0"
+      zone={display.zone}
+      usingDeviceZone={display.usingDeviceZone}
+      canSwitch={display.canSwitch}
+      onToggle={display.toggle}
+    />
+  );
+  const gridContextChips = React.useMemo<ContextChip[]>(
+    () => [
+      ...(policy.showReleasedSlots
+        ? [
+            {
+              key: "notice",
+              label: "Moves",
+              value: `within ${RESCHEDULE_MIN_LEAD_HOURS} h only if accepted · not refunded`,
+              title: `A move from or to a time within ${RESCHEDULE_MIN_LEAD_HOURS} hours happens only if the other person accepts it at least 15 minutes before the session starts. Rescheduling is not refunded.`,
+            },
+          ]
+        : []),
+      ...(contextChips ?? []),
+    ],
+    [policy.showReleasedSlots, contextChips],
+  );
+
   const grid = (
     <SafeUnifiedCalendar
       className="min-h-0 flex-1"
-      legendPosition={legendPosition}
       consultantId={subject.consultantProfileId}
       eventType={subject.eventType}
       eventId={subject.eventId}
@@ -375,6 +439,9 @@ export function TimePicker({
       focus={focus}
       viewerZone={listZone}
       showZoneSwitch={false}
+      zoneSlot={zoneLine}
+      contextChips={gridContextChips}
+      warnings={warnings}
       requestedSlots={requestedSlots}
       releasingOccurrenceIds={releasingIds}
       lead={policy.lead}
@@ -464,16 +531,6 @@ export function TimePicker({
 
   return (
     <div className={cn("flex min-h-0 flex-col gap-4", className)}>
-      {policy.minLeadHours > 0 && (
-        <div className="shrink-0 rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-900/40 dark:bg-amber-900/20">
-          <p className="text-xs text-amber-800 dark:text-amber-300">
-            <strong>Note:</strong> sessions cannot be moved within{" "}
-            {policy.minLeadHours} hours of their start time, and rescheduling is
-            not refunded.
-          </p>
-        </div>
-      )}
-
       {showReleaseStep && (
         <div className="shrink-0">
           <SessionReleasePicker
@@ -499,17 +556,22 @@ export function TimePicker({
         {/* The allocate page has no separate heading, so the hint names the client. */}
         {policy.kind === "ALLOCATE" && subject.consulteeName
           ? `Choose the times for ${subject.consulteeName}'s booking. Green is free for both of you; anything else is already taken.`
-          : policy.pickerHint}
+          : movingShortNotice && policy.shortNoticeHint
+            ? policy.shortNoticeHint
+            : policy.pickerHint}
       </p>
 
-      {wide !== null && (
-        <ZoneSwitch
-          className="shrink-0"
-          zone={display.zone}
-          usingDeviceZone={display.usingDeviceZone}
-          canSwitch={display.canSwitch}
-          onToggle={display.toggle}
-        />
+      {/* The grid carries the zone line in its context row; the day list needs its own. */}
+      {useDayList && (
+        <>
+          {gridContextChips.length > 0 && (
+            <SchedulingContextBar
+              className="shrink-0"
+              chips={gridContextChips}
+            />
+          )}
+          {zoneLine}
+        </>
       )}
 
       {picker}
@@ -554,7 +616,8 @@ export function TimePicker({
             </div>
           )}
 
-          {picked.length > 0 && (
+          {/* The grid's session tray already counts its picks. */}
+          {useDayList && picked.length > 0 && (
             <p className="mr-auto text-sm text-muted-foreground">
               {pickedTimes} of {sessionsBeingMoved}{" "}
               {sessionsBeingMoved === 1 ? "time" : "times"} picked.
@@ -573,7 +636,7 @@ export function TimePicker({
 
           {/* Naming a time is an option, never a requirement: releasing without
               one hands the counterparty a request to place. */}
-          {policy.allowReleaseWithoutTime && (
+          {offersAnyTime && (
             <Button
               variant="outline"
               onClick={() => submit(false)}
@@ -597,7 +660,7 @@ export function TimePicker({
               selectionIncomplete,
               pickedTimes,
               neededTimes: sessionsBeingMoved,
-              allowReleaseWithoutTime: policy.allowReleaseWithoutTime,
+              allowReleaseWithoutTime: offersAnyTime,
             })}
           >
             {isSubmitting ? (

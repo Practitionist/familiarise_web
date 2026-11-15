@@ -145,6 +145,8 @@ const refundDoor = withOpsAction(
           reason: `admin refund: ${body.reason}`,
           initiatedByUserId: actor.userId,
           dedupeKey,
+          // A partial admin refund is not a cancellation; one that returns the rest ends the seat.
+          keepSeatIfPartial: true,
           settlesOwedByHand: true,
         }).catch((err: unknown) => refundInFlightOr(err, dedupeKey));
         return {
@@ -175,12 +177,27 @@ const refundDoor = withOpsAction(
       // repeat answers 200 with nothing refunded, never a second cascade.
       const alreadyRefunded =
         summary.alreadyRefunded && summary.refundsIssued === 0;
+      const { nothingToRefund } = summary;
+      let response: Record<string, unknown> = { kind: eventKind, summary };
+      if (nothingToRefund) {
+        response = {
+          ...response,
+          nothingToRefund: true,
+          refunded: 0,
+          message:
+            "Every seat on this event was free, so there is nothing to refund.",
+        };
+      } else if (alreadyRefunded) {
+        response = { ...response, alreadyRefunded: true, refunded: 0 };
+      }
       return {
         target: refundTarget(body),
-        after: { refundsIssued: summary.refundsIssued, alreadyRefunded },
-        response: alreadyRefunded
-          ? { kind: eventKind, summary, alreadyRefunded: true, refunded: 0 }
-          : { kind: eventKind, summary },
+        after: {
+          refundsIssued: summary.refundsIssued,
+          alreadyRefunded,
+          nothingToRefund,
+        },
+        response,
       };
     },
   },

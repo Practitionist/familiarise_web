@@ -1,0 +1,96 @@
+/**
+ * The trial-scheduled notices read before the booking transaction and are staged inside it,
+ * one insert per table; the caller flushes the committed rows after the commit.
+ */
+import { TrialStatus } from "@prisma/client";
+
+import type { Tx } from "@/lib/prisma";
+import { goHref } from "@/lib/dashboard/go";
+import { getAppUrl } from "@/lib/url";
+import { prepareTrialScheduledEmail } from "@/lib/email/senders/booking";
+import {
+  screenPreparedEmails,
+  stageScreenedEmails,
+  type ScreenedRecipientEmails,
+  type StagedRecipientEmail,
+} from "@/lib/email/send-to-recipients";
+import {
+  prepareTrialScheduledBells,
+  stagePreparedBells,
+  type PreparedBell,
+  type StagedTrigger,
+} from "@/lib/novu";
+
+export interface PreparedScheduleNotices {
+  bells: PreparedBell[];
+  emails: ScreenedRecipientEmails;
+}
+
+export interface StagedScheduleNotices {
+  bells: StagedTrigger[];
+  emails: StagedRecipientEmail[];
+}
+
+/** Reads and renders the notices before the transaction; writes nothing. */
+export async function prepareTrialScheduledNotices(args: {
+  consulteeUserId: string;
+  consultantUserId: string;
+  consulteeName: string;
+  consultantName: string;
+  planTitle: string;
+  startsAt: Date;
+}): Promise<PreparedScheduleNotices> {
+  const payload = {
+    consultantName: args.consultantName,
+    consulteeName: args.consulteeName,
+    planTitle: args.planTitle,
+    dateTime: args.startsAt.toISOString(),
+    status: TrialStatus.SCHEDULED,
+  };
+  const bells = await prepareTrialScheduledBells([
+    {
+      subscriberId: args.consulteeUserId,
+      input: { ...payload, dashboardUrl: goHref("client", "appointments") },
+    },
+    {
+      subscriberId: args.consultantUserId,
+      input: { ...payload, dashboardUrl: goHref("expert", "appointments") },
+    },
+  ]);
+  const prepared = await prepareTrialScheduledEmail({
+    // The dedupe key is set when the rows are staged, once the trial exists.
+    trialId: "pending",
+    consulteeUserId: args.consulteeUserId,
+    consultantUserId: args.consultantUserId,
+    consulteeName: args.consulteeName,
+    consultantName: args.consultantName,
+    planTitle: args.planTitle,
+    startsAt: args.startsAt,
+    awaitingPayment: false,
+    dashboardUrl: `${getAppUrl()}${goHref("auto", "appointments")}`,
+    paymentUrl: null,
+  });
+  return { bells, emails: await screenPreparedEmails(prepared) };
+}
+
+/** Stages the prepared notices on the booking's transaction: one insert per table. */
+export async function stageTrialScheduledNotices(
+  tx: Tx,
+  trialId: string,
+  prepared: PreparedScheduleNotices,
+): Promise<StagedScheduleNotices> {
+  // Keyed to the trial: a later trial for the same pair and time is a new bell.
+  const bells = await stagePreparedBells(
+    tx,
+    prepared.bells.map((bell) => ({
+      ...bell,
+      dedupeKey: `trial-scheduled:${trialId}`,
+    })),
+  );
+  const emails = await stageScreenedEmails(
+    tx,
+    prepared.emails,
+    `trial:${trialId}`,
+  );
+  return { bells, emails };
+}

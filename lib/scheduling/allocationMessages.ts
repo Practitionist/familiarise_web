@@ -335,6 +335,10 @@ const ALLOCATION_ERROR_TOASTS: Record<
     title: "Co-host unavailable",
     variant: "destructive",
   },
+  USE_RETIME: {
+    title: "This event already has booked seats, so move it instead",
+    variant: "destructive",
+  },
   // ILLEGAL_TRANSITION and RESCHEDULE_STATE_CHANGED are deliberately absent:
   // both 409s route to requestChangedElsewhere() (qa-1702, #1705).
   SLOT_TAKEN: {
@@ -403,6 +407,17 @@ export const invalidEventId = (): AllocationToast => ({
   description: "This booking can't be scheduled as shown. Please reload.",
 });
 
+/** A consultation with a confirmed time moves only through Reschedule. */
+export const ALREADY_SCHEDULED_COPY =
+  "This booking already has a time. Use Reschedule to move it.";
+
+/** 409 on a consultation: it already has a confirmed time, however it got one. */
+export const alreadyScheduled = (): AllocationToast => ({
+  variant: "destructive",
+  title: "Already has a time",
+  description: ALREADY_SCHEDULED_COPY,
+});
+
 /** 409 — another tab or teammate already allocated this request. "Session"
  * is deliberately avoided here: it means a bookable session everywhere else
  * in this dialog. */
@@ -453,15 +468,20 @@ export const rescheduleTimesTaken = (
 ): AllocationToast => ({
   variant: "destructive",
   title:
-    starts.length === 1
+    starts.length <= 1
       ? "This time was just taken"
       : "These times were just taken",
-  description: `${starts
-    .map(
-      (start) =>
-        `${formatDayLabel(start, { zone })} ${formatClockTime(start, { zone })}`,
-    )
-    .join(", ")}. Your booking keeps its original time — pick another time.`,
+  // The allocator's refusal does not always name which start was taken.
+  description: `${
+    starts.length > 0
+      ? `${starts
+          .map(
+            (start) =>
+              `${formatDayLabel(start, { zone })} ${formatClockTime(start, { zone })}`,
+          )
+          .join(", ")}. `
+      : ""
+  }Your booking keeps its original time — pick another time.`,
 });
 
 /** The request's tentative times moved in another tab; the page reloaded them. */

@@ -29,7 +29,7 @@ This page follows real money through four organisation-sponsored flows, step by 
 | `GST_PAYABLE`                  |         | 72,000  |
 | Total                          | 472,000 | 472,000 |
 
-`assertWalletDebitJournaled` finds the `Dr WALLET` line, or the whole checkout would roll back. Benjamin's earning is `PENDING` until its hold-until time (24 hours after the session ends, plus 7 extra days while he is a new expert), then `READY` for the weekly payout.
+`assertWalletDebitJournaled` finds the `Dr WALLET` line, or the whole checkout would roll back. Benjamin's earning is `PENDING` until its hold-until time (48 hours after the session ends, plus 3 extra days while he is a new expert), then `READY` for the weekly payout.
 
 **What if Rachel had booked Andrew Anderson instead?** He is salaried (`payoutRecipient = ORGANIZATION`), so the organisation absorbs the expert slice: `CONSULTANT_PAYABLE` is 0 and `ORG_PAYABLE(iit-madras)` is 360,000 (the 40,000 plus 320,000). IIT Madras spends 472,000 from its wallet and earns 360,000 back, so its net pre-tax cost is the 40,000 platform fee.
 

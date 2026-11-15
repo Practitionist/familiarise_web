@@ -62,7 +62,7 @@ const MAX_NO_SHOW_CANDIDATES = 10;
 const MAX_STALE_REQUESTS_PER_ARM = 20;
 /** Slot rows the stale-RESCHEDULED arm may release; a pure row-lock pass. */
 const MAX_STALE_SLOT_RELEASES = 200;
-/** Unpaid trials per run; the unanswered arm refunds per payment. */
+/** Unpaid trials per run. */
 const MAX_UNPAID_TRIALS = 25;
 /** Lapsed proposals per run; each takes the appointment lock and a restore. */
 const MAX_RESCHEDULE_PROPOSALS = 25;
@@ -539,6 +539,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       }),
   },
 
+  // A financial job (it stamps class-end refunds owed): fail-closed, and held in degraded maintenance.
   // @cleanup-twin auto-complete-appointments
   "auto-complete-appointments": {
     meta: {
@@ -575,13 +576,25 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           classesCompleted: r.classesCompleted,
           consultationsCompleted: r.consultationsCompleted,
           subscriptionsCompleted: r.subscriptionsCompleted,
+          trialsCompleted: r.trialsCompleted,
+          sessionsCompleted: r.sessionsCompleted,
+          sessionsVoided: r.sessionsVoided,
+          sessionsUnverified: r.sessionsUnverified,
+          classEndSeatsOwed: r.classEndSeatsOwed,
+          classEndOwedPaise: r.classEndOwedPaise,
+          classEndCreditSeatsEscalated: r.classEndCreditSeatsEscalated,
         }),
         items: (r) => ({
           processed:
             r.webinarsCompleted +
             r.classesCompleted +
             r.consultationsCompleted +
-            r.subscriptionsCompleted,
+            r.subscriptionsCompleted +
+            r.trialsCompleted +
+            r.sessionsCompleted +
+            r.sessionsVoided +
+            r.sessionsUnverified +
+            r.classEndSeatsOwed,
         }),
         failureMessage: "Failed to auto-complete appointments",
       }),
@@ -990,7 +1003,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
     build: () =>
       cleanupRoute({
         job: "expire-stale-requests",
-        run: async (req) => {
+        run: async (req, { startedAt }) => {
           const { expireStaleRequests } =
             await import("@/scripts/appointments/expire-stale-requests");
           return expireStaleRequests({
@@ -1001,12 +1014,15 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
               ),
               maxSlotReleases: MAX_STALE_SLOT_RELEASES,
             },
+            startedAt,
           });
         },
         summarize: (r) => ({
           consultationsExpired: r.consultationsExpired,
+          parkedConsultationsCancelled: r.parkedConsultationsCancelled,
           subscriptionsExpired: r.subscriptionsExpired,
           subscriptionNudgesSent: r.subscriptionNudgesSent,
+          requestExpiryAlertsSent: r.requestExpiryAlertsSent,
           paymentPendingExpired: r.paymentPendingExpired,
           unallocatedHasMore: r.unallocatedHasMore,
           unallocatedRefundsDeferred: r.unallocatedRefundsDeferred,
@@ -1014,6 +1030,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
         items: (r) => ({
           processed:
             r.consultationsExpired +
+            r.parkedConsultationsCancelled +
             r.subscriptionsExpired +
             r.paymentPendingExpired,
         }),
@@ -1025,8 +1042,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
   "expire-unpaid-trials": {
     meta: {
       title: "Expire unpaid trials",
-      description:
-        "Expire unpaid trials and refund paid trials nobody answered",
+      description: "Cancel paid trials whose pay window ended unpaid",
       category: "Appointments",
       manualRun: "inline",
     },
@@ -1407,7 +1423,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
     meta: {
       title: "Prune job history",
       description:
-        "Remove no-op job runs past 14 days and other runs past 180, close stranded runs, and prune admin run requests, messaging, export, cookie and meeting presence rows",
+        "Remove no-op job runs past 14 days and other runs past 180, close stranded runs, and prune admin run requests, messaging, export, cookie, meeting presence and settled Stream revocation rows",
       category: "Cleanup",
       manualRun: "inline",
     },
@@ -1442,6 +1458,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           unconfirmedNewsletterPruned: r.unconfirmedNewsletterPruned,
           meetingPresencePruned: r.meetingPresencePruned,
           meetingAttendancePruned: r.meetingAttendancePruned,
+          streamRevocationRetriesPruned: r.streamRevocationRetriesPruned,
           hasMore: r.hasMore,
         }),
         items: (r) => ({
@@ -1456,7 +1473,8 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
             r.cookiePreferencesPruned +
             r.unconfirmedNewsletterPruned +
             r.meetingPresencePruned +
-            r.meetingAttendancePruned,
+            r.meetingAttendancePruned +
+            r.streamRevocationRetriesPruned,
         }),
         failureMessage: "System job execution prune failed",
       }),
@@ -2305,8 +2323,12 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           accessRevocationsRecovered: r.accessRevocationsRecovered,
           stillFailing: r.stillFailing,
           gaveUp: r.gaveUp,
+          streamUnconfigured: r.streamUnconfigured,
         }),
-        status: (r) => (r.stillFailing > 0 || r.gaveUp > 0 ? 207 : 200),
+        status: (r) =>
+          r.stillFailing > 0 || r.gaveUp > 0 || r.streamUnconfigured > 0
+            ? 207
+            : 200,
         failureMessage: "Failed to retry moderation enforcement",
       }),
   },

@@ -6,19 +6,22 @@ A trial session is a one-time session that lets a consultee try a consultant's s
 
 Key characteristics:
 
-- Priced per plan via `trialPriceInPaise`, which defaults to 0 (a free trial); the consultant can raise it, and a priced trial is paid for on the branded checkout page described under "Paying for a trial" below.
-- A platform-wide minimum sits under every plan's trial price: admin or staff set `PlatformPricingConfig.minTrialPriceInPaise` via `PATCH /api/admin/trial-pricing`, and the plan create/update routes reject prices below it. The floor defaults to 0, which keeps free trials allowed.
-- Since #1775 a priced trial is charged at request: `POST /api/trials` creates a placeholder appointment and mints the order against it, the capture webhook sets `Trial.paymentId` while the trial stays `PENDING`, and the consultant can accept only a paid trial, whose session is then placed on that appointment. Trials accepted under the earlier flow still pass through `AWAITING_PAYMENT`. An unpaid trial past its pay window is released by the expire-unpaid-trials sweep, which since 2026-09-19 (#1591 J4-P0-03) also tombstones the held appointment (`softCancelTrialAppointment`) and notifies the consultee, and a paid trial nobody answers within 48 hours is cancelled and refunded in full.
-- The pay-link persist is a CAS, not a bare write (#1583 A-P0-06): a mint that matched zero rows on `Trial.updateMany({ where: { status: AWAITING_PAYMENT, pendingPaymentUrl: null } })` tombstones the freshly minted order rather than orphaning it, and reports `PAY_LINK_ORPHANED` (`lib/booking/pay-link-persist.ts`). A trial whose link was lost this way — still `AWAITING_PAYMENT`, `pendingPaymentUrl` null, `paymentDueAt` still in the future — is re-minted from the consultee's own read (`lib/trials/pay-link.ts`), under the same `lockApprovalPaymentMint` key and appointment lock the original mint used, reusing a live PENDING intent first rather than minting a second gateway order.
-- Duration configured per plan via `trialDurationMinutes` (default 30 min)
-- Consultant must approve and schedule the session
-- Successful trials can convert into a full subscription
+- **The buyer picks the time.** `POST /api/trials` requires one window of the plan's trial length, chosen from the expert's open times on the trial step of the dark mentorship dialog (`MentorshipTrialStep` in `app/explore/experts/[consultantId]/components/`), which uses the single-time picker (`components/scheduling/SingleTimePicker.tsx`).
+- Priced per plan via `trialPriceInPaise`, which defaults to 0 (a free trial). A platform-wide minimum sits under every plan's trial price: admin or staff set `PlatformPricingConfig.minTrialPriceInPaise` via `PATCH /api/admin/trial-pricing`, and the plan create/update routes reject prices below it.
+- **A free trial is confirmed at once**: the request writes the trial as `SCHEDULED` with a confirmed session. **A paid trial holds its time** as `AWAITING_PAYMENT` with a tentative session until the capture confirms it, and the hold lapses through the expire-unpaid-trials sweep if nobody pays.
+- Duration configured per plan via `trialDurationMinutes`: 30 or 60 minutes (default 30), checked on write by `SubscriptionPlanSchema` against `TRIAL_DURATION_MINUTES` (`schemas/trial-length.ts`) and offered in the editor as two radio buttons. A plan saved earlier with another length keeps booking at it until its next save, which asks for 30 or 60. `assertWindowMatchesPlanDuration` refuses a window of any other length than the plan's.
+- **The price is agreed at request.** `bookTrialInTx` writes `Trial.agreedPricePaise` from the plan's `trialPriceInPaise`, and a later plan edit never moves it. The length is not stored: it is read from the session the trial holds (see "Agreed price and booked length" below).
+- Each side may **reschedule** a trial once, at least 24 hours before it starts; the **expert can cancel** a scheduled trial, which refunds the learner in full and records a reliability strike.
+- Successful trials can convert into a full subscription.
 
 **Source files:**
 
 - Model: `prisma/schema.prisma` (Trial, TrialStatus)
-- API: `app/api/trials/route.ts`, `app/api/trials/[trialId]/route.ts`, `app/api/trials/check-eligibility/route.ts`
-- Locking: `utils/appointmentlock.ts` (lockSlotBooking, unlockSlotBooking — the shared slot-interval lock)
+- API: `app/api/trials/route.ts`, `app/api/trials/[trialId]/route.ts`, `app/api/trials/check-eligibility/route.ts`, and the shared reschedule routes under `app/api/appointments/[appointmentId]/reschedule/`
+- Booking: `lib/trials/book-trial.ts` (`bookTrialInTx`, `lockTrialPick`), `lib/trials/slot-check.ts` (`trialWindowRefusal`)
+- Reschedule: `lib/booking/trial-reschedule.ts` (`confirmTrialProposal`), `lib/booking/reschedule-caps.ts` (`trialCapReached`)
+- Cancellation: `lib/trials/cancellation.ts`
+- Locking: `utils/appointmentlock.ts` (`lockConsulteeBooking`, `lockSlotBatch` — the shared slot-atom lock)
 - Auto-completion: `scripts/appointments/auto-complete-appointments.ts`
 - Notifications: `lib/novu/workflows.ts`
 
@@ -28,20 +31,21 @@ Key characteristics:
 
 ### Trial
 
-| Field                       | Type               | Default   | Description                                                                                                    |
-| --------------------------- | ------------------ | --------- | -------------------------------------------------------------------------------------------------------------- |
-| `id`                        | `String` (cuid)    | auto      | Primary key                                                                                                    |
-| `status`                    | `TrialStatus`      | `PENDING` | Current lifecycle status                                                                                       |
-| `notes`                     | `String?` (Text)   | null      | Consultee's questions or goals for the trial                                                                   |
-| `consulteeProfileId`        | `String`           | required  | FK to ConsulteeProfile                                                                                         |
-| `consultantProfileId`       | `String`           | required  | FK to ConsultantProfile                                                                                        |
-| `subscriptionPlanId`        | `String`           | required  | FK to SubscriptionPlan (must have trial enabled)                                                               |
-| `appointmentId`             | `String?` (unique) | null      | FK to Appointment (a paid trial's placeholder is created at request; a free trial's appointment on acceptance) |
-| `convertedToSubscriptionId` | `String?` (unique) | null      | FK to Subscription (set when CONVERTED)                                                                        |
-| `requestedAt`               | `DateTime`         | `now()`   | When the trial was requested                                                                                   |
-| `completedAt`               | `DateTime?`        | null      | When the session was completed                                                                                 |
-| `createdAt`                 | `DateTime`         | `now()`   | Record creation timestamp                                                                                      |
-| `updatedAt`                 | `DateTime`         | auto      | Last update timestamp                                                                                          |
+| Field                       | Type               | Default  | Description                                                                 |
+| --------------------------- | ------------------ | -------- | --------------------------------------------------------------------------- |
+| `id`                        | `String` (cuid)    | auto     | Primary key                                                                 |
+| `status`                    | `TrialStatus`      | none     | Written at request: `SCHEDULED` (free) or `AWAITING_PAYMENT` (paid)         |
+| `notes`                     | `String?` (Text)   | null     | Consultee's questions or goals for the trial                                |
+| `consulteeProfileId`        | `String`           | required | FK to ConsulteeProfile                                                      |
+| `consultantProfileId`       | `String`           | required | FK to ConsultantProfile                                                     |
+| `subscriptionPlanId`        | `String`           | required | FK to SubscriptionPlan (must have trial enabled)                            |
+| `agreedPricePaise`          | `BigInt?`          | null     | Trial price agreed at request; null reads the plan (rows before the column) |
+| `appointmentId`             | `String?` (unique) | null     | FK to Appointment, created with the trial and its picked session at request |
+| `convertedToSubscriptionId` | `String?` (unique) | null     | FK to Subscription (set when CONVERTED)                                     |
+| `requestedAt`               | `DateTime`         | `now()`  | When the trial was requested                                                |
+| `completedAt`               | `DateTime?`        | null     | When the session was completed                                              |
+| `createdAt`                 | `DateTime`         | `now()`  | Record creation timestamp                                                   |
+| `updatedAt`                 | `DateTime`         | auto     | Last update timestamp                                                       |
 
 ### Constraints
 
@@ -60,15 +64,25 @@ Key characteristics:
 
 ### TrialStatus Enum
 
-| Value              | Description                                                       |
-| ------------------ | ----------------------------------------------------------------- |
-| `PENDING`          | Requested, awaiting consultant action; a paid trial is paid here  |
-| `AWAITING_PAYMENT` | Legacy: accepted before payment under the pre-#1775 flow          |
-| `SCHEDULED`        | Time slot confirmed                                               |
-| `COMPLETED`        | Trial session finished                                            |
-| `CONVERTED`        | Consultee subscribed after trial                                  |
-| `CANCELLED`        | Cancelled by consultee, lapsed unpaid, or unanswered for 48 hours |
-| `REJECTED`         | Declined by consultant                                            |
+| Value              | Description                                                        |
+| ------------------ | ------------------------------------------------------------------ |
+| `AWAITING_PAYMENT` | A paid trial holding its picked time until the capture confirms it |
+| `SCHEDULED`        | Time confirmed (free at request, paid at capture)                  |
+| `COMPLETED`        | Trial session finished                                             |
+| `CONVERTED`        | Consultee subscribed after trial                                   |
+| `CANCELLED`        | Cancelled by either party, or lapsed unpaid                        |
+
+---
+
+## Agreed price and booked length
+
+A trial keeps the price it was requested at, and the length of the session it holds. `bookTrialInTx` stamps `agreedPricePaise` on the row when it is created, from the plan's `trialPriceInPaise` that the request was just checked against. If the expert later changes the trial price, the plan edit route (`PUT /api/plans/subscriptions/[subscriptionPlanId]`) first calls `freezeTrialPrice` (`lib/booking/sold-terms.ts`) inside its own transaction, which stamps every trial of that plan that is still null, and only then changes the plan. A change to the trial length alone freezes nothing. The database refuses a negative price through `trial_agreed_price_valid` in `prisma/sql/check-constraints.sql`.
+
+The price readers use `agreedTrialPricePaise`: the approval pay-link price (`calculateAmount` in `lib/payments/operations/approval-payment.ts`). The length is never stored on the trial, because a trial holds its time from the moment it is requested and that session already records the length. `bookedSessionMinutes` (`lib/appointments/occurrences.ts`) returns the live session's length, else the latest session row's, and the plan's `trialDurationMinutes` is used only when the booking has no session row at all. The trial reschedule confirmation (`confirmTrialProposal` in `lib/booking/trial-reschedule.ts`) and the reschedule pages under `app/dashboard/` read the length that way.
+
+**Example.** Raj Anderson requests Hannah Anderson's trial when the plan says ₹200 (20,000 paise) and 30 minutes. Hannah then edits the plan to ₹500 and 60 minutes. Raj's pay link is still ₹200 plus tax, and when he moves the call the new window must still be exactly 30 minutes, because his held session is 30 minutes long.
+
+**Known leftovers.** Several display-only readers also still show the plan's current figures for a booking. A row with a null price is a row created before the column, so it reads the plan by design.
 
 ---
 
@@ -76,45 +90,48 @@ Key characteristics:
 
 ```mermaid
 stateDiagram-v2
-    [*] --> PENDING : Consultee requests trial
-    PENDING --> SCHEDULED : Consultant approves a free trial & picks slot
-    PENDING --> SCHEDULED : Consultant accepts a paid trial already paid at request
-    PENDING --> CANCELLED : Unpaid past its window, or unanswered for 48 h (refunded)
-    PENDING --> AWAITING_PAYMENT : Legacy accept-then-pay only
-    AWAITING_PAYMENT --> SCHEDULED : Webhook confirms payment
-    AWAITING_PAYMENT --> CANCELLED : Consultee cancels or the pay-link lapses (expire-unpaid-trials sweep)
-    PENDING --> REJECTED : Consultant declines
-    PENDING --> CANCELLED : Consultee cancels
+    [*] --> SCHEDULED : Free trial, POST /api/trials
+    [*] --> AWAITING_PAYMENT : Paid trial, POST /api/trials (time held)
+    AWAITING_PAYMENT --> SCHEDULED : Capture webhook confirms the hold
+    AWAITING_PAYMENT --> CANCELLED : Learner cancels, or the pay window lapses
     SCHEDULED --> COMPLETED : Session ends (auto or manual)
-    SCHEDULED --> CANCELLED : Consultee cancels
-    COMPLETED --> CONVERTED : Consultee subscribes
-    REJECTED --> [*]
+    SCHEDULED --> CANCELLED : Learner or expert cancels through DELETE
+    COMPLETED --> CONVERTED : Plan with the same expert is paid within 30 days
     CANCELLED --> [*]
     CONVERTED --> [*]
 ```
 
+`POST /api/trials` creates the row directly in its final state and writes one `BookingStatusHistory` creation row; the expert is never asked to accept or decline. A reschedule does not change `Trial.status`: the trial stays `SCHEDULED` while its one session is released (see "Rescheduling a trial").
+
 Valid transitions, as `TRIAL_ALLOWED_FROM` in `lib/booking/transitions.ts` encodes them and `transitionTrial` enforces them; `AWAITING_PAYMENT` is server-set only and is deliberately absent from the client-facing `TrialSessionStatusEnum`, so a request body can never assert it:
 
-| From               | Allowed targets                                          |
-| ------------------ | -------------------------------------------------------- |
-| `PENDING`          | `AWAITING_PAYMENT`, `SCHEDULED`, `CANCELLED`, `REJECTED` |
-| `AWAITING_PAYMENT` | `SCHEDULED`, `CANCELLED`                                 |
-| `SCHEDULED`        | `COMPLETED`, `CANCELLED`                                 |
-| `COMPLETED`        | `CONVERTED`                                              |
-| `CONVERTED`        | (terminal)                                               |
-| `CANCELLED`        | (terminal)                                               |
-| `REJECTED`         | (terminal)                                               |
+| From               | Allowed targets          |
+| ------------------ | ------------------------ |
+| `AWAITING_PAYMENT` | `SCHEDULED`, `CANCELLED` |
+| `SCHEDULED`        | `COMPLETED`, `CANCELLED` |
+| `COMPLETED`        | `CONVERTED`              |
+| `CONVERTED`        | (terminal)               |
+| `CANCELLED`        | (terminal)               |
 
-### Cancellation Behavior (PATCH CANCELLED and DELETE)
+The `PATCH /api/trials/[trialId]` route offers a narrower set than the map. It never moves `AWAITING_PAYMENT` to `SCHEDULED` (only the capture webhook confirms a paid hold, so an unpaid hold can never be confirmed by hand), and it answers 409 `USE_CANCEL_ENDPOINT` to `CANCELLED` on a `SCHEDULED` trial, because `DELETE` is the one door that owns the cancel window, the quoted refund, the strike and any open reschedule.
 
-Both `PATCH` (with `status: CANCELLED`) and `DELETE` now exhibit identical cleanup behavior:
+### Cancellation behaviour
 
-- **Appointment/slot cleanup**: If the trial has a linked appointment, `softCancelTrialAppointment` (`lib/trials/cancellation.ts`) soft-cancels it inside a transaction — the `AppointmentOccurrence` rows move to `CANCELLED` with `deletedAt` set, the `Appointment` itself gets `deletedAt`, and its participants move to `CANCELLED`. Doctrine rule 2 forbids deleting anything a `Payment` points at; a hard delete here used to cascade-destroy a paid trial's Payment row with no refund and nothing left to reconcile (#1009).
-- **Notifications**: Both paths send cancellation notifications to both parties via Novu (`trial-session-cancelled`).
-- **Transaction boundaries**: Since #1846 (SM-D2, SM-D5) `DELETE` moves the status and tombstones the session in one transaction on its own client, through `softCancelTrialAppointmentInTx`, and it does so under the appointment lock that every other lifecycle writer takes; a trial with no appointment yet has no lock to take, so its CAS alone decides. The CAS narrows to the status the caller read, so a trial accepted or paid since that read answers 409 instead of being cancelled on a stale view. `PATCH` still commits the status transition in its own transaction first and then tombstones in a second transaction through `softCancelTrialAppointment`, because only `DELETE` was in scope for #1846 and `PATCH` now cancels only unpaid trials. A failure between those two leaves a `CANCELLED` trial whose appointment still has `deletedAt: null`; the expire-unpaid-trials sweep repairs that shape on its next run (a bounded cohort of `CANCELLED` trials with a live appointment), so no manual reconciliation is needed.
-- **A paid trial shows its refund quote first (#1846)**: The consultee's cancel dialog first calls `GET /api/trials/[trialId]/cancel/preview`, which returns the refund quote in the appointment cancel preview's shape plus the amount paid, and renders the amount, the breakdown and the refund rail. The dialog then sends `DELETE` with `confirmedRefundPaise` set to the quoted amount. `DELETE` re-quotes under the appointment lock and refunds exactly that quote; a missing confirmation answers 409 `REFUND_QUOTE_REQUIRED`, and a confirmation that no longer matches answers 409 `REFUND_QUOTE_CHANGED`, and both carry the current quote so the dialog can show it and ask again. `PATCH` with `status: CANCELLED` refuses a paid trial with 409 `REFUND_QUOTE_REQUIRED`, and its CAS carries `paymentId: null`, so a capture that commits first turns the cancel into a 409 as well. A buyer who has not paid can also leave a trial through the abandon door, `POST /api/bookings/[bookingId]/abandon`, described in [06-booking-lifecycle.md](./06-booking-lifecycle.md).
+`DELETE /api/trials/[trialId]` is the door that ends a trial. It accepts `AWAITING_PAYMENT` and `SCHEDULED` trials, from the learner, the trial's own expert, or staff.
 
-Previously, PATCH CANCELLED did not clean up appointments/slots, and DELETE did not send cancellation notifications. Both paths now handle both concerns.
+- **One transaction, under the appointment lock.** The status CAS (narrowed to the status the caller read), an expert's strike, `declineOpenReschedules` for any open reschedule request, the tombstone (`softCancelTrialAppointmentInTx` in `lib/trials/cancellation.ts`: the sessions move to `CANCELLED` with `deletedAt`, the appointment gets `deletedAt`, the seats move to `CANCELLED`) and the refund-owed marker commit together. Doctrine rule 2 forbids deleting anything a `Payment` points at, so nothing is deleted.
+- **The cancel window.** `trialCancelWindowRefusal` reads `cancelWindowRefusal` (`lib/booking/session-window.ts`): from 15 minutes before the session until it ends the answer is 409 `SESSION_IN_PROGRESS`, and a delivered trial answers 409 `SESSION_ALREADY_DELIVERED`.
+- **A paid trial shows its refund quote first.** The cancel dialog calls `GET /api/trials/[trialId]/cancel/preview` (`quoteTrialRefund`) and sends `DELETE` with `confirmedRefundPaise`; `DELETE` re-quotes under the lock and refunds exactly that quote. A missing confirmation answers 409 `REFUND_QUOTE_REQUIRED`, a stale one 409 `REFUND_QUOTE_CHANGED`, and both carry the current quote. The marker (`trialRefundOwed`, key `trial-cancel:<trialId>:<paymentId>`) is stamped with `stampRefundOwed` in the cancel commit and driven through `refundBookingPayment` by `refundCancelledTrial`; the retry sweep re-drives it if the gateway leg fails. A trial with no payment answers `{ paid: false }`, and a `free_` ₹0 payment that holds no referral credit answers `freeBooking: true`, so the dialog says there is nothing to refund instead of quoting ₹0.
+- **Who pays.** The learner's own cancel is quoted on the booking-time policy's notice tiers. Anyone else cancels on the consultant's side, so the quote uses `consultantInitiatedPct` (100 %) whatever the notice: the learner gets everything still refundable back.
+- **The expert's cancel records a strike.** When the trial's own expert cancels a `SCHEDULED` trial, `recordExpertStrike` (`lib/booking/expert-reliability.ts`) writes one `EXPERT_CANCEL` strike in the same transaction, for a free trial too. A staff cancel records none, and cancelling a trial that was never confirmed records none.
+- **A held trial's payment dies with it.** When the trial still has a `PENDING` payment (a paid trial that is `AWAITING_PAYMENT`), `DELETE`, the `PATCH` cancel and the expire-unpaid-trials sweep call `expirePendingPaymentsInTx` (`lib/booking/pending-payment-expiry.ts`) inside the same transaction, before the trial moves: the payment first, then the trial, which is the capture's own lock order (payment, then trial). The gateway order is cancelled after the commit (`cancelGatewayOrders`, best effort), and a capture that still lands on the expired payment is parked and refunded. A payment that was already captured is left alone and goes through the quoted refund below. For example, Daniel Brown holds a ₹500 (50,000 paise) paid trial with Hannah Anderson and never pays: when the sweep cancels it, the ₹500 order is `EXPIRED` in the same commit, so a late payment cannot revive a trial that no longer exists.
+- **Notices.** The other party gets `trial-session-cancelled`; the learner gets the `trial-refunded` bell only once money actually moved.
+
+The `PATCH` route cancels only a trial awaiting payment (409 `USE_CANCEL_ENDPOINT` for `SCHEDULED`), and refuses a paid one with 409 `REFUND_QUOTE_REQUIRED`; its CAS carries `paymentId: null`, so a capture that commits first turns the cancel into a 409. A learner who has not paid can also leave through the abandon door, `POST /api/bookings/[bookingId]/abandon` ([06-booking-lifecycle.md](./06-booking-lifecycle.md)).
+
+#### Worked example: the expert cancels a paid trial
+
+A ₹500 trial (`trialPriceInPaise` 50,000) is `SCHEDULED` for Thursday 10:00. On Thursday at 09:30 the expert opens "Cancel trial". The preview quotes 50,000 paise at 100 % (the consultant tier ignores the 30 minutes of notice that would give the learner 0 % on their own cancel). The expert confirms; `DELETE` re-quotes 50,000, and one transaction moves the trial to `CANCELLED`, writes the strike, tombstones the session and stamps `refundOwedKey = trial-cancel:<trialId>:<paymentId>` with 50,000 paise. After the commit `refundBookingPayment` refunds 50,000 to the card and the learner gets the refunded bell. Had the expert tried at 09:50, the answer would have been 409 `SESSION_IN_PROGRESS` and nothing would have moved.
 
 ### Conversion Handler (PATCH CONVERTED)
 
@@ -138,132 +155,116 @@ The `CONVERTED` transition requires a `subscriptionId` in the request body. The 
 
 ```mermaid
 sequenceDiagram
-    participant Consultee
-    participant API as /api/trials
-    participant DB as Database
+    participant Learner
+    participant API as POST /api/trials
     participant Redis
-    participant Novu
+    participant DB as Database
+    participant Gateway
 
-    Consultee->>API: POST /api/trials (request trial)
-    API->>DB: Check unique constraint (one trial per pair)
-    API->>DB: Verify plan has trialEnabled
-    API->>DB: Create Trial (PENDING)
-    API->>Novu: trial-session-requested (to consultant)
-    API-->>Consultee: 201 Created
-
-    Note over API: Consultant reviews request
-
-    Consultee->>API: PATCH /api/trials/id with status SCHEDULED and slotData
-    API->>Redis: lockSlotBooking(consultantProfileId, startsAt, endsAt)
-    API->>DB: $transaction: validate availability (both participants) + create Appointment (TRIAL) + update Trial
-    API->>Redis: unlockSlotBooking()
-    API->>Novu: trial-session-scheduled (to consultee)
-    API-->>Consultee: 200 OK
-
-    Note over API: Session takes place
-
-    Note over API: Hourly cron runs
-    API->>DB: Find SCHEDULED trials past endTime + 1h buffer
-    API->>DB: Update to COMPLETED, set completedAt
-    API->>Novu: trial-session-completed (to both parties)
+    Learner->>API: plan + picked window (slot.startsAt, slot.endsAt)
+    API->>API: trial length (assertWindowMatchesPlanDuration), lead (assertRequestLeadFits)
+    API->>Redis: request cap → consultee lock → slot atoms (lockTrialPick)
+    API->>DB: $transaction: capacity, open hours + both calendars (trialWindowRefusal)
+    API->>DB: create Appointment + session, seats
+    alt free trial
+        API->>DB: create Trial (SCHEDULED), confirmed session, CONFIRMED seats
+        API->>DB: stage trial-session-scheduled bells + emails
+    else paid trial
+        API->>DB: create Trial (AWAITING_PAYMENT, paymentDueAt), tentative session, HELD seats
+    end
+    API->>Redis: release locks
+    API->>Gateway: paid only — mint the order after the commit
+    API-->>Learner: 201 (paid: checkoutUrl to /checkout/plans/trial/[id])
 ```
 
 ### Step-by-step
 
-1. **Request** -- Consultee calls `POST /api/trials` with `consulteeProfileId`, `consultantProfileId`, `subscriptionPlanId`, and optional `notes`. The API checks the unique constraint and verifies `trialEnabled` on the plan.
-2. **Eligibility check** -- `GET /api/trials/check-eligibility` can be called beforehand to verify the consultee has not already used their trial with this consultant.
-3. **Approve & Schedule** -- Consultant calls `PATCH /api/trials/[trialId]` with `status: "SCHEDULED"` and `slotData: { startsAt, endsAt }`. The system acquires a distributed lock, validates slot availability, then creates an `Appointment` (type `TRIAL`) and a `AppointmentOccurrence` inside a Prisma transaction. A paid trial is accepted only once its request-time payment has been captured; the session is then placed on the placeholder appointment created at request time, and the trial moves straight to `SCHEDULED`. `AWAITING_PAYMENT` remains only for trials accepted under the old accept-then-pay flow.
-4. **Session** -- Both parties join the meeting via Stream video call.
-5. **Auto-complete** -- The hourly cron marks `SCHEDULED` trials as `COMPLETED` once all appointment slots have ended (with a 1-hour buffer).
-6. **Conversion** -- If the consultee subscribes, the trial status transitions to `CONVERTED` and `convertedToSubscriptionId` is set.
+1. **Pick** — on the expert page, "Book Trial" opens the mentorship dialog on its trial step (step one is the start-date choice; Back returns to it). The step shows the dark single-time picker: a month of the expert's availability read with the learner's own busy times (`consulteeUserId`), cut into windows of the trial's length by `windowsForDay` at `leadMsFor("request", { settled })` — 15 minutes for a free trial, 2 hours for a paid one, which still has to be paid. Before `POST /api/trials` the step checks `/api/trials/check-eligibility`; after a free booking it calls `invalidateAvailability`.
+2. **Validate before anything is held** — the route refuses a window of the wrong length (400 `WINDOW_DURATION_MISMATCH`) or one inside the lead (409 `REQUEST_TOO_SOON`) before it reads or clears the pair's earlier freed trial row. Every validity check, including the plan lookup, runs before the request limiter, so a refused request costs no attempt.
+
+   The limiter (`trialRequestLimiter`, 3 trials per 24 hours per caller, privileged roles included) is read without spending by `trialRequestRefusal` and spent by `spendTrialRequest` only once a trial has been created (`lib/rate-limit.ts`). A caller who has already created three answers 429 `RATE_LIMITED` with `retryAfterSeconds`, `retryAt` and a `Retry-After` header, and the trial step shows when they may retry in their own zone. If Redis is slow or down the read lets the request through. For example, Daniel Brown's requests are refused twice because the plan is still a draft; he then books a trial once, and he has spent one of his three, not three.
+
+3. **Lock** — the expert's request-cap lock (its count and the insert run under it), then `lockTrialPick`: the consultee lock and one all-or-nothing slot batch over the host and, for a learner who is an expert too, their own calendar. Contention answers 423 `SLOT_BUSY`; Redis down answers 503.
+4. **Write** — `bookTrialInTx` (`lib/trials/book-trial.ts`) checks `trialWindowRefusal` on the transaction's client (400 `OUTSIDE_AVAILABILITY`, 409 `SLOT_TAKEN`), creates the appointment with its one session (stamped with `consultantProfileId`), the seats and the trial in its final status (with the sold price frozen on the row), and appends the one creation history row. A free trial's session is confirmed, so a concurrent confirmed overlap meets `occurrence_no_confirmed_overlap` and answers 409 `SLOT_TAKEN`.
+5. **Pay (paid trial only)** — the order is minted after the commit against the trial's appointment and persisted as the pay page (`persistTrialPayLink`). The pay window, `Trial.paymentDueAt` and `Payment.expiresAt` alike, is `payWindowEnd`: 24 hours, but never later than 15 minutes before the session. The capture webhook moves the trial `AWAITING_PAYMENT → SCHEDULED`, stamps `Trial.paymentId`, and `confirmExistingAppointment` confirms the held session and seats in place. An unpaid hold past `paymentDueAt` is cancelled and tombstoned by the expire-unpaid-trials sweep, which frees the time. A capture that lands after the held session already started (between the pay window closing and that sweep) never confirms it: the capture webhook cancels the trial, tombstones the hold and parks the payment for the full automatic refund, answering `captured_after_release`.
+6. **Session, completion, conversion** — both parties join through Stream; the auto-complete pass (every 30 minutes) completes the trial once its confirmed session has ended (1-hour buffer); a plan with the same expert paid within 30 days converts it.
+
+The consultant never schedules, accepts or declines a trial: `PATCH /api/trials/[trialId]` accepts only `COMPLETED`, `CONVERTED` and `CANCELLED` (`TrialSessionStatusEnum`).
+
+#### Worked example: two learners pick the same free time
+
+Learners A and B both pick Tuesday 18:00 on the same expert's free 30-minute trial. Both requests take their own consultee locks, then race for the same slot atom; B waits while A holds it. A's transaction finds the window open, writes a confirmed session and commits `SCHEDULED`; A's locks release. B now gets the atom, but `trialWindowRefusal` sees A's session and B's request answers 409 `SLOT_TAKEN` ("That time was just taken. Pick another time."), and the trial step drops B's pick and re-reads the grid. If B's request had somehow skipped the atoms, the overlap constraint would have refused B's confirmed session with the same 409. A paid hold behaves the same way through the atoms and the occupancy read, because an `AWAITING_PAYMENT` trial's session occupies its time.
 
 ### Paying for a trial
 
-Since #1775 a paid trial is charged when it is requested, not when it is accepted. The request creates a placeholder appointment and mints the order against it, the buyer pays on the branded checkout page, and the capture stamps the trial's `paymentId` while it stays `PENDING`. The consultant can accept only a paid trial (`409 TRIAL_UNPAID` otherwise), and the session is then created on the placeholder appointment. A decline, or 48 hours without an answer (`TRIAL_UNANSWERED`), refunds the payment in full and stages the `trial-refunded` bell for the learner. The "Pay to confirm" button on the checkout page lands on `/checkout/pay/[paymentId]`, which opens the existing Razorpay order.
+A priced trial is paid for on our own checkout page at `/checkout/plans/trial/[trialId]`, a single card centred under the site header (the route keeps the public header through `CHROME_SHOWN_PREFIXES` in `lib/navigation/public-chrome.ts`), and every "Pay Now" affordance in the product has to land there: the page names the amount, shows the held session in the viewer's own timezone and states when the hold lapses, then hands off to `/checkout/pay/[paymentId]`. The one place that decision is made is `bookingPayHref` in `lib/appointments/trial-checkout-href.ts`: the branded trial page for a trial row, our pay page for a Razorpay order, and a hosted link only when one is an https URL. The `Trial` id survives only in the synthetic view-model id the mappers mint (`trial-<id>`), which is why the helper parses that prefix. A new surface that offers to pay for a booking must call the helper rather than link to `pendingPaymentUrl`.
 
-A priced trial is paid for on our own checkout page at
-`/checkout/plans/trial/[trialId]`, and every "Pay Now" affordance in the product
-has to land there. The page exists because the gateway pay-link on
-`Trial.pendingPaymentUrl` opens straight into Razorpay with none of the
-context a buyer needs: the branded page names the amount, shows the held session
-in the viewer's own timezone, states the deadline the hold expires at, and only
-then hands off (#1167).
+A lost pay link is re-minted from the learner's own read (`remintTrialPayLink` in `lib/trials/pay-link.ts`) while the pay window is open, reusing a live PENDING intent before minting a second order. The persist is a CAS on the payable statuses, so a mint that lands after the sweep cancelled the trial tombstones the orphaned order (`reconcileOrphanedPayLink`).
 
-The one place that decision is made is `bookingPayHref` in
-`lib/appointments/trial-checkout-href.ts`. It returns the branded trial page
-for a trial row, our pay page at `/checkout/pay/[paymentId]` for a Razorpay
-order, and a hosted link only when one is an https URL. The `Trial` id only
-survives in the synthetic view-model id the mappers mint (`trial-<id>`), which
-is why the helper parses that prefix rather than reading a field. Both Pay Now
-buttons on the appointment detail page and the one in the appointment sheet call
-it, because the branch previously lived inline in the sheet and a second entry
-point added on the detail page shipped without it, quietly regressing paid
-trials back to the raw gateway link (#1428, #1429).
+---
 
-If you add a new surface that offers to pay for a booking, call the helper
-first; do not re-derive the branch, and do not link to `pendingPaymentUrl`
-directly. The branded page's own "Pay to confirm" button lands on
-`/checkout/pay/[paymentId]`, which opens the existing order.
+## Rescheduling a trial
+
+A trial is one session (ordinal 1), and each side may move it **once**, through the same `RescheduleRequest` machinery as consultations (`POST /api/appointments/[appointmentId]/reschedule`).
+
+- **Who and when.** Only the trial's learner or expert (403 `TRIAL_PARTY_ONLY` otherwise, even for an organisation operator). A booking that holds a live, unexpired `PENDING` payment cannot be rescheduled at all (409 `PAY_LINK_LIVE`). The trial must be `SCHEDULED`, its session at least 24 hours away (`RESCHEDULE_MIN_LEAD_HOURS`), and the new time at least 24 hours away too (`leadMsFor("reschedule")`).
+- **Always a named time.** A trial has no allocator to place it later, so the request must carry the new window (400 `PROPOSAL_REQUIRED`), sent as its 30-minute atoms (`trialProposalAtoms`). The release flips the session to `RESCHEDULED` (tentative) and opens the booking's one request with `originStatus: SCHEDULED`; `Trial.status` stays `SCHEDULED` behind a locking touch.
+- **Confirming.** `confirmTrialProposal` (`lib/booking/trial-reschedule.ts`) closes the request and moves the released session in place onto the new window in one transaction, under the appointment lock, the consultee lock and the window's slot atoms, after checking the trial's length, the lead, the expert's open hours and both calendars (`trialWindowRefusal`, excluding the trial's own appointment). A **learner's** proposal confirms at once when it passes (`AUTO_ACCEPTED`); if the time was just taken or cannot be booked, the request is withdrawn on the spot, the trial keeps its time, and the route answers 409 `TIMES_TAKEN` or `TIME_NOT_BOOKABLE`. An **expert's** proposal waits for the learner, who answers on the appointment's `RescheduleProposalCard` (`POST …/reschedule/respond`): Accept runs the same confirm (`ACCEPTED`), Decline restores.
+- **Endings that restore.** Decline, the initiator's withdraw and the expiry sweep all call `restoreRescheduledBooking`, which puts the session back at its original time and stamps `restoredAt`, so the request costs no move. A trial that is cancelled while a request is open has it declined in the cancel commit.
+- **Caps.** `trialCapReached` (`lib/booking/reschedule-caps.ts`, `MAX_TRIAL_RESCHEDULES_PER_SIDE = 1`) counts the side's earlier requests that really moved the trial (`countedReleases`). The learner's second move answers 422 `MAX_RESCHEDULES_EXCEEDED`, the expert's 409 `EXPERT_RESCHEDULE_CAP`.
+- **Pickers.** Both sides pick on the light single-time picker at the reschedule lead (`purpose="reschedule"`, 24 hours), offering only free times inside the expert's published hours: the learner on `/dashboard/consultee/[consulteeId]/appointments/[appointmentId]/reschedule` with their own busy times, the expert on the consultant reschedule page ("Propose a new trial time") with the learner's `consulteeUserId`, so the learner's busy times apply too.
+
+#### Worked example: one move each
+
+A free trial is booked for Friday 10:00. On Monday the learner moves it to Saturday 11:00: the time is in the expert's open hours and both calendars are free, so it confirms at once and the session row now reads Saturday 11:00. On Tuesday the learner tries Sunday: 422 `MAX_RESCHEDULES_EXCEEDED`. On Wednesday the expert proposes Saturday 15:00; the session is released and the learner sees the proposal. The learner declines, so the session goes back to Saturday 11:00 and the request is stamped `restoredAt` — the expert has not used their move, and may propose again. Had the learner accepted, the expert's next attempt would answer 409 `EXPERT_RESCHEDULE_CAP`.
 
 ---
 
 ## How Trial Differs from Consultation
 
-| Aspect                | Trial                                                                                              | Consultation                                            |
-| --------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| **Payment**           | Per plan's `trialPriceInPaise` (0 = free, the default; a priced trial pays via `AWAITING_PAYMENT`) | Required (via checkout)                                 |
-| **Duration**          | Fixed per plan (`trialDurationMinutes`, default 30 min)                                            | Variable (`durationInHours`, 0.5-4h)                    |
-| **Lock type**         | `lockSlotBooking()` -- shared `slot-booking:` atom keys                                            | `lockSlotBooking()` -- shared `slot-booking:` atom keys |
-| **Uniqueness**        | One per consultee-consultant pair                                                                  | Multiple allowed                                        |
-| **Conversion**        | Leads to Subscription (`convertedToSubscriptionId`)                                                | Standalone                                              |
-| **Status field**      | `status` (TrialStatus enum)                                                                        | `status` (AppointmentStatus enum)                       |
-| **Appointment type**  | `TRIAL`                                                                                            | `CONSULTATION`                                          |
-| **Booking flow**      | Request -> consultant schedules                                                                    | Direct checkout or request-based                        |
-| **Scheduling period** | None                                                                                               | None                                                    |
-| **Slot count**        | Single slot (1)                                                                                    | `Math.ceil(durationInHours / 0.5)` slots                |
+| Aspect               | Trial                                                                                                | Consultation                              |
+| -------------------- | ---------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| **Payment**          | Per plan's `trialPriceInPaise` (0 = free, the default); a priced trial holds its time until captured | Required (via checkout)                   |
+| **Duration**         | Fixed per plan (`trialDurationMinutes`, 30 or 60 min, default 30)                                    | Variable (`durationInHours`, 0.5-4h)      |
+| **Locks**            | Consultee lock + shared `slot-booking:` atoms (`lockTrialPick`)                                      | Consultee lock + shared atoms             |
+| **Uniqueness**       | One per consultee-consultant pair                                                                    | Multiple allowed                          |
+| **Conversion**       | Leads to Subscription (`convertedToSubscriptionId`)                                                  | Standalone                                |
+| **Status field**     | `status` (TrialStatus enum)                                                                          | `status` (AppointmentStatus enum)         |
+| **Appointment type** | `TRIAL`                                                                                              | `CONSULTATION`                            |
+| **Booking flow**     | The learner picks; free confirms at once, paid at capture                                            | Direct checkout or request-based          |
+| **Reschedule**       | Once per side, a named window, confirmed in place                                                    | Per-session caps, placed by the allocator |
+| **Slot count**       | Single session (1)                                                                                   | `Math.ceil(durationInHours / 0.5)` atoms  |
 
 ---
 
 ## Concurrency Protection
 
-Trial scheduling takes the SAME lock as every other direct slot writer: `lockSlotBooking()` in `utils/appointmentlock.ts`, which acquires one key per 30-minute atom of the requested interval. Until #1169 PR 1 trials locked a private `trial-slot-booking:` namespace that no other path read, so a trial and a consultation checkout for the same consultant-minute never contended — and because the trial slot also carried no `consultantProfileId`, it fell outside the `occurrence_no_confirmed_overlap` exclusion constraint too (#1093 §1). Both halves are fixed: the slot is stamped with `consultantProfileId` at creation, and the availability check now runs inside the scheduling transaction and covers the consultee's calendar as well as the consultant's.
+Every trial time writer — the buyer's pick and a reschedule confirm — takes the same locks as every other direct slot writer, in checkout's global order: the consultee lock (`lockConsulteeBooking`), then one all-or-nothing slot batch (`lockSlotBatch`, one `slot-booking:{consultantProfileId}:{atomStartISO}` key per 30-minute atom) over the host and, for a learner who is an expert too, their own calendar. The request also takes the expert's request-cap lock first, and a reschedule confirm takes the appointment lock first. The availability check (`trialWindowRefusal`) runs inside the writing transaction and covers both calendars, because the consultant-keyed exclusion constraint cannot see the consultee's other bookings. Every trial session is stamped with `consultantProfileId`, so a confirmed one is inside `occurrence_no_confirmed_overlap`; a paid hold is tentative and outside it, so the atoms and the occupancy read (an `AWAITING_PAYMENT` trial occupies its time, `buildOccupiedAppointmentFilter`) are what serialise it until the capture confirms it.
 
-Because the consultee-calendar check is only a read, the route also takes `lockConsulteeBooking(consulteeUserId)` before the slot lock, following the same consultant → consultee → slot lock order that checkout uses. Without it, two trials for the same consultee with two different consultants would hold disjoint consultant-keyed atoms, pass the consultee check concurrently, and both commit — the exact cross-consultant double-book the consultant-keyed exclusion constraint cannot see.
-
-**Redis key pattern:** `slot-booking:{consultantProfileId}:{atomStartISO}` (one key per 30-minute atom)
-
-| Parameter           | Value                                    |
-| ------------------- | ---------------------------------------- |
-| Default TTL         | 60,000 ms (60 seconds)                   |
-| Retry count         | 5 per atom (interval config)             |
-| Base retry delay    | 200 ms                                   |
-| Retry jitter        | 200 ms (random)                          |
-| Exponential backoff | Yes                                      |
-| Drift factor        | 0.01                                     |
-| Release mechanism   | Atomic Lua script (check value then DEL) |
-
-The locks are acquired before slot validation and released in a `finally` block regardless of success or failure. On lock contention, the API returns HTTP 423 (Locked); when Redis is unreachable, acquisition fails closed with HTTP 503 (`BookingLockUnavailableError`) instead of reading as contention.
-
-Slot validation inside the lock checks for overlaps across all appointment types (consultations, subscriptions, webinars, classes, and other trials).
+Lock contention answers 423; when Redis is unreachable, acquisition fails closed with 503 (`BookingLockUnavailableError`). Locks are released in a `finally` block.
 
 ---
 
 ## Auto-Completion
 
 **File:** `scripts/appointments/auto-complete-appointments.ts`
-**Schedule:** Hourly (via GitHub Actions cron job)
+**Schedule:** every 30 minutes on the five-minute ticker (`TARGET_EVERY_MINUTES` in `lib/cron/schedule.ts`)
 **Buffer:** 1 hour after session end time
 
 The `completeTrials()` function:
 
-1. Queries `Trial` records where `status = SCHEDULED` and all linked `AppointmentOccurrence.endsAt < (now - 1 hour)`
+1. Queries `Trial` records where `status = SCHEDULED` and every confirmed (non-tentative, live) session ended before `now - 1 hour` (`completableTrialWhere`)
 2. Updates each to `status = COMPLETED` with `completedAt = now()`
+
+A session released by an open reschedule is tentative, so a trial being moved is never completed on its old time; the request expires at least 24 hours before that time and restores it.
 
 Additionally, the `GET /api/trials` endpoint performs an inline auto-complete check (without the buffer) to keep the UI current between cron runs.
 
 ---
 
 ## Conversion to Subscription
+
+**The prompt to continue.** The buyer's trial detail page carries a "Continue with {expert}" card, quiet before the session and prominent once it completes. When the trial completes, the learner gets one bell and one email headed "Continue with {expert}" that open the plan's checkout page, and the expert gets a bell only (`stageTrialCompletedNotices`, `lib/booking/trial-completed-notice.ts`, called by the trial route and the auto-complete sweep). See [the booking follow-up train](../decisions/2026-11-12-booking-follow-up-train.md), decision 6, and [the required notices record](../decisions/2026-11-15-required-notices-and-deadline-alerts.md), decision 4.
 
 When a consultee decides to subscribe after a trial, the trial status transitions from `COMPLETED` to `CONVERTED`:
 
@@ -290,12 +291,12 @@ The link enables:
 
 Trial events trigger Novu workflows defined in `lib/novu/workflows.ts`. All trial workflows use the `TrialPayload` type.
 
-| Workflow ID               | Trigger                     | Recipients   |
-| ------------------------- | --------------------------- | ------------ |
-| `trial-session-requested` | Consultee requests trial    | Consultant   |
-| `trial-session-scheduled` | Consultant schedules trial  | Consultee    |
-| `trial-session-completed` | Trial session ends          | Both parties |
-| `trial-session-cancelled` | Trial cancelled or rejected | Both parties |
+| Workflow ID               | Trigger                              | Recipients                                                                         |
+| ------------------------- | ------------------------------------ | ---------------------------------------------------------------------------------- |
+| `trial-session-scheduled` | A free trial is booked               | Both parties                                                                       |
+| `trial-session-completed` | Trial session ends                   | Both parties (learner: bell and email "Continue with {expert}"; expert: bell only) |
+| `trial-session-cancelled` | Trial cancelled                      | The other party                                                                    |
+| `trial-refunded`          | A cancelled paid trial's money moved | Learner                                                                            |
 
 **Payload type** (`TrialPayload`):
 
@@ -308,21 +309,39 @@ Trial events trigger Novu workflows defined in `lib/novu/workflows.ts`. All tria
 | `status`         | `string`  | Current trial status            |
 | `dashboardUrl`   | `string`  | Link to relevant dashboard page |
 
+A paid trial's confirmation reaches both parties through the capture's booked emails. A trial reschedule uses the shared `appointment-rescheduled` family. Its bell is staged on the move's transaction through the outbox and goes only to the party who did not make the move (`stageTrialMovedBells` in `lib/booking/trial-reschedule.ts`), and its notices name the trial's parties through `rescheduleParties` (`lib/booking/reschedule-outcome-notice.ts`). A paid trial whose payment is captured after its held session started is cancelled by the capture, and both parties get the existing `trial-session-cancelled` notice, staged with the release and sent after commit (`stageTrialPaidAfterStartNotice` in `lib/payments/webhooks/handlers.ts`).
+
 Users can disable trial notifications via `NotificationPreference.trialNotifications`.
 
 ---
 
 ## API Reference
 
-| Method   | Endpoint                               | Auth Required             | Purpose                                                                                        |
-| -------- | -------------------------------------- | ------------------------- | ---------------------------------------------------------------------------------------------- |
-| `GET`    | `/api/trials`                          | Yes (session)             | List trials (paginated, filterable)                                                            |
-| `POST`   | `/api/trials`                          | Yes (session)             | Request a new trial session                                                                    |
-| `GET`    | `/api/trials/[trialId]`                | Yes (session)             | Get a specific trial session                                                                   |
-| `PATCH`  | `/api/trials/[trialId]`                | Yes (session)             | Update status (schedule, complete, convert)                                                    |
-| `DELETE` | `/api/trials/[trialId]`                | Yes (session)             | Cancel a PENDING, AWAITING_PAYMENT or SCHEDULED trial; a paid one needs `confirmedRefundPaise` |
-| `GET`    | `/api/trials/[trialId]/cancel/preview` | Yes (session)             | Refund quote for cancelling the trial now (#1846)                                              |
-| `GET`    | `/api/trials/check-eligibility`        | Yes (session)             | Check if consultee can request a trial                                                         |
-| `GET`    | `/api/trials/stats`                    | Yes (session + ownership) | Trial session statistics (own profile only)                                                    |
+| Method   | Endpoint                                    | Auth Required               | Purpose                                                                                |
+| -------- | ------------------------------------------- | --------------------------- | -------------------------------------------------------------------------------------- |
+| `GET`    | `/api/trials`                               | Yes (session)               | List trials (paginated, filterable)                                                    |
+| `POST`   | `/api/trials`                               | Yes (session)               | Book a trial at the picked `slot` (free: confirmed; paid: held, returns `checkoutUrl`) |
+| `GET`    | `/api/trials/[trialId]`                     | Yes (session)               | Get a specific trial session                                                           |
+| `PATCH`  | `/api/trials/[trialId]`                     | Yes (session)               | Update notes, cancel an unpaid trial, complete or convert                              |
+| `DELETE` | `/api/trials/[trialId]`                     | Yes (session)               | Cancel an AWAITING_PAYMENT or SCHEDULED trial; a paid one needs `confirmedRefundPaise` |
+| `GET`    | `/api/trials/[trialId]/cancel/preview`      | Yes (session)               | Refund quote for cancelling the trial now, for the caller's side                       |
+| `POST`   | `/api/appointments/[id]/reschedule`         | Yes (session, party)        | Move the trial once per side to a named window (see "Rescheduling a trial")            |
+| `POST`   | `/api/appointments/[id]/reschedule/respond` | Yes (session, counterparty) | Accept or decline the other side's proposed trial time                                 |
+| `GET`    | `/api/trials/check-eligibility`             | Yes (session)               | Check if consultee can request a trial                                                 |
+| `GET`    | `/api/trials/stats`                         | Yes (session + ownership)   | Trial session statistics (own profile only)                                            |
 
 **Note**: `/api/trials/stats` was previously in `PUBLIC_API_PREFIXES` (no auth required). It now requires authentication and enforces an ownership check -- users can only view stats for their own consultant profile.
+
+---
+
+## Deprecated & Superseded Approaches
+
+- **A trial request with no time ("the expert will contact you to schedule").** The learner now picks the time on the trial step of the mentorship dialog; `POST /api/trials` requires `slot`.
+- **Charging a paid trial at request against a session-less placeholder, then the consultant accepting it.** A paid trial now holds the learner's picked time as `AWAITING_PAYMENT` and the capture confirms it.
+- **A `PENDING` "awaiting the expert" trial, its accept and decline (`REJECTED`), and the 48-hour `TRIAL_UNANSWERED` refund.** A trial is created directly as `SCHEDULED` or `AWAITING_PAYMENT`, so nothing waits on the expert; `PENDING` and `REJECTED` were removed from `TrialStatus`, with `TrialAcceptDialog` and the inbox's "Pick a time" and "Decline" trial actions.
+- **`PATCH` moving `AWAITING_PAYMENT` to `SCHEDULED`.** It could confirm an unpaid hold by hand; only the capture webhook confirms one now.
+- **Trials could not be rescheduled, and the consultant could not cancel a scheduled trial.** Each side moves a trial once through the shared reschedule routes, and the expert cancels through `DELETE` with a full refund and a strike.
+- **`PATCH` cancelling a scheduled trial.** It skipped the strike and any open reschedule; it now answers 409 `USE_CANCEL_ENDPOINT`.
+- **A trial priced and sized from the live plan.** A plan edit moved a pending trial's pay-link amount and the length a reschedule had to match. Superseded by `Trial.agreedPricePaise` and the booked session's length (`bookedSessionMinutes`).
+- **Trial lengths from 15 to 120 minutes in 15-minute steps.** A 45-minute trial on the 30-minute grid left a quarter hour of the expert's time unsellable; new saves accept 30 or 60 minutes only.
+- **`TrialBookingModal` and `TrialSlotPicker`.** A separate light modal with a two-week day strip; replaced by the trial step of the dark mentorship dialog and the single-time picker. The light trial reschedule pages moved from `TrialSlotPicker` to the same picker, and `TrialScheduleCalendar` went with the expert's accept dialog.

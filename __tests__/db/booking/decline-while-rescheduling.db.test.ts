@@ -6,6 +6,7 @@
 import { NextRequest } from "next/server";
 import prisma from "../../../lib/prisma";
 import { HOUR_MS, seedConsultee, seedHost, seedOneToOne } from "./harness";
+import { publishEveryHour } from "./harness-host";
 
 const sessionUser = { current: null as null | Record<string, unknown> };
 jest.mock("../../../lib/auth-helpers", () => ({
@@ -234,6 +235,8 @@ describe("a stranded booking (released, no open proposal)", () => {
 describe("a booking being moved is not a new request", () => {
   async function released(by: "CONSULTEE" | "CONSULTANT") {
     const host = await seedHost();
+    // An expert's proposed times are checked against their published hours.
+    await publishEveryHour(host);
     const buyer = await seedConsultee();
     const startsAt = hoursAhead(24 * 5);
     const booking = await seedOneToOne(

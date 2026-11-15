@@ -73,6 +73,8 @@ export interface TimePickerSubmission {
   preference?: SlotPreference;
   /** The zone the picker showed times in, for naming them back in a refusal. */
   displayZone?: string;
+  /** Sent as `Idempotency-Key`: the same submission repeated reuses it. */
+  idempotencyKey?: string;
 }
 
 export interface TimePickerPolicy {
@@ -97,9 +99,8 @@ export interface TimePickerPolicy {
    */
   submitLabel: string;
   /**
-   * Release WITHOUT naming a time. Predates proposals and is still the whole
-   * contract when the counterparty should be the one choosing, so it survives
-   * on every reschedule surface and at every session count.
+   * Release WITHOUT naming a time, for the consultee only and never for a
+   * session under 24 hours away: the counterparty then places the session.
    */
   allowReleaseWithoutTime: boolean;
   /**
@@ -115,6 +116,8 @@ export interface TimePickerPolicy {
   appliesInitialAllocationGuard: boolean;
   /** One line above the grid; the only place the two roles read differently. */
   pickerHint: string;
+  /** Shown instead of the release-without-time option when a moving session is under 24 hours away. */
+  shortNoticeHint?: string;
   onSubmit: (submission: TimePickerSubmission) => void | Promise<void>;
   /** The grid reported a 409 — someone else allocated this first. */
   onConflict?: () => void;
@@ -169,15 +172,20 @@ export interface TimePickerSubject {
 type PolicyHandlers = Pick<TimePickerPolicy, "onSubmit"> &
   Partial<Pick<TimePickerPolicy, "onConflict">>;
 
-/** A consultant placing a pending request that has never been scheduled. */
+/**
+ * A consultant placing a pending request, or released sessions; released ones
+ * keep 24 hours' notice, as the allocator holds them (`replacementLeadMs`).
+ */
 export function allocatePolicy(
   handlers: PolicyHandlers,
-  { settled }: { settled: boolean },
+  { settled, replacing = false }: { settled: boolean; replacing?: boolean },
 ): TimePickerPolicy {
   return {
     kind: "ALLOCATE",
     minLeadHours: 0,
-    lead: { purpose: "allocate", unpaid: !settled },
+    lead: replacing
+      ? { purpose: "reschedule" }
+      : { purpose: "allocate", unpaid: !settled },
     showReleasedSlots: false,
     submitLabel: "Save times",
     allowReleaseWithoutTime: false,
@@ -189,21 +197,26 @@ export function allocatePolicy(
   };
 }
 
-/** A consultee moving a live booking of theirs. */
+/**
+ * A consultee moving a live booking of theirs. Sessions and new times under
+ * 24 hours away are offered: the expert must accept those before the session.
+ */
 export function rescheduleConsulteePolicy(
   handlers: PolicyHandlers,
+  { settled }: { settled: boolean },
 ): TimePickerPolicy {
   return {
     kind: "RESCHEDULE_CONSULTEE",
-    minLeadHours: RESCHEDULE_MIN_LEAD_HOURS,
-    lead: { purpose: "reschedule" },
+    minLeadHours: 0,
+    // The lead the server's proposal check uses: 2 hours while unpaid.
+    lead: { purpose: "allocate", unpaid: !settled },
     showReleasedSlots: true,
     submitLabel: "Request this time",
     allowReleaseWithoutTime: true,
     calendarMode: "select",
     appliesInitialAllocationGuard: false,
-    pickerHint:
-      "Green means your consultant is free — choosing one of those confirms straight away. Anything else is sent to them to approve.",
+    pickerHint: `Green means your expert is free. A green time at least ${RESCHEDULE_MIN_LEAD_HOURS} hours away confirms straight away; anything else is sent to your expert to accept.`,
+    shortNoticeHint: `This session starts within ${RESCHEDULE_MIN_LEAD_HOURS} hours, so no new time confirms by itself: your expert has to accept it at least 15 minutes before the session starts; if they don't, the session keeps its time.`,
     ...handlers,
   };
 }
@@ -211,20 +224,21 @@ export function rescheduleConsulteePolicy(
 /** A consultant moving a booking they deliver. */
 export function rescheduleConsultantPolicy(
   handlers: PolicyHandlers,
+  { settled }: { settled: boolean },
 ): TimePickerPolicy {
   return {
     kind: "RESCHEDULE_CONSULTANT",
-    minLeadHours: RESCHEDULE_MIN_LEAD_HOURS,
-    lead: { purpose: "reschedule" },
+    minLeadHours: 0,
+    lead: { purpose: "allocate", unpaid: !settled },
     showReleasedSlots: true,
     submitLabel: "Propose this time",
-    allowReleaseWithoutTime: true,
+    // The expert names times; the client accepts one or the session stays.
+    allowReleaseWithoutTime: false,
     calendarMode: "select",
     appliesInitialAllocationGuard: false,
-    // Never auto-confirms: publishing availability is standing consent to be
-    // booked inside it, but merely being free is not consent to be moved.
     pickerHint:
-      "Green means you are free. Whatever you propose is sent to the consultee to accept.",
+      "Green means you are free. Whatever you propose is sent to your client to accept; until they do, the session keeps its time.",
+    shortNoticeHint: `This session starts within ${RESCHEDULE_MIN_LEAD_HOURS} hours: your client has to accept the new time at least 15 minutes before the session starts; if they don't, the session keeps its time.`,
     ...handlers,
   };
 }

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { AppointmentStatus, PaymentStatus, type Prisma } from "@prisma/client";
+import { AppointmentStatus, type Prisma } from "@prisma/client";
 import type { Tx } from "@/lib/prisma";
 import { forbiddenResponse } from "@/lib/auth-helpers";
 import { BookingRuleError } from "./booking-rule-error";
@@ -11,6 +11,8 @@ import {
 import { transitionParticipant } from "./participants";
 import { declineOpenReschedules } from "./reschedule-decline";
 import { transitionOccurrenceCompletion } from "./transitions";
+import { BookingLockUnavailableError } from "@/utils/appointmentlock";
+import { expirePendingPaymentsInTx } from "./pending-payment-expiry";
 
 import {
   EVENT_ID_INVALID_MESSAGE,
@@ -46,6 +48,21 @@ export function parseRequestListQueryOrRespond(
     };
   }
   return { query: parsed.query, response: null };
+}
+
+/**
+ * The answer when the approval lock is not granted: a lock-service outage is
+ * its typed 503; anything else the lock raises is contention with another approval.
+ */
+export function approvalLockRefusal(error: unknown): NextResponse {
+  if (error instanceof BookingLockUnavailableError) {
+    return NextResponse.json(
+      { error: error.message, code: error.code },
+      { status: error.httpStatus },
+    );
+  }
+  if (!(error instanceof Error)) throw error;
+  return NextResponse.json({ error: error.message }, { status: 409 });
 }
 
 /**
@@ -253,7 +270,7 @@ export async function releaseDeclinedRequestHold(
   where: { consultationId: string } | { subscriptionId: string },
   actorUserId?: string | null,
 ): Promise<StagedBackupInterestNotices> {
-  const held = await tx.appointment?.findFirst?.({
+  const held = await tx.appointment.findFirst({
     where: { ...where, deletedAt: null },
     select: { id: true },
   });
@@ -272,9 +289,10 @@ export async function releaseDeclinedRequestHold(
     actorUserId: actorUserId ?? null,
     reason: "Request declined by consultant",
   });
-  await tx.payment?.updateMany?.({
-    where: { appointmentId: held.id, paymentStatus: PaymentStatus.PENDING },
-    data: { paymentStatus: PaymentStatus.EXPIRED },
+  // A capture landing after this is parked and refunded by the capture-after-release path.
+  await expirePendingPaymentsInTx(tx, {
+    appointmentId: held.id,
+    reason: "Request declined by consultant",
   });
   return holdNotices ?? { bells: [], emails: [] };
 }

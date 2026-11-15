@@ -8,6 +8,8 @@ import {
   forbiddenResponse,
 } from "@/lib/auth-helpers";
 import { PARTY_USER_SELECT } from "@/lib/booking/list-selects";
+import { publicProfileUserSelect } from "@/lib/data/consultant-public";
+import { checkConsulteeActiveBookings } from "../../consultants/utils/consultee-bookings";
 
 export async function GET(
   req: NextRequest,
@@ -22,30 +24,38 @@ export async function GET(
     const resolvedParams = await params;
     const { id } = resolvedParams;
 
-    // Check authorization: privileged users can access any, others only their own
-    const canAccess =
-      isPrivileged(session.user.role) ||
-      checkOwnership(session, id, "consultee");
-
-    if (!canAccess) {
+    // The owner and ADMIN read the whole profile; STAFF read the shared
+    // public-field selection; anyone else is refused.
+    const isOwner = checkOwnership(session, id, "consultee");
+    const fullRead = isOwner || session.user.role === "ADMIN";
+    if (!fullRead && !isPrivileged(session.user.role)) {
       return forbiddenResponse(
         "You can only access your own consultee profile",
       );
     }
 
-    const consultee = await prisma.consulteeProfile.findUnique({
-      where: { id: id },
-      include: {
-        user: {
+    const consultee = fullRead
+      ? await prisma.consulteeProfile.findUnique({
+          where: { id: id },
           include: {
-            workExperiences: {
-              orderBy: [{ isCurrent: "desc" }, { startDate: "desc" }],
+            user: {
+              include: {
+                workExperiences: {
+                  orderBy: [{ isCurrent: "desc" }, { startDate: "desc" }],
+                },
+                education: { orderBy: { endYear: "desc" } },
+              },
             },
-            education: { orderBy: { endYear: "desc" } },
           },
-        },
-      },
-    });
+        })
+      : await prisma.consulteeProfile.findUnique({
+          where: { id: id },
+          select: {
+            id: true,
+            userId: true,
+            user: { select: publicProfileUserSelect },
+          },
+        });
 
     if (!consultee) {
       return NextResponse.json(
@@ -75,74 +85,6 @@ export async function GET(
   }
 }
 
-export async function POST(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
-) {
-  try {
-    // Require authentication
-    const authResult = await requireApiAuth();
-    if (authResult.error) return authResult.error;
-    const { session } = authResult;
-
-    const resolvedParams = await params;
-    const { id } = resolvedParams;
-
-    // Check authorization: privileged users can create for any user, others only for themselves
-    const canCreate = isPrivileged(session.user.role) || session.user.id === id;
-
-    if (!canCreate) {
-      return forbiddenResponse(
-        "You can only create a consultee profile for yourself",
-      );
-    }
-
-    const body = await req.json();
-    const user = await prisma.user.findUnique({
-      where: { id: id },
-    });
-
-    if (!user) {
-      return NextResponse.json(
-        { error: "User not found. Cannot create consultee profile." },
-        { status: 404 },
-      );
-    }
-
-    const createdConsultee = await prisma.consulteeProfile.create({
-      data: {
-        aboutMe: body.aboutMe,
-        preferredLanguage: body.preferredLanguage,
-        goals: body.goals,
-        careerStage: body.careerStage,
-        skillsToDevelop: body.skillsToDevelop ?? [],
-        budgetPreference: body.budgetPreference,
-        user: { connect: { id: id } },
-      },
-      include: {
-        consultantReviews: { where: { deletedAt: null } },
-        user: PARTY_USER_SELECT,
-      },
-    });
-
-    return NextResponse.json(createdConsultee, { status: 201 });
-  } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "user" } },
-    );
-    console.error("Error creating consultee:", error);
-    return NextResponse.json(
-      {
-        error:
-          "An unexpected error occurred while creating the consultee profile",
-        details: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 },
-    );
-  }
-}
-
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -156,12 +98,8 @@ export async function PATCH(
     const resolvedParams = await params;
     const { id } = resolvedParams;
 
-    // Check authorization: privileged users can update any, others only their own
-    const canUpdate =
-      isPrivileged(session.user.role) ||
-      checkOwnership(session, id, "consultee");
-
-    if (!canUpdate) {
+    // The owner only; operators read a learner's profile but never edit it.
+    if (!checkOwnership(session, id, "consultee")) {
       return forbiddenResponse(
         "You can only update your own consultee profile",
       );
@@ -187,7 +125,11 @@ export async function PATCH(
         preferredLanguage: body.preferredLanguage,
         goals: body.goals,
         careerStage: body.careerStage,
-        skillsToDevelop: body.skillsToDevelop ?? [],
+        // An omitted field leaves the stored list as it is.
+        skillsToDevelop:
+          body.skillsToDevelop === undefined
+            ? undefined
+            : (body.skillsToDevelop ?? []),
         budgetPreference: body.budgetPreference,
       },
       include: {
@@ -219,45 +161,55 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    // Require authentication
     const authResult = await requireApiAuth();
     if (authResult.error) return authResult.error;
     const { session } = authResult;
 
-    const resolvedParams = await params;
-    const { id } = resolvedParams;
+    const { id } = await params;
 
-    // Check authorization: privileged users can delete any, others only their own
-    const canDelete =
-      isPrivileged(session.user.role) ||
-      checkOwnership(session, id, "consultee");
-
-    if (!canDelete) {
+    // The owner only, like the expert's own profile delete; operators erase
+    // accounts through the DPDP request queue.
+    const owner = await prisma.consulteeProfile.findUnique({
+      where: { id },
+      select: { userId: true },
+    });
+    if (!owner || owner.userId !== session.user.id) {
       return forbiddenResponse(
         "You can only delete your own consultee profile",
       );
     }
 
-    const existingConsultee = await prisma.consulteeProfile.findUnique({
-      where: { id: id },
-    });
-
-    if (!existingConsultee) {
+    const active = await checkConsulteeActiveBookings(id, owner.userId);
+    if (active.hasActive) {
       return NextResponse.json(
-        { error: "Consultee profile not found for deletion" },
-        { status: 404 },
+        {
+          error:
+            "Cannot delete your learner profile while you have active or upcoming bookings.",
+          code: "ACTIVE_APPOINTMENTS_BLOCK_DELETE",
+          details: active.details,
+        },
+        { status: 400 },
       );
     }
 
-    const deletedConsultee = await prisma.consulteeProfile.delete({
-      where: { id: id },
-      include: {
-        consultantReviews: { where: { deletedAt: null } },
-        user: PARTY_USER_SELECT,
-      },
+    // Refunds, credit usage and invoices all hang off a payment row, so one
+    // count covers the buyer's money history; it is kept, never cascaded away.
+    const payments = await prisma.payment.count({
+      where: { userId: owner.userId },
     });
+    if (payments > 0) {
+      return NextResponse.json(
+        {
+          error:
+            "Your learner profile has payment history, so it can't be deleted on its own. Delete your account instead; payment records are kept as the law requires.",
+          code: "MONEY_HISTORY_BLOCKS_DELETE",
+        },
+        { status: 400 },
+      );
+    }
 
-    return NextResponse.json(deletedConsultee, { status: 200 });
+    await prisma.consulteeProfile.delete({ where: { id } });
+    return NextResponse.json({ message: "Consultee profile deleted" });
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),

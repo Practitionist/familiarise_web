@@ -43,7 +43,7 @@ export interface GridQuota {
 }
 
 export const gridQuotaSchema: z.ZodType<GridQuota> = z.object({
-  unit: z.enum(["week", "month"]),
+  unit: z.literal("week"),
   capacity: z.number().int().nonnegative(),
   weekNumber: z.number().int().positive(),
   weekCount: z.number().int().positive(),
@@ -152,8 +152,7 @@ export function quotaFooterText(
   if (nowMs >= planEndMs) {
     return `Plan ended on ${formatDayLabel(lastInstantBefore(new Date(planEndMs)), { zone })}`;
   }
-  const unitWord = quota.unit === "week" ? "Week" : "Month";
-  const which = `${unitWord} ${quota.weekNumber} of ${quota.weekCount}`;
+  const which = `Week ${quota.weekNumber} of ${quota.weekCount}`;
   const held = `${which} · ${quota.filled} of ${quota.capacity} booked`;
   if (quota.remainingThisCycle > 0 || quota.allBooked) return held;
   const nextOpensMs = Date.parse(quota.windowEnd);

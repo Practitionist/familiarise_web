@@ -2,6 +2,11 @@ import { render, screen } from "@testing-library/react";
 import { useForm } from "react-hook-form";
 
 import { Form } from "@/components/ui/form";
+
+// The session-time field reads the signed-in user's zone; this suite renders other fields.
+jest.mock("@/components/offerings/editor/session-time-field", () => ({
+  SessionTimeField: () => null,
+}));
 import { OfferingField } from "@/components/offerings/editor/OfferingFields";
 import { WaitingCountProvider } from "@/components/offerings/editor/waiting-count";
 import type { FieldSpec } from "@/components/offerings/editor/manifest";

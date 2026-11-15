@@ -1,5 +1,6 @@
 import type { TimePickerSubject } from "@/components/scheduling/time-picker-policy";
 import type { TAppointmentDetail } from "@/lib/data/appointment-detail";
+import { bookedSessionMinutes } from "@/lib/appointments/occurrences";
 import {
   toOccurrenceLike,
   type OccurrenceLike,
@@ -128,6 +129,8 @@ export function buildRescheduleSubject(
     switch (appointment.appointmentType) {
       case "CONSULTATION": {
         const plan = appointment.consultation?.consultationPlan;
+        // The booked session's length; the plan's only with no session row.
+        const booked = bookedSessionMinutes(appointment.occurrences);
         return {
           consultantProfileId: plan?.consultantProfile?.id,
           consulteeProfileId: appointment.consultation?.requestedBy?.id,
@@ -136,7 +139,8 @@ export function buildRescheduleSubject(
           consulteeName: appointment.consultation?.requestedBy?.user?.name,
           title: plan?.title ?? "Consultation",
           typeLabel: "Consultation",
-          sessionDurationInHours: plan?.durationInHours,
+          sessionDurationInHours:
+            booked === null ? plan?.durationInHours : booked / 60,
           eventType: "consultation",
           eventId: appointment.consultation?.id ?? undefined,
         };

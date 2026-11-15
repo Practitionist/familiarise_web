@@ -3,7 +3,12 @@
 import { useCallback, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useZonedFormat } from "@/lib/time/zoned-format";
+import { useProvidedZone, useZonedFormat } from "@/lib/time/zoned-format";
+import {
+  formatInViewerZone,
+  isValidTimeZone,
+  zoneLabel,
+} from "@/lib/time/viewer-zone";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
@@ -12,6 +17,7 @@ import {
   ChevronDown,
   CreditCard,
   LifeBuoy,
+  Video,
   MessageSquare,
   Receipt,
   Star,
@@ -71,11 +77,13 @@ import {
 } from "@/lib/appointments/payment-display";
 import {
   paymentDisplayStatus,
+  seatPaymentBadge,
   seatPaymentsByUser,
   summarizeSeatPayments,
 } from "@/lib/appointments/seat-payments";
+import { useNowTick } from "@/hooks/use-now-tick";
 import {
-  appointmentStatusChip,
+  CONSULTEE_JOIN_WINDOW_MS,
   getOccurrenceVMJoinState,
   isDeadOccurrence,
   isDeliberateEnd,
@@ -86,11 +94,19 @@ import { TimelineStrip } from "./TimelineStrip";
 import { CountdownBadge } from "../CountdownBadge";
 import { KIND_LABEL } from "../AppointmentRow";
 import { RowPrimaryAction } from "../RowPrimaryAction";
-import { SessionTimeline } from "../SessionTimeline";
-import { ClassSessionControls } from "./ClassSessionControls";
-import { SubscriptionReturnControls } from "./SubscriptionReturnControls";
+import { ClassSeriesRetimeButton } from "./ClassSeriesRetimeButton";
+import { useClassSessionActions } from "./ClassSessionControls";
+import { useSubscriptionReturnActions } from "./SubscriptionReturnControls";
+import { SessionSchedule, type SessionRowAction } from "./SessionSchedule";
 import { SessionAttendance } from "./SessionAttendance";
-import { RescheduleProposalCard } from "./RescheduleProposalCard";
+import {
+  RescheduleProposalCard,
+  useRescheduleAnswer,
+} from "./RescheduleProposalCard";
+import {
+  rescheduleAnswersFor,
+  type RescheduleSide,
+} from "@/lib/appointments/reschedule-answer";
 import { LazyAppointmentChatSheet } from "../LazyAppointmentChatSheet";
 import { caseKeyOf } from "@/lib/support/case-key";
 import { AppointmentSupportStatusCard } from "@/components/support/AppointmentSupportStatusCard";
@@ -110,8 +126,23 @@ const SCHEDULE_KEYS = new Set(["reschedule", "new-time", "retime", "timings"]);
 const POST_APPROVAL = new Set<BookingStateKind>([
   "CONFIRMED",
   "AWAITING_ALLOCATION",
+  "BEING_MOVED",
   "COMPLETED",
 ]);
+
+/** Before confirmation a trial or a pay-first hold is cancelled; a submitted request is withdrawn. */
+function preApprovalCancelLabel(vm: AppointmentVM): string {
+  if (vm.kind === "TRIAL") return "Cancel trial";
+  return vm.bookingSource === "DIRECT_CHECKOUT"
+    ? "Cancel booking"
+    : "Withdraw request";
+}
+
+/** A trial or a pay-first checkout is the learner's own hold, never an approval. */
+function payFirstKind(vm: AppointmentVM): "trial" | "checkout" | null {
+  if (vm.kind === "TRIAL") return "trial";
+  return vm.bookingSource === "DIRECT_CHECKOUT" ? "checkout" : null;
+}
 
 function initials(name: string): string {
   return name
@@ -132,9 +163,11 @@ function Section({
   children: ReactNode;
 }) {
   return (
-    <section className="rounded-2xl border border-border bg-card p-5 shadow-sm">
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <h2 className="text-sm font-semibold text-foreground">{title}</h2>
+    <section className="rounded-2xl border border-border/80 bg-card p-5 sm:p-6">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-[15px] font-semibold tracking-tight text-foreground">
+          {title}
+        </h2>
         {action}
       </div>
       {children}
@@ -302,14 +335,11 @@ export function AppointmentDetailClient({
     },
   });
 
-  // #1775 — the consultant's two actions on an unpaid approval; the callout
-  // reads the 429 / 409 answers off the ApiResponseError these throw.
-  let requestPath: string | null = null;
-  if (detail?.appointment.consultation) {
-    requestPath = `/api/bookings/consultations/${detail.appointment.consultation.id}`;
-  } else if (detail?.appointment.subscription) {
-    requestPath = `/api/bookings/subscriptions/${detail.appointment.subscription.id}`;
-  }
+  // The consultant's two actions on an unpaid approval, which only a 1:1 can be;
+  // the callout reads the 429 / 409 answers off the ApiResponseError these throw.
+  const requestPath = detail?.appointment.consultation
+    ? `/api/bookings/consultations/${detail.appointment.consultation.id}`
+    : null;
   const postRequestAction = async (action: "remind" | "withdraw-approval") => {
     if (!requestPath) throw new Error("No request to act on");
     const res = await fetch(`${requestPath}/${action}`, { method: "POST" });
@@ -330,7 +360,38 @@ export function AppointmentDetailClient({
   // request; #1554 made the booking one Appointment, so that is one row.
   const sessionFeedback = useSessionFeedback(appointmentId);
   useSetBreadcrumbLabel(mapped?.vm.title);
+  const viewerZone = useProvidedZone();
+  const now = useNowTick();
+  const refreshDetail = () => {
+    void queryClient.invalidateQueries({
+      queryKey: ["appointment-detail", appointmentId],
+    });
+  };
+  // Per-session actions live on the session rows; the hooks run before the
+  // loading and error returns below, so they take the read as it stands.
+  const classActions = useClassSessionActions({
+    appointmentId,
+    classId: detail?.appointment.classId ?? null,
+    consultantProfileId: mapped?.vm.consultantProfileId ?? null,
+    sessions: detail?.appointment.class ? detail.appointment.occurrences : [],
+    role,
+    // A seat's unit depends on when it was bought; the copy says "one
+    // session" rather than guess a list price.
+    unitLabel: null,
+    onChanged: refreshDetail,
+  });
+  const returnActions = useSubscriptionReturnActions({
+    appointmentId,
+    sessions: detail?.appointment.occurrences ?? [],
+    sessionsReturned: detail?.appointment.subscription?.sessionsReturned ?? 0,
+    rescheduleOpen: !!detail?.appointment.rescheduleRequests?.[0],
+    onChanged: refreshDetail,
+    enabled:
+      role === "consultee" &&
+      detail?.appointment.subscription?.status === "APPROVED",
+  });
 
+  const moveControl = useRescheduleAnswer(appointmentId, role);
   const payments = detail?.appointment.payment ?? [];
   // #1527 — one request page, two doors: "Get help" opens on the intent
   // options, "Problem with this charge" already on PAYMENT_STATUS.
@@ -360,6 +421,15 @@ export function AppointmentDetailClient({
   }
 
   const { vm } = mapped;
+  // Class host controls are for the plan's host and whoever acts on that
+  // host's dashboard; the routes refuse co-hosts and co-instructors. A
+  // cancelled or finished class has nothing left to move or make up.
+  const classControls =
+    vm.bucket !== "cancelled" &&
+    vm.bucket !== "past" &&
+    (role === "consultee" ||
+      !consultantId ||
+      vm.consultantProfileId === consultantId);
   const action = adapter.primaryAction(vm);
   const orgName =
     detail.appointment.organization?.name ??
@@ -395,15 +465,12 @@ export function AppointmentDetailClient({
       sponsorOrgName: paidRow ? sponsorOf(paidRow) : orgName,
     }),
     role === "consultant" ? "CONSULTANT" : "CONSULTEE",
-    { joinWindowMs },
+    // Every deadline and time on the page reads in the viewer's profile zone.
+    { joinWindowMs, viewerZone, heldOccurrenceIds: sessionFeedback.rateable },
   );
   const { bookingState, moneyState, nextAction } = presentation;
   const postApproval = POST_APPROVAL.has(bookingState.state);
-  // A confirmed booking wears the learner's Appointments chip; other states say why.
-  const headerChip =
-    role === "consultee" && bookingState.state === "CONFIRMED"
-      ? appointmentStatusChip(vm, role)
-      : toneBadge(bookingState.tone, bookingState.label);
+  const headerChip = toneBadge(bookingState.tone, bookingState.label);
   // #1163 — the proposal card below IS the answer surface; the adapter's
   // "Review reschedule request" list affordance would only link back here.
   // "Report issue" opens the same per-appointment support thread as the
@@ -418,9 +485,14 @@ export function AppointmentDetailClient({
     .filter(
       (item) => item.key !== "cancel" || postApproval || role === "consultee",
     )
+    // A hold whose pay window closed is over; the sweep ends it.
+    .filter(
+      (item) =>
+        item.key !== "cancel" || bookingState.state !== "PAYMENT_LAPSED",
+    )
     .map((item) =>
       item.key === "cancel" && !postApproval
-        ? { ...item, label: "Withdraw request" }
+        ? { ...item, label: preApprovalCancelLabel(vm) }
         : item,
     );
   const heldCount = detail.appointment.occurrences.filter(
@@ -466,9 +538,12 @@ export function AppointmentDetailClient({
           },
         }
       : undefined;
+  // Attendees only: the host and co-hosts sit on the roster but hold no seat.
   const participants = Array.from(
     new Map(
-      detail.appointment.participants.map((seat) => [seat.user.id, seat.user]),
+      detail.appointment.participants
+        .filter((seat) => seat.role === "CONSULTEE")
+        .map((seat) => [seat.user.id, seat.user]),
     ).values(),
   );
   const previewParticipants = participants.slice(0, PARTICIPANTS_PREVIEW);
@@ -495,16 +570,41 @@ export function AppointmentDetailClient({
   // confirmation" never offered.
   const openProposal = detail.appointment.rescheduleRequests?.[0] ?? null;
   const showSeatSummary = role === "consultant" && isGroup;
+  // Which side of a 1:1 the viewer is a party to; an operator is neither.
+  const requesterUserId =
+    detail.appointment.consultation?.requestedBy?.userId ??
+    detail.appointment.subscription?.requestedBy?.userId ??
+    detail.appointment.trial?.consulteeProfile?.userId;
+  const hostUserId =
+    detail.appointment.consultation?.consultationPlan?.consultantProfile
+      ?.userId ??
+    detail.appointment.subscription?.subscriptionPlan?.consultantProfile
+      ?.userId ??
+    detail.appointment.trial?.consultantProfile?.userId ??
+    detail.appointment.trial?.subscriptionPlan?.consultantProfile?.userId;
+  let viewerSide: RescheduleSide | null = null;
+  if (viewerId && viewerId === requesterUserId) viewerSide = "CONSULTEE";
+  else if (viewerId && viewerId === hostUserId) viewerSide = "CONSULTANT";
+  const moveAnswers = openProposal
+    ? rescheduleAnswersFor({
+        viewerId,
+        viewerSide,
+        proposal: openProposal,
+        readOnly: adapter.readOnly,
+      })
+    : [];
   // Sponsorship is what the money says, not the org tag: checkout stamps
   // `Appointment.organizationId` on a PERSONAL-funded booking too, and that
   // member paid their own card. A group event keeps the tag as its label.
   const sponsoredBy =
     orgName && (isGroup || payments.some(isSponsoredPayment)) ? orgName : null;
-  // Did the viewer pay anything on this page themselves? Names the money door.
+  // Was the viewer actually charged (a succeeded charge above zero)? Names the money door.
+  const charged = (p: { paymentStatus: string; amount: number | string }) =>
+    p.paymentStatus === "SUCCEEDED" && Number(p.amount) > 0;
   const hasOwnCharge = payments.some(
     (p) =>
-      !isSponsoredPayment(p) ||
-      p.childPayments.some((c) => c.userId === viewerId),
+      (charged(p) && !isSponsoredPayment(p)) ||
+      p.childPayments.some((c) => c.userId === viewerId && charged(c)),
   );
   const liveVmOccurrences = vm.occurrences.filter((s) => !isDeadOccurrence(s));
   // A single-sitting booking's one confirmed session is already the header's
@@ -544,6 +644,8 @@ export function AppointmentDetailClient({
   const payHref = bookingPayHref(vm);
   const openPendingPayment = () => {
     if (!payHref) return;
+    // Coming back from the pay page reads the paid state, not this cache.
+    refreshDetail();
     if (isExternalPayHref(payHref)) {
       window.open(payHref, "_blank", "noopener,noreferrer");
       return;
@@ -585,12 +687,13 @@ export function AppointmentDetailClient({
         {scheduleItems.map(renderActionButton)}
       </div>
     ) : null;
+  // The review invite follows the outcome: a session this learner attended.
   const showReviewCard =
     role === "consultee" &&
     !!vm.consultantProfileId &&
     (bookingState.state === "COMPLETED" ||
-      detail.appointment.occurrences.some(
-        (o) => o.completionStatus === "COMPLETED",
+      detail.appointment.occurrences.some((o) =>
+        sessionFeedback.rateable.has(o.id),
       ));
   const showProgress =
     !!vm.group && vm.group.total > 0 && postApproval && !usesSessionProgress;
@@ -599,14 +702,58 @@ export function AppointmentDetailClient({
   // A one-sitting consultee booking has nothing for a main column once the
   // header carries its session, so its cards flow as one grid instead.
   const compactLayout = !!soleSession && role === "consultee";
-  const refreshDetail = () => {
-    void queryClient.invalidateQueries({
-      queryKey: ["appointment-detail", appointmentId],
-    });
-  };
+  // The other party's wall clock for the next session, when their zone is
+  // known and differs, so neither side has to convert a time in their head.
+  const counterpartZone = (() => {
+    const seats = detail.appointment.participants as Array<{
+      role: string;
+      user: { id: string; timezone?: string | null };
+    }>;
+    if (isGroup) {
+      return role === "consultee"
+        ? (seats.find((s) => s.role === "CONSULTANT")?.user.timezone ?? null)
+        : null;
+    }
+    const other = seats.filter((s) =>
+      role === "consultee" ? s.role === "CONSULTANT" : s.role === "CONSULTEE",
+    );
+    return other.length === 1 ? (other[0].user.timezone ?? null) : null;
+  })();
+  const theirTime =
+    vm.nextAt &&
+    viewerZone &&
+    isValidTimeZone(counterpartZone) &&
+    formatInViewerZone(vm.nextAt, counterpartZone, "xxx") !==
+      formatInViewerZone(vm.nextAt, viewerZone, "xxx")
+      ? `${formatInViewerZone(vm.nextAt, counterpartZone, "EEE h:mm a")} for ${vm.counterpart.name.split(" ")[0]} (${zoneLabel(vm.nextAt, counterpartZone)})`
+      : null;
+  // The next session's Join lives in the Next up panel the whole time: live
+  // once the join window opens, and until then a disabled button that says
+  // when it opens, so nobody hunts for it at the last minute.
+  const joinWindow = joinWindowMs ?? CONSULTEE_JOIN_WINDOW_MS;
+  const joinOpensAt = anchorSession
+    ? new Date(anchorSession.startsAt.getTime() - joinWindow)
+    : null;
+  const canJoinNow = action.kind === "join";
+  const joinNotYet =
+    !canJoinNow &&
+    !!joinOpensAt &&
+    !anchorSession?.isTentative &&
+    bookingState.state === "CONFIRMED" &&
+    vm.bucket !== "past" &&
+    vm.bucket !== "cancelled" &&
+    now.getTime() < joinOpensAt.getTime();
+
+  const heroCaption = canJoinNow
+    ? "Your session is open"
+    : vm.bucket === "past"
+      ? "Last session"
+      : isGroup || (vm.group?.total ?? 0) > 1
+        ? "Next session"
+        : "Session";
 
   let stickyCta: ReactNode = null;
-  if (nextAction.kind === "PAY" && pendingRow && payHref) {
+  if (nextAction.kind === "PAY" && payHref) {
     stickyCta = (
       <Button
         className="w-full bg-amber-500 text-white hover:bg-amber-600 dark:bg-amber-600 dark:hover:bg-amber-500"
@@ -624,6 +771,49 @@ export function AppointmentDetailClient({
     stickyCta = <RowPrimaryAction action={action} size="default" />;
   }
 
+  // A class session the host cancelled stays listed with its make-up state.
+  const classRows = detail.appointment.class
+    ? detail.appointment.occurrences
+    : [];
+  const classCancelledNote = (session: { occurrenceId: string }) => {
+    const row = classRows.find((r) => r.id === session.occurrenceId);
+    if (!row?.hostCancelledAt || row.deletedAt) return null;
+    if (row.seatsSettledAt) return "Cancelled by the host · refunded instead";
+    const makeUp = classRows.find(
+      (r) =>
+        r.ordinal === row.ordinal &&
+        r.id !== row.id &&
+        !isDeadOccurrence(r) &&
+        r.completionStatus !== "VOIDED",
+    );
+    return makeUp
+      ? `Cancelled by the host · make-up ${format(new Date(makeUp.startsAt), "EEE d MMM, h:mm a")}`
+      : "Cancelled by the host · make-up owed";
+  };
+  // The plan's weekly count, so the schedule can call out a short week.
+  const sessionsPerWeek =
+    detail.appointment.subscription?.sessionsPerWeek ??
+    detail.appointment.subscription?.subscriptionPlan?.sessionsPerWeek ??
+    detail.appointment.class?.classPlan?.sessionsPerWeek ??
+    null;
+  // Move every session 24 h or more away to a new weekly pattern.
+  const seriesMove =
+    role === "consultant" &&
+    classControls &&
+    vm.kind === "CLASS" &&
+    detail.appointment.class &&
+    vm.consultantProfileId ? (
+      <ClassSeriesRetimeButton
+        appointmentId={appointmentId}
+        classId={detail.appointment.class.id}
+        consultantProfileId={vm.consultantProfileId}
+        schedulingTimezone={detail.appointment.class.schedulingTimezone}
+        sessionsPerWeek={
+          detail.appointment.class.classPlan?.sessionsPerWeek ?? 1
+        }
+        onMoved={refreshDetail}
+      />
+    ) : null;
   const sessionsCard = !soleSession && (
     <Section
       title={
@@ -631,7 +821,14 @@ export function AppointmentDetailClient({
           ? `Sessions · ${heldCount} held`
           : "Sessions"
       }
-      action={scheduleActions}
+      action={
+        scheduleActions || seriesMove ? (
+          <div className="flex flex-wrap items-center gap-2">
+            {scheduleActions}
+            {seriesMove}
+          </div>
+        ) : null
+      }
     >
       {/* Without this the stars below simply disappeared (or showed empty)
           on a call the viewer had already rated. */}
@@ -640,8 +837,29 @@ export function AppointmentDetailClient({
           <RatingsUnavailable onRetry={() => sessionFeedback.retry()} />
         </div>
       ) : null}
-      {hasConfirmedSessions || hasTentativeSessions ? (
-        <SessionTimeline
+      {showProgress && vm.group && (
+        <div className="mb-5">
+          <div className="mb-1.5 flex items-center justify-between text-xs">
+            <span className="font-medium text-foreground tabular-nums">
+              {vm.group.completed} of {vm.group.total} done
+            </span>
+            <span className="text-muted-foreground tabular-nums">
+              {Math.max(0, vm.group.total - vm.group.completed)} to go
+            </span>
+          </div>
+          <Progress
+            value={(vm.group.completed / vm.group.total) * 100}
+            className="h-1.5"
+          />
+        </div>
+      )}
+      {classControls && classActions.notices && (
+        <div className="mb-4">{classActions.notices}</div>
+      )}
+      {hasConfirmedSessions ||
+      hasTentativeSessions ||
+      vm.occurrences.some((o) => classCancelledNote(o) !== null) ? (
+        <SessionSchedule
           renderSessionExtra={(session) => {
             // The host side sees who attended each session.
             const attendance =
@@ -660,7 +878,7 @@ export function AppointmentDetailClient({
             // above explains instead.
             if (sessionFeedback.isError) return attendance;
             if (role === "consultee" && !canRate && rating === null) {
-              return null;
+              return attendance;
             }
             return (
               <>
@@ -678,16 +896,23 @@ export function AppointmentDetailClient({
           }}
           occurrences={vm.occurrences}
           joinWindowMs={joinWindowMs}
-          defaultExpanded
           isJoining={action.kind === "join" && !!action.busy}
           onJoinSession={
             action.kind === "join" && action.onClick
               ? action.onClick
               : undefined
           }
-          showHeld
           // Schedule words only; the pay verb lives in the needs-you slot.
           heldRowLabel={presentation.sessionRowLabel}
+          rowActions={(session): SessionRowAction[] => [
+            ...(classControls
+              ? classActions.rowActions(session.occurrenceId)
+              : []),
+            ...returnActions.rowActions(session.occurrenceId),
+          ]}
+          sessionsPerWeek={sessionsPerWeek}
+          footnote={returnActions.footnote}
+          cancelledNote={classCancelledNote}
         />
       ) : (
         <p className="text-sm text-muted-foreground">
@@ -724,9 +949,7 @@ export function AppointmentDetailClient({
           {previewParticipants.map((u) => {
             const seat = isGroup ? seatPayments.get(u.id) : undefined;
             const seatStatus = seat ? paymentDisplayStatus(seat) : null;
-            const seatBadge = seatStatus
-              ? paymentStatusBadge(seatStatus)
-              : null;
+            const seatBadge = seat ? seatPaymentBadge(seat) : null;
             return (
               <span
                 key={u.id}
@@ -762,7 +985,23 @@ export function AppointmentDetailClient({
     </Section>
   );
 
+  // A paid seat that cost nothing (a free event, a full discount) is why a
+  // host can read "1 of 2 seats paid" beside nothing collected; name it.
+  // Paid and free seats count live attendee seats only, the same seats "Participants" counts.
+  const liveSeatIds = new Set(participants.map((u) => u.id));
+  const settledLiveSeats = Array.from(seatPayments.entries())
+    .filter(([userId]) => liveSeatIds.has(userId))
+    .map(([, row]) => row)
+    .filter((row) => {
+      const status = paymentDisplayStatus(row);
+      return status === "SUCCEEDED" || status === "PARTIALLY_REFUNDED";
+    });
+  const freeSeats = settledLiveSeats.filter(
+    (row) => Number(row.amount) === 0,
+  ).length;
+  const paidSeats = settledLiveSeats.length - freeSeats;
   const seatRows: Array<[string, number]> = [
+    ["Free seats", freeSeats],
     ["Awaiting payment", seatSummary.pending],
     ["Lapsed", seatSummary.lapsed],
     ["Refunded", seatSummary.refunded],
@@ -790,18 +1029,21 @@ export function AppointmentDetailClient({
             <div className="flex items-baseline justify-between gap-3">
               <dt className="text-muted-foreground">Seats paid</dt>
               <dd className="font-medium text-foreground tabular-nums">
-                {seatSummary.paid} of {participants.length} seat
+                {paidSeats} of {participants.length} seat
                 {participants.length === 1 ? "" : "s"} paid
               </dd>
             </div>
             <div className="flex items-baseline justify-between gap-3">
               <dt className="text-muted-foreground">Collected</dt>
               <dd className="font-medium text-foreground tabular-nums">
-                {formatCurrencyAmount(
-                  seatSummary.collectedPaise,
-                  seatSummary.currency,
-                )}{" "}
-                collected
+                {seatSummary.collectedPaise === 0 &&
+                freeSeats > 0 &&
+                paidSeats === 0
+                  ? "Nothing — every paid seat was free"
+                  : `${formatCurrencyAmount(
+                      seatSummary.collectedPaise,
+                      seatSummary.currency,
+                    )} collected`}
               </dd>
             </div>
             {seatRows
@@ -989,85 +1231,174 @@ export function AppointmentDetailClient({
           </Link>
         </Button>
 
-        <header className="rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-6">
-          <div className="flex items-start gap-3 sm:gap-4">
-            <Avatar className="h-12 w-12 shrink-0 border border-border sm:h-14 sm:w-14">
+        {/* The one banner: shown whenever this viewer must act. */}
+        <NeedsYouCallout
+          embedded
+          payFirst={payFirstKind(vm)}
+          presentation={presentation}
+          names={names}
+          heldCount={heldCount}
+          pending={pendingRow}
+          onPay={payHref ? openPendingPayment : undefined}
+          onExitSeries={
+            role === "consultee" && detail.appointment.class && viewerId
+              ? () =>
+                  exitClassSeries(detail.appointment.class!.id, viewerId).then(
+                    refreshDetail,
+                  )
+              : undefined
+          }
+          decision={decision}
+          awaitingPayment={
+            role === "consultant" && requestPath
+              ? {
+                  remind: remindMutation.mutateAsync,
+                  withdraw: withdrawMutation.mutateAsync,
+                  onChanged: refreshDetail,
+                }
+              : undefined
+          }
+          moveAnswers={
+            moveAnswers.length > 0
+              ? { answers: moveAnswers, control: moveControl }
+              : undefined
+          }
+          onHelp={() => openHelp()}
+        >
+          {/* The Next up panel carries Join; without a next session time
+              the callout keeps it. */}
+          {nextAction.kind === "JOIN" && canJoinNow && !vm.nextAt ? (
+            <RowPrimaryAction action={action} size="default" />
+          ) : nextAction.kind === "RATE" && rateableSole ? (
+            <SoleSessionRating
+              appointmentId={appointmentId}
+              session={rateableSole}
+              role={role}
+              feedback={sessionFeedback}
+            />
+          ) : null}
+        </NeedsYouCallout>
+        <header className="rounded-2xl border border-border/80 bg-card p-5 sm:p-7">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+              {KIND_LABEL[vm.kind]}
+            </span>
+            <StatusBadge {...headerChip} withDot size="sm" />
+          </div>
+          {bookingState.why && (
+            <p className="mt-1.5 text-xs text-muted-foreground">
+              {bookingState.why}
+            </p>
+          )}
+          <h1 className="mt-2 text-xl font-semibold leading-tight tracking-tight text-foreground sm:text-2xl">
+            {vm.title}
+          </h1>
+          <div className="mt-3 flex items-center gap-2.5 text-sm text-muted-foreground">
+            <Avatar className="h-7 w-7 shrink-0 border border-border">
               <AvatarImage
                 src={vm.counterpart.image ?? undefined}
                 alt={vm.counterpart.name}
               />
-              <AvatarFallback className="text-base font-medium">
+              <AvatarFallback className="text-[11px] font-medium">
                 {initials(vm.counterpart.name) || "?"}
               </AvatarFallback>
             </Avatar>
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                <h1 className="text-lg font-semibold leading-tight text-foreground sm:text-xl">
-                  {vm.title}
-                </h1>
-                <StatusBadge {...headerChip} withDot size="sm" />
-              </div>
-              {/* The kind is a fact about the booking, so it reads in the
-                  meta line rather than as a second chip beside the status. */}
-              <p className="mt-1 text-sm text-muted-foreground">
-                {KIND_LABEL[vm.kind]} with {vm.counterpart.name}
-                {vm.meta ? ` · ${vm.meta}` : ""}
-                {vm.group && vm.group.total > 0 ? ` · ${groupCountLine}` : ""}
-              </p>
-              {vm.nextAt && (
-                <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm">
-                  <span className="inline-flex items-center gap-1.5 font-medium text-foreground tabular-nums">
-                    <CalendarClock className="h-4 w-4 text-muted-foreground" />
-                    {format(vm.nextAt, "EEE, d MMM yyyy · h:mm a")}
-                    {anchorSession?.endsAt && (
-                      <span className="font-normal text-muted-foreground">
-                        {" – "}
-                        {format(anchorSession.endsAt, "h:mm a")}
-                      </span>
-                    )}
-                  </span>
-                  {vm.bucket !== "past" && vm.bucket !== "cancelled" && (
-                    <CountdownBadge
-                      targetDate={vm.nextAt}
-                      sessionEndDate={anchorSession?.endsAt ?? undefined}
-                      meetingEnded={
-                        anchorSession
-                          ? isDeliberateEnd({
-                              endedAt: anchorSession.meetingEndedAt,
-                              endedReason: anchorSession.meetingEndedReason,
-                            })
-                          : false
-                      }
-                    />
-                  )}
-                </div>
-              )}
-            </div>
+            {/* The kind is a fact about the booking, so it reads in the
+                eyebrow rather than as a second chip beside the status. */}
+            <p className="min-w-0">
+              with{" "}
+              <span className="font-medium text-foreground">
+                {vm.counterpart.name}
+              </span>
+              {vm.meta ? ` · ${vm.meta}` : ""}
+              {vm.group && vm.group.total > 0 ? ` · ${groupCountLine}` : ""}
+            </p>
           </div>
 
-          {/* A plan's header already carries "h of T"; classes keep the bar
-              because their header has no session-progress line. */}
-          {showProgress && vm.group && (
-            <div className="mt-4">
-              <div className="mb-1.5 flex items-center justify-between text-xs text-muted-foreground">
-                <span>Program progress</span>
-                <span className="font-medium text-foreground">
-                  {vm.group.completed} of {vm.group.total} sessions
+          {vm.nextAt && (
+            <div className="mt-5 flex flex-wrap items-center gap-4 rounded-xl border border-border/80 bg-muted/40 p-4">
+              <div
+                aria-hidden
+                className="flex w-14 shrink-0 flex-col items-center rounded-lg border border-border bg-background py-1.5 leading-none"
+              >
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  {format(vm.nextAt, "EEE")}
+                </span>
+                <span className="mt-1 text-xl font-semibold tabular-nums text-foreground">
+                  {format(vm.nextAt, "d")}
+                </span>
+                <span className="mt-1 text-[10px] uppercase text-muted-foreground">
+                  {format(vm.nextAt, "MMM")}
                 </span>
               </div>
-              <Progress
-                value={(vm.group.completed / vm.group.total) * 100}
-                className="h-2"
-              />
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-medium text-muted-foreground">
+                  {heroCaption}
+                </p>
+                <p className="mt-0.5 text-base font-semibold text-foreground tabular-nums">
+                  {format(vm.nextAt, "h:mm a")}
+                  {anchorSession?.endsAt && (
+                    <span className="font-normal text-muted-foreground">
+                      {" – "}
+                      {format(anchorSession.endsAt, "h:mm a")}
+                    </span>
+                  )}
+                </p>
+                <p className="mt-0.5 inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <CalendarClock aria-hidden className="h-3.5 w-3.5" />
+                  {format(vm.nextAt, "EEEE, d MMMM yyyy")}
+                </p>
+                {theirTime && (
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    {theirTime}
+                  </p>
+                )}
+              </div>
+              {vm.bucket !== "past" && vm.bucket !== "cancelled" && (
+                <CountdownBadge
+                  targetDate={vm.nextAt}
+                  sessionEndDate={anchorSession?.endsAt ?? undefined}
+                  meetingEnded={
+                    anchorSession
+                      ? isDeliberateEnd({
+                          endedAt: anchorSession.meetingEndedAt,
+                          endedReason: anchorSession.meetingEndedReason,
+                        })
+                      : false
+                  }
+                />
+              )}
+              {canJoinNow ? (
+                <RowPrimaryAction action={action} size="default" />
+              ) : joinNotYet && joinOpensAt ? (
+                <div className="flex flex-col items-end gap-1">
+                  <Button
+                    size="default"
+                    disabled
+                    aria-describedby="join-opens-at"
+                  >
+                    <Video className="mr-1.5 h-4 w-4" />
+                    Join
+                  </Button>
+                  <span
+                    id="join-opens-at"
+                    className="text-[11px] text-muted-foreground"
+                  >
+                    Opens at {format(joinOpensAt, "h:mm a")}
+                  </span>
+                </div>
+              ) : null}
             </div>
           )}
 
           <div className="mt-5 flex flex-wrap items-center gap-2">
             {/* The needs-you callout owns Pay/Join/Approve; this row keeps
                 only what it does not (e.g. Set schedule). */}
-            {action.kind !== "view" && nextAction.kind === "NONE" && (
-              <RowPrimaryAction action={action} size="default" />
-            )}
+            {action.kind !== "view" &&
+              action.kind !== "join" &&
+              nextAction.kind === "NONE" && (
+                <RowPrimaryAction action={action} size="default" />
+              )}
             {/* With the Sessions card folded away, the one session's rating
                 takes the primary slot, under the session row's gates. */}
             {soleSession &&
@@ -1102,51 +1433,6 @@ export function AppointmentDetailClient({
               <RatingsUnavailable onRetry={() => sessionFeedback.retry()} />
             </div>
           )}
-
-          <NeedsYouCallout
-            embedded
-            presentation={presentation}
-            names={names}
-            heldCount={heldCount}
-            pending={pendingRow}
-            onPay={payHref ? openPendingPayment : undefined}
-            onExitSeries={
-              role === "consultee" && detail.appointment.class && viewerId
-                ? () =>
-                    exitClassSeries(
-                      detail.appointment.class!.id,
-                      viewerId,
-                    ).then(refreshDetail)
-                : undefined
-            }
-            requestAgainHref={
-              vm.consultantProfileId
-                ? `/explore/experts/${vm.consultantProfileId}`
-                : null
-            }
-            decision={decision}
-            awaitingPayment={
-              role === "consultant" && requestPath
-                ? {
-                    remind: remindMutation.mutateAsync,
-                    withdraw: withdrawMutation.mutateAsync,
-                    onChanged: refreshDetail,
-                  }
-                : undefined
-            }
-            onHelp={() => openHelp()}
-          >
-            {nextAction.kind === "JOIN" && action.kind === "join" ? (
-              <RowPrimaryAction action={action} size="default" />
-            ) : nextAction.kind === "RATE" && rateableSole ? (
-              <SoleSessionRating
-                appointmentId={appointmentId}
-                session={rateableSole}
-                role={role}
-                feedback={sessionFeedback}
-              />
-            ) : null}
-          </NeedsYouCallout>
         </header>
 
         <div
@@ -1166,9 +1452,10 @@ export function AppointmentDetailClient({
             {renderNotices?.(vm)}
             {openProposal && (
               <RescheduleProposalCard
-                appointmentId={appointmentId}
                 proposal={openProposal}
                 role={role}
+                answers={moveAnswers}
+                control={moveControl}
                 readOnly={adapter.readOnly}
               />
             )}
@@ -1198,54 +1485,28 @@ export function AppointmentDetailClient({
               </div>
             )}
             {sessionsCard}
-            {/* Cancel one class session, make it up, or skip the make-up. */}
-            {vm.kind === "CLASS" && detail.appointment.class && (
-              <ClassSessionControls
-                appointmentId={appointmentId}
-                sessions={detail.appointment.occurrences}
-                role={role}
-                // A seat's unit depends on when it was bought; the copy says
-                // "one session" rather than guess a list price.
-                unitLabel={null}
-                onChanged={refreshDetail}
-              />
-            )}
-            {/* The consultee returns one upcoming session to the plan. */}
-            {role === "consultee" &&
-              vm.kind === "SUBSCRIPTION" &&
-              detail.appointment.subscription?.status === "APPROVED" && (
-                <SubscriptionReturnControls
-                  appointmentId={appointmentId}
-                  sessions={detail.appointment.occurrences}
-                  sessionsReturned={
-                    detail.appointment.subscription.sessionsReturned
-                  }
-                  rescheduleOpen={!!openProposal}
-                  onChanged={refreshDetail}
-                />
-              )}
             {participantsCard}
           </div>
 
           {compactLayout ? (
             <>
               <div className="flex min-w-0 flex-col gap-4">
-                {paymentCard}
                 {detailsCard}
                 {timelineCard}
               </div>
               <div className="flex min-w-0 flex-col gap-4">
                 {resourcesCard}
                 {helpCard}
+                {paymentCard}
               </div>
             </>
           ) : (
             <aside className="flex min-w-0 flex-col gap-4">
-              {paymentCard}
               {detailsCard}
               {resourcesCard}
-              {timelineCard}
               {helpCard}
+              {paymentCard}
+              {timelineCard}
             </aside>
           )}
         </div>
@@ -1262,6 +1523,9 @@ export function AppointmentDetailClient({
       {/* Mounted HERE, not by each caller: this component renders the
           actions whose clicks open these dialogs. */}
       {adapter.renderDialogs()}
+      {moveControl.dialog}
+      {classActions.dialog}
+      {returnActions.dialog}
       <LazyAppointmentChatSheet target={chatTarget} onClose={closeChat} />
     </DashboardErrorBoundary>
   );

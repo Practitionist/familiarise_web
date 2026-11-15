@@ -7,23 +7,20 @@ import {
   LIVE_SUBSCRIPTION_STATUSES,
 } from "@/lib/booking/transitions";
 import { convertCompletedTrial } from "@/lib/trials/conversion";
+import { assertExpertTakesDirectCheckout } from "@/lib/booking/booking-rule-error";
 import type { Tx } from "@/lib/prisma";
 import type { CheckoutInput } from "@/schemas/checkout";
 import {
-  firstCycleWindow,
-  purchaseTermsOf,
   soldTermsOf,
   subscriptionEntitlement,
-  subscriptionPlanEnd,
 } from "@/lib/booking/entitlement";
 import { AppointmentsType, Prisma, AppointmentStatus } from "@prisma/client";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
-import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
 import type { SubscriptionCheckoutResult } from "@/lib/payments/checkout/schema";
 import {
-  resolvePlanStart,
-  resolvePriorSubscriptionForRenewal,
-} from "@/lib/payments/checkout/renewal";
+  assertSubscriptionDemandRoom,
+  resolveSubscriptionPurchase,
+} from "@/lib/payments/checkout/subscription-demand";
 
 export async function handleSubscriptionCheckout(
   tx: Tx,
@@ -36,57 +33,28 @@ export async function handleSubscriptionCheckout(
   cancellationPolicyId: string,
   precomputedSchedulingPeriod?: { startsAt: Date; endsAt: Date } | null,
 ): Promise<SubscriptionCheckoutResult> {
-  const plan = await tx.subscriptionPlan.findUnique({
-    where: { id: data.planId },
-    include: {
-      consultantProfile: {
-        include: { user: true },
-      },
-    },
-  });
-
-  if (!plan) {
-    throw new Error("Subscription plan not found");
-  }
-
-  // #1743 — validate renewal source when renewsSubscriptionId is provided.
-  const priorSubscription = await resolvePriorSubscriptionForRenewal(
+  const purchase = await resolveSubscriptionPurchase(
     tx,
-    data.renewsSubscriptionId,
+    data,
     consulteeProfileId,
-    plan.id,
+    precomputedSchedulingPeriod,
   );
-
+  // A switch flipped while the order was minted refuses here; the abort tombstones that order.
+  assertExpertTakesDirectCheckout(
+    "SUBSCRIPTION",
+    purchase.plan.consultantProfile,
+  );
+  const {
+    plan,
+    priorSubscription,
+    schedulingTimezone,
+    startDate,
+    endDate,
+    terms,
+  } = purchase;
   const isSchedulingPeriodRequest = Boolean(
     data.schedulingPeriodStartsAt || data.renewsSubscriptionId,
   );
-  // The persisted window is the first cycle; a client end is ignored. A
-  // renewal starts no earlier than the prior plan's end, and the plan end is
-  // fixed here once, from the start.
-  const schedulingTimezone = resolveSchedulingTimezone(
-    plan.consultantProfile?.user?.timezone,
-  );
-  const priorPlanEnd = priorSubscription
-    ? subscriptionPlanEnd(priorSubscription)
-    : null;
-  const { start: startDate, end: endDate } =
-    precomputedSchedulingPeriod &&
-    (!priorPlanEnd || precomputedSchedulingPeriod.startsAt >= priorPlanEnd)
-      ? {
-          start: precomputedSchedulingPeriod.startsAt,
-          end: precomputedSchedulingPeriod.endsAt,
-        }
-      : firstCycleWindow(
-          plan,
-          resolvePlanStart(
-            data.schedulingPeriodStartsAt,
-            priorPlanEnd,
-            new Date(),
-          ),
-          schedulingTimezone,
-        );
-  // The plan's terms are frozen here once; plan edits apply to new buyers only.
-  const terms = purchaseTermsOf(plan, startDate, schedulingTimezone);
 
   // #1766 — the double-buy guard follows the entitlement, not the window: a
   // live row with sessions left blocks; a spent one is a renewal-as-repurchase.
@@ -150,6 +118,10 @@ export async function handleSubscriptionCheckout(
       { httpStatus: 409, code: "SUBSCRIPTION_ALREADY_ACTIVE" },
     );
   }
+
+  // Authoritative: orchestrate pre-checks before the gateway mint, and this
+  // re-check under the same lock sees any sale committed since.
+  await assertSubscriptionDemandRoom(tx, purchase, consulteeProfileId);
 
   // Create subscription - consultant will allocate slots via Requests tab
   let subscription: Prisma.SubscriptionGetPayload<Record<string, never>>;

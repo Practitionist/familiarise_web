@@ -102,24 +102,6 @@ const EMPTY_COPY: Record<
   },
 };
 
-async function fetchPendingTrialCounts(
-  consultantId: string,
-): Promise<Record<string, number>> {
-  const response = await fetch(
-    `/api/trials?consultantProfileId=${encodeURIComponent(consultantId)}&status=PENDING`,
-  );
-  if (!response.ok) return {};
-  const { data } = (await response.json()) as {
-    data: { subscriptionPlanId: string }[];
-  };
-  const counts: Record<string, number> = {};
-  for (const trial of data) {
-    counts[trial.subscriptionPlanId] =
-      (counts[trial.subscriptionPlanId] ?? 0) + 1;
-  }
-  return counts;
-}
-
 /**
  * One Sell tab's offerings: a search held in the URL, one card per offering
  * with its status, stats and actions. Webinar and class cards keep the host's Join.
@@ -373,13 +355,6 @@ export function EventManagementDashboard({
     [stats.data],
   );
 
-  const pendingTrials = useQuery({
-    queryKey: ["trials", consultantId, "PENDING", "counts"],
-    queryFn: () => fetchPendingTrialCounts(consultantId),
-    enabled: type === "subscription",
-    staleTime: 60_000,
-  });
-
   const consultationPlans = useConsultationPlans(
     consultantId,
     type === "consultation",
@@ -468,12 +443,19 @@ export function EventManagementDashboard({
         ? `${basePath}/offerings/${row.type}/new?from=${planId}`
         : null,
       shareAttributionHref: expertShareHref,
+      // A published class can't be sold until its sessions have times.
+      scheduleHref:
+        (row.type === "webinar" || row.type === "class") &&
+        row.instanceId &&
+        !row.startsAt &&
+        !row.isCollaborated
+          ? `/dashboard/consultant/${consultantId}/appointments/unscheduled-${row.type}-${row.instanceId}/timings`
+          : null,
       trials:
         row.type === "subscription" && planId
           ? {
-              // Trial requests are a type tab of the Requests inbox (#1775).
+              // Trials are a type tab of the Requests inbox.
               href: `${basePath}/requests?type=trial`,
-              pending: pendingTrials.data?.[planId] ?? 0,
             }
           : undefined,
       join: joinable,

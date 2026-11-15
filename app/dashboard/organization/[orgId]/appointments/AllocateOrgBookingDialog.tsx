@@ -21,8 +21,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  SingleTimePicker,
+  type SingleTimeValue,
+} from "@/components/scheduling/SingleTimePicker";
 import { useToast } from "@/hooks/use-toast";
 import { errorMessageFromBody } from "@/lib/fetch-helpers";
+import { byCodeUnit } from "@/lib/scheduling/code-unit-order";
+import { formatDateTimeLabel } from "@/lib/time/display";
+import { useViewerZone } from "@/lib/time/use-viewer-zone";
+
+const ATOM_MS = 30 * 60_000;
 
 export interface AllocateOrgBookingDialogProps {
   orgId: string;
@@ -30,6 +39,11 @@ export interface AllocateOrgBookingDialogProps {
   planTitle: string;
   expertName?: string | null;
   learnerName?: string | null;
+  /** The learner, so their own busy times read as taken. */
+  learnerUserId?: string | null;
+  /** The delivering expert, whose open hours the times come from. */
+  consultantProfileId: string;
+  sessionMinutes: number;
   trigger?: React.ReactNode;
   onAllocated?: () => void;
 }
@@ -40,25 +54,27 @@ export function AllocateOrgBookingDialog({
   planTitle,
   expertName,
   learnerName,
+  learnerUserId,
+  consultantProfileId,
+  sessionMinutes,
   trigger,
   onAllocated,
 }: Readonly<AllocateOrgBookingDialogProps>) {
   const router = useRouter();
   const { toast } = useToast();
+  const { zone } = useViewerZone();
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<"auto" | "manual">("auto");
-  const [slots, setSlots] = useState<{ id: string; value: string }[]>([
-    { id: "slot-0", value: "" },
-  ]);
-  const [nextSlotSeq, setNextSlotSeq] = useState(1);
+  const [picked, setPicked] = useState<SingleTimeValue | null>(null);
+  const [starts, setStarts] = useState<string[]>([]);
   const [overrideReason, setOverrideReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const reset = () => {
     setMode("auto");
-    setSlots([{ id: "slot-0", value: "" }]);
-    setNextSlotSeq(1);
+    setPicked(null);
+    setStarts([]);
     setOverrideReason("");
     setError(null);
   };
@@ -67,31 +83,24 @@ export function AllocateOrgBookingDialog({
     setError(null);
     const trimmedReason = overrideReason.trim();
     if (trimmedReason.length < 5) {
-      setError(
-        "Please enter an audit justification of at least 5 characters.",
-      );
+      setError("Please enter an audit justification of at least 5 characters.");
       return;
     }
 
     let isoSlots: string[] | undefined;
     if (mode === "manual") {
-      const cleaned = slots
-        .map((s) => s.value.trim())
-        .filter((s) => s.length > 0);
-      if (cleaned.length === 0) {
-        setError("Add at least one slot start time for manual allocation.");
+      if (starts.length === 0) {
+        setError("Add at least one time for manual allocation.");
         return;
       }
-      const parsed: string[] = [];
-      for (const raw of cleaned) {
-        const d = new Date(raw);
-        if (Number.isNaN(d.getTime())) {
-          setError(`Invalid date/time: ${raw}`);
-          return;
-        }
-        parsed.push(d.toISOString());
-      }
-      isoSlots = parsed;
+      // Manual allocation takes every 30-minute atom of each session.
+      isoSlots = starts
+        .flatMap((start) =>
+          Array.from({ length: Math.ceil(sessionMinutes / 30) }, (_, i) =>
+            new Date(Date.parse(start) + i * ATOM_MS).toISOString(),
+          ),
+        )
+        .sort(byCodeUnit);
     }
 
     setSubmitting(true);
@@ -164,7 +173,9 @@ export function AllocateOrgBookingDialog({
           setOpen(next);
         }}
       >
-        <ResponsiveModalContent className="sm:max-w-md">
+        <ResponsiveModalContent
+          className={mode === "manual" ? "sm:max-w-3xl" : "sm:max-w-md"}
+        >
           <ResponsiveModalHeader>
             <ResponsiveModalTitle>
               Allocate Slot — {planTitle}
@@ -203,56 +214,55 @@ export function AllocateOrgBookingDialog({
             </div>
 
             {mode === "manual" && (
-              <div className="space-y-2">
-                <Label>Slot start time(s)</Label>
-                <div className="space-y-2">
-                  {slots.map((slot) => (
-                    <div key={slot.id} className="flex items-center gap-2">
-                      <Input
-                        type="datetime-local"
-                        value={slot.value}
-                        onChange={(e) => {
-                          const nextValue = e.target.value;
-                          setSlots((prev) =>
-                            prev.map((item) =>
-                              item.id === slot.id
-                                ? { ...item, value: nextValue }
-                                : item,
-                            ),
-                          );
-                        }}
-                      />
-                      {slots.length > 1 && (
-                        <Button
-                          type="button"
-                          size="icon"
-                          variant="ghost"
-                          onClick={() =>
-                            setSlots((prev) =>
-                              prev.filter((item) => item.id !== slot.id),
-                            )
-                          }
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      )}
-                    </div>
-                  ))}
-                </div>
+              <div className="space-y-3">
+                <Label>Session times</Label>
+                <SingleTimePicker
+                  consultantId={consultantProfileId}
+                  consulteeUserId={learnerUserId ?? undefined}
+                  sessionMinutes={sessionMinutes}
+                  zone={zone}
+                  theme="light"
+                  audience="buyer"
+                  purpose="allocate"
+                  value={picked}
+                  onChange={setPicked}
+                />
                 <Button
                   type="button"
                   size="sm"
                   variant="outline"
+                  disabled={!picked || starts.includes(picked.startsAt)}
                   onClick={() => {
-                    setSlots((prev) => [
-                      ...prev,
-                      { id: `slot-${nextSlotSeq}`, value: "" },
-                    ]);
-                    setNextSlotSeq((seq) => seq + 1);
+                    if (!picked) return;
+                    setStarts((prev) => [...prev, picked.startsAt]);
+                    setPicked(null);
                   }}
                 >
-                  <Plus className="mr-1 h-3.5 w-3.5" /> Add another slot
+                  <Plus className="mr-1 h-3.5 w-3.5" /> Add this time
                 </Button>
+                {starts.length > 0 && (
+                  <ul className="space-y-1">
+                    {starts.map((start) => (
+                      <li
+                        key={start}
+                        className="flex items-center justify-between gap-2 rounded-md border px-3 py-1.5 text-sm"
+                      >
+                        {formatDateTimeLabel(new Date(start), { zone })}
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          aria-label={`Remove ${formatDateTimeLabel(new Date(start), { zone })}`}
+                          onClick={() =>
+                            setStarts((prev) => prev.filter((s) => s !== start))
+                          }
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
             )}
 

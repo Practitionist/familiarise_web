@@ -5,12 +5,22 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { CancellationPolicyNote } from "@/components/booking/CancellationPolicyNote";
 import { Separator } from "@/components/ui/separator";
+import {
+  PLAN_EMAIL_SUPPORT_LABEL,
+  planLevelLabel,
+} from "@/lib/labels/plan-labels";
 import { firstCycleWindow, lastInstantBefore } from "@/lib/booking/entitlement";
 import {
   planDurationText,
   planPriceLabel,
 } from "@/lib/offerings/plan-length-copy";
 import { useViewerZone } from "@/lib/time/use-viewer-zone";
+import { formatInViewerZone } from "@/lib/time/viewer-zone";
+import {
+  planFeasibilitySchema,
+  subscriptionCheckoutBlocked,
+} from "@/schemas/plan-feasibility";
+import { PLAN_CLIENTS_FULL_MESSAGE } from "@/schemas/plan-clients";
 import {
   subscriptionSearchParamsSchema,
   type SubscriptionSearchParams,
@@ -25,7 +35,7 @@ import {
 } from "../components/PlanCheckoutShell";
 import { CheckoutTotalNotes } from "../components/CheckoutTotals";
 import { reportPaymentsError } from "../utils";
-import { loadErrorMessage, searchParamsKey } from "./shared";
+import { loadErrorMessage, planIncludes, searchParamsKey } from "./shared";
 
 // price arrives as number: extended client + JSON serialization
 type SubscriptionPlanWithConsultant = Omit<SubscriptionPlan, "price"> & {
@@ -49,6 +59,8 @@ type SubscriptionResponse = {
   data: SubscriptionPlanWithConsultant;
 };
 
+const DATE_PATTERN = "d MMM yyyy";
+
 const START_PASSED =
   "The start date has passed. Please go back and pick a new one.";
 
@@ -57,7 +69,7 @@ function confirmationText(data: {
   isMockPayment?: boolean;
 }): string {
   if (data.isZeroAmountPayment) {
-    return "Payment completed via referral credits. Your subscription is now active.";
+    return "Nothing to pay. Your subscription is now active.";
   }
   if (data.isMockPayment) {
     return "Mock payment processed. Your subscription is now active. Check your dashboard for details.";
@@ -122,7 +134,7 @@ export function useSubscriptionCheckout(
     };
   }, [validatedSearchParams]);
 
-  // The first cycle as the buyer will see it, in the browser's zone (display
+  // The first cycle as the buyer will see it, in their profile zone (display
   // only; the persisted window is the server's).
   const firstCycle = useMemo(() => {
     const start = effectiveSearchParams?.schedulingPeriodStartsAt;
@@ -133,9 +145,36 @@ export function useSubscriptionCheckout(
         durationInMonths: planData.data.durationInMonths ?? 1,
       },
       new Date(start),
-      Intl.DateTimeFormat().resolvedOptions().timeZone,
+      viewer.zone,
     );
-  }, [planData?.data, effectiveSearchParams?.schedulingPeriodStartsAt]);
+  }, [
+    planData?.data,
+    effectiveSearchParams?.schedulingPeriodStartsAt,
+    viewer.zone,
+  ]);
+
+  // The expert's room for this cadence over the first weeks, counting today's
+  // bookings. Advisory: checkout itself refuses only an empty first week.
+  const feasibilityQuery = useQuery({
+    queryKey: [
+      "plan-feasibility",
+      planId,
+      effectiveSearchParams?.schedulingPeriodStartsAt ?? null,
+    ],
+    enabled: Boolean(planId && effectiveSearchParams?.schedulingPeriodStartsAt),
+    staleTime: 60_000,
+    retry: false,
+    queryFn: async () => {
+      const startsAt = effectiveSearchParams?.schedulingPeriodStartsAt;
+      const qs = startsAt ? `?startsAt=${encodeURIComponent(startsAt)}` : "";
+      const response = await fetch(
+        `/api/plans/subscriptions/${planId}/feasibility${qs}`,
+      );
+      if (!response.ok) return null;
+      return planFeasibilitySchema.parse(await response.json());
+    },
+  });
+  const feasibility = feasibilityQuery.data ?? null;
 
   // Periodic staleness check: warn once the first cycle has elapsed.
   const cycleEnd = firstCycle?.end;
@@ -195,12 +234,42 @@ export function useSubscriptionCheckout(
       title: plan?.title || "Monthly Plan",
     },
     detailsTitle: "Subscription Details",
-    detailsBanner: effectiveSearchParams?.renewsSubscriptionId ? (
-      <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-foreground">
-        Renewing your existing subscription — your new period will start
-        immediately after your current subscription ends
-      </div>
-    ) : null,
+    detailsBanner:
+      effectiveSearchParams?.renewsSubscriptionId ||
+      feasibility?.notice ||
+      feasibility?.fullyBooked ||
+      feasibility?.firstWeekPlaceable === 0 ? (
+        <div className="space-y-2">
+          {effectiveSearchParams?.renewsSubscriptionId && (
+            <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-foreground">
+              Renewing your existing subscription — your new period will start
+              immediately after your current subscription ends
+            </div>
+          )}
+          {feasibility?.fullyBooked ? (
+            <div
+              role="alert"
+              className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-foreground"
+            >
+              {PLAN_CLIENTS_FULL_MESSAGE}
+            </div>
+          ) : feasibility?.firstWeekPlaceable === 0 ? (
+            <div
+              role="alert"
+              className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-foreground"
+            >
+              This expert has no free time in the first week of this plan right
+              now. Pick a later start date, or ask them to open more hours.
+            </div>
+          ) : (
+            feasibility?.notice && (
+              <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-950">
+                {feasibility.notice}
+              </div>
+            )
+          )}
+        </div>
+      ) : null,
     detailRows: (
       <>
         {/* Start + first cycle: the buyer picked a start; the consultant
@@ -209,19 +278,30 @@ export function useSubscriptionCheckout(
           "string" && (
           <>
             <CheckoutDetailRow label="Starts" className="text-right text-sm">
-              {new Date(
+              {formatInViewerZone(
                 effectiveSearchParams.schedulingPeriodStartsAt,
-              ).toLocaleDateString()}
+                viewer.zone,
+                DATE_PATTERN,
+              )}
             </CheckoutDetailRow>
             {firstCycle && (
               <CheckoutDetailRow
                 label="First cycle"
                 className="text-right text-sm"
               >
-                {firstCycle.start.toLocaleDateString()} →{" "}
-                {lastInstantBefore(firstCycle.end).toLocaleDateString()} ·{" "}
-                {sessionsPerWeek} session{sessionsPerWeek === 1 ? "" : "s"} per
-                cycle · {plan?.totalSessions ?? "—"} in the plan
+                {formatInViewerZone(
+                  firstCycle.start,
+                  viewer.zone,
+                  DATE_PATTERN,
+                )}{" "}
+                →{" "}
+                {formatInViewerZone(
+                  lastInstantBefore(firstCycle.end),
+                  viewer.zone,
+                  DATE_PATTERN,
+                )}{" "}
+                · {sessionsPerWeek} session{sessionsPerWeek === 1 ? "" : "s"}{" "}
+                per cycle · {plan?.totalSessions ?? "—"} in the plan
               </CheckoutDetailRow>
             )}
             <Separator className="bg-border" />
@@ -243,13 +323,13 @@ export function useSubscriptionCheckout(
           {plan?.totalHours || computedSessions * sessionDurationInHours} hours
         </CheckoutDetailRow>
         <CheckoutDetailRow label="Email Support">
-          {plan?.emailSupport || "General"}
+          {PLAN_EMAIL_SUPPORT_LABEL[plan?.emailSupport ?? "GENERAL"]}
         </CheckoutDetailRow>
         <CheckoutDetailRow label="Language">
           {plan?.language || "English"}
         </CheckoutDetailRow>
         <CheckoutDetailRow label="Level">
-          {plan?.level || "Beginner"}
+          {planLevelLabel(plan?.level ?? "BEGINNER")}
         </CheckoutDetailRow>
         <CheckoutDetailRow label="Prerequisites">
           {plan?.prerequisites || "None"}
@@ -263,18 +343,12 @@ export function useSubscriptionCheckout(
     basePricePaise: plan?.price || 0,
     pricingTitle: "Subscription Pricing",
     feeLabel: planPriceLabel(plan ?? {}),
-    includes: (
-      <>
-        <li>
-          {plan?.totalSessions || computedSessions} total sessions (
-          {plan?.totalHours || computedSessions * sessionDurationInHours} hours)
-        </li>
-        <li>{sessionsPerWeek} sessions per week</li>
-        <li>{sessionDurationInHours} hour sessions</li>
-        <li>{plan?.emailSupport || "General"} email support</li>
-        <li>Learning materials</li>
-      </>
-    ),
+    includes: planIncludes(plan?.whatsIncluded, [
+      `${plan?.totalSessions || computedSessions} total sessions (${plan?.totalHours || computedSessions * sessionDurationInHours} hours)`,
+      `${sessionsPerWeek} sessions per week`,
+      `${sessionDurationInHours} hour sessions`,
+      `${PLAN_EMAIL_SUPPORT_LABEL[plan?.emailSupport ?? "GENERAL"]} email support`,
+    ]),
     renderFooter: (ctx) => (
       <>
         {/* Plans are paid at purchase; the 48 h promise. */}
@@ -301,7 +375,9 @@ export function useSubscriptionCheckout(
       </>
     ),
     checkoutPlanFields,
-    soldOut: false,
+    // The server's per-viewer answer: an existing client of the expert is never blocked.
+    soldOut: subscriptionCheckoutBlocked(feasibility),
+    soldOutLabel: "Fully booked",
     mockFlow: {
       kind: "direct",
       successTitle: "✅ Subscription Activated Successfully!",

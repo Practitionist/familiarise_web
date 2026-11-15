@@ -6,9 +6,10 @@
  *
  * VALIDATION LAYERS:
  * 1. Zod schema validation - Type-safe validation with automatic type inference
- * 2. ScheduleValidationService - Validates business rules (conflicts, availability, weekly distribution, etc.)
+ * 2. ScheduleValidationService - Validates business rules (conflicts, availability, per-day cap, etc.)
  */
 
+import { readJsonBody } from "@/lib/api/parse";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
@@ -18,7 +19,6 @@ import {
   eventIdSchema,
 } from "@/schemas/slotAllocation/validationSchemas";
 import { ZodError } from "zod";
-import type { SlotConflictResult } from "@/utils/scheduling-engine/types";
 import { requireApiAuth, authorizeEventAccess } from "@/lib/auth-helpers";
 import { refuseMalformedEventId } from "@/lib/booking/request-route-guards";
 import {
@@ -27,14 +27,6 @@ import {
   findTentativeOccurrenceIdsForEvent,
 } from "@/lib/booking/validate-conflict-view";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
-
-interface ValidationResult extends SlotConflictResult {
-  weeklyDistributionErrors: {
-    week: string;
-    slotsCount: number;
-    maxAllowed: number;
-  }[];
-}
 
 const classInclude = {
   classPlan: {
@@ -85,7 +77,9 @@ export async function POST(
       eventIdSchema.parse(classId);
 
       // Validate request body and get typed data
-      const body = validationRequestSchema.parse(await request.json());
+      const read = await readJsonBody(request);
+      if (read.error) return read.error;
+      const body = validationRequestSchema.parse(read.body);
 
       // Fetch class with necessary relations
       const classEntity = await prisma.class.findUnique({
@@ -116,7 +110,7 @@ export async function POST(
         { classId },
       );
 
-      // LAYER 2: Business Logic Validation (conflicts, availability, consecutive slots, weekly distribution, etc.)
+      // LAYER 2: Business Logic Validation (conflicts, availability, consecutive slots, per-day cap, etc.)
       const validationService = new ScheduleValidationService(prisma);
       const validationResult = await validationService.validate(
         "class",
@@ -161,12 +155,11 @@ export async function POST(
             conflicts: [],
             outsideAvailability: [],
             validSlots: body.slots,
-            weeklyDistributionErrors: [],
           },
         });
       }
 
-      const result: ValidationResult = categorizeValidationErrors({
+      const result = categorizeValidationErrors({
         errors: validationResult.errors,
         slots: body.slots,
         conflictDetails,
@@ -178,11 +171,6 @@ export async function POST(
               ? "Class"
               : "Consultation",
       });
-
-      // If there are weekly distribution errors, no slots are valid
-      if (result.weeklyDistributionErrors.length > 0) {
-        result.validSlots = [];
-      }
 
       return NextResponse.json({ data: result });
     } catch (validationError) {

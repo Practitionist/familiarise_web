@@ -1,4 +1,6 @@
 import { cache } from "react";
+import prisma from "@/lib/prisma";
+import { bookingSettled } from "@/lib/booking/settled";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
@@ -11,11 +13,16 @@ import {
 } from "@/lib/data/appointment-detail";
 import { resolvePrimaryPlanOwnerIds } from "@/lib/booking/plan-owners";
 import { getSession } from "@/lib/auth-server";
-import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
+import {
+  requirePersonalProfileAccess,
+  viewerOwnsPersonalProfile,
+} from "@/lib/auth/personal-dashboard-access";
 import { operatorOpsHref } from "@/lib/backoffice/booking-href";
 import { buildRescheduleSubject } from "@/lib/scheduling/time-picker-subject";
+import { bookedSessionMinutes } from "@/lib/appointments/occurrences";
 
 import { RescheduleClient } from "./RescheduleClient";
+import { TrialRescheduleClient } from "./TrialRescheduleClient";
 
 /**
  * The consultant's reschedule surface.
@@ -37,6 +44,10 @@ export async function generateMetadata({
   params,
 }: Readonly<PageProps>): Promise<Metadata> {
   const { consultantId, appointmentId } = await params;
+  // Bound to the viewer before any read: a non-owner learns nothing.
+  if (!(await viewerOwnsPersonalProfile("consultant", consultantId))) {
+    return { title: "Reschedule — Familiarise" };
+  }
   const detail = await loadDetail(appointmentId).catch(() => null);
   const owned =
     Boolean(consultantId) &&
@@ -66,9 +77,6 @@ export default async function ConsultantReschedulePage({
     notFound();
   }
 
-  const resolved = buildRescheduleSubject(detail);
-  if (!resolved) notFound();
-
   const backHref = `/dashboard/consultant/${consultantId}/appointments`;
   const opsHref = access.isInspecting
     ? operatorOpsHref(
@@ -77,6 +85,44 @@ export default async function ConsultantReschedulePage({
         appointmentId,
       )
     : null;
+
+  // A trial is one session: the trial picker proposes its one new window.
+  const trial = appointment.trial;
+  if (appointment.appointmentType === "TRIAL" && trial) {
+    const consulteeName = trial.consulteeProfile?.user?.name ?? undefined;
+    return (
+      <DashboardViewportFill className="gap-4">
+        <div className="shrink-0">
+          <PanelHeader
+            description={
+              consulteeName
+                ? `Propose a new trial time for ${consulteeName}`
+                : "Propose a new trial time"
+            }
+          />
+        </div>
+        {opsHref ? (
+          <OperatorOpsHint href={opsHref} />
+        ) : (
+          <TrialRescheduleClient
+            consultantId={consultantId}
+            appointmentId={appointmentId}
+            consulteeUserId={trial.consulteeProfile.userId}
+            consulteeName={consulteeName}
+            trialDurationMinutes={
+              bookedSessionMinutes(appointment.occurrences) ??
+              trial.subscriptionPlan.trialDurationMinutes
+            }
+            title={trial.subscriptionPlan.title}
+            backHref={backHref}
+          />
+        )}
+      </DashboardViewportFill>
+    );
+  }
+
+  const resolved = buildRescheduleSubject(detail);
+  if (!resolved) notFound();
 
   return (
     <DashboardViewportFill className="gap-4">
@@ -102,6 +148,10 @@ export default async function ConsultantReschedulePage({
           typeLabel={resolved.typeLabel}
           subject={resolved.subject}
           backHref={backHref}
+          settled={await bookingSettled(prisma, {
+            consultationId: detail.appointment.consultation?.id,
+            subscriptionId: detail.appointment.subscription?.id,
+          })}
         />
       )}
     </DashboardViewportFill>

@@ -3,78 +3,44 @@ import { isUniqueViolation } from "@/lib/db/pg-errors";
 import { scrubStreamEventForStorage } from "@/lib/stream/webhook-payload-scrub";
 import { toInputJson, type WebhookClaim } from "@/lib/webhooks/event-log";
 
-export const STALE_PROCESSING_THRESHOLD_MS = 5 * 60 * 1000;
-export const MAX_STALE_RECLAIM_RETRIES = 5;
+const STALE_PROCESSING_THRESHOLD_MS = 5 * 60 * 1000;
+const MAX_STALE_RECLAIM_RETRIES = 5;
 
-export interface ReclaimStaleOptions {
-  now?: Date;
-  staleThresholdMs?: number;
-  maxRetries?: number;
-}
-
-/**
- * Atomically reclaims an unprocessed webhook event row stuck in processing.
- * Mode 1 (`(eventId, priorClaimedAt)`) fences on the exact prior `claimedAt` snapshot;
- * Mode 2 (`(eventId, opts)`) reclaims rows stale beyond threshold with `deferCount < maxRetries`.
- */
+/** Re-claims an unprocessed row only if its `claimedAt` still equals the snapshot the caller selected. */
 export async function reclaimStaleProcessingWebhookEvent(
   eventId: string,
-  priorClaimedAtOrOpts?: Date | null | ReclaimStaleOptions,
+  priorClaimedAt: Date | null,
 ): Promise<{ reclaimed: boolean; claim: WebhookClaim }> {
-  const isDateOrNull =
-    priorClaimedAtOrOpts === undefined ||
-    priorClaimedAtOrOpts === null ||
-    priorClaimedAtOrOpts instanceof Date;
+  const claimedAt = new Date();
+  const claimed = await prisma.webhookEvent.updateMany({
+    where: { eventId, processed: false, claimedAt: priorClaimedAt },
+    data: { claimedAt, error: null, deferCount: { increment: 1 } },
+  });
+  return {
+    reclaimed: claimed.count > 0,
+    claim: { claimedAt: claimed.count > 0 ? claimedAt : null },
+  };
+}
 
-  if (isDateOrNull && arguments.length >= 2) {
-    const claimedAt = new Date();
-    const claimed = await prisma.webhookEvent.updateMany({
-      where: {
-        eventId,
-        processed: false,
-        claimedAt: priorClaimedAtOrOpts ?? null,
-      },
-      data: {
-        claimedAt,
-        error: null,
-        deferCount: { increment: 1 },
-      },
-    });
-    return {
-      reclaimed: claimed.count > 0,
-      claim: { claimedAt: claimed.count > 0 ? claimedAt : null },
-    };
-  }
-
-  const opts: ReclaimStaleOptions =
-    typeof priorClaimedAtOrOpts === "object" &&
-    priorClaimedAtOrOpts !== null &&
-    !(priorClaimedAtOrOpts instanceof Date)
-      ? priorClaimedAtOrOpts
-      : {};
-  const now = opts.now ?? new Date();
-  const thresholdMs = opts.staleThresholdMs ?? STALE_PROCESSING_THRESHOLD_MS;
-  const maxRetries = opts.maxRetries ?? MAX_STALE_RECLAIM_RETRIES;
-  const staleBefore = new Date(now.getTime() - thresholdMs);
-
+/** Re-claims a redelivered row whose earlier attempt was abandoned without an error, within the retry cap. */
+export async function reclaimAbandonedWebhookReceipt(
+  eventId: string,
+  now: Date = new Date(),
+): Promise<{ reclaimed: boolean; claim: WebhookClaim }> {
+  const staleBefore = new Date(now.getTime() - STALE_PROCESSING_THRESHOLD_MS);
   const claimed = await prisma.webhookEvent.updateMany({
     where: {
       eventId,
       processed: false,
       error: null,
-      deferCount: { lt: maxRetries },
+      deferCount: { lt: MAX_STALE_RECLAIM_RETRIES },
       OR: [
         { claimedAt: { lt: staleBefore } },
         { claimedAt: null, receivedAt: { lt: staleBefore } },
       ],
     },
-    data: {
-      claimedAt: now,
-      error: null,
-      deferCount: { increment: 1 },
-    },
+    data: { claimedAt: now, error: null, deferCount: { increment: 1 } },
   });
-
   return {
     reclaimed: claimed.count > 0,
     claim: { claimedAt: claimed.count > 0 ? now : null },
@@ -109,7 +75,7 @@ export async function recordStreamEventReceipt(
     if (!isUniqueViolation(error)) throw error;
   }
   try {
-    const reclaimed = await reclaimStaleProcessingWebhookEvent(eventId);
+    const reclaimed = await reclaimAbandonedWebhookReceipt(eventId);
     if (reclaimed.reclaimed) {
       return { isNew: true, claim: reclaimed.claim };
     }

@@ -413,6 +413,9 @@ model SupportCase {
   acknowledgedAt         DateTime? @db.Timestamptz
   resolutionDueAt        DateTime? @db.Timestamptz
   resolvedAt             DateTime? @db.Timestamptz
+  /// When the case was last reopened; null = never. A reopen after `statutoryDueAt`
+  /// works to its new resolution target instead of the passed statutory date.
+  reopenedAt             DateTime? @db.Timestamptz
   autoCloseLastAttemptAt DateTime? @db.Timestamptz
   closedAt               DateTime? @db.Timestamptz
   deletedAt              DateTime? @db.Timestamptz
@@ -3353,11 +3356,15 @@ model ConsultantProfile {
 
   // #1703 D1 — INSTANT pays on a free slot; REQUEST routes every slot through
   // approval. Rationale: docs/booking/21-schema-reference.md.
-  bookingMode       BookingMode @default(INSTANT)
+  bookingMode          BookingMode @default(INSTANT)
   // #1703 D4 — the pause toggle and the optional open-PENDING cap (null = off);
   // the request route refuses with a typed 409 when either bites.
-  acceptingRequests Boolean     @default(true)
-  maxOpenRequests   Int?
+  acceptingRequests    Boolean     @default(true)
+  maxOpenRequests      Int?
+  /// The most distinct buyers with a live 1:1 plan this expert takes at once;
+  /// null = no limit. Private: public surfaces get only a "fully booked" flag.
+  /// Checkout refuses a new client at it; CHECK >= 1 lives in prisma/sql.
+  maxActivePlanClients Int?
 
   // India statutory (compliance stubs read these; PAN lives encrypted on ConsultantTaxInfo)
   /// @deprecated Legacy plaintext PAN retained for pre-reset read compatibility (#2006); dropped in PR-6 reset batch.
@@ -4033,6 +4040,12 @@ model Consultation {
   /// Client-minted `Idempotency-Key` of the request that created this row; a retry with it replays this row.
   requestIdempotencyKey String?             @unique
   bookingSource         BookingSource       @default(REQUEST_SUBMITTED)
+  /// Price (paise) the buyer agreed to at request; plan edits never move it.
+  /// Null = read the plan (rows created before the column).
+  agreedPricePaise      BigInt?
+  /// Hash of what the learner submitted with requestIdempotencyKey (plan, window,
+  /// org); a retry replays only on a match. Null = compare the held times (rows created before the column).
+  requestFingerprint    String?             @db.VarChar(64)
   // Cancellation tracking
   cancellationReason    CancellationReason?
   cancellationNotes     String?             @db.Text
@@ -4312,7 +4325,6 @@ enum AppointmentStatus {
   PENDING
   APPROVED
   APPROVED_PENDING_PAYMENT // Approved by consultant but awaiting payment
-  SCHEDULED
   COMPLETED
   REJECTED
   CANCELLED
@@ -4325,7 +4337,7 @@ enum AppointmentStatus {
 
 model Trial {
   id     String      @id @default(cuid())
-  status TrialStatus @default(PENDING)
+  status TrialStatus // Written at request: SCHEDULED (free) or AWAITING_PAYMENT (paid)
   notes  String?     @db.Text // Consultee's questions/goals
 
   // One trial per consultant per consultee
@@ -4337,6 +4349,10 @@ model Trial {
 
   subscriptionPlan   SubscriptionPlan @relation(fields: [subscriptionPlanId], references: [id])
   subscriptionPlanId String
+
+  /// Trial price (paise) the buyer agreed to at request; plan edits never move
+  /// it. Null = read the plan (rows created before the column).
+  agreedPricePaise BigInt?
 
   // The held call, once the consultant has picked a time.
   appointment   Appointment? @relation(fields: [appointmentId], references: [id])
@@ -4368,11 +4384,11 @@ model Trial {
   completedAt DateTime? @db.Timestamptz
 
   /// Deadline for a paid trial's pay link: request + the 24 h pay window (#1775).
-  /// The expiry job cancels a PENDING or AWAITING_PAYMENT trial still unpaid past it.
+  /// The expiry job cancels an AWAITING_PAYMENT trial still unpaid past it.
   paymentDueAt DateTime? @db.Timestamptz
 
   // No `deletedAt` tombstone. TrialStatus already has a value for every terminal
-  // outcome — COMPLETED / CONVERTED / CANCELLED / REJECTED — and each is written
+  // outcome — COMPLETED / CONVERTED / CANCELLED — and each is written
   // through `transitionTrial`, so the status IS the retirement record and a
   // second marker on the same row could only ever disagree with it. #1319 added
   // the column as a mirror of Appointment.deletedAt and nothing wrote it; the
@@ -4397,13 +4413,11 @@ model Trial {
 }
 
 enum TrialStatus {
-  PENDING // Requested, awaiting consultant action; a paid trial is paid here (#1775)
-  AWAITING_PAYMENT // Legacy: accepted before payment; new paid trials pay at request
-  SCHEDULED // Time slot confirmed
+  AWAITING_PAYMENT // A paid trial holding its picked time until paid or its pay window ends
+  SCHEDULED // A free trial at request, or a paid one once captured
   COMPLETED // Trial call held
   CONVERTED // Consultee subscribed after trial
-  CANCELLED // Cancelled by consultee, lapsed unpaid, or TRIAL_UNANSWERED after 48 h
-  REJECTED // Declined by consultant
+  CANCELLED // Cancelled by either party or lapsed unpaid
 }
 
 enum BookingSource {
@@ -4527,7 +4541,6 @@ enum WebinarStatus {
   /// nothing to join.
   DRAFT
   SCHEDULED
-  IN_PROGRESS
   COMPLETED
   CANCELLED
 }
@@ -4710,7 +4723,6 @@ enum ClassStatus {
   /// See WebinarStatus.DRAFT.
   DRAFT
   SCHEDULED
-  IN_PROGRESS
   COMPLETED
   CANCELLED
 }
@@ -7260,6 +7272,10 @@ model ReferralProgramConfig {
   expertWaiverDays          Int      @default(90)
   // Budget charged when an expert referral vests: the expected forgone take on its waived sessions.
   expertReferralBudgetPaise BigInt   @default(180000)
+  // Founding-expert grant: sessions and validity per waiver, and how many experts may hold one.
+  foundingWaiverSessions    Int      @default(3)
+  foundingWaiverDays        Int      @default(90)
+  foundingExpertCap         Int      @default(30)
   // Review-hold rules, off while null: referrals of one code sharing an IP hash (or IP hash and
   // user agent) at or above the count, within holdWindowDays of signup when that is set.
   holdSameIpReferrals       Int?
@@ -7310,8 +7326,9 @@ model ConsultantFeeWaiver {
   reason              ConsultantFeeWaiverReason
   sessionsRemaining   Int
   expiresAt           DateTime                  @db.Timestamptz
-  referralId          String
-  referral            Referral                  @relation(fields: [referralId], references: [id], onDelete: Cascade)
+  // Null exactly when reason is FOUNDING_EXPERT, at most one per consultant (sidecar CHECK + partial unique).
+  referralId          String?
+  referral            Referral?                 @relation(fields: [referralId], references: [id], onDelete: Cascade)
   createdAt           DateTime                  @default(now()) @db.Timestamptz
 
   @@unique([referralId, consultantProfileId])
@@ -7321,6 +7338,7 @@ model ConsultantFeeWaiver {
 enum ConsultantFeeWaiverReason {
   REFERRED_EXPERT
   REFERRING_EXPERT
+  FOUNDING_EXPERT
 }
 
 // Single-row platform pricing config (fixed id), mirroring
@@ -8391,6 +8409,8 @@ model StreamRevocationRetry {
   nextRetryAt       DateTime?            @db.Timestamptz
   lastError         String?              @db.Text
   completedAt       DateTime?            @db.Timestamptz
+  /// SEAT_ACCESS_REVOKE only: the last Meeting id, in (createdAt, id) order, every room up to which the user is confirmed removed from.
+  resumeAfter       String?
   createdAt         DateTime             @default(now()) @db.Timestamptz
   updatedAt         DateTime             @updatedAt @db.Timestamptz
 
@@ -8404,6 +8424,10 @@ enum StreamRevocationKind {
   EVENT_CHANNEL_REMOVE
   DM_REMOVE
   ORG_REVOKE
+  /// An ended seat's channel, DM and room access; planId is the appointment.
+  SEAT_ACCESS_REVOKE
+  /// A refund's seats to revoke; planId is the Refund row, userId its payer.
+  REFUND_ACCESS_REVOKE
 }
 
 enum ErasureVendor {

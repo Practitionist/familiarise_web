@@ -20,6 +20,7 @@ import {
   slaDeadlinesFor,
   slaStateOf,
   effectiveResolutionDueAt,
+  reopenedClockPatch,
   userRepliedPatch,
   type SlaClock,
 } from "@/lib/support/sla";
@@ -41,6 +42,7 @@ function clock(overrides: Partial<SlaClock> = {}): SlaClock {
     resolvedAt: null,
     awaitingUserSince: null,
     pausedSeconds: 0,
+    reopenedAt: null,
     ...overrides,
   };
 }
@@ -151,6 +153,73 @@ describe("the resolution clock pauses while we are waiting on the user", () => {
     expect(
       slaStateOf(row, new Date(T0.getTime() + 2 * DAY)).resolutionBreached,
     ).toBe(true);
+  });
+});
+
+describe("reopen", () => {
+  const resolvedCase = (
+    statutoryDueAt: Date | null,
+    acknowledgedAt: Date | null = T0,
+  ) => ({
+    resolvedAt: new Date(T0.getTime() + 2 * DAY),
+    acknowledgedAt,
+    activeChannel: "HUMAN",
+    statutoryDueAt,
+  });
+
+  it("restarts the first-reply deadline only for a case nobody replied to", () => {
+    const reopenedAt = new Date(T0.getTime() + 9 * DAY);
+    expect(
+      reopenedClockPatch(resolvedCase(null, null), "HIGH", reopenedAt).ackDueAt,
+    ).toEqual(new Date(reopenedAt.getTime() + 8 * HOUR));
+    expect(
+      reopenedClockPatch(resolvedCase(null), "HIGH", reopenedAt),
+    ).not.toHaveProperty("ackDueAt");
+  });
+
+  it("caps the new target at a statutory date that is still ahead", () => {
+    const statutory = new Date(T0.getTime() + 7 * DAY);
+    const reopenedAt = new Date(T0.getTime() + 6 * DAY);
+    expect(
+      reopenedClockPatch(resolvedCase(statutory), "MEDIUM", reopenedAt),
+    ).toEqual({
+      resolutionDueAt: statutory,
+      pausedSeconds: 0,
+      reopenedAt,
+    });
+  });
+
+  it("works to its new target when reopened after the statutory date", () => {
+    const statutory = new Date(T0.getTime() + 7 * DAY);
+    const reopenedAt = new Date(T0.getTime() + 9 * DAY);
+    const patch = reopenedClockPatch(
+      resolvedCase(statutory),
+      "MEDIUM",
+      reopenedAt,
+    );
+    expect(patch).toEqual({
+      resolutionDueAt: new Date(reopenedAt.getTime() + 7 * DAY),
+      pausedSeconds: 0,
+      reopenedAt,
+    });
+    const row = clock({
+      resolutionDueAt: patch.resolutionDueAt,
+      statutoryDueAt: statutory,
+      reopenedAt,
+    });
+    expect(slaStateOf(row, reopenedAt).resolutionBreached).toBe(false);
+    expect(effectiveResolutionDueAt(row, reopenedAt)).toEqual(
+      patch.resolutionDueAt,
+    );
+  });
+
+  it("still caps a case that was never reopened at its statutory date", () => {
+    const statutory = new Date(T0.getTime() + 2 * HOUR);
+    const row = clock({
+      resolutionDueAt: new Date(T0.getTime() + 7 * DAY),
+      statutoryDueAt: statutory,
+    });
+    expect(effectiveResolutionDueAt(row, T0)).toEqual(statutory);
   });
 });
 

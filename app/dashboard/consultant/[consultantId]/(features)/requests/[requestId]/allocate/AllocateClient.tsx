@@ -21,6 +21,7 @@ export function AllocateClient({
   title,
   pinnedAt,
   viewerZone,
+  warnings,
 }: Readonly<{
   subject: TimePickerSubject;
   /** Paid (or free): decides the lead time a placed session needs. */
@@ -31,6 +32,8 @@ export function AllocateClient({
   pinnedAt?: Date | null;
   /** The viewer's profile zone from the page, so the grid matches the dashboard (#1703 QA-1). */
   viewerZone: string | null;
+  /** Feasibility warnings for a subscription's coming weeks, shown in the tray. */
+  warnings?: string[];
 }>) {
   const router = useRouter();
   // Replaces the generic "allocate" crumb with the booking's own name (#1064).
@@ -49,7 +52,7 @@ export function AllocateClient({
       // Allocated elsewhere, or no longer allocatable: the list is the answer.
       onConflict: goBack,
     },
-    { settled },
+    { settled, replacing: subject.hasReleasedSlots === true },
   );
 
   return (
@@ -62,9 +65,7 @@ export function AllocateClient({
       onCancel={goBack}
       // Only the request's tentative count moved: reload it and stay here.
       onRequestRefresh={router.refresh}
-      // The legend lives between the grid and the action footer here: the
-      // footer is always on screen, and the top space goes to the heatmap.
-      legendPosition="bottom"
+      warnings={warnings}
     />
   );
 }

@@ -62,6 +62,7 @@ import {
 } from "@/lib/booking/allocation/guards";
 import { findIdempotentAllocation } from "@/lib/booking/allocation/idempotency";
 import { assertCollaboratorsFree } from "@/lib/booking/allocation/collaborators";
+import { bookingTransaction } from "@/lib/db/booking-transaction";
 
 /**
  * REQUESTED SLOTS: Use pre-selected slots from consultee
@@ -90,8 +91,6 @@ export async function useRequestedSlots(
   // here, because approving stored times is only valid for an unallocated event.
   _initialAllocation: boolean | undefined,
   idempotencyKey?: string,
-  /** Consultant accepting times outside their own published availability. */
-  overrideAvailabilityWindow?: boolean,
   expectedTentativeSlotCount?: number,
   txOptions: AllocationTxOptions = {},
 ): Promise<AllocationResult> {
@@ -123,24 +122,17 @@ export async function useRequestedSlots(
   }
   const lock = await lockAutoAllocate(consultantProfileId);
 
-  // #898 follow-up — serialize on the consultee too. The GiST overlap guard
-  // is consultant-keyed, so it cannot see a cross-consultant double-booking,
-  // and this path confirms the consultee's slots. Without it an approval here
-  // and an auto/manual allocation for the same consultee under a DIFFERENT
-  // consultant both pass their conflict validation under Read Committed and
-  // both commit. Lock order matches the other two paths: consultant → consultee.
+  // Serialize on the consultee too: the GiST overlap guard is consultant-keyed,
+  // so it cannot see a cross-consultant double-booking. The key is held from
+  // the batch to the commit, and the in-transaction recheck reads the
+  // consultee's calendar under it, so two allocations for one consultee under
+  // different consultants never both commit; the reads and validation before
+  // it do not hold the buyer's own checkout up. Order: consultant → consultee → batch.
   let consulteeLock: ApprovalLock | null = null;
   let slotGrant: SlotBatchGrant | null = null;
 
   try {
     const consulteeLockUserId = await getConsulteeUserId(eventType, eventId);
-    if (consulteeLockUserId) {
-      consulteeLock = await lockConsulteeBooking(
-        consulteeLockUserId,
-        undefined,
-        ALLOCATOR_LOCK_RETRY_CONFIG,
-      );
-    }
 
     // #837 TOCTOU — same re-check the auto/manual paths do: the pre-lock
     // replay check can miss a concurrent first submit that stamped its key
@@ -262,7 +254,9 @@ export async function useRequestedSlots(
       existingAppointmentIds,
       {
         consulteeUserId,
-        overrideAvailabilityWindow,
+        // Requested times are held times: checked against published hours
+        // when requested, and kept for every approver.
+        heldSlotStarts: requestedSlots,
         // Co-host arm: the consultant's own ACCEPTED seats occupy too.
         consultantProfileId,
         leadTimeMs,
@@ -283,6 +277,13 @@ export async function useRequestedSlots(
       )
       .sort((a, b) => a.localeCompare(b));
 
+    if (consulteeLockUserId) {
+      consulteeLock = await lockConsulteeBooking(
+        consulteeLockUserId,
+        undefined,
+        ALLOCATOR_LOCK_RETRY_CONFIG,
+      );
+    }
     // Lock order: consultant → consultee → slot batch over every busy profile.
     slotGrant = await lockPickedSlots(
       requestedSlots,
@@ -294,7 +295,7 @@ export async function useRequestedSlots(
       }),
     );
 
-    return await prisma.$transaction(
+    return await bookingTransaction(
       async (tx) => {
         await renewAllocationBatch(slotGrant);
         // Multi-tab guard: another tab already confirmed slots for this
@@ -419,6 +420,7 @@ export async function useRequestedSlots(
           config,
           txOptions.approvableFrom,
           txOptions.historyReason,
+          txOptions.actorUserId,
         );
 
         // CRITICAL FIX: Clear isTentative flag on all slots after approval

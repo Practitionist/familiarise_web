@@ -42,10 +42,18 @@ import {
 import { SESSION_HOSTS_SELECT, sessionHostUserIds } from "./session-hosts";
 import { transitionOccurrenceCompletion } from "./transitions";
 import { liveParticipant, transitionParticipant } from "./participants";
-import { NEEDS_HUMAN } from "./misses";
+import {
+  agedNeedsHumanWhere,
+  NEEDS_HUMAN,
+  NEEDS_HUMAN_ESCALATE_DAYS,
+} from "./misses";
 import { reportStandingFinding } from "@/lib/observability/standing-finding";
+import { reportSentryMessage } from "@/lib/observability/report";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { onClassSessionVoided } from "./class-sessions";
+
+/** How long past the booked end a one-sided session waits for Stream before it parks UNVERIFIED. */
+const STREAM_EVIDENCE_WAIT_MS = 24 * 60 * 60 * 1000;
 
 /** Stream reads one sweep run may spend on attendance evidence; a slot past the budget waits for the next run. */
 const STREAM_WITNESS_READS_PER_RUN = 100;
@@ -113,7 +121,11 @@ export interface OutcomeContext {
 export type SlotDecision =
   | {
       kind: "deferred";
-      reason: "live-overrun" | "no-show-detector" | "stream-budget";
+      reason:
+        | "live-overrun"
+        | "no-show-detector"
+        | "stream-budget"
+        | "stream-evidence";
     }
   | {
       kind: "written";
@@ -511,12 +523,15 @@ export async function decideSlotOutcome(
 
   let presences: PresenceInterval[] = slot.presences;
   let report: CallPresenceEvidence | null = null;
+  let streamAnswered = false;
   if (meeting) {
     const evidence = await readStreamEvidence(slot, meeting, ctx.witness);
     if (evidence === EXHAUSTED) {
       return { kind: "deferred", reason: "stream-budget" };
     }
     report = evidence.report;
+    streamAnswered =
+      report !== null || evidence.sessions.has(meeting.streamCallId);
     const resolved = resolvePresencesFromStream(
       slot.presences,
       meeting.streamCallId,
@@ -533,7 +548,7 @@ export async function decideSlotOutcome(
     }
   }
 
-  const verdict = classifySessionOutcome({
+  let verdict = classifySessionOutcome({
     startsAt: slot.startsAt,
     endsAt: slot.endsAt,
     hostUserIds: sessionHostUserIds(slot.appointment),
@@ -544,6 +559,22 @@ export async function decideSlotOutcome(
     report,
     maintenanceWindows: ctx.outages,
   });
+  // Webhook rows alone never mark one side absent: wait for Stream, then park for ops.
+  if (
+    meeting &&
+    !streamAnswered &&
+    (verdict.outcome === "LEARNER_ABSENT" || verdict.outcome === "HOST_ABSENT")
+  ) {
+    if (ctx.now.getTime() - slot.endsAt.getTime() < STREAM_EVIDENCE_WAIT_MS) {
+      return { kind: "deferred", reason: "stream-evidence" };
+    }
+    verdict = {
+      ...verdict,
+      outcome: "INCONCLUSIVE",
+      completionStatus: "UNVERIFIED",
+      hostAttributed: false,
+    };
+  }
   let to: OccurrenceCompletionStatus = verdict.completionStatus;
   if (verdict.outcome === "HOST_ABSENT" && slot.appointment.consultationId) {
     // D5 — the detector cancels and refunds a consultation host no-show; one it
@@ -740,6 +771,51 @@ export function staleNeedsHumanWhere(
       },
     ],
   };
+}
+
+/**
+ * Escalates every session parked for ops longer than 7 days, once per new id
+ * per day (`reportStandingFinding`), with a Sentry warning naming how many hold
+ * an ended plan's settlement. No money moves; the hold stays until ops decides.
+ */
+export async function escalateAgedNeedsHuman(
+  db: Pick<Tx, "appointmentOccurrence">,
+  now: Date,
+): Promise<number> {
+  const where = agedNeedsHumanWhere(now);
+  const aged = await db.appointmentOccurrence.count({ where });
+  if (aged === 0) return 0;
+  const rows = await db.appointmentOccurrence.findMany({
+    where,
+    select: { id: true },
+    orderBy: [{ endsAt: "asc" }, { id: "asc" }],
+    take: 200,
+  });
+  // Plan-end settlement waits while any of these sits on an ended plan.
+  const blockingPlanEnd = await db.appointmentOccurrence.count({
+    where: {
+      AND: [
+        where,
+        { appointment: { subscription: { planEndsAt: { lte: now } } } },
+      ],
+    },
+  });
+  const message = `${aged} session(s) waited over ${NEEDS_HUMAN_ESCALATE_DAYS} days for an ops decision; ${blockingPlanEnd} hold an ended plan's settlement`;
+  await reportStandingFinding(
+    {
+      key: "session-outcome-sweep:needs-human-escalation",
+      ids: [...rows.map((r) => r.id), `count:${aged}`],
+      message,
+    },
+    () =>
+      reportSentryMessage(message, {
+        subsystem: "bookings",
+        op: "needs-human-escalation",
+        level: "warning",
+        extra: { aged, blockingPlanEnd, sample: rows.slice(0, 10) },
+      }),
+  );
+  return aged;
 }
 
 /**

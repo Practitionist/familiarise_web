@@ -20,13 +20,36 @@ jest.mock("../../lib/auth-helpers", () => ({
   requireApiAuth: async () => ({ session }),
 }));
 jest.mock("../../lib/rate-limit", () => ({
-  applyRateLimit: async () => null,
-  trialRequestLimiter: {},
+  trialRequestRefusal: async () => null,
+  spendTrialRequest: async () => undefined,
 }));
 jest.mock("../../lib/booking/participants", () => ({
   recordParticipants: jest.fn(),
 }));
-jest.mock("../../lib/novu", () => ({ notifyTrialRequested: jest.fn() }));
+jest.mock("../../lib/trials/book-trial", () => ({
+  lockTrialPick: jest.fn(async () => async () => undefined),
+  // The booking's own insert stands in for the whole in-transaction write.
+  bookTrialInTx: jest.fn(
+    async (
+      tx: { trial: { create: (a: unknown) => Promise<object> } },
+      args: Record<string, unknown>,
+    ) => ({
+      ...(await tx.trial.create({ data: args })),
+      appointmentId: "apt-1",
+    }),
+  ),
+  TrialTimeRefusedError: class extends Error {},
+}));
+jest.mock("../../lib/trials/schedule-notices", () => ({
+  prepareTrialScheduledNotices: jest.fn(async () => ({
+    bells: [],
+    emails: { prepared: { messages: [] }, screened: [] },
+  })),
+  stageTrialScheduledNotices: jest.fn(async () => ({ bells: [], emails: [] })),
+}));
+jest.mock("../../lib/novu/stage-then-attempt", () => ({
+  flushNotificationsAfter: jest.fn(async () => undefined),
+}));
 jest.mock("../../lib/payments/operations/approval-payment", () => ({
   createApprovalPaymentIntent: jest.fn(),
 }));
@@ -96,6 +119,7 @@ jest.mock("../../lib/prisma", () => {
     __esModule: true,
     default: {
       trial: { findUnique: jest.fn(async () => null) },
+      consultantProfile: { findUnique: jest.fn(async () => null) },
       membership: {
         findFirst: (...a: unknown[]) =>
           membershipFindFirst(...(a as [{ where: { role?: string } }])),
@@ -106,13 +130,14 @@ jest.mock("../../lib/prisma", () => {
           title: "Mentorship",
           consultantProfileId: state.planOwner,
           trialEnabled: true,
+          trialDurationMinutes: 30,
           trialPriceInPaise: 0,
           status: "PUBLISHED",
           consultantProfile: {
             id: state.planOwner,
             acceptingRequests: true,
             maxOpenRequests: state.maxOpenRequests,
-            user: { id: "u-other" },
+            user: { id: "u-other", name: "Other" },
           },
         })),
       },
@@ -129,6 +154,14 @@ jest.mock("../../lib/prisma", () => {
 import { NextRequest } from "next/server";
 import { POST } from "../../app/api/trials/route";
 
+const pickStart = new Date(
+  Math.ceil((Date.now() + 3 * 86_400_000) / 3_600_000) * 3_600_000,
+);
+const pickedSlot = {
+  startsAt: pickStart.toISOString(),
+  endsAt: new Date(pickStart.getTime() + 30 * 60_000).toISOString(),
+};
+
 const post = (body: Record<string, unknown> = {}) =>
   POST(
     new NextRequest("http://localhost/api/trials", {
@@ -137,6 +170,7 @@ const post = (body: Record<string, unknown> = {}) =>
         consulteeProfileId: "cee-dual",
         consultantProfileId: state.planOwner,
         subscriptionPlanId: "plan-1",
+        slot: pickedSlot,
         ...body,
       }),
     }),

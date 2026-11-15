@@ -27,8 +27,9 @@ export function rateLimitMock(): object {
 /** Chat access revocation does nothing. */
 export function chatRevocationMock(): object {
   return {
-    revokeEndedBookingChatAccess: jest.fn(async () => undefined),
-    revokeEndedEventChatAccess: jest.fn(async () => undefined),
+    revokeEndedSeatAccess: jest.fn(async () => undefined),
+    persistSeatRevocation: jest.fn(async () => undefined),
+    persistSeatRevocationInTx: jest.fn(async () => null),
   };
 }
 

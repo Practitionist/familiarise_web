@@ -77,12 +77,12 @@ function remindRateLimited(nextAllowedAt: Date): Refusal {
   });
 }
 
-function notAwaitingPayment(kind: string, id: string): Refusal {
+function notAwaitingPayment(id: string): Refusal {
   return new Refusal({
     code: "NOT_AWAITING_PAYMENT",
     userMessage:
       "There is no open payment link to remind about. It may have expired or already been paid.",
-    devMessage: `${kind} ${id} has no live pay link to remind about`,
+    devMessage: `consultation ${id} has no live pay link to remind about`,
   });
 }
 
@@ -92,28 +92,21 @@ function notAwaitingPayment(kind: string, id: string): Refusal {
  * next allowed instant, which the response echoes.
  */
 export async function remindApprovedPayment(args: {
-  kind: "consultation" | "subscription";
   id: string;
   actor: RemindActor;
 }): Promise<{ nextAllowedAt: Date }> {
-  const row =
-    args.kind === "consultation"
-      ? await prisma.consultation.findUnique({
-          where: { id: args.id },
-          select: { ...REMIND_SELECT, consultationPlan: REMIND_PLAN_SELECT },
-        })
-      : await prisma.subscription.findUnique({
-          where: { id: args.id },
-          select: { ...REMIND_SELECT, subscriptionPlan: REMIND_PLAN_SELECT },
-        });
+  // Only a 1:1 awaits payment after approval; a plan is paid at checkout.
+  const row = await prisma.consultation.findUnique({
+    where: { id: args.id },
+    select: { ...REMIND_SELECT, consultationPlan: REMIND_PLAN_SELECT },
+  });
   if (!row)
     throw new Refusal({
       code: "NOT_FOUND",
       httpStatus: 404,
       userMessage: "This request no longer exists.",
     });
-  const plan =
-    "consultationPlan" in row ? row.consultationPlan : row.subscriptionPlan;
+  const plan = row.consultationPlan;
   const owns =
     !!args.actor.consultantProfileId &&
     plan?.consultantProfileId === args.actor.consultantProfileId;
@@ -127,10 +120,10 @@ export async function remindApprovedPayment(args: {
   const now = new Date();
   const payment = liveReminderPayment(row, now);
   if (!payment || !row.appointment || !row.pendingPaymentUrl) {
-    throw notAwaitingPayment(args.kind, args.id);
+    throw notAwaitingPayment(args.id);
   }
   const consultee = row.requestedBy?.user;
-  if (!consultee?.email) throw notAwaitingPayment(args.kind, args.id);
+  if (!consultee?.email) throw notAwaitingPayment(args.id);
 
   // Once per 24 h, measured from the last manual reminder's own outbox row
   // (state-as-outbox, ADR 27): the Upstash window reports `reset` on the UTC
@@ -170,7 +163,7 @@ export async function remindApprovedPayment(args: {
     PaymentLinkEmail({
       name: consultee.name ?? "User",
       consultantName,
-      appointmentType: args.kind,
+      appointmentType: "consultation",
       amount: payment.amount,
       currency: payment.currency,
       // #1775 P-1 — the stored link is an order id on Razorpay.
@@ -182,7 +175,7 @@ export async function remindApprovedPayment(args: {
   const message = {
     from: SENDERS.payments,
     to: consultee.email,
-    subject: `Reminder: payment due - ${args.kind === "consultation" ? "Consultation" : "Subscription"} with ${consultantName}`,
+    subject: `Reminder: payment due - Consultation with ${consultantName}`,
     ...rendered,
   };
   const [, bellResult] = await Promise.all([
@@ -203,8 +196,7 @@ export async function remindApprovedPayment(args: {
           amount: payment.amount,
           currency: payment.currency,
           consultantName,
-          appointmentType:
-            args.kind === "consultation" ? "CONSULTATION" : "SUBSCRIPTION",
+          appointmentType: "CONSULTATION",
           planTitle: plan?.title,
           paymentUrl,
           expiresAt: payment.expiresAt,
@@ -231,7 +223,6 @@ export async function remindApprovedPayment(args: {
  * `{ code: "REMIND_RATE_LIMITED", nextAllowedAt }`, both `no-store`.
  */
 export async function remindPaymentResponse(
-  kind: "consultation" | "subscription",
   id: string,
   actor: RemindActor,
 ): Promise<NextResponse> {
@@ -239,7 +230,7 @@ export async function remindPaymentResponse(
   try {
     const malformedId = refuseMalformedEventId(id);
     if (malformedId) return malformedId;
-    const { nextAllowedAt } = await remindApprovedPayment({ kind, id, actor });
+    const { nextAllowedAt } = await remindApprovedPayment({ id, actor });
     return NextResponse.json(
       { nextAllowedAt: nextAllowedAt.toISOString() },
       { headers: noStore },
@@ -259,6 +250,6 @@ export async function remindPaymentResponse(
         },
       );
     }
-    return apiError({ tag: `[Bookings.${kind}.Remind]`, error });
+    return apiError({ tag: "[Bookings.consultation.Remind]", error });
   }
 }

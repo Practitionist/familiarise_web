@@ -19,9 +19,18 @@
 
 import type { AppointmentsType, RescheduleInitiatorRole } from "@prisma/client";
 import type { RescheduleOutcomeFields } from "@/lib/novu/workflows";
-import { SCHEDULING_INTERVAL_MS } from "@/lib/appointments/occurrences";
+import {
+  CONSULTANT_JOIN_WINDOW_MS,
+  CONSULTEE_JOIN_WINDOW_MS,
+  SCHEDULING_INTERVAL_MS,
+} from "@/lib/appointments/occurrences";
 import type { AppointmentKind } from "@/lib/appointments/view-model";
-import { RESCHEDULE_MIN_LEAD_HOURS } from "@/lib/booking/lead-time";
+import {
+  isShortNotice,
+  leadMsFor,
+  RESCHEDULE_MIN_LEAD_HOURS,
+} from "@/lib/booking/lead-time";
+import { AllocationConflictError } from "@/utils/scheduling-engine/errors";
 
 type ReleasableRow = {
   startsAt: Date | string;
@@ -30,12 +39,18 @@ type ReleasableRow = {
   deletedAt?: Date | string | null;
 };
 
-/** A party may release only a confirmed SCHEDULED session at least the lead time out. */
+/**
+ * A confirmed SCHEDULED session the caller may move: at least 24 hours out,
+ * or, for a 1:1 (agreed short-notice moves), any that has not started.
+ */
 export function rescheduleReleasable(
   rows: ReadonlyArray<ReleasableRow>,
   now: Date = new Date(),
+  { agreedShortNotice = false }: { agreedShortNotice?: boolean } = {},
 ): boolean {
-  const earliest = now.getTime() + RESCHEDULE_MIN_LEAD_HOURS * 3_600_000;
+  const earliest = agreedShortNotice
+    ? now.getTime() + 1
+    : now.getTime() + RESCHEDULE_MIN_LEAD_HOURS * 3_600_000;
   return rows.some(
     (row) =>
       row.completionStatus === "SCHEDULED" &&
@@ -43,6 +58,11 @@ export function rescheduleReleasable(
       !row.deletedAt &&
       new Date(row.startsAt).getTime() >= earliest,
   );
+}
+
+/** The 1:1 kinds whose parties may agree a move inside 24 hours. */
+export function allowsAgreedShortNotice(kind: string): boolean {
+  return kind === "CONSULTATION" || kind === "SUBSCRIPTION";
 }
 
 /** A published webinar moves to a new date only while its session is confirmed and the lead time out. */
@@ -57,25 +77,25 @@ export function allowsRetime(
 /** Ceiling on how long an unanswered proposal may sit. */
 export const PROPOSAL_MAX_LIFETIME_HOURS = 72;
 
-/**
- * A proposal must resolve before the session it concerns arrives, with the same
- * margin the reschedule policy itself demands.
- */
+/** A proposal opened with more notice resolves this long before the session. */
 export const PROPOSAL_RESOLVE_BEFORE_SESSION_HOURS = 24;
 
 const HOUR_MS = 3_600_000;
 
 /**
- * When an unanswered proposal lapses.
- *
- * Two bounds, whichever comes first. A proposal about a session three months
- * out can safely wait days; one about a session this week has to be answered
- * before the session itself happens, or the booking silently stands and nobody
- * attends. A single fixed timer gets one of those two cases wrong.
- *
- * Returns null when the earliest released session is already inside the resolve
- * margin — such a reschedule should have been rejected by the 24-hour policy
- * gate before reaching here, so a caller seeing null has a bug upstream.
+ * A short-notice proposal is answered before its session's join window opens,
+ * so the original opens to both sides exactly as it would have.
+ */
+export const SHORT_NOTICE_ANSWER_BY_MS = Math.max(
+  CONSULTEE_JOIN_WINDOW_MS,
+  CONSULTANT_JOIN_WINDOW_MS,
+);
+
+/**
+ * When an unanswered proposal lapses and the original time is restored: the
+ * earlier of 72 hours and 24 hours before the earliest released session; a
+ * short-notice proposal (opened inside those 24 hours) lapses when that
+ * session's join window opens. Null once that window is open.
  */
 export function computeProposalExpiry(
   releasedSlotStarts: Date[],
@@ -83,22 +103,34 @@ export function computeProposalExpiry(
 ): Date | null {
   if (releasedSlotStarts.length === 0) return null;
 
-  // Seeded rather than relying on the length guard above: an unseeded reduce on
-  // an empty array throws, and a future caller reordering these two lines would
-  // turn a null return into a crash.
   const earliest = releasedSlotStarts.reduce(
     (a, b) => (a < b ? a : b),
     releasedSlotStarts[0],
   );
+  const answerBy = new Date(earliest.getTime() - SHORT_NOTICE_ANSWER_BY_MS);
+  if (answerBy <= now) return null;
   const mustResolveBy = new Date(
     earliest.getTime() - PROPOSAL_RESOLVE_BEFORE_SESSION_HOURS * HOUR_MS,
   );
+  if (mustResolveBy <= now) return answerBy;
   const lifetimeCap = new Date(
     now.getTime() + PROPOSAL_MAX_LIFETIME_HOURS * HOUR_MS,
   );
+  return mustResolveBy < lifetimeCap ? mustResolveBy : lifetimeCap;
+}
 
-  const expiry = mustResolveBy < lifetimeCap ? mustResolveBy : lifetimeCap;
-  return expiry <= now ? null : expiry;
+/**
+ * A move that only the other side may confirm: a released session or a
+ * proposed time less than 24 hours away. It never confirms itself.
+ */
+export function needsOtherSideAcceptance(
+  releasedStarts: ReadonlyArray<Date | string>,
+  proposedStarts: ReadonlyArray<Date | string>,
+  now: Date = new Date(),
+): boolean {
+  return [...releasedStarts, ...proposedStarts].some((start) =>
+    isShortNotice(new Date(start).getTime(), now.getTime()),
+  );
 }
 
 /**
@@ -129,6 +161,31 @@ export function supportsProposals(
   return (
     appointmentType === "CONSULTATION" || appointmentType === "SUBSCRIPTION"
   );
+}
+
+/**
+ * Proposed times are stored one 30-minute atom per row; a person reads one
+ * line per session, so back-to-back atoms are joined.
+ */
+export function proposedSessionsOf<
+  T extends { startsAt: Date | string; endsAt: Date | string },
+>(times: ReadonlyArray<T>): { startsAt: Date; endsAt: Date }[] {
+  const sorted = [...times]
+    .map((t) => ({
+      startsAt: new Date(t.startsAt),
+      endsAt: new Date(t.endsAt),
+    }))
+    .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
+  const sessions: { startsAt: Date; endsAt: Date }[] = [];
+  for (const time of sorted) {
+    const last = sessions[sessions.length - 1];
+    if (last && last.endsAt.getTime() === time.startsAt.getTime()) {
+      last.endsAt = time.endsAt;
+    } else {
+      sessions.push({ ...time });
+    }
+  }
+  return sessions;
 }
 
 /** A window either side of the atom count is measured in. */
@@ -384,6 +441,13 @@ export function rescheduleProposeOutcome(args: {
       message: "Your new time has been sent to the attendee to confirm.",
     };
   }
+  if (autoConfirmReason === "NEEDS_ACCEPTANCE") {
+    return {
+      code: "AWAITING_ANSWER",
+      message:
+        "Your new time has been sent. The expert has to accept it at least 15 minutes before the session starts; if they don't, the session keeps its original time.",
+    };
+  }
   if (!autoConfirmRefusalIsFinal(autoConfirmReason)) {
     return {
       code: "AWAITING_ANSWER",
@@ -401,3 +465,32 @@ export function rescheduleProposeOutcome(args: {
 
 /** Where a decline left the released sessions (respond route's outcome code). */
 export type RescheduleRespondCode = "DECLINED" | "RELEASED";
+
+/**
+ * Released sessions placed without an accepted proposal keep 24 hours'
+ * notice; an accepted proposal, or a first placement, uses the allocate lead.
+ */
+export function replacementLeadMs(
+  isReschedule: boolean,
+  acceptedRequestId: string | undefined,
+  settled: boolean,
+): number {
+  return isReschedule && !acceptedRequestId
+    ? leadMsFor("reschedule")
+    : leadMsFor("allocate", { settled });
+}
+
+/** A new time under 24 hours away for a released session needs the other side's acceptance. */
+export function assertReplacementNotice(
+  isReschedule: boolean,
+  acceptedRequestId: string | undefined,
+  slots: readonly Date[],
+  now: Date = new Date(),
+): void {
+  if (!isReschedule || acceptedRequestId) return;
+  if (!slots.some((s) => isShortNotice(s.getTime(), now.getTime()))) return;
+  throw new AllocationConflictError(
+    "A new time less than 24 hours away has to be accepted by the other person. Pick a time at least 24 hours away.",
+    "NEEDS_ACCEPTANCE",
+  );
+}

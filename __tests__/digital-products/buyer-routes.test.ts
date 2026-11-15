@@ -76,7 +76,7 @@ const createRazorpayOrder = jest.fn(async () => {
 });
 jest.mock("../../lib/payments/core/razorpay", () => ({
   createRazorpayOrder: (...a: unknown[]) => createRazorpayOrder(...(a as [])),
-  cancelRazorpayOrder: jest.fn(),
+  cancelRazorpayOrder: jest.fn(async () => "no_live_payment"),
 }));
 const presign = jest.fn(
   (_opts: Record<string, unknown>) => "https://r2/signed",
@@ -130,6 +130,19 @@ const purchaseModel = {
     rows.push(row);
     return row;
   },
+  updateMany: async ({
+    where,
+    data,
+  }: {
+    where: Partial<Row>;
+    data: Partial<Row>;
+  }) => {
+    const hit = rows.filter(
+      (r) => r.id === where.id && r.status === where.status,
+    );
+    hit.forEach((r) => Object.assign(r, data));
+    return { count: hit.length };
+  },
 };
 const deliverable = { ok: true };
 const tx = {
@@ -137,6 +150,7 @@ const tx = {
   $executeRaw: async () => 1,
   digitalProduct: {
     findFirst: async () => (deliverable.ok ? { id: "dp_1" } : null),
+    updateMany: jest.fn(async () => ({ count: 1 })),
   },
   digitalProductPurchase: { ...purchaseModel, updateMany: stamp },
   digitalProductDownload: { create: downloadCreate },
@@ -181,7 +195,6 @@ beforeEach(() => {
 
 it("mints one order at the quoted amount for overlapping purchases and refuses a second free claim", async () => {
   const quote = await quoteDigitalProductForBuyer({
-    productId: "dp_1",
     pricePaise: 50_000,
     buyerId: "buyer_1",
   });
@@ -198,15 +211,6 @@ it("mints one order at the quoted amount for overlapping purchases and refuses a
   expect(createRazorpayOrder.mock.calls[0]).toEqual([
     expect.objectContaining({ amount: quote.totalPaise }),
   ]);
-  // A resumed order is shown at its persisted amount.
-  rows[0].amountPaise = 61_000;
-  expect(
-    await quoteDigitalProductForBuyer({
-      productId: "dp_1",
-      pricePaise: 50_000,
-      buyerId: "buyer_1",
-    }),
-  ).toEqual({ basePaise: null, taxPaise: null, totalPaise: 61_000 });
   expect(rows).toHaveLength(1);
   expect([a.status, b.status].sort()).toEqual([200, 201]);
   expect(createRazorpayOrder.mock.calls[0]).toEqual([
@@ -219,6 +223,20 @@ it("mints one order at the quoted amount for overlapping purchases and refuses a
       }),
     }),
   ]);
+  // A pending order minted at another price is superseded, never resumed.
+  rows[0].amountPaise = 61_000;
+  expect((await purchase(req(), params)).status).toBe(201);
+  expect(rows.map((r) => [r.status, r.amountPaise])).toEqual([
+    ["FAILED", 61_000],
+    ["PENDING", 59_000],
+  ]);
+  // A price edit that commits before the insert refuses the stale quote and inserts nothing.
+  rows.length = 0;
+  tx.digitalProduct.updateMany.mockResolvedValueOnce({ count: 0 });
+  const moved = await purchase(req(), params);
+  expect(moved.status).toBe(409);
+  expect((await moved.json()).code).toBe("PRICE_CHANGED");
+  expect(rows).toHaveLength(0);
 
   rows.length = 0;
   product.pricePaise = 0;

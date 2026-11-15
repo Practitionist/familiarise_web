@@ -4,12 +4,27 @@ import { notFound, redirect } from "next/navigation";
 
 import { DashboardViewportFill } from "@/components/dashboard/DashboardViewportFill";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
-import { ALLOCATION_APPROVABLE_FROM } from "@/lib/booking/transitions";
+import {
+  ALLOCATION_APPROVABLE_FROM,
+  RESCHEDULE_OPEN_STATUSES,
+} from "@/lib/booking/transitions";
 import { readAllocationRequest } from "@/lib/data/allocation-request";
+import { isDeadOccurrence } from "@/lib/appointments/occurrences";
+import { ALREADY_SCHEDULED_COPY } from "@/lib/scheduling/allocationMessages";
 import { getViewerZone } from "@/lib/time/viewer-zone-server";
 import { isEventIdFormat } from "@/schemas/slotAllocation/validationSchemas";
 
 import { AllocateClient } from "./AllocateClient";
+import prisma from "@/lib/prisma";
+import {
+  assessExpertFeasibility,
+  hostFeasibilityWarnings,
+} from "@/lib/booking/feasibility";
+import { leadMsFor } from "@/lib/booking/lead-time";
+import { MAX_SUBSCRIPTION_SESSIONS_PER_DAY } from "@/utils/scheduling-engine/sessionCaps";
+
+/** How far ahead the allocate page checks a subscription's room. */
+const HOST_FEASIBILITY_WEEKS = 8;
 
 /**
  * The consultant's slot-allocation surface.
@@ -148,7 +163,7 @@ export default async function AllocateSlotsPage({
             This request is no longer available for allocation
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            {request.status === "SCHEDULED" || request.status === "COMPLETED"
+            {request.status === "COMPLETED"
               ? "Its sessions already have times."
               : "It was cancelled, declined, or expired."}{" "}
             <a className="underline" href={backHref}>
@@ -160,9 +175,104 @@ export default async function AllocateSlotsPage({
     );
   }
 
+  // The allocator refuses a consultation with a confirmed live session, so
+  // the grid is never offered for one.
+  const scheduledAppointmentId =
+    request.eventType === "consultation"
+      ? request.slots.find(
+          (slot) => !slot.isTentative && !isDeadOccurrence(slot),
+        )?.appointmentId
+      : null;
+  if (scheduledAppointmentId) {
+    return (
+      <DashboardViewportFill className="gap-4">
+        <div className="shrink-0 rounded-lg border border-border bg-card p-6">
+          <h1 className="text-lg font-semibold">{ALREADY_SCHEDULED_COPY}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            <a
+              className="underline"
+              href={`/dashboard/consultant/${encodeURIComponent(consultantId)}/appointments/${encodeURIComponent(scheduledAppointmentId)}/reschedule`}
+            >
+              Reschedule
+            </a>
+          </p>
+        </div>
+      </DashboardViewportFill>
+    );
+  }
+
+  // The expert's own release of a paid session without times is answered with
+  // proposed times, never placed here (the allocator refuses it).
+  const bareExpertRelease = request.hasReleasedSlots
+    ? await prisma.rescheduleRequest.findFirst({
+        where: {
+          status: { in: RESCHEDULE_OPEN_STATUSES },
+          initiatorRole: "CONSULTANT",
+          proposedTimes: { none: {} },
+          appointment: {
+            ...(request.eventType === "consultation"
+              ? { consultationId: requestId }
+              : { subscriptionId: requestId }),
+            payment: { some: { paymentStatus: "SUCCEEDED", deletedAt: null } },
+          },
+        },
+        select: { appointmentId: true },
+      })
+    : null;
+  if (bareExpertRelease) {
+    return (
+      <DashboardViewportFill className="gap-4">
+        <div className="shrink-0 rounded-lg border border-border bg-card p-6">
+          <h1 className="text-lg font-semibold">
+            Propose new times so your client can accept one
+          </h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            You released this session without proposing times, so it can&apos;t
+            be placed here. Open the booking, withdraw your request, then
+            propose new times; if your client doesn&apos;t accept, the session
+            keeps its original time.{" "}
+            <a
+              className="underline"
+              href={`/dashboard/consultant/${encodeURIComponent(consultantId)}/appointments/${encodeURIComponent(bareExpertRelease.appointmentId)}`}
+            >
+              Open the booking
+            </a>
+          </p>
+        </div>
+      </DashboardViewportFill>
+    );
+  }
+
   // The same zone source as the Appointments pages (#1703 QA-1). Only a
   // profile zone travels; without one the grid falls back to the browser's.
   const viewer = await getViewerZone();
+
+  // The coming plan weeks' room for a subscription, counting today's bookings:
+  // from the plan week being filled, never past the plan's end.
+  const cycle = request.entitlement?.cycle;
+  const feasibilityWeeks = cycle
+    ? Math.min(HOST_FEASIBILITY_WEEKS, cycle.count - cycle.ordinal)
+    : HOST_FEASIBILITY_WEEKS;
+  const warnings =
+    request.eventType === "subscription" && request.sessionsPerWeek
+      ? hostFeasibilityWarnings(
+          await assessExpertFeasibility(prisma, {
+            consultantProfileId: consultantId,
+            zone: request.schedulingTimezone ?? viewer.zone,
+            sessionMinutes: Math.round(
+              (request.sessionDurationInHours ?? 1) * 60,
+            ),
+            sessionsPerWeek: request.sessionsPerWeek,
+            perDayCap: MAX_SUBSCRIPTION_SESSIONS_PER_DAY,
+            notBeforeMs:
+              Date.now() + leadMsFor("allocate", { settled: request.settled }),
+            weeks: feasibilityWeeks,
+            weeksFromMs: request.cycleStartsAt?.getTime(),
+            countBookings: true,
+          }),
+          request.sessionsPerWeek,
+        )
+      : [];
 
   return (
     <DashboardViewportFill className="gap-4">
@@ -172,6 +282,7 @@ export default async function AllocateSlotsPage({
         title={request.title}
         pinnedAt={parsePinnedAt(at)}
         viewerZone={viewer.own ? viewer.zone : null}
+        warnings={warnings}
         subject={{
           consultantProfileId: consultantId,
           eventType: request.eventType,

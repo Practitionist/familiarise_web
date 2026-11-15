@@ -22,6 +22,26 @@ jest.mock("@sentry/nextjs", () => ({
   startSpan: (_o: unknown, fn: () => unknown) => fn(),
 }));
 jest.mock("../../lib/prisma", () => ({ __esModule: true, default: {} }));
+// The first-week room check reads published hours; one free session by default.
+const firstWeekRoom = { placeable: 2 };
+jest.mock("../../lib/booking/feasibility", () => ({
+  __esModule: true,
+  assessExpertFeasibility: jest.fn(async () => ({
+    verdict: "ok",
+    weeks: [
+      {
+        weekStartMs: 0,
+        publishedCapacity: 2,
+        placeable: firstWeekRoom.placeable,
+      },
+    ],
+    longestWindowMinutes: 120,
+    bestWeekPublishedSessions: 2,
+    reasons: [],
+  })),
+  firstWeekPlaceable: (report: { weeks: { placeable: number }[] }) =>
+    report.weeks[0]?.placeable ?? 0,
+}));
 jest.mock("../../lib/payments/operations/refund", () => ({
   __esModule: true,
   refundPayment: jest.fn(),
@@ -78,6 +98,7 @@ jest.mock("../../lib/events/capacity", () => ({
   getClassCapacity: jest.fn(),
 }));
 
+import { assessExpertFeasibility } from "../../lib/booking/feasibility";
 import { handleSubscriptionCheckout } from "../../lib/payments/checkout/handlers/subscription";
 import {
   classifyError,
@@ -145,6 +166,10 @@ function makeTx(liveRows: ReturnType<typeof heldRow>[] = []) {
       create: jest.fn().mockResolvedValue({ id: "sub-1" }),
     },
     trial: { findFirst: jest.fn().mockResolvedValue(null) },
+    // No limit on live plan clients unless a test sets one.
+    consultantProfile: {
+      findUnique: jest.fn().mockResolvedValue({ maxActivePlanClients: null }),
+    },
     appointment: { create: jest.fn().mockResolvedValue({ id: "apt-1" }) },
     consulteeProfile: {
       findUnique: jest.fn().mockResolvedValue({ userId: "buyer-user" }),
@@ -189,6 +214,11 @@ it("persists end = start + 7 zone-days and sessionsTotal = 24 despite a 90-day c
   expect(data.sessionsPerWeek).toBe(2);
   expect(data.sessionMinutes).toBe(60);
   expect(data.schedulingTimezone).toBe("Asia/Kolkata");
+  // The first-week room also counts the expert's other sold, unplaced plans.
+  expect(assessExpertFeasibility).toHaveBeenCalledWith(
+    tx,
+    expect.objectContaining({ planDemand: { excludeSubscriptionIds: [] } }),
+  );
   // The buyer holds a seat on the placeholder from the moment of purchase.
   const seated = (tx.appointmentParticipant.createMany as jest.Mock).mock
     .calls[0][0].data;
@@ -287,6 +317,23 @@ describe("double-buy guard", () => {
       "policy-1",
     );
 
+  it("refuses a plan whose first week the expert's hours can't hold at all", async () => {
+    firstWeekRoom.placeable = 0;
+    try {
+      const tx = makeTx();
+      const error = await checkout(tx).catch((e: unknown) => e);
+      expect(error).toMatchObject({ httpStatus: 409, code: "NOT_PLACEABLE" });
+      expect(tx.subscription.create).not.toHaveBeenCalled();
+      expect(isBusinessErrorCode("NOT_PLACEABLE")).toBe(true);
+      expect(classifyError(error)).toMatchObject({
+        httpStatus: 409,
+        errorType: "NOT_PLACEABLE_ERROR",
+      });
+    } finally {
+      firstWeekRoom.placeable = 2;
+    }
+  });
+
   it("refuses with a typed 409 while a live row has sessions left", async () => {
     const tx = makeTx([heldRow(4)]);
     const error = await checkout(tx).catch((e: unknown) => e);
@@ -311,13 +358,7 @@ describe("double-buy guard", () => {
     const { where } = (tx.subscription.findMany as jest.Mock).mock.calls[0][0];
     expect(where.schedulingPeriodStartsAt).toBeUndefined();
     expect(where.OR).toBeUndefined();
-    expect(where.status.in).toEqual(
-      expect.arrayContaining([
-        "PENDING",
-        "APPROVED",
-        "APPROVED_PENDING_PAYMENT",
-      ]),
-    );
+    expect(where.status.in).toEqual(["PENDING", "APPROVED"]);
   });
 
   it("lets a spent plan be bought again (renewal as repurchase)", async () => {

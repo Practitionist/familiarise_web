@@ -261,6 +261,7 @@ erDiagram
         int totalRevenue
         int pendingRevenue
         boolean isIndependent
+        int maxActivePlanClients
     }
     ConsulteeProfile {
         string id
@@ -660,6 +661,8 @@ erDiagram
         string requestedById
         AppointmentStatus status
         BookingSource bookingSource
+        bigint agreedPricePaise
+        string requestFingerprint
         string pendingPaymentUrl
         CancellationReason cancellationReason
         datetime cancelledAt
@@ -693,6 +696,7 @@ erDiagram
         string organizationId
         string pendingPaymentUrl
         string paymentId
+        bigint agreedPricePaise
         TrialStatus status
     }
     PlatformPricingConfig {
@@ -714,6 +718,8 @@ erDiagram
     SubscriptionPlan ||--o{ Trial : "trialled"
     Trial ||--o| Subscription : "converts to"
 ```
+
+`Consultation.agreedPricePaise` and `Trial.agreedPricePaise` hold the price (paise, `BigInt`) the request was made at. They are nullable: a null row predates the column and reads the plan. The sidecar CHECKs `consultation_agreed_price_valid` and `trial_agreed_price_valid` in `prisma/sql/check-constraints.sql` require a price of at least 0 when set. The length is not stored; it is read from the session the booking holds. The rules and readers are in [Booking schema reference](../booking/21-schema-reference.md).
 
 ---
 
@@ -1893,16 +1899,16 @@ Every enum in the schema and its values.
 | `ResidencyStatus`              | RESIDENT, NON_RESIDENT                                                                                                                                                     |
 | `MsmeStatus`                   | NONE, MICRO, SMALL, MEDIUM                                                                                                                                                 |
 | `PayoutArrangement`            | DIRECT, AOR, EOR                                                                                                                                                           |
-| `AppointmentStatus`            | PENDING, APPROVED, APPROVED_PENDING_PAYMENT, SCHEDULED, COMPLETED, REJECTED, CANCELLED, EXPIRED                                                                            |
+| `AppointmentStatus`            | PENDING, APPROVED, APPROVED_PENDING_PAYMENT, COMPLETED, REJECTED, CANCELLED, EXPIRED                                                                                       |
 | `AppointmentsType`             | CONSULTATION, SUBSCRIPTION, WEBINAR, CLASS, TRIAL                                                                                                                          |
 | `OccurrenceCompletionStatus`   | SCHEDULED, COMPLETED, UNVERIFIED, CANCELLED, RESCHEDULED, VOIDED                                                                                                           |
 | `RescheduleRequestStatus`      | PENDING_REVIEW, ACCEPTED, AUTO_ACCEPTED, DECLINED, WITHDRAWN, EXPIRED                                                                                                      |
 | `BookingSource`                | DIRECT_CHECKOUT, REQUEST_SUBMITTED                                                                                                                                         |
-| `TrialStatus`                  | PENDING, AWAITING_PAYMENT, SCHEDULED, COMPLETED, CONVERTED, CANCELLED, REJECTED                                                                                            |
+| `TrialStatus`                  | AWAITING_PAYMENT, SCHEDULED, COMPLETED, CONVERTED, CANCELLED                                                                                                               |
 | `NewsletterStatus`             | PENDING, SUBSCRIBED, UNSUBSCRIBED, BOUNCED (the `NewsletterSubscriber` list)                                                                                               |
 | `NewsletterSource`             | LANDING_PAGE, FOOTER, BLOG, USE_CASE_PAGE, IMPORT                                                                                                                          |
-| `WebinarStatus`                | SCHEDULED, IN_PROGRESS, COMPLETED, CANCELLED                                                                                                                               |
-| `ClassStatus`                  | SCHEDULED, IN_PROGRESS, COMPLETED, CANCELLED                                                                                                                               |
+| `WebinarStatus`                | DRAFT, SCHEDULED, COMPLETED, CANCELLED                                                                                                                                     |
+| `ClassStatus`                  | DRAFT, SCHEDULED, COMPLETED, CANCELLED                                                                                                                                     |
 | `DayOfWeek`                    | MONDAY, TUESDAY, WEDNESDAY, THURSDAY, FRIDAY, SATURDAY, SUNDAY                                                                                                             |
 | `ScheduleType`                 | WEEKLY, CUSTOM                                                                                                                                                             |
 | `Platform`                     | ZOOM, GOOGLE_MEET, MICROSOFT_TEAMS, STREAM, CUSTOM                                                                                                                         |

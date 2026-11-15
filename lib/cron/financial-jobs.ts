@@ -35,13 +35,15 @@ export const FINANCIAL_JOB_NAMES = new Set([
   // in this job call refundPaymentsForExpired, another refund front-door
   // caller that must be held with the rest of the money jobs.
   "expire-stale-requests",
-  // #1775 C-12 — refunds a paid trial nobody answered within 48 h.
+  // Expires a lapsed trial's unpaid order and cancels it at the gateway.
   "expire-unpaid-trials",
   // #1780 row 4 — refunds a cancelled class session not made up in 14 days.
   "settle-cancelled-sessions",
   // Voids a declared incident's sessions and refunds them through the front door.
   "settle-platform-incidents",
   "maintenance-booking-remediation",
+  // Its class pass stamps each seat's class-end refund owed in the completing commit.
+  "auto-complete-appointments",
   // #1846 N2 — re-drives the capture webhook's owed auto-refunds.
   "retry-auto-refunds",
   // Settles standalone sale captures and stages refunds for the ones it cannot grant.

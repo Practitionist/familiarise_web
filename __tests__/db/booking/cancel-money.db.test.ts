@@ -5,6 +5,8 @@
  *  - a cancel never drives (or leaves undurable) a refund another door owns;
  *  - an unpaid checkout's discount use comes back only on the expiry CAS win.
  */
+import "./harness-cancel-route";
+import { sessionUser } from "./harness-session";
 import prisma from "../../../lib/prisma";
 import { NextRequest } from "next/server";
 import { randomUUID } from "node:crypto";
@@ -15,28 +17,6 @@ import {
   seedHost,
   seedOneToOne,
 } from "./harness";
-
-const sessionUser = { current: null as null | Record<string, unknown> };
-jest.mock("../../../lib/auth-helpers", () => ({
-  ...jest.requireActual("../../../lib/auth-helpers"),
-  requireApiAuth: async () => ({ session: { user: sessionUser.current } }),
-  isPrivileged: () => false,
-}));
-jest.mock("../../../lib/rate-limit", () => ({
-  ...jest.requireActual("../../../lib/rate-limit"),
-  applyRateLimit: async () => null,
-}));
-jest.mock("../../../lib/novu", () => {
-  const noop = jest.fn(async () => []);
-  return new Proxy(
-    {},
-    { get: (_target, prop) => (prop === "__esModule" ? true : noop) },
-  );
-});
-jest.mock("../../../lib/stream/access-revocation", () => ({
-  revokeEndedBookingChatAccess: jest.fn(async () => undefined),
-  revokeEndedEventChatAccess: jest.fn(async () => undefined),
-}));
 
 import { POST as cancel } from "../../../app/api/appointments/[appointmentId]/cancel/route";
 import { handlePaymentSuccess } from "../../../lib/payments/webhooks/handlers";

@@ -299,10 +299,16 @@ describe("Recording CRUD & Mid-Call DPDP Consent Withdrawal", () => {
         params: Promise.resolve({ recordingId: "rec-del" }),
       });
       expect(res.status).toBe(200);
-      // The row is CAS-expired before any stored object is touched.
+      // The row is CAS-expired before any stored object is touched; a live purchase refuses the claim.
       expect(mockRecordingUpdateManyAndReturn).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: "rec-del", status: "AVAILABLE" },
+          where: {
+            id: "rec-del",
+            status: "AVAILABLE",
+            purchases: {
+              none: { status: { in: ["PENDING", "SUCCEEDED"] } },
+            },
+          },
           data: expect.objectContaining({
             status: "EXPIRED",
             recordingUrl: "",

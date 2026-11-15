@@ -61,6 +61,8 @@ jest.mock("../../actions/stream/chat/channel.action", () => ({
 jest.mock("../../lib/stream/event-channel-service", () => ({
   addUserToEventChannel: (...args: unknown[]) =>
     mockAddUserToEventChannel(...args),
+  grantEventChannelMember: (type: string, id: string, userId: string) =>
+    mockAddUserToEventChannel(type, id, userId),
 }));
 
 describe("DM eligibility rules and channel provisioning", () => {
@@ -90,11 +92,7 @@ describe("DM eligibility rules and channel provisioning", () => {
 
   it("excludes APPROVED_PENDING_PAYMENT from DM_ELIGIBLE_STATUSES", () => {
     expect(DM_ELIGIBLE_STATUSES).not.toContain("APPROVED_PENDING_PAYMENT");
-    expect(DM_ELIGIBLE_STATUSES).toEqual([
-      "APPROVED",
-      "SCHEDULED",
-      "COMPLETED",
-    ]);
+    expect(DM_ELIGIBLE_STATUSES).toEqual(["APPROVED", "COMPLETED"]);
   });
 
   it("grants DM eligibility for confirmed webinar and class bookings", async () => {
@@ -147,6 +145,29 @@ describe("DM eligibility rules and channel provisioning", () => {
     ).resolves.toBe(false);
   });
 
+  it("never lets a booking whose client seat was refunded keep a DM open", async () => {
+    const { pairBookingContexts } =
+      await import("../../lib/stream/dm-eligibility");
+    // The store holds only a still-SCHEDULED booking whose seat was refunded.
+    const refundedOnly = async ({ where }: { where: { NOT?: unknown } }) =>
+      JSON.stringify(where.NOT ?? null).includes('"REFUNDED"')
+        ? []
+        : [
+            {
+              consultationPlan: { organizationId: null },
+              subscriptionPlan: { organizationId: null },
+              appointment: { organizationId: null },
+            },
+          ];
+    mockConsultationFindMany.mockImplementation(refundedOnly);
+    mockSubscriptionFindMany.mockImplementation(refundedOnly);
+
+    await expect(
+      pairBookingContexts("consultant-u1", "consultee-u2"),
+    ).resolves.toEqual({ personalAllowed: false, organizations: [] });
+    expect(mockConsultationFindMany).toHaveBeenCalled();
+  });
+
   it("leaves an event booking unstamped when the buyer never became a member", async () => {
     const { ensureChannelsForAppointment } =
       await import("../../lib/payments/webhooks/ensure-channels");
@@ -159,6 +180,7 @@ describe("DM eligibility rules and channel provisioning", () => {
       appointmentType: "WEBINAR",
       organizationId: null,
       payment: [{ userId: "buyer-1" }],
+      participants: [{ userId: "buyer-1" }],
       consultation: null,
       subscription: null,
       webinar: {
@@ -213,6 +235,7 @@ describe("DM eligibility rules and channel provisioning", () => {
       appointmentType: "WEBINAR",
       organizationId: "org-1",
       payment: [{ userId: "buyer-1" }],
+      participants: [{ userId: "buyer-1" }],
       consultation: null,
       subscription: null,
       webinar: {

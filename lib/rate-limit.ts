@@ -62,7 +62,7 @@ export const referralCustomizeLimiter = makeLimiter(
 );
 /** 30 per hour per user — GET /api/referrals/expert-link */
 export const expertLinkLimiter = makeLimiter(30, "1 h", "rl:expert-link");
-/** 1 per 24 hours per appointment — POST /api/bookings/{consultations,subscriptions}/[id]/remind */
+/** 1 per 24 hours per appointment — POST /api/bookings/consultations/[id]/remind */
 export const remindLimiter = makeLimiter(1, "24 h", "rl:remind");
 /** 5 per hour — support-tickets, feedbacks, reviews, report */
 export const spamLimiter = makeLimiter(5, "1 h", "rl:spam");
@@ -211,6 +211,8 @@ export const inviteAcceptIpLimiter = makeLimiter(
   "rl:org-invite-accept",
 );
 export const inviteAcceptLimiter = inviteAcceptIpLimiter;
+/** 30 per minute per IP — GET /api/invitations/preview */
+export const invitePreviewLimiter = makeLimiter(30, "1 m", "rl:invite-preview");
 /** 10 per minute per IP — GET /api/referrals/code/check/[code] */
 export const referralCheckLimiter = makeLimiter(10, "1 m", "rl:referral-check");
 /** 20 per hour per admin — POST /api/admin/team/members and setup-link */
@@ -288,6 +290,63 @@ export async function applyRateLimit(
       expected: false,
     });
     return null;
+  }
+}
+
+/**
+ * The trial limiter read without spending a request: a 429 carrying when the
+ * caller may retry, or null (also when Redis is slow or down: fail-open).
+ */
+export async function trialRequestRefusal(
+  identifier: string,
+): Promise<NextResponse | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const peek = await Promise.race([
+      trialRequestLimiter.getRemaining(identifier),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), LIMITER_TIMEOUT_MS);
+      }),
+    ]);
+    if (!peek || peek.remaining > 0) return null;
+    const retryAfter = retryAfterSeconds(peek.reset);
+    return NextResponse.json(
+      {
+        error: "You've reached today's trial request limit.",
+        code: "RATE_LIMITED",
+        retryAfterSeconds: retryAfter,
+        retryAt: new Date(Date.now() + retryAfter * 1000).toISOString(),
+      },
+      {
+        status: 429,
+        headers: {
+          "X-RateLimit-Remaining": "0",
+          "Retry-After": String(retryAfter),
+        },
+      },
+    );
+  } catch (error) {
+    captureThrottled("rate-limit:trialRequestRefusal", error, {
+      subsystem: "rate-limit",
+      op: "trialRequestRefusal",
+      expected: false,
+    });
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Spends one trial request; called only once a trial has been created. */
+export async function spendTrialRequest(identifier: string): Promise<void> {
+  try {
+    await trialRequestLimiter.limit(identifier);
+  } catch (error) {
+    captureThrottled("rate-limit:spendTrialRequest", error, {
+      subsystem: "rate-limit",
+      op: "spendTrialRequest",
+      expected: false,
+    });
   }
 }
 

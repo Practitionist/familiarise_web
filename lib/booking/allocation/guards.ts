@@ -14,6 +14,8 @@ import { getEventRelationField } from "@/lib/booking/allocation/identity";
 import type { AppointmentWithSlots } from "@/lib/booking/allocation/types";
 import { tentativeSlotCountOf } from "@/lib/booking/allocation/counts";
 import { findIdempotentAllocation } from "@/lib/booking/allocation/idempotency";
+import { liveParticipant } from "@/lib/booking/participants";
+import { ALREADY_SCHEDULED_COPY } from "@/lib/scheduling/allocationMessages";
 
 /**
  * The allocation transaction's first statement: an advisory xact lock per
@@ -71,9 +73,60 @@ export async function assertNoConfirmedSlots(
   });
   if (confirmed > 0) {
     throw new AllocationConflictError(
-      `This ${eventType} was already allocated in another session ` +
-        `(${confirmed} confirmed slot(s) exist).`,
+      eventType === "consultation"
+        ? ALREADY_SCHEDULED_COPY
+        : `This ${eventType} was already allocated in another session ` +
+            `(${confirmed} confirmed slot(s) exist).`,
       "ALREADY_ALLOCATED",
+      { confirmed },
+    );
+  }
+}
+
+/**
+ * Whether the allocation must find no confirmed session. A consultation with
+ * one is moved only through reschedule, whatever the client sends.
+ */
+export function mustBeUnscheduled(
+  eventType: EventType,
+  initialAllocation: boolean | undefined,
+): boolean {
+  return (
+    eventType === "consultation" ||
+    (initialAllocation === true && eventType !== "subscription")
+  );
+}
+
+/**
+ * A webinar or class with a live seat is never re-planned: replacing its
+ * sessions would move paid attendees with no notice and no free leave. Re-time
+ * owns that move. Appending sessions (a top-up) is not a re-plan, so callers
+ * skip this for top-ups. Runs after the event's advisory lock.
+ */
+export async function assertGroupEventUnsoldInTx(
+  tx: Tx,
+  eventType: EventType,
+  eventId: string,
+): Promise<void> {
+  if (eventType !== "webinar" && eventType !== "class") return;
+  const relationField = getEventRelationField(eventType);
+  // Buyers only: the host and co-hosts hold participant rows of their own.
+  const liveSeats = await tx.appointmentParticipant.count({
+    where: {
+      ...liveParticipant(),
+      role: "CONSULTEE",
+      appointment: {
+        [`${relationField}Id`]: eventId,
+        deletedAt: null,
+      } as Prisma.AppointmentWhereInput,
+    },
+  });
+  if (liveSeats > 0) {
+    throw new AllocationConflictError(
+      `This ${eventType} already has ${liveSeats} booked seat${liveSeats === 1 ? "" : "s"}, ` +
+        `so its times can't be re-planned. Use "${eventType === "class" ? "Move upcoming sessions" : "Move to a new date"}" to move it: attendees are told and may leave with a full refund.`,
+      "USE_RETIME",
+      { liveSeats },
     );
   }
 }

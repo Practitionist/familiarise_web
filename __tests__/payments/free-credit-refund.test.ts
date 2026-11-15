@@ -47,6 +47,7 @@ const tx = {
     findFirst: jest.fn(),
   },
   referralCreditUsage: { findMany: jest.fn() },
+  streamRevocationRetry: { updateMany: jest.fn(), createMany: jest.fn() },
   appointment: { findUnique: jest.fn() },
   appointmentOccurrence: { findMany: jest.fn(), count: jest.fn() },
   refund: {

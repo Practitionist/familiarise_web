@@ -210,7 +210,10 @@ import {
   acceptProposal,
   declineProposal,
 } from "@/lib/booking/reschedule-respond";
-import { tryAutoConfirmProposal } from "@/lib/booking/reschedule-auto-confirm";
+import {
+  checkProposalPlaceable,
+  tryAutoConfirmProposal,
+} from "@/lib/booking/reschedule-auto-confirm";
 import {
   AppointmentBusyError,
   type ApprovalLock,
@@ -417,6 +420,7 @@ describe("accept re-validates through the allocator before anything is written",
       // #1340 — the allocator must not close this proposal as superseded by
       // its own times.
       excludeRescheduleRequestId: REQ,
+      actorUserId: CONSULTEE_USER,
       inTx: expect.any(Function),
     });
   });
@@ -562,6 +566,28 @@ describe("accept re-validates through the allocator before anything is written",
  * explicit accept rethrew it as a 409 and never sent the MOVED notification.
  * Both callers now name their own proposal so the sweep skips exactly that row.
  */
+describe("an expert's proposal is checked when it is made", () => {
+  it("runs the accept's own allocator checks and writes nothing", async () => {
+    mockAllocate.mockResolvedValue({
+      success: false,
+      errorCode: "VALIDATION_ERROR",
+      error: "That time is outside the plan week.",
+    });
+    const out = await checkProposalPlaceable(REQ, "subscription", "sub-1");
+    expect(out).toMatchObject({
+      placeable: false,
+      reason: "VALIDATION_ERROR",
+    });
+    expect(mockAllocate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mode: "manual",
+        checkOnly: true,
+        excludeRescheduleRequestId: REQ,
+      }),
+    );
+  });
+});
+
 describe("#1340 — a confirmation keeps the proposal it is confirming", () => {
   it("accept names its own proposal to the allocator and then closes it ACCEPTED", async () => {
     const out = await acceptProposal({
@@ -583,19 +609,78 @@ describe("#1340 — a confirmation keeps the proposal it is confirming", () => {
     expect(args.data).toMatchObject({ status: "ACCEPTED" });
   });
 
-  it("auto-confirm names its own proposal to the allocator and then closes it AUTO_ACCEPTED", async () => {
-    mockRequestFindUnique.mockResolvedValue(
-      proposalRow({
-        initiatorRole: "CONSULTEE",
-        releasedOccurrenceIds: ["released-slot-1"],
-        proposedTimes: [
-          {
-            startsAt: new Date("2026-09-01T10:00:00.000Z"),
-            endsAt: new Date("2026-09-01T11:00:00.000Z"),
-          },
-        ],
-      }),
+  const learnerProposal = (releasedInHours: number, proposedInHours: number) =>
+    proposalRow({
+      initiatorRole: "CONSULTEE",
+      releasedOccurrenceIds: ["released-slot-1"],
+      releasedSessions: [
+        {
+          ordinal: 1,
+          startsAt: new Date(Date.now() + releasedInHours * HOUR).toISOString(),
+        },
+      ],
+      proposedTimes: [
+        {
+          startsAt: new Date(Date.now() + proposedInHours * HOUR),
+          endsAt: new Date(Date.now() + (proposedInHours + 1) * HOUR),
+        },
+      ],
+    });
+
+  it.each([
+    ["the session", 10, 72],
+    ["the new time", 72, 10],
+  ])(
+    "never auto-confirms when %s is under 24 hours away",
+    async (_what, releasedInHours, proposedInHours) => {
+      mockRequestFindUnique.mockResolvedValue(
+        learnerProposal(releasedInHours, proposedInHours),
+      );
+      const out = await tryAutoConfirmProposal(REQ, "consultation", "cons-1");
+      expect(out).toEqual({ confirmed: false, reason: "NEEDS_ACCEPTANCE" });
+      expect(mockAllocate).not.toHaveBeenCalled();
+    },
+  );
+
+  it("re-decides consent inside the transaction: a lock wait cannot carry a move inside 24 hours", async () => {
+    // Just over 24 hours when read; just under by the time the move commits.
+    mockRequestFindUnique.mockResolvedValue(learnerProposal(72, 24 + 1 / 3600));
+    let hookError: unknown;
+    mockAllocate.mockImplementation(
+      async (req: { inTx: (tx: unknown, moved: unknown) => Promise<void> }) => {
+        jest.setSystemTime(Date.now() + 2_000);
+        try {
+          await req.inTx(txStub, NOTHING_MOVED);
+        } catch (error) {
+          hookError = error;
+          return { success: false, errorCode: "NEEDS_ACCEPTANCE" };
+        }
+        return { success: true };
+      },
     );
+    jest.useFakeTimers({
+      doNotFake: [
+        "nextTick",
+        "setImmediate",
+        "queueMicrotask",
+        "setTimeout",
+        "clearTimeout",
+        "setInterval",
+        "clearInterval",
+      ],
+    });
+    try {
+      const out = await tryAutoConfirmProposal(REQ, "consultation", "cons-1");
+      expect(out).toEqual({ confirmed: false, reason: "NEEDS_ACCEPTANCE" });
+      expect(hookError).toMatchObject({ errorCode: "NEEDS_ACCEPTANCE" });
+      expect(txStub.rescheduleRequest.updateMany).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("auto-confirm names its own proposal to the allocator and then closes it AUTO_ACCEPTED", async () => {
+    mockRequestFindUnique.mockResolvedValue(learnerProposal(72, 96));
 
     const out = await tryAutoConfirmProposal(REQ, "consultation", "cons-1");
 
@@ -712,6 +797,9 @@ describe("decline ends the request and restores what it released", () => {
     expect(notifyAppointmentRescheduled).toHaveBeenCalledWith(
       expect.arrayContaining([CONSULTEE_USER, CONSULTANT_USER]),
       expect.objectContaining({ outcome: "DECLINED" }),
+      expect.objectContaining({
+        required: expect.objectContaining({ kind: "REQUEST_DECLINED" }),
+      }),
     );
   });
 
@@ -747,6 +835,9 @@ describe("decline ends the request and restores what it released", () => {
     expect(notifyAppointmentRescheduled).toHaveBeenCalledWith(
       expect.any(Array),
       expect.objectContaining({ outcome: "RELEASED" }),
+      expect.objectContaining({
+        required: expect.objectContaining({ kind: "REQUEST_DECLINED" }),
+      }),
     );
   });
 
@@ -899,6 +990,9 @@ describe("the respond route drives the loop for the counterparty", () => {
     expect(notifyAppointmentRescheduled).toHaveBeenCalledWith(
       expect.any(Array),
       expect.objectContaining({ outcome: body.outcome }),
+      expect.objectContaining({
+        required: expect.objectContaining({ kind: "REQUEST_DECLINED" }),
+      }),
     );
   });
 

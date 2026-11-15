@@ -24,11 +24,8 @@ import {
   type OccurrenceVM,
 } from "./view-model";
 import { normalizeOccurrences, type AnomalySink } from "./normalize";
-import {
-  eventUnionStatusBadge,
-  isConfirmedStatus,
-  normalizeStatus,
-} from "./status";
+import { bookingStatus, bookingStatusBadge } from "./booking-status";
+import { isCompletedOccurrence } from "@/lib/booking/entitlement";
 import type { StatusBadgeStyle } from "@/lib/labels/session-labels";
 
 /** The engine's unit of arithmetic: every interval and duration is a multiple. */
@@ -140,6 +137,42 @@ export function intervalStartsOf(occurrence: {
     { length: intervalCountOf(occurrence) },
     (_, i) => new Date(start.getTime() + i * SCHEDULING_INTERVAL_MS),
   );
+}
+
+/**
+ * The booked session's length in minutes: the live session, else the latest row
+ * (a released or cancelled row keeps its times); null when no row has times.
+ */
+export function bookedSessionMinutes(
+  occurrences: readonly {
+    startsAt: Date | string;
+    endsAt?: Date | string | null;
+    completionStatus?: string | null;
+    deletedAt?: Date | string | null;
+  }[],
+): number | null {
+  const timed = occurrences.filter((o) => o.endsAt);
+  const live = timed.find(
+    (o) =>
+      !o.deletedAt &&
+      (o.completionStatus === "SCHEDULED" ||
+        o.completionStatus === "UNVERIFIED"),
+  );
+  const row =
+    live ??
+    timed.reduce<(typeof timed)[number] | undefined>(
+      (latest, o) =>
+        !latest ||
+        new Date(o.startsAt).getTime() > new Date(latest.startsAt).getTime()
+          ? o
+          : latest,
+      undefined,
+    );
+  if (!row?.endsAt) return null;
+  const minutes =
+    (new Date(row.endsAt).getTime() - new Date(row.startsAt).getTime()) /
+    60_000;
+  return minutes > 0 ? minutes : null;
 }
 
 export async function nextOrdinal(
@@ -291,11 +324,18 @@ export function occurrencesAllowReschedule(
   return !occurrences.some((row) => row.completionStatus === "RESCHEDULED");
 }
 
+/**
+ * Whether the host may re-plan this booking's times without anyone's consent.
+ * A webinar or class only while no seat is live: once sold, it is re-timed
+ * (notice plus free leave), never re-planned. The allocator enforces the same
+ * rule in its transaction (`assertGroupEventUnsoldInTx`).
+ */
 export function allowsManageTimings(
   kind: AppointmentKind,
   occurrences: Array<{ isTentative?: boolean | null }>,
+  liveSeats: number,
 ): boolean {
-  if (kind === "WEBINAR" || kind === "CLASS") return true;
+  if (kind === "WEBINAR" || kind === "CLASS") return liveSeats === 0;
   if (occurrences.length === 0) return true;
   return occurrences.every((row) => Boolean(row.isTentative));
 }
@@ -352,7 +392,10 @@ export function getOccurrenceJoinState(
 
   const joinWindowMs = opts?.joinWindowMs ?? CONSULTEE_JOIN_WINDOW_MS;
   const rejoinGraceMs =
-    opts?.rejoinGraceMs ?? (occurrence.endsAt != null ? REJOIN_GRACE_MS : 0);
+    opts?.rejoinGraceMs ??
+    (occurrence.endsAt !== null && occurrence.endsAt !== undefined
+      ? REJOIN_GRACE_MS
+      : 0);
   const now = (opts?.now ?? new Date()).getTime();
   const { start, end } = occurrenceTimes(occurrence);
 
@@ -418,7 +461,9 @@ export function getOccurrenceVMJoinState(
       ...opts,
       rejoinGraceMs:
         opts?.rejoinGraceMs ??
-        (occurrence.endsAt != null ? REJOIN_GRACE_MS : 0),
+        (occurrence.endsAt !== null && occurrence.endsAt !== undefined
+          ? REJOIN_GRACE_MS
+          : 0),
     },
   );
 }
@@ -461,7 +506,25 @@ export function isOccurrenceOver(
   return occurrenceEnd(occurrence) + graceMs < now.getTime();
 }
 
-/** True when the timeline has occurrences and every live one is over. */
+/** A session's outcome is recorded: delivered, parked for a human, voided, or attended. */
+export function isOccurrenceHeld(o: {
+  completionStatus?: string | null;
+  outcome?: string | null;
+}): boolean {
+  return (
+    isCompletedOccurrence(o) || o.completionStatus === "VOIDED" || !!o.outcome
+  );
+}
+
+/** True when every live session's outcome is recorded or its call was ended by the host. */
+export function allOccurrencesHeld(occurrences: OccurrenceVM[]): boolean {
+  const live = liveOccurrences(occurrences);
+  if (occurrences.length === 0) return false;
+  if (live.length === 0) return true;
+  return live.every((o) => isOccurrenceHeld(o) || meetingClosedAt(o) !== null);
+}
+
+/** True when the timeline has occurrences and every live one is over by the clock. */
 export function allOccurrencesOver(
   occurrences: OccurrenceVM[],
   now = new Date(),
@@ -521,33 +584,68 @@ export function getProximityLabel(
   return `in ${weeks} ${weeks === 1 ? "week" : "weeks"}`;
 }
 
-/**
- * The learner's chip on every surface: a booked webinar or class reads
- * "Registered" and a booked 1:1 "Confirmed", until a live event reaches the
- * join window of its next session and reads "In progress".
- */
-export function appointmentStatusChip(
-  vm: Pick<AppointmentVM, "status" | "kind" | "nextAt" | "bucket">,
-  role: "consultee" | "consultant",
-  now = new Date(),
-): StatusBadgeStyle {
-  const badge = eventUnionStatusBadge(vm.status);
-  if (
-    role !== "consultee" ||
-    vm.bucket !== "upcoming" ||
-    !isConfirmedStatus(vm.status)
-  ) {
-    return badge;
-  }
-  const joinable =
-    vm.nextAt === null ||
-    vm.nextAt.getTime() - now.getTime() <= CONSULTEE_JOIN_WINDOW_MS;
-  if (normalizeStatus(vm.status) === "IN_PROGRESS" && joinable) return badge;
-  const group = vm.kind === "WEBINAR" || vm.kind === "CLASS";
+/** Held when the outcome is recorded or the host ended the call; past-but-undecided is told apart. */
+function listSessions(occurrences: OccurrenceVM[], live: OccurrenceVM[]) {
+  const done = live.length > 0 && allOccurrencesHeld(occurrences);
   return {
-    ...eventUnionStatusBadge("SCHEDULED"),
-    label: group ? "Registered" : "Confirmed",
+    live: live.length,
+    allTentative: live.length > 0 && live.every((s) => s.isTentative),
+    done,
+    awaitingOutcome:
+      !done && live.length > 0 && allOccurrencesOver(occurrences),
   };
+}
+
+type ChipVM = Pick<AppointmentVM, "status" | "kind"> &
+  Partial<
+    Pick<
+      AppointmentVM,
+      | "occurrences"
+      | "bookingSource"
+      | "seatStatus"
+      | "paid"
+      | "payDeadline"
+      | "payLapsed"
+      | "reschedule"
+      | "refunded"
+    >
+  >;
+
+/** A list row's status, from the one status function and the facts the row carries. */
+function rowBookingStatus(vm: ChipVM, role: "consultee" | "consultant") {
+  const live = vm.occurrences ? liveOccurrences(vm.occurrences) : null;
+  return bookingStatus(
+    {
+      kind: vm.kind,
+      status: vm.status,
+      source: vm.bookingSource,
+      seatStatus: vm.seatStatus,
+      paid: vm.paid,
+      payDeadline: vm.payDeadline,
+      payLapsed: vm.payLapsed,
+      reschedule: vm.reschedule,
+      refunded: vm.refunded,
+      sessions:
+        vm.occurrences && live ? listSessions(vm.occurrences, live) : undefined,
+    },
+    role === "consultant" ? "CONSULTANT" : "CONSULTEE",
+  );
+}
+
+/** The status chip on every appointments surface, from the one status function. */
+export function appointmentStatusChip(
+  vm: ChipVM,
+  role: "consultee" | "consultant",
+): StatusBadgeStyle {
+  return bookingStatusBadge(rowBookingStatus(vm, role));
+}
+
+/** The chip's reason line ("Payment was not completed in time."), empty when the word says it all. */
+export function appointmentStatusLine(
+  vm: ChipVM,
+  role: "consultee" | "consultant",
+): string {
+  return rowBookingStatus(vm, role).line;
 }
 
 export interface OccurrenceSourceAppointment {

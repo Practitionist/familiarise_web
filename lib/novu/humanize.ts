@@ -225,7 +225,7 @@ function rawRefundReasonLabel(raw: string): string | undefined {
   // member or the cancel route's "cancelled" default (which would read
   // "cancelled (cancelled)" if kept).
   const whole = raw.match(
-    /^whole-event (class|webinar) cancellation \((.*)\)$/i,
+    /^whole-event (class|webinar) cancellation(?: by staff)? \((.*)\)$/i,
   );
   if (whole) {
     const kind = whole[1].toLowerCase();
@@ -268,6 +268,8 @@ function rawRefundReasonLabel(raw: string): string | undefined {
   const sweep: Record<string, string> = {
     SESSION_VOIDED_NOT_MADE_UP: "a voided session was never made up",
     HOST_SESSION_NOT_MADE_UP: "a cancelled session was never made up",
+    HOST_SESSION_VOIDED_NOT_MADE_UP: "a voided session was never made up",
+    OWN_SESSION_CANCEL_NOT_MADE_UP: "a cancelled session was never made up",
     PLAN_ENDED_UNUSED_SESSIONS: "sessions not used by the end of the plan",
   };
   // Own-key: `sweep["toString"]` would otherwise resolve the inherited

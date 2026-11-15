@@ -4,6 +4,7 @@
  * seat opened.
  */
 
+import { refundNoticeText } from "@/lib/notifications/refund-wording";
 import UnplacedWeeksEmail from "@/emails/booking/UnplacedWeeksEmail";
 import * as React from "react";
 import { Button, Section, Text } from "react-email";
@@ -41,6 +42,7 @@ import {
   heading,
   paragraph,
 } from "@/emails/components/styles";
+import { shownMoves, type SessionMove } from "@/lib/booking/session-moves";
 import type { EmailRecipient } from "../preferences";
 import {
   attemptStaged,
@@ -50,6 +52,7 @@ import {
 import {
   absolute,
   defineBudgetedEmailSender,
+  defineLifecyclePreparer,
   defineLifecycleStager,
   greet,
   money,
@@ -58,6 +61,7 @@ import {
   stageBuiltSpec,
   stageSpecGuarded,
   stageSpecOncePerRecipient,
+  stageSpecOncePerRecipientQuietly,
   whenText,
   type PreparedRecipientEmails,
   type PreparedSpecEmails,
@@ -72,8 +76,12 @@ export {
   type StagedRecipientEmail,
 };
 
+/** A send required for anyone traces its render failure instead of losing it. */
+const isRequired = (requiredFor: readonly string[] | undefined) =>
+  (requiredFor?.length ?? 0) > 0;
+
 export function refundOnItsWay(amountPaise: number, currency: string): string {
-  return `A refund of ${money(amountPaise, currency)} is on its way`;
+  return refundNoticeText(amountPaise, currency, false);
 }
 
 function humanType(appointmentType: string): string {
@@ -173,6 +181,10 @@ export interface AppointmentCancelledEmailArgs {
   reason?: string | null;
   refundText?: string;
   refundUserIds?: string[];
+  /** Recipients the other party's change makes this a required notice for. */
+  requiredFor?: readonly string[];
+  /** A host removed this one seat from a class or webinar; nothing was cancelled. */
+  removedFrom?: { eventLabel: string; planTitle: string };
   dashboardUrl: string;
 }
 
@@ -188,11 +200,15 @@ function buildCancelledEmail(args: AppointmentCancelledEmailArgs): {
     spec: {
       emailType: "APPOINTMENT_CANCELLED",
       category: "appointments",
+      requiredFor: args.requiredFor,
+      traceRenderFailure: isRequired(args.requiredFor),
       entityRef: `appointment:${args.appointmentId}`,
       subject: (r) =>
-        args.startsAt
-          ? `Your session on ${whenText(args.startsAt, r.zone)} was cancelled`
-          : "Your session was cancelled",
+        args.removedFrom
+          ? `You were removed from ${args.removedFrom.planTitle}`
+          : args.startsAt
+            ? `Your session on ${whenText(args.startsAt, r.zone)} was cancelled`
+            : "Your session was cancelled",
       render: (r) =>
         React.createElement(AppointmentCancelledEmail, {
           recipientName: greet(r),
@@ -202,6 +218,7 @@ function buildCancelledEmail(args: AppointmentCancelledEmailArgs): {
           cancelledBy: args.cancelledBy,
           reason: args.reason ?? undefined,
           refundText: showRefund(r) ? args.refundText : undefined,
+          removedFrom: args.removedFrom,
           dashboardUrl: absolute(args.dashboardUrl),
           unsubscribeUrl: r.unsubscribeUrl,
         }),
@@ -230,6 +247,10 @@ export interface AppointmentRescheduledEmailArgs {
   leaveBy?: Date | null;
   /** MOVED: these recipients already hold another session at the new time. */
   clash?: boolean;
+  /** A series move: every moved session, old time and new. */
+  moves?: readonly SessionMove[];
+  /** Recipients the other party's change makes this a required notice for. */
+  requiredFor?: readonly string[];
   dashboardUrl: string;
 }
 
@@ -251,6 +272,8 @@ function buildRescheduledEmail(args: AppointmentRescheduledEmailArgs): {
     spec: {
       emailType: "APPOINTMENT_RESCHEDULED",
       category: "appointments",
+      requiredFor: args.requiredFor,
+      traceRenderFailure: isRequired(args.requiredFor),
       entityRef: `appointment:${args.appointmentId}`,
       subject: () => subjects[args.outcome],
       render: (r) =>
@@ -274,10 +297,25 @@ function buildRescheduledEmail(args: AppointmentRescheduledEmailArgs): {
               ? whenText(args.leaveBy, r.zone)
               : undefined,
           clash: args.outcome === "MOVED" && args.clash === true,
+          ...movesProps(args, r.zone),
           dashboardUrl: absolute(args.dashboardUrl),
           unsubscribeUrl: r.unsubscribeUrl,
         }),
     },
+  };
+}
+
+function movesProps(args: AppointmentRescheduledEmailArgs, zone: string) {
+  if (args.outcome !== "MOVED" || !args.moves || args.moves.length < 2) {
+    return {};
+  }
+  const { shown, more } = shownMoves(args.moves);
+  return {
+    moves: shown.map((m) => ({
+      fromText: whenText(m.from, zone),
+      toText: whenText(m.to, zone),
+    })),
+    moreMoves: more,
   };
 }
 
@@ -493,6 +531,8 @@ export interface UnscheduledSubscriptionNudgeEmailArgs {
   consulteeName: string;
   planTitle: string;
   nudgeHours: number;
+  /** When the buyer is refunded in full if cycle 1 is still unplaced. */
+  refundAt: Date;
   timingsUrl: string;
 }
 
@@ -506,30 +546,104 @@ export function unscheduledNudgeEntityRef(
   return `subscription:${subscriptionId}:h${nudgeHours}`;
 }
 
-export const sendUnscheduledSubscriptionNudgeEmail =
-  defineBudgetedEmailSender<UnscheduledSubscriptionNudgeEmailArgs>((args) => ({
-    userIds: [args.consultantUserId],
-    spec: {
-      emailType: SUBSCRIPTION_UNSCHEDULED_NUDGE_EMAIL_TYPE,
-      category: "appointments",
-      entityRef: unscheduledNudgeEntityRef(
-        args.subscriptionId,
-        args.nudgeHours,
-      ),
-      subject: () =>
-        `${args.consulteeName}'s subscription is waiting for session times`,
-      render: (r) =>
-        React.createElement(NewBookingRequestEmail, {
-          consultantName: greet(r),
-          consulteeName: args.consulteeName,
-          planTitle: args.planTitle,
-          appointmentType: "subscription",
-          reviewUrl: absolute(args.timingsUrl),
-          unsubscribeUrl: r.unsubscribeUrl,
-          nudgeHours: args.nudgeHours,
-        }),
+function unscheduledNudgeSpec(
+  args: UnscheduledSubscriptionNudgeEmailArgs,
+): RecipientEmailSpec {
+  return {
+    emailType: SUBSCRIPTION_UNSCHEDULED_NUDGE_EMAIL_TYPE,
+    category: "appointments",
+    entityRef: unscheduledNudgeEntityRef(args.subscriptionId, args.nudgeHours),
+    subject: () =>
+      `${args.consulteeName}'s subscription is waiting for session times`,
+    render: (r) =>
+      React.createElement(NewBookingRequestEmail, {
+        consultantName: greet(r),
+        consulteeName: args.consulteeName,
+        planTitle: args.planTitle,
+        appointmentType: "subscription",
+        reviewUrl: absolute(args.timingsUrl),
+        unsubscribeUrl: r.unsubscribeUrl,
+        nudgeHours: args.nudgeHours,
+        refundAtText: whenText(args.refundAt, r.zone),
+      }),
+  };
+}
+
+/** A sweep's deadline email claim lasts past the deadline it announces. */
+const DEADLINE_EMAIL_CLAIM_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Stages the nudge once per stage; the claim commits with the row. */
+export function stageUnscheduledSubscriptionNudgeEmail(
+  args: UnscheduledSubscriptionNudgeEmailArgs,
+) {
+  const entityRef = unscheduledNudgeEntityRef(
+    args.subscriptionId,
+    args.nudgeHours,
+  );
+  return stageSpecOncePerRecipientQuietly(
+    unscheduledNudgeSpec(args),
+    [args.consultantUserId],
+    {
+      scope: SUBSCRIPTION_UNSCHEDULED_NUDGE_EMAIL_TYPE,
+      key: (userId) => `${entityRef}:${userId}`,
+      ttlMs: DEADLINE_EMAIL_CLAIM_MS,
     },
-  }));
+  );
+}
+
+// ── Request about to lapse ──────────────────────────────────────────────────
+
+export interface RequestExpiringEmailArgs {
+  consultationId: string;
+  consultantUserId: string;
+  consulteeName: string;
+  planTitle: string;
+  expiresAt: Date;
+  reviewUrl: string;
+}
+
+export const REQUEST_EXPIRING_EMAIL_TYPE = "REQUEST_EXPIRING_SOON";
+
+/** One alert per request: the guard and the sender share this entityRef. */
+export function requestExpiringEntityRef(consultationId: string): string {
+  return `request:${consultationId}:expiring`;
+}
+
+function requestExpiringSpec(
+  args: RequestExpiringEmailArgs,
+): RecipientEmailSpec {
+  return {
+    emailType: REQUEST_EXPIRING_EMAIL_TYPE,
+    category: "appointments",
+    entityRef: requestExpiringEntityRef(args.consultationId),
+    subject: (r) =>
+      `${args.consulteeName}'s request lapses at ${whenText(args.expiresAt, r.zone)}`,
+    render: (r) =>
+      React.createElement(NewBookingRequestEmail, {
+        consultantName: greet(r),
+        consulteeName: args.consulteeName,
+        planTitle: args.planTitle,
+        appointmentType: "consultation",
+        reviewUrl: absolute(args.reviewUrl),
+        unsubscribeUrl: r.unsubscribeUrl,
+        expiresAtText: whenText(args.expiresAt, r.zone),
+      }),
+  };
+}
+
+/** Stages the alert once per request; the claim commits with the row. */
+export function stageRequestExpiringEmail(args: RequestExpiringEmailArgs) {
+  const entityRef = requestExpiringEntityRef(args.consultationId);
+  return stageSpecOncePerRecipientQuietly(
+    requestExpiringSpec(args),
+    [args.consultantUserId],
+    {
+      scope: REQUEST_EXPIRING_EMAIL_TYPE,
+      key: (userId) => `${entityRef}:${userId}`,
+      ttlMs: DEADLINE_EMAIL_CLAIM_MS,
+    },
+  );
+}
 
 export interface UnplacedWeekNudgeEmailArgs {
   consultantProfileId: string;
@@ -633,7 +747,7 @@ function buildTrialScheduledEmail(args: TrialScheduledEmailArgs): {
   };
 }
 
-/** Renders the scheduled notice outside any transaction; stage it with `stagePreparedEmails`. */
+/** Renders the scheduled notice outside any transaction; `screenPreparedEmails` reads its verdicts before staging. */
 export function prepareTrialScheduledEmail(
   args: TrialScheduledEmailArgs,
 ): Promise<PreparedRecipientEmails> {
@@ -877,7 +991,7 @@ export interface TrialLifecycleEmailArgs {
   userIds: string[];
   kind: Extract<
     TrialAndSubscriptionEmailKind,
-    "TRIAL_REQUESTED" | "TRIAL_COMPLETED" | "TRIAL_CANCELLED" | "TRIAL_REJECTED"
+    "TRIAL_COMPLETED" | "TRIAL_CANCELLED"
   >;
   planTitle: string;
   consultantUserId?: string;
@@ -885,6 +999,8 @@ export interface TrialLifecycleEmailArgs {
   consultantName?: string;
   consulteeName?: string;
   startsAt?: EmailTimestampInput;
+  /** Recipients a change someone else made makes this a required notice for. */
+  requiredFor?: readonly string[];
   dashboardUrl: string;
 }
 
@@ -897,6 +1013,8 @@ function buildTrialLifecycleEmail(args: TrialLifecycleEmailArgs): {
     spec: {
       emailType: args.kind,
       category: "trials",
+      requiredFor: args.requiredFor,
+      traceRenderFailure: isRequired(args.requiredFor),
       entityRef: `trial:${args.trialId}`,
       subject: () =>
         trialAndSubscriptionSubject({
@@ -932,6 +1050,10 @@ function buildTrialLifecycleEmail(args: TrialLifecycleEmailArgs): {
 
 export const stageTrialLifecycleEmail =
   defineLifecycleStager<TrialLifecycleEmailArgs>(buildTrialLifecycleEmail);
+
+/** Renders a trial lifecycle email before the transaction that stages it. */
+export const prepareTrialLifecycleEmail =
+  defineLifecyclePreparer<TrialLifecycleEmailArgs>(buildTrialLifecycleEmail);
 
 export interface SubscriptionLifecycleEmailArgs {
   subscriptionId: string;

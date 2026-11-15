@@ -7,7 +7,11 @@
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    supportCase: { findMany: jest.fn(), count: jest.fn() },
+    supportCase: {
+      findMany: jest.fn(),
+      count: jest.fn(),
+      fields: { statutoryDueAt: "statutoryDueAt" },
+    },
   },
 }));
 

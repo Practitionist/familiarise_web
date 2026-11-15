@@ -20,6 +20,10 @@ export interface NewBookingRequestEmailProps {
   unsubscribeUrl?: string | null;
   /** #1775 C-4 — set on the unscheduled-plan nudge (12, 24 or 36 hours). */
   nudgeHours?: number;
+  /** The nudge: when the buyer is refunded in full (recipient's zone). */
+  refundAtText?: string;
+  /** The request-expiring alert: when the unanswered request lapses (recipient's zone). */
+  expiresAtText?: string;
 }
 
 export default function NewBookingRequestEmail({
@@ -32,7 +36,29 @@ export default function NewBookingRequestEmail({
   reviewUrl,
   unsubscribeUrl,
   nudgeHours,
+  refundAtText,
+  expiresAtText,
 }: NewBookingRequestEmailProps) {
+  if (expiresAtText) {
+    const title = `${consulteeName}'s request lapses at ${expiresAtText}`;
+    return (
+      <EmailLayout preview={title} unsubscribeUrl={unsubscribeUrl}>
+        <Text style={heading}>{title}</Text>
+        <Text style={paragraph}>Hi {consultantName},</Text>
+        <Text style={paragraph}>
+          {consulteeName}&apos;s request for <strong>{planTitle}</strong> is
+          still waiting for your answer. Approve or decline it by{" "}
+          <strong>{expiresAtText}</strong>; after that it lapses and the time is
+          freed for other bookings.
+        </Text>
+        <Section style={buttonContainer}>
+          <Button style={button} href={reviewUrl}>
+            Review request
+          </Button>
+        </Section>
+      </EmailLayout>
+    );
+  }
   if (nudgeHours) {
     const title = `${consulteeName}'s ${appointmentType} is waiting for session times`;
     return (
@@ -41,8 +67,15 @@ export default function NewBookingRequestEmail({
         <Text style={paragraph}>Hi {consultantName},</Text>
         <Text style={paragraph}>
           {consulteeName} paid for <strong>{planTitle}</strong> {nudgeHours}{" "}
-          hours ago and still has no session times. Schedule the first cycle
-          within 48 hours of payment, or the buyer is refunded in full.
+          hours ago and still has no session times.{" "}
+          {refundAtText ? (
+            <>
+              Schedule the first cycle by <strong>{refundAtText}</strong>, or{" "}
+              {consulteeName} is refunded in full.
+            </>
+          ) : (
+            "Schedule the first cycle within 48 hours of payment, or the buyer is refunded in full."
+          )}
         </Text>
         <Section style={buttonContainer}>
           <Button style={button} href={reviewUrl}>

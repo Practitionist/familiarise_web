@@ -59,6 +59,7 @@ jest.mock("../../lib/prisma", () => ({
         "newsletterSubscriber",
         "meetingPresence",
         "meetingAttendance",
+        "streamRevocationRetry",
       ].map((model) => [
         model,
         {
@@ -280,6 +281,27 @@ it("leaves the 180-day tier for a later run while no-op runs still drain", async
     pruned: 2 * RUN_DELETE_BATCH,
     hasMore: true,
   });
+});
+
+it("prunes a settled access revocation 30 days after it settled, never an erasure or owed row", async () => {
+  findSecondary.mockImplementation(async (model: string) =>
+    model === "streamRevocationRetry" ? [{ id: "revocation-1" }] : [],
+  );
+  deleteSecondary.mockResolvedValue({ count: 1 });
+  const result = await pruneSystemJobExecutions();
+  const settled = {
+    erasureRequestId: null,
+    status: "SUCCEEDED",
+    completedAt: { lt: sentOutboxRetentionCutoff(NOW) },
+  };
+  expect(findSecondary).toHaveBeenCalledWith(
+    "streamRevocationRetry",
+    expect.objectContaining({ where: settled }),
+  );
+  expect(deleteSecondary).toHaveBeenCalledWith("streamRevocationRetry", {
+    where: { ...settled, id: { in: ["revocation-1"] } },
+  });
+  expect(result.streamRevocationRetriesPruned).toBe(1);
 });
 
 it("prunes meeting presence only once its occurrence ended three years ago", async () => {

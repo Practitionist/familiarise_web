@@ -34,7 +34,7 @@ Cancellation is one of the most architecturally nuanced flows in the booking sys
 2. **Nothing is deleted.** The appointment, its slots and its payment records are all preserved; the cancellation is a status change plus audit fields. `Payment.appointment` is `onDelete: Restrict`, so the database refuses to delete an appointment a payment points at; the app never tries, and the trail stays intact.
 3. **Refunds are automatic and policy-driven.** The cancellation flow computes a refund from the tiers frozen onto the booking at checkout and drives it through the payment operations, without an admin in the loop.
 
-> **Refreshed 2026-08-15 (#1013).** This chapter previously described an earlier design in which cancellation deleted the appointment, required no authentication and never touched money. All three statements were false against the route, and the walkthrough, the diagrams and the record tables below have now been rewritten against it: soft-cancel under a compare-and-set guard, participant/privileged/org-admin authorization, and automatic policy-driven refunds including the whole-event fan-out for webinars and classes (#1003). Consultees leave group events via participant self-leave (#1005), not appointment cancel. The refund maths described here is the linear per-session proration that closed #1006.
+> **Refreshed 2026-08-15 (#1013).** This chapter previously described an earlier design in which cancellation deleted the appointment, required no authentication and never touched money. All three statements were false against the route, and the walkthrough, the diagrams and the record tables below have now been rewritten against it: soft-cancel under a compare-and-set guard, participant/privileged/org-admin authorization, and automatic policy-driven refunds including the whole-event fan-out for webinars and classes (#1003). Consultees leave group events via participant self-leave (#1005), not appointment cancel. The refund maths described here is per session: a plan refunds each undelivered session at its own notice tier, one unit being the price over the sessions sold (`sessionsTotal`); see "How the amount is computed" below.
 
 Here is the complete decision tree for the cancellation endpoint, from the moment a request arrives to the final response:
 
@@ -78,7 +78,7 @@ flowchart TD
     RF -->|Yes| RF1["Policy refund:\nprorated base x tier"]
     RF -->|No| Y
     RF1 --> Y{Webinar or Class?}
-    Y -->|Yes| Z["refundWholeEventPayments()\n(every attendee, in full)"]
+    Y -->|Yes| Z["refundWholeEventPayments()\n(webinar seats in full,\nclass seats their undelivered share)"]
     Y -->|No| X
     Z --> X["void notifyAppointmentCancelled()\n(fire-and-forget)"]
     X --> AA["Return 200\n(success, refund, eventRefund)"]
@@ -100,17 +100,32 @@ flowchart TD
 
 Cancellation is authorized at the API layer, not merely hidden in the UI. Here is what the route checks:
 
-| Check                                    | Performed? | Details                                                                                     |
-| ---------------------------------------- | ---------- | ------------------------------------------------------------------------------------------- |
-| Is the user authenticated?               | Yes        | `getSession()` must return a valid session, or the route answers 401                        |
-| Is the user a participant?               | Yes        | The consultant on the plan or the consultee who requested it, or the route answers 403      |
-| Is the user privileged?                  | Yes        | `isPrivileged(session.user.role)` bypasses the participant check for admin and staff        |
-| Is the user an admin of the funding org? | Yes        | `isOrgAdminOfAppointment()` admits an admin of the organization funding the booking (#1166) |
-| Who may cancel a group event?            | Organiser  | Only the consultant who owns the webinar or class plan; attendees cannot cancel the event   |
-| Is the booking in a cancellable state?   | Yes        | The allowed-from set rides the `UPDATE`'s `WHERE`, so a lost race answers 409               |
-| Is a payment dispute open?               | Yes        | An open dispute answers 409, because a refund now could pay the customer twice              |
+| Check                                    | Performed? | Details                                                                                                                                                       |
+| ---------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Is the user authenticated?               | Yes        | `getSession()` must return a valid session, or the route answers 401                                                                                          |
+| Is the user a participant?               | Yes        | The consultant on the plan or the consultee who requested it, or the route answers 403                                                                        |
+| Is the user a non-party operator?        | Yes        | STAFF or ADMIN who is not a party answers 403 `PLATFORM_CANCEL_DOOR_REQUIRED` (`platformCancelDoorRefusal`) unless the request carries the staff door's grant |
+| Is the user an admin of the funding org? | Yes        | `isOrgAdminOfAppointment()` admits an admin of the organization funding the booking (#1166)                                                                   |
+| Who may cancel a group event?            | Organiser  | Only the consultant who owns the webinar or class plan; attendees cannot cancel the event                                                                     |
+| Is the booking in a cancellable state?   | Yes        | The allowed-from set rides the `UPDATE`'s `WHERE`, so a lost race answers 409                                                                                 |
+| Is a payment dispute open?               | Yes        | An open dispute answers 409, because a refund now could pay the customer twice                                                                                |
 
-**What this means in practice**: the two parties to a booking, a platform admin, or an admin of the organization that funds the booking can cancel it. A group event can only be cancelled by its organiser, since cancelling it ends the session for everyone enrolled.
+**Expert cancellations and strikes.** An expert who cancels a confirmed booking, free or paid, records one `EXPERT_CANCEL` strike (`recordExpertStrike`) in the cancel's own transaction. The cancel route strikes when the expert themself cancels (`isExpertSideCancel`; an operator's or an admin's cancel strikes nobody) and the 1:1 booking has a paid payment or is `APPROVED` (a free request the expert approved has no payment at all), or the webinar or class has a confirmed seat or a seat held under a SUCCEEDED payment (`hasConfirmedSeat`). A strike on a session inside a declared incident is dropped when strikes are read. The expert's cancel dialog says so before the click (`EXPERT_CANCEL_RELIABILITY_LINE`), and a trial's expert cancel strikes too (see [the trials doc](./09-trials.md)). Strikes are never shown on public pages: the expert reads their own on Settings → Booking (`ReliabilityCard`, through the owner-only `GET /api/user/consultants/[id]/strikes`), and staff read them in `ExpertStrikesCard`. See [the trial and public booking surfaces record](../decisions/2026-11-13-trial-and-public-booking-surfaces.md), decisions 5 and 6.
+
+**What this means in practice**: the two parties to a booking, or an admin of the organization that funds the booking, can cancel it here. A platform operator (STAFF or ADMIN) who is not a party cancels only through the back-office door at `app/api/staff/appointments/[appointmentId]/cancel/route.ts`, which adds a fresh sign-in, the staff refund limits and an operator audit row, and then runs this route under a one-request grant. An operator who is a party (they bought the booking, or they are its expert) cancels as that party. The same refusal guards the request decline routes and the trial routes; see [who can decline a request or end a trial](#who-can-decline-a-request-or-end-a-trial) below. A group event can only be cancelled by its organiser, since cancelling it ends the session for everyone enrolled.
+
+### Who can decline a request or end a trial
+
+A decline refunds a paid request in full, and a trial cancel refunds the learner, so these routes apply the same rule as the cancel route through the same helper, `platformCancelDoorRefusal` in `lib/booking/platform-cancel.ts`: a STAFF or ADMIN caller who is not the learner or the expert is refused with 403 `PLATFORM_CANCEL_DOOR_REQUIRED` before anything is written, whatever status the request names. Party identity is checked first, so an expert or a learner whose account is STAFF or ADMIN keeps that party's rights.
+
+| Route                                                                                                         | What is refused to a non-party operator                     |
+| ------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `PATCH /api/bookings/consultations/[consultationId]` and `PATCH /api/bookings/subscriptions/[subscriptionId]` | Every status, approval and decline alike                    |
+| `PATCH /api/bookings/consultations` and `PATCH /api/bookings/subscriptions` (the list routes)                 | `status: "REJECTED"`, the only status they accept           |
+| `PATCH /api/trials/[trialId]`                                                                                 | Every status (decline, cancel, schedule, complete, convert) |
+| `DELETE /api/trials/[trialId]`                                                                                | Every cancel                                                |
+
+A paid pending 1:1 or plan request always has a tentative appointment, created with the capture, so the back-office platform cancel door ends it: its allowed-from set includes `PENDING`, and an operator's cancel is priced at the expert-side tier of the frozen policy. There is no staff door for a trial, so an operator cannot end a paid trial until one is built; only the learner or the expert can.
 
 **Where the org admin sits in the refund maths**: an org admin acts on the **payer** side, not the consultant side. That distinction is load-bearing, because a consultant-initiated cancellation settles at the policy's consultant-initiated percentage — one hundred per cent under the platform defaults — while a payer-initiated one falls to whatever tier the remaining notice earns. The route therefore computes `isConsultantInitiated` from the consultant's own user ID or from a privileged actor who is not the consultee, and an org admin matches neither.
 
@@ -725,7 +740,7 @@ flowchart TD
     G --> H{Post-transaction}
     H --> I["Notifications\n(all types)"]
     H --> J{Webinar or Class?}
-    J -->|Yes| J1["refundWholeEventPayments()\nevery attendee, in full"]
+    J -->|Yes| J1["refundWholeEventPayments()\nwebinar seats in full,\nclass seats their undelivered share"]
     J -->|No| J2["Policy refund\n(prorated base x tier)"]
 
     style Consultation fill:#e3f2fd,stroke:#1565c0
@@ -734,18 +749,18 @@ flowchart TD
 
 ### Comparison Table: All Four Event Types
 
-| Aspect                           | Consultation             | Subscription                     | Webinar                      | Class                        |
-| -------------------------------- | ------------------------ | -------------------------------- | ---------------------------- | ---------------------------- |
-| **Model updated**                | `Consultation`           | `Subscription`                   | `Webinar`                    | `Class`                      |
-| **Status field**                 | `status`                 | `status`                         | `status`                     | `status`                     |
-| **Audit fields stored**          | Yes (5 fields)           | Yes (5 fields)                   | No                           | No                           |
-| **Cancellation reason on model** | Yes                      | Yes                              | No                           | No                           |
-| **Cancelled-by tracking**        | Yes                      | Yes                              | No                           | No                           |
-| **Notification sent**            | Yes                      | Yes                              | Yes                          | Yes                          |
-| **Slots deleted**                | No — marked `CANCELLED`  | No — marked `CANCELLED`          | No — marked `CANCELLED`      | No — marked `CANCELLED`      |
-| **Appointment deleted**          | No — preserved           | No — preserved                   | No — preserved               | No — preserved               |
-| **Slot scope of the update**     | This appointment         | Whole `subscriptionId`           | This appointment             | Whole `classId`              |
-| **Refund rail**                  | Policy tier on the gross | Policy tier on the prorated base | Whole-event fan-out, in full | Whole-event fan-out, in full |
+| Aspect                           | Consultation             | Subscription                             | Webinar                      | Class                                              |
+| -------------------------------- | ------------------------ | ---------------------------------------- | ---------------------------- | -------------------------------------------------- |
+| **Model updated**                | `Consultation`           | `Subscription`                           | `Webinar`                    | `Class`                                            |
+| **Status field**                 | `status`                 | `status`                                 | `status`                     | `status`                                           |
+| **Audit fields stored**          | Yes (5 fields)           | Yes (5 fields)                           | No                           | No                                                 |
+| **Cancellation reason on model** | Yes                      | Yes                                      | No                           | No                                                 |
+| **Cancelled-by tracking**        | Yes                      | Yes                                      | No                           | No                                                 |
+| **Notification sent**            | Yes                      | Yes                                      | Yes                          | Yes                                                |
+| **Slots deleted**                | No — marked `CANCELLED`  | No — marked `CANCELLED`                  | No — marked `CANCELLED`      | No — marked `CANCELLED`                            |
+| **Appointment deleted**          | No — preserved           | No — preserved                           | No — preserved               | No — preserved                                     |
+| **Slot scope of the update**     | This appointment         | Whole `subscriptionId`                   | This appointment             | Whole `classId`                                    |
+| **Refund rail**                  | Policy tier on the gross | Each undelivered session at its own tier | Whole-event fan-out, in full | Whole-event fan-out, each seat's undelivered share |
 
 ### Consultation Cancellation (Detailed)
 
@@ -801,7 +816,7 @@ const moved = (
 ).count;
 ```
 
-The group-event allowed-from sets are written as explicit `in` lists rather than as `notIn` exclusions, so that a future addition to the status enum is refused by default instead of silently becoming cancellable (#837). Classes use `CLASS_EVENT_ALLOWED_FROM.CANCELLED`, which is the same idea against a different enum.
+A `DRAFT` webinar or class can be cancelled too: `EVENT_ALLOWED_FROM.CANCELLED` is `DRAFT` and `SCHEDULED`, so a draft with placed sessions goes through the same cancel door and its host is never stuck with it (nothing is refunded, because a draft has no seats). The group-event allowed-from sets are written as explicit `in` lists rather than as `notIn` exclusions, so that a future addition to the status enum is refused by default instead of silently becoming cancellable (#837). Classes use `CLASS_EVENT_ALLOWED_FROM.CANCELLED`, which is the same idea against a different enum.
 
 **Why no audit fields**: Webinars are typically cancelled by the consultant (the host). Since webinars are group events, the system does not track individual cancellation reasons on the event model. The `status` change is sufficient for the event lifecycle. If audit data is needed, it can be reconstructed from the API logs and the `cancelledBy` information in the notification payload.
 
@@ -811,11 +826,15 @@ Classes are multi-session group events (e.g., "6-week Python bootcamp"). They be
 
 **What gets written to the database**: Only `status: "CANCELLED"`, same as webinar.
 
-**What the host's series cancel refunds (#1780 D-5)**: A webinar still refunds every seat in full. A class refunds each seat only the sessions it was not delivered. The cancel route reads every paid seat's ledger (`classSeriesLedgers`) before its transaction tombstones the sessions, and each seat then refunds `amount − unit × delivered`, keyed `series-cancel:<paymentId>`. The delivered share of the fee stays with the consultant, because the refund cascade claws back the consultant's share in proportion to the refund. A credit-funded seat that had sessions delivered is escalated to ops, because the credits rail restores all or nothing.
+**What the host's series cancel refunds (#1780 D-5)**: A webinar still refunds every seat in full. A class refunds each seat only the sessions it was not delivered. The cancel route reads every paid seat's ledger (`classSeriesLedgers`) on its own transaction, under the event and appointment locks and before that transaction tombstones the sessions, so a session refunded, completed or left between the click and the commit is never paid twice. Each seat then refunds `amount − unit × delivered` less what it already got back per session, keyed `event-cancel:<classId>:pay:<paymentId>`. The delivered share of the fee stays with the consultant, because the refund cascade claws back the consultant's share in proportion to the refund. A credit-funded seat that had sessions delivered is escalated to ops, because the credits rail restores all or nothing.
 
 ### Cancelling one class session (#1780 row 4)
 
 The host can also cancel a single session of a class without touching the rest of the series. The session is then made up within 14 days or refunded one unit per seat by a sweep, and every such cancellation counts as a miss toward the learner's exit right. The state machine is described in `18-state-machines.md`. Misses are host cancellations only today; consultant no-shows and outage voiding are tracked in #1569.
+
+### A class that ends with sessions never placed
+
+A class is not cancelled when its host leaves sessions unscheduled; it completes once every placed session has ended. The completing commit owes each live paid seat the sessions it bought that no row ever placed, `floor(paid × unplaced / sessions bought)`, under a marker keyed `class-end:<classId>:pay:<paymentId>` (`stampClassEndRefundsOwed` in `lib/payments/operations/event-refunds.ts`, called by `completeClasses` in `scripts/appointments/auto-complete-appointments.ts`). A session the host cancelled or that was voided is not unplaced: its make-up or its one-unit refund already answers for it. The `retry-auto-refunds` sweep drives the refund, and the seat's earnings stay held until it settles. One class settles per transaction: the completion flip and every seat's owed marker commit together (seat slices would need a new column, and the refund retry job pays any owed marker older than 15 minutes whatever the class's status, so a marker may never outlive an uncommitted flip). To keep that transaction short, `classSeriesLedgers` reads the whole roster's ledgers in a fixed five queries however many seats the class has, the transaction has a 6-second timeout, and no class starts after half of the run's start budget; a class not reached waits for the next run. `auto-complete-appointments` is a financial job (`FINANCIAL_JOB_NAMES`) with a fail-closed lock, so in degraded maintenance the whole job pauses, including its ordinary completions and earnings-hold stamping, and its run record reports the slot tally and the class-end stamps.
 
 ### The refund window and seat leaves (#1780)
 
@@ -1074,7 +1093,9 @@ Webinar and class seats are the documented exception. One shared `Appointment` r
 
 #### How the amount is computed
 
-The refund is two multiplications, in this order: the **base** is narrowed to what the buyer has not yet received, and the **policy tier** then applies to that base.
+A plan sold with a known `sessionsTotal` is quoted per session by `quoteUnusedSessions` (`lib/payments/operations/cancellation-policy.ts`): one unit is the price divided by `sessionsTotal`, every undelivered session still on the calendar comes back at its own notice tier, every never-scheduled one at infinite notice (100 %), and a delivered or support-refunded session not at all. The floor is taken once per tier over the sessions in it. A 12-session ₹12,000 plan with 4 delivered, 2 sessions more than 24 hours out and 6 never scheduled refunds 8 × ₹1,000 = ₹8,000 on a learner cancel; if one of the two scheduled sessions were 5 hours out it would come back at 50 %, for ₹7,500.
+
+The formula below is the fallback for a row whose sold `sessionsTotal` is unknown, and for a consultation: the **base** is narrowed to what the buyer has not yet received, and the **policy tier** then applies to that base.
 
 ```
 proratedBasePaise = subscription && slotsTotal > 0
@@ -1104,6 +1125,8 @@ The refund runs after the cancellation transaction commits, and a failure to ref
 The rule has two halves, and the second half is the one that keeps it fair. **Any tier above zero per cent restores the credit in full**, because rounding a partial tier up to a whole credit is the only settlement the rail can express and the buyer gave notice the ladder rewards. **A zero-per-cent tier restores nothing**, which is the same answer a card buyer gets for the same notice — a late cancel bites a credit buyer exactly as it bites everyone else, and treating "the rail cannot pay a fraction" as "therefore pay everything" would have made free credit strictly better than money.
 
 Both halves live in `quoteBookingRefund`, in one predicate: `isFreeCreditFunded && refundPct > 0`. The quote reports the tier the ladder actually answered on `tierRefundPct` and the settlement on `refundPct`, so the refund reason can name the real tier while the buyer is told they were made whole. The zero case falls through to the ordinary `POLICY_ZERO` arm, so nothing about it is special-cased. The predicate requires both a `free_` intent and a zero amount, because a `free_` intent carrying a non-zero amount is a mixed payment that settles on the money arm; that combination is out of scope here and is refused with `INVALID_AMOUNT` as it always was.
+
+**A genuinely free cancel writes no refund record.** A booking whose payment carries a `free_` intent, a zero amount and a zero list price (`isPriceFreePayment` in `lib/payments/funding-rail.ts`) spent neither money nor credit, so its cancel owes nothing: the 1:1 cancel (`cancelRefundOwed` is skipped), the whole-event cancel (`planEventSeats` settles the seat), a seat leave (`seatRefundOwed`) and an organiser removal (`refundRemovedAttendeeSeat`) stamp no marker, write no `Refund` row and send no refund bell or email, and the cancellation email carries no refund line. The 1:1 answer is `NOTHING_REFUNDABLE` (`POLICY_ZERO` at a 0 % tier). A credit-funded booking keeps the zero-rupee record described above, and so does a booking discounted to zero, whose refund door nets the earnings recorded on its list price. Example: Charlotte Brown's free 30-minute consultation with Hannah Anderson is cancelled by Hannah; Hannah takes a strike, and Charlotte gets the cancellation email with no refund sentence and no ₹0.00 refund email. See [the trial and public booking surfaces record](../decisions/2026-11-13-trial-and-public-booking-surfaces.md), decision 7.
 
 A booking with no session scheduled at all is a different matter and does refund in full. There is no start time, so there are no hours of notice, and treating that as negative notice made cancelling before allocation score worse than cancelling after it — which no tier table can mean. The condition is keyed on the booking having no slot rows whatsoever, deliberately: a booking whose slots are merely all cancelled is not the same claim.
 
@@ -1337,7 +1360,7 @@ sequenceDiagram
         end
 
         opt Webinar or Class cancellation
-            API->>Pay: refundWholeEventPayments(every attendee, in full)
+            API->>Pay: refundWholeEventPayments (webinar seats in full, class seats their undelivered share)
             Pay-->>API: WholeEventRefundSummary
             API->>DB: findMany paid attendee payments
             DB-->>API: attendee user IDs
@@ -1389,3 +1412,5 @@ See [the money HLD](../start-here/02-money-system-hld.md#10-refunds) and worked 
 
 1. **Computing the quote after the commit with no durable marker.** Replaced by the in-transaction quote and the refund-owed marker.
 2. **Cancelling an event by `PUT` with `status: "CANCELLED"`.** That path wrote no refunds or history and is refused with `USE_CANCEL_ROUTE`; cancel through this route.
+3. **Class ledgers read before the locks.** The cancel route once read every seat's class-series ledger on the global client before it took the event and appointment locks, so a session refunded, completed or left in between was refunded again by the series cancel. The ledgers are read on the cancel's transaction now.
+4. **A zero-rupee "credit restoration" for a booking that spent no credit, and strikes only for paid bookings.** A free booking was read as credit-funded, so its cancel wrote a ₹0 `Refund` and sent a ₹0.00 refund email, and an expert's cancel of a free request with no payment recorded no strike. Both replaced by the rules above.

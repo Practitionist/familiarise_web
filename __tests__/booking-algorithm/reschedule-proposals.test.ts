@@ -9,8 +9,11 @@
 import "./setup";
 import {
   PROPOSAL_MAX_LIFETIME_HOURS,
+  assertReplacementNotice,
   computeProposalExpiry,
   mayAutoConfirm,
+  needsOtherSideAcceptance,
+  proposedSessionsOf,
   proposalCountMatches,
   rescheduleNotificationVariant,
   supportsProposals,
@@ -47,16 +50,68 @@ describe("computeProposalExpiry", () => {
     expect(expiry).toEqual(hoursFromNow(16));
   });
 
-  it("never returns an expiry in the past", () => {
-    // Inside the resolve margin already — the 24h policy gate should have
-    // rejected this upstream, so null signals a caller bug rather than
-    // producing a proposal that is born expired.
-    expect(computeProposalExpiry([hoursFromNow(10)], now)).toBeNull();
-    expect(computeProposalExpiry([hoursFromNow(24)], now)).toBeNull();
+  it("a short-notice proposal lapses when the session's join window opens", () => {
+    expect(computeProposalExpiry([hoursFromNow(10)], now)).toEqual(
+      hoursFromNow(10 - 0.25),
+    );
+    expect(computeProposalExpiry([hoursFromNow(24)], now)).toEqual(
+      hoursFromNow(24 - 0.25),
+    );
+  });
+
+  it("never returns an expiry once the join window is open", () => {
+    expect(computeProposalExpiry([hoursFromNow(0.2)], now)).toBeNull();
+    expect(computeProposalExpiry([now], now)).toBeNull();
   });
 
   it("returns null when nothing was released", () => {
     expect(computeProposalExpiry([], now)).toBeNull();
+  });
+});
+
+describe("needsOtherSideAcceptance", () => {
+  it.each([
+    ["session and new time 24 hours or more away", [48], [72], false],
+    ["session inside 24 hours", [10], [72], true],
+    ["new time inside 24 hours", [48], [5], true],
+  ])("%s", (_case, released, proposed, expected) => {
+    expect(
+      needsOtherSideAcceptance(
+        released.map(hoursFromNow),
+        proposed.map(hoursFromNow),
+        now,
+      ),
+    ).toBe(expected);
+  });
+});
+
+describe("re-placing a released session without acceptance", () => {
+  it("refuses a new time under 24 hours away, unless a proposal was accepted", () => {
+    const soon = [hoursFromNow(10)];
+    expect(() => assertReplacementNotice(true, undefined, soon, now)).toThrow(
+      expect.objectContaining({ errorCode: "NEEDS_ACCEPTANCE" }),
+    );
+    expect(() =>
+      assertReplacementNotice(true, "req-1", soon, now),
+    ).not.toThrow();
+    expect(() =>
+      assertReplacementNotice(true, undefined, [hoursFromNow(30)], now),
+    ).not.toThrow();
+  });
+});
+
+describe("proposedSessionsOf", () => {
+  it("reads a one-hour proposal as one session, not two half hours", () => {
+    expect(
+      proposedSessionsOf([
+        { startsAt: hoursFromNow(48), endsAt: hoursFromNow(48.5) },
+        { startsAt: hoursFromNow(48.5), endsAt: hoursFromNow(49) },
+        { startsAt: hoursFromNow(72), endsAt: hoursFromNow(72.5) },
+      ]),
+    ).toEqual([
+      { startsAt: hoursFromNow(48), endsAt: hoursFromNow(49) },
+      { startsAt: hoursFromNow(72), endsAt: hoursFromNow(72.5) },
+    ]);
   });
 });
 

@@ -5,13 +5,11 @@
  * from *infrastructure failures* (unexpected, full stack trace for debugging).
  *
  * Usage:
- *   import { classifyError, logClassifiedError } from "@/lib/payments/error-classification";
+ *   import { classifyError, logClassifiedError } from "@/lib/errors/classification/payment-error-classification";
  *
  *   const classified = classifyError(error);
  *   logClassifiedError("Checkout", classified, error);
  */
-
-import * as Sentry from "@sentry/nextjs";
 
 // ============================================================================
 // Error Types — used by both server routes and frontend toast mapping
@@ -72,6 +70,12 @@ export const ErrorTypes = {
   CONSULTANT_EXCLUSIVE_ENGAGEMENT: "CONSULTANT_EXCLUSIVE_ENGAGEMENT_ERROR",
   // #1766 — the buyer already holds this plan with entitlement left.
   SUBSCRIPTION_ALREADY_ACTIVE: "SUBSCRIPTION_ALREADY_ACTIVE_ERROR",
+  // The expert's hours can't hold even the first week of the plan.
+  NOT_PLACEABLE: "NOT_PLACEABLE_ERROR",
+  // The expert's limit on live plan clients is reached.
+  PLAN_CLIENTS_FULL: "PLAN_CLIENTS_FULL_ERROR",
+  // A direct 1:1 checkout for an expert who reviews requests first.
+  REQUEST_APPROVAL_REQUIRED: "REQUEST_APPROVAL_REQUIRED_ERROR",
   CURRENCY_UNSUPPORTED: "CURRENCY_UNSUPPORTED_ERROR",
   CREDIT_SHORTFALL: "CREDIT_SHORTFALL_ERROR",
   DISCOUNT_CURRENCY_MISMATCH: "DISCOUNT_CURRENCY_MISMATCH_ERROR",
@@ -475,6 +479,22 @@ const BUSINESS_ERROR_ENTRIES = [
     errorType: ErrorTypes.SUBSCRIPTION_ALREADY_ACTIVE,
     httpStatus: 409,
   },
+  // No userMessage: the thrown sentence says what to do instead.
+  {
+    code: "NOT_PLACEABLE",
+    errorType: ErrorTypes.NOT_PLACEABLE,
+    httpStatus: 409,
+  },
+  {
+    code: "PLAN_CLIENTS_FULL",
+    errorType: ErrorTypes.PLAN_CLIENTS_FULL,
+    httpStatus: 409,
+  },
+  {
+    code: "REQUEST_APPROVAL_REQUIRED",
+    errorType: ErrorTypes.REQUEST_APPROVAL_REQUIRED,
+    httpStatus: 409,
+  },
   // #1564 — a non-INR plan price or settlement is a configuration the platform
   // does not offer, not a crash; 422 like the other unsupported-config codes.
   {
@@ -589,6 +609,18 @@ const BUSINESS_ERROR_ENTRIES = [
     errorType: ErrorTypes.BOOKING_RULE,
     httpStatus: 400,
   },
+  // A host-set event time off the half-hour grid or too close to now.
+  {
+    code: "EVENT_TIME_INVALID",
+    errorType: ErrorTypes.BOOKING_RULE,
+    httpStatus: 400,
+  },
+  // A published plan's cadence that no week of the expert's published hours can hold.
+  {
+    code: "PLAN_NOT_FEASIBLE",
+    errorType: ErrorTypes.BOOKING_RULE,
+    httpStatus: 422,
+  },
   // The buyer already holds a live seat on this webinar or class.
   {
     code: "ALREADY_REGISTERED",
@@ -614,6 +646,13 @@ const BUSINESS_ERROR_ENTRIES = [
     errorType: ErrorTypes.BOOKING_RULE,
     httpStatus: 409,
     userMessage: "This plan isn't available to book right now.",
+  },
+  // A new sale against an archived plan.
+  {
+    code: "PLAN_ARCHIVED",
+    errorType: ErrorTypes.BOOKING_RULE,
+    httpStatus: 409,
+    userMessage: "This plan is no longer offered, so it can't be booked.",
   },
   // A non-marketplace plan bought outside the org that offers it.
   {
@@ -728,6 +767,18 @@ export interface ClassifiedError {
   httpStatus: number;
 }
 
+/** The copy an unrecognised failure answers with; its own message never reaches the client. */
+export const UNEXPECTED_ERROR_MESSAGE =
+  "Something went wrong. Please try again.";
+
+/** A reported fault's copy with the first eight characters of its Sentry event id. */
+export function withErrorReference(
+  message: string,
+  errorId: string | undefined,
+): string {
+  return errorId ? `${message} Reference: ${errorId.slice(0, 8)}.` : message;
+}
+
 /**
  * Classify an Error into a structured result for logging and response.
  *
@@ -783,9 +834,9 @@ export function classifyError(
     }
   }
 
-  // 4. Unrecognised — treat as unexpected
+  // 4. Unrecognised: the raw message stays in the server log and Sentry.
   return {
-    errorMessage: msg,
+    errorMessage: UNEXPECTED_ERROR_MESSAGE,
     errorType: ErrorTypes.UNKNOWN,
     isBusinessError: false,
     httpStatus: 500,
@@ -797,7 +848,8 @@ export function classifyError(
 // ============================================================================
 
 /**
- * Log a classified error with the right severity.
+ * Log a classified error with the right severity. Console only: the caller
+ * reports the fault to Sentry once, through `reportSentryError`.
  *
  * @param tag     - Short route identifier, e.g. "Checkout", "Refunds"
  * @param result  - Output from classifyError()
@@ -811,10 +863,6 @@ export function logClassifiedError(
   if (result.isBusinessError) {
     console.warn(`[${tag}] Business rule blocked: ${result.errorMessage}`);
   } else {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "payments" } },
-    );
     console.error(`[${tag}] Unexpected error:`, error);
   }
 }

@@ -14,6 +14,7 @@ import {
   CHECKOUT_WAIT_RETRY_CONFIG,
   lockConsulteeBooking,
   unlockConsulteeBooking,
+  unlockRequestCap,
   extendLock,
   extendSlotInterval,
   unlockSlotInterval,
@@ -30,7 +31,10 @@ import {
   SeatHoldLapsedError,
   SeatOrderMintFailure,
 } from "@/lib/payments/checkout/seat-pre-mint";
-import { isZeroAmountOrder } from "@/lib/payments/checkout/zero-amount";
+import {
+  hasBilledSupply,
+  isZeroAmountOrder,
+} from "@/lib/payments/checkout/zero-amount";
 import {
   DIRECT_CHECKOUT_HOLD_MS,
   SEAT_CHECKOUT_HOLD_MS,
@@ -53,6 +57,7 @@ import {
 import {
   releaseSupersededHolds,
   findReusablePendingOrderPayment,
+  openOrderTargetOf,
 } from "@/lib/payments/checkout/order-reuse";
 import { buildPaymentMetadata } from "@/lib/payments/checkout/schema";
 import { tombstoneAbortedGatewayOrder } from "@/lib/payments/checkout/gateway-intent";
@@ -61,6 +66,7 @@ import {
   releaseCheckoutLock,
   acquireCheckoutLock,
   lockBuyerSeatAtoms,
+  lockExpertPlanSales,
 } from "@/lib/payments/checkout/locks";
 import { asSeatPaymentConflict } from "@/lib/payments/checkout/seats";
 import { SlotTakenError } from "@/lib/booking/booking-rule-error";
@@ -72,6 +78,10 @@ import {
   resolveOrgFunding,
 } from "@/lib/payments/checkout/org-funding";
 import { commitCheckout } from "@/lib/payments/checkout/commit";
+import {
+  assertSubscriptionDemandRoom,
+  resolveSubscriptionPurchase,
+} from "@/lib/payments/checkout/subscription-demand";
 import {
   assertOrgBillingAvailable,
   currentGstRegime,
@@ -99,6 +109,10 @@ export const IN_TX_MODELLED_REFUSAL_CODES: ReadonlySet<BusinessErrorCode> =
     "DISCOUNT_EXHAUSTED",
     "DISCOUNT_CODE_INVALID",
     "SUBSCRIPTION_ALREADY_ACTIVE",
+    "NOT_PLACEABLE",
+    "PLAN_CLIENTS_FULL",
+    "NOT_ACCEPTING_BOOKINGS",
+    "REQUEST_APPROVAL_REQUIRED",
     "ALREADY_RENEWED",
     "INVALID_RENEWAL_SOURCE",
     "WELCOME_DISCOUNT_IN_USE",
@@ -135,6 +149,8 @@ export async function handleCheckout(
   // #898 follow-up — tier-2 consultee lock (acquired alongside the checkout lock
   // below; see the ordering note at STEP 2).
   let consulteeLock: ApprovalLock | null = null;
+  // A plan checkout's per-expert key (consultant tier: after event checkout, before the consultee).
+  let planSalesLock: ApprovalLock | null = null;
   // A dual-role seat buyer's own slot atoms (event → consultee → slot batch).
   let buyerSeatGrant: SlotBatchGrant | null = null;
   // TYPE-1: Properly typed payment response instead of any
@@ -164,15 +180,6 @@ export async function handleCheckout(
     assertOrgBillingAvailable(currentGstRegime());
   }
 
-  // A buyer-paid domestic supply gets a consumer tax invoice, which must carry
-  // the buyer's state; org rails bill on the org series and exports have none.
-  if (
-    buyerCountry === "IN" &&
-    (!fundingSource || fundingSource === "PERSONAL")
-  ) {
-    consumerBuyerStateSchema.parse(validatedData);
-  }
-
   try {
     // STEP 1: Calculate amount and fetch plan data (OUTSIDE LOCK - just pricing)
     const priced = await calculateAmountAndValidate(
@@ -195,6 +202,16 @@ export async function handleCheckout(
       creditsApplied,
       subscriptionSchedulingPeriod,
     } = priced;
+
+    // A buyer-paid domestic supply gets a consumer tax invoice, which must carry
+    // the buyer's state; org rails, exports and a free order with no credit get none.
+    if (
+      buyerCountry === "IN" &&
+      (!fundingSource || fundingSource === "PERSONAL") &&
+      hasBilledSupply(amount, creditsApplied)
+    ) {
+      consumerBuyerStateSchema.parse(validatedData);
+    }
 
     // INVOICE fundingSource: fast-fail on the credit limit before any lock is
     // taken. #1744 row 4 — the booking itself counts: `exposure >= limit` let
@@ -247,7 +264,14 @@ export async function handleCheckout(
     // (consultation) the consultee lock is taken BEFORE the slot lock; for an
     // event-based checkout it is taken AFTER the event lock.
     const isSlotBasedCheckout = !!validatedData.startsAt;
+    const planSalesProfileId =
+      appointmentType === "SUBSCRIPTION"
+        ? planData.consultantProfile?.id
+        : undefined;
     if (isSlotBasedCheckout) {
+      if (planSalesProfileId) {
+        planSalesLock = await lockExpertPlanSales(planSalesProfileId);
+      }
       consulteeLock = await lockConsulteeBooking(
         userId,
         undefined,
@@ -267,6 +291,9 @@ export async function handleCheckout(
     );
     lockType = validatedData.startsAt ? "slot-based" : "event-based";
     if (!isSlotBasedCheckout) {
+      if (planSalesProfileId) {
+        planSalesLock = await lockExpertPlanSales(planSalesProfileId);
+      }
       consulteeLock = await lockConsulteeBooking(
         userId,
         undefined,
@@ -375,41 +402,20 @@ export async function handleCheckout(
     // parity (amount must equal THIS request's computation). Rejections are
     // superseded to EXPIRED so they can neither be resumed later nor re-minted
     // into a parallel charge by a third tab.
+    const openOrderTarget = openOrderTargetOf(
+      validatedData,
+      userId,
+      organizationId,
+      subscriptionSchedulingPeriod,
+    );
     const { reusable: reusableOrder, supersede: supersededOrders } =
-      await findReusablePendingOrderPayment(prisma, {
-        userId,
-        appointmentType,
-        planId: validatedData.planId,
-        eventId: validatedData.eventId,
-        organizationId,
-        paymentGateway: validatedData.paymentGateway,
-        expectedAmountPaise: amount,
-        ...(appointmentType === "CONSULTATION" &&
-        validatedData.startsAt &&
-        validatedData.endsAt
-          ? {
-              slotWindow: {
-                startsAt: new Date(validatedData.startsAt),
-                endsAt: new Date(validatedData.endsAt),
-              },
-            }
-          : {}),
-        ...(appointmentType === "SUBSCRIPTION"
-          ? {
-              schedulingPeriod:
-                subscriptionSchedulingPeriod ??
-                (validatedData.schedulingPeriodStartsAt &&
-                validatedData.schedulingPeriodEndsAt
-                  ? {
-                      startsAt: new Date(
-                        validatedData.schedulingPeriodStartsAt,
-                      ),
-                      endsAt: new Date(validatedData.schedulingPeriodEndsAt),
-                    }
-                  : null),
-            }
-          : {}),
-      });
+      openOrderTarget
+        ? await findReusablePendingOrderPayment(prisma, {
+            ...openOrderTarget,
+            expectedAmountPaise: amount,
+            expectedDiscountCodeId: priced.discountCodeId,
+          })
+        : { reusable: null, supersede: [] };
     if (supersededOrders.length > 0) {
       // #1463 — expiring the payment is only half of it; the hold it minted has
       // to come off the calendar in the same transaction or this buyer's next
@@ -486,11 +492,13 @@ export async function handleCheckout(
       CHECKOUT_LOCK_TTL_MS[validatedData.appointmentType] ?? 60_000,
       checkoutTxTimeoutMs + 10_000,
     );
+    // Each held lock renews on its own: a renewal-only plan checkout has no primary lock.
     const renewOrAbort = async (ttl: number): Promise<void> => {
-      if (!lock) return;
-      const renewed = Array.isArray(lock)
-        ? await extendSlotInterval(lock, ttl)
-        : await extendLock(lock, ttl);
+      const renewed =
+        !lock ||
+        (Array.isArray(lock)
+          ? await extendSlotInterval(lock, ttl)
+          : await extendLock(lock, ttl));
       if (!renewed) {
         throw new Error(
           "Checkout took too long and its hold expired — another checkout for this slot may be already in progress. Please try again.",
@@ -504,6 +512,11 @@ export async function handleCheckout(
           );
         }
       }
+      if (planSalesLock && !(await extendLock(planSalesLock, ttl))) {
+        throw new Error(
+          "Checkout took too long and its hold expired — another checkout for this slot may be already in progress. Please try again.",
+        );
+      }
       if (buyerSeatGrant && !(await extendSlotInterval(buyerSeatGrant, ttl))) {
         throw new Error(
           "Checkout took too long and its hold expired — another checkout for this slot may be already in progress. Please try again.",
@@ -511,6 +524,22 @@ export async function handleCheckout(
       }
     };
     await renewOrAbort(perAttemptTtl);
+
+    // A full expert is refused before any gateway order exists; the commit
+    // re-checks under the same lock. No transaction is open here.
+    if (appointmentType === "SUBSCRIPTION") {
+      const purchase = await resolveSubscriptionPurchase(
+        prisma,
+        validatedData,
+        priced.consulteeProfileId,
+        subscriptionSchedulingPeriod,
+      );
+      await assertSubscriptionDemandRoom(
+        prisma,
+        purchase,
+        priced.consulteeProfileId,
+      );
+    }
 
     // #1861 L1 — one deadline for the gateway's capture window and the
     // PENDING row, so a Serializable retry cannot push the row past the order.
@@ -582,6 +611,7 @@ export async function handleCheckout(
         if (paymentError instanceof PaymentError) throw paymentError;
         throw new Error(
           "Failed to create payment intent. Please try again later.",
+          { cause: paymentError },
         );
       }
     }
@@ -721,9 +751,12 @@ export async function handleCheckout(
         // #1365 — these payments never see a capture webhook, so the tax
         // invoice has to be minted here too. Org-sponsored payments no-op
         // inside the minter by design; they are invoiced on the org series.
-        await mintConsumerInvoiceBestEffort({
-          paymentIntent: mintedOrder.id,
-        });
+        // A free order with no credit has no supply, so its reads are skipped.
+        if (hasBilledSupply(amount, creditsApplied)) {
+          await mintConsumerInvoiceBestEffort({
+            paymentIntent: mintedOrder.id,
+          });
+        }
 
         const appointmentIdForChannels = result.appointmentId;
         if (appointmentIdForChannels) {
@@ -790,6 +823,7 @@ export async function handleCheckout(
         if (mintError instanceof PaymentError) throw mintError;
         throw new Error(
           "Failed to create payment intent. Please try again later.",
+          { cause: mintError },
         );
       }
       const dbError = asSeatPaymentConflict(asWelcomeDiscountConflict(caught));
@@ -967,6 +1001,7 @@ export async function handleCheckout(
 
       throw new Error(
         "Failed to record payment information. Please try again.",
+        { cause: dbError },
       );
     }
   } catch (error) {
@@ -1030,6 +1065,9 @@ export async function handleCheckout(
     }
     if (consulteeLock) {
       await unlockConsulteeBooking(consulteeLock);
+    }
+    if (planSalesLock) {
+      await unlockRequestCap(planSalesLock);
     }
     if (buyerSeatGrant) {
       await unlockSlotInterval(buyerSeatGrant);

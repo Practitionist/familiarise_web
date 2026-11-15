@@ -55,6 +55,7 @@ jest.mock("../../../lib/prisma", () => {
         },
       ),
     },
+    bookingUtilization: { findUnique: jest.fn(async () => null) },
   };
   return {
     __esModule: true,

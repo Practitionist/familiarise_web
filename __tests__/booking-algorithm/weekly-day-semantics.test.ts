@@ -35,17 +35,12 @@ import {
   windowAtoms,
 } from "../../utils/scheduling-engine/availabilityCoverage";
 import {
-  mergeConsecutiveSlots,
   processAvailabilitySlots,
   type WeeklySlot,
 } from "../../utils/scheduling-engine/intervals";
-import { mergeConsecutiveSlotsForDisplay } from "../../app/explore/experts/[consultantId]/utils/mergeSlots";
-import type { PickerInterval as ExplorePickerInterval } from "../../app/explore/experts/[consultantId]/types";
-import type { TIntervalTiming } from "../../types/slots";
 
 const IST = "Asia/Kolkata";
 const NEW_YORK = "America/New_York";
-const THIRTY_MIN_MS = 30 * 60 * 1000;
 
 /** IST Monday 01:00–05:00 — the row every day-shift bug was reported on. */
 const IST_EARLY_MONDAY: WeeklySlot = {
@@ -262,64 +257,7 @@ describe("a block ending at local midnight keeps its last atom (#1415)", () => {
   });
 });
 
-// ─── 5. Display merge = booking merge (#1416) ───────────────────────────────
-
-describe("the expert page merges slots exactly as booking does (#1416)", () => {
-  const base = new Date("2026-09-07T10:00:00.000Z").getTime();
-
-  const bookingAtom = (
-    index: number,
-    gapMs: number,
-  ): TIntervalTiming & {
-    isAllocated: boolean;
-  } => {
-    const start = base + index * THIRTY_MIN_MS + (index > 0 ? gapMs : 0);
-    return {
-      slotId: `atom-${index}`,
-      dateInISO: new Date(start).toISOString(),
-      dayOfWeek: "MONDAY",
-      startsAt: new Date(start).toISOString(),
-      endsAt: new Date(start + THIRTY_MIN_MS).toISOString(),
-      availabilityWindowId: "row",
-      appointmentOccurrenceId: "",
-      localStartTime: "",
-      localEndTime: "",
-      type: "WEEKLY",
-      isAllocated: false,
-      bookingStatus: "available",
-    };
-  };
-
-  const displayAtom = (index: number, gapMs: number): ExplorePickerInterval => {
-    const atom = bookingAtom(index, gapMs);
-    return {
-      id: atom.slotId,
-      localStartTime: "",
-      localEndTime: "",
-      originalSlot: {} as ExplorePickerInterval["originalSlot"],
-      isAllocated: false,
-      bookingStatus: "available",
-      startsAt: atom.startsAt,
-      endsAt: atom.endsAt,
-      type: "WEEKLY",
-    };
-  };
-
-  it.each([0, 1_000, 60_000])("agrees about a %dms seam", (gapMs) => {
-    const booking = mergeConsecutiveSlots([
-      bookingAtom(0, gapMs),
-      bookingAtom(1, gapMs),
-    ]);
-    const display = mergeConsecutiveSlotsForDisplay([
-      displayAtom(0, gapMs),
-      displayAtom(1, gapMs),
-    ]);
-    expect(display).toHaveLength(booking.length);
-    expect(display.length).toBe(gapMs === 0 ? 1 : 2);
-  });
-});
-
-// ─── 6. The dual-written DST columns (#872) ─────────────────────────────────
+// ─── 5. The dual-written DST columns ────────────────────────────────────────
 
 describe("weeklyRowLocalColumns", () => {
   it("describes an IST pre-dawn row in the consultant's own wall clock", () => {

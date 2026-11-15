@@ -6,7 +6,7 @@
  * paise, and Razorpay is offered.
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { Suspense } from "react";
 
@@ -22,9 +22,23 @@ jest.mock("@/hooks/useMaintenanceGuard", () => ({
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn() }),
 }));
+// Pressed on a page that showed the order free, the server answers with ₹1,179.41 to pay.
 jest.mock("@/app/checkout/components/RazorpayCheckout", () => ({
   __esModule: true,
-  default: () => <button type="button">Pay with Razorpay</button>,
+  default: ({
+    label = "Pay with Razorpay",
+    onPaidWhenFree,
+  }: {
+    label?: string;
+    onPaidWhenFree?: (order: { amount: number; currency: string }) => void;
+  }) => (
+    <button
+      type="button"
+      onClick={() => onPaidWhenFree?.({ amount: 117941, currency: "INR" })}
+    >
+      {label}
+    </button>
+  ),
 }));
 jest.mock("@/app/checkout/components/OrgPayerSelector", () => ({
   OrgPayerSelector: () => null,
@@ -78,7 +92,7 @@ const basePlan = {
   price: 99950,
   consultantProfile,
   language: "English",
-  level: "All Levels",
+  level: "ALL_LEVELS",
   durationInHours: 1,
   durationInMonths: 1,
   sessionsPerWeek: 2,
@@ -198,6 +212,98 @@ describe("shared plan checkout", () => {
     expect(heading).toBeTruthy();
     expect(total).toBeTruthy();
     expect(screen.getByText("Pay with Razorpay")).toBeTruthy();
+  });
+
+  it("a free consultation offers one confirm button and no payer, method or refund copy", async () => {
+    PLANS["/api/plans/consultations/free"] = {
+      data: { ...basePlan, price: 0 },
+    };
+    renderPage(
+      <ConsultationCheckoutPage
+        params={resolved({ planId: "free" })}
+        searchParams={search({
+          startsAt: future(48),
+          endsAt: future(49),
+          availabilityWindowWeeklyId: "aw1",
+        })}
+      />,
+    );
+    await screen.findByRole(
+      "button",
+      { name: "Confirm booking" },
+      { timeout: 4000 },
+    );
+    expect(screen.queryByText("Pay with Razorpay")).toBeNull();
+    expect(screen.queryByText(/Billing state/)).toBeNull();
+    expect(screen.queryByText("Includes")).toBeNull();
+    expect(screen.queryByText(/If you cancel/)).toBeNull();
+  });
+
+  it("a free order the server prices stops, shows the new price and asks again", async () => {
+    PLANS["/api/plans/consultations/stale"] = {
+      data: { ...basePlan, price: 0 },
+    };
+    renderPage(
+      <ConsultationCheckoutPage
+        params={resolved({ planId: "stale" })}
+        searchParams={search({
+          startsAt: future(48),
+          endsAt: future(49),
+          availabilityWindowWeeklyId: "aw1",
+        })}
+      />,
+    );
+    const confirm = await screen.findByRole(
+      "button",
+      { name: "Confirm booking" },
+      { timeout: 4000 },
+    );
+    PLANS["/api/plans/consultations/stale"] = { data: basePlan };
+    fireEvent.click(confirm);
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "The price changed to ₹1,179.41.",
+    );
+    expect(
+      await screen.findByRole("button", { name: "Pay with Razorpay" }),
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: "Confirm booking" }),
+    ).toBeNull();
+    expect(await screen.findByText("₹1,179.41")).toBeTruthy();
+  });
+
+  it("a fully booked subscription checkout says so on its disabled pay button", async () => {
+    const answer = global.fetch as jest.Mock;
+    const routed = answer.getMockImplementation()!;
+    answer.mockImplementation(async (input: RequestInfo | URL) =>
+      String(input).startsWith("/api/plans/subscriptions/plan1/feasibility")
+        ? {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              verdict: "ok",
+              firstWeekPlaceable: 2,
+              sessionsPerWeek: 2,
+              notice: null,
+              fullyBooked: true,
+            }),
+          }
+        : routed(input),
+    );
+    renderPage(
+      <SubscriptionCheckoutPage
+        params={params}
+        searchParams={search({ schedulingPeriodStartsAt: future(96) })}
+      />,
+    );
+    const button = await screen.findByRole(
+      "button",
+      { name: "Fully booked" },
+      { timeout: 4000 },
+    );
+    expect(button).toHaveProperty("disabled", true);
+    expect(screen.queryByText("Pay with Razorpay")).toBeNull();
+    expect(screen.queryByText("Sold out")).toBeNull();
   });
 
   it("renders the subscription checkout with the pay-now line", async () => {

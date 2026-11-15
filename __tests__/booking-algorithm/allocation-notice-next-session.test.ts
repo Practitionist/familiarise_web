@@ -67,3 +67,29 @@ it("names the next live session on a subscription top-up", async () => {
   const payload = (notifyAppointmentBooked as jest.Mock).mock.calls[0][1];
   expect(payload.dateTime).toBe(OCCURRENCES[3].startsAt.toISOString());
 });
+
+it("keys each placement batch apart, so week two is not deduplicated into week one", async () => {
+  (notifyAppointmentBooked as jest.Mock).mockClear();
+  const week = (days: number) => [`occ-week-${days}`];
+  await stageAllocationNotices(
+    tx,
+    "subscription",
+    "sub-1",
+    undefined,
+    undefined,
+    week(1),
+  );
+  await stageAllocationNotices(
+    tx,
+    "subscription",
+    "sub-1",
+    undefined,
+    undefined,
+    week(8),
+  );
+
+  const keys = (notifyAppointmentBooked as jest.Mock).mock.calls.map(
+    ([, , opts]) => opts.dedupeKey,
+  );
+  expect(keys[0]).not.toEqual(keys[1]);
+});

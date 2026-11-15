@@ -32,17 +32,17 @@ Every distributed lock key in this subsystem is minted in
 `utils/appointmentlock.ts` and nowhere else, because two names for one atom is
 no lock at all.
 
-| Atom                                    | Key shape                                            | Minted by                                 |
-| --------------------------------------- | ---------------------------------------------------- | ----------------------------------------- |
-| 30 minutes of one consultant's calendar | `slot-booking:<consultantProfileId>:<atomStartISO>`  | `tryLockSlotBatch` / `lockSlotBatch`      |
-| One consultee's booking activity        | `consultee-booking:<consulteeUserId>`                | `lockConsulteeBooking`                    |
-| One sellable event or plan              | `event-checkout:<appointmentType>:<eventOrPlanId>`   | `lockEventCheckout`                       |
-| One consultant's allocation pool        | `auto-allocate:<consultantProfileId>`                | `lockAutoAllocate`                        |
-| One consultant's open-request cap       | `request-cap:<consultantProfileId>`                  | `lockRequestCap`                          |
-| One consultation approval               | `consultation-approval:<consultationId>`             | `lockConsultationApproval`                |
-| One subscription approval               | `subscription-approval:<subscriptionId>`             | `lockSubscriptionApproval`                |
-| One pay-link mint                       | `approval-payment-mint:<kind>:<id>`, kind lowercased | `lockApprovalPaymentMint`                 |
-| One appointment's lifecycle             | `appointment-lock:<appointmentId>`                   | `lockAppointment` / `withAppointmentLock` |
+| Atom                                     | Key shape                                            | Minted by                                 |
+| ---------------------------------------- | ---------------------------------------------------- | ----------------------------------------- |
+| 30 minutes of one consultant's calendar  | `slot-booking:<consultantProfileId>:<atomStartISO>`  | `tryLockSlotBatch` / `lockSlotBatch`      |
+| One consultee's booking activity         | `consultee-booking:<consulteeUserId>`                | `lockConsulteeBooking`                    |
+| One sellable event or plan               | `event-checkout:<appointmentType>:<eventOrPlanId>`   | `lockEventCheckout`                       |
+| One consultant's allocation pool         | `auto-allocate:<consultantProfileId>`                | `lockAutoAllocate`                        |
+| One consultant's requests and plan sales | `request-cap:<consultantProfileId>`                  | `lockRequestCap`, `lockExpertPlanSales`   |
+| One consultation approval                | `consultation-approval:<consultationId>`             | `lockConsultationApproval`                |
+| One subscription approval                | `subscription-approval:<subscriptionId>`             | `lockSubscriptionApproval`                |
+| One pay-link mint                        | `approval-payment-mint:<kind>:<id>`, kind lowercased | `lockApprovalPaymentMint`                 |
+| One appointment's lifecycle              | `appointment-lock:<appointmentId>`                   | `lockAppointment` / `withAppointmentLock` |
 
 Every path acquires in one global order, coarse to fine, so the families form
 a total order that cannot cycle. The locks are Redis try-locks with bounded
@@ -56,7 +56,9 @@ retries, so a path that breaks the order times out; it never hangs.
 4. `consultation-approval:` / `subscription-approval:`, then
    `approval-payment-mint:` as a leaf under the approval key.
 5. One consultant tier, never two at once: `auto-allocate:` (allocation) or
-   `request-cap:` (request-for-approval and trial requests).
+   `request-cap:` (request-for-approval, trial requests, and every plan
+   checkout, which holds it across the sold-plan counts and the new hold's
+   commit).
 6. `consultee-booking:`, exactly one.
 7. **One atomic slot batch**: every `slot-booking:` atom of every profile the
    write makes busy — the host, each ACCEPTED co-host, and the buyer's own
@@ -66,9 +68,18 @@ retries, so a path that breaks the order times out; it never hangs.
 
 The whole-event cancel takes `event-checkout:` before `appointment-lock:`, and
 the re-time door documents the same order at its head (`lib/booking/event-retime.ts`).
-The allocator takes the consultee key only after its search, so a buyer's own
-checkout never reads "another booking in progress on your account" because an
-expert is allocating for them.
+A webinar or class allocation (`lib/booking/allocation/allocate.ts`) takes the
+same `event-checkout:` key first, so a re-plan waits for seat checkouts; a held
+key answers 409 `EVENT_CHECKOUT_BUSY`. The class series move (`retimeClassSeries`)
+takes event checkout, then the appointment, then the host and co-host slot batch.
+Every allocation mode takes the consultee key only after its search or its
+reads and validation, just before the slot batch (auto in `modes/auto.ts`,
+manual in `modes/manual.ts`, requested in `modes/use-requested.ts`), so a
+buyer's own checkout never reads "another booking in progress on your account"
+because an expert is picking times for them. The in-transaction
+`revalidateConflicts` reads the consultee's calendar under the key, so holding
+it from the batch to the commit is enough to stop a cross-consultant double
+booking.
 
 Every writer that moves one booking's lifecycle takes the `appointment-lock:`
 atom before it opens its transaction. That includes the reschedule withdraw
@@ -273,6 +284,22 @@ status intent is limited to DRAFT and SCHEDULED (`EventEditorStatusSchema` in
 `schemas/event-instance.ts`, `editorStatusOrRefusal` in
 `lib/api/plans/event-status.ts`). The cancel route is the only door because it
 owns refunds and history.
+
+A sold webinar or class is never re-planned. Once any buyer seat is live (a
+`CONSULTEE` participant that is HELD, CONFIRMED or ATTENDED; the host's own
+participant row never counts), a manual or auto allocation that would replace its
+sessions answers 409 `USE_RETIME`: `assertGroupEventUnsoldInTx`
+(`lib/booking/allocation/guards.ts`) counts the live seats with `tx` right after
+`guardAllocationInTx` takes the event's advisory lock, so a seat checkout that
+commits first is always seen. A top-up that only appends sessions skips the check.
+The move for a sold event is the webinar re-time (`retimeWebinar` in
+`lib/booking/event-retime.ts`, the "Move to a new date" button) or, for a class,
+the series move (`retimeClassSeries`, "Move upcoming sessions"), which carry the
+24-hour notice and the `retimeBy` free leave. The series move reads a snapshot
+before its locks and re-reads the class status and its movable sessions inside
+the transaction, refusing with 409 `RETIME_NOT_ALLOWED` when they differ. The host's menu and the timings page apply the same rule
+through `allowsManageTimings`, but they are conveniences; the transaction is the
+control.
 
 ## 10. Sweeps are scoped to the lapsed buyer and bounded in time
 

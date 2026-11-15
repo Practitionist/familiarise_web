@@ -14,20 +14,33 @@ export const CreateTrialSchema = z.object({
   // nothing — this is *attribution*, not sponsorship. Membership is
   // verified server-side before persisting.
   organizationId: z.string().optional(),
+  // The buyer's pick: one window of the plan's trial length, from the
+  // expert's open times. The route checks the length and the lead time.
+  slot: z.object({
+    startsAt: z.string().datetime({ offset: true }),
+    endsAt: z.string().datetime({ offset: true }),
+  }),
 });
 
 export const UpdateTrialSchema = z.object({
   status: TrialSessionStatusEnum.optional(),
-  scheduledTime: z.string().optional(),
-  slotData: z
-    .object({
-      startsAt: z.string(),
-      endsAt: z.string(),
-      availabilityWindowId: z.string(),
-      slotType: z.enum(["WEEKLY", "CUSTOM"]),
-    })
-    .optional(),
   notes: z.string().max(MAX_TEXT_LENGTH).optional(), // #831
   // Required when status = CONVERTED — the subscription created via checkout
   subscriptionId: z.string().optional(),
 });
+
+/** The trial cancel door's optional body: the refund the caller confirmed from its preview, in paise. */
+export const TrialCancelBodySchema = z.object({
+  confirmedRefundPaise: z.number().int().nonnegative().optional(),
+});
+
+/** What a trial cancel sends; the DELETE route parses the body with `TrialCancelBodySchema`. */
+export function trialCancelRequest(
+  trialId: string,
+  quote?: { estimatedRefundPaise: number },
+): { url: string; body: z.infer<typeof TrialCancelBodySchema> } {
+  return {
+    url: `/api/trials/${trialId}`,
+    body: quote ? { confirmedRefundPaise: quote.estimatedRefundPaise } : {},
+  };
+}

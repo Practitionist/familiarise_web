@@ -747,8 +747,8 @@ async function collectTopUpCandidates(now: Date): Promise<TopUpCandidate[]> {
   for (let page = 0; page < TOP_UP_SCAN_PAGES; page++) {
     const classes = await prisma.class.findMany({
       where: {
-        // A class has no request to approve; SCHEDULED/IN_PROGRESS is the
-        // occupancy policy's equivalent of an APPROVED request.
+        // A class has no request to approve; SCHEDULED is the occupancy
+        // policy's equivalent of an APPROVED request.
         status: { in: [...OCCUPIED_EVENT_STATUSES] },
         deletedAt: null,
         schedulingPeriodEndsAt: { gt: now },

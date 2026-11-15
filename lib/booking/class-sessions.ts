@@ -10,6 +10,7 @@
  */
 
 import { OccurrenceCompletionStatus, Prisma } from "@prisma/client";
+import type { RequiredNoticeKind } from "@/lib/notifications/required-notices";
 
 import prisma, { type Tx } from "@/lib/prisma";
 import { transitionOccurrenceCompletion } from "@/lib/booking/transitions";
@@ -71,6 +72,7 @@ import {
   splitByClash,
 } from "./retime-leave";
 import { MAKEUP_WINDOW_DAYS, MISS_WHERE, missedAt } from "./misses";
+import { eventTimeRefusal } from "./event-time-rules";
 import {
   reliabilityThresholdMet,
   seatLedger,
@@ -113,6 +115,7 @@ async function stageBellsByZone(
   userIds: string[],
   payload: (zone: string) => NovuPayload,
   dedupeKey: string,
+  required?: RequiredNoticeKind,
 ): Promise<StagedTrigger[]> {
   const zones = await resolveRecipientTimezones(userIds, tx);
   const bells: StagedTrigger[] = [];
@@ -122,6 +125,7 @@ async function stageBellsByZone(
       recipients: ids,
       payload: payload(zone),
       dedupeKey,
+      ...(required ? { required } : {}),
     });
     if (bell) bells.push(bell);
   }
@@ -260,9 +264,13 @@ async function onExitRightTripped(
 }
 
 /** E-2 — cancel one future session; no deletedAt, so it stays a miss. */
+/** The history reason of a host's one-session cancel; the refund sweep reads its actor. */
+export const HOST_CANCELLED_SESSION_REASON = "HOST_CANCELLED_SESSION";
+
 export async function cancelClassSession(
   hosted: HostedClass,
   occurrenceId: string,
+  actorUserId: string | null,
 ) {
   const appointmentId = hosted.appointment.id;
   const result = await withAppointmentLock(appointmentId, () =>
@@ -278,7 +286,9 @@ export async function cancelClassSession(
         to: OccurrenceCompletionStatus.CANCELLED,
         fromIn: [OccurrenceCompletionStatus.SCHEDULED],
         data: { hostCancelledAt: now },
-        reason: "HOST_CANCELLED_SESSION",
+        reason: HOST_CANCELLED_SESSION_REASON,
+        // The delayed refund notice reads who cancelled from this history row.
+        actorUserId,
         allowZero: true,
       });
       if (moved === 0) {
@@ -304,25 +314,38 @@ export async function cancelClassSession(
       let cancelEmailArgs: AppointmentCancelledEmailArgs | null = null;
       let exitEmailArgs: ClassExitAvailableEmailArgs | null = null;
       if (seatUserIds.length > 0) {
+        const cancelPayload = (zone: string) => ({
+          planTitle: hosted.cls.classPlan.title,
+          consultantName: hostName,
+          dateTime: zoned(session.startsAt, zone),
+          makeUpBy: zoned(makeUpBy, zone),
+          // Every seat holder here is a consultee.
+          dashboardUrl,
+        });
+        // A seat holder who cancelled the session themself keeps their own switches.
+        const others = seatUserIds.filter((id) => id !== actorUserId);
+        const own = seatUserIds.filter((id) => id === actorUserId);
         bells.push(
           ...(await stageBellsByZone(
             tx,
             NOVU_WORKFLOWS.CLASS_SESSION_CANCELLED,
-            seatUserIds,
-            (zone) => ({
-              planTitle: hosted.cls.classPlan.title,
-              consultantName: hostName,
-              dateTime: zoned(session.startsAt, zone),
-              makeUpBy: zoned(makeUpBy, zone),
-              // #1527 — every seat holder here is a consultee.
-              dashboardUrl,
-            }),
+            others,
+            cancelPayload,
+            `occ-cancel:${occurrenceId}`,
+            "CANCELLED_BY_HOST",
+          )),
+          ...(await stageBellsByZone(
+            tx,
+            NOVU_WORKFLOWS.CLASS_SESSION_CANCELLED,
+            own,
+            cancelPayload,
             `occ-cancel:${occurrenceId}`,
           )),
         );
         cancelEmailArgs = {
           appointmentId,
           userIds: seatUserIds,
+          requiredFor: others,
           startsAt: session.startsAt,
           cancelledBy: hostName,
           dashboardUrl,
@@ -622,6 +645,11 @@ export async function scheduleClassMakeUp(
       "Holding a make-up past the 14-day window needs a reason.",
       400,
     );
+  }
+  // On the half-hour lattice and an hour ahead, like every host-set event time.
+  const timeRefusal = eventTimeRefusal(startsAt, "makeup");
+  if (timeRefusal) {
+    throw new BookingRuleError(timeRefusal.code, timeRefusal.message, 400);
   }
   const appointmentId = hosted.appointment.id;
   const plan = hosted.cls.classPlan;

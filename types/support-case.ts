@@ -156,6 +156,7 @@ export interface OwnTicketCase {
   topic: CaseTopic;
   status: string;
   ackDueAt?: string | null;
+  acknowledgedAt?: string | null;
   resolvedAt?: string | null;
   /** Submitted as `{ rating }` to `/api/support/cases/[caseId]/csat`; returned as `csatRating`. */
   csatRating?: number | null;

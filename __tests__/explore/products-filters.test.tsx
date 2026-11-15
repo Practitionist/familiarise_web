@@ -36,3 +36,25 @@ describe("ProductsFilters", () => {
     expect(html()).not.toContain("Clear");
   });
 });
+
+describe("ProductsFilters active chips", () => {
+  it("shows no chips when nothing is filtered", () => {
+    expect(html()).not.toContain("Active filters");
+  });
+
+  it("offers one removal link per filter that keeps the others", () => {
+    const markup = html({ q: "cv", category: "TEMPLATE", price: "free" });
+    expect(markup).toContain('aria-label="Remove filter “cv”"');
+    expect(markup).toContain(
+      'href="/explore/products?category=TEMPLATE&amp;price=free"',
+    );
+    expect(markup).toContain('href="/explore/products?q=cv&amp;price=free"');
+    expect(markup).toContain(
+      'href="/explore/products?q=cv&amp;category=TEMPLATE"',
+    );
+  });
+
+  it("offers Most purchased as a sort", () => {
+    expect(html()).toContain('<option value="popular"');
+  });
+});

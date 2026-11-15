@@ -30,6 +30,7 @@ jest.mock("../../lib/prisma", () => {
     // #1732 — the lapsed-link cohort now reads subscriptions too.
     subscription: { findUnique: jest.fn(), updateMany: jest.fn() },
     bookingStatusHistory: { create: jest.fn() },
+    bookingUtilization: { findUnique: jest.fn(async () => null) },
   };
   const client = {
     ...tx,

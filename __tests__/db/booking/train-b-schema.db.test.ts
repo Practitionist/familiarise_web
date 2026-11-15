@@ -221,6 +221,19 @@ describe("frozen purchase terms", () => {
     });
     const policyId = await seedPolicy();
     const start = new Date(Date.now() + 2 * 86_400_000);
+    // Checkout refuses a plan whose first week holds no free time, so the host publishes some.
+    await prisma.consultantProfile.update({
+      where: { id: host.consultantProfileId },
+      data: {
+        scheduleType: "CUSTOM",
+        availabilityWindowsCustom: {
+          create: {
+            startsAt: start,
+            endsAt: new Date(start.getTime() + 7 * 86_400_000),
+          },
+        },
+      },
+    });
     const input = checkoutSchema.parse({
       appointmentType: "SUBSCRIPTION",
       planId: plan.id,

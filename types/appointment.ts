@@ -207,3 +207,8 @@ export type TAppointment = Prisma.AppointmentGetPayload<{
 
 // Extract slot type from TAppointment for reuse
 export type TAppointmentOccurrence = TAppointment["occurrences"][number];
+
+/** A list row that also counted its live seats (`_count.participants` filtered to live statuses). */
+export type TAppointmentWithSeats = TAppointment & {
+  _count?: { participants?: number };
+};

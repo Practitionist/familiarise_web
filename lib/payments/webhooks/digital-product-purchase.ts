@@ -39,6 +39,7 @@ import {
   paiseNote,
   refundStagedCapture,
   resolveStandaloneCharge,
+  settleOrderPayment,
   stageCaptureRefund,
   type CaptureOutcome,
   type StageRefundInput,
@@ -245,20 +246,16 @@ async function settleProductSale(
         },
       });
     }
-    payment = await tx.payment.update({
-      where: { id: orderPayment.id },
-      data: {
-        amount: chargedPaise,
-        originalAmount: charge.originalAmount,
-        taxAmount: charge.taxAmount,
-        gstRegime: charge.gstRegime,
-        ...buyerCountry,
-        paymentMethod,
-        paymentStatus: "SUCCEEDED",
-        capturedAt: new Date(),
-        description,
-        ...(gatewayPaymentId ? { gatewayPaymentId } : {}),
-      },
+    payment = await settleOrderPayment(tx, orderPayment, {
+      amount: chargedPaise,
+      originalAmount: charge.originalAmount,
+      taxAmount: charge.taxAmount,
+      gstRegime: charge.gstRegime,
+      ...buyerCountry,
+      paymentMethod,
+      capturedAt: new Date(),
+      description,
+      ...(gatewayPaymentId ? { gatewayPaymentId } : {}),
     });
   } else {
     payment = await tx.payment.create({

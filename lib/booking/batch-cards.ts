@@ -56,7 +56,7 @@ export interface BatchCard {
   nextBatchStartsAt: Date | null;
 }
 
-const SELLABLE = new Set(["SCHEDULED", "IN_PROGRESS"]);
+const SELLABLE = new Set(["SCHEDULED"]);
 const GONE = new Set(["CANCELLED", "RESCHEDULED"]);
 
 /** "Mondays", "Mondays and Thursdays", or "Varies" when the days drift. */

@@ -18,7 +18,7 @@ import {
   HOST_ATTRIBUTED_OUTCOMES,
 } from "@/lib/booking/session-outcome";
 import { INCIDENT_REFUND_KEY_PREFIX } from "@/lib/booking/incident-keys";
-import { NEEDS_HUMAN } from "@/lib/booking/misses";
+import { agedNeedsHumanWhere, NEEDS_HUMAN } from "@/lib/booking/misses";
 import {
   OCCURRENCE_COMPLETION_ALLOWED_FROM,
   transitionOccurrenceCompletion,
@@ -224,8 +224,7 @@ export async function setSessionOutcome(tx: Tx, args: OverturnArgs) {
     to === "VOIDED" &&
     occ.completionStatus !== "VOIDED" &&
     plan &&
-    plan.status !== "APPROVED" &&
-    plan.status !== "SCHEDULED"
+    plan.status !== "APPROVED"
   ) {
     throw new OpsRefusal(
       "PLAN_SETTLED",
@@ -266,21 +265,34 @@ export async function overturnSessionOutcome(args: {
  * host no-show the detector declined, a call the maintenance drain cut, and a
  * paid trial that was voided (D4). None of them moves money on its own.
  */
-export async function readSessionsNeedingHuman(limit = 100) {
-  return prisma.appointmentOccurrence.findMany({
-    where: NEEDS_HUMAN,
-    orderBy: { endsAt: "desc" },
+export async function readSessionsNeedingHuman(limit = 100, now = new Date()) {
+  // Sessions parked over 7 days come first, oldest first, so the cap never hides them.
+  const aged = await prisma.appointmentOccurrence.findMany({
+    where: agedNeedsHumanWhere(now),
+    orderBy: { endsAt: "asc" },
     take: limit,
-    select: {
-      id: true,
-      appointmentId: true,
-      startsAt: true,
-      endsAt: true,
-      completionStatus: true,
-      outcome: true,
-      deliveredMinutes: true,
-      lostMinutes: true,
-      meeting: { select: { endedReason: true } },
-    },
+    select: NEEDS_HUMAN_ROW_SELECT,
   });
+  const recent = await prisma.appointmentOccurrence.findMany({
+    where: { AND: [NEEDS_HUMAN, { id: { notIn: aged.map((r) => r.id) } }] },
+    orderBy: { endsAt: "desc" },
+    take: Math.max(0, limit - aged.length),
+    select: NEEDS_HUMAN_ROW_SELECT,
+  });
+  return [
+    ...aged.map((row) => ({ ...row, aged: true })),
+    ...recent.map((row) => ({ ...row, aged: false })),
+  ];
 }
+
+const NEEDS_HUMAN_ROW_SELECT = {
+  id: true,
+  appointmentId: true,
+  startsAt: true,
+  endsAt: true,
+  completionStatus: true,
+  outcome: true,
+  deliveredMinutes: true,
+  lostMinutes: true,
+  meeting: { select: { endedReason: true } },
+} satisfies Prisma.AppointmentOccurrenceSelect;

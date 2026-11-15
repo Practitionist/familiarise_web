@@ -1008,8 +1008,8 @@ export const supportArticles: SupportArticle[] = [
       {
         heading: "Hold periods and the minimum payout",
         paragraphs: [
-          "Each earning is held for a short period after the later of the payment and the end of the session, so a cancellation or refund can still be settled. The hold is 24 hours for consultations and classes, 48 hours for webinars, and 7 days for subscriptions; moving a session moves its release date with it.",
-          "A payout is sent once your available balance reaches ₹500. Smaller balances stay available and join the next payout. An earning marked Refunded was returned to the learner after a cancellation and is not paid out. On bookings you sell yourself, Familiarise keeps a 20% platform fee; sessions an organisation pays for follow that organisation's agreement.",
+          "Each earning is held for a short period after the later of the payment and the end of the session, so a cancellation or refund can still be settled. The hold is 48 hours for consultations and webinars, 24 hours for classes, and 7 days for subscriptions; moving a session moves its release date with it.",
+          "A payout is sent once your available balance reaches ₹250. Smaller balances stay available and join the next payout. An earning marked Refunded was returned to the learner after a cancellation and is not paid out. On bookings you sell yourself, Familiarise keeps a 20% platform fee; sessions an organisation pays for follow that organisation's agreement.",
         ],
       },
       {
@@ -1101,8 +1101,8 @@ export const supportArticles: SupportArticle[] = [
     category: "experts",
     title: "How do trial sessions work?",
     excerpt:
-      "Offering a trial on a subscription, answering trial requests, and what happens after.",
-    updated: "September 2026",
+      "Offering a trial on a subscription, how learners book it, and what happens after.",
+    updated: "November 2026",
     contactCategory: "consultant",
     related: ["experts/booking-requests", "experts/create-offerings"],
     sections: [
@@ -1113,9 +1113,10 @@ export const supportArticles: SupportArticle[] = [
         ],
       },
       {
-        heading: "Answering trial requests",
+        heading: "How learners book a trial",
         paragraphs: [
-          "Learners request a trial from your public page, and the request arrives in Requests under Trials. Accept it by picking a time, or decline it; a learner who paid for a declined trial is refunded automatically. Each learner can take one trial with you.",
+          "Learners pick a trial time from your open hours on your public page. A free trial is confirmed at once. A paid trial holds the time while the learner pays and is confirmed when the payment goes through. Either way it then shows in your Appointments. Each learner can take one trial with you.",
+          "Each side can move a trial once, at least 24 hours before it starts. If you cancel a confirmed trial, the learner is refunded in full and the cancellation counts against your reliability.",
         ],
       },
       {
@@ -1322,7 +1323,7 @@ export const supportArticles: SupportArticle[] = [
       {
         heading: "What always arrives",
         paragraphs: [
-          "Some notices are required and ignore these switches. In the bell and by email: account, security, verification and moderation notices. By email only: payment receipts, and invitations or decisions you must act on. Booking updates, reminders, refunds, payouts, support replies and announcements are optional and follow your switches.",
+          "Some notices are required and ignore these switches. In the bell and by email: account, security, verification and moderation notices, and the changes someone else makes to your booking (your expert, host or our staff cancelling it and the refund that follows, a declined request, a proposed new time, the original time coming back when a proposal lapses, a move that confirmed automatically, a class or webinar time change, a host removing your seat, a refund for a class session the host missed). By email only: payment receipts, and invitations or decisions you must act on. Reminders, your own booking changes, other refunds, payouts, support replies and announcements are optional and follow your switches.",
         ],
       },
       {

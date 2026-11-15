@@ -22,8 +22,14 @@ import {
   slotCellClassName,
   type SlotStatusKey,
 } from "@/lib/scheduling/interval-status-tokens";
-import type { CellView, OverlapDetail } from "@/lib/scheduling/week-grid-model";
-import type { RowSegment } from "@/lib/scheduling/dead-hour-bands";
+import type { GridBlock } from "@/lib/scheduling/grid-blocks";
+import { GRID_COLS } from "@/lib/scheduling/week-grid-geometry";
+import {
+  fitLabel,
+  type CellView,
+  type OverlapDetail,
+  type RowWindow,
+} from "@/lib/scheduling/week-grid-model";
 import {
   formatDateTimeLabel,
   formatDayOfMonth,
@@ -40,25 +46,56 @@ import { cn } from "@/utils/tailwind";
  * re-renders a handful of cells rather than all of them.
  */
 
-// A fixed time gutter and seven shrinkable day columns.
-export const GRID_COLS =
-  "grid grid-cols-[3.5rem_repeat(7,minmax(0,1fr))] md:grid-cols-[5rem_repeat(7,minmax(0,1fr))]";
+/** One half-hour row: 24px, so an hour is 48px. Blocks are placed on this pitch. */
+export const GRID_ROW_PX = 24;
 
-/** One keyboard stop in the grid, top to bottom. */
-export type NavRow =
-  | {
-      kind: "band";
-      key: string;
-      /** What the open/closed state is remembered under. */
-      toggleKey: string;
-      segment: RowSegment;
-      open: boolean;
-    }
-  | { kind: "cells"; key: string; axisIndex: number };
+/** The sticky header's height, and the matching offset that puts the block layer under it. */
+const HEADER_HEIGHT = "h-16";
+const HEADER_OFFSET = "top-16";
+
+/** A cell fills its slot on the ruled canvas: no radius, no gap, 11px text. */
+const CELL_GEOMETRY = "h-6 rounded-none text-[11px]";
+
+/** The rule under a row: solid where the next hour starts, dashed at the half-hour. */
+const HOUR_RULE =
+  "after:pointer-events-none after:absolute after:inset-x-0 after:bottom-0 after:border-b after:border-slate-300";
+const HALF_HOUR_RULE =
+  "after:pointer-events-none after:absolute after:inset-x-0 after:bottom-0 after:border-b after:border-dashed after:border-slate-200";
+
+/** Closed time (nothing published) is a light hatch on the canvas, unlike past's fade or outside-period's stripe. */
+const CLOSED_CANVAS =
+  "bg-[repeating-linear-gradient(135deg,theme(colors.slate.100)_0_6px,theme(colors.slate.50)_6px_12px)]";
+
+/** The canvas classes of one gridcell: the day-column line, the row rule and, when closed, the hatch. */
+function canvasCellClass(endsHour: boolean, closed: boolean): string {
+  return cn(
+    "relative h-6 min-w-0 border-l border-slate-200",
+    endsHour ? HOUR_RULE : HALF_HOUR_RULE,
+    closed && CLOSED_CANVAS,
+  );
+}
+
+/** The roving-focus key of an axis row. */
+export function rowKeyOf(axisRow: AxisRow): string {
+  return `row:${axisRow.key}`;
+}
 
 export interface GridFocus {
   rowKey: string;
   dayIndex: number;
+}
+
+/** One day column's share of the hover preview: the atoms a click would place. */
+export interface GhostPiece {
+  key: string;
+  dayIndex: number;
+  fromRow: number;
+  toRow: number;
+  /** False when no whole session fits at the hovered time. */
+  fits: boolean;
+  startMs: number;
+  endMs: number;
+  label: string;
 }
 
 export interface CellTooltip {
@@ -71,6 +108,11 @@ interface SlotCellProps {
   dayIndex: number;
   rowKey: string;
   zone: string;
+  /** The row ends on the hour, so its rule is solid. */
+  endsHour: boolean;
+  /** The cell above / below paints the same state: drop the shared border so the run reads as one. */
+  joinTop: boolean;
+  joinBottom: boolean;
   isFocusTarget: boolean;
   /** Fraction down the cell where the now-line sits, or null. */
   nowFraction: number | null;
@@ -84,13 +126,15 @@ interface SlotCellProps {
     dayIndex: number,
   ) => void;
   onFocusCell: (rowKey: string, dayIndex: number) => void;
+  /** The pointer or focus is on this atom: preview what a click would place. */
+  onPreview: (startMs: number) => void;
 }
 
 function NowLine({ fraction }: Readonly<{ fraction: number }>) {
   return (
     <div
       aria-hidden
-      className="pointer-events-none absolute inset-x-0 z-10 border-t-2 border-primary"
+      className="pointer-events-none absolute inset-x-0 z-20 border-t-2 border-primary"
       style={{ top: `${fraction * 100}%` }}
     >
       <span className="absolute -left-1 -top-[5px] h-2 w-2 rounded-full bg-primary" />
@@ -112,19 +156,22 @@ function sameCellProps(
   return (
     a.cell.startMs === b.cell.startMs &&
     a.cell.statusKey === b.cell.statusKey &&
-    a.cell.text === b.cell.text &&
     a.cell.stateLabel === b.cell.stateLabel &&
     a.cell.isRequested === b.cell.isRequested &&
     a.dayIndex === b.dayIndex &&
     a.rowKey === b.rowKey &&
     a.zone === b.zone &&
+    a.endsHour === b.endsHour &&
+    a.joinTop === b.joinTop &&
+    a.joinBottom === b.joinBottom &&
     a.isFocusTarget === b.isFocusTarget &&
     a.nowFraction === b.nowFraction &&
     a.readOnly === b.readOnly &&
     sameTooltip(a.tooltip, b.tooltip) &&
     a.onActivate === b.onActivate &&
     a.onKeyDown === b.onKeyDown &&
-    a.onFocusCell === b.onFocusCell
+    a.onFocusCell === b.onFocusCell &&
+    a.onPreview === b.onPreview
   );
 }
 
@@ -133,6 +180,9 @@ const SlotCell = memo(function SlotCell({
   dayIndex,
   rowKey,
   zone,
+  endsHour,
+  joinTop,
+  joinBottom,
   isFocusTarget,
   nowFraction,
   readOnly,
@@ -140,6 +190,7 @@ const SlotCell = memo(function SlotCell({
   onActivate,
   onKeyDown,
   onFocusCell,
+  onPreview,
 }: Readonly<SlotCellProps>) {
   const token = SLOT_STATUS_TOKENS[cell.statusKey];
   const interactive = !readOnly && token.interactive;
@@ -164,23 +215,29 @@ const SlotCell = memo(function SlotCell({
       className={slotCellClassName(cell.statusKey, {
         className: cn(
           "flex items-center gap-0.5 overflow-hidden",
+          CELL_GEOMETRY,
+          joinTop && "border-t-0",
+          joinBottom && "border-b-0",
           readOnly && "cursor-default",
           cell.isRequested && REQUESTED_OUTLINE.className,
         ),
       })}
       onClick={() => onActivate(cell.startMs)}
       onKeyDown={(event) => onKeyDown(event, rowKey, dayIndex)}
-      onFocus={() => onFocusCell(rowKey, dayIndex)}
+      onFocus={() => {
+        onFocusCell(rowKey, dayIndex);
+        onPreview(cell.startMs);
+      }}
+      onMouseEnter={() => onPreview(cell.startMs)}
     >
       <SlotStatusIcon name={token.icon} />
-      {cell.text && <span className="truncate">{cell.text}</span>}
     </button>
   );
   return (
     <div
       role="gridcell"
       aria-selected={interactive ? cell.statusKey === "selected" : undefined}
-      className="relative min-w-0"
+      className={canvasCellClass(endsHour, cell.statusKey === "unavailable")}
     >
       {tooltip ? (
         <Tooltip>
@@ -209,6 +266,7 @@ const SlotCell = memo(function SlotCell({
 const SkippedCell = memo(function SkippedCell({
   dayIndex,
   rowKey,
+  endsHour,
   isRepeat,
   isFocusTarget,
   onKeyDown,
@@ -216,6 +274,7 @@ const SkippedCell = memo(function SkippedCell({
 }: Readonly<{
   dayIndex: number;
   rowKey: string;
+  endsHour: boolean;
   /** The row is another day's repeated fall-back hour, not a time this day skips. */
   isRepeat: boolean;
   isFocusTarget: boolean;
@@ -223,7 +282,7 @@ const SkippedCell = memo(function SkippedCell({
   onFocusCell: SlotCellProps["onFocusCell"];
 }>) {
   return (
-    <div role="gridcell" className="relative min-w-0">
+    <div role="gridcell" className={canvasCellClass(endsHour, true)}>
       <button
         type="button"
         tabIndex={isFocusTarget ? 0 : -1}
@@ -235,7 +294,7 @@ const SkippedCell = memo(function SkippedCell({
         }
         data-day-index={dayIndex}
         data-row-key={rowKey}
-        className="h-7 w-full cursor-not-allowed rounded-sm border border-dashed border-transparent"
+        className="h-6 w-full cursor-not-allowed"
         onKeyDown={(event) => onKeyDown(event, rowKey, dayIndex)}
         onFocus={() => onFocusCell(rowKey, dayIndex)}
       />
@@ -243,12 +302,106 @@ const SkippedCell = memo(function SkippedCell({
   );
 });
 
+/**
+ * The overlay of session blocks, laid on the same columns and 24px row pitch
+ * as the cells beneath. Decorative: the cells keep focus, clicks and names.
+ */
+function BlockLayer({
+  blocks,
+  ghost,
+  rows,
+}: Readonly<{
+  blocks: readonly GridBlock[];
+  ghost: readonly GhostPiece[];
+  rows: RowWindow;
+}>) {
+  const count = rows.to - rows.from;
+  const place = (dayIndex: number, fromRow: number, toRow: number) => {
+    const from = Math.max(fromRow, rows.from);
+    const to = Math.min(toRow, rows.to);
+    return to <= from
+      ? null
+      : {
+          gridColumn: dayIndex + 2,
+          gridRow: `${from - rows.from + 1} / span ${to - from}`,
+        };
+  };
+  return (
+    <div
+      aria-hidden
+      data-testid="grid-blocks"
+      className={cn(
+        GRID_COLS,
+        "pointer-events-none absolute inset-x-0 z-10",
+        HEADER_OFFSET,
+      )}
+      style={{ gridTemplateRows: `repeat(${count}, ${GRID_ROW_PX}px)` }}
+    >
+      {blocks.map((block) => {
+        const style = place(block.dayIndex, block.fromRow, block.toRow);
+        if (!style) return null;
+        const token = SLOT_STATUS_TOKENS[block.statusKey];
+        return (
+          <div
+            key={block.key}
+            data-block-state={block.statusKey}
+            style={style}
+            className={cn(
+              "m-px flex min-w-0 items-start gap-1 overflow-hidden rounded-md border px-1.5 py-0.5 text-xs leading-tight shadow-sm",
+              token.fill,
+              token.border,
+              token.text,
+              token.pattern,
+              block.isRequested && REQUESTED_OUTLINE.className,
+            )}
+          >
+            <SlotStatusIcon name={token.icon} className="mt-0.5" />
+            <span className="min-w-0 break-words">
+              <span className="font-medium">{block.label}</span>
+              {` · ${block.timeLabel}`}
+            </span>
+          </div>
+        );
+      })}
+      {ghost.map((piece) => {
+        const style = place(piece.dayIndex, piece.fromRow, piece.toRow);
+        if (!style) return null;
+        return (
+          <div
+            key={piece.key}
+            data-ghost={piece.fits ? "fits" : "blocked"}
+            data-ghost-start={new Date(piece.startMs).toISOString()}
+            data-ghost-end={new Date(piece.endMs).toISOString()}
+            style={style}
+            className={cn(
+              "m-px overflow-hidden rounded-md border-2 border-dashed px-1.5 py-0.5 text-xs font-medium leading-tight",
+              piece.fits
+                ? "border-emerald-700 bg-emerald-50/80 text-emerald-900"
+                : "border-rose-600 bg-rose-50/80 text-rose-900",
+            )}
+          >
+            {piece.label}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export interface WeekGridProps {
   days: Date[];
   axis: AxisRow[];
   matrix: (CellView | null)[][];
-  navRows: NavRow[];
-  bandLabelOf: (segment: RowSegment) => string;
+  /** The axis rows drawn: the open-hours window or the full day. */
+  rows: RowWindow;
+  /** Busy and picked runs, drawn as one labelled overlay each. */
+  blocks: readonly GridBlock[];
+  /** Per day, the whole sessions its free time holds ("N fit"). Absent on a read-only grid. */
+  dayFits?: readonly number[];
+  /** The hover preview; empty when there is nothing to place. */
+  ghost: readonly GhostPiece[];
+  /** The atom under the pointer or focus, or null once both leave the grid. */
+  onPreview: (startMs: number | null) => void;
   /** Index of today's column, or -1. */
   todayIndex: number;
   inPeriodDays: boolean[];
@@ -261,7 +414,6 @@ export interface WeekGridProps {
   refreshing: boolean;
   tooltipOf: (cell: CellView) => CellTooltip | null;
   onActivate: (startMs: number) => void;
-  onToggleBand: (key: string) => void;
   onFocusChange: (focus: GridFocus) => void;
   onPageWeek: (direction: -1 | 1) => void;
   gridRef: (element: HTMLDivElement | null) => void;
@@ -289,8 +441,11 @@ export function WeekGrid({
   days,
   axis,
   matrix,
-  navRows,
-  bandLabelOf,
+  rows,
+  blocks,
+  dayFits,
+  ghost,
+  onPreview,
   todayIndex,
   inPeriodDays,
   nowAtomStartMs,
@@ -301,7 +456,6 @@ export function WeekGrid({
   refreshing,
   tooltipOf,
   onActivate,
-  onToggleBand,
   onFocusChange,
   onPageWeek,
   gridRef,
@@ -311,38 +465,39 @@ export function WeekGrid({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const pendingFocusRef = useRef<GridFocus | null>(null);
 
+  // One keyboard stop per drawn row, top to bottom.
+  const navRows = useMemo(
+    () =>
+      axis.slice(rows.from, rows.to).map((axisRow, offset) => ({
+        key: rowKeyOf(axisRow),
+        axisIndex: rows.from + offset,
+      })),
+    [axis, rows.from, rows.to],
+  );
   const navIndexOf = useMemo(() => {
     const map = new Map<string, number>();
     navRows.forEach((row, index) => map.set(row.key, index));
     return map;
   }, [navRows]);
 
-  // The roving stop must always land on a row that exists this week.
+  // The roving stop must always land on a row that is drawn.
   const activeFocus = useMemo<GridFocus>(() => {
     if (navIndexOf.has(focus.rowKey)) return focus;
-    const firstCells =
-      navRows.find((row) => row.kind === "cells") ?? navRows[0];
-    return { rowKey: firstCells?.key ?? "", dayIndex: focus.dayIndex };
+    return { rowKey: navRows[0]?.key ?? "", dayIndex: focus.dayIndex };
   }, [focus, navIndexOf, navRows]);
 
   const focusElement = useCallback((target: GridFocus) => {
     const container = containerRef.current;
     if (!container) return false;
-    const row = container.querySelector<HTMLElement>(
-      `[data-nav-key="${target.rowKey}"]`,
-    );
-    const element =
-      row?.dataset.navKind === "band"
-        ? row.querySelector<HTMLElement>("button")
-        : row?.querySelector<HTMLElement>(
-            `[data-day-index="${target.dayIndex}"]`,
-          );
+    const element = container
+      .querySelector<HTMLElement>(`[data-nav-key="${target.rowKey}"]`)
+      ?.querySelector<HTMLElement>(`[data-day-index="${target.dayIndex}"]`);
     if (!element) return false;
     element.focus();
     return true;
   }, []);
 
-  // After a week change or band toggle the target renders later; finish the move then.
+  // After a week or view change the target renders later; finish the move then.
   useEffect(() => {
     const pending = pendingFocusRef.current;
     if (pending && focusElement(pending)) pendingFocusRef.current = null;
@@ -356,7 +511,7 @@ export function WeekGrid({
     onActivate,
     onFocusChange,
     onPageWeek,
-    onToggleBand,
+    onPreview,
     activeFocus,
   });
   useEffect(() => {
@@ -366,7 +521,7 @@ export function WeekGrid({
       onActivate,
       onFocusChange,
       onPageWeek,
-      onToggleBand,
+      onPreview,
       activeFocus,
     };
   });
@@ -385,27 +540,26 @@ export function WeekGrid({
       rowKey: string,
       dayIndex: number,
     ) => {
-      const { navRows: rows, navIndexOf: indexOf } = latest.current;
+      const { navRows: stops, navIndexOf: indexOf } = latest.current;
       const index = indexOf.get(rowKey) ?? 0;
       const lastDay = 6;
       const go = (nextIndex: number, nextDay: number) => {
-        const clampedIndex = Math.max(0, Math.min(rows.length - 1, nextIndex));
-        const row = rows[clampedIndex];
+        const clampedIndex = Math.max(0, Math.min(stops.length - 1, nextIndex));
+        const row = stops[clampedIndex];
         if (!row) return;
         moveTo({
           rowKey: row.key,
           dayIndex: Math.max(0, Math.min(lastDay, nextDay)),
         });
       };
-      const isBand = rows[index]?.kind === "band";
       switch (event.key) {
         case "ArrowRight":
           event.preventDefault();
-          if (!isBand) go(index, dayIndex + 1);
+          go(index, dayIndex + 1);
           break;
         case "ArrowLeft":
           event.preventDefault();
-          if (!isBand) go(index, dayIndex - 1);
+          go(index, dayIndex - 1);
           break;
         case "ArrowDown":
           event.preventDefault();
@@ -422,7 +576,7 @@ export function WeekGrid({
           break;
         case "End":
           event.preventDefault();
-          if (event.ctrlKey || event.metaKey) go(rows.length - 1, lastDay);
+          if (event.ctrlKey || event.metaKey) go(stops.length - 1, lastDay);
           else go(index, lastDay);
           break;
         case "PageUp":
@@ -452,6 +606,10 @@ export function WeekGrid({
     latest.current.onActivate(startMs);
   }, []);
 
+  const handlePreview = useCallback((startMs: number) => {
+    latest.current.onPreview(startMs);
+  }, []);
+
   const setContainer = useCallback(
     (element: HTMLDivElement | null) => {
       containerRef.current = element;
@@ -475,159 +633,172 @@ export function WeekGrid({
       </p>
       <div
         ref={setContainer}
-        role="grid"
-        aria-label={label}
-        aria-describedby={helpId}
-        aria-busy={refreshing || undefined}
-        aria-multiselectable={readOnly ? undefined : true}
-        aria-colcount={8}
-        className="relative flex-1 overflow-y-auto scrollbar-thin min-h-0"
+        className="relative min-h-0 flex-1 overflow-y-auto scrollbar-thin"
+        onMouseLeave={() => onPreview(null)}
+        onBlur={(event) => {
+          if (
+            !(event.relatedTarget instanceof Node) ||
+            !event.currentTarget.contains(event.relatedTarget)
+          ) {
+            onPreview(null);
+          }
+        }}
       >
         <div
-          role="row"
-          className={cn(
-            GRID_COLS,
-            "sticky top-0 z-20 gap-0.5 bg-background pb-1 md:gap-1",
-          )}
+          role="grid"
+          aria-label={label}
+          aria-describedby={helpId}
+          aria-busy={refreshing || undefined}
+          aria-multiselectable={readOnly ? undefined : true}
+          aria-colcount={8}
         >
-          <div role="columnheader" className="min-w-0">
-            <span className="sr-only">Time</span>
-          </div>
-          {days.map((date, index) => (
-            <div
-              key={date.toISOString()}
-              role="columnheader"
-              aria-current={index === todayIndex ? "date" : undefined}
-              className={cn(
-                "min-w-0 rounded-sm p-1 text-center md:p-2",
-                inPeriodDays[index] && "border-x-2 border-blue-200 bg-blue-50",
-                index === todayIndex && "bg-primary/10 ring-1 ring-primary/40",
-              )}
-            >
+          <div
+            role="row"
+            className={cn(
+              GRID_COLS,
+              "sticky top-0 z-30 border-b-2 border-slate-300 bg-background",
+            )}
+          >
+            <div role="columnheader" className="min-w-0">
+              <span className="sr-only">Time</span>
+            </div>
+            {days.map((date, index) => (
               <div
+                key={date.toISOString()}
+                role="columnheader"
+                aria-current={index === todayIndex ? "date" : undefined}
                 className={cn(
-                  "text-xs font-bold md:text-base",
-                  index === todayIndex && "text-primary",
+                  "flex min-w-0 flex-col items-center justify-center border-l border-slate-200 px-1 text-center",
+                  HEADER_HEIGHT,
+                  inPeriodDays[index] && "bg-blue-50",
+                  index === todayIndex && "bg-primary/10",
                 )}
               >
-                {formatWeekdayShort(date)}
+                <div
+                  className={cn(
+                    "text-[11px] font-medium uppercase tracking-wide text-muted-foreground",
+                    index === todayIndex && "text-primary",
+                  )}
+                >
+                  {formatWeekdayShort(date)}
+                </div>
+                <div
+                  className={cn(
+                    "text-sm font-semibold leading-6 md:text-base",
+                    index === todayIndex &&
+                      "min-w-7 rounded-full bg-primary px-1.5 text-primary-foreground",
+                  )}
+                >
+                  {formatDayOfMonth(date)}
+                </div>
+                {dayFits && (
+                  <div
+                    data-day-fit
+                    className={cn(
+                      "text-[11px] leading-4",
+                      dayFits[index] > 0
+                        ? "font-medium text-emerald-800"
+                        : "text-muted-foreground",
+                    )}
+                  >
+                    {fitLabel(dayFits[index] ?? 0)}
+                  </div>
+                )}
               </div>
-              <div className="text-xs text-muted-foreground md:text-sm">
-                {formatDayOfMonth(date)}
-              </div>
-            </div>
-          ))}
-        </div>
-        {navRows.map((navRow) => {
-          if (navRow.kind === "band") {
-            const holdsNow =
-              todayIndex >= 0 &&
-              !navRow.open &&
-              matrix
-                .slice(navRow.segment.from, navRow.segment.to)
-                .some((line) => line[todayIndex]?.startMs === nowAtomStartMs);
-            const isFocusTarget = activeFocus.rowKey === navRow.key;
+            ))}
+          </div>
+          {navRows.map((navRow) => {
+            const axisRow = axis[navRow.axisIndex];
+            const line = matrix[navRow.axisIndex] ?? [];
+            // Neighbours outside the drawn rows never join: their border closes the run.
+            const above =
+              navRow.axisIndex > rows.from
+                ? matrix[navRow.axisIndex - 1]
+                : undefined;
+            const below =
+              navRow.axisIndex + 1 < rows.to
+                ? matrix[navRow.axisIndex + 1]
+                : undefined;
+            const minuteOfHour = axisRow.minuteOfDay % 60;
+            const endsHour = minuteOfHour >= 30;
             return (
               <div
                 key={navRow.key}
                 role="row"
+                data-row={navRow.axisIndex}
                 data-nav-key={navRow.key}
-                data-nav-kind="band"
-                className="grid grid-cols-1"
+                className={GRID_COLS}
               >
-                <div role="gridcell" aria-colspan={8}>
-                  <button
-                    type="button"
-                    tabIndex={isFocusTarget ? 0 : -1}
-                    onClick={() => onToggleBand(navRow.toggleKey)}
-                    onKeyDown={(event) =>
-                      handleKeyDown(event, navRow.key, activeFocus.dayIndex)
-                    }
-                    onFocus={() =>
-                      handleFocusCell(navRow.key, activeFocus.dayIndex)
-                    }
-                    aria-expanded={navRow.open}
-                    className={cn(
-                      "relative my-0.5 flex h-6 w-full items-center justify-center gap-1 rounded-sm border border-dashed border-border text-[10px] text-muted-foreground hover:bg-muted",
-                      holdsNow && "border-primary/60",
-                    )}
-                  >
-                    {holdsNow && (
-                      <span
-                        aria-hidden
-                        className="absolute inset-y-0 left-0 w-0.5 rounded-full bg-primary"
-                      />
-                    )}
-                    {bandLabelOf(navRow.segment)}
-                    <span aria-hidden>{navRow.open ? "· hide" : "· show"}</span>
-                    {holdsNow && <span aria-hidden>· now</span>}
-                  </button>
+                <div
+                  role="rowheader"
+                  className="flex h-6 min-w-0 items-start justify-end whitespace-nowrap pr-1 text-[11px] leading-none tabular-nums text-muted-foreground md:pr-2"
+                >
+                  {/* The first row of each local hour prints the hour; every row keeps its full name for screen readers. */}
+                  {minuteOfHour === 0 ? (
+                    <span>{axisRow.label}</span>
+                  ) : (
+                    <>
+                      {minuteOfHour < 30 && (
+                        <span aria-hidden="true">
+                          {axisRow.label.replace(/:\d{2}/, "")}
+                        </span>
+                      )}
+                      <span className="sr-only">{axisRow.label}</span>
+                    </>
+                  )}
                 </div>
-              </div>
-            );
-          }
-          const axisRow = axis[navRow.axisIndex];
-          const line = matrix[navRow.axisIndex] ?? [];
-          return (
-            <div
-              key={navRow.key}
-              role="row"
-              data-row={navRow.axisIndex}
-              data-nav-key={navRow.key}
-              data-nav-kind="cells"
-              className={cn(
-                GRID_COLS,
-                "gap-0.5 border-b border-border/40 md:gap-1",
-              )}
-            >
-              <div
-                role="rowheader"
-                className="flex h-7 min-w-0 items-start justify-end whitespace-nowrap pr-1 text-[10px] tabular-nums text-muted-foreground md:pr-2 md:text-xs"
-              >
-                {axisRow.label}
-              </div>
-              {days.map((date, dayIndex) => {
-                const cell = line[dayIndex];
-                const isFocusTarget =
-                  activeFocus.rowKey === navRow.key &&
-                  activeFocus.dayIndex === dayIndex;
-                if (!cell) {
+                {days.map((date, dayIndex) => {
+                  const cell = line[dayIndex];
+                  const isFocusTarget =
+                    activeFocus.rowKey === navRow.key &&
+                    activeFocus.dayIndex === dayIndex;
+                  if (!cell) {
+                    return (
+                      <SkippedCell
+                        key={date.toISOString()}
+                        dayIndex={dayIndex}
+                        rowKey={navRow.key}
+                        endsHour={endsHour}
+                        isRepeat={axisRow.occurrence === 1}
+                        isFocusTarget={isFocusTarget}
+                        onKeyDown={handleKeyDown}
+                        onFocusCell={handleFocusCell}
+                      />
+                    );
+                  }
                   return (
-                    <SkippedCell
+                    <SlotCell
                       key={date.toISOString()}
+                      cell={cell}
                       dayIndex={dayIndex}
                       rowKey={navRow.key}
-                      isRepeat={axisRow.occurrence === 1}
+                      zone={zone}
+                      endsHour={endsHour}
+                      joinTop={above?.[dayIndex]?.statusKey === cell.statusKey}
+                      joinBottom={
+                        below?.[dayIndex]?.statusKey === cell.statusKey
+                      }
                       isFocusTarget={isFocusTarget}
+                      nowFraction={
+                        dayIndex === todayIndex &&
+                        cell.startMs === nowAtomStartMs
+                          ? nowFraction
+                          : null
+                      }
+                      readOnly={readOnly}
+                      tooltip={tooltipOf(cell)}
+                      onActivate={handleActivate}
                       onKeyDown={handleKeyDown}
                       onFocusCell={handleFocusCell}
+                      onPreview={handlePreview}
                     />
                   );
-                }
-                return (
-                  <SlotCell
-                    key={date.toISOString()}
-                    cell={cell}
-                    dayIndex={dayIndex}
-                    rowKey={navRow.key}
-                    zone={zone}
-                    isFocusTarget={isFocusTarget}
-                    nowFraction={
-                      dayIndex === todayIndex && cell.startMs === nowAtomStartMs
-                        ? nowFraction
-                        : null
-                    }
-                    readOnly={readOnly}
-                    tooltip={tooltipOf(cell)}
-                    onActivate={handleActivate}
-                    onKeyDown={handleKeyDown}
-                    onFocusCell={handleFocusCell}
-                  />
-                );
-              })}
-            </div>
-          );
-        })}
+                })}
+              </div>
+            );
+          })}
+        </div>
+        <BlockLayer blocks={blocks} ghost={ghost} rows={rows} />
       </div>
     </TooltipProvider>
   );

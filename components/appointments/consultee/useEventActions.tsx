@@ -29,12 +29,14 @@ import {
   shownQuoteBody,
   type ShownCancelQuote,
 } from "@/lib/appointments/cancel-requote";
+import { FREE_BOOKING_REFUND_LINE } from "@/lib/appointments/payment-display";
 import { fetchWithIdentity } from "@/lib/auth/identity-header";
 import {
   rescheduleTimesTaken,
   takenStartsFrom,
 } from "@/lib/scheduling/allocationMessages";
 import { takenSlotStartsOf } from "@/lib/scheduling/allocationService";
+import type { RescheduleProposeCode } from "@/lib/booking/reschedule-proposals";
 
 interface UseEventActionsOptions {
   appointmentId?: string;
@@ -71,30 +73,28 @@ function reportActionFailure(error: unknown, op: string): void {
 }
 
 /**
- * Which of the three reschedule outcomes happened.
- *
- * They must not read alike: the time is already yours, the consultant has been
- * asked, or nothing was proposed and they will pick. Lifted out of the handler
- * so the branching lives next to the copy it produces rather than inflating a
- * function that also does auth, fetch and error handling.
+ * The reschedule toast. The server's outcome code picks the title and its
+ * sentence is the reason, so a move waiting for acceptance reads as sent.
  */
 function rescheduleOutcomeToast(outcome: {
-  autoConfirmed: boolean;
-  proposedTimes: boolean;
+  code: RescheduleProposeCode | undefined;
+  message: string | undefined;
   sessionsAffected: number;
 }): { title: string; description: string } {
-  if (outcome.autoConfirmed) {
+  if (outcome.code === "AUTO_CONFIRMED") {
     return {
       title: "New time confirmed",
       description: "Your session has been moved. Nothing further is needed.",
     };
   }
-  if (outcome.proposedTimes) {
-    return {
-      title: "Request sent",
-      description:
-        "That time isn't free, so we've asked your consultant to confirm it.",
-    };
+  if (outcome.code === "AWAITING_ANSWER" && outcome.message) {
+    return { title: "Request sent", description: outcome.message };
+  }
+  if (
+    (outcome.code === "NOT_PLACEABLE" || outcome.code === "PROPOSAL_CLOSED") &&
+    outcome.message
+  ) {
+    return { title: "Time not confirmed", description: outcome.message };
   }
   return {
     title: "Ready to reschedule",
@@ -120,9 +120,10 @@ type CancelRefund = {
   rail?: "GATEWAY" | "INTERNAL" | "CREDITS";
 } | null;
 
-function describeRefund(refund: CancelRefund): string {
+function describeRefund(refund: CancelRefund, freeBooking = false): string {
   // A free booking has no money to speak about.
   if (!refund) return "";
+  if (freeBooking) return FREE_BOOKING_REFUND_LINE;
 
   // Branch on what the route SAYS happened, never on the amount: zero is
   // equally "the policy owes nothing", "the balance was already exhausted" and
@@ -235,6 +236,8 @@ export function useEventActions({
     preference?: SlotPreference,
     /** The zone the picker showed, for naming taken times back. */
     displayZone?: string,
+    /** Replays the first answer when the same submission is sent again. */
+    idempotencyKey?: string,
   ): Promise<boolean> => {
     if (!appointmentId) {
       toast({
@@ -264,7 +267,10 @@ export function useEventActions({
 
       const response = await fetchWithIdentity(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
+        },
         body: Object.keys(payload).length ? JSON.stringify(payload) : undefined,
       });
 
@@ -274,7 +280,8 @@ export function useEventActions({
       )) as {
         sessionsAffected?: number;
         slotsAffected?: number;
-        autoConfirmed?: boolean;
+        outcome?: RescheduleProposeCode;
+        message?: string;
       };
 
       // #448 — show the SESSION count, not the slot count: a 1-hour session is
@@ -285,8 +292,8 @@ export function useEventActions({
 
       toast(
         rescheduleOutcomeToast({
-          autoConfirmed: !!data.autoConfirmed,
-          proposedTimes: !!proposedSlots?.length,
+          code: data.outcome,
+          message: data.message,
           sessionsAffected,
         }),
       );
@@ -390,7 +397,7 @@ export function useEventActions({
         title: "Appointment cancelled",
         description: [
           `Your ${type.toLowerCase()} "${title}" has been cancelled.`,
-          describeRefund(data.refund ?? null),
+          describeRefund(data.refund ?? null, quote?.freeBooking),
         ]
           .filter(Boolean)
           .join(" "),

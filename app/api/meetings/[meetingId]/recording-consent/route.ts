@@ -103,7 +103,7 @@ async function stopRecordingOnConsentDecline(
   let targetCallId = access.streamCallId ?? null;
 
   if (isRecording === undefined || !targetCallId) {
-    const meetingRow = await prisma.meeting?.findUnique?.({
+    const meetingRow = await prisma.meeting.findUnique({
       where: { id: access.meetingId },
       select: { isRecording: true, streamCallId: true },
     });

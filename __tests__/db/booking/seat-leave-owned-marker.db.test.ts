@@ -18,9 +18,13 @@ jest.mock("../../../lib/novu", () => {
     { get: (_target, prop) => (prop === "__esModule" ? true : noop) },
   );
 });
+/** The seat intent is written for real; only the Stream drive is stubbed. */
 jest.mock("../../../lib/stream/access-revocation", () => ({
-  revokeEndedBookingChatAccess: jest.fn(async () => undefined),
-  revokeEndedEventChatAccess: jest.fn(async () => undefined),
+  revokeEndedSeatAccess: jest.fn(async () => undefined),
+  persistSeatRevocation: jest.fn(async () => undefined),
+  persistSeatRevocationInTx: jest.requireActual(
+    "../../../lib/stream/access-revocation",
+  ).persistSeatRevocationInTx,
 }));
 /** The seat refund door; a test makes it die after the release committed. */
 jest.mock("../../../lib/payments/operations/event-refunds", () => ({
@@ -54,6 +58,16 @@ const leave = (webinarId: string, userId: string) =>
     userId,
     actorUserId: userId,
     isSelfLeave: true,
+  });
+
+const openSeatIntents = (appointmentId: string, userId: string) =>
+  prisma.streamRevocationRetry.count({
+    where: {
+      kind: "SEAT_ACCESS_REVOKE",
+      planId: appointmentId,
+      userId,
+      status: { not: "SUCCEEDED" },
+    },
   });
 
 const seatStatus = async (appointmentId: string, userId: string) =>
@@ -96,6 +110,10 @@ describe("seat leave and a refund another door owes", () => {
           .refundOwedKey,
       ).toBe(`incident:inc-1:occ-1:${buyer.userId}`);
       expect(seatDoor.refundRemovedAttendeeSeat).not.toHaveBeenCalled();
+      // The seat intent was written before the refusal and rolled back with it.
+      expect(await openSeatIntents(webinar.appointmentId, buyer.userId)).toBe(
+        0,
+      );
     },
   );
 
@@ -116,5 +134,6 @@ describe("seat leave and a refund another door owes", () => {
       where: { id: payment.id },
     });
     expect(row.refundOwedKey).toMatch(/^seat-leave:.*:pay:/);
+    expect(await openSeatIntents(webinar.appointmentId, buyer.userId)).toBe(1);
   });
 });

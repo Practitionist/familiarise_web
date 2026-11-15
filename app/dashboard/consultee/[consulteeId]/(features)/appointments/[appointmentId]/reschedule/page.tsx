@@ -1,10 +1,8 @@
 import { cache } from "react";
+import { bookingSettled } from "@/lib/booking/settled";
 import type { Metadata } from "next";
-import Link from "next/link";
 import { notFound } from "next/navigation";
-import { CalendarX } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
 import { DashboardViewportFill } from "@/components/dashboard/DashboardViewportFill";
 import { PanelHeader } from "@/components/dashboard/PageScaffold";
 import { OperatorOpsHint } from "@/components/appointments/OperatorOpsHint";
@@ -14,12 +12,17 @@ import {
   readAppointmentDetail,
 } from "@/lib/data/appointment-detail";
 import { getSession } from "@/lib/auth-server";
-import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
+import {
+  requirePersonalProfileAccess,
+  viewerOwnsPersonalProfile,
+} from "@/lib/auth/personal-dashboard-access";
 import { operatorOpsHref } from "@/lib/backoffice/booking-href";
 import { safeReturnTo } from "@/lib/navigation/safe-path";
 import { buildRescheduleSubject } from "@/lib/scheduling/time-picker-subject";
+import { bookedSessionMinutes } from "@/lib/appointments/occurrences";
 
 import { RescheduleClient } from "./RescheduleClient";
+import { TrialRescheduleClient } from "./TrialRescheduleClient";
 
 /**
  * The consultee's reschedule surface.
@@ -75,11 +78,15 @@ export async function generateMetadata({
   params,
 }: Readonly<PageProps>): Promise<Metadata> {
   const { consulteeId, appointmentId } = await params;
+  const generic = { title: "Reschedule — Familiarise" };
+  // Bound to the viewer before any read: a non-owner learns nothing.
+  if (!(await viewerOwnsPersonalProfile("consultee", consulteeId))) {
+    return generic;
+  }
   const [detail, profile] = await Promise.all([
     loadDetail(appointmentId).catch(() => null),
     loadConsulteeUserId(consulteeId).catch(() => null),
   ]);
-  const generic = { title: "Reschedule — Familiarise" };
   if (!detail || !profile) return generic;
   if (!consulteeOwns(detail.appointment, consulteeId, profile.userId)) {
     return generic;
@@ -114,43 +121,8 @@ export default async function RescheduleAppointmentPage({
     notFound();
   }
 
-  // #1163 — trials have no reschedule path (the API rejects them at submit),
-  // so refuse before drawing a picker whose submit can only fail.
-  if (detail.appointment.appointmentType === "TRIAL") {
-    return (
-      <DashboardViewportFill className="gap-4">
-        <div className="flex flex-1 flex-col items-center justify-center py-16 text-center">
-          <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-muted">
-            <CalendarX className="h-7 w-7 text-muted-foreground/70" />
-          </div>
-          <h1 className="text-base font-medium text-foreground">
-            Trial sessions can&apos;t be rescheduled
-          </h1>
-          <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-            A trial is a one-off taster at the time your consultant offered. If
-            it no longer works, cancel it and request a new one, or message your
-            consultant.
-          </p>
-          <Button variant="outline" size="sm" className="mt-4" asChild>
-            <Link href={`/dashboard/consultee/${consulteeId}/appointments`}>
-              Back to appointments
-            </Link>
-          </Button>
-        </div>
-      </DashboardViewportFill>
-    );
-  }
-
-  // The picker draws the CONSULTANT's availability, and this route's params
-  // carry no consultant — so it is resolved from the booking, here, rather
-  // than shipped to the client to look up.
-  const resolved = buildRescheduleSubject(detail);
-  if (!resolved) notFound();
-
-  // #1166 — org detail pages send ?returnTo= so finishing (or backing out of)
-  // a reschedule lands back in the org context instead of this personal list.
-  // RescheduleClient router.push()es this, so an off-site value would be an
-  // open redirect; safeReturnTo() decides it by parsing, not by prefix.
+  // Org detail pages send ?returnTo= so finishing lands back in the org
+  // context; safeReturnTo() decides it by parsing, so it is never off-site.
   const backHref = safeReturnTo(
     returnTo,
     `/dashboard/consultee/${consulteeId}/appointments`,
@@ -162,6 +134,45 @@ export default async function RescheduleAppointmentPage({
         appointmentId,
       )
     : null;
+
+  // A trial is one session: the buyer's slot list picks its one new window.
+  const trial = detail.appointment.trial;
+  if (detail.appointment.appointmentType === "TRIAL" && trial) {
+    const consultantName = trial.subscriptionPlan.consultantProfile?.user?.name;
+    return (
+      <DashboardViewportFill className="gap-4">
+        <div className="shrink-0">
+          <PanelHeader
+            description={
+              consultantName
+                ? `Choose a new time for your trial with ${consultantName}`
+                : "Choose a new time for your trial"
+            }
+          />
+        </div>
+        {opsHref ? (
+          <OperatorOpsHint href={opsHref} />
+        ) : (
+          <TrialRescheduleClient
+            appointmentId={appointmentId}
+            consultantId={trial.subscriptionPlan.consultantProfileId}
+            trialDurationMinutes={
+              bookedSessionMinutes(detail.appointment.occurrences) ??
+              trial.subscriptionPlan.trialDurationMinutes
+            }
+            title={trial.subscriptionPlan.title}
+            backHref={backHref}
+          />
+        )}
+      </DashboardViewportFill>
+    );
+  }
+
+  // The picker draws the CONSULTANT's availability, and this route's params
+  // carry no consultant — so it is resolved from the booking, here, rather
+  // than shipped to the client to look up.
+  const resolved = buildRescheduleSubject(detail);
+  if (!resolved) notFound();
 
   return (
     <DashboardViewportFill className="gap-4">
@@ -188,6 +199,10 @@ export default async function RescheduleAppointmentPage({
           typeLabel={resolved.typeLabel}
           subject={resolved.subject}
           backHref={backHref}
+          settled={await bookingSettled(prisma, {
+            consultationId: detail.appointment.consultation?.id,
+            subscriptionId: detail.appointment.subscription?.id,
+          })}
         />
       )}
     </DashboardViewportFill>

@@ -25,13 +25,33 @@ jest.mock("../../lib/auth-server", () => ({
 
 jest.mock("../../lib/rate-limit", () => ({
   __esModule: true,
-  trialRequestLimiter: {},
-  applyRateLimit: jest.fn(async () => null),
+  trialRequestRefusal: jest.fn(async () => null),
+  spendTrialRequest: jest.fn(async () => undefined),
 }));
 
-jest.mock("../../lib/novu", () => ({
-  __esModule: true,
-  notifyTrialRequested: jest.fn(async () => undefined),
+jest.mock("../../lib/trials/book-trial", () => ({
+  lockTrialPick: jest.fn(async () => async () => undefined),
+  // The booking's own insert stands in for the whole in-transaction write.
+  bookTrialInTx: jest.fn(
+    async (
+      tx: { trial: { create: (a: unknown) => Promise<object> } },
+      args: Record<string, unknown>,
+    ) => ({
+      ...(await tx.trial.create({ data: args })),
+      appointmentId: "apt-1",
+    }),
+  ),
+  TrialTimeRefusedError: class extends Error {},
+}));
+jest.mock("../../lib/trials/schedule-notices", () => ({
+  prepareTrialScheduledNotices: jest.fn(async () => ({
+    bells: [],
+    emails: { prepared: { messages: [] }, screened: [] },
+  })),
+  stageTrialScheduledNotices: jest.fn(async () => ({ bells: [], emails: [] })),
+}));
+jest.mock("../../lib/novu/stage-then-attempt", () => ({
+  flushNotificationsAfter: jest.fn(async () => undefined),
 }));
 
 jest.mock("../../utils/appointmentlock", () => ({
@@ -49,10 +69,11 @@ jest.mock("../../lib/prisma", () => {
       create: jest.fn(),
     },
     subscriptionPlan: { findUnique: jest.fn() },
+    consultantProfile: { findUnique: jest.fn(async () => null) },
     consulteeProfile: { findUnique: jest.fn() },
     membership: { findFirst: jest.fn() },
   };
-  // #1775 C-7 — the create runs in a transaction with the paid placeholder.
+  // The create runs in the booking transaction.
   db.$transaction = jest.fn(async (fn: (tx: unknown) => unknown) => fn(db));
   return { __esModule: true, default: db };
 });
@@ -64,6 +85,14 @@ import { POST } from "../../app/api/trials/route";
 const CONSULTEE = "consultee-1";
 const CONSULTANT = "consultant-1";
 const PLAN = "plan-1";
+
+const pickStart = new Date(
+  Math.ceil((Date.now() + 3 * 86_400_000) / 3_600_000) * 3_600_000,
+);
+const pickedSlot = {
+  startsAt: pickStart.toISOString(),
+  endsAt: new Date(pickStart.getTime() + 30 * 60_000).toISOString(),
+};
 
 const mockedSession = getSession as jest.Mock;
 const mockedFindUnique = prisma.trial.findUnique as jest.Mock;
@@ -90,6 +119,7 @@ function request() {
       consulteeProfileId: CONSULTEE,
       consultantProfileId: CONSULTANT,
       subscriptionPlanId: PLAN,
+      slot: pickedSlot,
     }),
   }) as never;
 }
@@ -111,6 +141,8 @@ beforeEach(() => {
     title: "Career Clarity",
     consultantProfileId: CONSULTANT,
     trialEnabled: true,
+    trialDurationMinutes: 30,
+    trialPriceInPaise: 0,
     consultantProfile: {
       maxOpenRequests: null,
       user: { id: "expert-1", name: "Expert" },
@@ -122,7 +154,7 @@ beforeEach(() => {
   });
   mockedCreate.mockResolvedValue({
     id: "trial-1",
-    status: TrialStatus.PENDING,
+    status: TrialStatus.SCHEDULED,
     consulteeProfile: { user: { id: "user-1", name: "Learner" } },
     consultantProfile: { user: { id: "expert-1", name: "Expert" } },
   });
@@ -145,7 +177,7 @@ describe("duplicate trial requests (defect 7)", () => {
     // A live trial already exists — no race, the read-side gate catches it.
     mockedFindUnique.mockResolvedValue({
       id: "trial-existing",
-      status: TrialStatus.PENDING,
+      status: TrialStatus.AWAITING_PAYMENT,
     });
 
     const res = await POST(request());
@@ -165,14 +197,14 @@ describe("duplicate trial requests (defect 7)", () => {
   });
 
   it("answers 409, not 500, when the rival clears the freed row first", async () => {
-    // A declined trial frees the pair, so both requests read it and both go to
+    // A cancelled trial frees the pair, so both requests read it and both go to
     // clear it. `delete` would raise P2025 on the loser and fall into the
     // generic catch as a 500 — one statement earlier than the unique violation
     // this route already answers calmly. `deleteMany` reports a count of zero
     // instead, and the insert stays the arbiter.
     mockedFindUnique.mockResolvedValue({
       id: "trial-freed",
-      status: TrialStatus.REJECTED,
+      status: TrialStatus.CANCELLED,
     });
     mockedDeleteMany.mockResolvedValue({ count: 0 });
     mockedCreate.mockRejectedValue(uniqueViolation());

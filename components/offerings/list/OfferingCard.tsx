@@ -62,7 +62,9 @@ export interface OfferingCardProps {
   duplicateHref: string | null;
   /** Signed expert share link whose `?via=<token>` param is appended to owned offering links. */
   shareAttributionHref?: string | null;
-  trials?: { href: string; pending: number };
+  trials?: { href: string };
+  /** Where an owned, unscheduled webinar or class gets its times. */
+  scheduleHref?: string | null;
   join?: { canJoin: boolean; isJoining: boolean; onJoin: () => void };
   onArchiveToggle?: () => Promise<unknown>;
   onDelete?: () => Promise<unknown>;
@@ -94,6 +96,7 @@ export function OfferingCard({
   duplicateHref,
   shareAttributionHref,
   trials,
+  scheduleHref,
   join,
   onArchiveToggle,
   onDelete,
@@ -309,7 +312,20 @@ export function OfferingCard({
         {(row.type === "webinar" || row.type === "class") && (
           <div>
             <dt className="sr-only">First session</dt>
-            <dd>{formatStart(row.startsAt)}</dd>
+            <dd>
+              {formatStart(row.startsAt)}
+              {!row.startsAt && scheduleHref && (
+                <>
+                  {" · "}
+                  <Link
+                    href={scheduleHref}
+                    className="font-medium text-primary underline-offset-4 hover:underline"
+                  >
+                    Schedule now
+                  </Link>
+                </>
+              )}
+            </dd>
           </div>
         )}
         {row.seats && (
@@ -342,9 +358,7 @@ export function OfferingCard({
           className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-foreground underline-offset-4 hover:underline"
         >
           <Gift className="h-3.5 w-3.5" aria-hidden />
-          {trials.pending > 0
-            ? `${trials.pending} trial ${trials.pending === 1 ? "request" : "requests"}`
-            : "Trial requests"}
+          Trials
         </Link>
       )}
 

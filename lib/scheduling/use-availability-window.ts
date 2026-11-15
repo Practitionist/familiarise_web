@@ -29,7 +29,7 @@ export const AVAILABILITY_READ_FAILED_MESSAGE =
   "We couldn't load the available times. Check your connection and try again.";
 
 /** A failed grid read. `message` is user copy; the server's own text stays in `detail`. */
-export class AvailabilityReadError extends Error {
+class AvailabilityReadError extends Error {
   readonly status: number;
   readonly detail: unknown;
   constructor(status: number, detail: unknown) {
@@ -56,6 +56,7 @@ async function fetchWindow(
   etagCacheRef?: MutableRefObject<EtagCacheEntry | null>,
   subscriptionId?: string,
   releasing?: string,
+  eventQuery = "",
 ): Promise<AvailabilityWindowData> {
   const consulteeParam = consulteeUserId
     ? `&consulteeUserId=${encodeURIComponent(consulteeUserId)}`
@@ -63,7 +64,7 @@ async function fetchWindow(
   const subscriptionParam = subscriptionId
     ? `&subscriptionId=${encodeURIComponent(subscriptionId)}${releasing ? `&releasing=${encodeURIComponent(releasing)}` : ""}`
     : "";
-  const url = `/api/scheduling/availability-with-allocation/${consultantId}?startDateInUtc=${startUtc.toISOString()}&endDateInUtc=${endUtc.toISOString()}&timezone=${encodeURIComponent(timezone)}${consulteeParam}${subscriptionParam}`;
+  const url = `/api/scheduling/availability-with-allocation/${consultantId}?startDateInUtc=${startUtc.toISOString()}&endDateInUtc=${endUtc.toISOString()}&timezone=${encodeURIComponent(timezone)}${consulteeParam}${subscriptionParam}${eventQuery}`;
 
   const cachedEntry =
     !noStore && etagCacheRef?.current?.key === url
@@ -86,6 +87,21 @@ async function fetchWindow(
   }
 
   let response = await fetch(url, init);
+  // An operator may not read the learner's calendar: fall back to the expert's alone.
+  if (response.status === 403 && consulteeUserId) {
+    return fetchWindow(
+      consultantId,
+      startUtc,
+      endUtc,
+      timezone,
+      noStore,
+      undefined,
+      etagCacheRef,
+      subscriptionId,
+      releasing,
+      eventQuery,
+    );
+  }
   if (response.status === 304) {
     if (cachedEntry) {
       return cachedEntry.data;
@@ -141,6 +157,23 @@ export function invalidateAvailability(
   ]).then(() => undefined);
 }
 
+/** The event a host is placing: co-hosts fold in; a move frees its own sessions. */
+export interface AvailabilityEvent {
+  classId?: string;
+  webinarId?: string;
+  moving?: boolean;
+}
+
+function eventQueryOf(event: AvailabilityEvent | undefined): string {
+  if (event?.classId) {
+    return `&classId=${encodeURIComponent(event.classId)}${event.moving ? "&purpose=reschedule" : ""}`;
+  }
+  if (event?.webinarId) {
+    return `&webinarId=${encodeURIComponent(event.webinarId)}${event.moving ? "&purpose=reschedule" : ""}`;
+  }
+  return "";
+}
+
 export function availabilityQueryKey(
   consultantId: string,
   startUtc: Date,
@@ -149,6 +182,7 @@ export function availabilityQueryKey(
   consulteeUserId?: string,
   subscriptionId?: string,
   releasing?: string,
+  eventQuery?: string,
 ) {
   const base = consulteeUserId
     ? [
@@ -166,14 +200,15 @@ export function availabilityQueryKey(
         endUtc.toISOString(),
         timezone,
       ];
-  // The plan-limit overlay changes the answer, so it keys the query too.
-  return subscriptionId
+  // The plan-limit overlay and the event change the answer, so they key it too.
+  const keyed = subscriptionId
     ? [
         ...base,
         `subscription:${subscriptionId}`,
         `releasing:${releasing ?? ""}`,
       ]
     : base;
+  return eventQuery ? [...keyed, `event:${eventQuery}`] : keyed;
 }
 
 /**
@@ -202,6 +237,7 @@ export function useAvailabilityWindow({
   consulteeUserId,
   subscriptionId,
   releasingIds,
+  event,
   enabled = true,
   bypassRef,
   keepPrevious = false,
@@ -215,6 +251,8 @@ export function useAvailabilityWindow({
   subscriptionId?: string;
   /** Sessions a reschedule is moving; the overlay counts them as free. */
   releasingIds?: readonly string[];
+  /** The event being placed or moved. */
+  event?: AvailabilityEvent;
   enabled?: boolean;
   bypassRef?: MutableRefObject<boolean>;
   /** Keep showing the last answer while a new window loads (no skeleton swap). */
@@ -225,6 +263,7 @@ export function useAvailabilityWindow({
   const releasing = releasingIds?.length
     ? [...releasingIds].sort(byCodeUnit).join(",")
     : undefined;
+  const eventQuery = eventQueryOf(event);
   const ready =
     enabled && !!consultantId && !!startUtc && !!endUtc && !!timezone;
   return useQuery({
@@ -238,6 +277,7 @@ export function useAvailabilityWindow({
             consulteeUserId,
             subscriptionId,
             releasing,
+            eventQuery,
           )
         : ["availability", "disabled"],
     queryFn: () => {
@@ -253,6 +293,7 @@ export function useAvailabilityWindow({
         etagCacheRef,
         subscriptionId,
         releasing,
+        eventQuery,
       );
     },
     enabled: ready,
@@ -273,6 +314,9 @@ export function monthKeyOf(monthStart: Date): string {
 }
 
 /** The first to last instant of the calendar month `monthStart` names, read in `timezone`. */
+/** The month read runs this far into the next day, so a session starting on the last evening can cross midnight; it stays inside the route's 32-day cap. */
+const MONTH_READ_TAIL_MS = 12 * 60 * 60 * 1000;
+
 export function monthBounds(
   monthStart: Date,
   timezone: string,
@@ -302,35 +346,48 @@ export function useAvailabilityMonth({
   monthStart,
   timezone,
   consulteeUserId,
+  event,
+  bypassRef,
   enabled = true,
 }: {
   consultantId: string | undefined;
   monthStart: Date;
   timezone: string | null;
   consulteeUserId?: string;
+  /** The event being placed or moved. */
+  event?: AvailabilityEvent;
+  /** Set to true to send the next read past the browser cache once. */
+  bypassRef?: MutableRefObject<boolean>;
   enabled?: boolean;
 }) {
   const etagCacheRef = useRef<EtagCacheEntry | null>(null);
   const pollOptions = useGridPollOptions();
   const ready = enabled && !!consultantId && !!timezone;
   const monthKey = monthKeyOf(monthStart);
-  const queryKey = consulteeUserId
+  const eventQuery = eventQueryOf(event);
+  const baseKey = consulteeUserId
     ? ["availability-month", consultantId, monthKey, timezone, consulteeUserId]
     : ["availability-month", consultantId, monthKey, timezone];
+  const queryKey = eventQuery ? [...baseKey, `event:${eventQuery}`] : baseKey;
   const activeQueryKey = ready ? queryKey : ["availability-month", "disabled"];
   return useQuery({
     queryKey: activeQueryKey,
     queryFn: () => {
       const zone = timezone as string;
       const { start, end } = monthBounds(monthStart, zone);
+      const noStore = bypassRef?.current ?? false;
+      if (bypassRef) bypassRef.current = false;
       return fetchWindow(
         consultantId as string,
         start,
-        end,
+        new Date(end.getTime() + MONTH_READ_TAIL_MS),
         zone,
-        false,
+        noStore,
         consulteeUserId,
         etagCacheRef,
+        undefined,
+        undefined,
+        eventQuery,
       );
     },
     enabled: ready,

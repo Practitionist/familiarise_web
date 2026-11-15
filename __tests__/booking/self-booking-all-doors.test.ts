@@ -67,6 +67,10 @@ jest.mock("../../lib/booking/transitions", () => ({
 jest.mock("../../lib/booking/participants", () => ({
   recordParticipants: jest.fn(async () => undefined),
 }));
+// The expiry sweep the route's module imports ends Stream access; no door here reaches it.
+jest.mock("../../lib/stream/access-revocation", () => ({
+  revokeEndedSeatAccess: jest.fn(),
+}));
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 
 const mockSessionUser: { id: string; consultantProfileId?: string } = {
@@ -79,9 +83,13 @@ const mockTrialCount = jest.fn(async () => 0);
 const mockProfile = {
   id: "cp_1",
   acceptingRequests: true,
+  bookingMode: "REQUEST" as "REQUEST" | "INSTANT",
   maxOpenRequests: null as number | null,
   user: { id: "user_consultant", name: "Olivia" },
 };
+jest.mock("../../lib/booking/allocation/coverage", () =>
+  jest.requireActual("../fixtures/request-door-hours"),
+);
 jest.mock("../../lib/prisma", () => {
   const created = () => ({
     id: "req_1",
@@ -93,6 +101,11 @@ jest.mock("../../lib/prisma", () => {
   const db: Record<string, unknown> = {
     consulteeProfile: {
       findUnique: jest.fn(async () => ({ id: "cs_1", user: {} })),
+    },
+    consultantProfile: {
+      findUnique: jest.fn(async () => ({
+        bookingMode: mockProfile.bookingMode,
+      })),
     },
     consultationPlan: {
       findFirst: jest.fn(async () => ({
@@ -118,6 +131,9 @@ jest.mock("../../lib/prisma", () => {
       })),
     },
     membership: { findUnique: jest.fn(async () => mockOrgMembership) },
+    availabilityWindowWeekly: jest.requireActual(
+      "../fixtures/request-door-hours",
+    ).namedWeeklyWindow,
     $transaction: jest.fn(async (fn: (tx: unknown) => unknown) => fn(db)),
   };
   return { __esModule: true, default: db };

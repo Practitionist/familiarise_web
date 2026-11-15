@@ -20,6 +20,7 @@
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import { ORG_FUNDED_PAYMENT_METHODS } from "@/lib/payments/org-funded";
+import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
 import { readOrgOwnerUserIds } from "@/lib/enterprise/related-party";
 import type { AppointmentsType, Prisma } from "@prisma/client";
 import type { Scope } from "./parse";
@@ -35,6 +36,7 @@ const LIST_OCCURRENCE_SELECT = {
   endsAt: true,
   isTentative: true,
   completionStatus: true,
+  outcome: true,
   deletedAt: true,
   meeting: { select: { endedAt: true, endedReason: true } },
 } satisfies Prisma.AppointmentOccurrenceSelect;
@@ -266,12 +268,25 @@ export async function listAppointmentsScoped(
           orderBy: { startsAt: "asc" },
           take: LIST_UPCOMING_OCCURRENCES,
         },
+        // Settled charges, so a paid plan waiting for its times is not read as
+        // unpaid; joined into the same statement.
         _count: {
-          select: { occurrences: { where: { deletedAt: null } } },
+          select: {
+            occurrences: { where: { deletedAt: null } },
+            payment: { where: { paymentStatus: "SUCCEEDED", deletedAt: null } },
+          },
+        },
+        // The open move, so a booking being rescheduled reads "Being moved".
+        rescheduleRequests: {
+          where: { status: { in: RESCHEDULE_OPEN_STATUSES } },
+          orderBy: { createdAt: "desc" },
+          take: 1,
+          select: { initiatorRole: true, expiresAt: true, originStatus: true },
         },
         consultation: {
           select: {
             status: true,
+            bookingSource: true,
             consultationPlan: {
               select: {
                 title: true,
@@ -292,6 +307,7 @@ export async function listAppointmentsScoped(
         subscription: {
           select: {
             status: true,
+            bookingSource: true,
             subscriptionPlan: {
               select: {
                 title: true,

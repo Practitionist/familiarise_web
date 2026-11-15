@@ -103,6 +103,8 @@ import {
 } from "../../lib/stream/webhook-events";
 import { TERMINAL_ERROR_PREFIXES } from "../../lib/webhooks/event-log";
 
+const CLAIM = { claimedAt: null };
+
 beforeEach(() => {
   jest.clearAllMocks();
   sequence = [];
@@ -199,71 +201,30 @@ describe("recordStreamEventReceipt — the durable half", () => {
   });
 });
 
-describe("processStreamEvent — safe to defer, now that the receipt exists", () => {
-  it("defers to the sweeper when the DB is unhealthy", async () => {
-    mockIsDbHealthy.mockResolvedValue(false);
+describe("processStreamEvent — dispatches under the receipt's claim", () => {
+  it("never re-claims the row the route just wrote and fences completion on its claim", async () => {
+    const claim = { claimedAt: new Date("2026-09-01T00:00:00Z") };
+    await processStreamEvent({}, "call.ended", "stream_abc", {}, claim);
 
-    await processStreamEvent({}, "call.ended", "stream_abc", undefined, {});
-
-    // Returning here is only safe BECAUSE the route already persisted the
-    // receipt. Before that, this branch wrote nothing and deferred to a sweeper
-    // with nothing to find.
-    expect(sequence).not.toContain("persist");
-  });
-
-  it("dispatches inline when the caller already holds the claim", async () => {
-    // The regression this pins: the route persists the receipt, then dispatches
-    // in after(). Re-claiming there means logWebhookEvent sees the row it just
-    // created — IN-PROGRESS, aged milliseconds — and correctly refuses it as
-    // another worker's in-flight work. `isNew` came back false and dispatch
-    // returned having handled nothing, so every event waited for the sweeper.
-    mockLogWebhookEvent.mockResolvedValue({ isNew: false });
-
-    await processStreamEvent(
-      {},
-      "call.ended",
-      "stream_abc",
-      undefined,
-      {},
-      {
-        claimAlreadyHeld: true,
-      },
-    );
-
-    // It must NOT have consulted the claim, and must have reached dispatch
-    // rather than bailing out. The payload here is a bare `{}`, so the handler's
-    // Zod schema rejects it and the completion carries that error — which is
-    // itself the proof: reaching validation means the early return did not fire.
+    // A bare `{}` fails the handler schema, so the completion mark proves dispatch ran.
     expect(sequence).not.toContain("persist");
     expect(mockMarkProcessed).toHaveBeenCalledTimes(1);
     expect(mockMarkProcessed.mock.calls[0][0]).toBe("stream_abc");
-  });
-
-  it("still yields to a real competitor when it does NOT hold the claim", async () => {
-    // The sweeper path. Here `isNew: false` genuinely means another worker owns
-    // it, and returning is correct — this is the case the earlier stub hid by
-    // always answering true.
-    mockLogWebhookEvent.mockResolvedValue({ isNew: false });
-
-    await processStreamEvent({}, "call.ended", "stream_abc", undefined, {});
-
-    expect(mockMarkProcessed).not.toHaveBeenCalled();
+    expect(mockMarkProcessed.mock.calls[0][2]).toBe(claim);
   });
 
   it("never throws — the response is already sent, so there is nobody to signal", async () => {
-    mockLogWebhookEvent.mockRejectedValue(new Error("boom"));
+    mockMarkProcessed.mockRejectedValue(new Error("boom"));
 
     await expect(
-      processStreamEvent({}, "call.ended", "stream_abc", undefined, {}),
+      processStreamEvent({}, "call.ended", "stream_abc", {}, CLAIM),
     ).resolves.toBeUndefined();
   });
 
   it("stops on an unhandled type without pretending to process it", async () => {
-    await processStreamEvent({}, "call.not_a_real_event", "id", undefined, {});
+    await processStreamEvent({}, "call.not_a_real_event", "id", {}, CLAIM);
 
-    expect(mockMarkProcessed).toHaveBeenCalledWith("id", undefined, {
-      claimedAt: null,
-    });
+    expect(mockMarkProcessed).toHaveBeenCalledWith("id", undefined, CLAIM);
   });
 });
 
@@ -282,11 +243,8 @@ describe("a payload that cannot match its schema is terminal, not retryable", ()
       {},
       "call.recording_ready",
       "stream_bad",
-      undefined,
       {},
-      {
-        claimAlreadyHeld: true,
-      },
+      CLAIM,
     );
 
     expect(mockMarkProcessed).toHaveBeenCalledTimes(1);
@@ -303,11 +261,8 @@ describe("a payload that cannot match its schema is terminal, not retryable", ()
       {},
       "call.recording_ready",
       "stream_bad",
-      undefined,
       {},
-      {
-        claimAlreadyHeld: true,
-      },
+      CLAIM,
     );
 
     const [, error] = mockMarkProcessed.mock.calls[0] as [string, string];
@@ -322,11 +277,8 @@ describe("a payload that cannot match its schema is terminal, not retryable", ()
       {},
       "call.recording_ready",
       "stream_bad",
-      undefined,
       {},
-      {
-        claimAlreadyHeld: true,
-      },
+      CLAIM,
     );
 
     expect(mockHandleRecordingReady).not.toHaveBeenCalled();
@@ -348,18 +300,15 @@ describe("a payload that cannot match its schema is terminal, not retryable", ()
       },
       "call.recording_ready",
       "stream_good",
-      undefined,
       { call_cid: "default:slot-1" },
-      { claimAlreadyHeld: true },
+      CLAIM,
     );
 
     expect(mockHandleRecordingReady).toHaveBeenCalledTimes(1);
-    // The sweeper re-drive (claimAlreadyHeld) holds its own claim and passes
-    // none, so its completion stays unfenced.
     expect(mockMarkProcessed).toHaveBeenCalledWith(
       "stream_good",
       undefined,
-      undefined,
+      CLAIM,
     );
   });
 });
@@ -413,10 +362,8 @@ describe("Stream payload shapes the handlers rely on", () => {
       {},
       "call.session_started",
       "stream_ss",
-      undefined,
-      {
-        call_cid: "default:abc",
-      },
+      { call_cid: "default:abc" },
+      CLAIM,
     );
     expect(mockHandleRecordingReady).not.toHaveBeenCalled();
     expect(mockMarkProcessed).toHaveBeenCalledWith(

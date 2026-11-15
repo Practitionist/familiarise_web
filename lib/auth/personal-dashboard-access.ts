@@ -57,3 +57,17 @@ export async function requirePersonalProfileAccess(
   // belong on — a user may hold both profiles, or neither.
   redirect("/dashboard");
 }
+
+/** Whether the signed-in viewer owns this profile; never redirects, for page metadata. */
+export async function viewerOwnsPersonalProfile(
+  kind: PersonalProfileKind,
+  profileId: string,
+): Promise<boolean> {
+  const session = await getSession();
+  if (!session?.user?.id || session.user.banned === true) return false;
+  const owned =
+    kind === "consultee"
+      ? session.user.consulteeProfileId
+      : session.user.consultantProfileId;
+  return Boolean(owned) && owned === profileId;
+}

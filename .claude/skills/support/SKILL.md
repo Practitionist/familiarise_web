@@ -28,7 +28,7 @@ Terse rules for agents. The human explanation is in `docs/support/` (start at `d
 
 - Create or reuse cases only through `createOrReuseSupportCase()` (directly or via `createSupportTicket()` / `runSupportTurn()`). It owns dedupe, the FAM reference and intake notifications.
 - Move status only through code that calls `assertCaseTransition()` with the right actor, plus your own compare-and-set (`updateMany` with the expected prior state). PATCH status goes through `executePatchLifecycleTx()`.
-- Route every money or hold action through its door: `REVIEW_REFUND` → `reviewSupportRefundDoor`, `VOID_RECOMMENDATION` → `voidSupportRecommendationDoor`, `APPLY_HOLD`/`RELEASE_HOLD` → `applySupportHoldDoor`/`releaseSupportHoldDoor`. Non-party booking cancels go through `app/api/staff/appointments/[appointmentId]/cancel/route.ts`.
+- Route every money or hold action through its door: `REVIEW_REFUND` → `reviewSupportRefundDoor`, `VOID_RECOMMENDATION` → `voidSupportRecommendationDoor`, `APPLY_HOLD`/`RELEASE_HOLD` → `applySupportHoldDoor`/`releaseSupportHoldDoor`. Non-party booking cancels go through `app/api/staff/appointments/[appointmentId]/cancel/route.ts`; the request decline routes and the trial routes refuse a non-party operator with `PLATFORM_CANCEL_DOOR_REQUIRED` (`platformCancelDoorRefusal`), and there is no staff door for a trial.
 - Pass `tx` to every helper inside `$transaction` (`PG_POOL_MAX=1`, AGENTS.md §2.1). `evidenceRecipientsByAppointment()` and friends take a db argument for this reason.
 - Stage notifications inside the business transaction with `stageBell()` / `deliver()` and a stable `entityRef`; flush with `flushNotificationsAfter()`.
 - Give every action a `clientActionId` and every turn a `clientTurnId`; replays must compare stored columns (`replayCaseActionTx()`), never trust the key alone.
@@ -43,6 +43,9 @@ Terse rules for agents. The human explanation is in `docs/support/` (start at `d
 
 - Never write another domain's tables from support code (refunds, earnings, bookings, payouts). Call the domain's door or service.
 - Never reopen a decided case, and never reopen on a plain reply. A customer reopens only with `reopen: true` from the requester or submitter, undecided, within `REOPEN_WINDOW_MS` (14 days). Staff reopen an undecided RESOLVED or CLOSED case through PATCH (`CASE_TRANSITIONS` in `lib/support/case-transitions.ts`), with no 14-day window.
+- Never leave a reopened case on its old resolution deadline: every reopen path calls `reopenedClockPatch()` (`lib/support/sla.ts`), which sets a new `resolutionDueAt` from the reopen time at the current priority, capped at a `statutoryDueAt` still ahead, sets a new `ackDueAt` the same way when `acknowledgedAt` is empty (a case resolved without a public reply), zeroes `pausedSeconds` and stamps `reopenedAt`. `effectiveResolutionDueAt()` caps every clock at the statutory date except a case whose `reopenedAt` is after it. Every clock built for `slaStateOf()` must carry `reopenedAt` (the `SlaClock` type requires it). Never touch `statutoryDueAt` on a reopen, nor `ackDueAt` of an acknowledged case.
+- Never read `statutoryDueAt` as a working deadline without the reopened rule: a case whose `reopenedAt` is later than its `statutoryDueAt` works to `resolutionDueAt` only. `effectiveResolutionDueAt()` (`lib/support/sla.ts`), the inbox's "SLA at risk" filter (`inboxWhere()` in `lib/support/case-read.ts`) and `compareCasesBySla()` (`lib/support/inbox-query.ts`) all apply it; a new reader must too.
+- Never key an SLA notice without its deadline (`slaNoticeKey()` in `lib/support/sla-sweep.ts`): acknowledgement keys name `ackDueAt`, resolution keys the resolution or statutory deadline. Never add `id notIn` exclusion lists to `slaNoticeCaseWhere()`; the sweep pages by id (`stageSlaNotices()`, at most 10 pages of 200 rows per run, always from the lowest id) and skips noticed rows in memory. A case awaiting the user is not a resolution candidate; the statutory arm never pauses.
 - Never set `activeChannel` to anything but HUMAN after creation.
 - Never update or delete a `SupportCaseDecision` (trigger `support_case_decision_immutable`). Corrections are a new row with `supersedesDecisionId`, admin-only, before `appealUntil`, with no appeal filed.
 - Never decide a PROBLEM case, and never link an incident to a RESOLVED or CLOSED problem.
@@ -86,6 +89,7 @@ The code still has the rules described above until these land; don't build again
 - `familiarise-support` is a Stream-only user (no `User` row); keep it in `getExcludedUserIds()` in `scripts/stream/stream-sync.ts`.
 - `releaseSeat` only marks the funded participant `REFUNDED` (no session, recording or document access; group seats resell). It never cancels the booking; that is the platform cancel door. The credits rail always releases the seat.
 - Customer copy must never promise that a reply reopens a case.
+- Show the requester's reply-by line (`describeWait()`) only while a first reply is owed: not resolved or closed, and no `acknowledgedAt`. `SupportRequestView` and `useSupportThread()` (`waitingLine`) both gate it.
 - Host organizations are booking parties only through captured payments (`CAPTURED_PAYMENT_WHERE` in `lib/support/evidence-parties.ts`).
 - The DPDP export shows a chat grant's basis and case reference only to the person who filed the case.
 

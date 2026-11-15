@@ -567,7 +567,8 @@ export function useCalendarData(
       const tentativeSlots: BookableInterval[] = [];
       for (const appointment of activeData) {
         for (const slot of appointment.occurrences ?? []) {
-          if (slot.deletedAt) continue;
+          // A returned or cancelled session no longer holds its time.
+          if (slot.deletedAt || slot.completionStatus === "CANCELLED") continue;
           const startMs = new Date(slot.startsAt).getTime();
           const endMs = new Date(slot.endsAt).getTime();
           if (!Number.isFinite(startMs) || !(endMs > startMs)) continue;

@@ -46,16 +46,11 @@ const reschedulePage = read(
 );
 
 describe("#1163 — the proposal card answers through the lifecycle endpoints", () => {
-  it("calls respond with an action and withdraw without one", () => {
-    expect(proposalCard).toContain("/reschedule/respond");
-    expect(proposalCard).toContain("/reschedule/withdraw");
-    expect(proposalCard).toContain("JSON.stringify({ action: kind })");
-  });
-
   it("splits the affordances by identity: counterparty answers, initiator withdraws", () => {
-    expect(proposalCard).toContain("proposal.initiatedById");
-    expect(proposalCard).toContain('mutation.mutate("withdraw")');
-    expect(proposalCard).toContain('mutation.mutate("accept")');
+    expect(proposalCard).toContain('control.answer("withdraw")');
+    expect(proposalCard).toContain(
+      "rescheduleAnswerRequest(appointmentId, kind)",
+    );
     expect(proposalCard).toContain('mutation.mutate("decline")');
   });
 
@@ -104,6 +99,14 @@ describe("#1163 — cancel/reschedule invalidation reaches the detail hub", () =
   });
 });
 
+describe("the learner's reschedule toast", () => {
+  it("shows the server's outcome sentence, never a fixed cause", () => {
+    expect(eventActions).toContain("code: data.outcome");
+    expect(eventActions).toContain("message: data.message");
+    expect(eventActions).not.toContain("That time isn't free");
+  });
+});
+
 describe("#1163 — the consultant inbox answers proposals", () => {
   it("Approve routes an answerable proposal through respond-accept", () => {
     expect(inbox).toContain("answerableProposal");
@@ -130,10 +133,10 @@ describe("#1163 — the consultant inbox answers proposals", () => {
   });
 });
 
-describe("#1163 — the reschedule page refuses trial subjects", () => {
-  it("renders a friendly refusal instead of a picker that 403s at submit", () => {
+describe("the reschedule page moves a trial with the buyer's slot list", () => {
+  it("branches a trial to its own picker instead of the multi-session one", () => {
     expect(reschedulePage).toContain('appointmentType === "TRIAL"');
-    expect(reschedulePage).toContain("can&apos;t be rescheduled");
+    expect(reschedulePage).toContain("<TrialRescheduleClient");
   });
 });
 

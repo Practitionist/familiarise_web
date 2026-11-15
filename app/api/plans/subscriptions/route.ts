@@ -1,8 +1,11 @@
+import { readJsonBody } from "@/lib/api/parse";
 import { PROFILE_OWNER_SELECT } from "@/lib/booking/list-selects";
 import prisma from "@/lib/prisma";
 import { planConsultantSelect } from "@/lib/api/plans/consultant-projection";
 import { NextRequest, NextResponse } from "next/server";
 import { SubscriptionPlanSchema } from "@/schemas/plans";
+import { planPublishFeasibility } from "@/lib/booking/feasibility";
+import { MAX_SUBSCRIPTION_SESSIONS_PER_DAY } from "@/utils/scheduling-engine/sessionCaps";
 import {
   curriculumCreateNested,
   faqCreateNested,
@@ -15,6 +18,10 @@ import {
   oneOnOnePlanListWhere,
 } from "@/lib/api/plans/visibility";
 import { getMinTrialPriceInPaise } from "@/lib/trials/pricing-config";
+import {
+  assertSubscriptionPlanFloor,
+  planEditRefusal,
+} from "@/lib/api/plans/plan-edit-guard";
 
 import { getSession } from "@/lib/auth-server";
 import * as Sentry from "@sentry/nextjs";
@@ -111,7 +118,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body = await request.json();
+    const read = await readJsonBody(request);
+    if (read.error) return read.error;
+    const body = read.body;
     const { consultantProfileId, ...planData } = body;
 
     if (!consultantProfileId) {
@@ -163,6 +172,27 @@ export async function POST(request: NextRequest) {
         durationInWeeks,
         sessionDurationInHours,
       });
+
+    assertSubscriptionPlanFloor({
+      pricePaise: Math.round(validatedData.price),
+      sessionDurationInHours,
+      totalSessions,
+      durationInWeeks,
+    });
+
+    // A published plan must be deliverable from the expert's published hours.
+    const feasibility = await planPublishFeasibility(prisma, {
+      consultantProfileId,
+      sessionsPerWeek: validatedData.sessionsPerWeek,
+      sessionMinutes: Math.round(sessionDurationInHours * 60),
+      perDayCap: MAX_SUBSCRIPTION_SESSIONS_PER_DAY,
+      publishing: (validatedData.status ?? "PUBLISHED") === "PUBLISHED",
+    });
+    if (feasibility.refusal) {
+      return NextResponse.json(feasibility.refusal.body, {
+        status: feasibility.refusal.status,
+      });
+    }
 
     // Trial fields — Zod-validated; free by default until paid-trial
     // checkout is wired (the wiring PR flips the default to ₹100).
@@ -249,10 +279,15 @@ export async function POST(request: NextRequest) {
 
     // Transform topics to strings in response
     return NextResponse.json(
-      { data: transformTopicsToStrings(newSubscriptionPlan) },
+      {
+        data: transformTopicsToStrings(newSubscriptionPlan),
+        feasibilityWarnings: feasibility.warnings,
+      },
       { status: 201 },
     );
   } catch (error) {
+    const refusal = planEditRefusal(error);
+    if (refusal) return refusal;
     console.error("Error creating subscription plan:", error);
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),

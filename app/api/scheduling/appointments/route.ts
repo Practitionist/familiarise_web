@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { AppointmentsType } from "@prisma/client";
+import { AppointmentStatus, AppointmentsType } from "@prisma/client";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 import { resolveOrgScope } from "@/lib/api/scope/parse";
-import { readConsultantAppointmentsPage } from "@/lib/data/consultant-appointments";
+import {
+  readConsultantAppointmentsPage,
+  withPublicRequesterForStaff,
+} from "@/lib/data/consultant-appointments";
 import { z } from "zod";
 import {
   CONSULTANT_APPOINTMENTS_WINDOWS,
@@ -77,22 +80,8 @@ export async function GET(request: NextRequest) {
 
   // Validate statuses — consultation/subscription use AppointmentStatus enum,
   // webinar/class use their own event lifecycle statuses
-  const validRequestStatuses = [
-    "PENDING",
-    "APPROVED",
-    "APPROVED_PENDING_PAYMENT",
-    "SCHEDULED",
-    "COMPLETED",
-    "REJECTED",
-    "CANCELLED",
-    "EXPIRED",
-  ];
-  const validEventStatuses = [
-    "SCHEDULED",
-    "IN_PROGRESS",
-    "COMPLETED",
-    "CANCELLED",
-  ];
+  const validRequestStatuses: string[] = Object.values(AppointmentStatus);
+  const validEventStatuses = ["SCHEDULED", "COMPLETED", "CANCELLED"];
   if (
     consultationStatus &&
     !validRequestStatuses.includes(consultationStatus)
@@ -205,7 +194,10 @@ export async function GET(request: NextRequest) {
     });
 
     // `meta.nextCursor` is where the next "Load older" page starts.
-    return NextResponse.json({ data: rows, meta: { nextCursor } });
+    return NextResponse.json({
+      data: rows.map((row) => withPublicRequesterForStaff(row, session.user)),
+      meta: { nextCursor },
+    });
   } catch (error) {
     console.error("Error fetching appointments:", error);
     return NextResponse.json(

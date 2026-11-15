@@ -9,6 +9,7 @@
  * depending on which offering you were editing.
  */
 
+import type { AriaAttributes } from "react";
 import {
   get,
   useWatch,
@@ -35,6 +36,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Label } from "@/components/ui/label";
 import { PriceField } from "@/components/planner/components/form-fields/PriceField";
 import { LanguageLevelFields } from "@/components/planner/components/form-fields/LanguageLevelFields";
 import { LearningOutcomesField } from "@/components/planner/components/form-fields/LearningOutcomesField";
@@ -47,6 +50,7 @@ import {
 import type { FieldSpec } from "./manifest";
 import { useWaitingCounts } from "./waiting-count";
 import { WaitlistSwitch } from "./WaitlistSwitch";
+import { SessionTimeField } from "./session-time-field";
 
 /** Sections are a 6-column grid so halves and thirds both land cleanly. */
 const SPAN_CLASS: Record<NonNullable<FieldSpec["span"]>, string> = {
@@ -61,18 +65,6 @@ const SPAN_CLASS: Record<NonNullable<FieldSpec["span"]>, string> = {
  * Lives outside the component because it was a ninety-line switch inlined in
  * JSX, which both the analyser and a reader mistake for a nested component.
  */
-/** `YYYY-MM-DDTHH:mm` in the VIEWER's timezone, which is what the control reads back. */
-function toLocalDateTimeValue(value: unknown): string {
-  if (!value) return "";
-  const date = new Date(value as string | number | Date);
-  if (Number.isNaN(date.getTime())) return "";
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return (
-    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
-    `T${pad(date.getHours())}:${pad(date.getMinutes())}`
-  );
-}
-
 function renderControl<T extends FieldValues = FieldValues>(
   spec: FieldSpec,
   field: ControllerRenderProps<T, never>,
@@ -109,23 +101,6 @@ function renderControl<T extends FieldValues = FieldValues>(
           }
         />
       );
-    case "date":
-      return (
-        <Input
-          type="datetime-local"
-          {...field}
-          // datetime-local speaks LOCAL time in and out, so the value must be
-          // formatted from local components. toISOString() renders UTC into a
-          // local-time control: an IST author saw 04:30 for a 10:00 session
-          // and, because onChange reads that same box back as local, merely
-          // opening the form and saving shifted the stored instant by the
-          // offset — every time, with no edit (#1060).
-          value={toLocalDateTimeValue(field.value)}
-          onChange={(e) =>
-            field.onChange(e.target.value ? new Date(e.target.value) : null)
-          }
-        />
-      );
     case "select":
       // FormControl sits on the trigger: Select's root renders no element to label.
       return (
@@ -148,6 +123,8 @@ function renderControl<T extends FieldValues = FieldValues>(
       return (
         <Switch checked={!!field.value} onCheckedChange={field.onChange} />
       );
+    case "minutesChoice":
+      return <MinutesChoice spec={spec} field={field} />;
     case "image":
       return coverImage ? (
         <PlanImageUploader
@@ -170,6 +147,49 @@ function renderControl<T extends FieldValues = FieldValues>(
         />
       );
   }
+}
+
+/** A few fixed lengths as radio buttons; a stored length outside them is named until it is changed. */
+function MinutesChoice<T extends FieldValues = FieldValues>({
+  spec,
+  field,
+  ...control
+}: Readonly<
+  {
+    spec: FieldSpec;
+    field: ControllerRenderProps<T, never>;
+    // FormControl's id, description and error state, forwarded to the group.
+    id?: string;
+  } & Pick<AriaAttributes, "aria-describedby" | "aria-invalid">
+>) {
+  const choices = spec.minuteChoices ?? [];
+  const current = typeof field.value === "number" ? field.value : null;
+  return (
+    <div className="space-y-2">
+      <RadioGroup
+        {...control}
+        aria-label={spec.label}
+        className="flex h-9 items-center gap-4"
+        value={current === null ? "" : String(current)}
+        onValueChange={(value) => field.onChange(Number(value))}
+      >
+        {choices.map((minutes) => (
+          <div key={minutes} className="flex items-center gap-2">
+            <RadioGroupItem
+              value={String(minutes)}
+              id={`${spec.name}-${minutes}`}
+            />
+            <Label htmlFor={`${spec.name}-${minutes}`}>{minutes} minutes</Label>
+          </div>
+        ))}
+      </RadioGroup>
+      {current !== null && !choices.includes(current) && (
+        <p className="text-xs text-muted-foreground">
+          Saved as {current} minutes. Choose one of these to save changes.
+        </p>
+      )}
+    </div>
+  );
 }
 
 /** The cover-image change staged until save; absent while creating (no plan id to attach to). */
@@ -218,6 +238,14 @@ export function OfferingField<T extends FieldValues = FieldValues>({
           description={spec.description}
           required={spec.required}
         />
+      </div>
+    );
+  }
+
+  if (spec.kind === "sessionTime") {
+    return (
+      <div className={span}>
+        <SessionTimeField control={control} spec={spec} />
       </div>
     );
   }

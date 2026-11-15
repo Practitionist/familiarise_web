@@ -36,7 +36,6 @@ export async function POST(
     const rl = await applyRateLimit(eventMutationLimiter, auth.session.user.id);
     if (rl) return rl;
     const body = await withdrawApproval({
-      kind: "consultation",
       id: consultationId,
       actor: {
         userId: auth.session.user.id,
@@ -47,11 +46,9 @@ export async function POST(
       // The retry loop outlives the appointment lock's fixed grant, so each
       // attempt re-grants it — see withdrawApproval.
       //
-      // `renewAppointmentLock` answers whether the re-grant succeeded; that is
-      // deliberately dropped. A renewal that fails only costs serialisation,
-      // because the request CAS below carries the money predicate in its WHERE
-      // (see lapseApprovedRequest), so correctness never rests on the lock
-      // being held for the whole retry loop.
+      // A re-grant that finds the lock taken over throws LOCK_LOST (409), so
+      // no attempt runs unserialised; the request CAS still carries the money
+      // predicate in its WHERE (see lapseApprovedRequest).
       //
       // The cast is this route's job, not a shortcut. `RenewInjectedLock` takes
       // `unknown` on purpose — lapse-approved-request must not import the Redis

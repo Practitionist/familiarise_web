@@ -53,6 +53,49 @@ jest.mock("../../lib/prisma", () => ({
     // #1008 — the cancel/reschedule routes call hasActiveDisputeForAppointment,
     // which reads prisma.dispute.findFirst. Default to no live dispute.
     dispute: { findFirst: jest.fn().mockResolvedValue(null) },
+    // A repeated cancel reads back what the first click committed.
+    consultation: { findUnique: jest.fn().mockResolvedValue(null) },
+    // The Idempotency-Key store, in memory: the unique index answers P2002.
+    idempotencyRecord: (() => {
+      const rows = new Map<string, Record<string, unknown>>();
+      const keyOf = (w: {
+        scope_key_userId: { scope: string; key: string; userId: string };
+      }) =>
+        `${w.scope_key_userId.scope}|${w.scope_key_userId.key}|${w.scope_key_userId.userId}`;
+      return {
+        rows,
+        create: jest.fn(async ({ data }: { data: Record<string, string> }) => {
+          const k = `${data.scope}|${data.key}|${data.userId}`;
+          if (rows.has(k))
+            throw Object.assign(new Error("dup"), { code: "P2002" });
+          rows.set(k, { ...data, completedAt: null });
+          return rows.get(k);
+        }),
+        findUnique: jest.fn(
+          async ({ where }: { where: Parameters<typeof keyOf>[0] }) =>
+            rows.get(keyOf(where)) ?? null,
+        ),
+        update: jest.fn(
+          async ({
+            where,
+            data,
+          }: {
+            where: Parameters<typeof keyOf>[0];
+            data: Record<string, unknown>;
+          }) => {
+            const k = keyOf(where);
+            rows.set(k, { ...rows.get(k), ...data });
+            return rows.get(k);
+          },
+        ),
+        delete: jest.fn(
+          async ({ where }: { where: Parameters<typeof keyOf>[0] }) => {
+            rows.delete(keyOf(where));
+            return {};
+          },
+        ),
+      };
+    })(),
     $disconnect: jest.fn(),
   },
 }));
@@ -103,12 +146,24 @@ jest.mock("../../lib/payments/operations/event-refunds", () => ({
   }),
 }));
 
+const seatGeneration = new Date("2030-01-01T00:02:00Z");
+jest.mock("../../lib/stream/access-revocation", () => ({
+  persistSeatRevocationInTx: jest.fn(async () => seatGeneration),
+  revokeEndedSeatAccess: jest.fn().mockResolvedValue(undefined),
+  fenceSeatGrants: jest.fn().mockResolvedValue({ verified: true, lost: [] }),
+  enqueueCollaboratorRevocationRetry: jest.fn().mockResolvedValue(undefined),
+}));
+
 // ─── Imports ────────────────────────────────────────────────────────────────
 
 import type { NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import { notifyAppointmentCancelled } from "@/lib/novu";
+import {
+  persistSeatRevocationInTx,
+  revokeEndedSeatAccess,
+} from "@/lib/stream/access-revocation";
 import { POST as rescheduleHandler } from "@/app/api/appointments/[appointmentId]/reschedule/route";
 import { POST as cancelHandler } from "@/app/api/appointments/[appointmentId]/cancel/route";
 import {
@@ -296,13 +351,16 @@ function makeMockTx() {
     },
     consultation: {
       update: jest.fn(),
-      findUnique: jest.fn().mockResolvedValue({ status: "SCHEDULED" }),
+      findUnique: jest.fn().mockResolvedValue({ status: "APPROVED" }),
       // B2 — the cancel/reschedule CAS guards use updateMany.
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      // Paid unless a case says otherwise (the proposal lead reads it).
+      count: jest.fn().mockResolvedValue(1),
     },
     subscription: {
       update: jest.fn(),
-      findUnique: jest.fn().mockResolvedValue({ status: "SCHEDULED" }),
+      count: jest.fn().mockResolvedValue(1),
+      findUnique: jest.fn().mockResolvedValue({ status: "APPROVED" }),
       // B2 — the cancel/reschedule CAS guards use updateMany.
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       // #448 / #1583 A-P0-03 — a PARTIAL (slotIds) subscription reschedule
@@ -337,12 +395,16 @@ function makeMockTx() {
     appointmentParticipant: {
       createMany: jest.fn().mockResolvedValue({ count: 1 }),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      // An event cancel reads back the seats its sweep released.
+      updateManyAndReturn: jest.fn().mockResolvedValue([]),
     },
     bookingStatusHistory: {
       create: jest.fn().mockResolvedValue({}),
       // The reschedule caps count past release acts.
       groupBy: jest.fn().mockResolvedValue([]),
     },
+    // An expert's cancel of a confirmed booking records a reliability strike.
+    systemEvent: { create: jest.fn().mockResolvedValue({}) },
     // Cancel closes any live reschedule proposal so the appointment's
     // openForAppointmentId reservation is released and the expiry cron cannot
     // act on a cancelled booking. Reschedule creates one when times are proposed.
@@ -374,9 +436,12 @@ describe("RescheduleErrors", () => {
       expect(err.message).toContain("5 hours");
     });
 
-    it("should clamp negative hours to 0", () => {
+    it("a session that has started is no longer movable, whatever the notice rule", () => {
       const err = new ReschedulePolicyError(-2, 24);
-      expect(err.message).toContain("0 hours");
+      expect(err.message).toBe(
+        "This session has already started, so it can no longer be moved.",
+      );
+      expect(err.message).not.toContain("24 hours");
     });
 
     it("should expose hoursUntilSlot and minimumHoursRequired properties", () => {
@@ -587,6 +652,37 @@ describe("Reschedule Route Handler - POST", () => {
     expect(body.error).toContain("24 hours");
   });
 
+  it("refuses a session exactly 24 hours away: isTooSoonFor draws the one boundary", async () => {
+    // Only the clock is frozen; timers and microtasks run for real.
+    jest.useFakeTimers({
+      doNotFake: [
+        "nextTick",
+        "setImmediate",
+        "setTimeout",
+        "clearTimeout",
+        "setInterval",
+        "clearInterval",
+        "queueMicrotask",
+      ],
+    });
+    const now = Date.now();
+    jest.setSystemTime(now);
+    try {
+      const appointment = makeConsultationAppointment({
+        occurrences: [makeSlot("slot-1", new Date(now + 24 * 60 * 60 * 1000))],
+      });
+      mockTx.appointment.findUnique.mockResolvedValue(appointment);
+
+      const req = makeRescheduleRequest("apt-1", "CONSULTATION");
+      const res = await rescheduleHandler(req, makeParams("apt-1"));
+
+      expect(res.status).toBe(409);
+      expect((await res.json()).code).toBe("RESCHEDULE_WINDOW");
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it("should enforce 24-hour restriction even if only one of multiple slots is near", async () => {
     const appointment = makeSubscriptionAppointment({
       occurrences: [
@@ -602,6 +698,78 @@ describe("Reschedule Route Handler - POST", () => {
     const res = await rescheduleHandler(req, makeParams("apt-1"));
 
     expect(res.status).toBe(409);
+  });
+
+  it.each([
+    ["learner", { consultantProfileId: undefined }],
+    ["expert", { consulteeProfileId: undefined }],
+  ])(
+    "lets the %s propose times inside 24 hours; the proposal lapses when the join window opens",
+    async (_side, profile) => {
+      (getSession as jest.Mock).mockResolvedValue({
+        user: {
+          id: "user-1",
+          consulteeProfileId: "ce-1",
+          consultantProfileId: "cp-1",
+          ...profile,
+        },
+      });
+      mockTx.appointment.findUnique.mockResolvedValue(
+        makeConsultationAppointment({
+          occurrences: [makeSlot("slot-1", NEAR_DATE)],
+        }),
+      );
+      const startsAt = new Date(NEAR_DATE.getTime() + 2 * 60 * 60 * 1000);
+      const res = await rescheduleHandler(
+        makeRescheduleRequest("apt-1", "CONSULTATION", {
+          proposedSlots: [
+            {
+              startsAt: startsAt.toISOString(),
+              endsAt: new Date(
+                startsAt.getTime() + 30 * 60 * 1000,
+              ).toISOString(),
+            },
+          ],
+        }),
+        makeParams("apt-1"),
+      );
+
+      expect(res.status).toBe(200);
+      expect(mockTx.rescheduleRequest.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            expiresAt: new Date(NEAR_DATE.getTime() - 15 * 60 * 1000),
+          }),
+        }),
+      );
+    },
+  );
+
+  it("refuses a proposed time an unpaid booking's acceptance could not place", async () => {
+    mockTx.consultation.count.mockResolvedValue(0);
+    mockTx.appointment.findUnique.mockResolvedValue(
+      makeConsultationAppointment({
+        occurrences: [makeSlot("slot-1", NEAR_DATE)],
+      }),
+    );
+    const startsAt = new Date(Date.now() + 60 * 60 * 1000);
+    const res = await rescheduleHandler(
+      makeRescheduleRequest("apt-1", "CONSULTATION", {
+        proposedSlots: [
+          {
+            startsAt: startsAt.toISOString(),
+            endsAt: new Date(startsAt.getTime() + 30 * 60 * 1000).toISOString(),
+          },
+        ],
+      }),
+      makeParams("apt-1"),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      code: "PROPOSAL_TOO_SOON",
+      error: "New times must be at least 2 hours away.",
+    });
+    expect(mockTx.rescheduleRequest.create).not.toHaveBeenCalled();
   });
 
   // ─── CONSULTATION Reschedule ────────────────────────────────────────────
@@ -935,6 +1103,54 @@ describe("Reschedule Route Handler - POST", () => {
 
   // ─── Edge Cases ─────────────────────────────────────────────────────────
 
+  it("replays the committed answer for a repeated Idempotency-Key instead of releasing again", async () => {
+    mockTx.appointment.findUnique.mockResolvedValue(
+      makeConsultationAppointment(),
+    );
+    const send = () =>
+      rescheduleHandler(
+        new Request(
+          "http://localhost/api/appointments/apt-1/reschedule?type=CONSULTATION",
+          {
+            method: "POST",
+            body: JSON.stringify({}),
+            headers: {
+              "Content-Type": "application/json",
+              "Idempotency-Key": "reschedule-key-0001",
+            },
+          },
+        ) as unknown as NextRequest,
+        makeParams("apt-1"),
+      );
+
+    const first = await send();
+    const firstBody = await first.json();
+    const releases = (prisma.$transaction as jest.Mock).mock.calls.length;
+    const second = await send();
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(second.headers.get("Idempotent-Replay")).toBe("true");
+    expect(await second.json()).toEqual(firstBody);
+    expect((prisma.$transaction as jest.Mock).mock.calls.length).toBe(releases);
+  });
+
+  it("refuses a malformed session list rather than releasing the whole booking", async () => {
+    mockTx.appointment.findUnique.mockResolvedValue(
+      makeSubscriptionAppointment(),
+    );
+
+    const req = makeRescheduleRequest("apt-1", "SUBSCRIPTION", {
+      slotIds: [42],
+    });
+    const res = await rescheduleHandler(req, makeParams("apt-1"));
+    const body = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(body.code).toBe("INVALID_SLOT_IDS");
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
   it("should handle empty body gracefully", async () => {
     mockTx.appointment.findUnique.mockResolvedValue(
       makeConsultationAppointment(),
@@ -1129,7 +1345,7 @@ describe("Cancel Route Handler - POST", () => {
           id: "cons-1",
           status: {
             // Pinned to the status this cancel read in its own transaction.
-            in: ["SCHEDULED"],
+            in: ["APPROVED"],
           },
         },
         data: expect.objectContaining({
@@ -1201,7 +1417,7 @@ describe("Cancel Route Handler - POST", () => {
           id: "sub-1",
           status: {
             // Pinned to the status this cancel read in its own transaction.
-            in: ["SCHEDULED"],
+            in: ["APPROVED"],
           },
           // Pinned to the removed-session count the quote was priced on.
           sessionsRefunded: 0,
@@ -1230,7 +1446,10 @@ describe("Cancel Route Handler - POST", () => {
       expect(res.status).toBe(200);
 
       expect(mockTx.webinar.updateMany).toHaveBeenCalledWith({
-        where: { id: "web-1", status: { in: ["SCHEDULED", "IN_PROGRESS"] } },
+        where: {
+          id: "web-1",
+          status: { in: ["DRAFT", "SCHEDULED"] },
+        },
         data: { status: "CANCELLED" },
       });
     });
@@ -1251,7 +1470,10 @@ describe("Cancel Route Handler - POST", () => {
       expect(res.status).toBe(200);
 
       expect(mockTx.class.updateMany).toHaveBeenCalledWith({
-        where: { id: "cls-1", status: { in: ["SCHEDULED", "IN_PROGRESS"] } },
+        where: {
+          id: "cls-1",
+          status: { in: ["DRAFT", "SCHEDULED"] },
+        },
         data: { status: "CANCELLED" },
       });
     });
@@ -1276,7 +1498,7 @@ describe("Cancel Route Handler - POST", () => {
       where: {
         id: "cons-1",
         status: {
-          in: ["SCHEDULED"],
+          in: ["APPROVED"],
         },
       },
       data: expect.objectContaining({
@@ -1303,6 +1525,7 @@ describe("Cancel Route Handler - POST", () => {
         appointmentType: "CONSULTATION",
         reason: "OTHER",
       }),
+      undefined,
     );
   });
 
@@ -1383,7 +1606,95 @@ describe("Cancel Route Handler - POST", () => {
     expect(notifyAppointmentCancelled).toHaveBeenCalledWith(
       expect.arrayContaining(["consultant-1", "attendee-9"]),
       expect.objectContaining({ appointmentType: "CLASS" }),
+      undefined,
     );
+  });
+
+  it("revokes the seats its own commit released, never a seat that ended earlier", async () => {
+    (prisma.appointment.findUnique as jest.Mock).mockResolvedValue(
+      makeClassAppointment({
+        class: {
+          id: "cls-1",
+          status: "SCHEDULED",
+          classPlan: {
+            title: "Weekly Cohort",
+            consultantProfileId: "cp-1",
+            consultantProfile: {
+              user: { id: "consultant-1", name: "Dr Who" },
+            },
+          },
+        },
+      }),
+    );
+    (prisma.payment.findMany as jest.Mock).mockResolvedValue([]);
+    // The pre-lock roster misses a seat that landed before the commit; an earlier
+    // leaver's seat is already released, so the sweep does not move it.
+    (prisma.appointmentParticipant.findMany as jest.Mock).mockImplementation(
+      async ({ where }: { where: { status?: { in?: string[] } } }) =>
+        where.status?.in?.includes("CANCELLED")
+          ? [{ userId: "attendee-9" }, { userId: "attendee-left" }]
+          : [{ userId: "attendee-9" }],
+    );
+    mockTx.appointmentParticipant.updateManyAndReturn.mockResolvedValue([
+      { userId: "attendee-9", role: "CONSULTEE" },
+      { userId: "attendee-late", role: "CONSULTEE" },
+      { userId: "consultant-1", role: "CONSULTANT" },
+    ]);
+
+    await cancelHandler(makeCancelRequest("apt-1"), makeParams("apt-1"));
+    (prisma.appointmentParticipant.findMany as jest.Mock).mockResolvedValue([]);
+
+    const released = ["attendee-9", "attendee-late"];
+    expect(persistSeatRevocationInTx).toHaveBeenCalledTimes(1);
+    expect(persistSeatRevocationInTx).toHaveBeenCalledWith(
+      mockTx,
+      "apt-1",
+      released,
+    );
+    expect(revokeEndedSeatAccess).toHaveBeenCalledWith(
+      "apt-1",
+      released,
+      seatGeneration,
+    );
+  });
+
+  it("writes a 1:1 consultee's seat row in the cancel commit and settles that generation", async () => {
+    const res = await cancelHandler(
+      makeCancelRequest("apt-1"),
+      makeParams("apt-1"),
+    );
+
+    expect(res.status).toBe(200);
+    expect(persistSeatRevocationInTx).toHaveBeenCalledWith(mockTx, "apt-1", [
+      "user-1",
+    ]);
+    expect(revokeEndedSeatAccess).toHaveBeenCalledWith(
+      "apt-1",
+      ["user-1"],
+      seatGeneration,
+    );
+  });
+
+  it("a replayed 1:1 cancel runs no transaction write and persists its consultee's row itself", async () => {
+    mockTx.consultation.updateMany.mockResolvedValue({ count: 0 });
+    (
+      prisma as unknown as { consultation: { findUnique: jest.Mock } }
+    ).consultation.findUnique.mockResolvedValueOnce({
+      status: "CANCELLED",
+      cancelledBy: "user-1",
+      cancelledAt: new Date(),
+      cancellationReason: null,
+    });
+
+    const res = await cancelHandler(
+      makeCancelRequest("apt-1"),
+      makeParams("apt-1"),
+    );
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).replayed).toBe(true);
+    expect(persistSeatRevocationInTx).not.toHaveBeenCalled();
+    expect(revokeEndedSeatAccess).toHaveBeenCalledWith("apt-1", ["user-1"]);
   });
 
   it("tells free and credit seats too, not only paid ones (#1780 R-3)", async () => {
@@ -1415,6 +1726,7 @@ describe("Cancel Route Handler - POST", () => {
     expect(notifyAppointmentCancelled).toHaveBeenCalledWith(
       expect.arrayContaining(["attendee-credit", "attendee-free"]),
       expect.objectContaining({ appointmentType: "CLASS" }),
+      undefined,
     );
   });
 
@@ -1467,6 +1779,8 @@ describe("Cancel Route Handler - POST", () => {
       expect.objectContaining({
         cancelledBy: "consultant",
       }),
+      // The host side cancelled: the buyer hears it whatever their switches say.
+      { required: { kind: "CANCELLED_BY_HOST", recipients: ["user-1"] } },
     );
   });
 
@@ -1491,6 +1805,7 @@ describe("Cancel Route Handler - POST", () => {
       expect.objectContaining({
         cancelledBy: "consultee",
       }),
+      undefined,
     );
   });
 });

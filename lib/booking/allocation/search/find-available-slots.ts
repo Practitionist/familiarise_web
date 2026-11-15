@@ -66,6 +66,9 @@ import {
 } from "@/lib/booking/allocation/search/blocks";
 import type { AppointmentWithSlots } from "@/lib/booking/allocation/types";
 
+/** How a sweep may place: spread with a free day between, one a day, or up to the per-day cap. */
+type Spacing = "spaced" | "onePerDay" | "packed";
+
 /**
  * Find available consecutive slots for auto-allocation.
  *
@@ -515,22 +518,35 @@ export async function findAvailableSlots(
    * second sweep walks the same window with the same cap counters.
    */
   /**
-   * A subscription's sessions spread across its week: no session the day
-   * before or after another one (placed now or already held).
+   * Sessions spread across the week: no session the day before or after
+   * another one (placed now or already held).
    */
   const isSpacedFrom = (candidateStart: Date): boolean =>
     adjacentDayKeys(candidateStart, config.schedulingTimezone).every(
       (key) => !placedPerDay.has(key),
     );
 
+  /** The candidate's own day holds no session yet (a class may otherwise stack two). */
+  const dayIsEmpty = (candidateStart: Date): boolean =>
+    !placedPerDay.has(
+      ScheduleCalculationService.dayKey(
+        candidateStart,
+        config.schedulingTimezone,
+      ),
+    );
+
   const tryPlaceOnDay = (
     currentDay: Date,
     perfectOnly: boolean,
-    spaced: boolean,
+    spacing: Spacing,
   ): boolean => {
-    const roomy = spaced
-      ? (start: Date) => hasRoomOn(start) && isSpacedFrom(start)
-      : hasRoomOn;
+    const roomy =
+      spacing === "spaced"
+        ? (start: Date) =>
+            hasRoomOn(start) && dayIsEmpty(start) && isSpacedFrom(start)
+        : spacing === "onePerDay"
+          ? (start: Date) => hasRoomOn(start) && dayIsEmpty(start)
+          : hasRoomOn;
     let best: { block: Date[]; score: number } | null = null;
 
     for (const { start: rowStart, endMs: rowEndMs } of rowStartsForDay(
@@ -640,7 +656,18 @@ export async function findAvailableSlots(
    * bounds the overrun: one day is one pass over that day's rows. A walk it
    * truncates before every session is placed answers SEARCH_TIMEOUT below.
    */
-  const sweepPeriod = (perfectOnly: boolean, spaced = false): void => {
+  // Once the budget is spent no later sweep runs, so it is reported once.
+  let budgetSpent = false;
+  // Preference sweeps stop at half the time left here, so the packed sweep always gets the rest.
+  const preferenceCutoffMs =
+    searchBudget.spentMs() +
+    Math.max(0, searchBudget.limitMs - searchBudget.spentMs()) / 2;
+  const sweepPeriod = (
+    perfectOnly: boolean,
+    spacing: Spacing = "packed",
+  ): void => {
+    if (budgetSpent) return;
+    const preference = perfectOnly || spacing !== "packed";
     const cursor = new Date(
       Date.UTC(
         startDate.getUTCFullYear(),
@@ -655,12 +682,14 @@ export async function findAvailableSlots(
       cursor.setUTCDate(cursor.getUTCDate() + 1)
     ) {
       if (searchBudget.exhausted()) {
+        budgetSpent = true;
         reportSearchBudgetSpent(searchBudget, consultant, walk);
         return;
       }
+      if (preference && searchBudget.spentMs() >= preferenceCutoffMs) return;
       while (
         selectedSlots.length < totalSlotsNeeded &&
-        tryPlaceOnDay(new Date(cursor), perfectOnly, spaced)
+        tryPlaceOnDay(new Date(cursor), perfectOnly, spacing)
       ) {
         // Placed; re-attempt the same day under the updated counters.
       }
@@ -669,14 +698,17 @@ export async function findAvailableSlots(
 
   // Skipped entirely when nothing was asked for, so the single sweep below is
   // the only one that runs and today's placements are reproduced exactly.
+  const recurring = eventType === "subscription" || eventType === "class";
   if (maxScore > 0) {
-    if (eventType === "subscription") sweepPeriod(true, true);
+    if (recurring) sweepPeriod(true, "spaced");
     sweepPeriod(true);
   }
-  // A subscription first tries to keep a free day between sessions, so a
-  // week of 3 lands Mon/Wed/Fri rather than Mon/Tue/Wed; like the preference
-  // pass, it never costs a placement, because the sweep below reconsiders.
-  if (eventType === "subscription") sweepPeriod(false, true);
+  // A recurring plan first keeps a free day between sessions, so a week of 3
+  // lands Mon/Wed/Fri rather than Mon/Tue/Wed; a class then tries one a day
+  // before stacking two. Like the preference pass, neither costs a placement,
+  // because the packed sweep below reconsiders everything they declined.
+  if (recurring) sweepPeriod(false, "spaced");
+  if (eventType === "class") sweepPeriod(false, "onePerDay");
   // MUST stay unconditional and MUST stay over the whole window. This is the
   // only thing making the preferred-only sweep above a preference rather than
   // a filter: everything it declined is reconsidered here.
@@ -693,7 +725,7 @@ export async function findAvailableSlots(
     // runs first because it's the most actionable answer.
     if (config.schedulingPeriodEndsAt && config.schedulingPeriodEndsAt < now) {
       throw new AllocationValidationError(
-        "This plan's scheduling period has ended. Extend the period on the plan to place more sessions.",
+        "This plan's scheduling period has ended, so no more sessions can be placed. Sessions that were never held are refunded when the plan settles.",
         "PERIOD_ENDED",
         {
           schedulingPeriodEndsAt: config.schedulingPeriodEndsAt.toISOString(),

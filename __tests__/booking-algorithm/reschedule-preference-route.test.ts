@@ -147,6 +147,7 @@ function makeMockTx() {
       findUnique: jest.fn().mockResolvedValue({ status: "SCHEDULED" }),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
+    payment: { count: jest.fn().mockResolvedValue(0) },
     bookingStatusHistory: {
       create: jest.fn().mockResolvedValue({}),
       // The reschedule caps count past release acts.

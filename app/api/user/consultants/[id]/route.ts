@@ -8,6 +8,7 @@ import {
 import {
   consultantPublicScalars,
   consultantPublicApiSchema,
+  publicProfileUserSelect,
 } from "@/lib/data/consultant-public";
 import {
   BookingMode,
@@ -20,6 +21,7 @@ import {
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { experienceValidation } from "@/schemas/shared";
+import { maxActivePlanClientsSchema } from "@/schemas/plan-clients";
 import { checkActiveAppointments } from "../utils/consultant-appointments";
 import { getSession } from "@/lib/auth-server";
 import { purgeExpertSurfaces } from "@/lib/data/public-cache";
@@ -39,6 +41,7 @@ import {
 } from "@/lib/scheduling/availability-contract";
 import {
   NONE_UNCOVERED,
+  previewNewlyUncovered,
   settleAvailabilityWrite,
   type UncoveredUpcoming,
 } from "@/lib/scheduling/uncovered-upcoming";
@@ -49,7 +52,10 @@ import {
   WeeklyOffsetConflictError,
   weeklyLocalColumnsForSave,
 } from "@/lib/scheduling/weeklyUtcOffset";
-import { isKnownTimeZone } from "@/utils/schedule/weekly-projection";
+import {
+  isKnownTimeZone,
+  partitionWeeklyRows,
+} from "@/utils/schedule/weekly-projection";
 // Zod schema for UUID validation
 const uuidSchema = z.string().uuid();
 
@@ -93,6 +99,7 @@ const bookingRequestFields = z
     bookingMode: z.nativeEnum(BookingMode).optional(),
     acceptingRequests: z.boolean().optional(),
     maxOpenRequests: z.number().int().min(1).max(50).nullable().optional(),
+    maxActivePlanClients: maxActivePlanClientsSchema.optional(),
   })
   .strict();
 
@@ -175,6 +182,7 @@ const BOOKING_SETTINGS_SELECT = {
   bookingMode: true,
   acceptingRequests: true,
   maxOpenRequests: true,
+  maxActivePlanClients: true,
 } as const;
 
 /** The caller's own profile's owner, or the 401/403 response to return. */
@@ -263,6 +271,8 @@ export async function GET(
       where: { id },
       select: {
         ...consultantPublicScalars,
+        // The plan-client limit is the owner's private setting.
+        maxActivePlanClients: isPrivilegedAccess,
         user: isPrivilegedAccess
           ? {
               // Full user data for own profile or admin
@@ -278,29 +288,7 @@ export async function GET(
                 },
               },
             }
-          : {
-              // Public fields only
-              select: {
-                id: true,
-                name: true,
-                image: true,
-                profileDisplayImage: true,
-                bio: true,
-                city: true,
-                country: true,
-                linkedinUrl: true,
-                timezone: true,
-                workExperiences: {
-                  orderBy: [{ isCurrent: "desc" }, { startDate: "desc" }],
-                },
-                education: {
-                  orderBy: { endYear: "desc" },
-                },
-                certifications: {
-                  orderBy: { issueDate: "desc" },
-                },
-              },
-            },
+          : { select: publicProfileUserSelect },
         domain: true,
         subDomains: true,
         tags: true,
@@ -355,11 +343,7 @@ export async function GET(
       },
     );
   } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "auth" } },
-    );
-    return apiError({ tag: "[Consultant.GET]", error });
+    return apiError({ tag: "[Consultant.GET]", error, subsystem: "auth" });
   }
 }
 
@@ -536,6 +520,26 @@ export async function PUT(
       mergedCustom = mergeAdjacentCustomRows(customSlotData);
     }
 
+    // The settings form asks first which bookings the new hours would leave
+    // outside, and how many custom dates a weekly save removes; nothing is written.
+    if (request.nextUrl.searchParams.get("preview") === "availability") {
+      return NextResponse.json({
+        preview: await previewNewlyUncovered(prisma, id, {
+          scheduleType,
+          weeklyRows: partitionWeeklyRows(
+            mergedWeekly.map((row) => ({
+              timezone: row.timezone ?? null,
+              localStartDay: row.localStartDay ?? null,
+              localStartMinutes: row.localStartMinutes ?? null,
+              localEndDay: row.localEndDay ?? null,
+              localEndMinutes: row.localEndMinutes ?? null,
+            })),
+          ).usable,
+          customRows: mergedCustom,
+        }),
+      });
+    }
+
     class SwitchBlockedInTx extends Error {
       constructor(readonly active: ActiveAppointmentsResult) {
         super("SCHEDULE_SWITCH_BLOCKED");
@@ -639,11 +643,7 @@ export async function PUT(
 
     return NextResponse.json({ data: { id }, uncoveredUpcoming });
   } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "auth" } },
-    );
-    return apiError({ tag: "[Consultant.PUT]", error });
+    return apiError({ tag: "[Consultant.PUT]", error, subsystem: "auth" });
   }
 }
 
@@ -663,8 +663,17 @@ export async function PATCH(
 
     const parsed = bookingRequestSettingsSchema.safeParse(await request.json());
     if (!parsed.success) {
+      // The plan-client limit's own sentence; anything else is a stale or hand-built body.
+      const limitIssue = parsed.error.issues.find((issue) =>
+        issue.path.includes("maxActivePlanClients"),
+      );
       return NextResponse.json(
-        { error: "Validation failed", details: parsed.error.format() },
+        {
+          error:
+            limitIssue?.message ??
+            "These booking settings could not be saved. Reload the page and try again.",
+          details: parsed.error.format(),
+        },
         { status: 400 },
       );
     }
@@ -677,6 +686,9 @@ export async function PATCH(
       }),
       ...("maxOpenRequests" in set && {
         maxOpenRequests: expect.maxOpenRequests,
+      }),
+      ...("maxActivePlanClients" in set && {
+        maxActivePlanClients: expect.maxActivePlanClients,
       }),
     };
     const written = await prisma.consultantProfile.updateMany({
@@ -702,11 +714,11 @@ export async function PATCH(
     purgeExpertSurfaces(id);
     return NextResponse.json({ data });
   } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "consultants" } },
-    );
-    return apiError({ tag: "[Consultant.PATCH]", error });
+    return apiError({
+      tag: "[Consultant.PATCH]",
+      error,
+      subsystem: "consultants",
+    });
   }
 }
 
@@ -862,10 +874,6 @@ export async function DELETE(
     purgeExpertSurfaces(id);
     return NextResponse.json({ message: "Consultant deleted successfully" });
   } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "auth" } },
-    );
-    return apiError({ tag: "[Consultant.DELETE]", error });
+    return apiError({ tag: "[Consultant.DELETE]", error, subsystem: "auth" });
   }
 }

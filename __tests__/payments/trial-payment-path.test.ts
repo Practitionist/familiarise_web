@@ -62,7 +62,6 @@ describe("trial payment deadline", () => {
 
 describe("trial re-request eligibility", () => {
   it.each([
-    TrialStatus.PENDING,
     TrialStatus.AWAITING_PAYMENT,
     TrialStatus.SCHEDULED,
     TrialStatus.COMPLETED,
@@ -71,14 +70,11 @@ describe("trial re-request eligibility", () => {
     expect(blocksNewTrialRequest(status)).toBe(true);
   });
 
-  it.each([TrialStatus.CANCELLED, TrialStatus.REJECTED])(
-    "frees the pair after %s",
-    (status) => {
-      // The learner never received a trial, so their one shot isn't spent.
-      // A lapsed unpaid trial lands on CANCELLED via the expiry job.
-      expect(blocksNewTrialRequest(status)).toBe(false);
-    },
-  );
+  it.each([TrialStatus.CANCELLED])("frees the pair after %s", (status) => {
+    // The learner never received a trial, so their one shot isn't spent.
+    // A lapsed unpaid trial lands on CANCELLED via the expiry job.
+    expect(blocksNewTrialRequest(status)).toBe(false);
+  });
 });
 
 describe("webhook metadata for trials", () => {

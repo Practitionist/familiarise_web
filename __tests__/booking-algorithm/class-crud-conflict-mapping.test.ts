@@ -40,6 +40,7 @@ jest.mock("../../lib/prisma", () => ({
     // The PATCH's slot batch reads the live sessions and the accepted co-hosts.
     appointmentOccurrence: { findMany: jest.fn().mockResolvedValue([]) },
     collaborator: { findMany: jest.fn().mockResolvedValue([]) },
+    membership: { count: jest.fn().mockResolvedValue(0) },
   },
 }));
 
@@ -102,7 +103,8 @@ const VALID_POST_BODY = {
   sessionDurationInHours: 1,
   topics: ["pottery"],
   learningOutcomes: ["Throw a bowl"],
-  startDate: "2026-03-02T10:00:00.000Z",
+  // Far enough ahead to clear the one-hour lead whenever the suite runs.
+  startDate: "2031-03-03T10:00:00.000Z",
   classContents: [
     { title: "Week one", description: "Wedging clay", hoursAllotted: 1 },
   ],
@@ -295,5 +297,41 @@ describe("#627/#784 — class PATCH maps its two rejections", () => {
 
     expect(response.status).not.toBe(403);
     expect(base.consultantProfile.findUnique).not.toHaveBeenCalled();
+  });
+});
+
+describe("class POST start time", () => {
+  it("answers 400 for a start off the half-hour grid and creates nothing", async () => {
+    const res = await POST(
+      request({ ...VALID_POST_BODY, startDate: "2031-03-03T10:10:00.000Z" }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ code: "EVENT_TIME_INVALID" });
+    expect(transaction).not.toHaveBeenCalled();
+  });
+});
+
+describe("class PATCH on an organisation's plan", () => {
+  it("refuses a named expert who is no longer an active member", async () => {
+    base.classPlan.findUnique.mockResolvedValue({
+      id: "plan-1",
+      organizationId: "org-1",
+      consultantProfileId: "cp-1",
+      consultantProfile: { id: "cp-1", userId: "user-1" },
+    });
+
+    const response = await PATCH(request({ id: "plan-1", title: "Renamed" }));
+
+    expect(response.status).toBe(403);
+    expect((await response.json()).code).toBe("NOT_ACTIVE_ORG_EXPERT");
+    expect(base.membership.count).toHaveBeenCalledWith({
+      where: {
+        organizationId: "org-1",
+        consultantProfileId: "cp-1",
+        status: "ACTIVE",
+        role: "EXPERT",
+      },
+    });
+    expect(transaction).not.toHaveBeenCalled();
   });
 });

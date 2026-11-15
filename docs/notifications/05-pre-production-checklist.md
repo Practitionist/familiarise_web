@@ -110,6 +110,7 @@ Done on 2026-11-08 for Production, in the window of the production release promo
 - [x] Development: `npm run novu:sync -- --dry-run` followed by `npm run novu:sync`, to sync all 16 workflow families
 - [x] Production: the same sequence with `--env production`; all 16 families applied on 2026-11-08. The native-mute reset found 0 mutes across 86 subscribers, and the profile-data scrub cleared 24 of 86 subscribers, with a follow-up dry run of 0
 - [x] After the domain-notices change (decision 17), `npm run novu:sync` ran in Development and, at the release, with `--env production`, so `payout-clawback`, `org-payout-clawback` and the new referral copy reached the `payout`, `org-billing`, `referral` and `payment` families
+- [ ] After the required-notices change ([the 2026-11-15 record](../decisions/2026-11-15-required-notices-and-deadline-alerts.md)) merges, the owner runs `npm run novu:sync -- --dry-run`, `npm run novu:sync` and two clean `npm run novu:check` runs five minutes apart in Development, and the same with `--env production` at the release promotion. The sync rewrites the `trial` family (the unsent `trial-session-requested` branch removed, the corrected `trial-refunded` description, the "Continue with {expert}" copy of `trial-session-completed`) and the `appointment` family (the request-expiring and refund-time copy of `new-booking-request`, the answer-by and moved-sessions copy of `appointment-rescheduled`)
 - [x] `npm run novu:check -- --env production` exited `0` with zero drift on two runs (08:29 and 08:34 UTC). Novu's read API serves stale workflows for about three minutes after a sync, so wait five minutes and expect two clean runs in a row after any future sync.
 - [x] HMAC encryption is enabled on the Production In-App integration (Novu Dashboard, In-App Integration settings) to pair with `computeSubscriberHash(subscriberId)`, and verified by behaviour on 2026-11-08: an inbox session with no hash or a wrong hash gets 400 "Please provide a valid HMAC hash", and the correct hash gets 201
 
@@ -121,7 +122,7 @@ Done on 2026-11-08 for Production, in the window of the production release promo
 ### Step 5: Environment Variables & Pre-Launch Delivery Guard Cutover
 
 - [ ] Confirm all required environment variables are configured in Netlify Dashboard and GitHub Actions secrets
-- [ ] Move Resend from Free to Pro just before launch, before the first marketing batch, or when real volume needs it, whichever comes first: Free stops sending at 100 emails a day (see [Resend billing guardrails](../../.claude/skills/billing-guardrails/references/resend.md#5-when-to-move-to-pro-owner-decision-2026-11-03))
+- [ ] Move Resend from Free to Pro on the first purchase trigger (the first marketing batch, daily volume approaching the Free cap, or go-live with more than a handful of active experts; the triggers are kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend)): Free stops sending at 100 emails a day (see [Resend billing guardrails](../../.claude/skills/billing-guardrails/references/resend.md#5-when-to-move-to-pro))
 - [ ] **Launch Cutover Gate**: Flip `EMAIL_DELIVERY_MODE=live` in the production env vars of the active application host and of the standby Netlify site (every scheduled job that sends mail runs on the Netlify ticker, so no Actions variable is read by a cron job) when opening public traffic (while unset or `allowlist`, external recipients are held safely as `DEAD_LETTER` `held:pre-launch` in `FailedEmail`)
 
 ### Step 6: Smoke Test Verification
@@ -235,7 +236,7 @@ Rotate `RESEND_API_KEY` across all four locations in lockstep so no environment 
 
 ## When You'll Need to Upgrade
 
-- **Resend Free → Pro (\$20/mo)**: When daily volume regularly exceeds ~80 emails/day, newsletter broadcasts exceed 100 subscribers in a single blast, or native Resend open/click analytics are required.
+- **Resend Free → Pro (\$20/mo)**: On the owner's purchase triggers (kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend)): typically daily volume approaching the Free cap of 100 emails a day, a newsletter broadcast larger than the Free plan allows, or a need for native Resend open/click analytics.
 - **Novu Free → Pro (~\$25–30/mo)**: When monthly workflow runs (one per bell recipient, Development and Production together) pass the upgrade trigger kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend), or when activity history beyond the Free plan's 24 hours is required.
 - **Kit / Directus CMS**: Remain deferred post-launch (`lib/newsletter/convertkit.ts` and `app/api/webhooks/directus/route.ts`) until automated drip sequences or managed CMS publishing are prioritized.
 

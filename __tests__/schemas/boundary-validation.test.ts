@@ -14,7 +14,11 @@ import {
 } from "../../schemas/payouts";
 import { channelCreateSchema } from "../../schemas/stream-channels";
 import { userIdQuerySchema } from "../../schemas/user";
-import { parseJsonRequest, parseRequestBody } from "../../lib/api/parse";
+import {
+  parseJsonRequest,
+  parseRequestBody,
+  readJsonBody,
+} from "../../lib/api/parse";
 
 describe("adminPayoutBatchSchema", () => {
   it("accepts a non-empty id list", () => {
@@ -122,6 +126,16 @@ describe("parseJsonRequest", () => {
     expect(error?.status).toBe(400);
   });
 
+  it("answers malformed JSON with the one typed 400 every route shares", async () => {
+    const { error } = await readJsonBody({
+      json: async () => {
+        throw new SyntaxError("Expected property name");
+      },
+    });
+    expect(error?.status).toBe(400);
+    expect(await error?.json()).toMatchObject({ code: "MALFORMED_JSON" });
+  });
+
   it("400s shape violations with issues attached", async () => {
     const req = { json: async () => ({ consultantProfileIds: [] }) };
     const { data, error } = await parseJsonRequest(schema, req);
@@ -169,15 +183,16 @@ describe("parseJsonRequest", () => {
 
 describe("userIdQuerySchema", () => {
   it("accepts a bounded id", () => {
-    expect(userIdQuerySchema.safeParse({ userId: "cjld2cjxh0000" }).success).toBe(
-      true,
-    );
+    expect(
+      userIdQuerySchema.safeParse({ userId: "cjld2cjxh0000" }).success,
+    ).toBe(true);
   });
 
-  it.each([["missing", {}], ["blank", { userId: "" }], ["oversized", { userId: "x".repeat(129) }]])(
-    "rejects %s",
-    (_label, query) => {
-      expect(userIdQuerySchema.safeParse(query).success).toBe(false);
-    },
-  );
+  it.each([
+    ["missing", {}],
+    ["blank", { userId: "" }],
+    ["oversized", { userId: "x".repeat(129) }],
+  ])("rejects %s", (_label, query) => {
+    expect(userIdQuerySchema.safeParse(query).success).toBe(false);
+  });
 });

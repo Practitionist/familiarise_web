@@ -1,3 +1,5 @@
+import { readJsonBody } from "@/lib/api/parse";
+import { createHash } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { assertRequestLeadFits } from "@/lib/booking/lead-time";
 import prisma from "@/lib/prisma";
@@ -51,7 +53,14 @@ import { planSaleRefusal } from "@/lib/api/plans/visibility";
 import { assertWindowMatchesPlanDuration } from "@/lib/booking/slot-validation";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
+import { REQUEST_NOT_OFFERED_MESSAGE } from "@/lib/booking/booking-mode";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
+import { assertSlotsStillPublished } from "@/lib/booking/allocation/coverage";
+import { AllocationConflictError } from "@/utils/scheduling-engine/errors";
+import {
+  TRIAL_WINDOW_REFUSAL_COPY,
+  TRIAL_WINDOW_REFUSAL_STATUS,
+} from "@/lib/trials/slot-check";
 
 import { getSession } from "@/lib/auth-server";
 import { assertNotSelfBooking } from "@/lib/booking/self-booking";
@@ -78,10 +87,39 @@ const REQUEST_RESPONSE_INCLUDE = {
   },
 } satisfies Prisma.ConsultationInclude;
 
-/** The original 201 for a retried key, or null when the key has created nothing yet. */
+interface AskedRequest {
+  consultationPlanId: string;
+  startsAt: string;
+  endsAt: string;
+  organizationId: string | null;
+}
+
+/** What the learner submitted, one spelling per instant, stored at creation. */
+function requestFingerprintOf(asked: AskedRequest): string {
+  const instant = (value: string) => {
+    const ms = Date.parse(value);
+    return Number.isNaN(ms) ? value : new Date(ms).toISOString();
+  };
+  return createHash("sha256")
+    .update(
+      JSON.stringify([
+        asked.consultationPlanId,
+        instant(asked.startsAt),
+        instant(asked.endsAt),
+        asked.organizationId ?? "",
+      ]),
+    )
+    .digest("hex");
+}
+
+/**
+ * The original 201 for a retried key, or null when the key has created nothing
+ * yet; the same key with another plan, time or organisation is the caller's 422.
+ */
 async function replayRequest(
   idempotencyKey: string | null,
   userId: string,
+  asked: AskedRequest,
 ): Promise<NextResponse | null> {
   if (!idempotencyKey) return null;
   const original = await prisma.consultation.findUnique({
@@ -89,10 +127,25 @@ async function replayRequest(
     include: REQUEST_RESPONSE_INCLUDE,
   });
   if (!original) return null;
-  if (original.requestedBy.userId !== userId) {
+  // Compared with what was submitted, never the booking's current times; a row
+  // created before the fingerprint compares its held times instead.
+  const held = (original.appointment?.occurrences ?? []).filter(
+    (o) => !o.deletedAt,
+  );
+  const sameBody = original.requestFingerprint
+    ? original.requestFingerprint === requestFingerprintOf(asked)
+    : original.consultationPlanId === asked.consultationPlanId &&
+      (original.appointment?.organizationId ?? null) === asked.organizationId &&
+      held.length > 0 &&
+      Math.min(...held.map((o) => o.startsAt.getTime())) ===
+        Date.parse(asked.startsAt) &&
+      Math.max(...held.map((o) => o.endsAt.getTime())) ===
+        Date.parse(asked.endsAt);
+  if (original.requestedBy.userId !== userId || !sameBody) {
     return NextResponse.json(
       {
-        error: "This Idempotency-Key was already used for another request.",
+        error:
+          "This Idempotency-Key was already used with a different request body.",
         code: "IDEMPOTENCY_KEY_REUSED",
       },
       { status: 422 },
@@ -143,10 +196,10 @@ export async function POST(req: NextRequest) {
       );
     }
     const idempotencyKey = keyResult?.data ?? null;
-    const replayed = await replayRequest(idempotencyKey, session.user.id);
-    if (replayed) return replayed;
 
-    const body = await req.json();
+    const read = await readJsonBody(req);
+    if (read.error) return read.error;
+    const body = read.body;
     const parseResult = RequestForApprovalSchema.safeParse(body);
     if (!parseResult.success) {
       // #1583 E-P1-03 — a typed refusal (grid / lead time) rides `params.code`.
@@ -173,6 +226,18 @@ export async function POST(req: NextRequest) {
       consultationPlanId,
       organizationId,
     } = parseResult.data;
+    const asked = {
+      consultationPlanId,
+      startsAt,
+      endsAt,
+      organizationId: organizationId ?? null,
+    };
+    const replayed = await replayRequest(
+      idempotencyKey,
+      session.user.id,
+      asked,
+    );
+    if (replayed) return replayed;
 
     // #1166 ORG-9 — org sponsorship was silently dropped by the approval flow:
     // the request carried no org, so the approved booking billed the member's
@@ -253,6 +318,7 @@ export async function POST(req: NextRequest) {
           select: {
             id: true,
             acceptingRequests: true,
+            bookingMode: true,
             maxOpenRequests: true,
             user: { select: { id: true } },
           },
@@ -294,6 +360,16 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // An instant-booking expert sells a free time at checkout; a held one is taken.
+    if (consultationPlan.consultantProfile.bookingMode !== "REQUEST") {
+      return bookingRuleResponse(
+        new BookingRuleError(
+          "REQUEST_NOT_OFFERED",
+          REQUEST_NOT_OFFERED_MESSAGE,
+        ),
+      );
+    }
+
     try {
       assertWindowMatchesPlanDuration(consultationPlan, startTime, endTime);
       assertRequestLeadFits(consultationPlan.price, startTime);
@@ -313,10 +389,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (
-      availabilityWindowWeeklyId &&
-      prisma.availabilityWindowWeekly?.findFirst
-    ) {
+    if (availabilityWindowWeeklyId) {
       const weeklyWindow = await prisma.availabilityWindowWeekly.findFirst({
         where: { id: availabilityWindowWeeklyId, consultantProfileId },
         select: { id: true },
@@ -332,10 +405,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    if (
-      availabilityWindowCustomId &&
-      prisma.availabilityWindowCustom?.findFirst
-    ) {
+    if (availabilityWindowCustomId) {
       const customWindow = await prisma.availabilityWindowCustom.findFirst({
         where: { id: availabilityWindowCustomId, consultantProfileId },
         select: { id: true },
@@ -385,6 +455,7 @@ export async function POST(req: NextRequest) {
       const replayedInLock = await replayRequest(
         idempotencyKey,
         session.user.id,
+        asked,
       );
       if (replayedInLock) return replayedInLock;
 
@@ -463,8 +534,18 @@ export async function POST(req: NextRequest) {
         // budget sits well inside the 60 s slot lock held above.
         const consultation = await prisma.$transaction(
           async (tx) => {
-            // Cap and availability are read on this transaction, after every
-            // lock, so the insert below commits against what they saw.
+            // Mode, cap and availability are read on this transaction, after
+            // every lock, so the insert below commits against what they saw.
+            const mode = await tx.consultantProfile.findUnique({
+              where: { id: consultantProfileId },
+              select: { bookingMode: true },
+            });
+            if (mode?.bookingMode !== "REQUEST") {
+              throw new RequestRefusal(409, {
+                error: REQUEST_NOT_OFFERED_MESSAGE,
+                code: "REQUEST_NOT_OFFERED",
+              });
+            }
             const atCapacity = await capacityRefusal(
               tx,
               consultationPlan.consultantProfile,
@@ -475,6 +556,27 @@ export async function POST(req: NextRequest) {
                 code: atCapacity.code,
               });
             }
+            // A request is checked against published hours here only; once
+            // held, it keeps its time for every approver.
+            await assertSlotsStillPublished(
+              tx,
+              consultantProfileId,
+              slotChunkStarts,
+            ).catch((error: unknown) => {
+              if (
+                error instanceof AllocationConflictError &&
+                error.errorCode === "AVAILABILITY_CHANGED"
+              ) {
+                throw new RequestRefusal(
+                  TRIAL_WINDOW_REFUSAL_STATUS.OUTSIDE_AVAILABILITY,
+                  {
+                    error: TRIAL_WINDOW_REFUSAL_COPY.OUTSIDE_AVAILABILITY,
+                    code: "OUTSIDE_AVAILABILITY",
+                  },
+                );
+              }
+              throw error;
+            });
             const validation = await new ScheduleValidationService(
               tx,
             ).checkSlotAvailability(
@@ -514,6 +616,10 @@ export async function POST(req: NextRequest) {
                 status: AppointmentStatus.PENDING,
                 requestNotes: requestNotes,
                 requestIdempotencyKey: idempotencyKey,
+                requestFingerprint: idempotencyKey
+                  ? requestFingerprintOf(asked)
+                  : null,
+                agreedPricePaise: consultationPlan.price,
                 appointment: {
                   create: {
                     appointmentType: "CONSULTATION",
@@ -639,6 +745,7 @@ export async function POST(req: NextRequest) {
           const replayedRace = await replayRequest(
             idempotencyKey,
             session.user.id,
+            asked,
           );
           if (replayedRace) return replayedRace;
         }

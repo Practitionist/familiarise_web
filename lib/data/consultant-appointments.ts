@@ -22,8 +22,10 @@
  * stay Dates.
  */
 
+import { isStaffNonParty, publicRequester } from "@/lib/booking/list-selects";
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
+import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
 import { AppointmentsType, AppointmentStatus, Prisma } from "@prisma/client";
 import { toPlain } from "@/lib/data/serialize";
 import { exactKeysetBand } from "@/lib/db/exact-keyset";
@@ -31,7 +33,7 @@ import {
   bookingAnomalies,
   scheduleAnomalyReport,
 } from "@/lib/appointments/report-anomalies";
-import type { TAppointment } from "@/types/appointment";
+import type { TAppointmentWithSeats } from "@/types/appointment";
 import type { Scope } from "@/lib/api/scope/parse";
 import { scopeToPlanHostWhere, scopeToWhereOrgId } from "@/lib/api/scope/parse";
 import {
@@ -128,7 +130,37 @@ async function olderThan(
  * the roster itself is not fetched here (#1554 — it lives on
  * AppointmentParticipant and no list consumer reads it).
  */
-export type ConsultantListAppointment = TAppointment;
+export type ConsultantListAppointment = TAppointmentWithSeats;
+
+/** STAFF read the learner of a booking they are not a party to in the public shape. */
+export function withPublicRequesterForStaff(
+  row: ConsultantListAppointment,
+  viewer: {
+    role?: string | null;
+    consulteeProfileId?: string | null;
+    consultantProfileId?: string | null;
+  },
+) {
+  const request = row.consultation ?? row.subscription;
+  const hostProfileId =
+    row.consultation?.consultationPlan.consultantProfile.id ??
+    row.subscription?.subscriptionPlan.consultantProfile.id;
+  const isParty =
+    (!!request && request.requestedBy.id === viewer.consulteeProfileId) ||
+    (!!hostProfileId && hostProfileId === viewer.consultantProfileId);
+  if (!isStaffNonParty(viewer.role, isParty)) return row;
+  return {
+    ...row,
+    consultation: row.consultation && {
+      ...row.consultation,
+      requestedBy: publicRequester(row.consultation.requestedBy),
+    },
+    subscription: row.subscription && {
+      ...row.subscription,
+      requestedBy: publicRequester(row.subscription.requestedBy),
+    },
+  };
+}
 
 export async function getConsultantAppointments(
   args: GetConsultantAppointmentsArgs,
@@ -349,6 +381,12 @@ export async function readConsultantAppointmentsPage(
   const hostUserSelect = { id: true, name: true, image: true } as const;
 
   const include = {
+    // Live buyer seats gate the host's Timings action on a webinar or class.
+    _count: {
+      select: {
+        participants: { where: { ...liveParticipant(), role: "CONSULTEE" } },
+      },
+    },
     occurrences: {
       where: { deletedAt: null },
       orderBy: { startsAt: "asc" },
@@ -356,6 +394,41 @@ export async function readConsultantAppointmentsPage(
         meeting: {
           select: { id: true, endedAt: true, endedReason: true },
         },
+      },
+    },
+    // The open move, so a booking being rescheduled reads "Being moved" here too.
+    rescheduleRequests: {
+      where: { status: { in: RESCHEDULE_OPEN_STATUSES } },
+      orderBy: { createdAt: "desc" },
+      take: 1,
+      select: {
+        id: true,
+        status: true,
+        reason: true,
+        expiresAt: true,
+        originStatus: true,
+        initiatorRole: true,
+        initiatedById: true,
+        proposedTimes: {
+          orderBy: { startsAt: "asc" },
+          take: 1,
+          select: { startsAt: true, endsAt: true },
+        },
+      },
+    },
+    // The newest payment rows, so a pay-first hold reads its own pay window
+    // (a 1:1 or plan has one buyer; a host's event view does not read them).
+    payment: {
+      where: { deletedAt: null },
+      orderBy: { createdAt: "desc" },
+      take: 3,
+      select: {
+        id: true,
+        paymentStatus: true,
+        expiresAt: true,
+        amount: true,
+        currency: true,
+        createdAt: true,
       },
     },
     consultation: {

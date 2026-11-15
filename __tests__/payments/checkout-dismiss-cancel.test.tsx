@@ -111,3 +111,67 @@ it("never offers to cancel a pay-link order minted elsewhere", async () => {
 
   expect(dismissToast.action).toBeUndefined();
 });
+
+it("shows the button busy from the click and ignores a second press while the pre-check runs", async () => {
+  let release: (ok: boolean) => void = () => undefined;
+  const onBeforeCheckout = jest.fn(
+    () => new Promise<boolean>((resolve) => (release = resolve)),
+  );
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  await act(async () =>
+    root.render(
+      <RazorpayCheckout
+        checkoutData={{} as CheckoutInput}
+        onBeforeCheckout={onBeforeCheckout}
+        onPaymentSuccess={jest.fn()}
+        onPaymentError={jest.fn()}
+      />,
+    ),
+  );
+  const button = container.querySelector("button")!;
+  await act(async () => button.click());
+  await act(async () => button.click());
+  expect(button.textContent).toBe("Processing...");
+  expect(onBeforeCheckout).toHaveBeenCalledTimes(1);
+  await act(async () => release(false));
+  expect(button.textContent).toBe("Pay with Razorpay");
+  act(() => root.unmount());
+});
+
+it("passes a resumed order's amount and currency to the price-change notice, opening nothing", async () => {
+  const Razorpay = jest.fn();
+  Object.assign(window, { Razorpay });
+  global.fetch = jest.fn(async () => ({
+    ok: true,
+    json: async () => ({
+      success: true,
+      reused: true,
+      paymentId: "pay-1",
+      paymentIntent: { id: "order_1", client_secret: null },
+      amount: 117941,
+      currency: "INR",
+    }),
+  })) as unknown as typeof fetch;
+  const onPaidWhenFree = jest.fn();
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  await act(async () =>
+    root.render(
+      <RazorpayCheckout
+        checkoutData={{} as CheckoutInput}
+        onPaymentSuccess={jest.fn()}
+        onPaymentError={jest.fn()}
+        onPaidWhenFree={onPaidWhenFree}
+        label="Confirm booking"
+      />,
+    ),
+  );
+  await act(async () => container.querySelector("button")?.click());
+  expect(onPaidWhenFree).toHaveBeenCalledWith({
+    amount: 117941,
+    currency: "INR",
+  });
+  expect(Razorpay).not.toHaveBeenCalled();
+  act(() => root.unmount());
+});

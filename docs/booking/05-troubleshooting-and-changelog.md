@@ -2,18 +2,19 @@
 
 ## Quick Error Lookup
 
-| Error Pattern                            | Category           | Cause                                             | Fix                                                          |
-| ---------------------------------------- | ------------------ | ------------------------------------------------- | ------------------------------------------------------------ |
-| `"Slots must be consecutive"`            | Validation         | Gap between selected slots                        | Ensure 30-min intervals with no gaps                         |
-| `"Weekly limit exceeded"`                | Subscription       | More calls than `sessionsPerWeek` in a week       | Remove excess calls; check Sunday-Saturday boundaries        |
-| `"Outside scheduling period"`            | Subscription/Class | Slot before startDate or after endDate            | Select within [startDate, endDate]                           |
-| `"Slots in the past"`                    | Universal          | Slot < now + 5 seconds                            | Select future slots; 5-second buffer for processing          |
-| `"Does not match consultant's schedule"` | Universal          | Slot not within any availability window           | Check weekly/custom availability; ensure correct day-of-week |
-| `"No available slots found"`             | Auto allocation    | Consultant has no open slots in the search window | Add availability; check for conflicts                        |
-| `"Slot already booked"`                  | Conflict           | Range overlap with existing appointment           | Choose a different time; check for PENDING bookings          |
-| `"Invalid slot count"`                   | Manual allocation  | Count not a multiple of slotsPerSession           | Must be exact multiple (e.g., 2, 4, 6 for 1h sessions)       |
-| `"Duplicate slots detected"`             | Manual allocation  | Same slot provided twice                          | Remove duplicates from request                               |
-| `"Cannot approve requested slots"`       | Requested mode     | No appointments exist for the event               | Consultee needs to resubmit request                          |
+| Error Pattern                            | Category           | Cause                                                                                 | Fix                                                                                                         |
+| ---------------------------------------- | ------------------ | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `"Slots must be consecutive"`            | Validation         | Gap between selected slots                                                            | Ensure 30-min intervals with no gaps                                                                        |
+| `"Weekly limit exceeded"`                | Subscription only  | More calls than `sessionsPerWeek` in a week (a class has no weekly limit)             | Remove excess calls; check Sunday-Saturday boundaries                                                       |
+| `"Outside scheduling period"`            | Subscription/Class | Slot before startDate or after endDate                                                | Select within [startDate, endDate]                                                                          |
+| `"Slots in the past"`                    | Universal          | Slot < now + 5 seconds                                                                | Select future slots; 5-second buffer for processing                                                         |
+| `"Does not match consultant's schedule"` | Universal          | Slot not within any availability window                                               | Check weekly/custom availability; ensure correct day-of-week                                                |
+| `OUTSIDE_AVAILABILITY` (400)             | Request door       | A requested time is outside the expert's published hours at the moment of the request | Pick a time inside the expert's open hours. A request already held keeps its time if the hours shrink later |
+| `"No available slots found"`             | Auto allocation    | Consultant has no open slots in the search window                                     | Add availability; check for conflicts                                                                       |
+| `"Slot already booked"`                  | Conflict           | Range overlap with existing appointment                                               | Choose a different time; check for PENDING bookings                                                         |
+| `"Invalid slot count"`                   | Manual allocation  | Count not a multiple of slotsPerSession                                               | Must be exact multiple (e.g., 2, 4, 6 for 1h sessions)                                                      |
+| `"Duplicate slots detected"`             | Manual allocation  | Same slot provided twice                                                              | Remove duplicates from request                                                                              |
+| `"Cannot approve requested slots"`       | Requested mode     | No appointments exist for the event                                                   | Consultee needs to resubmit request                                                                         |
 
 ## Common Issues
 
@@ -87,6 +88,23 @@ flowchart TD
 3. **Layer 3 (Database)**: Are there constraint violations? Check Prisma transaction logs.
 
 ---
+
+## Changelog: 2026-11-12 — the scheduling surfaces repair
+
+A repair of the scheduling surfaces pull request changed these behaviours; each is documented where it lives and the owner decisions are in [the scheduling surfaces ADR](../decisions/2026-11-09-scheduling-surfaces-and-feasibility.md).
+
+- **Plan publish gate.** The subscription plan `PUT` runs the feasibility gate only on a cadence change or a first publish. Feasibility counts a session on the zone-day it starts, and counted sessions never overlap. The feasibility `GET` answers 404 for a draft the caller cannot see, and the plan editor keeps a refused publish's reasons on the page ([04-api-reference.md](./04-api-reference.md)).
+- **Class creation and cadence.** A class start off the UTC half-hour grid, under an hour ahead, or unable to place every session answers 400 `EVENT_TIME_INVALID` before any write. A class has no weekly limit any more; only the per-day cap of two applies ([02-event-types-and-validation.md](./02-event-types-and-validation.md)).
+- **Drafts.** A `DRAFT` webinar or class can be cancelled ([18-state-machines.md](./18-state-machines.md)).
+- **:45-offset zones and midnight.** Hosts in a :45-offset zone are offered :15 and :45 local times on the UTC half-hour grid, and a pick across local midnight is one session on the day it starts ([19-dst-and-timezone-posture.md](./19-dst-and-timezone-posture.md), [03-interval-math-and-calculations.md](./03-interval-math-and-calculations.md)).
+- **Series move and allocator.** The class series move re-reads inside the transaction, replays an `Idempotency-Key` and refuses a stale plan with 409 `RETIME_NOT_ALLOWED`; a webinar or class allocation takes the event checkout lock first ([07-rescheduling-flow.md](./07-rescheduling-flow.md), [12-concurrency-and-locking.md](./12-concurrency-and-locking.md)).
+- **Host-only controls and pickers.** Co-hosts and co-instructors no longer see Timings, the series move, the webinar move or per-session cancel and make-up. The pickers of the owning host leave the event's own sessions out of the busy time and fold in co-hosts' time ([20-availability-grid-cost.md](./20-availability-grid-cost.md)).
+- **Jobs.** Class-end settlement keeps one class per transaction with a 6-second timeout and `auto-complete-appointments` is a financial, fail-closed job; the parked-consultation sweep tombstones and cancels participants the way a cancel does, and persists the client's Stream revocation intent for `retry-moderation-enforcement` to drive ([13-cron-jobs-and-background-tasks.md](./13-cron-jobs-and-background-tasks.md)).
+- **Trials.** Ending a held trial expires its pending payment in the same transaction, a booking with a live pending payment cannot be rescheduled (409 `PAY_LINK_LIVE`), and the trial limiter counts only trials created ([09-trials.md](./09-trials.md)).
+
+## Changelog: 2026-11-10 — the agent-run QA suite is rebuilt as `prompts/booking-qa/`
+
+The numbered corpus `prompts/booking-algorithm-tests/` (agents 001 to 020 and the Wave 0 shared setup) described request, allocation and refund flows that no longer exist, so it was deleted rather than patched. Its replacement, `prompts/booking-qa/`, is organised by area (setup, heat map, consultations, subscriptions, webinars, classes, trials, money, concurrency, time zones, dashboards, sweeps, copy and accessibility) and shares one `_shared/` folder: safety rules for the shared database, personas with deliberately different time zones, base fixtures, SQL recipes (including the per-host overlap invariant and plan-week counts), and a reporting taxonomy that asks for inconsistencies, false information, AI-slop copy, console and network errors and missed chances to tell the user something, not only pass or fail. Every case checks each dashboard that shows the booking and the other party's local time. The still-valid hard cases of the old corpus (webhook disorder, abandoned sweep, refund owed, gateway failures, maintenance freeze, org scope and sponsor allocation, DST, duplicate submits, caps, returning a session and expert strikes) were rewritten into the new folders. The `qa-preview` agent definition now uses the same taxonomy and may seed fixtures through the Supabase MCP, with every write behind the owner-approval prompt.
 
 ## Changelog: 2026-09-20 — finance train 4, PR-X: the consultee Payments page reads through the money-state layer
 
@@ -626,7 +644,7 @@ After any booking algorithm change, verify:
 
 ### Per Event Type
 
-- [ ] **Consultation**: Consecutive slots, same day, correct count for duration
+- [ ] **Consultation**: Consecutive slots (may cross midnight), correct count for the sold duration
 - [ ] **Subscription**: Weekly distribution, total calls, scheduling period, 1 call/day max
 - [ ] **Webinar**: Consecutive slots, single appointment created
 - [ ] **Class**: Session distribution, weekly limits, complete sessions per day

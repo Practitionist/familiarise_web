@@ -205,6 +205,20 @@ export async function transitionParticipant(
   return res.count;
 }
 
+/** `transitionParticipant` that returns the client seats it moved, for a caller that acts on exactly those. */
+export async function transitionParticipantSeats(
+  tx: ParticipantTx,
+  where: Prisma.AppointmentParticipantWhereInput,
+  to: ParticipantStatus,
+): Promise<string[]> {
+  const moved = await tx.appointmentParticipant.updateManyAndReturn({
+    where: { AND: [where, { status: { in: PARTICIPANT_ALLOWED_FROM[to] } }] },
+    data: { status: to },
+    select: { userId: true, role: true },
+  });
+  return moved.filter((p) => p.role === "CONSULTEE").map((p) => p.userId);
+}
+
 /** Stamp the Payment that funded every participant row of one appointment. */
 export async function linkParticipantsToPayment(
   tx: ParticipantTx,

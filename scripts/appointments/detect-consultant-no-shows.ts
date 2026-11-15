@@ -177,7 +177,7 @@ function isOpsOwnedSibling(occurrence: {
 // Shared by the candidate read and the ticker's idle probe.
 function noShowCandidateWhere(graceCutoff: Date) {
   return {
-    status: { in: [AppointmentStatus.APPROVED, AppointmentStatus.SCHEDULED] },
+    status: AppointmentStatus.APPROVED,
     appointment: {
       payment: {
         some: {

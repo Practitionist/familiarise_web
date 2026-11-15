@@ -72,32 +72,24 @@ describe("approval confirm excludes RESCHEDULED slots", () => {
 });
 
 describe("no gateway call inside the approval transaction", () => {
-  // #1775 C-1 — a plan never mints on approval; only its legacy retry remains.
-  it.each([
-    ["consultations", consultationsRoute, "generatePaymentLink(", true],
-    [
-      "subscriptions",
-      subscriptionsRoute,
-      "generatePaymentLinkForSubscription(",
-      false,
-    ],
-  ] as const)(
-    "%s mints AFTER commit with a retry marker",
-    (_name, src, mintCall, mintsOnApprove) => {
-      // #1775 B-9 — the mint moved into the shared block; the route's own
-      // name for it is gone, and the shared call must also sit after the tx.
-      expect(src).not.toContain(mintCall);
-      const txStart = src.indexOf("prisma.$transaction(");
-      const txOptions = src.indexOf(
-        "isolationLevel: Prisma.TransactionIsolationLevel.Serializable",
-        txStart,
-      );
-      const inTx = src.slice(txStart, txOptions);
-      expect(inTx).not.toContain("mintApprovalPaymentAfterCommit(");
-      expect(src.includes("needsPaymentLink: true")).toBe(mintsOnApprove);
-      expect(src).toContain("needsLinkRetry");
-    },
-  );
+  it("consultations mint AFTER commit with a retry marker", () => {
+    // The mint lives in the shared block; the route's own
+    // name for it is gone, and the shared call must also sit after the tx.
+    const src = consultationsRoute;
+    expect(src).not.toContain("generatePaymentLink(");
+    const txStart = src.indexOf("prisma.$transaction(");
+    const txOptions = src.indexOf(
+      "isolationLevel: Prisma.TransactionIsolationLevel.Serializable",
+      txStart,
+    );
+    expect(src.slice(txStart, txOptions)).not.toContain(
+      "mintApprovalPaymentAfterCommit(",
+    );
+    expect(src).toContain("needsPaymentLink: true");
+    expect(src).toContain("needsLinkRetry");
+  });
+
+  // A plan never mints: pinned by behaviour in subscription-approval-no-pay-link.test.ts.
 });
 
 describe("#1165 — approval gateway unified on RAZORPAY", () => {
@@ -106,10 +98,9 @@ describe("#1165 — approval gateway unified on RAZORPAY", () => {
       expect(src).not.toContain("PaymentGateway.STRIPE");
       expect(src).toContain("PaymentGateway.RAZORPAY");
     }
-    for (const src of [consultationsRoute, subscriptionsRoute]) {
-      expect(src).not.toContain("PaymentGateway.");
-      expect(src).toContain("mintApprovalPaymentAfterCommit({");
-    }
+    expect(subscriptionsRoute).not.toContain("PaymentGateway.");
+    expect(consultationsRoute).not.toContain("PaymentGateway.");
+    expect(consultationsRoute).toContain("mintApprovalPaymentAfterCommit({");
   });
 });
 
@@ -155,7 +146,7 @@ describe("#1775 — the detail PATCH refuses self-approval", () => {
 
 describe("#1775 C-1 — an unpaid plan is never approved", () => {
   it("the detail PATCH refuses with SUBSCRIPTION_UNPAID and never parks the plan awaiting payment", () => {
-    expect(subscriptionsRoute).toContain('"SUBSCRIPTION_UNPAID"');
+    expect(subscriptionsRoute).toContain("throw subscriptionUnpaidError()");
     expect(subscriptionsRoute).toContain("...SETTLED_SUBSCRIPTION");
     expect(subscriptionsRoute).not.toContain(
       "to: AppointmentStatus.APPROVED_PENDING_PAYMENT",

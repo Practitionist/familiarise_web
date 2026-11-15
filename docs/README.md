@@ -80,6 +80,9 @@ Booking system, slot allocation, validation, and scheduling logic for all 5 even
 - [2026-11-04-booking-v2-train-b.md](./decisions/2026-11-04-booking-v2-train-b.md) - Booking v2 train B: Regular time, the rolling 4-week horizon, the plan-end choice, frozen plan terms, and earnings that wait for owed refunds
 - [2026-11-07-attendee-comms.md](./decisions/2026-11-07-attendee-comms.md) - Attendee comms: calendar links instead of attachments, a 15-minute reminder window, reminders to paid seats only, "host is live" after the host's call join, and event-lock contention kept a 409
 - [2026-11-07-event-seat-waitlist.md](./decisions/2026-11-07-event-seat-waitlist.md) - A notify-only list for sold-out webinars and classes: no reservation, a 12-hour re-notice cooldown, quiet hours not applied, the notice linking straight to checkout, the release paths that stage it, a best-effort email after commit, and erasure plus a 30-day purge
+- [2026-11-12-bug-hunt-booking.md](./decisions/2026-11-12-bug-hunt-booking.md) - The agreed price kept at request for 1:1s and trials, the booked session's length, published hours checked only at the request door, and a 1:1 that may cross midnight, with the options not chosen
+- [2026-11-13-access-rules-after-the-bug-hunt.md](./decisions/2026-11-13-access-rules-after-the-bug-hunt.md) - The ordinary booking routes refuse operators who are not a party (a paid request ends through the staff cancel door; no staff route ends a paid trial yet), organisation plans are edited only by an active expert member, staff read a learner's profile in the public shape and admin profile edits are step-up and audited, plus three plain fixes and two findings not built
+- [2026-11-13-product-lifecycles.md](./decisions/2026-11-13-product-lifecycles.md) - One target lifecycle per booking product: the four state machines kept, dead stored values removed, "Requests reviewed first" enforced at checkout for 1:1s only, with the as-is product comparison, a ₹1,000 worked example and what Trains 1 and 2 still build
 - [01-booking-system-hld.md](./start-here/01-booking-system-hld.md) - Booking system high-level design: pipeline, allocation, concurrency layers, state machines, cron architecture
 - [02-money-system-hld.md](./start-here/02-money-system-hld.md) - Money system high-level design: pricing, capture, legs, ledger, earnings, payouts, refunds and policy decisions
 - [03-booking-and-money-machinery.md](./start-here/03-booking-and-money-machinery.md) - Worked guide with the seeded cast, entity model and end-to-end ledger examples
@@ -129,6 +132,7 @@ The money subsystem: checkout and pricing, capture and webhooks, the double-entr
 - [finance/90-decisions/README.md](./finance/90-decisions/README.md) - The money ADRs and the gateway decision
 - [finance/60-tax/05-gst-registration-and-tax-regime.md](./finance/60-tax/05-gst-registration-and-tax-regime.md) - The registered and unregistered GST regimes, the `Payment.gstRegime` stamp, the ₹15 lakh turnover alarm and the switch-over runbook
 - [2026-11-09-tax-compliance-and-pricing-levers.md](./decisions/2026-11-09-tax-compliance-and-pricing-levers.md) - Launch unregistered under the s.22 threshold with the regime from `PLATFORM_GSTIN`; one order pipeline; the profitability floor on every platform-funded lever; the roadmap and cited sources
+- [2026-11-12-bug-hunt-money-doors.md](./decisions/2026-11-12-bug-hunt-money-doors.md) - The recover door refuses returned or contested money, an abandoned wallet top-up is kept and a late payment credited, staff limits count credit at its value, and a reload or second tab counts the buyer's own open order; the options not chosen and the one fix not built
 - [2026-11-09-payment-gateways-one-rail.md](./decisions/2026-11-09-payment-gateways-one-rail.md) - Why only Razorpay and RazorpayX are integrated: Stripe removed, the US-entity route and the merchant-of-record platforms rejected, Cashfree, Tazapay and Xflow deferred with revisit triggers
 
 ---
@@ -179,6 +183,7 @@ Stream.io integration for messaging and video calls. This is the implemented mes
 - [13-recording-webhooks.md](./stream/13-recording-webhooks.md) - Recording webhooks
 - [19-recordings-lifecycle-and-access.md](./stream/19-recordings-lifecycle-and-access.md) - Recording lifecycle, retention and shared-run access
 - [troubleshooting.md](./stream/troubleshooting.md) - Troubleshooting
+- [2026-11-14-event-membership-follows-seats.md](./decisions/2026-11-14-event-membership-follows-seats.md) - Event chat and call members come from seats that hold access (`paidParticipant()`), never from payments, so a registration cannot re-add someone who left, was removed or was refunded
 
 ---
 
@@ -297,7 +302,8 @@ strategy documents to the individual slow-query investigations.
 - [03-dashboard-appointments-perf.md](./performance/03-dashboard-appointments-perf.md) - Investigation: slow `/api/appointments` query
 - [04-availability-allocation-perf.md](./performance/04-availability-allocation-perf.md) - Investigation: slow wide-window availability-with-allocation query
 - [05-lighthouse-audit-and-cwv-playbook.md](./performance/05-lighthouse-audit-and-cwv-playbook.md) - Lighthouse audits and the Core Web Vitals playbook
-- [06-database-round-trips-and-join-loading.md](./performance/06-database-round-trips-and-join-loading.md) - Why statement count dominates dashboard latency, and when readers use join loading
+- [06-database-round-trips-and-join-loading.md](./performance/06-database-round-trips-and-join-loading.md) - Why statement count dominates dashboard and booking-write latency, when readers use join loading, and the per-path counts of the booking writes
+- [2026-11-15-booking-statement-cuts.md](./decisions/2026-11-15-booking-statement-cuts.md) - Targeted join loading on the hot booking reads (not a global flip), trial notices read before their transaction under explicit limits, no invoice reads for a free order, and no raw error text in a 500, with the worked counts and the options not chosen
 
 ---
 
@@ -400,6 +406,7 @@ Prisma operations and migration documentation.
 - [2026-11-11-fable-5-2-advisor-tier.md](./decisions/2026-11-11-fable-5-2-advisor-tier.md) - Fable 5.2 becomes the advisor tier, audit days run at `xhigh` and orchestration at `high`, executor pins stay on Opus and Sonnet, and the Fable 5.2 briefing rules
 - [2026-11-09-repo-notion-split.md](./decisions/2026-11-09-repo-notion-split.md) - The six Notion sections, one canonical pricing page, the delete-versus-archive rule, competitor screenshots kept out of git, and legal facts written into the compliance docs
 - [2026-11-11-notion-workspace-consolidation.md](./decisions/2026-11-11-notion-workspace-consolidation.md) - Notion page titles carry outline numbers, repository pointers name the section and page without them, and the canonical page names after the consolidation
+- [2026-11-12-bug-hunt-support-and-stream.md](./decisions/2026-11-12-bug-hunt-support-and-stream.md) - A reopened support case gets a new resolution deadline, the SLA sweep pages by id with two stated limits, one-sided attendance rows wait for Stream and then park unverified, and two ideas considered and not built
 
 ---
 

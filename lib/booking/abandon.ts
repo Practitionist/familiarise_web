@@ -85,7 +85,7 @@ const ABANDONABLE_REQUEST_FROM = [
   "PENDING",
   "APPROVED_PENDING_PAYMENT",
 ] as const;
-const ABANDONABLE_TRIAL_FROM = ["PENDING", "AWAITING_PAYMENT"] as const;
+const ABANDONABLE_TRIAL_FROM = ["AWAITING_PAYMENT"] as const;
 
 /**
  * Rule 5's money predicate for a request, repeated inside the CAS. The OR
@@ -359,11 +359,9 @@ export async function abandonBooking(args: {
   //
   // The retry loop OUTLIVES the fixed 75 s grant (4 × (10 s maxWait + 15 s
   // timeout) ≈ 100 s), so each attempt re-grants it — the same per-attempt
-  // renewal the approval path takes via `renewApprovalLock` (#1319). A lapsed
-  // grant is not corruption: every CAS below carries its state and money
-  // predicates in the WHERE, so a second abandon running concurrently matches
-  // zero rows and answers NOT_ABANDONABLE / ALREADY_PAID. What it would cost is
-  // the serialisation, which is the whole point of this key.
+  // renewal the approval path takes via `renewApprovalLock`. A grant that
+  // lapsed to another writer aborts with LOCK_LOST (409) rather than run
+  // unserialised; every CAS below still carries its state and money predicates.
   const now = new Date();
   const outcome = await withAppointmentLock(
     target.appointmentId,

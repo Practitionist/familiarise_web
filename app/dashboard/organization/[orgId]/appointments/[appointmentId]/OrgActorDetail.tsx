@@ -16,7 +16,11 @@ import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { errorMessageFromBody } from "@/lib/fetch-helpers";
-import { appointmentStatusBadge } from "@/lib/labels/session-labels";
+import {
+  bookingStatus,
+  bookingStatusBadge,
+  type OpenRescheduleInput,
+} from "@/lib/appointments/booking-status";
 import { humanizeEnum } from "@/lib/ui/tone";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import {
@@ -35,6 +39,7 @@ import {
 import { OperatorOpsHint } from "@/components/appointments/OperatorOpsHint";
 import { AllocateOrgBookingDialog } from "../AllocateOrgBookingDialog";
 import { fetchWithIdentity } from "@/lib/auth/identity-header";
+import { createSubmissionKeys } from "@/lib/api/submission-key";
 
 export interface OrgActorDetailProps {
   orgId: string;
@@ -44,8 +49,16 @@ export interface OrgActorDetailProps {
     title: string;
     kind: AppointmentsType;
     status: AppointmentStatus | null;
+    /** DIRECT_CHECKOUT or REQUEST_SUBMITTED for a 1:1 or plan. */
+    source?: string | null;
+    paid?: boolean;
+    reschedule?: OpenRescheduleInput | null;
     expertName: string | null;
     learnerName: string | null;
+    learnerUserId: string | null;
+    /** The delivering expert and one session's length, for the allocate picker. */
+    consultantProfileId: string | null;
+    sessionMinutes: number | null;
     sessions: { id: string; startsAt: Date; endsAt: Date | null }[];
   };
   canCancel: boolean;
@@ -66,10 +79,14 @@ const fmt = (d: Date) =>
     minute: "2-digit",
   });
 
-async function postJson(url: string, body: unknown) {
+async function postJson(
+  url: string,
+  body: unknown,
+  headers: Record<string, string> = {},
+) {
   const res = await fetchWithIdentity(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...headers },
     body: JSON.stringify(body),
   });
   const json = await res.json().catch(() => null);
@@ -152,9 +169,23 @@ export function OrgActorDetail({
   const router = useRouter();
   const { toast } = useToast();
   const [cancelOpen, setCancelOpen] = useState(false);
+  const [rescheduleKeyFor] = useState(createSubmissionKeys);
   const showAllocate = Boolean(canAllocate);
   const acting = ((canCancel || canReschedule) && !opsHref) || showAllocate;
-  const status = meta.status ? appointmentStatusBadge(meta.status) : null;
+  const status = meta.status
+    ? bookingStatusBadge(
+        bookingStatus(
+          {
+            kind: meta.kind,
+            status: meta.status,
+            source: meta.source,
+            paid: meta.paid,
+            reschedule: meta.reschedule,
+          },
+          "ORG_ADMIN",
+        ),
+      )
+    : null;
 
   const queryClient = useQueryClient();
   const cancel = async () => {
@@ -205,7 +236,18 @@ export function OrgActorDetail({
     const url = isSubscription
       ? `/api/appointments/${appointmentId}/reschedule?type=SUBSCRIPTION`
       : `/api/appointments/${appointmentId}/reschedule`;
-    await postJson(url, { reason });
+    const body = { reason };
+    // Keyed on the whole request and the times it releases, so a later move of
+    // the same booking never replays an earlier answer.
+    const key = rescheduleKeyFor({
+      url,
+      body,
+      releases: meta.sessions.map((s) => [
+        s.id,
+        new Date(s.startsAt).getTime(),
+      ]),
+    });
+    await postJson(url, body, { "Idempotency-Key": key });
     toast({
       title: "Reschedule requested",
       description: "The expert will pick a new time.",
@@ -258,15 +300,20 @@ export function OrgActorDetail({
 
         {acting && (
           <div className="flex flex-wrap gap-2">
-            {showAllocate && (
-              <AllocateOrgBookingDialog
-                orgId={orgId}
-                appointmentId={appointmentId}
-                planTitle={meta.title}
-                expertName={meta.expertName}
-                learnerName={meta.learnerName}
-              />
-            )}
+            {showAllocate &&
+              meta.consultantProfileId &&
+              meta.sessionMinutes !== null && (
+                <AllocateOrgBookingDialog
+                  orgId={orgId}
+                  appointmentId={appointmentId}
+                  planTitle={meta.title}
+                  expertName={meta.expertName}
+                  learnerName={meta.learnerName}
+                  learnerUserId={meta.learnerUserId}
+                  consultantProfileId={meta.consultantProfileId}
+                  sessionMinutes={meta.sessionMinutes}
+                />
+              )}
             {canReschedule && !opsHref && (
               <ConfirmDialog
                 title="Ask to reschedule?"

@@ -8,17 +8,12 @@ import { randomUUID } from "node:crypto";
 import prisma from "../../../lib/prisma";
 import { seedHeldSeat, seedWebinar } from "./harness-seats";
 
-jest.mock("../../../lib/novu", () => {
-  const noop = jest.fn(async () => []);
-  return new Proxy(
-    {},
-    { get: (_target, prop) => (prop === "__esModule" ? true : noop) },
-  );
-});
-jest.mock("../../../lib/stream/access-revocation", () => ({
-  revokeEndedBookingChatAccess: jest.fn(async () => undefined),
-  revokeEndedEventChatAccess: jest.fn(async () => undefined),
-}));
+jest.mock("../../../lib/novu", () =>
+  jest.requireActual("../../fixtures/noop-module").noopModule(),
+);
+jest.mock("../../../lib/stream/access-revocation", () =>
+  jest.requireActual("./harness-edges").chatRevocationMock(),
+);
 /** The instance dies after the release commit, before its refund call returns. */
 jest.mock("../../../lib/payments/operations/event-refunds", () => ({
   ...jest.requireActual("../../../lib/payments/operations/event-refunds"),

@@ -32,7 +32,11 @@ export default function AppointmentsPageClient({
 
   const adapter = useConsulteeAppointmentsAdapter();
 
-  const vms = useMemo(() => mapConsulteeEvents(eventsData), [eventsData]);
+  const zone = viewerZone.zone;
+  const vms = useMemo(
+    () => mapConsulteeEvents(eventsData, new Date(), zone),
+    [eventsData, zone],
+  );
 
   return (
     <DashboardErrorBoundary>
@@ -40,23 +44,27 @@ export default function AppointmentsPageClient({
         title="Appointments"
         description="Your consultations, subscriptions, webinars, and classes"
       />
-      <MyAlerts viewerZone={viewerZone} />
       <IncidentRemedyBanner consulteeId={consulteeId} zone={viewerZone.zone} />
       <div>
         {isLoading && !eventsData ? (
           <AppointmentsPageSkeleton />
         ) : error ? (
-          <ErrorState
-            title="Couldn't load appointments"
-            error={error}
-            onRetry={() => void refetch()}
-          />
+          <>
+            {/* The alerts read their own endpoints, so they stay usable. */}
+            <MyAlerts viewerZone={viewerZone} />
+            <ErrorState
+              title="Couldn't load appointments"
+              error={error}
+              onRetry={() => void refetch()}
+            />
+          </>
         ) : (
           <DisplayZoneProvider zone={viewerZone.zone}>
             <AppointmentsShell
               vms={vms}
               adapter={adapter}
               viewerZone={viewerZone}
+              afterHero={<MyAlerts viewerZone={viewerZone} />}
             />
           </DisplayZoneProvider>
         )}

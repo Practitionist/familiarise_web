@@ -1,6 +1,6 @@
 /**
- * A sold subscription keeps the terms it was bought on. Rows sold before the
- * purchase-time freeze read the plan, so a plan edit stamps them first.
+ * A sold subscription keeps its terms, a 1:1 request or trial its agreed price.
+ * Rows from before the freeze read the plan, so a plan edit stamps them first.
  */
 import type { PrismaLike, Tx } from "@/lib/prisma";
 import { planEndOf, weeksPlanEndOf } from "@/lib/booking/entitlement";
@@ -69,6 +69,60 @@ export async function freezeSoldTerms(
     where: { subscriptionPlanId, sessionsTotal: null },
     data: { sessionsTotal: plan.totalSessions },
   });
+}
+
+/**
+ * Stamps the consultation plan's current price onto every request that still
+ * reads it from the plan; same tx and ordering as freezeSoldTerms.
+ */
+export async function freezeConsultationPrice(
+  tx: Pick<Tx, "consultation" | "consultationPlan">,
+  consultationPlanId: string,
+): Promise<void> {
+  const plan = await tx.consultationPlan.findUnique({
+    where: { id: consultationPlanId },
+    select: { price: true },
+  });
+  if (!plan) return;
+  await tx.consultation.updateMany({
+    where: { consultationPlanId, agreedPricePaise: null },
+    data: { agreedPricePaise: plan.price },
+  });
+}
+
+/**
+ * Stamps the plan's current trial price onto every trial that still reads it
+ * from the plan; same tx and ordering as freezeSoldTerms.
+ */
+export async function freezeTrialPrice(
+  tx: Pick<Tx, "trial" | "subscriptionPlan">,
+  subscriptionPlanId: string,
+): Promise<void> {
+  const plan = await tx.subscriptionPlan.findUnique({
+    where: { id: subscriptionPlanId },
+    select: { trialPriceInPaise: true },
+  });
+  if (!plan) return;
+  await tx.trial.updateMany({
+    where: { subscriptionPlanId, agreedPricePaise: null },
+    data: { agreedPricePaise: plan.trialPriceInPaise },
+  });
+}
+
+/** The price a 1:1 request runs on, in paise: agreed at request, else the plan's. */
+export function agreedConsultationPricePaise(consultation: {
+  agreedPricePaise: number | null;
+  consultationPlan: { price: number };
+}): number {
+  return consultation.agreedPricePaise ?? consultation.consultationPlan.price;
+}
+
+/** The price a trial runs on, in paise: agreed at request, else the plan's. */
+export function agreedTrialPricePaise(trial: {
+  agreedPricePaise: number | null;
+  subscriptionPlan: { trialPriceInPaise: number };
+}): number {
+  return trial.agreedPricePaise ?? trial.subscriptionPlan.trialPriceInPaise;
 }
 
 /** Live buyers of a plan: the clients a plan edit leaves on their own terms. */

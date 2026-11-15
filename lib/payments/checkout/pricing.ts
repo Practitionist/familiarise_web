@@ -4,8 +4,8 @@
 import { seatHoldingParticipant } from "@/utils/scheduling-engine/occupancyPolicy";
 import prisma from "@/lib/prisma";
 import type { CheckoutInput } from "@/schemas/checkout";
-import { firstCycleWindow } from "@/lib/booking/entitlement";
 import {
+  type BookingMode,
   type Currency,
   type OfferingPlanStatus,
   type OrgPlanVisibility,
@@ -33,7 +33,10 @@ import {
   planSaleRefusal,
 } from "@/lib/api/plans/visibility";
 import { classEnrolmentFrom } from "@/lib/booking/class-enrolment";
-import { BookingRuleError } from "@/lib/booking/booking-rule-error";
+import {
+  BookingRuleError,
+  assertExpertTakesDirectCheckout,
+} from "@/lib/booking/booking-rule-error";
 import { assertWindowMatchesPlanDuration } from "@/lib/booking/slot-validation";
 import {
   holdsSettledSeat,
@@ -42,11 +45,12 @@ import {
   assertSeatRemintable,
   assertClassEnrolmentOpen,
 } from "@/lib/payments/checkout/seats";
-import {
-  resolvePlanStart,
-  resolvePriorPlanEnd,
-} from "@/lib/payments/checkout/renewal";
+import { resolveSubscriptionCheckoutPeriod } from "@/lib/payments/checkout/renewal";
 import { validateSlotAvailability } from "@/lib/payments/checkout/occupancy-validate";
+import {
+  openOrderTargetOf,
+  ownOpenOrderHolds,
+} from "@/lib/payments/checkout/order-reuse";
 
 /**
  * Calculate final amount with discount and validate plan availability
@@ -112,21 +116,16 @@ export async function calculateAmountAndValidate(
         consultantProfile: {
           verificationStatus: string;
           acceptingRequests: boolean;
+          bookingMode: BookingMode;
         } | null;
       },
       label: string,
     ) => {
-      // A paused expert takes no new 1:1 booking; webinar and class seats keep
-      // selling, and approved pay-links are minted elsewhere.
-      const oneToOne =
-        validatedData.appointmentType === "CONSULTATION" ||
-        validatedData.appointmentType === "SUBSCRIPTION";
-      if (oneToOne && p.consultantProfile?.acceptingRequests === false) {
-        throw new BookingRuleError(
-          "NOT_ACCEPTING_BOOKINGS",
-          "This expert is not taking new 1:1 bookings right now. Pick another expert, or try again later.",
-        );
-      }
+      // Webinar and class seats keep selling; approved pay links are minted elsewhere.
+      assertExpertTakesDirectCheckout(
+        validatedData.appointmentType,
+        p.consultantProfile,
+      );
       // #1527 Q4 — new sales only. Pay-links minted for approved requests
       // (approval-payment.ts) deliberately skip this, so unpublishing a plan
       // never strands a booking the consultant already accepted.
@@ -146,7 +145,10 @@ export async function calculateAmountAndValidate(
         );
       }
       if (p.archivedAt) {
-        throw new Error(`${label} is no longer available`);
+        throw new BookingRuleError(
+          "PLAN_ARCHIVED",
+          `${label} is no longer offered, so it can't be booked.`,
+        );
       }
       // A non-marketplace plan sells only to its own org's sponsored buyers; a
       // plan whose org was cleared (onDelete: SetNull) sells to no sponsor.
@@ -246,31 +248,18 @@ export async function calculateAmountAndValidate(
           organizationId,
           plan.consultantProfile.id,
         );
-        if (
-          validatedData.schedulingPeriodStartsAt ||
-          validatedData.renewsSubscriptionId
-        ) {
-          const priorPlanEnd = await resolvePriorPlanEnd(
-            tx,
-            validatedData.renewsSubscriptionId,
-            user.consulteeProfile.id,
-            plan.id,
-          );
-          const schedulingTimezone = resolveSchedulingTimezone(
-            plan.consultantProfile?.user?.timezone,
-          );
-          const effectiveStart = resolvePlanStart(
-            validatedData.schedulingPeriodStartsAt,
-            priorPlanEnd,
-            new Date(),
-          );
-          const { start, end } = firstCycleWindow(
+        subscriptionSchedulingPeriod = await resolveSubscriptionCheckoutPeriod(
+          tx,
+          {
+            schedulingPeriodStartsAt: validatedData.schedulingPeriodStartsAt,
+            renewsSubscriptionId: validatedData.renewsSubscriptionId,
+            consulteeProfileId: user.consulteeProfile.id,
             plan,
-            effectiveStart,
-            schedulingTimezone,
-          );
-          subscriptionSchedulingPeriod = { startsAt: start, endsAt: end };
-        }
+            schedulingTimezone: resolveSchedulingTimezone(
+              plan.consultantProfile?.user?.timezone,
+            ),
+          },
+        );
         amount = plan.price;
         priceCurrency = plan.priceCurrency;
         break;
@@ -281,6 +270,7 @@ export async function calculateAmountAndValidate(
         }
         const webinar = await tx.webinar.findUnique({
           where: { id: validatedData.eventId },
+          relationLoadStrategy: "join",
           include: {
             webinarPlan: {
               include: {
@@ -428,6 +418,20 @@ export async function calculateAmountAndValidate(
         throw new Error("Invalid appointment type");
     }
 
+    // Priced as if the buyer's own open order for this item were released, so a reload or second tab
+    // prices like the first; releaseSupersededHolds returns its holds before the commit consumes them.
+    const target = openOrderTargetOf(
+      validatedData,
+      userId,
+      organizationId,
+      subscriptionSchedulingPeriod,
+    );
+    let ownHolds: ReturnType<typeof ownOpenOrderHolds> | null = null;
+    const readOwnHolds = () =>
+      target
+        ? (ownHolds ??= ownOpenOrderHolds(tx, target))
+        : Promise.resolve({ creditsPaise: 0, discountCodeIds: [] });
+
     // Apply discount if provided - with full backend re-validation
     let discountCodeId = null;
     let appliedDiscount: CheckoutDiscountInput | null = null;
@@ -450,10 +454,15 @@ export async function calculateAmountAndValidate(
           discount.maxUses !== null &&
           discount.currentUses >= discount.maxUses
         ) {
-          throw new DiscountExhaustedError(
-            discount.currentUses,
-            discount.maxUses,
-          );
+          const ownUses = (await readOwnHolds()).discountCodeIds.filter(
+            (id) => id === discount.id,
+          ).length;
+          if (discount.currentUses - ownUses >= discount.maxUses) {
+            throw new DiscountExhaustedError(
+              discount.currentUses,
+              discount.maxUses,
+            );
+          }
         }
 
         discountCodeId = discount.id;
@@ -525,7 +534,8 @@ export async function calculateAmountAndValidate(
       promoFeeBps: attribution.promoFeeBps,
       useReferralCredits: validatedData.useReferralCredits === true,
       resolveAvailableCreditsPaise: async () =>
-        (await getUserCredits(userId, tx)).totalAvailable,
+        (await getUserCredits(userId, tx)).totalAvailable +
+        (await readOwnHolds()).creditsPaise,
     });
     // A code on an order whose take cannot fund promo (a fee waiver, a host org) is refused,
     // before commit, so no redemption is spent.

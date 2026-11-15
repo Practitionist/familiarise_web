@@ -5,6 +5,93 @@ import { sendAppointmentRescheduledEmail } from "@/lib/email";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 
+const PARTY_USER = { select: { user: { select: { id: true, name: true } } } };
+
+/**
+ * The parties' names and the plan title a reschedule notice needs, for each
+ * 1:1 kind that can be moved (consultation, subscription, trial). Spread into
+ * an appointment select and read back with {@link rescheduleParties}.
+ */
+export const RESCHEDULE_PARTIES_SELECT = {
+  consultation: {
+    select: {
+      requestedBy: PARTY_USER,
+      consultationPlan: {
+        select: { title: true, consultantProfile: PARTY_USER },
+      },
+    },
+  },
+  subscription: {
+    select: {
+      requestedBy: PARTY_USER,
+      subscriptionPlan: {
+        select: { title: true, consultantProfile: PARTY_USER },
+      },
+    },
+  },
+  trial: {
+    select: {
+      consulteeProfile: PARTY_USER,
+      subscriptionPlan: {
+        select: { title: true, consultantProfile: PARTY_USER },
+      },
+    },
+  },
+} as const;
+
+type PartyUser = { id: string; name: string | null };
+type PlanSide = {
+  title: string;
+  consultantProfile: { user: PartyUser };
+};
+
+export interface RescheduleParties {
+  planTitle: string;
+  consultantUser: PartyUser;
+  consulteeUser: PartyUser;
+}
+
+/** The two parties of a moved booking, or null for a kind that never reschedules. */
+export function rescheduleParties(appointment: {
+  consultation?: {
+    requestedBy: { user: PartyUser };
+    consultationPlan: PlanSide;
+  } | null;
+  subscription?: {
+    requestedBy: { user: PartyUser };
+    subscriptionPlan: PlanSide;
+  } | null;
+  trial?: {
+    consulteeProfile: { user: PartyUser };
+    subscriptionPlan: PlanSide;
+  } | null;
+}): RescheduleParties | null {
+  const pick = (consultee: PartyUser, plan: PlanSide): RescheduleParties => ({
+    planTitle: plan.title,
+    consultantUser: plan.consultantProfile.user,
+    consulteeUser: consultee,
+  });
+  if (appointment.consultation) {
+    return pick(
+      appointment.consultation.requestedBy.user,
+      appointment.consultation.consultationPlan,
+    );
+  }
+  if (appointment.subscription) {
+    return pick(
+      appointment.subscription.requestedBy.user,
+      appointment.subscription.subscriptionPlan,
+    );
+  }
+  if (appointment.trial) {
+    return pick(
+      appointment.trial.consulteeProfile.user,
+      appointment.trial.subscriptionPlan,
+    );
+  }
+  return null;
+}
+
 /**
  * Tell both parties that a reschedule ended with the booking back on its
  * original time: the initiator withdrew it (PR 2e), or nobody answered and it
@@ -32,52 +119,16 @@ export async function notifyRescheduleRestored(
             id: true,
             organizationId: true,
             appointmentType: true,
-            consultation: {
-              select: {
-                requestedBy: {
-                  select: { user: { select: { id: true, name: true } } },
-                },
-                consultationPlan: {
-                  select: {
-                    title: true,
-                    consultantProfile: {
-                      select: { user: { select: { id: true, name: true } } },
-                    },
-                  },
-                },
-              },
-            },
-            subscription: {
-              select: {
-                requestedBy: {
-                  select: { user: { select: { id: true, name: true } } },
-                },
-                subscriptionPlan: {
-                  select: {
-                    title: true,
-                    consultantProfile: {
-                      select: { user: { select: { id: true, name: true } } },
-                    },
-                  },
-                },
-              },
-            },
+            ...RESCHEDULE_PARTIES_SELECT,
           },
         },
       },
     });
     const appt = detail?.appointment;
-    const side = appt?.consultation ?? appt?.subscription;
-    if (!detail || !side || !appt) return;
+    const parties = appt ? rescheduleParties(appt) : null;
+    if (!detail || !parties || !appt) return;
 
-    const isConsultation = "consultationPlan" in side;
-    const planTitle = isConsultation
-      ? side.consultationPlan.title
-      : side.subscriptionPlan.title;
-    const consultantUser = isConsultation
-      ? side.consultationPlan.consultantProfile.user
-      : side.subscriptionPlan.consultantProfile.user;
-    const consulteeUser = side.requestedBy.user;
+    const { planTitle, consultantUser, consulteeUser } = parties;
     const userIds = [
       detail.initiatedById,
       consultantUser.id,
@@ -94,17 +145,29 @@ export async function notifyRescheduleRestored(
       select: { startsAt: true },
     });
     const dashboardUrl = notificationHref(appt.organizationId, "appointments");
+    // A lapse reaches every party; a withdrawal reaches everyone but the proposer who withdrew.
+    const required =
+      outcome === "EXPIRED"
+        ? { kind: "PROPOSAL_LAPSED" as const, recipients: userIds }
+        : {
+            kind: "PROPOSAL_WITHDRAWN" as const,
+            recipients: userIds.filter((id) => id !== detail.initiatedById),
+          };
 
-    await notifyAppointmentRescheduled(userIds, {
-      ...notificationScope(appt.organizationId),
-      appointmentType: appt.appointmentType,
-      consultantName: consultantUser.name || "Consultant",
-      consulteeName: consulteeUser.name || "Consultee",
-      planTitle,
-      dashboardUrl,
-      outcome,
-      ...(restored ? { oldDateTime: restored.startsAt.toISOString() } : {}),
-    });
+    await notifyAppointmentRescheduled(
+      userIds,
+      {
+        ...notificationScope(appt.organizationId),
+        appointmentType: appt.appointmentType,
+        consultantName: consultantUser.name || "Consultant",
+        consulteeName: consulteeUser.name || "Consultee",
+        planTitle,
+        dashboardUrl,
+        outcome,
+        ...(restored ? { oldDateTime: restored.startsAt.toISOString() } : {}),
+      },
+      { required },
+    );
     // #1653 — the email twin; the sender never throws.
     await sendAppointmentRescheduledEmail(
       {
@@ -113,6 +176,7 @@ export async function notifyRescheduleRestored(
         outcome,
         appointmentType: appt.appointmentType,
         oldStartsAt: restored?.startsAt ?? null,
+        requiredFor: required.recipients,
         dashboardUrl,
       },
       emailBudgetMs,

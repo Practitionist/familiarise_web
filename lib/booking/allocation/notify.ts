@@ -35,6 +35,8 @@ export async function stageAllocationNotices(
     unplacedSessions?: number;
   },
   outcome?: ApprovalOutcome,
+  /** The rows this run wrote; each write is its own notice, never deduplicated into an earlier one. */
+  placedIds: readonly (string | undefined)[] = [],
 ): Promise<StagedTrigger[]> {
   // #1775 B-9 — nothing is booked before payment: an awaiting-payment
   // approval's only consultee message is the pay-link email the mint sends.
@@ -278,8 +280,16 @@ export async function stageAllocationNotices(
     dashboardUrl: notificationHref(context.organizationId, "appointments"),
   };
 
+  const placedKeys = placedIds
+    .filter((id): id is string => typeof id === "string")
+    .sort((x, y) => (x < y ? -1 : x > y ? 1 : 0));
+  const dedupeKey =
+    placedKeys.length > 0
+      ? `allocation:${context.appointmentId ?? eventId}:${placedKeys.join(",")}`
+      : undefined;
   const results = await notifyAppointmentBooked(context.userIds, payload, {
     tx,
+    dedupeKey,
   });
 
   // #1206 — a second, separate notice rather than a flag on the booking one:
@@ -295,7 +305,7 @@ export async function stageAllocationNotices(
           requiredSessions: partial.requiredSessions ?? 0,
           unplacedSessions: partial.unplacedSessions ?? 0,
         },
-        { tx },
+        { tx, dedupeKey },
       )),
     );
   }

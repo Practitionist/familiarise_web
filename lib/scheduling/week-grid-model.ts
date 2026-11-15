@@ -1,14 +1,14 @@
 /**
  * The dashboard heat map as data: one resolved cell per (row, day), built
  * once per data change so rendering is a lookup and every reader (paint,
- * dead-hour fold, legend, click guard, keyboard) agrees on what a cell is.
+ * open-hours window, legend, click guard, keyboard) agrees on what a cell is.
  */
 import {
   resolveSlotStatusKey,
   SLOT_STATUS_TOKENS,
   type SlotStatusKey,
 } from "@/lib/scheduling/interval-status-tokens";
-import type { WeekRowModel } from "@/lib/time/grid-zone";
+import { ATOM_MS, type WeekRowModel } from "@/lib/time/grid-zone";
 
 export interface OverlapDetail {
   id: string;
@@ -141,36 +141,35 @@ export function describeAtom(
   };
 }
 
-/** A cell ready to render: the atom plus its visible word. */
+/** A cell ready to render: the atom plus its state's name. Busy runs are labelled by their block, not the cell. */
 export interface CellView extends AtomState {
-  /** The word drawn in the cell; empty on a continuation of the same state. */
-  text: string;
-  /** The state's full name, for the accessible label and tooltip. */
+  /** The state's full name, for the accessible label, tooltip and block label. */
   stateLabel: string;
 }
 
 export interface WeekCells {
   /** `[axisIndex][dayIndex]`; null where a clock change skips that time. */
   matrix: (CellView | null)[][];
-  /** Rows with an in-period live cell; outside-period-only rows band separately. */
+  /** Rows with an in-period live or requested cell; they bound the open-hours window. */
   live: boolean[];
+  /** Rows with an outside-period cell, so an empty window can say why. */
   outsidePeriod: boolean[];
   paintedKeys: ReadonlySet<SlotStatusKey>;
   paintedCounts: ReadonlyMap<SlotStatusKey, number>;
   /** Atom start → cell, for the visible week. */
   byStart: ReadonlyMap<number, CellView>;
+  /** Atom start → where its cell sits in `matrix`. */
+  positions: ReadonlyMap<number, CellPosition>;
+}
+
+export interface CellPosition {
+  row: number;
+  day: number;
 }
 
 function stateLabelOf(atom: AtomState): string {
   if (atom.statusKey === "thisEvent" && atom.isInPast) return "Past session";
   return SLOT_STATUS_TOKENS[atom.statusKey].label;
-}
-
-function wordOf(atom: AtomState, stateLabel: string): string {
-  if (atom.statusKey === "unavailable" || atom.statusKey === "outsidePeriod") {
-    return "";
-  }
-  return stateLabel;
 }
 
 /** One pass over the week: cells, the fold vectors and the legend's painted set. */
@@ -181,34 +180,24 @@ export function buildWeekCells(
   const painted = new Set<SlotStatusKey>();
   const counts = new Map<SlotStatusKey, number>();
   const byStart = new Map<number, CellView>();
+  const positions = new Map<number, CellPosition>();
   const live: boolean[] = [];
   const outsidePeriod: boolean[] = [];
-  const previousWord: string[] = rows.cells.map(() => "");
 
-  const matrix = rows.axis.map((axisRow) => {
+  const matrix = rows.axis.map((axisRow, rowIndex) => {
     let rowLive = false;
     let rowOutside = false;
     const line = rows.cells.map((dayCells, dayIndex) => {
       const row = dayCells.get(axisRow.key);
-      if (!row) {
-        previousWord[dayIndex] = "";
-        return null;
-      }
+      if (!row) return null;
       const atom = describeAtom(row.start.getTime(), row.end.getTime(), ctx);
-      const stateLabel = stateLabelOf(atom);
-      const word = wordOf(atom, stateLabel);
-      const cell: CellView = {
-        ...atom,
-        stateLabel,
-        // The word stays on the first cell of a run; the rest repeat it silently.
-        text: word === previousWord[dayIndex] ? "" : word,
-      };
-      previousWord[dayIndex] = word;
+      const cell: CellView = { ...atom, stateLabel: stateLabelOf(atom) };
       painted.add(cell.statusKey);
       counts.set(cell.statusKey, (counts.get(cell.statusKey) ?? 0) + 1);
       if (cell.statusKey === "outsidePeriod") rowOutside = true;
-      else if (cell.isLive) rowLive = true;
+      else if (cell.isLive || cell.isRequested) rowLive = true;
       byStart.set(cell.startMs, cell);
+      positions.set(cell.startMs, { row: rowIndex, day: dayIndex });
       return cell;
     });
     live.push(rowLive);
@@ -223,6 +212,119 @@ export function buildWeekCells(
     paintedKeys: painted,
     paintedCounts: counts,
     byStart,
+    positions,
+  };
+}
+
+/**
+ * How many whole sessions of `size` atoms the free atoms in `starts` hold:
+ * each unbroken run holds `floor(run / size)`. Session-length aware, so two
+ * free half-hours on either side of a booking hold no 1-hour session.
+ */
+export function sessionsThatFit(
+  starts: Iterable<number>,
+  size: number,
+): number {
+  const sorted = [...starts].sort((a, b) => a - b);
+  const per = Math.max(1, size);
+  let fits = 0;
+  let run = 0;
+  sorted.forEach((startMs, index) => {
+    run = index > 0 && sorted[index - 1] + ATOM_MS === startMs ? run + 1 : 1;
+    if (run % per === 0) fits += 1;
+  });
+  return fits;
+}
+
+/** "3 fit": the whole sessions a day's free time holds, as the week header and month view print it. */
+export function fitLabel(count: number): string {
+  if (count === 0) return "None fit";
+  return `${count} ${count === 1 ? "fits" : "fit"}`;
+}
+
+/**
+ * Per day column of `matrix`, the whole sessions its free cells hold: the week
+ * header's "N fit". A session that runs past midnight counts on the day it starts.
+ */
+export function weekDayFits(
+  matrix: readonly (readonly (Pick<
+    CellView,
+    "startMs" | "statusKey"
+  > | null)[])[],
+  size: number,
+): number[] {
+  const days = matrix.reduce((most, line) => Math.max(most, line.length), 0);
+  const dayOf = new Map<number, number>();
+  matrix.forEach((line) =>
+    line.forEach((cell, day) => {
+      if (cell?.statusKey === "available") dayOf.set(cell.startMs, day);
+    }),
+  );
+  const per = Math.max(1, size);
+  const fits = Array.from({ length: days }, () => 0);
+  const sorted = [...dayOf.keys()].sort((a, b) => a - b);
+  let run = 0;
+  sorted.forEach((startMs, index) => {
+    run = index > 0 && sorted[index - 1] + ATOM_MS === startMs ? run + 1 : 1;
+    if (run % per !== 0) return;
+    const day = dayOf.get(startMs - (per - 1) * ATOM_MS);
+    if (day !== undefined) fits[day] += 1;
+  });
+  return fits;
+}
+
+/**
+ * The atom starts one click on `clickedMs` places for a session of `size`
+ * atoms: forward from the click, else backward, else both ways around it.
+ * Just the click when no whole session fits. The click and the hover preview
+ * both call this, so the preview is exactly what a click does.
+ */
+export function expandToSession(
+  clickedMs: number,
+  size: number,
+  isFree: (startMs: number) => boolean,
+): number[] {
+  if (size <= 1) return [clickedMs];
+  const free = (steps: number) => isFree(clickedMs + steps * ATOM_MS);
+  let ahead = 0;
+  while (ahead + 1 < size && free(ahead + 1)) ahead += 1;
+  const at = (steps: number) => clickedMs + steps * ATOM_MS;
+  const span = (from: number, to: number) =>
+    Array.from({ length: to - from + 1 }, (_, i) => at(from + i));
+  if (ahead + 1 === size) return span(0, ahead);
+  let behind = 0;
+  while (behind + 1 < size && free(-(behind + 1))) behind += 1;
+  if (behind + 1 === size) return span(-behind, 0);
+  if (ahead + behind + 1 >= size && (ahead > 0 || behind > 0)) {
+    return span(-(size - 1 - ahead), ahead);
+  }
+  return [clickedMs];
+}
+
+/** Rows of padding the open-hours window keeps above and below the live rows: one hour. */
+export const OPEN_HOURS_PAD_ROWS = 2;
+
+/** A contiguous run of axis rows, `from` inclusive to `to` exclusive. */
+export interface RowWindow {
+  from: number;
+  to: number;
+}
+
+/**
+ * The "Open hours" view: the earliest to the latest live row of the week,
+ * padded by an hour each side and clamped to the day. Closed rows inside it
+ * stay visible. Null when nothing in the week is live.
+ */
+export function openHoursWindow(
+  live: readonly boolean[],
+  padRows: number = OPEN_HOURS_PAD_ROWS,
+): RowWindow | null {
+  const first = live.indexOf(true);
+  if (first === -1) return null;
+  const last = live.lastIndexOf(true);
+  return {
+    from: Math.max(0, first - padRows),
+    to: Math.min(live.length, last + 1 + padRows),
   };
 }
 
@@ -256,4 +358,34 @@ export function selectionConflicts(
     }
   }
   return conflicts;
+}
+
+/**
+ * The atoms this booking holds as an unconfirmed request (tentative, not
+ * released): the approver may pick them up to the allocate lead, not 24 hours.
+ */
+export function ownHoldStarts(
+  occurrences: ReadonlyArray<{
+    startsAt: Date | string;
+    endsAt: Date | string;
+    isTentative: boolean;
+    completionStatus: string | null;
+    deletedAt?: Date | string | null;
+  }>,
+): ReadonlySet<number> {
+  const starts = new Set<number>();
+  for (const row of occurrences) {
+    if (!row.isTentative || row.deletedAt) continue;
+    if (row.completionStatus !== "SCHEDULED") continue;
+    const endMs = new Date(row.endsAt).getTime();
+    for (
+      let atom =
+        Math.floor(new Date(row.startsAt).getTime() / ATOM_MS) * ATOM_MS;
+      atom < endMs;
+      atom += ATOM_MS
+    ) {
+      starts.add(atom);
+    }
+  }
+  return starts;
 }

@@ -23,19 +23,24 @@ import {
   getJoinableOccurrence,
   occurrencesAllowReschedule,
 } from "@/lib/appointments/occurrences";
-import { rescheduleReleasable } from "@/lib/booking/reschedule-proposals";
+import {
+  allowsAgreedShortNotice,
+  rescheduleReleasable,
+} from "@/lib/booking/reschedule-proposals";
 import {
   consulteeDestructiveAction,
   consulteeMayReschedule,
+  rescheduleStatusOk,
   openProposalTarget,
   type OpenRescheduleProposal,
 } from "@/lib/appointments/consultee-affordances";
 import {
-  isApprovedStatus,
   isCompletedLikeStatus,
   isConfirmedStatus,
   isInactiveStatus,
   isPendingPaymentStatus,
+  isUnpaidSeat,
+  seatLapsedOrReleased,
 } from "@/lib/appointments/status";
 import type {
   AppointmentVM,
@@ -391,7 +396,12 @@ export function useConsulteeAppointmentsAdapter(options?: {
       joinWindowMs: CONSULTEE_JOIN_WINDOW_MS,
       now,
     });
-    if (joinable && isConfirmedStatus(vm.status) && vm.raw.appointment) {
+    if (
+      joinable &&
+      isConfirmedStatus(vm.status) &&
+      !isUnpaidSeat(vm) &&
+      vm.raw.appointment
+    ) {
       return {
         kind: "join",
         label: "Join",
@@ -416,7 +426,10 @@ export function useConsulteeAppointmentsAdapter(options?: {
 
   const overflowItems = (vm: AppointmentVM): OverflowItem[] => {
     const items: OverflowItem[] = [];
-    const inactive = isInactiveStatus(vm.status);
+    // A seat that no longer holds a place offers no chat, calendar or leave.
+    if (seatLapsedOrReleased(vm)) return items;
+    // A row the list files under Cancelled (a lapsed hold, a given-back seat) offers no live action.
+    const inactive = isInactiveStatus(vm.status) || vm.bucket === "cancelled";
     const slots = vm.raw.rawOccurrences ?? [];
     // #1163 — a live proposal outranks every other action: until it is
     // answered the row just says "awaiting confirmation". Navigation, not a
@@ -441,9 +454,11 @@ export function useConsulteeAppointmentsAdapter(options?: {
       // there is no id to send them to.
       consulteeId &&
       !inactive &&
-      isApprovedStatus(vm.status) &&
+      rescheduleStatusOk(vm.kind, vm.status) &&
       occurrencesAllowReschedule(slots) &&
-      rescheduleReleasable(slots),
+      rescheduleReleasable(slots, new Date(), {
+        agreedShortNotice: allowsAgreedShortNotice(vm.kind),
+      }),
     );
     const destructive = consulteeDestructiveAction(vm.kind);
     const mayCancel =
@@ -654,7 +669,10 @@ export function useConsulteeAppointmentsAdapter(options?: {
     const destructive = consulteeDestructiveAction(activeVm.kind);
 
     if (destructive === "cancel-booking") {
-      if (await actions.handleCancelConfirm(quote)) closeDialog();
+      if (await actions.handleCancelConfirm(quote)) {
+        invalidateBookings();
+        closeDialog();
+      }
       return;
     }
 
@@ -671,6 +689,23 @@ export function useConsulteeAppointmentsAdapter(options?: {
           throw new Error("Only webinars and classes support leave-event");
         }
         await leaveEvent(activeVm.kind, id, userId, activeVm.title);
+        // The seat is released, so its detail page no longer answers: go to the list, drop it.
+        closeDialog();
+        if (consulteeId) {
+          router.push(
+            `/dashboard/consultee/${consulteeId}/appointments?tab=cancelled`,
+          );
+          void queryClient.invalidateQueries({
+            queryKey: ["consultee-events", consulteeId],
+          });
+        }
+        if (activeVm.appointmentId) {
+          queryClient.removeQueries({
+            queryKey: ["appointment-detail", activeVm.appointmentId],
+            exact: true,
+          });
+        }
+        return;
       }
       closeDialog();
       invalidateBookings();

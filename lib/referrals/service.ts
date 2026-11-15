@@ -294,6 +294,33 @@ export async function getUserCredits(
 }
 
 /**
+ * Credit the buyer's own unpaid orders hold that releasing them would make
+ * spendable again: usage on a credit that is vested, INR, unreversed and unexpired.
+ */
+export async function releasableHeldCreditsPaise(
+  db: Pick<Tx, "referralCreditUsage">,
+  userId: string,
+  paymentIds: string[],
+  now: Date = new Date(),
+): Promise<number> {
+  if (paymentIds.length === 0) return 0;
+  const held = await db.referralCreditUsage.aggregate({
+    where: {
+      paymentId: { in: paymentIds },
+      credit: {
+        userId,
+        currency: "INR",
+        state: "VESTED",
+        reversedAt: null,
+        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+      },
+    },
+    _sum: { amount: true },
+  });
+  return sumPaise(held._sum.amount);
+}
+
+/**
  * A credit with `vestedAt` set is a liability: redeeming it draws the liability down (Dr
  * REFERRAL_CREDIT_LIABILITY / Cr PLATFORM_PROMO) and restoring it on a refund or an
  * abandoned order re-raises it, so the liability always equals the vested balance.

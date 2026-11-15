@@ -37,6 +37,11 @@
  * the paise.
  */
 
+import {
+  noticeReason,
+  refundNoticeKind,
+  refundNoticeOverride,
+} from "./refund-cause";
 import { casMiss } from "@/lib/cron/run-counters";
 import {
   reportSentryError,
@@ -851,12 +856,15 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
   };
   let stagedBell: StagedTrigger | null = null;
   let stagedEmails: StagedRecipientEmail[] = [];
+  // A hand refund that settled an owed refund is announced by that refund's cause.
+  const cause = noticeReason(settledOwed, input.reason);
   const receiptArgs = payment.userId
     ? {
         userId: payment.userId,
         paymentId: payment.id,
         amountPaise: requested,
         currency: payment.currency,
+        required: refundNoticeKind(cause) !== null,
       }
     : null;
   // Rendered before the settling transaction; a failed pre-read renders inside it instead.
@@ -929,7 +937,11 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
                     : {}),
                   dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
                 },
-                { tx, entityRef: `payment:${payment.id}` },
+                {
+                  tx,
+                  entityRef: `payment:${payment.id}`,
+                  required: refundNoticeOverride(cause, receiptArgs.userId),
+                },
               );
               stagedBell = bell?.staged ?? null;
             }
@@ -1995,10 +2007,7 @@ export async function applyRefundCascade(
       now: new Date(),
     });
   }
-  if (
-    payment.appointment?.trial?.status === "CANCELLED" ||
-    payment.appointment?.trial?.status === "REJECTED"
-  ) {
+  if (payment.appointment?.trial?.status === "CANCELLED") {
     await stampTrialEarningsOnCancel(tx, {
       paymentId: payment.id,
       now: new Date(),

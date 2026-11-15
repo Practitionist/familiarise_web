@@ -12,7 +12,7 @@ import { reportSentryError } from "@/lib/observability/report";
 /**
  * Adds confirmed webinar or class attendees to the Stream calls already provisioned for the
  * appointment, so their join skips the membership write. Best effort and post-commit: a missing
- * call is fine because the join route adds any member the call lacks.
+ * call is fine because the join route adds any member the call lacks. The caller fences the grants.
  */
 export async function addSeatHoldersToOpenCalls(
   appointmentId: string,

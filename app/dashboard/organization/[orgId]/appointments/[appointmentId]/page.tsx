@@ -14,7 +14,11 @@ import {
   readAppointmentDetail,
   type TAppointmentDetail,
 } from "@/lib/data/appointment-detail";
-import { isDeadOccurrence } from "@/lib/appointments/occurrences";
+import {
+  bookedSessionMinutes,
+  isDeadOccurrence,
+} from "@/lib/appointments/occurrences";
+import { soldSessionMinutes } from "@/lib/booking/entitlement";
 import { operatorOpsHref } from "@/lib/backoffice/booking-href";
 
 import DetailPageClient from "./DetailPageClient";
@@ -24,6 +28,19 @@ import { DisplayZoneProvider } from "@/lib/time/zoned-format";
 import { OrgActorDetail, type OrgActorDetailProps } from "./OrgActorDetail";
 
 type Appointment = TAppointmentDetail["appointment"];
+
+/** One session's length for the org's allocate picker; only a 1:1 booking is allocated. */
+function allocateSessionMinutes(appointment: Appointment): number | null {
+  if (appointment.consultation) {
+    return (
+      bookedSessionMinutes(appointment.occurrences) ??
+      Math.round(appointment.consultation.consultationPlan.durationInHours * 60)
+    );
+  }
+  if (appointment.subscription)
+    return soldSessionMinutes(appointment.subscription);
+  return null;
+}
 
 /** ADR 20 metadata only: what the Everyone list already shows, no content. */
 function toMetadata(appointment: Appointment): OrgActorDetailProps["meta"] {
@@ -41,11 +58,30 @@ function toMetadata(appointment: Appointment): OrgActorDetailProps["meta"] {
     appointment.class?.status ??
     appointment.trial?.status ??
     null) as OrgActorDetailProps["meta"]["status"];
+  const open = appointment.rescheduleRequests[0];
   return {
     title: plan?.title ?? "Session",
     kind: appointment.appointmentType,
     status,
+    source: booking?.bookingSource ?? null,
+    // A settled charge, so a paid plan waiting for its times is not read as unpaid.
+    paid: appointment.payment.some((p) => p.paymentStatus === "SUCCEEDED"),
+    // The live proposal, so the badge reads "Being moved" here as on every page.
+    reschedule: open
+      ? {
+          by: open.initiatorRole === "CONSULTANT" ? "CONSULTANT" : "REQUESTER",
+          proposedStartsAt: open.proposedTimes[0]?.startsAt ?? null,
+          originalStartsAt: null,
+          expiresAt: open.expiresAt,
+        }
+      : null,
     expertName: plan?.consultantProfile?.user?.name ?? null,
+    consultantProfileId: plan?.consultantProfileId ?? null,
+    sessionMinutes: allocateSessionMinutes(appointment),
+    learnerUserId:
+      booking?.requestedBy?.userId ??
+      appointment.trial?.consulteeProfile?.userId ??
+      null,
     learnerName:
       booking?.requestedBy?.user?.name ??
       appointment.trial?.consulteeProfile?.user?.name ??

@@ -1,10 +1,6 @@
 import type { BookingMode } from "@prisma/client";
 
-/**
- * #1703 D1 — the consultee-facing reading of `ConsultantProfile.bookingMode`.
- * Pure so the expert page's CTA and badge can be pinned without a DOM.
- */
-
+/** How the expert page reads `ConsultantProfile.bookingMode`; pure so the button and its hint can be pinned. */
 export type ConsultationCta = {
   action: "checkout" | "request";
   label: string;
@@ -12,14 +8,8 @@ export type ConsultationCta = {
   hint: string | null;
 };
 
-/**
- * INSTANT keeps the pre-#1703 arm: pay now on a free slot, request only on a
- * contended one. REQUEST routes every slot through approval.
- */
-export function consultationCtaFor(
-  mode: BookingMode,
-  slotIsAllocated: boolean,
-): ConsultationCta {
+/** REQUEST sends every time through approval; INSTANT pays now, and a held time is taken, never a request. */
+export function consultationCtaFor(mode: BookingMode): ConsultationCta {
   if (mode === "REQUEST") {
     return {
       action: "request",
@@ -27,17 +17,12 @@ export function consultationCtaFor(
       hint: "Request this time — the expert confirms before you pay.",
     };
   }
-  if (slotIsAllocated) {
-    // #1785 L-3 — the slot list marks a contended time with a "Request" tag;
-    // the sentence under the button says what the tag means.
-    return {
-      action: "request",
-      label: "Request for Approval",
-      hint: "Someone else is asking for this time too — the expert confirms before you pay.",
-    };
-  }
   return { action: "checkout", label: "Continue to Checkout", hint: null };
 }
+
+/** The request door's refusal for an expert who takes instant bookings. */
+export const REQUEST_NOT_OFFERED_MESSAGE =
+  "This expert takes instant bookings. Pick a free time and continue to checkout.";
 
 /** The consultee's recourse while the expert is paused; a pause stops new 1:1 bookings and trials. */
 export const CONSULTANT_PAUSED_HINT =

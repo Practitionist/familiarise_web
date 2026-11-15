@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { trialCancelRequest } from "@/schemas/trials";
 import { z } from "zod";
 import * as Sentry from "@sentry/nextjs";
 import { useToast } from "@/hooks/use-toast";
@@ -146,6 +147,8 @@ export function useConsultantEventActions({
     preference?: SlotPreference,
     /** The zone the picker showed, for naming taken times back. */
     displayZone?: string,
+    /** Replays the first answer when the same submission is sent again. */
+    idempotencyKey?: string,
   ): Promise<boolean> => {
     if (!appointmentId) {
       toast({
@@ -173,7 +176,10 @@ export function useConsultantEventActions({
 
       const response = await fetchWithIdentity(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
+        },
         body: Object.keys(payload).length ? JSON.stringify(payload) : undefined,
       });
 
@@ -418,10 +424,69 @@ export function useConsultantEventActions({
     }
   };
 
+  /**
+   * Cancel a trial through its own door (`DELETE /api/trials/[id]`) with the
+   * refund the dialog showed. The expert's cancel refunds the learner in full
+   * and records a strike; a changed quote re-asks with nothing committed.
+   */
+  const handleTrialCancel = async (
+    trialId: string,
+    quote?: ShownCancelQuote,
+  ): Promise<boolean> => {
+    const previewUrl = `/api/trials/${trialId}/cancel/preview`;
+    setIsLoading(true);
+    try {
+      const { url, body } = trialCancelRequest(trialId, quote);
+      const response = await fetchWithIdentity(url, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      try {
+        await requireJsonResponse(response, "Failed to cancel trial");
+      } catch (error) {
+        if (error instanceof ApiResponseError && error.status === 409) {
+          void queryClient.invalidateQueries({
+            queryKey: cancelPreviewQueryKey(previewUrl),
+          });
+          toast({
+            title: "This trial can't be cancelled right now",
+            description: actionFailureMessage(error, "Failed to cancel trial"),
+            variant: "destructive",
+          });
+          return false;
+        }
+        throw error;
+      }
+      toast({
+        title: "Trial cancelled",
+        description: `"${title}" has been cancelled. The learner is refunded in full if they paid.`,
+      });
+      invalidateBookingData();
+      return true;
+    } catch (error) {
+      if (!isExpectedRefusal(error)) {
+        Sentry.captureException(
+          error instanceof Error ? error : new Error(String(error)),
+          { tags: { subsystem: "client" } },
+        );
+      }
+      toast({
+        title: "Error",
+        description: actionFailureMessage(error, "Failed to cancel trial"),
+        variant: "destructive",
+      });
+      return false;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   return {
     isLoading,
     handleReschedule,
     handleRetime,
     handleCancelConfirm,
+    handleTrialCancel,
   };
 }

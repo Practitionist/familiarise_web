@@ -42,7 +42,7 @@ export async function generateMetadata({
   if (!found) return { robots: { index: false } };
   const { domain, count } = found;
   const title = `${domain.name} experts and mentors | Familiarise`;
-  const who = count > 0 ? `${count} verified` : "verified";
+  const who = count > 0 ? `${count} interviewed` : "interviewed";
   const description = `Book a session with ${who} ${domain.name.toLowerCase()} experts. Compare ratings, experience and prices.`;
   return {
     title,
@@ -64,7 +64,7 @@ export default async function ExpertsByFieldPage({
   const noun = count === 1 ? "expert" : "experts";
   const countSentence =
     count > 0
-      ? `${count} verified ${noun} in ${domain.name.toLowerCase()}. `
+      ? `${count} interviewed ${noun} in ${domain.name.toLowerCase()}. `
       : "";
 
   const itemList = {
@@ -119,7 +119,7 @@ export default async function ExpertsByFieldPage({
           </div>
         ) : (
           <p className="text-muted-foreground">
-            No verified experts in this field yet.
+            No listed experts in this field yet.
           </p>
         )}
 

@@ -10,6 +10,7 @@ import {
 } from "@/lib/payments/refundable-balance";
 import { getAppUrl } from "@/lib/url";
 import { notifyRefundProcessed } from "@/lib/novu";
+import { seatRemovalRefundReason } from "./refund-cause";
 import { notificationScope } from "@/lib/novu/workflows";
 import { goHref } from "@/lib/dashboard/go";
 import { EMAIL_BUDGET_MS, sendRefundProcessedEmail } from "@/lib/email";
@@ -26,6 +27,7 @@ import {
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import {
   isFreeCreditIntent,
+  isPriceFreePayment,
   type FundingRail,
 } from "@/lib/payments/funding-rail";
 import { computeRefundPct } from "./cancellation-policy";
@@ -36,9 +38,12 @@ import {
 import { findLiveEventSlot } from "@/lib/appointments/live-event-slot";
 import { liveParticipant } from "@/lib/booking/participants";
 import {
-  seatLedger,
-  occurrenceRefundsPaise,
+  seatLedgerFrom,
+  seatSessionsByAppointment,
+  occurrenceRefundsByPayment,
   seriesCancelRefundPaise,
+  classEndRefundPaise,
+  CLASS_END_REFUND_KEY_PREFIX,
   type SeriesSeat,
 } from "@/lib/booking/class-series";
 
@@ -64,13 +69,29 @@ export type WholeEventRefundSummary = {
   skippedAlreadyRefunded: number;
   /** Seats stamped owed but left for the retry sweep once the inline bite was spent. */
   deferred: number;
-  /** Every seat was a skip: nothing issued, deferred or failed. */
+  /** Seats nobody paid for: settled with nothing owed, never "already refunded". */
+  freeSeats: number;
+  /** Every seat was a skip and at least one had been refunded: nothing issued, deferred or failed. */
   alreadyRefunded: boolean;
+  /** Every seat was free, so there was nothing to refund. */
+  nothingToRefund: boolean;
 };
 
 /** Seats refunded inline before the rest is left to the retry sweep. */
 const INLINE_SEAT_LIMIT = 10;
 const INLINE_BUDGET_MS = 10_000;
+
+function isPriceFreeSeat(p: {
+  paymentIntent: string;
+  amount: number | bigint;
+  originalAmount: number | bigint;
+}): boolean {
+  return isPriceFreePayment({
+    paymentIntent: p.paymentIntent,
+    amountPaise: Number(p.amount),
+    listPricePaise: Number(p.originalAmount),
+  });
+}
 
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -78,7 +99,7 @@ function errMsg(e: unknown): string {
 
 export type EventSeatPlan =
   | { kind: "owe"; marker: RefundOwedMarker }
-  | { kind: "settled" }
+  | { kind: "settled"; free?: true }
   | { kind: "escalate"; delivered: number; partlyReturned: boolean };
 
 type EventRefundArgs = {
@@ -93,6 +114,11 @@ type EventRefundArgs = {
   ledgers?: ReadonlyMap<string, SeriesSeat>;
   /** Scopes the seat keys to the calling door, so two doors never share one refund. */
   dedupeKeyPrefix?: string;
+  /**
+   * What a seat with a ledger is owed: everything undelivered (a cancel, the
+   * default) or only the sessions sold but never placed (class-end settlement).
+   */
+  basis?: "undelivered" | "unplaced";
 };
 
 /**
@@ -121,6 +147,7 @@ async function planEventSeats(
       id: true,
       userId: true,
       amount: true,
+      originalAmount: true,
       currency: true,
       paymentIntent: true,
       ...REFUNDABLE_BALANCE_SELECT,
@@ -133,21 +160,41 @@ async function planEventSeats(
       .filter((p) => isFreeCreditIntent(p.paymentIntent))
       .map((p) => p.id),
   );
+  const unplacedBasis = args.basis === "unplaced";
+  const classEndPaid = unplacedBasis
+    ? await classEndRefundedPaise(db, args.eventId)
+    : new Map<string, number>();
   const plans = new Map<string, EventSeatPlan>();
   for (const p of payments) {
+    // A free seat owes nothing and writes no refund record.
+    if (isPriceFreeSeat(p)) {
+      plans.set(p.id, { kind: "settled", free: true });
+      continue;
+    }
     if (!liveSeats.has(p.id)) {
       plans.set(p.id, { kind: "settled" });
       continue;
     }
     const ledger = args.ledgers?.get(p.id);
+    // Class-end settlement owes only a seat whose ledger shows unplaced sessions.
+    if (unplacedBasis && !(ledger && ledger.unplaced > 0)) {
+      plans.set(p.id, { kind: "settled" });
+      continue;
+    }
     const key = `${prefix}:${args.eventId}:pay:${p.id}`;
     const credit = creditStates.get(p.id);
     if (credit) {
       // The credits rail restores whole or not at all, so a seat delivered part
       // of the series, or already partly returned, is escalated to a human.
+      const partOwed =
+        unplacedBasis && !!ledger && ledger.unplaced < ledger.heldCount;
       if (credit.claimed && credit.stillUsedPaise <= 0) {
         plans.set(p.id, { kind: "settled" });
-      } else if ((ledger && ledger.deliveredHeld > 0) || credit.claimed) {
+      } else if (
+        (ledger && ledger.deliveredHeld > 0) ||
+        credit.claimed ||
+        partOwed
+      ) {
         plans.set(p.id, {
           kind: "escalate",
           delivered: ledger?.deliveredHeld ?? 0,
@@ -167,12 +214,10 @@ async function planEventSeats(
       continue;
     }
     const balance = refundableBalancePaise(Number(p.amount), p);
-    // Sessions already refunded one by one (occ:*) are not owed again.
-    const undelivered = ledger
-      ? Number(seriesCancelRefundPaise(ledger, p.amount)) -
-        (ledger.occRefundedPaise ?? 0)
-      : balance;
-    const owed = Math.min(undelivered, balance);
+    const owed = Math.min(
+      seatOwedPaise(ledger, p, balance, classEndPaid, unplacedBasis),
+      balance,
+    );
     plans.set(
       p.id,
       owed > 0
@@ -190,6 +235,50 @@ async function planEventSeats(
   }
   // Settlement is INR-only by design, so the seats of one event share a currency.
   return { plans, currency: payments[0]?.currency ?? "INR" };
+}
+
+/**
+ * A money seat's share before the balance clamp: its unplaced sessions net of
+ * any class-end refund already paid, or everything undelivered net of the
+ * sessions already refunded one by one (`occ:*`); the whole balance with no ledger.
+ */
+function seatOwedPaise(
+  ledger: SeriesSeat | undefined,
+  payment: { id: string; amount: bigint | number },
+  balance: number,
+  classEndPaid: ReadonlyMap<string, number>,
+  unplacedBasis: boolean,
+): number {
+  if (!ledger) return balance;
+  if (unplacedBasis) {
+    return (
+      Number(classEndRefundPaise(ledger, payment.amount)) -
+      (classEndPaid.get(payment.id) ?? 0)
+    );
+  }
+  return (
+    Number(seriesCancelRefundPaise(ledger, payment.amount)) -
+    (ledger.occRefundedPaise ?? 0)
+  );
+}
+
+/** Class-end refunds already sent or in flight on the class, by payment. */
+async function classEndRefundedPaise(
+  db: PrismaLike,
+  classId: string,
+): Promise<Map<string, number>> {
+  const rows = await db.refund.findMany({
+    where: {
+      status: { in: ["SUCCEEDED", "PENDING"] },
+      dedupeKey: { startsWith: `${CLASS_END_REFUND_KEY_PREFIX}${classId}:` },
+    },
+    select: { paymentId: true, amountPaise: true },
+  });
+  const paid = new Map<string, number>();
+  for (const r of rows) {
+    paid.set(r.paymentId, (paid.get(r.paymentId) ?? 0) + Number(r.amountPaise));
+  }
+  return paid;
 }
 
 /**
@@ -317,7 +406,9 @@ export async function refundWholeEventPayments(
     failures: [],
     skippedAlreadyRefunded: 0,
     deferred: 0,
+    freeSeats: 0,
     alreadyRefunded: false,
+    nothingToRefund: false,
   };
   const { plans: stamped, ...rest } = opts;
   const args: EventRefundArgs = { kind, eventId, reason, ...rest };
@@ -329,7 +420,9 @@ export async function refundWholeEventPayments(
 
   const owing: string[] = [];
   for (const [paymentId, plan] of plans) {
-    if (plan.kind === "settled") {
+    if (plan.kind === "settled" && plan.free) {
+      summary.freeSeats += 1;
+    } else if (plan.kind === "settled") {
       summary.skippedAlreadyRefunded += 1;
     } else if (plan.kind === "escalate") {
       summary.failures.push({
@@ -425,24 +518,27 @@ export async function refundWholeEventPayments(
     });
   }
 
-  summary.alreadyRefunded =
+  const allSkipped =
     summary.refundsIssued === 0 &&
     summary.failures.length === 0 &&
     summary.deferred === 0 &&
-    summary.skippedAlreadyRefunded === plans.size;
+    summary.skippedAlreadyRefunded + summary.freeSeats === plans.size;
+  summary.nothingToRefund = allSkipped && summary.freeSeats === plans.size;
+  summary.alreadyRefunded = allSkipped && summary.skippedAlreadyRefunded > 0;
 
   return summary;
 }
 
 /**
- * #1780 D-5 — each paid class seat's ledger by payment id, joined at the later
- * of its participant row and its payment (a re-bought seat reuses the row).
- * The cancel route reads this BEFORE its transaction tombstones the sessions.
+ * Each paid class seat's ledger by payment id, joined at the later of its
+ * participant row and its payment (a re-bought seat reuses the row). At most
+ * five reads on `db` whatever the roster, so a door's transaction stays short.
  */
 export async function classSeriesLedgers(
   classId: string,
+  db: PrismaLike = prisma,
 ): Promise<Map<string, SeriesSeat>> {
-  const payments = await prisma.payment.findMany({
+  const payments = await db.payment.findMany({
     where: {
       appointment: { classId },
       paymentStatus: "SUCCEEDED",
@@ -456,33 +552,110 @@ export async function classSeriesLedgers(
       appointmentId: true,
     },
   });
-  const seats = await prisma.appointmentParticipant.findMany({
+  const ledgers = new Map<string, SeriesSeat>();
+  if (payments.length === 0) return ledgers;
+  const seats = await db.appointmentParticipant.findMany({
     where: {
       appointment: { classId },
       userId: { in: payments.map((p) => p.userId) },
     },
     select: { userId: true, createdAt: true, sessionsPurchased: true },
   });
-  const ledgers = new Map<string, SeriesSeat>();
-  for (const p of payments) {
-    if (!p.appointmentId) continue;
+  const placed = payments.flatMap((p) =>
+    p.appointmentId ? [{ ...p, appointmentId: p.appointmentId }] : [],
+  );
+  const sessions = await seatSessionsByAppointment(
+    db,
+    placed.map((p) => p.appointmentId),
+  );
+  const refunded = await occurrenceRefundsByPayment(
+    db,
+    placed.map((p) => p.id),
+  );
+  const now = new Date();
+  for (const p of placed) {
     const seat = seats.find((s) => s.userId === p.userId);
     const seatAt = seat?.createdAt;
-    const joinedAt = seatAt && seatAt > p.createdAt ? seatAt : p.createdAt;
+    const { N, occurrences } = sessions.get(p.appointmentId) ?? {
+      N: 0,
+      occurrences: [],
+    };
     ledgers.set(p.id, {
-      ...(await seatLedger(
-        prisma,
-        {
-          appointmentId: p.appointmentId,
-          createdAt: joinedAt,
-          sessionsPurchased: seat?.sessionsPurchased,
-        },
-        p.amount,
-      )),
-      occRefundedPaise: await occurrenceRefundsPaise(prisma, p.id),
+      ...seatLedgerFrom({
+        N,
+        amountPaise: p.amount,
+        joinedAt: seatAt && seatAt > p.createdAt ? seatAt : p.createdAt,
+        occurrences,
+        now,
+        sessionsPurchased: seat?.sessionsPurchased,
+      }),
+      occRefundedPaise: refunded.get(p.id) ?? 0,
     });
   }
   return ledgers;
+}
+
+/** The dedupe prefix of class-end settlement; each seat's key is `class-end:<classId>:pay:<paymentId>`. */
+const CLASS_END_DEDUPE_PREFIX = CLASS_END_REFUND_KEY_PREFIX.slice(0, -1);
+
+/** What class-end settlement stamped: seats owed a refund, and credit seats queued for a human. */
+export type ClassEndSettlement = {
+  owed: number;
+  owedPaise: number;
+  escalated: number;
+};
+
+/**
+ * Class-end settlement, on the completing transaction: every live paid seat is
+ * stamped owed floor(paid × unplaced / sessions sold) for the sessions it was
+ * sold but no row ever placed, net of any class-end refund already paid, and a
+ * credit seat owed part of its value is queued for a human in the same commit.
+ * Nothing is driven here: the retry-auto-refunds sweep drives the markers, and
+ * each marker holds its payment's earnings until the refund settles. A seat
+ * whose payment owes another door's refund refuses, so the completion commits nothing.
+ */
+export async function stampClassEndRefundsOwed(
+  tx: Tx,
+  classId: string,
+): Promise<ClassEndSettlement> {
+  const plans = await stampWholeEventRefundsOwed(tx, {
+    kind: "class",
+    eventId: classId,
+    reason: "class ended with sessions that were never scheduled",
+    ledgers: await classSeriesLedgers(classId, tx),
+    dedupeKeyPrefix: CLASS_END_DEDUPE_PREFIX,
+    basis: "unplaced",
+  });
+  const settlement: ClassEndSettlement = {
+    owed: 0,
+    owedPaise: 0,
+    escalated: 0,
+  };
+  for (const [paymentId, plan] of plans) {
+    if (plan.kind === "owe") {
+      settlement.owed += 1;
+      settlement.owedPaise += plan.marker.amountPaise ?? 0;
+    } else if (plan.kind === "escalate") {
+      settlement.escalated += 1;
+      await recordSystemEvent({
+        db: tx,
+        strict: true,
+        category: "BOOKING",
+        severity: "WARN",
+        message: `Credit seat ${paymentId} needs a partial credit return`,
+        context: {
+          paymentId,
+          eventId: classId,
+          kind: "class",
+          delivered: plan.delivered,
+          partlyReturned: plan.partlyReturned,
+          cause: "class-end",
+        },
+        correlationId: `partial-credit:${paymentId}`,
+      });
+    }
+  }
+  return settlement;
 }
 
 /**
@@ -560,6 +733,10 @@ export async function refundRemovedAttendeeSeat(args: {
    * wallet, accrual or licence, which the attendee never held.
    */
   rail: FundingRail | null;
+  /** Set when the seat was free: nothing was paid, so nothing is refunded. */
+  freeBooking?: true;
+  /** The gateway is still settling the refund. */
+  pending?: boolean;
 } | null> {
   const eventFilter =
     args.kind === "webinar"
@@ -579,6 +756,9 @@ export async function refundRemovedAttendeeSeat(args: {
       // unless the caller named the sale, which is the only way this door can
       // be sure it is refunding the payment in front of it.
       ...(args.paymentId ? {} : { orderBy: { createdAt: "asc" } }),
+      // One joined statement where "query" loads the refunds, disputes and
+      // policy tiers separately; every caller, free seat included, reaches it.
+      relationLoadStrategy: "join",
       where: {
         ...(args.paymentId ? { id: args.paymentId } : {}),
         userId: args.attendeeUserId,
@@ -591,6 +771,7 @@ export async function refundRemovedAttendeeSeat(args: {
       select: {
         id: true,
         amount: true,
+        originalAmount: true,
         paymentIntent: true,
         currency: true,
         organizationId: true,
@@ -599,6 +780,16 @@ export async function refundRemovedAttendeeSeat(args: {
       },
     });
     if (!payment) return null;
+    // Free and credit-funded seats are told apart only here: a price-free seat
+    // owes nothing, while a ₹0 credit-funded seat must reach creditSeatRefund.
+    if (isPriceFreeSeat(payment)) {
+      return {
+        amountRefundedPaise: 0,
+        refundPct: 100,
+        rail: null,
+        freeBooking: true,
+      };
+    }
     organizationId = payment.organizationId;
     const dedupeKey = args.dedupeKey
       ? `${args.dedupeKey}:pay:${payment.id}`
@@ -647,11 +838,15 @@ export async function refundRemovedAttendeeSeat(args: {
     if (amountPaise <= 0)
       return { amountRefundedPaise: 0, refundPct, rail: null };
 
-    const actorLabel = isOrganiserInitiated ? "organiser" : "attendee";
     const result = await refundBookingPayment({
       paymentId: payment.id,
       amountPaise,
-      reason: `removed from ${args.kind} ${args.eventId} by the ${actorLabel} (${refundPct}%)`,
+      reason: seatRemovalRefundReason(
+        args.kind,
+        args.eventId,
+        isOrganiserInitiated,
+        refundPct,
+      ),
       ...(isOrganiserInitiated
         ? { customerReason: `You were removed from this ${args.kind}.` }
         : {}),
@@ -663,21 +858,33 @@ export async function refundRemovedAttendeeSeat(args: {
     // Phase 3b, and PENDING refunds wait for the settlement webhook.
     if (result.rail === "GATEWAY" && !result.status) {
       await Promise.allSettled([
-        notifyRefundProcessed(args.attendeeUserId, {
-          ...notificationScope(payment.organizationId),
-          amount: amountPaise,
-          currency: payment.currency,
-          reason: isOrganiserInitiated
-            ? `You were removed from this ${args.kind}.`
-            : `You left this ${args.kind}.`,
-          dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
-        }),
+        notifyRefundProcessed(
+          args.attendeeUserId,
+          {
+            ...notificationScope(payment.organizationId),
+            amount: amountPaise,
+            currency: payment.currency,
+            reason: isOrganiserInitiated
+              ? `You were removed from this ${args.kind}.`
+              : `You left this ${args.kind}.`,
+            dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
+          },
+          isOrganiserInitiated
+            ? {
+                required: {
+                  kind: "SEAT_RELEASED",
+                  recipients: [args.attendeeUserId],
+                },
+              }
+            : undefined,
+        ),
         sendRefundProcessedEmail(
           {
             userId: args.attendeeUserId,
             paymentId: payment.id,
             amountPaise,
             currency: payment.currency,
+            required: isOrganiserInitiated,
           },
           { budgetMs: EMAIL_BUDGET_MS.REQUEST },
         ),
@@ -688,6 +895,8 @@ export async function refundRemovedAttendeeSeat(args: {
       amountRefundedPaise: result.amountRefundedPaise,
       refundPct,
       rail: result.rail,
+      // Still settling at the gateway: the removal notice says the refund started.
+      ...(result.status === "PENDING" ? { pending: true } : {}),
     };
   } catch (err) {
     // Benign idempotent re-drives — a seat already refunded, or a payment that
@@ -849,9 +1058,13 @@ async function creditSeatRefund(
     });
     return { amountRefundedPaise: 0, refundPct: 0, rail: null };
   }
+  const organiser = (args.initiatedBy ?? "organiser") === "organiser";
   const r = await refundBookingPayment({
     paymentId,
-    reason: `left ${args.kind} ${args.eventId} — credits restored in full`,
+    // The organiser's removal keeps its cause, so its credit notice is required.
+    reason: organiser
+      ? seatRemovalRefundReason(args.kind, args.eventId, true, 100)
+      : `left ${args.kind} ${args.eventId} — credits restored in full`,
     initiatedByUserId: args.initiatedByUserId,
     dedupeKey,
   });

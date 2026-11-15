@@ -5,7 +5,7 @@
  * without upfront payment (request-for-approval flow).
  *
  * Workflow:
- * 1. User submits consultation/subscription request (no payment)
+ * 1. User submits a consultation or trial request (no payment)
  * 2. Consultant approves the request
  * 3. System generates payment link using this module
  * 4. User pays via the link
@@ -45,6 +45,10 @@ import {
 } from "@/utils/appointmentlock";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import { liveOccurrenceWhere } from "@/lib/appointments/occurrences";
+import {
+  agreedConsultationPricePaise,
+  agreedTrialPricePaise,
+} from "@/lib/booking/sold-terms";
 
 // ============================================================================
 // Type Definitions
@@ -52,16 +56,15 @@ import { liveOccurrenceWhere } from "@/lib/appointments/occurrences";
 
 export interface CreateApprovalPaymentParams {
   userId: string;
-  appointmentType: "CONSULTATION" | "SUBSCRIPTION" | "TRIAL";
+  appointmentType: "CONSULTATION" | "TRIAL";
   consultationId?: string;
-  subscriptionId?: string;
   planId: string;
   /** Required when appointmentType is TRIAL. */
   trialId?: string;
   /**
    * Link the intent to the appointment that ALREADY exists. Every approval
    * arm creates it before minting — trials hold their slot when the
-   * consultant accepts, consultations/subscriptions create it at request
+   * consultant accepts, consultations create it at request
    * time (#1181) — so the webhook confirms THAT appointment instead of
    * building a twin (Consultation.appointment is one-to-one; a capture-time
    * creation either collides on the unique or strands the request-time row),
@@ -80,8 +83,6 @@ export interface CreateApprovalPaymentParams {
   paymentGateway: PaymentGateway;
   startsAt?: string;
   endsAt?: string;
-  schedulingPeriodStartsAt?: string;
-  schedulingPeriodEndsAt?: string;
   notes?: string;
 }
 
@@ -102,7 +103,7 @@ export interface ApprovalPaymentResult {
 // ============================================================================
 
 /**
- * Generate payment link for approved consultation/subscription
+ * Generate payment link for an approved consultation or trial
  * Used in request-for-approval flow after consultant approval
  *
  * @param params - Payment parameters including user, appointment type, and plan details
@@ -110,7 +111,7 @@ export interface ApprovalPaymentResult {
  */
 /**
  * H3 FIX: Uses a distributed lock keyed on the resource being paid for
- * (consultationId or subscriptionId) to prevent duplicate payment link
+ * (consultationId or trialId) to prevent duplicate payment link
  * generation from concurrent API calls.
  */
 const APPROVAL_PAYMENT_LOCK_TTL = 30_000; // 30 seconds
@@ -205,9 +206,7 @@ async function firstSessionStartOf(
     ? { appointmentId: params.appointmentId }
     : params.consultationId
       ? { appointment: { consultationId: params.consultationId } }
-      : params.subscriptionId
-        ? { appointment: { subscriptionId: params.subscriptionId } }
-        : null;
+      : null;
   if (!appointment) return null;
   const first = await prisma.appointmentOccurrence.findFirst({
     where: { ...appointment, ...liveOccurrenceWhere },
@@ -237,9 +236,7 @@ async function requestAlreadyPaid(
     ? { appointmentId: params.appointmentId }
     : params.consultationId
       ? { appointment: { consultationId: params.consultationId } }
-      : params.subscriptionId
-        ? { appointment: { subscriptionId: params.subscriptionId } }
-        : null;
+      : null;
   if (!appointment) return false;
   const paid = await prisma.payment.count({
     where: {
@@ -258,23 +255,13 @@ async function requestStillPayable(
   if (params.appointmentType === "TRIAL" && params.trialId) {
     const trial = await prisma.trial.findUnique({
       where: { id: params.trialId },
-      select: { status: true, paymentId: true },
+      select: { status: true },
     });
-    return (
-      trial?.status === TrialStatus.AWAITING_PAYMENT ||
-      (trial?.status === TrialStatus.PENDING && trial.paymentId === null)
-    );
+    return trial?.status === TrialStatus.AWAITING_PAYMENT;
   }
   if (params.appointmentType === "CONSULTATION" && params.consultationId) {
     const row = await prisma.consultation.findUnique({
       where: { id: params.consultationId },
-      select: { status: true },
-    });
-    return row?.status === AppointmentStatus.APPROVED_PENDING_PAYMENT;
-  }
-  if (params.appointmentType === "SUBSCRIPTION" && params.subscriptionId) {
-    const row = await prisma.subscription.findUnique({
-      where: { id: params.subscriptionId },
       select: { status: true },
     });
     return row?.status === AppointmentStatus.APPROVED_PENDING_PAYMENT;
@@ -291,11 +278,6 @@ export async function createApprovalPaymentIntent(
       "consultationId required for CONSULTATION appointment type",
     );
   }
-  if (params.appointmentType === "SUBSCRIPTION" && !params.subscriptionId) {
-    throw new Error(
-      "subscriptionId required for SUBSCRIPTION appointment type",
-    );
-  }
   if (params.appointmentType === "TRIAL" && !params.trialId) {
     throw new Error("trialId required for TRIAL appointment type");
   }
@@ -308,8 +290,6 @@ export async function createApprovalPaymentIntent(
     switch (params.appointmentType) {
       case "CONSULTATION":
         return params.consultationId;
-      case "SUBSCRIPTION":
-        return params.subscriptionId;
       case "TRIAL":
         return params.trialId;
     }
@@ -375,7 +355,6 @@ export async function createApprovalPaymentIntent(
     // appointmentId through (see CreateApprovalPaymentParams).
     const existingPayment = await findExistingLivePayment({
       consultationId: params.consultationId,
-      subscriptionId: params.subscriptionId,
       trialId: params.trialId,
       appointmentId: params.appointmentId,
     });
@@ -845,25 +824,32 @@ async function calculateAmount(
   buyerCountry: string,
 ): Promise<ApprovalAmount> {
   if (params.appointmentType === "TRIAL") {
-    // A trial is priced by its parent subscription plan's trialPriceInPaise,
-    // NOT the plan price — the trial is a taster of that plan, not the plan.
-    const plan = await prisma.subscriptionPlan.findUnique({
-      where: { id: params.planId },
+    // A trial is priced at the trial price it was requested on (the plan's
+    // trialPriceInPaise for a row that predates the column), not the plan price.
+    const trial = await prisma.trial.findUnique({
+      where: { id: params.trialId },
       select: {
-        title: true,
-        trialPriceInPaise: true,
-        trialEnabled: true,
-        priceCurrency: true,
+        agreedPricePaise: true,
+        subscriptionPlan: {
+          select: {
+            title: true,
+            trialPriceInPaise: true,
+            trialEnabled: true,
+            priceCurrency: true,
+          },
+        },
       },
     });
 
-    if (!plan) {
-      throw new Error("Subscription plan not found");
+    if (!trial) {
+      throw new Error("Trial not found");
     }
+    const plan = trial.subscriptionPlan;
     if (!plan.trialEnabled) {
       throw new Error("This plan does not offer trials");
     }
-    if (plan.trialPriceInPaise <= 0) {
+    const trialPricePaise = agreedTrialPricePaise(trial);
+    if (trialPricePaise <= 0) {
       // Free trials never reach a payment intent — the accept path schedules
       // them directly. Reaching here means the caller mis-routed.
       throw new Error("Cannot create a payment intent for a free trial");
@@ -874,7 +860,7 @@ async function calculateAmount(
 
     return {
       ...(await priceWithTax(
-        planPricePaise(plan.trialPriceInPaise, "trialPriceInPaise"),
+        planPricePaise(trialPricePaise, "trialPriceInPaise"),
         buyerCountry,
         params.appointmentType,
       )),
@@ -883,62 +869,35 @@ async function calculateAmount(
     };
   }
 
-  if (params.appointmentType === "CONSULTATION") {
-    const plan = await prisma.consultationPlan.findUnique({
-      where: { id: params.planId },
-      select: {
-        title: true,
-        price: true,
-        priceCurrency: true,
+  // The price agreed at request; the plan's only for a row that predates it.
+  const consultation = await prisma.consultation.findUnique({
+    where: { id: params.consultationId },
+    select: {
+      agreedPricePaise: true,
+      consultationPlan: {
+        select: { title: true, price: true, priceCurrency: true },
       },
-    });
+    },
+  });
 
-    if (!plan) {
-      throw new Error("Consultation plan not found");
-    }
-
-    const currency = plan.priceCurrency;
-    // Every stage below treats the amount as INR paise, so a non-INR plan must refuse here.
-    validatePlanCurrency(currency);
-
-    return {
-      ...(await priceWithTax(
-        planPricePaise(plan.price, "plan price"),
-        buyerCountry,
-        params.appointmentType,
-      )),
-      currency,
-      plan: { title: plan.title },
-    };
-  } else {
-    // SUBSCRIPTION
-    const plan = await prisma.subscriptionPlan.findUnique({
-      where: { id: params.planId },
-      select: {
-        title: true,
-        price: true,
-        priceCurrency: true,
-      },
-    });
-
-    if (!plan) {
-      throw new Error("Subscription plan not found");
-    }
-
-    // #781 §A — priceCurrency is the non-null Currency enum; no gateway fallback.
-    const currency = plan.priceCurrency;
-    validatePlanCurrency(currency); // see the note on the CONSULTATION branch
-
-    return {
-      ...(await priceWithTax(
-        planPricePaise(plan.price, "plan price"),
-        buyerCountry,
-        params.appointmentType,
-      )),
-      currency,
-      plan: { title: plan.title },
-    };
+  if (!consultation) {
+    throw new Error("Consultation not found");
   }
+  const plan = consultation.consultationPlan;
+
+  const currency = plan.priceCurrency;
+  // Every stage below treats the amount as INR paise, so a non-INR plan must refuse here.
+  validatePlanCurrency(currency);
+
+  return {
+    ...(await priceWithTax(
+      planPricePaise(agreedConsultationPricePaise(consultation), "plan price"),
+      buyerCountry,
+      params.appointmentType,
+    )),
+    currency,
+    plan: { title: plan.title },
+  };
 }
 
 /**
@@ -975,11 +934,6 @@ function buildApprovalMetadata(
     metadata.consultationId = params.consultationId;
   }
 
-  // Add subscription-specific fields
-  if (params.subscriptionId) {
-    metadata.subscriptionId = params.subscriptionId;
-  }
-
   // Add trial-specific fields — the webhook resolves the Trial from this.
   if (params.trialId) {
     metadata.trialId = params.trialId;
@@ -995,12 +949,6 @@ function buildApprovalMetadata(
   if (params.startsAt && params.endsAt) {
     metadata.startsAt = params.startsAt;
     metadata.endsAt = params.endsAt;
-  }
-
-  // Add scheduling period if provided
-  if (params.schedulingPeriodStartsAt && params.schedulingPeriodEndsAt) {
-    metadata.schedulingPeriodStartsAt = params.schedulingPeriodStartsAt;
-    metadata.schedulingPeriodEndsAt = params.schedulingPeriodEndsAt;
   }
 
   return metadata;
@@ -1029,7 +977,7 @@ export interface ExistingApprovalPayment {
   expiresAt: Date | null;
   /**
    * Whether the request this payment belongs to can still be paid for — an
-   * APPROVED_PENDING_PAYMENT consultation/subscription, or an AWAITING_PAYMENT
+   * APPROVED_PENDING_PAYMENT consultation, or an AWAITING_PAYMENT
    * trial. False once the expiry sweep has moved it on, which is the signal to
    * refuse rather than re-mint (see ApprovalWindowLapsedError).
    */
@@ -1114,22 +1062,18 @@ async function findExistingTrialPayment(
     : null;
   const payment = viaAppointment ?? trial?.payment;
 
-  // Same status filter as the consultation/subscription arms below: a FAILED
+  // Same status filter as the consultation arm below: a FAILED
   // gateway order is a rejection the buyer must retry from scratch, so it is
   // not offered back to the mint at all.
   if (!payment || !reusable.includes(payment.paymentStatus)) {
     return null;
   }
-  // A paid-at-request trial is payable while PENDING and not yet captured (#1775 C-7).
-  const requestIsPayable =
-    trial?.status === TrialStatus.AWAITING_PAYMENT ||
-    (trial?.status === TrialStatus.PENDING && trial.paymentId === null);
+  const requestIsPayable = trial?.status === TrialStatus.AWAITING_PAYMENT;
   return { ...payment, requestIsPayable };
 }
 
 export async function findExistingLivePayment(params: {
   consultationId?: string;
-  subscriptionId?: string;
   trialId?: string;
   /** The appointment the mint anchors to; the trial arm resolves through it. */
   appointmentId?: string;
@@ -1181,49 +1125,6 @@ export async function findExistingLivePayment(params: {
       requestIsPayable:
         consultation?.status === AppointmentStatus.APPROVED_PENDING_PAYMENT,
     };
-  }
-
-  if (params.subscriptionId) {
-    const subscription = await prisma.subscription.findUnique({
-      where: { id: params.subscriptionId },
-      include: {
-        appointment: {
-          include: {
-            payment: true,
-          },
-        },
-      },
-    });
-
-    // Check the wrapper for a payment (#1554: one per subscription)
-    for (const apt of subscription?.appointment
-      ? [subscription.appointment]
-      : []) {
-      const payment = apt.payment?.find((p) =>
-        REUSABLE_STATUSES.includes(p.paymentStatus),
-      );
-      if (payment) {
-        return {
-          id: payment.id,
-          paymentStatus: payment.paymentStatus,
-          paymentIntent: payment.paymentIntent,
-          gatewayPaymentId: payment.gatewayPaymentId,
-          paymentGateway: payment.paymentGateway,
-          amount: payment.amount,
-          originalAmount: payment.originalAmount,
-          taxAmount: payment.taxAmount,
-          isInternational: payment.isInternational,
-          buyerCountry: payment.buyerCountry,
-          gstRegime: payment.gstRegime,
-          currency: payment.currency,
-          expiresAt: payment.expiresAt,
-          requestIsPayable:
-            subscription?.status === AppointmentStatus.APPROVED_PENDING_PAYMENT,
-        };
-      }
-    }
-
-    return null;
   }
 
   return null;

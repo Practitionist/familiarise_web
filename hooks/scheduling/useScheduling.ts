@@ -20,6 +20,7 @@ import {
   getSlotLimits,
   validateEventSlots,
   groupSlotsByDay,
+  sessionDayKeys,
   countCompleteCallsInMap,
   isCompleteCall,
   countSessionsForDay,
@@ -45,6 +46,7 @@ import {
   allocationFailed,
   allocationFailedWithCode,
   allocatedElsewhere,
+  alreadyScheduled,
   requestChangedElsewhere,
   rateLimited,
   schedulingDayBucket,
@@ -368,8 +370,11 @@ export interface UseEventSlotAllocationReturn {
   /** Get slot allocation limits */
   getSlotLimits: () => SlotLimits;
 
-  /** Check if adding a slot would be valid */
-  canAddSlot: (slot: CalendarInterval) => boolean;
+  /** Whether a click adding this slot (or its auto-expanded session) would be accepted. */
+  canAddSlot: (
+    slot: CalendarInterval,
+    autoExpandedGroup?: CalendarInterval[],
+  ) => boolean;
 }
 
 /**
@@ -684,7 +689,13 @@ export function useEventSlotAllocation(
           toast(rateLimited());
           break;
         case "allocated-elsewhere":
-          toast(allocatedElsewhere());
+          // A consultation refuses any allocation once it has a confirmed time;
+          // for other events the code means a stale tab lost the race.
+          toast(
+            eventType === "consultation"
+              ? alreadyScheduled()
+              : allocatedElsewhere(),
+          );
           onConflict?.();
           break;
         case "request-changed":
@@ -745,6 +756,7 @@ export function useEventSlotAllocation(
     },
     [
       toast,
+      eventType,
       onConflict,
       onStaleData,
       onRequestChanged,
@@ -757,6 +769,221 @@ export function useEventSlotAllocation(
   // ==========================================
   // SLOT MANAGEMENT FUNCTIONS
   // ==========================================
+
+  // The day a slot's session starts, so a session past midnight stays whole.
+  const sessionDayOf = useCallback(
+    (selection: CalendarInterval[], target: CalendarInterval) =>
+      sessionDayKeys(
+        selection,
+        slotLimits.slotsPerSession || 1,
+        options.schedulingTimezone,
+      ).get(target.startTime.getTime()) ??
+      dayKey(target.startTime, options.schedulingTimezone),
+    [slotLimits.slotsPerSession, options.schedulingTimezone],
+  );
+
+  /**
+   * What adding a slot (or its auto-expanded session) to `currentSlots` does:
+   * the refusal a click would toast, or the new selection and its progress note.
+   */
+  const addOutcome = useCallback(
+    (
+      currentSlots: CalendarInterval[],
+      slot: CalendarInterval,
+      autoExpandedGroup?: CalendarInterval[],
+    ):
+      | { refusal: AllocationToast }
+      | { selection: CalendarInterval[]; progress: AllocationToast | null } => {
+      let progress: AllocationToast | null = null;
+      // Add slot(s) with event-specific limits
+      const slotsToAdd =
+        autoExpandedGroup && autoExpandedGroup.length > 0
+          ? autoExpandedGroup
+          : [slot];
+      const newSelection = [...currentSlots, ...slotsToAdd];
+
+      // Subscription: the plan's total. The rolling cycle (not a calendar
+      // week) is the only weekly cap; the grid paints it as "Limit reached".
+      if (eventType === "subscription") {
+        const slotsPerCall = slotLimits.slotsPerSession;
+        const targetDayKey = sessionDayOf(newSelection, slot);
+
+        // If this slot would complete a call, check total limits
+        const slotsByDayPost = groupSlotsByDay(
+          newSelection,
+          options.schedulingTimezone,
+          slotsPerCall,
+        );
+
+        // Count total complete calls across ALL weeks for newSelection (post-add)
+        const totalCompleteCalls = countCompleteCallsInMap(
+          slotsByDayPost,
+          slotsPerCall,
+        );
+
+        const maxTotalCalls = slotLimits.totalSessions;
+
+        const potentialDaySlots = [...(slotsByDayPost.get(targetDayKey) || [])];
+
+        if (isCompleteCall(potentialDaySlots, slotsPerCall)) {
+          // Count total complete calls *after* this slot is added; if it
+          // exceeds the max, this completion is the problem.
+          if (totalCompleteCalls > maxTotalCalls) {
+            return { refusal: sessionLimitReached(maxTotalCalls) };
+          }
+        }
+      } else if (eventType === "class") {
+        // Class-specific interactive guards
+        const slotsPerSession = slotLimits.slotsPerSession;
+        const targetDayKey = sessionDayOf(newSelection, slot);
+
+        // Group current selection by day (pre-add)
+        const preByDay = groupSlotsByDay(
+          currentSlots,
+          options.schedulingTimezone,
+          slotsPerSession,
+        );
+
+        // Detect any in-progress class (day not multiple of slotsPerSession)
+        const incompleteDays = Array.from(preByDay.entries())
+          .filter(([, daySlots]) => daySlots.length % slotsPerSession !== 0)
+          .map(([key]) => key);
+
+        if (
+          incompleteDays.length > 0 &&
+          !incompleteDays.includes(targetDayKey)
+        ) {
+          return { refusal: completeSessionFirst() };
+        }
+
+        // If adding on the incomplete day, ensure consecutiveness
+        if (incompleteDays.includes(targetDayKey)) {
+          const daySlots = preByDay.get(targetDayKey) || [];
+          const sorted = [...daySlots].sort(
+            (a, b) => a.startTime.getTime() - b.startTime.getTime(),
+          );
+          if (sorted.length > 0) {
+            const firstSlot = sorted[0];
+            const lastSlot = sorted[sorted.length - 1];
+            const isConsecutiveBefore =
+              slot.endTime.getTime() === firstSlot.startTime.getTime();
+            const isConsecutiveAfter =
+              slot.startTime.getTime() === lastSlot.endTime.getTime();
+            if (!isConsecutiveBefore && !isConsecutiveAfter) {
+              return { refusal: consecutiveRequired() };
+            }
+          }
+        }
+
+        // Enforce max classes per day when starting a new class on that day
+        const daySlots = preByDay.get(targetDayKey) || [];
+        const maxSessionsPerDay = options.maxSessionsPerDay || 2;
+        const { sessions } = countSessionsForDay(daySlots, slotsPerSession);
+        const isStartingNewSessionOnDay =
+          daySlots.length % slotsPerSession === 0;
+        if (isStartingNewSessionOnDay && sessions >= maxSessionsPerDay) {
+          return {
+            refusal: dailyLimitReached(
+              maxSessionsPerDay,
+              schedulingDayBucket(slot.startTime, options.schedulingTimezone),
+            ),
+          };
+        }
+      } else if (
+        newSelection.length >
+        slotLimits.maxSlots - (options.pastConfirmedSlotCount || 0)
+      ) {
+        // Validate against slot limits for other event types (adjusted for past slots)
+        return { refusal: allSessionsSelected() };
+      }
+
+      // Event-specific validation for interactive selection
+      const validation = validateEventSlots(
+        newSelection,
+        eventType,
+        eventConstraints,
+        slotLimits,
+        options,
+      );
+
+      // Only show error for serious validation issues, not warnings
+      if (!validation.isValid && validation.errors.length > 0) {
+        const isMinSlotIssue = validation.errors.some(
+          (error) =>
+            error.includes("slots required") ||
+            error.includes("Need") ||
+            error.includes("more slots"),
+        );
+
+        if (!isMinSlotIssue) {
+          return { refusal: invalidSelection(validation.errors[0]) };
+        }
+      }
+
+      // Subscription: per-day consecutiveness and progress feedback
+      if (eventType === "subscription" && options.sessionDurationInHours) {
+        const slotsPerCall = slotLimits.slotsPerSession;
+        const maxTotalCalls = slotLimits.totalSessions;
+
+        const targetDayKey = sessionDayOf(newSelection, slot);
+
+        // Check daily call limit BEFORE adding the new slot
+        const currentDaySlots = currentSlots.filter(
+          (selectedSlot) =>
+            sessionDayOf(newSelection, selectedSlot) === targetDayKey,
+        );
+
+        // Check if adding this slot would exceed the per-call limit
+        if (currentDaySlots.length >= slotsPerCall) {
+          return {
+            refusal: oneSessionPerDay(
+              schedulingDayBucket(slot.startTime, options.schedulingTimezone),
+            ),
+          };
+        }
+
+        // If we have existing slots for this day, check if the new slot would be consecutive
+        if (currentDaySlots.length > 0) {
+          const sortedDaySlots = [...currentDaySlots].sort(
+            (a, b) => a.startTime.getTime() - b.startTime.getTime(),
+          );
+
+          const lastSlot = sortedDaySlots[sortedDaySlots.length - 1];
+          const firstSlot = sortedDaySlots[0];
+
+          // New slot should be either immediately before the first slot or after the last slot
+          const isConsecutiveBefore =
+            slot.endTime.getTime() === firstSlot.startTime.getTime();
+          const isConsecutiveAfter =
+            slot.startTime.getTime() === lastSlot.endTime.getTime();
+
+          if (!isConsecutiveBefore && !isConsecutiveAfter) {
+            return { refusal: consecutiveRequired() };
+          }
+        }
+
+        // Show progress feedback
+        const completedCalls = Math.floor(newSelection.length / slotsPerCall);
+        const currentCallProgress = newSelection.length % slotsPerCall;
+
+        if (currentCallProgress === 0 && newSelection.length > 0) {
+          progress = sessionAdded(completedCalls, maxTotalCalls);
+        } else {
+          progress = keepGoing(
+            slotsPerCall - currentCallProgress,
+            completedCalls + 1,
+          );
+        }
+      }
+
+      const sortedSelection = [...newSelection];
+      sortedSelection.sort(
+        (a, b) => a.startTime.getTime() - b.startTime.getTime(),
+      );
+      return { selection: sortedSelection, progress };
+    },
+    [eventType, eventConstraints, slotLimits, options, sessionDayOf],
+  );
 
   /**
    * Toggle slot selection with event-specific validation
@@ -773,16 +1000,9 @@ export function useEventSlotAllocation(
 
         if (isSelected) {
           // Remove the entire consecutive group containing this slot
-          const removalDayKey = dayKey(
-            slot.startTime,
-            options.schedulingTimezone,
-          );
+          const removalDayKey = sessionDayOf(currentSlots, slot);
           const daySlots = currentSlots
-            .filter(
-              (s) =>
-                dayKey(s.startTime, options.schedulingTimezone) ===
-                removalDayKey,
-            )
+            .filter((s) => sessionDayOf(currentSlots, s) === removalDayKey)
             .sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
 
           const group = findConsecutiveGroupContaining(slot, daySlots);
@@ -792,224 +1012,17 @@ export function useEventSlotAllocation(
           return currentSlots.filter(
             (s) => !removeTimestamps.has(s.startTime.getTime()),
           );
-        } else {
-          // Add slot(s) with event-specific limits
-          const slotsToAdd =
-            autoExpandedGroup && autoExpandedGroup.length > 0
-              ? autoExpandedGroup
-              : [slot];
-          const newSelection = [...currentSlots, ...slotsToAdd];
-
-          // Subscription: the plan's total. The rolling cycle (not a calendar
-          // week) is the only weekly cap; the grid paints it as "Limit reached".
-          if (eventType === "subscription") {
-            const slotsPerCall = slotLimits.slotsPerSession;
-            const targetDayKey = dayKey(
-              slot.startTime,
-              options.schedulingTimezone,
-            );
-
-            // Count total complete calls across ALL weeks for newSelection (post-add)
-            const totalCompleteCalls = countCompleteCallsInMap(
-              groupSlotsByDay(newSelection, options.schedulingTimezone),
-              slotsPerCall,
-            );
-
-            const maxTotalCalls = slotLimits.totalSessions;
-
-            // If this slot would complete a call, check total limits
-            const slotsByDayPost = groupSlotsByDay(
-              newSelection,
-              options.schedulingTimezone,
-            );
-            const potentialDaySlots = [
-              ...(slotsByDayPost.get(targetDayKey) || []),
-            ];
-
-            if (isCompleteCall(potentialDaySlots, slotsPerCall)) {
-              // Count total complete calls *after* this slot is added; if it
-              // exceeds the max, this completion is the problem.
-              if (totalCompleteCalls > maxTotalCalls) {
-                queueToast(sessionLimitReached(maxTotalCalls));
-                return currentSlots;
-              }
-            }
-          } else if (eventType === "class") {
-            // Class-specific interactive guards
-            const slotsPerSession = slotLimits.slotsPerSession;
-            const targetDayKey = dayKey(
-              slot.startTime,
-              options.schedulingTimezone,
-            );
-
-            // Group current selection by day (pre-add)
-            const preByDay = groupSlotsByDay(
-              currentSlots,
-              options.schedulingTimezone,
-            );
-
-            // Detect any in-progress class (day not multiple of slotsPerSession)
-            const incompleteDays = Array.from(preByDay.entries())
-              .filter(([, daySlots]) => daySlots.length % slotsPerSession !== 0)
-              .map(([key]) => key);
-
-            if (
-              incompleteDays.length > 0 &&
-              !incompleteDays.includes(targetDayKey)
-            ) {
-              queueToast(completeSessionFirst());
-              return currentSlots;
-            }
-
-            // If adding on the incomplete day, ensure consecutiveness
-            if (incompleteDays.includes(targetDayKey)) {
-              const daySlots = preByDay.get(targetDayKey) || [];
-              const sorted = [...daySlots].sort(
-                (a, b) => a.startTime.getTime() - b.startTime.getTime(),
-              );
-              if (sorted.length > 0) {
-                const firstSlot = sorted[0];
-                const lastSlot = sorted[sorted.length - 1];
-                const isConsecutiveBefore =
-                  slot.endTime.getTime() === firstSlot.startTime.getTime();
-                const isConsecutiveAfter =
-                  slot.startTime.getTime() === lastSlot.endTime.getTime();
-                if (!isConsecutiveBefore && !isConsecutiveAfter) {
-                  queueToast(consecutiveRequired());
-                  return currentSlots;
-                }
-              }
-            }
-
-            // Enforce max classes per day when starting a new class on that day
-            const daySlots = preByDay.get(targetDayKey) || [];
-            const maxSessionsPerDay = options.maxSessionsPerDay || 2;
-            const { sessions } = countSessionsForDay(daySlots, slotsPerSession);
-            const isStartingNewSessionOnDay =
-              daySlots.length % slotsPerSession === 0;
-            if (isStartingNewSessionOnDay && sessions >= maxSessionsPerDay) {
-              queueToast(
-                dailyLimitReached(
-                  maxSessionsPerDay,
-                  schedulingDayBucket(
-                    slot.startTime,
-                    options.schedulingTimezone,
-                  ),
-                ),
-              );
-              return currentSlots;
-            }
-          } else if (
-            newSelection.length >
-            slotLimits.maxSlots - (options.pastConfirmedSlotCount || 0)
-          ) {
-            // Validate against slot limits for other event types (adjusted for past slots)
-            queueToast(allSessionsSelected());
-            return currentSlots;
-          }
-
-          // Event-specific validation for interactive selection
-          const validation = validateEventSlots(
-            newSelection,
-            eventType,
-            eventConstraints,
-            slotLimits,
-            options,
-          );
-
-          // Only show error for serious validation issues, not warnings
-          if (!validation.isValid && validation.errors.length > 0) {
-            const isMinSlotIssue = validation.errors.some(
-              (error) =>
-                error.includes("slots required") ||
-                error.includes("Need") ||
-                error.includes("more slots"),
-            );
-
-            if (!isMinSlotIssue) {
-              queueToast(invalidSelection(validation.errors[0]));
-              return currentSlots;
-            }
-          }
-
-          // Subscription: per-day consecutiveness and progress feedback
-          if (eventType === "subscription" && options.sessionDurationInHours) {
-            const slotsPerCall = slotLimits.slotsPerSession;
-            const maxTotalCalls = slotLimits.totalSessions;
-
-            const targetDayKey = dayKey(
-              slot.startTime,
-              options.schedulingTimezone,
-            );
-
-            // Check daily call limit BEFORE adding the new slot
-            const currentDaySlots = currentSlots.filter(
-              (selectedSlot) =>
-                dayKey(selectedSlot.startTime, options.schedulingTimezone) ===
-                targetDayKey,
-            );
-
-            // Check if adding this slot would exceed the per-call limit
-            if (currentDaySlots.length >= slotsPerCall) {
-              queueToast(
-                oneSessionPerDay(
-                  schedulingDayBucket(
-                    slot.startTime,
-                    options.schedulingTimezone,
-                  ),
-                ),
-              );
-              return currentSlots;
-            }
-
-            // If we have existing slots for this day, check if the new slot would be consecutive
-            if (currentDaySlots.length > 0) {
-              const sortedDaySlots = [...currentDaySlots].sort(
-                (a, b) => a.startTime.getTime() - b.startTime.getTime(),
-              );
-
-              const lastSlot = sortedDaySlots[sortedDaySlots.length - 1];
-              const firstSlot = sortedDaySlots[0];
-
-              // New slot should be either immediately before the first slot or after the last slot
-              const isConsecutiveBefore =
-                slot.endTime.getTime() === firstSlot.startTime.getTime();
-              const isConsecutiveAfter =
-                slot.startTime.getTime() === lastSlot.endTime.getTime();
-
-              if (!isConsecutiveBefore && !isConsecutiveAfter) {
-                queueToast(consecutiveRequired());
-                return currentSlots;
-              }
-            }
-
-            // Show progress feedback
-            const completedCalls = Math.floor(
-              newSelection.length / slotsPerCall,
-            );
-            const currentCallProgress = newSelection.length % slotsPerCall;
-
-            if (currentCallProgress === 0 && newSelection.length > 0) {
-              queueToast(sessionAdded(completedCalls, maxTotalCalls));
-            } else {
-              queueToast(
-                keepGoing(
-                  slotsPerCall - currentCallProgress,
-                  completedCalls + 1,
-                ),
-              );
-            }
-          }
-
-          const sortedSelection = [...newSelection];
-          sortedSelection.sort(
-            (a, b) => a.startTime.getTime() - b.startTime.getTime(),
-          );
-          return sortedSelection;
         }
+        const outcome = addOutcome(currentSlots, slot, autoExpandedGroup);
+        if ("refusal" in outcome) {
+          queueToast(outcome.refusal);
+          return currentSlots;
+        }
+        if (outcome.progress) queueToast(outcome.progress);
+        return outcome.selection;
       });
     },
-    [eventType, eventConstraints, slotLimits, options, queueToast],
+    [addOutcome, sessionDayOf, queueToast],
   );
 
   /**
@@ -1411,22 +1424,11 @@ export function useEventSlotAllocation(
     return slotLimits;
   }, [slotLimits]);
 
-  /**
-   * Check if adding a slot would be valid
-   */
+  /** Whether a click adding this slot (or its session) would be accepted: toggleSlot's own rules. */
   const canAddSlot = useCallback(
-    (slot: CalendarInterval) => {
-      const testSelection = [...selectedSlots, slot];
-      const validation = validateEventSlots(
-        testSelection,
-        eventType,
-        eventConstraints,
-        slotLimits,
-        options,
-      );
-      return validation.isValid;
-    },
-    [selectedSlots, eventType, eventConstraints, slotLimits, options],
+    (slot: CalendarInterval, autoExpandedGroup?: CalendarInterval[]) =>
+      !("refusal" in addOutcome(selectedSlots, slot, autoExpandedGroup)),
+    [selectedSlots, addOutcome],
   );
 
   // ==========================================

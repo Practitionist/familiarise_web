@@ -54,6 +54,7 @@ import { deriveConsulteeActionItems } from "@/lib/dashboard/action-items";
 import { isExternalPayHref } from "@/lib/payments/pay-link-href";
 import { WaitingTimesStrip } from "@/components/booking/WaitingTimesStrip";
 import { isInactiveStatus, isConfirmedStatus } from "@/lib/appointments/status";
+import { bookingStatus } from "@/lib/appointments/booking-status";
 import {
   CONSULTEE_JOIN_WINDOW_MS,
   REJOIN_GRACE_MS,
@@ -89,16 +90,19 @@ const KIND_OF: Record<ProcessedEvent["type"], AppointmentKind> = {
 };
 
 /** The shared Appointments chip; Home lists only bookings that can still happen. */
-function homeStatusChip(event: ProcessedEvent, now: Date) {
+function homeStatusChip(event: ProcessedEvent) {
   return appointmentStatusChip(
     {
       status: event.status.toUpperCase(),
       kind: KIND_OF[event.type],
-      nextAt: event.startsAt,
-      bucket: event.needsActionReason ? "needsAction" : "upcoming",
+      bookingSource: event.bookingSource,
+      seatStatus: event.seatStatus,
+      paid: event.paid,
+      payDeadline: event.payDeadline,
+      payLapsed: event.payLapsed,
+      reschedule: event.reschedule,
     },
     "consultee",
-    now,
   );
 }
 
@@ -130,17 +134,19 @@ interface HomeTabProps {
   viewerZone: ViewerZone;
 }
 
-/**
- * The card's corner badge. The Appointments row calls a slot-less booking
- * "Not scheduled" and the "Pay now" step "Payment required"; the same words
- * here so a request reads identically on both surfaces (#1703).
- */
+/** The card's corner badge, in the booking words the Appointments list uses. */
 function awaitingLabel(reason: NeedsActionReason | null): string {
   switch (reason) {
     case "PAY_NOW":
-      return "Payment required";
+      return bookingStatus(
+        { kind: "CONSULTATION", status: "APPROVED_PENDING_PAYMENT" },
+        "CONSULTEE",
+      ).label;
     case "PENDING_APPROVAL":
-      return "Pending";
+      return bookingStatus(
+        { kind: "CONSULTATION", status: "PENDING" },
+        "CONSULTEE",
+      ).label;
     default:
       return noSessionLabel(reason);
   }
@@ -302,7 +308,7 @@ function NextUpCard({
           <span className="text-[11px] font-medium text-muted-foreground">
             {TYPE_LABEL[event.type]}
           </span>
-          <StatusBadge {...homeStatusChip(event, now)} withDot size="sm" />
+          <StatusBadge {...homeStatusChip(event)} withDot size="sm" />
         </div>
         {/* #1775 P-1 — the processor resolves the target: our pay page for a
             Razorpay order id (in-app), or a hosted https link (new tab). */}

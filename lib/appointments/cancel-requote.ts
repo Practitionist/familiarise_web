@@ -13,6 +13,8 @@ export type ShownCancelQuote = {
   creditRestoresInFull?: boolean;
   /** False when the dialog showed an unpaid booking. */
   expectedPaid?: boolean;
+  /** The dialog showed a free booking; read by the confirmation toast, never sent. */
+  freeBooking?: boolean;
 };
 
 /** The binding for a dialog that showed an unpaid booking (an approval awaiting payment). */

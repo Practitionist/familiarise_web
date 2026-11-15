@@ -53,3 +53,14 @@ export async function canViewPlanDetail(
     resolvedSession?.user?.consultantProfileId ?? null,
   );
 }
+
+/**
+ * The by-id plan API gate. A public plan reads no session; otherwise a failed
+ * lookup throws `SessionLookupFailedError` (503), so it never reads as hidden.
+ */
+export async function canViewPlanById(
+  plan: Parameters<typeof canViewPlanDetail>[0],
+): Promise<boolean> {
+  if (await canViewPlanDetail(plan, null)) return true;
+  return canViewPlanDetail(plan, await getSession());
+}

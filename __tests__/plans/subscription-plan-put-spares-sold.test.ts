@@ -10,9 +10,11 @@
  */
 const order: string[] = [];
 const sold = { count: 3 };
+const guard = { count: 1 };
 const tx = {
   subscriptionContent: { deleteMany: jest.fn(async () => ({ count: 0 })) },
   subscriptionPlan: {
+    updateMany: jest.fn(async () => ({ count: guard.count })),
     findUnique: jest.fn(async () => {
       order.push("read-plan");
       return {
@@ -57,6 +59,12 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 jest.mock("../../lib/auth-server", () => ({ getSession: jest.fn() }));
+jest.mock("../../lib/booking/feasibility", () => ({
+  planPublishFeasibility: jest.fn(async () => ({
+    refusal: null,
+    warnings: [],
+  })),
+}));
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 jest.mock("../../lib/data/plan-details", () => ({}));
 jest.mock("../../lib/topics", () => ({
@@ -78,6 +86,7 @@ import { NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import { planEndOf } from "@/lib/booking/entitlement";
+import { planPublishFeasibility } from "@/lib/booking/feasibility";
 import { PUT } from "@/app/api/plans/subscriptions/[subscriptionPlanId]/route";
 
 const db = prisma as unknown as {
@@ -94,22 +103,29 @@ const put = (body: unknown) =>
     { params: Promise.resolve({ subscriptionPlanId: "plan-1" }) },
   );
 
+const monthPlan = {
+  id: "plan-1",
+  price: 5_000_000,
+  sessionsPerWeek: 2,
+  sessionDurationInHours: 1,
+  totalSessions: 8,
+  durationInMonths: 1,
+  durationInWeeks: null,
+  trialEnabled: false,
+  trialPriceInPaise: 0,
+  status: "PUBLISHED",
+  consultantProfileId: "profile-1",
+  consultantProfile: { userId: "owner" },
+};
+
 beforeEach(() => {
   jest.clearAllMocks();
   order.length = 0;
   (getSession as jest.Mock).mockResolvedValue({ user: { id: "owner" } });
-  db.subscriptionPlan.findUnique.mockResolvedValue({
-    id: "plan-1",
-    sessionsPerWeek: 2,
-    sessionDurationInHours: 1,
-    durationInMonths: 1,
-    durationInWeeks: null,
-    trialEnabled: false,
-    trialPriceInPaise: 0,
-    consultantProfile: { userId: "owner" },
-  });
+  db.subscriptionPlan.findUnique.mockResolvedValue(monthPlan);
   db.subscription.count.mockResolvedValue(3);
   sold.count = 3;
+  guard.count = 1;
 });
 
 it("stamps sold rows (cadence, length, total, end) before the plan changes", async () => {
@@ -166,4 +182,83 @@ it("lets an unsold months plan move to weeks", async () => {
       }),
     }),
   );
+});
+
+it("refuses a terms edit the published hours can't deliver, before writing", async () => {
+  (planPublishFeasibility as jest.Mock).mockResolvedValueOnce({
+    refusal: {
+      status: 422,
+      body: {
+        error: "can't be delivered",
+        code: "PLAN_NOT_FEASIBLE",
+        reasons: [],
+      },
+    },
+    warnings: [],
+  });
+  const res = await put({ sessionsPerWeek: 7 });
+  expect(res.status).toBe(422);
+  expect(await res.json()).toMatchObject({ code: "PLAN_NOT_FEASIBLE" });
+  expect(planPublishFeasibility).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.objectContaining({
+      consultantProfileId: "profile-1",
+      sessionsPerWeek: 7,
+      sessionMinutes: 60,
+      perDayCap: 1,
+      publishing: true,
+    }),
+  );
+  expect(tx.subscriptionPlan.update).not.toHaveBeenCalled();
+});
+
+it("never re-polices a published plan on an edit that leaves its terms alone", async () => {
+  const res = await put({ title: "A clearer title for the plan" });
+  expect(res.status).toBe(200);
+  expect(planPublishFeasibility).not.toHaveBeenCalled();
+});
+
+it("refuses a short pack priced under the pack floor in plain words, before any write", async () => {
+  db.subscriptionPlan.findUnique.mockResolvedValueOnce({
+    ...monthPlan,
+    durationInWeeks: 4,
+  });
+  const res = await put({ price: 100_000 });
+  expect(res.status).toBe(400);
+  expect(await res.json()).toEqual({
+    error: "A plan of 8 60-minute sessions must be priced at ₹5,994 or more.",
+    code: "PLAN_PRICE_BELOW_FLOOR",
+  });
+  expect(tx.subscriptionPlan.update).not.toHaveBeenCalled();
+});
+
+it("leaves a month-based plan unfloored", async () => {
+  const res = await put({ price: 100_000 });
+  expect(res.status).toBe(200);
+  expect(tx.subscriptionPlan.update).toHaveBeenCalled();
+});
+
+it("lets a full-form save that re-sends a short pack's stored price and terms through", async () => {
+  db.subscriptionPlan.findUnique.mockResolvedValueOnce({
+    ...monthPlan,
+    price: 100_000,
+    durationInWeeks: 4,
+  });
+  const res = await put({
+    title: "Renamed sprint",
+    price: 100_000,
+    sessionsPerWeek: 2,
+    durationInWeeks: 4,
+    sessionDurationInHours: 1,
+  });
+  expect(res.status).toBe(200);
+  expect(planPublishFeasibility).not.toHaveBeenCalled();
+});
+
+it("answers 409 when the price or terms changed after this edit read them", async () => {
+  guard.count = 0;
+  const res = await put({ price: 6_000_000 });
+  expect(res.status).toBe(409);
+  expect(await res.json()).toMatchObject({ code: "PLAN_CHANGED" });
+  expect(tx.subscriptionPlan.update).not.toHaveBeenCalled();
 });

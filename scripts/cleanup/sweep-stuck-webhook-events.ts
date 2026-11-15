@@ -171,9 +171,8 @@ async function dispatchClaimedStuckEvent(
         ev.payload,
         ev.eventType,
         ev.eventId,
-        ev.signature ?? undefined,
         { call_cid: callCid },
-        { claimAlreadyHeld: true, claim },
+        claim,
       ),
     );
     return null;

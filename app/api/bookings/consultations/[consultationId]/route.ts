@@ -1,3 +1,4 @@
+import { readJsonBody } from "@/lib/api/parse";
 import * as Sentry from "@sentry/nextjs";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import { assertNoLiveCheckoutHold } from "@/lib/booking/request-cohort";
@@ -27,9 +28,11 @@ import {
   unlockApproval,
 } from "@/utils/appointmentlock";
 import { transitionConsultationRequest } from "@/lib/booking/transitions";
+import { agreedConsultationPricePaise } from "@/lib/booking/sold-terms";
 import { flushBackupInterestNotices } from "@/lib/booking/backup-interest";
 import {
   APPROVAL_STATUSES_DETAIL_ONLY,
+  approvalLockRefusal,
   refuseMalformedEventId,
   NOT_BEING_MOVED,
   assertNotBeingMoved,
@@ -40,6 +43,8 @@ import {
   HOST_PROFILE_SELECT,
   PARTY_PROFILE_SELECT,
   PARTY_USER_SELECT,
+  isStaffNonParty,
+  publicRequester,
 } from "@/lib/booking/list-selects";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import {
@@ -47,6 +52,7 @@ import {
   stampRejectionRefundOwed,
 } from "@/lib/booking/rejection-refund";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import { platformCancelDoorRefusal } from "@/lib/booking/platform-cancel";
 import {
   requireApiAuth,
   isPrivileged,
@@ -116,7 +122,13 @@ export async function GET(
       );
     }
 
-    return NextResponse.json({ data: consultationData }, { status: 200 });
+    const data = isStaffNonParty(session.user.role, isParticipant)
+      ? {
+          ...consultationData,
+          requestedBy: publicRequester(consultationData.requestedBy),
+        }
+      : consultationData;
+    return NextResponse.json({ data }, { status: 200 });
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -192,7 +204,9 @@ export async function PATCH(
     const rl = await applyRateLimit(eventMutationLimiter, session.user.id);
     if (rl) return rl;
 
-    const body = await request.json();
+    const read = await readJsonBody(request);
+    if (read.error) return read.error;
+    const body = read.body;
     const { consultationId } = await params;
     const malformedId = refuseMalformedEventId(consultationId);
     if (malformedId) return malformedId;
@@ -265,6 +279,13 @@ export async function PATCH(
       );
     }
 
+    // An operator who is not a party answers requests only through the staff door.
+    const doorRefusal = platformCancelDoorRefusal(request, {
+      privileged: isPrivileged(session.user.role),
+      party: isParticipant,
+    });
+    if (doorRefusal) return doorRefusal;
+
     if (
       APPROVAL_STATUSES_DETAIL_ONLY.has(status) &&
       existingConsultation.consultationPlan.consultantProfile.user.id ===
@@ -294,13 +315,7 @@ export async function PATCH(
           APPROVAL_LOCK_TTL_MS,
         ); // #1319 — must outlive the 30 s tx
       } catch (error) {
-        return NextResponse.json(
-          {
-            error:
-              error instanceof Error ? error.message : "Failed to acquire lock",
-          },
-          { status: 409 }, // Conflict - another approval in progress
-        );
+        return approvalLockRefusal(error);
       }
     }
 
@@ -412,6 +427,7 @@ export async function PATCH(
                   await tx.appointmentOccurrence.updateMany({
                     where: {
                       appointmentId: consultation.appointment.id,
+                      deletedAt: null,
                       completionStatus: "SCHEDULED",
                     },
                     data: { isTentative: false },
@@ -814,7 +830,8 @@ async function checkConsultationPayment(
   });
 
   if (
-    consultation?.consultationPlan?.price === 0 &&
+    consultation &&
+    agreedConsultationPricePaise(consultation) === 0 &&
     Boolean(consultation.appointment)
   ) {
     return true;

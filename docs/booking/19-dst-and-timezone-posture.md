@@ -86,6 +86,19 @@ file other than the writers mentions `utcOffsetMinutes`.
   local :00/:30 start off the grid checkout enforces. `weeklyZoneRefusal`
   answers every weekly write with the `ZONE` refusal and points the consultant at
   date-specific availability, which snaps to the grid.
+- **A :45-offset host still schedules events on the UTC grid.** The platform keeps
+  one UTC half-hour grid (owner decision, 2026-11-12). A host in Asia/Kathmandu
+  (UTC+05:45) who schedules a class is offered the local times that land on it,
+  :15 and :45 (18:15 rather than 18:00), because `atomPhaseMinutes`
+  (`lib/time/grid-zone.ts`) gives the zone's offset from :00 and :30 (15 minutes
+  at +05:45, 0 at +05:30). The pattern scheduler (`ClassPatternScheduler`,
+  `lib/booking/class-pattern.ts`) lists only those starts and refuses any other
+  with `OFF_GRID_TIME`. The week grid (`WeekGrid`) prints the hour label on the
+  first row of each local hour, so a Kathmandu column reads 18:00 over its 18:15
+  row. The webinar schema (`schemas/plans.ts`) checks the start with
+  `isOnEventLattice` (`lib/booking/event-time-rules.ts`) in UTC, so the browser's
+  minutes never decide. Neither the browser nor the schema checks the one-hour
+  lead; the server's `eventTimeRefusal` does.
 
 ## Rules for new code
 

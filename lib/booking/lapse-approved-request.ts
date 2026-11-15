@@ -238,36 +238,19 @@ function isTypedHttpError(
  * booking, which is what the row now says too. It used to answer — and write —
  * `EXPIRED`, which is reserved for a window that ran out.
  */
-/** #1775 — the ownership read: the row and its plan, or a 404 / 403 refusal. */
-async function readOwnedRequest(
-  kind: "consultation" | "subscription",
-  id: string,
-  actor: WithdrawActor,
-) {
-  const row =
-    kind === "consultation"
-      ? await prisma.consultation.findUnique({
-          where: { id },
-          select: {
-            ...WITHDRAW_SELECT,
-            consultationPlan: WITHDRAW_PLAN_SELECT,
-          },
-        })
-      : await prisma.subscription.findUnique({
-          where: { id },
-          select: {
-            ...WITHDRAW_SELECT,
-            subscriptionPlan: WITHDRAW_PLAN_SELECT,
-          },
-        });
+/** The ownership read: the request and its plan, or a 404 / 403 refusal. */
+async function readOwnedRequest(id: string, actor: WithdrawActor) {
+  const row = await prisma.consultation.findUnique({
+    where: { id },
+    select: { ...WITHDRAW_SELECT, consultationPlan: WITHDRAW_PLAN_SELECT },
+  });
   if (!row)
     throw new Refusal({
       code: "NOT_FOUND",
       httpStatus: 404,
       userMessage: "This request no longer exists.",
     });
-  const plan =
-    "consultationPlan" in row ? row.consultationPlan : row.subscriptionPlan;
+  const plan = row.consultationPlan;
   const owns =
     !!actor.consultantProfileId &&
     plan?.consultantProfileId === actor.consultantProfileId;
@@ -281,8 +264,8 @@ async function readOwnedRequest(
   return { row, plan };
 }
 
+/** Only a 1:1 awaits payment after approval; a plan is paid at checkout. */
 export async function withdrawApproval(args: {
-  kind: "consultation" | "subscription";
   id: string;
   actor: WithdrawActor;
   lock: AppointmentLock;
@@ -293,7 +276,7 @@ export async function withdrawApproval(args: {
    */
   renewLock: RenewInjectedLock;
 }): Promise<{ status: "CANCELLED" }> {
-  const { row, plan } = await readOwnedRequest(args.kind, args.id, args.actor);
+  const { row, plan } = await readOwnedRequest(args.id, args.actor);
 
   const run = (lock: unknown) =>
     withSerializableRetry(async () => {
@@ -307,7 +290,7 @@ export async function withdrawApproval(args: {
       return prisma.$transaction(
         (tx) =>
           lapseApprovedRequest(tx, {
-            kind: args.kind,
+            kind: "consultation",
             id: args.id,
             reason: "WITHDRAWN_BY_CONSULTANT",
             actorUserId: args.actor.userId,
@@ -318,9 +301,7 @@ export async function withdrawApproval(args: {
         },
       );
     });
-  // A subscription may have no wrapper yet (#1554); then there is no atom to
-  // contend for. The attempt still runs — one CAS, and it needs no renewal,
-  // which the production helper answers as "no grant" for a null lock.
+  // A request with no wrapper has no atom to contend for; the one CAS still runs.
   let moved: 0 | 1;
   let holdNotices: StagedBackupInterestNotices | undefined;
   try {
@@ -341,7 +322,7 @@ export async function withdrawApproval(args: {
     throw new Refusal({
       code: "REQUEST_CHANGED_ELSEWHERE",
       userMessage: "This request changed elsewhere — it may already be paid.",
-      devMessage: `${args.kind} ${args.id} was not APPROVED_PENDING_PAYMENT at write time`,
+      devMessage: `consultation ${args.id} was not APPROVED_PENDING_PAYMENT at write time`,
     });
   await flushBackupInterestNotices(holdNotices);
 
@@ -355,11 +336,8 @@ export async function withdrawApproval(args: {
       consulteeUserId: consultee.id,
       consulteeName: consultee.name ?? "Consultee",
       consultantName: plan?.consultantProfile?.user?.name ?? "Consultant",
-      planTitle:
-        plan?.title ??
-        (args.kind === "consultation" ? "Consultation" : "Subscription"),
-      appointmentType:
-        args.kind === "consultation" ? "CONSULTATION" : "SUBSCRIPTION",
+      planTitle: plan?.title ?? "Consultation",
+      appointmentType: "CONSULTATION",
       startsAt: row.appointment.occurrences[0]?.startsAt ?? null,
       reason: WITHDRAWN_BY_CONSULTANT_REASON,
     });

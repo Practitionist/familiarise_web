@@ -1,6 +1,6 @@
 /**
- * #1775 PR-A — the Requests inbox fixture: one PENDING consultation, one
- * APPROVED_PENDING_PAYMENT subscription, one next-cycle subscription and one
+ * The Requests inbox fixture: one PENDING consultation, one
+ * APPROVED_PENDING_PAYMENT consultation, one next-cycle subscription and one
  * AWAITING_PAYMENT trial, plus a where-aware prisma mock that serves them.
  * Shared by the read pin (.test.ts) and the render pin (.test.tsx).
  */
@@ -119,13 +119,16 @@ const subscriptionBase = {
   requestedBy: profile("ce-2", "Rahul Sen"),
 };
 
-export const awaitingSubscription = {
-  ...subscriptionBase,
-  id: "s-awaiting",
+export const awaitingConsultation = {
+  id: "c-awaiting",
   status: "APPROVED_PENDING_PAYMENT",
-  pendingPaymentUrl: "https://pay.example.test/subscription",
+  pendingPaymentUrl: "https://pay.example.test/consultation",
   requestedAt: hoursAgo(5),
-  appointment: wrapper("a-s1", {
+  bookingSource: "REQUEST_SUBMITTED",
+  requestNotes: null,
+  consultationPlan: { ...pendingConsultation.consultationPlan, price: 2400000 },
+  requestedBy: profile("ce-2", "Rahul Sen"),
+  appointment: wrapper("a-c2", {
     occurrences: [
       {
         startsAt: hoursAhead(72),
@@ -285,8 +288,8 @@ export function serveInboxFixture(prisma: {
   trial: MockModel;
   membership: { findMany: jest.Mock };
 }) {
-  const c = serve([pendingConsultation]);
-  const s = serve([awaitingSubscription, nextCycleSubscription]);
+  const c = serve([pendingConsultation, awaitingConsultation]);
+  const s = serve([nextCycleSubscription]);
   const t = serve([awaitingTrial]);
   prisma.consultation.findMany.mockImplementation(c.findMany);
   prisma.consultation.count.mockImplementation(c.count);

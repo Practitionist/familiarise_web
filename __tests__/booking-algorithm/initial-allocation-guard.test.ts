@@ -10,6 +10,9 @@
  */
 
 import "./setup";
+import fs from "fs";
+import { errorSentence } from "../../components/dashboard/shared/requests/labels";
+import { ALREADY_SCHEDULED_COPY } from "../../lib/scheduling/allocationMessages";
 
 // Mock prisma (relative path required — @/ aliases fail in jest.mock)
 jest.mock("../../lib/prisma", () => ({
@@ -185,6 +188,51 @@ describe("manual allocation with initialAllocation", () => {
     expect(guardReads).toEqual([]);
     expect(result.error).not.toContain("already allocated in another session");
   });
+});
+
+describe("a consultation that already has a time (server-derived)", () => {
+  it.each(["manual", "auto"] as const)(
+    "%s mode refuses with ALREADY_ALLOCATED whatever the client sends",
+    async (mode) => {
+      (
+        prisma as unknown as { consultation: { findUnique: jest.Mock } }
+      ).consultation.findUnique.mockResolvedValue({
+        consultationPlan: { consultantProfileId: "cp-1" },
+        requestedBy: { user: { id: "user-1" } },
+      });
+      mockPrisma.appointmentOccurrence.count.mockResolvedValue(1);
+
+      const result = await allocate({
+        eventType: "consultation",
+        eventId: "con-1",
+        mode,
+        slots: mode === "manual" ? FUTURE_SLOTS : undefined,
+      });
+
+      expect(result.httpStatus).toBe(409);
+      expect(result.errorCode).toBe("ALREADY_ALLOCATED");
+      expect(result.error).toBe(
+        "This booking already has a time. Use Reschedule to move it.",
+      );
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    },
+  );
+});
+
+it("the allocate page, the grid, the inbox and the detail page use the same sentence", () => {
+  const read = (rel: string) => fs.readFileSync(rel, "utf8");
+  const page = read(
+    "app/dashboard/consultant/[consultantId]/(features)/requests/[requestId]/allocate/page.tsx",
+  );
+  expect(page).toContain("{ALREADY_SCHEDULED_COPY}");
+  expect(page).toContain("/reschedule`}");
+  expect(read("hooks/scheduling/useScheduling.ts")).toMatch(
+    /eventType === "consultation"\s*\?\s*alreadyScheduled\(\)/,
+  );
+  expect(read("components/appointments/detail/NeedsYouCallout.tsx")).toMatch(
+    /type === "CONSULTATION"\s*\?\s*alreadyScheduled\(\)/,
+  );
+  expect(errorSentence("ALREADY_ALLOCATED", "")).toBe(ALREADY_SCHEDULED_COPY);
 });
 
 describe("manual allocation: transaction race window", () => {

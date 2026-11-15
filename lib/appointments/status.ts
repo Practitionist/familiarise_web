@@ -9,14 +9,6 @@
  * so guards normalize case rather than typing against one enum.
  */
 
-import {
-  APPOINTMENT_STATUS_BADGE,
-  EVENT_STATUS_BADGE,
-  TRIAL_STATUS_BADGE,
-  formatStatusLabel,
-  type StatusBadgeStyle,
-} from "@/lib/labels/session-labels";
-
 const TERMINAL_STATUSES = new Set([
   "CANCELLED",
   "REJECTED",
@@ -37,7 +29,7 @@ const COMPLETED_LIKE_STATUSES = new Set(["COMPLETED", "CONVERTED"]);
 // both a locked-in state (uploads/joining enabled — isConfirmedStatus) and a
 // distinct pre-scheduling phase some surfaces branch on (isApprovedStatus is
 // a strict subset check of isConfirmedStatus).
-const CONFIRMED_STATUSES = new Set(["APPROVED", "SCHEDULED", "IN_PROGRESS"]);
+const CONFIRMED_STATUSES = new Set(["APPROVED", "SCHEDULED"]);
 
 export const normalizeStatus = (status: string | null | undefined): string =>
   status?.toUpperCase() ?? "";
@@ -89,28 +81,45 @@ export function isConfirmedStatus(status: string | null | undefined): boolean {
   return CONFIRMED_STATUSES.has(normalizeStatus(status));
 }
 
-/**
- * Badge style for the event status UNION (consultations/subscriptions carry
- * AppointmentStatus, webinars/classes carry Webinar/ClassStatus, trials
- * carry TrialStatus). Tries the maps in specificity order and falls
- * back to a neutral title-cased pill for legacy values.
- */
-export function eventUnionStatusBadge(
-  status: string | null | undefined,
-): StatusBadgeStyle {
-  const s = normalizeStatus(status);
-  if (s in APPOINTMENT_STATUS_BADGE) {
-    return APPOINTMENT_STATUS_BADGE[s as keyof typeof APPOINTMENT_STATUS_BADGE];
-  }
-  if (s in EVENT_STATUS_BADGE) {
-    return EVENT_STATUS_BADGE[s as keyof typeof EVENT_STATUS_BADGE];
-  }
-  if (s in TRIAL_STATUS_BADGE) {
-    return TRIAL_STATUS_BADGE[s as keyof typeof TRIAL_STATUS_BADGE];
-  }
-  return {
-    label: status ? formatStatusLabel(status) : "Unknown",
-    className: "bg-zinc-100 text-zinc-600 border-zinc-200",
-    dotClassName: "bg-zinc-400",
-  };
+/** A seat still held on a payment that never succeeded: not registered, no Join. */
+export function isUnpaidSeat(vm: {
+  seatStatus?: string | null;
+  paid?: boolean;
+}): boolean {
+  return normalizeStatus(vm.seatStatus) === "HELD" && vm.paid !== true;
+}
+
+/** The viewer's own seat was given back: they left, were removed, or the event was cancelled. */
+export function isReleasedSeat(seatStatus: string | null | undefined): boolean {
+  const s = normalizeStatus(seatStatus);
+  return s === "CANCELLED" || s === "REFUNDED";
+}
+
+/** The viewer's own seat status on a webinar or class read scoped to their participant row. */
+export function ownSeatStatusOf(
+  appointment:
+    | { id: string; participants?: ReadonlyArray<{ status: string }> }
+    | null
+    | undefined,
+): string | null {
+  return appointment?.participants?.[0]?.status ?? null;
+}
+
+/** The viewer's seat no longer holds a place: given back, or held on a payment whose window closed. */
+export function seatLapsedOrReleased(
+  vm: {
+    seatStatus?: string | null;
+    paid?: boolean;
+    payDeadline?: Date | null;
+    payLapsed?: boolean;
+  },
+  now: Date = new Date(),
+): boolean {
+  if (isReleasedSeat(vm.seatStatus)) return true;
+  if (!isUnpaidSeat(vm)) return false;
+  // Lapsed only on evidence; an unknown window is still payable.
+  return (
+    vm.payLapsed === true ||
+    (!!vm.payDeadline && vm.payDeadline.getTime() <= now.getTime())
+  );
 }

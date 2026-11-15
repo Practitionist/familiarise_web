@@ -44,17 +44,17 @@ export function HeroSection({
           {/* Badge */}
           <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/5 backdrop-blur-sm border border-white/10 text-zinc-400 text-sm mb-8">
             <Sparkles className="w-4 h-4 text-zinc-300" />
-            {/* #1490 — was "Trusted by 10,000+ professionals worldwide", a
-                number nothing produced. What replaces it is enforced by the
-                directory reads themselves: only VERIFIED profiles are public. */}
-            <span>Every expert is verified before they are listed</span>
+            {/* Claim only what the onboarding process does; no audience counts. */}
+            <span>
+              Every expert is interviewed by our founder before listing
+            </span>
           </div>
 
           {/* Main headline */}
           <h1 className="text-fluid-5xl font-bold text-white mb-6 leading-tight tracking-tight">
             Learn live from{" "}
             <span className="relative inline-block">
-              <span className="silver-text">verified experts</span>
+              <span className="silver-text">founder-interviewed experts</span>
             </span>
             <br />
             <span className="text-zinc-400">in your field</span>
@@ -63,7 +63,7 @@ export function HeroSection({
           {/* Subheadline */}
           <p className="text-lg md:text-xl text-zinc-400 mb-10 max-w-2xl mx-auto leading-relaxed">
             Join live classes and webinars, or book tutoring and 1-on-1 sessions
-            with verified experts. Book, pay and learn in one place.
+            with founder-interviewed experts. Book, pay and learn in one place.
           </p>
 
           {/* CTAs */}

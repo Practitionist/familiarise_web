@@ -318,9 +318,10 @@ function RecordingsCard({
   const withParts = data.slots.filter((s) => s.parts.length > 0);
   const latest = withParts.at(-1);
   const latestPart = latest?.parts.at(-1);
+  // A cancelled or released session has no recording to explain; the schedule shows it.
   const lastEnded = [...data.slots]
     .reverse()
-    .find((s) => s.state !== "upcoming");
+    .find((s) => s.state !== "upcoming" && s.state !== "cancelled");
   return (
     <div className="space-y-1.5 text-xs">
       <p className="text-foreground">

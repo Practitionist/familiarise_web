@@ -6,8 +6,14 @@
  * vm.occurrences.
  */
 
-import type { TAppointment } from "@/types/appointment";
+import { withLapsedMoveRestored } from "@/lib/appointments/lapsed-move";
+import type { TAppointment, TAppointmentWithSeats } from "@/types/appointment";
 import { deriveBucket } from "./bucket";
+import {
+  holdOpenFrom,
+  listStatusFacts,
+  trialHoldFacts,
+} from "./list-status-facts";
 import { occurrencesOfAppointment } from "./occurrences";
 import {
   getAnchorTime,
@@ -29,6 +35,8 @@ import {
 export interface ConsultantTrialLike {
   id: string;
   status: string;
+  /** When a paid trial's held time releases unpaid. */
+  paymentDueAt?: Date | string | null;
   consulteeProfile: {
     id: string;
     user: { id: string; name: string; image: string | null };
@@ -81,7 +89,7 @@ export interface UnscheduledWebinarLike {
 }
 
 export interface ConsultantAppointmentsInput {
-  appointments: TAppointment[];
+  appointments: TAppointmentWithSeats[];
   scheduledTrials?: ConsultantTrialLike[];
   unscheduledClasses?: UnscheduledClassLike[];
   unscheduledWebinars?: UnscheduledWebinarLike[];
@@ -245,14 +253,23 @@ function nextActionableChild(
   );
 }
 
+function liveSeatsOf(rows: TAppointmentWithSeats[]): number {
+  return rows.reduce((sum, row) => sum + (row._count?.participants ?? 0), 0);
+}
+
 function mapSingle(
-  appointment: TAppointment,
+  appointment: TAppointmentWithSeats,
   consultantId: string,
   now: Date,
 ): AppointmentVM {
   const occurrences = sortOccurrences(occurrencesOfAppointment(appointment));
   const { title, counterpart, status } = eventFacts(appointment, consultantId);
   const kind = appointment.appointmentType;
+  const source =
+    appointment.consultation?.bookingSource ??
+    appointment.subscription?.bookingSource ??
+    null;
+  const facts = listStatusFacts(appointment, occurrences);
   return {
     id: `appointment-${appointment.id}`,
     // Always the viewing consultant: this is their own list.
@@ -262,21 +279,39 @@ function mapSingle(
     title,
     counterpart,
     status,
-    ...deriveBucket({ status, occurrences, kind, now }, "consultant"),
+    ...deriveBucket(
+      {
+        status,
+        occurrences,
+        kind,
+        now,
+        source,
+        holdOpen: holdOpenFrom(facts, now),
+        paid: facts.paid,
+        moving: !!facts.reschedule,
+      },
+      "consultant",
+    ),
     nextAt: getAnchorTime(occurrences, now),
     occurrences,
     group: null,
     meta: null,
     organizationId: appointment.organizationId ?? null,
     pendingPaymentUrl: null,
+    bookingSource: source,
+    ...facts,
     collaborators: [],
     collaboratorRole: collaboratorRoleOf(appointment, consultantId),
-    raw: { appointment, source: appointment },
+    raw: {
+      appointment,
+      source: appointment,
+      liveSeats: liveSeatsOf([appointment]),
+    },
   };
 }
 
 function mapGroup(
-  children: TAppointment[],
+  children: TAppointmentWithSeats[],
   consultantId: string,
   now: Date,
 ): AppointmentVM {
@@ -289,6 +324,8 @@ function mapGroup(
   const live = liveOccurrences(occurrences);
   const completed = live.filter((s) => isOccurrenceOver(s, now)).length;
   const target = nextActionableChild(children, now);
+  const source = first.subscription?.bookingSource ?? null;
+  const facts = listStatusFacts(first, occurrences);
   const groupId =
     first.appointmentType === "SUBSCRIPTION"
       ? `subscription-${first.subscriptionId}`
@@ -302,7 +339,20 @@ function mapGroup(
     title,
     counterpart,
     status,
-    ...deriveBucket({ status, occurrences, now }, "consultant"),
+    ...deriveBucket(
+      {
+        status,
+        occurrences,
+        now,
+        source,
+        holdOpen: holdOpenFrom(facts, now),
+        paid: facts.paid,
+        moving: !!facts.reschedule,
+      },
+      "consultant",
+    ),
+    bookingSource: source,
+    ...facts,
     nextAt: getAnchorTime(occurrences, now),
     occurrences,
     group: { total: live.length, completed },
@@ -315,6 +365,7 @@ function mapGroup(
       appointment: target ?? first,
       groupAppointments: children,
       source: first,
+      liveSeats: liveSeatsOf(children),
     },
   };
 }
@@ -337,6 +388,7 @@ function mapTrial(
       : null,
   );
   const status = normalizeStatus(t.status);
+  const hold = trialHoldFacts(t as Parameters<typeof trialHoldFacts>[0]);
   const trialAppointment = t.appointment
     ? ({
         id: t.appointment.id,
@@ -347,6 +399,7 @@ function mapTrial(
     : undefined;
   return {
     id: `trial-${t.id}`,
+    trialId: t.id,
     // Always the viewing consultant: this is their own list.
     consultantProfileId: consultantId,
     appointmentId: t.appointment?.id ?? null,
@@ -354,7 +407,11 @@ function mapTrial(
     title: t.subscriptionPlan.title,
     counterpart: person(t.consulteeProfile.user),
     status,
-    ...deriveBucket({ status, occurrences, now }, "consultant"),
+    ...deriveBucket(
+      { status, occurrences, now, holdOpen: holdOpenFrom(hold, now) },
+      "consultant",
+    ),
+    ...hold,
     nextAt: getAnchorTime(occurrences, now),
     occurrences,
     group: null,
@@ -453,8 +510,9 @@ export function mapConsultantAppointments(
 
   // Group subscription/class children under their parent (one row per
   // program); everything else is a row per appointment.
-  const groups = new Map<string, TAppointment[]>();
-  for (const appointment of appointments ?? []) {
+  const groups = new Map<string, TAppointmentWithSeats[]>();
+  for (const row of appointments ?? []) {
+    const appointment = withLapsedMoveRestored(row, now);
     const key =
       appointment.appointmentType === "SUBSCRIPTION" &&
       appointment.subscriptionId

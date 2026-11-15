@@ -70,6 +70,8 @@ export type BookingRefundContext = {
     amountPaise: number;
     /** #1161 — free_ (credit-funded) detection for the restoration rail. */
     paymentIntent: string;
+    /** The plan price before discounts, credits and tax; zero on a free booking. */
+    listPricePaise: number;
     /**
      * Gross less anything already given back. Callers must clamp to this: a
      * percentage of the gross overshoots on a payment with an earlier partial
@@ -173,6 +175,9 @@ export async function resolveBookingRefundContext(
     // #1554 — one wrapper per booking: this is the row checkout created, so
     // it carries the payment and the frozen terms.
     where: { ...bookingAppointmentFilter(ref), deletedAt: null },
+    // The refund quote's inputs in one joined statement; "query" loads each
+    // relation separately. The selected columns and their values are unchanged.
+    relationLoadStrategy: "join",
     select: {
       id: true,
       cancellationPolicy: POLICY_TERMS_INCLUDE,
@@ -191,6 +196,7 @@ export async function resolveBookingRefundContext(
           // #1161 — free_ detection: a fully-credit-funded payment refunds as
           // credit restoration, which the amount-based tier math cannot see.
           paymentIntent: true,
+          originalAmount: true,
           ...REFUNDABLE_BALANCE_SELECT,
         },
         orderBy: { createdAt: "asc" },
@@ -232,7 +238,10 @@ export async function resolveBookingRefundContext(
   // is scoped to a payer (or the booking has exactly one: the 1:1 types).
   const singlePayer = !!payerUserId || (!ref.classId && !ref.webinarId);
   if (singlePayer && payments.length > 1) {
-    void recordSystemErrorSafe({
+    // On the caller's client and awaited: inside a transaction a global-client
+    // insert queues behind it on a one-connection pool, and a detached one outlives the commit.
+    await recordSystemErrorSafe({
+      db,
       organizationId: null,
       category: "PAYMENT",
       summary:
@@ -247,6 +256,7 @@ export async function resolveBookingRefundContext(
         id: payment.id,
         amountPaise: Number(payment.amount),
         paymentIntent: payment.paymentIntent,
+        listPricePaise: Number(payment.originalAmount),
         refundablePaise: refundableBalancePaise(
           Number(payment.amount),
           payment,

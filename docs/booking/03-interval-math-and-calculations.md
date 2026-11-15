@@ -80,7 +80,7 @@ An open window is a statement about the clock, not about the booking. `isConfirm
 
 ### Is the surface allowed to hand over a join handler?
 
-The third question is asked by the adapter, not by the shared helpers. A read-only surface renders the timeline without an `onJoinSession` callback, and a session that is live but whose booking the adapter has refused must then read as a state rather than as an action. `SessionTimeline` renders the Join button only when a handler is present and shows a muted, non-actionable label otherwise, because a row that says "JOIN" in unmuted text and does nothing when clicked is worse than one that says nothing at all.
+The third question is asked by the adapter, not by the shared helpers. A read-only surface renders the timeline without an `onJoinSession` callback, and a session that is live but whose booking the adapter has refused must then read as a state rather than as an action. `SessionTimeline` (the appointment sheet) and `SessionSchedule` (the detail page) render the Join button only when a handler is present and show a muted, non-actionable label otherwise, because a row that says "JOIN" in unmuted text and does nothing when clicked is worse than one that says nothing at all.
 
 ### The development escape hatch
 
@@ -201,6 +201,8 @@ Groups slots by `dayKey(startTime, timeZone)`. Returns `Map<string, TimeSlot[]>`
 
 Used by: daily call limits (subscription), session count (class), completed-calls counting.
 
+The browser's copy of this grouping, `groupSlotsByDay(slots, timeZone, slotsPerSession)` in `lib/scheduling/intervalSelectionValidation.ts`, takes the session length so that a pick that runs past local midnight stays whole. `sessionDayKeys` cuts each run of back-to-back half-hour atoms into sessions of `slotsPerSession` atoms from the run's first atom and keys every atom of a session to the zone day on which the session starts. A 90-minute session picked from 23:30 to 01:00 in the scheduling zone is therefore one session on the day it starts: it counts once against the per-day limits, passes the consecutive check, deselects as a whole (`hooks/scheduling/useScheduling.ts`), and is counted once on its start day in the week header's "N fit" (`lib/scheduling/calendarUtils.ts`, `lib/scheduling/week-grid-model.ts`). The server buckets by session start in the same way.
+
 ### `groupSlotsByWeek(slots, timeZone?)`
 
 Groups slots by `weekKey(startTime, timeZone)`. Returns `Map<string, TimeSlot[]>`.
@@ -272,7 +274,7 @@ Every consumer goes through it and they must never diverge. `processWeeklySlots`
 
 Segmenting those occurrences for display no longer cuts a block at local midnight. `breakDownSlotsByDuration` (`utils/scheduling-engine/intervals.ts`) snaps window starts to the absolute UTC half-hour and `groupSlotsByDate` keys each window by the viewer day of its own start, so :45 zones keep every atom; a fetch range ends at the next day's first instant (`dayRangeBounds`), so a block that runs to midnight keeps its final 23:30 atom (#1415).
 
-Merging is the last step, and its rule is exact adjacency in both of the places that merge. `mergeConsecutiveSlots` joins the booking-side atoms and `mergeConsecutiveSlotsForDisplay` (`app/explore/experts/[consultantId]/utils/mergeSlots.ts`) joins the expert page's; the only difference between them is which atoms are eligible, since the first merges available atoms only and the second merges any run that shares a status. Neither tolerates a gap. A tolerance on the display side advertised a window whose seam no availability row publishes, and checkout's per-atom union coverage then refused the booking the card had just promised (#1416).
+Merging is the last step, and its rule is exact adjacency. `mergeConsecutiveSlots` joins available atoms only when one ends exactly where the next begins; it tolerates no gap. A tolerance would advertise a window whose seam no availability row publishes, and checkout's per-atom union coverage would then refuse the booking the picker had just offered. The expert page reads the same windows through `windowsForDay` (`lib/scheduling/booking-windows.ts`), so it has no merge of its own.
 
 ## Projecting a custom row onto the allocator's days
 
@@ -287,3 +289,4 @@ A custom availability row is not a rule but an absolute instant range, `startsAt
 - **Dropping custom rows longer than 24 hours from the grid.** The grid route discarded any custom row over 24 hours as "unreasonable", so a coalesced multi-day row drew an empty grid while the allocator placed sessions in it. The cap is gone; the range clip bounds the work.
 - **Matching a custom row on its start day only.** `matchCustomSlotToDay` offered a custom row only on the UTC day of its `startsAt`, and the row walk stopped after 48 starts, so a multi-day row offered its first 24 hours and nothing else, and a row that began before the scheduling period offered nothing at all. Replaced by `customRowDaySlices` above.
 - **`splitSlotsByDay` for display.** It cut each generated block into half-open segments at the viewer's local midnight, which pushed :45-zone viewers off the half-hour lattice. Deleted; windows are keyed by their own start's viewer day.
+- **`mergeConsecutiveSlotsForDisplay`** (`app/explore/experts/[consultantId]/utils/mergeSlots.ts`), the expert page's own merge for its old availability card. Only a test still imported it once the single-time picker replaced the card; deleted with that test.

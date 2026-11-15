@@ -12,7 +12,16 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import {
+  PLAN_EMAIL_SUPPORT_LABEL,
+  planLevelLabel,
+} from "@/lib/labels/plan-labels";
 import ALREADY_WORDS from "./raw-enum-already-words.json";
+import {
+  BOOKING_WORDS,
+  bookingStatus,
+  type StatusViewer,
+} from "@/lib/appointments/booking-status";
 
 const ROOT = path.resolve(__dirname, "../..");
 
@@ -171,5 +180,82 @@ describe("customer-facing copy never prints a raw enum", () => {
     expect(RAW_FIELD.test("`HTTP error (${res.status})`")).toBe(false);
     expect(RAW_FIELD.test("<Tab key={t} value={tab.status} />")).toBe(false);
     expect(RAW_FIELD.test("<span>{LABEL[row.status]}</span>")).toBe(false);
+  });
+});
+
+describe("the checkout details", () => {
+  const ADAPTERS = ["consultation", "subscription", "webinar", "class"];
+  const read = (kind: string) =>
+    fs.readFileSync(
+      path.join(ROOT, `app/checkout/plans/adapters/use-${kind}-checkout.tsx`),
+      "utf8",
+    );
+
+  it.each(ADAPTERS)(
+    "the %s adapter prints the level through its label, never the enum",
+    (kind) => {
+      const source = read(kind);
+      expect(source).not.toMatch(/\{\s*[\w?.]*\?\.(level|emailSupport)\b/);
+      expect(source).toContain("planLevelLabel(");
+      expect(source).not.toMatch(/toLocale(Date|Time)String\(/);
+    },
+  );
+
+  it("prints email support through its label", () => {
+    expect(read("subscription")).toContain("PLAN_EMAIL_SUPPORT_LABEL[");
+  });
+
+  it("labels every plan level and email support tier", () => {
+    expect(planLevelLabel("BEGINNER")).toBe("Beginner");
+    expect(planLevelLabel(null)).toBe("All levels");
+    expect(PLAN_EMAIL_SUPPORT_LABEL.GENERAL).toBe("General");
+    expect(Object.values(PLAN_EMAIL_SUPPORT_LABEL)).toEqual([
+      "General",
+      "Priority",
+      "Dedicated",
+    ]);
+  });
+});
+
+describe("the one booking status", () => {
+  const KINDS = ["CONSULTATION", "SUBSCRIPTION", "WEBINAR", "CLASS", "TRIAL"];
+  const STATUSES = [
+    "PENDING",
+    "APPROVED_PENDING_PAYMENT",
+    "APPROVED",
+    "AWAITING_PAYMENT",
+    "SCHEDULED",
+    "COMPLETED",
+    "CONVERTED",
+    "REJECTED",
+    "CANCELLED",
+    "EXPIRED",
+    "DRAFT",
+  ];
+  const VIEWERS: StatusViewer[] = [
+    "CONSULTEE",
+    "CONSULTANT",
+    "ORG_ADMIN",
+    "STAFF",
+  ];
+  const EVENT_WORDS = ["Draft", "Scheduled", "Completed", "Cancelled"];
+
+  it("speaks only the seven words (or a host's event words) and plain reason lines", () => {
+    for (const kind of KINDS) {
+      for (const status of STATUSES) {
+        for (const viewer of VIEWERS) {
+          for (const source of ["DIRECT_CHECKOUT", "REQUEST_SUBMITTED"]) {
+            const s = bookingStatus({ kind, status, source }, viewer);
+            const host =
+              viewer === "CONSULTANT" &&
+              (kind === "WEBINAR" || kind === "CLASS");
+            expect([...BOOKING_WORDS, ...(host ? EVENT_WORDS : [])]).toContain(
+              s.label,
+            );
+            expect(s.line).not.toMatch(/\b[A-Z]+_[A-Z_]+\b/);
+          }
+        }
+      }
+    }
   });
 });

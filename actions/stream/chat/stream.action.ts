@@ -58,14 +58,14 @@ async function assertCanMintToken(
   if (session.user.id !== forUserId) {
     throw new Error("Forbidden: cannot mint a token for another user");
   }
-  const targetUser = await prisma.user?.findUnique?.({
+  const targetUser = await prisma.user.findUnique({
     where: { id: forUserId },
     select: { id: true, erasedAt: true, banned: true },
   });
-  if (targetUser === null || targetUser?.erasedAt) {
+  if (!targetUser || targetUser.erasedAt) {
     throw new Error("Forbidden: account erased");
   }
-  if (targetUser?.banned) {
+  if (targetUser.banned) {
     throw new Error("Forbidden: account suspended");
   }
   const hasStreamConsent = await checkConsent({

@@ -2,6 +2,8 @@
 // one unit through utils/appointmentlock, and the in-lock plan re-read.
 
 import { Refusal } from "@/lib/errors/refusal";
+import { assertExpertTakesDirectCheckout } from "@/lib/booking/booking-rule-error";
+import type { BookingMode } from "@prisma/client";
 import {
   OCCUPYING_OCCURRENCE_WHERE,
   seatHoldingParticipant,
@@ -15,6 +17,9 @@ import {
   unlockSlotBooking,
   lockEventCheckout,
   unlockEventCheckout,
+  lockRequestCap,
+  RequestCapBusyError,
+  EventCheckoutBusyError,
   CHECKOUT_LOCK_TTL_MS,
   ApprovalLock,
   type SlotBatchGrant,
@@ -53,6 +58,27 @@ export async function lockBuyerSeatAtoms(
     CHECKOUT_LOCK_TTL_MS[appointmentType],
     CHECKOUT_WAIT_RETRY_CONFIG,
   );
+}
+
+/**
+ * One expert's plan sales, on the consultant-tier `request-cap:` key: held from
+ * the sold-plan counts through the new hold's commit. Contention reads as a
+ * busy plan checkout, which the client retries once.
+ */
+export async function lockExpertPlanSales(
+  consultantProfileId: string,
+): Promise<ApprovalLock> {
+  try {
+    return await lockRequestCap(
+      consultantProfileId,
+      CHECKOUT_LOCK_TTL_MS.SUBSCRIPTION,
+    );
+  } catch (error) {
+    if (error instanceof RequestCapBusyError) {
+      throw new EventCheckoutBusyError("SUBSCRIPTION");
+    }
+    throw error;
+  }
 }
 
 /**
@@ -113,6 +139,7 @@ export async function readEventCapacity(
   if (appointmentType === "WEBINAR") {
     const webinar = await prisma.webinar.findUnique({
       where: { id: eventId },
+      relationLoadStrategy: "join",
       include: {
         webinarPlan: { include: { consultantProfile: true } },
         appointment: {
@@ -323,6 +350,12 @@ export async function verifyPlanExistsInsideLock(
   collaboratorProfileIds: string[];
 }> {
   const select = { consultantProfileId: true, organizationId: true } as const;
+  // A 1:1's expert switches are re-read under the lock, before any gateway order exists.
+  const switches = {
+    consultantProfile: {
+      select: { acceptingRequests: true, bookingMode: true },
+    },
+  } as const;
   const collaborators = {
     where: { status: { in: ["PENDING" as const, "ACCEPTED" as const] } },
     select: { consultantProfileId: true },
@@ -331,19 +364,23 @@ export async function verifyPlanExistsInsideLock(
     consultantProfileId: string | null;
     organizationId: string | null;
     collaborators?: { consultantProfileId: string }[];
+    consultantProfile?: {
+      acceptingRequests: boolean;
+      bookingMode: BookingMode;
+    } | null;
   } | null = null;
 
   switch (appointmentType) {
     case "CONSULTATION":
       plan = await tx.consultationPlan.findUnique({
         where: { id: planId },
-        select,
+        select: { ...select, ...switches },
       });
       break;
     case "SUBSCRIPTION":
       plan = await tx.subscriptionPlan.findUnique({
         where: { id: planId },
-        select,
+        select: { ...select, ...switches },
       });
       break;
     case "WEBINAR":
@@ -365,6 +402,10 @@ export async function verifyPlanExistsInsideLock(
       "This plan is no longer available. Please refresh and try again.",
     );
   }
+  assertExpertTakesDirectCheckout(
+    appointmentType,
+    plan.consultantProfile ?? null,
+  );
   // A seat is sold from the event; the plan the self-booking and related-party
   // rules read must be that event's plan, never a client-chosen one.
   if (appointmentType === "WEBINAR" || appointmentType === "CLASS") {

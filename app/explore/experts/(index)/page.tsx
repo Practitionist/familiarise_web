@@ -39,7 +39,7 @@ export const revalidate = 300;
 export const metadata: Metadata = {
   title: "Find experts and mentors | Familiarise",
   description:
-    "Browse verified experts across technology, business, design and more. Compare ratings, experience and prices, then book a session.",
+    "Browse founder-interviewed experts across technology, business, design and more. Compare ratings, experience and prices, then book a session.",
   alternates: { canonical: "/explore/experts" },
 };
 
@@ -100,7 +100,7 @@ function HeroSection({
             </div>
           ) : (
             <p className="text-sm text-zinc-500">
-              Check back for newly verified experts.
+              Check back for newly listed experts.
             </p>
           )}
         </div>

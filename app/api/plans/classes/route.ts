@@ -1,3 +1,4 @@
+import { readJsonBody } from "@/lib/api/parse";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { CollaboratorStatus, PlanEmailSupport, Prisma } from "@prisma/client";
@@ -18,7 +19,7 @@ import {
   isPrivileged,
   forbiddenResponse,
 } from "@/lib/auth-helpers";
-import { maxParticipantsSchema } from "@/schemas/plans";
+import { maxParticipantsSchema, PlanCadenceSchema } from "@/schemas/plans";
 import { planTotalSessions } from "@/lib/booking/entitlement";
 
 export async function GET(request: NextRequest) {
@@ -92,7 +93,9 @@ export async function POST(request: NextRequest) {
     if (authResult.error) return authResult.error;
     const { session } = authResult;
 
-    const body = await request.json();
+    const read = await readJsonBody(request);
+    if (read.error) return read.error;
+    const body = read.body;
     const {
       title,
       description,
@@ -146,6 +149,19 @@ export async function POST(request: NextRequest) {
     ) {
       return NextResponse.json(
         { error: "Invalid numeric values" },
+        { status: 400 },
+      );
+    }
+
+    // The same cadence rules as the plan editor: a 0 or fractional cadence, or a
+    // length off the 30-minute grid, is the client's error, never a DB 500.
+    const cadence = PlanCadenceSchema.safeParse({
+      sessionsPerWeek,
+      sessionDurationInHours: sessionDurationInHours ?? 1,
+    });
+    if (!cadence.success) {
+      return NextResponse.json(
+        { error: cadence.error.issues[0]?.message ?? "Invalid cadence" },
         { status: 400 },
       );
     }

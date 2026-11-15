@@ -37,7 +37,6 @@ import {
   SlotShortageError,
 } from "@/utils/scheduling-engine/errors";
 import { stageAllocationNotices } from "@/lib/booking/allocation/notify";
-import { leadMsFor } from "@/lib/booking/lead-time";
 import { checkoutInProgressError } from "@/lib/booking/request-cohort";
 import {
   slotTakenRefusal,
@@ -55,6 +54,7 @@ import {
 } from "@/lib/booking/allocation/event-data";
 import {
   confirmedIntervalsOf,
+  heldIntervalStartsOf,
   releasedSessionCountOf,
   releasedOccurrenceIdsOf,
   topUpTargetSessions,
@@ -68,8 +68,14 @@ import {
   assertExpectedTentativeSlotCountInTx,
   assertNoConfirmedSlots,
   guardAllocationInTx,
+  mustBeUnscheduled,
+  assertGroupEventUnsoldInTx,
   probeConfirmedOverlap,
 } from "@/lib/booking/allocation/guards";
+import {
+  assertReplacementNotice,
+  replacementLeadMs,
+} from "@/lib/booking/reschedule-proposals";
 import { resolveConsumedPreferenceRequests } from "@/lib/booking/allocation/preference";
 import { findIdempotentAllocation } from "@/lib/booking/allocation/idempotency";
 import { assertCollaboratorsFree } from "@/lib/booking/allocation/collaborators";
@@ -79,6 +85,7 @@ import {
   reconnectEnrolledUsers,
   collectEventParticipantIds,
 } from "@/lib/booking/allocation/commit/reconnect-enrolled";
+import { bookingTransaction } from "@/lib/db/booking-transaction";
 
 /**
  * MANUAL ALLOCATION: Validate and allocate user-selected slots
@@ -97,7 +104,7 @@ import {
  *    - No conflicts with existing appointments
  *
  * 3. Event-specific rules apply:
- *    - Consultations: All slots same day, consecutive
+ *    - Consultations: Consecutive slots (may cross midnight)
  *    - Subscriptions: Weekly limits enforced
  *    - Webinars: Consecutive slots required
  *    - Classes: Session grouping validated
@@ -171,19 +178,15 @@ export async function manualAllocate(
   );
 
   const lock = await lockAutoAllocate(consultantProfileId);
-  // #898 follow-up — serialize on the consultee too (consultant → consultee
-  // lock order) so one person can't be booked with two consultants at once.
+  // Lock order: consultant → consultee → slot batch. The consultee key (one
+  // person is never booked with two experts at once) is held only from the
+  // batch to the write, so the buyer's own checkout is not refused while the
+  // expert's picks are read and validated; the in-transaction recheck reads
+  // the consultee's calendar under it.
   let consulteeLock: ApprovalLock | null = null;
   let slotGrant: SlotBatchGrant | null = null;
   try {
     const consulteeLockUserId = await getConsulteeUserId(eventType, eventId);
-    if (consulteeLockUserId) {
-      consulteeLock = await lockConsulteeBooking(
-        consulteeLockUserId,
-        undefined,
-        ALLOCATOR_LOCK_RETRY_CONFIG,
-      );
-    }
 
     // #837 TOCTOU — the pre-lock replay check can miss a concurrent first
     // submit that stamped its key while we waited on the lock. Re-check now
@@ -201,7 +204,7 @@ export async function manualAllocate(
     // Multi-tab guard: a fresh dialog allocation must 409 if another
     // session already allocated this event (re-checked in-txn below).
     // #1766 — a subscription decides after its rows are read (see below).
-    if (initialAllocation && eventType !== "subscription") {
+    if (mustBeUnscheduled(eventType, initialAllocation)) {
       await assertNoConfirmedSlots(prisma, eventType, eventId);
     }
 
@@ -222,7 +225,6 @@ export async function manualAllocate(
       settled,
     } = eventData;
     if (eventData.checkoutInProgress) throw checkoutInProgressError();
-    const leadTimeMs = leadMsFor("allocate", { settled });
 
     // Convert to Date objects with validation
     const slots = slotStrings.map((s, i) => {
@@ -291,6 +293,12 @@ export async function manualAllocate(
     // A reschedule is a live RELEASE (tentative + RESCHEDULED), not mere
     // tentativeness: fresh requests already carry tentative holds.
     const isReschedule = releasedSessionCountOf(existingAppointments) > 0;
+    const leadTimeMs = replacementLeadMs(
+      isReschedule,
+      excludeRescheduleRequestId,
+      settled,
+    );
+    assertReplacementNotice(isReschedule, excludeRescheduleRequestId, slots);
 
     // Intervals, not rows — see autoAllocate.
     const existingNonTentativeSlotCount =
@@ -321,7 +329,9 @@ export async function manualAllocate(
     // serialises two tabs of the same event.
     const isFreshAllocation =
       !isTopUp &&
-      (initialAllocation === true || existingNonTentativeSlotCount === 0);
+      (mustBeUnscheduled(eventType, initialAllocation) ||
+        initialAllocation === true ||
+        existingNonTentativeSlotCount === 0);
 
     // What to leave out of conflict detection and the weekly/daily limits
     // (#1554 — see autoAllocate: a reschedule excludes the tentative
@@ -333,6 +343,11 @@ export async function manualAllocate(
       ? releasedOccurrenceIdsOf(existingAppointments)
       : [];
     const ownAppointmentIds = existingAppointments.map((a) => a.id);
+    // A time the booking already holds keeps it for every approver; only a
+    // new time is held to the published hours.
+    const heldSlotStarts = heldIntervalStartsOf(existingAppointments);
+    const held = new Set(heldSlotStarts.map((d) => d.getTime()));
+    const newSlots = slots.filter((slot) => !held.has(slot.getTime()));
 
     // #1065 — a hand-placed allocation answers a stated preference just as an
     // auto one does (it does not READ the preference — the consultant chose
@@ -469,13 +484,22 @@ export async function manualAllocate(
         leadTimeMs,
         // The consultant explicitly accepting these times as-is.
         overrideAvailabilityWindow: override,
+        heldSlotStarts,
       },
     );
 
     if (!validation.isValid) {
       throw validationRefusal(validation.errors);
     }
+    if (txOptions.checkOnly) return { success: true, appointments: [] };
 
+    if (consulteeLockUserId) {
+      consulteeLock = await lockConsulteeBooking(
+        consulteeLockUserId,
+        undefined,
+        ALLOCATOR_LOCK_RETRY_CONFIG,
+      );
+    }
     // Lock order: consultant → consultee → slot batch over every busy profile.
     // Picked times never wait: a held one is a typed 409 naming the times.
     slotGrant = await lockPickedSlots(
@@ -489,7 +513,7 @@ export async function manualAllocate(
     );
 
     // SHORT write-only transaction (see autoAllocate for the rationale).
-    return await prisma.$transaction(
+    return await bookingTransaction(
       async (tx) => {
         await renewAllocationBatch(slotGrant);
         // #1692 — per-event serialisation first (see autoAllocate).
@@ -502,6 +526,8 @@ export async function manualAllocate(
           slotStrings,
         );
         if (lockedReplay) return lockedReplay;
+        // A sold webinar or class is re-timed, never re-planned.
+        if (!isTopUp) await assertGroupEventUnsoldInTx(tx, eventType, eventId);
         // #1766 — see autoAllocate: a stale tab must not append twice.
         if (isTopUp) {
           await assertHeldSessionCountInTx(
@@ -528,7 +554,7 @@ export async function manualAllocate(
         }
         // The consultant's explicit override waives availability, here as out of tx.
         if (!override) {
-          await assertSlotsStillPublished(tx, consultantProfileId, slots);
+          await assertSlotsStillPublished(tx, consultantProfileId, newSlots);
         }
 
         // AE-2 (#784) — a webinar/class co-host is not a slot participant, so
@@ -621,6 +647,7 @@ export async function manualAllocate(
           config,
           txOptions.approvableFrom,
           txOptions.historyReason,
+          txOptions.actorUserId,
         );
         await holdUntilPaid(tx, appointments, outcome);
 
@@ -650,6 +677,7 @@ export async function manualAllocate(
             eventId,
             manualPartialInfo,
             outcome,
+            appointments.flatMap((a) => (a.occurrences ?? []).map((o) => o.id)),
           ),
         };
       },

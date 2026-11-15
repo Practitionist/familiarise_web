@@ -12,16 +12,24 @@ export const ReleasedSessionsSchema = z.array(
   z.object({
     ordinal: z.number().int(),
     startsAt: z.string().datetime({ offset: true }),
+    /** Unconfirmed (an unpaid hold) when released; a restore puts it back so. */
+    tentative: z.boolean().optional(),
   }),
 );
 export type ReleasedSessions = z.infer<typeof ReleasedSessionsSchema>;
 
+/** Entry i describes `releasedOccurrenceIds[i]`: both come from the same list. */
 export function releasedSessionsOf(
-  slots: readonly { ordinal: number; startsAt: Date | string }[],
+  slots: readonly {
+    ordinal: number;
+    startsAt: Date | string;
+    isTentative?: boolean | null;
+  }[],
 ): ReleasedSessions {
   return slots.map((s) => ({
     ordinal: s.ordinal,
     startsAt: new Date(s.startsAt).toISOString(),
+    ...(s.isTentative ? { tentative: true } : {}),
   }));
 }
 

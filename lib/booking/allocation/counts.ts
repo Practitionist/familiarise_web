@@ -10,6 +10,7 @@ import {
 import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
 import {
   intervalCountOf,
+  intervalStartsOf,
   isDeadOccurrence,
 } from "@/lib/appointments/occurrences";
 import { TWENTY_FOUR_HOURS_IN_MS } from "@/utils/scheduling-engine/slotTimeUtils";
@@ -249,6 +250,22 @@ export function releasedOccurrenceIdsOf(
     appointment.occurrences
       .filter(isReleasedForReschedule)
       .map((slot) => slot.id),
+  );
+}
+
+/** The interval starts the event's live sessions hold now; a released or dead row holds none. */
+export function heldIntervalStartsOf(
+  appointments: AppointmentWithSlots[],
+): Date[] {
+  return appointments.flatMap((appointment) =>
+    appointment.occurrences
+      .filter(
+        (o) =>
+          !o.deletedAt &&
+          (o.completionStatus === "SCHEDULED" ||
+            o.completionStatus === "UNVERIFIED"),
+      )
+      .flatMap((o) => intervalStartsOf(o)),
   );
 }
 

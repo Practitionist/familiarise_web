@@ -108,7 +108,7 @@ const TABLE: [
     "NONE",
     "REQUEST_AGAIN",
     "Released",
-    "Payment lapsed",
+    "Cancelled",
   ],
   [
     "CONFIRMED",
@@ -136,7 +136,7 @@ const TABLE: [
     "NONE",
     "NONE",
     "",
-    "Awaiting schedule",
+    "Confirmed",
   ],
   [
     "COMPLETED",
@@ -173,7 +173,7 @@ const TABLE: [
     "NONE",
     "REQUEST_AGAIN",
     "Released",
-    "Declined",
+    "Cancelled",
   ],
 ];
 
@@ -242,7 +242,16 @@ describe("deriveBookingPresentation — the money line and the timeline", () => 
   });
 
   it("consultee AWAITING_PAYMENT: the PAY action carries the amount and the deadline", () => {
-    const input = base(TABLE[1][1]);
+    const input = base({
+      ...TABLE[1][1],
+      history: [
+        {
+          fromStatus: "PENDING",
+          toStatus: "APPROVED_PENDING_PAYMENT",
+          by: "CONSULTANT",
+        },
+      ],
+    });
     const u = deriveBookingPresentation(input, "CONSULTEE", { now: NOW });
     expect(u.nextAction).toEqual({
       kind: "PAY",
@@ -257,6 +266,35 @@ describe("deriveBookingPresentation — the money line and the timeline", () => 
       "Approved (Ethan)",
       expect.stringMatching(/^You pay/),
     ]);
+  });
+
+  it("a trial's timeline starts with one booking entry and never names an approval", () => {
+    const trial = (status: string, payments: PaymentInput[]) =>
+      base({
+        appointmentType: "TRIAL",
+        request: { status, kind: "TRIAL", requestedAt: PAST },
+        payments,
+      });
+    const labels = (
+      input: BookingPresentationInput,
+      viewer: "CONSULTEE" | "CONSULTANT",
+    ) =>
+      deriveBookingPresentation(input, viewer, { now: NOW }).timeline.map(
+        (e) => e.label,
+      );
+    const awaiting = trial("AWAITING_PAYMENT", [
+      pay("PENDING", 10_600, { expiresAt: IN_4D }),
+    ]);
+    expect(labels(awaiting, "CONSULTEE").slice(0, 2)).toEqual([
+      "Booked (you)",
+      expect.stringMatching(/^You pay/),
+    ]);
+    expect(labels(awaiting, "CONSULTANT")[0]).toBe("Booked by Rachel");
+    const free = trial("SCHEDULED", []);
+    for (const viewer of ["CONSULTEE", "CONSULTANT"] as const) {
+      const all = labels({ ...free, occurrences: confirmed }, viewer);
+      expect(all.some((l) => /approve|request/i.test(l))).toBe(false);
+    }
   });
 
   it("sponsored shows the organisation and no amount; a co-pay appends", () => {
@@ -437,7 +475,7 @@ describe("ALLOCATE (#1775 C-5)", () => {
     });
   });
 
-  it("words the next-cycle wait the same for both sides, naming nobody", () => {
+  it("words the next-cycle wait for each side", () => {
     const input = base({
       request: req("APPROVED"),
       occurrences: [slot(false, PAST)],
@@ -445,11 +483,10 @@ describe("ALLOCATE (#1775 C-5)", () => {
       holdExpiresAt: null,
       entitlement: { remaining: 4, nextBatch: 4 },
     });
-    for (const role of ["CONSULTANT", "CONSULTEE"] as const) {
-      expect(
-        deriveBookingPresentation(input, role, { now: NOW }).bookingState.why,
-      ).toBe("Week done · the next 4 to be scheduled.");
-    }
+    const why = (role: "CONSULTANT" | "CONSULTEE") =>
+      deriveBookingPresentation(input, role, { now: NOW }).bookingState.why;
+    expect(why("CONSULTANT")).toBe("Week done. Schedule the next 4.");
+    expect(why("CONSULTEE")).toBe("Week done. Ethan is placing the next 4.");
   });
 });
 
@@ -574,7 +611,7 @@ describe("a plan that ended with sessions not held", () => {
     }
   });
 
-  it("keeps the held wording for a plan that delivered everything", () => {
+  it("adds no reason line to a plan that delivered everything", () => {
     const input = base({
       request: req("COMPLETED"),
       occurrences: [slot(false, PAST)],
@@ -582,6 +619,6 @@ describe("a plan that ended with sessions not held", () => {
       holdExpiresAt: null,
       entitlement: { remaining: 0, nextBatch: 0, notHeld: 0, planEnded: true },
     });
-    expect(whyFor(input)[0].why).toBe("Every session has been held.");
+    expect(whyFor(input)[0].why).toBe("");
   });
 });

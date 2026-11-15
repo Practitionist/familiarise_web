@@ -65,7 +65,6 @@ import {
   type RowAction,
 } from "./InboxRow";
 import { InboxSortControl } from "./InboxSort";
-import { TrialAcceptDialog, type TrialAcceptTarget } from "./TrialAcceptDialog";
 import {
   RequestedSlotsDialog,
   type RequestedSlotsConfirmation,
@@ -240,6 +239,10 @@ export function RequestsInbox({
     // Home's strips count the same cohort (#1775 A-6).
     void queryClient.invalidateQueries({
       queryKey: ["consultant-dashboard", consultantProfileId],
+    });
+    // The demand banner and the Settings counts read the same open requests.
+    void queryClient.invalidateQueries({
+      queryKey: ["consultant-demand", consultantProfileId],
     });
   }, [consultantProfileId, queryClient]);
 
@@ -526,30 +529,12 @@ export function RequestsInbox({
     },
   });
 
-  // ---- decline (request or trial) -----------------------------------------
+  // ---- decline ------------------------------------------------------------
   const [declineTarget, setDeclineTarget] = useState<InboxRowInput | null>(
     null,
   );
   const decline = useMutation({
     mutationFn: async (row: InboxRowInput) => {
-      if (row.kind === "trial") {
-        const response = await fetch(`/api/trials/${row.id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: "REJECTED" }),
-        });
-        const body = (await response.json().catch(() => ({}))) as {
-          error?: string;
-          code?: string;
-        };
-        if (response.status === 409) return "stale" as const;
-        if (!response.ok) {
-          throw new Error(
-            errorSentence(body.code, body.error ?? "Could not decline"),
-          );
-        }
-        return "done" as const;
-      }
       try {
         await declineRequest({ id: row.id, type: requestType(row) });
         return "done" as const;
@@ -722,11 +707,6 @@ export function RequestsInbox({
     },
   });
 
-  // ---- trial accept -------------------------------------------------------
-  const [trialTarget, setTrialTarget] = useState<TrialAcceptTarget | null>(
-    null,
-  );
-
   const onAction = (row: InboxRowInput, action: RowAction) => {
     switch (action.kind) {
       case "approve":
@@ -738,7 +718,6 @@ export function RequestsInbox({
         setAnswerTarget({ row, answer: action.kind });
         return;
       case "decline":
-      case "trial-decline":
         setDeclineTarget(row);
         return;
       case "remind":
@@ -747,13 +726,6 @@ export function RequestsInbox({
         return;
       case "withdraw":
         setWithdrawTarget(row);
-        return;
-      case "pick-time":
-        setTrialTarget({
-          id: row.id,
-          consulteeName: row.requester.name,
-          durationMinutes: row.trial?.durationMinutes ?? 30,
-        });
         return;
       default:
         return;
@@ -1218,18 +1190,6 @@ export function RequestsInbox({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-
-      <TrialAcceptDialog
-        consultantId={consultantProfileId}
-        target={trialTarget}
-        onOpenChange={(open) => {
-          if (!open) setTrialTarget(null);
-        }}
-        onAccepted={() => {
-          setTrialTarget(null);
-          invalidate();
-        }}
-      />
     </div>
   );
 }

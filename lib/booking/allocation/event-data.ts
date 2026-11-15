@@ -13,7 +13,11 @@ import {
   ConsultantAllocationData,
   EventConfig,
 } from "@/utils/scheduling-engine/types";
-import { intervalStartsOf } from "@/lib/appointments/occurrences";
+import {
+  bookedSessionMinutes,
+  intervalStartsOf,
+  liveOccurrenceWhere,
+} from "@/lib/appointments/occurrences";
 import { isVoidRequestRow } from "@/lib/booking/allocation/counts";
 import { isLiveCheckoutHold } from "@/lib/booking/request-cohort";
 import { assertUnpaidApprovalFits } from "@/lib/booking/lead-time";
@@ -26,6 +30,7 @@ import {
   subscriptionEntitlement,
 } from "@/lib/booking/entitlement";
 import { formatDateLabel } from "@/lib/time/display";
+import { agreedConsultationPricePaise } from "@/lib/booking/sold-terms";
 import {
   ALLOCATION_APPROVABLE_FROM,
   transitionClassEvent,
@@ -34,7 +39,7 @@ import {
   transitionWebinarEvent,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
-import { BookingRuleError } from "@/lib/booking/booking-rule-error";
+import { subscriptionUnpaidError } from "@/lib/booking/booking-rule-error";
 import {
   SETTLED_CONSULTATION,
   SETTLED_SUBSCRIPTION,
@@ -88,6 +93,7 @@ export async function approveByMoney<
     fromIn: AppointmentStatus[];
     data?: D;
     reason?: string;
+    actorUserId?: string | null;
   }) => Promise<void>,
   settled: Omit<W, "id">,
   unpaid: Omit<W, "id"> | (() => Promise<void>),
@@ -95,9 +101,10 @@ export async function approveByMoney<
   approvableFrom: AppointmentStatus[] = ALLOCATION_APPROVABLE_FROM,
   /** Runs before the awaiting-payment write; a throw refuses the approval. */
   beforeUnpaid?: () => void,
-  /** Recorded on the history row: how the times were placed. */
-  reason?: string,
+  /** Recorded on the history row: how the times were placed, and by whom. */
+  history: { reason?: string; actorUserId?: string | null } = {},
 ): Promise<ApprovalOutcome> {
+  const { reason, actorUserId } = history;
   try {
     await transition({
       where: { id: eventId, ...settled } as W,
@@ -105,6 +112,7 @@ export async function approveByMoney<
       fromIn: approvableFrom,
       data,
       reason,
+      actorUserId,
     });
     return "approved";
   } catch (error) {
@@ -126,8 +134,48 @@ export async function approveByMoney<
     ].filter((status) => approvableFrom.includes(status)),
     data,
     reason,
+    actorUserId,
   });
   return "awaiting_payment";
+}
+
+/**
+ * A class's stored scheduling period starts at its first live session and
+ * reaches at least its last, so every reader of the period agrees with the sessions.
+ */
+export async function followClassSessions(
+  tx: Pick<Tx, "appointmentOccurrence" | "class">,
+  classId: string,
+): Promise<void> {
+  const live = {
+    ...liveOccurrenceWhere,
+    appointment: { classId, deletedAt: null },
+  };
+  const first = await tx.appointmentOccurrence.findFirst({
+    where: live,
+    orderBy: { startsAt: "asc" },
+    select: { startsAt: true },
+  });
+  const last = await tx.appointmentOccurrence.findFirst({
+    where: live,
+    orderBy: { endsAt: "desc" },
+    select: { endsAt: true },
+  });
+  if (!first || !last) return;
+  await tx.class.updateMany({
+    where: { id: classId },
+    data: { schedulingPeriodStartsAt: first.startsAt },
+  });
+  await tx.class.updateMany({
+    where: {
+      id: classId,
+      OR: [
+        { schedulingPeriodEndsAt: null },
+        { schedulingPeriodEndsAt: { lt: last.endsAt } },
+      ],
+    },
+    data: { schedulingPeriodEndsAt: last.endsAt },
+  });
 }
 
 /**
@@ -142,6 +190,8 @@ export async function updateEventStatus(
   approvableFrom?: AppointmentStatus[],
   /** How the times were placed (`scheduleReason`), for the history row. */
   reason?: string,
+  /** Who placed them; null for a sweep. */
+  actorUserId?: string | null,
 ): Promise<ApprovalOutcome | undefined> {
   switch (eventType) {
     // #836 — allocation racing a cancel/expiry must not resurrect the
@@ -164,7 +214,7 @@ export async function updateEventStatus(
         approvableFrom,
         // The client pays before the session: refuse a too-close first one.
         () => assertUnpaidApprovalFits(firstSlot),
-        reason,
+        { reason, actorUserId },
       );
 
     // #1775 C-1 — a plan is paid at purchase: an unpaid one is refused,
@@ -183,16 +233,13 @@ export async function updateEventStatus(
             },
           });
           if (unpaid > 0) {
-            throw new BookingRuleError(
-              "SUBSCRIPTION_UNPAID",
-              "This plan is paid at purchase — the request has no successful payment.",
-            );
+            throw subscriptionUnpaidError();
           }
         },
         undefined,
         approvableFrom,
         undefined,
-        reason,
+        { reason, actorUserId },
       );
 
     case "webinar": {
@@ -202,6 +249,7 @@ export async function updateEventStatus(
         await transitionWebinarEvent(tx, {
           where: { id: eventId },
           to: "SCHEDULED",
+          actorUserId,
         });
       } catch (error) {
         if (
@@ -236,6 +284,7 @@ export async function updateEventStatus(
           where: { id: eventId },
           to: "SCHEDULED",
           data: periodData,
+          actorUserId,
         });
       } catch (error) {
         if (
@@ -253,6 +302,7 @@ export async function updateEventStatus(
           });
         }
       }
+      await followClassSessions(tx, eventId);
       break;
     }
   }
@@ -330,6 +380,7 @@ export async function fetchEventData(
       const event = await db.consultation.findUnique({
         where: { id: eventId },
         select: {
+          agreedPricePaise: true,
           consultationPlan: {
             select: {
               durationInHours: true,
@@ -369,14 +420,21 @@ export async function fetchEventData(
       // The same money predicate the approval CAS rides (SETTLED_CONSULTATION).
       settled =
         payments.some((p) => p.paymentStatus === PaymentStatus.SUCCEEDED) ||
-        Number(event.consultationPlan?.price ?? -1) === 0;
+        agreedConsultationPricePaise(event) === 0;
       checkoutInProgress = isLiveCheckoutHold(
         event.bookingSource,
         payments,
         new Date(),
       );
+      // The booked session's length; the plan's only for a booking with no session row.
+      const bookedMinutes = bookedSessionMinutes(
+        event.appointment?.occurrences ?? [],
+      );
       config = {
-        durationInHours: event.consultationPlan?.durationInHours,
+        durationInHours:
+          bookedMinutes === null
+            ? event.consultationPlan?.durationInHours
+            : bookedMinutes / 60,
       };
       consulteeUserId = event.requestedBy?.user?.id;
       // #1319 — atom STARTS, not one entry per row. The approval gate counts

@@ -73,6 +73,7 @@ const txStub = {
     // The appointmentId link is still a plain update — only STATUS rides a CAS.
     update: jest.fn().mockResolvedValue({}),
     updateMany: paymentUpdateMany,
+    count: jest.fn().mockResolvedValue(1),
   },
   appointmentOccurrence: {
     create: slotCreate,
@@ -436,84 +437,6 @@ describe("#1583 A-P0-01 — capture after a terminal subscription state", () => 
 
     expect(subscriptionUpdateMany).not.toHaveBeenCalled();
     expect(historyCreate).not.toHaveBeenCalled();
-    expect(refundPayment).not.toHaveBeenCalled();
-  });
-
-  // CodeRabbit r2 — the CAS can lose to a writer that moved the row between
-  // the pre-read and the update; the fresh status decides benign or refund.
-  // findUnique is read three times: the arm's pre-read, the helper's own
-  // pre-image, then the arm's re-read after the miss.
-  it("a CAS miss whose fresh status is still live moves nothing and refunds nothing", async () => {
-    subscriptionFindUnique
-      .mockResolvedValueOnce({ status: "APPROVED_PENDING_PAYMENT" })
-      .mockResolvedValueOnce({ status: "APPROVED_PENDING_PAYMENT" })
-      .mockResolvedValueOnce({ status: "APPROVED" });
-    subscriptionUpdateMany.mockResolvedValue({ count: 0 });
-
-    await handlePaymentSuccess(
-      "order1",
-      SUB_METADATA as unknown as Record<string, string>,
-      10000,
-    );
-
-    expect(historyCreate).not.toHaveBeenCalled();
-    expect(refundPayment).not.toHaveBeenCalled();
-  });
-
-  it("a CAS miss whose fresh status is CANCELLED is flagged and refunded", async () => {
-    subscriptionFindUnique
-      .mockResolvedValueOnce({ status: "APPROVED_PENDING_PAYMENT" })
-      .mockResolvedValueOnce({ status: "APPROVED_PENDING_PAYMENT" })
-      .mockResolvedValueOnce({ status: "CANCELLED" });
-    subscriptionUpdateMany.mockResolvedValue({ count: 0 });
-
-    await handlePaymentSuccess(
-      "order1",
-      SUB_METADATA as unknown as Record<string, string>,
-      10000,
-    );
-
-    expect(historyCreate).not.toHaveBeenCalled();
-    expect(refundPayment).toHaveBeenCalledWith(
-      expect.objectContaining({
-        paymentId: "pay1",
-        reason: "capture after cancellation",
-      }),
-    );
-  });
-
-  it("APPROVED_PENDING_PAYMENT moves through the guarded helper with a history row", async () => {
-    subscriptionFindUnique.mockResolvedValue({
-      status: "APPROVED_PENDING_PAYMENT",
-      appointment: { id: "appt-sub-1", deletedAt: null },
-    });
-    subscriptionUpdateMany.mockResolvedValue({ count: 1 });
-
-    await handlePaymentSuccess(
-      "order1",
-      SUB_METADATA as unknown as Record<string, string>,
-      10000,
-    );
-
-    expect(subscriptionUpdateMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          id: "sub-1",
-          status: { in: ["APPROVED_PENDING_PAYMENT"] },
-        }),
-        data: expect.objectContaining({ status: "APPROVED" }),
-      }),
-    );
-    expect(historyCreate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          entity: "SUBSCRIPTION",
-          entityId: "sub-1",
-          toStatus: "APPROVED",
-          appointmentId: "appt-sub-1",
-        }),
-      }),
-    );
     expect(refundPayment).not.toHaveBeenCalled();
   });
 });

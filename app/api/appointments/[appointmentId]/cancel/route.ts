@@ -18,6 +18,7 @@ import {
 import {
   liveParticipant,
   transitionParticipant,
+  transitionParticipantSeats,
 } from "@/lib/booking/participants";
 import prisma, { type Tx } from "@/lib/prisma";
 import { collaboratorUserIds } from "@/lib/collaborators/recipients";
@@ -27,6 +28,7 @@ import { type AppointmentStatus, CancellationReason } from "@prisma/client";
 import { notifyAppointmentCancelled } from "@/lib/novu";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { refundOnItsWay } from "@/lib/email";
+import { refundStartedText } from "@/lib/notifications/refund-wording";
 import { stageAppointmentCancelledEmail } from "@/lib/email/senders/booking";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
@@ -34,7 +36,7 @@ import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
 import { CancelAppointmentSchema } from "@/schemas/appointments";
 
 import { isPrivileged, requireApiAuth } from "@/lib/auth-helpers";
-import { platformCancelGrant } from "@/lib/booking/platform-cancel";
+import { platformCancelDoorRefusal } from "@/lib/booking/platform-cancel";
 import {
   recordSystemErrorSafe,
   recordSystemEvent,
@@ -51,6 +53,7 @@ import { creditStillUsedPaise } from "@/lib/payments/operations/credit-plan-retu
 import {
   isFreeCreditIntent,
   isInternalFundedIntent,
+  isPriceFreePayment,
   type FundingRail,
 } from "@/lib/payments/funding-rail";
 import {
@@ -79,6 +82,12 @@ import {
   stampWholeEventRefundsOwed,
   type WholeEventRefundSummary,
 } from "@/lib/payments/operations/event-refunds";
+import {
+  cancelRefundReason,
+  type CancelSide,
+  creditCancelRefundReason,
+  wholeEventCancelRefundReason,
+} from "@/lib/payments/operations/refund-cause";
 import { hasActiveDisputeForAppointment } from "@/lib/payments/dispute-guard";
 import {
   quoteBookingRefund,
@@ -99,10 +108,10 @@ import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { declineOpenReschedules } from "@/lib/booking/reschedule-decline";
 import { recordExpertStrike } from "@/lib/booking/expert-reliability";
 import {
-  revokeEndedBookingChatAccess,
-  revokeEndedEventChatAccess,
+  persistSeatRevocationInTx,
+  revokeEndedSeatAccess,
 } from "@/lib/stream/access-revocation";
-import { bookingOrgId } from "@/lib/stream-utils";
+import { bookingTransaction } from "@/lib/db/booking-transaction";
 
 /** Audit attribution shared by every CAS this cancel drives (#1322 A12). */
 type CancelAuditMeta = {
@@ -364,23 +373,22 @@ function cancelRefundOwed(
   appointmentId: string,
   paymentId: string,
   quote: BookingRefundQuote,
-  isConsultantInitiated: boolean,
+  side: CancelSide,
 ): RefundOwedMarker | null {
   if (quote.creditRestoresInFull) {
     return {
       paymentId,
       amountPaise: null,
       key: cancelRefundKey(appointmentId, paymentId),
-      reason: `cancellation (credit-funded booking, credit restored in full from the ${quote.tierRefundPct}% tier)`,
+      reason: creditCancelRefundReason(quote.tierRefundPct, side),
     };
   }
   if (quote.refundPaise <= 0) return null;
-  const side = isConsultantInitiated ? "consultant" : "consultee";
   return {
     paymentId,
     amountPaise: quote.refundPaise,
     key: cancelRefundKey(appointmentId, paymentId),
-    reason: `cancellation (${quote.refundPct}% per booking-time policy, ${side}-initiated)`,
+    reason: cancelRefundReason(quote.refundPct, side),
   };
 }
 
@@ -478,21 +486,17 @@ type AttendeesByRail = {
   payerOf: Map<string, string>;
 };
 
-/**
- * #1780 R-3 — every attendee of a group event, sorted by how their seat was
- * funded: a paid seat by its payment's rail, a seat with no payment as free.
- * Read off the seats as well as the payments, so a free seat is not skipped.
- */
-/** A seat still held under a SUCCEEDED payment, read on the cancel's own transaction. */
-async function hasPaidLiveSeat(
+/** A buyer seat that is confirmed, or held under a SUCCEEDED payment, read on the cancel's own transaction. */
+async function hasConfirmedSeat(
   tx: Tx,
   appointmentId: string,
 ): Promise<boolean> {
   const seats = await tx.appointmentParticipant.findMany({
     where: { appointmentId, role: "CONSULTEE", ...liveParticipant() },
-    select: { userId: true },
+    select: { userId: true, status: true },
   });
   if (seats.length === 0) return false;
+  if (seats.some((seat) => seat.status !== "HELD")) return true;
   const paid = await tx.payment.count({
     where: {
       appointmentId,
@@ -503,13 +507,24 @@ async function hasPaidLiveSeat(
   return paid > 0;
 }
 
+/**
+ * Every attendee of a group event, sorted by how their seat was
+ * funded: a paid seat by its payment's rail, a seat with no payment as free.
+ * Read off the seats as well as the payments, so a free seat is not skipped.
+ */
 async function eventAttendeesByRail(
   appointmentId: string,
 ): Promise<AttendeesByRail> {
   const [payments, seats] = await Promise.all([
     prisma.payment.findMany({
       where: { appointmentId, ...LIVE_SUCCEEDED_PAYMENT_WHERE },
-      select: { id: true, userId: true, paymentIntent: true },
+      select: {
+        id: true,
+        userId: true,
+        paymentIntent: true,
+        amount: true,
+        originalAmount: true,
+      },
     }),
     prisma.appointmentParticipant.findMany({
       where: { appointmentId, role: "CONSULTEE", ...liveParticipant() },
@@ -529,6 +544,14 @@ async function eventAttendeesByRail(
   for (const p of payments) {
     // A seat given back earlier was already told (and refunded) when it left.
     if (!seated.has(p.userId)) continue;
+    if (
+      isPriceFreePayment({
+        paymentIntent: p.paymentIntent,
+        amountPaise: Number(p.amount),
+        listPricePaise: Number(p.originalAmount),
+      })
+    )
+      continue;
     paid.add(p.userId);
     out.payerOf.set(p.id, p.userId);
     if (isFreeCreditIntent(p.paymentIntent)) out.credits.push(p.userId);
@@ -557,8 +580,8 @@ function attendeeEmailGroups(
   );
   const ok = (ids: string[]) => uniq(ids).filter((id) => !failed.has(id));
   const cash = isClass
-    ? "The sessions not yet held are being refunded to you."
-    : "Your payment for this event is being refunded in full.";
+    ? "Your refund for the sessions not yet held has started and usually reaches you in 5–7 working days."
+    : "Your full refund for this event has started and usually reaches you in 5–7 working days.";
   return [
     { userIds: ok(a.gateway), refundText: cash },
     {
@@ -639,6 +662,8 @@ export async function POST(
     // Fetch appointment BEFORE transaction to avoid timeout on heavy queries
     const appointment = await prisma.appointment.findUnique({
       where: { id: appointmentId },
+      // Four optional booking branches: one joined statement, not one per level.
+      relationLoadStrategy: "join",
       include: {
         consultation: {
           include: {
@@ -707,16 +732,11 @@ export async function POST(
 
     // A platform operator who is not a party cancels only through the audited,
     // money-bounded door, which grants this request.
-    if (isPrivilegedUser && !isParticipant && !platformCancelGrant(request)) {
-      return NextResponse.json(
-        {
-          error:
-            "Cancel this booking from the back office so the refund is audited.",
-          code: "PLATFORM_CANCEL_DOOR_REQUIRED",
-        },
-        { status: 403 },
-      );
-    }
+    const doorRefusal = platformCancelDoorRefusal(request, {
+      privileged: isPrivilegedUser,
+      party: isParticipant,
+    });
+    if (doorRefusal) return doorRefusal;
 
     if (!actor.authorized) {
       return NextResponse.json(
@@ -845,19 +865,24 @@ export async function POST(
         ? await eventAttendeesByRail(appointmentId)
         : null;
 
-    // #1780 D-5 — each class seat's ledger, read before the transaction below
-    // tombstones the sessions: the series refunds only what was not delivered.
-    const seriesLedgers = appointment.class
-      ? await classSeriesLedgers(appointment.class.id)
-      : null;
-
     const { isConsultantInitiated, isExpertSideCancel, hostProfileId } = actor;
 
     let eventKind: "class" | "webinar" | null = null;
     if (appointment.class) eventKind = "class";
     else if (appointment.webinar) eventKind = "webinar";
     const eventId = appointment.class?.id ?? appointment.webinar?.id ?? null;
-    const eventRefundReason = `whole-event ${eventKind ?? "event"} cancellation (${validatedData.reason ?? "cancelled"})`;
+    // Platform staff who are not a party cancel for the platform, not for a side.
+    const staffCancel = isPrivilegedUser && !isParticipant;
+    const cancelSide: CancelSide = staffCancel
+      ? "staff"
+      : isConsultantInitiated
+        ? "consultant"
+        : "consultee";
+    const eventRefundReason = wholeEventCancelRefundReason(
+      eventKind ?? "event",
+      validatedData.reason ?? "cancelled",
+      staffCancel,
+    );
 
     // Transaction for critical database operations only (with increased timeout)
     // #1319 — serialize lifecycle mutations per appointment (lock order:
@@ -874,7 +899,7 @@ export async function POST(
     const runCancel = (captureLanded: boolean) =>
       withEventCheckoutLock(eventCheckoutKey, () =>
         withAppointmentLock(appointmentId, () =>
-          prisma.$transaction(
+          bookingTransaction(
             async (tx) => {
               // The CAS below is pinned to this read, so a capture committing
               // after it makes the cancel match zero rows instead of cancelling
@@ -1055,14 +1080,15 @@ export async function POST(
               }
 
               // The refund this cancel owes commits with the cancel, so a death
-              // before the refund leaves a marker the retry sweep drives.
+              // before the refund leaves a marker the retry sweep drives. A free
+              // booking owes none: no refund record and no refund notice.
               const owed =
-                quote && paidPayment
+                quote && paidPayment && !isPriceFreePayment(paidPayment)
                   ? cancelRefundOwed(
                       appointmentId,
                       paidPayment.id,
                       quote,
-                      isConsultantInitiated,
+                      cancelSide,
                     )
                   : null;
               // Only the door that owns the marker drives it; a payment already
@@ -1106,12 +1132,15 @@ export async function POST(
                   now: cancellationData.cancelledAt,
                 });
               }
+              // An expert's own cancel of a confirmed booking or seat, free or paid,
+              // records a strike; strikes are private to the expert and to operations.
               if (
                 isExpertSideCancel &&
                 hostProfileId &&
                 (paidPayment !== null ||
+                  observedStatus === "APPROVED" ||
                   (eventKind !== null &&
-                    (await hasPaidLiveSeat(tx, appointmentId))))
+                    (await hasConfirmedSeat(tx, appointmentId))))
               ) {
                 const cancelledSessions =
                   await tx.appointmentOccurrence.findMany({
@@ -1126,13 +1155,19 @@ export async function POST(
                   organizationId: appointment.organizationId,
                 });
               }
+              // Each class seat's ledger, read under the locks on this
+              // transaction and before it tombstones the sessions below, so the
+              // series refunds exactly what was not delivered as of this commit.
+              const seriesLedgers = appointment.class
+                ? await classSeriesLedgers(appointment.class.id, tx)
+                : undefined;
               const eventPlans =
                 eventKind && eventId
                   ? await stampWholeEventRefundsOwed(tx, {
                       kind: eventKind,
                       eventId,
                       reason: eventRefundReason,
-                      ledgers: seriesLedgers ?? undefined,
+                      ledgers: seriesLedgers,
                     })
                   : null;
 
@@ -1172,8 +1207,27 @@ export async function POST(
                 // is still cancellable; matching no live slot is not a conflict.
                 allowZero: true,
               });
-              // #1319 A9 — every participant of the cancelled engagement.
-              await transitionParticipant(tx, sweepScope, "CANCELLED");
+              // Every participant of the cancelled engagement; an event keeps
+              // the client seats this commit released, so it revokes only those.
+              let releasedSeatUserIds: string[] | null = null;
+              if (eventKind) {
+                releasedSeatUserIds = await transitionParticipantSeats(
+                  tx,
+                  sweepScope,
+                  "CANCELLED",
+                );
+              } else {
+                await transitionParticipant(tx, sweepScope, "CANCELLED");
+              }
+              // An event revokes the seats this commit released; a 1:1 its consultee.
+              const revokedUserIds =
+                releasedSeatUserIds ??
+                (consulteeUserId ? [consulteeUserId] : []);
+              const seatRevocation = await persistSeatRevocationInTx(
+                tx,
+                appointmentId,
+                revokedUserIds,
+              );
 
               await declineOpenReschedules(tx, appointmentId, auditMeta);
 
@@ -1191,6 +1245,8 @@ export async function POST(
                 holdNotices,
                 eventPlans,
                 gatewayCancels: pendingExpiry?.gatewayCancels ?? [],
+                revokedUserIds,
+                seatRevocation,
               };
             },
             {
@@ -1217,7 +1273,14 @@ export async function POST(
         if (replay) return { replay };
         throw err;
       });
-    if ("replay" in committed) return NextResponse.json(committed.replay);
+    // A replayed 1:1 click runs no transaction, so its consultee's row is persisted here.
+    if ("replay" in committed) {
+      await revokeEndedSeatAccess(
+        appointmentId,
+        consulteeUserId ? [consulteeUserId] : [],
+      );
+      return NextResponse.json(committed.replay);
+    }
     const {
       holdNotices,
       paidPayment,
@@ -1225,6 +1288,8 @@ export async function POST(
       owed,
       gatewayCancels,
       eventPlans,
+      revokedUserIds,
+      seatRevocation,
       ...result
     } = committed;
     await flushBackupInterestNotices(holdNotices);
@@ -1301,27 +1366,12 @@ export async function POST(
         eventId,
         eventRefundReason,
         session.user.id,
-        {
-          ledgers: seriesLedgers ?? undefined,
-          plans: eventPlans ?? undefined,
-        },
+        { plans: eventPlans ?? undefined },
       );
     }
 
-    // Chat access ends with the booking, synchronously; a Stream failure queues a retry.
-    if (eventKind && eventId && attendees) {
-      await revokeEndedEventChatAccess(eventKind, eventId, attendees.all);
-    } else if (consulteeUserId && consultantUserId) {
-      await revokeEndedBookingChatAccess({
-        userIds: [consulteeUserId],
-        dmCounterpartUserIds: [consultantUserId],
-        dmOrganizationId: bookingOrgId({
-          consultationPlan: appointment.consultation?.consultationPlan,
-          subscriptionPlan: appointment.subscription?.subscriptionPlan,
-          appointment,
-        }),
-      });
-    }
+    // Chat and room access end with the booking; this settles the rows the cancel committed.
+    await revokeEndedSeatAccess(appointmentId, revokedUserIds, seatRevocation);
 
     // Notification metadata (for fire-and-forget notifications after transaction)
     const notificationMeta = {
@@ -1365,7 +1415,20 @@ export async function POST(
         ].filter((id): id is string => !!id),
       ),
     );
+    // The host side cancelled: the buyer and every attendee hear it whatever
+    // their switches say; a staff cancel reaches every party but the actor.
+    const hostCancelled =
+      notificationMeta.cancelledBy === notificationMeta.consultantUserId ||
+      (isHostOrgOperator && session.user.id !== consulteeUserId);
+    const bookedUserIds = staffCancel
+      ? userIds.filter((id) => id !== session.user.id)
+      : hostCancelled
+        ? [consulteeUserId, ...attendeeUserIds].filter(
+            (id): id is string => !!id && id !== session.user.id,
+          )
+        : [];
     if (userIds.length > 0) {
+      // A refund still pending at the gateway has started; only a settled one is on its way.
       const refundText =
         refund?.status === "REFUNDED"
           ? refund.rail === "CREDITS"
@@ -1374,7 +1437,9 @@ export async function POST(
               ? "The amount has been returned to the sponsoring organisation's balance."
               : // The amount is in paise, so the currency is INR by construction.
                 refundOnItsWay(refund.amountRefundedPaise, "INR")
-          : undefined;
+          : refund?.status === "PENDING" && refund.amountRefundedPaise > 0
+            ? refundStartedText(refund.amountRefundedPaise, "INR")
+            : undefined;
       const emailArgs = {
         appointmentId,
         startsAt: appointment.occurrences?.[0]?.startsAt ?? null,
@@ -1394,31 +1459,41 @@ export async function POST(
             )
           : [];
       const [bellResults, ...stagedEmailBatches] = await Promise.all([
-        notifyAppointmentCancelled(userIds, {
-          ...notificationScope(appointment.organizationId),
-          appointmentId,
-          appointmentType: notificationMeta.appointmentType,
-          consultantName: notificationMeta.consultantName || "Consultant",
-          consulteeName: notificationMeta.consulteeName || "Consultee",
-          planTitle: planTitleOrSessionLabel(
-            notificationMeta.planTitle,
-            notificationMeta.appointmentType,
-          ),
-          dateTime: notificationMeta.dateTime,
-          dashboardUrl: notificationHref(
-            appointment.organizationId,
-            "appointments",
-          ),
-          reason: validatedData.reason || undefined,
-          cancelledBy:
-            notificationMeta.cancelledBy ===
-              notificationMeta.consultantUserId ||
-            (isHostOrgOperator && session.user.id !== consulteeUserId)
+        notifyAppointmentCancelled(
+          userIds,
+          {
+            ...notificationScope(appointment.organizationId),
+            appointmentId,
+            appointmentType: notificationMeta.appointmentType,
+            consultantName: notificationMeta.consultantName || "Consultant",
+            consulteeName: notificationMeta.consulteeName || "Consultee",
+            planTitle: planTitleOrSessionLabel(
+              notificationMeta.planTitle,
+              notificationMeta.appointmentType,
+            ),
+            dateTime: notificationMeta.dateTime,
+            dashboardUrl: notificationHref(
+              appointment.organizationId,
+              "appointments",
+            ),
+            reason: validatedData.reason || undefined,
+            cancelledBy: hostCancelled
               ? "consultant"
               : notificationMeta.cancelledBy === consulteeUserId
                 ? "consultee"
                 : "system",
-        }).catch((err) => {
+          },
+          bookedUserIds.length > 0
+            ? {
+                required: {
+                  kind: staffCancel
+                    ? "CANCELLED_BY_STAFF"
+                    : "CANCELLED_BY_HOST",
+                  recipients: bookedUserIds,
+                },
+              }
+            : undefined,
+        ).catch((err) => {
           console.error(
             "Failed to send appointment cancellation notification:",
             err,
@@ -1431,6 +1506,7 @@ export async function POST(
             userIds: group.userIds,
             refundText: group.refundText,
             refundUserIds: group.refundText ? group.userIds : [],
+            requiredFor: bookedUserIds,
           }).catch(() => []),
         ),
         stageAppointmentCancelledEmail(prisma, {
@@ -1448,6 +1524,7 @@ export async function POST(
           refundUserIds: refund
             ? [consulteeUserId].filter((id): id is string => !!id)
             : [],
+          requiredFor: bookedUserIds,
           dashboardUrl: notificationHref(
             appointment.organizationId,
             "appointments",

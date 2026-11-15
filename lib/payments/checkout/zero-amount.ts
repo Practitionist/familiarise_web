@@ -9,3 +9,14 @@ export function isZeroAmountOrder(
 ): boolean {
   return amountPaise === 0 && !isOrgSponsoredPayment;
 }
+
+/**
+ * A buyer-paid supply, and so a consumer tax invoice and a billing state,
+ * exists only when money or credit funded the order: a free order needs neither.
+ */
+export function hasBilledSupply(
+  amountPaise: number,
+  creditsAppliedPaise: number,
+): boolean {
+  return amountPaise > 0 || creditsAppliedPaise > 0;
+}

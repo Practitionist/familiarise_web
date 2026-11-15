@@ -132,9 +132,35 @@ function subscription(
   };
 }
 
+function consultation(
+  id: string,
+  status: string,
+  requestedAt: Date,
+  appointment: ReturnType<typeof wrapper>,
+) {
+  return {
+    id,
+    status,
+    requestedAt,
+    bookingSource: "REQUEST_SUBMITTED",
+    requestNotes: null,
+    pendingPaymentUrl: "https://pay.example.test/consultation",
+    consultationPlan: {
+      id: "plan-c",
+      title: "Career chat",
+      durationInHours: 1,
+      price: 150000,
+      priceCurrency: "INR",
+      consultantProfile: consultant,
+    },
+    requestedBy: learner(`ce-${id}`),
+    appointment,
+  };
+}
+
 function trial(
   id: string,
-  status: "PENDING" | "AWAITING_PAYMENT",
+  status: "AWAITING_PAYMENT",
   requestedAt: Date,
   paymentDueAt: Date | null,
 ) {
@@ -159,7 +185,7 @@ function trial(
 
 /** Serves `rows` for one model, in request-age order like the SQL. */
 function only(
-  model: "subscription" | "trial",
+  model: "consultation" | "subscription" | "trial",
   rows: { status: string; requestedAt: Date }[],
 ) {
   const byAge = [...rows].sort(
@@ -222,15 +248,15 @@ describe("Deadline sort: the effective deadline on a ranked window", () => {
   });
 
   it("orders pay links by their expiry, not by when the request came in", async () => {
-    only("subscription", [
-      subscription(
-        "s-old",
+    only("consultation", [
+      consultation(
+        "c-old",
         "APPROVED_PENDING_PAYMENT",
         hoursAgo(24 * 5),
         wrapper("a-old", { payLink: hoursAhead(30) }),
       ),
-      subscription(
-        "s-new",
+      consultation(
+        "c-new",
         "APPROVED_PENDING_PAYMENT",
         hoursAgo(3),
         wrapper("a-new", { payLink: hoursAhead(4) }),
@@ -238,22 +264,21 @@ describe("Deadline sort: the effective deadline on a ranked window", () => {
     ]);
     const page = await readRequestsInbox({
       consultantProfileId: CP,
-      type: "subscription",
+      type: "consultation",
       chip: "awaiting-payment",
       sort: "deadline",
       page: 1,
       now: NOW,
     });
-    expect(ids(page.rows)).toEqual(["s-new", "s-old"]);
+    expect(ids(page.rows)).toEqual(["c-new", "c-old"]);
     expect(page.rows.map(deadlineOf)).toEqual([
       hoursAhead(4).getTime(),
       hoursAhead(30).getTime(),
     ]);
   });
 
-  it("puts a next cycle that is due now ahead of a pay link due later", async () => {
-    // The shared fixture: a next cycle due NOW (asked 20 days ago) and a pay
-    // link due in 6 h (asked 5 hours ago).
+  it("dates a next cycle by its window start", async () => {
+    // The shared fixture: a next cycle due NOW (asked 20 days ago); a plan never awaits payment.
     const page = await readRequestsInbox({
       consultantProfileId: CP,
       type: "subscription",
@@ -261,16 +286,13 @@ describe("Deadline sort: the effective deadline on a ranked window", () => {
       page: 1,
       now: NOW,
     });
-    expect(ids(page.rows)).toEqual(["s-next", "s-awaiting"]);
-    expect(page.rows.map(deadlineOf)).toEqual([
-      NOW.getTime(),
-      hoursAhead(6).getTime(),
-    ]);
+    expect(ids(page.rows)).toEqual(["s-next"]);
+    expect(page.rows.map(deadlineOf)).toEqual([NOW.getTime()]);
   });
 
   it("sorts a row with no clock after every dated row", async () => {
     only("trial", [
-      trial("t-undated", "PENDING", hoursAgo(48), null),
+      trial("t-undated", "AWAITING_PAYMENT", hoursAgo(48), null),
       trial("t-late", "AWAITING_PAYMENT", hoursAgo(24), hoursAhead(40)),
       trial("t-soon", "AWAITING_PAYMENT", hoursAgo(1), hoursAhead(3)),
     ]);

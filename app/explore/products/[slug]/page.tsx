@@ -123,7 +123,6 @@ export default async function DigitalProductPage({
     viewer.kind === "owned" || product.pricePaise === 0
       ? null
       : await quoteDigitalProductForBuyer({
-          productId: product.id,
           pricePaise: product.pricePaise,
           buyerId: viewer.kind === "buyer" && user?.id ? user.id : null,
         });
@@ -213,6 +212,19 @@ export default async function DigitalProductPage({
           quote={quote}
           viewer={viewer}
         />
+        {viewer.kind !== "owner" && (
+          <Link
+            href={`${expertHref}#sessions`}
+            className="block rounded-lg border p-3 text-sm transition-colors hover:bg-muted"
+          >
+            <span className="font-medium">
+              Book a session with {product.creator.name ?? "this expert"}
+            </span>
+            <span className="block text-xs text-muted-foreground">
+              Talk it through 1:1 or see their other services.
+            </span>
+          </Link>
+        )}
         {user?.id && viewer.kind !== "owner" && (
           <ReportProductButton productId={product.id} />
         )}

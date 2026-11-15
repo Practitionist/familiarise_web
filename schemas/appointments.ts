@@ -72,6 +72,19 @@ export const RescheduleProposalSchema = z
   })
   .passthrough();
 
+/** The counterparty's answer to an open reschedule proposal. */
+export const RescheduleRespondSchema = z.object({
+  action: z.enum(["accept", "decline"]),
+});
+
+/** The sessions a per-session subscription reschedule names; `slotId` is the legacy single form. */
+export const RescheduleSlotIdsSchema = z
+  .object({
+    slotIds: z.array(z.string().min(1)).max(64).optional(),
+    slotId: z.string().min(1).optional(),
+  })
+  .passthrough();
+
 /** Returning one subscription session to the plan; the path names the session, so the body carries nothing. */
 export const SessionReturnSchema = z.object({}).strict();
 
@@ -120,6 +133,8 @@ const CancelRefundQuoteSchema = z.object({
   grossPaise: z.number().optional(),
   /** The credits rail restores whole; echoed back with the click. */
   creditRestoresInFull: z.boolean().optional(),
+  /** Nothing was paid, in money or referral credit: the dialog says so instead of naming a rail. */
+  freeBooking: z.boolean().optional(),
   /** A credit-funded plan with sessions held: our team returns the rest by hand. */
   creditReturnNeedsReview: z.boolean().optional(),
   /** Whether a captured payment funds the 1:1 booking; echoed back with the click. */

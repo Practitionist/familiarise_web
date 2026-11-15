@@ -61,6 +61,9 @@ const trialUpdateMany = jest.fn(
 const trialFindUnique = jest.fn();
 const txPaymentUpdate = jest.fn(async () => ({}));
 const occurrenceFindMany = jest.fn();
+// The started-hold probe for a trial capture; null means the held session
+// has not started, so the capture takes the normal trial branch.
+const occurrenceFindFirst = jest.fn(async () => null);
 const txStub = {
   payment: {
     findUnique: paymentFindUnique,
@@ -69,7 +72,10 @@ const txStub = {
   },
   appointment: { findUnique: appointmentFindUnique },
   trial: { updateMany: trialUpdateMany, findUnique: trialFindUnique },
-  appointmentOccurrence: { findMany: occurrenceFindMany },
+  appointmentOccurrence: {
+    findMany: occurrenceFindMany,
+    findFirst: occurrenceFindFirst,
+  },
 };
 // #990 — the Phase-2 clear-marker write runs on the base client (outside the
 // tx). Give it its own update mock so the auto-refund success path completes.
@@ -520,7 +526,7 @@ describe("a capture rejected for its amount opens no group room", () => {
           class: null,
           trial: null,
           webinar: {
-            status: "IN_PROGRESS",
+            status: "SCHEDULED",
             webinarPlan: { id: "wp1", consultantProfileId: "host1" },
           },
         },

@@ -47,8 +47,8 @@ describe("dayKey (default Asia/Kolkata)", () => {
   it("groups slots that share an IST day even across UTC midnight", () => {
     // 23:30Z Jul 19 and 00:30Z Jul 20 are both Jul 20 in IST.
     const slots = [
-      { startTime: new Date("2026-07-19T23:30:00.000Z") },
-      { startTime: new Date("2026-07-20T00:30:00.000Z") },
+      ...makeConsecutiveTimeSlots("2026-07-19T23:30:00.000Z", 1),
+      ...makeConsecutiveTimeSlots("2026-07-20T00:30:00.000Z", 1),
     ] as CalendarInterval[];
     const grouped = groupSlotsByDay(slots);
     expect(grouped.size).toBe(1);
@@ -58,10 +58,22 @@ describe("dayKey (default Asia/Kolkata)", () => {
   it("splits slots that straddle IST midnight even though they share a UTC day", () => {
     // 18:00Z and 19:00Z on Jul 19 are 23:30 IST and 00:30 IST — different IST days.
     const slots = [
-      { startTime: new Date("2026-07-19T18:00:00.000Z") },
-      { startTime: new Date("2026-07-19T19:00:00.000Z") },
+      ...makeConsecutiveTimeSlots("2026-07-19T18:00:00.000Z", 1),
+      ...makeConsecutiveTimeSlots("2026-07-19T19:00:00.000Z", 1),
     ] as CalendarInterval[];
     expect(groupSlotsByDay(slots).size).toBe(2);
+  });
+
+  it("keeps a session that runs past IST midnight on the day it starts", () => {
+    // 23:00 to 01:00 IST as four half-hour slots of one two-hour session.
+    const slots = makeConsecutiveTimeSlots(
+      "2026-07-19T17:30:00.000Z",
+      4,
+    ) as CalendarInterval[];
+    expect(groupSlotsByDay(slots).size).toBe(2);
+    const bySession = groupSlotsByDay(slots, undefined, 4);
+    expect(Array.from(bySession.keys())).toEqual(["2026-07-19"]);
+    expect(bySession.get("2026-07-19")).toHaveLength(4);
   });
 
   it("an explicit timezone overrides the default", () => {

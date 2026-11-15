@@ -89,6 +89,8 @@ jest.mock("../../lib/prisma", () => {
         }) => {
           if (!JSON.stringify(where).includes('"PENDING"')) return [];
           const whereText = JSON.stringify(where);
+          // The request-expiring alert's window read: nothing lapses soon here.
+          if (whereText.includes('"requestedAt":{"gte"')) return [];
           const partialMarkerQuery = whereText.includes(
             '"refundOwedPaise":{"not":null}',
           );

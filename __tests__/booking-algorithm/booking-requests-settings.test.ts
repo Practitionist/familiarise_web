@@ -51,6 +51,7 @@ describe("booking requests settings", () => {
     expect(bare.bookingMode).toBe("INSTANT");
     expect(bare.acceptingRequests).toBe(true);
     expect(bare.maxOpenRequests).toBeNull();
+    expect(bare.maxActivePlanClients).toBeNull();
   });
 
   it("the whole-profile form no longer carries the booking settings", () => {
@@ -67,6 +68,7 @@ describe("booking requests settings", () => {
       bookingMode: "INSTANT" as const,
       acceptingRequests: true,
       maxOpenRequests: 5,
+      maxActivePlanClients: null,
     };
     expect(bookingRequestSettingsChange(shown, { ...shown })).toBeNull();
     expect(
@@ -74,6 +76,15 @@ describe("booking requests settings", () => {
     ).toEqual({
       set: { maxOpenRequests: null },
       expect: { maxOpenRequests: 5 },
+    });
+    expect(
+      bookingRequestSettingsChange(shown, {
+        ...shown,
+        maxActivePlanClients: 4,
+      }),
+    ).toEqual({
+      set: { maxActivePlanClients: 4 },
+      expect: { maxActivePlanClients: null },
     });
   });
 

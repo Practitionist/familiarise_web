@@ -41,6 +41,10 @@ import {
 } from "@/lib/observability/release-lag";
 import { razorpayKeyMode } from "@/lib/payments/core/razorpay-key-mode";
 import {
+  PAST_CAP_REVOCATION_WHERE,
+  REVOCATION_ATTEMPT_CAP,
+} from "@/lib/stream/revocation-retry-policy";
+import {
   checkGstRegistrationTurnover,
   GST_TURNOVER_ALARM_PAISE,
 } from "@/lib/compliance/gst-turnover";
@@ -321,6 +325,42 @@ async function queueSection(db: Db, now: Date): Promise<SectionBody> {
     items,
     notes:
       items.length === 0 ? ["Every queue's oldest item is within limit."] : [],
+  };
+}
+
+/** Seat, refund and erasure revocations still retrying daily past their attempt cap. */
+async function revocationSection(db: Db): Promise<SectionBody> {
+  const total = await db.streamRevocationRetry.count({
+    where: PAST_CAP_REVOCATION_WHERE,
+  });
+  if (total === 0) {
+    return { items: [], notes: ["No access revocation is past its cap."] };
+  }
+  // A row reaches exactly the cap on the attempt that crossed it; the next one is a day later.
+  const crossed = {
+    ...PAST_CAP_REVOCATION_WHERE,
+    attempts: REVOCATION_ATTEMPT_CAP,
+  };
+  const fresh = await db.streamRevocationRetry.count({ where: crossed });
+  const ids =
+    fresh > 0
+      ? (
+          await db.streamRevocationRetry.findMany({
+            where: crossed,
+            select: { id: true },
+            take: SAMPLE_IDS,
+          })
+        ).map((row) => row.id)
+      : undefined;
+  return {
+    items: [
+      {
+        text: `${total} Stream access revocations still owed past the retry cap (${fresh} new)`,
+        isNew: fresh > 0,
+        ...(ids ? { ids } : {}),
+      },
+    ],
+    notes: [],
   };
 }
 
@@ -812,6 +852,7 @@ export async function runOpsDigest(
     await read("Held email", () => heldEmailSection(db, now));
     await read("Dead letters", () => deadLetterSection(db, now));
     await read("Queue ages", () => queueSection(db, now));
+    await read("Access revocations", () => revocationSection(db));
     await read("Inbound webhooks", () => webhookSection(db, now));
     await read("Telemetry", () => telemetrySection(db, environment, now));
     await read("Sentry ingest", () => canarySection(db, environment, now));

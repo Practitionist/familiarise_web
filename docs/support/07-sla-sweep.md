@@ -4,7 +4,7 @@ type: reference
 band: domain
 audience: sde2
 status: live
-last-reviewed: 2026-10-23
+last-reviewed: 2026-11-12
 ---
 
 # The SLA sweep and its arms
@@ -50,7 +50,14 @@ Every per-row transaction uses `ALLOCATION_TX_MAX_WAIT_MS` (8 s) and `ALLOCATION
 
 ### 1. SLA warn and breach notices
 
-Candidates are open cases with an acknowledgement or resolution target breached in the last 30 days, an acknowledgement due within 2 hours, a resolution due within 24 hours, or a statutory deadline breached or due within 24 hours (`fetchSlaSweepCandidates()`). Breach state is pause-aware (`slaStateOf()` in `lib/support/sla.ts`). Each threshold has its own identity, `sla:<caseId>:<ack|res>:<warn|breach>`, used as the bell's dedupe key and outbox `entityRef`; the sweep preloads the last 35 days of those rows and excludes cases already notified, so old overdue cases cannot eat the batch. The bell (`support-ticket-activity` workflow) goes to the assignee, or every operator if unassigned; operators also get a `support-sla-alert` email. On a breach of an organization-owned case, the organization's escalation contact gets a `support-sla-alert-org` email. Personal cases never email an organization.
+Candidates are open cases with an acknowledgement target breached in the last 30 days or due within 2 hours, a resolution target breached in the last 30 days or due within 24 hours, or a statutory deadline breached in the last 30 days or due within 24 hours (`slaNoticeCaseWhere()`). A case awaiting the customer is not a resolution candidate, because its resolution clock is paused; the statutory arm never pauses, so such a case can still fire on its statutory deadline. Breach state is pause-aware (`slaStateOf()` in `lib/support/sla.ts`).
+
+Each notice has its own identity, used as the bell's dedupe key and outbox `entityRef` (`slaNoticeKey()`). Every notice carries the deadline it was raised for: an acknowledgement notice is `sla:<caseId>:ack:<warn|breach>:<deadline in epoch milliseconds>`, taken from `ackDueAt`, and a resolution notice is `sla:<caseId>:res:<warn|breach>:<deadline in epoch milliseconds>`, taken from the resolution target or, if there is none, the statutory deadline. A reopen's new deadline, or a priority raise that tightens one, therefore gets a fresh notice instead of being suppressed by the earlier one, while an unchanged deadline keeps its key and is noticed once. Example: a MEDIUM case whose first reply was due at 11:00 IST on Sat 24 Oct 2026 got its breach notice under a key naming that time; resolved with no public reply and reopened at 15:00 IST on Thu 12 Nov 2026, it has a new first-reply deadline of 15:00 IST on Fri 13 Nov, and its warn and breach notices fire again under keys naming the new time. The sweep preloads the staged keys of the last 35 days (the newest 5,000 outbox rows) and skips a row whose key is already there, in memory.
+
+**How the run reads candidates** (`stageSlaNotices()`). The query pages candidates in id order, 200 at a time (`SLA_SCAN_PAGE_SIZE`), and stops when it has staged `limit` notices, when the candidates run out, when the 16-second start budget is spent, or after 10 pages (`SLA_SCAN_PAGE_CAP`). Every run starts again from the lowest id. A matched case that fires nothing (already noticed, or paused) is skipped in memory, so it does not block the cases behind it inside those pages. Two limits follow, stated plainly:
+
+- One run reads at most 2,000 candidate rows. A noticed case stays a candidate until it is resolved or leaves the notice window, and it still takes a row. If more than 2,000 open cases sit in the window at once, the cases whose ids sort after the first 2,000 are not read on any run until earlier ones leave. No state is kept between runs; lifting this limit needs a stored marker on the case for the notice it last received, which is a schema change.
+- Reading in id order no longer puts statutory deadlines first within a run. A statutory deadline that is due can wait behind lower-id cases for a run or more when the backlog exceeds one run's reach. The bell (`support-ticket-activity` workflow) goes to the assignee, or every operator if unassigned; operators also get a `support-sla-alert` email. On a breach of an organization-owned case, the organization's escalation contact gets a `support-sla-alert-org` email. Personal cases never email an organization.
 
 ### 2. Auto-close
 
@@ -146,13 +153,13 @@ Unanswered, uncancelled evidence requests past `dueAt` (within the last 30 days)
 
 ## Invariants
 
-| Rule                                                                                                | Enforcer                                                                                             | Test                                                 |
-| --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
-| One owned RUNNING lease per sweep; unavailable fail-open admission or lease loss can overlap cores. | The database: `SystemJobExecution_running_jobName_key`; `withCronLock()`.                            | `__tests__/maintenance/with-cron-lock.test.ts`       |
-| Each arm is bounded per run.                                                                        | App: `PROBLEM_CASCADE_CAP` (10), `EVIDENCE_PURGE_CAP` (5), `CHAT_ACCESS_CAP` (10), the limit.        | `__tests__/support/sla-sweep-lifecycle-arms.test.ts` |
-| Each threshold notifies once.                                                                       | App: outbox `entityRef` identities and the preloaded exclusion lists; outbox `transactionId` unique. | `__tests__/support/dispute-deadline-alerts.test.ts`  |
-| A cascade never resolves an incident of a problem that was reopened.                                | App: compare-and-set includes the problem's status.                                                  | `__tests__/db/support/problem-cascade.db.test.ts`    |
-| One failing row never stops the run, and Sentry hears about it once.                                | App: per-row transactions, collected `errors`, one `reportSentryError()`.                            | `__tests__/support/sla-sweep-lifecycle-arms.test.ts` |
+| Rule                                                                                                | Enforcer                                                                                                                                                        | Test                                                 |
+| --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| One owned RUNNING lease per sweep; unavailable fail-open admission or lease loss can overlap cores. | The database: `SystemJobExecution_running_jobName_key`; `withCronLock()`.                                                                                       | `__tests__/maintenance/with-cron-lock.test.ts`       |
+| Each arm is bounded per run.                                                                        | App: `PROBLEM_CASCADE_CAP` (10), `EVIDENCE_PURGE_CAP` (5), `CHAT_ACCESS_CAP` (10), the limit.                                                                   | `__tests__/support/sla-sweep-lifecycle-arms.test.ts` |
+| Each threshold notifies once.                                                                       | App: outbox `entityRef` identities from `slaNoticeKey()` (each notice includes its deadline) checked against the preloaded keys; outbox `transactionId` unique. | `__tests__/support/dispute-deadline-alerts.test.ts`  |
+| A cascade never resolves an incident of a problem that was reopened.                                | App: compare-and-set includes the problem's status.                                                                                                             | `__tests__/db/support/problem-cascade.db.test.ts`    |
+| One failing row never stops the run, and Sentry hears about it once.                                | App: per-row transactions, collected `errors`, one `reportSentryError()`.                                                                                       | `__tests__/support/sla-sweep-lifecycle-arms.test.ts` |
 
 The auto-close regressions are in `__tests__/support/sla-sweep-auto-close.test.ts`; they cover held-prefix progress, refusal classification, stamp races, unchanged business clocks and admission bounds. Moderation-deadline and overdue-evidence coverage remains separate work.
 
@@ -167,7 +174,7 @@ The auto-close regressions are in `__tests__/support/sla-sweep-auto-close.test.t
 
 ## Where in code
 
-- `lib/support/sla-sweep.ts`: `runSupportSlaSweep()`, `fetchSlaSweepCandidates()`, `autoCloseResolvedRows()`, `processDisputeDeadlineAlerts()`, `pageCriticalDisputeDeadlines()`.
+- `lib/support/sla-sweep.ts`: `runSupportSlaSweep()`, `stageSlaNotices()`, `slaNoticeKey()`, `autoCloseResolvedRows()`, `processDisputeDeadlineAlerts()`, `pageCriticalDisputeDeadlines()`.
 - `lib/support/problem-cascade.ts`, `lib/support/evidence-retention.ts`, `lib/support/chat-sweep.ts`.
 - `lib/cron/cleanup-registry.ts`, `lib/cron/with-cron-lock.ts`, `netlify/functions/cron-tick.mts`.
 
@@ -175,7 +182,7 @@ The auto-close regressions are in `__tests__/support/sla-sweep-auto-close.test.t
 
 - **In-transaction cascade.** Resolving a problem used to resolve every linked incident inside one long, sometimes Serializable transaction, with notices staged after commit and easily lost. The cascade is now a bounded sweep arm with one short transaction per incident and notices staged in that transaction.
 - **Mixed-table queues.** The sweep once read both the old ticket table and appointment threads; when those tables were dropped, the deployed sweep failed on every run. It now reads only `SupportCase` and related rows.
-- **Repeated overdue notices.** Old overdue rows could re-qualify every run and consume the batch. Notice identities in the durable outbox and the preloaded exclusion lists stop that.
+- **Repeated overdue notices.** Old overdue rows could re-qualify every run and consume the batch. Notice identities in the durable outbox stop the repeat, and the sweep skips noticed rows in memory while paging by id. The earlier fix, trimmed `id notIn` lists of up to 500 cases per notice kind built from the preloaded outbox rows, is gone, as is ordering by statutory deadline first.
 - **Storage-reconcile purge.** The design first put the 180-day purge in the storage reconciliation job. It runs as a sweep arm instead, and reconciliation only removes objects whose rows are tombstoned.
 - The ticker's comment for this target still lists only three arms; the list above is current.
 - **Counters only in the response.** The sweep's per-arm counters live in the HTTP body and the run log; `withCronLock()` does not store them in `SystemJobExecution`, so history has only COMPLETED or FAILED.

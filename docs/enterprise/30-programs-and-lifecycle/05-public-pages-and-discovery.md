@@ -65,7 +65,11 @@ DETAIL pages are reached by primary key, not by listing, and filtered on
 nothing at all, so an `ORG_ONLY` plan was fully readable by anyone holding its
 id and an archived plan still rendered a page with a live booking button.
 `isPlanViewable()` now gates all four. Consultation and subscription detail
-pages were added at the same time, giving all four types parity.
+pages were added at the same time, giving all four types parity. The by-id
+plan APIs apply the same rule: the webinar and class GETs through
+`planDetailResponse`, and the consultation and subscription GETs through
+`canViewPlanDetail`, so an archived or draft plan answers 404 to everyone but
+its expert, who can still preview it.
 
 The second is that `ORG_ONLY` finally has a reader. Narrowing a plan to
 `ORG_ONLY` previously made it invisible to everyone, including the members it

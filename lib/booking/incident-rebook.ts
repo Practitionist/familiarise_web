@@ -27,14 +27,14 @@ import { WEEKLY_COVERAGE_SELECT } from "@/utils/scheduling-engine/availabilityCo
 import { ScheduleValidationService } from "@/utils/scheduling-engine/ScheduleValidationService";
 import {
   lockConsulteeBooking,
-  lockSlotInterval,
+  lockSlotBatch,
   unlockConsulteeBooking,
   unlockSlotInterval,
   withAppointmentLock,
 } from "@/utils/appointmentlock";
 import { BookingRuleError } from "./booking-rule-error";
 import { createMakeUpOccurrence } from "./class-sessions";
-import { REBOOKABLE_PARENT_STATUSES, incidentRefundKey } from "./incident-keys";
+import { incidentRefundKey, isRebookableParent } from "./incident-keys";
 import { rescheduleNotificationVariant } from "./reschedule-proposals";
 import { transitionConsultationRequest, transitionTrial } from "./transitions";
 
@@ -273,7 +273,7 @@ async function assertNoIncidentRefund(
   if (marker?.refundOwedKey === key || refund) throw closed();
 }
 
-/** A booking completed before the void goes back to SCHEDULED, so the rebooked session completes and cancels normally. */
+/** A completed booking reopens (a 1:1 to APPROVED, a trial to SCHEDULED) so the rebooked session completes and cancels normally. */
 async function reopenBooking(
   tx: Tx,
   ctx: RebookContext,
@@ -296,13 +296,14 @@ async function reopenBooking(
           where: { id: booking.id },
           select: { status: true },
         });
-  if (!live || !REBOOKABLE_PARENT_STATUSES.has(live.status)) throw closed();
+  if (!live || !isRebookableParent(booking.kind, live.status)) throw closed();
+  // A confirmed booking stays as it is; only a completed one reopens.
   if (live.status !== "COMPLETED") return;
   if (booking.kind === "consultation") {
     await transitionConsultationRequest(tx, {
       ...meta,
       where: { id: booking.id },
-      to: "SCHEDULED",
+      to: "APPROVED",
       fromIn: ["COMPLETED"],
     });
     return;
@@ -406,6 +407,8 @@ async function notifyRebooked(ctx: RebookContext): Promise<void> {
   const organizationId = remedy.occurrence.appointment.organizationId;
   const appointmentType = booking.kind;
   const userIds = [...new Set([booking.expert.id, ctx.userId])];
+  // The move confirmed itself: the party who did not rebook hears it whatever their switches say.
+  const others = userIds.filter((id) => id !== ctx.userId);
   const dashboardUrl = notificationHref(organizationId, "appointments");
   const variant = rescheduleNotificationVariant({
     releasedAt: remedy.occurrence.startsAt,
@@ -425,7 +428,10 @@ async function notifyRebooked(ctx: RebookContext): Promise<void> {
         planTitle: planTitleOrSessionLabel(booking.title, appointmentType),
         dashboardUrl,
       },
-      { deferAttempt: true },
+      {
+        deferAttempt: true,
+        required: { kind: "MOVE_AUTO_CONFIRMED", recipients: others },
+      },
     ).catch((error: unknown) => {
       console.error("[incident-rebook] Failed to stage the bell:", error);
       return [];
@@ -437,6 +443,7 @@ async function notifyRebooked(ctx: RebookContext): Promise<void> {
       appointmentType,
       oldStartsAt: remedy.occurrence.startsAt,
       newStartsAt: ctx.startsAt,
+      requiredFor: others,
       dashboardUrl,
     }).catch((error: unknown) => {
       console.error("[incident-rebook] Failed to stage the email:", error);
@@ -462,7 +469,7 @@ export async function rebookIncidentRemedy(args: {
   const remedy = await readRemedy(args.remedyId);
   assertOpenFor(remedy, args.userId, now);
   const booking = bookingOf(remedy);
-  if (!booking || !REBOOKABLE_PARENT_STATUSES.has(booking.status))
+  if (!booking || !isRebookableParent(booking.kind, booking.status))
     throw closed();
   assertStartAllowed(args.startsAt, now);
   const voided = remedy.occurrence;
@@ -478,16 +485,26 @@ export async function rebookIncidentRemedy(args: {
         (voided.endsAt.getTime() - voided.startsAt.getTime()),
     ),
   };
-  // Global lock order: appointment, then consultee, then the expert's slot atoms.
+  // A learner who is also an expert holds their own calendar's atoms too.
+  const buyerProfile = await prisma.consultantProfile.findUnique({
+    where: { userId: args.userId },
+    select: { id: true },
+  });
+  const slotProfileIds = [ctx.consultantProfileId, buyerProfile?.id].filter(
+    (id, i, all): id is string => !!id && all.indexOf(id) === i,
+  );
+  // Global lock order: appointment, then consultee, then one all-or-nothing slot batch.
   const committed = await withAppointmentLock(
     voided.appointmentId,
     async () => {
       const consulteeLock = await lockConsulteeBooking(args.userId);
       try {
-        const slotLocks = await lockSlotInterval(
-          ctx.consultantProfileId,
-          ctx.startsAt,
-          ctx.endsAt,
+        const slotLocks = await lockSlotBatch(
+          slotProfileIds.map((consultantProfileId) => ({
+            consultantProfileId,
+            startsAt: ctx.startsAt,
+            endsAt: ctx.endsAt,
+          })),
         );
         try {
           return await prisma.$transaction((tx) => commitRebook(tx, ctx), {
@@ -583,7 +600,8 @@ export async function readOpenIncidentRemedies(
   });
   return rows.flatMap((row) => {
     const booking = bookingOf(row);
-    if (!booking || !REBOOKABLE_PARENT_STATUSES.has(booking.status)) return [];
+    if (!booking || !isRebookableParent(booking.kind, booking.status))
+      return [];
     return [
       {
         id: row.id,

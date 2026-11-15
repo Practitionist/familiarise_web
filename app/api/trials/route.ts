@@ -1,34 +1,40 @@
+import { readJsonBody } from "@/lib/api/parse";
+import { isStaffNonParty, publicRequester } from "@/lib/booking/list-selects";
 import prisma from "@/lib/prisma";
 import { blocksNewTrialRequest } from "@/lib/trials/eligibility";
-import {
-  AppointmentsType,
-  PaymentGateway,
-  Prisma,
-  TrialStatus,
-} from "@prisma/client";
-import { APPROVAL_PAYMENT_EXPIRATION_MS } from "@/lib/payments/constants";
+import { PaymentGateway, Prisma, TrialStatus } from "@prisma/client";
 import { createApprovalPaymentIntent } from "@/lib/payments/operations/approval-payment";
-import { recordParticipants } from "@/lib/booking/participants";
 import { persistTrialPayLink } from "@/lib/trials/pay-link";
+import {
+  bookTrialInTx,
+  lockTrialPick,
+  TrialTimeRefusedError,
+} from "@/lib/trials/book-trial";
+import {
+  prepareTrialScheduledNotices,
+  stageTrialScheduledNotices,
+  type StagedScheduleNotices,
+} from "@/lib/trials/schedule-notices";
+import { TRIAL_WINDOW_REFUSAL_COPY } from "@/lib/trials/slot-check";
 import { reportSentryError } from "@/lib/observability/report";
 import { NextRequest, NextResponse } from "next/server";
-import { stageTrialLifecycleEmail } from "@/lib/email/senders/booking";
-import { notifyTrialRequested } from "@/lib/novu";
+import { z } from "zod";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { CreateTrialSchema } from "@/schemas/trials";
 import { requireApiAuth } from "@/lib/auth-helpers";
-import { trialRequestLimiter, applyRateLimit } from "@/lib/rate-limit";
+import { spendTrialRequest, trialRequestRefusal } from "@/lib/rate-limit";
 import {
   resolveOrgScope,
   scopeToPlanHostWhere,
   scopeToWhereOrgId,
 } from "@/lib/api/scope/parse";
-import { isUniqueViolation } from "@/lib/db/pg-errors";
+import { isExclusionViolation, isUniqueViolation } from "@/lib/db/pg-errors";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import { planSaleRefusal } from "@/lib/api/plans/visibility";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
-import { getAppUrl } from "@/lib/url";
+import { assertRequestLeadFits } from "@/lib/booking/lead-time";
+import { assertWindowMatchesPlanDuration } from "@/lib/booking/slot-validation";
 import { assertNotSelfBooking } from "@/lib/booking/self-booking";
 import { capacityRefusal } from "@/lib/booking/request-caps";
 import { apiError } from "@/lib/errors/api-error";
@@ -39,6 +45,7 @@ import {
   RequestCapBusyError,
   unlockRequestCap,
 } from "@/utils/appointmentlock";
+import { SlotLockError } from "@/utils/errors/SlotLockError";
 
 /**
  * GET /api/trials
@@ -49,7 +56,18 @@ export async function GET(request: NextRequest) {
   const consultantProfileId = searchParams.get("consultantProfileId");
   const consulteeProfileId = searchParams.get("consulteeProfileId");
   const subscriptionPlanId = searchParams.get("subscriptionPlanId");
-  const status = searchParams.get("status") as TrialStatus | null;
+  // An unknown or removed status is the caller's error, never a Prisma one.
+  const statusParse = z
+    .nativeEnum(TrialStatus)
+    .nullable()
+    .safeParse(searchParams.get("status"));
+  if (!statusParse.success) {
+    return NextResponse.json(
+      { error: "Invalid trial status" },
+      { status: 400 },
+    );
+  }
+  const status = statusParse.data;
   const page = parseInt(searchParams.get("page") || "1");
   const limit = parseInt(searchParams.get("limit") || "10");
   const search = searchParams.get("search");
@@ -243,8 +261,21 @@ export async function GET(request: NextRequest) {
       prisma.trial.count({ where: whereClause }),
     ]);
 
+    // STAFF read the learner of a trial they are not a party to in the public shape.
+    const data = trials.map((trial) =>
+      isStaffNonParty(
+        session.user.role,
+        trial.consulteeProfileId === session.user.consulteeProfileId ||
+          trial.consultantProfileId === session.user.consultantProfileId,
+      )
+        ? {
+            ...trial,
+            consulteeProfile: publicRequester(trial.consulteeProfile),
+          }
+        : trial,
+    );
     return NextResponse.json({
-      data: trials,
+      data,
       meta: {
         total,
         page,
@@ -253,7 +284,11 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
-    console.error("Error fetching trial sessions:", error);
+    reportSentryError(error, {
+      subsystem: "trials",
+      op: "GET /api/trials",
+      expected: false,
+    });
     return NextResponse.json(
       { error: "An error occurred while fetching trial sessions" },
       { status: 500 },
@@ -271,7 +306,9 @@ export async function POST(request: NextRequest) {
     if (authResult.error) return authResult.error;
     const { session } = authResult;
 
-    const body = await request.json();
+    const read = await readJsonBody(request);
+    if (read.error) return read.error;
+    const body = read.body;
     const result = CreateTrialSchema.safeParse(body);
     if (!result.success) {
       return NextResponse.json(
@@ -285,6 +322,7 @@ export async function POST(request: NextRequest) {
       subscriptionPlanId,
       notes,
       organizationId,
+      slot,
     } = result.data;
 
     const isPrivileged =
@@ -297,15 +335,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    // Rate limit: 3 trial requests per 24 hours per creator. #831 — applied
-    // uniformly: a privileged session can still flood consultant inboxes,
-    // so role no longer bypasses the limiter.
-    const rl = await applyRateLimit(trialRequestLimiter, session.user.id);
-    if (rl) return rl;
-
-    // #1527 review — the plan lookup + refusal checks used to run AFTER the
-    // freed-trial deleteMany below, so a request against a DRAFT plan (409)
-    // still consumed the consultee's freed trial slot. Verify the plan first.
+    // The plan and its refusals come before the freed-trial deleteMany below,
+    // so a refused request never consumes the pair's freed trial slot.
     const subscriptionPlan = await prisma.subscriptionPlan.findUnique({
       where: { id: subscriptionPlanId },
       include: {
@@ -314,7 +345,7 @@ export async function POST(request: NextRequest) {
             id: true,
             acceptingRequests: true,
             maxOpenRequests: true,
-            user: { select: { id: true } },
+            user: { select: { id: true, name: true } },
           },
         },
       },
@@ -368,6 +399,30 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // A paid trial holds its time until the capture confirms it; a free one
+    // is confirmed with this request.
+    const isPaidTrial = Number(subscriptionPlan.trialPriceInPaise ?? 0) > 0;
+    // The pick is checked before a freed trial row is cleared below, so a
+    // refused time never consumes the pair's slot.
+    const startsAt = new Date(slot.startsAt);
+    const endsAt = new Date(slot.endsAt);
+    try {
+      assertWindowMatchesPlanDuration(
+        { trialDurationMinutes: subscriptionPlan.trialDurationMinutes },
+        startsAt,
+        endsAt,
+      );
+      assertRequestLeadFits(subscriptionPlan.trialPriceInPaise ?? 0, startsAt);
+    } catch (error) {
+      if (error instanceof BookingRuleError) return bookingRuleResponse(error);
+      throw error;
+    }
+
+    // 3 trials per 24 hours per caller, privileged included: read here without
+    // spending one, and spent only once a trial is created.
+    const rl = await trialRequestRefusal(session.user.id);
+    if (rl) return rl;
+
     // Check if a trial already exists for this consultee-consultant pair
     const existingTrial = await prisma.trial.findUnique({
       where: {
@@ -378,11 +433,8 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    // Only a live or already-delivered trial blocks a new request. A declined,
-    // withdrawn or lapsed-unpaid trial frees the pair — never paying isn't the
-    // same as having used your trial. The freed row must be deleted rather than
-    // left in place, because the pair is @@unique. See lib/trials/eligibility.ts
-    // for the abuse trade-off and how to tighten it if this gets gamed.
+    // Only a live or delivered trial blocks a new request; a cancelled or lapsed
+    // one frees the pair and its row is deleted, because the pair is @@unique.
     if (existingTrial) {
       if (blocksNewTrialRequest(existingTrial.status)) {
         return NextResponse.json(
@@ -402,9 +454,6 @@ export async function POST(request: NextRequest) {
       await prisma.trial.deleteMany({ where: { id: existingTrial.id } });
     }
 
-    // #1775 C-7 — a paid trial is charged at request and refunded in full on
-    // decline or no answer; a free trial moves no money.
-    const isPaidTrial = Number(subscriptionPlan.trialPriceInPaise ?? 0) > 0;
     // Get consultee info for activity log
     const consulteeProfile = await prisma.consulteeProfile.findUnique({
       where: { id: consulteeProfileId },
@@ -458,13 +507,19 @@ export async function POST(request: NextRequest) {
       resolvedOrgId = organizationId;
     }
 
-    // Create the trial session. The pair is @@unique, and the free-the-slot
-    // delete above is a separate statement, so two concurrent requests for the
-    // same pair both pass the eligibility read and race into the insert — the
-    // loser used to surface as a 500. It is the same "already requested"
-    // answer the sequential path gives, so say so.
-    // The expert's open-request cap: count and insert under one lock, the same
-    // gate request-for-approval applies, so a trial cannot overfill the queue.
+    const consulteeUserId = consulteeProfile.user.id;
+    const consultantUserId = subscriptionPlan.consultantProfile.user.id;
+    // An expert taking a trial with another expert is busy on their own calendar too.
+    const buyerConsultantProfile = await prisma.consultantProfile.findUnique({
+      where: { userId: consulteeUserId },
+      select: { id: true },
+    });
+
+    // Lock order: the expert's request cap (its count and the insert run
+    // under it), then the consultee, then the slot atoms — checkout's order.
+    // The pair is @@unique, so two concurrent requests for the same pair both
+    // pass the eligibility read and race into the insert; the loser is the
+    // same "already requested" answer the sequential path gives.
     let capLock: Awaited<ReturnType<typeof lockRequestCap>>;
     try {
       capLock = await lockRequestCap(consultantProfileId);
@@ -488,64 +543,105 @@ export async function POST(request: NextRequest) {
       throw error;
     }
     let trial;
+    let staged: StagedScheduleNotices | null = null;
     try {
-      trial = await prisma
-        .$transaction(async (tx) => {
-          const atCapacity = await capacityRefusal(
-            tx,
-            subscriptionPlan.consultantProfile,
-          );
-          if (atCapacity) {
-            throw new Refusal({
-              code: atCapacity.code,
-              userMessage: atCapacity.message,
+      const release = await lockTrialPick({
+        consulteeUserId,
+        consultantProfileId,
+        buyerConsultantProfileId: buyerConsultantProfile?.id,
+        startsAt,
+        endsAt,
+      });
+      try {
+        // Read and rendered before the transaction: a free trial stages only its rows.
+        const prepared = isPaidTrial
+          ? null
+          : await prepareTrialScheduledNotices({
+              consulteeUserId,
+              consultantUserId,
+              consulteeName: consulteeProfile.user.name || "User",
+              consultantName:
+                subscriptionPlan.consultantProfile.user.name || "Consultant",
+              planTitle: subscriptionPlan.title,
+              startsAt,
             });
-          }
-          // #1775 C-7 — a placeholder appointment (no sessions yet) anchors the
-          // pay order, so capture confirms THIS row; accept adds the session.
-          const placeholder = isPaidTrial
-            ? await tx.appointment.create({
-                data: { appointmentType: AppointmentsType.TRIAL },
-                select: { id: true },
-              })
-            : null;
-          const created = await tx.trial.create({
-            data: {
-              consulteeProfileId,
-              consultantProfileId,
-              subscriptionPlanId,
-              notes,
-              status: TrialStatus.PENDING,
-              organizationId: resolvedOrgId,
-              appointmentId: placeholder?.id ?? null,
-              paymentDueAt: placeholder
-                ? new Date(Date.now() + APPROVAL_PAYMENT_EXPIRATION_MS)
-                : null,
+        const booked = await prisma
+          .$transaction(
+            async (tx) => {
+              const atCapacity = await capacityRefusal(
+                tx,
+                subscriptionPlan.consultantProfile,
+              );
+              if (atCapacity) {
+                throw new Refusal({
+                  code: atCapacity.code,
+                  userMessage: atCapacity.message,
+                });
+              }
+              const created = await bookTrialInTx(tx, {
+                consulteeProfileId,
+                consultantProfileId,
+                subscriptionPlanId,
+                notes,
+                organizationId: resolvedOrgId,
+                consulteeUserId,
+                consultantUserId,
+                paid: isPaidTrial,
+                agreedPricePaise: subscriptionPlan.trialPriceInPaise,
+                startsAt,
+                endsAt,
+              });
+              // The confirmation notices commit with the booking.
+              const notices = prepared
+                ? await stageTrialScheduledNotices(tx, created.id, prepared)
+                : null;
+              return { created, notices };
             },
-            include: TRIAL_CREATED_INCLUDE,
+            { maxWait: 10_000, timeout: 15_000 },
+          )
+          .catch((error: unknown) => {
+            if (isUniqueViolation(error)) return null;
+            throw error;
           });
-          if (placeholder) {
-            await recordParticipants(
-              tx,
-              placeholder.id,
-              [
-                { userId: consulteeProfile.user.id, role: "CONSULTEE" },
-                {
-                  userId: subscriptionPlan.consultantProfile.user.id,
-                  role: "CONSULTANT",
-                },
-              ],
-              { organizationId: resolvedOrgId, status: "HELD" },
-            );
-          }
-          return created;
-        })
-        .catch((error: unknown) => {
-          if (isUniqueViolation(error)) return null;
-          throw error;
-        });
+        trial = booked?.created ?? null;
+        staged = booked?.notices ?? null;
+      } finally {
+        await release();
+      }
     } catch (error) {
       if (isRefusal(error)) return apiError({ tag: "[trials.POST]", error });
+      if (error instanceof TrialTimeRefusedError) {
+        return NextResponse.json(
+          { error: error.message, code: error.code },
+          { status: error.httpStatus },
+        );
+      }
+      // A confirmed session that met another at the database is the same lost race.
+      if (isExclusionViolation(error)) {
+        return NextResponse.json(
+          {
+            error: TRIAL_WINDOW_REFUSAL_COPY.SLOT_TAKEN,
+            code: "SLOT_TAKEN",
+          },
+          { status: 409 },
+        );
+      }
+      if (error instanceof SlotLockError) {
+        return NextResponse.json(
+          {
+            error:
+              "Someone else is booking that time right now. Pick another time or try again.",
+            code: "SLOT_BUSY",
+          },
+          { status: 423 },
+        );
+      }
+      if (error instanceof BookingLockUnavailableError) {
+        return NextResponse.json(
+          { error: error.message },
+          { status: error.httpStatus },
+        );
+      }
       throw error;
     } finally {
       await unlockRequestCap(capLock);
@@ -560,56 +656,37 @@ export async function POST(request: NextRequest) {
         { status: 409 },
       );
     }
+    await spendTrialRequest(session.user.id);
 
-    // #1775 C-7 — mint AFTER the commit (a gateway call never sits in a tx);
-    // a failed mint leaves the trial PENDING and the checkout page re-mints.
-    const checkoutUrl = trial.appointmentId
+    if (staged) {
+      await flushNotificationsAfter(
+        {
+          bells: staged.bells,
+          emails: [
+            { list: staged.emails, emailType: "TRIAL_SESSION_SCHEDULED" },
+          ],
+        },
+        "trials.booked",
+      );
+    }
+
+    // Minted AFTER the commit (a gateway call never sits in a transaction);
+    // a failed mint leaves the hold AWAITING_PAYMENT and the checkout page
+    // re-mints while the pay window is open.
+    const checkoutUrl = isPaidTrial
       ? await mintTrialRequestOrder(trial.id, trial.appointmentId, {
-          userId: consulteeProfile.user.id,
+          userId: consulteeUserId,
           planId: subscriptionPlanId,
         })
       : null;
 
-    const consultantUserId = trial.consultantProfile.user.id;
-    const consultantName = trial.consultantProfile.user.name || "Consultant";
-    const consulteeName = trial.consulteeProfile.user.name || "A new user";
-    const dashboardUrl = `/dashboard/consultant/${consultantProfileId}/requests`;
-    const [bellResult, emailRows] = await Promise.all([
-      Promise.resolve(
-        notifyTrialRequested(
-          consultantUserId,
-          {
-            consultantName,
-            consulteeName,
-            planTitle: subscriptionPlan.title,
-            status: trial.status,
-            dashboardUrl,
-          },
-          undefined,
-          { deferAttempt: true },
-        ),
-      ).catch(() => null),
-      stageTrialLifecycleEmail(prisma, {
-        trialId: trial.id,
-        userIds: [consultantUserId],
-        kind: "TRIAL_REQUESTED",
-        planTitle: subscriptionPlan.title,
-        consultantName,
-        consulteeName,
-        dashboardUrl: `${getAppUrl()}${dashboardUrl}`,
-      }).catch(() => []),
-    ]);
-    await flushNotificationsAfter(
-      {
-        bells: [bellResult?.staged],
-        emails: [{ rows: emailRows, emailType: "TRIAL_REQUESTED" }],
-      },
-      "trials.requested",
-    );
-
     return NextResponse.json({ data: trial, checkoutUrl }, { status: 201 });
   } catch (error) {
-    console.error("Error creating trial session:", error);
+    reportSentryError(error, {
+      subsystem: "trials",
+      op: "POST /api/trials",
+      expected: false,
+    });
     return NextResponse.json(
       { error: "An error occurred while creating trial session" },
       { status: 500 },
@@ -618,9 +695,9 @@ export async function POST(request: NextRequest) {
 }
 
 /**
- * #1775 C-7 — the paid trial's order, minted against its placeholder
- * appointment and persisted as the pay page; the response hands the buyer
- * the branded trial checkout. Never throws: a lost mint is re-minted there.
+ * The paid trial's order, minted against the appointment that holds its
+ * picked time and persisted as the pay page; the response hands the buyer the
+ * branded trial checkout. Never throws: a lost mint is re-minted there.
  */
 async function mintTrialRequestOrder(
   trialId: string,
@@ -653,32 +730,3 @@ async function mintTrialRequestOrder(
   }
   return checkoutPath;
 }
-
-const TRIAL_CREATED_INCLUDE = {
-  consulteeProfile: {
-    include: {
-      user: {
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          image: true,
-        },
-      },
-    },
-  },
-  consultantProfile: {
-    select: {
-      ...consultantPublicScalars,
-      user: {
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          image: true,
-        },
-      },
-    },
-  },
-  subscriptionPlan: true,
-} satisfies Prisma.TrialInclude;

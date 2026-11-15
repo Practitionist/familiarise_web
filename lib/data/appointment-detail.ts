@@ -11,18 +11,25 @@
  * on the profile selects exist for the API route's ownership check.
  */
 
+import { moveHasLapsed } from "@/lib/appointments/lapsed-move";
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
-import type { AppointmentFeedbackRole, RefundStatus } from "@prisma/client";
+import type {
+  AppointmentFeedbackRole,
+  BookingHistoryEntity,
+  RefundStatus,
+} from "@prisma/client";
 import { toPlain } from "@/lib/data/serialize";
 import {
   bookingAnomalies,
   scheduleAnomalyReport,
 } from "@/lib/appointments/report-anomalies";
 
+// `timezone` lets the detail page show the other party's wall clock for the
+// next session; it names a zone, never a location.
 const userSelect = {
-  select: { id: true, name: true, image: true },
+  select: { id: true, name: true, image: true, timezone: true },
 } as const;
 
 const slotsInclude = {
@@ -105,7 +112,44 @@ const collaboratorsInclude = {
   },
 } as const;
 
+const LIFECYCLE_HISTORY_ENTITIES: BookingHistoryEntity[] = [
+  "CONSULTATION",
+  "SUBSCRIPTION",
+  "TRIAL",
+  "WEBINAR",
+  "CLASS",
+];
+
+/** Which side wrote a history edge; a staff or system actor's id never leaves the server. */
+export type HistoryActorSide = "CONSULTANT" | "REQUESTER" | "OTHER" | null;
+
+function historyActorSide(
+  actorUserId: string | null,
+  sides: { requester: string | null; hosts: (string | undefined)[] },
+): HistoryActorSide {
+  if (!actorUserId) return null;
+  if (actorUserId === sides.requester) return "REQUESTER";
+  if (sides.hosts.includes(actorUserId)) return "CONSULTANT";
+  return "OTHER";
+}
+
+/**
+ * Every booking page, its API and the authz helper read through here: a move
+ * past its deadline is ended first, so the original session is what they see.
+ */
 export async function readAppointmentDetail(appointmentId: string) {
+  const detail = await loadAppointmentDetail(appointmentId);
+  const open = detail?.appointment.rescheduleRequests?.[0];
+  if (!open || !moveHasLapsed(open.expiresAt)) return detail;
+  // Loaded on use: settling takes the booking locks, which plain reads never need.
+  const { settleLapsedProposal } =
+    await import("@/lib/booking/reschedule-lapse");
+  return (await settleLapsedProposal(appointmentId))
+    ? loadAppointmentDetail(appointmentId)
+    : detail;
+}
+
+async function loadAppointmentDetail(appointmentId: string) {
   const appointment = await prisma.appointment.findUnique({
     where: { id: appointmentId },
     include: {
@@ -148,6 +192,8 @@ export async function readAppointmentDetail(appointmentId: string) {
       trial: {
         include: {
           consulteeProfile: consulteeProfileSelect,
+          // The trial's delivering expert, who answers its reschedules.
+          consultantProfile: consultantProfileSelect,
           subscriptionPlan: {
             include: { consultantProfile: consultantProfileSelect },
           },
@@ -200,21 +246,23 @@ export async function readAppointmentDetail(appointmentId: string) {
         },
       },
       occurrences: slotsInclude,
-      // EXPIRED edge: lapsed pay link vs unanswered request. CANCELLED +
-      // WITHDRAWN_BY_CONSULTANT: the withdraw copy (lib/dashboard/money-state.ts).
+      // The booking's own lifecycle edges: who approved, declined, withdrew or
+      // cancelled it, and when. The actor id is folded into a side below.
       statusHistory: {
-        where: {
-          OR: [
-            { toStatus: "EXPIRED" },
-            { toStatus: "CANCELLED", reason: "WITHDRAWN_BY_CONSULTANT" },
-          ],
+        where: { entity: { in: LIFECYCLE_HISTORY_ENTITIES } },
+        orderBy: { createdAt: "asc" },
+        select: {
+          fromStatus: true,
+          toStatus: true,
+          reason: true,
+          actorUserId: true,
+          createdAt: true,
         },
-        select: { fromStatus: true, toStatus: true, reason: true },
       },
       // #1554 — the roster: every live seat holder, with display fields.
       participants: {
         where: liveParticipant(),
-        select: { userId: true, role: true, user: userSelect },
+        select: { userId: true, role: true, status: true, user: userSelect },
       },
     },
     // ~28 relation nodes: one joined statement instead of one per node.
@@ -225,7 +273,31 @@ export async function readAppointmentDetail(appointmentId: string) {
 
   // #1554 — the whole programme is this one wrapper's occurrences; there are
   // no sibling appointments to fetch.
-  const detail = toPlain({ appointment });
+  const sides = {
+    requester:
+      appointment.consultation?.requestedBy.userId ??
+      appointment.subscription?.requestedBy.userId ??
+      appointment.trial?.consulteeProfile.userId ??
+      null,
+    hosts: [
+      appointment.consultation?.consultationPlan.consultantProfile.userId,
+      appointment.subscription?.subscriptionPlan.consultantProfile.userId,
+      appointment.trial?.subscriptionPlan.consultantProfile.userId,
+      appointment.webinar?.webinarPlan.consultantProfile?.userId,
+      appointment.class?.classPlan.consultantProfile?.userId,
+    ],
+  };
+  const detail = toPlain({
+    appointment: {
+      ...appointment,
+      statusHistory: appointment.statusHistory.map(
+        ({ actorUserId, ...edge }) => ({
+          ...edge,
+          by: historyActorSide(actorUserId, sides),
+        }),
+      ),
+    },
+  });
   // The read carries the live proposal, so a lost session can be judged here.
   scheduleAnomalyReport(
     bookingAnomalies([detail.appointment], {

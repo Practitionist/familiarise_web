@@ -13,7 +13,7 @@ import {
   transitionParticipant,
   RELEASED_PARTICIPANT_STATUSES,
 } from "@/lib/booking/participants";
-import { markBackupInterestBooked } from "@/lib/booking/backup-interest";
+import { markAppointmentWindowsBooked } from "@/lib/booking/backup-interest";
 import { markEventWaitlistBooked } from "@/lib/booking/event-waitlist";
 import prisma, { type Tx } from "@/lib/prisma";
 import { isPreMintIntent } from "@/lib/payments/pre-mint-intent";
@@ -60,6 +60,7 @@ import {
   DOUBLE_BOOKING_BLOCKED_NOTE,
   autoRefundPendingDescription,
   settledAutoRefundDescription,
+  unreturnedCaptureWhere,
 } from "@/lib/payments/webhooks/auto-refund-marker";
 import { mintConsumerInvoiceBestEffort } from "@/lib/payments/billing/consumer-invoice";
 import {
@@ -90,14 +91,17 @@ import {
   notifyPaymentSuccess,
   notifyPaymentFailed,
   notifyAppointmentBooked,
+  notifyTrialCancelled,
   type StagedTrigger,
 } from "@/lib/novu";
+import { stageTrialLifecycleEmail } from "@/lib/email/senders/booking";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import { goHref } from "@/lib/dashboard/go";
 import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
 import { returnDiscountUse } from "@/lib/payments/checkout/discount-use";
+import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
 import { recordReferralCaptureInSavepoint } from "@/lib/referrals/capture";
 import {
   prepareCreditsAppliedEmail,
@@ -121,6 +125,7 @@ import { getAppUrl } from "@/lib/url";
 import {
   createAppointmentFromWebhook,
   RecoveryAlreadyDoneError,
+  RecoveryRefusedError,
 } from "./legacy-appointment-creation";
 import {
   loadAppointmentForEmails,
@@ -143,7 +148,11 @@ import {
   type StagedRequestExpiredNotice,
 } from "@/lib/booking/expiry-notices";
 
-export { createAppointmentFromWebhook, RecoveryAlreadyDoneError };
+export {
+  createAppointmentFromWebhook,
+  RecoveryAlreadyDoneError,
+  RecoveryRefusedError,
+};
 
 type PaymentSuccessTxResult =
   | {
@@ -156,6 +165,8 @@ type PaymentSuccessTxResult =
       outcome: "captured_after_release";
       paymentId: string;
       releasedBy: string;
+      /** Both parties' cancelled notice, staged with the release. */
+      trialNotice?: StagedNotificationBundle | null;
     }
   | {
       outcome: "confirmed";
@@ -483,6 +494,15 @@ export async function handlePaymentSuccess(
             recovering &&
             payment.paymentStatus === PaymentStatus.SUCCEEDED &&
             payment.appointmentId === null;
+          // Read in this Serializable transaction so a concurrent refund or dispute aborts the booking.
+          if (
+            recoverable &&
+            (await tx.payment.count({
+              where: { id: payment.id, ...unreturnedCaptureWhere },
+            })) === 0
+          ) {
+            throw new RecoveryRefusedError(payment.id);
+          }
           // The SUCCEEDED short-circuit's own predicate; `recoverable` excluded so
           // a wrong-amount capture on an unconfirmed recovery still blocks.
           const alreadyProcessed =
@@ -798,6 +818,64 @@ export async function handlePaymentSuccess(
           }
 
           if (metadata.trialId) {
+            // Nobody pays for a trial whose held session already started: the
+            // hold is released, the trial cancelled, and the capture refunded.
+            const startedHold = await tx.appointmentOccurrence.findFirst({
+              where: {
+                appointmentId: appointment.id,
+                isTentative: true,
+                deletedAt: null,
+                startsAt: { lte: new Date() },
+              },
+              select: { id: true },
+            });
+            if (startedHold) {
+              let cancelledHere = false;
+              try {
+                await transitionTrial(tx, {
+                  reason: "PAID_AFTER_SESSION_STARTED",
+                  appointmentId: appointment.id,
+                  where: { id: metadata.trialId },
+                  to: TrialStatus.CANCELLED,
+                  fromIn: [TrialStatus.AWAITING_PAYMENT],
+                  data: { pendingPaymentUrl: null, paymentDueAt: null },
+                });
+                cancelledHere = true;
+              } catch (err) {
+                if (!(err instanceof IllegalTransitionError)) throw err;
+              }
+              await transitionOccurrenceCompletion(tx, {
+                actorUserId: null,
+                reason: "PAID_AFTER_SESSION_STARTED",
+                where: {
+                  appointmentId: appointment.id,
+                  isTentative: true,
+                  deletedAt: null,
+                },
+                to: OccurrenceCompletionStatus.CANCELLED,
+                data: { deletedAt: new Date() },
+                allowZero: true,
+              });
+              await tx.payment.update({
+                where: { id: payment.id },
+                data: {
+                  description: autoRefundPendingDescription(
+                    `trial ${metadata.trialId} was paid after its session started`,
+                  ),
+                },
+              });
+              await parkCapture();
+              return {
+                outcome: "captured_after_release",
+                paymentId: payment.id,
+                releasedBy: `trial session started before payment (${metadata.trialId})`,
+                // Only the door that cancelled the trial announces it.
+                trialNotice: cancelledHere
+                  ? await stageTrialPaidAfterStartNotice(tx, metadata.trialId)
+                  : null,
+              };
+            }
+
             let scheduled = { count: 0 };
             try {
               await transitionTrial(tx, {
@@ -828,31 +906,14 @@ export async function handlePaymentSuccess(
               }),
             );
 
-            const paidAtRequest =
-              scheduled.count === 0
-                ? await tx.trial.updateMany({
-                    where: {
-                      id: metadata.trialId,
-                      status: TrialStatus.PENDING,
-                      paymentId: null,
-                    },
-                    data: {
-                      paymentId: payment.id,
-                      pendingPaymentUrl: null,
-                      paymentDueAt: null,
-                    },
-                  })
-                : { count: 0 };
-
-            if (scheduled.count === 0 && paidAtRequest.count === 0) {
+            if (scheduled.count === 0) {
               const trial = await tx.trial.findUnique({
                 where: { id: metadata.trialId },
                 select: { status: true, paymentId: true },
               });
               const alreadyOurs =
                 trial?.paymentId === payment.id
-                  ? trial.status === TrialStatus.SCHEDULED ||
-                    trial.status === TrialStatus.PENDING
+                  ? trial.status === TrialStatus.SCHEDULED
                   : trial?.status === TrialStatus.SCHEDULED &&
                     trial.paymentId === null;
               if (!alreadyOurs) {
@@ -1215,6 +1276,12 @@ export async function handlePaymentSuccess(
         err: new Error("CAPTURE_AFTER_RELEASE_REFUND_FAILED"),
         context: { paymentId: txResult.paymentId },
       });
+    }
+    if (txResult.trialNotice) {
+      await flushNotificationsAfter(
+        txResult.trialNotice,
+        "capture.trial-paid-after-start",
+      );
     }
     return txResult.outcome;
   }
@@ -1673,9 +1740,13 @@ export async function handlePaymentFailure(
       return;
     }
 
-    // Credits and the discount use consumed at order creation go back under the same CAS.
+    // Credits, the discount use and the org engagement consumed at checkout go back under the same CAS.
     await reverseCreditsForPayment(payment.id, tx);
     await returnDiscountUse(tx, payment.id);
+    await reverseBookingUtilization(tx, {
+      paymentId: payment.id,
+      reason: "Payment failed",
+    });
 
     if (payment.appointment) {
       await cleanupFailedPaymentAppointment(tx, payment.appointment.id);
@@ -1757,7 +1828,6 @@ const LIVE_REQUEST_STATUSES: ReadonlySet<AppointmentStatus> = new Set([
   AppointmentStatus.PENDING,
   AppointmentStatus.APPROVED_PENDING_PAYMENT,
   AppointmentStatus.APPROVED,
-  AppointmentStatus.SCHEDULED,
   AppointmentStatus.COMPLETED,
 ]);
 
@@ -2010,7 +2080,6 @@ async function confirmApprovalStatus(
       const freshStatus = fresh?.status ?? consultation.status;
       if (
         freshStatus !== AppointmentStatus.APPROVED &&
-        freshStatus !== AppointmentStatus.SCHEDULED &&
         freshStatus !== AppointmentStatus.COMPLETED
       ) {
         capturedAfterTerminal = true;
@@ -2046,35 +2115,8 @@ async function confirmApprovalStatus(
       });
     };
 
-    // Subscriptions only transition APPROVED_PENDING_PAYMENT → APPROVED; PENDING awaits slot allocation.
-    if (subscription.status === AppointmentStatus.APPROVED_PENDING_PAYMENT) {
-      try {
-        await transitionSubscriptionRequest(tx, {
-          where: { id: entityId },
-          to: AppointmentStatus.APPROVED,
-          fromIn: [AppointmentStatus.APPROVED_PENDING_PAYMENT],
-          reason: "payment captured",
-          appointmentId,
-        });
-        console.log(
-          `✅ Subscription ${entityId} payment completed - moving from APPROVED_PENDING_PAYMENT to APPROVED`,
-        );
-      } catch (err) {
-        if (!(err instanceof IllegalTransitionError)) throw err;
-        const fresh = await tx.subscription.findUnique({
-          where: { id: entityId },
-          select: { status: true },
-        });
-        const freshStatus = fresh?.status ?? subscription.status;
-        if (LIVE_REQUEST_STATUSES.has(freshStatus)) {
-          console.log(
-            `ℹ️ Subscription ${entityId} already ${freshStatus} when the capture landed — nothing to move`,
-          );
-        } else {
-          await flagTerminal(freshStatus);
-        }
-      }
-    } else if (!LIVE_REQUEST_STATUSES.has(subscription.status)) {
+    // A plan is paid at checkout: the capture moves no status, and allocation approves it.
+    if (!LIVE_REQUEST_STATUSES.has(subscription.status)) {
       await flagTerminal(subscription.status);
     } else {
       console.log(
@@ -2293,7 +2335,7 @@ export async function confirmExistingAppointment(
     }
   }
 
-  const BENIGN_EVENT_STATUSES = ["SCHEDULED", "IN_PROGRESS", "COMPLETED"];
+  const BENIGN_EVENT_STATUSES = ["SCHEDULED", "COMPLETED"];
 
   if (appointment.class && userId) {
     const classId = appointment.class.id;
@@ -2393,7 +2435,7 @@ export async function confirmExistingAppointment(
       { appointmentId, status: "HELD" },
       "CONFIRMED",
     );
-    if (userId) await markBookedWindows(tx, appointmentId, userId);
+    if (userId) await markAppointmentWindowsBooked(tx, appointmentId, userId);
   }
 
   let capturedAfterTerminal = false;
@@ -2417,29 +2459,6 @@ export async function confirmExistingAppointment(
   }
 
   return { capturedAfterTerminal };
-}
-
-async function markBookedWindows(
-  tx: Tx,
-  appointmentId: string,
-  userId: string,
-) {
-  const windows = await tx.appointmentOccurrence.findMany({
-    where: {
-      appointmentId,
-      ...liveOccurrenceWhere,
-      consultantProfileId: { not: null },
-    },
-    select: { consultantProfileId: true, startsAt: true, endsAt: true },
-  });
-  for (const w of windows) {
-    if (!w.consultantProfileId) continue;
-    await markBackupInterestBooked(tx, userId, {
-      consultantProfileId: w.consultantProfileId,
-      windowStart: w.startsAt,
-      windowEnd: w.endsAt,
-    });
-  }
 }
 
 export async function settleAutoRefundMarker(paymentId: string): Promise<void> {
@@ -2684,6 +2703,78 @@ async function stageStartedBeforePaymentNotice(
     reportSentryError(error, {
       subsystem: "payments",
       op: "capture.started-before-payment-notice.stage",
+      level: "warning",
+    });
+    return null;
+  }
+}
+
+/**
+ * Both parties hear a trial paid after its held session started was cancelled
+ * (the trial templates carry no reason line); null when staging failed.
+ */
+async function stageTrialPaidAfterStartNotice(
+  tx: Tx,
+  trialId: string,
+): Promise<StagedNotificationBundle | null> {
+  await tx.$executeRaw`SAVEPOINT sp_trial_started_notice`;
+  try {
+    const trial = await tx.trial.findUnique({
+      where: { id: trialId },
+      select: {
+        subscriptionPlan: { select: { title: true } },
+        consultantProfile: {
+          select: { user: { select: { id: true, name: true } } },
+        },
+        consulteeProfile: {
+          select: { user: { select: { id: true, name: true } } },
+        },
+      },
+    });
+    if (!trial) {
+      await tx.$executeRaw`RELEASE SAVEPOINT sp_trial_started_notice`;
+      return null;
+    }
+    const consultant = trial.consultantProfile.user;
+    const consultee = trial.consulteeProfile.user;
+    const userIds = [consultant.id, consultee.id];
+    const consultantName = consultant.name || "Consultant";
+    const consulteeName = consultee.name || "User";
+    const dashboardUrl = goHref("auto", "appointments");
+    const bells = await notifyTrialCancelled(
+      userIds,
+      {
+        consultantName,
+        consulteeName,
+        planTitle: trial.subscriptionPlan.title,
+        status: TrialStatus.CANCELLED,
+        dashboardUrl,
+      },
+      `trial-cancelled:${trialId}`,
+      { tx, deferAttempt: true },
+    );
+    const emails = await stageTrialLifecycleEmail(tx, {
+      trialId,
+      userIds,
+      kind: "TRIAL_CANCELLED",
+      planTitle: trial.subscriptionPlan.title,
+      consultantUserId: consultant.id,
+      consulteeUserId: consultee.id,
+      consultantName,
+      consulteeName,
+      dashboardUrl,
+    });
+    await tx.$executeRaw`RELEASE SAVEPOINT sp_trial_started_notice`;
+    return {
+      bells: bells.map((row) => row.staged),
+      emails: [{ rows: emails, emailType: "TRIAL_CANCELLED" }],
+    };
+  } catch (error) {
+    await tx.$executeRaw`ROLLBACK TO SAVEPOINT sp_trial_started_notice`;
+    if (isWriteConflict(error)) throw error;
+    reportSentryError(error, {
+      subsystem: "payments",
+      op: "capture.trial-paid-after-start-notice.stage",
       level: "warning",
     });
     return null;

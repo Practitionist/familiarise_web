@@ -60,17 +60,18 @@ Escalate on evidence, not vibes. When a student or teacher report contradicts th
 
 ### 3.1 Role table
 
-| Role                                  | Model           | Effort | Why                                                                                  |
-| ------------------------------------- | --------------- | ------ | ------------------------------------------------------------------------------------ |
-| Advisor session (audit or design day) | fable           | xhigh  | Long-horizon synthesis. Above `high` the gain is task-dependent, so stop at `xhigh`. |
-| Advisor session (orchestration day)   | fable           | high   | Dispatch and spot-checks. Never leave it at Claude Code's `medium` default.          |
-| Advisor ceiling run (rare)            | fable           | max    | Only to measure the ceiling on one hard question, with the owner's go-ahead.         |
-| Teacher: build a PR, money code       | opus            | high   | Multi-file coherence and test writing; pair with a `codex review` round.             |
-| Teacher: triage review comments       | opus            | high   | Claim-versus-code verification needs care. Non-money triage can use medium.          |
-| Student: UI, labels, accessibility    | sonnet          | high   | Visible quality matters more than token savings.                                     |
-| Student: docs, E2E scenarios          | sonnet          | medium | Breadth over depth.                                                                  |
-| Student: preview QA                   | sonnet          | xhigh  | Many cases and long runs; see `.claude/agents/qa-preview.md`.                        |
-| Student: rename or lint sweep         | sonnet or haiku | low    | Mechanical.                                                                          |
+| Role                                           | Model           | Effort | Why                                                                                          |
+| ---------------------------------------------- | --------------- | ------ | -------------------------------------------------------------------------------------------- |
+| Advisor session (audit or design day)          | fable           | xhigh  | Long-horizon synthesis. Above `high` the gain is task-dependent, so stop at `xhigh`.         |
+| Advisor session (orchestration day)            | fable           | high   | Dispatch and spot-checks. Never leave it at Claude Code's `medium` default.                  |
+| Advisor ceiling run (rare)                     | fable           | max    | Only to measure the ceiling on one hard question, with the owner's go-ahead.                 |
+| Teacher: build a PR, money code                | opus            | high   | Multi-file coherence and test writing; pair with a `codex review` round.                     |
+| Teacher: triage review comments                | opus            | high   | Claim-versus-code verification needs care. Non-money triage can use medium.                  |
+| Student: UI, labels, accessibility             | sonnet          | high   | Visible quality matters more than token savings.                                             |
+| Student: docs that verify claims in code       | sonnet          | high   | Stale docs mislead the agents that read them; see `.claude/agents/documentation-writer.md`.  |
+| Student: E2E scenarios, lean preview re-checks | sonnet          | medium | Breadth over depth; see `.claude/agents/sweeper.md`.                                         |
+| Student: preview QA                            | sonnet          | xhigh  | Full rounds on state or money: many cases and long runs; see `.claude/agents/qa-preview.md`. |
+| Student: rename or lint sweep                  | sonnet or haiku | low    | Mechanical.                                                                                  |
 
 Choose the lowest effort that passes your checks. It is the biggest cost lever you control.
 
@@ -132,7 +133,11 @@ bash -c 'until mkdir /tmp/fw-heavy.lock 2>/dev/null; do sleep 15; done; trap "rm
 
 Always release the lock, even when the command fails: put the whole thing in one `bash -c` and use `trap 'rmdir /tmp/fw-heavy.lock' EXIT` as `.claude/skills/workflow/SKILL.md` does. After a killed run or a reboot, check for a stale `/tmp/fw-heavy.lock` (and `/tmp/fw-browser.lock`) and remove it before resuming agents.
 
-c. **Memory reaper.** On this 8 GB machine, Claude Code's low-memory reaper kills idle background shells, and a repo-wide `jest --changedSince` was killed that way. Prefer a targeted suite list: the tests the branch touched, committed or not (`git diff --name-only origin/dev -- '__tests__/*'` covers commits plus staged and unstaged edits; add `git ls-files --others --exclude-standard -- __tests__` for new untracked suites) plus the suites that import the changed modules. CI does not run everything on every PR: a PR into `dev` runs only `jest --changedSince` (`ci.yaml`), and the full sharded suite runs only on release runs (PRs into `prod`, pushes to `staging` or `prod`). So a change with wide reach (a shared helper, a fixture, a dependency bump) needs its importers run locally or it is first fully tested on the release PR.
+This snippet is the one definition of the lock. The two repo-owned check scripts take it the same way, for their whole run, and release it in an `EXIT` trap: `scripts/dev/pre-push-checks.sh <log-dir>` (every pre-push step, see c below) and `scripts/dev/db-tier-local.sh [--log-statements] <log-file> [jest args…]` (the database tier on a disposable Postgres, `.claude/skills/booking/references/verification.md` section 11). The `check-runner` agent runs them and returns only the numbers and the failures.
+
+c. **Memory reaper.** On this 8 GB machine, Claude Code's low-memory reaper kills idle background shells, and a repo-wide `jest --changedSince` was killed that way. While iterating, prefer a targeted suite list: the tests the branch touched, committed or not (`git diff --name-only origin/dev -- '__tests__/*'` covers commits plus staged and unstaged edits; add `git ls-files --others --exclude-standard -- __tests__` for new untracked suites) plus the suites that import the changed modules. CI does not run everything on every PR: a PR into `dev` runs only `jest --changedSince` (`ci.yaml`), and the full sharded suite runs only on release runs (PRs into `prod`, pushes to `staging` or `prod`). So a change with wide reach (a shared helper, a fixture, a dependency bump) needs its importers run locally or it is first fully tested on the release PR.
+
+On the final head, before a push, run the WHOLE suite once all the same: `npx jest --coverage=false --maxWorkers=2`, detached with `nohup` and behind the heavy lock, takes about 12 minutes on an idle machine, longer beside another job, and survives the reaper. `scripts/dev/pre-push-checks.sh` runs it as its last step, after `prisma generate`, a cold `tsc`, eslint and Prettier on the changed files, the comment-archaeology guard and a check that no commit carries a session trailer, and prints one `name rc=N Ns` line per step. In the 2026-11-13 trains a named-directory run missed a real failure three times, each in a suite outside the directories that looked relevant. A UI suite that times out at 5 seconds while Chrome or a second jest is running is re-run alone before it is called a failure.
 
 d. **Separate worktrees.** Parallel builders get separate worktrees and branches with disjoint file sets. Give them a rule for shared files, for example each builder adds its own block in a shared label file instead of editing common lines. The orchestrator merges the branches afterwards with `git merge --no-ff`. Symlink the main checkout's `node_modules` into each worktree (AGENTS.md section 3.1).
 
@@ -142,9 +147,20 @@ f. **Who gets what.**
 
 - Money work (`lib/payments/`, tax) goes to Opus at high effort, plus one `codex review --base origin/dev` round, posted on the PR as inline review threads.
 - UI, labels and accessibility go to Sonnet at high effort.
-- Docs go to Sonnet at medium effort.
+- Docs go to Sonnet at high effort (`documentation-writer`); a doc regenerated from a written verdict goes to Sonnet at low effort (`mechanic`).
+- A full preview QA round goes to Sonnet at extra-high effort (`qa-preview`); a lean re-check of a few cases goes to Sonnet at medium effort (`sweeper`).
 
 g. **Verify the brief.** A builder's report can disprove the orchestrator's premises. In the 2026-11-08 session, two of the three claims in a money brief were wrong. The orchestrator re-checks any contradicted claim in code before acting on it, and corrects the brief before relaunching anyone.
+
+h. **A QA run pins the head.** While a preview QA run is in progress, nobody pushes to that branch: the builder waits for the orchestrator's message, never for a report file to appear, and the QA agent writes its report once, at the end, with the head recorded at the start and the end. A push in the middle of a run made one round describe two builds.
+
+The hold is enforced by a hook, not only by this rule. `qa-preview` (and `sweeper` on a preview re-check) takes the hold with `scripts/dev/qa-hold.sh take <branch> <PR> <head>` before the first case. That writes `/tmp/fw-qa-hold/<key>` (the branch with `%` as `%25` and `/` as `%2F`) holding `<PR> <head> <UTC ISO time>`, never overwrites another run's fresh hold, and prints the line. The agent releases it with `scripts/dev/qa-hold.sh release <branch> "<line>"` when the run ends, which removes the file only if the file still holds that line. `.claude/hooks/qa-push-hold.sh`, a `PreToolUse` hook on every Bash call, blocks a `git push` to a held branch with a message naming the PR, the head and the hold's age, ending "wait for the QA run to end, or for the orchestrator to remove the hold file". That message means a QA run is still reading the preview: do not retry or work around it; wait for the orchestrator. The rule is deliberately conservative, because a false block is cheap and a missed one is not. The hook checks the branch checked out in every directory the command involves (the call's cwd and each absolute `cd` or `-C` directory, quoted or not) and every plain word after any `push`, and it blocks on `--all`, `--mirror`, `--branches`, `--repo`, a `*` refspec, a bare `:` or any relative `cd` or `-C` directory while any fresh hold exists. A push of another branch from a held checkout is therefore blocked too: run it from another worktree, or ask the orchestrator. A hold older than 3 hours is stale and lets the push through with a note, and any error inside the hook allows the push. It is a guard, not a boundary. Its known limits are `remote.*.push` and `push.default` configuration, git aliases, and shell functions and variables that hide the word push; a quoted string that merely contains `git push` is blocked, harmlessly. A QA agent that died without cleaning up leaves its hold behind: the orchestrator removes it with `rm -f` once it knows the run is over. With no hold directory the hook exits before reading its input, so it costs every other Bash call about 2 ms.
+
+i. **How many at once.** Two builders plus one heavy job is the limit on 8 GB; three builders, jest and Chrome together got jobs killed. A QA agent in the browser counts as the heavy job's neighbour, so expect UI test timeouts while it runs.
+
+j. **Reports go to files.** Each agent writes its result to a named file under `temp/` and returns a short summary. The orchestrator's context is summarised in a long session, and a result that lived only in a notification is lost with it.
+
+k. **An independent review is a gate.** Clean suites and passing previews did not catch what a second reviewer found on three PRs in a row. After a fix in access or money code, the builder sweeps the same class (every caller, every path that can throw between a write and its check) before the next review pass, instead of fixing the one line the reviewer named. The `independent-reviewer` agent can be that second pass before the owner's external review, but only when the owner says yes: the orchestrator offers it for a money, state or access PR that is otherwise ready, never runs it on its own, and runs it at most once per head.
 
 ## Sources
 

@@ -16,7 +16,7 @@ import {
 import { bookingOrgId, getDmChannelId } from "@/lib/stream-utils";
 import {
   dmEligibleStatusFilter,
-  excludeTrialBooking,
+  excludeNonDmDirectBooking,
   OPENABLE_EVENT_STATUSES,
 } from "@/lib/stream/dm-eligibility-statuses";
 import { queryChannelsPaged } from "@/lib/stream/batch";
@@ -240,34 +240,30 @@ async function addHostedPlanCollabChannels(
   collabChannelIds: Set<string>,
 ): Promise<void> {
   const [hostedWebinarPlans, hostedClassPlans] = await Promise.all([
-    prisma.webinarPlan?.findMany
-      ? prisma.webinarPlan.findMany({
-          where: {
-            consultantProfileId,
-            collaborators: {
-              some: {
-                status: "ACCEPTED",
-                consultantProfile: { deletedAt: null },
-              },
-            },
+    prisma.webinarPlan.findMany({
+      where: {
+        consultantProfileId,
+        collaborators: {
+          some: {
+            status: "ACCEPTED",
+            consultantProfile: { deletedAt: null },
           },
-          select: { id: true },
-        })
-      : Promise.resolve([]),
-    prisma.classPlan?.findMany
-      ? prisma.classPlan.findMany({
-          where: {
-            consultantProfileId,
-            collaborators: {
-              some: {
-                status: "ACCEPTED",
-                consultantProfile: { deletedAt: null },
-              },
-            },
+        },
+      },
+      select: { id: true },
+    }),
+    prisma.classPlan.findMany({
+      where: {
+        consultantProfileId,
+        collaborators: {
+          some: {
+            status: "ACCEPTED",
+            consultantProfile: { deletedAt: null },
           },
-          select: { id: true },
-        })
-      : Promise.resolve([]),
+        },
+      },
+      select: { id: true },
+    }),
   ]);
 
   for (const plan of hostedWebinarPlans) {
@@ -305,8 +301,6 @@ async function collectAcceptedCollaboratorTargets(
   selfHealEvents: { type: "webinar" | "class"; id: string }[],
   collabPresenterDmPairs: DmPair[],
 ): Promise<void> {
-  if (!prisma.collaborator?.findMany) return;
-
   const acceptedCollaborations = await prisma.collaborator.findMany({
     where: {
       consultantProfileId,
@@ -643,7 +637,7 @@ async function collectConsultantDmPairs(
       where: {
         consultationPlan: { consultantProfileId },
         status: dmEligibleStatusFilter(),
-        ...excludeTrialBooking(),
+        ...excludeNonDmDirectBooking(),
       },
       include: {
         requestedBy: { include: { user: { select: { id: true } } } },
@@ -655,7 +649,7 @@ async function collectConsultantDmPairs(
       where: {
         subscriptionPlan: { consultantProfileId },
         status: dmEligibleStatusFilter(),
-        ...excludeTrialBooking(),
+        ...excludeNonDmDirectBooking(),
       },
       include: {
         requestedBy: { include: { user: { select: { id: true } } } },
@@ -687,7 +681,7 @@ async function collectConsulteeDmPairs(
       where: {
         requestedById: consulteeProfileId,
         status: dmEligibleStatusFilter(),
-        ...excludeTrialBooking(),
+        ...excludeNonDmDirectBooking(),
       },
       include: {
         consultationPlan: {
@@ -704,7 +698,7 @@ async function collectConsulteeDmPairs(
       where: {
         requestedById: consulteeProfileId,
         status: dmEligibleStatusFilter(),
-        ...excludeTrialBooking(),
+        ...excludeNonDmDirectBooking(),
       },
       include: {
         subscriptionPlan: {

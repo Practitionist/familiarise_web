@@ -14,6 +14,8 @@ import {
   ErrorTypes,
   type ErrorType,
 } from "../classification/payment-error-classification";
+import { PLAN_CLIENTS_FULL_MESSAGE } from "@/schemas/plan-clients";
+import { REQUEST_APPROVAL_REQUIRED_MESSAGE } from "@/lib/booking/booking-rule-error";
 
 // ============================================================================
 // Toast message definitions
@@ -190,6 +192,18 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
   [ErrorTypes.SUBSCRIPTION_ALREADY_ACTIVE]: {
     title: "You Already Have This Plan",
     description: null,
+  },
+  [ErrorTypes.NOT_PLACEABLE]: {
+    title: "No Free Time In The First Week",
+    description: null,
+  },
+  [ErrorTypes.PLAN_CLIENTS_FULL]: {
+    title: "This Expert Is Fully Booked",
+    description: PLAN_CLIENTS_FULL_MESSAGE,
+  },
+  [ErrorTypes.REQUEST_APPROVAL_REQUIRED]: {
+    title: "This Expert Reviews Requests First",
+    description: REQUEST_APPROVAL_REQUIRED_MESSAGE,
   },
   [ErrorTypes.CURRENCY_UNSUPPORTED]: {
     title: "Currency Not Supported",
@@ -383,6 +397,11 @@ const FALLBACK_DESCRIPTIONS: Partial<Record<ErrorType, string>> = {
 // ============================================================================
 // Public API
 // ============================================================================
+
+/** A type's fixed description, or null when its copy depends on the server's message. */
+export function getStaticErrorDescription(errorType: ErrorType): string | null {
+  return ERROR_TOAST_MAP[errorType].description;
+}
 
 /**
  * Resolve an errorType + optional message into a toast-ready { title, description }.

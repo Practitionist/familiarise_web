@@ -100,7 +100,7 @@ beforeEach(() => {
 describe("one party resolver", () => {
   it("resolves learner and expert, and nobody else", async () => {
     (prisma.appointment.findFirst as jest.Mock).mockResolvedValue(
-      booking("SCHEDULED"),
+      booking("APPROVED"),
     );
     expect((await resolveDocumentParty(prisma, "apt-1", "l"))?.role).toBe(
       "learner",
@@ -121,7 +121,7 @@ describe("upload commit", () => {
   it("replays a committed upload with 200 and no second notification", async () => {
     signedIn("l");
     (prisma.appointment.findFirst as jest.Mock).mockResolvedValue(
-      booking("SCHEDULED"),
+      booking("APPROVED"),
     );
     (prisma.appointmentDocument.findFirst as jest.Mock).mockResolvedValue({
       id: "doc-1",
@@ -208,7 +208,7 @@ describe("DELETE binds the action to the caller's side", () => {
   it("lets an expert delete only a file they shared", async () => {
     signedIn("e");
     (prisma.appointment.findFirst as jest.Mock).mockResolvedValue(
-      booking("SCHEDULED"),
+      booking("APPROVED"),
     );
     (prisma.appointmentDocument.updateMany as jest.Mock).mockResolvedValue({
       count: 0,
@@ -228,7 +228,7 @@ describe("DELETE binds the action to the caller's side", () => {
   it("lets a learner withdraw only the latest pending version", async () => {
     signedIn("l");
     (prisma.appointment.findFirst as jest.Mock).mockResolvedValue(
-      booking("SCHEDULED"),
+      booking("APPROVED"),
     );
     (prisma.appointmentDocument.findFirst as jest.Mock).mockResolvedValue({
       rootDocumentId: "root-1",
@@ -283,7 +283,7 @@ describe("review", () => {
   it("is refused for the learner", async () => {
     signedIn("l");
     (prisma.appointment.findFirst as jest.Mock).mockResolvedValue(
-      booking("SCHEDULED"),
+      booking("APPROVED"),
     );
     const res = await post({ reviewStatus: "APPROVED" });
     expect(res.status).toBe(403);
@@ -292,7 +292,7 @@ describe("review", () => {
   it("answers SUPERSEDED when the learner uploaded a newer version", async () => {
     signedIn("e");
     (prisma.appointment.findFirst as jest.Mock).mockResolvedValue(
-      booking("SCHEDULED"),
+      booking("APPROVED"),
     );
     (prisma.appointmentDocument.findFirst as jest.Mock).mockImplementation(
       async ({ where }: { where: { reviewStatus?: string } }) =>
@@ -316,7 +316,7 @@ describe("review", () => {
   it("answers a retried approval as the first write did, without a second write", async () => {
     signedIn("e");
     (prisma.appointment.findFirst as jest.Mock).mockResolvedValue(
-      booking("SCHEDULED"),
+      booking("APPROVED"),
     );
     (prisma.appointmentDocument.findFirst as jest.Mock).mockResolvedValue({
       id: "doc-1",
@@ -339,7 +339,7 @@ describe("review", () => {
   it("answers SUPERSEDED to a retried approval once the learner uploaded a newer version", async () => {
     signedIn("e");
     (prisma.appointment.findFirst as jest.Mock).mockResolvedValue(
-      booking("SCHEDULED"),
+      booking("APPROVED"),
     );
     (prisma.appointmentDocument.findFirst as jest.Mock).mockResolvedValue({
       id: "doc-1",
@@ -359,7 +359,7 @@ describe("review", () => {
   it("replays a committed reply without re-verifying storage", async () => {
     signedIn("e");
     (prisma.appointment.findFirst as jest.Mock).mockResolvedValue(
-      booking("SCHEDULED"),
+      booking("APPROVED"),
     );
     (prisma.appointmentDocument.findFirst as jest.Mock)
       .mockResolvedValueOnce({ id: "reply-1" })
@@ -398,7 +398,7 @@ describe("review", () => {
   it("writes the status with the prior status in the WHERE", async () => {
     signedIn("e");
     (prisma.appointment.findFirst as jest.Mock).mockResolvedValue(
-      booking("SCHEDULED"),
+      booking("APPROVED"),
     );
     (prisma.appointmentDocument.findFirst as jest.Mock).mockResolvedValue({
       id: "doc-1",

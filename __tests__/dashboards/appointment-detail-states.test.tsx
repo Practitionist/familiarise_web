@@ -209,15 +209,14 @@ describe("consultee · AWAITING_PAYMENT subscription", () => {
     });
     const html = render("consultee");
     expect(html).toContain("Awaiting payment");
-    expect(html).toContain(
-      "Ethan approved. Pay ₹7,080.00 (₹6,000.00 + 18% GST) by ",
-    );
+    expect(html).toContain("Pay ₹7,080.00 (₹6,000.00 + 18% GST) by ");
     expect(html).toContain("to keep your 6 held slots.");
     expect(html).toContain("Pay ₹7,080.00");
     expect(html).toMatch(/21h 5\dm left/);
     expect(html).toContain("Held · link sent");
     expect(html).toContain("₹7,080.00 due · Razorpay · link valid until ");
-    expect(html).toContain("Problem with this charge");
+    // Nothing has been charged yet, so the money door names the booking.
+    expect(html).toContain("Problem with this booking");
     expect(html).not.toContain("Program progress");
     expect(html).not.toContain("Cancel booking");
     expect(html).toContain("Withdraw request");
@@ -233,13 +232,13 @@ describe("consultee · AWAITING_PAYMENT subscription", () => {
 });
 
 describe("consultee · REQUESTED subscription (#1675 owner decision 2026-09-20)", () => {
-  it("shows a neutral waiting line, no review prompt, and Withdraw after Get help", () => {
+  it("says the wait in the reason line, draws no action banner, and puts Withdraw after Get help", () => {
     viewerId = "u-rachel";
     currentDetail = subscriptionDetail({ status: "PENDING" });
     const html = render("consultee");
-    expect(html).toContain(
-      "Waiting for Ethan to respond — usually within 48 hours.",
-    );
+    // A wait is not an action: the badge's reason line says it, the banner stays away.
+    expect(html).toContain("Waiting for Ethan to answer (within 48 hours).");
+    expect(html).not.toContain('aria-label="Needs you"');
     // Nothing was ever held or completed, so the profile-review nudge does
     // not appear before there is anything to review.
     expect(html).not.toContain("Reviewed this expert");

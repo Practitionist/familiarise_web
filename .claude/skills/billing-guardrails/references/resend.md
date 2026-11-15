@@ -18,11 +18,11 @@ The repo assumes the Free plan until launch (`docs/notifications/05-pre-producti
 
 ## 4. Guardrails to set
 
-Resend dashboard, Settings, Usage: note the 100 per day cap before any broadcast. Upgrade to Pro before enabling `EMAIL_DELIVERY_MODE=live` for real traffic. Use Batch Email API for broadcasts (up to 100 per request).
+Resend dashboard, Settings, Usage: note the 100 per day cap before any broadcast. Move to Pro when the trigger on the vendor page fires, not by the calendar; the trigger is kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend). Use Batch Email API for broadcasts (up to 100 per request).
 
 ## 5. When to move to Pro
 
-Which plan we are on and when the owner moves up: value kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend). Free stops sending at 100 emails a day (3,000 a month), so a marketing batch or a booking surge on Free fails rather than bills. The reminder is also a line in the launch checklist (`docs/notifications/05-pre-production-checklist.md`, Step 5) and in the [booking v2 direction record](../../../../docs/decisions/2026-11-03-booking-v2-direction.md).
+Which plan we are on and the trigger that moves the owner up (a trigger, not a go-live date): value kept in Notion (Familiarise / Finance and Pricing / Vendors & Spend; the matching row is in Familiarise / Finance and Pricing / Finance Lever Register). Free stops sending at 100 emails a day (3,000 a month), so a marketing batch or a booking surge on Free fails rather than bills. The reminder is also a line in the launch checklist (`docs/notifications/05-pre-production-checklist.md`, Step 5) and in the [booking v2 direction record](../../../../docs/decisions/2026-11-03-booking-v2-direction.md).
 
 ## 6. Monitor
 

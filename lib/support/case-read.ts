@@ -24,6 +24,21 @@ import {
 import { slaStateOf } from "./sla";
 export { extractCallbackInfo } from "./callback-info";
 
+/** A case reopened after its statutory date works to its new target, so that date no longer puts it at risk. */
+function statutoryStillBinds(): Prisma.SupportCaseWhereInput {
+  return {
+    OR: [
+      { reopenedAt: null },
+      { reopenedAt: { lte: prisma.supportCase.fields.statutoryDueAt } },
+    ],
+  };
+}
+
+/** The inbox predicate both the page and its nav badge read. */
+function inboxWhere(filters: InboxFilters): Prisma.SupportCaseWhereInput {
+  return inboxCaseWhere(filters, new Date(), statutoryStillBinds());
+}
+
 export const SLA_SELECT = {
   status: true,
   ackDueAt: true,
@@ -31,6 +46,7 @@ export const SLA_SELECT = {
   resolutionDueAt: true,
   statutoryDueAt: true,
   resolvedAt: true,
+  reopenedAt: true,
   awaitingUserSince: true,
   pausedSeconds: true,
 } as const;
@@ -85,7 +101,7 @@ export async function readInboxPage(
     (Math.max(1, page) - 1) * INBOX_PAGE_SIZE,
     INBOX_MAX_DEPTH,
   );
-  const where = inboxCaseWhere(filters);
+  const where = inboxWhere(filters);
   const totalRead = prisma.supportCase.count({ where });
   const depth = skip + INBOX_PAGE_SIZE;
   const keySelect = {
@@ -96,6 +112,7 @@ export async function readInboxPage(
     ackDueAt: true,
     resolutionDueAt: true,
     statutoryDueAt: true,
+    reopenedAt: true,
   } as const;
   const rowsRead =
     filters.sort === "sla"
@@ -204,7 +221,7 @@ export async function readInboxPage(
 export function inboxBadgeCountReads(viewerId: string) {
   return [
     prisma.supportCase.count({
-      where: inboxCaseWhere(inboxBadgeFilters(viewerId)),
+      where: inboxWhere(inboxBadgeFilters(viewerId)),
     }),
   ] as const;
 }

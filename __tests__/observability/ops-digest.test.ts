@@ -118,6 +118,10 @@ const mockDb = {
     aggregate: jest.fn(async () => ({ _sum: { amount: 0 } })),
   },
   refund: { aggregate: jest.fn(async () => ({ _sum: { amountPaise: 0 } })) },
+  streamRevocationRetry: {
+    count: jest.fn(async (_args?: unknown) => 0),
+    findMany: jest.fn(async (_args?: unknown) => [] as { id: string }[]),
+  },
 };
 jest.mock("@/lib/prisma", () => ({
   __esModule: true,
@@ -139,6 +143,8 @@ const originalEnv = process.env;
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockDb.streamRevocationRetry.count.mockResolvedValue(0);
+  mockDb.streamRevocationRetry.findMany.mockResolvedValue([]);
   standingSkip = null;
   process.env = {
     ...originalEnv,
@@ -223,6 +229,31 @@ describe("daily ops digest", () => {
       `${HEARTBEAT}/fail`,
       expect.anything(),
     );
+  });
+
+  it("lists access revocations still owed past their retry cap, the newly crossed ones as new", async () => {
+    mockDb.streamRevocationRetry.count.mockImplementation(
+      async (args?: unknown) => {
+        const { where } = args as { where: { attempts: unknown } };
+        return typeof where.attempts === "number" ? 1 : 3;
+      },
+    );
+    mockDb.streamRevocationRetry.findMany.mockResolvedValue([{ id: "rev-1" }]);
+    const result = await run();
+    expect(mockDb.streamRevocationRetry.count).toHaveBeenCalledWith({
+      where: {
+        status: { in: ["PENDING", "FAILED"] },
+        kind: {
+          in: ["SEAT_ACCESS_REVOKE", "REFUND_ACCESS_REVOKE", "ERASURE_REVOKE"],
+        },
+        attempts: { gte: 6 },
+      },
+    });
+    expect(result.headline).toBe("1 new, 0 standing");
+    expect(sentEmail().text).toContain(
+      "3 Stream access revocations still owed past the retry cap (1 new)",
+    );
+    expect(sentEmail().text).toContain("rev-1");
   });
 
   it("records an unset heartbeat URL instead of throwing, and never calls Sentry", async () => {

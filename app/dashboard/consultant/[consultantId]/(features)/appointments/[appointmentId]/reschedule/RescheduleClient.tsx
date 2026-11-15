@@ -24,6 +24,7 @@ export function RescheduleClient({
   title,
   typeLabel,
   subject,
+  settled,
   backHref,
 }: Readonly<{
   consultantId: string;
@@ -31,6 +32,8 @@ export function RescheduleClient({
   title: string;
   typeLabel: BookingTypeLabel;
   subject: TimePickerSubject;
+  /** Paid or free; an unpaid booking's new times need the 2-hour lead. */
+  settled: boolean;
   backHref: string;
 }>) {
   const router = useRouter();
@@ -50,17 +53,27 @@ export function RescheduleClient({
     router.refresh();
   };
 
-  const policy = rescheduleConsultantPolicy({
-    onSubmit: async ({ slotIds, proposedSlots, preference, displayZone }) => {
-      const moved = await actions.handleReschedule(
+  const policy = rescheduleConsultantPolicy(
+    {
+      onSubmit: async ({
         slotIds,
         proposedSlots,
         preference,
         displayZone,
-      );
-      if (moved) goBack();
+        idempotencyKey,
+      }) => {
+        const moved = await actions.handleReschedule(
+          slotIds,
+          proposedSlots,
+          preference,
+          displayZone,
+          idempotencyKey,
+        );
+        if (moved) goBack();
+      },
     },
-  });
+    { settled },
+  );
 
   return (
     <TimePicker

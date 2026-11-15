@@ -3,8 +3,8 @@
  */
 
 // Invariant: the nav badge, Home's Needs-you strip and the personal NeedsYou
-// context are one number, countRequestsToAnswer: real PENDING consultations,
-// live PENDING subscriptions and PENDING trials, never a checkout in flight.
+// context are one number, countRequestsToAnswer: real PENDING consultations and
+// live PENDING subscriptions (a trial never waits on the expert), never a checkout in flight.
 
 jest.mock("../../lib/auth-helpers", () => ({
   __esModule: true,
@@ -62,7 +62,7 @@ beforeEach(() => {
 describe("one requests-to-answer number", () => {
   it("badge, Home strip and NeedsYou all answer countRequestsToAnswer", async () => {
     const count = await countRequestsToAnswer({ consultantProfileId: "cp-1" });
-    expect(count).toBe(6);
+    expect(count).toBe(5);
 
     const badge = await getInbox(
       new NextRequest(
@@ -110,19 +110,49 @@ describe("one requests-to-answer number", () => {
       null,
       "org-1",
     ]);
-    expect(summary.total).toBe(12);
+    expect(summary.total).toBe(10);
   });
 });
 
+/** The where-fragment a lapsed move restoring away from PENDING is excluded by. */
+const LAPSED =
+  /"originStatus":\{"in":\["APPROVED","APPROVED_PENDING_PAYMENT"\]\}/;
+
+describe("a move past its deadline is not a request to answer", () => {
+  it("both counts exclude it, with one statement each", async () => {
+    await countRequestsToAnswer({ consultantProfileId: "cp-1" });
+    expect(m.consultation.count).toHaveBeenCalledTimes(1);
+    expect(m.subscription.count).toHaveBeenCalledTimes(1);
+    for (const model of [m.consultation, m.subscription]) {
+      const [{ where }] = model.count.mock.calls[0];
+      const shape = JSON.stringify(where);
+      expect(shape).toMatch(LAPSED);
+      expect(shape).toContain('"NOT":{"expiresAt":{"gt"');
+    }
+  });
+});
+
+it("Home's reschedule replies leave out a proposal past its deadline", async () => {
+  const now = new Date("2026-11-15T12:00:00Z");
+  await readConsultantNeedsYou("cp-1", now);
+  const [{ where }] = m.rescheduleRequest.findMany.mock.calls[0];
+  expect(where).toMatchObject({
+    status: "PENDING_REVIEW",
+    initiatorRole: "CONSULTEE",
+    expiresAt: { gt: now },
+  });
+  expect(m.rescheduleRequest.findMany).toHaveBeenCalledTimes(1);
+});
+
 describe("countOpenRequestsForCap", () => {
-  it("counts real submitted requests in every tenant, inside their hold, plus trial requests", async () => {
+  it("counts real submitted requests in every tenant, inside their hold; a trial is never one", async () => {
     const now = new Date("2026-10-27T12:00:00Z");
     const tx = {
       consultation: { count: jest.fn().mockResolvedValue(2) },
       subscription: { count: jest.fn().mockResolvedValue(1) },
       trial: { count: jest.fn().mockResolvedValue(1) },
     };
-    await expect(countOpenRequestsForCap("cp-1", tx, now)).resolves.toBe(4);
+    await expect(countOpenRequestsForCap("cp-1", tx, now)).resolves.toBe(3);
 
     const [{ where: consultation }] = tx.consultation.count.mock.calls[0];
     expect(consultation).toEqual({
@@ -146,9 +176,7 @@ describe("countOpenRequestsForCap", () => {
     expect(JSON.stringify([consultation, subscription])).not.toContain(
       "payment",
     );
-    expect(tx.trial.count).toHaveBeenCalledWith({
-      where: { consultantProfileId: "cp-1", status: "PENDING" },
-    });
+    expect(tx.trial.count).not.toHaveBeenCalled();
     // The global client is never touched when a transaction is passed.
     expect(m.consultation.count).not.toHaveBeenCalled();
   });

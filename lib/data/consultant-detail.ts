@@ -1,7 +1,11 @@
 import { cache } from "react";
 import { reportSentryError } from "@/lib/observability/report";
 import prisma from "@/lib/prisma";
-import { oneOnOnePlanDiscoverableWhere } from "@/lib/api/plans/visibility";
+import {
+  eventPlanDiscoverableWhere,
+  oneOnOnePlanDiscoverableWhere,
+} from "@/lib/api/plans/visibility";
+import { planClientsFull } from "@/lib/booking/plan-demand";
 import type { TReviewTrackPresence } from "@/types/review";
 import {
   publicReviewSelect,
@@ -107,11 +111,27 @@ export const getConsultantDetail = cache(async (consultantId: string) => {
           },
         },
       },
-      webinarPlans: true,
-      classPlans: true,
+      webinarPlans: { where: eventPlanDiscoverableWhere() },
+      classPlans: {
+        where: eventPlanDiscoverableWhere(),
+        include: {
+          // The next scheduled batch only, so the card can say when it starts.
+          classes: {
+            where: {
+              status: "SCHEDULED",
+              deletedAt: null,
+              schedulingPeriodStartsAt: { gt: new Date() },
+            },
+            orderBy: { schedulingPeriodStartsAt: "asc" },
+            take: 1,
+            select: { id: true, schedulingPeriodStartsAt: true },
+          },
+        },
+      },
     },
   });
   if (!consultant) return null;
+  const fullyBooked = await planClientsFull(prisma, consultant.id);
 
   // The Prisma client extension at lib/prisma.ts:121-124 converts BigInt
   // `price` → Number for all four plan models. But the rows returned by
@@ -122,7 +142,9 @@ export const getConsultantDetail = cache(async (consultantId: string) => {
   // strings — downstream client components already format them via
   // formatInTimeZone / date-fns, so this is safe here.
   try {
-    return JSON.parse(JSON.stringify(consultant)) as typeof consultant;
+    return JSON.parse(
+      JSON.stringify({ ...consultant, planClientsFull: fullyBooked }),
+    ) as typeof consultant & { planClientsFull: boolean };
   } catch (error) {
     // A throw here means the row picked up something non-JSON-safe (a
     // serialization regression, not a missing/empty result) — the public

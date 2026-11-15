@@ -2,20 +2,20 @@
 
 ## Event Type Comparison
 
-| Aspect                   | Consultation              | Subscription                                             | Webinar                   | Class                                                       | Trial                            |
-| ------------------------ | ------------------------- | -------------------------------------------------------- | ------------------------- | ----------------------------------------------------------- | -------------------------------- |
-| **Relationship**         | 1:1                       | 1:1                                                      | 1:many                    | 1:many                                                      | 1:1                              |
-| **Frequency**            | One-time                  | Recurring                                                | One-time                  | Recurring                                                   | One-time (free)                  |
-| **Duration field**       | `durationInHours` (total) | `sessionDurationInHours` (per call) + `durationInMonths` | `durationInHours` (total) | `sessionDurationInHours` (per session) + `durationInMonths` | Fixed 0.5h (1 slot)              |
-| **Slot grouping**        | Consecutive + same day    | 1 call/day max, consecutive within day                   | Consecutive               | Max 2-3 sessions/day, consecutive within session            | Single slot                      |
-| **Scheduling period**    | None                      | Required [startDate, endDate]                            | None                      | Required [startDate, endDate]                               | None                             |
-| **Appointments created** | 1                         | 1 per call (many)                                        | 1                         | 1 per session (many)                                        | 1                                |
-| **Weekly limit**         | N/A                       | `sessionsPerWeek` (0-7)                                  | N/A                       | `sessionsPerWeek`                                           | N/A                              |
-| **Status field**         | `status`                  | `status`                                                 | `status`                  | `status`                                                    | `status` (TrialStatus)           |
-| **Allocation modes**     | auto, manual, requested   | auto, manual, requested                                  | auto, manual              | auto, manual                                                | Consultant-scheduled             |
-| **Min duration**         | 0.5h                      | 0.5h per session                                         | 0.5h                      | 0.5h per session                                            | 0.5h (fixed)                     |
-| **Payment**              | Required                  | Required                                                 | Required                  | Required                                                    | Free                             |
-| **Uniqueness**           | Multiple allowed          | Multiple allowed                                         | Multiple allowed          | Multiple allowed                                            | One per consultant per consultee |
+| Aspect                   | Consultation                     | Subscription                                             | Webinar                   | Class                                                       | Trial                            |
+| ------------------------ | -------------------------------- | -------------------------------------------------------- | ------------------------- | ----------------------------------------------------------- | -------------------------------- |
+| **Relationship**         | 1:1                              | 1:1                                                      | 1:many                    | 1:many                                                      | 1:1                              |
+| **Frequency**            | One-time                         | Recurring                                                | One-time                  | Recurring                                                   | One-time (free)                  |
+| **Duration field**       | `durationInHours` (total)        | `sessionDurationInHours` (per call) + `durationInMonths` | `durationInHours` (total) | `sessionDurationInHours` (per session) + `durationInMonths` | Fixed 0.5h (1 slot)              |
+| **Slot grouping**        | Consecutive (may cross midnight) | 1 call/day max, consecutive within day                   | Consecutive               | Max 2-3 sessions/day, consecutive within session            | Single slot                      |
+| **Scheduling period**    | None                             | Required [startDate, endDate]                            | None                      | Required [startDate, endDate]                               | None                             |
+| **Appointments created** | 1                                | 1 per call (many)                                        | 1                         | 1 per session (many)                                        | 1                                |
+| **Weekly limit**         | N/A                              | `sessionsPerWeek` (0-7)                                  | N/A                       | None (two a day at most)                                    | N/A                              |
+| **Status field**         | `status`                         | `status`                                                 | `status`                  | `status`                                                    | `status` (TrialStatus)           |
+| **Allocation modes**     | auto, manual, requested          | auto, manual, requested                                  | auto, manual              | auto, manual                                                | Consultant-scheduled             |
+| **Min duration**         | 0.5h                             | 0.5h per session                                         | 0.5h                      | 0.5h per session                                            | 0.5h (fixed)                     |
+| **Payment**              | Required                         | Required                                                 | Required                  | Required                                                    | Free                             |
+| **Uniqueness**           | Multiple allowed                 | Multiple allowed                                         | Multiple allowed          | Multiple allowed                                            | One per consultant per consultee |
 
 ---
 
@@ -23,9 +23,11 @@
 
 Single one-time session between consultant and consultee.
 
-**Config**: `durationInHours` (0.5-4 hours)
-**Slots**: `slotsPerSession = Math.ceil(durationInHours / 0.5)`
-**Rules**: All slots must be consecutive and on the same day. Exactly one Appointment is created.
+**Config**: `durationInHours` (0.5-4 hours) on the plan. Each request keeps the price it was made at in `Consultation.agreedPricePaise`; the length is read from the booked session (see "Agreed price and booked length" in [the booking lifecycle](./06-booking-lifecycle.md)).
+**Slots**: `slotsPerSession = Math.ceil(minutes / 30)`, where the minutes are the length of the session the booking holds (`bookedSessionMinutes` in `lib/appointments/occurrences.ts`), or the plan's length when the booking has no session row at all.
+**Rules**: The slots must be one consecutive block of exactly the booked length. The block may cross midnight, because contiguity and length, not the calendar day, keep it one session. Exactly one Appointment is created. `validateConsultation` (`utils/scheduling-engine/ScheduleValidationService.ts`) enforces this on the server, and `validateConsultationSelection` (`lib/scheduling/intervalSelectionValidation.ts`) applies the same rule in the browser.
+
+**Example.** Hannah Anderson sells a 1-hour consultation. Priya Anderson requests Mon 16 Nov 2026 from 23:30 to 00:30 IST. That is two half-hour atoms, back to back, one on each side of midnight. The server accepts it as one session. The old rule judged the day in Asia/Kolkata for every host, so a session that crossed 18:30 UTC was refused on allocate, reschedule-accept and incident rebook even though the request door had accepted it.
 
 ```mermaid
 flowchart TD
@@ -33,9 +35,7 @@ flowchart TD
     B -->|No| X1[Error: invalid duration]
     B -->|Yes| C{Correct slot count?}
     C -->|No| X2[Error: wrong number of slots]
-    C -->|Yes| D{All same day?}
-    D -->|No| X3[Error: must be same day]
-    D -->|Yes| E{All consecutive?}
+    C -->|Yes| E{All consecutive?}
     E -->|No| X4[Error: must be consecutive]
     E -->|Yes| F[Valid]
 ```
@@ -95,6 +95,10 @@ Single one-time event with multiple attendees.
 **Slots**: `slotsPerSession = Math.ceil(durationInHours / 0.5)`
 **Rules**: Consecutive slots required. Exactly one Appointment created. Consultant-scheduled (no request-based flow).
 
+**Setting its time**: the host picks the start on their own calendar with the single-session picker (`SingleSessionPicker`). The picker lists every half-hour start of a day, labelled Free (inside published hours, unbooked), Outside your hours (allowed for an event), Busy or Too soon, in the host's zone. The server applies `eventTimeRefusal` (`lib/booking/event-time-rules.ts`) on create and on a changed time: the start must be on the UTC half hour and at least an hour away, or it answers 400 `EVENT_TIME_INVALID`. The end is the start plus whole minutes, so a 90-minute webinar's slot (and its co-host check) covers 90 minutes. For example, an IST host picks Thu 18:30, a 1.5 h webinar, and the session is stored as 13:00–14:30 UTC.
+
+**After it sells**: once any buyer seat is live, the webinar is never re-planned through Manage timings (409 `USE_RETIME`); the host re-times it at least 24 hours out, and every attendee may leave with a full refund until `retimeBy`.
+
 **Enrollment**: Consultees enroll via checkout. A full event is sold out — registration closes until the organizer raises its capacity.
 
 ---
@@ -105,7 +109,7 @@ Recurring sessions with multiple attendees over months.
 
 **Config**: `sessionDurationInHours` (per session) + `durationInMonths` + `sessionsPerWeek`
 **Total sessions**: `countWeeks(startDate, endDate) * sessionsPerWeek`
-**Rules**: Complete sessions per day (slot count % slotsPerSession == 0), consecutive within day, weekly session limit, scheduling period.
+**Rules**: Complete sessions per day (slot count % slotsPerSession == 0), consecutive within day, at most two sessions a day, scheduling period. There is no weekly limit: a host may run a class faster than the plan's `sessionsPerWeek`, and only the per-day cap limits it. This is a deliberate owner decision (2026-11-12); "enforce the plan's cadence" is the fallback if learners complain. Subscriptions keep their plan-week rules. Auto-schedule still spreads sessions at the plan's cadence.
 
 ```mermaid
 flowchart LR
@@ -114,13 +118,21 @@ flowchart LR
     C -->|No| X1[Error]
     C -->|Yes| D{Consecutive?}
     D -->|No| X2[Error]
-    D -->|Yes| E[Group by week]
-    E --> F{Weekly limit?}
+    D -->|Yes| E[Group by day]
+    E --> F{At most 2 sessions a day?}
     F -->|No| X3[Error]
     F -->|Yes| G[Valid]
 ```
 
 Consultant-scheduled. Consultees enroll via checkout; a full event reads as sold out.
+
+**Scheduling a class**: the host schedules from a weekly pattern on the Manage timings page (`ClassPatternScheduler`): a first possible day plus weekday and time rows ("Mon and Thu at 18:00"). The pattern is projected into the plan's N sessions on the host's wall clock (`projectPattern` in `lib/booking/class-pattern.ts`), so a daylight-saving change keeps 18:00 at 18:00. Each session is labelled against the host's calendar before saving, and saving sends exactly those times through the allocator's manual mode, which re-checks overlap, co-hosts and the two-a-day cap. A pattern is checked against the UTC half-hour grid, so a host in a :45-offset zone such as Asia/Kathmandu is offered :15 and :45 local times (see the DST and timezone posture page). The week grid stays available as the calendar view. The editor's start date produces the default series through the same projection (`seriesStartsFrom`). The offering card's "Schedule now" link opens the scheduler for a class with no sessions yet.
+
+**Creating a class with a start**: the class create route (`app/api/bookings/classes/crud-with-plan/route.ts`) refuses with 400 `EVENT_TIME_INVALID`, before any write, a start that is off the UTC half-hour grid, less than an hour ahead, or unable to place every session of the series. The editor rounds a class start up to the next half hour before it sends it (`components/offerings/editor/adapters.ts`), so a start that was a few minutes off the grid no longer publishes an empty class.
+
+**Cancelling a draft**: a `DRAFT` webinar or class, including one with sessions already placed, can move to `CANCELLED` through the normal cancel door (`EVENT_ALLOWED_FROM` in `lib/booking/transitions.ts`), so the host is never stuck with it. `SCHEDULED` is still reachable from `DRAFT` only by publishing.
+
+**After it sells**: the allocator refuses to re-plan a class with a live buyer seat (409 `USE_RETIME`). The host either moves every session at least 24 hours away to a new pattern in one step (`retimeClassSeries`, "Move upcoming sessions"), or cancels one session and schedules a make-up within 14 days with the single-session picker. A series move records no host miss and gives every seat a free leave until `retimeBy`; a cancel counts as a miss toward learners' exit right.
 
 ---
 

@@ -1,3 +1,4 @@
+import { readJsonBody } from "@/lib/api/parse";
 import { PROFILE_OWNER_SELECT } from "@/lib/booking/list-selects";
 import * as Sentry from "@sentry/nextjs";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
@@ -13,6 +14,7 @@ import {
   withHostSlotBatch,
 } from "@/lib/booking/host-slot-batch";
 import prisma from "@/lib/prisma";
+import { orgPlanEditRefusal } from "@/lib/enterprise/membership-guards";
 import { recordParticipants } from "@/lib/booking/participants";
 import {
   expireEventWaitlistForPlan,
@@ -25,10 +27,12 @@ import { seatHoldingParticipant } from "@/utils/scheduling-engine/occupancyPolic
 import { refuseForeignProfileReassignment } from "@/lib/api/plans/profile-reassignment";
 import { faqCreateNested, faqReplaceNested } from "@/lib/api/plans/content";
 import { NextRequest, NextResponse } from "next/server";
+import { eventEndOf, eventTimeRefusal } from "@/lib/booking/event-time-rules";
 import { z } from "zod";
 import { WebinarPlanSchema } from "@/schemas/plans";
 import { editorStatusOrRefusal } from "@/lib/api/plans/event-status";
-import { Prisma, WebinarStatus } from "@prisma/client";
+import { EventEditorStatusSchema } from "@/schemas/event-instance";
+import { Prisma } from "@prisma/client";
 import {
   EVENT_PUBLISHABLE_FROM,
   transitionWebinarEvent,
@@ -108,10 +112,8 @@ const PostWebinarWithPlanBodySchema = WebinarPlanSchema.omit({
     .refine((val) => !val || !isNaN(Date.parse(val)), {
       message: "Invalid date format for scheduledAt",
     }),
-  status: z
-    .nativeEnum(WebinarStatus)
-    .optional()
-    .default(WebinarStatus.SCHEDULED),
+  // Create saves a draft or publishes; every other status is server-written.
+  status: EventEditorStatusSchema.optional().default("SCHEDULED"),
 });
 
 // Schema for PATCH request body
@@ -140,7 +142,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body = await request.json();
+    const read = await readJsonBody(request);
+    if (read.error) return read.error;
+    const body = read.body;
     console.log(
       "Received webinar creation request body:",
       JSON.stringify(body, null, 2),
@@ -242,15 +246,15 @@ export async function POST(request: NextRequest) {
       // Zod refine ensures parseable date if scheduledAt is a string
       const parsedStartTime = new Date(scheduledAt);
       if (!isNaN(parsedStartTime.getTime())) {
+        const timeRefusal = eventTimeRefusal(parsedStartTime, "create");
+        if (timeRefusal) {
+          return NextResponse.json(
+            { error: timeRefusal.message, code: timeRefusal.code },
+            { status: 400 },
+          );
+        }
         startTime = parsedStartTime;
-        endTime = new Date(startTime);
-        // Zod ensures durationInHours is a valid number
-        endTime.setHours(startTime.getHours() + durationInHours);
-        console.log("Calculated times:", {
-          startTime: startTime.toISOString(),
-          endTime: endTime.toISOString(),
-          durationInHours,
-        });
+        endTime = eventEndOf(startTime, durationInHours * 60);
       } else {
         // Was a silent skip: startTime stayed undefined, the nested appointment
         // create was replaced with `undefined`, and the result was a published
@@ -531,7 +535,9 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
-    const body = await request.json();
+    const read = await readJsonBody(request);
+    if (read.error) return read.error;
+    const body = read.body;
     console.log(
       "Received webinar update request body:",
       JSON.stringify(body, null, 2),
@@ -581,18 +587,12 @@ export async function PATCH(request: NextRequest) {
       shareRecordingsWithAllAttendees,
     } = validatedData;
 
-    // Find or create topics by name if provided
-    let topicIds: string[] | undefined;
-    if (topicNames !== undefined) {
-      topicIds = await findOrCreateTopics(topicNames);
-    }
-
     console.log("Validated fields for update:", {
       id,
       webinarId,
       title,
       durationInHours,
-      topicIds: topicIds ? `[${topicIds.length} topics]` : "undefined",
+      topics: topicNames ? `[${topicNames.length} topics]` : "undefined",
       status,
       scheduledAt,
     });
@@ -638,12 +638,25 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
+    const orgRefusal = await orgPlanEditRefusal(
+      prisma,
+      existingPlan,
+      existingPlan.consultantProfile.id,
+    );
+    if (orgRefusal) return NextResponse.json(orgRefusal, { status: 403 });
+
     const reassignmentRefusal = await refuseForeignProfileReassignment(
       session.user.id,
       existingPlan.consultantProfileId,
       consultantProfileId,
     );
     if (reassignmentRefusal) return reassignmentRefusal;
+
+    // Topics are created only once the edit is authorised.
+    const topicIds =
+      topicNames === undefined
+        ? undefined
+        : await findOrCreateTopics(topicNames);
 
     // A supplied webinarId must name an instance of this plan; otherwise use its first.
     const webinarToUpdate = webinarId
@@ -695,6 +708,24 @@ export async function PATCH(request: NextRequest) {
         );
       }
 
+      // The editor resends the stored time on every save; only a changed time
+      // is a new schedule and has to pass the event-time rules.
+      const currentStart = webinarToUpdate?.appointment?.occurrences?.find(
+        (s) => !isDeadOccurrence(s),
+      )?.startsAt;
+      if (
+        !currentStart ||
+        new Date(currentStart).getTime() !== scheduledDate.getTime()
+      ) {
+        const timeRefusal = eventTimeRefusal(scheduledDate, "create");
+        if (timeRefusal) {
+          return NextResponse.json(
+            { error: timeRefusal.message, code: timeRefusal.code },
+            { status: 400 },
+          );
+        }
+      }
+
       startTime = scheduledDate;
 
       // Duration needed to calculate end time. Use plan's existing if not provided in patch.
@@ -704,15 +735,7 @@ export async function PATCH(request: NextRequest) {
         throw new Error("Invalid duration for calculating end time.");
       }
 
-      endTime = new Date(
-        scheduledDate.getTime() + effectiveDuration * 60 * 60 * 1000,
-      );
-
-      console.log("Calculated slot times (PATCH):", {
-        startTime: startTime.toISOString(),
-        endTime: endTime.toISOString(),
-        effectiveDuration,
-      });
+      endTime = eventEndOf(scheduledDate, effectiveDuration * 60);
     } else if (
       durationInHours !== undefined &&
       webinarToUpdate?.appointment?.occurrences?.length
@@ -735,6 +758,24 @@ export async function PATCH(request: NextRequest) {
           },
         );
       }
+    }
+
+    // A webinar goes live only once it has a time.
+    if (
+      status === "SCHEDULED" &&
+      webinarToUpdate?.status === "DRAFT" &&
+      !startTime &&
+      !webinarToUpdate.appointment?.occurrences?.some(
+        (s) => !isDeadOccurrence(s),
+      )
+    ) {
+      return NextResponse.json(
+        {
+          error: "Set a time for this webinar before you publish it.",
+          code: "EVENT_TIME_INVALID",
+        },
+        { status: 400 },
+      );
     }
 
     const effectiveDurationForSlots =

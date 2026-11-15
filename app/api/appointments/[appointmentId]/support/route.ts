@@ -106,6 +106,7 @@ export async function GET(
         currentNodeId: true,
         requesterUserId: true,
         ackDueAt: true,
+        acknowledgedAt: true,
         resolvedAt: true,
         csatRating: true,
         csatAt: true,
@@ -195,6 +196,7 @@ export async function GET(
                 ? {
                     referenceNumber: thread.referenceNumber,
                     ackDueAt: thread.ackDueAt,
+                    acknowledgedAt: thread.acknowledgedAt,
                   }
                 : null,
           }

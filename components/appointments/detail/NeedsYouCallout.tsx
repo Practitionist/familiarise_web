@@ -28,6 +28,7 @@ import { useHoldCountdown } from "@/hooks/useHoldCountdown";
 import type { BookingPresentation } from "@/lib/dashboard/money-state";
 import {
   allocatedElsewhere,
+  alreadyScheduled,
   allocationFailed,
   allocationFailedWithCode,
   requestChangedElsewhere,
@@ -42,6 +43,8 @@ import {
 import { ApiResponseError } from "@/lib/fetch-helpers";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { cn } from "@/utils/tailwind";
+import type { RescheduleAnswer } from "@/lib/appointments/reschedule-answer";
+import type { RescheduleAnswerControl } from "./RescheduleProposalCard";
 
 /** The consultant's answer to a request, wired to the Requests page's mutations. */
 export interface RequestDecision {
@@ -80,13 +83,19 @@ export interface NeedsYouCalloutProps {
   onPay?: () => void;
   /** #1780 E-5 — leave the class with a full refund of the remaining sessions. */
   onExitSeries?: () => Promise<void>;
-  requestAgainHref: string | null;
   decision?: RequestDecision;
   onHelp: () => void;
   /** Extra content for JOIN / RATE — the existing button or stars. */
   children?: ReactNode;
-  /** Drawn inside the page header, which already offers Get help in its menu. */
+  /** The detail page offers Get help in its own rail, so the banner omits it. */
   embedded?: boolean;
+  /** The answers the routes accept from this viewer on an open reschedule. */
+  moveAnswers?: {
+    answers: RescheduleAnswer[];
+    control: RescheduleAnswerControl;
+  };
+  /** A trial or a pay-first checkout: the learner's own hold, never an approval. */
+  payFirst?: "trial" | "checkout" | null;
 }
 
 const EmbeddedContext = createContext(false);
@@ -116,7 +125,7 @@ function Shell({
         "border",
         surface,
         embedded
-          ? "mt-5 scroll-mt-24 rounded-xl p-3.5 sm:p-4"
+          ? "scroll-mt-24 rounded-2xl p-4 sm:p-5"
           : "rounded-2xl p-4 shadow-sm sm:p-5",
       )}
     >
@@ -210,7 +219,11 @@ function ApproveOrDecline({
         return;
       }
       if (conflict === "genuine-conflict") {
-        toast(allocatedElsewhere());
+        toast(
+          decision.request.type === "CONSULTATION"
+            ? alreadyScheduled()
+            : allocatedElsewhere(),
+        );
         decision.onDecided();
         return;
       }
@@ -231,8 +244,8 @@ function ApproveOrDecline({
         result.awaitingPayment
           ? {
               title: result.payExpiresAt
-                ? `Approved — the client has until ${format(result.payExpiresAt, "EEE d MMM HH:mm")} to pay`
-                : "Approved — waiting for the client to pay",
+                ? `Awaiting payment — the client has until ${format(result.payExpiresAt, "EEE d MMM HH:mm")} to pay`
+                : "Awaiting payment — the client was sent the pay link",
               description: `${names.payer} was sent the payment link; the times are held until it is paid.`,
             }
           : timesConfirmed(),
@@ -607,11 +620,11 @@ function CalloutBody(props: Omit<NeedsYouCalloutProps, "embedded">) {
     heldCount,
     pending,
     onPay,
-    requestAgainHref,
     decision,
     awaitingPayment,
     onHelp,
     children,
+    payFirst = null,
   } = props;
   const { nextAction, bookingState } = presentation;
   const deadline = nextAction.deadline;
@@ -674,11 +687,21 @@ function CalloutBody(props: Omit<NeedsYouCalloutProps, "embedded">) {
         </Shell>
       );
     case "PAY": {
-      if (!pending) return null;
-      const amount = formatCurrencyAmount(
-        Number(pending.amount),
-        pending.currency,
-      );
+      const amount = pending
+        ? `${formatCurrencyAmount(Number(pending.amount), pending.currency)}${gstSplit(pending)}`
+        : "";
+      const by = deadline ? format(deadline, "EEE d MMM HH:mm") : null;
+      let line: string;
+      if (payFirst) {
+        const what = payFirst === "trial" ? "trial time" : "time";
+        line = `Your ${what} is held${by ? ` until ${by}` : ""}. Pay${amount ? ` ${amount}` : ""} to confirm it.`;
+      } else {
+        const keep =
+          heldCount > 0
+            ? `to keep your ${heldCount === 1 ? "held slot" : `${heldCount} held slots`}.`
+            : "to confirm the booking.";
+        line = `Pay${amount ? ` ${amount}` : ""}${by ? ` by ${by}` : ""} ${keep}`;
+      }
       return (
         <Shell
           onHelp={onHelp}
@@ -697,32 +720,53 @@ function CalloutBody(props: Omit<NeedsYouCalloutProps, "embedded">) {
             </>
           }
         >
-          {names.consultant} approved. Pay {amount}
-          {gstSplit(pending)}
-          {deadline ? ` by ${format(deadline, "EEE d MMM HH:mm")}` : ""}
-          {heldCount > 0
-            ? ` to keep your ${heldCount === 1 ? "held slot" : `${heldCount} held slots`}.`
-            : " to confirm the booking."}
+          {line}
         </Shell>
       );
     }
-    case "REQUEST_AGAIN":
+    case "RESPOND_TO_MOVE": {
+      const move = props.moveAnswers;
+      if (!move) return null;
+      const { answers, control } = move;
       return (
         <Shell
           onHelp={onHelp}
           actions={
-            requestAgainHref ? (
-              <Button size="sm" variant="outline" asChild>
-                <Link href={requestAgainHref}>{nextAction.label}</Link>
-              </Button>
-            ) : null
+            <>
+              {deadline && <TimeLeft deadline={deadline} />}
+              {answers.includes("accept") && (
+                <Button
+                  size="sm"
+                  disabled={control.busy}
+                  onClick={() => control.answer("accept")}
+                >
+                  {control.busy && (
+                    <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                  )}
+                  {nextAction.label}
+                </Button>
+              )}
+              {answers.includes("decline") && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  disabled={control.busy}
+                  onClick={() => control.answer("decline")}
+                >
+                  Decline…
+                </Button>
+              )}
+            </>
           }
         >
-          {bookingState.state === "PAYMENT_LAPSED"
-            ? `Your payment link expired${deadline ? ` on ${format(deadline, "EEE d MMM")}` : ""}.`
-            : `${names.consultant} declined this request.`}
+          {bookingState.why}
         </Shell>
       );
+    }
+    // Nothing to do: the badge's reason line explains, and "Book again" sits in the header.
+    case "REQUEST_AGAIN":
+      return null;
     case "JOIN":
     case "RATE":
       return children ? (
@@ -732,19 +776,8 @@ function CalloutBody(props: Omit<NeedsYouCalloutProps, "embedded">) {
             : "How did it go?"}
         </Shell>
       ) : null;
+    // The banner shows only when the viewer must act; a wait is the reason line's job.
     case "NONE":
-      // #1675 (owner decision 2026-09-20) — the consultee's own REQUESTED
-      // page had nothing here; that read as the request vanishing. A plain
-      // wait line, no button, replaces the silence without inviting an action.
-      if (bookingState.state === "REQUESTED") {
-        const consultantFirstName = names.consultant.split(" ")[0];
-        return (
-          <Shell tone="neutral" onHelp={onHelp} actions={null}>
-            Waiting for {consultantFirstName} to respond — usually within 48
-            hours.
-          </Shell>
-        );
-      }
       return null;
     default:
       return null;

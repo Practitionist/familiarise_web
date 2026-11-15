@@ -100,8 +100,9 @@ jest.mock("../../lib/novu/outbox", () => ({
 }));
 jest.mock("../../lib/email", () => ({
   EMAIL_BUDGET_MS: { JOB: 1 },
-  sendUnscheduledSubscriptionNudgeEmail: jest.fn().mockResolvedValue({
-    success: true,
+  stageUnscheduledSubscriptionNudgeEmail: jest.fn().mockResolvedValue({
+    staged: [],
+    renderFailures: 0,
   }),
 }));
 
@@ -257,18 +258,28 @@ describe("expiry sweep refunds (PR 2c)", () => {
       '"status":"APPROVED"',
     );
     expect(JSON.stringify(cohortCall.where.AND)).toContain("isTentative");
-    // Through the CAS helper now (#1423): the from-set rides the WHERE as a
-    // list, and the cohort's own predicate is repeated at write time.
+    // Through the CAS helper: the from-set rides the WHERE as a list, and the
+    // cohort's own predicate is repeated at write time.
     expect(prisma.subscription.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
           id: "sub-immortal",
           status: { in: [AppointmentStatus.APPROVED] },
-          NOT: expect.anything(),
+          AND: expect.anything(),
         }),
         data: { status: "EXPIRED" },
       }),
     );
+    // Only a plan that never had a confirmed session and has nothing open.
+    const cas = (prisma.subscription.updateMany as jest.Mock).mock.calls.find(
+      ([args]) => args.where.id === "sub-immortal",
+    )?.[0];
+    const guards = JSON.stringify(cas?.where.AND);
+    expect(guards).toContain(
+      '"NOT":{"appointment":{"OR":[{"occurrences":{"some":{"isTentative":false}}},{"rescheduleRequests":{"some":{}}}]}}',
+    );
+    expect(guards).toContain('"rescheduleRequests":{"none":{"status":{"in":');
+    expect(JSON.stringify(cohortCall.where.AND)).toContain(guards);
     expect(result.subscriptionsExpired).toBe(1);
     expect(result.refundsIssued).toBe(1);
     expect(mockDriveRefundOwed).toHaveBeenCalledWith(

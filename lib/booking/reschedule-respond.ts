@@ -51,6 +51,10 @@ import { EMAIL_BUDGET_MS, sendAppointmentRescheduledEmail } from "@/lib/email";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import {
+  RESCHEDULE_PARTIES_SELECT,
+  rescheduleParties,
+} from "@/lib/booking/reschedule-outcome-notice";
 
 export type RespondOutcome = { done: true } | { done: false; reason: string };
 
@@ -126,6 +130,7 @@ export async function acceptProposal(args: {
     // proposal these released slots carry, and this one is being ACCEPTED, not
     // superseded.
     excludeRescheduleRequestId: request.id,
+    actorUserId: args.resolvedById,
     // ACCEPTED commits with the move or not at all.
     inTx: async (tx, moved) => {
       await closeConfirmedProposal(tx, {
@@ -162,36 +167,7 @@ export async function acceptProposal(args: {
             id: true,
             organizationId: true,
             appointmentType: true,
-            consultation: {
-              select: {
-                requestedBy: {
-                  select: { user: { select: { id: true, name: true } } },
-                },
-                consultationPlan: {
-                  select: {
-                    title: true,
-                    consultantProfile: {
-                      select: { user: { select: { id: true, name: true } } },
-                    },
-                  },
-                },
-              },
-            },
-            subscription: {
-              select: {
-                requestedBy: {
-                  select: { user: { select: { id: true, name: true } } },
-                },
-                subscriptionPlan: {
-                  select: {
-                    title: true,
-                    consultantProfile: {
-                      select: { user: { select: { id: true, name: true } } },
-                    },
-                  },
-                },
-              },
-            },
+            ...RESCHEDULE_PARTIES_SELECT,
           },
         },
         releasedOccurrenceIds: true,
@@ -203,7 +179,7 @@ export async function acceptProposal(args: {
       },
     });
     const appt = detail?.appointment;
-    const side = appt?.consultation ?? appt?.subscription;
+    const parties = appt ? rescheduleParties(appt) : null;
     const released = detail?.releasedOccurrenceIds?.length
       ? await prisma.appointmentOccurrence.findFirst({
           where: { id: { in: detail.releasedOccurrenceIds } },
@@ -211,17 +187,8 @@ export async function acceptProposal(args: {
           select: { startsAt: true },
         })
       : null;
-    if (detail && appt && side && released && detail.proposedTimes[0]) {
-      // Normalize the consultation/subscription union once (TS narrows via
-      // the plan-key discriminators).
-      const isConsultation = "consultationPlan" in side;
-      const planTitle = isConsultation
-        ? side.consultationPlan.title
-        : side.subscriptionPlan.title;
-      const consultantUser = isConsultation
-        ? side.consultationPlan.consultantProfile.user
-        : side.subscriptionPlan.consultantProfile.user;
-      const consulteeUser = side.requestedBy.user;
+    if (detail && appt && parties && released && detail.proposedTimes[0]) {
+      const { planTitle, consultantUser, consulteeUser } = parties;
       const recipient = detail.initiatedById;
       const other =
         consulteeUser.id === detail.initiatedById
@@ -505,55 +472,20 @@ export async function declineProposal(args: {
             id: true,
             organizationId: true,
             appointmentType: true,
-            consultation: {
-              select: {
-                requestedBy: {
-                  select: { user: { select: { id: true, name: true } } },
-                },
-                consultationPlan: {
-                  select: {
-                    title: true,
-                    consultantProfile: {
-                      select: { user: { select: { id: true, name: true } } },
-                    },
-                  },
-                },
-              },
-            },
-            subscription: {
-              select: {
-                requestedBy: {
-                  select: { user: { select: { id: true, name: true } } },
-                },
-                subscriptionPlan: {
-                  select: {
-                    title: true,
-                    consultantProfile: {
-                      select: { user: { select: { id: true, name: true } } },
-                    },
-                  },
-                },
-              },
-            },
+            ...RESCHEDULE_PARTIES_SELECT,
           },
         },
         releasedOccurrenceIds: true,
       },
     });
     const appt = detail?.appointment;
-    const side = appt?.consultation ?? appt?.subscription;
-    if (detail && side && appt) {
-      const isConsultation = "consultationPlan" in side;
-      const planTitle = isConsultation
-        ? side.consultationPlan.title
-        : side.subscriptionPlan.title;
-      const consultantUser = isConsultation
-        ? side.consultationPlan.consultantProfile.user
-        : side.subscriptionPlan.consultantProfile.user;
+    const parties = appt ? rescheduleParties(appt) : null;
+    if (detail && parties && appt) {
+      const { planTitle, consultantUser, consulteeUser } = parties;
       const declinedUserIds = [
         detail.initiatedById,
         consultantUser.id,
-        side.requestedBy.user.id,
+        consulteeUser.id,
       ].filter((id, i, arr) => arr.indexOf(id) === i);
       // The earliest session the booking still owes, so the copy can name a
       // time. On the restored path that is the earliest RESTORED one; on the
@@ -571,21 +503,28 @@ export async function declineProposal(args: {
         select: { startsAt: true },
       });
       const outcome = restoredFully ? "DECLINED" : "RELEASED";
-      await notifyAppointmentRescheduled(declinedUserIds, {
-        ...notificationScope(appt.organizationId),
-        appointmentType: appt.appointmentType,
-        consultantName: consultantUser.name || "Consultant",
-        consulteeName: side.requestedBy.user.name || "Consultee",
-        planTitle,
-        dashboardUrl: notificationHref(appt.organizationId, "appointments"),
-        outcome,
-        ...(earliest ? { oldDateTime: earliest.startsAt.toISOString() } : {}),
-      });
+      // The proposer's request was declined by someone else: required for them.
+      const proposerIds = declinedUserIds.filter((id) => id !== resolvedById);
+      await notifyAppointmentRescheduled(
+        declinedUserIds,
+        {
+          ...notificationScope(appt.organizationId),
+          appointmentType: appt.appointmentType,
+          consultantName: consultantUser.name || "Consultant",
+          consulteeName: consulteeUser.name || "Consultee",
+          planTitle,
+          dashboardUrl: notificationHref(appt.organizationId, "appointments"),
+          outcome,
+          ...(earliest ? { oldDateTime: earliest.startsAt.toISOString() } : {}),
+        },
+        { required: { kind: "REQUEST_DECLINED", recipients: proposerIds } },
+      );
       // #1653 — the email twin; the sender never throws.
       await sendAppointmentRescheduledEmail(
         {
           appointmentId: appt.id,
           userIds: declinedUserIds,
+          requiredFor: proposerIds,
           outcome,
           appointmentType: appt.appointmentType,
           oldStartsAt: earliest?.startsAt ?? null,

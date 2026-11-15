@@ -56,7 +56,7 @@ ORDER BY "createdAt" DESC LIMIT 25;
 
 1. Wait for the healers, which run on the ticker. `reconcile-orphaned-confirmations` re-runs slot confirmation for a payment whose slots are still tentative and keeps the first confirmed booking, so a genuine double-booking loser is not force-confirmed. `reconcile-orphaned-payments` (every 30 minutes, for payments older than 60 minutes and younger than 7 days) links a late appointment, or refunds the payment through the refund front door.
 2. If the capture event itself was lost, see [webhook recovery](04-webhook-recovery.md): the capture is confirmed by `reconcile-payment-status` through the single confirmer, `handlePaymentSuccess`.
-3. If the payment is `SUCCEEDED` because the gateway metadata failed validation, use the admin recover door `POST /api/payments/[paymentId]/recover` (step-up, reason) with corrected metadata. The target must equal the notes the server minted on the Razorpay order.
+3. If the payment is `SUCCEEDED` because the gateway metadata failed validation, use the admin recover door `POST /api/payments/[paymentId]/recover` (step-up, reason) with corrected metadata. The target must equal the notes the server minted on the Razorpay order. If the door answers 409 `PAYMENT_RETURNED`, the money already went back or is contested (a pending or paid refund, an owed-refund or auto-refund marker, or an open or lost dispute); do not force a booking, and finish the refund or the dispute instead.
 4. A payment older than 7 days is not healed automatically. The job files one `WARN` `SystemEvent` (correlation id `orphan-escrow:<paymentId>`) and one Sentry message, and the money waits for an operator: link it by recovering it, or refund it from the Refunds section, "Issue refund".
 
 **Verify.** The payment shows an appointment, or a `Refund` of the full amount reaches `SUCCEEDED`, and the `SystemEvent` no longer reappears.
@@ -178,7 +178,7 @@ For each row:
 
 Never clear `refundOwedKey` by SQL.
 
-A `PENDING` earning that is simply young is not held: `release-earnings` moves it to `READY` after its hold-until time (24 hours for a consultation, 48 for a webinar, 168 for a subscription, 24 for a class, plus 7 days for a new expert). **Verify:** the earning is `READY` and appears in the next payout batch.
+A `PENDING` earning that is simply young is not held: `release-earnings` moves it to `READY` after its hold-until time (48 hours for a consultation, 48 for a webinar, 168 for a subscription, 24 for a class, plus 3 days for a new expert). **Verify:** the earning is `READY` and appears in the next payout batch.
 
 ## 6. A member overage is stuck pending
 

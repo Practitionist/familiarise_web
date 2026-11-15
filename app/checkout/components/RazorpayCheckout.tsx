@@ -6,7 +6,7 @@ import { ToastAction } from "@/components/ui/toast";
 import { useToast } from "@/hooks/use-toast";
 import { loadScript } from "../plans/utils";
 import { CheckoutInput } from "@/schemas/checkout";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   buildCheckoutOptions,
   holdTimeoutSeconds,
@@ -30,6 +30,8 @@ interface RazorpayPaymentResponse {
 interface RazorpayPaymentError {
   description?: string;
   code?: string;
+  /** The route's coarse bucket when `code` is a rule code with no toast of its own. */
+  errorType?: string;
   reason?: string;
   message?: string;
 }
@@ -114,6 +116,13 @@ type RazorpayCheckoutProps = RazorpayCheckoutSource & {
    * sits open, so without this the buyer pays into a rejection.
    */
   onBeforeCheckout?: () => Promise<boolean>;
+  /** The idle button text; a free order reads "Confirm booking". */
+  label?: string;
+  /**
+   * Set where the page showed the order free: an answer that needs payment
+   * comes here instead of opening the sheet, so the buyer sees the price first.
+   */
+  onPaidWhenFree?: (order: { amount: number; currency: string }) => void;
 };
 
 interface GatewayOrder {
@@ -139,20 +148,26 @@ export default function RazorpayCheckout({
   userPhone,
   description,
   onBeforeCheckout,
+  label = "Pay with Razorpay",
+  onPaidWhenFree,
 }: RazorpayCheckoutProps) {
   const { toast } = useToast();
   const { emiEnabled } = useCheckoutFlags();
   const [isProcessing, setIsProcessing] = useState(false);
+  // Synchronous re-entry guard: state updates land a render later than a second click.
+  const inFlight = useRef(false);
   const attemptKey = useCheckoutAttemptKey();
 
   const handleCheckout = async () => {
-    // Before the spinner, so an abort leaves the button exactly as it was.
-    if (onBeforeCheckout && !(await onBeforeCheckout())) return;
+    if (inFlight.current) return;
+    inFlight.current = true;
+    // Busy from the click, so a slow pre-check never reads as an ignored press.
     setIsProcessing(true);
     // While the gateway sheet is up it owns the button; only its own exits
     // (dismiss, failure, verified success) may re-enable it.
     let gatewayOpened = false;
     try {
+      if (onBeforeCheckout && !(await onBeforeCheckout())) return;
       const order = existingOrder
         ? {
             id: existingOrder.orderId,
@@ -163,6 +178,10 @@ export default function RazorpayCheckout({
           }
         : await createOrder();
       if (!order) return;
+      if (onPaidWhenFree) {
+        onPaidWhenFree({ amount: order.amount, currency: order.currency });
+        return;
+      }
       gatewayOpened = await openGateway(order);
     } catch (error) {
       reportPaymentsError(error);
@@ -174,6 +193,7 @@ export default function RazorpayCheckout({
       });
     } finally {
       if (!gatewayOpened) setIsProcessing(false);
+      inFlight.current = false;
     }
   };
 
@@ -207,6 +227,7 @@ export default function RazorpayCheckout({
         // availability bucket, and a buyer who dawdled on the pay page is told
         // the listing went away when only their chosen minute did.
         code: errorData.code || errorData.errorType,
+        errorType: errorData.errorType,
       });
       return null;
     }
@@ -217,6 +238,7 @@ export default function RazorpayCheckout({
       onPaymentError({
         description: data.error || "Payment initialization failed",
         code: data.code || data.errorType,
+        errorType: data.errorType,
       });
       return null;
     }
@@ -237,8 +259,9 @@ export default function RazorpayCheckout({
       id: data.paymentIntent.id,
       paymentId:
         typeof data.paymentId === "string" ? data.paymentId : undefined,
-      amount: data.paymentIntent.amount,
-      currency: data.paymentIntent.currency,
+      // A resumed or replayed order carries its amount and currency at the top level.
+      amount: data.paymentIntent.amount ?? data.amount,
+      currency: data.paymentIntent.currency ?? data.currency,
       // #1771 row 1 — the server echoes a Customer only while saved cards are on.
       customerId: data.paymentIntent.customerId,
       holdExpiresAt: data.holdExpiresAt,
@@ -419,7 +442,7 @@ export default function RazorpayCheckout({
 
   return (
     <Button onClick={handleCheckout} disabled={isProcessing || disabled}>
-      {isProcessing ? "Processing..." : "Pay with Razorpay"}
+      {isProcessing ? "Processing..." : label}
     </Button>
   );
 }

@@ -260,6 +260,8 @@ async function readEventByAppointment(
 ): Promise<EventView | null> {
   const row = await tx.appointment.findUnique({
     where: { id: appointmentId },
+    // Runs inside every seat release: one joined statement, not eleven.
+    relationLoadStrategy: "join",
     select: appointmentEventSelect(now),
   });
   return row ? viewOfAppointment(row) : null;
@@ -303,7 +305,7 @@ function seatsRemaining(view: EventView): number {
     : getClassCapacity({ ...params, classInstance: instance }).remaining;
 }
 
-const CLASS_SELLABLE = new Set(["SCHEDULED", "IN_PROGRESS"]);
+const CLASS_SELLABLE = new Set(["SCHEDULED"]);
 
 /** The event, its plan and its host are live; nothing about timing yet. */
 function eventLive(view: EventView): boolean {

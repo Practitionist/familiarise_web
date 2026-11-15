@@ -6,7 +6,9 @@ import {
   isProfanityFree,
 } from "@/utils/contentValidation";
 import { experienceValidation } from "./shared";
+import { TRIAL_DURATION_MINUTES } from "./trial-length";
 import { MAX_GROUP_SESSION_PARTICIPANTS } from "@/lib/events/capacity";
+import { isOnEventLattice } from "@/lib/booking/event-time-rules";
 
 // Separate refine functions for different validation types
 const profanityFreeRefinement = (value: string) => {
@@ -290,6 +292,16 @@ export const SubscriptionContentSchema = ClassContentSchema.omit({
   subscriptionPlanId: z.string().optional(),
 });
 
+/** One sitting (a 1:1 call or a webinar) on the 30-minute booking grid, 30 min to 8 h. */
+export const sittingDurationInHoursSchema = z
+  .number()
+  .min(0.5, "Duration must be at least 30 minutes")
+  .max(8, "Duration cannot exceed 8 hours")
+  .refine(
+    (val) => (val * 60) % 30 === 0,
+    "Duration must be in 30-minute increments",
+  );
+
 // #1527 Q4 — absent means PUBLISHED (the column default), so older API
 // clients keep publishing exactly as before.
 const offeringPlanStatusSchema = z.nativeEnum(OfferingPlanStatus).optional();
@@ -300,14 +312,7 @@ export const ConsultationPlanSchema = z.object({
   // Required at the validation edge even though the DB column stays nullable
   // (relaxed so legacy rows survive); authoring always has a description.
   description: requiredDescriptionSchema,
-  durationInHours: z
-    .number()
-    .min(0.5, "Duration must be at least 30 minutes")
-    .max(8, "Duration cannot exceed 8 hours")
-    .refine(
-      (val) => (val * 60) % 30 === 0,
-      "Duration must be in 30-minute increments",
-    ),
+  durationInHours: sittingDurationInHoursSchema,
   price: priceSchema,
   priceCurrency: z.nativeEnum(Currency).default(Currency.INR),
   language: z.string().min(1, "Language is required"),
@@ -319,6 +324,31 @@ export const ConsultationPlanSchema = z.object({
   status: offeringPlanStatusSchema,
   ...recordingShape,
   ...planPositioningShape,
+});
+
+/**
+ * The recurring cadence every plan door must accept identically: whole sessions
+ * a week (1–7) and a session length on the 30-minute booking grid (30 min–4 h).
+ * The plan editor, the class plan POST and the org catalog all parse through it.
+ */
+export const sessionsPerWeekSchema = z
+  .number()
+  .int("Sessions per week must be a whole number")
+  .min(1, "At least one session per week is required")
+  .max(7, "Cannot exceed 7 sessions per week");
+
+export const sessionDurationInHoursSchema = z
+  .number()
+  .min(0.5, "Session duration must be at least 30 minutes")
+  .max(4, "Session duration cannot exceed 4 hours")
+  .refine(
+    (val) => (val * 60) % 30 === 0,
+    "Session duration must be in 30-minute increments",
+  );
+
+export const PlanCadenceSchema = z.object({
+  sessionsPerWeek: sessionsPerWeekSchema,
+  sessionDurationInHours: sessionDurationInHoursSchema,
 });
 
 export const SubscriptionPlanSchema = z.object({
@@ -342,11 +372,12 @@ export const SubscriptionPlanSchema = z.object({
   price: priceSchema,
   priceCurrency: z.nativeEnum(Currency).default(Currency.INR),
   trialEnabled: z.boolean().optional(),
+  // Checked on write only: a stored length outside the two keeps booking as it is.
   trialDurationMinutes: z
     .number()
-    .int("Trial duration must be a whole number of minutes")
-    .min(15, "Trial duration must be at least 15 minutes")
-    .max(120, "Trial duration cannot exceed 120 minutes")
+    .refine((m) => TRIAL_DURATION_MINUTES.some((allowed) => allowed === m), {
+      message: "A trial is 30 or 60 minutes.",
+    })
     .optional(),
   // ₹0 stays allowed — the plan form adds deliberate friction instead.
   trialPriceInPaise: z
@@ -354,15 +385,10 @@ export const SubscriptionPlanSchema = z.object({
     .int("Trial price must be a whole paise amount")
     .min(0, "Trial price must be non-negative")
     .optional(),
-  sessionsPerWeek: z
-    .number()
-    .min(1, "At least one session per week is required")
-    .max(7, "Cannot exceed 7 sessions per week"),
-  sessionDurationInHours: z
-    .number()
-    .min(0.5, "Session duration must be at least 30 minutes")
-    .max(4, "Session duration cannot exceed 4 hours")
-    .default(1),
+  sessionsPerWeek: sessionsPerWeekSchema,
+  // Sessions are booked as 30-minute atoms; any other length would be sold as
+  // one length and booked as the next.
+  sessionDurationInHours: sessionDurationInHoursSchema.default(1),
   emailSupport: z.enum(["GENERAL", "PRIORITY", "DEDICATED"]).default("GENERAL"),
   language: z.string().min(1, "Language is required"),
   level: planLevelSchema,
@@ -449,27 +475,14 @@ export const WebinarPlanSchema = BaseEventPlanSchema.extend({
   ...waitlistShape,
   ...recordingShape,
   shareRecordingsWithAllAttendees: z.boolean().default(false),
-  durationInHours: z
-    .number()
-    .min(0.5, "Duration must be at least 30 minutes")
-    .max(8, "Duration cannot exceed 8 hours")
-    .refine(
-      (val) => (val * 60) % 30 === 0,
-      "Duration must be in 30-minute increments",
-    ),
+  durationInHours: sittingDurationInHoursSchema,
   scheduledAt: z
     .string()
     .min(1, "Start time is required")
-    .refine((val) => {
-      const date = new Date(val);
-      return date.getMinutes() % 30 === 0;
-    }, "Please select either :00 or :30 for the minutes (e.g., 9:00 or 9:30)")
-    .refine((val) => {
-      const selectedDate = new Date(val);
-      const minAllowedDate = new Date();
-      minAllowedDate.setHours(minAllowedDate.getHours() + 1); // At least 1 hour in future
-      return selectedDate > minAllowedDate;
-    }, "Start time must be at least 1 hour in the future"),
+    .refine(
+      (value) => isOnEventLattice(new Date(value)),
+      "Pick a start time from the list.",
+    ),
 });
 
 export const ClassPlanSchema = BaseEventPlanSchema.extend({
@@ -498,10 +511,7 @@ export const ClassPlanSchema = BaseEventPlanSchema.extend({
   certificateProvided: z.boolean().default(false),
   ...waitlistShape,
   ...recordingShape,
-  sessionsPerWeek: z
-    .number()
-    .min(1, "At least one session per week is required")
-    .max(7, "Cannot exceed 7 sessions per week"),
+  sessionsPerWeek: sessionsPerWeekSchema,
   emailSupport: z.enum(["GENERAL", "PRIORITY", "DEDICATED"]).default("GENERAL"),
   classContents: z
     .array(ClassContentSchema)
@@ -516,7 +526,8 @@ export const ClassPlanSchema = BaseEventPlanSchema.extend({
   // Named for the manifest field that authors it. It was `startDate` here and
   // `schedulingStartDate` on the form, so the resolver stripped the value and
   // no class ever sent a start date to the API.
-  schedulingStartDate: z.date().optional().nullable(),
+  // The editor's time picker writes an ISO string; a loaded value is a Date.
+  schedulingStartDate: z.coerce.date().optional().nullable(),
   endDate: z.date().optional().nullable(),
   // #1819 — empty means "until session 1"; the route caps it at totalSessions.
   lateJoinUntilSession: z

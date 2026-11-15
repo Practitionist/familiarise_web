@@ -112,7 +112,7 @@ export function getEventConstraints(
 
     case "consultation":
       return {
-        requireConsecutive: true, // consultations are a single same-day block
+        requireConsecutive: true, // consultations are one unbroken block
         allowMultipleSessions: false,
         isDailyLimited: true,
         isOneTimeEvent: true,
@@ -221,15 +221,50 @@ export function getSlotLimits(
 }
 
 /**
- * Groups an array of time slots by scheduling-timezone day.
+ * Each slot's scheduling-day key by start time, with a session that runs past
+ * midnight kept whole on the day it starts: contiguous runs are cut into
+ * sessions of `slotsPerSession` from the run's first slot.
+ */
+export function sessionDayKeys(
+  slots: CalendarInterval[],
+  slotsPerSession: number,
+  timeZone?: string,
+): Map<number, string> {
+  const sorted = [...slots].sort(
+    (a, b) => a.startTime.getTime() - b.startTime.getTime(),
+  );
+  const keys = new Map<number, string>();
+  const perSession = Math.max(1, slotsPerSession);
+  let indexInRun = 0;
+  let sessionKey = "";
+  let lastEnd: number | null = null;
+  for (const slot of sorted) {
+    const start = slot.startTime.getTime();
+    if (start !== lastEnd) indexInRun = 0;
+    if (indexInRun % perSession === 0) {
+      sessionKey = dayKey(slot.startTime, timeZone);
+    }
+    keys.set(start, sessionKey);
+    indexInRun += 1;
+    lastEnd = slot.endTime.getTime();
+  }
+  return keys;
+}
+
+/**
+ * Groups time slots by scheduling-timezone day. Given `slotsPerSession`, a
+ * session that crosses midnight stays in its start day's group.
  */
 export function groupSlotsByDay(
   slots: CalendarInterval[],
   timeZone?: string,
+  slotsPerSession = 1,
 ): Map<string, CalendarInterval[]> {
+  const keys = sessionDayKeys(slots, slotsPerSession, timeZone);
   const slotsByDay = new Map<string, CalendarInterval[]>();
   slots.forEach((slot) => {
-    const key = dayKey(slot.startTime, timeZone);
+    const key =
+      keys.get(slot.startTime.getTime()) ?? dayKey(slot.startTime, timeZone);
     if (!slotsByDay.has(key)) {
       slotsByDay.set(key, []);
     }
@@ -320,38 +355,11 @@ export function validateClassSessionDistributionByCount(
   timeZone?: string,
 ): boolean {
   if (slots.length === 0) return true;
-  for (const [, daySlots] of Array.from(groupSlotsByDay(slots, timeZone))) {
+  for (const [, daySlots] of Array.from(
+    groupSlotsByDay(slots, timeZone, slotsPerSession),
+  )) {
     const { sessions } = countSessionsForDay(daySlots, slotsPerSession);
     if (sessions > maxSessions) return false;
-  }
-  return true;
-}
-
-/**
- * Validate weekly distribution for classes using complete session count per week.
- */
-export function validateWeeklySessionsDistribution(
-  slots: CalendarInterval[],
-  sessionsPerWeek: number,
-  slotsPerSession: number,
-  timeZone?: string,
-): boolean {
-  if (slots.length === 0) return true;
-  const weeks = new Map<string, Map<string, CalendarInterval[]>>();
-  for (const slot of slots) {
-    const wk = weekKey(slot.startTime, timeZone);
-    if (!weeks.has(wk)) weeks.set(wk, new Map());
-    const byDay = weeks.get(wk)!;
-    const dk = dayKey(slot.startTime, timeZone);
-    if (!byDay.has(dk)) byDay.set(dk, []);
-    byDay.get(dk)!.push(slot);
-  }
-  for (const [, byDay] of Array.from(weeks)) {
-    let weekSessions = 0;
-    for (const [, daySlots] of Array.from(byDay)) {
-      weekSessions += countSessionsForDay(daySlots, slotsPerSession).sessions;
-    }
-    if (weekSessions > sessionsPerWeek) return false;
   }
   return true;
 }
@@ -502,7 +510,7 @@ export function validateSubscriptionSlots(
   const maxTotalCalls = limits.totalSessions;
   const timeZone = options.schedulingTimezone;
 
-  const slotsByDay = groupSlotsByDay(slots, timeZone);
+  const slotsByDay = groupSlotsByDay(slots, timeZone, slotsPerCall);
 
   const weekCalls = new Map<
     string,
@@ -594,7 +602,7 @@ function validateSelectionCounts(
 ): void {
   if (eventType === "subscription") {
     const completeCalls = countCompleteCallsInMap(
-      groupSlotsByDay(slots, timeZone),
+      groupSlotsByDay(slots, timeZone, limits.slotsPerSession),
       limits.slotsPerSession,
     );
 
@@ -648,7 +656,6 @@ function validateClassSelection(
   slots: CalendarInterval[],
   constraints: EventConstraints,
   limits: SlotLimits,
-  options: SlotValidationOptions,
   result: ValidationResult,
   timeZone?: string,
 ): void {
@@ -664,7 +671,7 @@ function validateClassSelection(
   // disconnected fragments masquerade as one session. Informational only:
   // interactive blocking happens in toggleSlot so users can start a class
   // by selecting the first slot.
-  const byDay = groupSlotsByDay(slots, timeZone);
+  const byDay = groupSlotsByDay(slots, timeZone, slotsPerSession);
   const hasInProgress = Array.from(byDay.values()).some(
     (daySlots) =>
       countSessionsForDay(daySlots, slotsPerSession).sessions *
@@ -679,15 +686,8 @@ function validateClassSelection(
     timeZone,
   );
 
-  const weeklyOk = validateWeeklySessionsDistribution(
-    slots,
-    options.sessionsPerWeek || 1,
-    slotsPerSession,
-    timeZone,
-  );
-
+  // A class may meet more often than its plan's weekly count; only the day is capped.
   result.sessionDistributionValid = sessionsPerDayOk;
-  result.weeklyDistributionValid = weeklyOk;
 
   if (!result.dailyHoursValid) {
     result.isValid = false;
@@ -704,12 +704,6 @@ function validateClassSelection(
     result.isValid = false;
     result.errors.push(
       `Maximum ${constraints.maxSessionsPerDay || 2} classes per day exceeded`,
-    );
-  }
-  if (!weeklyOk) {
-    result.isValid = false;
-    result.errors.push(
-      `Maximum ${options.sessionsPerWeek || 1} classes per week exceeded`,
     );
   }
 }
@@ -759,33 +753,20 @@ function validateSubscriptionSelection(
 function validateConsultationSelection(
   slots: CalendarInterval[],
   result: ValidationResult,
-  timeZone?: string,
 ): void {
-  // Same scheduling-timezone day first (matches the server's same-day rule),
-  // then consecutiveness.
+  // One unbroken block; it may cross midnight (matches the server).
   if (slots.length <= 1) return;
-
-  const firstSlotDay = dayKey(slots[0].startTime, timeZone);
-  const allSameDay = slots.every(
-    (slot) => dayKey(slot.startTime, timeZone) === firstSlotDay,
-  );
-  if (!allSameDay) {
-    result.isValid = false;
-    result.errors.push(
-      "Consultation is a one-day event - all slots must be on the same day",
-    );
-  }
 
   result.consecutiveSlotsValid = validateConsecutiveSlots(slots);
   if (!result.consecutiveSlotsValid) {
     result.isValid = false;
     result.errors.push(
-      "Consultation slots must be consecutive within the same day",
+      "Consultation slots must be consecutive (no gaps allowed)",
     );
   }
 }
 
-/** Soft weekly-spread warnings for recurring events. */
+/** Soft weekly-spread warning for a subscription; a class may meet more often than its plan. */
 function warnOnWeeklyDistribution(
   slots: CalendarInterval[],
   eventType: ClientEventType,
@@ -806,19 +787,6 @@ function warnOnWeeklyDistribution(
     if (!result.weeklyDistributionValid) {
       result.warnings.push(
         `Consider distributing calls more evenly across weeks`,
-      );
-    }
-  } else if (eventType === "class") {
-    const ok = validateWeeklySessionsDistribution(
-      slots,
-      options.sessionsPerWeek,
-      limits.slotsPerSession,
-      timeZone,
-    );
-    if (!ok) {
-      result.weeklyDistributionValid = false;
-      result.warnings.push(
-        `Consider distributing classes more evenly across weeks`,
       );
     }
   }
@@ -856,20 +824,13 @@ export function validateEventSlots(
       validateWebinarSelection(slots, limits, result);
       break;
     case "class":
-      validateClassSelection(
-        slots,
-        constraints,
-        limits,
-        options,
-        result,
-        timeZone,
-      );
+      validateClassSelection(slots, constraints, limits, result, timeZone);
       break;
     case "subscription":
       validateSubscriptionSelection(slots, options, limits, result);
       break;
     case "consultation":
-      validateConsultationSelection(slots, result, timeZone);
+      validateConsultationSelection(slots, result);
       break;
   }
 

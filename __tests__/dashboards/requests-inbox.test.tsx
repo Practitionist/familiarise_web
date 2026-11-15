@@ -115,7 +115,7 @@ describe("Requests inbox anatomy (A-4)", () => {
         NOW,
       );
     };
-    expect(actionsOf("s-awaiting")).toEqual({
+    expect(actionsOf("c-awaiting")).toEqual({
       primary: { kind: "remind" },
       secondary: [{ kind: "withdraw" }],
     });
@@ -145,14 +145,16 @@ describe("Requests inbox anatomy (A-4)", () => {
         },
         { zone: "Asia/Kolkata" },
       ),
-    ).toBe("Approved — the learner has until Thu, 24 Sept, 2:15 pm to pay");
+    ).toBe(
+      "Awaiting payment — the learner has until Thu, 24 Sept, 2:15 pm to pay",
+    );
     // No deadline on the response (a link already live): no number invented.
     expect(approvedToast({ awaitingPayment: true })).toBe(
-      "Approved — waiting for the learner to pay",
+      "Awaiting payment — the learner was sent the pay link",
     );
     // Absent or false → today's behaviour.
-    expect(approvedToast({})).toBe("Approved");
-    expect(approvedToast({ awaitingPayment: false })).toBe("Approved");
+    expect(approvedToast({})).toBe("Confirmed");
+    expect(approvedToast({ awaitingPayment: false })).toBe("Confirmed");
   });
 
   it("puts the batch checkbox only on the dialog-free row", async () => {

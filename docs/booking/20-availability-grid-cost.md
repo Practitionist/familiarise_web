@@ -198,6 +198,22 @@ change when the clock passes it. Carrying the earliest deadline **that is still
 in the future** does: the moment `now()` crosses it, that row falls out of the
 subquery, the minimum moves to the next hold or to null, and the ETag changes.
 
+### A host moving their own event
+
+When the request carries `purpose=reschedule` together with a `classId` or
+`webinarId`, and the caller is the consultant who owns that event, the route
+leaves the event's own appointment out of the busy time (the host's and the
+accepted co-hosts'), so a host may land a session on the time it already holds,
+and it folds the event's ACCEPTED co-hosts' published hours and busy time into
+the grid. Anyone else sending the same parameters still sees the event's
+sessions as busy. The excluded appointment id is appended to the ETag input
+(`excludedAppointmentId` in `lib/scheduling/availabilityGridMarker.ts`) only
+when it is set, so every other request keeps its tag. The single-session picker
+(`SingleSessionPicker`, used by the webinar move dialog and the class make-up)
+and the class pattern scheduler send the event through
+`lib/scheduling/use-availability-window.ts`, so their grids carry this
+behaviour.
+
 ### What the marker does not cover
 
 Two things, both deliberate, and both in the safe direction.

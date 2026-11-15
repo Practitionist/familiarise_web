@@ -1,6 +1,8 @@
+import { readJsonBody } from "@/lib/api/parse";
 import { PROFILE_OWNER_SELECT } from "@/lib/booking/list-selects";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
+import { orgPlanEditRefusal } from "@/lib/enterprise/membership-guards";
 import { refuseForeignProfileReassignment } from "@/lib/api/plans/profile-reassignment";
 import { recordParticipants } from "@/lib/booking/participants";
 import {
@@ -18,6 +20,7 @@ import {
 } from "@/lib/api/plans/content";
 import { ClassPlanSchema, ClassContentSchema } from "@/schemas/plans";
 import { editorStatusOrRefusal } from "@/lib/api/plans/event-status";
+import { EventEditorStatusSchema } from "@/schemas/event-instance";
 import { refundWindowHoursSchema } from "@/lib/booking/refund-window";
 import { ClassStatus, Prisma } from "@prisma/client";
 import {
@@ -40,7 +43,12 @@ import {
 
 import { getSession } from "@/lib/auth-server";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
-import { buildOccurrence } from "@/lib/appointments/occurrences";
+import { seriesStartsFrom } from "@/lib/booking/class-pattern";
+import { eventTimeRefusal } from "@/lib/booking/event-time-rules";
+import {
+  buildOccurrence,
+  liveOccurrenceWhere,
+} from "@/lib/appointments/occurrences";
 import {
   assertCollaboratorsAvailableForWindows,
   assertConsultantAvailableForWindows,
@@ -91,8 +99,8 @@ const PostClassWithPlanBodySchema = ClassPlanSchema.omit({
   topics: z
     .array(z.string().min(1, "Topic name cannot be empty"))
     .min(1, "At least one topic is required"),
-  // Defaults to SCHEDULED with a startDate and DRAFT without one.
-  status: z.nativeEnum(ClassStatus).optional(),
+  // Create saves a draft or publishes; defaults to SCHEDULED with a startDate and DRAFT without one.
+  status: EventEditorStatusSchema.optional(),
   startDate: z
     .string()
     .optional()
@@ -158,7 +166,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body = await request.json();
+    const read = await readJsonBody(request);
+    if (read.error) return read.error;
+    const body = read.body;
 
     // Verification check - consultant must be verified to create classes
     if (body.consultantProfileId) {
@@ -280,21 +290,27 @@ export async function POST(request: NextRequest) {
     // #784 — the session start times, computed once so the AE-2 co-host guard
     // and the appointment create below cannot drift apart.
     const sessionStarts: Date[] = start
-      ? Array.from({ length: totalSessions }).map((_, index) => {
-          const appointmentDate = new Date(start!);
-          // Spread meetings evenly within each week:
-          // weekOffset positions the week, dayWithinWeek spaces meetings apart
-          // e.g. sessionsPerWeek=2 -> days 0,3 (Mon,Thu)
-          // e.g. sessionsPerWeek=3 -> days 0,2,4 (Mon,Wed,Fri)
-          const weekOffset = Math.floor(index / sessionsPerWeek) * 7;
-          const dayWithinWeek =
-            (index % sessionsPerWeek) * Math.floor(7 / sessionsPerWeek);
-          appointmentDate.setDate(
-            appointmentDate.getDate() + weekOffset + dayWithinWeek,
-          );
-          return appointmentDate;
-        })
+      ? seriesStartsFrom(
+          start,
+          sessionsPerWeek,
+          totalSessions,
+          resolveSchedulingTimezone(consultantProfile.user.timezone),
+        )
       : [];
+
+    // A class given a start holds every session, each on the half-hour grid.
+    const startRefusal = start ? eventTimeRefusal(start, "create") : null;
+    if (startRefusal || (start && sessionStarts.length !== totalSessions)) {
+      return NextResponse.json(
+        {
+          error:
+            startRefusal?.message ??
+            `That start can't place all ${totalSessions} sessions. Pick a different day or time.`,
+          code: "EVENT_TIME_INVALID",
+        },
+        { status: 400 },
+      );
+    }
 
     // Create class plan, instance, and appointments in a transaction.
     // Serializable + retry: this writes N session slot atoms that the #440
@@ -555,7 +571,9 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
-    const body = await request.json();
+    const read = await readJsonBody(request);
+    if (read.error) return read.error;
+    const body = read.body;
     console.log(
       "Received class update request body:",
       JSON.stringify(body, null, 2),
@@ -631,18 +649,12 @@ export async function PATCH(request: NextRequest) {
       lateJoinersGetPastRecordings,
     } = validatedData;
 
-    // Find or create topics by name if provided
-    let topicIds: string[] | undefined;
-    if (topicNames !== undefined) {
-      topicIds = await findOrCreateTopics(topicNames);
-    }
-
     console.log("Validated fields for update:", {
       id,
       classId,
       title,
       status,
-      topicIds,
+      topicNames,
     });
 
     // First, check if the class plan exists
@@ -674,12 +686,25 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
+    const orgRefusal = await orgPlanEditRefusal(
+      prisma,
+      existingPlan,
+      existingPlan.consultantProfile.id,
+    );
+    if (orgRefusal) return NextResponse.json(orgRefusal, { status: 403 });
+
     const reassignmentRefusal = await refuseForeignProfileReassignment(
       session.user.id,
       existingPlan.consultantProfileId,
       consultantProfileId,
     );
     if (reassignmentRefusal) return reassignmentRefusal;
+
+    // Topics are created only once the edit is authorised.
+    const topicIds =
+      topicNames === undefined
+        ? undefined
+        : await findOrCreateTopics(topicNames);
 
     const lateJoinRefusal = lateJoinCutoffRefusal(
       lateJoinUntilSession,
@@ -714,6 +739,26 @@ export async function PATCH(request: NextRequest) {
     ) {
       return NextResponse.json(
         { error: "Cannot update status or dates: no class instance found" },
+        { status: 400 },
+      );
+    }
+
+    // A class goes live only once it has sessions.
+    if (
+      status === "SCHEDULED" &&
+      classToUpdate?.status === "DRAFT" &&
+      (await prisma.appointmentOccurrence.count({
+        where: {
+          ...liveOccurrenceWhere,
+          appointment: { classId: classToUpdate.id, deletedAt: null },
+        },
+      })) === 0
+    ) {
+      return NextResponse.json(
+        {
+          error: "Set the class's times before you publish it.",
+          code: "EVENT_TIME_INVALID",
+        },
         { status: 400 },
       );
     }

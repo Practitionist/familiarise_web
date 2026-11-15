@@ -10,6 +10,8 @@ import {
   ANSWERABLE_SUBSCRIPTION,
 } from "@/lib/booking/request-cohort";
 import { runBounded } from "@/lib/db/bounded";
+import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
+import { RESTORABLE_ORIGINS } from "@/lib/appointments/lapsed-move";
 import { requestHoldDeadline } from "@/lib/dashboard/money-state";
 import { readPayoutRequirements } from "@/lib/data/consultant-payout-setup";
 import type { PayoutRequirements } from "@/lib/payments/payouts/payout-requirements";
@@ -53,13 +55,38 @@ export interface NeedsYouSummary {
 export function pendingConsultationWhere(
   consultantProfileId: string,
   scope: Scope,
+  now: Date = new Date(),
 ): Prisma.ConsultationWhereInput {
   return {
     AND: [
       consultationRequestWhere(consultantProfileId, scope, "PENDING"),
       ANSWERABLE_CONSULTATION,
+      { NOT: { appointment: lapsedMoveWhere(now) } },
     ],
   };
+}
+
+/**
+ * A booking whose open move passed its deadline and restores off PENDING: it
+ * reads as the original (withLapsedMoveRestored), so it is no request to answer.
+ */
+export function lapsedMoveWhere(now: Date): Prisma.AppointmentWhereInput {
+  return {
+    rescheduleRequests: {
+      some: {
+        status: { in: RESCHEDULE_OPEN_STATUSES },
+        NOT: answerableBy(now),
+        originStatus: { in: RESTORABLE_ORIGINS },
+      },
+    },
+  };
+}
+
+/** A proposal still inside its deadline: past it the original stands and nothing is left to answer. */
+export function answerableBy(now: Date) {
+  return {
+    expiresAt: { gt: now },
+  } satisfies Prisma.RescheduleRequestWhereInput;
 }
 
 /** The pending predicate at any status; Home's "Awaiting payment" row reads
@@ -80,11 +107,13 @@ export function consultationRequestWhere(
 export function pendingSubscriptionWhere(
   consultantProfileId: string,
   scope: Scope,
+  now: Date = new Date(),
 ): Prisma.SubscriptionWhereInput {
   return {
     AND: [
       subscriptionRequestWhere(consultantProfileId, scope, "PENDING"),
       ANSWERABLE_SUBSCRIPTION,
+      { NOT: { appointment: lapsedMoveWhere(now) } },
     ],
     deletedAt: null,
   };
@@ -139,8 +168,8 @@ const AWAITING_CLIENT_ANSWER = {
 
 /**
  * The one "requests to answer" number: PENDING consultations and live
- * subscriptions that are real requests (never an unpaid checkout in flight),
- * plus PENDING trials. The nav badge, Home, NeedsYou and the request cap all
+ * subscriptions that are real requests (never an unpaid checkout in flight);
+ * a trial never waits on the expert. The nav badge, Home, NeedsYou and the request cap all
  * read it, so they cannot disagree. `db` lets a caller count inside its lock.
  */
 export async function countRequestsToAnswer(
@@ -149,7 +178,7 @@ export async function countRequestsToAnswer(
 ): Promise<number> {
   const cp = args.consultantProfileId;
   const scope = args.orgScope ?? { kind: "personal" };
-  const [consultations, subscriptions, trials] = await runBounded([
+  const [consultations, subscriptions] = await runBounded([
     () =>
       db.consultation.count({
         where: {
@@ -164,9 +193,8 @@ export async function countRequestsToAnswer(
           NOT: AWAITING_CLIENT_ANSWER,
         },
       }),
-    () => db.trial.count({ where: trialRequestWhere(cp, scope, ["PENDING"]) }),
   ] as const);
-  return consultations + subscriptions + trials;
+  return consultations + subscriptions;
 }
 
 /** A PENDING request asked for at or after this instant still holds its slots. */
@@ -178,10 +206,24 @@ export function holdingSince(
   return new Date(2 * now.getTime() - releasesAt.getTime());
 }
 
+/** A submitted 1:1 request still waiting on the expert inside its hold. */
+export function openConsultationRequestWhere(
+  consultantProfileId: string,
+  now: Date,
+): Prisma.ConsultationWhereInput {
+  return {
+    status: "PENDING",
+    bookingSource: "REQUEST_SUBMITTED",
+    consultationPlan: { consultantProfileId },
+    requestedAt: { gte: holdingSince("CONSULTATION", now) },
+    NOT: { appointment: BEING_MOVED },
+  };
+}
+
 /**
  * The request cap's count, across every tenant: real submitted requests
  * (PENDING, REQUEST_SUBMITTED, still inside their hold, not a booking being
- * moved) plus PENDING trial requests. No appointment arm, so an unallocated
+ * moved); a trial never waits on the expert. No appointment arm, so an unallocated
  * request counts, and no direct checkout ever does. Call it inside the cap
  * lock with `tx`.
  */
@@ -190,16 +232,10 @@ export async function countOpenRequestsForCap(
   db: RequestCounters = prisma,
   now: Date = new Date(),
 ): Promise<number> {
-  const [consultations, subscriptions, trials] = await runBounded([
+  const [consultations, subscriptions] = await runBounded([
     () =>
       db.consultation.count({
-        where: {
-          status: "PENDING",
-          bookingSource: "REQUEST_SUBMITTED",
-          consultationPlan: { consultantProfileId },
-          requestedAt: { gte: holdingSince("CONSULTATION", now) },
-          NOT: { appointment: BEING_MOVED },
-        },
+        where: openConsultationRequestWhere(consultantProfileId, now),
       }),
     () =>
       db.subscription.count({
@@ -212,9 +248,8 @@ export async function countOpenRequestsForCap(
           NOT: { appointment: BEING_MOVED },
         },
       }),
-    () => db.trial.count({ where: { consultantProfileId, status: "PENDING" } }),
   ] as const);
-  return consultations + subscriptions + trials;
+  return consultations + subscriptions;
 }
 
 // Structural, not Pick<PrismaClient>: the extended client (lib/prisma) and a

@@ -1,5 +1,5 @@
-import type { MemberRole, MemberStatus } from "@prisma/client";
-import type { Tx } from "@/lib/prisma";
+import type { MemberRole, MemberStatus, Prisma } from "@prisma/client";
+import type { PrismaLike, Tx } from "@/lib/prisma";
 import { LIVE_PARTICIPANT_STATUSES } from "@/lib/booking/participants";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { isBlockedRoleTransition } from "./role-transitions";
@@ -55,6 +55,51 @@ export interface GuardedMembership {
   role: MemberRole;
   status: MemberStatus;
   consultantProfileId: string | null;
+}
+
+/**
+ * A consultant delivers, or edits, an organisation's plan only while an ACTIVE
+ * EXPERT member of that organisation.
+ */
+export function activeOrgExpertWhere(
+  organizationId: string,
+  consultantProfileId: string,
+): Prisma.MembershipWhereInput {
+  return {
+    organizationId,
+    consultantProfileId,
+    status: "ACTIVE",
+    role: "EXPERT",
+  };
+}
+
+export const NOT_ACTIVE_ORG_EXPERT_REFUSAL = {
+  code: "NOT_ACTIVE_ORG_EXPERT",
+  error:
+    "Only an active expert of the organisation that owns this plan can change it.",
+} as const;
+
+/** Null when the plan's expert may edit it; the refusal when an org plan's expert is no longer an active member. */
+export async function orgPlanEditRefusal(
+  db: PrismaLike,
+  plan: { organizationId: string | null },
+  consultantProfileId: string,
+): Promise<typeof NOT_ACTIVE_ORG_EXPERT_REFUSAL | null> {
+  if (!plan.organizationId) return null;
+  return (await isActiveOrgExpert(db, plan.organizationId, consultantProfileId))
+    ? null
+    : NOT_ACTIVE_ORG_EXPERT_REFUSAL;
+}
+
+export async function isActiveOrgExpert(
+  db: PrismaLike,
+  organizationId: string,
+  consultantProfileId: string,
+): Promise<boolean> {
+  const count = await db.membership.count({
+    where: activeOrgExpertWhere(organizationId, consultantProfileId),
+  });
+  return count > 0;
 }
 
 /** #1851 decision 6 — only an OWNER grants or takes away these roles. */

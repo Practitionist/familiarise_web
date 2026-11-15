@@ -16,6 +16,10 @@ jest.mock("@/lib/data/indexable-experts", () => ({
   listIndexableDomainNames: (...args: unknown[]) =>
     mockListIndexableDomains(...args),
 }));
+const mockListProductTopics = jest.fn();
+jest.mock("@/lib/data/digital-products-public", () => ({
+  listProductTopics: (...args: unknown[]) => mockListProductTopics(...args),
+}));
 const mockReportSentryError = jest.fn();
 jest.mock("@/lib/observability/report", () => ({
   reportSentryError: (...args: unknown[]) => mockReportSentryError(...args),
@@ -27,6 +31,10 @@ import { metadata as blogMetadata } from "@/app/blog/layout";
 
 let entries: Awaited<ReturnType<typeof sitemap>>;
 beforeAll(async () => {
+  mockListProductTopics.mockResolvedValue([
+    { id: "d1", name: "Technology", count: 3 },
+    { id: "d2", name: "Creative Arts", count: 1 },
+  ]);
   mockListIndexableExperts.mockResolvedValue(["c-1", "c-2"]);
   mockListIndexableDomains.mockResolvedValue(["Technology", "Creative Arts"]);
   mockListIndexablePlans.mockResolvedValue({
@@ -111,6 +119,16 @@ describe("sitemap", () => {
       expect.arrayContaining([
         "/explore/experts/c/technology",
         "/explore/experts/c/creative-arts",
+      ]),
+    );
+  });
+
+  it("lists a products page per field that has products on sale", () => {
+    const pathnames = entries.map((entry) => pathnameOf(entry.url));
+    expect(pathnames).toEqual(
+      expect.arrayContaining([
+        "/explore/products/c/technology",
+        "/explore/products/c/creative-arts",
       ]),
     );
   });

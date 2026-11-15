@@ -9,11 +9,18 @@
  * (decision 6); an organiser removal is untouched.
  */
 
-const refundSeat = jest.fn(async () => ({
-  amountRefundedPaise: 100_000,
-  refundPct: 100,
-  rail: "GATEWAY",
-}));
+const refundSeat = jest.fn(
+  async (): Promise<{
+    amountRefundedPaise: number;
+    refundPct: number;
+    rail: string;
+    pending?: boolean;
+  }> => ({
+    amountRefundedPaise: 100_000,
+    refundPct: 100,
+    rail: "GATEWAY",
+  }),
+);
 // The notify-me hooks are pinned by their own suites; here they stage nothing.
 jest.mock("@/lib/booking/event-waitlist", () => ({
   stageSeatOpenedNotices: jest.fn(async () => ({ pages: [], email: null })),
@@ -21,6 +28,10 @@ jest.mock("@/lib/booking/event-waitlist", () => ({
   markEventWaitlistBooked: jest.fn(async () => ({ count: 0 })),
   expireEventWaitlist: jest.fn(async () => ({ expired: 0, purged: 0 })),
   hasLapsedEventWaitlist: jest.fn(async () => false),
+}));
+const notifySeatRemoved = jest.fn(async (..._a: unknown[]) => undefined);
+jest.mock("@/lib/booking/seat-removed-notice", () => ({
+  notifySeatRemoved: (...a: unknown[]) => notifySeatRemoved(...a),
 }));
 jest.mock("../../lib/payments/operations/event-refunds", () => ({
   refundRemovedAttendeeSeat: (...a: unknown[]) => refundSeat(...(a as [])),
@@ -31,6 +42,17 @@ const driveRefundOwed = jest.fn(async () => ({ kind: "settled" }));
 jest.mock("../../lib/payments/operations/refund-owed", () => ({
   stampRefundOwed: (...a: unknown[]) => stampRefundOwed(...(a as [])),
   driveRefundOwed: (...a: unknown[]) => driveRefundOwed(...(a as [])),
+}));
+
+const generation = new Date("2026-09-01T00:02:00Z");
+const persistSeatRevocationInTx = jest.fn(
+  async (..._a: unknown[]): Promise<Date | null> => generation,
+);
+const revokeEndedSeatAccess = jest.fn(async (..._a: unknown[]) => undefined);
+jest.mock("../../lib/stream/access-revocation", () => ({
+  persistSeatRevocationInTx: (...a: unknown[]) =>
+    persistSeatRevocationInTx(...a),
+  revokeEndedSeatAccess: (...a: unknown[]) => revokeEndedSeatAccess(...a),
 }));
 
 const joinedAt = new Date("2026-09-01T00:00:00Z");
@@ -57,6 +79,8 @@ jest.mock("../../lib/prisma", () => {
       findFirst: jest.fn(async () => ({
         id: "pay-1",
         amount: 100_000,
+        originalAmount: 100_000,
+        paymentIntent: "order_1",
         currency: "INR",
         createdAt: joinedAt,
         refunds: [],
@@ -146,6 +170,42 @@ it("stamps the refund owed in the release commit, so a crash after it is re-driv
   expect(driveRefundOwed).not.toHaveBeenCalled();
 });
 
+it("writes the seat revocation through the release transaction, so a stalled refund cannot lose it", async () => {
+  slot.startsAt = inHours(30);
+  refundSeat.mockRejectedValueOnce(new Error("refund stalled"));
+  await expect(leave()).rejects.toThrow("refund stalled");
+  expect(persistSeatRevocationInTx).toHaveBeenCalledWith(
+    expect.objectContaining({ appointmentParticipant: expect.anything() }),
+    "apt-1",
+    ["u-1"],
+  );
+  const written = persistSeatRevocationInTx.mock.invocationCallOrder[0];
+  expect(release.mock.invocationCallOrder[0]).toBeLessThan(written);
+  expect(written).toBeLessThan(refundSeat.mock.invocationCallOrder[0]);
+  expect(revokeEndedSeatAccess).not.toHaveBeenCalled();
+});
+
+it("drives nothing when the release transaction throws after the write", async () => {
+  slot.startsAt = inHours(30);
+  jest
+    .mocked(stageSeatOpenedNotices)
+    .mockRejectedValueOnce(new Error("staging failed"));
+  await expect(leave()).rejects.toThrow("staging failed");
+  expect(persistSeatRevocationInTx).toHaveBeenCalledTimes(1);
+  expect(refundSeat).not.toHaveBeenCalled();
+  expect(revokeEndedSeatAccess).not.toHaveBeenCalled();
+});
+
+it("drives the seat row the release committed, at its generation", async () => {
+  slot.startsAt = inHours(30);
+  await leave();
+  expect(revokeEndedSeatAccess).toHaveBeenCalledWith(
+    "apt-1",
+    ["u-1"],
+    generation,
+  );
+});
+
 it("settles the marker after the refund under the same key", async () => {
   slot.startsAt = inHours(30);
   await leave();
@@ -172,6 +232,59 @@ it("leaves an organiser removal untouched (full, organiser-initiated)", async ()
   await leave(false);
   expect(refundSeat).toHaveBeenCalledWith(
     expect.objectContaining({ mode: "full", initiatedBy: "organiser" }),
+  );
+});
+
+it("tells an attendee removed from a free seat, who gets no refund notice", async () => {
+  slot.startsAt = inHours(1);
+  await leave(false);
+  expect(notifySeatRemoved).not.toHaveBeenCalled();
+  const { default: db } = jest.requireMock("../../lib/prisma") as {
+    default: {
+      $transaction: (fn: (t: unknown) => unknown) => Promise<unknown>;
+    };
+  };
+  const tx = (await db.$transaction((t) => t)) as {
+    payment: { findFirst: jest.Mock };
+  };
+  tx.payment.findFirst.mockResolvedValueOnce({
+    id: "pay-free",
+    amount: 0,
+    originalAmount: 0,
+    paymentIntent: "free_1",
+    currency: "INR",
+    createdAt: joinedAt,
+    refunds: [],
+    disputes: [],
+    appointment: { cancellationPolicy: null },
+  });
+  refundSeat.mockResolvedValueOnce({
+    amountRefundedPaise: 0,
+    refundPct: 100,
+    rail: null as unknown as string,
+  });
+  await leave(false);
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(notifySeatRemoved).toHaveBeenCalledWith(
+    expect.objectContaining({ attendeeUserId: "u-1" }),
+  );
+});
+
+it("a host removal whose refund is still settling says the refund has started", async () => {
+  slot.startsAt = inHours(1);
+  refundSeat.mockResolvedValueOnce({
+    amountRefundedPaise: 50_000,
+    refundPct: 100,
+    rail: "GATEWAY",
+    pending: true,
+  });
+  await leave(false);
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(notifySeatRemoved).toHaveBeenCalledWith(
+    expect.objectContaining({
+      attendeeUserId: "u-1",
+      refundText: expect.stringContaining("refund has started"),
+    }),
   );
 });
 
@@ -208,6 +321,8 @@ it("refuses a class exit without the exit right (#1780 E-5)", async () => {
           }),
         },
         appointmentOccurrence: { findMany: async () => [] },
+        // The leave reads the seat's payment once, before the rule runs.
+        payment: { findFirst: async () => null },
       }),
   );
   await expect(

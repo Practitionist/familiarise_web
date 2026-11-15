@@ -107,6 +107,10 @@ jest.mock("../../lib/observability/report", () => ({
 // Only the second half of this file uses it: the route never touches prisma,
 // but the REAL resolveMeetingAccess — exercised below through requireActual —
 // is nothing but database reads.
+// The seat fence has its own suite; here every grant re-checks as still admitted.
+jest.mock("../../lib/stream/access-revocation", () => ({
+  fenceSeatGrants: jest.fn(async () => ({ verified: true, lost: [] })),
+}));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
@@ -509,7 +513,7 @@ describe("POST /api/meetings/[meetingId]/join", () => {
  *
  * `resolveMeetingAccess` refused three booking states — CANCELLED, REJECTED,
  * EXPIRED — while every dashboard's Join affordance is an allowlist of
- * {APPROVED, SCHEDULED, IN_PROGRESS}. Everything in neither set was hidden by
+ * {APPROVED, SCHEDULED}. Everything in neither set was hidden by
  * the UI and admitted by the server: PENDING, a DRAFT webinar, and above all
  * `APPROVED_PENDING_PAYMENT` and its trial twin `AWAITING_PAYMENT`. Typing
  * /meetings/<id> walked into a booking nobody had paid for. #1272 closed that in
@@ -665,14 +669,6 @@ describe("resolveMeetingAccess still admits a live session", () => {
 
   it("admits a scheduled trial", async () => {
     seedAccess(trial("SCHEDULED"));
-
-    expect((await resolveMeetingAccess("slot-abc", "user_1")).hasAccess).toBe(
-      true,
-    );
-  });
-
-  it("admits a webinar that is in progress", async () => {
-    seedAccess(webinar("IN_PROGRESS"));
 
     expect((await resolveMeetingAccess("slot-abc", "user_1")).hasAccess).toBe(
       true,

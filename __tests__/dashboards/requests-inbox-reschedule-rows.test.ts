@@ -104,6 +104,14 @@ describe("Requests inbox rows for a booking being moved", () => {
     );
   });
 
+  it("the consultant's own 'any time works' offers no placement the server refuses", async () => {
+    const row = await rowFor("CONSULTANT", false);
+    expect(actionsOf(row)).toEqual({
+      primary: null,
+      secondary: [{ kind: "withdraw-proposal" }],
+    });
+  });
+
   it("no moving row ever offers Decline", async () => {
     for (const [by, times] of [
       ["CONSULTEE", true],
@@ -115,6 +123,72 @@ describe("Requests inbox rows for a booking being moved", () => {
       const kinds = [actions.primary, ...actions.secondary].map((a) => a?.kind);
       expect(kinds).not.toContain("decline");
     }
+  });
+});
+
+describe("a move past its deadline, before the sweep ends it", () => {
+  it("offers nothing to answer and reads by the status the restore writes", async () => {
+    const m = prisma as unknown as MockPrisma;
+    serveInboxFixture(m);
+    const moving = movingConsultation("CONSULTEE", true);
+    const lapsed = {
+      ...moving,
+      appointment: {
+        ...moving.appointment,
+        rescheduleRequests: moving.appointment.rescheduleRequests.map((r) => ({
+          ...r,
+          expiresAt: new Date(NOW.getTime() - 60_000),
+          originStatus: "APPROVED",
+        })),
+      },
+    };
+    const c = serve([lapsed]);
+    m.consultation.findMany.mockImplementation(c.findMany);
+    m.consultation.count.mockImplementation(c.count);
+    const { rows } = await readRequestsInbox({
+      consultantProfileId: CP,
+      type: "consultation",
+      sort: "priority",
+      page: 1,
+      now: NOW,
+    });
+    const row = rows.find((r) => r.id === "c-moving");
+    if (!row) return;
+    const actions = actionsOf(row);
+    const kinds = [actions.primary, ...actions.secondary].map((a) => a?.kind);
+    expect(kinds).not.toContain("accept-proposal");
+    expect(kinds).not.toContain("keep-original");
+    expect(row.proposal).toBeNull();
+    expect(
+      deriveBookingPresentation(row.presentation, "CONSULTANT", { now: NOW })
+        .bookingState.state,
+    ).not.toBe("BEING_MOVED");
+  });
+});
+
+describe("the inbox's tab counts", () => {
+  it("leave out a move past its deadline, with the same counts issued", async () => {
+    const m = prisma as unknown as MockPrisma;
+    serveInboxFixture(m);
+    await readRequestsInbox({
+      consultantProfileId: CP,
+      type: "consultation",
+      sort: "priority",
+      page: 1,
+      now: NOW,
+    });
+    const wheres = m.consultation.count.mock.calls.map(([a]) =>
+      JSON.stringify(a.where),
+    );
+    // One count per tab source, as before the exclusion.
+    expect(wheres).toHaveLength(4);
+    expect(
+      wheres.some((w) =>
+        /"originStatus":\{"in":\["APPROVED","APPROVED_PENDING_PAYMENT"\]\}/.test(
+          w,
+        ),
+      ),
+    ).toBe(true);
   });
 });
 

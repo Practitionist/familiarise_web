@@ -84,6 +84,54 @@ export async function resolveConsumedPreferenceRequests(
 ): Promise<void> {
   if (releasedOccurrenceIds.length === 0) return;
 
+  // Placing times answers every other open request on these sessions (they
+  // close DECLINED); the proposal this allocation confirms is excluded.
+  const superseded = await tx.rescheduleRequest.findMany({
+    where: {
+      releasedOccurrenceIds: { hasSome: releasedOccurrenceIds },
+      status: { in: [...RESCHEDULE_OPEN_STATUSES] },
+      ...(excludeRescheduleRequestId
+        ? { id: { not: excludeRescheduleRequestId } }
+        : {}),
+    },
+    select: {
+      id: true,
+      initiatorRole: true,
+      appointmentId: true,
+      _count: { select: { proposedTimes: true } },
+    },
+  });
+  // The consultant's own proposal waits on the client's consent; placing other
+  // times over it would move the booking without asking.
+  if (
+    superseded.some(
+      (r) => r.initiatorRole === "CONSULTANT" && r._count.proposedTimes > 0,
+    )
+  ) {
+    throw new AllocationConflictError(
+      "You've asked your client to move to other times. Withdraw that request first, or wait for their answer.",
+      "PROPOSAL_AWAITING_CLIENT",
+    );
+  }
+  // The expert's bare release of a paid session is never placed by the expert
+  // side: the client accepts proposed times, or the expiry restores the original.
+  const bareExpertRelease = superseded.filter(
+    (r) => r.initiatorRole === "CONSULTANT" && r._count.proposedTimes === 0,
+  );
+  if (
+    bareExpertRelease.length > 0 &&
+    (await tx.payment.count({
+      where: {
+        appointmentId: { in: bareExpertRelease.map((r) => r.appointmentId) },
+        paymentStatus: "SUCCEEDED",
+      },
+    })) > 0
+  ) {
+    throw new AllocationConflictError(
+      "Propose new times so your client can accept one.",
+      "PROPOSE_TIMES_REQUIRED",
+    );
+  }
   const consumed = await tx.rescheduleRequest.findMany({
     where: {
       ...openPreferenceRequestWhere(releasedOccurrenceIds),
@@ -111,48 +159,9 @@ export async function resolveConsumedPreferenceRequests(
     }
   }
 
-  // E2E-audit P1 fix — times-bearing proposals must not dangle when the
-  // consultant answers a concrete-times proposal by placing DIFFERENT times
-  // directly on the calendar grid. The proposal used to stay PENDING_REVIEW
-  // for up to its 72h lifetime with openForAppointmentId reserved — and a
-  // stale Accept still passed every guard, re-ran the allocator at the
-  // originally proposed times, and silently deleted the just-placed
-  // confirmed slots. The manual placement IS the answer: close these as
-  // DECLINED so the reschedule machine releases the reservation.
-  //
-  // #1340 — "superseded" means every OTHER open proposal. A confirmation
-  // (auto-confirm or an explicit accept) places the proposal's OWN times, so
-  // without this exclusion the sweep declined the very row its caller was
-  // about to close as AUTO_ACCEPTED/ACCEPTED: the CAS matched zero rows, the
-  // booking moved, and the paperwork said the consultee's request had been
-  // refused.
-  const superseded = await tx.rescheduleRequest.findMany({
-    where: {
-      releasedOccurrenceIds: { hasSome: releasedOccurrenceIds },
-      status: { in: [...RESCHEDULE_OPEN_STATUSES] },
-      ...(excludeRescheduleRequestId
-        ? { id: { not: excludeRescheduleRequestId } }
-        : {}),
-    },
-    select: {
-      id: true,
-      initiatorRole: true,
-      _count: { select: { proposedTimes: true } },
-    },
-  });
-  // The consultant's own proposal waits on the client's consent; placing other
-  // times over it would move the booking without asking.
-  if (
-    superseded.some(
-      (r) => r.initiatorRole === "CONSULTANT" && r._count.proposedTimes > 0,
-    )
-  ) {
-    throw new AllocationConflictError(
-      "You've asked your client to move to other times. Withdraw that request first, or wait for their answer.",
-      "PROPOSAL_AWAITING_CLIENT",
-    );
-  }
+  const accepted = new Set(consumed.map((r) => r.id));
   for (const request of superseded) {
+    if (accepted.has(request.id)) continue;
     try {
       await transitionRescheduleRequest(tx, {
         where: { id: request.id },

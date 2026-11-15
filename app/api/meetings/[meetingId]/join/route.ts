@@ -24,6 +24,7 @@ import {
   assertValidUpdateUserPermissions,
 } from "@/lib/stream/video-contracts";
 import { reportSentryError } from "@/lib/observability/report";
+import { fenceSeatGrants } from "@/lib/stream/access-revocation";
 import { captureThrottled } from "@/lib/observability/throttled-capture";
 
 /** The only capabilities Stream's UpdateUserPermissions accepts; any other name fails the whole request. */
@@ -99,7 +100,8 @@ export async function POST(
           : null);
 
     await upsertUsersToStream([userId]);
-    const admitted = await withStreamCircuitBreaker(async () => {
+    const appointmentId = access.appointment?.id;
+    const grant = withStreamCircuitBreaker(async () => {
       const call = getStreamVideoClient().video.call(
         STREAM_CALL_TYPE,
         resolvedCallId,
@@ -159,6 +161,14 @@ export async function POST(
       }
       return true;
     });
+    let admitted: boolean;
+    try {
+      admitted = await grant;
+    } catch (error) {
+      // A membership that landed before a later write threw is re-checked like any other grant.
+      if (appointmentId) await fenceSeatGrants(appointmentId, [userId]);
+      throw error;
+    }
 
     if (!admitted) {
       if (isRepeatRoomRefusal(meetingId)) {
@@ -182,6 +192,27 @@ export async function POST(
             : {}),
         },
         { status: 409 },
+      );
+    }
+
+    // A cancel or refund that committed while this grant was in flight found no membership to remove.
+    const fence = appointmentId
+      ? await fenceSeatGrants(appointmentId, [userId])
+      : null;
+    if (fence?.verified && fence.lost.length > 0) {
+      return NextResponse.json(
+        { error: "This booking is no longer active.", code: "BOOKING_ENDED" },
+        { status: 403 },
+      );
+    }
+    // An unread seat check never admits a client; the sweep re-checks the grant that landed.
+    if (fence && !fence.verified && access.role !== "host") {
+      return NextResponse.json(
+        {
+          error: "We could not confirm your booking. Please try again.",
+          code: "SEAT_UNVERIFIED",
+        },
+        { status: 503 },
       );
     }
 

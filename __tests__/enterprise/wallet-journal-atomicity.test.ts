@@ -4,18 +4,25 @@
 
 /**
  * The org wallet never moves without its journal: a stale top-up is settled
- * against the gateway before it is deleted, a checkout wallet debit commits
+ * against the gateway before it is marked abandoned, a checkout wallet debit commits
  * only with its Dr WALLET line, an ops adjustment posts its balanced pair, and
  * refund-remaining never sends more than the balance left after in-flight refunds.
  */
-jest.mock("../../lib/prisma", () => ({
-  __esModule: true,
-  default: {
+jest.mock("../../lib/prisma", () => {
+  const client = {
     $executeRaw: jest.fn().mockResolvedValue(1),
-    walletTopUp: { findMany: jest.fn(), deleteMany: jest.fn() },
+    walletTopUp: { findMany: jest.fn(), updateMany: jest.fn() },
     billingAccount: { findUniqueOrThrow: jest.fn() },
-  },
-}));
+    ledgerEntry: { groupBy: jest.fn(async () => []) },
+  };
+  return {
+    __esModule: true,
+    default: {
+      ...client,
+      $transaction: (fn: (tx: typeof client) => unknown) => fn(client),
+    },
+  };
+});
 jest.mock("../../lib/cron/with-cron-lock", () => ({
   withCronLock: jest.fn((_j: string, _o: unknown, fn: () => unknown) => fn()),
 }));
@@ -60,15 +67,16 @@ import { cleanupAbandonedOrgTopUps } from "../../scripts/cleanup/cleanup-abandon
 import type { CheckoutCommitInput } from "../../lib/payments/checkout/commit/types";
 
 const db = prisma as unknown as {
-  walletTopUp: { findMany: jest.Mock; deleteMany: jest.Mock };
+  walletTopUp: { findMany: jest.Mock; updateMany: jest.Mock };
   billingAccount: { findUniqueOrThrow: jest.Mock };
+  ledgerEntry: { groupBy: jest.Mock };
 };
 const holding = readRazorpayOrderHolding as jest.Mock;
 
 beforeEach(() => jest.clearAllMocks());
 
 describe("org wallet journal atomicity", () => {
-  it("confirms a captured stale top-up, deletes an empty one, and skips one the gateway cannot answer", async () => {
+  it("confirms a captured stale top-up, marks an empty one FAILED, and skips one the gateway cannot answer", async () => {
     const row = (id: string) => ({
       id,
       billingAccountId: "ba_1",
@@ -86,7 +94,7 @@ describe("org wallet journal atomicity", () => {
       .mockResolvedValueOnce({ kind: "empty" })
       .mockRejectedValueOnce(new Error("gateway down"));
     (confirmTopUp as jest.Mock).mockResolvedValue({ confirmed: true });
-    db.walletTopUp.deleteMany.mockResolvedValue({ count: 1 });
+    db.walletTopUp.updateMany.mockResolvedValue({ count: 1 });
 
     const r = await cleanupAbandonedOrgTopUps();
 
@@ -98,8 +106,16 @@ describe("org wallet journal atomicity", () => {
       providerPaymentId: "pay_a",
       amountPaise: 50_000,
     });
-    expect(db.walletTopUp.deleteMany).toHaveBeenCalledTimes(1);
-    expect(db.walletTopUp.deleteMany.mock.calls[0][0].where.id).toBe("b");
+    expect(db.walletTopUp.updateMany).toHaveBeenCalledTimes(1);
+    expect(db.walletTopUp.updateMany.mock.calls[0][0]).toEqual({
+      where: {
+        id: "b",
+        status: "PENDING",
+        providerPaymentId: null,
+        capturedAt: null,
+      },
+      data: { status: "FAILED" },
+    });
     expect(r).toMatchObject({ confirmed: 1, reaped: 1, success: false });
   });
 
@@ -244,6 +260,70 @@ describe("org wallet journal atomicity", () => {
     expect(stopped.stoppedOn).toMatchObject({ topUpId: "new" });
     expect(createRazorpayRefund).not.toHaveBeenCalled();
   });
+
+  it("returns only top-up money and leaves operator-granted credit in the wallet", async () => {
+    db.billingAccount.findUniqueOrThrow.mockResolvedValue({
+      walletBalance: 10_000,
+      ownerOrgId: "org_1",
+    });
+    const granted = [
+      { direction: "CREDIT", _sum: { amountPaise: BigInt(6_000) } },
+    ];
+    db.ledgerEntry.groupBy
+      .mockResolvedValueOnce(granted)
+      .mockResolvedValueOnce(granted);
+    db.walletTopUp.findMany.mockResolvedValue([
+      {
+        id: "t1",
+        billingAccountId: "ba_1",
+        amountPaise: 10_000,
+        providerOrderId: "we_t1",
+        providerPaymentId: "pay_t1",
+      },
+    ]);
+    (listRazorpayRefunds as jest.Mock).mockResolvedValue([]);
+    (createRazorpayRefund as jest.Mock).mockResolvedValue({
+      refundId: "rfnd_1",
+      amount: 4_000,
+      currency: "INR",
+      status: "PENDING",
+    });
+
+    const r = await refundRemainingWalletBalance({
+      billingAccountId: "ba_1",
+      reason: "offboarding",
+    });
+
+    expect(createRazorpayRefund).toHaveBeenCalledWith(
+      expect.objectContaining({ amount: 4_000 }),
+    );
+    expect(r).toMatchObject({ grantedCreditPaise: 6_000, pendingPaise: 4_000 });
+
+    // A grant committing after the first read raises balance and grant together: none of it leaves.
+    (createRazorpayRefund as jest.Mock).mockClear();
+    db.billingAccount.findUniqueOrThrow
+      .mockResolvedValueOnce({ walletBalance: 10_000, ownerOrgId: "org_1" })
+      .mockResolvedValueOnce({ walletBalance: 16_000, ownerOrgId: "org_1" });
+    db.ledgerEntry.groupBy
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce(granted);
+    db.walletTopUp.findMany.mockResolvedValue([
+      {
+        id: "t2",
+        billingAccountId: "ba_1",
+        amountPaise: 20_000,
+        providerOrderId: "we_t2",
+        providerPaymentId: "pay_t2",
+      },
+    ]);
+    await refundRemainingWalletBalance({
+      billingAccountId: "ba_1",
+      reason: "offboarding",
+    });
+    expect(createRazorpayRefund).toHaveBeenCalledWith(
+      expect.objectContaining({ amount: 10_000 }),
+    );
+  });
 });
 
 describe("bounded top-up recovery polling", () => {
@@ -274,7 +354,7 @@ describe("bounded top-up recovery polling", () => {
     holding.mockReset().mockResolvedValue({ kind: "live" });
     for (let i = 0; i < 3; i++) await cleanupAbandonedOrgTopUps({ limit: 10 });
     expect(new Set(holding.mock.calls.map(([id]) => id)).size).toBe(25);
-    expect(db.walletTopUp.deleteMany).not.toHaveBeenCalled();
+    expect(db.walletTopUp.updateMany).not.toHaveBeenCalled();
     stamp.mockResolvedValue(1);
   });
 });

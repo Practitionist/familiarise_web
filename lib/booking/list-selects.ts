@@ -31,6 +31,27 @@ export const PROFILE_WITH_USER_SELECT = {
   },
 } as const;
 
+/**
+ * A booking's learner as a STAFF viewer who is not a party sees it: ids and
+ * public identity, without the email or the learner-only profile fields.
+ */
+export function publicRequester(profile: {
+  id: string;
+  userId: string;
+  user: { id: string; name: string | null; image: string | null };
+}) {
+  const { id, name, image } = profile.user;
+  return { id: profile.id, userId: profile.userId, user: { id, name, image } };
+}
+
+/** STAFF who are not a party read the requester in the public shape; parties and ADMIN in full. */
+export function isStaffNonParty(
+  role: string | null | undefined,
+  isParty: boolean,
+): boolean {
+  return role === "STAFF" && !isParty;
+}
+
 /** A consultant profile reduced to the ids an ownership check compares. */
 export const PROFILE_OWNER_SELECT = {
   select: { id: true, userId: true },
@@ -91,6 +112,7 @@ export const APPOINTMENT_LIST_SELECT = {
         status: true,
         reason: true,
         expiresAt: true,
+        originStatus: true,
         initiatorRole: true,
         // #1065 — only auto-allocate reads these; a consultant placing times by
         // hand on the grid would otherwise have no idea one was stated, which

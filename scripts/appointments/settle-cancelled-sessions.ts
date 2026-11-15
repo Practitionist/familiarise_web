@@ -25,6 +25,13 @@
  * and app/api/cleanup/settle-cancelled-sessions/route.ts (the ticker twin).
  */
 
+import { HOST_CANCELLED_SESSION_REASON } from "@/lib/booking/class-sessions";
+import { refundNoticeText } from "@/lib/notifications/refund-wording";
+import {
+  CLASS_SESSION_REFUND_REASON,
+  refundNoticeKind,
+} from "@/lib/payments/operations/refund-cause";
+import { HOST_ATTRIBUTED_OUTCOMES } from "@/lib/booking/session-outcome";
 import { PLAN_END_REFUND_REASON } from "@/lib/payments/refund-reasons";
 import {
   AppointmentStatus,
@@ -116,10 +123,7 @@ type CancelledSession = Prisma.AppointmentOccurrenceGetPayload<{
 export const planEndRefundKey = (subscriptionId: string, paymentId: string) =>
   `plan-end:${subscriptionId}:pay:${paymentId}`;
 const PLAN_ENDED_HISTORY_REASON = "PLAN_ENDED";
-const PLAN_LIVE_STATUSES: AppointmentStatus[] = [
-  AppointmentStatus.APPROVED,
-  AppointmentStatus.SCHEDULED,
-];
+const PLAN_LIVE_STATUSES: AppointmentStatus[] = [AppointmentStatus.APPROVED];
 
 // #476 — one lock for every entry; fail-closed because this sweep refunds.
 export async function settleCancelledSessions(
@@ -233,6 +237,7 @@ const DUE_SELECT = {
   ordinal: true,
   startsAt: true,
   completionStatus: true,
+  outcome: true,
   appointment: {
     select: {
       class: {
@@ -508,11 +513,40 @@ async function refundSeatForSession(
   const amountPaise = await capToBalance(payment, unitPaise);
   if (amountPaise <= 0) return false;
   const voided = session.completionStatus === OccurrenceCompletionStatus.VOIDED;
+  const hostVoid =
+    voided &&
+    session.outcome !== null &&
+    HOST_ATTRIBUTED_OUTCOMES.includes(session.outcome);
+  // A seat holder who cancelled the session themself is refunded under a reason that stays optional.
+  const ownCancel =
+    !voided && (await sessionCancelledBy(session.id)) === payment.userId;
   return refundAndTell(session, payment, {
     amountPaise,
     dedupeKey,
-    reason: voided ? "SESSION_VOIDED_NOT_MADE_UP" : "HOST_SESSION_NOT_MADE_UP",
+    reason: ownCancel
+      ? CLASS_SESSION_REFUND_REASON.OWN_CANCEL
+      : !voided
+        ? CLASS_SESSION_REFUND_REASON.HOST_CANCELLED
+        : hostVoid
+          ? CLASS_SESSION_REFUND_REASON.HOST_VOIDED
+          : CLASS_SESSION_REFUND_REASON.VOIDED,
   });
+}
+
+/** Who cancelled the session, from its cancel's history row; null for a void or an unattributed cancel. */
+async function sessionCancelledBy(
+  occurrenceId: string,
+): Promise<string | null> {
+  const row = await prisma.bookingStatusHistory.findFirst({
+    where: {
+      entity: "OCCURRENCE",
+      entityId: occurrenceId,
+      reason: HOST_CANCELLED_SESSION_REASON,
+    },
+    orderBy: { createdAt: "desc" },
+    select: { actorUserId: true },
+  });
+  return row?.actorUserId ?? null;
 }
 
 /** The keyed refund plus its bell; null when the gateway must be retried. */
@@ -535,6 +569,10 @@ async function refundAndTell(
       payment.currency,
     );
     const dashboardUrl = goHref("client", "appointments");
+    // A refund still settling at the gateway has started; only a settled one is on its way.
+    const pending = refund.status === "PENDING";
+    // A refund the host caused reaches the seat whatever their switches say.
+    const hostCaused = refundNoticeKind(args.reason) !== null;
     const [staged, emailRows] = await Promise.all([
       stageBell(prisma, {
         workflowId: NOVU_WORKFLOWS.CLASS_SESSION_REFUNDED,
@@ -544,8 +582,10 @@ async function refundAndTell(
           amount: formattedAmount,
           // The seat holder is always a consultee.
           dashboardUrl,
+          ...(pending ? { refundStarted: true } : {}),
         },
         dedupeKey: args.dedupeKey,
+        ...(hostCaused ? { required: "CLASS_SESSION_REFUNDED" as const } : {}),
       }),
       stageAppointmentCancelledEmail(prisma, {
         appointmentId: session.appointmentId,
@@ -553,8 +593,13 @@ async function refundAndTell(
         startsAt: session.startsAt,
         cancelledBy: "Familiarise",
         reason: args.reason,
-        refundText: `A refund of ${formattedAmount} has been issued.`,
+        refundText: refundNoticeText(
+          refund.amountRefundedPaise,
+          payment.currency,
+          pending,
+        ),
         refundUserIds: [payment.userId],
+        ...(hostCaused ? { requiredFor: [payment.userId] } : {}),
         dashboardUrl,
       }).catch((err) => {
         console.error(

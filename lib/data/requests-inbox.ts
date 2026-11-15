@@ -6,9 +6,10 @@
  * way the payment history builds its own (lifecycleOf / planOf), so the inbox,
  * Home and the detail page cannot disagree about a booking.
  *
- * Sources per type: consultation and subscription requests in PENDING and
- * APPROVED_PENDING_PAYMENT (the needs-you predicates), subscriptions whose
- * live cycle is finished, trials in PENDING / AWAITING_PAYMENT, and unpaid
+ * Sources per type: consultation requests in PENDING and
+ * APPROVED_PENDING_PAYMENT, subscription requests in PENDING (the needs-you
+ * predicates), subscriptions whose
+ * live cycle is finished, trials in AWAITING_PAYMENT, and unpaid
  * direct checkouts still inside their pay window (listed, never counted).
  * Chips narrow the sources server-side. A time sort over one source pages in
  * SQL by the request clock; every other view pages a bounded window sorted
@@ -19,6 +20,7 @@
  * `consultantProfileId`, the page runs `requirePersonalProfileAccess`.
  */
 
+import { withLapsedRequestRestored } from "@/lib/appointments/lapsed-move";
 import prisma from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import { scopeToPlanHostWhere, type Scope } from "@/lib/api/scope/parse";
@@ -35,6 +37,7 @@ import {
   subscriptionPlanEnd,
   type SubscriptionEntitlement,
 } from "@/lib/booking/entitlement";
+import { bookedSessionMinutes } from "@/lib/appointments/occurrences";
 import {
   APPOINTMENT_LIST_SELECT,
   PROFILE_WITH_USER_SELECT,
@@ -54,6 +57,7 @@ import {
   inboxBucketOf,
   isCursorSort,
   sortInboxRows,
+  tentativeAtomsOf,
   toStampDate,
   type InboxBucket,
   type InboxChip,
@@ -461,10 +465,12 @@ function finish(row: Omit<InboxRowInput, "bucket">, now: Date): InboxRowInput {
 }
 
 function consultationRow(
-  c: ConsultationRow,
+  stored: ConsultationRow,
   consultantProfileId: string,
   now: Date,
 ): InboxRowInput {
+  // A move past its deadline reads as the original until the sweep ends it.
+  const c = withLapsedRequestRestored(stored, now);
   const request = lifecycleOf({ consultation: c });
   const facts = wrapperFacts(c.appointment, "CONSULTATION");
   const holdDeadline =
@@ -511,7 +517,12 @@ function consultationRow(
       slots: facts.slots,
       requiredSlots: Math.max(
         1,
-        Math.ceil((c.consultationPlan.durationInHours || 1) / SLOT_HOURS),
+        Math.ceil(
+          (bookedSessionMinutes(c.appointment?.occurrences ?? []) ??
+            (c.consultationPlan.durationInHours || 1) * 60) /
+            60 /
+            SLOT_HOURS,
+        ),
       ),
       tentativeSlotCount: facts.tentativeSlotCount,
       rescheduledSlotCount: facts.rescheduledSlotCount,
@@ -587,11 +598,12 @@ function entitlementOf(
 }
 
 function subscriptionRow(
-  s: SubscriptionRow,
+  stored: SubscriptionRow,
   consultantProfileId: string,
   now: Date,
   kind: "subscription" | "next-cycle",
 ): InboxRowInput {
+  const s = withLapsedRequestRestored(stored, now);
   const request = lifecycleOf({ subscription: s });
   const facts = wrapperFacts(s.appointment, "SUBSCRIPTION");
   const entitlement = entitlementOf(s, now);
@@ -626,7 +638,7 @@ function subscriptionRow(
     ? entitlement.cycle.nextBatch * slotsPerSession
     : null;
   const requiredSlots =
-    facts.tentativeSlotCount > 0 ? facts.tentativeSlotCount : freshBatch;
+    facts.tentativeSlotCount > 0 ? tentativeAtomsOf(facts.slots) : freshBatch;
   return finish(
     {
       id: s.id,
@@ -678,8 +690,7 @@ function trialRow(
 ): InboxRowInput {
   const request = lifecycleOf({ trial: t });
   const facts = wrapperFacts(t.appointment, "TRIAL");
-  // A paid trial's pay link runs to paymentDueAt; a request has no clock of
-  // its own (no sweep expires a PENDING trial), so the bucket treats it as due.
+  // A listed trial is a paid one awaiting payment; its pay link runs to paymentDueAt.
   const deadline =
     pendingPayLinkDeadline(t.appointment) ??
     (t.status === "AWAITING_PAYMENT" ? t.paymentDueAt : null);
@@ -724,7 +735,10 @@ function trialRow(
       schedulingPeriod: null,
       schedulingTimezone: null,
       entitlement: null,
-      trial: { durationMinutes: t.subscriptionPlan.trialDurationMinutes },
+      trial: {
+        durationMinutes: t.subscriptionPlan.trialDurationMinutes,
+        consulteeUserId: t.consulteeProfile.user.id,
+      },
       checkoutHold: null,
       requestedStartPassed: false,
     },
@@ -933,7 +947,7 @@ function planSources(
 ): InboxSource[] {
   const key: ChipKey = chip ?? "all";
   if (type === "consultation") {
-    const pending = pendingConsultationWhere(cp, scope);
+    const pending = pendingConsultationWhere(cp, scope, now);
     const stranded = consultationSource(
       cp,
       strandedApprovedConsultationWhere(cp, scope),
@@ -981,17 +995,12 @@ function planSources(
     return byChip[key] ?? [];
   }
   if (type === "subscription") {
-    const pending = pendingSubscriptionWhere(cp, scope);
-    const awaiting = subscriptionSource(
-      cp,
-      subscriptionRequestWhere(cp, scope, "APPROVED_PENDING_PAYMENT"),
-      now,
-    );
+    // A plan is paid at checkout, so it is never awaiting payment.
+    const pending = pendingSubscriptionWhere(cp, scope, now);
     const nextCycle = nextCycleSource(cp, scope, now);
     const byChip: Partial<Record<ChipKey, InboxSource[]>> = {
       all: [
         subscriptionSource(cp, pending, now),
-        awaiting,
         nextCycle,
         subscriptionSource(
           cp,
@@ -1012,7 +1021,6 @@ function planSources(
           now,
         ),
       ],
-      "awaiting-payment": [awaiting],
       "next-cycle": [nextCycle],
       declined: [
         subscriptionSource(
@@ -1024,14 +1032,10 @@ function planSources(
     };
     return byChip[key] ?? [];
   }
-  // A trial has no hold clock, so "answer today" is every pending one.
-  const trialStatuses: Partial<
-    Record<ChipKey, ("PENDING" | "AWAITING_PAYMENT" | "REJECTED")[]>
-  > = {
-    all: ["PENDING", "AWAITING_PAYMENT"],
-    "answer-today": ["PENDING"],
+  // A trial never waits on the expert: the only one listed is a paid trial awaiting payment.
+  const trialStatuses: Partial<Record<ChipKey, "AWAITING_PAYMENT"[]>> = {
+    all: ["AWAITING_PAYMENT"],
     "awaiting-payment": ["AWAITING_PAYMENT"],
-    declined: ["REJECTED"],
   };
   const statuses = trialStatuses[key];
   return statuses

@@ -1,5 +1,6 @@
 "use client";
 
+import { proposedSessionsOf } from "@/lib/booking/reschedule-proposals";
 import Image from "next/image";
 import Link from "next/link";
 import { MoreHorizontal, Timer, User } from "lucide-react";
@@ -29,6 +30,7 @@ import {
   type MoneyState,
 } from "@/lib/dashboard/money-state";
 import {
+  tentativeAtomsOf,
   toStampDate,
   type InboxRowInput,
   type Stamp,
@@ -61,8 +63,6 @@ export type RowAction =
   | { kind: "withdraw" }
   | { kind: "allocate-next" }
   | { kind: "propose-times" }
-  | { kind: "pick-time" }
-  | { kind: "trial-decline" }
   | { kind: "accept-proposal" }
   | { kind: "place-new-time" }
   | { kind: "keep-original" }
@@ -80,8 +80,6 @@ const ACTION_LABEL: Record<RowAction["kind"], string> = {
   withdraw: "Withdraw approval",
   "allocate-next": "Allocate",
   "propose-times": "Propose new times",
-  "pick-time": "Pick a time",
-  "trial-decline": "Decline",
   "accept-proposal": "Accept new times",
   "place-new-time": "Pick a new time",
   "keep-original": "Keep the original time",
@@ -119,34 +117,31 @@ export function isDialogFreeApproval(row: InboxRowInput): boolean {
   return (
     (row.kind === "consultation" || row.kind === "subscription") &&
     row.bookingSource === "REQUEST_SUBMITTED" &&
+    // Only a request still awaiting the expert's answer; an approved one awaits payment.
+    row.presentation.request?.status === "PENDING" &&
     !row.requestedStartPassed &&
     row.rescheduledSlotCount === 0 &&
     row.proposal === null &&
     row.requiredSlots !== null &&
     row.tentativeSlotCount > 0 &&
-    row.tentativeSlotCount >= row.requiredSlots
+    tentativeAtomsOf(row.slots) >= row.requiredSlots
   );
 }
 
 const isDestructive = (action: RowAction) =>
-  action.kind === "decline" ||
-  action.kind === "withdraw" ||
-  action.kind === "trial-decline";
+  action.kind === "decline" || action.kind === "withdraw";
 
 /**
  * A booking being moved is answered, never declined: the client's proposal is
  * accepted (or placed, when any time works) or turned down to keep the original
- * time; the consultant's own proposal can only be withdrawn; released sessions
- * with no proposal left need a new time.
+ * time; the consultant's own request, with times or without, is only withdrawn
+ * (the server never lets the expert place over it); released sessions with no
+ * request left need a new time.
  */
 function movingActions(row: InboxRowInput): RowActions | null {
   const proposal = openProposal(row);
   if (proposal?.initiatorRole === "CONSULTANT") {
-    return {
-      primary:
-        proposal.proposedTimes.length > 0 ? null : { kind: "place-new-time" },
-      secondary: [{ kind: "withdraw-proposal" }],
-    };
+    return { primary: null, secondary: [{ kind: "withdraw-proposal" }] };
   }
   if (proposal) {
     return {
@@ -179,16 +174,8 @@ export function rowActions(
   if (row.kind === "next-cycle" || nextAction.kind === "ALLOCATE") {
     return { primary: { kind: "allocate-next" }, secondary: [] };
   }
-  if (row.kind === "trial") {
-    // A paid trial's reminder has no route yet: the countdown alone (#1775).
-    if (nextAction.kind === "APPROVE_OR_DECLINE") {
-      return {
-        primary: { kind: "pick-time" },
-        secondary: [{ kind: "trial-decline" }],
-      };
-    }
-    return { primary: null, secondary: [] };
-  }
+  // A trial never waits on the expert; a paid one awaiting payment shows its countdown only.
+  if (row.kind === "trial") return { primary: null, secondary: [] };
   if (
     nextAction.kind === "APPROVE_OR_DECLINE" &&
     row.requestedStartPassed &&
@@ -321,14 +308,14 @@ export function proposalLine(
 ): string | null {
   const proposal = openProposal(row);
   if (!proposal) return null;
-  const [first, ...rest] = proposal.proposedTimes;
+  const [first, ...rest] = proposedSessionsOf(proposal.proposedTimes);
   const times = first
     ? `${formatDateTime(first.startsAt, viewer)}${rest.length > 0 ? ` +${rest.length} more` : ""}`
     : null;
   if (proposal.initiatorRole === "CONSULTANT") {
     return times
       ? `You asked to move this to ${times} · waiting for ${row.requester.name}`
-      : "You released this session · pick a new time";
+      : "You released this session without times · withdraw it, then propose new times";
   }
   return times
     ? `${row.requester.name} asked to move · proposed ${times}`

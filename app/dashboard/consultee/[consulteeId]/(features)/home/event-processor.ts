@@ -23,6 +23,17 @@ import {
   liveOccurrencesOf,
 } from "@/lib/appointments/occurrences";
 import { deriveBucket } from "@/lib/appointments/bucket";
+import type { OpenRescheduleInput } from "@/lib/appointments/booking-status";
+import {
+  holdOpenFrom,
+  listStatusFacts,
+  trialHoldFacts,
+} from "@/lib/appointments/list-status-facts";
+import {
+  isUnpaidSeat,
+  ownSeatStatusOf,
+  seatLapsedOrReleased,
+} from "@/lib/appointments/status";
 import { payLinkHref, payablePaymentId } from "@/lib/payments/pay-link-href";
 import { isOrgFundedPaymentMethod } from "@/lib/payments/org-funded";
 import { formatInViewerZone } from "@/lib/time/viewer-zone";
@@ -61,6 +72,14 @@ export interface ProcessedEvent {
   startsAt: Date | null;
   endsAt: Date | null;
   status: string;
+  /** DIRECT_CHECKOUT or REQUEST_SUBMITTED for a 1:1 or plan. */
+  bookingSource?: string | null;
+  /** The learner's own seat and its payment, for the shared status chip. */
+  seatStatus?: string | null;
+  paid?: boolean;
+  payDeadline?: Date | null;
+  payLapsed?: boolean;
+  reschedule?: OpenRescheduleInput | null;
   slots: ProcessedEventSlot[];
   appointmentId?: string;
   /** Same derivation the Appointments page uses (lib/appointments/bucket), so
@@ -236,9 +255,19 @@ function awaitingReason(
   status: string | null | undefined,
   slots: SlotWithContext[],
   now: Date = new Date(),
+  hold?: {
+    source: string | null | undefined;
+    open: boolean | undefined;
+    paid: boolean | undefined;
+    moving: boolean;
+  },
 ): NeedsActionReason | null {
   const { bucket, needsActionReason } = deriveBucket({
     status,
+    source: hold?.source,
+    holdOpen: hold?.open,
+    paid: hold?.paid,
+    moving: hold?.moving,
     occurrences: slots.map((slot) =>
       toOccurrenceVM({
         ...slot.rawSlot,
@@ -251,6 +280,15 @@ function awaitingReason(
   });
   if (bucket !== "needsAction") return null;
   return needsActionReason;
+}
+
+/** An unpaid hold whose window is known to be closed can no longer happen, so Home leaves it out. */
+function lapsedHold(
+  status: string | null | undefined,
+  facts: { paid?: boolean },
+  open: boolean | undefined,
+): boolean {
+  return open === false && !facts.paid && isPendingOrPayment(status);
 }
 
 function isPendingOrPayment(status: string | null | undefined): boolean {
@@ -272,10 +310,22 @@ function processConsultation(
   const session = findNextSlot(slotContexts, now);
   // A fresh request has no occurrence yet; it used to vanish from Home while
   // the Appointments page showed it awaiting approval (#1703).
+  const holdFacts = listStatusFacts(consultation.appointment, []);
+  if (
+    lapsedHold(consultation.status, holdFacts, holdOpenFrom(holdFacts, now))
+  ) {
+    return null;
+  }
   const needsActionReason = awaitingReason(
     consultation.status,
     slotContexts,
     now,
+    {
+      source: consultation.bookingSource,
+      open: holdOpenFrom(holdFacts, now),
+      paid: holdFacts.paid,
+      moving: !!holdFacts.reschedule,
+    },
   );
   if (!session && !needsActionReason) return null;
 
@@ -315,6 +365,11 @@ function processConsultation(
     startsAt: session?.startsAt ?? null,
     endsAt: session?.endsAt ?? null,
     status: consultation.status ?? "PENDING",
+    bookingSource: consultation.bookingSource,
+    paid: holdFacts.paid,
+    payDeadline: holdFacts.payDeadline,
+    payLapsed: holdFacts.payLapsed,
+    reschedule: holdFacts.reschedule,
     slots: slotContexts.map(toEventSlot),
     appointmentId,
     needsActionReason,
@@ -347,7 +402,18 @@ function processSubscription(
   const nextSlot = findNextSlot(allSlots, now);
   // A paid subscription awaiting allocation has a wrapper and no occurrences;
   // it used to vanish from Home (#1703).
-  const needsActionReason = awaitingReason(subscription.status, allSlots, now);
+  const planFacts = listStatusFacts(nextAppointment, []);
+  if (
+    lapsedHold(subscription.status, planFacts, holdOpenFrom(planFacts, now))
+  ) {
+    return null;
+  }
+  const needsActionReason = awaitingReason(subscription.status, allSlots, now, {
+    source: subscription.bookingSource,
+    open: holdOpenFrom(planFacts, now),
+    paid: planFacts.paid,
+    moving: !!planFacts.reschedule,
+  });
   if (!nextSlot && !needsActionReason) return null;
 
   // Build meeting appointment
@@ -385,6 +451,11 @@ function processSubscription(
     startsAt: nextSlot?.startsAt ?? null,
     endsAt: nextSlot?.endsAt ?? null,
     status: subscription.status ?? "PENDING",
+    bookingSource: subscription.bookingSource,
+    paid: planFacts.paid,
+    payDeadline: planFacts.payDeadline,
+    payLapsed: planFacts.payLapsed,
+    reschedule: planFacts.reschedule,
     slots: allSlots.map(toEventSlot),
     appointmentId: nextAppointment?.id,
     needsActionReason,
@@ -403,10 +474,53 @@ function processSubscription(
 /**
  * Process a webinar into a ProcessedEvent
  */
+/** The learner's own held order on a seat, for its Pay link. */
+function payablePaymentIdOf(
+  appointment:
+    | {
+        payment?: ReadonlyArray<{
+          id: string;
+          paymentStatus: string;
+          createdAt?: Date | string;
+        }> | null;
+      }
+    | null
+    | undefined,
+): string | null {
+  return payablePaymentId(appointment?.payment);
+}
+
+/**
+ * The learner's own seat decides a group card: a released or lapsed seat is
+ * not on Home, and a held one they have not paid is a Pay task with no Join.
+ */
+function seatGate(
+  appointment: Parameters<typeof listStatusFacts>[0] &
+    Parameters<typeof ownSeatStatusOf>[0] &
+    Parameters<typeof payablePaymentIdOf>[0],
+  now: Date,
+) {
+  const seatStatus = ownSeatStatusOf(appointment);
+  const facts = listStatusFacts(appointment, []);
+  const seat = { seatStatus, ...facts };
+  return {
+    seat,
+    skip: seatLapsedOrReleased(seat, now),
+    unpaid: isUnpaidSeat(seat),
+    payUrl: payLinkHref({
+      paymentId: payablePaymentIdOf(appointment),
+      checkoutUrl: null,
+    }),
+  };
+}
+
 function processWebinar(
   webinar: TConsulteeWebinar,
   now: Date = new Date(),
 ): ProcessedEvent | null {
+  // A seat the learner no longer holds belongs to the Appointments list's Cancelled tab, not Home.
+  const gate = seatGate(webinar.appointment, now);
+  if (gate.skip) return null;
   const allSlots: SlotWithContext[] = [];
   const appointmentId = webinar.appointment?.id ?? "";
 
@@ -440,8 +554,11 @@ function processWebinar(
   };
 
   // Registered = the consultee is connected to at least one session slot.
+  // A host's session confirms the event, not this learner's unpaid seat.
   const bookingStatus: BookingStatus =
-    (webinar.appointment?.occurrences?.length ?? 0) > 0 ? "CONFIRMED" : null;
+    !gate.unpaid && (webinar.appointment?.occurrences?.length ?? 0) > 0
+      ? "CONFIRMED"
+      : null;
 
   // Extract collaborators
   const collaborators: ProcessedCollaborator[] = (
@@ -464,10 +581,15 @@ function processWebinar(
     status: webinar.status ?? "APPROVED",
     slots: allSlots.map(toEventSlot),
     appointmentId,
-    needsActionReason: null,
-    joinableAppointment,
-    joinableSlot: nextSlot.rawSlot,
-    joinableOccurrence: nextSlot.run,
+    needsActionReason: gate.unpaid ? "PAY_NOW" : null,
+    pendingPaymentUrl: gate.unpaid ? gate.payUrl : null,
+    seatStatus: gate.seat.seatStatus,
+    paid: gate.seat.paid,
+    payDeadline: gate.seat.payDeadline,
+    payLapsed: gate.seat.payLapsed,
+    joinableAppointment: gate.unpaid ? undefined : joinableAppointment,
+    joinableSlot: gate.unpaid ? undefined : nextSlot.rawSlot,
+    joinableOccurrence: gate.unpaid ? null : nextSlot.run,
     bookingStatus,
     collaborators,
     organizationId: webinar.appointment?.organizationId ?? null,
@@ -482,6 +604,9 @@ function processClass(
   classEvent: TConsulteeClass,
   now: Date = new Date(),
 ): ProcessedEvent | null {
+  // A seat the learner no longer holds belongs to the Appointments list's Cancelled tab, not Home.
+  const gate = seatGate(classEvent.appointment, now);
+  if (gate.skip) return null;
   // #1554 — one wrapper per class, N occurrences.
   const nextAppointment = classEvent.appointment;
   const allSlots: SlotWithContext[] = nextAppointment
@@ -512,8 +637,11 @@ function processClass(
     },
   };
 
+  // A host's session confirms the event, not this learner's unpaid seat.
   const bookingStatus: BookingStatus =
-    (classEvent.appointment?.occurrences?.length ?? 0) > 0 ? "CONFIRMED" : null;
+    !gate.unpaid && (classEvent.appointment?.occurrences?.length ?? 0) > 0
+      ? "CONFIRMED"
+      : null;
 
   // Extract collaborators
   const collaborators: ProcessedCollaborator[] = (
@@ -536,10 +664,15 @@ function processClass(
     status: classEvent.status ?? "APPROVED",
     slots: allSlots.map(toEventSlot),
     appointmentId: nextSlot.appointmentId,
-    needsActionReason: null,
-    joinableAppointment,
-    joinableSlot: nextSlot.rawSlot,
-    joinableOccurrence: nextSlot.run,
+    needsActionReason: gate.unpaid ? "PAY_NOW" : null,
+    pendingPaymentUrl: gate.unpaid ? gate.payUrl : null,
+    seatStatus: gate.seat.seatStatus,
+    paid: gate.seat.paid,
+    payDeadline: gate.seat.payDeadline,
+    payLapsed: gate.seat.payLapsed,
+    joinableAppointment: gate.unpaid ? undefined : joinableAppointment,
+    joinableSlot: gate.unpaid ? undefined : nextSlot.rawSlot,
+    joinableOccurrence: gate.unpaid ? null : nextSlot.run,
     bookingStatus,
     collaborators,
     organizationId: nextAppointment?.organizationId ?? null,
@@ -558,7 +691,15 @@ function processTrial(
   const appointmentId = trial.appointment?.id ?? "";
   const slotContexts = toSlotContexts(slots, appointmentId);
   const session = findNextSlot(slotContexts, now);
-  const needsActionReason = awaitingReason(trial.status, slotContexts, now);
+  const hold = trialHoldFacts(trial);
+  const holdOpen = holdOpenFrom(hold, now);
+  if (lapsedHold(trial.status, hold, holdOpen)) return null;
+  const needsActionReason = awaitingReason(trial.status, slotContexts, now, {
+    source: null,
+    open: holdOpen,
+    paid: hold.paid,
+    moving: false,
+  });
   if (!session && !needsActionReason) return null;
 
   const joinableAppointment: MeetingAppointment = {
@@ -586,17 +727,21 @@ function processTrial(
     slots: slotContexts.map(toEventSlot),
     appointmentId: appointmentId || undefined,
     needsActionReason,
+    ...hold,
+    // Only while the window is open: the checkout refuses a lapsed trial.
     pendingPaymentUrl:
-      payLinkHref({
-        paymentId: payablePaymentId(
-          (trial.appointment as { payment?: unknown } | null)?.payment as
-            Parameters<typeof payablePaymentId>[0] | undefined,
-        ),
-        checkoutUrl: trial.pendingPaymentUrl,
-      }) ??
-      (trial.status === "AWAITING_PAYMENT"
-        ? `/checkout/plans/trial/${trial.id}`
-        : null),
+      holdOpen === false
+        ? null
+        : (payLinkHref({
+            paymentId: payablePaymentId(
+              (trial.appointment as { payment?: unknown } | null)?.payment as
+                Parameters<typeof payablePaymentId>[0] | undefined,
+            ),
+            checkoutUrl: trial.pendingPaymentUrl,
+          }) ??
+          (trial.status === "AWAITING_PAYMENT"
+            ? `/checkout/plans/trial/${trial.id}`
+            : null)),
     joinableAppointment: session ? joinableAppointment : undefined,
     joinableSlot: session?.rawSlot,
     joinableOccurrence: session?.run ?? null,
