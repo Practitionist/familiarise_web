@@ -1,6 +1,6 @@
 /** The review case a conduct removal opens, its earnings hold, and what an overturn or the 72-hour lapse owes. */
 
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 
 import prisma, {
   ALLOCATION_TX_MAX_WAIT_MS,
@@ -9,7 +9,15 @@ import prisma, {
   type Tx,
 } from "@/lib/prisma";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
-import { isPriceFreePayment } from "@/lib/payments/funding-rail";
+import {
+  isFreeCreditIntent,
+  isPriceFreePayment,
+} from "@/lib/payments/funding-rail";
+import {
+  REFUNDABLE_BALANCE_SELECT,
+  RETURNED_REFUND_STATUSES,
+  refundableBalancePaise,
+} from "@/lib/payments/refundable-balance";
 import {
   driveRefundOwed,
   markerFromRow,
@@ -276,7 +284,53 @@ async function removalTargetTx(db: PrismaLike, removalCaseId: string) {
   };
 }
 
-/** On the decision's tx: an OVERTURNED removal (or appeal of one) owes the unrefunded balance and an unblock. */
+/** What an overturn must refund first: the seat's unrefunded paise, "credits" unrestored, or null. */
+export async function removalRefundOutstandingTx(
+  tx: Tx,
+  supportCase: {
+    id: string;
+    category: string | null;
+    appealOfDecisionId: string | null;
+  },
+): Promise<number | "credits" | null> {
+  const caseId = await reviewedRemovalCaseId(tx, supportCase);
+  const target = caseId ? await removalTargetTx(tx, caseId) : null;
+  if (!target) return null;
+  const payment = await tx.payment.findFirst({
+    orderBy: { createdAt: "asc" },
+    where: {
+      userId: target.userId,
+      appointmentId: target.appointmentId,
+      paymentStatus: "SUCCEEDED",
+      deletedAt: null,
+    },
+    select: {
+      amount: true,
+      originalAmount: true,
+      paymentIntent: true,
+      ...REFUNDABLE_BALANCE_SELECT,
+    },
+  });
+  if (
+    !payment ||
+    isPriceFreePayment({
+      paymentIntent: payment.paymentIntent,
+      amountPaise: Number(payment.amount),
+      listPricePaise: Number(payment.originalAmount),
+    })
+  ) {
+    return null;
+  }
+  if (isFreeCreditIntent(payment.paymentIntent)) {
+    return payment.refunds.some((r) => RETURNED_REFUND_STATUSES.has(r.status))
+      ? null
+      : "credits";
+  }
+  const balance = refundableBalancePaise(Number(payment.amount), payment);
+  return balance > 0 ? balance : null;
+}
+
+/** On the decision's tx, once its refund is settled: an OVERTURNED removal (or appeal of one) owes an unblock. */
 export async function conductRemovalDecidedTx(
   tx: Tx,
   supportCase: {
@@ -288,16 +342,8 @@ export async function conductRemovalDecidedTx(
 ): Promise<void> {
   if (outcome !== "OVERTURNED") return;
   const caseId = await reviewedRemovalCaseId(tx, supportCase);
-  if (!caseId) return;
-  const target = await removalTargetTx(tx, caseId);
+  const target = caseId ? await removalTargetTx(tx, caseId) : null;
   if (!target) return;
-  await stampRemovalRefundTx(
-    tx,
-    caseId,
-    target.appointmentId,
-    target.userId,
-    "conduct removal overturned",
-  );
   await persistConductBlockInTx(tx, target.appointmentId, target.userId);
 }
 
@@ -377,20 +423,40 @@ async function settleConductRemovalRemedy(
   return failure;
 }
 
-/** Removal cases past their review deadline with no decision and no lapse recorded yet. */
-export function conductRemovalLapsedWhere(
+/**
+ * Removal cases past their 72-hour deadline with no lapse recorded and no decision made in time:
+ * a decision after the deadline does not cancel the refund it owes.
+ */
+function lapsedCaseIds(
+  db: PrismaLike,
   now: Date,
-): Prisma.SupportCaseWhereInput {
-  return {
-    category: CONDUCT_REMOVAL_CATEGORY,
-    deletedAt: null,
-    appointmentId: { not: null },
-    createdAt: {
-      lte: new Date(now.getTime() - CONDUCT_REMOVAL_REVIEW_HOURS * HOUR_MS),
-    },
-    decisions: { none: {} },
-    events: { none: { kind: "REMOVAL_REVIEW_LAPSED" } },
-  };
+  limit: number,
+  onlyCaseId?: string,
+) {
+  return db.$queryRaw<{ id: string }[]>`
+    SELECT c.id FROM "SupportCase" c
+    WHERE c.category = ${CONDUCT_REMOVAL_CATEGORY}
+      ${onlyCaseId ? Prisma.sql`AND c.id = ${onlyCaseId}` : Prisma.empty}
+      AND c."deletedAt" IS NULL
+      AND c."appointmentId" IS NOT NULL
+      AND c."createdAt" <= ${new Date(now.getTime() - CONDUCT_REMOVAL_REVIEW_HOURS * HOUR_MS)}
+      AND NOT EXISTS (
+        SELECT 1 FROM "SupportCaseEvent" e
+        WHERE e."caseId" = c.id AND e.kind = 'REMOVAL_REVIEW_LAPSED')
+      AND NOT EXISTS (
+        SELECT 1 FROM "SupportCaseDecision" d
+        WHERE d."caseId" = c.id
+          AND d."createdAt" <= c."createdAt" + ${CONDUCT_REMOVAL_REVIEW_HOURS}::int * interval '1 hour')
+    ORDER BY c."createdAt" ASC, c.id ASC
+    LIMIT ${limit}`;
+}
+
+/** The ticker's idle probe for the conduct removal arm. */
+export async function hasConductRemovalLapse(
+  db: PrismaLike,
+  now: Date,
+): Promise<boolean> {
+  return (await lapsedCaseIds(db, now, 1)).length > 0;
 }
 
 /**
@@ -402,11 +468,11 @@ async function lapseRemovalTx(
   caseId: string,
   now: Date,
 ): Promise<ConductRemovalRemedy | null> {
-  const still = await tx.supportCase.findFirst({
-    where: { id: caseId, ...conductRemovalLapsedWhere(now) },
+  if ((await lapsedCaseIds(tx, now, 1, caseId)).length === 0) return null;
+  const still = await tx.supportCase.findUniqueOrThrow({
+    where: { id: caseId },
     select: { updatedAt: true },
   });
-  if (!still) return null;
   // Compare-and-set on the version a decision also checks: an overlapping run or decision loses here.
   const claimed = await tx.supportCase.updateMany({
     where: { id: caseId, updatedAt: still.updatedAt },
@@ -431,13 +497,15 @@ async function lapseRemovalTx(
     target.userId,
     "conduct removal review lapsed",
   );
-  await postCaseMessageTx(
-    tx,
-    caseId,
-    `Support did not decide within ${CONDUCT_REMOVAL_REVIEW_HOURS} hours, so whatever is still unrefunded on your seat is being returned to where you paid from. Support can still review the removal.`,
-    false,
-    now,
-  );
+  if (marker) {
+    await postCaseMessageTx(
+      tx,
+      caseId,
+      `Support did not decide within ${CONDUCT_REMOVAL_REVIEW_HOURS} hours, so whatever is still unrefunded on your seat is being returned to where you paid from.`,
+      false,
+      now,
+    );
+  }
   return { caseId, ...target, marker, unblockGeneration: null };
 }
 
@@ -451,12 +519,7 @@ export async function sweepConductRemovalDeadlines(opts: {
   now: Date;
   errors: string[];
 }): Promise<ConductRemovalDeadlineResult> {
-  const due = await prisma.supportCase.findMany({
-    where: conductRemovalLapsedWhere(opts.now),
-    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-    take: opts.limit,
-    select: { id: true },
-  });
+  const due = await lapsedCaseIds(prisma, opts.now, opts.limit);
   let lapsed = 0;
   // Sequential: each case is one transaction and a refund on the shared pool.
   for (const { id } of due) {

@@ -30,7 +30,7 @@ import {
 } from "./evidence-retention";
 import { hasChatAccessWork, sweepSupportChatAccess } from "./chat-sweep";
 import {
-  conductRemovalLapsedWhere,
+  hasConductRemovalLapse,
   sweepConductRemovalDeadlines,
 } from "./conduct-removal-case";
 import { activeHolds, caseHoldEvents, releaseAllCaseHolds } from "./case-holds";
@@ -1003,7 +1003,6 @@ export async function hasSupportSlaSweepWork(
         autoCloseWhere(now),
         CASCADE_INCIDENT_WHERE,
         purgeEligibleWhere(now),
-        conductRemovalLapsedWhere(now),
       ],
     },
     select: { id: true },
@@ -1011,6 +1010,8 @@ export async function hasSupportSlaSweepWork(
   if (supportCase) return true;
   if (outOfTime()) return true;
   if (await hasChatAccessWork(db, now)) return true;
+  if (outOfTime()) return true;
+  if (await hasConductRemovalLapse(db, now)) return true;
   if (outOfTime()) return true;
   const dispute = await db.dispute.findFirst({
     where: { OR: [disputeDeadlineWhere(now), LIVE_DISPUTE_WHERE] },

@@ -67,6 +67,7 @@ import {
 } from "./case-holds";
 import {
   conductRemovalDecidedTx,
+  removalRefundOutstandingTx,
   settleDecidedRemoval,
 } from "./conduct-removal-case";
 import {
@@ -867,6 +868,26 @@ async function assertDecisionMatchesMoney(
   }
 }
 
+/**
+ * An overturned removal is refunded first, through the recommendation and its bounded review:
+ * staff send up to their limits at once, an admin approves above them.
+ */
+async function assertRemovalRefundedFirst(
+  tx: Tx,
+  supportCase: SupportCase,
+  outcome: ActionInput<"DECIDE">["outcome"],
+) {
+  if (outcome !== "OVERTURNED") return;
+  const owed = await removalRefundOutstandingTx(tx, supportCase);
+  if (owed === null) return;
+  throw new CaseActionError(
+    "REFUND_FIRST",
+    owed === "credits"
+      ? "Restore this seat's credits first: recommend the refund and have it approved, then record the overturn."
+      : `Refund the ₹${(owed / 100).toFixed(2)} still unrefunded on this seat first: recommend it and have it approved (an admin approves above your limit), then record the overturn.`,
+  );
+}
+
 /** Deciding releases the case's payout holds, so every recommendation must be reviewed or voided first. */
 async function assertNoOpenRecommendation(tx: Tx, caseId: string) {
   const open = await tx.supportFinancialRecommendation.findFirst({
@@ -966,6 +987,7 @@ async function recordCaseDecisionTx(
       caseDecidedDetail(latest),
     );
   await assertDecisionMatchesMoney(tx, caseId, input.outcome);
+  await assertRemovalRefundedFirst(tx, supportCase, input.outcome);
   await assertNoOpenRecommendation(tx, caseId);
   const restoredConsultantProfileId = await reverseModerationIfOverturned(
     tx,
@@ -1027,7 +1049,7 @@ async function assertSupersedeKeepsEffects(
       "COMPENSATING_ACTION_REQUIRED",
       "The moderation action was already reversed. Reinstate it from moderation first.",
     );
-  // An overturned removal already owes its refund and its unblock.
+  // An overturned removal was refunded and unblocked; upholding it again cannot undo either.
   if (
     latest.outcome === "OVERTURNED" &&
     outcome !== "OVERTURNED" &&
@@ -1035,7 +1057,7 @@ async function assertSupersedeKeepsEffects(
   )
     throw new CaseActionError(
       "COMPENSATING_ACTION_REQUIRED",
-      "The removal was overturned, so its refund and unblock are already owed. It cannot be upheld again.",
+      "The removal was overturned: its seat was refunded and its call block lifted. It cannot be upheld again.",
     );
   if (latest.outcome !== "REFUND_APPROVED" || outcome === "REFUND_APPROVED")
     return;
@@ -1096,6 +1118,7 @@ async function supersedeDecisionTx(
     );
   await assertSupersedeKeepsEffects(tx, supportCase, latest, input.outcome);
   await assertDecisionMatchesMoney(tx, caseId, input.outcome);
+  await assertRemovalRefundedFirst(tx, supportCase, input.outcome);
   const restoredConsultantProfileId =
     latest.outcome === "OVERTURNED"
       ? undefined

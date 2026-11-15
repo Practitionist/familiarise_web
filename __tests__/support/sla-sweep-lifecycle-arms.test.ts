@@ -21,7 +21,7 @@ jest.mock("../../lib/support/chat-sweep", () => ({
   sweepSupportChatAccess: (...args: unknown[]) => mockChatSweep(...args),
 }));
 jest.mock("../../lib/support/conduct-removal-case", () => ({
-  conductRemovalLapsedWhere: () => ({}),
+  hasConductRemovalLapse: async () => false,
   sweepConductRemovalDeadlines: (...args: unknown[]) =>
     mockConductRemovals(...args),
 }));

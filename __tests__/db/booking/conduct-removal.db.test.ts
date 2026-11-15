@@ -91,14 +91,14 @@ const SEAT = 100_000;
 
 async function seatBuyer(
   webinar: SeededWebinar,
-  pay: { amount: number; intent?: string } | null,
+  pay: { amount: number; intent?: string; listPaise?: number } | null,
 ) {
   const buyer = await seedSeatBuyer();
   const payment = pay
     ? await prisma.payment.create({
         data: {
           amount: BigInt(pay.amount),
-          originalAmount: BigInt(SEAT),
+          originalAmount: BigInt(pay.listPaise ?? SEAT),
           paymentMethod: pay.intent ? "credits" : "card",
           paymentIntent: pay.intent ?? `order_dbtier_${randomUUID()}`,
           paymentGateway: "RAZORPAY",
@@ -129,17 +129,17 @@ async function seatBuyer(
   return { userId: buyer.userId, payment };
 }
 
-async function paidSeat() {
-  const webinar = await seedWebinar({ capacity: 10, price: SEAT });
-  const seat = await seatBuyer(webinar, { amount: SEAT });
+async function paidSeat(price = SEAT) {
+  const webinar = await seedWebinar({ capacity: 10, price });
+  const seat = await seatBuyer(webinar, { amount: price, listPaise: price });
   const payment = seat.payment!;
   const earning = await prisma.consultantEarnings.create({
     data: {
       consultantProfileId: webinar.host.consultantProfileId,
       paymentId: payment.id,
-      grossAmount: BigInt(SEAT),
-      platformFeePaise: BigInt(20_000),
-      consultantSharePaise: BigInt(80_000),
+      grossAmount: BigInt(price),
+      platformFeePaise: BigInt(price / 5),
+      consultantSharePaise: BigInt(price - price / 5),
       cycleOrdinal: 0,
       status: "PENDING",
       holdUntil: null,
@@ -158,24 +158,80 @@ const remove = (webinar: SeededWebinar, userId: string) =>
     note: "Abusive messages in chat",
   });
 
-async function overturn(caseId: string) {
-  const staff = await seedUser("STAFF");
-  const { updatedAt } = await prisma.supportCase.findUniqueOrThrow({
-    where: { id: caseId },
-    select: { updatedAt: true },
+type Actor = { userId: string; role: "STAFF" | "ADMIN"; freshSession: true };
+const actor = async (role: "STAFF" | "ADMIN"): Promise<Actor> => ({
+  userId: (await seedUser(role)).userId,
+  role,
+  freshSession: true,
+});
+const version = async (caseId: string) =>
+  (
+    await prisma.supportCase.findUniqueOrThrow({
+      where: { id: caseId },
+      select: { updatedAt: true },
+    })
+  ).updatedAt.toISOString();
+
+async function decide(
+  caseId: string,
+  by: Actor,
+  outcome: "OVERTURNED" | "UPHELD",
+) {
+  return performCaseAction(caseId, by, {
+    action: "DECIDE",
+    clientActionId: randomUUID(),
+    expectedUpdatedAt: await version(caseId),
+    outcome,
+    explanation: "The recording settles it.",
   });
-  await performCaseAction(
-    caseId,
-    { userId: staff.userId, role: "STAFF", freshSession: true },
-    {
-      action: "DECIDE",
-      clientActionId: randomUUID(),
-      expectedUpdatedAt: updatedAt.toISOString(),
-      outcome: "OVERTURNED",
-      explanation: "The recording shows no harassment.",
-    },
-  );
 }
+
+async function recommend(
+  caseId: string,
+  by: Actor,
+  paymentId: string,
+  paise: number,
+) {
+  const result = await performCaseAction(caseId, by, {
+    action: "RECOMMEND_REFUND",
+    clientActionId: randomUUID(),
+    expectedUpdatedAt: await version(caseId),
+    paymentId,
+    amountPaise: paise,
+    reason: "Overturning the removal: return the seat",
+    releaseSeat: false,
+  });
+  if (!("id" in result) || typeof result.id !== "string")
+    throw new Error("no recommendation");
+  return result.id;
+}
+
+async function review(
+  caseId: string,
+  by: Actor,
+  recommendationId: string,
+  approve: boolean,
+  expectedRefundablePaise?: number,
+) {
+  return performCaseAction(caseId, by, {
+    action: "REVIEW_REFUND",
+    clientActionId: randomUUID(),
+    expectedUpdatedAt: await version(caseId),
+    recommendationId,
+    approve,
+    reason: approve ? "The removal is overturned" : "Already refunded",
+    ...(expectedRefundablePaise === undefined
+      ? {}
+      : { expectedRefundablePaise }),
+  });
+}
+
+/** Moves the case's clock back, so its 72-hour deadline has already passed. */
+const pastDeadline = (caseId: string) =>
+  prisma.supportCase.update({
+    where: { id: caseId },
+    data: { createdAt: new Date(Date.now() - 73 * HOUR_MS) },
+  });
 
 const intents = (appointmentId: string, userId: string) =>
   prisma.streamRevocationRetry.findMany({
@@ -303,29 +359,39 @@ describe("removal", () => {
   });
 });
 
-describe("overturn", () => {
-  it("refunds exactly the unrefunded remainder (₹1,000 less ₹250 sent; a failed ₹100 does not count) and unblocks", async () => {
-    const { webinar, userId, payment } = await paidSeat();
-    await prisma.refund.createMany({
-      data: [
-        {
-          paymentId: payment.id,
-          amountPaise: BigInt(25_000),
-          status: "SUCCEEDED",
-          paymentGateway: "RAZORPAY",
-          refundId: `rfnd_dbtier_${randomUUID()}`,
-        },
-        {
-          paymentId: payment.id,
-          amountPaise: BigInt(10_000),
-          status: "FAILED",
-          paymentGateway: "RAZORPAY",
-          refundId: `rfnd_dbtier_${randomUUID()}`,
-        },
-      ],
+describe("overturn: refund first, through the bounded door", () => {
+  it("a staff overturn of a ₹6,000 seat waits for an admin to approve its refund, then records", async () => {
+    const { webinar, userId, payment } = await paidSeat(600_000);
+    const { caseId } = (await remove(webinar, userId))!;
+    const staff = await actor("STAFF");
+    const reviewer = await actor("STAFF");
+    const admin = await actor("ADMIN");
+
+    await expect(decide(caseId, staff, "OVERTURNED")).rejects.toMatchObject({
+      code: "REFUND_FIRST",
     });
-    const removed = await remove(webinar, userId);
-    stream.configured = true;
+    const recommendationId = await recommend(
+      caseId,
+      staff,
+      payment.id,
+      600_000,
+    );
+    await expect(
+      review(caseId, reviewer, recommendationId, true, 600_000),
+    ).rejects.toMatchObject({ code: "ADMIN_REQUIRED" });
+    expect(await refundedPaise(payment.id)).toBe(0);
+    await expect(decide(caseId, staff, "OVERTURNED")).rejects.toBeTruthy();
+
+    await review(caseId, admin, recommendationId, true, 600_000);
+    expect(await refundedPaise(payment.id)).toBe(600_000);
+    await expect(decide(caseId, staff, "OVERTURNED")).resolves.toMatchObject({
+      outcome: "OVERTURNED",
+    });
+  });
+
+  it("a staff overturn of a ₹4,000 seat refunds at once, counts in movedPaise, then records and unblocks", async () => {
+    const { webinar, userId, payment } = await paidSeat(400_000);
+    const { caseId } = (await remove(webinar, userId))!;
     await prisma.meeting.create({
       data: {
         streamCallId: `call-${randomUUID()}`,
@@ -336,22 +402,27 @@ describe("overturn", () => {
         ).id,
       },
     });
+    const staff = await actor("STAFF");
+    const reviewer = await actor("STAFF");
 
-    await overturn(removed!.caseId);
+    const recommendationId = await recommend(
+      caseId,
+      staff,
+      payment.id,
+      400_000,
+    );
+    const reviewed = await review(
+      caseId,
+      reviewer,
+      recommendationId,
+      true,
+      400_000,
+    );
+    expect(reviewed).toMatchObject({ movedPaise: 400_000 });
+    expect(await refundedPaise(payment.id)).toBe(400_000);
 
-    expect(await refundedPaise(payment.id)).toBe(100_000);
-    const sent = await prisma.refund.findMany({
-      where: { paymentId: payment.id, dedupeKey: { not: null } },
-      select: { amountPaise: true, dedupeKey: true },
-    });
-    expect(sent.map((r) => [Number(r.amountPaise), r.dedupeKey])).toEqual([
-      [75_000, `conduct-removal:${removed!.caseId}:pay:${payment.id}`],
-    ]);
-    const marker = await prisma.payment.findUniqueOrThrow({
-      where: { id: payment.id },
-      select: { refundOwedKey: true },
-    });
-    expect(marker.refundOwedKey).toBeNull();
+    stream.configured = true;
+    await decide(caseId, staff, "OVERTURNED");
     expect(mockCall.unblockUser).toHaveBeenCalledWith({ user_id: userId });
     const block = (await intents(webinar.appointmentId, userId)).find(
       (r) => r.kind === "CONDUCT_CALL_BLOCK",
@@ -359,49 +430,45 @@ describe("overturn", () => {
     expect(block?.status).toBe("SUCCEEDED");
   });
 
-  it("refunds nothing for a free seat and restores credits for a credit-funded seat", async () => {
+  it("a lapse refund that lands before the admin acts leaves the approval nothing to send", async () => {
+    const { webinar, userId, payment } = await paidSeat(600_000);
+    const { caseId } = (await remove(webinar, userId))!;
+    const staff = await actor("STAFF");
+    const admin = await actor("ADMIN");
+    const recommendationId = await recommend(
+      caseId,
+      staff,
+      payment.id,
+      600_000,
+    );
+
+    await sweepConductRemovalDeadlines({
+      limit: 50,
+      now: new Date(Date.now() + 73 * HOUR_MS),
+      errors: [],
+    });
+    expect(await refundedPaise(payment.id)).toBe(600_000);
+
+    await expect(
+      review(caseId, admin, recommendationId, true, 0),
+    ).rejects.toMatchObject({ code: "AMOUNT_EXCEEDS_REFUNDABLE" });
+    expect(await refundedPaise(payment.id)).toBe(600_000);
+    await review(caseId, staff, recommendationId, false);
+    await expect(decide(caseId, staff, "OVERTURNED")).resolves.toMatchObject({
+      outcome: "OVERTURNED",
+    });
+  });
+
+  it("a free seat owes nothing, so its overturn records at once", async () => {
     const webinar = await seedWebinar({ capacity: 10, price: 0 });
     const free = await seatBuyer(webinar, {
       amount: 0,
       intent: `free_${randomUUID()}`,
+      listPaise: 0,
     });
-    await prisma.payment.update({
-      where: { id: free.payment!.id },
-      data: { originalAmount: BigInt(0) },
-    });
-    const freeRemoval = await remove(webinar, free.userId);
-    await overturn(freeRemoval!.caseId);
+    const { caseId } = (await remove(webinar, free.userId))!;
+    await decide(caseId, await actor("STAFF"), "OVERTURNED");
     expect(refundDoor).not.toHaveBeenCalled();
-    expect(
-      await prisma.payment.findUniqueOrThrow({
-        where: { id: free.payment!.id },
-        select: { refundOwedKey: true },
-      }),
-    ).toEqual({ refundOwedKey: null });
-
-    const paidWebinar = await seedWebinar({ capacity: 10, price: SEAT });
-    const credit = await seatBuyer(paidWebinar, {
-      amount: 0,
-      intent: `free_${randomUUID()}`,
-    });
-    refundDoor.mockImplementation(async () => ({
-      refundId: `rf_${randomUUID()}`,
-      amountRefundedPaise: 0,
-      rail: "CREDITS",
-      status: "SUCCEEDED",
-    }));
-    const creditRemoval = await remove(paidWebinar, credit.userId);
-    await overturn(creditRemoval!.caseId);
-    const key = `conduct-removal:${creditRemoval!.caseId}:pay:${credit.payment!.id}`;
-    expect(refundDoor.mock.calls.length).toBeGreaterThan(0);
-    for (const [args] of refundDoor.mock.calls) {
-      // The credits rail restores in full: no amount, under the removal's key.
-      expect(args).toMatchObject({
-        paymentId: credit.payment!.id,
-        dedupeKey: key,
-      });
-      expect(args).not.toHaveProperty("amountPaise");
-    }
   });
 });
 
@@ -452,5 +519,102 @@ describe("the 72-hour deadline", () => {
     });
     expect(lapsedAgain).toBe(1);
     expect(again.lapsed).toBe(0);
+  });
+
+  it("refunds exactly the unrefunded remainder: ₹1,000 less ₹250 sent, a failed ₹100 not counted", async () => {
+    const { webinar, userId, payment } = await paidSeat();
+    await prisma.refund.createMany({
+      data: [
+        {
+          paymentId: payment.id,
+          amountPaise: BigInt(25_000),
+          status: "SUCCEEDED",
+          paymentGateway: "RAZORPAY",
+          refundId: `rfnd_dbtier_${randomUUID()}`,
+        },
+        {
+          paymentId: payment.id,
+          amountPaise: BigInt(10_000),
+          status: "FAILED",
+          paymentGateway: "RAZORPAY",
+          refundId: `rfnd_dbtier_${randomUUID()}`,
+        },
+      ],
+    });
+    const { caseId } = (await remove(webinar, userId))!;
+    await sweepConductRemovalDeadlines({
+      limit: 50,
+      now: new Date(Date.now() + 73 * HOUR_MS),
+      errors: [],
+    });
+    const sent = await prisma.refund.findMany({
+      where: { paymentId: payment.id, dedupeKey: { not: null } },
+      select: { amountPaise: true, dedupeKey: true },
+    });
+    expect(sent.map((r) => [Number(r.amountPaise), r.dedupeKey])).toEqual([
+      [75_000, `conduct-removal:${caseId}:pay:${payment.id}`],
+    ]);
+  });
+
+  it("restores a credit-funded seat on the credits rail, under the removal's key", async () => {
+    const webinar = await seedWebinar({ capacity: 10, price: SEAT });
+    const credit = await seatBuyer(webinar, {
+      amount: 0,
+      intent: `free_${randomUUID()}`,
+    });
+    refundDoor.mockImplementation(async () => ({
+      refundId: `rf_${randomUUID()}`,
+      amountRefundedPaise: 0,
+      rail: "CREDITS",
+      status: "SUCCEEDED",
+    }));
+    const { caseId } = (await remove(webinar, credit.userId))!;
+    await sweepConductRemovalDeadlines({
+      limit: 50,
+      now: new Date(Date.now() + 73 * HOUR_MS),
+      errors: [],
+    });
+    const ours = refundDoor.mock.calls.filter(
+      ([args]) =>
+        (args as { paymentId: string }).paymentId === credit.payment!.id,
+    );
+    expect(ours.length).toBeGreaterThan(0);
+    for (const [args] of ours) {
+      expect(args).toMatchObject({
+        dedupeKey: `conduct-removal:${caseId}:pay:${credit.payment!.id}`,
+      });
+      expect(args).not.toHaveProperty("amountPaise");
+    }
+  });
+
+  it("still refunds when support upholds after the deadline: a late decision does not cancel the promise", async () => {
+    const { webinar, userId, payment } = await paidSeat();
+    const { caseId } = (await remove(webinar, userId))!;
+    await pastDeadline(caseId);
+
+    await decide(caseId, await actor("STAFF"), "UPHELD");
+    await sweepConductRemovalDeadlines({
+      limit: 50,
+      now: new Date(),
+      errors: [],
+    });
+
+    expect(await refundedPaise(payment.id)).toBe(SEAT);
+  });
+
+  it("refunds nothing when support upholds in time", async () => {
+    const { webinar, userId, payment } = await paidSeat();
+    const { caseId } = (await remove(webinar, userId))!;
+    await prisma.supportCase.update({
+      where: { id: caseId },
+      data: { createdAt: new Date(Date.now() - 71 * HOUR_MS) },
+    });
+    await decide(caseId, await actor("STAFF"), "UPHELD");
+    await sweepConductRemovalDeadlines({
+      limit: 50,
+      now: new Date(Date.now() + 2 * HOUR_MS),
+      errors: [],
+    });
+    expect(await refundedPaise(payment.id)).toBe(0);
   });
 });
