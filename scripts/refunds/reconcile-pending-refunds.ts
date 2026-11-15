@@ -11,6 +11,10 @@
  * - app/api/cleanup/reconcile-refunds/route.ts (API endpoint)
  */
 
+import {
+  refundNoticeKind,
+  refundNoticeOverride,
+} from "@/lib/payments/operations/refund-cause";
 import { startDeadline } from "@/lib/cron/run-deadline";
 import {
   compareLeastRecentlyReconciled,
@@ -462,6 +466,7 @@ async function reconcilePendingRefundsUnlocked(
           paymentId: refund.payment.id,
           amountPaise: refund.amountPaise,
           currency: refund.currency,
+          required: refundNoticeKind(refund.reason) !== null,
         };
         const receipt = await prepareRefundProcessedEmail(receiptArgs).catch(
           () => null,
@@ -499,7 +504,14 @@ async function reconcilePendingRefundsUnlocked(
                   // The payer's money view, matching the other money bells.
                   dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
                 },
-                { tx, entityRef: `payment:${refund.payment.id}` },
+                {
+                  tx,
+                  entityRef: `payment:${refund.payment.id}`,
+                  required: refundNoticeOverride(
+                    refund.reason,
+                    refund.payment.userId,
+                  ),
+                },
               );
               bell = notice?.staged ?? null;
               emails = await stageRefundProcessedEmail(
@@ -716,6 +728,7 @@ async function bindGatewayRefundToPlaceholder(
     paymentId: cascade.paymentId,
     amountPaise: cascade.amountPaise,
     currency: cascade.currency,
+    required: refundNoticeKind(cascade.reason) !== null,
   };
   const receipt =
     nextStatus === RefundStatus.SUCCEEDED
@@ -760,7 +773,11 @@ async function bindGatewayRefundToPlaceholder(
               currency: cascade.currency,
               dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
             },
-            { tx, entityRef: `payment:${cascade.paymentId}` },
+            {
+              tx,
+              entityRef: `payment:${cascade.paymentId}`,
+              required: refundNoticeOverride(cascade.reason, cascade.userId),
+            },
           );
           bell = notice?.staged ?? null;
           emails = await stageRefundProcessedEmail(tx, receiptArgs, receipt);

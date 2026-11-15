@@ -10,6 +10,7 @@ import {
 } from "@/lib/payments/refundable-balance";
 import { getAppUrl } from "@/lib/url";
 import { notifyRefundProcessed } from "@/lib/novu";
+import { seatRemovalRefundReason } from "./refund-cause";
 import { notificationScope } from "@/lib/novu/workflows";
 import { goHref } from "@/lib/dashboard/go";
 import { EMAIL_BUDGET_MS, sendRefundProcessedEmail } from "@/lib/email";
@@ -831,11 +832,15 @@ export async function refundRemovedAttendeeSeat(args: {
     if (amountPaise <= 0)
       return { amountRefundedPaise: 0, refundPct, rail: null };
 
-    const actorLabel = isOrganiserInitiated ? "organiser" : "attendee";
     const result = await refundBookingPayment({
       paymentId: payment.id,
       amountPaise,
-      reason: `removed from ${args.kind} ${args.eventId} by the ${actorLabel} (${refundPct}%)`,
+      reason: seatRemovalRefundReason(
+        args.kind,
+        args.eventId,
+        isOrganiserInitiated,
+        refundPct,
+      ),
       ...(isOrganiserInitiated
         ? { customerReason: `You were removed from this ${args.kind}.` }
         : {}),
@@ -847,21 +852,33 @@ export async function refundRemovedAttendeeSeat(args: {
     // Phase 3b, and PENDING refunds wait for the settlement webhook.
     if (result.rail === "GATEWAY" && !result.status) {
       await Promise.allSettled([
-        notifyRefundProcessed(args.attendeeUserId, {
-          ...notificationScope(payment.organizationId),
-          amount: amountPaise,
-          currency: payment.currency,
-          reason: isOrganiserInitiated
-            ? `You were removed from this ${args.kind}.`
-            : `You left this ${args.kind}.`,
-          dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
-        }),
+        notifyRefundProcessed(
+          args.attendeeUserId,
+          {
+            ...notificationScope(payment.organizationId),
+            amount: amountPaise,
+            currency: payment.currency,
+            reason: isOrganiserInitiated
+              ? `You were removed from this ${args.kind}.`
+              : `You left this ${args.kind}.`,
+            dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
+          },
+          isOrganiserInitiated
+            ? {
+                required: {
+                  kind: "SEAT_RELEASED",
+                  recipients: [args.attendeeUserId],
+                },
+              }
+            : undefined,
+        ),
         sendRefundProcessedEmail(
           {
             userId: args.attendeeUserId,
             paymentId: payment.id,
             amountPaise,
             currency: payment.currency,
+            required: isOrganiserInitiated,
           },
           { budgetMs: EMAIL_BUDGET_MS.REQUEST },
         ),

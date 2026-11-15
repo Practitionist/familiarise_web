@@ -41,6 +41,7 @@ import {
   heading,
   paragraph,
 } from "@/emails/components/styles";
+import { shownMoves, type SessionMove } from "@/lib/booking/session-moves";
 import type { EmailRecipient } from "../preferences";
 import {
   attemptStaged,
@@ -173,6 +174,8 @@ export interface AppointmentCancelledEmailArgs {
   reason?: string | null;
   refundText?: string;
   refundUserIds?: string[];
+  /** Recipients the other party's change makes this a required notice for. */
+  requiredFor?: readonly string[];
   dashboardUrl: string;
 }
 
@@ -188,6 +191,7 @@ function buildCancelledEmail(args: AppointmentCancelledEmailArgs): {
     spec: {
       emailType: "APPOINTMENT_CANCELLED",
       category: "appointments",
+      requiredFor: args.requiredFor,
       entityRef: `appointment:${args.appointmentId}`,
       subject: (r) =>
         args.startsAt
@@ -230,6 +234,10 @@ export interface AppointmentRescheduledEmailArgs {
   leaveBy?: Date | null;
   /** MOVED: these recipients already hold another session at the new time. */
   clash?: boolean;
+  /** A series move: every moved session, old time and new. */
+  moves?: readonly SessionMove[];
+  /** Recipients the other party's change makes this a required notice for. */
+  requiredFor?: readonly string[];
   dashboardUrl: string;
 }
 
@@ -251,6 +259,7 @@ function buildRescheduledEmail(args: AppointmentRescheduledEmailArgs): {
     spec: {
       emailType: "APPOINTMENT_RESCHEDULED",
       category: "appointments",
+      requiredFor: args.requiredFor,
       entityRef: `appointment:${args.appointmentId}`,
       subject: () => subjects[args.outcome],
       render: (r) =>
@@ -274,10 +283,25 @@ function buildRescheduledEmail(args: AppointmentRescheduledEmailArgs): {
               ? whenText(args.leaveBy, r.zone)
               : undefined,
           clash: args.outcome === "MOVED" && args.clash === true,
+          ...movesProps(args, r.zone),
           dashboardUrl: absolute(args.dashboardUrl),
           unsubscribeUrl: r.unsubscribeUrl,
         }),
     },
+  };
+}
+
+function movesProps(args: AppointmentRescheduledEmailArgs, zone: string) {
+  if (args.outcome !== "MOVED" || !args.moves || args.moves.length < 2) {
+    return {};
+  }
+  const { shown, more } = shownMoves(args.moves);
+  return {
+    moves: shown.map((m) => ({
+      fromText: whenText(m.from, zone),
+      toText: whenText(m.to, zone),
+    })),
+    moreMoves: more,
   };
 }
 
@@ -493,6 +517,8 @@ export interface UnscheduledSubscriptionNudgeEmailArgs {
   consulteeName: string;
   planTitle: string;
   nudgeHours: number;
+  /** When the buyer is refunded in full if cycle 1 is still unplaced. */
+  refundAt: Date;
   timingsUrl: string;
 }
 
@@ -527,6 +553,47 @@ export const sendUnscheduledSubscriptionNudgeEmail =
           reviewUrl: absolute(args.timingsUrl),
           unsubscribeUrl: r.unsubscribeUrl,
           nudgeHours: args.nudgeHours,
+          refundAtText: whenText(args.refundAt, r.zone),
+        }),
+    },
+  }));
+
+// ── Request about to lapse ──────────────────────────────────────────────────
+
+export interface RequestExpiringEmailArgs {
+  consultationId: string;
+  consultantUserId: string;
+  consulteeName: string;
+  planTitle: string;
+  expiresAt: Date;
+  reviewUrl: string;
+}
+
+export const REQUEST_EXPIRING_EMAIL_TYPE = "REQUEST_EXPIRING_SOON";
+
+/** One alert per request: the guard and the sender share this entityRef. */
+export function requestExpiringEntityRef(consultationId: string): string {
+  return `request:${consultationId}:expiring`;
+}
+
+export const sendRequestExpiringEmail =
+  defineBudgetedEmailSender<RequestExpiringEmailArgs>((args) => ({
+    userIds: [args.consultantUserId],
+    spec: {
+      emailType: REQUEST_EXPIRING_EMAIL_TYPE,
+      category: "appointments",
+      entityRef: requestExpiringEntityRef(args.consultationId),
+      subject: (r) =>
+        `${args.consulteeName}'s request lapses at ${whenText(args.expiresAt, r.zone)}`,
+      render: (r) =>
+        React.createElement(NewBookingRequestEmail, {
+          consultantName: greet(r),
+          consulteeName: args.consulteeName,
+          planTitle: args.planTitle,
+          appointmentType: "consultation",
+          reviewUrl: absolute(args.reviewUrl),
+          unsubscribeUrl: r.unsubscribeUrl,
+          expiresAtText: whenText(args.expiresAt, r.zone),
         }),
     },
   }));

@@ -37,6 +37,7 @@
  * the paise.
  */
 
+import { refundNoticeKind, refundNoticeOverride } from "./refund-cause";
 import { casMiss } from "@/lib/cron/run-counters";
 import {
   reportSentryError,
@@ -857,6 +858,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
         paymentId: payment.id,
         amountPaise: requested,
         currency: payment.currency,
+        required: refundNoticeKind(input.reason) !== null,
       }
     : null;
   // Rendered before the settling transaction; a failed pre-read renders inside it instead.
@@ -929,7 +931,14 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
                     : {}),
                   dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
                 },
-                { tx, entityRef: `payment:${payment.id}` },
+                {
+                  tx,
+                  entityRef: `payment:${payment.id}`,
+                  required: refundNoticeOverride(
+                    input.reason,
+                    receiptArgs.userId,
+                  ),
+                },
               );
               stagedBell = bell?.staged ?? null;
             }

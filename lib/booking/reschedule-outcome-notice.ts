@@ -145,8 +145,12 @@ export async function notifyRescheduleRestored(
       select: { startsAt: true },
     });
     const dashboardUrl = notificationHref(appt.organizationId, "appointments");
+    // A lapse that puts the booking back on its original time reaches every party.
+    const lapsed = outcome === "EXPIRED";
 
-    await notifyAppointmentRescheduled(userIds, {
+    await notifyAppointmentRescheduled(
+      userIds,
+      {
       ...notificationScope(appt.organizationId),
       appointmentType: appt.appointmentType,
       consultantName: consultantUser.name || "Consultant",
@@ -155,7 +159,11 @@ export async function notifyRescheduleRestored(
       dashboardUrl,
       outcome,
       ...(restored ? { oldDateTime: restored.startsAt.toISOString() } : {}),
-    });
+      },
+      lapsed
+        ? { required: { kind: "PROPOSAL_LAPSED", recipients: userIds } }
+        : undefined,
+    );
     // #1653 — the email twin; the sender never throws.
     await sendAppointmentRescheduledEmail(
       {
@@ -164,6 +172,7 @@ export async function notifyRescheduleRestored(
         outcome,
         appointmentType: appt.appointmentType,
         oldStartsAt: restored?.startsAt ?? null,
+        ...(lapsed ? { requiredFor: userIds } : {}),
         dashboardUrl,
       },
       emailBudgetMs,

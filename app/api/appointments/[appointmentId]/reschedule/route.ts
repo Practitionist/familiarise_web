@@ -1276,12 +1276,17 @@ async function requestReschedule(
             appointment.organizationId,
             "appointments",
           );
+          // A proposal reaches the party who must answer it whatever their switches say.
+          const proposed = variant.outcome === "PROPOSED";
           const [bellResults, emailRows] = await Promise.all([
             notifyAppointmentRescheduled(
               uniqueUserIds,
               {
                 ...notificationScope(appointment.organizationId),
                 ...variant,
+                ...(proposed && result.proposalExpiresAt
+                  ? { respondBy: result.proposalExpiresAt.toISOString() }
+                  : {}),
                 appointmentType,
                 consultantName:
                   plan?.consultantProfile?.user?.name ?? "Consultant",
@@ -1292,7 +1297,17 @@ async function requestReschedule(
                 ),
                 dashboardUrl,
               },
-              { deferAttempt: true },
+              {
+                deferAttempt: true,
+                ...(proposed
+                  ? {
+                      required: {
+                        kind: "RESCHEDULE_PROPOSED" as const,
+                        recipients: uniqueUserIds,
+                      },
+                    }
+                  : {}),
+              },
             ).catch((err) => {
               console.error("[reschedule] Failed to send notification:", err);
               return [];
@@ -1306,6 +1321,7 @@ async function requestReschedule(
               newStartsAt: proposedAt,
               proposedBy: session.user.name || undefined,
               respondBy: result.proposalExpiresAt,
+              ...(proposed ? { requiredFor: uniqueUserIds } : {}),
               dashboardUrl,
             }).catch(() => []),
           ]);

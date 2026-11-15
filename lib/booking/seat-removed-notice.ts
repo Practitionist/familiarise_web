@@ -8,7 +8,7 @@ import { stageAppointmentCancelledEmail } from "@/lib/email/senders/booking";
 
 /**
  * An organiser removed a seat that owes no refund, so no refund notice tells
- * the attendee: they get the cancellation bell and email instead.
+ * the attendee: they get the cancellation bell and email instead, whatever their switches say.
  */
 export async function notifyFreeSeatRemoved(args: {
   appointmentId: string;
@@ -45,7 +45,9 @@ export async function notifyFreeSeatRemoved(args: {
     "appointments",
   );
   const [bells, emails] = await Promise.all([
-    notifyAppointmentCancelled([args.attendeeUserId], {
+    notifyAppointmentCancelled(
+      [args.attendeeUserId],
+      {
       ...notificationScope(appointment.organizationId),
       appointmentId: args.appointmentId,
       appointmentType: appointment.appointmentType,
@@ -55,13 +57,18 @@ export async function notifyFreeSeatRemoved(args: {
         plan?.title,
         appointment.appointmentType,
       ),
-      dateTime: startsAt?.toISOString(),
-      dashboardUrl,
-      cancelledBy: "consultant",
-    }),
+        dateTime: startsAt?.toISOString(),
+        dashboardUrl,
+        cancelledBy: "consultant",
+      },
+      {
+        required: { kind: "SEAT_RELEASED", recipients: [args.attendeeUserId] },
+      },
+    ),
     stageAppointmentCancelledEmail(prisma, {
       appointmentId: args.appointmentId,
       userIds: [args.attendeeUserId],
+      requiredFor: [args.attendeeUserId],
       startsAt,
       cancelledBy: consultantName,
       dashboardUrl,

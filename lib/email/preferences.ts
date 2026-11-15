@@ -117,33 +117,41 @@ async function fetchUsers(ids: string[], db: UserReader): Promise<UserRow[]> {
 /**
  * One query for every recipient of a message. Ids are deduped, input order is
  * preserved, and a user without an address is dropped because nothing can be
- * sent to them. `allowed` is decided here so callers never read the flags.
+ * sent to them. `allowed` is decided here so callers never read the flags;
+ * a recipient in `requiredFor` gets the message whatever their switches say.
  */
 export async function loadEmailRecipients(
   userIds: string[],
   category: PreferenceCategory | null,
   db: UserReader = prisma,
+  requiredFor: readonly string[] = [],
 ): Promise<EmailRecipient[]> {
   const ids = [...new Set(userIds)];
   const rows = await fetchUsers(ids, db);
   const byId = new Map(rows.map((row) => [row.id, row]));
-  const signable = category !== null && canSignLinks();
+  const required = new Set(requiredFor);
+  const signing = canSignLinks();
 
   return ids.flatMap((id) => {
     const user = byId.get(id);
     if (!user?.email) return [];
+    // A required send for this recipient is staged as a null-category notice.
+    const effective = required.has(id) ? null : category;
     return [
       {
         userId: user.id,
-        category,
+        category: effective,
         email: user.email,
         name: user.name,
         zone: resolveViewerZone({
           userTimezone: user.timezone,
           fallbackZone: DEFAULT_NOTIFICATION_TIMEZONE,
         }),
-        allowed: isEmailAllowedForUser(user, category),
-        unsubscribeUrl: signable ? buildEmailUnsubscribeUrl(user.id) : null,
+        allowed: isEmailAllowedForUser(user, effective),
+        unsubscribeUrl:
+          effective !== null && signing
+            ? buildEmailUnsubscribeUrl(user.id)
+            : null,
       },
     ];
   });

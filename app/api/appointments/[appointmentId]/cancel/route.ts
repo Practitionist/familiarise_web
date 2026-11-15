@@ -81,6 +81,10 @@ import {
   stampWholeEventRefundsOwed,
   type WholeEventRefundSummary,
 } from "@/lib/payments/operations/event-refunds";
+import {
+  cancelRefundReason,
+  wholeEventCancelRefundReason,
+} from "@/lib/payments/operations/refund-cause";
 import { hasActiveDisputeForAppointment } from "@/lib/payments/dispute-guard";
 import {
   quoteBookingRefund,
@@ -377,12 +381,11 @@ function cancelRefundOwed(
     };
   }
   if (quote.refundPaise <= 0) return null;
-  const side = isConsultantInitiated ? "consultant" : "consultee";
   return {
     paymentId,
     amountPaise: quote.refundPaise,
     key: cancelRefundKey(appointmentId, paymentId),
-    reason: `cancellation (${quote.refundPct}% per booking-time policy, ${side}-initiated)`,
+    reason: cancelRefundReason(quote.refundPct, isConsultantInitiated),
   };
 }
 
@@ -863,7 +866,10 @@ export async function POST(
     if (appointment.class) eventKind = "class";
     else if (appointment.webinar) eventKind = "webinar";
     const eventId = appointment.class?.id ?? appointment.webinar?.id ?? null;
-    const eventRefundReason = `whole-event ${eventKind ?? "event"} cancellation (${validatedData.reason ?? "cancelled"})`;
+    const eventRefundReason = wholeEventCancelRefundReason(
+      eventKind ?? "event",
+      validatedData.reason ?? "cancelled",
+    );
 
     // Transaction for critical database operations only (with increased timeout)
     // #1319 — serialize lifecycle mutations per appointment (lock order:
@@ -1396,6 +1402,15 @@ export async function POST(
         ].filter((id): id is string => !!id),
       ),
     );
+    // The host side cancelled: the buyer and every attendee hear it whatever their switches say.
+    const hostCancelled =
+      notificationMeta.cancelledBy === notificationMeta.consultantUserId ||
+      (isHostOrgOperator && session.user.id !== consulteeUserId);
+    const bookedUserIds = hostCancelled
+      ? [consulteeUserId, ...attendeeUserIds].filter(
+          (id): id is string => !!id && id !== session.user.id,
+        )
+      : [];
     if (userIds.length > 0) {
       const refundText =
         refund?.status === "REFUNDED"
@@ -1441,14 +1456,17 @@ export async function POST(
             "appointments",
           ),
           reason: validatedData.reason || undefined,
-          cancelledBy:
-            notificationMeta.cancelledBy ===
-              notificationMeta.consultantUserId ||
-            (isHostOrgOperator && session.user.id !== consulteeUserId)
-              ? "consultant"
-              : notificationMeta.cancelledBy === consulteeUserId
-                ? "consultee"
-                : "system",
+          cancelledBy: hostCancelled
+            ? "consultant"
+            : notificationMeta.cancelledBy === consulteeUserId
+              ? "consultee"
+              : "system",
+        },
+        {
+          required: {
+            kind: "CANCELLED_BY_HOST",
+            recipients: bookedUserIds,
+          },
         }).catch((err) => {
           console.error(
             "Failed to send appointment cancellation notification:",
@@ -1462,6 +1480,7 @@ export async function POST(
             userIds: group.userIds,
             refundText: group.refundText,
             refundUserIds: group.refundText ? group.userIds : [],
+            requiredFor: bookedUserIds,
           }).catch(() => []),
         ),
         stageAppointmentCancelledEmail(prisma, {
@@ -1479,6 +1498,7 @@ export async function POST(
           refundUserIds: refund
             ? [consulteeUserId].filter((id): id is string => !!id)
             : [],
+          requiredFor: bookedUserIds,
           dashboardUrl: notificationHref(
             appointment.organizationId,
             "appointments",

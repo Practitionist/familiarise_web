@@ -10,6 +10,7 @@
  */
 
 import { OccurrenceCompletionStatus, Prisma } from "@prisma/client";
+import type { RequiredNoticeKind } from "@/lib/notifications/required-notices";
 
 import prisma, { type Tx } from "@/lib/prisma";
 import { transitionOccurrenceCompletion } from "@/lib/booking/transitions";
@@ -114,6 +115,7 @@ async function stageBellsByZone(
   userIds: string[],
   payload: (zone: string) => NovuPayload,
   dedupeKey: string,
+  required?: RequiredNoticeKind,
 ): Promise<StagedTrigger[]> {
   const zones = await resolveRecipientTimezones(userIds, tx);
   const bells: StagedTrigger[] = [];
@@ -123,6 +125,7 @@ async function stageBellsByZone(
       recipients: ids,
       payload: payload(zone),
       dedupeKey,
+      ...(required ? { required } : {}),
     });
     if (bell) bells.push(bell);
   }
@@ -319,11 +322,13 @@ export async function cancelClassSession(
               dashboardUrl,
             }),
             `occ-cancel:${occurrenceId}`,
+            "CANCELLED_BY_HOST",
           )),
         );
         cancelEmailArgs = {
           appointmentId,
           userIds: seatUserIds,
+          requiredFor: seatUserIds,
           startsAt: session.startsAt,
           cancelledBy: hostName,
           dashboardUrl,

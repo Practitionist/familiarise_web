@@ -48,7 +48,8 @@ import { LIVE_SLOT_WHERE } from "@/lib/booking/cancellation-scope";
 import { recordExpertStrike } from "@/lib/booking/expert-reliability";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { isRefusal } from "@/lib/errors/refusal";
-import { notifyTrialCompleted, notifyTrialCancelled } from "@/lib/novu";
+import { notifyTrialCancelled } from "@/lib/novu";
+import { stageTrialCompletedNotices } from "@/lib/booking/trial-completed-notice";
 import { TrialCancelBodySchema, UpdateTrialSchema } from "@/schemas/trials";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 import { platformCancelDoorRefusal } from "@/lib/booking/platform-cancel";
@@ -379,62 +380,23 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       if (status === TrialStatus.COMPLETED) {
         updateData.completedAt = new Date();
 
-        // Notify both parties that the trial is completed
+        // The learner hears "Continue with {expert}"; the expert gets a bell only.
         afterCommit.push(async () => {
-          const userIds = [
-            existingTrial.consultantProfile.user.id,
-            existingTrial.consulteeProfile.user.id,
-          ];
-          const consultantName =
-            existingTrial.consultantProfile.user.name || "Consultant";
-          const consulteeName =
-            existingTrial.consulteeProfile.user.name || "User";
-          const dashboardUrl = goHref("auto", "appointments");
-          const [bells, completedEmails] = await Promise.all([
-            Promise.resolve(
-              notifyTrialCompleted(
-                userIds,
-                {
-                  consultantName,
-                  consulteeName,
-                  planTitle: existingTrial.subscriptionPlan.title,
-                  status: TrialStatus.COMPLETED,
-                  dashboardUrl,
-                },
-                { deferAttempt: true },
-              ),
-            ).catch((err) => {
-              console.error(
-                "[trials] Failed to stage trial completion bell:",
-                err,
-              );
-              return [];
-            }),
-            stageTrialLifecycleEmail(prisma, {
-              trialId,
-              userIds: [existingTrial.consulteeProfile.user.id],
-              kind: "TRIAL_COMPLETED",
-              planTitle: existingTrial.subscriptionPlan.title,
-              consultantName,
-              consulteeName,
-              dashboardUrl,
-            }).catch((err) => {
-              console.error(
-                "[trials] Failed to stage trial completion email:",
-                err,
-              );
-              return [];
-            }),
-          ]);
+          const staged = await stageTrialCompletedNotices({
+            trialId,
+            consultantUserId: existingTrial.consultantProfile.user.id,
+            consulteeUserId: existingTrial.consulteeProfile.user.id,
+            consultantName:
+              existingTrial.consultantProfile.user.name || "Consultant",
+            consulteeName: existingTrial.consulteeProfile.user.name || "User",
+            planTitle: existingTrial.subscriptionPlan.title,
+            subscriptionPlanId: existingTrial.subscriptionPlan.id,
+            dashboardUrl: goHref("auto", "appointments"),
+          });
           await flushNotificationsAfter(
             {
-              bells: (bells ?? []).map((b) => b?.staged),
-              emails: [
-                {
-                  list: completedEmails,
-                  emailType: "TRIAL_COMPLETED",
-                },
-              ],
+              bells: staged.bells,
+              emails: [{ list: staged.emails, emailType: "TRIAL_COMPLETED" }],
             },
             "trial.completed",
           );

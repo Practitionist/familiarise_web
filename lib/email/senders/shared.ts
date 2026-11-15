@@ -36,6 +36,8 @@ export interface RecipientEmailSpec {
   render: (r: EmailRecipient) => ReactElement;
   /** A required notice: a render failure stages a `review:render_failed` row in its place, not a Sentry event. */
   traceRenderFailure?: boolean;
+  /** Recipients this send is required for (`lib/notifications/required-notices.ts`). */
+  requiredFor?: readonly string[];
 }
 
 export type SpecBuild<TArgs> = (args: TArgs) => {
@@ -85,7 +87,12 @@ export async function prepareSpecEmails(
   db?: StagingTx,
 ): Promise<PreparedRecipientEmails> {
   const traced = spec.traceRenderFailure === true;
-  const recipients = await loadEmailRecipients(userIds, spec.category, db);
+  const recipients = await loadEmailRecipients(
+    userIds,
+    spec.category,
+    db,
+    spec.requiredFor,
+  );
   return prepareRecipientEmails(
     {
       recipients,
@@ -146,7 +153,12 @@ export async function sendSpecGuarded(
   deferAttempt?: boolean,
 ): Promise<SendToRecipientsResult> {
   try {
-    const recipients = await loadEmailRecipients(userIds, spec.category);
+    const recipients = await loadEmailRecipients(
+      userIds,
+      spec.category,
+      undefined,
+      spec.requiredFor,
+    );
     return await sendToRecipients({
       recipients,
       emailType: spec.emailType,

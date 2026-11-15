@@ -1323,7 +1323,7 @@ export const supportArticles: SupportArticle[] = [
       {
         heading: "What always arrives",
         paragraphs: [
-          "Some notices are required and ignore these switches. In the bell and by email: account, security, verification and moderation notices. By email only: payment receipts, and invitations or decisions you must act on. Booking updates, reminders, refunds, payouts, support replies and announcements are optional and follow your switches.",
+          "Some notices are required and ignore these switches. In the bell and by email: account, security, verification and moderation notices, and the changes the other person makes to your booking (an expert or host cancelling it and the refund that follows, a proposed new time, the original time coming back when a proposal lapses, a class series moving, a host removing your seat). By email only: payment receipts, and invitations or decisions you must act on. Reminders, your own booking changes, other refunds, payouts, support replies and announcements are optional and follow your switches.",
         ],
       },
       {

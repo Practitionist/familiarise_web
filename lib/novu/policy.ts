@@ -35,11 +35,12 @@ type BellUserRow = {
 /** How a workflow is gated: its preference switch, or none when it is required. */
 type BellGate = { category: PreferenceCategory | null; required: boolean };
 
-function gateOf(workflowId: NovuWorkflowId): BellGate {
+/** `requiredSend`: this send is a required notice (`lib/notifications/required-notices.ts`). */
+function gateOf(workflowId: NovuWorkflowId, requiredSend = false): BellGate {
   const template = templateFor(workflowId);
   return {
     category: template?.category ?? null,
-    required: template?.required === true,
+    required: requiredSend || template?.required === true,
   };
 }
 
@@ -61,11 +62,10 @@ function isBellAllowedForRecipient(
 }
 
 function allowedRecipientsOf(
-  workflowId: NovuWorkflowId,
+  gate: BellGate,
   recipients: string[],
   rows: BellUserRow[],
 ): string[] {
-  const gate = gateOf(workflowId);
   const byId = new Map(
     rows
       .filter(
@@ -82,7 +82,7 @@ function allowedRecipientsOf(
 export async function resolveRecipientBellPolicy(
   workflowId: NovuWorkflowId,
   recipients: string[],
-  opts?: { tx?: Partial<Pick<Tx, "user">> },
+  opts?: { tx?: Partial<Pick<Tx, "user">>; required?: boolean },
 ): Promise<{ allowedRecipients: string[] }> {
   if (recipients.length === 0) return { allowedRecipients: recipients };
   try {
@@ -95,7 +95,11 @@ export async function resolveRecipientBellPolicy(
       select: BELL_POLICY_SELECT,
     })) as BellUserRow[];
     return {
-      allowedRecipients: allowedRecipientsOf(workflowId, recipients, rows),
+      allowedRecipients: allowedRecipientsOf(
+        gateOf(workflowId, opts?.required),
+        recipients,
+        rows,
+      ),
     };
   } catch (err) {
     if (opts?.tx) throw err;
@@ -141,12 +145,14 @@ export async function bellAudience(
   tx: Pick<Tx, "user">,
   workflowId: NovuWorkflowId,
   cap: number,
+  opts?: { required?: boolean },
 ): Promise<string[] | null> {
+  const gate = gateOf(workflowId, opts?.required);
   const rows = await tx.user.findMany({
     where: {
       emailVerified: true,
       banned: false,
-      ...bellAllowedWhere(gateOf(workflowId)),
+      ...bellAllowedWhere(gate),
     },
     select: BELL_POLICY_SELECT,
     orderBy: { id: "asc" },
@@ -154,7 +160,7 @@ export async function bellAudience(
   });
   if (rows.length > cap) return null;
   return allowedRecipientsOf(
-    workflowId,
+    gate,
     rows.map((row) => row.id),
     rows,
   );
@@ -167,6 +173,7 @@ export async function bellAudience(
 export async function currentBellRecipients(
   workflowId: NovuWorkflowId,
   recipients: string[],
+  opts?: { required?: boolean },
 ): Promise<string[]> {
   if (recipients.length === 0) return [];
   const rows = await prisma.user.findMany({
@@ -176,7 +183,7 @@ export async function currentBellRecipients(
   // A recipient whose user row is gone has no subscriber left to ring.
   const known = new Set(rows.map((row) => row.id));
   return allowedRecipientsOf(
-    workflowId,
+    gateOf(workflowId, opts?.required),
     recipients.filter((id) => known.has(id)),
     rows,
   );
