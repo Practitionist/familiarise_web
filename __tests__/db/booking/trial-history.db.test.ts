@@ -89,7 +89,10 @@ describe("trial history per pair (real Postgres)", () => {
       [first.id, TrialStatus.CANCELLED],
       [second.id, TrialStatus.SCHEDULED],
     ]);
-    expect(rows[0]).toEqual(before);
+    // The client stamps each row with a symbol-keyed inspector; compare the columns.
+    expect(Object.fromEntries(Object.entries(rows[0]))).toEqual(
+      Object.fromEntries(Object.entries(before)),
+    );
     expect(rows[0].appointmentId).toBe(first.appointmentId);
     expect(second.appointmentId).not.toBe(first.appointmentId);
   });
