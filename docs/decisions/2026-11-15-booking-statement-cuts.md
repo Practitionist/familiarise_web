@@ -31,18 +31,23 @@ A trial request had a second problem. Its interactive `$transaction` passed no o
 
 ## Worked numbers
 
-Static counts trace every Prisma call on the path; measured counts come from `scripts/dev/db-tier-local.sh --log-statements` on a disposable Postgres 17. `BEGIN`, `COMMIT` and `SET TRANSACTION` count as statements. Time is statements × 95 ms.
+Every count below is measured, from `scripts/dev/db-tier-local.sh --log-statements` on a disposable Postgres 17. `BEGIN`, `COMMIT` and `SET TRANSACTION` count as statements. Time is statements × 95 ms.
 
-| Path                                       | Before     | After    | Saved                            | Source |
-| ------------------------------------------ | ---------- | -------- | -------------------------------- | ------ |
-| Free webinar seat checkout, awaited        | 122 to 124 | 65 to 67 | 57 (about 5.4 s)                 | static |
-| of which inside the Serializable commit    | 53         | 32       | 21                               | static |
-| Free trial request, inside its transaction | 37 to 39   | 18 to 20 | 19                               | static |
-| Free trial request, outside it             | 10 to 12   | 11 to 14 | −1 to −2 (the two hoisted reads) | static |
+| Path                                                    | Before | After | Source   |
+| ------------------------------------------------------- | ------ | ----- | -------- |
+| Free webinar seat checkout, `handleCheckout`            | 129    | 76    | measured |
+| of which inside the Serializable commit                 | 58     | 37    | measured |
+| Free 1:1 consultation checkout, `handleCheckout`        | 127    | 93    | measured |
+| Free trial request, the route                           | 46     | 29    | measured |
+| of which inside its transaction                         | 37     | 18    | measured |
+| `bookTrialInTx` alone, with `BEGIN` and `COMMIT`        | 21     | 16    | measured |
+| Cancel a free confirmed 1:1, the route                  | 52     | 21    | measured |
+| Leave a paid webinar seat, the committed leave          | 39     | 18    | measured |
+| `resolvePaymentForEarnings`'s read on a webinar payment | 17     | 1     | measured |
 
-Example, the trial: before, 38 statements inside a 5,000 ms limit is 3.6 s at 95 ms and 4.9 s at 130 ms, so a slow run overran. After, 19 statements inside a 15,000 ms limit is 1.8 s at 95 ms and 2.5 s at 130 ms.
+Example, the trial: before, 37 statements inside a 5,000 ms limit is 3.5 s at 95 ms and 4.8 s at 130 ms, so a slow run overran. After, 18 statements inside a 15,000 ms limit is 1.7 s at 95 ms and 2.3 s at 130 ms. The notice reads moved out of the transaction add two statements before it (9 to 11), and the route as a whole drops from 46 to 29.
 
-The measured rows for each path are in the pull request that carries this record.
+The counts exclude the test fixtures and assertions; auth, the rate limiter, the gateway and Novu delivery are mocked or run after the response, and the refund door and the Stream calls are not measured.
 
 ## Options not chosen
 

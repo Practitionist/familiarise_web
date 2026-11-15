@@ -67,14 +67,19 @@ The booking writes are where statement count hurts most, because several of thei
 
 Counts per path, before and after (static traces every Prisma call; measured is the database-tier statement log; `BEGIN`, `COMMIT` and `SET TRANSACTION` count):
 
-| Path                                           | Before     | After    | Source |
-| ---------------------------------------------- | ---------- | -------- | ------ |
-| Free webinar seat checkout, awaited            | 122 to 124 | 65 to 67 | static |
-| Free trial request, inside its transaction     | 37 to 39   | 18 to 20 | static |
-| Cancel a free confirmed 1:1, the route         | 52         | 21       | static |
-| Leave a paid webinar seat, the committed leave | 39         | 18       | static |
+| Path                                                    | Before | After | Source   |
+| ------------------------------------------------------- | ------ | ----- | -------- |
+| Free webinar seat checkout, `handleCheckout`            | 129    | 76    | measured |
+| of which inside the Serializable commit                 | 58     | 37    | measured |
+| Free 1:1 consultation checkout, `handleCheckout`        | 127    | 93    | measured |
+| Free trial request, the route                           | 46     | 29    | measured |
+| of which inside its transaction                         | 37     | 18    | measured |
+| `bookTrialInTx` alone, with `BEGIN` and `COMMIT`        | 21     | 16    | measured |
+| Cancel a free confirmed 1:1, the route                  | 52     | 21    | measured |
+| Leave a paid webinar seat, the committed leave          | 39     | 18    | measured |
+| `resolvePaymentForEarnings`'s read on a webinar payment | 17     | 1     | measured |
 
-A path's time is its count times about 95 ms, so the webinar registration drops from about 11.7 s to about 6.3 s of round trips. A booking write's interactive `$transaction` passes `maxWait` and `timeout`; Prisma's 5 s default is not a budget for a transaction of 30 statements.
+A path's time is its count times about 95 ms, so a free webinar registration drops from about 12.3 s to about 7.2 s of round trips (measured with a mocked session and gateway; the refund door and the Stream calls are not in these counts). A booking write's interactive `$transaction` passes `maxWait` and `timeout`; Prisma's 5 s default is not a budget for a transaction of 30 statements.
 
 ## Companion conventions
 
