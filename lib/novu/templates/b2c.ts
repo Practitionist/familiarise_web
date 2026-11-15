@@ -85,7 +85,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     category: "appointments",
     inApp: {
       subject: "Session refunded",
-      body: "A missed session of {{payload.planTitle}} was not made up, so {{payload.amount}} is on its way back to you.",
+      body: "A missed session of {{payload.planTitle}} was not made up, so {% if payload.refundStarted %}your {{payload.amount}} refund has started and usually reaches you in 5–7 working days{% else %}{{payload.amount}} is on its way back to you{% endif %}.",
       redirect: "dashboardUrl",
     },
   },
@@ -489,8 +489,9 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
       "The learner, when the expert cancels a paid trial and its money moved.",
     category: "trials",
     inApp: {
-      subject: "Trial refunded in full",
-      body: "{{payload.consultantName}} couldn't take your {{payload.planTitle}} trial, so it is refunded in full.",
+      subject:
+        "{% if payload.refundStarted %}Trial refund started{% else %}Trial refunded in full{% endif %}",
+      body: "{% if payload.refundStarted %}{{payload.consultantName}} couldn't take your {{payload.planTitle}} trial. Your {{payload.amount}} refund has started and usually reaches you in 5–7 working days.{% else %}{{payload.consultantName}} couldn't take your {{payload.planTitle}} trial, so it is refunded in full.{% endif %}",
       redirect: "dashboardUrl",
     },
   },

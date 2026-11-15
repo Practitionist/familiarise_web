@@ -61,6 +61,8 @@ export type TrialRefundOutcome = {
   rail?: FundingRail | null;
   /** Set when the gateway leg failed; the cancellation still stands. */
   failed?: boolean;
+  /** The gateway is still settling the refund: notices say it has started. */
+  pending?: boolean;
 };
 
 /**
@@ -413,6 +415,7 @@ export async function refundCancelledTrial(args: {
       // A credit restore's Refund row is ₹0 by construction; `rail` says why.
       amountRefundedPaise: outcome.refund.amountRefundedPaise,
       rail: outcome.refund.rail ?? quote.fundingRail,
+      ...(outcome.refund.status === "PENDING" ? { pending: true } : {}),
     };
   }
   if (outcome.kind === "settled") {

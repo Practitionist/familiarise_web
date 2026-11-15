@@ -36,7 +36,9 @@ const recordExpertStrike = jest.fn(async () => {
   return true;
 });
 const refundCancelledTrial = jest.fn(
-  async (args: { owed: { amountPaise: number | null } | null }) =>
+  async (args: {
+    owed: { amountPaise: number | null } | null;
+  }): Promise<TrialRefundOutcome | null> =>
     args.owed
       ? { refundPct: 100, amountRefundedPaise: args.owed.amountPaise ?? 0 }
       : null,
@@ -181,6 +183,7 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 import { NextRequest } from "next/server";
+import type { TrialRefundOutcome } from "../../lib/trials/cancellation";
 import { DELETE, PATCH } from "../../app/api/trials/[trialId]/route";
 
 const ctx = { params: Promise.resolve({ trialId: "trial-1" }) };
@@ -278,6 +281,27 @@ describe("the expert cancels a scheduled trial", () => {
     expect(res.status).toBe(409);
     expect((await res.json()).code).toBe("SESSION_IN_PROGRESS");
     expect(transitionTrial).not.toHaveBeenCalled();
+  });
+});
+
+describe("a refund still pending at the gateway", () => {
+  it("tells the learner it has started, never that it is refunded", async () => {
+    refundCancelledTrial.mockResolvedValueOnce({
+      refundPct: 100,
+      amountRefundedPaise: 50_000,
+      rail: "GATEWAY",
+      pending: true,
+    });
+    const { stageTrialRefundedBell } = jest.requireMock(
+      "../../lib/trials/refund-bell",
+    ) as { stageTrialRefundedBell: jest.Mock };
+
+    await del({ confirmedRefundPaise: 50_000 });
+
+    expect(stageTrialRefundedBell.mock.calls[0][1]).toMatchObject({
+      started: true,
+      amountPaise: 50_000,
+    });
   });
 });
 

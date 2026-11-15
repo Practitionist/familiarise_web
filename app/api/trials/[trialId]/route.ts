@@ -960,7 +960,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
       quote,
       owed,
     });
-    // The learner hears "refunded" only once the money actually moved.
+    // A refund still pending says it has started; the settlement's refund notice says it arrived.
     if (
       isConsultantInitiated &&
       refund &&
@@ -975,6 +975,8 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
         required: staffCancel
           ? "REFUND_FROM_STAFF_CANCEL"
           : "REFUND_FROM_HOST_CANCEL",
+        started: refund.pending === true,
+        amountPaise: refund.amountRefundedPaise,
       }).catch(() => undefined);
       await flushNotificationsAfter(
         { bells: [refundedBell] },

@@ -132,7 +132,7 @@ describe("nudgeUnscheduledSubscriptions", () => {
         ),
       }),
       dedupeKey,
-      { deferAttempt: true },
+      { tx: expect.anything(), deferAttempt: true },
     );
     expect(mockNudgeEmail).toHaveBeenCalledWith(
       expect.objectContaining({ subscriptionId: "sub_1", nudgeHours: 24 }),

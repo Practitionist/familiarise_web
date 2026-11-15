@@ -44,6 +44,8 @@ const state = {
   spent: new Set<string>(),
   seatPaymentId: null as string | null,
   events: [] as { correlationId: string; context: unknown }[],
+  /** Who cancelled the session, as its history row records it. */
+  cancelActor: null as string | null,
 };
 const stamp = jest.fn(async () => ({ count: 1 }));
 jest.mock("../../lib/prisma", () => ({
@@ -84,6 +86,10 @@ jest.mock("../../lib/prisma", () => ({
               createdAt: new Date("2026-08-01T00:00:00Z"),
             },
     },
+    bookingStatusHistory: {
+      findFirst: async () =>
+        state.cancelActor ? { actorUserId: state.cancelActor } : null,
+    },
     // No plan has ended in these scenarios; plan-end settlement has its own suite.
     subscription: { findMany: async () => [] },
     systemEvent: {
@@ -114,6 +120,7 @@ beforeEach(() => {
   state.seatPaymentId = null;
   state.spent = new Set(["occ:occ-5:pay:pay-a"]);
   state.events = [];
+  state.cancelActor = null;
 });
 
 it("#1834 — a paid seat still HELD goes to the ops queue once, never refunded", async () => {
@@ -165,4 +172,25 @@ it("#1569 — a voided class session: the skipped seat is not paid twice", async
       reason: "SESSION_VOIDED_NOT_MADE_UP",
     }),
   );
+});
+
+describe("the delayed refund notice of a host-cancelled session", () => {
+  const stagedPayload = () => {
+    const { stageTrigger } = jest.requireMock("../../lib/novu/outbox") as {
+      stageTrigger: jest.Mock;
+    };
+    return stageTrigger.mock.calls[0][0].payload as Record<string, unknown>;
+  };
+
+  it("is required for a seat holder someone else cancelled it for", async () => {
+    state.cancelActor = "u-host";
+    await settleCancelledSessions();
+    expect(stagedPayload().requiredNotice).toBe("CLASS_SESSION_REFUNDED");
+  });
+
+  it("stays switchable for the seat holder who cancelled it themself", async () => {
+    state.cancelActor = "u-pay-b";
+    await settleCancelledSessions();
+    expect(stagedPayload().requiredNotice).toBeUndefined();
+  });
 });

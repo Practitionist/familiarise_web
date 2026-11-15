@@ -4,6 +4,7 @@
  * seat opened.
  */
 
+import { refundNoticeText } from "@/lib/notifications/refund-wording";
 import UnplacedWeeksEmail from "@/emails/booking/UnplacedWeeksEmail";
 import * as React from "react";
 import { Button, Section, Text } from "react-email";
@@ -80,7 +81,7 @@ const isRequired = (requiredFor: readonly string[] | undefined) =>
   (requiredFor?.length ?? 0) > 0;
 
 export function refundOnItsWay(amountPaise: number, currency: string): string {
-  return `A refund of ${money(amountPaise, currency)} is on its way`;
+  return refundNoticeText(amountPaise, currency, false);
 }
 
 function humanType(appointmentType: string): string {

@@ -37,6 +37,7 @@ import {
   REQUIRED_NOTICE_LABEL,
   requiredNoticeOf,
 } from "@/lib/notifications/required-notices";
+import { refundNoticeText } from "@/lib/notifications/refund-wording";
 import {
   CLASS_SESSION_REFUND_REASON,
   STAFF_CANCEL_REFUND_REASON,
@@ -184,6 +185,7 @@ describe("refund cause", () => {
       "CLASS_SESSION_REFUNDED",
     );
     expect(refundNoticeKind(CLASS_SESSION_REFUND_REASON.VOIDED)).toBeNull();
+    expect(refundNoticeKind(CLASS_SESSION_REFUND_REASON.OWN_CANCEL)).toBeNull();
     const tier = { tierRefundPct: 100, creditRestoresInFull: false };
     expect(refundNoticeKind(trialCancelRefundReason("consultant", tier))).toBe(
       "REFUND_FROM_HOST_CANCEL",
@@ -253,5 +255,16 @@ describe("credit-funded refunds keep their cause", () => {
     expect(
       refundNoticeKind(creditCancelRefundReason(50, "consultee")),
     ).toBeNull();
+  });
+});
+
+describe("refund wording", () => {
+  it("a refund still pending has started; only a settled one is on its way", () => {
+    expect(refundNoticeText(50_000, "INR", true)).toBe(
+      "Your ₹500.00 refund has started and usually reaches you in 5–7 working days.",
+    );
+    expect(refundNoticeText(50_000, "INR", false)).toBe(
+      "A refund of ₹500.00 is on its way",
+    );
   });
 });

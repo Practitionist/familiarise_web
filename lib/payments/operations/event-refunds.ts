@@ -735,6 +735,8 @@ export async function refundRemovedAttendeeSeat(args: {
   rail: FundingRail | null;
   /** Set when the seat was free: nothing was paid, so nothing is refunded. */
   freeBooking?: true;
+  /** The gateway is still settling the refund. */
+  pending?: boolean;
 } | null> {
   const eventFilter =
     args.kind === "webinar"
@@ -889,6 +891,8 @@ export async function refundRemovedAttendeeSeat(args: {
       amountRefundedPaise: result.amountRefundedPaise,
       refundPct,
       rail: result.rail,
+      // Still settling at the gateway: the removal notice says the refund started.
+      ...(result.status === "PENDING" ? { pending: true } : {}),
     };
   } catch (err) {
     // Benign idempotent re-drives — a seat already refunded, or a payment that

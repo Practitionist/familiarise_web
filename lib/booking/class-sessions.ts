@@ -264,6 +264,9 @@ async function onExitRightTripped(
 }
 
 /** E-2 — cancel one future session; no deletedAt, so it stays a miss. */
+/** The history reason of a host's one-session cancel; the refund sweep reads its actor. */
+export const HOST_CANCELLED_SESSION_REASON = "HOST_CANCELLED_SESSION";
+
 export async function cancelClassSession(
   hosted: HostedClass,
   occurrenceId: string,
@@ -283,7 +286,9 @@ export async function cancelClassSession(
         to: OccurrenceCompletionStatus.CANCELLED,
         fromIn: [OccurrenceCompletionStatus.SCHEDULED],
         data: { hostCancelledAt: now },
-        reason: "HOST_CANCELLED_SESSION",
+        reason: HOST_CANCELLED_SESSION_REASON,
+        // The delayed refund notice reads who cancelled from this history row.
+        actorUserId,
         allowZero: true,
       });
       if (moved === 0) {

@@ -28,6 +28,7 @@ import { type AppointmentStatus, CancellationReason } from "@prisma/client";
 import { notifyAppointmentCancelled } from "@/lib/novu";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { refundOnItsWay } from "@/lib/email";
+import { refundStartedText } from "@/lib/notifications/refund-wording";
 import { stageAppointmentCancelledEmail } from "@/lib/email/senders/booking";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
@@ -579,8 +580,8 @@ function attendeeEmailGroups(
   );
   const ok = (ids: string[]) => uniq(ids).filter((id) => !failed.has(id));
   const cash = isClass
-    ? "The sessions not yet held are being refunded to you."
-    : "Your payment for this event is being refunded in full.";
+    ? "Your refund for the sessions not yet held has started and usually reaches you in 5–7 working days."
+    : "Your full refund for this event has started and usually reaches you in 5–7 working days.";
   return [
     { userIds: ok(a.gateway), refundText: cash },
     {
@@ -1425,6 +1426,7 @@ export async function POST(
           )
         : [];
     if (userIds.length > 0) {
+      // A refund still pending at the gateway has started; only a settled one is on its way.
       const refundText =
         refund?.status === "REFUNDED"
           ? refund.rail === "CREDITS"
@@ -1433,7 +1435,9 @@ export async function POST(
               ? "The amount has been returned to the sponsoring organisation's balance."
               : // The amount is in paise, so the currency is INR by construction.
                 refundOnItsWay(refund.amountRefundedPaise, "INR")
-          : undefined;
+          : refund?.status === "PENDING" && refund.amountRefundedPaise > 0
+            ? refundStartedText(refund.amountRefundedPaise, "INR")
+            : undefined;
       const emailArgs = {
         appointmentId,
         startsAt: appointment.occurrences?.[0]?.startsAt ?? null,

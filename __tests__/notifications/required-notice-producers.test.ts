@@ -61,7 +61,7 @@ jest.mock("../../lib/novu/stage-then-attempt", () => ({
   flushNotificationsAfter: jest.fn(async () => undefined),
 }));
 
-import { notifyFreeSeatRemoved } from "@/lib/booking/seat-removed-notice";
+import { notifySeatRemoved } from "@/lib/booking/seat-removed-notice";
 import { notifyRescheduleRestored } from "@/lib/booking/reschedule-outcome-notice";
 import { stageTrialCompletedNotices } from "@/lib/booking/trial-completed-notice";
 
@@ -79,7 +79,7 @@ it("a host removing a free seat reaches the attendee whatever their switches say
   });
   mockUserFind.mockResolvedValue({ name: "Attendee" });
 
-  await notifyFreeSeatRemoved({ appointmentId: "a1", attendeeUserId: "u1" });
+  await notifySeatRemoved({ appointmentId: "a1", attendeeUserId: "u1" });
 
   expect(mockCancelledBell.mock.calls[0][2]).toEqual({
     required: { kind: "SEAT_RELEASED", recipients: ["u1"] },

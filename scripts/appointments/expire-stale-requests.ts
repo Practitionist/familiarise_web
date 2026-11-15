@@ -1918,6 +1918,7 @@ async function nudgeUnscheduledSubscriptions(
 
     let nudged = 0;
     let renderFailures = 0;
+    let bellFailures = 0;
     for (const {
       sub,
       stage,
@@ -1938,20 +1939,24 @@ async function nudgeUnscheduledSubscriptions(
         const planTitle = sub.subscriptionPlan.title;
         const timingsUrl = `${getAppUrl()}/dashboard/consultant/${sub.subscriptionPlan.consultantProfile.id}/appointments/${appointment.id}/timings`;
         if (!bellDone) {
-          await notifyUnscheduledSubscriptionNudge(
-            consultantUserId,
-            {
-              ...notificationScope(appointment.organizationId),
-              consulteeName,
-              planTitle,
-              appointmentType: "SUBSCRIPTION",
-              dashboardUrl: timingsUrl,
-              nudgeHours: stage,
-              refundAt: refundAt.toISOString(),
-            },
-            dedupeKey,
-            { deferAttempt: true },
+          // On a transaction, so a write failure throws here instead of reporting per plan.
+          const bell = await stageBellQuietly((tx) =>
+            notifyUnscheduledSubscriptionNudge(
+              consultantUserId,
+              {
+                ...notificationScope(appointment.organizationId),
+                consulteeName,
+                planTitle,
+                appointmentType: "SUBSCRIPTION",
+                dashboardUrl: timingsUrl,
+                nudgeHours: stage,
+                refundAt: refundAt.toISOString(),
+              },
+              dedupeKey,
+              { tx, deferAttempt: true },
+            ),
           );
+          if (!bell) bellFailures += 1;
         }
         if (!emailDone) {
           // Staged under its claim; the email relay sends it.
@@ -1974,6 +1979,11 @@ async function nudgeUnscheduledSubscriptions(
       }
     }
     // Reported once per run, never per plan.
+    if (bellFailures > 0) {
+      errors.push(
+        `${bellFailures} unscheduled-plan nudge bell(s) failed to stage; retried next run`,
+      );
+    }
     if (renderFailures > 0) {
       errors.push(
         `${renderFailures} unscheduled-plan nudge email(s) failed to render; retried next run`,
@@ -1986,6 +1996,18 @@ async function nudgeUnscheduledSubscriptions(
     console.error(`❌ ${msg}`);
     errors.push(msg);
     return { nudged: 0, errors };
+  }
+}
+
+/** Stages a deadline bell on its own transaction; false when the write failed, which the arm counts. */
+async function stageBellQuietly(
+  stage: (tx: Tx) => Promise<unknown>,
+): Promise<boolean> {
+  try {
+    await prisma.$transaction((tx) => stage(tx));
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -2085,6 +2107,7 @@ async function alertExpiringRequests(
 
     let alerted = 0;
     let renderFailures = 0;
+    let bellFailures = 0;
     for (const x of candidates) {
       const bellDone = bellStaged.has(x.transactionId);
       const emailDone = emailStaged.has(requestExpiringEntityRef(x.c.id));
@@ -2097,19 +2120,23 @@ async function alertExpiringRequests(
           "requests",
         );
         if (!bellDone) {
-          await notifyRequestExpiringSoon(
-            x.consultantUserId,
-            {
-              ...notificationScope(x.c.appointment?.organizationId),
-              consulteeName,
-              planTitle,
-              appointmentType: "CONSULTATION",
-              dashboardUrl: reviewUrl,
-              expiresAt: x.expiresAt.toISOString(),
-            },
-            x.dedupeKey,
-            { deferAttempt: true },
+          // On a transaction, so a write failure throws here instead of reporting per request.
+          const bell = await stageBellQuietly((tx) =>
+            notifyRequestExpiringSoon(
+              x.consultantUserId,
+              {
+                ...notificationScope(x.c.appointment?.organizationId),
+                consulteeName,
+                planTitle,
+                appointmentType: "CONSULTATION",
+                dashboardUrl: reviewUrl,
+                expiresAt: x.expiresAt.toISOString(),
+              },
+              x.dedupeKey,
+              { tx, deferAttempt: true },
+            ),
           );
+          if (!bell) bellFailures += 1;
         }
         if (!emailDone) {
           // Staged under its claim; the email relay sends it.
@@ -2131,6 +2158,11 @@ async function alertExpiringRequests(
       }
     }
     // Reported once per run, never per request.
+    if (bellFailures > 0) {
+      errors.push(
+        `${bellFailures} request-expiring bell(s) failed to stage; retried next run`,
+      );
+    }
     if (renderFailures > 0) {
       errors.push(
         `${renderFailures} request-expiring email(s) failed to render; retried next run`,

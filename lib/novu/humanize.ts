@@ -269,6 +269,7 @@ function rawRefundReasonLabel(raw: string): string | undefined {
     SESSION_VOIDED_NOT_MADE_UP: "a voided session was never made up",
     HOST_SESSION_NOT_MADE_UP: "a cancelled session was never made up",
     HOST_SESSION_VOIDED_NOT_MADE_UP: "a voided session was never made up",
+    OWN_SESSION_CANCEL_NOT_MADE_UP: "a cancelled session was never made up",
     PLAN_ENDED_UNUSED_SESSIONS: "sessions not used by the end of the plan",
   };
   // Own-key: `sweep["toString"]` would otherwise resolve the inherited
