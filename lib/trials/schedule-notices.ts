@@ -1,39 +1,45 @@
 /**
- * The "trial scheduled" bell to each side and the email to both, staged on
- * the transaction that confirms the time, so a rollback takes them too. The
- * caller renders the email first (`prepareTrialScheduledEmail`) and flushes
- * the staged rows after the commit (`flushNotificationsAfter`).
+ * The trial-scheduled notices read before the booking transaction and are staged inside it,
+ * one insert per table; the caller flushes the committed rows after the commit.
  */
 import { TrialStatus } from "@prisma/client";
 
 import type { Tx } from "@/lib/prisma";
 import { goHref } from "@/lib/dashboard/go";
+import { getAppUrl } from "@/lib/url";
+import { prepareTrialScheduledEmail } from "@/lib/email/senders/booking";
 import {
-  stagePreparedEmails,
-  type PreparedRecipientEmails,
+  screenPreparedEmails,
+  stageScreenedEmails,
+  type ScreenedRecipientEmails,
   type StagedRecipientEmail,
 } from "@/lib/email/send-to-recipients";
-import { notifyTrialScheduled } from "@/lib/novu";
+import {
+  prepareTrialScheduledBells,
+  stagePreparedBells,
+  type PreparedBell,
+  type StagedTrigger,
+} from "@/lib/novu";
+
+export interface PreparedScheduleNotices {
+  bells: PreparedBell[];
+  emails: ScreenedRecipientEmails;
+}
 
 export interface StagedScheduleNotices {
-  consulteeBell: Awaited<ReturnType<typeof notifyTrialScheduled>> | null;
-  consultantBell: Awaited<ReturnType<typeof notifyTrialScheduled>> | null;
+  bells: StagedTrigger[];
   emails: StagedRecipientEmail[];
 }
 
-export async function stageTrialScheduledNotices(
-  tx: Tx,
-  args: {
-    trialId: string;
-    consulteeUserId: string;
-    consultantUserId: string;
-    consulteeName: string;
-    consultantName: string;
-    planTitle: string;
-    startsAt: Date;
-    preparedEmails: PreparedRecipientEmails;
-  },
-): Promise<StagedScheduleNotices> {
+/** Reads and renders the notices before the transaction; writes nothing. */
+export async function prepareTrialScheduledNotices(args: {
+  consulteeUserId: string;
+  consultantUserId: string;
+  consulteeName: string;
+  consultantName: string;
+  planTitle: string;
+  startsAt: Date;
+}): Promise<PreparedScheduleNotices> {
   const payload = {
     consultantName: args.consultantName,
     consulteeName: args.consulteeName,
@@ -41,20 +47,50 @@ export async function stageTrialScheduledNotices(
     dateTime: args.startsAt.toISOString(),
     status: TrialStatus.SCHEDULED,
   };
-  const consulteeBell = await notifyTrialScheduled(
-    args.consulteeUserId,
-    { ...payload, dashboardUrl: goHref("client", "appointments") },
-    { deferAttempt: true, tx },
-  );
-  const consultantBell = await notifyTrialScheduled(
-    args.consultantUserId,
-    { ...payload, dashboardUrl: goHref("expert", "appointments") },
-    { deferAttempt: true, tx },
-  );
-  // Rendered before the trial row existed, so the dedupe key is set here.
-  const emails = await stagePreparedEmails(tx, {
-    ...args.preparedEmails,
-    entityRef: `trial:${args.trialId}`,
+  const bells = await prepareTrialScheduledBells([
+    {
+      subscriberId: args.consulteeUserId,
+      input: { ...payload, dashboardUrl: goHref("client", "appointments") },
+    },
+    {
+      subscriberId: args.consultantUserId,
+      input: { ...payload, dashboardUrl: goHref("expert", "appointments") },
+    },
+  ]);
+  const prepared = await prepareTrialScheduledEmail({
+    // The dedupe key is set when the rows are staged, once the trial exists.
+    trialId: "pending",
+    consulteeUserId: args.consulteeUserId,
+    consultantUserId: args.consultantUserId,
+    consulteeName: args.consulteeName,
+    consultantName: args.consultantName,
+    planTitle: args.planTitle,
+    startsAt: args.startsAt,
+    awaitingPayment: false,
+    dashboardUrl: `${getAppUrl()}${goHref("auto", "appointments")}`,
+    paymentUrl: null,
   });
-  return { consulteeBell, consultantBell, emails };
+  return { bells, emails: await screenPreparedEmails(prepared) };
+}
+
+/** Stages the prepared notices on the booking's transaction: one insert per table. */
+export async function stageTrialScheduledNotices(
+  tx: Tx,
+  trialId: string,
+  prepared: PreparedScheduleNotices,
+): Promise<StagedScheduleNotices> {
+  // Keyed to the trial: a later trial for the same pair and time is a new bell.
+  const bells = await stagePreparedBells(
+    tx,
+    prepared.bells.map((bell) => ({
+      ...bell,
+      dedupeKey: `trial-scheduled:${trialId}`,
+    })),
+  );
+  const emails = await stageScreenedEmails(
+    tx,
+    prepared.emails,
+    `trial:${trialId}`,
+  );
+  return { bells, emails };
 }

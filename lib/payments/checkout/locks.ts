@@ -139,6 +139,7 @@ export async function readEventCapacity(
   if (appointmentType === "WEBINAR") {
     const webinar = await prisma.webinar.findUnique({
       where: { id: eventId },
+      relationLoadStrategy: "join",
       include: {
         webinarPlan: { include: { consultantProfile: true } },
         appointment: {

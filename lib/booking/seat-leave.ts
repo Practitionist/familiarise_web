@@ -134,10 +134,16 @@ async function planWindowHours(
   return c?.classPlan?.refundWindowHours ?? null;
 }
 
-/** The seat's paid order on this event, read on the transaction client. */
+/**
+ * The seat's paid order on this event, read once per transaction and passed to
+ * the rule and the owed marker; a release never changes the payment row.
+ */
 function seatPayment(tx: Tx, kind: EventKind, eventId: string, userId: string) {
   return tx.payment.findFirst({
     orderBy: { createdAt: "asc" },
+    // One joined statement where "query" loads refunds, disputes and the policy
+    // tiers separately. A free seat is read too: the refund door tells it apart.
+    relationLoadStrategy: "join",
     where: {
       userId,
       appointment: eventFilter(kind, eventId),
@@ -157,6 +163,8 @@ function seatPayment(tx: Tx, kind: EventKind, eventId: string, userId: string) {
   });
 }
 
+type SeatPayment = NonNullable<Awaited<ReturnType<typeof seatPayment>>>;
+
 /**
  * The class quote for a seat under way (D-4), from its ledger. A next session
  * moved on the buyer is priced as outside the window unless the class was
@@ -165,7 +173,7 @@ function seatPayment(tx: Tx, kind: EventKind, eventId: string, userId: string) {
 export async function classSeatQuote(
   tx: Tx,
   ledger: SeatLedger,
-  payment: NonNullable<Awaited<ReturnType<typeof seatPayment>>>,
+  payment: SeatPayment,
   joinedAt: Date,
   now: Date,
   movesForgive: boolean,
@@ -193,8 +201,8 @@ export async function planSelfLeave(
   tx: Tx,
   kind: EventKind,
   eventId: string,
-  userId: string,
   seat: Seat,
+  payment: SeatPayment | null,
   now = new Date(),
 ): Promise<SeatRefundPlan> {
   const windowHours = eventRefundWindowHours(
@@ -203,7 +211,6 @@ export async function planSelfLeave(
   );
   if (kind === "webinar") {
     // An order captured after a move still bought the old time.
-    const payment = await seatPayment(tx, kind, eventId, userId);
     const joinedAt =
       payment && payment.createdAt < seat.createdAt
         ? payment.createdAt
@@ -225,7 +232,6 @@ export async function planSelfLeave(
     assertOutsideWindow(next, joinedAt, windowHours, now, !event?.retimeBy);
     return { mode: "full" };
   }
-  const payment = await seatPayment(tx, kind, eventId, userId);
   if (!payment) return { mode: "full" };
   // A re-bought seat reuses its row, so the later of the two is the purchase.
   const joinedAt = new Date(
@@ -287,9 +293,8 @@ export async function planSelfLeave(
  */
 async function planSeriesExit(
   tx: Tx,
-  classId: string,
-  userId: string,
   seat: Seat,
+  payment: SeatPayment | null,
   now = new Date(),
 ): Promise<SeatRefundPlan> {
   const series = await seriesLedger(tx, seat.appointmentId, now);
@@ -299,7 +304,6 @@ async function planSeriesExit(
       "This class has not missed enough sessions for a full-refund exit.",
     );
   }
-  const payment = await seatPayment(tx, "class", classId, userId);
   if (!payment) return { mode: "full" };
   const joinedAt = new Date(
     Math.max(payment.createdAt.getTime(), seat.createdAt.getTime()),
@@ -324,7 +328,7 @@ async function planSeriesExit(
 async function fullUndeliveredQuote(
   tx: Tx,
   ledger: SeatLedger,
-  payment: NonNullable<Awaited<ReturnType<typeof seatPayment>>>,
+  payment: SeatPayment,
   now: Date,
 ): Promise<number> {
   const quote = quoteClassSeatRefund({
@@ -397,7 +401,7 @@ export async function quoteSeatLeave(
         }),
     };
     try {
-      const plan = await planSelfLeave(tx, kind, eventId, userId, seat);
+      const plan = await planSelfLeave(tx, kind, eventId, seat, payment);
       return {
         ...base,
         refused: false,
@@ -462,16 +466,22 @@ export async function leaveEventSeat(args: {
             },
           });
           if (!seat) return null;
+          const payment = await seatPayment(
+            tx,
+            args.kind,
+            args.eventId,
+            args.userId,
+          );
           let plan: SeatRefundPlan = { mode: "full" };
           if (args.exit) {
-            plan = await planSeriesExit(tx, args.eventId, args.userId, seat);
+            plan = await planSeriesExit(tx, seat, payment);
           } else if (args.isSelfLeave) {
             plan = await planSelfLeave(
               tx,
               args.kind,
               args.eventId,
-              args.userId,
               seat,
+              payment,
             );
           }
           const count = await releaseParticipant(tx, {
@@ -484,12 +494,6 @@ export async function leaveEventSeat(args: {
             tx,
             eventAppointment.id,
             [args.userId],
-          );
-          const payment = await seatPayment(
-            tx,
-            args.kind,
-            args.eventId,
-            args.userId,
           );
           const owed = payment
             ? seatRefundOwed(payment, plan, `${keyPrefix}:${seat.id}`)
@@ -569,7 +573,7 @@ export async function leaveEventSeat(args: {
  * carries (`<key>:pay:<paymentId>`); null when nothing is owed.
  */
 function seatRefundOwed(
-  payment: NonNullable<Awaited<ReturnType<typeof seatPayment>>>,
+  payment: SeatPayment,
   plan: SeatRefundPlan,
   key: string,
 ): RefundOwedMarker | null {

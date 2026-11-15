@@ -31,7 +31,10 @@ import {
   SeatHoldLapsedError,
   SeatOrderMintFailure,
 } from "@/lib/payments/checkout/seat-pre-mint";
-import { isZeroAmountOrder } from "@/lib/payments/checkout/zero-amount";
+import {
+  hasBilledSupply,
+  isZeroAmountOrder,
+} from "@/lib/payments/checkout/zero-amount";
 import {
   DIRECT_CHECKOUT_HOLD_MS,
   SEAT_CHECKOUT_HOLD_MS,
@@ -205,7 +208,7 @@ export async function handleCheckout(
     if (
       buyerCountry === "IN" &&
       (!fundingSource || fundingSource === "PERSONAL") &&
-      (amount > 0 || creditsApplied > 0)
+      hasBilledSupply(amount, creditsApplied)
     ) {
       consumerBuyerStateSchema.parse(validatedData);
     }
@@ -608,6 +611,7 @@ export async function handleCheckout(
         if (paymentError instanceof PaymentError) throw paymentError;
         throw new Error(
           "Failed to create payment intent. Please try again later.",
+          { cause: paymentError },
         );
       }
     }
@@ -747,9 +751,12 @@ export async function handleCheckout(
         // #1365 — these payments never see a capture webhook, so the tax
         // invoice has to be minted here too. Org-sponsored payments no-op
         // inside the minter by design; they are invoiced on the org series.
-        await mintConsumerInvoiceBestEffort({
-          paymentIntent: mintedOrder.id,
-        });
+        // A free order with no credit has no supply, so its reads are skipped.
+        if (hasBilledSupply(amount, creditsApplied)) {
+          await mintConsumerInvoiceBestEffort({
+            paymentIntent: mintedOrder.id,
+          });
+        }
 
         const appointmentIdForChannels = result.appointmentId;
         if (appointmentIdForChannels) {
@@ -816,6 +823,7 @@ export async function handleCheckout(
         if (mintError instanceof PaymentError) throw mintError;
         throw new Error(
           "Failed to create payment intent. Please try again later.",
+          { cause: mintError },
         );
       }
       const dbError = asSeatPaymentConflict(asWelcomeDiscountConflict(caught));
@@ -993,6 +1001,7 @@ export async function handleCheckout(
 
       throw new Error(
         "Failed to record payment information. Please try again.",
+        { cause: dbError },
       );
     }
   } catch (error) {

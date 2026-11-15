@@ -633,7 +633,7 @@ function buildTrialScheduledEmail(args: TrialScheduledEmailArgs): {
   };
 }
 
-/** Renders the scheduled notice outside any transaction; stage it with `stagePreparedEmails`. */
+/** Renders the scheduled notice outside any transaction; `screenPreparedEmails` reads its verdicts before staging. */
 export function prepareTrialScheduledEmail(
   args: TrialScheduledEmailArgs,
 ): Promise<PreparedRecipientEmails> {

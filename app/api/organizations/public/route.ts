@@ -21,7 +21,6 @@
  *   limit       — default 24, max 50
  */
 
-import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 
 import { apiError } from "@/lib/errors";
@@ -77,10 +76,10 @@ export async function GET(req: NextRequest) {
       { headers: LIST_CACHE_HEADERS },
     );
   } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "organizations" } },
-    );
-    return apiError({ tag: "[Organizations.Public.GET]", error });
+    return apiError({
+      tag: "[Organizations.Public.GET]",
+      error,
+      subsystem: "organizations",
+    });
   }
 }
