@@ -965,6 +965,7 @@ async function completeTrials(
               dateTime: lastSlot?.startsAt?.toISOString(),
               dashboardUrl,
             },
+            `trial-completed:${trial.id}`,
             { deferAttempt: true },
           ).catch((error) => {
             console.error(

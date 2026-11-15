@@ -401,6 +401,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
                   status: TrialStatus.COMPLETED,
                   dashboardUrl,
                 },
+                `trial-completed:${trialId}`,
                 { deferAttempt: true },
               ),
             ).catch((err) => {
@@ -465,6 +466,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
                   status,
                   dashboardUrl,
                 },
+                `trial-cancelled:${trialId}`,
                 { deferAttempt: true },
               ),
             ).catch((err) => {
@@ -990,6 +992,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
             status: TrialStatus.CANCELLED,
             dashboardUrl,
           },
+          `trial-cancelled:${trialId}`,
           { deferAttempt: true },
         ),
       ).catch((err) => {

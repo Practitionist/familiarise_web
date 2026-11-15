@@ -1,6 +1,7 @@
 // Seats a registrant on the webinar's shared appointment.
 
 import { seatHoldingParticipant } from "@/utils/scheduling-engine/occupancyPolicy";
+import { liveOccurrenceWhere } from "@/lib/appointments/occurrences";
 import { recordParticipants } from "@/lib/booking/participants";
 import type { Tx } from "@/lib/prisma";
 import type { CheckoutInput } from "@/schemas/checkout";
@@ -29,7 +30,11 @@ export async function handleWebinarCheckout(
       },
       appointment: {
         include: {
-          occurrences: true,
+          // Live sessions only, earliest first: a moved time leaves a RESCHEDULED row behind.
+          occurrences: {
+            where: liveOccurrenceWhere,
+            orderBy: { startsAt: "asc" },
+          },
           participants: {
             where: seatHoldingParticipant(new Date()),
             select: { userId: true },

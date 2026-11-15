@@ -22,11 +22,11 @@ jest.mock("@sentry/nextjs", () => ({
 }));
 jest.mock("@sentry/core", () => jest.requireMock("@sentry/nextjs"));
 
-const failingRead = async () => {
+const failingRead = jest.fn(async () => {
   throw new Error(
     "Invalid `prisma.consultantProfile.findMany()` invocation: boom",
   );
-};
+});
 jest.mock("@/lib/prisma", () => ({
   __esModule: true,
   default: new Proxy(
@@ -35,6 +35,11 @@ jest.mock("@/lib/prisma", () => ({
       get: () => new Proxy({}, { get: () => failingRead }),
     },
   ),
+}));
+
+// The default page read is cached; pass through so the request reaches Prisma.
+jest.mock("next/cache", () => ({
+  unstable_cache: <T extends (...args: never[]) => unknown>(fn: T) => fn,
 }));
 
 import { NextRequest } from "next/server";
@@ -59,4 +64,9 @@ it("captures an unrecognised failure once and shows that event's id as the refer
     `Something went wrong. Please try again. Reference: ${eventId.slice(0, 8)}.`,
   );
   expect(JSON.stringify(body)).not.toMatch(/prisma/i);
+  // The failure is the route's own Prisma read, not a harness error before it.
+  expect(failingRead).toHaveBeenCalled();
+  expect(captureException.mock.calls[0][0]).toMatchObject({
+    message: expect.stringContaining("prisma.consultantProfile.findMany"),
+  });
 });

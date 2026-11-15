@@ -82,7 +82,14 @@ export async function stageTrialScheduledNotices(
   trialId: string,
   prepared: PreparedScheduleNotices,
 ): Promise<StagedScheduleNotices> {
-  const bells = await stagePreparedBells(tx, prepared.bells);
+  // Keyed to the trial: a later trial for the same pair and time is a new bell.
+  const bells = await stagePreparedBells(
+    tx,
+    prepared.bells.map((bell) => ({
+      ...bell,
+      dedupeKey: `trial-scheduled:${trialId}`,
+    })),
+  );
   const emails = await stageScreenedEmails(
     tx,
     prepared.emails,

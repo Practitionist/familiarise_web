@@ -93,6 +93,41 @@ it("a free webinar seat is confirmed on the no-gateway rail with no invoice", as
   );
 });
 
+it("a moved webinar sells against its live session, not the replaced one", async () => {
+  const webinar = await seedWebinar({ capacity: 20, price: 0 });
+  // The original time moved: its row is a past RESCHEDULED tombstone, read first.
+  await prisma.appointmentOccurrence.updateMany({
+    where: { appointmentId: webinar.appointmentId },
+    data: {
+      completionStatus: "RESCHEDULED",
+      startsAt: new Date(Date.now() - 3 * 3_600_000),
+      endsAt: new Date(Date.now() - 2 * 3_600_000),
+    },
+  });
+  await prisma.appointmentOccurrence.create({
+    data: {
+      appointmentId: webinar.appointmentId,
+      ordinal: 2,
+      startsAt: webinar.startsAt,
+      endsAt: webinar.endsAt,
+      isTentative: false,
+      consultantProfileId: webinar.host.consultantProfileId,
+    },
+  });
+  const buyer = await seedSeatBuyer();
+
+  await handleCheckout(
+    seatCheckoutInput(webinar, `moved-seat-${randomUUID()}`),
+    buyer.userId,
+  );
+
+  const seat = await prisma.appointmentParticipant.findFirstOrThrow({
+    where: { appointmentId: webinar.appointmentId, userId: buyer.userId },
+    select: { status: true },
+  });
+  expect(seat.status).toBe("CONFIRMED");
+});
+
 it("a free trial request commits its trial with both bells and both emails", async () => {
   const host = await seedHost();
   await publishEveryHour(host);
