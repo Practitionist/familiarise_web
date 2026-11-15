@@ -156,6 +156,23 @@ currently hold:
   their enum, plus six indexes the schema no longer declares** (13 statements).
   No schema declares them and no code reads them, so they are dead and a push
   may remove them.
+- **`destructiveStatementsAllowed` — the trial pair unique** (2 statements):
+  `DROP INDEX "Trial_consulteeProfileId_consultantProfileId_key"` and the plain
+  `Trial_consulteeProfileId_consultantProfileId_idx` that replaces it. A pair
+  keeps every trial, and the sidecar partial unique
+  `trial_one_blocking_per_pair_key` allows one live or delivered trial per pair,
+  so the sidecars must be applied in the same step
+  ([decision record](../decisions/2026-11-15-trial-history-many-per-pair.md)).
+  Before that push, the read below must return no rows, or the index cannot be
+  built:
+
+  ```sql
+  SELECT "consulteeProfileId", "consultantProfileId", count(*) AS "blocking"
+  FROM "Trial"
+  WHERE "status"::text IN ('AWAITING_PAYMENT', 'SCHEDULED', 'COMPLETED', 'CONVERTED')
+  GROUP BY 1, 2
+  HAVING count(*) > 1;
+  ```
 
 #### Rows holding a removed value
 

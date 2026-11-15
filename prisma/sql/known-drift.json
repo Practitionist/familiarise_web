@@ -104,6 +104,18 @@
       "reason": "Pre-#2041 recording-storage column and its enum. No schema declares them and no code reads them.",
       "trackedBy": "#2270",
       "expires": "2026-11-21"
+    },
+    {
+      "statement": "DROP INDEX \"Trial_consulteeProfileId_consultantProfileId_key\"",
+      "reason": "A pair keeps every trial: the one-row-per-pair unique goes, and the sidecar index trial_one_blocking_per_pair_key allows one live or delivered trial per pair. Apply the sidecars straight after.",
+      "trackedBy": "#2775",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "CREATE INDEX \"Trial_consulteeProfileId_consultantProfileId_idx\" ON \"Trial\"(\"consulteeProfileId\", \"consultantProfileId\")",
+      "reason": "The plain pair index that replaces the dropped unique. Not destructive, so only the drift check reads it; it goes with the same push.",
+      "trackedBy": "#2775",
+      "expires": "2026-12-31"
     }
   ],
   "knownDivergences": [

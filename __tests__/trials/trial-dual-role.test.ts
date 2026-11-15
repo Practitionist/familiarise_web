@@ -127,7 +127,7 @@ jest.mock("../../lib/prisma", () => {
   return {
     __esModule: true,
     default: {
-      trial: { findUnique: jest.fn(async () => null) },
+      trial: { findFirst: jest.fn(async () => null) },
       consultantProfile: { findUnique: jest.fn(async () => null) },
       membership: {
         findFirst: (...a: unknown[]) =>

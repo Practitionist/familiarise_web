@@ -50,6 +50,8 @@ export async function convertCompletedTrial(
         lte: paidAt,
       },
     },
+    // The pair index allows one COMPLETED trial; the order only makes the read explicit.
+    orderBy: { completedAt: "desc" },
     select: { id: true },
   });
   if (!trial) return null;

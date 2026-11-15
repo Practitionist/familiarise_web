@@ -3,17 +3,10 @@
  */
 
 /**
- * Defect 7 — a duplicate trial request answers 409, not 500.
- *
- * POST /api/trials reads the pair, deletes a freed row, then inserts. Those
- * are three statements, so two concurrent requests for the same
- * consultee/consultant pair can both clear the eligibility read and both
- * reach the insert. The loser trips `@@unique([consulteeProfileId,
- * consultantProfileId])` and used to fall into the route's generic catch as a
- * 500 — an alarming answer to a question the sequential path already answers
- * calmly. Here we pin that the race and the sequential case give the client
- * the same 409 + `TRIAL_ALREADY_REQUESTED` code, and that a genuine failure
- * still escalates.
+ * POST /api/trials keeps a pair's history: a request after an ended trial adds
+ * a row and never writes the earlier one, a trial that holds the pair refuses
+ * with 409 TRIAL_ALREADY_REQUESTED, and a request that loses the insert race
+ * to the pair index gets the same 409. Any other failure still escalates.
  */
 
 import { Prisma, TrialStatus } from "@prisma/client";
@@ -70,11 +63,39 @@ jest.mock("../../utils/appointmentlock", () => ({
   BookingLockUnavailableError: class extends Error {},
 }));
 
+type TrialRow = {
+  id: string;
+  status: TrialStatus;
+  consulteeProfileId: string;
+  consultantProfileId: string;
+  appointmentId: string | null;
+  requestedAt: Date;
+};
+
+// The pair's stored trials; findFirst applies the route's own where and select.
+const stored: TrialRow[] = [];
+
 jest.mock("../../lib/prisma", () => {
   const db: Record<string, unknown> = {
     trial: {
-      findUnique: jest.fn(),
-      deleteMany: jest.fn(),
+      findFirst: jest.fn(
+        async (args: {
+          where: {
+            consulteeProfileId: string;
+            consultantProfileId: string;
+            status: { in: TrialStatus[] };
+          };
+          select: { id: true };
+        }) => {
+          const hit = stored.find(
+            (row) =>
+              row.consulteeProfileId === args.where.consulteeProfileId &&
+              row.consultantProfileId === args.where.consultantProfileId &&
+              args.where.status.in.includes(row.status),
+          );
+          return hit ? { id: hit.id } : null;
+        },
+      ),
       create: jest.fn(),
     },
     subscriptionPlan: { findUnique: jest.fn() },
@@ -90,6 +111,7 @@ jest.mock("../../lib/prisma", () => {
 import prisma from "../../lib/prisma";
 import { getSession } from "../../lib/auth-server";
 import { POST } from "../../app/api/trials/route";
+import { TRIAL_REQUEST_BLOCKING_STATUSES } from "../../lib/trials/eligibility";
 
 const CONSULTEE = "consultee-1";
 const CONSULTANT = "consultant-1";
@@ -104,21 +126,39 @@ const pickedSlot = {
 };
 
 const mockedSession = getSession as jest.Mock;
-const mockedFindUnique = prisma.trial.findUnique as jest.Mock;
 const mockedCreate = prisma.trial.create as jest.Mock;
-const mockedDeleteMany = prisma.trial.deleteMany as jest.Mock;
 
-function uniqueViolation() {
+/** P2002 as Prisma 7 with adapter-pg raises it: the index name rides the adapter cause. */
+function uniqueViolation(index: string) {
   return new Prisma.PrismaClientKnownRequestError(
-    "Unique constraint failed on the fields: (`consulteeProfileId`,`consultantProfileId`)",
+    `Unique constraint failed on the constraint: \`${index}\``,
     {
       code: "P2002",
-      clientVersion: "6.0.0",
+      clientVersion: "7.0.0",
       meta: {
-        target: ["consulteeProfileId", "consultantProfileId"],
+        modelName: "Trial",
+        driverAdapterError: {
+          cause: {
+            originalCode: "23505",
+            originalMessage: `duplicate key value violates unique constraint "${index}"`,
+            kind: "UniqueConstraintViolation",
+            constraint: { index },
+          },
+        },
       },
     },
   );
+}
+
+function storedTrial(status: TrialStatus): TrialRow {
+  return {
+    id: `trial-${status.toLowerCase()}`,
+    status,
+    consulteeProfileId: CONSULTEE,
+    consultantProfileId: CONSULTANT,
+    appointmentId: `apt-${status.toLowerCase()}`,
+    requestedAt: new Date("2026-11-01T10:00:00.000Z"),
+  };
 }
 
 function request() {
@@ -135,6 +175,7 @@ function request() {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  stored.length = 0;
   mockedSession.mockResolvedValue({
     user: {
       id: "user-1",
@@ -142,9 +183,6 @@ beforeEach(() => {
       consulteeProfileId: CONSULTEE,
     },
   });
-  // No prior trial for the pair — the read-side gate passes.
-  mockedFindUnique.mockResolvedValue(null);
-  mockedDeleteMany.mockResolvedValue({ count: 1 });
   (prisma.subscriptionPlan.findUnique as jest.Mock).mockResolvedValue({
     id: PLAN,
     title: "Career Clarity",
@@ -169,31 +207,55 @@ beforeEach(() => {
   });
 });
 
-describe("duplicate trial requests (defect 7)", () => {
-  it("answers 409 TRIAL_ALREADY_REQUESTED when the insert loses the race", async () => {
-    mockedCreate.mockRejectedValue(uniqueViolation());
+describe("POST /api/trials keeps the pair's history", () => {
+  it("creates a new trial after a cancelled one and never writes the earlier row", async () => {
+    const earlier = storedTrial(TrialStatus.CANCELLED);
+    stored.push(earlier);
+    const snapshot = { ...earlier };
 
     const res = await POST(request());
 
-    expect(res.status).toBe(409);
-    expect(await res.json()).toEqual({
-      error: "You have already requested a trial with this consultant",
-      code: "TRIAL_ALREADY_REQUESTED",
-    });
+    expect(res.status).toBe(201);
+    expect(mockedCreate).toHaveBeenCalledTimes(1);
+    expect(stored).toEqual([snapshot]);
+    // The trial delegate offers only the read and the insert.
+    expect(Object.keys(prisma.trial).sort()).toEqual(["create", "findFirst"]);
   });
 
-  it("answers the same 409 on the sequential path, so the client branches once", async () => {
-    // A live trial already exists — no race, the read-side gate catches it.
-    mockedFindUnique.mockResolvedValue({
-      id: "trial-existing",
-      status: TrialStatus.AWAITING_PAYMENT,
-    });
+  it.each(TRIAL_REQUEST_BLOCKING_STATUSES)(
+    "refuses with 409 while an earlier %s trial holds the pair",
+    async (status) => {
+      stored.push(storedTrial(TrialStatus.CANCELLED), storedTrial(status));
+
+      const res = await POST(request());
+
+      expect(res.status).toBe(409);
+      expect(await res.json()).toEqual({
+        error: "You have already requested a trial with this consultant",
+        code: "TRIAL_ALREADY_REQUESTED",
+      });
+      expect(mockedCreate).not.toHaveBeenCalled();
+    },
+  );
+
+  it("answers the same 409 when the insert loses the race to the pair index", async () => {
+    mockedCreate.mockRejectedValue(
+      uniqueViolation("trial_one_blocking_per_pair_key"),
+    );
 
     const res = await POST(request());
 
     expect(res.status).toBe(409);
     expect((await res.json()).code).toBe("TRIAL_ALREADY_REQUESTED");
-    expect(mockedCreate).not.toHaveBeenCalled();
+  });
+
+  it("500s on a unique violation of any other constraint", async () => {
+    mockedCreate.mockRejectedValue(uniqueViolation("Trial_appointmentId_key"));
+
+    const res = await POST(request());
+
+    expect(res.status).toBe(500);
+    expect((await res.json()).code).toBeUndefined();
   });
 
   it("still 500s on a failure that is not a unique violation", async () => {
@@ -203,31 +265,5 @@ describe("duplicate trial requests (defect 7)", () => {
 
     expect(res.status).toBe(500);
     expect((await res.json()).code).toBeUndefined();
-  });
-
-  it("answers 409, not 500, when the rival clears the freed row first", async () => {
-    // A cancelled trial frees the pair, so both requests read it and both go to
-    // clear it. `delete` would raise P2025 on the loser and fall into the
-    // generic catch as a 500 — one statement earlier than the unique violation
-    // this route already answers calmly. `deleteMany` reports a count of zero
-    // instead, and the insert stays the arbiter.
-    mockedFindUnique.mockResolvedValue({
-      id: "trial-freed",
-      status: TrialStatus.CANCELLED,
-    });
-    mockedDeleteMany.mockResolvedValue({ count: 0 });
-    mockedCreate.mockRejectedValue(uniqueViolation());
-
-    const res = await POST(request());
-
-    expect(res.status).toBe(409);
-    expect((await res.json()).code).toBe("TRIAL_ALREADY_REQUESTED");
-  });
-
-  it("creates normally when nothing collides", async () => {
-    const res = await POST(request());
-
-    expect(res.status).toBe(201);
-    expect(mockedCreate).toHaveBeenCalledTimes(1);
   });
 });

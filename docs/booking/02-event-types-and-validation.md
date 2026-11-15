@@ -217,14 +217,14 @@ Free one-time session that lets a consultee try a subscription plan before commi
 
 **Config**: Fixed 0.5h (1 slot), no payment
 **Slots**: 1 slot per trial
-**Rules**: One trial per consultant per consultee (`@@unique([consulteeProfileId, consultantProfileId])`). Uses `lockTrialSlot()` for concurrency protection.
+**Rules**: At most one live or delivered trial per consultant and consultee (`trial_one_blocking_per_pair_key`, a partial unique index in `prisma/sql/check-constraints.sql`); a cancelled trial stays as history and the learner may request again. Uses `lockTrialSlot()` for concurrency protection.
 
 **Status lifecycle**: `PENDING` -> `SCHEDULED` -> `COMPLETED` -> `CONVERTED` (with `CANCELLED` and `REJECTED` branches)
 
 ```mermaid
 flowchart TD
-    A[Validate trial request] --> B{Already had trial with this consultant?}
-    B -->|Yes| X1[Error: one trial per consultant]
+    A[Validate trial request] --> B{Live or delivered trial with this consultant?}
+    B -->|Yes| X1[Error: trial already requested]
     B -->|No| C{Consultant approved?}
     C -->|No| X2[Status: REJECTED]
     C -->|Yes| D[Lock slot via lockTrialSlot]

@@ -53,8 +53,10 @@ Before this change the Thursday request deleted T1, and A1 became a booking with
 ## Consequences
 
 - A pair's trials read as a history. Counts of a learner's or an expert's active trials are unchanged, because at most one row per pair is active.
-- The schema change drops a unique index, so the owner's push needs that statement in `destructiveStatementsAllowed` (`prisma/sql/known-drift.json`) and the sidecar index applied straight after. Until the push, the live database still carries the old unique, and a request after a cancelled trial is refused by it with the same 409 instead of creating a second row.
-- Before the push, the read-only check in the pull request confirms that no pair already holds two blocking trials, which would make the index fail to build.
+- The schema change drops a unique index, so the owner's push needs that statement in `destructiveStatementsAllowed` (`prisma/sql/known-drift.json`) and the sidecar index applied straight after.
+- **The database step comes before the merge.** The request door maps only the new index's violation to its 409, so code running against the old unique turns a request after a cancelled trial into a 500. While the four booking enum swaps keep the preflight refusing a full push, the owner either applies the step alone (the plan's two `Trial` statements, then the sidecars) or holds the merge for the reconcile push that follows the release.
+- Until the release, `origin/prod` still creates trials as `PENDING`, which the index does not cover, and still deletes a cancelled row before its insert. The old code keeps one row per pair by itself; only an account that books on both a preview and production can mix the two.
+- While the old unique exists no pair can hold two rows, so the read-only check in `docs/prisma/README.md` returns nothing today; it is run again just before the step, because the index cannot be built over two blocking trials.
 
 ## Deprecated & Superseded Approaches
 

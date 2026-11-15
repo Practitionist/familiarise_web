@@ -78,7 +78,7 @@ const plan = { trialPriceInPaise: 0, acceptingRequests: true };
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    trial: { findUnique: jest.fn(async () => null) },
+    trial: { findFirst: jest.fn(async () => null) },
     consultantProfile: { findUnique: jest.fn(async () => null) },
     subscriptionPlan: {
       findUnique: jest.fn(async () => ({
