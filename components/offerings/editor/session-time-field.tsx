@@ -4,7 +4,6 @@ import { createContext, useContext, useMemo, type ReactNode } from "react";
 import { useWatch, type Control, type FieldValues } from "react-hook-form";
 
 import {
-  SINGLE_TIME_PICKER_MAX_WIDTH,
   SingleTimePicker,
   type SingleTimeValue,
 } from "@/components/scheduling/SingleTimePicker";
@@ -81,7 +80,7 @@ export function SessionTimeField<T extends FieldValues = FieldValues>({
       control={control}
       name={spec.name as never}
       render={({ field }) => (
-        <FormItem className={SINGLE_TIME_PICKER_MAX_WIDTH}>
+        <FormItem>
           <FormLabel>
             {spec.label}
             {spec.required && <RequiredMark />}

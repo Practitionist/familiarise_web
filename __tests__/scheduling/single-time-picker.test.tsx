@@ -181,32 +181,40 @@ it("lets a grid read newer than a refusal answer for that time again", () => {
   expect(time(/^9:00 am to 10:00 am, free/)).toBeEnabled();
 });
 
-it("puts the panes side by side only when its own width allows", () => {
-  let resize: ResizeObserverCallback = () => {};
+it("lays out by its own width: panes side by side from 700 px, times up to six columns", () => {
+  const resize = new Map<Element, ResizeObserverCallback>();
   const original = globalThis.ResizeObserver;
   globalThis.ResizeObserver = class {
-    constructor(callback: ResizeObserverCallback) {
-      resize = callback;
+    constructor(private readonly callback: ResizeObserverCallback) {}
+    observe(el: Element) {
+      resize.set(el, this.callback);
     }
-    observe() {}
     unobserve() {}
     disconnect() {}
   };
   try {
     const { container } = render(<Harness />);
     const root = container.firstElementChild as HTMLElement;
-    const widthOf = (width: number) =>
+    const times = screen.getByRole("group", { name: "Morning" })
+      .parentElement as HTMLElement;
+    const grid = screen.getByRole("group", {
+      name: "Morning",
+    }).lastElementChild;
+    const widen = (el: Element, width: number) =>
       act(() =>
-        resize(
+        resize.get(el)?.(
           [{ contentRect: { width } } as ResizeObserverEntry],
           {} as ResizeObserver,
         ),
       );
     expect(root).toHaveAttribute("data-layout", "stacked");
-    widthOf(900);
+    widen(times, 800);
+    expect(grid).toHaveClass("grid-cols-4");
+    widen(root, 2240);
     expect(root).toHaveAttribute("data-layout", "side-by-side");
-    widthOf(480);
-    expect(root).toHaveAttribute("data-layout", "stacked");
+    expect(grid).toHaveClass("grid-cols-6");
+    widen(times, 400);
+    expect(grid).toHaveClass("grid-cols-3");
   } finally {
     globalThis.ResizeObserver = original;
   }

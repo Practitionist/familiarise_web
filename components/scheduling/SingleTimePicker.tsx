@@ -12,7 +12,7 @@ import { Check, ChevronDown } from "lucide-react";
 
 import { NotifyWhenFreeButton } from "@/components/booking/NotifyWhenFreeButton";
 import { Switch } from "@/components/ui/switch";
-import { useMinWidth } from "@/hooks/use-min-width";
+import { useWidthStep } from "@/hooks/use-width-step";
 import { useNowTick } from "@/hooks/use-now-tick";
 import { BACKUP_INTEREST_CAP } from "@/lib/booking/interest/backup-interest-list";
 import {
@@ -94,9 +94,19 @@ export const TIME_JUST_TAKEN_MESSAGE =
 const PERIODS: readonly DayPeriod[] = ["Morning", "Afternoon", "Evening"];
 
 /** The picker's own width that fits the 22rem month, the gap and a two-column times pane in one row. */
-const SIDE_BY_SIDE_MIN_PX = 700;
-/** The widest the picker grows; a caller lines its hint text up with it. */
-export const SINGLE_TIME_PICKER_MAX_WIDTH = "max-w-[68rem]";
+const SIDE_BY_SIDE_STEPS = [700] as const;
+/** The times list width that fits 2..6 columns of 7.5rem buttons with 0.5rem gaps. */
+const TIME_COLUMN_STEPS = [248, 376, 504, 632, 760] as const;
+const TIME_COLUMNS = [
+  "grid-cols-1",
+  "grid-cols-2",
+  "grid-cols-3",
+  "grid-cols-4",
+  "grid-cols-5",
+  "grid-cols-6",
+] as const;
+/** Stacked, the times share the month's width, so they stop at four columns. */
+const MAX_TIME_COLUMNS = { stacked: 4, sideBySide: 6 } as const;
 
 const DAY_HEADING = new Intl.DateTimeFormat(DISPLAY_LOCALE, {
   weekday: "long",
@@ -153,7 +163,8 @@ const VISIBLE_TAG: Partial<
 
 /**
  * Pick one time for one session: a month on the left, the chosen day's times
- * on the right, stacked when the picker itself is under 700 px wide. Controlled;
+ * on the right, stacked when the picker itself is under 700 px wide; side by
+ * side it fills its container and the times take the extra width. Controlled;
  * the caller owns the button that acts on the pick. A pick the latest read
  * shows gone is cleared and the pane says so.
  */
@@ -178,13 +189,19 @@ export function SingleTimePicker({
   className,
 }: Readonly<SingleTimePickerProps>) {
   const tokens = PICKER_TOKENS[theme];
-  const [measureRef, sideBySide] =
-    useMinWidth<HTMLDivElement>(SIDE_BY_SIDE_MIN_PX);
+  const [measureRef, rootStep] =
+    useWidthStep<HTMLDivElement>(SIDE_BY_SIDE_STEPS);
+  const sideBySide = rootStep > 0;
+  const [timesRef, timesStep] = useWidthStep<HTMLDivElement>(TIME_COLUMN_STEPS);
+  const columnCount = Math.min(
+    timesStep + 1,
+    MAX_TIME_COLUMNS[sideBySide ? "sideBySide" : "stacked"],
+  );
+  const timeColumns = TIME_COLUMNS[columnCount - 1];
   const rootClass = cn(
     "grid w-full min-w-0",
-    SINGLE_TIME_PICKER_MAX_WIDTH,
     sideBySide
-      ? "grid-cols-[minmax(22rem,1fr)_minmax(0,1.2fr)] gap-8"
+      ? "grid-cols-[minmax(22rem,2fr)_minmax(0,3fr)] gap-8"
       : "grid-cols-1 gap-5",
     className,
   );
@@ -490,6 +507,7 @@ export function SingleTimePicker({
           canGoBack={canGoBack}
           canGoForward={canGoForward}
           theme={theme}
+          className={sideBySide ? "mx-auto max-w-md" : undefined}
         />
       </div>
       <section
@@ -559,7 +577,10 @@ export function SingleTimePicker({
           </div>
         )}
         {!loading && !failed && (
-          <div className="max-h-[24rem] space-y-5 overflow-y-auto pr-1">
+          <div
+            ref={timesRef}
+            className="max-h-[24rem] space-y-5 overflow-y-auto pr-1"
+          >
             {freeCount === 0 && (
               <div className="space-y-3 py-4">
                 <p className={cn("text-sm", tokens.heading)}>
@@ -600,7 +621,7 @@ export function SingleTimePicker({
                   >
                     {period}
                   </p>
-                  <div className="grid grid-cols-[repeat(auto-fill,minmax(max(7.5rem,22%),1fr))] gap-2">
+                  <div className={cn("grid gap-2", timeColumns)}>
                     {ghost && (
                       <div
                         data-just-taken="true"
