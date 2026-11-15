@@ -33,12 +33,14 @@ jest.mock("../../lib/rate-limit", () => ({
   spendTrialRequest: (...a: unknown[]) => spendTrialRequest(...(a as [])),
 }));
 const prepared = { bells: [], emails: { prepared: {}, screened: [] } };
-const prepareNotices = jest.fn(async () => prepared);
-const stageNotices = jest.fn(async () => ({ bells: [], emails: [] }));
+const prepareNotices = jest.fn(async (..._args: unknown[]) => prepared);
+const stageNotices = jest.fn(async (..._args: unknown[]) => ({
+  bells: [],
+  emails: [],
+}));
 jest.mock("../../lib/trials/schedule-notices", () => ({
-  prepareTrialScheduledNotices: (...a: unknown[]) =>
-    prepareNotices(...(a as [])),
-  stageTrialScheduledNotices: (...a: unknown[]) => stageNotices(...(a as [])),
+  prepareTrialScheduledNotices: (...a: unknown[]) => prepareNotices(...a),
+  stageTrialScheduledNotices: (...a: unknown[]) => stageNotices(...a),
 }));
 jest.mock("../../lib/novu/stage-then-attempt", () => ({
   flushNotificationsAfter: jest.fn(async () => undefined),

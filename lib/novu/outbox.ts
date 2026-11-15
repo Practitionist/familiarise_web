@@ -213,9 +213,8 @@ function stagedRowData(args: Omit<StageTriggerArgs, "tx">) {
 }
 
 /**
- * Stages already policy-filtered triggers inside `tx` in one insert. A row
- * already staged under the same `transactionId` is kept and not returned, so
- * the relay, not the caller's flush, settles it.
+ * Stages policy-filtered triggers inside `tx` in one insert; a row already staged under
+ * its `transactionId` is skipped and not returned, so the relay settles it.
  */
 export async function stageTriggerBatch(
   tx: Pick<Tx, "notificationOutbox">,

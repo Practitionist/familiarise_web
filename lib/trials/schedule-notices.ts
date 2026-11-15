@@ -1,9 +1,6 @@
 /**
- * The "trial scheduled" bell to each side and the email to both. Everything
- * they read (recipients, preferences, zones, suppressions, the render) runs
- * before the transaction that confirms the time; inside it they are two
- * inserts, so a rollback takes them too. The caller flushes the staged rows
- * after the commit (`flushNotificationsAfter`).
+ * The trial-scheduled notices read before the booking transaction and are staged inside it,
+ * one insert per table; the caller flushes the committed rows after the commit.
  */
 import { TrialStatus } from "@prisma/client";
 

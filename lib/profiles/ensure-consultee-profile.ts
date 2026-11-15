@@ -15,10 +15,10 @@
  * the same atomic unit (booking + profile creation either both commit
  * or neither do).
  *
- * The `upsert` + `user.update` pair runs only when the profile or its link is
- * missing, and is concurrency-safe via the `ConsulteeProfile.userId @unique`
- * constraint; a racing second caller would hit the unique index, fall through
- * to the `update: {}` branch, and end up with the same id.
+ * The `upsert` + `user.update` pair is concurrency-safe via the
+ * `ConsulteeProfile.userId @unique` constraint; a racing second caller
+ * would hit the unique index, fall through to the `update: {}` branch,
+ * and end up with the same id.
  */
 
 import type { PrismaLike } from "@/lib/prisma";

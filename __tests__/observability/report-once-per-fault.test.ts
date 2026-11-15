@@ -4,9 +4,9 @@
  */
 
 let next = 0;
-const captureException = jest.fn(() => `evt-${++next}`);
+const captureException = jest.fn((..._args: unknown[]) => `evt-${++next}`);
 jest.mock("@sentry/core", () => ({
-  captureException: (...args: unknown[]) => captureException(...(args as [])),
+  captureException: (...args: unknown[]) => captureException(...args),
   captureMessage: jest.fn(),
 }));
 
