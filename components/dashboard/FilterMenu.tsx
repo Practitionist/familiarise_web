@@ -26,6 +26,10 @@ export interface FilterMenuProps {
   allValue?: string | null;
   /** The trigger text when nothing is picked and there is no "all" option. */
   allLabel?: string;
+  /** Disables the trigger and the clear button, e.g. while the list loads. */
+  disabled?: boolean;
+  /** Fired on pointer-enter or focus of an option with the value a click would pick (for prefetch). */
+  onOptionIntent?: (value: string | null) => void;
 }
 
 const TRIGGER =
@@ -42,6 +46,8 @@ export function FilterMenu({
   onChange,
   allValue = null,
   allLabel = "All",
+  disabled = false,
+  onOptionIntent,
 }: Readonly<FilterMenuProps>) {
   const [open, setOpen] = useState(false);
   // With an own "all" option, `null` means a pick the list cannot show (several values).
@@ -61,8 +67,10 @@ export function FilterMenu({
           <button
             type="button"
             aria-label={`${label}: ${shown}`}
+            disabled={disabled}
             className={cn(
               TRIGGER,
+              "disabled:pointer-events-none disabled:opacity-50",
               active
                 ? "rounded-l-lg border-foreground bg-foreground pl-3 pr-2 text-background"
                 : "rounded-lg border-border bg-card px-3 text-foreground hover:border-foreground/30",
@@ -85,19 +93,22 @@ export function FilterMenu({
             {items.map((option) => {
               const selected =
                 option.value === "" ? value === null : option.value === value;
+              // In a clearable group, picking the current pick again clears it, as the chips did.
+              const clears =
+                option.value === "" ||
+                (allValue === null && selected && active);
+              const next = clears ? allValue : option.value;
               return (
                 <button
                   key={option.value || "__all"}
                   type="button"
                   aria-pressed={selected}
                   onClick={() => {
-                    // In a clearable group, picking the current pick again clears it, as the chips did.
-                    const clears =
-                      option.value === "" ||
-                      (allValue === null && selected && active);
-                    onChange(clears ? allValue : option.value);
+                    onChange(next);
                     setOpen(false);
                   }}
+                  onPointerEnter={() => onOptionIntent?.(next)}
+                  onFocus={() => onOptionIntent?.(next)}
                   className={cn(
                     "flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-sm transition-colors hover:bg-accent focus-visible:bg-accent focus-visible:outline-none",
                     selected && "font-semibold",
@@ -123,9 +134,11 @@ export function FilterMenu({
         <button
           type="button"
           aria-label={`Clear ${label.toLowerCase()} filter`}
+          disabled={disabled}
           onClick={() => onChange(allValue)}
           className={cn(
             TRIGGER,
+            "disabled:pointer-events-none disabled:opacity-50",
             "rounded-r-lg border-l-0 border-foreground bg-foreground pl-1 pr-2.5 text-background/70 hover:text-background",
           )}
         >
