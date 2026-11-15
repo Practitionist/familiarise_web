@@ -1,6 +1,6 @@
 ---
 name: performance
-description: Core Web Vitals (LCP, TBT, INP, CLS), Lighthouse MCP audits, Next.js 15 cold-start and bundle optimization, image lazy-loading, and accessibility/SEO compliance
+description: Core Web Vitals (LCP, TBT, INP, CLS), Lighthouse MCP audits, Next.js 15 cold-start and bundle optimization, image lazy-loading, accessibility/SEO compliance, and database round trips (statement counts, join loading) on booking writes
 user-invocable: true
 allowed-tools: Read, Grep, Glob, Edit, Write, Bash
 ---
@@ -59,6 +59,15 @@ You are working on performance, Core Web Vitals (LCP, TBT, INP, CLS), or Lightho
 5. **Label-Content-Name Alignment (WCAG 2.5.3)**: When a component has both visible text and an `aria-label`, the `aria-label` must match or start with the exact visible button text.
 
 6. **Taxonomy Reads Go Through the Cache**: Domain, SubDomain and Tag lists come from `lib/data/taxonomy.ts` (`unstable_cache`, tag `taxonomy`), never a direct Prisma read in a route; any new write to those tables must call `purgeTaxonomy()` after it commits.
+
+### 5. Database Round Trips on Booking Writes
+
+A booking write's latency is its statement count times about 95 ms (one connection per function, Singapore to Mumbai). Count before you cut: `scripts/dev/db-tier-local.sh --log-statements <log> <db test>` writes every statement a database-tier test issued; the `statement-counter` agent traces a path that no test drives. The per-path counts and what was cut are in `docs/performance/06-database-round-trips-and-join-loading.md` ("Booking write paths") and `docs/decisions/2026-11-15-booking-statement-cuts.md`.
+
+- **The default stays `relationLoadStrategy: "query"`** (`lib/prisma.ts`). A hot read opts in to `"join"` by name: the four webinar loads of a seat checkout, `resolvePaymentForEarnings` (`EARNINGS_PAYMENT_INCLUDE`), the order-reuse read, the cancel route's appointment read, the backup-interest read behind `stageNoticesForAppointmentHolds`, `readEventByAppointment`, the `trial.create` read-back, `ensureConsulteeProfile`, `resolveBookingRefundContext`, the seat-leave `seatPayment` and the payment read in `refundRemovedAttendeeSeat`. A global flip is an infrastructure audit item, not a per-PR change.
+- **Never join a read whose related rows carry a `Decimal`** (`Payment.exchangeRateAtCheckout`, `Refund.exchangeRateAtRefund`, the FX and tax columns): the upstream precision issue is open. A root model's own `Decimal` is selected as a column and is safe; `__tests__/db/booking/free-booking-paths.db.test.ts` pins it for the earnings read.
+- **Notice reads go before the transaction.** The free trial request resolves recipients, bell policy, zones and suppressions first (`prepareTrialScheduledNotices`), then stages one outbox insert and one email insert inside it (`stageTrialScheduledNotices`), so the rows still commit with the booking. An interactive `$transaction` on a booking path passes `maxWait` and `timeout`; Prisma's 5 s default is not a budget.
+- **Skip a read only where its result is already known.** Checkout skips the consumer-invoice reads when `hasBilledSupply(amount, creditsApplied)` is false; a ₹0 order funded by credit still mints. Free and credit-funded seats are told apart only inside `refundRemovedAttendeeSeat`, so callers always reach it.
 
 ---
 

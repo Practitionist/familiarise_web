@@ -88,7 +88,8 @@ describe("who-is-acting identity gates (#819)", () => {
     const upsert = jest.fn(async () => ({ id: "cp-1" }));
     const updateMany = jest.fn(async () => ({ count: 1 }));
     const tx = {
-      consulteeProfile: { upsert },
+      // No profile yet: the joined read misses, so the helper creates and links one.
+      consulteeProfile: { findUnique: jest.fn(async () => null), upsert },
       user: { updateMany },
     } as unknown as PrismaLike;
 
