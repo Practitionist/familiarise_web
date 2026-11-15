@@ -19,6 +19,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { FilterBar } from "@/components/dashboard/FilterBar";
+import { pagedListFilters } from "./paged-list-filters";
 import {
   Sheet,
   SheetContent,
@@ -516,39 +517,30 @@ export function SubscriptionsPage({
       <Card>
         <CardContent className="p-4">
           <FilterBar
-            search={{
-              label: "Search subscriptions",
-              placeholder: "Search by user name or email...",
-              value: searchQuery,
-              onChange: (value) => {
-                setSearchQuery(value);
-                setPage(1);
+            {...pagedListFilters({
+              search: {
+                label: "Search subscriptions",
+                placeholder: "Search by user name or email...",
+                value: searchQuery,
+                onChange: setSearchQuery,
               },
-            }}
-            selects={[
-              {
-                key: "status",
-                label: "Status",
-                value: statusFilter,
-                options: [
-                  { value: "all", label: "All Status" },
-                  { value: "active", label: "Active" },
-                  { value: "expiring_soon", label: "Expiring Soon" },
-                  { value: "expired", label: "Expired" },
-                  { value: "cancelled", label: "Cancelled" },
-                ],
-                onChange: (v) => {
-                  setStatusFilter(v);
-                  setPage(1);
+              selects: [
+                {
+                  key: "status",
+                  label: "Status",
+                  value: statusFilter,
+                  options: [
+                    { value: "all", label: "All Status" },
+                    { value: "active", label: "Active" },
+                    { value: "expiring_soon", label: "Expiring Soon" },
+                    { value: "expired", label: "Expired" },
+                    { value: "cancelled", label: "Cancelled" },
+                  ],
+                  onChange: setStatusFilter,
                 },
-              },
-            ]}
-            canClear={Boolean(searchQuery) || statusFilter !== "all"}
-            onClear={() => {
-              setSearchQuery("");
-              setStatusFilter("all");
-              setPage(1);
-            }}
+              ],
+              setPage,
+            })}
           />
         </CardContent>
       </Card>

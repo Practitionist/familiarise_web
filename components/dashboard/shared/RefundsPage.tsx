@@ -15,6 +15,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { FilterBar } from "@/components/dashboard/FilterBar";
+import { GATEWAY_FILTER_OPTIONS, pagedListFilters } from "./paged-list-filters";
 import {
   ResponsiveTable,
   type ResponsiveColumn,
@@ -298,58 +299,37 @@ export function RefundsPage({
       <Card>
         <CardContent className="p-4">
           <FilterBar
-            search={{
-              label: "Search refunds",
-              placeholder: "Search by refund ID...",
-              value: searchQuery,
-              onChange: (value) => {
-                setSearchQuery(value);
-                setPage(1);
+            {...pagedListFilters({
+              search: {
+                label: "Search refunds",
+                placeholder: "Search by refund ID...",
+                value: searchQuery,
+                onChange: setSearchQuery,
               },
-            }}
-            selects={[
-              {
-                key: "status",
-                label: "Status",
-                value: statusFilter,
-                options: [
-                  { value: "all", label: "All Status" },
-                  { value: "PENDING", label: "Pending" },
-                  { value: "SUCCEEDED", label: "Succeeded" },
-                  { value: "FAILED", label: "Failed" },
-                  { value: "CANCELLED", label: "Cancelled" },
-                ],
-                onChange: (v) => {
-                  setStatusFilter(v);
-                  setPage(1);
+              selects: [
+                {
+                  key: "status",
+                  label: "Status",
+                  value: statusFilter,
+                  options: [
+                    { value: "all", label: "All Status" },
+                    { value: "PENDING", label: "Pending" },
+                    { value: "SUCCEEDED", label: "Succeeded" },
+                    { value: "FAILED", label: "Failed" },
+                    { value: "CANCELLED", label: "Cancelled" },
+                  ],
+                  onChange: setStatusFilter,
                 },
-              },
-              {
-                key: "gateway",
-                label: "Gateway",
-                value: gatewayFilter,
-                options: [
-                  { value: "all", label: "All Gateways" },
-                  { value: "STRIPE", label: "Stripe" },
-                  { value: "RAZORPAY", label: "Razorpay" },
-                ],
-                onChange: (v) => {
-                  setGatewayFilter(v);
-                  setPage(1);
+                {
+                  key: "gateway",
+                  label: "Gateway",
+                  value: gatewayFilter,
+                  options: GATEWAY_FILTER_OPTIONS,
+                  onChange: setGatewayFilter,
                 },
-              },
-            ]}
-            canClear={
-              Boolean(searchQuery) ||
-              statusFilter !== "all" ||
-              gatewayFilter !== "all"
-            }
-            onClear={() => {
-              setSearchQuery("");
-              setStatusFilter("all");
-              setGatewayFilter("all");
-              setPage(1);
-            }}
+              ],
+              setPage,
+            })}
           />
         </CardContent>
       </Card>
