@@ -214,8 +214,11 @@ describe("CustomMessage booking tag", () => {
 
     answer(200, verified);
     renderWithQuery(<CustomMessage />);
-    expect(await screen.findByTestId("booking-tag")).toHaveTextContent(
-      "About: Career coaching",
+    const tag = await screen.findByTestId("booking-tag");
+    expect(tag).toHaveTextContent(/^Career coaching$/);
+    expect(tag).toHaveAttribute(
+      "title",
+      `About: Career coaching · next session ${format(new Date(NEXT), "EEE, d MMM, h:mm a")}`,
     );
     expect(screen.queryByText(/Forged title/)).not.toBeInTheDocument();
     expect(screen.queryByText("Get help")).not.toBeInTheDocument();

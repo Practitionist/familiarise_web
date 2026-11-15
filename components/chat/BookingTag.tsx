@@ -56,7 +56,7 @@ export function useBookingTag(
   return useQuery(bookingTagQueryOptions(appointmentId, cid));
 }
 
-/** The tag on a sent message, rendered only from the server's answer. */
+/** The tag on a sent message, rendered only from the server's answer; the session time is in its tooltip. */
 export function MessageBookingTag({
   appointmentId,
   cid,
@@ -68,13 +68,14 @@ export function MessageBookingTag({
   return (
     <div
       data-testid="booking-tag"
+      title={bookingTagLabel(tag, format)}
       className={cn(
-        "mb-1 flex items-center gap-1.5 text-[11px]",
+        "mb-1 flex max-w-64 items-center gap-1.5 text-[11px]",
         mine ? "text-primary-foreground/80" : "text-muted-foreground",
       )}
     >
       <CalendarIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
-      <span>{bookingTagLabel(tag, format)}</span>
+      <span className="truncate">{tag.title}</span>
     </div>
   );
 }
