@@ -2,27 +2,25 @@
 
 import { use, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Download, Filter, Search } from "lucide-react";
+import { Download } from "lucide-react";
 import type { OrgAuditCategory } from "@prisma/client";
 import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
 import {
   DashboardHeader,
   DashboardContent,
 } from "@/components/dashboard/PageScaffold";
+import { FilterBar } from "@/components/dashboard/FilterBar";
+import {
+  DateRangeMenu,
+  dateRangeToInstants,
+  type DateRange,
+} from "@/components/dashboard/DateRangeMenu";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { humanizeEnum } from "@/lib/ui/tone";
 import { ORG_AUDIT_CATEGORY_LABEL } from "@/lib/labels/org-labels";
 import { visibleAuditCategories } from "@/lib/enterprise/audit-visibility";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   ResponsiveTable,
   type ResponsiveColumn,
@@ -102,20 +100,21 @@ export default function AuditLogPage({ params }: Readonly<PageProps>) {
 
   const [category, setCategory] = useState<OrgAuditCategory | "ALL">("ALL");
   const [search, setSearch] = useState("");
-  const [from, setFrom] = useState<string>("");
-  const [to, setTo] = useState<string>("");
+  const [range, setRange] = useState<DateRange>({ from: "", to: "" });
   const [cursorStack, setCursorStack] = useState<string[]>([]); // back-navigation
 
   const queryString = useMemo(() => {
     const p = new URLSearchParams();
     if (category !== "ALL") p.set("categories", category);
     if (search.trim()) p.set("q", search.trim());
-    if (from) p.set("from", new Date(from).toISOString());
-    if (to) p.set("to", new Date(to).toISOString());
+    // Local-day bounds: the first day from midnight, the last day through 23:59:59.999.
+    const { from, to } = dateRangeToInstants(range);
+    if (from) p.set("from", from.toISOString());
+    if (to) p.set("to", to.toISOString());
     const current = cursorStack[cursorStack.length - 1];
     if (current) p.set("cursor", current);
     return p.toString();
-  }, [category, search, from, to, cursorStack]);
+  }, [category, search, range, cursorStack]);
 
   const { data, isLoading, isFetching } = useQuery<AuditResponse>({
     queryKey: ["org-audit-log", orgId, queryString],
@@ -166,10 +165,14 @@ export default function AuditLogPage({ params }: Readonly<PageProps>) {
   const resetFilters = () => {
     setCategory("ALL");
     setSearch("");
-    setFrom("");
-    setTo("");
+    setRange({ from: "", to: "" });
     setCursorStack([]);
   };
+  const isFiltered =
+    category !== "ALL" ||
+    search.trim() !== "" ||
+    range.from !== "" ||
+    range.to !== "";
 
   const rows = data?.rows ?? [];
   const canGoPrev = cursorStack.length > 0;
@@ -230,84 +233,59 @@ export default function AuditLogPage({ params }: Readonly<PageProps>) {
         description="Every change in your organization, with who made it and when."
       />
       <DashboardContent>
-        <Card className="mb-4">
-          <CardHeader>
-            <CardTitle className="text-base flex items-center gap-2">
-              <Filter className="h-4 w-4" /> Filters
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-col sm:flex-row sm:flex-wrap gap-3">
-              <div className="min-w-0 flex-1">
-                <div className="relative">
-                  <Search className="h-4 w-4 absolute left-3 top-2.5 text-muted-foreground/70" />
-                  <Input
-                    aria-label="Search description"
-                    placeholder="Search description…"
-                    value={search}
-                    onChange={(e) => {
-                      setSearch(e.target.value);
-                      setCursorStack([]);
-                    }}
-                    className="pl-9"
-                  />
-                </div>
-              </div>
-              <Select
-                value={category}
-                onValueChange={(v) => {
-                  setCategory(v as OrgAuditCategory | "ALL");
-                  setCursorStack([]);
-                }}
-              >
-                <SelectTrigger className="w-full sm:w-48">
-                  <SelectValue placeholder="Category" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="ALL">All categories</SelectItem>
-                  {categories.map((c) => (
-                    <SelectItem key={c} value={c}>
-                      {ORG_AUDIT_CATEGORY_LABEL[c]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Input
-                type="date"
-                value={from}
-                onChange={(e) => {
-                  setFrom(e.target.value);
-                  setCursorStack([]);
-                }}
-                className="w-full sm:w-40"
-                aria-label="From date"
-              />
-              <Input
-                type="date"
-                value={to}
-                onChange={(e) => {
-                  setTo(e.target.value);
-                  setCursorStack([]);
-                }}
-                className="w-full sm:w-40"
-                aria-label="To date"
-              />
-              <Button variant="outline" onClick={resetFilters}>
-                Reset
-              </Button>
-              {canExport && (
-                <Button
-                  variant="outline"
-                  onClick={onDownloadCsv}
-                  disabled={isFetching}
-                >
-                  <Download className="h-4 w-4 mr-1" />
-                  CSV
-                </Button>
-              )}
-            </div>
-          </CardContent>
-        </Card>
+        <FilterBar
+          className="mb-4"
+          search={{
+            label: "Search description",
+            placeholder: "Search description…",
+            value: search,
+            onChange: (v) => {
+              setSearch(v);
+              setCursorStack([]);
+            },
+          }}
+          selects={[
+            {
+              key: "category",
+              label: "Category",
+              value: category,
+              options: [
+                { value: "ALL", label: "All categories" },
+                ...categories.map((c) => ({
+                  value: c,
+                  label: ORG_AUDIT_CATEGORY_LABEL[c],
+                })),
+              ],
+              onChange: (v) => {
+                setCategory(categories.find((c) => c === v) ?? "ALL");
+                setCursorStack([]);
+              },
+            },
+          ]}
+          onClear={resetFilters}
+          canClear={isFiltered}
+        >
+          <DateRangeMenu
+            value={range}
+            onChange={(next) => {
+              setRange(next);
+              setCursorStack([]);
+            }}
+            direction="past"
+          />
+          {canExport && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9"
+              onClick={onDownloadCsv}
+              disabled={isFetching}
+            >
+              <Download className="h-4 w-4 mr-1" />
+              CSV
+            </Button>
+          )}
+        </FilterBar>
 
         <Card>
           <CardContent className="p-0 sm:p-4">
