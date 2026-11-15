@@ -10,11 +10,13 @@ import { isNovuConfigured } from "./client";
 import {
   attemptTrigger,
   stageTrigger,
+  stageTriggerBatch,
   type NovuPayload,
+  type StagedTrigger,
   type StageTriggerArgs,
   type TriggerResult,
 } from "./outbox";
-import { resolveRecipientBellPolicy } from "./policy";
+import { bellRecipientZones, resolveRecipientBellPolicy } from "./policy";
 import type { NovuWorkflowId } from "./templates/types";
 import { shownMoves } from "@/lib/booking/session-moves";
 import {
@@ -684,10 +686,53 @@ export const notifyNewReview = defineSingleNotifier<ReviewPayload>(
 );
 
 // Trials
-export const notifyTrialScheduled = defineZonedSingleNotifier(
-  W.TRIAL_SESSION_SCHEDULED,
-  trialWire,
-);
+/** A bell resolved before its transaction: recipient, zone and payload fixed, not yet staged. */
+export type PreparedBell = Omit<StageTriggerArgs, "tx">;
+
+/**
+ * The trial-scheduled bells resolved before the caller's transaction: one
+ * recipient read for the bell policy and zones, and no write.
+ */
+export async function prepareTrialScheduledBells(
+  bells: ReadonlyArray<{ subscriberId: string; input: TrialInput }>,
+): Promise<PreparedBell[]> {
+  const workflowId = W.TRIAL_SESSION_SCHEDULED;
+  const zones = await bellRecipientZones(
+    workflowId,
+    bells.map((bell) => bell.subscriberId),
+  );
+  return bells.flatMap(({ subscriberId, input }) => {
+    const timezone = zones.get(subscriberId);
+    if (timezone === undefined) return [];
+    return [
+      {
+        workflowId,
+        kind: "SINGLE" as const,
+        recipients: [subscriberId],
+        payload: trialWire(input, timezone),
+      },
+    ];
+  });
+}
+
+/**
+ * Stages prepared bells inside `tx` in one insert. With Novu unconfigured the
+ * rows stay for the relay and none is returned to flush.
+ */
+export async function stagePreparedBells(
+  tx: Pick<Tx, "notificationOutbox">,
+  bells: PreparedBell[],
+): Promise<StagedTrigger[]> {
+  const staged = await stageTriggerBatch(tx, bells);
+  if (bells.length > 0 && !isNovuConfigured()) {
+    for (const workflowId of new Set(bells.map((bell) => bell.workflowId))) {
+      reportNotConfigured(workflowId);
+    }
+    return [];
+  }
+  return staged;
+}
+
 export const notifyTrialCompleted = defineZonedMultiNotifier(
   W.TRIAL_SESSION_COMPLETED,
   trialWire,

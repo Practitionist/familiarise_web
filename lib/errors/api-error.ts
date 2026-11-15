@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 
-import { classifyError } from "@/lib/errors/classification/payment-error-classification";
+import {
+  classifyError,
+  withErrorReference,
+} from "@/lib/errors/classification/payment-error-classification";
 import { reportSentryError } from "@/lib/observability/report";
 import { setSentryIdentity } from "@/lib/observability/identity";
 
@@ -12,6 +15,8 @@ interface IApiErrorOptions {
   userId?: string; // for debugging context
   role?: string | null;
   fallbackMessage?: string;
+  /** The Sentry `subsystem` tag; this is the one capture of the request's fault. */
+  subsystem?: string;
 }
 
 /**
@@ -56,6 +61,7 @@ export function apiError({
   userId,
   role,
   fallbackMessage,
+  subsystem = "api",
 }: IApiErrorOptions): NextResponse {
   // Many of these routes are reached without going through `requireApiAuth`
   // (or predating it), so the acting user is not always on the isolation
@@ -76,7 +82,7 @@ export function apiError({
   } else {
     errorId =
       reportSentryError(error, {
-        subsystem: "api",
+        subsystem,
         tags: { route_tag: tag },
       }) || undefined;
     console.error(`${tag}${ctx} Unexpected:`, error);
@@ -84,7 +90,9 @@ export function apiError({
 
   return NextResponse.json(
     {
-      error: classified.errorMessage,
+      error: classified.isBusinessError
+        ? classified.errorMessage
+        : withErrorReference(classified.errorMessage, errorId),
       errorType: classified.errorType,
       ...(errorId ? { errorId } : {}),
     },

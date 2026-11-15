@@ -208,7 +208,11 @@ async function expireOneTrial(trial: LapsedTrial, now: Date): Promise<boolean> {
     };
     const [, emailRows] = await Promise.all([
       Promise.resolve(
-        notifyTrialCancelled([trial.consulteeProfile.user.id], cancelBellInput),
+        notifyTrialCancelled(
+          [trial.consulteeProfile.user.id],
+          cancelBellInput,
+          `trial-cancelled:${trial.id}`,
+        ),
       ).catch(() => []),
       stageTrialLifecycleEmail(prisma, {
         trialId: trial.id,

@@ -23,7 +23,12 @@ import { idempotencyKeyFor } from "./idempotency";
 import { RENDER_FAILED } from "./replay-policy";
 import { stampFirstAttempt, UNSETTLED } from "@/lib/retry/provider-window";
 import { EmailRecipientCappedError, overRecipientCap } from "./recipient-cap";
-import { EmailSuppressedError, findSuppression } from "./suppression";
+import {
+  EmailSuppressedError,
+  findSuppressed,
+  findSuppression,
+  normaliseEmail,
+} from "./suppression";
 import {
   EmailHeldError,
   HELD_PRE_LAUNCH,
@@ -204,43 +209,17 @@ export async function stage(
 ): Promise<StagedEmail | null> {
   const payload = withReplyTo(message);
   const db = opts.tx ?? prisma;
-  const heldDomain = heldRecipientDomain(recipientsOf(payload));
   const write = async (): Promise<StagedEmail> => {
-    let refusal: string | null = null;
-    let suppressed: EmailSuppressionReason | undefined;
-    if (heldDomain) {
-      logHeld(emailType, heldDomain);
-      refusal = HELD_PRE_LAUNCH;
-    } else {
-      suppressed = (await findSuppression(payload.to, db))?.reason;
-      if (suppressed) {
-        console.warn(
-          `[email] ${emailType} not sent: recipient is suppressed (${suppressed})`,
-        );
-        refusal = `suppressed:${suppressed}`;
-      }
-    }
+    const heldDomain = heldRecipientDomain(recipientsOf(payload));
+    const suppressed = heldDomain
+      ? undefined
+      : (await findSuppression(payload.to, db))?.reason;
+    const verdict = stagingVerdict(emailType, heldDomain, suppressed);
     const row = await db.failedEmail.create({
-      data: {
-        recipient: payload.to,
-        fromAddress: payload.from,
-        replyTo: payload.replyTo ?? null,
-        subject: payload.subject,
-        ...storedBodies(payload, emailType),
-        ...deliveryColumns(payload.deliveryPolicy),
-        emailType,
-        status: refusal ? "DEAD_LETTER" : "PENDING",
-        nextRetryAt: new Date(Date.now() + 60_000),
-        lastError: refusal,
-        entityRef: opts.entityRef ?? null,
-      },
+      data: stagedRowData(payload, emailType, verdict, opts.entityRef),
       select: { id: true },
     });
-    const idempotencyKey = idempotencyKeyFor(payload, emailType, row.id);
-    if (heldDomain) return { id: row.id, idempotencyKey, held: true };
-    return suppressed
-      ? { id: row.id, idempotencyKey, suppressed }
-      : { id: row.id, idempotencyKey };
+    return stagedEmailOf(row.id, payload, emailType, verdict);
   };
   if (opts.tx) return write();
   try {
@@ -255,6 +234,127 @@ export async function stage(
     );
     return null;
   }
+}
+
+/** Why a staged row is born DEAD_LETTER instead of PENDING: a pre-launch hold or a suppression. */
+export interface StagingVerdict {
+  held: boolean;
+  suppressed?: EmailSuppressionReason;
+}
+
+/** A message with its verdict, read before the transaction that stages it. */
+export interface ScreenedEmail {
+  message: RenderedEmail;
+  verdict: StagingVerdict;
+}
+
+function stagingVerdict(
+  emailType: string,
+  heldDomain: string | null,
+  suppressed: EmailSuppressionReason | undefined,
+): StagingVerdict {
+  if (heldDomain) {
+    logHeld(emailType, heldDomain);
+    return { held: true };
+  }
+  if (suppressed) {
+    console.warn(
+      `[email] ${emailType} not sent: recipient is suppressed (${suppressed})`,
+    );
+    return { held: false, suppressed };
+  }
+  return { held: false };
+}
+
+function stagedRowData(
+  payload: RenderedEmail,
+  emailType: string,
+  verdict: StagingVerdict,
+  entityRef: string | undefined,
+) {
+  const refusal = verdict.held
+    ? HELD_PRE_LAUNCH
+    : verdict.suppressed
+      ? `suppressed:${verdict.suppressed}`
+      : null;
+  return {
+    recipient: payload.to,
+    fromAddress: payload.from,
+    replyTo: payload.replyTo ?? null,
+    subject: payload.subject,
+    ...storedBodies(payload, emailType),
+    ...deliveryColumns(payload.deliveryPolicy),
+    emailType,
+    status: refusal ? ("DEAD_LETTER" as const) : ("PENDING" as const),
+    nextRetryAt: new Date(Date.now() + 60_000),
+    lastError: refusal,
+    entityRef: entityRef ?? null,
+  };
+}
+
+function stagedEmailOf(
+  id: string,
+  payload: RenderedEmail,
+  emailType: string,
+  verdict: StagingVerdict,
+): StagedEmail {
+  const idempotencyKey = idempotencyKeyFor(payload, emailType, id);
+  if (verdict.held) return { id, idempotencyKey, held: true };
+  return verdict.suppressed
+    ? { id, idempotencyKey, suppressed: verdict.suppressed }
+    : { id, idempotencyKey };
+}
+
+/** {@link stage}'s hold and suppression verdicts for `messages`, in one read. */
+export async function screenForStaging(
+  messages: RenderedEmail[],
+  emailType: string,
+): Promise<ScreenedEmail[]> {
+  const payloads = messages.map(withReplyTo);
+  const heldDomains = payloads.map((payload) =>
+    heldRecipientDomain(recipientsOf(payload)),
+  );
+  const suppressed = await findSuppressed(
+    payloads.filter((_, i) => !heldDomains[i]).map((payload) => payload.to),
+  );
+  return payloads.map((payload, i) => ({
+    message: messages[i],
+    verdict: stagingVerdict(
+      emailType,
+      heldDomains[i],
+      heldDomains[i] ? undefined : suppressed.get(normaliseEmail(payload.to)),
+    ),
+  }));
+}
+
+/** Stages screened messages inside `tx` in one insert, in their order. */
+export async function stageScreened(
+  tx: Pick<Tx, "failedEmail">,
+  screened: ScreenedEmail[],
+  emailType: string,
+  entityRef: string,
+): Promise<StagedEmail[]> {
+  if (screened.length === 0) return [];
+  const payloads = screened.map(({ message }) => withReplyTo(message));
+  const rows = await tx.failedEmail.createManyAndReturn({
+    data: payloads.map((payload, i) =>
+      stagedRowData(payload, emailType, screened[i].verdict, entityRef),
+    ),
+    select: { id: true, recipient: true },
+  });
+  // Rows are matched back by recipient; one address's rows keep insert order.
+  const idsByRecipient = new Map<string, string[]>();
+  for (const row of rows) {
+    idsByRecipient.set(row.recipient, [
+      ...(idsByRecipient.get(row.recipient) ?? []),
+      row.id,
+    ]);
+  }
+  return payloads.map((payload, i) => {
+    const id = idsByRecipient.get(payload.to)?.shift();
+    if (!id) throw new Error(`[email] ${emailType} staged row missing`);
+    return stagedEmailOf(id, payload, emailType, screened[i].verdict);
+  });
 }
 
 /** The recipient of a message whose template threw before it could be staged. */

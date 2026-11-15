@@ -62,7 +62,6 @@ jest.mock("../../lib/rate-limit", () => ({
 }));
 jest.mock("../../lib/novu", () => ({
   notifyTrialCancelled: jest.fn(async () => []),
-  notifyTrialScheduled: jest.fn(),
   notifyTrialCompleted: jest.fn(),
 }));
 jest.mock("../../lib/email/senders/booking", () => ({
@@ -324,7 +323,10 @@ describe("the cancel notices commit with the cancel", () => {
     };
     await del({ confirmedRefundPaise: 50_000 });
 
-    expect(notifyTrialCancelled.mock.calls[0][2]).toMatchObject({
+    expect(notifyTrialCancelled.mock.calls[0][2]).toBe(
+      "trial-cancelled:trial-1",
+    );
+    expect(notifyTrialCancelled.mock.calls[0][3]).toMatchObject({
       tx: expect.anything(),
       deferAttempt: true,
       required: { kind: "CANCELLED_BY_HOST", recipients: ["u-learner"] },

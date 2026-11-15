@@ -170,11 +170,11 @@ A series move (`retimeClassSeries`, `lib/booking/class-retime.ts`) sends one not
 
 ### Trial Sessions
 
-| Workflow ID               | Trigger Function                                 | Recipients   | Payload Type   |
-| ------------------------- | ------------------------------------------------ | ------------ | -------------- |
-| `trial-session-scheduled` | `notifyTrialScheduled(consulteeUserId, payload)` | Consultee    | `TrialPayload` |
-| `trial-session-completed` | `stageTrialCompletedNotices(args)`               | Both parties | `TrialPayload` |
-| `trial-session-cancelled` | `notifyTrialCancelled(userIds[], payload)`       | Both parties | `TrialPayload` |
+| Workflow ID               | Trigger Function                                                                                      | Recipients   | Payload Type   |
+| ------------------------- | ----------------------------------------------------------------------------------------------------- | ------------ | -------------- |
+| `trial-session-scheduled` | `prepareTrialScheduledBells([...])` before the transaction, `stagePreparedBells(tx, bells)` inside it | Both parties | `TrialPayload` |
+| `trial-session-completed` | `stageTrialCompletedNotices(args)`                                                                    | Both parties | `TrialPayload` |
+| `trial-session-cancelled` | `stageTrialCancelNotice(tx, notice, pre)` on the cancel's transaction                                 | Both parties | `TrialPayload` |
 
 **TrialPayload**: `consultantName`, `consulteeName`, `planTitle`, `dateTime?` (recipient-zone), `dateTimeIso?`, `status` (label), `statusCode?`, `dashboardUrl`, `continueWith?`. Callers pass `TrialInput`.
 

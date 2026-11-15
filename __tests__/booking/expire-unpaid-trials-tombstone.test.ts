@@ -93,6 +93,7 @@ describe("expire-unpaid-trials tombstones the held call", () => {
     expect(notifyTrialCancelled).toHaveBeenCalledWith(
       ["u1"],
       expect.objectContaining({ status: "CANCELLED", planTitle: "Plan" }),
+      "trial-cancelled:trial-1",
     );
   });
 

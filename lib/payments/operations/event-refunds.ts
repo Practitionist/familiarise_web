@@ -756,6 +756,9 @@ export async function refundRemovedAttendeeSeat(args: {
       // unless the caller named the sale, which is the only way this door can
       // be sure it is refunding the payment in front of it.
       ...(args.paymentId ? {} : { orderBy: { createdAt: "asc" } }),
+      // One joined statement where "query" loads the refunds, disputes and
+      // policy tiers separately; every caller, free seat included, reaches it.
+      relationLoadStrategy: "join",
       where: {
         ...(args.paymentId ? { id: args.paymentId } : {}),
         userId: args.attendeeUserId,
@@ -777,7 +780,8 @@ export async function refundRemovedAttendeeSeat(args: {
       },
     });
     if (!payment) return null;
-    // A free seat owes nothing and writes no refund record.
+    // Free and credit-funded seats are told apart only here: a price-free seat
+    // owes nothing, while a ₹0 credit-funded seat must reach creditSeatRefund.
     if (isPriceFreeSeat(payment)) {
       return {
         amountRefundedPaise: 0,

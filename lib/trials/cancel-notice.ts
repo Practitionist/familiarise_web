@@ -60,6 +60,7 @@ export async function stageTrialCancelNotice(
       status: "CANCELLED",
       dashboardUrl: n.dashboardUrl,
     },
+    `trial-cancelled:${n.trialId}`,
     { tx, deferAttempt: true, required: n.required },
   );
   const emails = await stageTrialLifecycleEmail(tx, emailArgs(n), pre);

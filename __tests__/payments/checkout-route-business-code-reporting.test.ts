@@ -208,24 +208,50 @@ describe("a business-coded refusal leaves POST /api/checkout as an answer", () =
     },
   );
 
-  it("still captures an unrecognised failure at Sentry's default level", async () => {
-    handleCheckout.mockRejectedValue(new Error("connection terminated"));
+  it("captures an unrecognised Prisma failure once and never returns its text", async () => {
+    captureException.mockReturnValueOnce("0123456789abcdef0123456789abcdef");
+    handleCheckout.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError(
+        "Invalid `prisma.appointment.findFirst()` invocation: Transaction API error: Transaction already closed: A query cannot be executed on an expired transaction.",
+        { code: "P2028", clientVersion: "test" },
+      ),
+    );
 
     const res = await POST(checkoutRequest());
+    const body = await res.json();
 
     expect(res.status).toBe(500);
-    // Two captures here (the route's own, then logClassifiedError's). Asserted
-    // rather than assumed, so the loop below cannot pass on an empty list; the
-    // point of the loop is that neither is downgraded to a modelled outcome.
-    expect(captureException).toHaveBeenCalledTimes(2);
-    for (const call of captureException.mock.calls) {
-      const context = (call[1] ?? {}) as {
-        level?: string;
-        tags?: Record<string, string>;
-      };
-      expect(context.level).toBeUndefined();
-      expect(context.tags?.expected).not.toBe("true");
-    }
+    expect(body.error).toBe(
+      "Something went wrong. Please try again. Reference: 01234567.",
+    );
+    expect(JSON.stringify(body)).not.toMatch(/prisma|transaction/i);
+    expect(body.errorId).toBe("0123456789abcdef0123456789abcdef");
+    const context = soleCaptureContext();
+    expect(context.level).toBeUndefined();
+    expect(context.tags?.expected).not.toBe("true");
+  });
+
+  it("shows the id of a fault the checkout core already reported, and captures nothing more", async () => {
+    captureException.mockReturnValueOnce("fedcba9876543210fedcba9876543210");
+    const fault = new Error("connection terminated");
+    handleCheckout.mockImplementation(async () => {
+      const { reportSentryError } = jest.requireActual(
+        "../../lib/observability/report",
+      );
+      reportSentryError(fault, { subsystem: "payments" });
+      throw new Error(
+        "Failed to record payment information. Please try again.",
+        {
+          cause: fault,
+        },
+      );
+    });
+
+    const body = await (await POST(checkoutRequest())).json();
+
+    expect(captureException).toHaveBeenCalledTimes(1);
+    expect(body.errorId).toBe("fedcba9876543210fedcba9876543210");
+    expect(body.error).toContain("Reference: fedcba98.");
   });
 });
 

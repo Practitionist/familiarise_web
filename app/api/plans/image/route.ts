@@ -1,4 +1,3 @@
-import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
@@ -83,11 +82,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ imageUrl: result.fileUrl }, { status: 200 });
   } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "bookings" } },
-    );
-    return apiError({ tag: "[PlanImage.POST]", error });
+    return apiError({ tag: "[PlanImage.POST]", error, subsystem: "bookings" });
   }
 }
 
@@ -136,11 +131,11 @@ export async function DELETE(request: NextRequest) {
 
     return NextResponse.json({ success: true }, { status: 200 });
   } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "bookings" } },
-    );
-    return apiError({ tag: "[PlanImage.DELETE]", error });
+    return apiError({
+      tag: "[PlanImage.DELETE]",
+      error,
+      subsystem: "bookings",
+    });
   }
 }
 

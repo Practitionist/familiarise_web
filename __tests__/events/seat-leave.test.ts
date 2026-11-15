@@ -321,6 +321,8 @@ it("refuses a class exit without the exit right (#1780 E-5)", async () => {
           }),
         },
         appointmentOccurrence: { findMany: async () => [] },
+        // The leave reads the seat's payment once, before the rule runs.
+        payment: { findFirst: async () => null },
       }),
   );
   await expect(

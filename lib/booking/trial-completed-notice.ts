@@ -38,6 +38,8 @@ export async function stageTrialCompletedNotices(
   emails: StagedRecipientEmail[];
 }> {
   const continueUrl = trialContinueUrl(args.subscriptionPlanId);
+  // One key for the route and the sweep, so a trial completed by both rings once.
+  const completedKey = `trial-completed:${args.trialId}`;
   const dateTime = args.startsAt?.toISOString();
   const base = {
     consultantName: args.consultantName,
@@ -64,6 +66,7 @@ export async function stageTrialCompletedNotices(
             continueWith: args.consultantName,
             dashboardUrl: continueUrl,
           },
+          completedKey,
           { deferAttempt: true },
         ).catch(fail("learner bell"))
       : [],
@@ -71,6 +74,7 @@ export async function stageTrialCompletedNotices(
       ? notifyTrialCompleted(
           [expert],
           { ...base, dashboardUrl: args.dashboardUrl },
+          completedKey,
           { deferAttempt: true },
         ).catch(fail("expert bell"))
       : [],
