@@ -151,14 +151,14 @@ export async function notifyRescheduleRestored(
     await notifyAppointmentRescheduled(
       userIds,
       {
-      ...notificationScope(appt.organizationId),
-      appointmentType: appt.appointmentType,
-      consultantName: consultantUser.name || "Consultant",
-      consulteeName: consulteeUser.name || "Consultee",
-      planTitle,
-      dashboardUrl,
-      outcome,
-      ...(restored ? { oldDateTime: restored.startsAt.toISOString() } : {}),
+        ...notificationScope(appt.organizationId),
+        appointmentType: appt.appointmentType,
+        consultantName: consultantUser.name || "Consultant",
+        consulteeName: consulteeUser.name || "Consultee",
+        planTitle,
+        dashboardUrl,
+        outcome,
+        ...(restored ? { oldDateTime: restored.startsAt.toISOString() } : {}),
       },
       lapsed
         ? { required: { kind: "PROPOSAL_LAPSED", recipients: userIds } }

@@ -1440,36 +1440,38 @@ export async function POST(
             )
           : [];
       const [bellResults, ...stagedEmailBatches] = await Promise.all([
-        notifyAppointmentCancelled(userIds, {
-          ...notificationScope(appointment.organizationId),
-          appointmentId,
-          appointmentType: notificationMeta.appointmentType,
-          consultantName: notificationMeta.consultantName || "Consultant",
-          consulteeName: notificationMeta.consulteeName || "Consultee",
-          planTitle: planTitleOrSessionLabel(
-            notificationMeta.planTitle,
-            notificationMeta.appointmentType,
-          ),
-          dateTime: notificationMeta.dateTime,
-          dashboardUrl: notificationHref(
-            appointment.organizationId,
-            "appointments",
-          ),
-          reason: validatedData.reason || undefined,
-          cancelledBy: hostCancelled
-            ? "consultant"
-            : notificationMeta.cancelledBy === consulteeUserId
-              ? "consultee"
-              : "system",
-        },
-        bookedUserIds.length > 0
-          ? {
-              required: {
-                kind: "CANCELLED_BY_HOST",
-                recipients: bookedUserIds,
-              },
-            }
-          : undefined,
+        notifyAppointmentCancelled(
+          userIds,
+          {
+            ...notificationScope(appointment.organizationId),
+            appointmentId,
+            appointmentType: notificationMeta.appointmentType,
+            consultantName: notificationMeta.consultantName || "Consultant",
+            consulteeName: notificationMeta.consulteeName || "Consultee",
+            planTitle: planTitleOrSessionLabel(
+              notificationMeta.planTitle,
+              notificationMeta.appointmentType,
+            ),
+            dateTime: notificationMeta.dateTime,
+            dashboardUrl: notificationHref(
+              appointment.organizationId,
+              "appointments",
+            ),
+            reason: validatedData.reason || undefined,
+            cancelledBy: hostCancelled
+              ? "consultant"
+              : notificationMeta.cancelledBy === consulteeUserId
+                ? "consultee"
+                : "system",
+          },
+          bookedUserIds.length > 0
+            ? {
+                required: {
+                  kind: "CANCELLED_BY_HOST",
+                  recipients: bookedUserIds,
+                },
+              }
+            : undefined,
         ).catch((err) => {
           console.error(
             "Failed to send appointment cancellation notification:",

@@ -48,8 +48,8 @@ export default function NewBookingRequestEmail({
         <Text style={paragraph}>
           {consulteeName}&apos;s request for <strong>{planTitle}</strong> is
           still waiting for your answer. Approve or decline it by{" "}
-          <strong>{expiresAtText}</strong>; after that it lapses and the time
-          is freed for other bookings.
+          <strong>{expiresAtText}</strong>; after that it lapses and the time is
+          freed for other bookings.
         </Text>
         <Section style={buttonContainer}>
           <Button style={button} href={reviewUrl}>

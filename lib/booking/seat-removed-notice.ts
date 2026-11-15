@@ -48,15 +48,15 @@ export async function notifyFreeSeatRemoved(args: {
     notifyAppointmentCancelled(
       [args.attendeeUserId],
       {
-      ...notificationScope(appointment.organizationId),
-      appointmentId: args.appointmentId,
-      appointmentType: appointment.appointmentType,
-      consultantName,
-      consulteeName: attendee?.name || "Attendee",
-      planTitle: planTitleOrSessionLabel(
-        plan?.title,
-        appointment.appointmentType,
-      ),
+        ...notificationScope(appointment.organizationId),
+        appointmentId: args.appointmentId,
+        appointmentType: appointment.appointmentType,
+        consultantName,
+        consulteeName: attendee?.name || "Attendee",
+        planTitle: planTitleOrSessionLabel(
+          plan?.title,
+          appointment.appointmentType,
+        ),
         dateTime: startsAt?.toISOString(),
         dashboardUrl,
         cancelledBy: "consultant",

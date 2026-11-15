@@ -31,7 +31,8 @@ export function seatRemovalRefundReason(
   return `removed from ${kind} ${eventId} by the ${organiserInitiated ? "organiser" : "attendee"} (${refundPct}%)`;
 }
 
-const SEAT_REMOVED_BY_ORGANISER = /^removed from (class|webinar) \S+ by the organiser /;
+const SEAT_REMOVED_BY_ORGANISER =
+  /^removed from (class|webinar) \S+ by the organiser /;
 
 /** The required notice kind a refund with this reason announces, or null when it stays optional. */
 export function refundNoticeKind(

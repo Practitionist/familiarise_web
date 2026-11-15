@@ -45,8 +45,7 @@ jest.mock("../../lib/novu/service", () => ({
 const mockCancelledEmail = jest.fn(async (..._a: unknown[]) => []);
 const mockTrialEmail = jest.fn(async (..._a: unknown[]) => [{ id: "email" }]);
 jest.mock("../../lib/email/senders/booking", () => ({
-  stageAppointmentCancelledEmail: (...a: unknown[]) =>
-    mockCancelledEmail(...a),
+  stageAppointmentCancelledEmail: (...a: unknown[]) => mockCancelledEmail(...a),
   stageTrialLifecycleEmail: (...a: unknown[]) => mockTrialEmail(...a),
 }));
 const mockRescheduledEmail = jest.fn(async (..._a: unknown[]) => ({
@@ -143,7 +142,9 @@ it("a completed trial: the learner's bell and email open the plan, the expert ge
   expect(learner[0]).toEqual(["c"]);
   expect(learner[1]).toMatchObject({
     continueWith: "Asha",
-    dashboardUrl: expect.stringContaining("/checkout/plans/subscription/plan-1"),
+    dashboardUrl: expect.stringContaining(
+      "/checkout/plans/subscription/plan-1",
+    ),
   });
   expect(expert[0]).toEqual(["e"]);
   expect(expert[1]).not.toHaveProperty("continueWith");
@@ -151,7 +152,9 @@ it("a completed trial: the learner's bell and email open the plan, the expert ge
   expect(mockTrialEmail.mock.calls[0][1]).toMatchObject({
     userIds: ["c"],
     kind: "TRIAL_COMPLETED",
-    dashboardUrl: expect.stringContaining("/checkout/plans/subscription/plan-1"),
+    dashboardUrl: expect.stringContaining(
+      "/checkout/plans/subscription/plan-1",
+    ),
   });
   expect(staged.bells).toHaveLength(2);
 });

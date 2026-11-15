@@ -291,12 +291,12 @@ The link enables:
 
 Trial events trigger Novu workflows defined in `lib/novu/workflows.ts`. All trial workflows use the `TrialPayload` type.
 
-| Workflow ID               | Trigger                              | Recipients      |
-| ------------------------- | ------------------------------------ | --------------- |
-| `trial-session-scheduled` | A free trial is booked               | Both parties    |
+| Workflow ID               | Trigger                              | Recipients                                                                         |
+| ------------------------- | ------------------------------------ | ---------------------------------------------------------------------------------- |
+| `trial-session-scheduled` | A free trial is booked               | Both parties                                                                       |
 | `trial-session-completed` | Trial session ends                   | Both parties (learner: bell and email "Continue with {expert}"; expert: bell only) |
-| `trial-session-cancelled` | Trial cancelled                      | The other party |
-| `trial-refunded`          | A cancelled paid trial's money moved | Learner         |
+| `trial-session-cancelled` | Trial cancelled                      | The other party                                                                    |
+| `trial-refunded`          | A cancelled paid trial's money moved | Learner                                                                            |
 
 **Payload type** (`TrialPayload`):
 

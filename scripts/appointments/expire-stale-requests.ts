@@ -2042,7 +2042,8 @@ async function alertExpiringRequests(
     });
     const candidates = expiring.flatMap((c) => {
       const expiresAt = new Date(
-        c.requestedAt.getTime() + PENDING_CONSULTATION_EXPIRATION_HOURS * HOUR_MS,
+        c.requestedAt.getTime() +
+          PENDING_CONSULTATION_EXPIRATION_HOURS * HOUR_MS,
       );
       const consultantUserId = c.consultationPlan.consultantProfile.user.id;
       const dedupeKey = requestExpiringDedupeKey(c.id);

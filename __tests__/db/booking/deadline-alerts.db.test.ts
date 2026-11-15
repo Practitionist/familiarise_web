@@ -59,7 +59,11 @@ async function seedRequest(hoursAgo: number, muted = false) {
     host,
     consultee,
     { startsAt: futureAt(5, 6), endsAt: futureAt(5, 7) },
-    { status: "PENDING", bookingSource: "REQUEST_SUBMITTED", isTentative: true },
+    {
+      status: "PENDING",
+      bookingSource: "REQUEST_SUBMITTED",
+      isTentative: true,
+    },
   );
   const consultationId = seeded.consultationId ?? "";
   await prisma.consultation.update({

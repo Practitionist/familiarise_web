@@ -755,11 +755,11 @@ export async function restoreSessionCredits(input: {
             });
           }
           notice = await stageRefundNotice(
-          tx,
-          payment,
-          restoredPaise,
-          input.reason,
-        );
+            tx,
+            payment,
+            restoredPaise,
+            input.reason,
+          );
           return {
             refundId: refundRow.id,
             amountRefundedPaise: 0,
