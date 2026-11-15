@@ -65,7 +65,7 @@ const payment = {
   amount: SEAT_PAISE,
   originalAmount: SEAT_PAISE,
   paymentIntent: "order_seat",
-  currency: "INR",
+  currency: "INR" as const,
   createdAt: JOINED,
   refunds: [],
   disputes: [],

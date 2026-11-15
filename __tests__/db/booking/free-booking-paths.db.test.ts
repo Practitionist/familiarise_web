@@ -88,7 +88,7 @@ it("a free webinar seat is confirmed on the no-gateway rail with no invoice", as
     });
   const joined = toPlain(await earningsRead("join"));
   expect(joined).toEqual(toPlain(await earningsRead("query")));
-  expect(joined.appointment?.webinar?.webinarPlan.consultantProfile.id).toBe(
+  expect(joined.appointment?.webinar?.webinarPlan.consultantProfile?.id).toBe(
     webinar.host.consultantProfileId,
   );
 });
