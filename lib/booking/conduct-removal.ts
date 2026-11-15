@@ -32,7 +32,7 @@ import {
   stageSeatOpenedNotices,
 } from "./event-waitlist";
 import { liveParticipant, releaseParticipant } from "./participants";
-import { notifyFreeSeatRemoved } from "./seat-removed-notice";
+import { notifySeatRemoved } from "./seat-removed-notice";
 
 interface ConductRemovalInput {
   appointmentId: string;
@@ -166,7 +166,7 @@ export async function removeAttendeeForConduct(
   );
   await scheduleAfter(
     () =>
-      notifyFreeSeatRemoved({
+      notifySeatRemoved({
         appointmentId: input.appointmentId,
         attendeeUserId: input.targetUserId,
       }),
