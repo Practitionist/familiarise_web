@@ -234,7 +234,14 @@ export async function retimeWebinar(args: {
                     planTitle: planTitleOrSessionLabel(plan.title, "webinar"),
                     dashboardUrl,
                   },
-                  { tx, deferAttempt: true },
+                  {
+                    tx,
+                    deferAttempt: true,
+                    required: {
+                      kind: "EVENT_MOVED",
+                      recipients: group.userIds,
+                    },
+                  },
                 );
                 bells.push(...staged.map((r) => r.staged));
               }
@@ -262,6 +269,7 @@ export async function retimeWebinar(args: {
         leaveBy: result.retimeBy,
         clash: group.clash,
         proposedBy: plan.consultantProfile?.user.name ?? undefined,
+        requiredFor: group.userIds,
         dashboardUrl,
       }).catch(() => []),
     ),

@@ -270,6 +270,7 @@ export async function calculateAmountAndValidate(
         }
         const webinar = await tx.webinar.findUnique({
           where: { id: validatedData.eventId },
+          relationLoadStrategy: "join",
           include: {
             webinarPlan: {
               include: {

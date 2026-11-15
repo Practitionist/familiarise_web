@@ -40,7 +40,7 @@ The review and QA of the scheduling surfaces pull request showed that most of th
    - **Today** the rail order is Payment, details, resources, timeline and help ([the page doc](../dashboard/appointment-detail-page.md)), and `NeedsYouCallout` (`components/appointments/detail/NeedsYouCallout.tsx`) carries the hold countdown for payment; the decision widens it to every must-act case.
    - **Options considered.** A banner for payment only was rejected, and so was adding a Pay button to the Payment card with no banner. The owner recorded the choices, not a reason for each; the banner covers every must-act case, which is the point of the first rejection.
 
-6. **Trial to subscription** (decided; built 2026-11-14, see [the booking states record](2026-11-14-booking-states-and-demand-guidance.md)).
+6. **Trial to subscription** (decided; built 2026-11-14, see [the booking states record](2026-11-14-booking-states-and-demand-guidance.md); the completion bell and email built 2026-11-15, see [the required notices record](2026-11-15-required-notices-and-deadline-alerts.md), decision 4).
    - The buyer's trial detail page gets a "Continue with {expert}" card, quiet before the session and prominent after it completes (built), plus one bell and one email when the trial completes (planned, a notifications pull request).
    - **Today** the consultee detail page shows a "Continue with {expert}" button only for a completed one-on-one (`DetailPageClient.tsx` under the consultee dashboard), and `trial-session-completed` goes to both parties ([the trials doc](../booking/09-trials.md)).
    - **Options considered.** Showing it only after the trial was rejected, and so was a card with no notice. The owner recorded the choices without a reason for each.
@@ -66,7 +66,7 @@ The review and QA of the scheduling surfaces pull request showed that most of th
 
     **Options considered.** Fixing both in the scheduling surfaces pull request was rejected because each is a money-path change that needs its own tests and review. Dismissing them was rejected so they stay tracked.
 
-12. **The series-move notice names every moved session** (decided, planned). Today the notice from `retimeClassSeries` in `lib/booking/class-retime.ts` carries the first old and new time and a link. Listing each pair needs a change to the shared rescheduled notification and email template, so it is part of the notifications follow-up.
+12. **The series-move notice names every moved session** (decided; built 2026-11-15, see [the required notices record](2026-11-15-required-notices-and-deadline-alerts.md), decision 5). Today the notice from `retimeClassSeries` in `lib/booking/class-retime.ts` carries the first old and new time and a link. Listing each pair needs a change to the shared rescheduled notification and email template, so it is part of the notifications follow-up.
 
 ## Deprecated & Superseded Approaches
 

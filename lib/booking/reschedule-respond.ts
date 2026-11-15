@@ -503,21 +503,28 @@ export async function declineProposal(args: {
         select: { startsAt: true },
       });
       const outcome = restoredFully ? "DECLINED" : "RELEASED";
-      await notifyAppointmentRescheduled(declinedUserIds, {
-        ...notificationScope(appt.organizationId),
-        appointmentType: appt.appointmentType,
-        consultantName: consultantUser.name || "Consultant",
-        consulteeName: consulteeUser.name || "Consultee",
-        planTitle,
-        dashboardUrl: notificationHref(appt.organizationId, "appointments"),
-        outcome,
-        ...(earliest ? { oldDateTime: earliest.startsAt.toISOString() } : {}),
-      });
+      // The proposer's request was declined by someone else: required for them.
+      const proposerIds = declinedUserIds.filter((id) => id !== resolvedById);
+      await notifyAppointmentRescheduled(
+        declinedUserIds,
+        {
+          ...notificationScope(appt.organizationId),
+          appointmentType: appt.appointmentType,
+          consultantName: consultantUser.name || "Consultant",
+          consulteeName: consulteeUser.name || "Consultee",
+          planTitle,
+          dashboardUrl: notificationHref(appt.organizationId, "appointments"),
+          outcome,
+          ...(earliest ? { oldDateTime: earliest.startsAt.toISOString() } : {}),
+        },
+        { required: { kind: "REQUEST_DECLINED", recipients: proposerIds } },
+      );
       // #1653 — the email twin; the sender never throws.
       await sendAppointmentRescheduledEmail(
         {
           appointmentId: appt.id,
           userIds: declinedUserIds,
+          requiredFor: proposerIds,
           outcome,
           appointmentType: appt.appointmentType,
           oldStartsAt: earliest?.startsAt ?? null,

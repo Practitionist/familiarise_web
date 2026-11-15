@@ -15,6 +15,7 @@ import {
   TrialTimeRefusedError,
 } from "@/lib/trials/book-trial";
 import {
+  prepareTrialScheduledNotices,
   stageTrialScheduledNotices,
   type StagedScheduleNotices,
 } from "@/lib/trials/schedule-notices";
@@ -22,7 +23,6 @@ import { TRIAL_WINDOW_REFUSAL_COPY } from "@/lib/trials/slot-check";
 import { reportSentryError } from "@/lib/observability/report";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { prepareTrialScheduledEmail } from "@/lib/email/senders/booking";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { CreateTrialSchema } from "@/schemas/trials";
 import { requireApiAuth } from "@/lib/auth-helpers";
@@ -40,8 +40,6 @@ import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
 import { assertRequestLeadFits } from "@/lib/booking/lead-time";
 import { assertWindowMatchesPlanDuration } from "@/lib/booking/slot-validation";
-import { getAppUrl } from "@/lib/url";
-import { goHref } from "@/lib/dashboard/go";
 import { assertNotSelfBooking } from "@/lib/booking/self-booking";
 import { capacityRefusal } from "@/lib/booking/request-caps";
 import { apiError } from "@/lib/errors/api-error";
@@ -540,63 +538,52 @@ export async function POST(request: NextRequest) {
         endsAt,
       });
       try {
-        const consultantName = subscriptionPlan.consultantProfile.user.name;
-        // Rendered before the transaction: a free trial stages only its rows.
-        const preparedEmails = isPaidTrial
+        // Read and rendered before the transaction: a free trial stages only its rows.
+        const prepared = isPaidTrial
           ? null
-          : await prepareTrialScheduledEmail({
-              // The dedupe key is set once the trial row exists.
-              trialId: "pending",
+          : await prepareTrialScheduledNotices({
               consulteeUserId,
               consultantUserId,
               consulteeName: consulteeProfile.user.name || "User",
-              consultantName: consultantName || "Consultant",
+              consultantName:
+                subscriptionPlan.consultantProfile.user.name || "Consultant",
               planTitle: subscriptionPlan.title,
               startsAt,
-              awaitingPayment: false,
-              dashboardUrl: `${getAppUrl()}${goHref("auto", "appointments")}`,
-              paymentUrl: null,
             });
         const booked = await prisma
-          .$transaction(async (tx) => {
-            const atCapacity = await capacityRefusal(
-              tx,
-              subscriptionPlan.consultantProfile,
-            );
-            if (atCapacity) {
-              throw new Refusal({
-                code: atCapacity.code,
-                userMessage: atCapacity.message,
+          .$transaction(
+            async (tx) => {
+              const atCapacity = await capacityRefusal(
+                tx,
+                subscriptionPlan.consultantProfile,
+              );
+              if (atCapacity) {
+                throw new Refusal({
+                  code: atCapacity.code,
+                  userMessage: atCapacity.message,
+                });
+              }
+              const created = await bookTrialInTx(tx, {
+                consulteeProfileId,
+                consultantProfileId,
+                subscriptionPlanId,
+                notes,
+                organizationId: resolvedOrgId,
+                consulteeUserId,
+                consultantUserId,
+                paid: isPaidTrial,
+                agreedPricePaise: subscriptionPlan.trialPriceInPaise,
+                startsAt,
+                endsAt,
               });
-            }
-            const created = await bookTrialInTx(tx, {
-              consulteeProfileId,
-              consultantProfileId,
-              subscriptionPlanId,
-              notes,
-              organizationId: resolvedOrgId,
-              consulteeUserId,
-              consultantUserId,
-              paid: isPaidTrial,
-              agreedPricePaise: subscriptionPlan.trialPriceInPaise,
-              startsAt,
-              endsAt,
-            });
-            // The confirmation notices commit with the booking.
-            const notices = preparedEmails
-              ? await stageTrialScheduledNotices(tx, {
-                  trialId: created.id,
-                  consulteeUserId,
-                  consultantUserId,
-                  consulteeName: consulteeProfile.user.name || "User",
-                  consultantName: consultantName || "Consultant",
-                  planTitle: subscriptionPlan.title,
-                  startsAt,
-                  preparedEmails,
-                })
-              : null;
-            return { created, notices };
-          })
+              // The confirmation notices commit with the booking.
+              const notices = prepared
+                ? await stageTrialScheduledNotices(tx, created.id, prepared)
+                : null;
+              return { created, notices };
+            },
+            { maxWait: 10_000, timeout: 15_000 },
+          )
           .catch((error: unknown) => {
             if (
               error instanceof TrialPairHeldError ||
@@ -664,7 +651,7 @@ export async function POST(request: NextRequest) {
     if (staged) {
       await flushNotificationsAfter(
         {
-          bells: [staged.consulteeBell?.staged, staged.consultantBell?.staged],
+          bells: staged.bells,
           emails: [
             { list: staged.emails, emailType: "TRIAL_SESSION_SCHEDULED" },
           ],

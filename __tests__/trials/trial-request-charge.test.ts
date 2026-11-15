@@ -32,16 +32,15 @@ jest.mock("../../lib/rate-limit", () => ({
   trialRequestRefusal: (...a: unknown[]) => trialRequestRefusal(...(a as [])),
   spendTrialRequest: (...a: unknown[]) => spendTrialRequest(...(a as [])),
 }));
-jest.mock("../../lib/email/senders/booking", () =>
-  jest.requireActual("../fixtures/trial-request-mocks").bookingEmailModule(),
-);
-const stageNotices = jest.fn(async () => ({
-  consulteeBell: null,
-  consultantBell: null,
+const prepared = { bells: [], emails: { prepared: {}, screened: [] } };
+const prepareNotices = jest.fn(async (..._args: unknown[]) => prepared);
+const stageNotices = jest.fn(async (..._args: unknown[]) => ({
+  bells: [],
   emails: [],
 }));
 jest.mock("../../lib/trials/schedule-notices", () => ({
-  stageTrialScheduledNotices: (...a: unknown[]) => stageNotices(...(a as [])),
+  prepareTrialScheduledNotices: (...a: unknown[]) => prepareNotices(...a),
+  stageTrialScheduledNotices: (...a: unknown[]) => stageNotices(...a),
 }));
 jest.mock("../../lib/novu/stage-then-attempt", () =>
   jest
@@ -192,6 +191,7 @@ it("a paid trial holds the picked time and mints the order against its appointme
   expect(createIntent).toHaveBeenCalledWith(
     expect.objectContaining({ trialId: "trial-1", appointmentId: "apt-1" }),
   );
+  expect(prepareNotices).not.toHaveBeenCalled();
   expect(stageNotices).not.toHaveBeenCalled();
   expect((await res.json()).checkoutUrl).toBe("/checkout/plans/trial/trial-1");
   expect(release).toHaveBeenCalledTimes(1);
@@ -205,9 +205,13 @@ it("a free trial is confirmed with the request: notices staged, nothing minted",
     expect.anything(),
     expect.objectContaining({ paid: false }),
   );
+  expect(prepareNotices).toHaveBeenCalledWith(
+    expect.objectContaining({ startsAt: start }),
+  );
   expect(stageNotices).toHaveBeenCalledWith(
     expect.anything(),
-    expect.objectContaining({ trialId: "trial-1", startsAt: start }),
+    "trial-1",
+    prepared,
   );
   expect(createIntent).not.toHaveBeenCalled();
   expect((await res.json()).data.status).toBe("SCHEDULED");

@@ -32,9 +32,6 @@ jest.mock("../../lib/trials/book-trial", () =>
 jest.mock("../../lib/trials/schedule-notices", () =>
   jest.requireActual("../fixtures/trial-request-mocks").scheduleNoticesModule(),
 );
-jest.mock("../../lib/email/senders/booking", () =>
-  jest.requireActual("../fixtures/trial-request-mocks").bookingEmailModule(),
-);
 jest.mock("../../lib/novu/stage-then-attempt", () =>
   jest
     .requireActual("../fixtures/trial-request-mocks")

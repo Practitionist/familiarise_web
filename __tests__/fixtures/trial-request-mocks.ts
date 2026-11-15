@@ -21,26 +21,16 @@ export function bookTrialModule(): object {
   };
 }
 
-/** `lib/trials/schedule-notices`: nothing staged. */
+/** `lib/trials/schedule-notices`: nothing prepared or staged. */
 export function scheduleNoticesModule(): object {
   return {
-    stageTrialScheduledNotices: jest.fn(async () => ({
-      consulteeBell: null,
-      consultantBell: null,
-      emails: [],
+    prepareTrialScheduledNotices: jest.fn(async () => ({
+      bells: [],
+      emails: { prepared: { messages: [] }, screened: [] },
     })),
-  };
-}
-
-/** `lib/email/senders/booking`: a prepared confirmation with no messages. */
-export function bookingEmailModule(): object {
-  return {
-    prepareTrialScheduledEmail: jest.fn(async () => ({
-      emailType: "TRIAL_SESSION_SCHEDULED",
-      entityRef: "trial:pending",
-      messages: [],
-      skipped: 0,
-      failed: 0,
+    stageTrialScheduledNotices: jest.fn(async () => ({
+      bells: [],
+      emails: [],
     })),
   };
 }

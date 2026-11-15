@@ -208,6 +208,8 @@ describe("refundRemovedAttendeeSeat", () => {
     expect(mockNotifyRefundProcessed).toHaveBeenCalledWith(
       ATTENDEE,
       expect.objectContaining({ amount: 50_000 }),
+      // The organiser removed the seat: the notice skips the attendee's switches.
+      { required: { kind: "SEAT_RELEASED", recipients: [ATTENDEE] } },
     );
   });
 

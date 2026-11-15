@@ -32,13 +32,10 @@ import {
 import {
   stageAppointmentCompletedEmails,
   stageSubscriptionLifecycleEmail,
-  stageTrialLifecycleEmail,
 } from "@/lib/email/senders/booking";
+import { stageTrialCompletedNotices } from "@/lib/booking/trial-completed-notice";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
-import {
-  notifyAppointmentCompleted,
-  notifyTrialCompleted,
-} from "../../lib/novu/service";
+import { notifyAppointmentCompleted } from "../../lib/novu/service";
 import { notificationScope } from "../../lib/novu/workflows";
 import { notificationHref } from "../../lib/novu/resolve-href";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
@@ -942,60 +939,30 @@ async function completeTrials(
       console.log(`   ✅ Marked as COMPLETED`);
       completed++;
 
-      const trialUserIds = [
-        trial.subscriptionPlan?.consultantProfile?.userId,
-        trial.consulteeProfile?.user?.id,
-      ].filter((id): id is string => !!id);
-      if (trialUserIds.length > 0) {
-        const dashboardUrl = notificationHref(
-          trial.appointment?.organizationId,
-          "appointments",
-        );
-        const consultantName =
-          trial.subscriptionPlan?.consultantProfile?.user?.name ?? "Consultant";
-        const consulteeName = trial.consulteeProfile?.user?.name ?? "Consultee";
-        const [bellResults, emailRows] = await Promise.all([
-          notifyTrialCompleted(
-            trialUserIds,
-            {
-              planTitle: trial.subscriptionPlan.title,
-              consultantName,
-              consulteeName,
-              status: "COMPLETED",
-              dateTime: lastSlot?.startsAt?.toISOString(),
-              dashboardUrl,
-            },
-            { deferAttempt: true },
-          ).catch((error) => {
-            console.error(
-              `[auto-complete] Failed to send trial completion notification:`,
-              error,
-            );
-            return [];
-          }),
-          stageTrialLifecycleEmail(prisma, {
-            trialId: trial.id,
-            userIds: trial.consulteeProfile?.user?.id
-              ? [trial.consulteeProfile.user.id]
-              : [],
-            kind: "TRIAL_COMPLETED",
-            planTitle: trial.subscriptionPlan.title,
-            consultantName,
-            consulteeName,
-            startsAt: lastSlot?.startsAt ?? null,
-            dashboardUrl,
-          }).catch((error) => {
-            console.error(
-              `[auto-complete] Failed to stage trial completion email:`,
-              error,
-            );
-            return [];
-          }),
-        ]);
+      const consultantUserId =
+        trial.subscriptionPlan?.consultantProfile?.userId;
+      const consulteeUserId = trial.consulteeProfile?.user?.id;
+      if (consultantUserId || consulteeUserId) {
+        const staged = await stageTrialCompletedNotices({
+          trialId: trial.id,
+          consultantUserId,
+          consulteeUserId,
+          consultantName:
+            trial.subscriptionPlan?.consultantProfile?.user?.name ??
+            "Consultant",
+          consulteeName: trial.consulteeProfile?.user?.name ?? "Consultee",
+          planTitle: trial.subscriptionPlan.title,
+          subscriptionPlanId: trial.subscriptionPlanId,
+          startsAt: lastSlot?.startsAt ?? null,
+          dashboardUrl: notificationHref(
+            trial.appointment?.organizationId,
+            "appointments",
+          ),
+        });
         await flushNotificationsAfter(
           {
-            bells: (bellResults ?? []).map((r) => r?.staged),
-            emails: [{ rows: emailRows, emailType: "TRIAL_COMPLETED" }],
+            bells: staged.bells,
+            emails: [{ list: staged.emails, emailType: "TRIAL_COMPLETED" }],
           },
           "auto-complete.trial",
         );

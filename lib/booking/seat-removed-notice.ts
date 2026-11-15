@@ -6,13 +6,12 @@ import { notificationHref } from "@/lib/novu/resolve-href";
 import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
 import { stageAppointmentCancelledEmail } from "@/lib/email/senders/booking";
 
-/**
- * An organiser removed a seat that owes no refund, so no refund notice tells
- * the attendee: they get the cancellation bell and email instead.
- */
-export async function notifyFreeSeatRemoved(args: {
+/** A host removed the seat: the attendee is told whatever their switches say, with the refund's state when one is still settling. */
+export async function notifySeatRemoved(args: {
   appointmentId: string;
   attendeeUserId: string;
+  /** Set while a refund is pending at the gateway; its settlement sends the refund notice. */
+  refundText?: string;
 }): Promise<void> {
   const [appointment, attendee] = await Promise.all([
     prisma.appointment.findUnique({
@@ -45,23 +44,41 @@ export async function notifyFreeSeatRemoved(args: {
     "appointments",
   );
   const [bells, emails] = await Promise.all([
-    notifyAppointmentCancelled([args.attendeeUserId], {
-      ...notificationScope(appointment.organizationId),
-      appointmentId: args.appointmentId,
-      appointmentType: appointment.appointmentType,
-      consultantName,
-      consulteeName: attendee?.name || "Attendee",
-      planTitle: planTitleOrSessionLabel(
-        plan?.title,
-        appointment.appointmentType,
-      ),
-      dateTime: startsAt?.toISOString(),
-      dashboardUrl,
-      cancelledBy: "consultant",
-    }),
+    notifyAppointmentCancelled(
+      [args.attendeeUserId],
+      {
+        ...notificationScope(appointment.organizationId),
+        appointmentId: args.appointmentId,
+        appointmentType: appointment.appointmentType,
+        consultantName,
+        consulteeName: attendee?.name || "Attendee",
+        planTitle: planTitleOrSessionLabel(
+          plan?.title,
+          appointment.appointmentType,
+        ),
+        dateTime: startsAt?.toISOString(),
+        dashboardUrl,
+        cancelledBy: "consultant",
+        seatRemoved: true,
+      },
+      {
+        required: { kind: "SEAT_RELEASED", recipients: [args.attendeeUserId] },
+      },
+    ),
     stageAppointmentCancelledEmail(prisma, {
       appointmentId: args.appointmentId,
       userIds: [args.attendeeUserId],
+      requiredFor: [args.attendeeUserId],
+      ...(args.refundText
+        ? { refundText: args.refundText, refundUserIds: [args.attendeeUserId] }
+        : {}),
+      removedFrom: {
+        eventLabel: appointment.class ? "class" : "webinar",
+        planTitle: planTitleOrSessionLabel(
+          plan?.title,
+          appointment.appointmentType,
+        ),
+      },
       startsAt,
       cancelledBy: consultantName,
       dashboardUrl,

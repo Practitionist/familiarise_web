@@ -1525,6 +1525,7 @@ describe("Cancel Route Handler - POST", () => {
         appointmentType: "CONSULTATION",
         reason: "OTHER",
       }),
+      undefined,
     );
   });
 
@@ -1605,6 +1606,7 @@ describe("Cancel Route Handler - POST", () => {
     expect(notifyAppointmentCancelled).toHaveBeenCalledWith(
       expect.arrayContaining(["consultant-1", "attendee-9"]),
       expect.objectContaining({ appointmentType: "CLASS" }),
+      undefined,
     );
   });
 
@@ -1724,6 +1726,7 @@ describe("Cancel Route Handler - POST", () => {
     expect(notifyAppointmentCancelled).toHaveBeenCalledWith(
       expect.arrayContaining(["attendee-credit", "attendee-free"]),
       expect.objectContaining({ appointmentType: "CLASS" }),
+      undefined,
     );
   });
 
@@ -1776,6 +1779,8 @@ describe("Cancel Route Handler - POST", () => {
       expect.objectContaining({
         cancelledBy: "consultant",
       }),
+      // The host side cancelled: the buyer hears it whatever their switches say.
+      { required: { kind: "CANCELLED_BY_HOST", recipients: ["user-1"] } },
     );
   });
 
@@ -1800,6 +1805,7 @@ describe("Cancel Route Handler - POST", () => {
       expect.objectContaining({
         cancelledBy: "consultee",
       }),
+      undefined,
     );
   });
 });
