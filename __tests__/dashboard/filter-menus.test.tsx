@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { useState } from "react";
 
 import { AppointmentsFilterBar } from "@/components/appointments/AppointmentsFilterBar";
@@ -248,5 +248,72 @@ describe("dateRangeToInstants", () => {
       to: null,
     });
     expect(dateRangeToInstants({ from: "2026-11-11", to: "" }).to).toBeNull();
+  });
+});
+
+describe("FilterBar search", () => {
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => jest.useRealTimers());
+
+  it("keeps a typed trailing space when the caller stores the value trimmed", () => {
+    function Harness() {
+      const [q, setQ] = useState("");
+      return (
+        <FilterBar
+          search={{
+            label: "Search users",
+            value: q,
+            onChange: (v) => setQ(v.trim()),
+          }}
+        />
+      );
+    }
+    render(<Harness />);
+    const box = screen.getByRole("searchbox", { name: "Search users" });
+    fireEvent.change(box, { target: { value: "John " } });
+    act(() => jest.advanceTimersByTime(400));
+    expect(box).toHaveValue("John ");
+    fireEvent.change(box, { target: { value: "John Doe" } });
+    act(() => jest.advanceTimersByTime(400));
+    expect(box).toHaveValue("John Doe");
+  });
+
+  it("still replaces the typed text on an outside change such as Clear", () => {
+    function Harness() {
+      const [q, setQ] = useState("");
+      return (
+        <>
+          <FilterBar
+            search={{
+              label: "Search users",
+              value: q,
+              onChange: (v) => setQ(v.trim()),
+            }}
+          />
+          <button type="button" onClick={() => setQ("")}>
+            Reset
+          </button>
+        </>
+      );
+    }
+    render(<Harness />);
+    const box = screen.getByRole("searchbox", { name: "Search users" });
+    fireEvent.change(box, { target: { value: "John" } });
+    act(() => jest.advanceTimersByTime(400));
+    fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+    expect(box).toHaveValue("");
+  });
+});
+
+// Only an IST machine can tell local midnight from UTC midnight; UTC runners skip this.
+const inIST = new Date(2026, 10, 11).getTimezoneOffset() === -330;
+(inIST ? describe : describe.skip)("dateRangeToInstants in IST", () => {
+  it("sends the IST day, not UTC midnight (which drops the day and starts at 05:30)", () => {
+    const { from, to } = dateRangeToInstants({
+      from: "2026-11-11",
+      to: "2026-11-11",
+    });
+    expect(from?.toISOString()).toBe("2026-11-10T18:30:00.000Z");
+    expect(to?.toISOString()).toBe("2026-11-11T18:29:59.999Z");
   });
 });
