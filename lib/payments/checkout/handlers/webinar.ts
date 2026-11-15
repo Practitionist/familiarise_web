@@ -64,14 +64,6 @@ export async function handleWebinarCheckout(
     });
   }
 
-  // FIX Issue #5: Validate webinar is scheduled before allowing booking
-  // Prevents slot timing from defaulting to new Date()
-  if (!webinar.appointment?.occurrences?.[0]) {
-    throw new Error(
-      "This webinar has not been scheduled yet. Please wait for the consultant to set a date and time.",
-    );
-  }
-
   // Block booking for COMPLETED or CANCELLED webinars
   const blockedStatuses = ["COMPLETED", "CANCELLED"] as const;
   if (
@@ -82,6 +74,14 @@ export async function handleWebinarCheckout(
         ? "This webinar has already ended."
         : "This webinar has been cancelled.";
     throw new Error(message);
+  }
+
+  // FIX Issue #5: Validate webinar is scheduled before allowing booking
+  // Prevents slot timing from defaulting to new Date()
+  if (!webinar.appointment?.occurrences?.[0]) {
+    throw new Error(
+      "This webinar has not been scheduled yet. Please wait for the consultant to set a date and time.",
+    );
   }
 
   // A webinar stays SCHEDULED while it runs: a late joiner may buy until its end time.
