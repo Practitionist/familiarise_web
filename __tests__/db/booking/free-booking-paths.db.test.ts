@@ -37,6 +37,11 @@ jest.mock("../../../lib/rate-limit", () => ({
 jest.mock("../../../lib/novu/stage-then-attempt", () =>
   jest.requireActual("./harness-edges").noFlushMock(),
 );
+// React Email's renderer needs ESM dynamic import, which jest lacks; rendering issues no statement.
+jest.mock("../../../lib/email/render", () => ({
+  __esModule: true,
+  renderEmail: async () => ({ html: "<p>rendered</p>", text: "rendered" }),
+}));
 // Chat channels are made after the response; they are not on the counted path.
 jest.mock("../../../lib/payments/webhooks/ensure-channels", () => ({
   __esModule: true,
