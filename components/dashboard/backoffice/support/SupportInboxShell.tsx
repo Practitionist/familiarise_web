@@ -7,10 +7,10 @@ import { Plus, SlidersHorizontal } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
+import { DateRangeMenu } from "@/components/dashboard/DateRangeMenu";
 import { FilterBar } from "@/components/dashboard/FilterBar";
 import { PageHeader } from "@/components/dashboard/PageScaffold";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useListParams } from "@/hooks/useListParams";
 import { durationLabel } from "@/lib/support/case-format";
@@ -255,24 +255,15 @@ export function SupportInboxShell({
               },
             ]}
           >
-            <label className="flex items-center gap-1.5 text-sm text-muted-foreground">
-              From
-              <Input
-                type="date"
-                className="h-9 w-auto"
-                value={f.from ?? ""}
-                onChange={(e) => list.setFilter("from", e.target.value || null)}
-              />
-            </label>
-            <label className="flex items-center gap-1.5 text-sm text-muted-foreground">
-              To
-              <Input
-                type="date"
-                className="h-9 w-auto"
-                value={f.to ?? ""}
-                onChange={(e) => list.setFilter("to", e.target.value || null)}
-              />
-            </label>
+            <DateRangeMenu
+              direction="past"
+              value={{ from: f.from ?? "", to: f.to ?? "" }}
+              onChange={(range) =>
+                list.setParams({
+                  filters: { from: range.from || null, to: range.to || null },
+                })
+              }
+            />
           </FilterBar>
         </div>
       </div>

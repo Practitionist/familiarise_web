@@ -9,7 +9,7 @@
  */
 
 import Link from "next/link";
-import { useId, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import {
   keepPreviousData,
   useQuery,
@@ -18,7 +18,6 @@ import {
 import { ChevronDown, FolderOpen } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Collapsible,
@@ -27,6 +26,7 @@ import {
 } from "@/components/ui/collapsible";
 import { EmptyState } from "@/components/dashboard/EmptyState";
 import { ErrorState } from "@/components/dashboard/ErrorState";
+import { DateRangeMenu } from "@/components/dashboard/DateRangeMenu";
 import { FilterBar } from "@/components/dashboard/FilterBar";
 import { TablePagination } from "@/components/dashboard/TablePagination";
 import {
@@ -237,32 +237,6 @@ function SessionGroup({
         </CollapsibleContent>
       )}
     </Collapsible>
-  );
-}
-
-function DateField({
-  label,
-  value,
-  onChange,
-}: Readonly<{
-  label: string;
-  value: string | null;
-  onChange: (value: string | null) => void;
-}>) {
-  const id = useId();
-  return (
-    <div className="flex items-center gap-1.5">
-      <label htmlFor={id} className="text-xs text-muted-foreground">
-        {label}
-      </label>
-      <Input
-        id={id}
-        type="date"
-        value={value ?? ""}
-        onChange={(e) => onChange(e.target.value || null)}
-        className="h-9 w-[9.5rem] text-sm"
-      />
-    </div>
   );
 }
 
@@ -606,15 +580,14 @@ export function LibraryBrowser({
         }
         canClear={filtered}
       >
-        <DateField
-          label="From"
-          value={filters.from}
-          onChange={(v) => list.setFilter("from", v)}
-        />
-        <DateField
-          label="To"
-          value={filters.to}
-          onChange={(v) => list.setFilter("to", v)}
+        <DateRangeMenu
+          direction="past"
+          value={{ from: filters.from ?? "", to: filters.to ?? "" }}
+          onChange={(range) =>
+            list.setParams({
+              filters: { from: range.from || null, to: range.to || null },
+            })
+          }
         />
         <div
           role="group"
