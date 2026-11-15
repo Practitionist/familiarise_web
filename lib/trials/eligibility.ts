@@ -1,10 +1,7 @@
 import type { Prisma, TrialStatus } from "@prisma/client";
 
-/**
- * Trial statuses that hold the (learner, expert) pair and block a new request.
- * `trial_one_blocking_per_pair_key` (prisma/sql/check-constraints.sql) allows one
- * row per pair over this same list; CANCELLED is terminal and frees the pair.
- */
+/** Statuses that hold the (learner, expert) pair; CANCELLED, which is terminal, frees it.
+ *  `trial_one_blocking_per_pair_key` in prisma/sql/check-constraints.sql indexes this same list. */
 export const TRIAL_REQUEST_BLOCKING_STATUSES: TrialStatus[] = [
   "AWAITING_PAYMENT", // a paid trial holding its time, pay window open
   "SCHEDULED", // confirmed, upcoming

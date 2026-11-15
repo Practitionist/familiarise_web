@@ -72,6 +72,7 @@ jest.mock("../../lib/trials/book-trial", () => ({
   bookTrialInTx: (...a: unknown[]) =>
     bookTrial(...(a as [unknown, { paid: boolean }])),
   TrialTimeRefusedError: class extends Error {},
+  TrialPairHeldError: class extends Error {},
 }));
 
 const plan = { trialPriceInPaise: 0, acceptingRequests: true };

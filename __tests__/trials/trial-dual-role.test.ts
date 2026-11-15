@@ -39,6 +39,7 @@ jest.mock("../../lib/trials/book-trial", () => ({
     }),
   ),
   TrialTimeRefusedError: class extends Error {},
+  TrialPairHeldError: class extends Error {},
 }));
 jest.mock("../../lib/trials/schedule-notices", () => ({
   stageTrialScheduledNotices: jest.fn(async () => ({

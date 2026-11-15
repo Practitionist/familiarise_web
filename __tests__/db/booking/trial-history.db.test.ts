@@ -1,8 +1,5 @@
 /**
- * A pair keeps every trial against real Postgres: a request after a cancelled
- * trial adds a row and leaves the earlier one as it was, and the partial
- * unique index refuses a second live or delivered trial, including when two
- * requests race, with the error the request door maps to its 409.
+ * Cancelled trials keep their history; one live or delivered trial holds the pair.
  */
 import { TrialStatus } from "@prisma/client";
 import prisma from "../../../lib/prisma";
@@ -119,6 +116,36 @@ describe("trial history per pair (real Postgres)", () => {
         where: { consulteeProfileId: pair.buyer.consulteeProfileId },
       }),
     ).toBe(1);
+  });
+
+  it("refuses a second blocking trial inside the booking transaction even without the pair index", async () => {
+    const pair = await seedPair();
+    await book(pair, futureAt(7, 10));
+    const rollback = new Error("rollback");
+
+    // DDL is transactional: the dropped index is back once this transaction rolls back.
+    const outcome = await prisma
+      .$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(`DROP INDEX "${TRIAL_PAIR_BLOCKING_INDEX}"`);
+        await bookTrialInTx(tx, {
+          consulteeProfileId: pair.buyer.consulteeProfileId,
+          consultantProfileId: pair.host.consultantProfileId,
+          subscriptionPlanId: pair.plan.id,
+          organizationId: null,
+          consulteeUserId: pair.buyer.userId,
+          consultantUserId: pair.host.userId,
+          paid: false,
+          agreedPricePaise: 0,
+          startsAt: futureAt(8, 10),
+          endsAt: futureAt(8, 10, 30),
+        });
+        throw rollback;
+      })
+      .catch((error: unknown) =>
+        error === rollback ? "created" : (error as Error).name,
+      );
+
+    expect(outcome).toBe("TrialPairHeldError");
   });
 
   it.each(Object.values(TrialStatus))(

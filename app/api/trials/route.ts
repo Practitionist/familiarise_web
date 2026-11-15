@@ -11,6 +11,7 @@ import { persistTrialPayLink } from "@/lib/trials/pay-link";
 import {
   bookTrialInTx,
   lockTrialPick,
+  TrialPairHeldError,
   TrialTimeRefusedError,
 } from "@/lib/trials/book-trial";
 import {
@@ -504,8 +505,8 @@ export async function POST(request: NextRequest) {
 
     // Lock order: the expert's request cap (its count and the insert run
     // under it), then the consultee, then the slot atoms — checkout's order.
-    // Two requests for one pair can both pass the read above; the pair index
-    // refuses the loser's insert with the same "already requested" answer.
+    // A rival request for the pair that passed the read above is refused by
+    // the in-transaction recheck or the pair index, with the same 409.
     let capLock: Awaited<ReturnType<typeof lockRequestCap>>;
     try {
       capLock = await lockRequestCap(consultantProfileId);
@@ -597,7 +598,10 @@ export async function POST(request: NextRequest) {
             return { created, notices };
           })
           .catch((error: unknown) => {
-            if (isUniqueViolationOn(error, TRIAL_PAIR_BLOCKING_INDEX)) {
+            if (
+              error instanceof TrialPairHeldError ||
+              isUniqueViolationOn(error, TRIAL_PAIR_BLOCKING_INDEX)
+            ) {
               return null;
             }
             throw error;

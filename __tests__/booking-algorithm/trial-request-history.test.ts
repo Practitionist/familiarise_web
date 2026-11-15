@@ -3,10 +3,7 @@
  */
 
 /**
- * POST /api/trials keeps a pair's history: a request after an ended trial adds
- * a row and never writes the earlier one, a trial that holds the pair refuses
- * with 409 TRIAL_ALREADY_REQUESTED, and a request that loses the insert race
- * to the pair index gets the same 409. Any other failure still escalates.
+ * A request after an ended trial adds a row; a held pair, or a lost race to its index, answers 409.
  */
 
 import { Prisma, TrialStatus } from "@prisma/client";
@@ -35,6 +32,7 @@ jest.mock("../../lib/trials/book-trial", () => ({
     }),
   ),
   TrialTimeRefusedError: class extends Error {},
+  TrialPairHeldError: class extends Error {},
 }));
 jest.mock("../../lib/trials/schedule-notices", () => ({
   stageTrialScheduledNotices: jest.fn(async () => ({
@@ -111,6 +109,7 @@ jest.mock("../../lib/prisma", () => {
 import prisma from "../../lib/prisma";
 import { getSession } from "../../lib/auth-server";
 import { POST } from "../../app/api/trials/route";
+import { bookTrialInTx, TrialPairHeldError } from "../../lib/trials/book-trial";
 import { TRIAL_REQUEST_BLOCKING_STATUSES } from "../../lib/trials/eligibility";
 
 const CONSULTEE = "consultee-1";
@@ -241,6 +240,17 @@ describe("POST /api/trials keeps the pair's history", () => {
   it("answers the same 409 when the insert loses the race to the pair index", async () => {
     mockedCreate.mockRejectedValue(
       uniqueViolation("trial_one_blocking_per_pair_key"),
+    );
+
+    const res = await POST(request());
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("TRIAL_ALREADY_REQUESTED");
+  });
+
+  it("answers the same 409 when the in-transaction recheck finds the pair held", async () => {
+    (bookTrialInTx as jest.Mock).mockRejectedValueOnce(
+      new TrialPairHeldError(),
     );
 
     const res = await POST(request());

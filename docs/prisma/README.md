@@ -160,11 +160,24 @@ currently hold:
   `DROP INDEX "Trial_consulteeProfileId_consultantProfileId_key"` and the plain
   `Trial_consulteeProfileId_consultantProfileId_idx` that replaces it. A pair
   keeps every trial, and the sidecar partial unique
-  `trial_one_blocking_per_pair_key` allows one live or delivered trial per pair,
-  so the sidecars must be applied in the same step
+  `trial_one_blocking_per_pair_key` allows one live or delivered trial per pair
   ([decision record](../decisions/2026-11-15-trial-history-many-per-pair.md)).
-  Before that push, the read below must return no rows, or the index cannot be
-  built:
+  The pair must stay unique at every moment of the cutover: a plain push drops
+  the old unique before its sidecar pass creates the new one, and two requests
+  in that gap could both insert. So the owner's order is:
+  1. Run the read below; it must return no rows, or the index cannot be built.
+  2. Create the partial unique alone, while the old unique still exists (an
+     owner-approved write, the exact statement from
+     `prisma/sql/check-constraints.sql`), and confirm with the second read
+     below that both indexes are present.
+  3. Run the preflight print. Its `Trial` statements must be exactly the two
+     above; it must not drop or rename `trial_one_blocking_per_pair_key`
+     (rehearsed on a disposable Postgres 17: Prisma leaves the partial index
+     alone).
+  4. Push, sidecars, assert. The sidecar pass replaces the partial index in one
+     transaction, so writes wait on it instead of passing through.
+  5. Run the second read again: only `trial_one_blocking_per_pair_key` remains,
+     with its `WHERE` clause. Then delete the two `#2775` entries.
 
   ```sql
   SELECT "consulteeProfileId", "consultantProfileId", count(*) AS "blocking"
@@ -172,6 +185,12 @@ currently hold:
   WHERE "status"::text IN ('AWAITING_PAYMENT', 'SCHEDULED', 'COMPLETED', 'CONVERTED')
   GROUP BY 1, 2
   HAVING count(*) > 1;
+  ```
+
+  ```sql
+  SELECT indexname, indexdef FROM pg_indexes
+  WHERE tablename = 'Trial'
+    AND indexname IN ('trial_one_blocking_per_pair_key', 'Trial_consulteeProfileId_consultantProfileId_key');
   ```
 
 #### Rows holding a removed value
