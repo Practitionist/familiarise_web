@@ -49,7 +49,8 @@ import {
   revokeEndedSeatAccess,
 } from "@/lib/stream/access-revocation";
 import { scheduleAfter } from "@/lib/api/after-safe";
-import { notifyFreeSeatRemoved } from "./seat-removed-notice";
+import { notifySeatRemoved } from "./seat-removed-notice";
+import { refundStartedText } from "@/lib/notifications/refund-wording";
 import { BookingRuleError } from "./booking-rule-error";
 import {
   occurrenceRefundsPaise,
@@ -554,13 +555,26 @@ export async function leaveEventSeat(args: {
     [args.userId],
     released.seatRevocation,
   );
-  // A removed attendee who is owed nothing hears no refund notice, so tell them here.
-  if (!args.isSelfLeave && !released.owed && !refund?.rail) {
+  // A free removal, or a refund still settling, has no refund notice yet: tell the attendee here.
+  const pendingRefund =
+    refund?.pending === true && refund.amountRefundedPaise > 0;
+  if (
+    !args.isSelfLeave &&
+    ((!released.owed && !refund?.rail) || pendingRefund)
+  ) {
     await scheduleAfter(
       () =>
-        notifyFreeSeatRemoved({
+        notifySeatRemoved({
           appointmentId: eventAppointment.id,
           attendeeUserId: args.userId,
+          ...(pendingRefund && refund
+            ? {
+                refundText: refundStartedText(
+                  refund.amountRefundedPaise,
+                  "INR",
+                ),
+              }
+            : {}),
         }),
       "seat-leave.removed-notice",
     );

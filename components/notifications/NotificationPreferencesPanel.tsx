@@ -25,6 +25,7 @@ import {
   receivableSwitches,
   showsQuietHours,
 } from "@/lib/notifications/receivable";
+import { ALWAYS_SENT_LINE } from "@/lib/notifications/required-notices";
 import {
   NotificationPreferenceSchema,
   QUIET_HOURS_DEFAULT_END,
@@ -68,7 +69,7 @@ const CATEGORY_FIELDS: ToggleField<EmailCategoryColumn>[] = [
     key: "appointmentReminders",
     label: "Bookings & sessions",
     description:
-      "Bookings, reminders, unread chat, recordings, documents and collaborator updates",
+      "Bookings, reminders, unread chat, recordings, documents and collaborator updates, except the changes someone else makes to your booking",
   },
   {
     key: "paymentNotifications",
@@ -395,6 +396,12 @@ export function NotificationPreferencesPanel() {
             disabled={pendingKeys.has("allNotifications")}
             onCheckedChange={(checked) => save({ allNotifications: checked })}
           />
+          <p
+            className="mt-3 text-xs text-zinc-500"
+            data-testid="notification-always-sent"
+          >
+            {ALWAYS_SENT_LINE}
+          </p>
           {optionalOff && (
             <p className="mt-3 text-xs text-zinc-500">
               The choices below are kept and apply again when you turn optional

@@ -15,9 +15,13 @@ export const POST = withOpsAction(
       kind: "AppointmentOccurrence",
       id: body.occurrenceId,
     }),
-    run: async ({ params, body }) => {
+    run: async ({ params, body, actor }) => {
       const hosted = await hostedForClass(params.classId);
-      const result = await cancelClassSession(hosted, body.occurrenceId);
+      const result = await cancelClassSession(
+        hosted,
+        body.occurrenceId,
+        actor.userId,
+      );
       return {
         target: { kind: "AppointmentOccurrence", id: body.occurrenceId },
         correlationId: `class:${params.classId}`,

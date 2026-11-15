@@ -1,4 +1,8 @@
 import type { Tx } from "@/lib/prisma";
+import {
+  refundNoticeKind,
+  refundNoticeOverride,
+} from "@/lib/payments/operations/refund-cause";
 import prisma from "../../../lib/prisma";
 import { gatewayCashAccount } from "@/lib/payments/ledger/gateway-account";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
@@ -895,7 +899,14 @@ export async function handleRefundCreated(
                   currency,
                   dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
                 },
-                { tx, entityRef: `payment:${payment.id}` },
+                {
+                  tx,
+                  entityRef: `payment:${payment.id}`,
+                  required: refundNoticeOverride(
+                    existingRefund.reason,
+                    payment.userId,
+                  ),
+                },
               );
               stagedNotification = notification?.staged ?? null;
               stagedEmails = await stageRefundProcessedEmail(tx, {
@@ -903,6 +914,7 @@ export async function handleRefundCreated(
                 paymentId: payment.id,
                 amountPaise: amount,
                 currency,
+                required: refundNoticeKind(existingRefund.reason) !== null,
               });
             }
           }
@@ -926,7 +938,7 @@ export async function handleRefundCreated(
               amountPaise: amount,
               refundId: { startsWith: "pending_" },
             },
-            select: { id: true, refundId: true },
+            select: { id: true, refundId: true, reason: true },
           });
           if (reservation) {
             const claimed = await tx.refund.updateMany({
@@ -962,7 +974,14 @@ export async function handleRefundCreated(
                     currency,
                     dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
                   },
-                  { tx, entityRef: `payment:${payment.id}` },
+                  {
+                    tx,
+                    entityRef: `payment:${payment.id}`,
+                    required: refundNoticeOverride(
+                      reservation.reason,
+                      payment.userId,
+                    ),
+                  },
                 );
                 stagedNotification = notification?.staged ?? null;
                 stagedEmails = await stageRefundProcessedEmail(tx, {
@@ -970,6 +989,7 @@ export async function handleRefundCreated(
                   paymentId: payment.id,
                   amountPaise: amount,
                   currency,
+                  required: refundNoticeKind(reservation.reason) !== null,
                 });
               }
               return;

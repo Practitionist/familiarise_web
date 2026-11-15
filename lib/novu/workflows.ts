@@ -49,7 +49,6 @@ export const NOVU_WORKFLOWS = {
   REVIEW_EXCLUDED_FROM_RATING: "review-excluded-from-rating",
 
   // Trials
-  TRIAL_SESSION_REQUESTED: "trial-session-requested",
   TRIAL_SESSION_SCHEDULED: "trial-session-scheduled",
   TRIAL_SESSION_COMPLETED: "trial-session-completed",
   TRIAL_SESSION_CANCELLED: "trial-session-cancelled",
@@ -220,11 +219,14 @@ export type AppointmentCancelledPayload = AppointmentPayload & {
   reason: string;
   cancelledBy: string;
   cancelledByRole?: "consultant" | "consultee" | "system";
+  /** A host removed this one seat; the event itself goes ahead. */
+  seatRemoved?: boolean;
 };
 
 export type AppointmentCancelledInput = AppointmentPayloadInput & {
   reason?: string;
   cancelledBy: "consultant" | "consultee" | "system";
+  seatRemoved?: boolean;
 };
 
 export type RescheduleOutcomeFields =
@@ -253,7 +255,12 @@ export type RescheduleOutcomeFields =
     };
 
 export type AppointmentRescheduledInput = AppointmentPayloadInput &
-  RescheduleOutcomeFields;
+  RescheduleOutcomeFields & {
+    /** PROPOSED: when the proposal lapses unanswered (ISO). */
+    respondBy?: string;
+    /** A series move: every moved session, old start and new (ISO). */
+    moves?: ReadonlyArray<{ from: string; to: string }>;
+  };
 
 export type AppointmentRescheduledPayload = AppointmentPayload & {
   outcome: RescheduleOutcomeFields["outcome"];
@@ -264,6 +271,11 @@ export type AppointmentRescheduledPayload = AppointmentPayload & {
   leaveBy?: string;
   leaveByIso?: string;
   clash?: boolean;
+  respondBy?: string;
+  respondByIso?: string;
+  /** "old → new" per moved session, at most ten, then "and N more". */
+  movesText?: string;
+  movedCount?: number;
 };
 
 export type PaymentSuccessPayload = NotificationScope & {
@@ -417,6 +429,8 @@ export type TrialPayload = {
   status: string;
   statusCode?: string;
   dashboardUrl: string;
+  /** The learner's completed-trial bell: the expert to continue with; `dashboardUrl` is then the plan. */
+  continueWith?: string;
 };
 
 export type TrialInput = Omit<TrialPayload, "dateTimeIso" | "statusCode">;
@@ -440,13 +454,22 @@ export type BookingRequestPayload = NotificationScope & {
   requestedDateTimeIso?: string;
   dashboardUrl: string;
   nudgeHours?: number;
+  /** The unscheduled-plan nudge: when the buyer is refunded in full. */
+  refundAt?: string;
+  refundAtIso?: string;
+  /** The request-expiring alert: when the unanswered request lapses. */
+  expiresAt?: string;
+  expiresAtIso?: string;
   /** The daily plan-week reminder: one sentence covering every plan due. */
   weekSummary?: string;
 };
 
 export type BookingRequestInput = Omit<
   BookingRequestPayload,
-  "appointmentTypeCode" | "requestedDateTimeIso"
+  | "appointmentTypeCode"
+  | "requestedDateTimeIso"
+  | "refundAtIso"
+  | "expiresAtIso"
 >;
 
 export type VerificationPayload = {

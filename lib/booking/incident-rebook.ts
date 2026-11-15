@@ -407,6 +407,8 @@ async function notifyRebooked(ctx: RebookContext): Promise<void> {
   const organizationId = remedy.occurrence.appointment.organizationId;
   const appointmentType = booking.kind;
   const userIds = [...new Set([booking.expert.id, ctx.userId])];
+  // The move confirmed itself: the party who did not rebook hears it whatever their switches say.
+  const others = userIds.filter((id) => id !== ctx.userId);
   const dashboardUrl = notificationHref(organizationId, "appointments");
   const variant = rescheduleNotificationVariant({
     releasedAt: remedy.occurrence.startsAt,
@@ -426,7 +428,10 @@ async function notifyRebooked(ctx: RebookContext): Promise<void> {
         planTitle: planTitleOrSessionLabel(booking.title, appointmentType),
         dashboardUrl,
       },
-      { deferAttempt: true },
+      {
+        deferAttempt: true,
+        required: { kind: "MOVE_AUTO_CONFIRMED", recipients: others },
+      },
     ).catch((error: unknown) => {
       console.error("[incident-rebook] Failed to stage the bell:", error);
       return [];
@@ -438,6 +443,7 @@ async function notifyRebooked(ctx: RebookContext): Promise<void> {
       appointmentType,
       oldStartsAt: remedy.occurrence.startsAt,
       newStartsAt: ctx.startsAt,
+      requiredFor: others,
       dashboardUrl,
     }).catch((error: unknown) => {
       console.error("[incident-rebook] Failed to stage the email:", error);
