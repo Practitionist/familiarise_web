@@ -180,3 +180,34 @@ it("lets a grid read newer than a refusal answer for that time again", () => {
   render(<Harness heldStarts={held} />);
   expect(time(/^9:00 am to 10:00 am, free/)).toBeEnabled();
 });
+
+it("puts the panes side by side only when its own width allows", () => {
+  let resize: ResizeObserverCallback = () => {};
+  const original = globalThis.ResizeObserver;
+  globalThis.ResizeObserver = class {
+    constructor(callback: ResizeObserverCallback) {
+      resize = callback;
+    }
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+  try {
+    const { container } = render(<Harness />);
+    const root = container.firstElementChild as HTMLElement;
+    const widthOf = (width: number) =>
+      act(() =>
+        resize(
+          [{ contentRect: { width } } as ResizeObserverEntry],
+          {} as ResizeObserver,
+        ),
+      );
+    expect(root).toHaveAttribute("data-layout", "stacked");
+    widthOf(900);
+    expect(root).toHaveAttribute("data-layout", "side-by-side");
+    widthOf(480);
+    expect(root).toHaveAttribute("data-layout", "stacked");
+  } finally {
+    globalThis.ResizeObserver = original;
+  }
+});
