@@ -88,7 +88,7 @@ export function FilterMenu({
             )}
           </button>
         </PopoverTrigger>
-        <PopoverContent className="w-56 p-1">
+        <PopoverContent className="w-56 p-1" aria-label={label}>
           <div role="group" aria-label={label}>
             {items.map((option) => {
               const selected =

@@ -317,3 +317,18 @@ const inIST = new Date(2026, 10, 11).getTimezoneOffset() === -330;
     expect(to?.toISOString()).toBe("2026-11-11T18:29:59.999Z");
   });
 });
+
+describe("menu popups", () => {
+  it("are named for screen readers", () => {
+    render(
+      <FilterMenu
+        label="Status"
+        options={[]}
+        value={null}
+        onChange={jest.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Status: All" }));
+    expect(screen.getByRole("dialog", { name: "Status" })).toBeInTheDocument();
+  });
+});
