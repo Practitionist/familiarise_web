@@ -65,15 +65,6 @@ function book({ host, buyer, plan }: Pair, startsAt: Date) {
   );
 }
 
-async function caught(run: () => Promise<unknown>): Promise<unknown> {
-  try {
-    await run();
-  } catch (error) {
-    return error;
-  }
-  throw new Error("expected the pair index to refuse the insert");
-}
-
 describe("trial history per pair (real Postgres)", () => {
   it("a request after a cancelled trial adds a row and leaves the first one untouched", async () => {
     const pair = await seedPair();
@@ -142,14 +133,19 @@ describe("trial history per pair (real Postgres)", () => {
         });
       await row(status);
 
-      if (TRIAL_REQUEST_BLOCKING_STATUSES.includes(status)) {
-        const error = await caught(() => row(TrialStatus.SCHEDULED));
-        expect(isUniqueViolationOn(error, TRIAL_PAIR_BLOCKING_INDEX)).toBe(
-          true,
-        );
-      } else {
-        await expect(row(TrialStatus.SCHEDULED)).resolves.toBeDefined();
-      }
+      const outcome = await row(TrialStatus.SCHEDULED).then(
+        () => "created",
+        (error: unknown) =>
+          isUniqueViolationOn(error, TRIAL_PAIR_BLOCKING_INDEX)
+            ? "refused by the pair index"
+            : error,
+      );
+
+      expect(outcome).toBe(
+        TRIAL_REQUEST_BLOCKING_STATUSES.includes(status)
+          ? "refused by the pair index"
+          : "created",
+      );
     },
   );
 });
