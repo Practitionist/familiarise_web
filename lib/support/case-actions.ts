@@ -869,22 +869,30 @@ async function assertDecisionMatchesMoney(
 }
 
 /**
- * An overturned removal is refunded first, through the recommendation and its bounded review:
- * staff send up to their limits at once, an admin approves above them.
+ * An overturned removal is refunded first: a first decision through the recommendation and its
+ * bounded review, an admin's correction of a decided case through the admin Refunds door.
  */
 async function assertRemovalRefundedFirst(
   tx: Tx,
   supportCase: SupportCase,
   outcome: ActionInput<"DECIDE">["outcome"],
+  correcting: boolean,
 ) {
   if (outcome !== "OVERTURNED") return;
-  const owed = await removalRefundOutstandingTx(tx, supportCase);
-  if (owed === null) return;
+  const outstanding = await removalRefundOutstandingTx(tx, supportCase);
+  if (!outstanding) return;
+  const { owed, paymentId } = outstanding;
+  const what =
+    owed === "credits"
+      ? "Restore this seat's credits"
+      : `Refund the ₹${(owed / 100).toFixed(2)} still unrefunded on this seat`;
   throw new CaseActionError(
     "REFUND_FIRST",
-    owed === "credits"
-      ? "Restore this seat's credits first: recommend the refund and have it approved, then record the overturn."
-      : `Refund the ₹${(owed / 100).toFixed(2)} still unrefunded on this seat first: recommend it and have it approved (an admin approves above your limit), then record the overturn.`,
+    correcting
+      ? `${what} first with Issue refund on payment ${paymentId} (/dashboard/admin/payments/${paymentId}?refund=1, the admin Refunds door), then come back and record the overturn.`
+      : `${what} first: recommend it and have it approved (an admin approves above your limit), then record the overturn.`,
+    409,
+    { paymentId },
   );
 }
 
@@ -987,7 +995,7 @@ async function recordCaseDecisionTx(
       caseDecidedDetail(latest),
     );
   await assertDecisionMatchesMoney(tx, caseId, input.outcome);
-  await assertRemovalRefundedFirst(tx, supportCase, input.outcome);
+  await assertRemovalRefundedFirst(tx, supportCase, input.outcome, false);
   await assertNoOpenRecommendation(tx, caseId);
   const restoredConsultantProfileId = await reverseModerationIfOverturned(
     tx,
@@ -1118,7 +1126,7 @@ async function supersedeDecisionTx(
     );
   await assertSupersedeKeepsEffects(tx, supportCase, latest, input.outcome);
   await assertDecisionMatchesMoney(tx, caseId, input.outcome);
-  await assertRemovalRefundedFirst(tx, supportCase, input.outcome);
+  await assertRemovalRefundedFirst(tx, supportCase, input.outcome, true);
   const restoredConsultantProfileId =
     latest.outcome === "OVERTURNED"
       ? undefined

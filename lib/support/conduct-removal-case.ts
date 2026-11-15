@@ -284,7 +284,7 @@ async function removalTargetTx(db: PrismaLike, removalCaseId: string) {
   };
 }
 
-/** What an overturn must refund first: the seat's unrefunded paise, "credits" unrestored, or null. */
+/** What an overturn must refund first on which payment: unrefunded paise, unrestored credits, or null. */
 export async function removalRefundOutstandingTx(
   tx: Tx,
   supportCase: {
@@ -292,7 +292,7 @@ export async function removalRefundOutstandingTx(
     category: string | null;
     appealOfDecisionId: string | null;
   },
-): Promise<number | "credits" | null> {
+): Promise<{ paymentId: string; owed: number | "credits" } | null> {
   const caseId = await reviewedRemovalCaseId(tx, supportCase);
   const target = caseId ? await removalTargetTx(tx, caseId) : null;
   if (!target) return null;
@@ -305,6 +305,7 @@ export async function removalRefundOutstandingTx(
       deletedAt: null,
     },
     select: {
+      id: true,
       amount: true,
       originalAmount: true,
       paymentIntent: true,
@@ -324,10 +325,10 @@ export async function removalRefundOutstandingTx(
   if (isFreeCreditIntent(payment.paymentIntent)) {
     return payment.refunds.some((r) => RETURNED_REFUND_STATUSES.has(r.status))
       ? null
-      : "credits";
+      : { paymentId: payment.id, owed: "credits" };
   }
   const balance = refundableBalancePaise(Number(payment.amount), payment);
-  return balance > 0 ? balance : null;
+  return balance > 0 ? { paymentId: payment.id, owed: balance } : null;
 }
 
 /** On the decision's tx, once its refund is settled: an OVERTURNED removal (or appeal of one) owes an unblock. */
@@ -468,17 +469,16 @@ async function lapseRemovalTx(
   caseId: string,
   now: Date,
 ): Promise<ConductRemovalRemedy | null> {
+  // Lock first, then read: a run that committed a lapse meanwhile is visible to the check below.
+  const locked = await tx.$queryRaw<{ id: string }[]>`
+    SELECT id FROM "SupportCase" WHERE id = ${caseId} FOR UPDATE`;
+  if (locked.length === 0) return null;
   if ((await lapsedCaseIds(tx, now, 1, caseId)).length === 0) return null;
-  const still = await tx.supportCase.findUniqueOrThrow({
+  // A new version, so a decision still holding the old one is refused as stale.
+  await tx.supportCase.updateMany({
     where: { id: caseId },
-    select: { updatedAt: true },
-  });
-  // Compare-and-set on the version a decision also checks: an overlapping run or decision loses here.
-  const claimed = await tx.supportCase.updateMany({
-    where: { id: caseId, updatedAt: still.updatedAt },
     data: { updatedAt: new Date() },
   });
-  if (claimed.count === 0) return null;
   await tx.supportCaseEvent.create({
     data: {
       caseId,

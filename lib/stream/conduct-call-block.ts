@@ -15,7 +15,7 @@ type VideoCall = ReturnType<
 
 class BlockBudgetSpent extends Error {}
 
-/** Stops waiting at the deadline; a call that lands later runs `onLate`, since Stream still applies it. */
+/** Stops waiting at the deadline; a call that settles later, either way, runs `onLate`, since Stream may still apply it. */
 function beforeDeadline<T>(
   work: Promise<T>,
   deadlineMs: number,
@@ -23,10 +23,10 @@ function beforeDeadline<T>(
 ): Promise<T> {
   const remainingMs = deadlineMs - Date.now();
   let timedOut = false;
-  void work.then(
-    () => timedOut && onLate(),
-    () => undefined,
-  );
+  const late = () => {
+    if (timedOut) onLate();
+  };
+  void work.then(late, late);
   if (remainingMs <= 0) {
     timedOut = true;
     return Promise.reject(new BlockBudgetSpent());
@@ -143,12 +143,14 @@ export async function driveConductCallBlock(
   } catch {
     return "conduct block lookup failed";
   }
+  // An unreadable removal counts as changed: the fresh intent reads it again later.
   const repairIfStale = async () => {
-    if ((await conductRemovalStands(appointmentId, userId)) !== block) {
-      await rearm();
-      return true;
-    }
-    return false;
+    const now = await conductRemovalStands(appointmentId, userId).catch(
+      () => !block,
+    );
+    if (now === block) return false;
+    await rearm();
+    return true;
   };
   const onLate = () => {
     repairIfStale().catch(() => undefined);
@@ -173,6 +175,8 @@ export async function driveConductCallBlock(
           : unblockInRoom(call, userId, deadlineMs, onLate));
       } catch (error) {
         await saveProgress(cursor, done);
+        // A failed answer may still have applied at Stream; a changed direction must stay owed.
+        await repairIfStale().catch(() => undefined);
         if (error instanceof BlockBudgetSpent) {
           return "time budget spent before the conduct block";
         }
@@ -185,7 +189,7 @@ export async function driveConductCallBlock(
   try {
     if (await repairIfStale()) return "the removal changed during the drive";
   } catch {
-    return "conduct block re-check failed";
+    return "conduct block repair failed";
   }
   return null;
 }

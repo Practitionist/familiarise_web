@@ -1,9 +1,5 @@
 /** @jest-environment node */
-/**
- * Who may remove an attendee for conduct, through the roster's door. The plan
- * reader answers the shape its select asks for, with the collaborator filter
- * applied as Postgres would apply the WHERE.
- */
+/** Who may remove for conduct, through the roster door; the plan reader applies the collaborator WHERE as Postgres would. */
 
 const mockSession = {
   current: {

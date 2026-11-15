@@ -1,10 +1,4 @@
-/**
- * The conduct removal's races on real Postgres: two overlapping deadline runs
- * record one lapse; a block reaches every open room, past the first page; a
- * block that lands after the overturn's unblock leaves an intent to repair it;
- * lapsed refunds that fail are reported once by the sweep, not per case; and a
- * co-host revoked while the removal waits for its lock is refused inside it.
- */
+/** The conduct removal races on real Postgres: overlapping lapses, many rooms, stale Stream writes, one report a run, a revoked co-host. */
 import { randomUUID } from "node:crypto";
 import prisma from "../../../lib/prisma";
 import { lockCaseRow, raceBehindLock, seedUser } from "../seed";
@@ -291,6 +285,31 @@ it("leaves an intent to repair a block whose call outlived its budget and landed
   ).not.toBeNull();
   await overturn(caseId);
   landKick();
+
+  const rows = await untilOwed(webinar.appointmentId, userId);
+  expect(rows.some((r) => r.status !== "SUCCEEDED")).toBe(true);
+});
+
+it("leaves an intent to repair a block that Stream applied but whose response was lost", async () => {
+  const { webinar, userId, caseId } = await removed();
+  await openRooms(webinar.appointmentId, 1);
+  stream.configured = true;
+  let loseResponse: () => void = () => undefined;
+  mockCall.kickUser.mockImplementationOnce(
+    () =>
+      new Promise((_, reject) => {
+        loseResponse = () =>
+          reject(new Error("Stream response lost after apply"));
+      }),
+  );
+
+  const staleBlock = redriveBlock(webinar.appointmentId, userId);
+  while (mockCall.kickUser.mock.calls.length === 0) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  await overturn(caseId);
+  loseResponse();
+  await staleBlock;
 
   const rows = await untilOwed(webinar.appointmentId, userId);
   expect(rows.some((r) => r.status !== "SUCCEEDED")).toBe(true);

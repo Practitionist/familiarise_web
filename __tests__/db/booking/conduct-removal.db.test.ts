@@ -1,14 +1,7 @@
-/**
- * A host's conduct removal on real Postgres: the seat ends, the case opens, the
- * earnings are held and both Stream intents are written in one transaction, with
- * no refund; an instance that dies after the commit leaves the intents for the
- * sweep. An overturn refunds exactly what is still unrefunded on the seat and
- * unblocks; the 72-hour deadline refunds once; a free seat owes nothing and a
- * credit-funded seat is returned on the credits rail.
- */
+/** A conduct removal on real Postgres: one commit, no refund at removal, refund-first overturns, the 72-hour lapse and its edge cases. */
 import { randomUUID } from "node:crypto";
 import prisma from "../../../lib/prisma";
-import { seedUser } from "../seed";
+import { rowId, seedUser } from "../seed";
 import {
   seedSeatBuyer,
   seedWebinar,
@@ -457,6 +450,41 @@ describe("overturn: refund first, through the bounded door", () => {
     await expect(decide(caseId, staff, "OVERTURNED")).resolves.toMatchObject({
       outcome: "OVERTURNED",
     });
+  });
+
+  it("an admin correcting an UPHELD removal refunds through the admin Refunds door first, then overturns", async () => {
+    const { webinar, userId, payment } = await paidSeat(100_000);
+    const { caseId } = (await remove(webinar, userId))!;
+    const upheld = await decide(caseId, await actor("STAFF"), "UPHELD");
+    const admin = await actor("ADMIN");
+    const correct = async () =>
+      performCaseAction(caseId, admin, {
+        action: "DECIDE",
+        clientActionId: randomUUID(),
+        expectedUpdatedAt: await version(caseId),
+        outcome: "OVERTURNED",
+        explanation: "The recording shows no harassment.",
+        supersedesDecisionId: rowId(upheld),
+      });
+
+    await expect(correct()).rejects.toMatchObject({
+      code: "REFUND_FIRST",
+      message: expect.stringContaining(
+        `/dashboard/admin/payments/${payment.id}?refund=1`,
+      ),
+    });
+    // What Issue refund on the payment page sends (POST /api/admin/refunds/issue, no amount).
+    await refundBookingPayment({
+      paymentId: payment.id,
+      reason: "ops refund: conduct removal overturned",
+      initiatedByUserId: admin.userId,
+      dedupeKey: `ops:${randomUUID()}`,
+      keepSeatIfPartial: true,
+      settlesOwedByHand: true,
+    });
+    expect(await refundedPaise(payment.id)).toBe(100_000);
+
+    await expect(correct()).resolves.toMatchObject({ outcome: "OVERTURNED" });
   });
 
   it("a free seat owes nothing, so its overturn records at once", async () => {
