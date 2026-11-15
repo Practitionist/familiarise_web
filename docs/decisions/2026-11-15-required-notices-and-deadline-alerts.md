@@ -1,4 +1,4 @@
-# ADR: Notices the other party causes always arrive, deadline alerts for experts, and the series and trial notices
+# ADR: Notices about changes someone else makes to a booking always arrive, deadline alerts for experts, and the series and trial notices
 
 - **Status**: Accepted (owner decisions, 2026-11-15). Built on the branch `feat/train3-notices` (train 3 of the booking follow-up train) unless a decision says otherwise.
 - **Date**: 2026-11-15
@@ -13,27 +13,37 @@ Three smaller gaps sat beside it: experts had no alert when a request was about 
 
 ## Decisions
 
-1. **A notice the other party causes reaches the recipient whatever their switches say** (decided; built).
-   - Required, whatever the master, In-App, Email or category switch says: an expert's or host's cancel of the recipient's booking or event, and the refund notice that cancel causes; a reschedule proposal, sent to the party who did not propose it; a proposal that lapses so the original time stands (restored); a series move of a class; a host releasing or removing the recipient's seat.
-   - Still switchable: reminders, marketing, digests, and every notice about the recipient's own action (a learner's own cancel, the expert's copy of the cancel they made, the proposer's copy of their own proposal).
+1. **A notice about a change someone else made to the recipient's booking reaches them whatever their switches say** (decided; built; widened by the owner later on 2026-11-15).
+   - Required, whatever the master, In-App, Email or category switch says, and only when the actor is not the recipient:
+     - an expert's or host's cancel of the recipient's booking or event, and the refund notice that cancel causes (`CANCELLED_BY_HOST`, `REFUND_FROM_HOST_CANCEL`);
+     - a staff or admin cancel of the recipient's booking or event, including a moderation bulk-cancel and a maintenance freeze, and the refund notice it causes (`CANCELLED_BY_STAFF`, `REFUND_FROM_STAFF_CANCEL`);
+     - an expert declining the recipient's request: a paid request's refund notice, and a declined reschedule proposal to the party who proposed it (`REQUEST_DECLINED`);
+     - a reschedule proposal, sent to the party who did not propose it (`RESCHEDULE_PROPOSED`);
+     - a proposal that lapses so the original time stands (`PROPOSAL_LAPSED`);
+     - a move that confirmed itself automatically (an auto-confirmed reschedule, an incident rebook), to the party who did not act (`MOVE_AUTO_CONFIRMED`);
+     - a series move of a class, and a webinar moved to a new time, to the attendees (`SERIES_MOVED`, `EVENT_MOVED`);
+     - a host releasing or removing the recipient's seat (`SEAT_RELEASED`);
+     - the per-session class refund notice when the host caused it: a cancelled session, or a void the outcome sweep attributes to the host, never made up (`CLASS_SESSION_REFUNDED`).
+   - Still switchable: reminders, marketing, digests, and every notice about the recipient's own action (a learner's own cancel, the expert's copy of the cancel they made, the proposer's copy of their own proposal, and a staff member cancelling a booking they are a party to).
    - Erasure still stops everything: an erased user receives nothing, required or not.
    - **Reason.** These are service messages about a contract the user paid for. India's Telecom Commercial Communications Customer Preference Regulations, 2018 (TCCCPR) separate transactional and service messages from promotional ones, and only promotional messages need the recipient's opt-in.
-   - **Options considered.** B, "cancellations only", was rejected because a proposal or a series move changes the paid booking just as much. C, "keep everything optional and fix only the Settings text", was rejected because a learner who muted bookings would still miss a cancelled paid session.
+   - **Options considered.** "Experts and hosts only" (the first version of this decision, built earlier the same day) was replaced by the widened list: a staff cancel, a decline, a webinar re-time, an automatic move and a host-caused class refund change the paid booking just as much, and the recipient did none of them. B, "cancellations only", was rejected because a proposal or a series move changes the paid booking just as much. C, "keep everything optional and fix only the Settings text", was rejected because a learner who muted bookings would still miss a cancelled paid session.
 
 2. **How: a per-send required override passed at the stage call** (decided; built).
    - The template keeps its category, so the same event sent about the recipient's own action stays switchable. The caller passes `required: { kind, recipients }`: the kind is one of `REQUIRED_NOTICE_KINDS` (`lib/notifications/required-notices.ts`), and only the listed recipients skip the switches.
    - Bells: the override is written into the outbox row's payload as `requiredNotice` (the kind), so the first-attempt recheck (`currentBellRecipients`) honours it as well as the staging gate. `isBellAllowedForRecipient` and `bellAllowedWhere` read it through the same gate (`gateOf`), so the JavaScript rule and the SQL twin agree; the real-Postgres parity test covers it.
    - Email: a required recipient is loaded with no category (`loadEmailRecipients`, option `requiredFor`), which is the existing marker of a required email: `isEmailAllowedForUser` lets it through, the staged `FailedEmail` row carries a null `deliveryCategory` so the relay's recheck lets it through again, and it carries no unsubscribe link. `loadEmailRecipients` also drops an erased user, so erasure stops a required email as it stops a required bell.
-   - Settings > Notifications shows one line built from the same constant ("Always sent: changes the other person makes to your booking (…)"), and the panel no longer says that booking changes are optional.
+   - A refund's cause is read back from `Refund.reason`, because the webhook and the reconcile job announce a refund long after the change that caused it; no column was added. The reason builders and `refundNoticeKind` live together in `lib/payments/operations/refund-cause.ts`: a 1:1 cancel's reason names its side (`consultant`, `consultee` or `staff`), a whole-event cancel by staff says "by staff", a paid decline says "rejected by consultant", moderation and the maintenance freeze have fixed reasons, and the class sweep writes `HOST_SESSION_NOT_MADE_UP` for a host-cancelled session and `HOST_SESSION_VOIDED_NOT_MADE_UP` for a host-attributed void (read from the occurrence's `outcome`).
+   - Settings > Notifications shows one line built from the same constant ("Always sent: changes someone else makes to your booking (…)"), and the panel no longer says that booking changes are optional.
    - **Options considered.** Twin templates (one required, one optional per event) were rejected because every change of copy would have to be made twice. Novu's workflow-level "critical" flag was rejected because it applies to the whole family, so it would remove the opt-out for every event in the family, and Postgres owns preferences, not Novu.
 
 3. **Deadline alerts for the expert: both** (decided; built).
    - (a) A submitted request about to lapse unanswered: the expert who must answer gets one bell and one email 6 hours before the request's 48-hour hold ends (`REQUEST_EXPIRY_ALERT_HOURS`). It is a new arm of the existing `expire-stale-requests` job, runs after the arm that expires lapsed requests, and is the `new-booking-request` event with an `expiresAt` field (the `appointment` family; no new Novu workflow).
-   - (b) A paid plan still unplaced 36 hours after payment, 12 hours before the automatic 48-hour refund: this alert already existed as the hour-36 stage of the unscheduled-plan nudge (`nudgeUnscheduledSubscriptions`, stages 12, 24 and 36 hours, in the same job), one bell and one email that name the learner. It now also names the refund time in the expert's zone, rather than adding a second notice at the same hour.
+   - (b) A paid plan still unplaced 36 hours after payment, 12 hours before the automatic 48-hour refund. Built shape (accepted by the owner): the existing unscheduled-plan nudge (`nudgeUnscheduledSubscriptions`, stages 12, 24 and 36 hours, in the same job), one bell and one email per stage that name the learner, now also names the refund time in the expert's zone; its hour-36 stage is the alert.
    - Both are about the expert's own pending action, so both respect the expert's switches (the `appointments` category).
    - **Once per item.** The bell's outbox row is the claim: its `transactionId` is derived from a dedupe key per request (`request-expiring:<consultationId>`) or per plan stage, and the arm skips an item whose row already exists. The email's claim is its `FailedEmail` row, found by its email type and `entityRef`. A second run sends nothing. No column was added.
    - **Quota.** At 100 active experts, if each receives 10 requests a month and one in five is still unanswered at hour 42, alert (a) adds about 200 bell runs (2 % of Novu Free's 10,000 a month) and 200 emails (under 7 % of Resend Free's 3,000 a month, a few a day) a month. Alert (b) adds nothing: the hour-36 stage was already sent.
-   - **Options considered.** The unplaced-plan alert only, and neither alert, were rejected. A new job or route for the alerts was not considered: the job rules (`lib/cron/AGENTS.md`) put a new pass on the sweep that already reads the rows.
+   - **Options considered.** The unplaced-plan alert only, and neither alert, were rejected. A separate 36-hour alert beside the nudge was not chosen, because the nudge's hour-36 stage already reaches the same expert at the same hour. A new job or route for the alerts was not considered: the job rules (`lib/cron/AGENTS.md`) put a new pass on the sweep that already reads the rows.
 
 4. **A completed trial points the learner at the expert's plan** (decided; built). Decision 6 of the booking follow-up train. The learner gets one bell and one email headed "Continue with {expert}" that open the plan's checkout page; the expert gets a bell only, with no email. Both completion paths (the trial route and the auto-complete sweep) send it through `stageTrialCompletedNotices` (`lib/booking/trial-completed-notice.ts`).
 
@@ -47,5 +57,6 @@ Three smaller gaps sat beside it: experts had no alert when a request was about 
 
 ## Deprecated & Superseded Approaches
 
+- **Experts and hosts only.** The first version of decision 1 made only the host side's changes required; replaced the same day by the widened list.
 - **Required as a property of the whole template only.** A template marked `required` still skips the switches for every send; it is no longer the only way, because a booking event is required for one recipient and optional for another.
 - **Settings copy that listed only account, security and moderation notices as always sent.** Replaced by the line built from `REQUIRED_NOTICE_KINDS`.

@@ -33,6 +33,7 @@ import prisma from "../../lib/prisma";
 import { NOVU_WORKFLOWS, notificationScope } from "../../lib/novu/workflows";
 import { bellAudience, currentBellRecipients } from "../../lib/novu/policy";
 import { attemptTrigger, type StagedTrigger } from "../../lib/novu/outbox";
+import { stageBell } from "../../lib/novu/stage-bell";
 import {
   notifyAppointmentCancelled,
   notifyAppointmentRescheduled,
@@ -92,7 +93,10 @@ async function stageKind(
   const appointmentId = randomUUID();
   const entityRef = `appointment:${appointmentId}`;
   const opts = { deferAttempt: true, required: override };
-  if (kind === "REFUND_FROM_HOST_CANCEL") {
+  if (
+    kind === "REFUND_FROM_HOST_CANCEL" ||
+    kind === "REFUND_FROM_STAFF_CANCEL"
+  ) {
     const paymentId = randomUUID();
     const bell = await notifyRefundProcessed(
       userId,
@@ -116,7 +120,32 @@ async function stageKind(
       entityRef: `payment:${paymentId}`,
     };
   }
-  if (kind === "CANCELLED_BY_HOST" || kind === "SEAT_RELEASED") {
+  if (kind === "CLASS_SESSION_REFUNDED") {
+    const bell = await stageBell(prisma, {
+      workflowId: NOVU_WORKFLOWS.CLASS_SESSION_REFUNDED,
+      recipients: [userId],
+      payload: {
+        planTitle: "Plan",
+        amount: "₹500",
+        dashboardUrl: "/dashboard",
+      },
+      dedupeKey: `occ-refund:${appointmentId}`,
+      ...(required ? { required: kind } : {}),
+    });
+    await stageAppointmentCancelledEmail(prisma, {
+      appointmentId,
+      userIds: [userId],
+      cancelledBy: "Familiarise",
+      dashboardUrl: "/dashboard",
+      ...(required ? { requiredFor: [userId] } : {}),
+    });
+    return { bells: bell ? [bell] : [], entityRef };
+  }
+  if (
+    kind === "CANCELLED_BY_HOST" ||
+    kind === "CANCELLED_BY_STAFF" ||
+    kind === "SEAT_RELEASED"
+  ) {
     const bells = await notifyAppointmentCancelled(
       [userId],
       { ...APPOINTMENT, appointmentId, cancelledBy: "consultant" },
@@ -134,12 +163,16 @@ async function stageKind(
   const outcome =
     kind === "RESCHEDULE_PROPOSED"
       ? "PROPOSED"
-      : kind === "SERIES_MOVED"
+      : kind === "SERIES_MOVED" ||
+          kind === "EVENT_MOVED" ||
+          kind === "MOVE_AUTO_CONFIRMED"
         ? "MOVED"
-        : "EXPIRED";
+        : kind === "REQUEST_DECLINED"
+          ? "DECLINED"
+          : "EXPIRED";
   const bells = await notifyAppointmentRescheduled(
     [userId],
-    outcome === "EXPIRED"
+    outcome === "EXPIRED" || outcome === "DECLINED"
       ? { ...APPOINTMENT, outcome }
       : {
           ...APPOINTMENT,

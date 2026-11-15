@@ -83,6 +83,7 @@ import {
 } from "@/lib/payments/operations/event-refunds";
 import {
   cancelRefundReason,
+  type CancelSide,
   wholeEventCancelRefundReason,
 } from "@/lib/payments/operations/refund-cause";
 import { hasActiveDisputeForAppointment } from "@/lib/payments/dispute-guard";
@@ -370,7 +371,7 @@ function cancelRefundOwed(
   appointmentId: string,
   paymentId: string,
   quote: BookingRefundQuote,
-  isConsultantInitiated: boolean,
+  side: CancelSide,
 ): RefundOwedMarker | null {
   if (quote.creditRestoresInFull) {
     return {
@@ -385,7 +386,7 @@ function cancelRefundOwed(
     paymentId,
     amountPaise: quote.refundPaise,
     key: cancelRefundKey(appointmentId, paymentId),
-    reason: cancelRefundReason(quote.refundPct, isConsultantInitiated),
+    reason: cancelRefundReason(quote.refundPct, side),
   };
 }
 
@@ -866,9 +867,17 @@ export async function POST(
     if (appointment.class) eventKind = "class";
     else if (appointment.webinar) eventKind = "webinar";
     const eventId = appointment.class?.id ?? appointment.webinar?.id ?? null;
+    // Platform staff who are not a party cancel for the platform, not for a side.
+    const staffCancel = isPrivilegedUser && !isParticipant;
+    const cancelSide: CancelSide = staffCancel
+      ? "staff"
+      : isConsultantInitiated
+        ? "consultant"
+        : "consultee";
     const eventRefundReason = wholeEventCancelRefundReason(
       eventKind ?? "event",
       validatedData.reason ?? "cancelled",
+      staffCancel,
     );
 
     // Transaction for critical database operations only (with increased timeout)
@@ -1075,7 +1084,7 @@ export async function POST(
                       appointmentId,
                       paidPayment.id,
                       quote,
-                      isConsultantInitiated,
+                      cancelSide,
                     )
                   : null;
               // Only the door that owns the marker drives it; a payment already
@@ -1402,15 +1411,18 @@ export async function POST(
         ].filter((id): id is string => !!id),
       ),
     );
-    // The host side cancelled: the buyer and every attendee hear it whatever their switches say.
+    // The host side cancelled: the buyer and every attendee hear it whatever
+    // their switches say; a staff cancel reaches every party but the actor.
     const hostCancelled =
       notificationMeta.cancelledBy === notificationMeta.consultantUserId ||
       (isHostOrgOperator && session.user.id !== consulteeUserId);
-    const bookedUserIds = hostCancelled
-      ? [consulteeUserId, ...attendeeUserIds].filter(
-          (id): id is string => !!id && id !== session.user.id,
-        )
-      : [];
+    const bookedUserIds = staffCancel
+      ? userIds.filter((id) => id !== session.user.id)
+      : hostCancelled
+        ? [consulteeUserId, ...attendeeUserIds].filter(
+            (id): id is string => !!id && id !== session.user.id,
+          )
+        : [];
     if (userIds.length > 0) {
       const refundText =
         refund?.status === "REFUNDED"
@@ -1467,7 +1479,9 @@ export async function POST(
           bookedUserIds.length > 0
             ? {
                 required: {
-                  kind: "CANCELLED_BY_HOST",
+                  kind: staffCancel
+                    ? "CANCELLED_BY_STAFF"
+                    : "CANCELLED_BY_HOST",
                   recipients: bookedUserIds,
                 },
               }

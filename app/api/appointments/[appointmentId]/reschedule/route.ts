@@ -1276,8 +1276,14 @@ async function requestReschedule(
             appointment.organizationId,
             "appointments",
           );
-          // A proposal reaches the party who must answer it whatever their switches say.
+          // A proposal, or a move that confirmed itself, reaches the party who
+          // did not act whatever their switches say.
           const proposed = variant.outcome === "PROPOSED";
+          const requiredKind = proposed
+            ? ("RESCHEDULE_PROPOSED" as const)
+            : variant.outcome === "MOVED"
+              ? ("MOVE_AUTO_CONFIRMED" as const)
+              : null;
           const [bellResults, emailRows] = await Promise.all([
             notifyAppointmentRescheduled(
               uniqueUserIds,
@@ -1299,10 +1305,10 @@ async function requestReschedule(
               },
               {
                 deferAttempt: true,
-                ...(proposed
+                ...(requiredKind
                   ? {
                       required: {
-                        kind: "RESCHEDULE_PROPOSED" as const,
+                        kind: requiredKind,
                         recipients: uniqueUserIds,
                       },
                     }
@@ -1321,7 +1327,7 @@ async function requestReschedule(
               newStartsAt: proposedAt,
               proposedBy: session.user.name || undefined,
               respondBy: result.proposalExpiresAt,
-              ...(proposed ? { requiredFor: uniqueUserIds } : {}),
+              ...(requiredKind ? { requiredFor: uniqueUserIds } : {}),
               dashboardUrl,
             }).catch(() => []),
           ]);

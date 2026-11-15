@@ -38,8 +38,11 @@ import {
   requiredNoticeOf,
 } from "@/lib/notifications/required-notices";
 import {
+  CLASS_SESSION_REFUND_REASON,
+  STAFF_CANCEL_REFUND_REASON,
   cancelRefundReason,
   refundNoticeKind,
+  rejectionRefundReason,
   seatRemovalRefundReason,
   wholeEventCancelRefundReason,
 } from "@/lib/payments/operations/refund-cause";
@@ -143,10 +146,10 @@ describe("the email gate", () => {
 
 describe("refund cause", () => {
   it("marks only the host side's refunds as required", () => {
-    expect(refundNoticeKind(cancelRefundReason(100, true))).toBe(
+    expect(refundNoticeKind(cancelRefundReason(100, "consultant"))).toBe(
       "REFUND_FROM_HOST_CANCEL",
     );
-    expect(refundNoticeKind(cancelRefundReason(50, false))).toBeNull();
+    expect(refundNoticeKind(cancelRefundReason(50, "consultee"))).toBeNull();
     expect(
       refundNoticeKind(wholeEventCancelRefundReason("class", "host ill")),
     ).toBe("REFUND_FROM_HOST_CANCEL");
@@ -157,13 +160,37 @@ describe("refund cause", () => {
       refundNoticeKind(seatRemovalRefundReason("webinar", "w1", false, 100)),
     ).toBeNull();
     expect(refundNoticeKind("support refund")).toBeNull();
+    expect(refundNoticeKind(cancelRefundReason(100, "staff"))).toBe(
+      "REFUND_FROM_STAFF_CANCEL",
+    );
+    expect(
+      refundNoticeKind(wholeEventCancelRefundReason("webinar", "x", true)),
+    ).toBe("REFUND_FROM_STAFF_CANCEL");
+    expect(refundNoticeKind(STAFF_CANCEL_REFUND_REASON.MODERATION)).toBe(
+      "REFUND_FROM_STAFF_CANCEL",
+    );
+    expect(refundNoticeKind(STAFF_CANCEL_REFUND_REASON.MAINTENANCE)).toBe(
+      "REFUND_FROM_STAFF_CANCEL",
+    );
+    expect(refundNoticeKind(rejectionRefundReason("consultation", 100))).toBe(
+      "REQUEST_DECLINED",
+    );
+    expect(refundNoticeKind(CLASS_SESSION_REFUND_REASON.HOST_CANCELLED)).toBe(
+      "CLASS_SESSION_REFUNDED",
+    );
+    expect(refundNoticeKind(CLASS_SESSION_REFUND_REASON.HOST_VOIDED)).toBe(
+      "CLASS_SESSION_REFUNDED",
+    );
+    expect(refundNoticeKind(CLASS_SESSION_REFUND_REASON.VOIDED)).toBeNull();
   });
 });
 
 describe("copy", () => {
-  it("the Settings line names every required kind", () => {
+  it("the Settings line names every required kind once", () => {
     for (const kind of REQUIRED_NOTICE_KINDS) {
-      expect(ALWAYS_SENT_LINE).toContain(REQUIRED_NOTICE_LABEL[kind]);
+      expect(ALWAYS_SENT_LINE.split(REQUIRED_NOTICE_LABEL[kind])).toHaveLength(
+        2,
+      );
     }
   });
 

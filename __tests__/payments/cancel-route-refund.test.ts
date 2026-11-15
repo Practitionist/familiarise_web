@@ -567,6 +567,41 @@ describe("a platform cancellation is not the buyer's choice", () => {
     expect(body.refund.refundPct).toBe(100);
     expect(body.refund.amountRefundedPaise).toBe(GROSS);
     expect(txStub.systemEvent.create).not.toHaveBeenCalled();
+    // Staff ended the booking: both parties hear it, and its refund, whatever their switches say.
+    expect(mockRefundBookingPayment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: expect.stringMatching(/, staff-initiated\)$/),
+      }),
+    );
+    const [recipients, , opts] = (notifyAppointmentCancelled as jest.Mock).mock
+      .calls[0];
+    expect(opts).toEqual({
+      required: { kind: "CANCELLED_BY_STAFF", recipients },
+    });
+    expect(recipients).toEqual(
+      expect.arrayContaining([CONSULTANT_USER, CONSULTEE_USER]),
+    );
+  });
+
+  it("a staff member cancelling their own booking stays behind their switches", async () => {
+    mockGetSession.mockResolvedValue({
+      user: {
+        ...sessionAs("consultee").user,
+        role: "ADMIN",
+        twoFactorEnabled: true,
+      },
+    });
+    mockAppointmentFindUnique.mockResolvedValue(consultationAppointment());
+    mockAppointmentFindMany.mockImplementation(async () =>
+      bookingRows({ liveSlotHours: [1] }),
+    );
+
+    const res = await cancelHandler(makeRequest(), makeParams(APPT));
+
+    expect(res.status).toBe(200);
+    expect((notifyAppointmentCancelled as jest.Mock).mock.calls[0][2]).toBe(
+      undefined,
+    );
   });
 
   it("refuses an operator who is not a party unless the audited platform door sent the request", async () => {

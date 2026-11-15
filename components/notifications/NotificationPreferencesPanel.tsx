@@ -69,7 +69,7 @@ const CATEGORY_FIELDS: ToggleField<EmailCategoryColumn>[] = [
     key: "appointmentReminders",
     label: "Bookings & sessions",
     description:
-      "Bookings, reminders, unread chat, recordings, documents and collaborator updates, except the changes the other person makes to your booking",
+      "Bookings, reminders, unread chat, recordings, documents and collaborator updates, except the changes someone else makes to your booking",
   },
   {
     key: "paymentNotifications",

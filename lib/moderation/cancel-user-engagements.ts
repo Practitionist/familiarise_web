@@ -14,6 +14,7 @@
  * interleave with a consultee's cancel or a consultant's accept. A held lock
  * fails that one engagement into `failures`, and a re-run picks it up.
  */
+import { STAFF_CANCEL_REFUND_REASON } from "@/lib/payments/operations/refund-cause";
 import * as Sentry from "@sentry/nextjs";
 import type { Prisma } from "@prisma/client";
 import prisma, { type Tx } from "@/lib/prisma";
@@ -508,8 +509,7 @@ async function casCancelExclusiveEngagement(
 }
 
 const MODERATION_REASON = "moderation";
-const GROUP_EVENT_REFUND_REASON =
-  "moderation (100% — platform-initiated cancellation)";
+const GROUP_EVENT_REFUND_REASON = STAFF_CANCEL_REFUND_REASON.MODERATION;
 
 /**
  * Tombstone the engagement's live slots. Since #1694 the overlap constraint
@@ -566,7 +566,7 @@ function moderationRefundOwed(
     paymentId,
     amountPaise: null,
     key: `moderation:${appointmentId}:${paymentId}`,
-    reason: "moderation (100% — platform-initiated cancellation)",
+    reason: STAFF_CANCEL_REFUND_REASON.MODERATION,
   };
 }
 
@@ -581,21 +581,25 @@ async function notifyExclusiveCancellation(
   if (userIds.length === 0) return;
 
   const engagementOrgId = engagement.appointments[0]?.organizationId ?? null;
-  await notifyAppointmentCancelled(userIds, {
-    ...notificationScope(engagementOrgId),
-    appointmentType:
-      engagement.appointments[0]?.appointmentType ?? kind.toUpperCase(),
-    consultantName: engagement.consultantUser?.name || "Consultant",
-    consulteeName: engagement.consulteeUser?.name || "Consultee",
-    // #536 — never show the customer a placeholder as the session's name.
-    planTitle: planTitleOrSessionLabel(
-      engagement.planTitle,
-      engagement.appointments[0]?.appointmentType ?? kind,
-    ),
-    dashboardUrl: notificationHref(engagementOrgId, "appointments"),
-    reason: "MODERATION",
-    cancelledBy: "system",
-  });
+  await notifyAppointmentCancelled(
+    userIds,
+    {
+      ...notificationScope(engagementOrgId),
+      appointmentType:
+        engagement.appointments[0]?.appointmentType ?? kind.toUpperCase(),
+      consultantName: engagement.consultantUser?.name || "Consultant",
+      consulteeName: engagement.consulteeUser?.name || "Consultee",
+      // #536 — never show the customer a placeholder as the session's name.
+      planTitle: planTitleOrSessionLabel(
+        engagement.planTitle,
+        engagement.appointments[0]?.appointmentType ?? kind,
+      ),
+      dashboardUrl: notificationHref(engagementOrgId, "appointments"),
+      reason: "MODERATION",
+      cancelledBy: "system",
+    },
+    { required: { kind: "CANCELLED_BY_STAFF", recipients: userIds } },
+  );
   // #1653 — the email twin; the sender never throws.
   const engagementAppointmentId = engagement.appointments[0]?.id;
   if (engagementAppointmentId) {
@@ -603,6 +607,7 @@ async function notifyExclusiveCancellation(
       {
         appointmentId: engagementAppointmentId,
         userIds,
+        requiredFor: userIds,
         cancelledBy: "Familiarise",
         reason: "Account moderation",
         dashboardUrl: notificationHref(engagementOrgId, "appointments"),
@@ -872,18 +877,25 @@ async function cancelGroupEvent(
         select: { id: true, organizationId: true },
       }));
     const eventOrgId = eventAppointment?.organizationId ?? null;
-    await notifyAppointmentCancelled(attendeeIds, {
-      ...notificationScope(eventOrgId),
-      appointmentType: isWebinar ? "WEBINAR" : "CLASS",
-      consultantName: "Consultant",
-      consulteeName: "Attendee",
-      // #536 — the event's own title is not loaded on this path, so the
-      // session label stands in rather than a placeholder.
-      planTitle: planTitleOrSessionLabel(null, isWebinar ? "WEBINAR" : "CLASS"),
-      dashboardUrl: notificationHref(eventOrgId, "appointments"),
-      reason: "MODERATION",
-      cancelledBy: "system",
-    });
+    await notifyAppointmentCancelled(
+      attendeeIds,
+      {
+        ...notificationScope(eventOrgId),
+        appointmentType: isWebinar ? "WEBINAR" : "CLASS",
+        consultantName: "Consultant",
+        consulteeName: "Attendee",
+        // #536 — the event's own title is not loaded on this path, so the
+        // session label stands in rather than a placeholder.
+        planTitle: planTitleOrSessionLabel(
+          null,
+          isWebinar ? "WEBINAR" : "CLASS",
+        ),
+        dashboardUrl: notificationHref(eventOrgId, "appointments"),
+        reason: "MODERATION",
+        cancelledBy: "system",
+      },
+      { required: { kind: "CANCELLED_BY_STAFF", recipients: attendeeIds } },
+    );
     // #1653 — the email twin, keyed by the event's appointment so a
     // re-run does not send twice; the sender never throws.
     if (eventAppointment) {
@@ -891,6 +903,7 @@ async function cancelGroupEvent(
         {
           appointmentId: eventAppointment.id,
           userIds: attendeeIds,
+          requiredFor: attendeeIds,
           cancelledBy: "Familiarise",
           reason: "Account moderation",
           dashboardUrl: notificationHref(eventOrgId, "appointments"),

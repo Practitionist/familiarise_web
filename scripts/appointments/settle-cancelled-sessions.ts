@@ -25,6 +25,11 @@
  * and app/api/cleanup/settle-cancelled-sessions/route.ts (the ticker twin).
  */
 
+import {
+  CLASS_SESSION_REFUND_REASON,
+  refundNoticeKind,
+} from "@/lib/payments/operations/refund-cause";
+import { HOST_ATTRIBUTED_OUTCOMES } from "@/lib/booking/session-outcome";
 import { PLAN_END_REFUND_REASON } from "@/lib/payments/refund-reasons";
 import {
   AppointmentStatus,
@@ -230,6 +235,7 @@ const DUE_SELECT = {
   ordinal: true,
   startsAt: true,
   completionStatus: true,
+  outcome: true,
   appointment: {
     select: {
       class: {
@@ -505,10 +511,18 @@ async function refundSeatForSession(
   const amountPaise = await capToBalance(payment, unitPaise);
   if (amountPaise <= 0) return false;
   const voided = session.completionStatus === OccurrenceCompletionStatus.VOIDED;
+  const hostVoid =
+    voided &&
+    session.outcome !== null &&
+    HOST_ATTRIBUTED_OUTCOMES.includes(session.outcome);
   return refundAndTell(session, payment, {
     amountPaise,
     dedupeKey,
-    reason: voided ? "SESSION_VOIDED_NOT_MADE_UP" : "HOST_SESSION_NOT_MADE_UP",
+    reason: !voided
+      ? CLASS_SESSION_REFUND_REASON.HOST_CANCELLED
+      : hostVoid
+        ? CLASS_SESSION_REFUND_REASON.HOST_VOIDED
+        : CLASS_SESSION_REFUND_REASON.VOIDED,
   });
 }
 
@@ -532,6 +546,8 @@ async function refundAndTell(
       payment.currency,
     );
     const dashboardUrl = goHref("client", "appointments");
+    // A refund the host caused reaches the seat whatever their switches say.
+    const hostCaused = refundNoticeKind(args.reason) !== null;
     const [staged, emailRows] = await Promise.all([
       stageBell(prisma, {
         workflowId: NOVU_WORKFLOWS.CLASS_SESSION_REFUNDED,
@@ -543,6 +559,7 @@ async function refundAndTell(
           dashboardUrl,
         },
         dedupeKey: args.dedupeKey,
+        ...(hostCaused ? { required: "CLASS_SESSION_REFUNDED" as const } : {}),
       }),
       stageAppointmentCancelledEmail(prisma, {
         appointmentId: session.appointmentId,
@@ -552,6 +569,7 @@ async function refundAndTell(
         reason: args.reason,
         refundText: `A refund of ${formattedAmount} has been issued.`,
         refundUserIds: [payment.userId],
+        ...(hostCaused ? { requiredFor: [payment.userId] } : {}),
         dashboardUrl,
       }).catch((err) => {
         console.error(

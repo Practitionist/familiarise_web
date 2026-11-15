@@ -33,6 +33,7 @@ import prisma, { type Tx } from "@/lib/prisma";
 import { getAppUrl } from "@/lib/url";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import { notifyRefundProcessed } from "@/lib/novu";
+import { rejectionRefundReason } from "@/lib/payments/operations/refund-cause";
 import { notificationScope } from "@/lib/novu/workflows";
 import { goHref } from "@/lib/dashboard/go";
 import { EMAIL_BUDGET_MS, sendRefundProcessedEmail } from "@/lib/email";
@@ -99,7 +100,7 @@ export async function stampRejectionRefundOwed(
     true,
   );
   const key = `rejection:${args.requestId}:${paid.id}`;
-  const reason = `${args.kind} request rejected by consultant (${refundPct}%)`;
+  const reason = rejectionRefundReason(args.kind, refundPct);
   // The credits rail accepts no partial amount, so a credit-funded
   // payment restores whole at a positive tier instead of through the clamp.
   // Integer basis points in BigInt, as cancellation-policy does.
@@ -200,14 +201,21 @@ async function notifyRejectedRequestPayer(
       select: { userId: true, currency: true, organizationId: true },
     });
     if (!payment) return;
-    await notifyRefundProcessed(payment.userId, {
-      ...notificationScope(payment.organizationId),
-      amount: amountPaise,
-      currency: payment.currency,
-      reason: "Your booking request was declined by the consultant.",
-      // #1527 — the recipient is always the payer.
-      dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
-    });
+    // The expert declined the payer's request: required whatever their switches say.
+    await notifyRefundProcessed(
+      payment.userId,
+      {
+        ...notificationScope(payment.organizationId),
+        amount: amountPaise,
+        currency: payment.currency,
+        reason: "Your booking request was declined by the consultant.",
+        // #1527 — the recipient is always the payer.
+        dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
+      },
+      {
+        required: { kind: "REQUEST_DECLINED", recipients: [payment.userId] },
+      },
+    );
     // #1653 — the email twin; the sender never throws.
     await sendRefundProcessedEmail(
       {
@@ -215,6 +223,7 @@ async function notifyRejectedRequestPayer(
         paymentId,
         amountPaise,
         currency: payment.currency,
+        required: true,
       },
       { budgetMs: EMAIL_BUDGET_MS.REQUEST },
     );
