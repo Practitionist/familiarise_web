@@ -10,7 +10,6 @@ import {
   Loader2,
   Plus,
   RotateCcw,
-  Search,
   Settings2,
   ShieldCheck,
   Sparkles,
@@ -20,6 +19,10 @@ import {
   DashboardContent,
   DashboardHeader,
 } from "@/components/dashboard/PageScaffold";
+import {
+  FilterBar,
+  type FilterBarProps,
+} from "@/components/dashboard/FilterBar";
 import { UrlTabs } from "@/components/dashboard/UrlTabs";
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
@@ -1260,26 +1263,12 @@ function RevokeFeeWaiverDialog({
 // Shared List Card for Credits & Fee Waivers
 // ---------------------------------------------------------------------------
 
-interface FilterSelectConfig {
-  key: string;
-  ariaLabel: string;
-  widthClass: string;
-  placeholder: string;
-  value: string;
-  onChange: (value: string) => void;
-  options: Array<{ value: string; label: string }>;
-}
-
 function ReferralsListCard<T extends { id: string }>({
   title,
   description,
   actionLabel,
   onAction,
-  searchAriaLabel,
-  searchPlaceholder,
-  searchValue,
-  onSearchChange,
-  selects,
+  filters,
   isLoading,
   loadingLabel,
   emptyIcon: EmptyIcon,
@@ -1295,11 +1284,7 @@ function ReferralsListCard<T extends { id: string }>({
   description: string;
   actionLabel?: string;
   onAction?: () => void;
-  searchAriaLabel: string;
-  searchPlaceholder: string;
-  searchValue: string;
-  onSearchChange: (value: string) => void;
-  selects: FilterSelectConfig[];
+  filters: FilterBarProps;
   isLoading: boolean;
   loadingLabel: string;
   emptyIcon: typeof Gift;
@@ -1326,40 +1311,7 @@ function ReferralsListCard<T extends { id: string }>({
           )}
         </div>
 
-        <div className="flex flex-col sm:flex-row gap-2">
-          <div className="relative flex-1">
-            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-            <Input
-              aria-label={searchAriaLabel}
-              className="pl-8"
-              placeholder={searchPlaceholder}
-              value={searchValue}
-              onChange={(e) => onSearchChange(e.target.value)}
-            />
-          </div>
-
-          {selects.map((sel) => (
-            <Select
-              key={sel.key}
-              value={sel.value}
-              onValueChange={sel.onChange}
-            >
-              <SelectTrigger
-                aria-label={sel.ariaLabel}
-                className={sel.widthClass}
-              >
-                <SelectValue placeholder={sel.placeholder} />
-              </SelectTrigger>
-              <SelectContent>
-                {sel.options.map((opt) => (
-                  <SelectItem key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          ))}
-        </div>
+        <FilterBar {...filters} />
       </CardHeader>
 
       <CardContent>
@@ -1492,52 +1444,60 @@ function CreditsTabPanel({
       <ReferralsListCard<ReferralCreditItem>
         title={creditCountLabel}
         description="Inspect referral credit states (PENDING, VESTED, EXPIRED, VOID), balances, and payment redemptions."
-        searchAriaLabel="Search by email, name, or referral code"
-        searchPlaceholder="Search by user email, name, referral code, or ID…"
-        searchValue={q}
-        onSearchChange={(val) => {
-          setQ(val);
-          setPage(1);
+        filters={{
+          search: {
+            label: "Search by email, name, or referral code",
+            placeholder: "Search by user email, name, referral code, or ID…",
+            value: q,
+            onChange: (val) => {
+              setQ(val);
+              setPage(1);
+            },
+          },
+          selects: [
+            {
+              key: "source",
+              label: "Filter by source",
+              value: sourceFilter,
+              onChange: (val) => {
+                setSourceFilter(val);
+                setPage(1);
+              },
+              options: [
+                { value: "ALL", label: "All sources" },
+                ...CREDIT_SOURCES.map((s) => ({
+                  value: s,
+                  label: humanizeEnum(s),
+                })),
+              ],
+            },
+            {
+              key: "status",
+              label: "Filter by status",
+              value: statusFilter,
+              onChange: (val) => {
+                setStatusFilter(val);
+                setPage(1);
+              },
+              options: [
+                { value: "ALL", label: "All statuses" },
+                { value: "PENDING", label: "Pending" },
+                { value: "ACTIVE", label: "Vested (Active)" },
+                { value: "EXHAUSTED", label: "Exhausted" },
+                { value: "EXPIRED", label: "Expired" },
+                { value: "REVERSED", label: "Void / Reversed" },
+              ],
+            },
+          ],
+          onClear: () => {
+            setQ("");
+            setSourceFilter("ALL");
+            setStatusFilter("ALL");
+            setPage(1);
+          },
+          canClear:
+            Boolean(q) || sourceFilter !== "ALL" || statusFilter !== "ALL",
         }}
-        selects={[
-          {
-            key: "source",
-            ariaLabel: "Filter by source",
-            widthClass: "w-full sm:w-[180px]",
-            placeholder: "All sources",
-            value: sourceFilter,
-            onChange: (val) => {
-              setSourceFilter(val);
-              setPage(1);
-            },
-            options: [
-              { value: "ALL", label: "All sources" },
-              ...CREDIT_SOURCES.map((s) => ({
-                value: s,
-                label: humanizeEnum(s),
-              })),
-            ],
-          },
-          {
-            key: "status",
-            ariaLabel: "Filter by status",
-            widthClass: "w-full sm:w-[170px]",
-            placeholder: "All statuses",
-            value: statusFilter,
-            onChange: (val) => {
-              setStatusFilter(val);
-              setPage(1);
-            },
-            options: [
-              { value: "ALL", label: "All statuses" },
-              { value: "PENDING", label: "Pending" },
-              { value: "ACTIVE", label: "Vested (Active)" },
-              { value: "EXHAUSTED", label: "Exhausted" },
-              { value: "EXPIRED", label: "Expired" },
-              { value: "REVERSED", label: "Void / Reversed" },
-            ],
-          },
-        ]}
         isLoading={creditsQuery.isLoading}
         loadingLabel="Loading credits…"
         emptyIcon={Gift}
@@ -1633,49 +1593,57 @@ function FeeWaiversTabPanel({
       <ReferralsListCard<FeeWaiverItem>
         title={waiverCountLabel}
         description="0% platform-fee session waivers granted to referred and referring experts."
-        searchAriaLabel="Search fee waivers"
-        searchPlaceholder="Search by consultant name, email, or referral ID…"
-        searchValue={q}
-        onSearchChange={(val) => {
-          setQ(val);
-          setPage(1);
+        filters={{
+          search: {
+            label: "Search fee waivers",
+            placeholder: "Search by consultant name, email, or referral ID…",
+            value: q,
+            onChange: (val) => {
+              setQ(val);
+              setPage(1);
+            },
+          },
+          selects: [
+            {
+              key: "reason",
+              label: "Filter by waiver reason",
+              value: reasonFilter,
+              onChange: (val) => {
+                setReasonFilter(val);
+                setPage(1);
+              },
+              options: [
+                { value: "ALL", label: "All reasons" },
+                { value: "REFERRED_EXPERT", label: "Referred Expert" },
+                { value: "REFERRING_EXPERT", label: "Referring Expert" },
+                { value: "FOUNDING_EXPERT", label: "Founding Expert" },
+              ],
+            },
+            {
+              key: "status",
+              label: "Filter by waiver status",
+              value: statusFilter,
+              onChange: (val) => {
+                setStatusFilter(val);
+                setPage(1);
+              },
+              options: [
+                { value: "ALL", label: "All statuses" },
+                { value: "ACTIVE", label: "Active" },
+                { value: "EXHAUSTED", label: "Exhausted" },
+                { value: "EXPIRED", label: "Expired" },
+              ],
+            },
+          ],
+          onClear: () => {
+            setQ("");
+            setReasonFilter("ALL");
+            setStatusFilter("ALL");
+            setPage(1);
+          },
+          canClear:
+            Boolean(q) || reasonFilter !== "ALL" || statusFilter !== "ALL",
         }}
-        selects={[
-          {
-            key: "reason",
-            ariaLabel: "Filter by waiver reason",
-            widthClass: "w-full sm:w-[190px]",
-            placeholder: "All reasons",
-            value: reasonFilter,
-            onChange: (val) => {
-              setReasonFilter(val);
-              setPage(1);
-            },
-            options: [
-              { value: "ALL", label: "All reasons" },
-              { value: "REFERRED_EXPERT", label: "Referred Expert" },
-              { value: "REFERRING_EXPERT", label: "Referring Expert" },
-              { value: "FOUNDING_EXPERT", label: "Founding Expert" },
-            ],
-          },
-          {
-            key: "status",
-            ariaLabel: "Filter by waiver status",
-            widthClass: "w-full sm:w-[160px]",
-            placeholder: "All statuses",
-            value: statusFilter,
-            onChange: (val) => {
-              setStatusFilter(val);
-              setPage(1);
-            },
-            options: [
-              { value: "ALL", label: "All statuses" },
-              { value: "ACTIVE", label: "Active" },
-              { value: "EXHAUSTED", label: "Exhausted" },
-              { value: "EXPIRED", label: "Expired" },
-            ],
-          },
-        ]}
         isLoading={waiversQuery.isLoading}
         loadingLabel="Loading fee waivers…"
         emptyIcon={Sparkles}
