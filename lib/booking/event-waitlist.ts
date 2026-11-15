@@ -260,6 +260,8 @@ async function readEventByAppointment(
 ): Promise<EventView | null> {
   const row = await tx.appointment.findUnique({
     where: { id: appointmentId },
+    // Runs inside every seat release: one joined statement, not eleven.
+    relationLoadStrategy: "join",
     select: appointmentEventSelect(now),
   });
   return row ? viewOfAppointment(row) : null;

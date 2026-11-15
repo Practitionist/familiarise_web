@@ -168,12 +168,12 @@ sequenceDiagram
 
 ### Trial Sessions
 
-| Workflow ID               | Trigger Function                                 | Recipients   | Payload Type   |
-| ------------------------- | ------------------------------------------------ | ------------ | -------------- |
-| `trial-session-requested` | None: a trial never waits on the expert          | —            | `TrialPayload` |
-| `trial-session-scheduled` | `notifyTrialScheduled(consulteeUserId, payload)` | Consultee    | `TrialPayload` |
-| `trial-session-completed` | `notifyTrialCompleted(userIds[], payload)`       | Both parties | `TrialPayload` |
-| `trial-session-cancelled` | `notifyTrialCancelled(userIds[], payload)`       | Both parties | `TrialPayload` |
+| Workflow ID               | Trigger Function                                                                                      | Recipients   | Payload Type   |
+| ------------------------- | ----------------------------------------------------------------------------------------------------- | ------------ | -------------- |
+| `trial-session-requested` | None: a trial never waits on the expert                                                               | —            | `TrialPayload` |
+| `trial-session-scheduled` | `prepareTrialScheduledBells([...])` before the transaction, `stagePreparedBells(tx, bells)` inside it | Both parties | `TrialPayload` |
+| `trial-session-completed` | `notifyTrialCompleted(userIds[], payload)`                                                            | Both parties | `TrialPayload` |
+| `trial-session-cancelled` | `notifyTrialCancelled(userIds[], payload)`                                                            | Both parties | `TrialPayload` |
 
 **TrialPayload**: `consultantName`, `consulteeName`, `planTitle`, `dateTime?` (recipient-zone), `dateTimeIso?`, `status` (label), `statusCode?`, `dashboardUrl`. Callers pass `TrialInput`.
 

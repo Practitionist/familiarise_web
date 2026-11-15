@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import prisma, { type Tx } from "@/lib/prisma";
 import { EMAIL_CATEGORY_COLUMN } from "@/lib/email/preferences";
+import { resolveNotificationTimezone } from "./humanize";
 import { templateFor } from "./templates";
 import type { NovuWorkflowId, PreferenceCategory } from "./templates/types";
 
@@ -101,6 +102,29 @@ export async function resolveRecipientBellPolicy(
     if (opts?.tx) throw err;
     return { allowedRecipients: recipients };
   }
+}
+
+/**
+ * {@link resolveRecipientBellPolicy} and each allowed recipient's zone in one
+ * joined read, for a caller that stages its bells later inside a transaction.
+ */
+export async function bellRecipientZones(
+  workflowId: NovuWorkflowId,
+  recipients: string[],
+): Promise<Map<string, string>> {
+  if (recipients.length === 0) return new Map();
+  const rows = await prisma.user.findMany({
+    where: { id: { in: recipients } },
+    relationLoadStrategy: "join",
+    select: { ...BELL_POLICY_SELECT, timezone: true },
+  });
+  const zoneOf = new Map(rows.map((row) => [row.id, row.timezone]));
+  return new Map(
+    allowedRecipientsOf(workflowId, recipients, rows).map((id) => [
+      id,
+      resolveNotificationTimezone(zoneOf.get(id) ?? null),
+    ]),
+  );
 }
 
 /**

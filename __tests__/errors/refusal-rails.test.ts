@@ -60,9 +60,18 @@ describe("apiError with a Refusal", () => {
     );
   });
 
-  it("still answers 500 and captures a plain Error", async () => {
-    const res = apiError({ tag: "[Test]", error: new Error("boom") });
+  it("still answers 500 and captures a plain Error once, without its message", async () => {
+    captureException.mockReturnValueOnce("abcdef0123456789abcdef0123456789");
+    const res = apiError({
+      tag: "[Test]",
+      error: new Error("Invalid `prisma.trial.create()` invocation: boom"),
+    });
     expect(res.status).toBe(500);
+    await expect(res.json()).resolves.toEqual({
+      error: "Something went wrong. Please try again. Reference: abcdef01.",
+      errorType: "UNKNOWN_ERROR",
+      errorId: "abcdef0123456789abcdef0123456789",
+    });
     expect(captureException).toHaveBeenCalledTimes(1);
     expect(captureException.mock.calls[0][1]).not.toMatchObject({
       level: "info",

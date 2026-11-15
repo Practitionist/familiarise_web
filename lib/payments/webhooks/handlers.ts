@@ -2750,6 +2750,7 @@ async function stageTrialPaidAfterStartNotice(
         status: TrialStatus.CANCELLED,
         dashboardUrl,
       },
+      `trial-cancelled:${trialId}`,
       { tx, deferAttempt: true },
     );
     const emails = await stageTrialLifecycleEmail(tx, {

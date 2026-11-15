@@ -625,6 +625,52 @@ async function resolveOwnerlessOrgSplit(
   };
 }
 
+/** The payment and every plan owner an earnings split can need. */
+export const EARNINGS_PAYMENT_INCLUDE = {
+  appointment: {
+    include: {
+      consultation: {
+        include: {
+          consultationPlan: {
+            include: { consultantProfile: true },
+          },
+        },
+      },
+      subscription: {
+        include: {
+          subscriptionPlan: {
+            include: { consultantProfile: true },
+          },
+        },
+      },
+      webinar: {
+        select: {
+          id: true,
+          webinarPlanId: true,
+          webinarPlan: {
+            include: { consultantProfile: true },
+          },
+        },
+      },
+      class: {
+        select: {
+          id: true,
+          classPlanId: true,
+          classPlan: {
+            include: { consultantProfile: true },
+          },
+        },
+      },
+      trial: {
+        select: {
+          id: true,
+          subscriptionPlan: { include: { consultantProfile: true } },
+        },
+      },
+    },
+  },
+} satisfies Prisma.PaymentInclude;
+
 export async function resolvePaymentForEarnings(
   where: Prisma.PaymentWhereUniqueInput,
   rawAppointmentType: string,
@@ -632,50 +678,9 @@ export async function resolvePaymentForEarnings(
 ): Promise<ResolvedEarningsPayment | null> {
   const paymentWithAppointment = await db.payment.findUnique({
     where,
-    include: {
-      appointment: {
-        include: {
-          consultation: {
-            include: {
-              consultationPlan: {
-                include: { consultantProfile: true },
-              },
-            },
-          },
-          subscription: {
-            include: {
-              subscriptionPlan: {
-                include: { consultantProfile: true },
-              },
-            },
-          },
-          webinar: {
-            select: {
-              id: true,
-              webinarPlanId: true,
-              webinarPlan: {
-                include: { consultantProfile: true },
-              },
-            },
-          },
-          class: {
-            select: {
-              id: true,
-              classPlanId: true,
-              classPlan: {
-                include: { consultantProfile: true },
-              },
-            },
-          },
-          trial: {
-            select: {
-              id: true,
-              subscriptionPlan: { include: { consultantProfile: true } },
-            },
-          },
-        },
-      },
-    },
+    // Six optional branches: one joined statement instead of one per relation.
+    relationLoadStrategy: "join",
+    include: EARNINGS_PAYMENT_INCLUDE,
   });
 
   if (!paymentWithAppointment?.appointment) return null;

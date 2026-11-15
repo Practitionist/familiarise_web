@@ -60,7 +60,6 @@ jest.mock("../../lib/rate-limit", () => ({
 }));
 jest.mock("../../lib/novu", () => ({
   notifyTrialCancelled: jest.fn(async () => []),
-  notifyTrialScheduled: jest.fn(),
   notifyTrialCompleted: jest.fn(),
 }));
 jest.mock("../../lib/email/senders/booking", () => ({

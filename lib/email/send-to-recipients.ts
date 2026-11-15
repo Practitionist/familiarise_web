@@ -11,9 +11,12 @@ import prisma, { type Tx } from "@/lib/prisma";
 import {
   attempt,
   deliver,
+  screenForStaging,
   stage,
   stageRenderFailure,
+  stageScreened,
   type RenderedEmail,
+  type ScreenedEmail,
   type StagedEmail,
   type UnrenderedEmail,
 } from "./deliver";
@@ -184,6 +187,40 @@ export async function stagePreparedEmails(
     );
   }
   return list;
+}
+
+/** Prepared messages with their hold and suppression verdicts, read before a transaction. */
+export interface ScreenedRecipientEmails {
+  prepared: PreparedRecipientEmails;
+  screened: ScreenedEmail[];
+}
+
+/** The reads {@link stagePreparedEmails} makes inside its transaction, made before it in one query. */
+export async function screenPreparedEmails(
+  prepared: PreparedRecipientEmails,
+): Promise<ScreenedRecipientEmails> {
+  return {
+    prepared,
+    screened: await screenForStaging(prepared.messages, prepared.emailType),
+  };
+}
+
+/** Stages screened messages in one insert, and a trace row per traced render failure, inside `tx`. */
+export async function stageScreenedEmails(
+  tx: Pick<Tx, "failedEmail">,
+  { prepared, screened }: ScreenedRecipientEmails,
+  entityRef: string,
+): Promise<StagedRecipientEmail[]> {
+  const staged = await stageScreened(
+    tx,
+    screened,
+    prepared.emailType,
+    entityRef,
+  );
+  for (const unrendered of prepared.unrendered ?? []) {
+    await stageRenderFailure(tx, unrendered, prepared.emailType, entityRef);
+  }
+  return screened.map(({ message }, i) => ({ staged: staged[i], message }));
 }
 
 async function traceSendRenderFailure(

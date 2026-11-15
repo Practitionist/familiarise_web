@@ -175,6 +175,9 @@ export async function resolveBookingRefundContext(
     // #1554 — one wrapper per booking: this is the row checkout created, so
     // it carries the payment and the frozen terms.
     where: { ...bookingAppointmentFilter(ref), deletedAt: null },
+    // The refund quote's inputs in one joined statement; "query" loads each
+    // relation separately. The selected columns and their values are unchanged.
+    relationLoadStrategy: "join",
     select: {
       id: true,
       cancellationPolicy: POLICY_TERMS_INCLUDE,
