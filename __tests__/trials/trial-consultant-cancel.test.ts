@@ -65,6 +65,7 @@ jest.mock("../../lib/novu", () => ({
 }));
 jest.mock("../../lib/email/senders/booking", () => ({
   stageTrialLifecycleEmail: jest.fn(async () => []),
+  prepareTrialLifecycleEmail: jest.fn(async () => null),
   prepareTrialScheduledEmail: jest.fn(),
 }));
 jest.mock("../../lib/novu/stage-then-attempt", () => ({
@@ -277,6 +278,33 @@ describe("the expert cancels a scheduled trial", () => {
     expect(res.status).toBe(409);
     expect((await res.json()).code).toBe("SESSION_IN_PROGRESS");
     expect(transitionTrial).not.toHaveBeenCalled();
+  });
+});
+
+describe("the cancel notices commit with the cancel", () => {
+  it("a staging failure rolls the cancel back instead of losing the notice", async () => {
+    const { notifyTrialCancelled } = jest.requireMock("../../lib/novu") as {
+      notifyTrialCancelled: jest.Mock;
+    };
+    notifyTrialCancelled.mockRejectedValueOnce(new Error("outbox down"));
+
+    const res = await del({ confirmedRefundPaise: 50_000 });
+
+    expect(res.status).toBe(500);
+    expect(refundCancelledTrial).not.toHaveBeenCalled();
+  });
+
+  it("stages the notices on the cancel transaction", async () => {
+    const { notifyTrialCancelled } = jest.requireMock("../../lib/novu") as {
+      notifyTrialCancelled: jest.Mock;
+    };
+    await del({ confirmedRefundPaise: 50_000 });
+
+    expect(notifyTrialCancelled.mock.calls[0][2]).toMatchObject({
+      tx: expect.anything(),
+      deferAttempt: true,
+      required: { kind: "CANCELLED_BY_HOST", recipients: ["u-learner"] },
+    });
   });
 });
 

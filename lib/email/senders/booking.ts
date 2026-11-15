@@ -51,6 +51,7 @@ import {
 import {
   absolute,
   defineBudgetedEmailSender,
+  defineLifecyclePreparer,
   defineLifecycleStager,
   greet,
   money,
@@ -1007,6 +1008,10 @@ function buildTrialLifecycleEmail(args: TrialLifecycleEmailArgs): {
 
 export const stageTrialLifecycleEmail =
   defineLifecycleStager<TrialLifecycleEmailArgs>(buildTrialLifecycleEmail);
+
+/** Renders a trial lifecycle email before the transaction that stages it. */
+export const prepareTrialLifecycleEmail =
+  defineLifecyclePreparer<TrialLifecycleEmailArgs>(buildTrialLifecycleEmail);
 
 export interface SubscriptionLifecycleEmailArgs {
   subscriptionId: string;
