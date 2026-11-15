@@ -36,7 +36,7 @@ export function trialAndSubscriptionSubject(
 ): string {
   switch (args.kind) {
     case "TRIAL_COMPLETED":
-      return `Trial completed: ${args.planTitle}`;
+      return `Continue with ${args.consultantName ?? "your expert"}: ${args.planTitle}`;
     case "TRIAL_CANCELLED":
       return `Trial cancelled: ${args.planTitle}`;
     case "SUBSCRIPTION_STARTED":
@@ -109,7 +109,7 @@ function renderTrialAndSubscriptionBody(args: {
           has concluded.{" "}
           {isConsultantRecipient
             ? "Open your dashboard to review session notes or follow up with your client."
-            : "Open your dashboard to review notes or continue with a full plan."}
+            : `Pick a plan to keep working with ${consultantName ?? "your expert"}.`}
         </Text>
       );
     }
@@ -196,7 +196,9 @@ export function TrialAndSubscriptionEmail({
 
       <Section style={buttonContainer}>
         <Button style={button} href={dashboardUrl}>
-          Open dashboard
+          {kind === "TRIAL_COMPLETED" && recipientRole !== "consultant"
+            ? `Continue with ${consultantName ?? "your expert"}`
+            : "Open dashboard"}
         </Button>
       </Section>
     </EmailLayout>

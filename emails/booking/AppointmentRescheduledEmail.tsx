@@ -25,6 +25,9 @@ export interface AppointmentRescheduledEmailProps {
   leaveByText?: string;
   /** MOVED: the recipient already holds another session at the new time. */
   clash?: boolean;
+  /** A series move: the listed sessions (at most ten, recipient's zone) and how many more moved. */
+  moves?: { fromText: string; toText: string }[];
+  moreMoves?: number;
   dashboardUrl: string;
   unsubscribeUrl?: string | null;
 }
@@ -53,7 +56,7 @@ function informationalBody(props: AppointmentRescheduledEmailProps): string {
     case "EXPIRED":
       return `The proposed new time for your ${appointmentType} expired, so your original time stands${oldStartsAtText ? `: ${oldStartsAtText}` : ""}.`;
     default:
-      return `The reschedule request for your ${appointmentType} was withdrawn${stays}.`;
+      return `The proposed new time for your ${appointmentType} was withdrawn, so your original time stands${oldStartsAtText ? `: ${oldStartsAtText}` : ""}.`;
   }
 }
 
@@ -101,8 +104,32 @@ export default function AppointmentRescheduledEmail(
             ) : (
               "before it lapses"
             )}
-            . If nobody responds in time the proposal lapses and the session
-            stays unscheduled until a new time is agreed.
+            . If nobody answers in time, the proposal lapses and the booking
+            goes back to its original time.
+          </Text>
+        </>
+      ) : outcome === "MOVED" && props.moves && props.moves.length > 1 ? (
+        <>
+          <Text style={paragraph}>
+            These sessions of your {appointmentType} moved:
+          </Text>
+          {props.moves.map((move) => (
+            <Text key={`${move.fromText}|${move.toText}`} style={paragraph}>
+              {move.fromText} → <strong>{move.toText}</strong>
+            </Text>
+          ))}
+          {props.moreMoves ? (
+            <Text style={paragraph}>and {props.moreMoves} more.</Text>
+          ) : null}
+          <Text style={paragraph}>
+            {[
+              props.clash ? "You already have a session at a new time." : "",
+              props.leaveByText
+                ? `Keep your seat — nothing to do. Can't make it? Leave with a full refund until ${props.leaveByText}.`
+                : "",
+            ]
+              .filter(Boolean)
+              .join(" ") || "Nothing else changes."}
           </Text>
         </>
       ) : (

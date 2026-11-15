@@ -20,6 +20,7 @@ import {
 import { isExpectedBellDeadLetter } from "@/lib/backoffice/queue-predicates";
 import { nextRetryAt } from "@/lib/retry/backoff";
 import { getNovuClient, isNovuConfigured } from "./client";
+import { requiredNoticeOf } from "@/lib/notifications/required-notices";
 import { currentBellRecipients, unerasedRecipients } from "./policy";
 import { toWire } from "./templates";
 import type { NovuWorkflowId } from "./templates/types";
@@ -845,6 +846,7 @@ export async function attemptTrigger(
       recipients = await currentBellRecipients(
         row.workflowId as NovuWorkflowId,
         row.recipients,
+        { required: requiredNoticeOf(row.payload) !== null },
       );
     } catch (error) {
       return { success: false, error: asError(error), outcome: "PENDING" };

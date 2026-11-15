@@ -14,6 +14,10 @@
  * the paid path needs.
  */
 
+import {
+  type CancelSide,
+  trialCancelRefundReason,
+} from "@/lib/payments/operations/refund-cause";
 import * as Sentry from "@sentry/nextjs";
 import { transitionParticipant } from "@/lib/booking/participants";
 import { transitionOccurrenceCompletion } from "@/lib/booking/transitions";
@@ -57,6 +61,8 @@ export type TrialRefundOutcome = {
   rail?: FundingRail | null;
   /** Set when the gateway leg failed; the cancellation still stands. */
   failed?: boolean;
+  /** The gateway is still settling the refund: notices say it has started. */
+  pending?: boolean;
 };
 
 /**
@@ -351,11 +357,10 @@ export function assertTrialQuoteConfirmed(
 export function trialRefundOwed(args: {
   trialId: string;
   quote: TrialRefundQuote | null;
-  isConsultantInitiated: boolean;
+  side: CancelSide;
 }): RefundOwedMarker | null {
-  const { quote } = args;
+  const { quote, side } = args;
   if (!quote) return null;
-  const side = args.isConsultantInitiated ? "consultant" : "consultee";
   // The credits rail restores in full or not at all, so a credit
   // restore carries no amount; a 0% tier owes nothing on any rail.
   if (quote.creditRestoresInFull) {
@@ -363,7 +368,7 @@ export function trialRefundOwed(args: {
       paymentId: quote.paymentId,
       amountPaise: null,
       key: `trial-cancel:${args.trialId}:${quote.paymentId}`,
-      reason: `trial cancellation (credit-funded trial, credit restored in full from the ${quote.tierRefundPct}% tier, ${side}-initiated)`,
+      reason: trialCancelRefundReason(side, quote),
     };
   }
   if (quote.estimatedRefundPaise <= 0) return null;
@@ -371,7 +376,7 @@ export function trialRefundOwed(args: {
     paymentId: quote.paymentId,
     amountPaise: quote.estimatedRefundPaise,
     key: `trial-cancel:${args.trialId}:${quote.paymentId}`,
-    reason: `trial cancellation (${quote.tierRefundPct}% per booking-time policy, ${side}-initiated)`,
+    reason: trialCancelRefundReason(side, quote),
   };
 }
 
@@ -410,6 +415,7 @@ export async function refundCancelledTrial(args: {
       // A credit restore's Refund row is ₹0 by construction; `rail` says why.
       amountRefundedPaise: outcome.refund.amountRefundedPaise,
       rail: outcome.refund.rail ?? quote.fundingRail,
+      ...(outcome.refund.status === "PENDING" ? { pending: true } : {}),
     };
   }
   if (outcome.kind === "settled") {

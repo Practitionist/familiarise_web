@@ -127,9 +127,9 @@ jest.mock("../../lib/novu/outbox", () => ({
 }));
 jest.mock("../../lib/email", () => ({
   EMAIL_BUDGET_MS: { JOB: 1 },
-  sendUnscheduledSubscriptionNudgeEmail: jest
+  stageUnscheduledSubscriptionNudgeEmail: jest
     .fn()
-    .mockResolvedValue({ success: true }),
+    .mockResolvedValue({ staged: [], renderFailures: 0 }),
 }));
 const stageNoticesForFreedWindows = jest.fn(
   async (_tx: unknown, _host: string, _rows: Array<{ id: string }>) => {},

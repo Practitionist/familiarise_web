@@ -18,6 +18,12 @@ import {
 } from "./outbox";
 import { bellRecipientZones, resolveRecipientBellPolicy } from "./policy";
 import type { NovuWorkflowId } from "./templates/types";
+import { shownMoves } from "@/lib/booking/session-moves";
+import {
+  REQUIRED_NOTICE_FIELD,
+  type RequiredNoticeKind,
+  type RequiredOverride,
+} from "@/lib/notifications/required-notices";
 import {
   NOVU_WORKFLOWS,
   type AccountBannedPayload,
@@ -96,6 +102,8 @@ export interface TriggerOptions {
   dedupeKey?: string;
   /** Stage the outbox row and return without attempting inline delivery. */
   deferAttempt?: boolean;
+  /** These recipients get this send whatever their switches say; the rest stay gated. */
+  required?: RequiredOverride;
 }
 
 export { resolveRecipientBellPolicy } from "./policy";
@@ -113,15 +121,23 @@ function reportNotConfigured(workflowId: string): void {
 async function stageAndAttempt(
   args: Omit<StageTriggerArgs, "tx" | "entityRef">,
   opts: TriggerOptions | undefined,
+  requiredKind: RequiredNoticeKind | null = null,
 ): Promise<TriggerResult> {
   const policy = await resolveRecipientBellPolicy(
     args.workflowId,
     args.recipients,
-    opts,
+    { tx: opts?.tx, required: requiredKind !== null },
   );
   if (policy.allowedRecipients.length === 0) return { success: true };
-  const effectiveArgs = { ...args, recipients: policy.allowedRecipients };
-  const staged = await stageTrigger({ ...effectiveArgs, ...opts });
+  const effectiveArgs = {
+    ...args,
+    recipients: policy.allowedRecipients,
+    payload: requiredKind
+      ? { ...args.payload, [REQUIRED_NOTICE_FIELD]: requiredKind }
+      : args.payload,
+  };
+  const { required: _required, ...stageOpts } = opts ?? {};
+  const staged = await stageTrigger({ ...effectiveArgs, ...stageOpts });
   if (!isNovuConfigured()) {
     reportNotConfigured(effectiveArgs.workflowId);
     return { success: false, error: "Novu not configured" };
@@ -133,6 +149,19 @@ async function stageAndAttempt(
   return attemptTrigger(staged);
 }
 
+/** The recipients split into the required group (with its kind) and the gated rest. */
+function splitRequired(
+  userIds: string[],
+  required: RequiredOverride | undefined,
+): Array<{ ids: string[]; kind: RequiredNoticeKind | null }> {
+  if (!required) return [{ ids: userIds, kind: null }];
+  const listed = new Set(required.recipients);
+  return [
+    { ids: userIds.filter((id) => listed.has(id)), kind: required.kind },
+    { ids: userIds.filter((id) => !listed.has(id)), kind: null },
+  ].filter((group) => group.ids.length > 0);
+}
+
 export async function triggerWorkflow<T extends NovuPayload>(
   workflowId: NovuWorkflowId,
   subscriberId: string,
@@ -140,6 +169,7 @@ export async function triggerWorkflow<T extends NovuPayload>(
   dedupeKey?: string,
   opts?: TriggerOptions,
 ): Promise<TriggerResult> {
+  const [group] = splitRequired([subscriberId], opts?.required);
   return stageAndAttempt(
     {
       workflowId,
@@ -149,6 +179,7 @@ export async function triggerWorkflow<T extends NovuPayload>(
       dedupeKey,
     },
     opts,
+    group?.kind ?? null,
   );
 }
 
@@ -160,20 +191,24 @@ export async function triggerForMultiple<T extends NovuPayload>(
   opts?: TriggerOptions,
 ): Promise<TriggerResult[]> {
   if (userIds.length === 0) return [];
-  if (userIds.length === 1)
-    return [
-      await triggerWorkflow(workflowId, userIds[0], payload, dedupeKey, opts),
-    ];
-
   const BATCH_SIZE = 100;
   const results: TriggerResult[] = [];
-  for (let i = 0; i < userIds.length; i += BATCH_SIZE) {
-    const batch = userIds.slice(i, i + BATCH_SIZE);
-    const result = await stageAndAttempt(
-      { workflowId, kind: "MULTI", recipients: batch, payload, dedupeKey },
-      opts,
-    );
-    results.push(...batch.map(() => result));
+  for (const { ids, kind } of splitRequired(userIds, opts?.required)) {
+    for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+      const batch = ids.slice(i, i + BATCH_SIZE);
+      const result = await stageAndAttempt(
+        {
+          workflowId,
+          kind: batch.length === 1 ? "SINGLE" : "MULTI",
+          recipients: batch,
+          payload,
+          dedupeKey,
+        },
+        opts,
+        kind,
+      );
+      results.push(...batch.map(() => result));
+    }
   }
   return results;
 }
@@ -379,6 +414,8 @@ function rescheduledWire(
     oldDateTime: rawOld,
     newDateTime: rawNew,
     leaveBy: rawLeaveBy,
+    respondBy: rawRespondBy,
+    moves,
     clash,
     ...base
   } = input;
@@ -388,6 +425,14 @@ function rescheduledWire(
   const newDateTimeIso = hasDestination ? rawNew : undefined;
   const newDateTime = formatNotificationDateTime(newDateTimeIso, timezone);
   const leaveBy = formatNotificationDateTime(rawLeaveBy, timezone);
+  const respondBy =
+    input.outcome === "PROPOSED"
+      ? formatNotificationDateTime(rawRespondBy, timezone)
+      : undefined;
+  const movesText =
+    input.outcome === "MOVED" && moves && moves.length > 1
+      ? sessionMovesText(moves, timezone)
+      : undefined;
   return {
     ...appointmentWire(base, timezone),
     outcome: input.outcome,
@@ -395,8 +440,23 @@ function rescheduledWire(
     newDateTime: newDateTime ?? RESCHEDULE_AWAITING_TIME[input.outcome],
     ...(newDateTime ? { newDateTimeIso } : {}),
     ...(leaveBy ? { leaveBy, leaveByIso: rawLeaveBy } : {}),
+    ...(respondBy ? { respondBy, respondByIso: rawRespondBy } : {}),
+    ...(movesText ? { movesText, movedCount: moves?.length } : {}),
     ...(clash ? { clash } : {}),
   };
+}
+
+/** "old → new" per moved session in `timezone`, at most ten, then "and N more". */
+export function sessionMovesText(
+  moves: ReadonlyArray<{ from: string; to: string }>,
+  timezone: string,
+): string {
+  const { shown, more } = shownMoves(moves);
+  const rows = shown.map(
+    ({ from, to }) =>
+      `${formatNotificationDateTime(from, timezone) ?? from} → ${formatNotificationDateTime(to, timezone) ?? to}`,
+  );
+  return more > 0 ? `${rows.join("; ")}; and ${more} more` : rows.join("; ");
 }
 
 function trialWire(input: TrialInput, timezone: string): TrialPayload {
@@ -414,8 +474,15 @@ function bookingRequestWire(
   input: BookingRequestInput,
   timezone: string,
 ): BookingRequestPayload {
-  const { requestedDateTime: rawRequested, ...rest } = input;
+  const {
+    requestedDateTime: rawRequested,
+    refundAt: rawRefundAt,
+    expiresAt: rawExpiresAt,
+    ...rest
+  } = input;
   const requestedDateTime = formatNotificationDateTime(rawRequested, timezone);
+  const refundAt = formatNotificationDateTime(rawRefundAt, timezone);
+  const expiresAt = formatNotificationDateTime(rawExpiresAt, timezone);
   return {
     ...rest,
     appointmentType: appointmentTypeLabel(input.appointmentType),
@@ -423,6 +490,8 @@ function bookingRequestWire(
     ...(requestedDateTime
       ? { requestedDateTime, requestedDateTimeIso: rawRequested }
       : {}),
+    ...(refundAt ? { refundAt, refundAtIso: rawRefundAt } : {}),
+    ...(expiresAt ? { expiresAt, expiresAtIso: rawExpiresAt } : {}),
   };
 }
 
@@ -686,6 +755,9 @@ export const notifyNewBookingRequest = defineZonedSingleNotifier(
 );
 export const notifyUnscheduledSubscriptionNudge = defineZonedSingleNotifier<
   BookingRequestInput & { nudgeHours: number }
+>(W.NEW_BOOKING_REQUEST, bookingRequestWire);
+export const notifyRequestExpiringSoon = defineZonedSingleNotifier<
+  BookingRequestInput & { expiresAt: string }
 >(W.NEW_BOOKING_REQUEST, bookingRequestWire);
 export const notifyUnplacedWeekNudge = defineZonedSingleNotifier<
   BookingRequestInput & { weekSummary: string }

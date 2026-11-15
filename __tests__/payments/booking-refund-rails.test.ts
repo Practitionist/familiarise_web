@@ -41,6 +41,13 @@ const mockFindDedupedRefund = jest.fn(
 /** Revocation rows a transaction wrote, kept only once its callback returns. */
 const mockCommittedRetryRows: unknown[] = [];
 const mockTxRetryCreateMany = jest.fn();
+/** The owed marker a hand refund reads inside its transaction. */
+const mockTxPaymentFindUnique = jest.fn(async (..._a: unknown[]) => ({
+  refundOwedKey: null as string | null,
+  refundOwedPaise: null as bigint | null,
+  refundOwedReason: null as string | null,
+  refundOwedAttempts: 0,
+}));
 const mockGlobalRetryWrite = jest.fn();
 
 jest.mock("../../lib/prisma", () => ({
@@ -58,11 +65,16 @@ jest.mock("../../lib/prisma", () => ({
     $transaction: async (fn: (tx: unknown) => Promise<unknown>) => {
       const staged: unknown[] = [];
       const out = await fn({
+        payment: {
+          findUnique: (...a: unknown[]) => mockTxPaymentFindUnique(...a),
+          updateMany: async () => ({ count: 1 }),
+        },
         appointmentParticipant: {
           updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         },
         refund: {
           findMany: (...a: unknown[]) => mockRefundFindMany(...a),
+          findUnique: async () => null,
           create: (...a: unknown[]) => mockRefundCreate(...a),
           update: (...a: unknown[]) => mockRefundUpdate(...a),
           updateMany: async (...a: unknown[]) => {
@@ -158,6 +170,7 @@ import {
   restampRefundedSeats,
 } from "../../lib/payments/operations/booking-refund";
 import { isInternalFundedIntent } from "../../lib/payments/funding-rail";
+import { cancelRefundReason } from "../../lib/payments/operations/refund-cause";
 
 const PAYMENT_ID = "pay-1";
 
@@ -446,6 +459,33 @@ describe("the internal rail tells the payer (#1589 N-P0-01)", () => {
     expect(mockStageRefundProcessedEmail).toHaveBeenCalledTimes(1);
     expect(mockAttemptTrigger).toHaveBeenCalledWith({ id: "bell-1" });
     expect(mockAttemptStagedEmails).toHaveBeenCalledTimes(1);
+  });
+
+  it("a hand refund that settles a host cancel's owed refund announces it as required", async () => {
+    mockPaymentFindUnique.mockResolvedValue({
+      ...orgFundedPayment("org_wallet_1_a"),
+      userId: "user-1",
+      organizationId: "org-1",
+    });
+    mockTxPaymentFindUnique.mockResolvedValueOnce({
+      refundOwedKey: "cancel:appt-1:pay-1",
+      refundOwedPaise: null,
+      refundOwedReason: cancelRefundReason(100, "consultant"),
+      refundOwedAttempts: 0,
+    });
+
+    await refundBookingPayment({
+      paymentId: PAYMENT_ID,
+      reason: "support refund",
+      initiatedByUserId: "ops-1",
+      settlesOwedByHand: true,
+    });
+
+    const [, , opts] = mockNotifyRefundProcessed.mock.calls[0];
+    expect(opts.required).toEqual({
+      kind: "REFUND_FROM_HOST_CANCEL",
+      recipients: ["user-1"],
+    });
   });
 
   it("a partial refund tells the payer the requested amount, not the payment's", async () => {

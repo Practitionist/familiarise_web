@@ -296,6 +296,8 @@ describe("refundRejectedRequest", () => {
     expect(mockNotifyRefundProcessed).toHaveBeenCalledWith(
       "user-1",
       expect.objectContaining({ amount: 100_000, currency: "INR" }),
+      // The expert declined the buyer's request: required for the payer.
+      { required: { kind: "REQUEST_DECLINED", recipients: ["user-1"] } },
     );
   });
 
@@ -350,6 +352,7 @@ describe("refundRejectedRequest", () => {
     expect(mockNotifyRefundProcessed).toHaveBeenCalledWith(
       "user-1",
       expect.objectContaining({ amount: 90_000 }),
+      { required: { kind: "REQUEST_DECLINED", recipients: ["user-1"] } },
     );
   });
 

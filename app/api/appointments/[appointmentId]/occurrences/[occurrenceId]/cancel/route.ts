@@ -16,8 +16,10 @@ export async function POST(
   return classSessionRoute(
     params,
     { hostOnly: true, op: "class-session-cancel" },
-    async ({ occurrenceId }, hosted) => {
-      return NextResponse.json(await cancelClassSession(hosted, occurrenceId));
+    async ({ actor, occurrenceId }, hosted) => {
+      return NextResponse.json(
+        await cancelClassSession(hosted, occurrenceId, actor.userId),
+      );
     },
   );
 }

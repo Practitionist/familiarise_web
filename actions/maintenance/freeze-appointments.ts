@@ -1,5 +1,6 @@
 /** Explicitly confirmed whole-booking cancellation with durable refund and notice obligations. */
 
+import { STAFF_CANCEL_REFUND_REASON } from "@/lib/payments/operations/refund-cause";
 import { Prisma } from "@prisma/client";
 
 import { notifyAppointmentCancelled } from "@/lib/novu/service";
@@ -461,7 +462,7 @@ function refundsOwed(
       paymentId: p.id,
       amountPaise: null,
       key: `freeze:${appointmentId}:${p.id}`,
-      reason: "Scheduled platform maintenance",
+      reason: STAFF_CANCEL_REFUND_REASON.MAINTENANCE,
     }));
 }
 
@@ -536,14 +537,17 @@ async function freezeOneAppointment(tx: Tx, ctx: FreezeContext) {
   for (const trialId of effects.trialsToTombstone)
     await softCancelTrialAppointmentInTx(tx, trialId);
   for (const { userIds, data } of effects.notifications) {
+    // A maintenance freeze is staff ending the booking: every party is told whatever their switches say.
     await notifyAppointmentCancelled(userIds, data, {
       tx,
       deferAttempt: true,
       dedupeKey: `maintenance-cancel:${ctx.appointment.id}`,
+      required: { kind: "CANCELLED_BY_STAFF", recipients: userIds },
     });
     await stageAppointmentCancelledEmail(tx, {
       appointmentId: ctx.appointment.id,
       userIds,
+      requiredFor: userIds,
       startsAt: data.dateTime ? new Date(data.dateTime) : undefined,
       cancelledBy: "Familiarise",
       reason: data.reason,
