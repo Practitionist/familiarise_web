@@ -12,6 +12,7 @@ import { Check, ChevronDown } from "lucide-react";
 
 import { NotifyWhenFreeButton } from "@/components/booking/NotifyWhenFreeButton";
 import { Switch } from "@/components/ui/switch";
+import { useWidthStep } from "@/hooks/use-width-step";
 import { useNowTick } from "@/hooks/use-now-tick";
 import { BACKUP_INTEREST_CAP } from "@/lib/booking/interest/backup-interest-list";
 import {
@@ -92,6 +93,21 @@ export const TIME_JUST_TAKEN_MESSAGE =
 
 const PERIODS: readonly DayPeriod[] = ["Morning", "Afternoon", "Evening"];
 
+/** The picker's own width that fits the 22rem month, the gap and a two-column times pane in one row. */
+const SIDE_BY_SIDE_STEPS = [700] as const;
+/** The times list width that fits 2..6 columns of 7.5rem buttons with 0.5rem gaps. */
+const TIME_COLUMN_STEPS = [248, 376, 504, 632, 760] as const;
+const TIME_COLUMNS = [
+  "grid-cols-1",
+  "grid-cols-2",
+  "grid-cols-3",
+  "grid-cols-4",
+  "grid-cols-5",
+  "grid-cols-6",
+] as const;
+/** Stacked, the times share the month's width, so they stop at four columns. */
+const MAX_TIME_COLUMNS = { stacked: 4, sideBySide: 6 } as const;
+
 const DAY_HEADING = new Intl.DateTimeFormat(DISPLAY_LOCALE, {
   weekday: "long",
   day: "numeric",
@@ -147,9 +163,10 @@ const VISIBLE_TAG: Partial<
 
 /**
  * Pick one time for one session: a month on the left, the chosen day's times
- * on the right (stacked below `md`). Controlled; the caller owns the button
- * that acts on the pick. A pick the latest read shows gone is cleared and
- * the pane says so.
+ * on the right, stacked when the picker itself is under 700 px wide; side by
+ * side the month stops at 30rem and the times take the rest. Controlled;
+ * the caller owns the button that acts on the pick. A pick the latest read
+ * shows gone is cleared and the pane says so.
  */
 export function SingleTimePicker({
   consultantId,
@@ -172,6 +189,28 @@ export function SingleTimePicker({
   className,
 }: Readonly<SingleTimePickerProps>) {
   const tokens = PICKER_TOKENS[theme];
+  const [measureRef, rootStep] =
+    useWidthStep<HTMLDivElement>(SIDE_BY_SIDE_STEPS);
+  const sideBySide = rootStep > 0;
+  const [timesRef, timesStep] = useWidthStep<HTMLDivElement>(TIME_COLUMN_STEPS);
+  const columnCount = Math.min(
+    timesStep + 1,
+    MAX_TIME_COLUMNS[sideBySide ? "sideBySide" : "stacked"],
+  );
+  const timeColumns = TIME_COLUMNS[columnCount - 1];
+  const rootClass = cn(
+    "grid w-full min-w-0",
+    sideBySide
+      ? "grid-cols-[minmax(22rem,min(30rem,40%))_minmax(0,1fr)] gap-8"
+      : "grid-cols-1 gap-5",
+    className,
+  );
+  const paneClass = cn(tokens.pane, sideBySide ? "p-6" : "p-4");
+  // Days stay 40 px wide: (332 - 2 - 24 - 24) / 7 stacked, (352 - 2 - 40 - 24) / 7 at the 22rem minimum.
+  const monthPaneClass = cn(
+    tokens.pane,
+    sideBySide ? "px-5 py-6" : "px-3 py-4",
+  );
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
@@ -431,12 +470,9 @@ export function SingleTimePicker({
 
   if (!mounted) {
     return (
-      <div
-        aria-busy="true"
-        className={cn("grid gap-4 md:grid-cols-2", className)}
-      >
-        <div className={cn("h-72 animate-pulse rounded-xl", tokens.skeleton)} />
-        <div className={cn("h-72 animate-pulse rounded-xl", tokens.skeleton)} />
+      <div ref={measureRef} aria-busy="true" className={rootClass}>
+        <div className={cn("h-80 animate-pulse rounded-xl", tokens.skeleton)} />
+        <div className={cn("h-80 animate-pulse rounded-xl", tokens.skeleton)} />
       </div>
     );
   }
@@ -449,7 +485,7 @@ export function SingleTimePicker({
   const canGoBack = calendarDateKey(month) > firstMonthKey;
   const timeClass = (option: SingleSessionOption, selected: boolean) =>
     cn(
-      "flex min-h-10 w-full items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm font-medium transition-colors",
+      "flex min-h-11 w-full items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm font-medium transition-colors",
       tokens.focus,
       selected && tokens.timeSelected,
       !selected && option.selectable && option.state === "free" && tokens.time,
@@ -459,9 +495,14 @@ export function SingleTimePicker({
 
   return (
     <div
-      className={cn("grid min-w-0 gap-4 md:grid-cols-2 md:gap-6", className)}
+      ref={measureRef}
+      data-layout={sideBySide ? "side-by-side" : "stacked"}
+      className={rootClass}
     >
-      <div className={tokens.pane}>
+      {/* Side by side the month hugs its grid; the times pane stretches to at least its height. */}
+      <div
+        className={cn(monthPaneClass, "min-w-0", sideBySide && "self-start")}
+      >
         <MonthGrid
           month={month}
           onMonthChange={changeMonth}
@@ -477,14 +518,14 @@ export function SingleTimePicker({
         />
       </div>
       <section
-        className={cn(tokens.pane, "min-w-0")}
+        className={cn(paneClass, "min-w-0")}
         aria-busy={loading}
         aria-label="Times"
       >
         <h3 className={cn("text-base font-semibold", tokens.heading)}>
           {dayHeading}
         </h3>
-        <p className={cn("mb-3 text-xs", tokens.muted)} title={zoneName}>
+        <p className={cn("mb-4 mt-0.5 text-xs", tokens.muted)} title={zoneName}>
           Times in {zoneName}
         </p>
         <p className="sr-only" aria-live="polite">
@@ -495,7 +536,7 @@ export function SingleTimePicker({
         {audience === "host" && (
           <label
             className={cn(
-              "mb-3 flex min-h-10 items-center justify-between gap-3 text-sm",
+              "mb-4 flex min-h-10 items-center justify-between gap-4 text-sm",
               tokens.heading,
             )}
           >
@@ -507,7 +548,7 @@ export function SingleTimePicker({
           <p
             role="status"
             className={cn(
-              "mb-3 rounded-lg border px-3 py-2 text-sm",
+              "mb-4 rounded-lg border px-3 py-2 text-sm",
               tokens.notice,
             )}
           >
@@ -519,13 +560,13 @@ export function SingleTimePicker({
             {[0, 1, 2, 3].map((row) => (
               <div
                 key={row}
-                className={cn("h-10 animate-pulse rounded-lg", tokens.skeleton)}
+                className={cn("h-11 animate-pulse rounded-lg", tokens.skeleton)}
               />
             ))}
           </div>
         )}
         {failed && (
-          <div role="alert" className="space-y-3 py-4 text-center">
+          <div role="alert" className="space-y-3 py-6 text-center">
             <p className={cn("text-sm", tokens.heading)}>
               {AVAILABILITY_READ_FAILED_MESSAGE}
             </p>
@@ -543,9 +584,12 @@ export function SingleTimePicker({
           </div>
         )}
         {!loading && !failed && (
-          <div className="max-h-[22rem] space-y-4 overflow-y-auto pr-1">
+          <div
+            ref={timesRef}
+            className="max-h-[24rem] space-y-5 overflow-y-auto pr-1"
+          >
             {freeCount === 0 && (
-              <div className="space-y-2 py-2">
+              <div className="space-y-3 py-4">
                 <p className={cn("text-sm", tokens.heading)}>
                   No free times on this day
                 </p>
@@ -584,13 +628,13 @@ export function SingleTimePicker({
                   >
                     {period}
                   </p>
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <div className={cn("grid gap-2", timeColumns)}>
                     {ghost && (
                       <div
                         data-just-taken="true"
                         aria-label={`${formatClockTime(new Date(ghost.startMs), { zone })} to ${formatClockTime(new Date(ghost.endMs), { zone })}, just taken`}
                         className={cn(
-                          "flex min-h-10 items-center justify-between rounded-lg border px-3 py-2 text-sm line-through",
+                          "flex min-h-11 items-center justify-between rounded-lg border px-3 py-2 text-sm line-through",
                           tokens.timeUnavailable,
                         )}
                       >

@@ -162,11 +162,16 @@ export function MonthGrid({
 
   return (
     <div className={cn("min-w-0", className)}>
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <h3 className={cn("text-base font-semibold", tokens.heading)}>
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <h3
+          className={cn(
+            "min-w-0 truncate text-base font-semibold",
+            tokens.heading,
+          )}
+        >
           {monthLabel}
         </h3>
-        <div className="flex items-center gap-1">
+        <div className="flex shrink-0 items-center gap-1">
           <button
             type="button"
             className={navClass}
@@ -198,7 +203,7 @@ export function MonthGrid({
         </div>
       </div>
       <div role="grid" aria-label={monthLabel} className="w-full">
-        <div role="row" className="mb-1 grid grid-cols-7 gap-1">
+        <div role="row" className="mb-2 grid grid-cols-7 gap-1">
           {WEEKDAYS.map(([short, long]) => (
             <div
               key={short}
@@ -214,7 +219,7 @@ export function MonthGrid({
           <div
             key={calendarDateKey(row.find((d) => d !== null) as Date)}
             role="row"
-            className="grid grid-cols-7 gap-1"
+            className="mt-1.5 grid grid-cols-7 gap-1"
           >
             {row.map((day, index) => {
               if (!day) {
@@ -253,7 +258,7 @@ export function MonthGrid({
                       if (!disabled) onSelect(day);
                     }}
                     className={cn(
-                      "relative mx-auto flex h-10 w-full max-w-11 items-center justify-center rounded-full text-sm transition-colors",
+                      "relative mx-auto flex h-11 w-full max-w-12 items-center justify-center rounded-full text-sm transition-colors",
                       tokens.day,
                       tokens.focus,
                       selected && tokens.daySelected,
