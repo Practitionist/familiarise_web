@@ -2,7 +2,7 @@
 export type PickerTheme = "light" | "dark";
 
 export interface PickerTokens {
-  /** Each pane's card. */
+  /** Each pane's card; the picker sets its padding by the width it is given. */
   pane: string;
   heading: string;
   muted: string;
@@ -35,7 +35,7 @@ const SHARED_FOCUS = "focus-visible:outline-none focus-visible:ring-2";
 
 export const PICKER_TOKENS: Record<PickerTheme, PickerTokens> = {
   dark: {
-    pane: "rounded-xl border border-zinc-700/50 bg-zinc-800/60 p-3 sm:p-5",
+    pane: "rounded-xl border border-zinc-700/50 bg-zinc-800/60",
     heading: "text-white",
     muted: "text-zinc-400",
     navButton: "text-zinc-300 hover:bg-zinc-700/60 hover:text-white",
@@ -59,7 +59,7 @@ export const PICKER_TOKENS: Record<PickerTheme, PickerTokens> = {
     error: "text-red-300",
   },
   light: {
-    pane: "rounded-xl border border-border bg-muted/40 p-3 sm:p-5",
+    pane: "rounded-xl border border-border bg-muted/40",
     heading: "text-foreground",
     muted: "text-muted-foreground",
     navButton: "text-muted-foreground hover:bg-muted hover:text-foreground",
