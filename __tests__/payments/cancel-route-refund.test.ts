@@ -538,6 +538,9 @@ describe("an expert's cancel of a free confirmed booking", () => {
     expect(notifyAppointmentCancelled).toHaveBeenCalledWith(
       expect.arrayContaining([CONSULTANT_USER]),
       expect.objectContaining({ appointmentId: APPT }),
+      expect.objectContaining({
+        required: expect.objectContaining({ kind: "CANCELLED_BY_HOST" }),
+      }),
     );
     expect(
       (notifyAppointmentCancelled as jest.Mock).mock.calls[0][0],
