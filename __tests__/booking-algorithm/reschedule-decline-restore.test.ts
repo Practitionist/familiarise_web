@@ -675,6 +675,8 @@ describe("a decline restores the booking it declined to move", () => {
         outcome: "DECLINED",
         oldDateTime: at(FIRST_SESSION).toISOString(),
       }),
+      // The proposer's request was declined by the other party: required for them.
+      { required: { kind: "REQUEST_DECLINED", recipients: [INITIATOR] } },
     );
   });
 
@@ -780,6 +782,9 @@ describe("a decline whose original time is gone parks instead of failing", () =>
     expect(notifyAppointmentRescheduled).toHaveBeenCalledWith(
       expect.any(Array),
       expect.objectContaining({ outcome: "RELEASED" }),
+      expect.objectContaining({
+        required: expect.objectContaining({ kind: "REQUEST_DECLINED" }),
+      }),
     );
   });
 

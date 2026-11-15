@@ -209,7 +209,7 @@ async function notifyRejectedRequestPayer(
         amount: amountPaise,
         currency: payment.currency,
         reason: "Your booking request was declined by the consultant.",
-        // #1527 — the recipient is always the payer.
+        // The recipient is always the payer.
         dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
       },
       {
