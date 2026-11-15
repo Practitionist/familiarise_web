@@ -42,7 +42,7 @@ export async function reviewedRemovalCaseId(
  * True once the removal is overturned: the decision in force on the removal
  * case, or on an appeal of it, is OVERTURNED.
  */
-export async function removalOverturned(
+async function removalOverturned(
   db: PrismaLike,
   removalCaseId: string,
 ): Promise<boolean> {

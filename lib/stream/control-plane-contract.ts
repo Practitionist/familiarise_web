@@ -281,7 +281,7 @@ export const OWNER_ONLY_MEMBER_PERMISSIONS = [
  * A conduct removal ends the seat, records the reason and opens a support review,
  * so no client role kicks or blocks inside a call; the server does both as admin.
  */
-export const SERVER_ONLY_CALL_MODERATION = ["kick-user", "block-user"];
+const SERVER_ONLY_CALL_MODERATION = ["kick-user", "block-user"];
 
 /**
  * A sealed room stays sealed at Stream: reopening rotates to a fresh call id, so no

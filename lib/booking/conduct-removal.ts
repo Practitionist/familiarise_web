@@ -40,7 +40,7 @@ import {
 import { liveParticipant, releaseParticipant } from "./participants";
 import { notifyFreeSeatRemoved } from "./seat-removed-notice";
 
-export interface ConductRemovalInput {
+interface ConductRemovalInput {
   appointmentId: string;
   targetUserId: string;
   actorUserId: string;
@@ -48,7 +48,7 @@ export interface ConductRemovalInput {
   note?: string | null;
 }
 
-export interface ConductRemovalResult {
+interface ConductRemovalResult {
   caseId: string;
   caseReference: string;
   /** False when the seat had no payment to hold, or a payout was already being sent. */

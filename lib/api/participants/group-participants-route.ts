@@ -380,7 +380,7 @@ async function executeGroupSeatLeave(opts: {
  * operator who may already remove attendees, or an accepted presenter-tier
  * co-host. Crew collaborators and attendees may not.
  */
-export async function canRemoveForConduct(
+async function canRemoveForConduct(
   session: Session,
   appointmentId: string,
 ): Promise<boolean> {

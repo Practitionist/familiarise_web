@@ -44,5 +44,3 @@ export type ConductRemovalReasonInput = z.infer<
 export const ConductRemovalBodySchema = z
   .object({ targetUserId: z.string().trim().min(1).max(64) })
   .and(ConductRemovalReasonSchema);
-
-export type ConductRemovalBody = z.infer<typeof ConductRemovalBodySchema>;

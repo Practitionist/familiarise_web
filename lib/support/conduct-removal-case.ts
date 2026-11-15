@@ -43,7 +43,7 @@ import {
 const HOUR_MS = 3_600_000;
 const REMOVAL_CASE_TITLE = "Removed from a group session";
 
-export interface OpenRemovalCaseInput {
+interface OpenRemovalCaseInput {
   appointmentId: string;
   removedUserId: string;
   actorUserId: string;
@@ -53,7 +53,7 @@ export interface OpenRemovalCaseInput {
 }
 
 /** What the host recorded; the removed attendee adds their side as replies. */
-export function removalCaseBody(input: {
+function removalCaseBody(input: {
   eventTitle: string | null;
   reasonLabel: string;
   note: string | null;
@@ -228,7 +228,7 @@ export async function holdSeatEarningsTx(
 }
 
 /** What an overturn or a missed deadline left to do after its commit. */
-export interface ConductRemovalRemedy {
+interface ConductRemovalRemedy {
   caseId: string;
   appointmentId: string;
   userId: string;
@@ -386,7 +386,7 @@ export async function settleDecidedRemoval(caseId: string): Promise<void> {
  * marker to clear it, and drives the unblock. A death before this leaves the
  * marker for retry-auto-refunds and the intent for the revocation sweep.
  */
-export async function settleConductRemovalRemedy(
+async function settleConductRemovalRemedy(
   remedy: ConductRemovalRemedy,
 ): Promise<void> {
   if (remedy.marker && remedy.event) {
@@ -469,7 +469,7 @@ async function lapseRemovalTx(
   return { caseId, ...target, marker, unblockGeneration: null };
 }
 
-export interface ConductRemovalDeadlineResult {
+interface ConductRemovalDeadlineResult {
   lapsed: number;
 }
 
