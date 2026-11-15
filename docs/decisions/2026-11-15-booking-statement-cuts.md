@@ -53,7 +53,7 @@ The measured rows for each path are in the pull request that carries this record
 
 ## Consequences
 
-- A staged trial bell whose `transactionId` already exists is skipped by the insert and left to the relay instead of being returned for the inline attempt, as the upsert did. The relay drains it on its next tick.
+- **Behaviour change: a trial bell that already exists is left to the relay, not retried inline.** If an outbox row with the same `transactionId` is already there (the same pair, time and names staged before), the one-statement insert skips it and does not return it, so the post-commit flush does not attempt it. The upsert used to return the existing row and the flush attempted it straight away. The relay (`drain-notification-outbox`) still settles a PENDING or RETRY row on its next tick, so the bell is delayed, not lost; a row already SENT is not sent again either way.
 - The suppression read for the trial email now sees the table as it was just before the transaction; `attempt()` rechecks the suppression before it sends, so a suppression added in between still stops the send.
 - The client toast for an unexpected failure is unchanged (it keys on `errorType: UNKNOWN_ERROR`); the `error` text is generic and carries a reference support can match to Sentry.
 
