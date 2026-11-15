@@ -1,19 +1,21 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Search, X } from "lucide-react";
+import { Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import {
+  DateRangeMenu,
+  type DateRange,
+  type DateRangeDirection,
+} from "@/components/dashboard/DateRangeMenu";
+import { FilterMenu } from "@/components/dashboard/FilterMenu";
 import type { AppointmentKind } from "@/lib/appointments/view-model";
-import { cn } from "@/utils/tailwind";
+
+export type { DateRange } from "@/components/dashboard/DateRangeMenu";
 
 export type TypeFilter =
-  | "ALL"
-  | "CONSULTATION"
-  | "SUBSCRIPTION"
-  | "TRIAL"
-  | "WEBINAR"
-  | "CLASS";
+  "ALL" | "CONSULTATION" | "SUBSCRIPTION" | "TRIAL" | "WEBINAR" | "CLASS";
 
 export function matchesTypeFilter(
   kind: AppointmentKind,
@@ -23,7 +25,7 @@ export function matchesTypeFilter(
   return kind === filter;
 }
 
-const TYPE_CHIPS: Array<{ value: TypeFilter; label: string }> = [
+const TYPE_OPTIONS: Array<{ value: TypeFilter; label: string }> = [
   { value: "ALL", label: "All types" },
   { value: "CONSULTATION", label: "Consultations" },
   { value: "SUBSCRIPTION", label: "Subscriptions" },
@@ -32,9 +34,10 @@ const TYPE_CHIPS: Array<{ value: TypeFilter; label: string }> = [
   { value: "CLASS", label: "Classes" },
 ];
 
-export interface DateRange {
-  from: string;
-  to: string;
+const TYPE_VALUES = new Set<string>(TYPE_OPTIONS.map((o) => o.value));
+
+function isTypeFilter(value: string | null): value is TypeFilter {
+  return value !== null && TYPE_VALUES.has(value);
 }
 
 interface AppointmentsFilterBarProps {
@@ -44,6 +47,8 @@ interface AppointmentsFilterBarProps {
   onSearchChange: (value: string) => void;
   dateRange: DateRange;
   onDateRangeChange: (value: DateRange) => void;
+  /** Which date presets fit the open tab: coming-up, past, or both. */
+  dateDirection?: DateRangeDirection;
   /** Role-specific filter control rendered at the end of the bar. */
   orgFilterSlot?: ReactNode;
 }
@@ -55,82 +60,63 @@ export function AppointmentsFilterBar({
   onSearchChange,
   dateRange,
   onDateRangeChange,
+  dateDirection = "any",
   orgFilterSlot,
 }: AppointmentsFilterBarProps) {
   const hasRange = dateRange.from !== "" || dateRange.to !== "";
+  const activeCount =
+    (typeFilter === "ALL" ? 0 : 1) +
+    (search.trim() === "" ? 0 : 1) +
+    (hasRange ? 1 : 0);
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide -mx-1 px-1">
-        {TYPE_CHIPS.map((chip) => (
-          <button
-            key={chip.value}
-            type="button"
-            onClick={() => onTypeChange(chip.value)}
-            className={cn(
-              "shrink-0 rounded-full border px-3 py-1 text-xs font-medium transition-colors",
-              typeFilter === chip.value
-                ? "border-foreground bg-foreground text-background"
-                : "border-border bg-card text-muted-foreground hover:text-foreground hover:border-foreground/30",
-            )}
-          >
-            {chip.label}
-          </button>
-        ))}
+    <div className="flex flex-wrap items-center gap-2">
+      <div className="relative min-w-[180px] basis-full sm:max-w-sm sm:flex-1 sm:basis-auto">
+        <Search
+          className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
+          aria-hidden
+        />
+        <Input
+          type="search"
+          value={search}
+          onChange={(e) => onSearchChange(e.target.value)}
+          placeholder="Search by name or plan…"
+          aria-label="Search appointments"
+          className="h-9 pl-8 text-sm"
+        />
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative flex-1 min-w-[180px] max-w-sm">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-          <Input
-            value={search}
-            onChange={(e) => onSearchChange(e.target.value)}
-            placeholder="Search by name or plan…"
-            className="h-9 pl-8 text-sm"
-          />
-        </div>
+      <FilterMenu
+        label="Type"
+        options={TYPE_OPTIONS}
+        value={typeFilter}
+        allValue="ALL"
+        onChange={(value) => onTypeChange(isTypeFilter(value) ? value : "ALL")}
+      />
 
-        <div className="flex items-center gap-1.5">
-          <Input
-            type="date"
-            value={dateRange.from}
-            onChange={(e) =>
-              onDateRangeChange({ ...dateRange, from: e.target.value })
-            }
-            // Wider and tighter than the default Input: at 140px with px-3,
-            // "dd/mm/yyyy" plus Chrome's own calendar-picker indicator
-            // overflows the content box and the icon sits on the border.
-            className="h-9 w-[158px] px-2.5 text-xs"
-            aria-label="From date"
-          />
-          <span className="text-xs text-muted-foreground">–</span>
-          <Input
-            type="date"
-            value={dateRange.to}
-            onChange={(e) =>
-              onDateRangeChange({ ...dateRange, to: e.target.value })
-            }
-            // Wider and tighter than the default Input: at 140px with px-3,
-            // "dd/mm/yyyy" plus Chrome's own calendar-picker indicator
-            // overflows the content box and the icon sits on the border.
-            className="h-9 w-[158px] px-2.5 text-xs"
-            aria-label="To date"
-          />
-          {hasRange && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-9 w-9"
-              onClick={() => onDateRangeChange({ from: "", to: "" })}
-              aria-label="Clear date range"
-            >
-              <X className="h-3.5 w-3.5" />
-            </Button>
-          )}
-        </div>
+      <DateRangeMenu
+        value={dateRange}
+        onChange={onDateRangeChange}
+        direction={dateDirection}
+      />
 
-        {orgFilterSlot && <div className="ml-auto">{orgFilterSlot}</div>}
-      </div>
+      {activeCount > 0 && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-9 text-muted-foreground"
+          onClick={() => {
+            onTypeChange("ALL");
+            onSearchChange("");
+            onDateRangeChange({ from: "", to: "" });
+          }}
+        >
+          Clear ({activeCount})
+        </Button>
+      )}
+
+      {orgFilterSlot && <div className="ml-auto">{orgFilterSlot}</div>}
     </div>
   );
 }
