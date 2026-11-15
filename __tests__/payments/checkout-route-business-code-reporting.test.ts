@@ -230,6 +230,29 @@ describe("a business-coded refusal leaves POST /api/checkout as an answer", () =
     expect(context.level).toBeUndefined();
     expect(context.tags?.expected).not.toBe("true");
   });
+
+  it("shows the id of a fault the checkout core already reported, and captures nothing more", async () => {
+    captureException.mockReturnValueOnce("fedcba9876543210fedcba9876543210");
+    const fault = new Error("connection terminated");
+    handleCheckout.mockImplementation(async () => {
+      const { reportSentryError } = jest.requireActual(
+        "../../lib/observability/report",
+      );
+      reportSentryError(fault, { subsystem: "payments" });
+      throw new Error(
+        "Failed to record payment information. Please try again.",
+        {
+          cause: fault,
+        },
+      );
+    });
+
+    const body = await (await POST(checkoutRequest())).json();
+
+    expect(captureException).toHaveBeenCalledTimes(1);
+    expect(body.errorId).toBe("fedcba9876543210fedcba9876543210");
+    expect(body.error).toContain("Reference: fedcba98.");
+  });
 });
 
 // #1582 B-P1-01b/c, #1564, #1586 J32 — the refusals that were still bare

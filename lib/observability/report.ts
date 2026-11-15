@@ -249,12 +249,34 @@ function safeJsonStringify(payload: Record<string, unknown>): string {
   }
 }
 
+// Fault captures by error object. An expected capture is not recorded: at info
+// it never reaches Sentry, so a later caller that judges it a fault still reports.
+const reportedFaults = new WeakMap<object, string>();
+
+/** The event id an error, or an error it wraps as `cause`, was already reported under. */
+function reportedFaultId(error: unknown): string | undefined {
+  let current: unknown = error;
+  for (
+    let depth = 0;
+    depth < 5 && current && typeof current === "object";
+    depth++
+  ) {
+    const id = reportedFaults.get(current);
+    if (id) return id;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return undefined;
+}
+
 /**
  * Report a caught fault or modelled outcome. Normalises non-Error throws and
  * returns the Sentry event ID (empty string if mocked/suppressed) so API
  * responses and UI error boundaries can surface a correlation reference.
  */
 export function reportSentryError(error: unknown, opts: ReportOpts): string {
+  // A fault is reported once: a rethrown or wrapped error answers with its first event id.
+  const prior = reportedFaultId(error);
+  if (prior) return prior;
   const normalised = normaliseError(error);
   const context = buildSentryCaptureContext(opts);
   const pgTags = extractPgErrorTags(error);
@@ -284,7 +306,11 @@ export function reportSentryError(error: unknown, opts: ReportOpts): string {
     extra: { ...(opts.extra ?? {}), thrown: error },
   });
   runAfterCapture();
-  return typeof eventId === "string" ? eventId : "";
+  const id = typeof eventId === "string" ? eventId : "";
+  if (id && !opts.expected && error && typeof error === "object") {
+    reportedFaults.set(error, id);
+  }
+  return id;
 }
 
 /** Sibling of `reportSentryError` for sites with no exception object to attach — idempotency short-circuits, race-losses, malformed-input rejections. */

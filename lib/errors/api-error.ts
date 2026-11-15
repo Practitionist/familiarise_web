@@ -15,6 +15,8 @@ interface IApiErrorOptions {
   userId?: string; // for debugging context
   role?: string | null;
   fallbackMessage?: string;
+  /** The Sentry `subsystem` tag; this is the one capture of the request's fault. */
+  subsystem?: string;
 }
 
 /**
@@ -59,6 +61,7 @@ export function apiError({
   userId,
   role,
   fallbackMessage,
+  subsystem = "api",
 }: IApiErrorOptions): NextResponse {
   // Many of these routes are reached without going through `requireApiAuth`
   // (or predating it), so the acting user is not always on the isolation
@@ -79,7 +82,7 @@ export function apiError({
   } else {
     errorId =
       reportSentryError(error, {
-        subsystem: "api",
+        subsystem,
         tags: { route_tag: tag },
       }) || undefined;
     console.error(`${tag}${ctx} Unexpected:`, error);

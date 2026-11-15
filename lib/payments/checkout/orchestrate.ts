@@ -611,6 +611,7 @@ export async function handleCheckout(
         if (paymentError instanceof PaymentError) throw paymentError;
         throw new Error(
           "Failed to create payment intent. Please try again later.",
+          { cause: paymentError },
         );
       }
     }
@@ -822,6 +823,7 @@ export async function handleCheckout(
         if (mintError instanceof PaymentError) throw mintError;
         throw new Error(
           "Failed to create payment intent. Please try again later.",
+          { cause: mintError },
         );
       }
       const dbError = asSeatPaymentConflict(asWelcomeDiscountConflict(caught));
@@ -999,6 +1001,7 @@ export async function handleCheckout(
 
       throw new Error(
         "Failed to record payment information. Please try again.",
+        { cause: dbError },
       );
     }
   } catch (error) {
