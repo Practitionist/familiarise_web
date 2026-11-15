@@ -14,21 +14,13 @@ import { formatCurrencyAmount } from "@/utils/formatting";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { FilterBar } from "@/components/dashboard/FilterBar";
 import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
 import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import {
-  Search,
   RotateCcw,
   RefreshCw,
   Loader2,
@@ -108,34 +100,18 @@ export function RefundsPage({
   const [gatewayFilter, setGatewayFilter] = useState("all");
   const [page, setPage] = useState(1);
 
-  const [debouncedSearch, setDebouncedSearch] = useState("");
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedSearch(searchQuery);
-      setPage(1);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [searchQuery]);
-
   const {
     data: refundsData,
     isLoading: loading,
     refetch: refetchRefunds,
     error: refundsError,
   } = useQuery<RefundListResponse>({
-    queryKey: [
-      queryKeyPrefix,
-      page,
-      debouncedSearch,
-      statusFilter,
-      gatewayFilter,
-    ],
+    queryKey: [queryKeyPrefix, page, searchQuery, statusFilter, gatewayFilter],
     queryFn: async () => {
       const params = new URLSearchParams();
       params.set("page", page.toString());
       params.set("limit", "20");
-      if (debouncedSearch) params.set("search", debouncedSearch);
+      if (searchQuery) params.set("search", searchQuery);
       if (statusFilter !== "all") params.set("status", statusFilter);
       if (gatewayFilter !== "all") params.set("gateway", gatewayFilter);
       const response = await fetch(`${apiEndpoint}?${params}`);
@@ -321,51 +297,60 @@ export function RefundsPage({
       {/* Filters */}
       <Card>
         <CardContent className="p-4">
-          <div className="flex flex-col sm:flex-row gap-4">
-            <div className="relative min-w-0 flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/70" />
-              <Input
-                placeholder="Search by refund ID..."
-                className="pl-9"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-            </div>
-            <Select
-              value={statusFilter}
-              onValueChange={(v) => {
-                setStatusFilter(v);
+          <FilterBar
+            search={{
+              label: "Search refunds",
+              placeholder: "Search by refund ID...",
+              value: searchQuery,
+              onChange: (value) => {
+                setSearchQuery(value);
                 setPage(1);
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-40">
-                <SelectValue placeholder="Status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Status</SelectItem>
-                <SelectItem value="PENDING">Pending</SelectItem>
-                <SelectItem value="SUCCEEDED">Succeeded</SelectItem>
-                <SelectItem value="FAILED">Failed</SelectItem>
-                <SelectItem value="CANCELLED">Cancelled</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select
-              value={gatewayFilter}
-              onValueChange={(v) => {
-                setGatewayFilter(v);
-                setPage(1);
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-40">
-                <SelectValue placeholder="Gateway" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Gateways</SelectItem>
-                <SelectItem value="STRIPE">Stripe</SelectItem>
-                <SelectItem value="RAZORPAY">Razorpay</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+              },
+            }}
+            selects={[
+              {
+                key: "status",
+                label: "Status",
+                value: statusFilter,
+                options: [
+                  { value: "all", label: "All Status" },
+                  { value: "PENDING", label: "Pending" },
+                  { value: "SUCCEEDED", label: "Succeeded" },
+                  { value: "FAILED", label: "Failed" },
+                  { value: "CANCELLED", label: "Cancelled" },
+                ],
+                onChange: (v) => {
+                  setStatusFilter(v);
+                  setPage(1);
+                },
+              },
+              {
+                key: "gateway",
+                label: "Gateway",
+                value: gatewayFilter,
+                options: [
+                  { value: "all", label: "All Gateways" },
+                  { value: "STRIPE", label: "Stripe" },
+                  { value: "RAZORPAY", label: "Razorpay" },
+                ],
+                onChange: (v) => {
+                  setGatewayFilter(v);
+                  setPage(1);
+                },
+              },
+            ]}
+            canClear={
+              Boolean(searchQuery) ||
+              statusFilter !== "all" ||
+              gatewayFilter !== "all"
+            }
+            onClear={() => {
+              setSearchQuery("");
+              setStatusFilter("all");
+              setGatewayFilter("all");
+              setPage(1);
+            }}
+          />
         </CardContent>
       </Card>
 

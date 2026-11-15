@@ -2,21 +2,14 @@
 
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
 import { gatewayLabel } from "@/lib/labels/money-labels";
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { FilterBar } from "@/components/dashboard/FilterBar";
 import {
   ResponsiveTable,
   type ResponsiveColumn,
@@ -29,7 +22,6 @@ import { formatCurrencyAmount } from "@/utils/formatting";
 import { disputeStatusLabel } from "@/lib/labels/money-labels";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
-  Search,
   AlertTriangle,
   RefreshCw,
   Loader2,
@@ -251,22 +243,12 @@ export function DisputesPage({
   const [statusFilter, setStatusFilter] = useState("all");
   const [gatewayFilter, setGatewayFilter] = useState("all");
   const [page, setPage] = useState(1);
-  const [debouncedSearch, setDebouncedSearch] = useState("");
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedSearch(searchQuery);
-      setPage(1);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [searchQuery]);
-
   const { data, isPending, isFetching, isError, refetch } = useQuery({
     queryKey: [
       "admin-disputes",
       apiEndpoint,
       page,
-      debouncedSearch,
+      searchQuery,
       statusFilter,
       gatewayFilter,
     ],
@@ -274,7 +256,7 @@ export function DisputesPage({
       const params = new URLSearchParams();
       params.set("page", page.toString());
       params.set("limit", "20");
-      if (debouncedSearch) params.set("search", debouncedSearch);
+      if (searchQuery) params.set("search", searchQuery);
       if (statusFilter !== "all") params.set("status", statusFilter);
       if (gatewayFilter !== "all") params.set("gateway", gatewayFilter);
 
@@ -400,60 +382,71 @@ export function DisputesPage({
       {/* Filters */}
       <Card>
         <CardContent className="p-4">
-          <div className="flex flex-col sm:flex-row gap-4">
-            <div className="relative min-w-0 flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/70" />
-              <Input
-                placeholder="Search by dispute ID..."
-                className="pl-9"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-            </div>
-            <Select
-              value={statusFilter}
-              onValueChange={(v) => {
-                setStatusFilter(v);
+          <FilterBar
+            search={{
+              label: "Search disputes",
+              placeholder: "Search by dispute ID...",
+              value: searchQuery,
+              onChange: (value) => {
+                setSearchQuery(value);
                 setPage(1);
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-48">
-                <SelectValue placeholder="Status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Status</SelectItem>
-                <SelectItem value="NEEDS_RESPONSE">Needs Response</SelectItem>
-                <SelectItem value="WARNING_NEEDS_RESPONSE">
-                  Warning - Needs Response
-                </SelectItem>
-                <SelectItem value="UNDER_REVIEW">Under Review</SelectItem>
-                <SelectItem value="WARNING_UNDER_REVIEW">
-                  Warning - Under Review
-                </SelectItem>
-                <SelectItem value="CHARGE_REFUNDED">Charge Refunded</SelectItem>
-                <SelectItem value="WON">Won</SelectItem>
-                <SelectItem value="LOST">Lost</SelectItem>
-                <SelectItem value="CLOSED">Closed</SelectItem>
-                <SelectItem value="WARNING_CLOSED">Warning - Closed</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select
-              value={gatewayFilter}
-              onValueChange={(v) => {
-                setGatewayFilter(v);
-                setPage(1);
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-40">
-                <SelectValue placeholder="Gateway" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Gateways</SelectItem>
-                <SelectItem value="STRIPE">Stripe</SelectItem>
-                <SelectItem value="RAZORPAY">Razorpay</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+              },
+            }}
+            selects={[
+              {
+                key: "status",
+                label: "Status",
+                value: statusFilter,
+                options: [
+                  { value: "all", label: "All Status" },
+                  { value: "NEEDS_RESPONSE", label: "Needs Response" },
+                  {
+                    value: "WARNING_NEEDS_RESPONSE",
+                    label: "Warning - Needs Response",
+                  },
+                  { value: "UNDER_REVIEW", label: "Under Review" },
+                  {
+                    value: "WARNING_UNDER_REVIEW",
+                    label: "Warning - Under Review",
+                  },
+                  { value: "CHARGE_REFUNDED", label: "Charge Refunded" },
+                  { value: "WON", label: "Won" },
+                  { value: "LOST", label: "Lost" },
+                  { value: "CLOSED", label: "Closed" },
+                  { value: "WARNING_CLOSED", label: "Warning - Closed" },
+                ],
+                onChange: (v) => {
+                  setStatusFilter(v);
+                  setPage(1);
+                },
+              },
+              {
+                key: "gateway",
+                label: "Gateway",
+                value: gatewayFilter,
+                options: [
+                  { value: "all", label: "All Gateways" },
+                  { value: "STRIPE", label: "Stripe" },
+                  { value: "RAZORPAY", label: "Razorpay" },
+                ],
+                onChange: (v) => {
+                  setGatewayFilter(v);
+                  setPage(1);
+                },
+              },
+            ]}
+            canClear={
+              Boolean(searchQuery) ||
+              statusFilter !== "all" ||
+              gatewayFilter !== "all"
+            }
+            onClear={() => {
+              setSearchQuery("");
+              setStatusFilter("all");
+              setGatewayFilter("all");
+              setPage(1);
+            }}
+          />
         </CardContent>
       </Card>
 

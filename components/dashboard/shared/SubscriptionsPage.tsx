@@ -1,10 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
-  Search,
   RefreshCw,
   Loader2,
   CheckCircle,
@@ -19,14 +18,7 @@ import {
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { FilterBar } from "@/components/dashboard/FilterBar";
 import {
   Sheet,
   SheetContent,
@@ -410,24 +402,15 @@ export function SubscriptionsPage({
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [page, setPage] = useState(1);
-  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [selectedSubscription, setSelectedSubscription] =
     useState<EnrichedSubscriptionItem | null>(null);
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedSearch(searchQuery);
-      setPage(1);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [searchQuery]);
 
   const { data, isPending, isFetching, isError, refetch } = useQuery({
     queryKey: [
       "admin-subscriptions",
       apiEndpoint,
       page,
-      debouncedSearch,
+      searchQuery,
       statusFilter,
     ],
     queryFn: async (): Promise<
@@ -438,7 +421,7 @@ export function SubscriptionsPage({
       const params = new URLSearchParams();
       params.set("limit", LIMIT.toString());
       params.set("offset", ((page - 1) * LIMIT).toString());
-      if (debouncedSearch) params.set("search", debouncedSearch);
+      if (searchQuery) params.set("search", searchQuery);
       if (statusFilter !== "all") params.set("status", statusFilter);
 
       const response = await fetch(`${apiEndpoint}?${params}`);
@@ -532,35 +515,41 @@ export function SubscriptionsPage({
 
       <Card>
         <CardContent className="p-4">
-          <div className="flex flex-col sm:flex-row gap-4">
-            <div className="relative min-w-0 flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/70" />
-              <Input
-                placeholder="Search by user name or email..."
-                className="pl-9"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-            </div>
-            <Select
-              value={statusFilter}
-              onValueChange={(v) => {
-                setStatusFilter(v);
+          <FilterBar
+            search={{
+              label: "Search subscriptions",
+              placeholder: "Search by user name or email...",
+              value: searchQuery,
+              onChange: (value) => {
+                setSearchQuery(value);
                 setPage(1);
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-44">
-                <SelectValue placeholder="Status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Status</SelectItem>
-                <SelectItem value="active">Active</SelectItem>
-                <SelectItem value="expiring_soon">Expiring Soon</SelectItem>
-                <SelectItem value="expired">Expired</SelectItem>
-                <SelectItem value="cancelled">Cancelled</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+              },
+            }}
+            selects={[
+              {
+                key: "status",
+                label: "Status",
+                value: statusFilter,
+                options: [
+                  { value: "all", label: "All Status" },
+                  { value: "active", label: "Active" },
+                  { value: "expiring_soon", label: "Expiring Soon" },
+                  { value: "expired", label: "Expired" },
+                  { value: "cancelled", label: "Cancelled" },
+                ],
+                onChange: (v) => {
+                  setStatusFilter(v);
+                  setPage(1);
+                },
+              },
+            ]}
+            canClear={Boolean(searchQuery) || statusFilter !== "all"}
+            onClear={() => {
+              setSearchQuery("");
+              setStatusFilter("all");
+              setPage(1);
+            }}
+          />
         </CardContent>
       </Card>
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { httpsHref } from "@/schemas/url";
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -11,7 +11,6 @@ import {
   Calendar,
   ExternalLink,
   RefreshCw,
-  Search,
 } from "lucide-react";
 
 import {
@@ -23,15 +22,8 @@ import { UrlTabs } from "@/components/dashboard/UrlTabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { FilterBar } from "@/components/dashboard/FilterBar";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
 function StatCard({
@@ -166,18 +158,10 @@ function getStatusBadge(status: string) {
   );
 }
 
-function useDebouncedInvoiceFilters() {
+function useInvoiceFilters() {
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [q, setQ] = useState("");
-  const [debouncedQ, setDebouncedQ] = useState("");
   const [page, setPage] = useState(1);
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedQ(q.trim());
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [q]);
 
   const handleSearchChange = (value: string) => {
     setQ(value);
@@ -189,14 +173,21 @@ function useDebouncedInvoiceFilters() {
     setPage(1);
   };
 
+  const handleClear = () => {
+    setQ("");
+    setStatusFilter("ALL");
+    setPage(1);
+  };
+
   return {
     statusFilter,
     q,
-    debouncedQ,
+    query: q.trim(),
     page,
     setPage,
     handleSearchChange,
     handleStatusChange,
+    handleClear,
   };
 }
 
@@ -251,6 +242,7 @@ function InvoicesTabScaffold<T extends { id: string }>({
   statusValue,
   statusOptions,
   onStatusChange,
+  onClear,
   isLoading,
   isError,
   onRetry,
@@ -275,6 +267,7 @@ function InvoicesTabScaffold<T extends { id: string }>({
   statusValue: string;
   statusOptions: Array<{ value: string; label: string }>;
   onStatusChange: (value: string) => void;
+  onClear: () => void;
   isLoading: boolean;
   isError: boolean;
   onRetry: () => void;
@@ -333,34 +326,25 @@ function InvoicesTabScaffold<T extends { id: string }>({
         ))}
       </DashboardGrid>
 
-      <div className="flex flex-col sm:flex-row gap-3">
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input
-            aria-label={searchAriaLabel}
-            className="pl-8"
-            placeholder={searchPlaceholder}
-            value={searchValue}
-            onChange={(e) => onSearchChange(e.target.value)}
-          />
-        </div>
-
-        <Select value={statusValue} onValueChange={onStatusChange}>
-          <SelectTrigger
-            aria-label={statusAriaLabel}
-            className="w-full sm:w-44"
-          >
-            <SelectValue placeholder="Filter status" />
-          </SelectTrigger>
-          <SelectContent>
-            {statusOptions.map((opt) => (
-              <SelectItem key={opt.value} value={opt.value}>
-                {opt.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
+      <FilterBar
+        search={{
+          label: searchAriaLabel,
+          placeholder: searchPlaceholder,
+          value: searchValue,
+          onChange: onSearchChange,
+        }}
+        selects={[
+          {
+            key: "status",
+            label: statusAriaLabel,
+            value: statusValue,
+            options: statusOptions,
+            onChange: onStatusChange,
+          },
+        ]}
+        canClear={Boolean(searchValue) || statusValue !== "ALL"}
+        onClear={onClear}
+      />
 
       <Card>
         <CardContent className="pt-6">
@@ -426,12 +410,13 @@ function OrganizationInvoicesTab({
   const {
     statusFilter,
     q,
-    debouncedQ,
+    query,
     page,
     setPage,
     handleSearchChange,
     handleStatusChange,
-  } = useDebouncedInvoiceFilters();
+    handleClear,
+  } = useInvoiceFilters();
 
   const { data, isLoading, isError, refetch } = useQuery<{
     invoices: OrgInvoiceItem[];
@@ -443,7 +428,7 @@ function OrganizationInvoicesTab({
       counts: Record<string, number>;
     };
   }>({
-    queryKey: [`${queryKeyPrefix}-b2b`, statusFilter, debouncedQ, page],
+    queryKey: [`${queryKeyPrefix}-b2b`, statusFilter, query, page],
     queryFn: async () => {
       const params = new URLSearchParams({
         scope: "b2b",
@@ -451,7 +436,7 @@ function OrganizationInvoicesTab({
         limit: "20",
       });
       if (statusFilter !== "ALL") params.set("status", statusFilter);
-      if (debouncedQ) params.set("q", debouncedQ);
+      if (query) params.set("q", query);
       const res = await fetch(`${apiEndpoint}?${params}`);
       if (!res.ok) throw new Error("Failed to fetch organization invoices");
       return res.json();
@@ -497,6 +482,7 @@ function OrganizationInvoicesTab({
       statusValue={statusFilter}
       statusOptions={B2B_STATUS_OPTIONS}
       onStatusChange={handleStatusChange}
+      onClear={handleClear}
       isLoading={isLoading}
       isError={isError}
       onRetry={() => void refetch()}
@@ -572,12 +558,13 @@ function ConsumerInvoicesTab({
   const {
     statusFilter,
     q,
-    debouncedQ,
+    query,
     page,
     setPage,
     handleSearchChange,
     handleStatusChange,
-  } = useDebouncedInvoiceFilters();
+    handleClear,
+  } = useInvoiceFilters();
 
   const { data, isLoading, isError, refetch } = useQuery<{
     invoices: ConsumerInvoiceItem[];
@@ -590,7 +577,7 @@ function ConsumerInvoicesTab({
       taxableValuePaise: number;
     };
   }>({
-    queryKey: [`${queryKeyPrefix}-b2c`, statusFilter, debouncedQ, page],
+    queryKey: [`${queryKeyPrefix}-b2c`, statusFilter, query, page],
     queryFn: async () => {
       const params = new URLSearchParams({
         scope: "b2c",
@@ -598,7 +585,7 @@ function ConsumerInvoicesTab({
         limit: "20",
       });
       if (statusFilter !== "ALL") params.set("status", statusFilter);
-      if (debouncedQ) params.set("q", debouncedQ);
+      if (query) params.set("q", query);
       const res = await fetch(`${apiEndpoint}?${params}`);
       if (!res.ok) throw new Error("Failed to fetch consumer invoices");
       return res.json();
@@ -642,6 +629,7 @@ function ConsumerInvoicesTab({
       statusValue={statusFilter}
       statusOptions={B2C_STATUS_OPTIONS}
       onStatusChange={handleStatusChange}
+      onClear={handleClear}
       isLoading={isLoading}
       isError={isError}
       onRetry={() => void refetch()}
