@@ -9,12 +9,13 @@
  */
 
 let nextEventId = 0;
-const captureException = jest.fn(() => {
+const captureException = jest.fn((_error: unknown, _context?: unknown) => {
   nextEventId += 1;
   return `${String(nextEventId).padStart(8, "0")}${"f".repeat(24)}`;
 });
 jest.mock("@sentry/nextjs", () => ({
-  captureException: (...args: unknown[]) => captureException(...(args as [])),
+  captureException: (error: unknown, context?: unknown) =>
+    captureException(error, context),
   captureMessage: jest.fn(),
   getCurrentScope: () => ({ setTag: jest.fn(), setUser: jest.fn() }),
   setUser: jest.fn(),
