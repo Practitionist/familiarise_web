@@ -494,7 +494,8 @@ export function SingleTimePicker({
       data-layout={sideBySide ? "side-by-side" : "stacked"}
       className={rootClass}
     >
-      <div className={cn(paneClass, "min-w-0")}>
+      {/* Side by side the month hugs its grid; the times pane stretches to at least its height. */}
+      <div className={cn(paneClass, "min-w-0", sideBySide && "self-start")}>
         <MonthGrid
           month={month}
           onMonthChange={changeMonth}
