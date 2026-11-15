@@ -180,3 +180,52 @@ it("lets a grid read newer than a refusal answer for that time again", () => {
   render(<Harness heldStarts={held} />);
   expect(time(/^9:00 am to 10:00 am, free/)).toBeEnabled();
 });
+
+it("lays out by its own width: panes side by side from 700 px, times up to six columns", () => {
+  const resize = new Map<Element, ResizeObserverCallback>();
+  const original = globalThis.ResizeObserver;
+  globalThis.ResizeObserver = class {
+    constructor(private readonly callback: ResizeObserverCallback) {}
+    observe(el: Element) {
+      resize.set(el, this.callback);
+    }
+    unobserve() {}
+    disconnect() {}
+  };
+  try {
+    const { container } = render(<Harness />);
+    const root = container.firstElementChild as HTMLElement;
+    const times = screen.getByRole("group", { name: "Morning" })
+      .parentElement as HTMLElement;
+    const grid = screen.getByRole("group", {
+      name: "Morning",
+    }).lastElementChild;
+    const widen = (el: Element, width: number) =>
+      act(() =>
+        resize.get(el)?.(
+          [{ contentRect: { width } } as ResizeObserverEntry],
+          {} as ResizeObserver,
+        ),
+      );
+    // A day is (pane - 2 border - 2 x padding - 6 gaps) / 7; p(x)-N and gap-N are N x 4 px.
+    const dayWidth = (paneWidth: number) => {
+      const pane = screen.getByRole("grid").parentElement?.parentElement;
+      const px = Number(/\bpx?-(\d+)\b/.exec(pane?.className ?? "")?.[1]);
+      const row = screen.getAllByRole("row")[0].className;
+      const gap = Number(/\bgap-(\d+)\b/.exec(row)?.[1]);
+      return (paneWidth - 2 - 2 * px * 4 - 6 * gap * 4) / 7;
+    };
+    expect(root).toHaveAttribute("data-layout", "stacked");
+    expect(dayWidth(332)).toBeGreaterThanOrEqual(40);
+    widen(times, 800);
+    expect(grid).toHaveClass("grid-cols-4");
+    widen(root, 2240);
+    expect(root).toHaveAttribute("data-layout", "side-by-side");
+    expect(dayWidth(352)).toBeGreaterThanOrEqual(40);
+    expect(grid).toHaveClass("grid-cols-6");
+    widen(times, 400);
+    expect(grid).toHaveClass("grid-cols-3");
+  } finally {
+    globalThis.ResizeObserver = original;
+  }
+});

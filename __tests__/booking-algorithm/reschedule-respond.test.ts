@@ -797,6 +797,9 @@ describe("decline ends the request and restores what it released", () => {
     expect(notifyAppointmentRescheduled).toHaveBeenCalledWith(
       expect.arrayContaining([CONSULTEE_USER, CONSULTANT_USER]),
       expect.objectContaining({ outcome: "DECLINED" }),
+      expect.objectContaining({
+        required: expect.objectContaining({ kind: "REQUEST_DECLINED" }),
+      }),
     );
   });
 
@@ -832,6 +835,9 @@ describe("decline ends the request and restores what it released", () => {
     expect(notifyAppointmentRescheduled).toHaveBeenCalledWith(
       expect.any(Array),
       expect.objectContaining({ outcome: "RELEASED" }),
+      expect.objectContaining({
+        required: expect.objectContaining({ kind: "REQUEST_DECLINED" }),
+      }),
     );
   });
 
@@ -984,6 +990,9 @@ describe("the respond route drives the loop for the counterparty", () => {
     expect(notifyAppointmentRescheduled).toHaveBeenCalledWith(
       expect.any(Array),
       expect.objectContaining({ outcome: body.outcome }),
+      expect.objectContaining({
+        required: expect.objectContaining({ kind: "REQUEST_DECLINED" }),
+      }),
     );
   });
 

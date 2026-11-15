@@ -1,5 +1,4 @@
 import { PROFILE_OWNER_SELECT } from "@/lib/booking/list-selects";
-import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { fetchWebinarPlanDetail } from "@/lib/data/plan-details";
 import { planDetailResponse } from "@/lib/api/plans/detail-response";
@@ -25,11 +24,7 @@ export async function GET(
       "Webinar plan not found",
     );
   } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "plans" } },
-    );
-    return apiError({ tag: "[WebinarPlan.GET]", error });
+    return apiError({ tag: "[WebinarPlan.GET]", error, subsystem: "plans" });
   }
 }
 
@@ -134,11 +129,7 @@ export async function PATCH(
         { status: 404 },
       );
     }
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "plans" } },
-    );
-    return apiError({ tag: "[WebinarPlan.PATCH]", error });
+    return apiError({ tag: "[WebinarPlan.PATCH]", error, subsystem: "plans" });
   }
 }
 

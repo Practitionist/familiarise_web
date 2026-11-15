@@ -1,5 +1,6 @@
 /** Stale-request expiry core, shared by the cleanup registry and admin recovery door. */
 
+import { scrubStringValue } from "@/lib/observability/sentry-scrubber";
 import { nudgeUnplacedPlanWeeks } from "@/lib/booking/week-nudge";
 import prisma from "../../lib/prisma";
 import type { PrismaLike } from "../../lib/prisma";
@@ -53,7 +54,10 @@ import {
   UNSCHEDULED_SUBSCRIPTION_REASON,
   type RequestExpiredNotice,
 } from "@/lib/booking/expiry-notices";
-import { notifyUnscheduledSubscriptionNudge } from "@/lib/novu/service";
+import {
+  notifyRequestExpiringSoon,
+  notifyUnscheduledSubscriptionNudge,
+} from "@/lib/novu/service";
 import { NOVU_WORKFLOWS, notificationScope } from "@/lib/novu/workflows";
 import { deriveTransactionId } from "@/lib/novu/outbox";
 import { stageBell } from "@/lib/novu/stage-bell";
@@ -62,9 +66,11 @@ import { stageAppointmentCancelledEmail } from "@/lib/email/senders/booking";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import type { Tx } from "@/lib/prisma";
 import {
-  EMAIL_BUDGET_MS,
+  REQUEST_EXPIRING_EMAIL_TYPE,
+  requestExpiringEntityRef,
   SUBSCRIPTION_UNSCHEDULED_NUDGE_EMAIL_TYPE,
-  sendUnscheduledSubscriptionNudgeEmail,
+  stageRequestExpiringEmail,
+  stageUnscheduledSubscriptionNudgeEmail,
   unscheduledNudgeEntityRef,
 } from "@/lib/email";
 import { getAppUrl } from "@/lib/url";
@@ -358,6 +364,7 @@ export async function hasStaleRequestWork(
         unpaidLapsedConsultationWhere(
           new Date(at - PAYMENT_PENDING_EXPIRATION_DAYS * DAY_MS),
         ),
+        expiringPendingConsultationWhere(now),
       ],
     },
     select: { id: true },
@@ -411,6 +418,8 @@ export interface ExpireStaleRequestsResult {
   subscriptionsExpired: number;
   /** #1703 — consultant nudges sent for paid, still-unscheduled subscriptions. */
   subscriptionNudgesSent: number;
+  /** Experts alerted about a request lapsing within six hours. */
+  requestExpiryAlertsSent: number;
   paymentPendingExpired: number;
   /** Tentative slots freed by the consultation expiry (B1). */
   consultationSlotsReleased: number;
@@ -1860,10 +1869,14 @@ async function nudgeUnscheduledSubscriptions(
       if (!stage || !sub.appointment) return [];
       const consultantUserId = sub.subscriptionPlan.consultantProfile.user.id;
       const dedupeKey = subscriptionNudgeDedupeKey(sub.id, stage);
+      const refundAt = new Date(
+        capturedAt.getTime() + PAID_UNALLOCATED_HOURS * HOUR_MS,
+      );
       return [
         {
           sub,
           stage,
+          refundAt,
           consultantUserId,
           dedupeKey,
           transactionId: deriveTransactionId(
@@ -1904,9 +1917,12 @@ async function nudgeUnscheduledSubscriptions(
     ]);
 
     let nudged = 0;
+    let renderFailures = 0;
+    let bellFailures = 0;
     for (const {
       sub,
       stage,
+      refundAt,
       consultantUserId,
       dedupeKey,
       transactionId,
@@ -1923,36 +1939,37 @@ async function nudgeUnscheduledSubscriptions(
         const planTitle = sub.subscriptionPlan.title;
         const timingsUrl = `${getAppUrl()}/dashboard/consultant/${sub.subscriptionPlan.consultantProfile.id}/appointments/${appointment.id}/timings`;
         if (!bellDone) {
-          await notifyUnscheduledSubscriptionNudge(
-            consultantUserId,
-            {
-              ...notificationScope(appointment.organizationId),
-              consulteeName,
-              planTitle,
-              appointmentType: "SUBSCRIPTION",
-              dashboardUrl: timingsUrl,
-              nudgeHours: stage,
-            },
-            dedupeKey,
+          // On a transaction, so a write failure throws here instead of reporting per plan.
+          const bell = await stageBellQuietly((tx) =>
+            notifyUnscheduledSubscriptionNudge(
+              consultantUserId,
+              {
+                ...notificationScope(appointment.organizationId),
+                consulteeName,
+                planTitle,
+                appointmentType: "SUBSCRIPTION",
+                dashboardUrl: timingsUrl,
+                nudgeHours: stage,
+                refundAt: refundAt.toISOString(),
+              },
+              dedupeKey,
+              { tx, deferAttempt: true },
+            ),
           );
+          if (!bell) bellFailures += 1;
         }
         if (!emailDone) {
-          const mailed = await sendUnscheduledSubscriptionNudgeEmail(
-            {
-              subscriptionId: sub.id,
-              consultantUserId,
-              consulteeName,
-              planTitle,
-              nudgeHours: stage,
-              timingsUrl,
-            },
-            EMAIL_BUDGET_MS.JOB,
-          );
-          // Neither sent nor staged: no row guards it, so say so and let
-          // the next run retry the email arm alone.
-          if (mailed.failed > 0 && mailed.sent === 0) {
-            throw new Error("nudge email neither sent nor staged");
-          }
+          // Staged under its claim; the email relay sends it.
+          const mailed = await stageUnscheduledSubscriptionNudgeEmail({
+            subscriptionId: sub.id,
+            consultantUserId,
+            consulteeName,
+            planTitle,
+            nudgeHours: stage,
+            refundAt,
+            timingsUrl,
+          });
+          renderFailures += mailed.renderFailures;
         }
         nudged += 1;
       } catch (error) {
@@ -1961,6 +1978,17 @@ async function nudgeUnscheduledSubscriptions(
         errors.push(msg);
       }
     }
+    // Reported once per run, never per plan.
+    if (bellFailures > 0) {
+      errors.push(
+        `${bellFailures} unscheduled-plan nudge bell(s) failed to stage; retried next run`,
+      );
+    }
+    if (renderFailures > 0) {
+      errors.push(
+        `${renderFailures} unscheduled-plan nudge email(s) failed to render; retried next run`,
+      );
+    }
     console.log(`✅ Sent ${nudged} unscheduled-subscription nudges`);
     return { nudged, errors };
   } catch (error) {
@@ -1968,6 +1996,185 @@ async function nudgeUnscheduledSubscriptions(
     console.error(`❌ ${msg}`);
     errors.push(msg);
     return { nudged: 0, errors };
+  }
+}
+
+/** Stages a deadline bell on its own transaction; false when the write failed, which the arm counts. */
+async function stageBellQuietly(
+  stage: (tx: Tx) => Promise<unknown>,
+): Promise<boolean> {
+  try {
+    await prisma.$transaction((tx) => stage(tx));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The expert hears about an unanswered request this many hours before it lapses. */
+export const REQUEST_EXPIRY_ALERT_HOURS = 6;
+
+/** The expiry arm's cohort as it will stand within the alert window: lapsing, not yet lapsed. */
+function expiringPendingConsultationWhere(now: Date) {
+  const lapsesBefore = new Date(
+    now.getTime() - PENDING_CONSULTATION_EXPIRATION_HOURS * HOUR_MS,
+  );
+  const alertBefore = new Date(
+    lapsesBefore.getTime() + REQUEST_EXPIRY_ALERT_HOURS * HOUR_MS,
+  );
+  return {
+    ...stalePendingConsultationWhere(alertBefore),
+    requestedAt: { gte: lapsesBefore, lt: alertBefore },
+  } satisfies Prisma.ConsultationWhereInput;
+}
+
+/** The outbox key of one request's lapse alert; the guard and the trigger share it. */
+export function requestExpiringDedupeKey(consultationId: string): string {
+  return `request-expiring:${consultationId}`;
+}
+
+/** Alerts the expert once, by the outbox claims, about a request lapsing within the window; follows their switches. */
+async function alertExpiringRequests(
+  limits: StaleRequestRunLimits,
+  now: Date = new Date(),
+): Promise<{ alerted: number; errors: string[] }> {
+  const errors: string[] = [];
+  try {
+    const expiring = await prisma.consultation.findMany({
+      where: expiringPendingConsultationWhere(now),
+      select: {
+        id: true,
+        requestedAt: true,
+        requestedBy: { select: { user: { select: { name: true } } } },
+        consultationPlan: {
+          select: {
+            title: true,
+            consultantProfile: {
+              select: { id: true, user: { select: { id: true } } },
+            },
+          },
+        },
+        appointment: { select: { organizationId: true } },
+      },
+      orderBy: { requestedAt: "asc" },
+      take: limits.maxRequests,
+    });
+    const candidates = expiring.flatMap((c) => {
+      const expiresAt = new Date(
+        c.requestedAt.getTime() +
+          PENDING_CONSULTATION_EXPIRATION_HOURS * HOUR_MS,
+      );
+      const consultantUserId = c.consultationPlan.consultantProfile.user.id;
+      const dedupeKey = requestExpiringDedupeKey(c.id);
+      return [
+        {
+          c,
+          expiresAt,
+          consultantUserId,
+          dedupeKey,
+          transactionId: deriveTransactionId(
+            NOVU_WORKFLOWS.NEW_BOOKING_REQUEST,
+            [consultantUserId],
+            {},
+            dedupeKey,
+          ),
+        },
+      ];
+    });
+    if (candidates.length === 0) return { alerted: 0, errors };
+
+    const [bellStaged, emailStaged] = await Promise.all([
+      prisma.notificationOutbox
+        .findMany({
+          where: {
+            transactionId: { in: candidates.map((x) => x.transactionId) },
+          },
+          select: { transactionId: true },
+        })
+        .then((rows) => new Set(rows.map((row) => row.transactionId))),
+      prisma.failedEmail
+        .findMany({
+          where: {
+            emailType: REQUEST_EXPIRING_EMAIL_TYPE,
+            entityRef: {
+              in: candidates.map((x) => requestExpiringEntityRef(x.c.id)),
+            },
+          },
+          select: { entityRef: true },
+        })
+        .then((rows) => new Set(rows.map((row) => row.entityRef))),
+    ]);
+
+    let alerted = 0;
+    let renderFailures = 0;
+    let bellFailures = 0;
+    for (const x of candidates) {
+      const bellDone = bellStaged.has(x.transactionId);
+      const emailDone = emailStaged.has(requestExpiringEntityRef(x.c.id));
+      if (bellDone && emailDone) continue;
+      try {
+        const consulteeName = x.c.requestedBy.user.name ?? "A consultee";
+        const planTitle = x.c.consultationPlan.title;
+        const reviewUrl = notificationHref(
+          x.c.appointment?.organizationId,
+          "requests",
+        );
+        if (!bellDone) {
+          // On a transaction, so a write failure throws here instead of reporting per request.
+          const bell = await stageBellQuietly((tx) =>
+            notifyRequestExpiringSoon(
+              x.consultantUserId,
+              {
+                ...notificationScope(x.c.appointment?.organizationId),
+                consulteeName,
+                planTitle,
+                appointmentType: "CONSULTATION",
+                dashboardUrl: reviewUrl,
+                expiresAt: x.expiresAt.toISOString(),
+              },
+              x.dedupeKey,
+              { tx, deferAttempt: true },
+            ),
+          );
+          if (!bell) bellFailures += 1;
+        }
+        if (!emailDone) {
+          // Staged under its claim; the email relay sends it.
+          const mailed = await stageRequestExpiringEmail({
+            consultationId: x.c.id,
+            consultantUserId: x.consultantUserId,
+            consulteeName,
+            planTitle,
+            expiresAt: x.expiresAt,
+            reviewUrl,
+          });
+          renderFailures += mailed.renderFailures;
+        }
+        alerted += 1;
+      } catch (error) {
+        const msg = `Expiry alert failed for consultation ${x.c.id}: ${scrubStringValue(String(error))}`;
+        console.error(`❌ ${msg}`);
+        errors.push(msg);
+      }
+    }
+    // Reported once per run, never per request.
+    if (bellFailures > 0) {
+      errors.push(
+        `${bellFailures} request-expiring bell(s) failed to stage; retried next run`,
+      );
+    }
+    if (renderFailures > 0) {
+      errors.push(
+        `${renderFailures} request-expiring email(s) failed to render; retried next run`,
+      );
+    }
+    console.log(`✅ Sent ${alerted} request-expiring alerts`);
+    return { alerted, errors };
+  } catch (error) {
+    const msg = `Failed to alert expiring requests: ${scrubStringValue(String(error))}`;
+    console.error(`❌ ${msg}`);
+    errors.push(msg);
+    return { alerted: 0, errors };
   }
 }
 
@@ -2177,6 +2384,10 @@ async function expireStaleRequestsUnlocked(
   const consultationResult = await expirePendingConsultations(limits);
   allErrors.push(...consultationResult.errors);
 
+  // Tell the expert once about a request lapsing within six hours.
+  const expiryAlerts = await alertExpiringRequests(limits);
+  allErrors.push(...expiryAlerts.errors);
+
   // Paid consultations parked after a failed restore and never re-placed.
   const parkedResult = await cancelAgedParkedConsultations({
     maxRows: limits.maxRequests,
@@ -2261,6 +2472,7 @@ async function expireStaleRequestsUnlocked(
     `   Paid plans unallocated >${PAID_UNALLOCATED_HOURS}h expired: ${paidUnallocated.expired}`,
   );
   console.log(`   Unscheduled-subscription nudges sent: ${nudges.nudged}`);
+  console.log(`   Request-expiring alerts sent: ${expiryAlerts.alerted}`);
   console.log(
     `   Refunds issued/failed: ${consultationResult.issued + parkedResult.issued + subscriptionResult.issued + approvedUnallocated.issued + paidUnallocated.issued}/${consultationResult.failures + parkedResult.failures + subscriptionResult.failures + approvedUnallocated.failures + paidUnallocated.failures}`,
   );
@@ -2284,6 +2496,7 @@ async function expireStaleRequestsUnlocked(
       approvedUnallocated.expired +
       paidUnallocated.expired,
     subscriptionNudgesSent: nudges.nudged,
+    requestExpiryAlertsSent: expiryAlerts.alerted,
     paymentPendingExpired: totalPaymentPending,
     consultationSlotsReleased: consultationResult.slotsReleased,
     refundsIssued:

@@ -264,7 +264,7 @@ Additionally, the `GET /api/trials` endpoint performs an inline auto-complete ch
 
 ## Conversion to Subscription
 
-**The prompt to continue (decided 2026-11-12, planned; not built).** The buyer's trial detail page will carry a "Continue with {expert}" card, quiet before the session and prominent once it completes, and one bell and one email will go out when the trial completes. Today the consultee detail page offers a "Continue with {expert}" button for a completed one-on-one, and `trial-session-completed` is the only completion notice. Picking the trial time will also become step two inside the mentorship dialog. See [the booking follow-up train](../decisions/2026-11-12-booking-follow-up-train.md).
+**The prompt to continue.** The buyer's trial detail page carries a "Continue with {expert}" card, quiet before the session and prominent once it completes. When the trial completes, the learner gets one bell and one email headed "Continue with {expert}" that open the plan's checkout page, and the expert gets a bell only (`stageTrialCompletedNotices`, `lib/booking/trial-completed-notice.ts`, called by the trial route and the auto-complete sweep). See [the booking follow-up train](../decisions/2026-11-12-booking-follow-up-train.md), decision 6, and [the required notices record](../decisions/2026-11-15-required-notices-and-deadline-alerts.md), decision 4.
 
 When a consultee decides to subscribe after a trial, the trial status transitions from `COMPLETED` to `CONVERTED`:
 
@@ -291,12 +291,12 @@ The link enables:
 
 Trial events trigger Novu workflows defined in `lib/novu/workflows.ts`. All trial workflows use the `TrialPayload` type.
 
-| Workflow ID               | Trigger                              | Recipients      |
-| ------------------------- | ------------------------------------ | --------------- |
-| `trial-session-scheduled` | A free trial is booked               | Both parties    |
-| `trial-session-completed` | Trial session ends                   | Both parties    |
-| `trial-session-cancelled` | Trial cancelled                      | The other party |
-| `trial-refunded`          | A cancelled paid trial's money moved | Learner         |
+| Workflow ID               | Trigger                              | Recipients                                                                         |
+| ------------------------- | ------------------------------------ | ---------------------------------------------------------------------------------- |
+| `trial-session-scheduled` | A free trial is booked               | Both parties                                                                       |
+| `trial-session-completed` | Trial session ends                   | Both parties (learner: bell and email "Continue with {expert}"; expert: bell only) |
+| `trial-session-cancelled` | Trial cancelled                      | The other party                                                                    |
+| `trial-refunded`          | A cancelled paid trial's money moved | Learner                                                                            |
 
 **Payload type** (`TrialPayload`):
 

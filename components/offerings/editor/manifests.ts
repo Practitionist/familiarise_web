@@ -463,7 +463,7 @@ export const WEBINAR_MANIFEST: OfferingManifest = {
           description:
             "Required before publishing. Pick a time on your own calendar; it must be on the half hour and at least an hour away.",
           required: true,
-          span: 3,
+          span: 6,
         },
       ],
     },
@@ -510,7 +510,7 @@ export const CLASS_MANIFEST: OfferingManifest = {
           description:
             "Required before publishing. Pick a time on your own calendar; it must be on the half hour and at least an hour away.",
           required: true,
-          span: 3,
+          span: 6,
         },
         {
           // #1819 — empty keeps enrolment closing when session 1 starts.

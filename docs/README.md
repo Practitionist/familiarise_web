@@ -302,7 +302,8 @@ strategy documents to the individual slow-query investigations.
 - [03-dashboard-appointments-perf.md](./performance/03-dashboard-appointments-perf.md) - Investigation: slow `/api/appointments` query
 - [04-availability-allocation-perf.md](./performance/04-availability-allocation-perf.md) - Investigation: slow wide-window availability-with-allocation query
 - [05-lighthouse-audit-and-cwv-playbook.md](./performance/05-lighthouse-audit-and-cwv-playbook.md) - Lighthouse audits and the Core Web Vitals playbook
-- [06-database-round-trips-and-join-loading.md](./performance/06-database-round-trips-and-join-loading.md) - Why statement count dominates dashboard latency, and when readers use join loading
+- [06-database-round-trips-and-join-loading.md](./performance/06-database-round-trips-and-join-loading.md) - Why statement count dominates dashboard and booking-write latency, when readers use join loading, and the per-path counts of the booking writes
+- [2026-11-15-booking-statement-cuts.md](./decisions/2026-11-15-booking-statement-cuts.md) - Targeted join loading on the hot booking reads (not a global flip), trial notices read before their transaction under explicit limits, no invoice reads for a free order, and no raw error text in a 500, with the worked counts and the options not chosen
 
 ---
 

@@ -145,17 +145,29 @@ export async function notifyRescheduleRestored(
       select: { startsAt: true },
     });
     const dashboardUrl = notificationHref(appt.organizationId, "appointments");
+    // A lapse reaches every party; a withdrawal reaches everyone but the proposer who withdrew.
+    const required =
+      outcome === "EXPIRED"
+        ? { kind: "PROPOSAL_LAPSED" as const, recipients: userIds }
+        : {
+            kind: "PROPOSAL_WITHDRAWN" as const,
+            recipients: userIds.filter((id) => id !== detail.initiatedById),
+          };
 
-    await notifyAppointmentRescheduled(userIds, {
-      ...notificationScope(appt.organizationId),
-      appointmentType: appt.appointmentType,
-      consultantName: consultantUser.name || "Consultant",
-      consulteeName: consulteeUser.name || "Consultee",
-      planTitle,
-      dashboardUrl,
-      outcome,
-      ...(restored ? { oldDateTime: restored.startsAt.toISOString() } : {}),
-    });
+    await notifyAppointmentRescheduled(
+      userIds,
+      {
+        ...notificationScope(appt.organizationId),
+        appointmentType: appt.appointmentType,
+        consultantName: consultantUser.name || "Consultant",
+        consulteeName: consulteeUser.name || "Consultee",
+        planTitle,
+        dashboardUrl,
+        outcome,
+        ...(restored ? { oldDateTime: restored.startsAt.toISOString() } : {}),
+      },
+      { required },
+    );
     // #1653 — the email twin; the sender never throws.
     await sendAppointmentRescheduledEmail(
       {
@@ -164,6 +176,7 @@ export async function notifyRescheduleRestored(
         outcome,
         appointmentType: appt.appointmentType,
         oldStartsAt: restored?.startsAt ?? null,
+        requiredFor: required.recipients,
         dashboardUrl,
       },
       emailBudgetMs,

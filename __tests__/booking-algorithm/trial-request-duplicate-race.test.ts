@@ -44,20 +44,11 @@ jest.mock("../../lib/trials/book-trial", () => ({
   TrialTimeRefusedError: class extends Error {},
 }));
 jest.mock("../../lib/trials/schedule-notices", () => ({
-  stageTrialScheduledNotices: jest.fn(async () => ({
-    consulteeBell: null,
-    consultantBell: null,
-    emails: [],
+  prepareTrialScheduledNotices: jest.fn(async () => ({
+    bells: [],
+    emails: { prepared: { messages: [] }, screened: [] },
   })),
-}));
-jest.mock("../../lib/email/senders/booking", () => ({
-  prepareTrialScheduledEmail: jest.fn(async () => ({
-    emailType: "TRIAL_SESSION_SCHEDULED",
-    entityRef: "trial:pending",
-    messages: [],
-    skipped: 0,
-    failed: 0,
-  })),
+  stageTrialScheduledNotices: jest.fn(async () => ({ bells: [], emails: [] })),
 }));
 jest.mock("../../lib/novu/stage-then-attempt", () => ({
   flushNotificationsAfter: jest.fn(async () => undefined),

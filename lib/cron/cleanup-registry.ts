@@ -1022,6 +1022,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           parkedConsultationsCancelled: r.parkedConsultationsCancelled,
           subscriptionsExpired: r.subscriptionsExpired,
           subscriptionNudgesSent: r.subscriptionNudgesSent,
+          requestExpiryAlertsSent: r.requestExpiryAlertsSent,
           paymentPendingExpired: r.paymentPendingExpired,
           unallocatedHasMore: r.unallocatedHasMore,
           unallocatedRefundsDeferred: r.unallocatedRefundsDeferred,

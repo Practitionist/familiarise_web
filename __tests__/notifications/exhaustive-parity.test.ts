@@ -405,6 +405,7 @@ describe("Exhaustive Dual-Channel Notification & Template Parity", () => {
         const subject = trialAndSubscriptionSubject({
           kind,
           planTitle: "Backend Mentorship",
+          consultantName: "Vikram",
           consulteeName: "Rohan",
         });
         const html = renderToStaticMarkup(

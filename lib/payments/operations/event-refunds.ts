@@ -10,6 +10,7 @@ import {
 } from "@/lib/payments/refundable-balance";
 import { getAppUrl } from "@/lib/url";
 import { notifyRefundProcessed } from "@/lib/novu";
+import { seatRemovalRefundReason } from "./refund-cause";
 import { notificationScope } from "@/lib/novu/workflows";
 import { goHref } from "@/lib/dashboard/go";
 import { EMAIL_BUDGET_MS, sendRefundProcessedEmail } from "@/lib/email";
@@ -734,6 +735,8 @@ export async function refundRemovedAttendeeSeat(args: {
   rail: FundingRail | null;
   /** Set when the seat was free: nothing was paid, so nothing is refunded. */
   freeBooking?: true;
+  /** The gateway is still settling the refund. */
+  pending?: boolean;
 } | null> {
   const eventFilter =
     args.kind === "webinar"
@@ -753,6 +756,9 @@ export async function refundRemovedAttendeeSeat(args: {
       // unless the caller named the sale, which is the only way this door can
       // be sure it is refunding the payment in front of it.
       ...(args.paymentId ? {} : { orderBy: { createdAt: "asc" } }),
+      // One joined statement where "query" loads the refunds, disputes and
+      // policy tiers separately; every caller, free seat included, reaches it.
+      relationLoadStrategy: "join",
       where: {
         ...(args.paymentId ? { id: args.paymentId } : {}),
         userId: args.attendeeUserId,
@@ -774,7 +780,8 @@ export async function refundRemovedAttendeeSeat(args: {
       },
     });
     if (!payment) return null;
-    // A free seat owes nothing and writes no refund record.
+    // Free and credit-funded seats are told apart only here: a price-free seat
+    // owes nothing, while a ₹0 credit-funded seat must reach creditSeatRefund.
     if (isPriceFreeSeat(payment)) {
       return {
         amountRefundedPaise: 0,
@@ -831,11 +838,15 @@ export async function refundRemovedAttendeeSeat(args: {
     if (amountPaise <= 0)
       return { amountRefundedPaise: 0, refundPct, rail: null };
 
-    const actorLabel = isOrganiserInitiated ? "organiser" : "attendee";
     const result = await refundBookingPayment({
       paymentId: payment.id,
       amountPaise,
-      reason: `removed from ${args.kind} ${args.eventId} by the ${actorLabel} (${refundPct}%)`,
+      reason: seatRemovalRefundReason(
+        args.kind,
+        args.eventId,
+        isOrganiserInitiated,
+        refundPct,
+      ),
       ...(isOrganiserInitiated
         ? { customerReason: `You were removed from this ${args.kind}.` }
         : {}),
@@ -847,21 +858,33 @@ export async function refundRemovedAttendeeSeat(args: {
     // Phase 3b, and PENDING refunds wait for the settlement webhook.
     if (result.rail === "GATEWAY" && !result.status) {
       await Promise.allSettled([
-        notifyRefundProcessed(args.attendeeUserId, {
-          ...notificationScope(payment.organizationId),
-          amount: amountPaise,
-          currency: payment.currency,
-          reason: isOrganiserInitiated
-            ? `You were removed from this ${args.kind}.`
-            : `You left this ${args.kind}.`,
-          dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
-        }),
+        notifyRefundProcessed(
+          args.attendeeUserId,
+          {
+            ...notificationScope(payment.organizationId),
+            amount: amountPaise,
+            currency: payment.currency,
+            reason: isOrganiserInitiated
+              ? `You were removed from this ${args.kind}.`
+              : `You left this ${args.kind}.`,
+            dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
+          },
+          isOrganiserInitiated
+            ? {
+                required: {
+                  kind: "SEAT_RELEASED",
+                  recipients: [args.attendeeUserId],
+                },
+              }
+            : undefined,
+        ),
         sendRefundProcessedEmail(
           {
             userId: args.attendeeUserId,
             paymentId: payment.id,
             amountPaise,
             currency: payment.currency,
+            required: isOrganiserInitiated,
           },
           { budgetMs: EMAIL_BUDGET_MS.REQUEST },
         ),
@@ -872,6 +895,8 @@ export async function refundRemovedAttendeeSeat(args: {
       amountRefundedPaise: result.amountRefundedPaise,
       refundPct,
       rail: result.rail,
+      // Still settling at the gateway: the removal notice says the refund started.
+      ...(result.status === "PENDING" ? { pending: true } : {}),
     };
   } catch (err) {
     // Benign idempotent re-drives — a seat already refunded, or a payment that
@@ -1033,9 +1058,13 @@ async function creditSeatRefund(
     });
     return { amountRefundedPaise: 0, refundPct: 0, rail: null };
   }
+  const organiser = (args.initiatedBy ?? "organiser") === "organiser";
   const r = await refundBookingPayment({
     paymentId,
-    reason: `left ${args.kind} ${args.eventId} — credits restored in full`,
+    // The organiser's removal keeps its cause, so its credit notice is required.
+    reason: organiser
+      ? seatRemovalRefundReason(args.kind, args.eventId, true, 100)
+      : `left ${args.kind} ${args.eventId} — credits restored in full`,
     initiatedByUserId: args.initiatedByUserId,
     dedupeKey,
   });

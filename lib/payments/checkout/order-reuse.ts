@@ -290,6 +290,8 @@ async function classifyOpenOrders(
     },
     orderBy: { createdAt: "desc" },
     take: 5, // bounded: newest attempts first; older ones get superseded below
+    // One joined statement, even when there is no candidate to nest under.
+    relationLoadStrategy: "join",
     select: {
       id: true,
       paymentIntent: true,

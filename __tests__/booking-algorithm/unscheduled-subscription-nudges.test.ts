@@ -10,6 +10,10 @@
  * through its own FailedEmail row, so a re-run repeats neither.
  */
 
+jest.mock("@sentry/nextjs", () => ({
+  captureException: jest.fn(),
+  captureMessage: jest.fn(),
+}));
 jest.mock("../../lib/prisma", () => {
   const db: Record<string, unknown> = {
     consultation: {
@@ -44,18 +48,17 @@ jest.mock("../../lib/novu/service", () => ({
   notifyUnscheduledSubscriptionNudge: (...a: unknown[]) =>
     mockNudgeBell(...(a as [])),
 }));
-const mockNudgeEmail = jest.fn(async () => ({
-  sent: 1,
-  skipped: 0,
-  failed: 0,
+const mockNudgeEmail = jest.fn(async (..._a: unknown[]) => ({
+  staged: [{}],
+  renderFailures: 0,
 }));
 jest.mock("../../lib/email", () => ({
   EMAIL_BUDGET_MS: { JOB: 1 },
   SUBSCRIPTION_UNSCHEDULED_NUDGE_EMAIL_TYPE: "SUBSCRIPTION_UNSCHEDULED_NUDGE",
   unscheduledNudgeEntityRef: (id: string, hour: number) =>
     `subscription:${id}:h${hour}`,
-  sendUnscheduledSubscriptionNudgeEmail: (...a: unknown[]) =>
-    mockNudgeEmail(...(a as [])),
+  stageUnscheduledSubscriptionNudgeEmail: (...a: unknown[]) =>
+    mockNudgeEmail(...a),
 }));
 
 import prisma from "../../lib/prisma";
@@ -129,10 +132,10 @@ describe("nudgeUnscheduledSubscriptions", () => {
         ),
       }),
       dedupeKey,
+      { tx: expect.anything(), deferAttempt: true },
     );
     expect(mockNudgeEmail).toHaveBeenCalledWith(
       expect.objectContaining({ subscriptionId: "sub_1", nudgeHours: 24 }),
-      1,
     );
 
     // Each arm's staged row is its own claim: with the bell's row but no
@@ -159,5 +162,30 @@ describe("nudgeUnscheduledSubscriptions", () => {
     expect(again.subscriptionNudgesSent).toBe(0);
     expect(mockNudgeBell).toHaveBeenCalledTimes(1);
     expect(mockNudgeEmail).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("render failures across the cohort", () => {
+  it("are reported once per run, never per plan", async () => {
+    const capture = jest.requireMock("@sentry/nextjs") as {
+      captureException: jest.Mock;
+    };
+    db.subscription.findMany.mockImplementation(
+      async (args: { where: { deletedAt?: null } }) =>
+        args.where.deletedAt === null
+          ? [
+              waitingSubscription(30),
+              { ...waitingSubscription(30), id: "sub_2" },
+            ]
+          : [],
+    );
+    mockNudgeEmail.mockResolvedValue({ staged: [], renderFailures: 1 });
+
+    const result = await expireStaleRequests();
+
+    expect(result.errors.filter((e) => e.includes("failed to render"))).toEqual(
+      ["2 unscheduled-plan nudge email(s) failed to render; retried next run"],
+    );
+    expect(capture.captureException).not.toHaveBeenCalled();
   });
 });
