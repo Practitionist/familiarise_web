@@ -1768,13 +1768,13 @@ export async function performCaseAction(
     throw error;
   });
   if (input.action === "DECIDE" && input.outcome === "OVERTURNED") {
+    await settleDecidedRemoval(caseId);
     purgeReviewSurfaces(
       "restoredConsultantProfileId" in result &&
         typeof result.restoredConsultantProfileId === "string"
         ? result.restoredConsultantProfileId
         : undefined,
     );
-    await settleDecidedRemoval(caseId);
   }
   if (input.action === "REVIEW_REFUND" && input.approve)
     return {

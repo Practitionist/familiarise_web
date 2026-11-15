@@ -23,7 +23,30 @@ jest.mock("../../../lib/novu/stage-then-attempt", () =>
   jest.requireActual("./harness-edges").noFlushMock(),
 );
 
+/** The maintenance flag lives in Redis, which the database tier does not run. */
+jest.mock("../../../lib/backoffice/maintenance-gate", () => ({
+  ...jest.requireActual("../../../lib/backoffice/maintenance-gate"),
+  assertMoneyDoorsOpen: async () => undefined,
+}));
+jest.mock("../../../lib/data/public-cache", () => ({
+  ...jest.requireActual("../../../lib/data/public-cache"),
+  purgeReviewSurfaces: jest.fn(),
+}));
 const mockFailHold = { next: false };
+const mockDieAfterCommit = { next: false };
+jest.mock("../../../lib/stream/access-revocation", () => {
+  const actual = jest.requireActual("../../../lib/stream/access-revocation");
+  return {
+    ...actual,
+    syncConductCallBlock: async (...args: unknown[]) => {
+      if (mockDieAfterCommit.next) {
+        mockDieAfterCommit.next = false;
+        throw new Error("instance died after the removal commit");
+      }
+      return actual.syncConductCallBlock(...args);
+    },
+  };
+});
 jest.mock("../../../lib/support/case-holds", () => {
   const actual = jest.requireActual("../../../lib/support/case-holds");
   return {
@@ -177,17 +200,17 @@ describe("removal", () => {
   it("ends the seat, opens the case, holds the earnings and writes both intents in one commit; nothing is refunded", async () => {
     const { webinar, userId, payment, earningId } = await paidSeat();
 
-    // Stream is unreachable after the commit: the intents must outlive it.
-    const removed = await remove(webinar, userId);
-    expect(removed?.earningsHeld).toBe(true);
+    // The instance dies right after the commit, before any Stream call.
+    mockDieAfterCommit.next = true;
+    await expect(remove(webinar, userId)).rejects.toThrow(/instance died/);
 
     const seat = await prisma.appointmentParticipant.findFirstOrThrow({
       where: { appointmentId: webinar.appointmentId, userId },
       select: { status: true },
     });
     expect(seat.status).toBe("CANCELLED");
-    const supportCase = await prisma.supportCase.findUniqueOrThrow({
-      where: { id: removed!.caseId },
+    const supportCase = await prisma.supportCase.findFirstOrThrow({
+      where: { appointmentId: webinar.appointmentId, requesterUserId: userId },
       include: { events: true },
     });
     expect(supportCase).toMatchObject({
@@ -320,11 +343,8 @@ describe("overturn", () => {
       where: { paymentId: payment.id, dedupeKey: { not: null } },
       select: { amountPaise: true, dedupeKey: true },
     });
-    expect(sent).toEqual([
-      {
-        amountPaise: BigInt(75_000),
-        dedupeKey: `conduct-removal:${removed!.caseId}:pay:${payment.id}`,
-      },
+    expect(sent.map((r) => [Number(r.amountPaise), r.dedupeKey])).toEqual([
+      [75_000, `conduct-removal:${removed!.caseId}:pay:${payment.id}`],
     ]);
     const marker = await prisma.payment.findUniqueOrThrow({
       where: { id: payment.id },
