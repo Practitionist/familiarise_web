@@ -19,6 +19,7 @@ import {
   isEventParticipant,
   removeUsersFromEventChannel,
 } from "@/lib/stream/event-channel-service";
+import { driveConductCallBlock } from "@/lib/stream/conduct-call-block";
 
 /** The revocations a mutating action owes Stream; erasure rows are written by the scrub. */
 export type AccessRevocationKind = Exclude<
@@ -838,6 +839,62 @@ export async function persistSeatRevocationInTx(
   return targets.length === 0 ? null : enqueueInTx(tx, targets);
 }
 
+const conductTarget = (appointmentId: string, userId: string) => ({
+  kind: "CONDUCT_CALL_BLOCK" as const,
+  userId,
+  planId: appointmentId,
+});
+
+/**
+ * Writes the conduct block intent through the transaction that removes the
+ * attendee or decides their review, so both commit together. Returns its generation.
+ */
+export async function persistConductBlockInTx(
+  tx: Tx,
+  appointmentId: string,
+  userId: string,
+): Promise<Date> {
+  return enqueueInTx(tx, [conductTarget(appointmentId, userId)]);
+}
+
+/**
+ * Drives the conduct block intent its transaction wrote inside the request's
+ * budget and settles that generation; the sweep owns the rest. Never throws.
+ */
+export async function syncConductCallBlock(
+  appointmentId: string,
+  userId: string,
+  generation: Date | null,
+): Promise<void> {
+  if (!isStreamConfigured()) {
+    reportStreamUnconfigured();
+    return;
+  }
+  let error: string | null;
+  try {
+    error = await driveConductCallBlock(
+      appointmentId,
+      userId,
+      Date.now() + SYNC_SEAT_REVOCATION_BUDGET_MS,
+    );
+  } catch (thrown) {
+    // The intent stays owed; the sweep re-drives it.
+    streamLogger.warn("Conduct block interrupted", {
+      appointmentId,
+      error: thrown instanceof Error ? thrown.message : String(thrown),
+    });
+    return;
+  }
+  if (!error) {
+    await settleIntents(
+      "CONDUCT_CALL_BLOCK",
+      appointmentId,
+      [userId],
+      generation,
+    );
+  }
+}
+
 /** How long provisioning waits on Stream to take back an unsaved room's members. */
 const UNSAVED_ROOM_RELEASE_BUDGET_MS = 5_000;
 
@@ -1117,8 +1174,9 @@ export interface AccessRevocationRow {
 /**
  * Re-drives one queued revocation. Returns the error to record, or null when
  * the access is gone or Postgres has since re-granted it; without Stream's keys
- * nothing is done and `STREAM_UNCONFIGURED` comes back. A seat or refund row
- * stops starting Stream work at its slice or at `deadlineMs`, whichever is sooner.
+ * nothing is done and `STREAM_UNCONFIGURED` comes back. A seat, refund or
+ * conduct block row stops starting Stream work at its slice or at `deadlineMs`,
+ * whichever is sooner.
  */
 export async function redriveAccessRevocation(
   row: AccessRevocationRow,
@@ -1148,6 +1206,8 @@ export async function redriveAccessRevocation(
     }
     case "REFUND_ACCESS_REVOKE":
       return (await driveRefundRevocation(row.planId, deadlineMs)).error;
+    case "CONDUCT_CALL_BLOCK":
+      return driveConductCallBlock(row.planId, row.userId, deadlineMs);
   }
 }
 

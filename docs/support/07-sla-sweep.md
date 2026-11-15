@@ -40,7 +40,8 @@ flowchart TD
     A5 --> A6["6. Chargeback deadline alerts (window up to 500, sends capped by limit)"]
     A6 --> A7["7. Moderation deadlines (cap: limit)"]
     A7 --> A8["8. Overdue evidence requests (cap: limit)"]
-    A8 --> F["Flush staged bells and emails after the response"]
+    A8 --> A9["9. Conduct removal review deadline (cap: 5)"]
+    A9 --> F["Flush staged bells and emails after the response"]
     F --> S{"Any row errors?"}
     S -- yes --> E["One Sentry report, HTTP 500, SystemJobExecution FAILED"]
     S -- no --> OK["HTTP 200, SystemJobExecution COMPLETED"]
@@ -151,12 +152,17 @@ Open moderation reports whose `resolutionDueAt` is due within 24 hours or breach
 
 Unanswered, uncancelled evidence requests past `dueAt` (within the last 30 days) on unresolved cases get one bell to the operator who asked, keyed `evidence-overdue:<requestId>`. An overdue request also makes `EVIDENCE_OVERDUE` a verified basis for a chat intervention.
 
+### 9. Conduct removal review deadline
+
+A host's conduct removal opens a `CONDUCT_REMOVAL` case that support must decide (`UPHELD` or `OVERTURNED`) within 72 hours (`DEADLINE_HOURS.CONDUCT_REMOVAL`, which also sets the case's `statutoryDueAt`, so arm 1 warns staff before it). `sweepConductRemovalDeadlines()` (`lib/support/conduct-removal-case.ts`) reads up to 5 removal cases created 72 hours ago or more with no decision and no `REMOVAL_REVIEW_LAPSED` event. For each, one transaction writes that event, stamps a full-balance refund-owed marker keyed `conduct-removal:<caseId>:pay:<paymentId>` (nothing for a free seat) and posts a message to the attendee; after the commit the seat door refunds whatever is still unrefunded on the payment, on the rails it was paid by. The event makes the arm fire once per case; the key makes a later overturn replay that refund rather than send another. The call block stays until support decides. Example: a ₹1,000 webinar seat removed on Monday at 10:00 and still undecided on Thursday at 10:00 is refunded ₹1,000 on the next run. See [the conduct removal record](../decisions/2026-11-15-conduct-removal.md).
+
 ## Invariants
 
 | Rule                                                                                                | Enforcer                                                                                                                                                        | Test                                                 |
 | --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
 | One owned RUNNING lease per sweep; unavailable fail-open admission or lease loss can overlap cores. | The database: `SystemJobExecution_running_jobName_key`; `withCronLock()`.                                                                                       | `__tests__/maintenance/with-cron-lock.test.ts`       |
-| Each arm is bounded per run.                                                                        | App: `PROBLEM_CASCADE_CAP` (10), `EVIDENCE_PURGE_CAP` (5), `CHAT_ACCESS_CAP` (10), the limit.                                                                   | `__tests__/support/sla-sweep-lifecycle-arms.test.ts` |
+| Each arm is bounded per run.                                                                        | App: `PROBLEM_CASCADE_CAP` (10), `EVIDENCE_PURGE_CAP` (5), `CHAT_ACCESS_CAP` (10), `CONDUCT_REMOVAL_CAP` (5), the limit.                                        | `__tests__/support/sla-sweep-lifecycle-arms.test.ts` |
+| A conduct removal's deadline refund fires once, at 72 hours.                                        | The `REMOVAL_REVIEW_LAPSED` event in the arm's transaction; the marker key on the removal case.                                                                 | `__tests__/db/booking/conduct-removal.db.test.ts`    |
 | Each threshold notifies once.                                                                       | App: outbox `entityRef` identities from `slaNoticeKey()` (each notice includes its deadline) checked against the preloaded keys; outbox `transactionId` unique. | `__tests__/support/dispute-deadline-alerts.test.ts`  |
 | A cascade never resolves an incident of a problem that was reopened.                                | App: compare-and-set includes the problem's status.                                                                                                             | `__tests__/db/support/problem-cascade.db.test.ts`    |
 | One failing row never stops the run, and Sentry hears about it once.                                | App: per-row transactions, collected `errors`, one `reportSentryError()`.                                                                                       | `__tests__/support/sla-sweep-lifecycle-arms.test.ts` |
@@ -175,7 +181,7 @@ The auto-close regressions are in `__tests__/support/sla-sweep-auto-close.test.t
 ## Where in code
 
 - `lib/support/sla-sweep.ts`: `runSupportSlaSweep()`, `stageSlaNotices()`, `slaNoticeKey()`, `autoCloseResolvedRows()`, `processDisputeDeadlineAlerts()`, `pageCriticalDisputeDeadlines()`.
-- `lib/support/problem-cascade.ts`, `lib/support/evidence-retention.ts`, `lib/support/chat-sweep.ts`.
+- `lib/support/problem-cascade.ts`, `lib/support/evidence-retention.ts`, `lib/support/chat-sweep.ts`, `lib/support/conduct-removal-case.ts`.
 - `lib/cron/cleanup-registry.ts`, `lib/cron/with-cron-lock.ts`, `netlify/functions/cron-tick.mts`.
 
 ## Deprecated & Superseded Approaches

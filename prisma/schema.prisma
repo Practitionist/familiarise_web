@@ -687,6 +687,8 @@ enum SupportCaseEventKind {
   CHAT_ACCESS_ENDED
   CHAT_SUPPORT_MESSAGE
   CHAT_REVIEW_NOTIFIED
+  /// A conduct removal case reached its review deadline undecided; the seat's unrefunded balance became owed.
+  REMOVAL_REVIEW_LAPSED
 }
 
 /// A staff grant to one booking chat, linked to a case. READ opens the audited
@@ -8428,6 +8430,8 @@ enum StreamRevocationKind {
   SEAT_ACCESS_REVOKE
   /// A refund's seats to revoke; planId is the Refund row, userId its payer.
   REFUND_ACCESS_REVOKE
+  /// The appointment's open rooms block the user while their conduct removal stands and unblock it once overturned; planId is the appointment.
+  CONDUCT_CALL_BLOCK
 }
 
 enum ErasureVendor {

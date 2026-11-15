@@ -123,6 +123,8 @@ const Resolution = z.object({
     updatedAt: z.string(),
     caseKind: z.enum(["INCIDENT", "PROBLEM"]),
     isAppeal: z.boolean(),
+    /** A conduct removal case is upheld or overturned, like an appeal. */
+    reviewsRemoval: z.boolean().optional(),
     legalHoldAt: z.string().nullable(),
     isAdmin: z.boolean(),
   }),
@@ -141,11 +143,12 @@ const APPEAL_OUTCOMES: ReadonlySet<DecisionOutcome> = new Set([
   "OVERTURNED",
 ]);
 
-/** Appeals are upheld or overturned; every other case gets a remedy outcome. */
+/** Appeals and conduct removals are upheld or overturned; every other case gets a remedy outcome. */
 export function outcomesFor(data: CaseResolution): DecisionOutcome[] {
+  const reviewed = data.isAppeal || data.reviewsRemoval === true;
   return Outcome.options.filter(
     (value) =>
-      data.isAppeal === APPEAL_OUTCOMES.has(value) &&
+      reviewed === APPEAL_OUTCOMES.has(value) &&
       (data.canExecuteMoney ||
         (value !== "REFUND_APPROVED" && value !== "REFUND_DECLINED")),
   );

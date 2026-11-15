@@ -104,6 +104,18 @@
       "reason": "Pre-#2041 recording-storage column and its enum. No schema declares them and no code reads them.",
       "trackedBy": "#2270",
       "expires": "2026-11-21"
+    },
+    {
+      "statement": "ALTER TYPE \"StreamRevocationKind\" ADD VALUE 'CONDUCT_CALL_BLOCK'",
+      "reason": "The revocation kind that blocks a conduct-removed attendee from the appointment's rooms and unblocks them once support overturns it. Not destructive, so only the drift check reads it; it goes with the reconcile push of #2762.",
+      "trackedBy": "#2799",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "ALTER TYPE \"SupportCaseEventKind\" ADD VALUE 'REMOVAL_REVIEW_LAPSED'",
+      "reason": "The case event the support SLA sweep writes once when a conduct removal passes its 72-hour review deadline undecided. Not destructive, so only the drift check reads it; it goes with the reconcile push of #2762.",
+      "trackedBy": "#2799",
+      "expires": "2026-12-31"
     }
   ],
   "knownDivergences": [
