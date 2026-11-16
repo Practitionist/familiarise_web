@@ -81,7 +81,7 @@ export function FilterMenu({
           </button>
         </PopoverTrigger>
         <PopoverContent className="w-56 p-1">
-          <div role="group" aria-label={label}>
+          <fieldset aria-label={label} className="m-0 min-w-0 border-0 p-0">
             {items.map((option) => {
               const selected =
                 option.value === "" ? value === null : option.value === value;
@@ -116,7 +116,7 @@ export function FilterMenu({
                 </button>
               );
             })}
-          </div>
+          </fieldset>
         </PopoverContent>
       </Popover>
       {active && (
