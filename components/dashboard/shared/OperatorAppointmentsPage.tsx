@@ -6,7 +6,7 @@ import {
 import type { ReactNode } from "react";
 import { getStaffAppointments } from "@/lib/data/staff-appointments";
 import type { Scope } from "@/lib/api/scope/parse";
-import { getViewerZone } from "@/lib/time/viewer-zone-server";
+import { OPERATOR_ZONE } from "@/lib/time/operator-zone";
 import { DisplayZoneProvider } from "@/lib/time/zoned-format";
 
 /**
@@ -23,9 +23,6 @@ export async function OperatorAppointmentsPage({
   children: ReactNode;
 }) {
   const queryClient = new QueryClient();
-  // #1527 QA — one zone for the server render and hydration: the list's
-  // dates printed Netlify's UTC, then the browser's zone (hydration #418).
-  const viewerZone = await getViewerZone();
 
   // #890 — SSR prefetch the DEFAULT view (page 1, no filters) so the client
   // useQuery hydrates without a fetch waterfall. The queryKey object MUST match
@@ -45,9 +42,8 @@ export async function OperatorAppointmentsPage({
 
   return (
     <HydrationBoundary state={dehydrate(queryClient)}>
-      <DisplayZoneProvider zone={viewerZone.zone}>
-        {children}
-      </DisplayZoneProvider>
+      {/* Operators read bookings in India time, whatever their profile zone. */}
+      <DisplayZoneProvider zone={OPERATOR_ZONE}>{children}</DisplayZoneProvider>
     </HydrationBoundary>
   );
 }

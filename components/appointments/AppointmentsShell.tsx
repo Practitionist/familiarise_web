@@ -38,6 +38,10 @@ import {
   type DateRange,
   type TypeFilter,
 } from "./AppointmentsFilterBar";
+import {
+  dateRangeBounds,
+  type DateRangeDirection,
+} from "@/components/dashboard/DateRangeMenu";
 import { NextUpHero, type HeroStat } from "./NextUpHero";
 
 type TabValue = AppointmentBucket | "all";
@@ -178,6 +182,12 @@ function replaceQueryParam(name: string, value: string) {
   }
 }
 
+/** Date presets look forward on the to-do tabs and back on the done ones. */
+function dateDirectionOf(tab: TabValue, view: View): DateRangeDirection {
+  if (view === "calendar" || tab === "all") return "any";
+  return tab === "past" || tab === "cancelled" ? "past" : "future";
+}
+
 interface AppointmentsShellProps {
   vms: AppointmentVM[];
   adapter: AppointmentActionAdapter;
@@ -275,14 +285,12 @@ export function AppointmentsShell({
   const resolveSponsoredLabel = (orgId: string | null) =>
     resolveSponsoringOrgName(orgId, orgMemberships);
 
-  // Chip/search/date filters apply to every tab (counts included) so the tab
+  // Type/search/date filters apply to every tab (counts included) so the tab
   // numbers always describe what the user would see on click.
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const fromMs = dateRange.from ? new Date(dateRange.from).getTime() : null;
-    const toMs = dateRange.to
-      ? new Date(dateRange.to).getTime() + 86_400_000 - 1
-      : null;
+    // Range ends are calendar days in the zone the list groups by.
+    const { fromMs, toMs } = dateRangeBounds(dateRange, viewerZone.zone);
     return vms.filter((vm) => {
       if (!matchesTypeFilter(vm.kind, typeFilter)) return false;
       if (
@@ -300,7 +308,7 @@ export function AppointmentsShell({
       }
       return true;
     });
-  }, [vms, typeFilter, search, dateRange]);
+  }, [vms, typeFilter, search, dateRange, viewerZone.zone]);
 
   const byBucket = useMemo(() => {
     const map: Record<AppointmentBucket, AppointmentVM[]> = {
@@ -404,14 +412,37 @@ export function AppointmentsShell({
               view === "calendar" && "opacity-60",
             )}
           >
-            {tabs.map(({ value, label }) => (
-              <TabsTrigger key={value} value={value} className="gap-1.5">
-                {label}
-                <span className="text-[10px] tabular-nums text-muted-foreground">
-                  {countOf(value)}
-                </span>
-              </TabsTrigger>
-            ))}
+            {tabs.map(({ value, label }) => {
+              const count = countOf(value);
+              // Work waiting on the viewer stands out; an empty tab recedes.
+              const urgent = value === "needsAction" && count > 0;
+              return (
+                <TabsTrigger
+                  key={value}
+                  value={value}
+                  className={cn(
+                    "gap-1.5",
+                    // The calendar already dims the whole list.
+                    view === "list" &&
+                      count === 0 &&
+                      value !== tab &&
+                      "opacity-60",
+                  )}
+                >
+                  {label}
+                  <span
+                    className={cn(
+                      "text-[10px] tabular-nums",
+                      urgent
+                        ? "font-bold text-destructive"
+                        : "text-muted-foreground",
+                    )}
+                  >
+                    {count}
+                  </span>
+                </TabsTrigger>
+              );
+            })}
           </TabsList>
 
           {/* List / calendar view toggle */}
@@ -453,6 +484,8 @@ export function AppointmentsShell({
             onSearchChange={setSearch}
             dateRange={dateRange}
             onDateRangeChange={setDateRange}
+            zone={viewerZone.zone}
+            dateDirection={dateDirectionOf(tab, view)}
             orgFilterSlot={orgFilterSlot}
           />
         </div>

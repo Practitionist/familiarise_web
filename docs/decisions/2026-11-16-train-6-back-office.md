@@ -1,0 +1,113 @@
+# ADR: The back office gets one permission matrix, one operator time zone and one totals page
+
+- **Status**: Accepted (owner decisions, 2026-11-16). Ships in the first of four back-office pull requests (access and foundations). The other three move their own screens and are labelled **(planned)** below.
+- **Date**: 2026-11-16
+- **Author**: Platform engineering
+- **Related**: [Authorization matrices](../authorization/01-authorization-matrices.md), [Maintenance architecture](../maintenance/01-architecture.md), [Trial sessions](../booking/09-trials.md), [Access rules after the bug hunt](2026-11-13-access-rules-after-the-bug-hunt.md)
+
+## Context
+
+The staff and admin consoles were audited before launch. Four things were wrong or inconsistent.
+
+- **Access lived in two places.** Most back-office pages ask the permission matrix (`BACKOFFICE_PERMISSIONS` in `lib/auth/backoffice-permissions.ts`) through `requireBackofficePage` and `requireBackofficeSurface`. About fifty API routes still asked a raw role question instead (`requirePrivilegedAuth` for ADMIN or STAFF, `requireAdminAuth` for ADMIN only, both in `lib/auth-helpers.ts`). A grant made that way is invisible to the file that is supposed to list every grant.
+- **Totals lived on two pages.** The admin-only Analytics page held every money and role total. The staff-only Metrics page held support-queue figures and documented itself as excluding revenue. Both pages already used the `analytics.read` key, so the "admin-only" and "staff-only" labels were nav choices, not access rules.
+- **Times were shown in whatever zone a screen happened to use.** About 57 back-office files used the browser zone, the server zone or a hard-coded zone, so the same instant read differently on two screens and a server-rendered label could differ from its hydrated version.
+- **Some admin writes were unaudited or leaked.** The maintenance history returned every column of the last 20 windows, including each window's bypass secret. A leads status change wrote no `OpsActionLog` row and asked for no reason. The OFFLINE setup step wrote no audit row.
+
+## Decisions
+
+1. **D1: there is no staff "void session" door before launch.** Staff end or repair a session through the doors that already exist and are audited: the refund doors (Money, Refunds, and the support remedy path) and the incident door (Money, Incidents). Each of them runs through `withOpsAction` (`lib/backoffice/ops-action-log.ts`), so each leaves an `OpsActionLog` row with a reason.
+   - Options not chosen: a new staff void door now. It would be a second way to end a session beside doors that already carry the refund caps, the step-up and the audit.
+
+2. **D2: Analytics is folded into Metrics.** Metrics now carries the platform totals next to the support-queue figures, read through `lib/backoffice/platform-totals.ts` with the same `where` clauses the old endpoint used.
+   - Kept: users and new users this month, experts, learners, staff, sessions (all, completed, upcoming, cancelled), the revenue total and this month, and refunds.
+   - The cancelled count reads `Consultation` rows with status `CANCELLED`, while the sessions total counts every `Appointment`, so the two are different populations. The read stays as Analytics had it, and the card is labelled "Cancelled consultation requests".
+   - Dropped: average session value and top domains, which were not on the owner's list of totals to keep.
+   - Deleted: the Analytics page, its client component, its loading file, its nav entry and `GET /api/admin/analytics`.
+   - Kept on purpose: `GET /api/admin/analytics/cancellations`, because the mobile API document ([Cancellation API for mobile](../api/cancellation-api-mobile.md)) names it. It moves onto the matrix as `analytics.read` and is otherwise unchanged.
+   - The totals are served by `GET /api/staff/metrics` (`getPlatformTotals`, gated on `analytics.read`), next to the support-queue figures.
+   - Metrics shows in both trees (`/dashboard/admin/metrics` and `/dashboard/staff/metrics`).
+   - Options not chosen: keeping Analytics as its own page. Two pages with the same permission key and overlapping numbers would drift.
+
+3. **D3: the operator display zone is IST (`Asia/Kolkata`) on every back-office screen.** The exact UTC instant shows in a tooltip. One helper pair gives the same text on the server and the client:
+   - `lib/time/operator-zone.ts` holds `OPERATOR_ZONE`, `formatOperatorInstant` (for example "1 Apr 2026, 5:30 am IST"), `formatUtcInstant` (the tooltip text) and `operatorMonthStart` (00:00 IST on the first of the India month);
+   - `lib/time/operator-time.tsx` holds `OperatorTime`, a `<time>` element that prints the IST text and carries the UTC reading in its `title`.
+
+   Both go through `lib/time/display.ts` with the zone and the `en-IN` locale pinned, so a server render and the hydrating browser print identical text. The back-office layout (`app/dashboard/(backoffice)/[tree]/layout.tsx`) mounts one `DisplayZoneProvider` with that zone, so every screen that already reads the provided zone moves with no edit. A person is shown the same way everywhere through `formatPerson` (`lib/backoffice/person.ts`) and `PersonCell` (`components/dashboard/backoffice/PersonCell.tsx`): the name, the email under it, a muted id, and "Removed user" when nothing is known.
+   - Rollout is split. The first pull request ships the helper, the layout provider and the screens that were wrong or that it already touches (Leads, job-run metrics, the entity trace, the evidence download, the audit-date label in `lib/labels/org-labels.ts`, the maintenance panels, System Jobs, run requests and the team page). The money, people-and-support and remaining screens move with their own pull requests **(planned)**, so until the last one merges some screens still print in the old zone.
+   - Options not chosen: the viewer's profile zone (two operators would read the same incident at different clock times); the browser zone (the hydration mismatch the display helpers were written to prevent).
+
+4. **D4: there is no staff door to end a paid trial now.** The trial routes refuse an operator who is not a party to the trial with 403 `PLATFORM_CANCEL_DOOR_REQUIRED` (`platformCancelDoorRefusal` in `lib/booking/platform-cancel.ts`), and no back-office door exists for a trial ([Trial sessions](../booking/09-trials.md)). Whether to build one is tracked as the issue "[backoffice][trials][P3] Decide a staff door to end a paid trial (deferred at Train 6; revisit with F8)" (#2836).
+   - Options not chosen: building the door in this train.
+
+5. **D5: only ADMIN can change the trial price floor.** `PATCH /api/admin/trial-pricing` now requires the matrix key `trialPricing.manage`, which is `ADMIN_ONLY`. The floor (`PlatformPricingConfig.minTrialPriceInPaise`) sits under every plan's trial price, so changing it changes what every expert may charge.
+   - `PATCH` is an audited door (`withOpsAction`, action `trialPricing.update`): it needs a reason of at least 5 characters, reads the floor inside the transaction and changes it only if it is still that value (a lost race answers 409 `FLOOR_CHANGED`), and writes an `OpsActionLog` row with the old and new floor.
+   - The key gates both `GET` and `PATCH` on that route, so STAFF can neither read nor change the floor through the API. Plan create and update routes still reject a price below it for every expert, because they read the floor on the server.
+   - Options not chosen: ADMIN and STAFF, which was the access before.
+
+6. **D6: both ADMIN and STAFF see the revenue and refund cards on Metrics.** Staff can already read every payment row on Payments (`payments.read`), so hiding the totals protected nothing. The comment on `GET /api/staff/metrics` that said it excludes revenue is removed.
+   - Options not chosen: an admin-only revenue key (a new key that withholds a sum of figures staff can already open row by row).
+
+7. **D7: "this month" on Metrics starts at 00:00 IST.** The card says "this month (IST)". The old endpoint cut the month with the server's clock, which on Netlify is UTC. Every period on the Metrics page is cut in IST by `operatorPeriodStarts` and `operatorMonthStart` (`lib/time/operator-zone.ts`): the "this month" platform cards (new users, revenue) and the support-queue figures' today, this week (a week opens on Sunday, as before) and this month. Every other read is unchanged.
+   - Worked example: Priya Anderson (seed learner) pays ₹1,000 (100,000 paise) at 03:00 IST on 1 December. That instant is 21:30 UTC on 30 November. It now counts in December's "this month (IST)" total. Under the old UTC-month cut it counted in November. The all-time totals are the same either way.
+   - Options not chosen: keeping the UTC month. It would put the first 5 hours 30 minutes of every IST month in the previous month's card.
+
+8. **D8: the raw-role API routes move onto the permission matrix with their own screen's pull request.** The first pull request moves only the routes it names:
+   - leads (`app/api/admin/leads/route.ts` and `leads/[leadId]/route.ts`) to `leads.manage`;
+   - the trial price floor to `trialPricing.manage`;
+   - stats (`app/api/admin/stats/route.ts`), `analytics/cancellations` and the Metrics endpoint (`app/api/staff/metrics/route.ts`) to `analytics.read`;
+   - maintenance (`maintenance`, `maintenance/preflight`, `maintenance/booking-remediation`) to `maintenance.manage`.
+
+   The remaining roughly 30 admin and 20 staff routes move with the pull request that owns their screen **(planned)**, and the last of them deletes `requirePrivilegedAuth` and `requireAdminAuth` once nothing calls them.
+   - Options not chosen: moving every route at once. It would put about fifty routes under one review with no screen to test each against.
+
+## What the first pull request changes for access
+
+| Change                                                                                                                                                                                                                       | Enforcer                                                                                                  | Who is affected                                                                                                               |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| The maintenance history no longer returns past windows' `bypassSecret` (or `betterstackIncidentId`). The active window's secret stays, because the controls panel needs it.                                                  | A `select` on the history read in `GET` of `app/api/admin/maintenance/route.ts`                           | Admin clients only. No client read a history row's secret.                                                                    |
+| A leads status change needs a reason of at least 5 characters and writes an `OpsActionLog` row (`lead.transition`). A concurrent change that loses the compare-and-set still answers 409 `LEAD_NOT_CLAIMABLE`.               | `withOpsAction("leads.manage", …)` in `app/api/admin/leads/[leadId]/route.ts`                             | ADMIN. A direct STAFF API call now gets 403, because `leads.manage` is `ADMIN_ONLY`; the Leads screen was already admin-only. |
+| The maintenance actor is required, and the audit row's role comes from the session. The OFFLINE setup step (discount-code pause, session drain, `offlineActivatedAt`) writes `maintenance.offline-activated` with the actor. | `setMaintenanceState` in `lib/maintenance.ts` and `activateOffline` in the route                          | ADMIN. The role set for maintenance is unchanged.                                                                             |
+| The trial-price floor is read and changed only with `trialPricing.manage`. `PATCH` needs a reason, is compare-and-set on the floor it read (409 `FLOOR_CHANGED`) and writes an `OpsActionLog` row (`trialPricing.update`).   | `requireBackofficeSurface` on `GET`, `withOpsAction` on `PATCH` in `app/api/admin/trial-pricing/route.ts` | ADMIN. STAFF were allowed before and now get 403.                                                                             |
+| `GET /api/admin/earnings/stats` is removed.                                                                                                                                                                                  | Deleted with its only helper, `getEarningsStats`. A search found no caller, test or document.             | Nobody.                                                                                                                       |
+
+Routes that only a document names, such as payouts processing, settlement lines, system events, exchange rates and the digital-product takedown, stay. They are operator or API doors.
+
+Worked example of the leads change: Olivia Brown (ADMIN) moves a new enterprise lead from `NEW` to `CONTACTED` at 14:05 IST on 17 November with the reason "Called the HR head, demo booked". The route reads the lead's earlier status inside the transaction, the compare-and-set `updateMany` moves it only if it is still `NEW`, and one `OpsActionLog` row records Olivia, the action `lead.transition`, the before and after status and the reason. If Maria Brown (STAFF) calls the same API, the matrix refuses with 403 before anything is read.
+
+## The second pull request: the decision queue and the appointments area
+
+The second pull request changes only reads, paging and display on the Appointments page of both trees. It changes no money rule, no status transition and no schema.
+
+1. **"Sessions that need a decision" is a paged, sortable table.** `readSessionsNeedingHuman` (`lib/backoffice/session-outcomes.ts`) reads one page of 20 rows over the unchanged `NEEDS_HUMAN` predicate (`lib/booking/misses.ts`), which the nav counts and the needs-attention inbox also read.
+   - It costs three statements: one joined list, one count and one batched user read. The old read was two lists capped at 100 rows, with no booking or person on a row.
+   - `GET /api/admin/sessions/needs-human` parses `?page` (a positive whole number) and `?sort` through `needsHumanQuerySchema` (`lib/backoffice/needs-human-queue.ts`). The sort keys are `endsAt`, `startsAt`, `outcomeAt` (shown as "Waiting since") and `lostMinutes`, with a leading `-` for descending; anything else answers 400.
+   - The default order is the session's end, oldest first, so a session parked longest leads the first page. Each row still says whether it is over 7 days old (`isAgedNeedsHuman`, the same test the escalation uses), because its booking's settlement waits on it.
+   - A row names the booking, the expert and the learner (`PersonCell`), or the live roster of an event ("12 attendees" for a webinar, "12 students" for a class), through the same `appointmentHeadline` helper the appointments list uses (`lib/data/appointment-headline.ts`).
+   - The columns are stacked (expert over learner, the session's date over its times, the outcome over the minutes lost and the "Set outcome" button), so the table fits the card at 1440 px. "Waiting since" shows the verdict's time, or "—" when no verdict was written yet; such a row sorts last, so the column and its sort agree.
+   - A sort picker above the table offers every sort, including the default "Ended, oldest first". It is the sort control on a phone, where the table becomes cards.
+   - Clicking a row opens that booking's drawer, and the appointments list underneath keeps its search, tab and type: the booking is read by its id beside the list.
+   - The card parses the route's body with `needsHumanPageSchema`, and the appointments list parses its own with `staffAppointmentsPayloadSchema` (`lib/data/staff-appointments-schema.ts`), so a malformed 200 shows the error state rather than an empty or broken table. Their enum fields (booking source, payment status and gateway, reschedule status, session outcome, end reason) are checked against the Prisma enums. If reading the booking a row opens fails, an error with a retry shows above the list, and clicking the row again also retries.
+   - The queue keeps its page and sort in the card's own state, because the URL's `q`, `page` and `sort` belong to the appointments list below it.
+   - Worked example: 45 sessions are parked. The first page shows the 20 that ended earliest. An operator who sorts by "Most minutes lost" and moves to page 2 sends `?page=2&sort=-lostMinutes` and reads rows 21 to 40 in that order.
+2. **Trials are on every tab and in the search.** The Scheduled, Completed and Issues tabs and their counts each have a trial arm (`buildStatusWhere` in `lib/data/staff-appointments.ts`), the search matches a trial's plan title, expert and learner, and the Type filter has "Trial". A trial's expert is the trial's own consultant (`Trial.consultantProfileId`), not the author of the plan it was taken on, both on the row and in the search.
+   - A trial is priced from what the buyer agreed to (`Trial.agreedPricePaise`), and from the plan's trial price only on rows from before that column, so a trial whose plan later went free does not read as free.
+   - A removed booking (`Appointment.deletedAt` set) stays listed, carries a "Removed" badge and counts under Issues. A trial booking whose trial row is gone is titled "Trial (record removed)" and reads Cancelled.
+3. **The booking drawer reads one clock.** The list row, "Scheduled At", the Ops panel's sessions, the class series doors and the documents panel print India time through `OperatorTime` or `formatOperatorInstant`, with the UTC instant on hover. A session's end prints its time alone when it falls on the start's India-time day. The relative times in the timeline and the pay-link deadline keep their words and carry the India-time instant in their tooltip. The payment line and the drawer's payment card name the status and the gateway in words (`paymentStatusBadge`, `gatewayLabel`).
+4. **The booking timeline and the entity trace show only real changes.** `getBookingTimeline` (`lib/data/booking-history.ts`) feeds both. Its query leaves out a status row whose before and after are the same and that carries neither a reason nor an actor, before the 200-row limit, so such rows can never push a real change out of the window. A same-status row with a reason or an actor stays, because it records who did something. The entity trace reads a booking's sessions from the booking itself, not from the shown entries, so a session whose only history row is hidden still brings its console audit rows. Steps read as words ("Scheduled → Unverified"), and an outcome token reads as its label ("Outcome sweep: Nobody joined"). A reschedule proposal is listed as "Reschedule proposed", with where it stands now beside it ("now accepted"); the answer is the status row of that reschedule request, so the outcome appears once. The history writes are unchanged.
+5. **Two more routes ask the matrix.** `GET /api/staff/appointments` and `GET /api/staff/appointments/[appointmentId]/timeline` moved from `requirePrivilegedAuth` to `appointments.manage`, which is the same ADMIN and STAFF set. The queue route keeps `classSeries.support`, the same set.
+   - `GET /api/staff/appointments` reads `?page` and `?limit` through zod: a value that is not a positive whole number falls back to page 1 and 20 rows, and the limit is clamped to 100.
+   - A role the matrix refuses gets a 403 whose body carries `code: "FORBIDDEN"` beside the message (`requireBackofficeSurface` in `lib/auth-helpers.ts`).
+   - Options not chosen: keeping the queue's two-list read with a higher cap. A cap hides rows past it, and the rows it did show could not be told apart.
+
+## Limits that remain
+
+- Until the later pull requests merge, some screens still print times in the browser or server zone, and about fifty routes still ask a raw role question **(planned)**.
+- Platform totals are counts and sums read on request, with no cache. The scaling roadmap ([Production scaling roadmap](../infrastructure/00-production-scaling-roadmap.md)) records the plan if they slow down.
+
+## Deprecated & Superseded Approaches
+
+- **A separate admin-only Analytics page and `GET /api/admin/analytics`**: superseded by Metrics. Delete any leftover reference to `AnalyticsPageClient` or the endpoint.
+- **A "Revenue trends, User growth, Booking conversion" Analytics page**: the testing playbook once described these charts, but the page only ever showed stat cards.
+- **Raw role guards on admin routes** (`requirePrivilegedAuth`, `requireAdminAuth`): being retired route by route as each screen moves onto the matrix **(planned)**. Do not add a new caller.
+- **Reading `new Date(year, month, 1)` for a back-office "this month"**: it uses the server's zone. Use the IST month cut in `lib/backoffice/platform-totals.ts`.

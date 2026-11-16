@@ -1,6 +1,6 @@
 /**
  * Cancellation Analytics API
- * Admin-only endpoint for cancellation insights
+ * Back-office cancellation insights, gated on `analytics.read`.
  */
 
 import * as Sentry from "@sentry/nextjs";
@@ -9,7 +9,7 @@ import prisma from "@/lib/prisma";
 import { CancellationReason } from "@prisma/client";
 import { sumPaise } from "@/lib/payments/utils/money";
 
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 
 /**
  * GET /api/admin/analytics/cancellations
@@ -17,7 +17,7 @@ import { requirePrivilegedAuth } from "@/lib/auth-helpers";
  */
 export async function GET(req: NextRequest) {
   try {
-    const auth = await requirePrivilegedAuth();
+    const auth = await requireBackofficeSurface("analytics.read");
     if (auth.error) return auth.error;
 
     // Parse query parameters
@@ -230,7 +230,10 @@ export async function GET(req: NextRequest) {
       availableReasons: Object.values(CancellationReason),
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "admin" } },
+    );
     console.error("Error fetching cancellation analytics:", error);
     return NextResponse.json(
       { error: "Failed to fetch cancellation analytics" },

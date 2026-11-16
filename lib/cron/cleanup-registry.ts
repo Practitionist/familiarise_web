@@ -2685,6 +2685,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           chatInterventionsLeft: r.chatInterventionsLeft,
           chatBoundariesSynced: r.chatBoundariesSynced,
           chatReviewNotices: r.chatReviewNotices,
+          conductRemovalsLapsed: r.conductRemovalsLapsed,
           disputeNoticesStaged: r.disputeNoticesStaged,
           errors: r.errors.length,
         }),

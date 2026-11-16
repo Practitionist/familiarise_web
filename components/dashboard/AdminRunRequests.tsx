@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/card";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import type { Tone } from "@/lib/ui/tone";
+import { OperatorTime } from "@/lib/time/operator-time";
 
 /** Polled only while a request is still REQUESTED or CLAIMED. */
 const POLL_MS = 5_000;
@@ -92,13 +93,8 @@ export function AdminRunRequests({
               <div className="min-w-0">
                 <p className="font-medium text-sm truncate">{request.job}</p>
                 <p className="text-xs text-muted-foreground">
-                  {new Date(request.createdAt).toLocaleString("en-IN", {
-                    day: "numeric",
-                    month: "short",
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })}{" "}
-                  • attempts: {request.attempts}
+                  <OperatorTime value={request.createdAt} /> • attempts:{" "}
+                  {request.attempts}
                   {request.lastError ? ` • ${request.lastError}` : ""}
                 </p>
               </div>

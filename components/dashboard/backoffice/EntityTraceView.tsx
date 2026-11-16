@@ -26,6 +26,7 @@ import {
   type TraceSource,
   type TraceSourceReport,
 } from "@/lib/backoffice/entity-trace-types";
+import { OperatorTime } from "@/lib/time/operator-time";
 import { humanizeEnum } from "@/lib/ui/tone";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
@@ -58,9 +59,7 @@ const KIND_LABEL: Record<TraceKind, string> = {
   user: "User",
 };
 
-/** Pinned to IST so the server render and hydration print the same text. */
-const when = (iso: string) =>
-  new Date(iso).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
+const when = (iso: string) => <OperatorTime value={iso} />;
 
 function Empty({ children }: Readonly<{ children: ReactNode }>) {
   return <p className="py-6 text-sm text-muted-foreground">{children}</p>;

@@ -63,10 +63,11 @@ describe("BACKOFFICE_PERMISSIONS", () => {
       "announcements.manage",
       "systemJobs.manage",
       "maintenance.manage",
-      // #1527 — Leads (§17b), compliance (Q5) and the newsletter send.
+      // Leads, compliance, the newsletter send and the trial-price floor.
       "leads.manage",
       "compliance.manage",
       "newsletter.send",
+      "trialPricing.manage",
     ] as BackofficeSurface[]) {
       expect(hasBackofficePermission("STAFF", surface)).toBe(false);
       expect(hasBackofficePermission("ADMIN", surface)).toBe(true);
@@ -109,7 +110,6 @@ describe("buildBackofficeNav", () => {
       "announcements",
       "system-jobs",
       "maintenance",
-      "analytics",
       "leads",
       "home",
     ];
@@ -142,7 +142,7 @@ describe("buildBackofficeNav", () => {
       "tds",
       "verification",
       "compliance",
-      "analytics",
+      "metrics",
       "organizations",
       "announcements",
       "system-jobs",
@@ -161,13 +161,12 @@ describe("buildBackofficeNav", () => {
     }
   });
 
-  it("keeps Metrics staff-only and Analytics admin-only", () => {
-    // Not a rename of one another: different endpoints, different questions
-    // (support-queue health vs platform revenue).
-    expect(flatten(nav("staff"))).toContain("metrics");
-    expect(flatten(nav("staff"))).not.toContain("analytics");
-    expect(flatten(nav("admin"))).toContain("analytics");
-    expect(flatten(nav("admin"))).not.toContain("metrics");
+  it("shows Metrics, the one Insights page, in both trees", () => {
+    for (const tree of ["admin", "staff"] as const) {
+      const insights = nav(tree).find((g) => g.label === "Insights");
+      expect(insights?.items.map((i) => i.path)).toEqual(["metrics"]);
+      expect(flatten(nav(tree))).not.toContain("analytics");
+    }
   });
 
   it("honours the TDS feature flag on the admin tree", () => {

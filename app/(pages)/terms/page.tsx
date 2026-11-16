@@ -345,6 +345,48 @@ export default function TermsPage() {
                 </li>
               </ul>
 
+              <h3 className="text-xl font-semibold mt-4 mb-2">
+                6.4 Removal from a Group Session
+              </h3>
+              {/* counsel: confirm the grounds, the earnings hold and the 72-hour review period before launch */}
+              <p>
+                The host or an accepted co-host of a webinar or class may remove
+                an attendee for conduct that breaks Section 6.2 or 6.3, such as
+                disrupting the session, harassing others, spam or impersonation.
+                When that happens:
+              </p>
+              <ul>
+                <li>
+                  The attendee&apos;s seat ends. They are removed from the
+                  session&apos;s chat and blocked from its calls, and are shown
+                  the reason the host recorded.
+                </li>
+                <li>
+                  We open a support case for the attendee and hold the
+                  host&apos;s earnings for that seat while support reviews it.
+                  The attendee can reply on the case to give their side. Nothing
+                  is refunded at the moment of removal.
+                </li>
+                <li>
+                  If support overturns the removal, or does not decide within 72
+                  hours, whatever is still unrefunded on the seat is refunded to
+                  where it was paid from. An overturned removal also lifts the
+                  call block.
+                </li>
+                <li>
+                  If support upholds the removal, nothing is refunded
+                  automatically. Support may still refund part of the seat, for
+                  example sessions not yet delivered.
+                </li>
+                <li>
+                  The attendee may appeal support&apos;s decision within 7 days.
+                </li>
+              </ul>
+              <p>
+                A host who removes someone only because they enrolled by mistake
+                refunds them in full at once, and no review is needed.
+              </p>
+
               <Separator className="my-6" />
 
               <h2 className="text-2xl font-semibold mt-6 mb-4">

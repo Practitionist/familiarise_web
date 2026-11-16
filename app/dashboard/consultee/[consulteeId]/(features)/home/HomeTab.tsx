@@ -1,5 +1,6 @@
 "use client";
 
+import { CONDUCT_REMOVAL_CATEGORY } from "@/lib/support/case-topic";
 import Link from "next/link";
 import { schedulableSessionsOf } from "@/lib/booking/entitlement";
 import { useRouter } from "next/navigation";
@@ -478,6 +479,28 @@ interface ReviewableSessionRow {
   existingReview: unknown;
 }
 
+type SessionCaseRow = {
+  id: string;
+  category: string | null;
+  status: string;
+  appointment: { planTitle: string | null } | null;
+};
+
+/** Open conduct removal cases: support is reviewing them and wants the learner's side. */
+function openRemovalReviews(rows: SessionCaseRow[] | undefined) {
+  return (rows ?? [])
+    .filter(
+      (c) =>
+        c.category === CONDUCT_REMOVAL_CATEGORY &&
+        c.status !== "RESOLVED" &&
+        c.status !== "CLOSED",
+    )
+    .map((c) => ({
+      caseId: c.id,
+      title: c.appointment?.planTitle ?? "Your removed seat",
+    }));
+}
+
 async function fetchJson<T>(url: string, unwrap: boolean): Promise<T> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Request failed: ${res.status}`);
@@ -627,6 +650,13 @@ export default function HomeTab({
       ),
   });
 
+  const { data: sessionCases } = useQuery({
+    queryKey: ["support-requests", "session", "home"],
+    staleTime: 2 * 60_000,
+    queryFn: () =>
+      fetchJson<SessionCaseRow[]>("/api/support/requests?scope=session", true),
+  });
+
   const pendingPayments = money?.pendingPayments;
   const actionItems = useMemo(
     () => [
@@ -680,6 +710,7 @@ export default function HomeTab({
           paymentId: r.paymentId,
           amountText: formatCurrencyAmount(r.amountPaise, r.currency),
         })),
+        removalReviews: openRemovalReviews(sessionCases),
         now,
       }),
       ...lowSessionSubscriptions(eventsData, now),
@@ -693,6 +724,7 @@ export default function HomeTab({
       userDetails?.id,
       reviewable,
       revisions,
+      sessionCases,
       now,
     ],
   );

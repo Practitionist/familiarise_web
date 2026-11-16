@@ -73,6 +73,8 @@ export interface CaseBooking {
   firstStartsAt: string | null;
   lastStartsAt: string | null;
   status: string | null;
+  /** The requester's own seat on a class or webinar; null for a 1:1. */
+  seatStatus: string | null;
 }
 
 export interface CasePayment {
@@ -115,6 +117,8 @@ export interface CaseWorkspace {
   sla: SlaState | null;
   ackDueAt: string | null;
   resolutionDueAt: string | null;
+  /** A conduct removal's 72-hour decision deadline; null for every other case. */
+  reviewDueAt: string | null;
   lastMessageAt?: string | null;
   createdAt: string;
   updatedAt: string;
