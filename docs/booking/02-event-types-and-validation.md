@@ -219,7 +219,7 @@ Free one-time session that lets a consultee try a subscription plan before commi
 **Slots**: 1 slot per trial
 **Rules**: At most one live or delivered trial per consultant and consultee (`trial_one_blocking_per_pair_key`, a partial unique index in `prisma/sql/check-constraints.sql`); a cancelled trial stays as history and the learner may request again. Concurrency: `lockTrialPick` (`lib/trials/book-trial.ts`) takes the consultee lock, then the shared slot-batch atoms over the expert's calendar (and the buyer's own, when the buyer is also an expert), in checkout's global lock order after the expert's request-cap lock; `bookTrialInTx` re-checks the pair inside the transaction.
 
-**Status lifecycle**: `PENDING` -> `SCHEDULED` -> `COMPLETED` -> `CONVERTED` (with `CANCELLED` and `REJECTED` branches)
+**Status lifecycle**: `AWAITING_PAYMENT` (paid) or `SCHEDULED` (free) at request -> `SCHEDULED` -> `COMPLETED` -> `CONVERTED`, with a `CANCELLED` branch
 
 ```mermaid
 flowchart TD
