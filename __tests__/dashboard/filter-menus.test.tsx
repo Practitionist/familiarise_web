@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { useState } from "react";
 
 import { AppointmentsFilterBar } from "@/components/appointments/AppointmentsFilterBar";
@@ -208,15 +208,61 @@ describe("AppointmentsFilterBar", () => {
     render(<Harness />);
     fireEvent.click(screen.getByRole("button", { name: "Clear (3)" }));
     expect(screen.queryByRole("button", { name: /^Clear \(/ })).toBeNull();
-    expect(
-      screen.getByRole("button", { name: "Type: All" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "All types" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
     expect(
       screen.getByRole("button", { name: "Date: Any date" }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("searchbox", { name: "Search appointments" }),
     ).toHaveValue("");
+  });
+
+  it("shows every type up front as a chip, with no menu to open", () => {
+    render(<Harness />);
+    const chips = within(screen.getByRole("group", { name: "Type" }));
+    expect(
+      chips.getAllByRole("button").map((chip) => chip.textContent),
+    ).toEqual([
+      "All types",
+      "Consultations",
+      "Subscriptions",
+      "Trials",
+      "Webinars",
+      "Classes",
+    ]);
+    expect(screen.queryByRole("button", { name: /^Type:/ })).toBeNull();
+
+    fireEvent.click(chips.getByRole("button", { name: "Webinars" }));
+    expect(chips.getByRole("button", { name: "Webinars" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(
+      chips.getByRole("button", { name: "Consultations" }),
+    ).toHaveAttribute("aria-pressed", "false");
+  });
+});
+
+describe("an active filter menu", () => {
+  it("keeps its trigger and clear button inside one outlined box", () => {
+    render(
+      <FilterMenu
+        label="Status"
+        options={[{ value: "OPEN", label: "Open" }]}
+        value="OPEN"
+        onChange={jest.fn()}
+      />,
+    );
+    const trigger = screen.getByRole("button", { name: "Status: Open" });
+    const clear = screen.getByRole("button", { name: "Clear status filter" });
+    expect(clear.parentElement).toBe(trigger.parentElement);
+    expect(trigger.parentElement).toHaveClass("border", "border-foreground");
+    // The box owns the border; neither half paints its own fill or edge.
+    expect(trigger.className).not.toMatch(/\bborder|bg-foreground/);
+    expect(clear.className).not.toMatch(/\bborder|bg-foreground/);
   });
 });
 
