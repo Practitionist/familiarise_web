@@ -33,6 +33,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { formatRole } from "@/components/collaborators/format";
 import { useToast } from "@/hooks/use-toast";
 import { appendExpertShareAttribution } from "@/hooks/useExpertShareHref";
 import type { OfferingStat } from "@/lib/offerings/stats";
@@ -43,14 +44,6 @@ import {
   publicOfferingHref,
   type OfferingRow,
 } from "./offering-rows";
-
-const COLLABORATOR_ROLE_LABEL: Record<string, string> = {
-  HOST: "Host",
-  CO_HOST: "Co-host",
-  MODERATOR: "Moderator",
-  CO_INSTRUCTOR: "Co-instructor",
-  TEACHING_ASSISTANT: "Teaching assistant",
-};
 
 const ORG_GOVERNED_HINT = "Managed by your organisation";
 
@@ -207,10 +200,7 @@ export function OfferingCard({
             <WaitingCountBadge count={row.waitingCount} />
             {row.isCollaborated && row.collaboratorRole && (
               <StatusBadge
-                label={
-                  COLLABORATOR_ROLE_LABEL[row.collaboratorRole] ??
-                  "Collaborator"
-                }
+                label={formatRole(row.collaboratorRole)}
                 tone="info"
                 size="sm"
               />

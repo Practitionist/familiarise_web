@@ -18,6 +18,7 @@ import {
   type ViewerZone,
 } from "@/lib/time/viewer-zone";
 import { cn } from "@/utils/tailwind";
+import { formatRole } from "@/components/collaborators/format";
 import { RowPrimaryAction } from "./RowPrimaryAction";
 import { RowOverflowMenu } from "./RowOverflowMenu";
 
@@ -141,7 +142,7 @@ export function AppointmentRow({
             <span className="truncate">{vm.counterpart.name}</span>
             {vm.collaboratorRole && (
               <span className="shrink-0 rounded bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300 px-1.5 py-px text-[10px] font-medium">
-                {vm.collaboratorRole}
+                {formatRole(vm.collaboratorRole)}
               </span>
             )}
             {vm.meta && <span className="truncate">{vm.meta}</span>}
