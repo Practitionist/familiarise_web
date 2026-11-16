@@ -2,7 +2,7 @@
 // writes.
 
 import {
-  liveParticipant,
+  liveLearnerSeat,
   recordParticipants,
 } from "@/lib/booking/participants";
 import type { Tx } from "@/lib/prisma";
@@ -12,10 +12,10 @@ import { getEventRelationField } from "@/lib/booking/allocation/identity";
 import type { AppointmentWithSlots } from "@/lib/booking/allocation/types";
 
 /**
- * Re-seat enrolled users on newly created appointments.
- * Used during in-progress reallocation of group events (classes): when
- * future sessions are deleted and recreated, the learners' participant rows
- * go with the deleted appointments (#1554). This restores them.
+ * Re-seats learners on newly created appointments: when a re-plan deletes and
+ * recreates a group event's sessions, the learners' participant rows go with
+ * the deleted appointments. `enrolledUserIds` must be learner seats only;
+ * everyone in it except the host is written as a confirmed learner.
  */
 export async function reconnectEnrolledUsers(
   tx: Tx,
@@ -47,13 +47,12 @@ export async function reconnectEnrolledUsers(
 }
 
 /**
- * #1206 — the people already seated on an event's confirmed sessions.
+ * The learners already seated on an event's confirmed sessions.
  *
  * Every delete branch harvests these ids from the rows it frees, so that
  * `reconnectEnrolledUsers` can re-seat them on the replacements. A top-up
  * frees nothing, so it reads them off the surviving appointments instead.
- * Without this a class topped up with two more sessions would create them
- * empty: enrolment for a group event lives ONLY on AppointmentParticipant.
+ * The host's row and staff rows are never read: only learners are re-seated.
  */
 export async function collectEventParticipantIds(
   tx: Tx,
@@ -63,9 +62,9 @@ export async function collectEventParticipantIds(
   const relationField = getEventRelationField(eventType);
   const seats = await tx.appointmentParticipant.findMany({
     where: {
-      // A released seat stays as history; only live seats are carried
-      // onto the new sessions.
-      ...liveParticipant(),
+      // A released seat stays as history; only live learner seats are
+      // carried onto the new sessions.
+      ...liveLearnerSeat(),
       appointment: {
         [`${relationField}Id`]: eventId,
         occurrences: { some: { isTentative: false, deletedAt: null } },

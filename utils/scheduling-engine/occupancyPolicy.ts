@@ -283,9 +283,11 @@ export function buildDeadSeatFilter(
 }
 
 /**
- * A participant row that holds its user's time right now, any role: live by
- * status, and not a HELD seat whose own payment has lapsed. A CONFIRMED or
- * attended seat always holds, whatever its old payment deadline said.
+ * A participant row that holds its user's time right now: the host's row or a
+ * learner seat, live by status, and not a HELD seat whose own payment has
+ * lapsed. A CONFIRMED or attended seat always holds, whatever its old payment
+ * deadline said. A staff row never holds time: a collaborator is busy through
+ * the plan's team (`buildCohostCommitmentFilter`).
  */
 export function timeHoldingParticipant(
   now: Date,
@@ -293,6 +295,7 @@ export function timeHoldingParticipant(
 ): Prisma.AppointmentParticipantWhereInput {
   return {
     ...liveParticipant(userId),
+    role: { not: "COLLABORATOR" },
     NOT: buildDeadSeatFilter(now),
   };
 }

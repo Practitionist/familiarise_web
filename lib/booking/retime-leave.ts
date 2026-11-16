@@ -9,11 +9,10 @@ import type { Tx } from "@/lib/prisma";
 import {
   buildCohostCommitmentFilter,
   buildDeadHoldFilter,
-  buildDeadSeatFilter,
   buildOccupiedAppointmentFilter,
   OCCUPYING_OCCURRENCE_WHERE,
+  timeHoldingParticipant,
 } from "@/utils/scheduling-engine/occupancyPolicy";
-import { liveParticipant } from "./participants";
 
 /** The free leave after a move lasts at most this long, and never past the moved session's start. */
 export const RETIME_FREE_LEAVE_MAX_MS = 7 * 24 * 60 * 60 * 1000;
@@ -94,8 +93,7 @@ export async function attendeeClashes(
     db.appointmentParticipant.findMany({
       where: {
         userId: { in: [...userIds] },
-        ...liveParticipant(),
-        NOT: buildDeadSeatFilter(now),
+        ...timeHoldingParticipant(now),
         appointment: { AND: elsewhereInWindow },
       },
       select: { userId: true },

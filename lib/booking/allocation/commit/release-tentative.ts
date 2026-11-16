@@ -1,7 +1,7 @@
 // Frees the rows a re-plan replaces. A Payment-bearing appointment is never
 // deleted: the payment guard rides in each delete's own WHERE.
 
-import { liveParticipant } from "@/lib/booking/participants";
+import { liveLearnerSeat } from "@/lib/booking/participants";
 import type { Tx } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import {
@@ -26,7 +26,8 @@ import { AllocationConflictError } from "@/utils/scheduling-engine/errors";
  *                            preserving past confirmed slots and their Meeting records.
  *                            Used for in-progress reallocation of classes/subscriptions.
  * @returns preservedSlotCount - Number of past slots that were preserved.
- * @returns enrolledUserIds - User IDs connected to deleted future slots (for reconnection).
+ * @returns enrolledUserIds - The learners seated on the freed rows (for
+ *   reconnection); never the host or a collaborator.
  * @returns deletedAppointmentIds - AE-4: appointment ids whose tentative slots
  *   were freed (partial reschedule path), so callers can refresh those slots.
  * @returns freedOrdinals - #1554: the ordinals of the occurrence rows this
@@ -62,9 +63,9 @@ export async function deleteExistingAppointments(
     const appointments = await tx.appointment.findMany({
       where: whereClause,
       include: {
-        // #1554 — live seat holders, so enrolled learners on a group event
-        // can be re-seated on the replacement appointments.
-        participants: { where: liveParticipant(), select: { userId: true } },
+        // Live learner seats only, to re-seat on the replacement
+        // appointments. The host's row and staff rows are never carried.
+        participants: { where: liveLearnerSeat(), select: { userId: true } },
         occurrences: true,
         // Payment.appointment is onDelete: Restrict; the payment guard rides
         // in the delete's own WHERE (`payment: { none: {} }`), not this read.
@@ -74,12 +75,9 @@ export async function deleteExistingAppointments(
     // AE-4 — record which appointments had tentative slots freed here (ids
     // captured from the pre-fetched rows, before the deleteMany runs).
     const deletedAppointmentIds: string[] = [];
-    // Capture the seat holders of the appointments being emptied. For a
-    // group event (class) the enrolled learners live ONLY on
-    // AppointmentParticipant — createAppointments seats just the
-    // consultant, so without this they'd be orphaned when the class is
-    // scheduled (tentative crud-with-plan slots → onlyTentative path).
-    // reconnectEnrolledUsers re-seats them; it filters the consultant itself.
+    // The learners seated on the appointments being emptied. A group event's
+    // enrolment lives only on AppointmentParticipant and createAppointments
+    // seats just the consultant, so reconnectEnrolledUsers re-seats these.
     const enrolledUserIdSet = new Set<string>();
     const freed: { ordinal: number; startsAt: Date; endsAt: Date }[] = [];
     for (const appointment of appointments) {
@@ -94,8 +92,8 @@ export async function deleteExistingAppointments(
         for (const slot of released) {
           freed.push(slot);
         }
-        // Collect the seat holders before the appointment may be deleted
-        // (their participant rows cascade with it).
+        // Collect the learners before the appointment may be deleted (their
+        // participant rows cascade with it).
         for (const seat of appointment.participants) {
           enrolledUserIdSet.add(seat.userId);
         }
@@ -152,9 +150,9 @@ export async function deleteExistingAppointments(
     const appointments = await tx.appointment.findMany({
       where: whereClause,
       include: {
-        // #1554 — live seat holders, so enrolled learners on a group event
-        // can be re-seated on the replacement appointments.
-        participants: { where: liveParticipant(), select: { userId: true } },
+        // Live learner seats only, to re-seat on the replacement
+        // appointments. The host's row and staff rows are never carried.
+        participants: { where: liveLearnerSeat(), select: { userId: true } },
         occurrences: {
           include: {
             meeting: { select: { id: true, endedAt: true } },
@@ -192,7 +190,7 @@ export async function deleteExistingAppointments(
 
       preservedSlotCount += pastSlots.length + protectedFutureSlots.length;
 
-      // Capture the seat holders before the appointment may be deleted
+      // Capture the learners before the appointment may be deleted
       if (deletableFutureSlots.length > 0) {
         for (const seat of appointment.participants) {
           enrolledUserIdSet.add(seat.userId);
@@ -235,9 +233,9 @@ export async function deleteExistingAppointments(
     const existingAppointments = await tx.appointment.findMany({
       where: whereClause,
       include: {
-        // #1554 — live seat holders, so enrolled learners on a group event
-        // can be re-seated on the replacement appointments.
-        participants: { where: liveParticipant(), select: { userId: true } },
+        // Live learner seats only, to re-seat on the replacement
+        // appointments. The host's row and staff rows are never carried.
+        participants: { where: liveLearnerSeat(), select: { userId: true } },
         // meeting rides along so held-session slots can be preserved
         // (#1169 PR 1 — deleting them cascades Meeting → Recording).
         occurrences: {
@@ -252,9 +250,9 @@ export async function deleteExistingAppointments(
       },
     });
 
-    // Capture every seat holder before the appointment is deleted or
-    // stripped; reconnectEnrolledUsers (called by the allocator on a non-empty
-    // result) re-seats them on the new appointments and filters the consultant.
+    // Capture every learner before the appointment is deleted or stripped;
+    // reconnectEnrolledUsers (called by the allocator on a non-empty result)
+    // re-seats them on the new appointments.
     const enrolledUserIdSet = new Set<string>();
     for (const appointment of existingAppointments) {
       for (const seat of appointment.participants) {

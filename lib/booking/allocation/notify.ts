@@ -1,7 +1,8 @@
 // Stages the booked and partially-scheduled notices inside the allocation
 // transaction; the caller attempts them after commit.
 
-import { liveParticipant } from "@/lib/booking/participants";
+import { liveLearnerSeat } from "@/lib/booking/participants";
+import { collaboratorUserIds } from "@/lib/collaborators/recipients";
 import type { Tx } from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import { EventType } from "@/utils/scheduling-engine/types";
@@ -15,10 +16,15 @@ import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import { LIVE_SLOT_WHERE } from "@/lib/booking/cancellation-scope";
 
+/** The booked notice's recipients: the host and learners, then the plan's team, each once. */
+const withTeam = (userIds: string[], team: string[]): string[] => [
+  ...new Set([...userIds, ...team]),
+];
+
 /**
- * PR 2c — fire-and-forget APPOINTMENT_BOOKED to both parties once real
- * times exist. Completes the B9 story: payment skipped this notification
- * for slot-less bookings on purpose.
+ * Stages the booked notice for both parties once real times exist. On a
+ * webinar or class the learners are read from learner seats and the team from
+ * the plan, never from staff participant rows.
  */
 export async function stageAllocationNotices(
   tx: Tx,
@@ -156,6 +162,7 @@ export async function stageAllocationNotices(
       select: {
         webinarPlan: {
           select: {
+            id: true,
             title: true,
             consultantProfile: {
               select: { user: { select: { id: true, name: true } } },
@@ -167,7 +174,7 @@ export async function stageAllocationNotices(
             id: true,
             organizationId: true,
             participants: {
-              where: liveParticipant(),
+              where: liveLearnerSeat(),
               select: { user: { select: { id: true, name: true } } },
             },
             occurrences: {
@@ -193,7 +200,10 @@ export async function stageAllocationNotices(
       userMap.set(u.id, u.name ?? "Attendee");
     userMap.delete(hostUser.id);
     context = {
-      userIds: [hostUser.id, ...userMap.keys()],
+      userIds: withTeam(
+        [hostUser.id, ...userMap.keys()],
+        await collaboratorUserIds("webinar", plan.id, tx),
+      ),
       consulteeUserIds: [...userMap.keys()],
       consultantName: hostUser.name || "Consultant",
       consulteeName:
@@ -211,6 +221,7 @@ export async function stageAllocationNotices(
       select: {
         classPlan: {
           select: {
+            id: true,
             title: true,
             consultantProfile: {
               select: { user: { select: { id: true, name: true } } },
@@ -222,7 +233,7 @@ export async function stageAllocationNotices(
             id: true,
             organizationId: true,
             participants: {
-              where: liveParticipant(),
+              where: liveLearnerSeat(),
               select: { user: { select: { id: true, name: true } } },
             },
             occurrences: {
@@ -253,7 +264,10 @@ export async function stageAllocationNotices(
     }
     userMap.delete(host.id);
     context = {
-      userIds: [host.id, ...userMap.keys()],
+      userIds: withTeam(
+        [host.id, ...userMap.keys()],
+        await collaboratorUserIds("class", plan.id, tx),
+      ),
       consulteeUserIds: [...userMap.keys()],
       consultantName: host.name || "Consultant",
       consulteeName:

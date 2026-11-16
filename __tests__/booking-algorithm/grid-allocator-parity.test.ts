@@ -55,6 +55,7 @@ describe("buildConsultantOccupancyWhere", () => {
         some: {
           userId: USER,
           status: { in: ["HELD", "CONFIRMED", "ATTENDED"] },
+          role: { not: "COLLABORATOR" },
           NOT: buildDeadSeatFilter(NOW),
         },
       },
@@ -121,6 +122,7 @@ describe("buildConsultantOccupancyWhere", () => {
         some: {
           userId: USER,
           status: { in: ["HELD", "CONFIRMED", "ATTENDED"] },
+          role: { not: "COLLABORATOR" },
           NOT: buildDeadSeatFilter(NOW),
         },
       },
