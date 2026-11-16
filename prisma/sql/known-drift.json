@@ -128,6 +128,18 @@
       "reason": "The enum swap that dropped the removed WebinarStatus values. The release carrying #2746 is on prod (#2800); production no longer reads them.",
       "trackedBy": "#2746",
       "expires": "2026-11-30"
+    },
+    {
+      "statement": "DROP INDEX \"Collaborator_consultantProfileId_webinarPlanId_key\"",
+      "reason": "One row per expert per plan became one row per period on the team, so the total unique gives way to the partial unique collaborator_one_active_{webinar,class} in check-constraints.sql, which the sidecar step creates straight after the push.",
+      "trackedBy": "#2803",
+      "expires": "2026-12-07"
+    },
+    {
+      "statement": "DROP INDEX \"Collaborator_consultantProfileId_classPlanId_key\"",
+      "reason": "One row per expert per plan became one row per period on the team, so the total unique gives way to the partial unique collaborator_one_active_{webinar,class} in check-constraints.sql, which the sidecar step creates straight after the push.",
+      "trackedBy": "#2803",
+      "expires": "2026-12-07"
     }
   ],
   "knownDivergences": [
