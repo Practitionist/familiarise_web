@@ -1,6 +1,6 @@
 # ADR: A learner and an expert keep every trial they had; at most one holds the pair
 
-- **Status**: Accepted by the owner on 2026-11-15 (option 2 of the issue "Re-requesting a trial deletes the earlier trial record and leaves its booking with no trial"). Ships in the pull request that adds this record; the database half waits for the owner's schema push.
+- **Status**: Accepted by the owner on 2026-11-15 (option 2 of the issue "Re-requesting a trial deletes the earlier trial record and leaves its booking with no trial"). Ships in the pull request that adds this record; its schema change was applied on 2026-11-16.
 - **Date**: 2026-11-15
 - **Author**: Platform engineering
 - **Related**: [Trial sessions](../booking/09-trials.md), [Booking state machines](../booking/18-state-machines.md), [Prisma and the live database](../prisma/README.md), [One target lifecycle per product](2026-11-13-product-lifecycles.md)
@@ -54,9 +54,9 @@ Before this change the Thursday request deleted T1, and A1 became a booking with
 
 - A pair's trials read as a history. Counts of a learner's or an expert's active trials are unchanged, because at most one row per pair is active.
 - The schema change drops a unique index, so the owner's push needs that statement in `destructiveStatementsAllowed` (`prisma/sql/known-drift.json`) and the sidecar index applied straight after.
-- **The database step comes before the merge.** The request door maps only the new index's violation to its 409, so code running against the old unique turns a request after a cancelled trial into a 500. The owner decided (2026-11-15) that the plan's two `Trial` statements go in with the release reconcile push that drops the removed booking enum values, not alone: the pull request stays open after review and merges only after that push, once the read-only check below has returned nothing. The partial unique is created before that push, while the old unique still exists, so the pair is never without a unique guard; the order is in `docs/prisma/README.md`.
+- **The database step comes before the merge.** The request door maps only the new index's violation to its 409, so code running against the old unique turns a request after a cancelled trial into a 500. The owner decided (2026-11-15) that the plan's two `Trial` statements go in with the release reconcile push that drops the removed booking enum values, not alone: the pull request stays open after review and merges only after that push, once the read-only check below has returned nothing. The partial unique was created before that push, while the old unique still existed, so the pair was never without a unique guard: the read-only duplicate check, the partial unique alone, the preflight print, the push, the sidecars and the sidecar check. Applied on 2026-11-16.
 - Until the release, `origin/prod` still creates trials as `PENDING`, which the index does not cover, and still deletes a cancelled row before its insert. The old code keeps one row per pair by itself; only an account that books on both a preview and production can mix the two.
-- While the old unique exists no pair can hold two rows, so the read-only check in `docs/prisma/README.md` returns nothing today; it is run again just before the step, because the index cannot be built over two blocking trials.
+- While the old unique existed no pair could hold two rows, so the read-only duplicate check returned nothing before the step; the index cannot be built over two blocking trials.
 
 ## Deprecated & Superseded Approaches
 
