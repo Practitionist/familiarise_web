@@ -368,6 +368,7 @@ export async function handlePaymentSuccess(
   try {
     preplannedEarnings = await planEarningsForPayment(
       { paymentIntent: paymentIntentId },
+      new Date(),
       metadata.appointmentType,
     );
   } catch {
@@ -736,6 +737,11 @@ export async function handlePaymentSuccess(
             return null;
           }
 
+          // The capture instant: stamped on the payment, and the time its
+          // split reads the team at. A recovered capture keeps its own.
+          const capturedAt = recoverable
+            ? (payment.capturedAt ?? payment.createdAt)
+            : new Date();
           const confirmed = recoverable
             ? { count: 1 }
             : await tx.payment.updateMany({
@@ -743,7 +749,7 @@ export async function handlePaymentSuccess(
                 data: {
                   paymentStatus: PaymentStatus.SUCCEEDED,
                   ...capturedGatewayId,
-                  capturedAt: new Date(),
+                  capturedAt,
                 },
               });
           if (confirmed.count === 0) {
@@ -1000,6 +1006,7 @@ export async function handlePaymentSuccess(
                 await createEarningsFromPayment({
                   payment: resolvedInTx.paymentForEarnings,
                   appointmentType: resolvedInTx.earningsAppointmentType,
+                  teamAt: capturedAt,
                   tx,
                   preplanned: preplannedEarnings ?? undefined,
                 });
@@ -1388,9 +1395,13 @@ export async function handlePaymentSuccess(
       );
 
       if (resolved) {
+        // A retry splits by the capture the row carries, never by now.
         await createEarningsFromPayment({
           payment: resolved.paymentForEarnings,
           appointmentType: resolved.earningsAppointmentType,
+          teamAt:
+            resolved.paymentForEarnings.capturedAt ??
+            resolved.paymentForEarnings.createdAt,
         });
 
         console.log(

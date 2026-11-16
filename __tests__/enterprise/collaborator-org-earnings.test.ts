@@ -314,6 +314,7 @@ describe("per-collaborator HOST-org earnings", () => {
     await createEarningsFromPayment({
       payment: makePayment(),
       appointmentType: "WEBINAR",
+      teamAt: new Date("2026-10-09T10:00:00Z"),
     });
 
     // Expect 2 OrgEarnings rows: LearnPro (primary) + AnotherAgency (hosted collab).
@@ -396,6 +397,7 @@ describe("per-collaborator HOST-org earnings", () => {
     await createEarningsFromPayment({
       payment: makePayment(),
       appointmentType: "WEBINAR",
+      teamAt: new Date("2026-10-09T10:00:00Z"),
     });
 
     // Both the primary expert and the same-org collaborator receive distinct
@@ -442,6 +444,7 @@ describe("per-collaborator HOST-org earnings", () => {
     await createEarningsFromPayment({
       payment: makePayment(),
       appointmentType: "WEBINAR",
+      teamAt: new Date("2026-10-09T10:00:00Z"),
     });
 
     expect(capturedOrgEarnings).toHaveLength(1);
@@ -466,6 +469,7 @@ describe("per-collaborator HOST-org earnings", () => {
     await createEarningsFromPayment({
       payment: makePayment(),
       appointmentType: "WEBINAR",
+      teamAt: new Date("2026-10-09T10:00:00Z"),
     });
 
     // Only the primary org row — collab share=0 short-circuits before

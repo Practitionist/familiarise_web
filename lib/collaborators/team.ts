@@ -113,17 +113,22 @@ export async function currentTeam(
  * Who was on the plan's team at `at`: accepted at or before it and not ended
  * by it. Reads the rows' own period, so the answer is the same whenever it is
  * asked, which is what a payment split retried later depends on.
+ * `liveProfilesOnly` leaves out a member whose profile is erased today.
  */
 export async function teamAsOf(
   db: PrismaLike,
   ref: PlanRef,
   at: Date,
+  opts: { liveProfilesOnly?: boolean } = {},
 ): Promise<TeamMember[]> {
   const rows = await db.collaborator.findMany({
     where: {
       ...planWhere(ref),
       acceptedAt: { lte: at },
       OR: [{ endedAt: null }, { endedAt: { gt: at } }],
+      ...(opts.liveProfilesOnly
+        ? { consultantProfile: { deletedAt: null } }
+        : {}),
     },
     select: TEAM_MEMBER_SELECT,
     orderBy: [{ acceptedAt: "asc" }, { id: "asc" }],

@@ -133,6 +133,11 @@ export interface CreateEarningsParams {
     } | null;
   };
   appointmentType: AppointmentType;
+  /**
+   * The instant whose team shares this sale: a seat's capture time, or for a
+   * replay the start of the recorded session. Never the time of a retry.
+   */
+  teamAt: Date;
   tx?: Tx;
   preplanned?: PreplannedEarningsContext | null;
 }
@@ -1143,7 +1148,7 @@ async function resolveEffectiveSplits(
     scope: { id: string; kind: "webinar" | "class" } | null;
     consultantProfileId: string | null;
     grossAmount: number;
-    preplanned?: PreplannedEarningsContext | null;
+    teamAt: Date;
   },
 ): Promise<{ splits: RevenueSplit[]; missingOwnerOrg: boolean }> {
   const {
@@ -1153,16 +1158,17 @@ async function resolveEffectiveSplits(
     scope,
     consultantProfileId,
     grossAmount,
-    preplanned,
+    teamAt,
   } = params;
 
   let splits: RevenueSplit[] = [];
-  if (preplanned !== null && preplanned !== undefined) {
-    splits = preplanned.splits;
-  } else if (planType && planId) {
-    splits = await calculateRevenueSplit(planType, planId, grossAmount, db, {
-      excludeBuyerUserId: payment.userId,
-    });
+  if (planType && planId) {
+    splits = await calculateRevenueSplit(
+      { planType, planId },
+      grossAmount,
+      db,
+      { at: teamAt, excludeBuyerUserId: payment.userId },
+    );
   }
 
   if (!consultantProfileId && splits.length === 0) {
@@ -1189,6 +1195,8 @@ async function resolveEffectiveSplits(
 
 export async function planEarningsForPayment(
   whereOrId: string | Prisma.PaymentWhereUniqueInput,
+  /** The expected capture time. A forecast: the capture transaction reads the team again. */
+  teamAt: Date,
   rawAppointmentType: string = "CONSULTATION",
   db: Tx | typeof prisma = prisma,
 ): Promise<PreplannedEarningsContext | null> {
@@ -1227,6 +1235,7 @@ export async function planEarningsForPayment(
     scope,
     consultantProfileId,
     grossAmount,
+    teamAt,
   });
 
   const orgSplit =
@@ -1284,6 +1293,20 @@ export async function planEarningsForPayment(
     walletLegOrgId,
     orgOverageSurchargePaise,
   };
+}
+
+/** True when two splits name the same parties, roles and shares in the same order. */
+function sameSplits(a: RevenueSplit[], b: RevenueSplit[]): boolean {
+  return (
+    a.length === b.length &&
+    a.every(
+      (split, i) =>
+        split.consultantProfileId === b[i].consultantProfileId &&
+        (split.organizationId ?? null) === (b[i].organizationId ?? null) &&
+        split.share === b[i].share &&
+        split.role === b[i].role,
+    )
+  );
 }
 
 function computeShareBpsList(
@@ -1938,6 +1961,7 @@ async function settleSingleOwnerEarningsInTx(
     initialEarningStatus: EarningStatus;
     holdUntil: Date | null;
     preplanned?: PreplannedEarningsContext | null;
+    splitPlan: PreplannedEarningsContext | null;
   },
 ): Promise<string> {
   const {
@@ -1950,11 +1974,11 @@ async function settleSingleOwnerEarningsInTx(
     initialEarningStatus,
     holdUntil,
     preplanned,
+    splitPlan,
   } = params;
-  const hasPreplanned = preplanned !== null && preplanned !== undefined;
 
-  const orgSplit = hasPreplanned
-    ? preplanned.orgSplit
+  const orgSplit = splitPlan
+    ? splitPlan.orgSplit
     : await resolveOrgSplit(
         tx,
         consultantProfileId,
@@ -1980,7 +2004,7 @@ async function settleSingleOwnerEarningsInTx(
     tx,
     appointmentType,
     payment.appointmentId,
-    preplanned,
+    splitPlan,
   );
 
   const ownerId = await createSingleOwnerConsultantEarnings(tx, {
@@ -2033,6 +2057,7 @@ async function executeEarningsCreationInTx(
       appointmentOccurrenceId: string | null;
     };
     holdUntil: Date | null;
+    teamAt: Date;
     preplanned?: PreplannedEarningsContext | null;
   },
 ): Promise<string | null> {
@@ -2046,9 +2071,9 @@ async function executeEarningsCreationInTx(
     grossAmount,
     anchor,
     holdUntil,
+    teamAt,
     preplanned,
   } = params;
-  const hasPreplanned = preplanned !== null && preplanned !== undefined;
 
   if (await hasUnappliedReceipt(tx, payment.id)) {
     throw new ParkedCaptureEarningsError(payment.id);
@@ -2075,8 +2100,12 @@ async function executeEarningsCreationInTx(
     scope,
     consultantProfileId,
     grossAmount,
-    preplanned,
+    teamAt,
   });
+  // The pre-plan forecast the team before this transaction. What it derived
+  // from the split holds only when the transaction read the same split.
+  const splitPlan =
+    preplanned && sameSplits(preplanned.splits, splits) ? preplanned : null;
   if (missingOwnerOrg) {
     console.warn(
       `No consultant profile or owner organization found for payment ${payment.id}. Skipping earnings creation.`,
@@ -2095,6 +2124,7 @@ async function executeEarningsCreationInTx(
       initialEarningStatus,
       holdUntil,
       preplanned,
+      splitPlan,
     });
     await applyCaseHoldsToNewEarnings(tx, payment);
     return ownerEarningsId;
@@ -2104,12 +2134,8 @@ async function executeEarningsCreationInTx(
   let ownerId: string | null = null;
 
   if (splits.length > 0) {
-    partySettlements = hasPreplanned
-      ? await settlePreplannedPartyFees(
-          tx,
-          payment,
-          preplanned.partySettlements,
-        )
+    partySettlements = splitPlan
+      ? await settlePreplannedPartyFees(tx, payment, splitPlan.partySettlements)
       : (
           await resolvePartySettlements(tx, {
             payment,
@@ -2194,30 +2220,9 @@ async function runWithSavepointOrRetry<T>(
 }
 
 export async function createEarningsFromPayment(
-  payment: CreateEarningsParams["payment"],
-  appointmentTypeArg?: AppointmentType,
-  txArg?: Tx,
-  preplannedArg?: PreplannedEarningsContext | null,
-): Promise<string | null>;
-export async function createEarningsFromPayment(
   params: CreateEarningsParams,
-): Promise<string | null>;
-export async function createEarningsFromPayment(
-  paramsOrPayment: CreateEarningsParams | CreateEarningsParams["payment"],
-  appointmentTypeArg?: AppointmentType,
-  txArg?: Tx,
-  preplannedArg?: PreplannedEarningsContext | null,
 ): Promise<string | null> {
-  const normalized: CreateEarningsParams =
-    "payment" in paramsOrPayment && "appointmentType" in paramsOrPayment
-      ? paramsOrPayment
-      : {
-          payment: paramsOrPayment,
-          appointmentType: appointmentTypeArg ?? "CONSULTATION",
-          tx: txArg,
-          preplanned: preplannedArg,
-        };
-  const { payment, appointmentType, tx: outerTx, preplanned } = normalized;
+  const { payment, appointmentType, teamAt, tx: outerTx, preplanned } = params;
   const hasPreplanned = preplanned !== null && preplanned !== undefined;
 
   const consultantProfileId =
@@ -2261,6 +2266,7 @@ export async function createEarningsFromPayment(
         grossAmount,
         anchor,
         holdUntil,
+        teamAt,
         preplanned,
       }),
     );
