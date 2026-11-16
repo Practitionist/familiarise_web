@@ -237,7 +237,10 @@ function CollaboratorRow({
                 min={1}
                 max={maxEditShare}
                 value={editShare}
-                onChange={(e) => onShareChange(Number(e.target.value))}
+                step={1}
+                onChange={(e) =>
+                  onShareChange(Math.trunc(Number(e.target.value)))
+                }
                 className="mt-1 h-8 text-xs"
               />
             </div>
@@ -391,7 +394,8 @@ function InviteCollaboratorPanel({
             min={1}
             max={maxInviteShare}
             value={inviteShare}
-            onChange={(e) => onShareChange(Number(e.target.value))}
+            step={1}
+            onChange={(e) => onShareChange(Math.trunc(Number(e.target.value)))}
             className="mt-1 h-9"
           />
           <p className="text-[10px] text-zinc-400 mt-0.5">
@@ -456,12 +460,12 @@ export function CollaboratorsTab({
         body: JSON.stringify({
           consultantProfileId: inviteProfileId,
           role: inviteRole,
-          revenueSharePercentage: inviteShare,
+          sharePercent: inviteShare,
         }),
       });
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || "Failed to invite collaborator");
+        const err = await res.json().catch(() => null);
+        throw new Error(err?.error || "Failed to invite collaborator");
       }
       return res.json();
     },
@@ -488,16 +492,16 @@ export function CollaboratorsTab({
     mutationFn: async ({
       collaboratorId,
       role,
-      revenueSharePercentage,
+      sharePercent,
     }: {
       collaboratorId: string;
       role: string;
-      revenueSharePercentage: number;
+      sharePercent: number;
     }) => {
       const res = await fetch(`${basePath}/${collaboratorId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ role, revenueSharePercentage }),
+        body: JSON.stringify({ role, sharePercent }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => null);
@@ -526,7 +530,10 @@ export function CollaboratorsTab({
       const res = await fetch(`${basePath}/${collaboratorId}`, {
         method: "DELETE",
       });
-      if (!res.ok) throw new Error("Failed to remove collaborator");
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        throw new Error(err?.error || "Failed to remove collaborator");
+      }
       return res.json();
     },
     onSuccess: () => {
@@ -535,9 +542,10 @@ export function CollaboratorsTab({
       });
       toast({ title: "Collaborator removed" });
     },
-    onError: () => {
+    onError: (err: Error) => {
       toast({
         title: "Failed to remove collaborator",
+        description: err.message,
         variant: "destructive",
       });
     },
@@ -651,7 +659,7 @@ export function CollaboratorsTab({
                   updateMutation.mutate({
                     collaboratorId: collabId,
                     role: editRole,
-                    revenueSharePercentage: editShare,
+                    sharePercent: editShare,
                   })
                 }
                 onRemove={(collabId) => removeMutation.mutate(collabId)}

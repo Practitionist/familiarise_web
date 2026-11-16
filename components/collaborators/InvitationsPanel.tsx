@@ -31,7 +31,10 @@ import type {
   CollaborationWithPlan,
   HostedPlanEntry,
 } from "./types";
-import { PendingInvitationCard } from "./PendingInvitationCard";
+import {
+  PendingInvitationCard,
+  type RespondArgs,
+} from "./PendingInvitationCard";
 import { ActiveCollaborationCard } from "./ActiveCollaborationCard";
 import { HostedPlanCard } from "./HostedPlanCard";
 
@@ -66,21 +69,16 @@ export function InvitationsPanel({
   });
 
   const respondMutation = useMutation({
-    mutationFn: async ({
-      id,
-      planType,
-      response,
-    }: {
-      id: string;
-      planType: "webinar" | "class";
-      response: "ACCEPTED" | "DECLINED";
-    }) => {
+    mutationFn: async ({ id, ...body }: RespondArgs) => {
       const res = await fetch(`/api/collaborations/${id}/respond`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ response, planType }),
+        body: JSON.stringify(body),
       });
-      if (!res.ok) throw new Error("Failed to respond");
+      if (!res.ok) {
+        const refusal = await res.json().catch(() => null);
+        throw new Error(refusal?.error ?? "Failed to respond");
+      }
       return res.json();
     },
     onSuccess: (_, variables) => {
@@ -92,9 +90,11 @@ export function InvitationsPanel({
             : "Invitation declined",
       });
     },
-    onError: () => {
+    onError: (error: Error) => {
+      queryClient.invalidateQueries({ queryKey: ["my-collaborations"] });
       toast({
         title: "Failed to respond to invitation",
+        description: error.message,
         variant: "destructive",
       });
     },

@@ -19,17 +19,22 @@ import { formatCurrencyAmount } from "@/utils/formatting";
 import type { CollaborationWithPlan } from "./types";
 import { ROLE_DESCRIPTIONS, formatRole } from "./format";
 
+/** An accept names the terms on screen, so a change in between is refused. */
+export type RespondArgs =
+  | {
+      id: string;
+      response: "ACCEPTED";
+      seenTerms: { role: string; sharePercent: number };
+    }
+  | { id: string; response: "DECLINED" };
+
 export function PendingInvitationCard({
   collab,
   onRespond,
   isResponding,
 }: {
   collab: CollaborationWithPlan;
-  onRespond: (args: {
-    id: string;
-    planType: "webinar" | "class";
-    response: "ACCEPTED" | "DECLINED";
-  }) => void;
+  onRespond: (args: RespondArgs) => void;
   isResponding: boolean;
 }) {
   const inviterUser = collab.invitedBy?.user ?? {
@@ -124,8 +129,11 @@ export function PendingInvitationCard({
             onClick={() =>
               onRespond({
                 id: collab.id,
-                planType: collab.planType,
                 response: "ACCEPTED",
+                seenTerms: {
+                  role: collab.role,
+                  sharePercent: collab.revenueShareBps / 100,
+                },
               })
             }
             disabled={isResponding}
@@ -137,13 +145,7 @@ export function PendingInvitationCard({
             size="sm"
             variant="outline"
             className="flex-1 border-zinc-200 bg-white sm:flex-none"
-            onClick={() =>
-              onRespond({
-                id: collab.id,
-                planType: collab.planType,
-                response: "DECLINED",
-              })
-            }
+            onClick={() => onRespond({ id: collab.id, response: "DECLINED" })}
             disabled={isResponding}
           >
             <X className="mr-1 h-3.5 w-3.5" />

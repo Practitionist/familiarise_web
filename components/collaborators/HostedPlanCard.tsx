@@ -255,7 +255,10 @@ function HostedCollaboratorItem({
                 min={1}
                 max={maxEditShare}
                 value={editSharePct}
-                onChange={(e) => onShareChange(Number(e.target.value))}
+                step={1}
+                onChange={(e) =>
+                  onShareChange(Math.trunc(Number(e.target.value)))
+                }
                 className="mt-1 h-8 text-xs"
               />
             </div>
@@ -427,7 +430,7 @@ export function HostedPlanCard({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             role: editRole,
-            revenueSharePercentage: editSharePct,
+            sharePercent: editSharePct,
           }),
         },
       );

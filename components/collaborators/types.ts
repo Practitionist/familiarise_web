@@ -53,7 +53,8 @@ export interface PlanOwner {
 export interface PlanCollaboratorInfo {
   id: string;
   role: string;
-  revenueShareBps: number;
+  /** Null for a peer: a collaborator sees only their own share. */
+  revenueShareBps: number | null;
   status: "PENDING" | "ACCEPTED";
   consultantProfile: {
     id: string;

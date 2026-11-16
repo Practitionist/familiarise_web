@@ -305,7 +305,7 @@ export function ActiveCollaborationCard({
                       {c.consultantProfile.user.name ?? "Unknown"}
                     </p>
                     <p className="truncate text-xs text-zinc-500">
-                      {formatRole(c.role)} · {c.revenueShareBps / 100}% share
+                      {formatRole(c.role)}
                     </p>
                   </div>
                 </div>
