@@ -74,6 +74,9 @@ jest.mock("../../lib/prisma", () => ({
     appointmentParticipant: {
       findMany: jest.fn(),
     },
+    collaborator: {
+      findMany: jest.fn(async () => []),
+    },
     sessionAccessLog: {
       findMany: jest.fn(async () => [
         {
@@ -127,6 +130,7 @@ const mockPrisma = prisma as unknown as {
   dpdpGrievance: { findMany: jest.Mock };
   consumerInvoice: { findMany: jest.Mock };
   appointmentParticipant: { findMany: jest.Mock };
+  collaborator: { findMany: jest.Mock };
   $transaction: jest.Mock;
 };
 
@@ -348,6 +352,19 @@ describe("Personal DPDP Consent & §11 Data Export Routes", () => {
       mockPrisma.supportCase.findMany.mockResolvedValueOnce([]);
       mockPrisma.membership.findMany.mockResolvedValueOnce([]);
       mockPrisma.appointmentParticipant.findMany.mockResolvedValueOnce([]);
+      mockPrisma.collaborator.findMany.mockResolvedValueOnce([
+        {
+          id: "collab_1",
+          role: "CO_HOST",
+          status: "REMOVED",
+          revenueShareBps: 2500,
+          createdAt: new Date("2026-10-01T00:00:00Z"),
+          acceptedAt: new Date("2026-10-02T00:00:00Z"),
+          endedAt: new Date("2026-10-20T00:00:00Z"),
+          webinarPlan: { title: "Design reviews" },
+          classPlan: null,
+        },
+      ]);
 
       const res = await getExport();
       expect(res.status).toBe(200);
@@ -381,6 +398,31 @@ describe("Personal DPDP Consent & §11 Data Export Routes", () => {
       expect(
         payload.personalDataSummary.activitySummary.sessionAccessLogTruncated,
       ).toBe(false);
+      // The user's own collaborations, ended ones included, and nobody else's.
+      expect(
+        payload.personalDataSummary.activitySummary.collaborations,
+      ).toEqual([
+        {
+          id: "collab_1",
+          planType: "WEBINAR",
+          planTitle: "Design reviews",
+          role: "CO_HOST",
+          status: "REMOVED",
+          revenueSharePercent: 25,
+          invitedAt: "2026-10-01T00:00:00.000Z",
+          acceptedAt: "2026-10-02T00:00:00.000Z",
+          endedAt: "2026-10-20T00:00:00.000Z",
+        },
+      ]);
+      const collaborationRead =
+        mockPrisma.collaborator.findMany.mock.calls[0][0];
+      expect(collaborationRead.where).toEqual({
+        consultantProfile: { userId: "user_dpdp_1" },
+      });
+      expect(collaborationRead.select).not.toHaveProperty("invitedById");
+      expect(collaborationRead.select.webinarPlan.select).toEqual({
+        title: true,
+      });
       expect(payload.sharedWithDataProcessors).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
