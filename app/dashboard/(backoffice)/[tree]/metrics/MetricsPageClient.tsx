@@ -5,11 +5,18 @@ import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
   AlertTriangle,
+  CalendarCheck,
+  CalendarClock,
+  CalendarX,
   CheckCircle,
   Clock,
+  GraduationCap,
+  IndianRupee,
   RefreshCw,
+  RotateCcw,
   ShieldCheck,
   Ticket,
+  UserCog,
   Users,
 } from "lucide-react";
 
@@ -28,7 +35,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import type { PlatformTotals } from "@/lib/backoffice/platform-totals";
 import { durationLabel } from "@/lib/support/case-format";
+import { formatCurrencyAmount } from "@/utils/formatting";
 import type { InboxStats } from "@/types/support-case";
 import { supportKeys } from "@/lib/support/support-keys";
 
@@ -43,13 +52,12 @@ interface StaffMetrics {
   userMetrics: {
     usersHelpedThisWeek: number;
     activeUsers: number;
-    newSignupsThisMonth: number;
-    totalUsers: number;
   };
   platformMetrics: {
     totalAppointments: number;
     pendingPayments: number;
   };
+  platformTotals: PlatformTotals;
 }
 
 const DEFAULT_METRICS: StaffMetrics = {
@@ -63,14 +71,25 @@ const DEFAULT_METRICS: StaffMetrics = {
   userMetrics: {
     usersHelpedThisWeek: 0,
     activeUsers: 0,
-    newSignupsThisMonth: 0,
-    totalUsers: 0,
   },
   platformMetrics: {
     totalAppointments: 0,
     pendingPayments: 0,
   },
+  platformTotals: {
+    monthStartsAt: "",
+    users: { total: 0, newThisMonth: 0 },
+    experts: { total: 0, active: 0 },
+    learners: { total: 0, active: 0 },
+    staff: { total: 0 },
+    sessions: { total: 0, completed: 0, upcoming: 0, cancelled: 0 },
+    revenue: { totalPaise: 0, thisMonthPaise: 0 },
+    refunds: { totalPaise: 0 },
+  },
 };
+
+const inr = (paise: number) => formatCurrencyAmount(paise, "INR");
+const count = (n: number) => n.toLocaleString("en-IN");
 
 const PERIOD_LABELS: Record<string, string> = {
   today: "Today",
@@ -142,6 +161,7 @@ export default function StaffMetricsPage() {
   const userMetrics = rawMetrics?.userMetrics ?? DEFAULT_METRICS.userMetrics;
   const platformMetrics =
     rawMetrics?.platformMetrics ?? DEFAULT_METRICS.platformMetrics;
+  const totals = rawMetrics?.platformTotals ?? DEFAULT_METRICS.platformTotals;
 
   const periodLabel = PERIOD_LABELS[period] ?? "This Week";
   const resolvedInPeriod = getResolvedTicketsForPeriod(supportMetrics, period);
@@ -295,18 +315,12 @@ export default function StaffMetricsPage() {
             <Section title="Platform Overview">
               <StatRow>
                 {loading ? (
-                  [1, 2, 3].map((i) => <StatSkeleton key={i} />)
+                  [1, 2].map((i) => <StatSkeleton key={i} />)
                 ) : (
                   <>
                     <Stat
-                      label="Total Users"
-                      value={userMetrics.totalUsers.toLocaleString()}
-                      hint={`+${userMetrics.newSignupsThisMonth} new this month`}
-                      icon={Users}
-                    />
-                    <Stat
                       label="Total Appointments"
-                      value={platformMetrics.totalAppointments.toLocaleString()}
+                      value={count(platformMetrics.totalAppointments)}
                       hint="All-time sessions"
                       icon={Activity}
                     />
@@ -320,6 +334,104 @@ export default function StaffMetricsPage() {
                           ? "warning"
                           : "neutral"
                       }
+                    />
+                  </>
+                )}
+              </StatRow>
+            </Section>
+
+            <Section title="People">
+              <StatRow>
+                {loading ? (
+                  [1, 2, 3, 4].map((i) => <StatSkeleton key={i} />)
+                ) : (
+                  <>
+                    <Stat
+                      label="Total Users"
+                      value={count(totals.users.total)}
+                      hint={`+${count(totals.users.newThisMonth)} this month (IST)`}
+                      icon={Users}
+                    />
+                    <Stat
+                      label="Experts"
+                      value={count(totals.experts.total)}
+                      hint={`${count(totals.experts.active)} active`}
+                      icon={UserCog}
+                    />
+                    <Stat
+                      label="Learners"
+                      value={count(totals.learners.total)}
+                      hint={`${count(totals.learners.active)} active`}
+                      icon={GraduationCap}
+                    />
+                    <Stat
+                      label="Staff Members"
+                      value={count(totals.staff.total)}
+                      icon={ShieldCheck}
+                    />
+                  </>
+                )}
+              </StatRow>
+            </Section>
+
+            <Section title="Sessions">
+              <StatRow>
+                {loading ? (
+                  [1, 2, 3, 4].map((i) => <StatSkeleton key={i} />)
+                ) : (
+                  <>
+                    <Stat
+                      label="Total Sessions"
+                      value={count(totals.sessions.total)}
+                      icon={Activity}
+                    />
+                    <Stat
+                      label="Completed Sessions"
+                      value={count(totals.sessions.completed)}
+                      icon={CalendarCheck}
+                      tone="success"
+                    />
+                    <Stat
+                      label="Upcoming Sessions"
+                      value={count(totals.sessions.upcoming)}
+                      icon={CalendarClock}
+                    />
+                    <Stat
+                      label="Cancelled Sessions"
+                      value={count(totals.sessions.cancelled)}
+                      icon={CalendarX}
+                      tone="critical"
+                    />
+                  </>
+                )}
+              </StatRow>
+            </Section>
+
+            <Section title="Revenue">
+              <StatRow>
+                {loading ? (
+                  [1, 2, 3].map((i) => <StatSkeleton key={i} />)
+                ) : (
+                  <>
+                    <Stat
+                      label="Total Revenue"
+                      value={inr(totals.revenue.totalPaise)}
+                      hint="Succeeded payments, all time"
+                      icon={IndianRupee}
+                    />
+                    <Stat
+                      label="Revenue this month (IST)"
+                      value={inr(totals.revenue.thisMonthPaise)}
+                      hint="Since 00:00 IST on the 1st"
+                      icon={IndianRupee}
+                      tone="success"
+                    />
+                    <Stat
+                      label="Refunds"
+                      value={inr(totals.refunds.totalPaise)}
+                      hint="Succeeded refunds, all time"
+                      icon={RotateCcw}
+                      tone="critical"
                     />
                   </>
                 )}

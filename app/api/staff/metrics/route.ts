@@ -1,6 +1,6 @@
 /**
- * Staff Analytics API
- * Limited analytics metrics for staff members (excludes revenue data)
+ * Back-office Metrics API: support-queue health plus the platform's people,
+ * session and money totals, for ADMIN and STAFF alike.
  */
 
 import * as Sentry from "@sentry/nextjs";
@@ -8,6 +8,8 @@ import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { getPlatformTotals } from "@/lib/backoffice/platform-totals";
+
 export async function GET() {
   try {
     const auth = await requirePrivilegedAuth();
@@ -28,10 +30,9 @@ export async function GET() {
       openTickets,
       usersHelpedThisWeek,
       activeUsers,
-      newSignupsThisMonth,
-      totalUsers,
       totalAppointments,
       pendingAppointments,
+      platformTotals,
     ] = await Promise.all([
       // Tickets resolved today
       prisma.supportCase.count({
@@ -86,14 +87,6 @@ export async function GET() {
           distinct: ["userId"],
         })
         .then((payments) => payments.length),
-      // New signups this month
-      prisma.user.count({
-        where: {
-          createdAt: { gte: startOfMonth },
-        },
-      }),
-      // Total users
-      prisma.user.count(),
       // Total appointments
       prisma.appointment.count(),
       // Appointments with pending payments
@@ -102,6 +95,7 @@ export async function GET() {
           paymentStatus: "PENDING",
         },
       }),
+      getPlatformTotals(),
     ]);
 
     // Measure the first human reply rather than unrelated later edits.
@@ -143,13 +137,12 @@ export async function GET() {
       userMetrics: {
         usersHelpedThisWeek,
         activeUsers,
-        newSignupsThisMonth,
-        totalUsers,
       },
       platformMetrics: {
         totalAppointments,
         pendingPayments: pendingAppointments,
       },
+      platformTotals,
     });
   } catch (error) {
     Sentry.captureException(
