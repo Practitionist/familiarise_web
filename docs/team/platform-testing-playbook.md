@@ -1297,6 +1297,10 @@ Use these checklists to systematically test every feature. Check off each item a
 - [ ] View subscription status
 - [ ] Open Metrics and see the platform totals and the support-queue figures
 - [ ] Check that a time on a back-office page shows IST and its tooltip shows UTC
+- [ ] On Appointments, page through "Sessions that need a decision", sort it by Lost and by Waiting since, and check that each row names the booking, the expert and the learner (or the attendee count) and opens that booking when clicked
+- [ ] Open a booking's drawer and check that "Scheduled At" and every session print the same IST time, with UTC on hover
+- [ ] Filter Appointments by Trial, and find a cancelled trial under Issues and a scheduled one under Scheduled
+- [ ] Check that a booking's timeline lists an answered reschedule once as "Proposed" and once as its answer, with no "approved → approved" row
 
 ## Admin Testing Checklist
 

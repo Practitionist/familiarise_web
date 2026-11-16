@@ -77,7 +77,7 @@ function inZone(date: Date, zone: string, kind: OperatorInstantKind): string {
   return kind === "time" ? clock : `${formatDateLabel(date, opts)}, ${clock}`;
 }
 
-/** "24 Sep 2026" / "2:00 pm IST" / "24 Sep 2026, 2:00 pm IST"; "—" for no instant. */
+/** "24 Sept 2026" / "2:00 pm IST" / "24 Sept 2026, 2:00 pm IST"; "—" for no instant. */
 export function formatOperatorInstant(
   instant: Instant,
   kind: OperatorInstantKind = "dateTime",

@@ -93,6 +93,20 @@ jest.mock("../../actions/maintenance/pause-discount-codes", () => ({
 jest.mock("../../actions/maintenance/post-recovery", () => ({
   runPostRecovery: jest.fn(),
 }));
+jest.mock("../../lib/data/staff-appointments", () => ({
+  getStaffAppointments: async () => ({ appointments: [] }),
+}));
+jest.mock("../../lib/data/booking-history", () => ({
+  getBookingTimeline: async (id: string) => ({
+    appointmentId: id,
+    entries: [],
+    truncated: false,
+  }),
+}));
+jest.mock("../../lib/rate-limit", () => ({
+  applyRateLimit: async () => null,
+  participantReadLimiter: {},
+}));
 
 import { GET as statsGet } from "../../app/api/admin/stats/route";
 import {
@@ -103,6 +117,11 @@ import { GET as cancellationsGet } from "../../app/api/admin/analytics/cancellat
 import { GET as maintenanceGet } from "../../app/api/admin/maintenance/route";
 import { GET as preflightGet } from "../../app/api/admin/maintenance/preflight/route";
 import { GET as metricsGet } from "../../app/api/staff/metrics/route";
+import { GET as staffAppointmentsGet } from "../../app/api/staff/appointments/route";
+import { GET as staffTimelineGet } from "../../app/api/staff/appointments/[appointmentId]/timeline/route";
+import { GET as needsHumanGet } from "../../app/api/admin/sessions/needs-human/route";
+
+const APPOINTMENT_ID = "3b0a1b7c-42cd-465e-8b4d-8dccba7f8820";
 
 const floorPatch = () =>
   trialPricingPatch(
@@ -131,6 +150,33 @@ const routes: Array<[string, BackofficeSurface, () => Promise<Response>]> = [
   ["GET /api/admin/maintenance", "maintenance.manage", maintenanceGet],
   ["GET /api/admin/maintenance/preflight", "maintenance.manage", preflightGet],
   ["GET /api/staff/metrics", "analytics.read", metricsGet],
+  [
+    "GET /api/staff/appointments",
+    "appointments.manage",
+    () =>
+      staffAppointmentsGet(
+        new NextRequest("http://test/api/staff/appointments"),
+      ),
+  ],
+  [
+    "GET /api/staff/appointments/[id]/timeline",
+    "appointments.manage",
+    () =>
+      staffTimelineGet(
+        new NextRequest(
+          `http://test/api/staff/appointments/${APPOINTMENT_ID}/timeline`,
+        ),
+        { params: Promise.resolve({ appointmentId: APPOINTMENT_ID }) },
+      ),
+  ],
+  [
+    "GET /api/admin/sessions/needs-human",
+    "classSeries.support",
+    () =>
+      needsHumanGet(
+        new NextRequest("http://test/api/admin/sessions/needs-human"),
+      ),
+  ],
 ];
 
 const cases = routes.flatMap(([name, surface, call]) =>

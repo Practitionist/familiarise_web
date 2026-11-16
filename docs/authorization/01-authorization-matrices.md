@@ -151,6 +151,7 @@ A route is on the matrix when its first line is `requireBackofficeSurface(key)`,
 | `/api/admin/trial-pricing` (`GET` and `PATCH`)                                       | `trialPricing.manage` | ADMIN          | Was ADMIN or STAFF. `PATCH` is now an audited door that needs a reason. Plan routes still enforce the floor for every expert.       |
 | `/api/admin/stats`, `/api/admin/analytics/cancellations`, `/api/staff/metrics`       | `analytics.read`      | ADMIN or STAFF | Same people as before; the key now names the grant.                                                                                 |
 | `/api/admin/maintenance`, `maintenance/preflight`, `maintenance/booking-remediation` | `maintenance.manage`  | ADMIN          | Same people as before. The actor of every transition is required and recorded.                                                      |
+| `/api/staff/appointments`, `/api/staff/appointments/[appointmentId]/timeline`        | `appointments.manage` | ADMIN or STAFF | Same people as before; the key now names the grant.                                                                                 |
 
 About fifty other admin and staff routes still call a raw role guard. They move onto the matrix with the pull request that owns their screen **(planned)**, and the last of those pull requests deletes `requirePrivilegedAuth` and `requireAdminAuth` once nothing calls them. Do not add a new caller. The decision record is [the 2026-11-16 back-office record](../decisions/2026-11-16-train-6-back-office.md).
 

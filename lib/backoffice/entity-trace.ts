@@ -1,5 +1,8 @@
 import prisma from "@/lib/prisma";
-import { getBookingTimeline } from "@/lib/data/booking-history";
+import {
+  getBookingTimeline,
+  type BookingTimelineEntry,
+} from "@/lib/data/booking-history";
 import { sentrySearchHref } from "@/lib/observability/sentry-issues";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { formatOperatorInstant } from "@/lib/time/operator-zone";
@@ -110,6 +113,26 @@ export function bookingStepLabel(
 
 const join = (parts: (string | null | undefined | false)[]) =>
   parts.filter(Boolean).join(" · ") || null;
+
+/** One timeline entry as a trace step; a proposal says it was proposed and where it stands now. */
+export function bookingTraceStep(entry: BookingTimelineEntry): {
+  status: string;
+  detail: string | null;
+} {
+  if (entry.kind === "reschedule") {
+    return {
+      status: "Reschedule proposed",
+      detail: join([
+        entry.reason,
+        entry.outcome && `now ${enumWords(entry.outcome)}`,
+      ]),
+    };
+  }
+  return {
+    status: bookingStepLabel(entry.entity, entry.from, entry.to),
+    detail: entry.reason,
+  };
+}
 
 class TraceCollector {
   readonly rows: TraceRow[] = [];
@@ -898,9 +921,8 @@ export async function readEntityTrace(args: {
       const timeline = await getBookingTimeline(A, { kind: "all" });
       const entries = timeline?.entries ?? [];
       const kept = entries.slice(0, TRACE_ROW_CAP);
-      for (const entry of entries) {
-        if (entry.entity === "OCCURRENCE") occurrenceIds.push(entry.entityId);
-      }
+      // From the booking's sessions, not the entries: a hidden row must not hide a session's audit.
+      occurrenceIds.push(...(timeline?.occurrenceIds ?? []));
       t.add(
         "booking",
         kept.flatMap((entry) =>
@@ -910,9 +932,8 @@ export async function readEntityTrace(args: {
             `${entry.kind}:${entry.id}`,
             new Date(entry.createdAt),
             {
-              status: bookingStepLabel(entry.entity, entry.from, entry.to),
+              ...bookingTraceStep(entry),
               actor: entry.actor?.name ?? null,
-              detail: entry.reason,
             },
           ),
         ),

@@ -1,6 +1,6 @@
 /**
- * #1569 A-10 — the ops side of session outcomes: overturn one session's
- * verdict (`session.set-outcome`), and list the sessions only a human can
+ * The ops side of session outcomes: overturn one session's verdict
+ * (`session.set-outcome`), and page through the sessions only a human can
  * decide. A void's make-up or refund is money, so an overturn that would
  * un-void a session is refused once either has happened.
  */
@@ -18,12 +18,25 @@ import {
   HOST_ATTRIBUTED_OUTCOMES,
 } from "@/lib/booking/session-outcome";
 import { INCIDENT_REFUND_KEY_PREFIX } from "@/lib/booking/incident-keys";
-import { agedNeedsHumanWhere, NEEDS_HUMAN } from "@/lib/booking/misses";
+import { isAgedNeedsHuman, NEEDS_HUMAN } from "@/lib/booking/misses";
 import {
   OCCURRENCE_COMPLETION_ALLOWED_FROM,
   transitionOccurrenceCompletion,
 } from "@/lib/booking/transitions";
+import {
+  APPOINTMENT_HEADLINE_SELECT,
+  appointmentHeadline,
+  headlineUserIds,
+  type HeadlineUser,
+} from "@/lib/data/appointment-headline";
+import { meetingEndReasonSchema } from "@/lib/meetings/end-reasons";
 import { withAppointmentLock } from "@/utils/appointmentlock";
+import {
+  NEEDS_HUMAN_DEFAULT_SORT,
+  NEEDS_HUMAN_PAGE_SIZE,
+  type NeedsHumanPage,
+  type NeedsHumanSort,
+} from "./needs-human-queue";
 import { OpsRefusal } from "./ops-refusal-error";
 
 const DECIDED = new Set<OccurrenceCompletionStatus>([
@@ -260,39 +273,100 @@ export async function overturnSessionOutcome(args: {
   );
 }
 
-/**
- * Sessions only a human can decide: an INCONCLUSIVE verdict, a consultation
- * host no-show the detector declined, a call the maintenance drain cut, and a
- * paid trial that was voided (D4). None of them moves money on its own.
- */
-export async function readSessionsNeedingHuman(limit = 100, now = new Date()) {
-  // Sessions parked over 7 days come first, oldest first, so the cap never hides them.
-  const aged = await prisma.appointmentOccurrence.findMany({
-    where: agedNeedsHumanWhere(now),
-    orderBy: { endsAt: "asc" },
-    take: limit,
-    select: NEEDS_HUMAN_ROW_SELECT,
-  });
-  const recent = await prisma.appointmentOccurrence.findMany({
-    where: { AND: [NEEDS_HUMAN, { id: { notIn: aged.map((r) => r.id) } }] },
-    orderBy: { endsAt: "desc" },
-    take: Math.max(0, limit - aged.length),
-    select: NEEDS_HUMAN_ROW_SELECT,
-  });
-  return [
-    ...aged.map((row) => ({ ...row, aged: true })),
-    ...recent.map((row) => ({ ...row, aged: false })),
-  ];
-}
-
 const NEEDS_HUMAN_ROW_SELECT = {
   id: true,
   appointmentId: true,
   startsAt: true,
   endsAt: true,
+  outcomeAt: true,
   completionStatus: true,
   outcome: true,
   deliveredMinutes: true,
   lostMinutes: true,
   meeting: { select: { endedReason: true } },
+  appointment: { select: APPOINTMENT_HEADLINE_SELECT },
 } satisfies Prisma.AppointmentOccurrenceSelect;
+
+/** The ORDER BY for a whitelisted sort; nullable columns put their nulls last, and id keeps pages stable. */
+function needsHumanOrderBy(
+  sort: NeedsHumanSort,
+): Prisma.AppointmentOccurrenceOrderByWithRelationInput[] {
+  const { dir } = sort;
+  let first: Prisma.AppointmentOccurrenceOrderByWithRelationInput;
+  if (sort.key === "outcomeAt") {
+    first = { outcomeAt: { sort: dir, nulls: "last" } };
+  } else if (sort.key === "lostMinutes") {
+    first = { lostMinutes: { sort: dir, nulls: "last" } };
+  } else if (sort.key === "startsAt") {
+    first = { startsAt: dir };
+  } else {
+    first = { endsAt: dir };
+  }
+  return [first, { id: "asc" }];
+}
+
+const personOf = (u: HeadlineUser | null) =>
+  u ? { id: u.id, name: u.name, email: u.email } : null;
+
+/**
+ * Sessions only a human can decide: an INCONCLUSIVE verdict, a consultation
+ * host no-show the detector declined, a call the maintenance drain cut, and a
+ * paid trial that was voided (D4). None of them moves money on its own. One
+ * page in three statements: the list, its count and one batched user read.
+ */
+export async function readSessionsNeedingHuman({
+  page = 1,
+  sort = NEEDS_HUMAN_DEFAULT_SORT,
+  now = new Date(),
+}: {
+  page?: number;
+  sort?: NeedsHumanSort;
+  now?: Date;
+} = {}): Promise<NeedsHumanPage> {
+  const [rows, total] = await Promise.all([
+    prisma.appointmentOccurrence.findMany({
+      relationLoadStrategy: "join",
+      where: NEEDS_HUMAN,
+      orderBy: needsHumanOrderBy(sort),
+      skip: (page - 1) * NEEDS_HUMAN_PAGE_SIZE,
+      take: NEEDS_HUMAN_PAGE_SIZE,
+      select: NEEDS_HUMAN_ROW_SELECT,
+    }),
+    prisma.appointmentOccurrence.count({ where: NEEDS_HUMAN }),
+  ]);
+  const userIds = headlineUserIds(rows.map((r) => r.appointment));
+  const users =
+    userIds.length > 0
+      ? await prisma.user.findMany({
+          where: { id: { in: userIds } },
+          select: { id: true, name: true, email: true, image: true },
+        })
+      : [];
+  const usersById = new Map(users.map((u) => [u.id, u]));
+  const items = rows.map((row) => {
+    const headline = appointmentHeadline(row.appointment, usersById);
+    return {
+      id: row.id,
+      appointmentId: row.appointmentId,
+      startsAt: row.startsAt.toISOString(),
+      endsAt: row.endsAt.toISOString(),
+      outcomeAt: row.outcomeAt?.toISOString() ?? null,
+      completionStatus: row.completionStatus,
+      outcome: row.outcome,
+      lostMinutes: row.lostMinutes,
+      // A sidecar CHECK keeps the column to the known reasons.
+      endedReason:
+        meetingEndReasonSchema.safeParse(row.meeting?.endedReason).data ?? null,
+      aged: isAgedNeedsHuman(row, now),
+      booking: {
+        type: row.appointment.appointmentType,
+        title: headline.title,
+        expert: personOf(headline.expert),
+        learner: personOf(headline.learner),
+        attendeeLabel: headline.attendeeLabel,
+        removed: row.appointment.deletedAt !== null,
+      },
+    };
+  });
+  return { items, total, page, pageSize: NEEDS_HUMAN_PAGE_SIZE };
+}
