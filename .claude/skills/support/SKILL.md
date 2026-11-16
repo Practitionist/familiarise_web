@@ -61,6 +61,12 @@ Terse rules for agents. The human explanation is in `docs/support/` (start at `d
 - Never capture to Sentry per row in a sweep arm; collect into `errors` and report once.
 - Never run `prisma db push`, `npm run db:*` or the DB race tier against the shared database.
 
+## Back office
+
+- Show every time on an operator screen through `lib/time/operator-zone.ts` (`OPERATOR_ZONE` is `Asia/Kolkata`; `formatOperatorInstant`, and `<OperatorTime>` in `lib/time/operator-time.tsx`, print IST with the UTC instant in the tooltip; `operatorMonthStart` cuts a month at 00:00 IST). The back-office layout mounts one `DisplayZoneProvider` with that zone. Never format an operator time with the browser, server or viewer-profile zone; a support page that does is still to be moved **(planned, with the people-and-support screens)**.
+- Show a person through the one person helper (`formatPerson` in `lib/backoffice/person.ts` and `<PersonCell>` in `components/dashboard/backoffice/PersonCell.tsx`: name, email, muted id, "Removed user" fallback), not a hand-built cell.
+- A staff action that changes state is a `withOpsAction` door (`lib/backoffice/ops-action-log.ts`): a matrix key, a reason of at least 5 characters and an `OpsActionLog` row. Guard a new route with `requireBackofficeSurface(key)`; do not add a caller of `requirePrivilegedAuth` or `requireAdminAuth`. There is no staff door to void a session or to end a paid trial; use the refund and incident doors, and see the record `docs/decisions/2026-11-16-train-6-back-office.md`.
+
 ## Planned (owner decisions 2026-11-04, not built yet)
 
 The code still has the rules described above until these land; don't build against them early.

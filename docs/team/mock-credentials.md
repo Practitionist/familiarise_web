@@ -26,7 +26,7 @@ Three manually-created test accounts (`owner-test`, `learner-test`, `a@gmail.com
 
 | Role            | Dashboard                         | Description                                                                            |
 | --------------- | --------------------------------- | -------------------------------------------------------------------------------------- |
-| `ADMIN`         | `/dashboard/admin/…`              | Full platform control — analytics, maintenance mode, TDS, everything STAFF can do      |
+| `ADMIN`         | `/dashboard/admin/…`              | Full platform control — maintenance mode, TDS, everything STAFF can do                 |
 | `STAFF`         | `/dashboard/staff/[id]/…`         | Day-to-day ops — payments, refunds, disputes, moderation, support tickets, system jobs |
 | `CONSULTANT`    | `/dashboard/consultant/[id]/…`    | Expert who creates services, manages availability, earns money                         |
 | `CONSULTEE`     | `/dashboard/consultee/[id]/…`     | Client who books sessions, attends calls, leaves reviews                               |

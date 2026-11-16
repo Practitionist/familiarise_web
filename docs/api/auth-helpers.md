@@ -29,7 +29,7 @@ Use this for routes that mutate platform-level state irreversibly. These are thi
 
 **Routes that must use this:**
 
-- `/api/admin/maintenance/**` — site-wide maintenance mode toggle
+- `/api/admin/maintenance/**` — site-wide maintenance mode toggle (now gated on the matrix key `maintenance.manage`, which is also ADMIN only; see `requireBackofficeSurface()`)
 - `/api/admin/system-jobs/run` — manual cron triggers
 - `/api/admin/newsletter/send` — mass email
 - `/api/admin/payouts` (POST only) — batch payout creation (GET stays privileged)
@@ -64,6 +64,20 @@ export async function GET(req: NextRequest) {
   if (auth.error) return auth.error;
   const session = auth.session;
   // ... operator logic
+}
+```
+
+## `requireBackofficeSurface(key)`
+
+> **The permission matrix.** The answer comes from `BACKOFFICE_PERMISSIONS` in `lib/auth/backoffice-permissions.ts`, so a role grant is visible in the one file that lists every grant.
+
+Use this for every back-office route that needs a role distinction, and for any new route in `/api/admin/**` or `/api/staff/**`. The two raw guards above are being retired route by route as each screen moves onto the matrix; do not add a new caller. A route moved in the first back-office pull request is `/api/admin/leads` (`leads.manage`), `/api/admin/trial-pricing` (`trialPricing.manage`), `/api/admin/stats` and `/api/admin/analytics/cancellations` (`analytics.read`) and `/api/admin/maintenance/**` (`maintenance.manage`). A mutation that must leave an audit row uses `withOpsAction` (`lib/backoffice/ops-action-log.ts`), which calls this helper and then writes the `OpsActionLog` row with the operator's reason. The matrix and its policy are in [the authorization matrices](../authorization/01-authorization-matrices.md).
+
+```ts
+export async function GET() {
+  const auth = await requireBackofficeSurface("analytics.read");
+  if (auth.error) return auth.error;
+  // ... runs for exactly the roles the matrix lists for that key
 }
 ```
 
