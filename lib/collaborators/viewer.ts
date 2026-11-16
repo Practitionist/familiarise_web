@@ -133,6 +133,33 @@ export async function resolveCollaborationViewer(
   return { plan, viewer: { kind: "none" }, callerProfileId };
 }
 
+/** The attendee list and attendance of a plan's events: a manager and a presenter. */
+export const seesAttendees = (viewer: CollaborationViewer): boolean =>
+  viewer.kind === "manager" || viewer.kind === "presenter";
+
+/** What an attendee paid: a manager only. */
+export const seesAttendeePayments = (viewer: CollaborationViewer): boolean =>
+  viewer.kind === "manager";
+
+/** The plan behind a webinar or class booking; null for any other booking. */
+export async function appointmentPlanRef(
+  db: PrismaLike,
+  appointmentId: string,
+): Promise<PlanRef | null> {
+  const row = await db.appointment.findUnique({
+    where: { id: appointmentId },
+    select: {
+      webinar: { select: { webinarPlanId: true } },
+      class: { select: { classPlanId: true } },
+    },
+  });
+  if (row?.webinar) {
+    return { planType: "webinar", planId: row.webinar.webinarPlanId };
+  }
+  if (row?.class) return { planType: "class", planId: row.class.classPlanId };
+  return null;
+}
+
 /** The columns every collaborator projection is built from. */
 export const COLLABORATOR_VIEW_SELECT = {
   id: true,
