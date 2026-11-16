@@ -443,7 +443,9 @@ describe("Event Channel Actions", () => {
         appointments: [],
       });
       // The co-host is still on the team when the roster's grant is re-checked.
-      mockPrisma.collaborator.findFirst.mockResolvedValue({ id: "collab-1" });
+      (mockPrisma.collaborator.findFirst as jest.Mock).mockResolvedValue({
+        id: "collab-1",
+      });
 
       const { addUserToEventChannel } =
         await import("../../actions/stream/chat/event-channel.action");
