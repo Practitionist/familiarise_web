@@ -3,7 +3,8 @@
  *
  * GET   — the current minTrialPriceInPaise, gated on `trialPricing.manage`.
  * PATCH — an audited door (`trialPricing.update`, reason required) that sets
- *         it, CAS on the floor it read; 0 keeps free trials allowed.
+ *         it, CAS on the floor it read; an unchanged value is a 409 with no
+ *         audit row. 0 keeps free trials allowed.
  */
 
 import * as Sentry from "@sentry/nextjs";
@@ -42,6 +43,15 @@ export const PATCH = withOpsAction(
     run: async (tx, { body }) => {
       const before = await getMinTrialPriceInPaise(tx);
       const next = body.minTrialPriceInPaise;
+      // No change, no audit row: the refusal rolls the transaction back.
+      if (next === before) {
+        throw new OpsRefusal(
+          "FLOOR_UNCHANGED",
+          "The trial-price floor is already this value.",
+          409,
+          { minTrialPriceInPaise: before },
+        );
+      }
       const { count } = await tx.platformPricingConfig.updateMany({
         where: { id: PRICING_CONFIG_ID, minTrialPriceInPaise: before },
         data: { minTrialPriceInPaise: next },

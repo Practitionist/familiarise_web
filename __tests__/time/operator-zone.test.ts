@@ -126,6 +126,45 @@ describe("operator time", () => {
     ).toBe("time");
   });
 
+  it.each([
+    // America/Los_Angeles skips 02:00–03:00 on 8 Mar 2026 and repeats 01:00–02:00 on 1 Nov.
+    [
+      "a Los Angeles spring gap",
+      "2026-03-07T21:00:00.000Z",
+      "2026-03-08T02:30",
+    ],
+    [
+      "a Los Angeles autumn overlap",
+      "2026-10-31T20:00:00.000Z",
+      "2026-11-01T01:30",
+    ],
+    // Europe/London skips 01:00–02:00 on 29 Mar 2026 and repeats it on 25 Oct.
+    ["a London spring gap", "2026-03-28T20:00:00.000Z", "2026-03-29T01:30"],
+    ["a London autumn overlap", "2026-10-24T20:00:00.000Z", "2026-10-25T01:30"],
+  ])(
+    "round-trips an IST wall time that falls in %s of the host zone",
+    (_case, iso, wall) => {
+      expect(toOperatorWallTime(iso)).toBe(wall);
+      expect(fromOperatorWallTime(wall)?.toISOString()).toBe(iso);
+    },
+  );
+
+  it("cuts the day, week and month in IST inside a host DST gap", () => {
+    // Sun 8 Mar 2026, 02:30 IST: the hour Los Angeles skips.
+    const p = operatorPeriodStarts(new Date("2026-03-07T21:00:00.000Z"));
+    expect(p.day.toISOString()).toBe("2026-03-07T18:30:00.000Z");
+    expect(p.week.toISOString()).toBe("2026-03-07T18:30:00.000Z");
+    expect(p.month.toISOString()).toBe("2026-02-28T18:30:00.000Z");
+  });
+
+  it("refuses a wall time whose fields are out of range", () => {
+    expect(fromOperatorWallTime("2026-02-30T10:00")).toBeNull();
+    expect(fromOperatorWallTime("2026-04-01T24:00")).toBeNull();
+    expect(fromOperatorWallTime("2026-04-01T10:00:00")?.toISOString()).toBe(
+      "2026-04-01T04:30:00.000Z",
+    );
+  });
+
   it("renders a <time> with the instant and its UTC reading", () => {
     expect(
       renderToStaticMarkup(

@@ -112,3 +112,28 @@ it("409 FLOOR_CHANGED when another admin moved the floor first", async () => {
   expect((await res.json()).code).toBe("FLOOR_CHANGED");
   expect(mockOpsLog.create).not.toHaveBeenCalled();
 });
+
+it("409 FLOOR_UNCHANGED with no write and no audit row for the current value", async () => {
+  const res = await patch({ minTrialPriceInPaise: 4_900, reason });
+  expect(res.status).toBe(409);
+  expect(await res.json()).toMatchObject({
+    code: "FLOOR_UNCHANGED",
+    minTrialPriceInPaise: 4_900,
+  });
+  expect(mockConfig.updateMany).not.toHaveBeenCalled();
+  expect(mockOpsLog.create).not.toHaveBeenCalled();
+});
+
+it("a retried change after it landed records nothing more", async () => {
+  expect((await patch({ minTrialPriceInPaise: 9_900, reason })).status).toBe(
+    200,
+  );
+  expect(mockOpsLog.create).toHaveBeenCalledTimes(1);
+  // The floor now reads the value the first request set.
+  mockConfig.upsert.mockResolvedValue({ minTrialPriceInPaise: 9_900 });
+  const retry = await patch({ minTrialPriceInPaise: 9_900, reason });
+  expect(retry.status).toBe(409);
+  expect((await retry.json()).code).toBe("FLOOR_UNCHANGED");
+  expect(mockConfig.updateMany).toHaveBeenCalledTimes(1);
+  expect(mockOpsLog.create).toHaveBeenCalledTimes(1);
+});

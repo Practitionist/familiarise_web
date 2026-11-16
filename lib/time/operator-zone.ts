@@ -4,10 +4,8 @@
  * pinned, so a server render and the hydrating browser print the same text.
  */
 
-import { fromZonedTime } from "date-fns-tz";
-
 import { formatClockTime, formatDateLabel } from "./display";
-import { formatInViewerZone, UTC_ZONE, zoneLabel } from "./viewer-zone";
+import { UTC_ZONE, zoneLabel } from "./viewer-zone";
 
 export const OPERATOR_ZONE = "Asia/Kolkata";
 
@@ -16,6 +14,56 @@ export type OperatorInstantKind = "date" | "time" | "dateTime";
 export type Instant = Date | string | number;
 
 const EMPTY = "—";
+
+// India keeps +05:30 all year, so IST wall time and instants convert by plain arithmetic.
+const IST_OFFSET_MS = 330 * 60_000;
+
+const PARTS = new Intl.DateTimeFormat("en-CA", {
+  timeZone: OPERATOR_ZONE,
+  hourCycle: "h23",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
+interface WallParts {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+}
+
+/** The IST calendar fields of an instant, read without building a host-local Date. */
+function istParts(date: Date): WallParts {
+  const field = (type: Intl.DateTimeFormatPartTypes) =>
+    Number(PARTS.formatToParts(date).find((p) => p.type === type)?.value);
+  return {
+    year: field("year"),
+    month: field("month"),
+    day: field("day"),
+    hour: field("hour"),
+    minute: field("minute"),
+  };
+}
+
+/** The instant of an IST wall time; days past the month's end roll over like Date.UTC. */
+function istInstant(
+  year: number,
+  month: number,
+  day: number,
+  hour = 0,
+  minute = 0,
+  second = 0,
+): Date {
+  return new Date(
+    Date.UTC(year, month - 1, day, hour, minute, second) - IST_OFFSET_MS,
+  );
+}
+
+const pad = (n: number) => String(n).padStart(2, "0");
 
 function toDate(instant: Instant): Date | null {
   const date = instant instanceof Date ? instant : new Date(instant);
@@ -61,24 +109,37 @@ export function toOperatorWallTime(
 ): string {
   const date =
     instant === null || instant === undefined ? null : toDate(instant);
-  return date
-    ? formatInViewerZone(date, OPERATOR_ZONE, "yyyy-MM-dd'T'HH:mm")
-    : "";
+  if (!date) return "";
+  const p = istParts(date);
+  return `${p.year}-${pad(p.month)}-${pad(p.day)}T${pad(p.hour)}:${pad(p.minute)}`;
 }
 
-const WALL_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/;
+const WALL_TIME = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/;
 
 /** The instant an IST wall time typed into a datetime-local input names; null when empty or malformed. */
 export function fromOperatorWallTime(wall: string): Date | null {
-  if (!WALL_TIME.test(wall)) return null;
-  const date = fromZonedTime(wall, OPERATOR_ZONE);
-  return Number.isNaN(date.getTime()) ? null : date;
+  const match = WALL_TIME.exec(wall);
+  if (!match) return null;
+  const [year, month, day, hour, minute, second = 0] = match
+    .slice(1)
+    .map((v) => (v === undefined ? 0 : Number(v)));
+  const date = istInstant(year, month, day, hour, minute, second);
+  // A field out of range ("2026-02-30", "25:00") would roll over; refuse it instead.
+  const back = istParts(date);
+  const exact =
+    back.year === year &&
+    back.month === month &&
+    back.day === day &&
+    back.hour === hour &&
+    back.minute === minute &&
+    second < 60;
+  return exact ? date : null;
 }
 
 /** 00:00 India time on the first of the India-time month that holds `now`. */
 export function operatorMonthStart(now: Date): Date {
-  const month = formatInViewerZone(now, OPERATOR_ZONE, "yyyy-MM");
-  return fromZonedTime(`${month}-01T00:00:00`, OPERATOR_ZONE);
+  const p = istParts(now);
+  return istInstant(p.year, p.month, 1);
 }
 
 export interface OperatorPeriodStarts {
@@ -90,19 +151,14 @@ export interface OperatorPeriodStarts {
   month: Date;
 }
 
-const midnightIn = (wallDate: string) =>
-  fromZonedTime(`${wallDate}T00:00:00`, OPERATOR_ZONE);
-
 /** The day, week and month starts every operator "today / this week / this month" counts from. */
 export function operatorPeriodStarts(now: Date): OperatorPeriodStarts {
-  const today = formatInViewerZone(now, OPERATOR_ZONE, "yyyy-MM-dd");
-  const [y, m, d] = today.split("-").map(Number);
-  // ISO weekday 1 (Mon) to 7 (Sun); Sunday opens the week, as getDay() did.
-  const sinceSunday = Number(formatInViewerZone(now, OPERATOR_ZONE, "i")) % 7;
-  const sunday = new Date(Date.UTC(y, m - 1, d - sinceSunday));
+  const { year, month, day } = istParts(now);
+  // 0 = Sunday, which opens the week as getDay() did; read off the IST date itself.
+  const sinceSunday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
   return {
-    day: midnightIn(today),
-    week: midnightIn(sunday.toISOString().slice(0, 10)),
-    month: operatorMonthStart(now),
+    day: istInstant(year, month, day),
+    week: istInstant(year, month, day - sinceSunday),
+    month: istInstant(year, month, 1),
   };
 }
