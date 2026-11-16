@@ -20,22 +20,16 @@ import { TableSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
 import { ToastAction } from "@/components/ui/toast";
 import { useToast } from "@/hooks/use-toast";
 import { DashboardHeader } from "@/components/dashboard/PageScaffold";
+import {
+  RemoveParticipantDialog,
+  type RemovalChoice,
+} from "@/components/events/RemoveParticipantDialog";
 import { effectiveMaxParticipants } from "@/lib/events/capacity";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
@@ -153,6 +147,45 @@ const removeParticipant = async ({
   return response.json();
 };
 
+/** What the conduct removal answers: the support case it opened for the attendee. */
+const conductRemovalResult = z.object({
+  removed: z.boolean(),
+  caseReference: z.string().optional(),
+  earningsHeld: z.boolean().optional(),
+});
+
+const removeForConduct = async ({
+  apiSegment,
+  eventId,
+  userId,
+  choice,
+}: {
+  apiSegment: string;
+  eventId: string;
+  userId: string;
+  choice: Extract<RemovalChoice, { mode: "CONDUCT" }>;
+}) => {
+  const response = await fetch(
+    `/api/participants/${apiSegment}/${eventId}/remove`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        targetUserId: userId,
+        reason: choice.reason,
+        note: choice.note,
+      }),
+    },
+  );
+  if (!response.ok) {
+    const body = refusalBody.safeParse(await response.json().catch(() => null));
+    throw new Error(
+      body.success ? body.data.error : "We couldn't remove them. Try again.",
+    );
+  }
+  return conductRemovalResult.parse(await response.json());
+};
+
 export default function EventParticipantsPage() {
   const params = useParams();
   const queryClient = useQueryClient();
@@ -256,18 +289,47 @@ export default function EventParticipantsPage() {
     },
   });
 
+  // Errors stay inside the dialog, so this mutation toasts only on success.
+  const conductRemovalMutation = useMutation({
+    mutationFn: removeForConduct,
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({
+        queryKey: ["event-participants", eventType, eventId],
+      });
+      toast({
+        title: result.removed ? "Participant removed" : "Already removed",
+        description: result.removed
+          ? `They were told why. Support case ${result.caseReference ?? ""} reviews the removal and decides within 72 hours${
+              result.earningsHeld
+                ? ", and your earnings from this seat are held until it decides"
+                : ""
+            }.`
+          : "They were already off the roster, so nothing changed.",
+      });
+    },
+  });
+
   // Only webinars and classes have a roster worth managing. Anything else in
   // the URL is a hand-edit or a stale link.
   if (!kind) notFound();
 
-  const handleConfirmRemoval = () => {
+  const handleRemoval = async (choice: RemovalChoice) => {
     if (!pendingRemoval) return;
-    removeParticipantMutation.mutate({
+    if (choice.mode === "NO_FAULT") {
+      // Fire and close: the mutation's own toast reports the refund or a failure.
+      removeParticipantMutation.mutate({
+        apiSegment: kind.apiSegment,
+        eventId,
+        userId: pendingRemoval.id,
+      });
+      return;
+    }
+    await conductRemovalMutation.mutateAsync({
       apiSegment: kind.apiSegment,
       eventId,
       userId: pendingRemoval.id,
+      choice,
     });
-    setPendingRemoval(null);
   };
 
   if (isLoading) return <TableSkeleton />;
@@ -370,9 +432,13 @@ export default function EventParticipantsPage() {
       variant="outline"
       size="sm"
       onClick={() => setPendingRemoval(participant)}
-      disabled={removeParticipantMutation.isPending}
+      disabled={
+        removeParticipantMutation.isPending || conductRemovalMutation.isPending
+      }
     >
-      {removeParticipantMutation.isPending ? "Removing..." : "Remove"}
+      {removeParticipantMutation.isPending || conductRemovalMutation.isPending
+        ? "Removing..."
+        : "Remove"}
     </Button>
   );
 
@@ -410,49 +476,17 @@ export default function EventParticipantsPage() {
         </CardContent>
       </Card>
 
-      {/* A paid seat is refunded in full under the organiser tier; the host
-          confirms knowing that, or knowing a free seat refunds nothing. */}
-      <AlertDialog
+      <RemoveParticipantDialog
         open={pendingRemoval !== null}
         onOpenChange={(open) => {
           if (!open) setPendingRemoval(null);
         }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              Remove {pendingRemoval?.name ?? "this participant"}?
-            </AlertDialogTitle>
-            <AlertDialogDescription asChild>
-              <div className="space-y-2">
-                <p>
-                  They lose access to {plan.title} and their seat is released
-                  back to the event.
-                </p>
-                {removingFreeSeat ? (
-                  <p>{FREE_SEAT_LINE}</p>
-                ) : (
-                  <p>
-                    Because you are removing them, their seat is refunded in
-                    full under the organiser tier of the cancellation policy —
-                    at any notice, including after the session has started. A
-                    seat that was never paid for refunds nothing.
-                  </p>
-                )}
-              </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Keep them enrolled</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-red-600 text-white hover:bg-red-700"
-              onClick={handleConfirmRemoval}
-            >
-              {removingFreeSeat ? "Remove attendee" : "Remove and refund"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        attendeeName={pendingRemoval?.name ?? null}
+        eventTitle={plan.title}
+        allowNoFault
+        freeSeat={removingFreeSeat}
+        onSubmit={handleRemoval}
+      />
     </>
   );
 }

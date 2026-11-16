@@ -1,3 +1,4 @@
+import { caseKeyOf } from "@/lib/support/case-key";
 import type { ActionItem } from "@/lib/enterprise/org-activation";
 import {
   CONSULTEE_JOIN_WINDOW_MS,
@@ -264,6 +265,8 @@ export interface ConsulteeActionInput {
   documentsToRevise?: { id: string; name: string; appointmentId: string }[];
   /** A refund the gateway rejected; staff re-issue it, the learner can follow up. */
   failedRefunds?: { paymentId: string; amountText: string }[];
+  /** A host removed the learner for conduct and support is reviewing it; their side is wanted. */
+  removalReviews?: { caseId: string; title: string }[];
   now?: Date;
 }
 
@@ -282,9 +285,21 @@ export function deriveConsulteeActionItems({
   sessionsToRate = [],
   documentsToRevise = [],
   failedRefunds = [],
+  removalReviews = [],
   now,
 }: ConsulteeActionInput): ActionItem[] {
   const items: ActionItem[] = [];
+
+  for (const review of removalReviews) {
+    items.push({
+      key: `removal-review:${review.caseId}`,
+      severity: "warning",
+      title: "Support is reviewing your removal",
+      body: `${review.title}: reply on the case with your side.`,
+      ctaLabel: "Reply",
+      ctaHref: `${basePath}/support/requests/${caseKeyOf({ kind: "case", id: review.caseId })}`,
+    });
+  }
 
   const imminent = imminentSessionItem(
     upcomingSessions,

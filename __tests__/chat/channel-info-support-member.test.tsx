@@ -4,13 +4,7 @@
  * and in a DM it is never the user that "Report" or "Block" targets.
  */
 import * as React from "react";
-import {
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 
 import {
   SUPPORT_STREAM_USER_ID,
@@ -105,8 +99,7 @@ describe("event channel member list", () => {
     ).toBeGreaterThan(0);
   });
 
-  it("removes an attendee through the server action, not the Stream client", async () => {
-    removeUserFromEventChannel.mockResolvedValue({ success: true });
+  it("opens the conduct removal dialog, not a chat-only kick", async () => {
     const channel = fakeChannel(
       "team",
       "webinar-abc",
@@ -126,13 +119,10 @@ describe("event channel member list", () => {
         name: "Remove Asha from this channel",
       })[0],
     );
-    await waitFor(() =>
-      expect(removeUserFromEventChannel).toHaveBeenCalledWith(
-        "webinar",
-        "abc",
-        "attendee",
-      ),
-    );
+    expect(await screen.findByText("Remove Asha?")).toBeInTheDocument();
+    // A removal needs a reason; nothing is sent until one is chosen.
+    expect(screen.getByRole("button", { name: "Remove" })).toBeDisabled();
+    expect(removeUserFromEventChannel).not.toHaveBeenCalled();
     expect(channel.removeMembers).not.toHaveBeenCalled();
   });
 

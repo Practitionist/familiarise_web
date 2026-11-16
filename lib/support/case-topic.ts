@@ -17,6 +17,7 @@ export const CASE_TOPICS = [
   "cancellation",
   "scheduling",
   "session",
+  "removal",
   "technical",
   "recordings",
   "documents",
@@ -31,6 +32,7 @@ export const CASE_TOPIC_LABEL: Record<CaseTopic, string> = {
   cancellation: "Cancellation",
   scheduling: "Scheduling",
   session: "Session",
+  removal: "Conduct removal",
   technical: "Technical",
   recordings: "Recordings",
   documents: "Documents",
@@ -38,6 +40,9 @@ export const CASE_TOPIC_LABEL: Record<CaseTopic, string> = {
   organisation: "Organisation",
   other: "Other",
 };
+
+/** The case category a host's conduct removal opens for the removed attendee. */
+export const CONDUCT_REMOVAL_CATEGORY = "CONDUCT_REMOVAL";
 
 export function isCaseTopic(value: unknown): value is CaseTopic {
   return (CASE_TOPICS as readonly unknown[]).includes(value);
@@ -100,6 +105,7 @@ export function ticketTopic(ticket: {
   category: string | null;
   issueType: string | null;
 }): CaseTopic {
+  if (ticket.category === CONDUCT_REMOVAL_CATEGORY) return "removal";
   if (ticket.category && isThreadCategory(ticket.category)) {
     return THREAD_TOPIC[ticket.category];
   }
@@ -121,6 +127,7 @@ const issueTypesOf = (topic: CaseTopic) =>
 export function supportCaseTopicWhere(
   topic: CaseTopic,
 ): Prisma.SupportCaseWhereInput {
+  if (topic === "removal") return { category: CONDUCT_REMOVAL_CATEGORY };
   const byIssue: Prisma.SupportCaseWhereInput[] = [
     { issueType: { in: issueTypesOf(topic) } },
   ];
@@ -133,7 +140,11 @@ export function supportCaseTopicWhere(
           {
             OR: [
               { category: null },
-              { category: { notIn: THREAD_CATEGORIES } },
+              {
+                category: {
+                  notIn: [...THREAD_CATEGORIES, CONDUCT_REMOVAL_CATEGORY],
+                },
+              },
             ],
           },
           { OR: byIssue },
@@ -141,4 +152,18 @@ export function supportCaseTopicWhere(
       },
     ],
   };
+}
+
+/**
+ * Where a case's booking card leads, and whether the page may read the booking's thread: a removed
+ * learner holds no seat, so the booking page refuses them and their Cancelled list is where it lives now.
+ */
+export function caseBookingLink(
+  topic: CaseTopic,
+  appointmentsBase: string,
+  appointmentId: string,
+): { href: string; readsBooking: boolean } {
+  return topic === "removal"
+    ? { href: `${appointmentsBase}?tab=cancelled`, readsBooking: false }
+    : { href: `${appointmentsBase}/${appointmentId}`, readsBooking: true };
 }

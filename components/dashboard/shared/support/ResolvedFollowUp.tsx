@@ -4,6 +4,7 @@ import {
   decisionInForce,
   useCaseResolution,
 } from "@/components/support/resolution/resolution-data";
+import { removalOutcomeCopy } from "@/components/support/resolution/removal-outcome";
 import { Button } from "@/components/ui/button";
 import { REOPEN_WINDOW_MS } from "@/lib/support/deadline-policy";
 import { formatDateLabel } from "@/lib/time/display";
@@ -41,9 +42,11 @@ export function ResolvedFollowUp({
     !!resolvedAt &&
     Date.now() - new Date(resolvedAt).getTime() <= REOPEN_WINDOW_MS;
   let action: React.ReactNode = null;
-  // A decision on an appeal is final, so it offers no further appeal.
+  // A decision on an appeal is final, and one in the learner's favour has nothing to appeal.
   const canAppeal =
-    !resolution.data?.isAppeal &&
+    !!resolution.data &&
+    !!decision &&
+    removalOutcomeCopy(resolution.data, decision.outcome).appealable &&
     appealUntil !== null &&
     appealUntil.getTime() > Date.now();
   if (canAppeal)

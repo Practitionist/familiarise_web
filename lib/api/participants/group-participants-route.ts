@@ -2,7 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import type { Session } from "@/lib/auth";
-import prisma from "@/lib/prisma";
+import prisma, { type PrismaLike } from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import { readSeatPayments } from "@/lib/data/seat-payments";
 import {
@@ -11,6 +11,8 @@ import {
   forbiddenResponse,
 } from "@/lib/auth-helpers";
 import { leaveEventSeat } from "@/lib/booking/seat-leave";
+import { removeAttendeeForConduct } from "@/lib/booking/conduct-removal";
+import { ConductRemovalBodySchema } from "@/schemas/conduct-removal";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
 import { isRefusal } from "@/lib/errors/refusal";
@@ -28,6 +30,11 @@ import {
 } from "@/lib/auth/org-permissions";
 
 export type GroupEventKind = "webinar" | "class";
+
+const errorClass = (error: unknown) =>
+  error instanceof Error ? error.name : typeof error;
+
+const EVENT_ID = z.string().trim().min(1).max(64);
 
 const PARTICIPANT_USER_SELECT = {
   id: true,
@@ -371,6 +378,151 @@ async function executeGroupSeatLeave(opts: {
     isSelfLeave: opts.isSelfLeave,
     exit: opts.isSelfLeave && opts.exitMode,
   });
+}
+
+/** Staff, the plan owner, an org operator who may remove attendees, or an accepted presenter co-host. */
+async function canRemoveForConduct(
+  session: Session,
+  appointmentId: string,
+  db: PrismaLike = prisma,
+): Promise<boolean> {
+  const profileId = session.user.consultantProfileId ?? null;
+  const planSelect = {
+    consultantProfileId: true,
+    organizationId: true,
+    collaborators: {
+      where: {
+        consultantProfileId: profileId ?? "__none__",
+        status: "ACCEPTED" as const,
+        tier: "PRESENTER" as const,
+        consultantProfile: { deletedAt: null },
+      },
+      select: { id: true },
+    },
+  };
+  const appointment = await db.appointment.findFirst({
+    where: { id: appointmentId, deletedAt: null },
+    select: {
+      webinar: { select: { webinarPlan: { select: planSelect } } },
+      class: { select: { classPlan: { select: planSelect } } },
+    },
+  });
+  const plan =
+    appointment?.webinar?.webinarPlan ?? appointment?.class?.classPlan;
+  if (!plan) return false;
+  if (isPrivileged(session.user.role)) return true;
+  if (profileId && plan.consultantProfileId === profileId) return true;
+  if (plan.collaborators.length > 0) return true;
+  if (!plan.organizationId) return false;
+  const membership = await db.membership.findFirst({
+    where: {
+      userId: session.user.id,
+      organizationId: plan.organizationId,
+      status: "ACTIVE",
+      organization: { status: { not: "DEACTIVATED" } },
+    },
+    select: { role: true },
+  });
+  return (
+    !!membership &&
+    (hasOrgPermission(membership.role, "catalog.manage") ||
+      hasOrgPermission(membership.role, "appointments.actForOrg.cancel"))
+  );
+}
+
+/**
+ * Removes an attendee from the appointment's webinar or class for conduct
+ * (`lib/booking/conduct-removal.ts`): the seat ends now and support reviews it.
+ */
+export async function handleConductRemoval(
+  request: Request,
+  session: Session,
+  appointmentId: string,
+): Promise<NextResponse> {
+  try {
+    const parsed = ConductRemovalBodySchema.safeParse(
+      await request.json().catch(() => null),
+    );
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "Choose a reason, and say why when the reason is Other." },
+        { status: 400 },
+      );
+    }
+    const { targetUserId, reason, note } = parsed.data;
+    if (targetUserId === session.user.id) {
+      return NextResponse.json(
+        { error: "You cannot remove yourself. Leave the session instead." },
+        { status: 400 },
+      );
+    }
+    if (!(await canRemoveForConduct(session, appointmentId))) {
+      return forbiddenResponse(
+        "Only the host or a co-host can remove attendees",
+      );
+    }
+    const removed = await removeAttendeeForConduct({
+      appointmentId,
+      targetUserId,
+      actorUserId: session.user.id,
+      reason,
+      note,
+      authorizeTx: (tx) => canRemoveForConduct(session, appointmentId, tx),
+    }).catch((error: unknown) => {
+      if (error instanceof BookingRuleError) return error;
+      throw error;
+    });
+    if (removed instanceof BookingRuleError)
+      return bookingRuleResponse(removed);
+    if (!removed) return NextResponse.json({ removed: false });
+    return NextResponse.json({
+      removed: true,
+      caseReference: removed.caseReference,
+      earningsHeld: removed.earningsHeld,
+    });
+  } catch (error) {
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
+    // Sentry carries the error through its scrubber; the console gets its class only.
+    console.error("[CONDUCT_REMOVAL]", errorClass(error));
+    return new NextResponse("Internal error", { status: 500 });
+  }
+}
+
+/** POST /api/participants/{webinar|class}/[eventId]/remove — the roster's and the event chat's door. */
+export async function handleGroupConductRemoval(
+  request: Request,
+  kind: GroupEventKind,
+  eventId: string,
+): Promise<NextResponse> {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+  const rl = await applyRateLimit(eventMutationLimiter, session.user.id);
+  if (rl) return rl;
+  const parsedEventId = EVENT_ID.safeParse(eventId);
+  if (!parsedEventId.success) {
+    return NextResponse.json(
+      { error: "Event ID is required" },
+      { status: 400 },
+    );
+  }
+  const appointment = await prisma.appointment.findFirst({
+    where:
+      kind === "webinar"
+        ? { webinarId: parsedEventId.data }
+        : { classId: parsedEventId.data },
+    select: { id: true },
+  });
+  if (!appointment) {
+    return new NextResponse(
+      kind === "webinar" ? "Webinar not found" : "Class not found",
+      { status: 404 },
+    );
+  }
+  return handleConductRemoval(request, session, appointment.id);
 }
 
 export async function handleGroupParticipantDelete(

@@ -33,12 +33,15 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "@/components/ui/use-toast";
 import { EmptyState } from "@/components/dashboard/DataCard";
+import { FilterMenu } from "@/components/dashboard/FilterMenu";
 import type { AllocationAttemptKey } from "@/hooks/scheduling/useScheduling";
 import {
+  CHIPS_FOR_TYPE,
   INBOX_TYPES,
   inboxQueryKey,
   inboxQueryString,
   isCursorSort,
+  isInboxChip,
   nextInboxSearch,
   readInboxParams,
   toStampDate,
@@ -56,7 +59,6 @@ import { replaceUrl } from "@/lib/navigation/history";
 
 import { BatchApproveBar } from "./BatchApproveBar";
 import { InboxBuckets } from "./InboxBuckets";
-import { InboxChips } from "./InboxChips";
 import {
   InboxRow,
   answerableProposal,
@@ -70,6 +72,7 @@ import {
   type RequestedSlotsConfirmation,
 } from "./components/RequestedSlotsDialog";
 import {
+  CHIP_LABEL,
   EMPTY_STATE,
   RANKED_WINDOW_NOTE,
   TOAST,
@@ -957,7 +960,7 @@ export function RequestsInbox({
             ))}
           </TabsList>
         </Tabs>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <span role="status" aria-live="polite">
             {newBadge && (
               <Button
@@ -970,6 +973,22 @@ export function RequestsInbox({
               </Button>
             )}
           </span>
+          <FilterMenu
+            label="Show"
+            options={CHIPS_FOR_TYPE[params.type].map((c) => ({
+              value: c,
+              label: CHIP_LABEL[c],
+            }))}
+            value={chip}
+            disabled={loading}
+            onChange={(next) => {
+              setSelected(new Set());
+              setParamsTransition({ chip: isInboxChip(next) ? next : null });
+            }}
+            onOptionIntent={(next) =>
+              prefetchInbox(params.type, isInboxChip(next) ? next : null)
+            }
+          />
           <InboxSortControl
             value={params.sort}
             disabled={loading}
@@ -995,17 +1014,6 @@ export function RequestsInbox({
           </Button>
         </div>
       </div>
-
-      <InboxChips
-        type={params.type}
-        active={chip}
-        disabled={loading}
-        onChange={(next) => {
-          setSelected(new Set());
-          setParamsTransition({ chip: next });
-        }}
-        onHoverChip={(c) => prefetchInbox(params.type, c)}
-      />
 
       {renderBody()}
 

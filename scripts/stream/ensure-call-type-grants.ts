@@ -4,7 +4,9 @@
  * from `user`/`guest`, and `end-call`, `list-recordings` plus every billable
  * permission (with `-owner` / `-any-team` variants) from `user`, `guest` and
  * `call_member`. Recordings reach clients only through our API. `user` and
- * `call_member` keep `remove-call-member` / `update-call-member` only as `-owner`.
+ * `call_member` keep `remove-call-member` / `update-call-member` only as `-owner`,
+ * and lose `kick-user` / `block-user` in every scope: removals go through the
+ * conduct removal routes.
  *
  *   npx tsx scripts/stream/ensure-call-type-grants.ts
  *   npx tsx scripts/stream/ensure-call-type-grants.ts --apply --routes-are-deployed

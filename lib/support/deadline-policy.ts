@@ -6,6 +6,7 @@ export const DEADLINE_HOURS = {
   CONTENT_REMOVAL: 36,
   INTIMATE_CONTENT: 2,
   LEGAL_TAKEDOWN: 3,
+  CONDUCT_REMOVAL: 72,
 } as const;
 
 /** How long after resolution the customer may say "This didn't fix it" on an undecided case. */

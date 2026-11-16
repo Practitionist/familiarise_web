@@ -286,6 +286,11 @@ export default function RefundPolicyPage() {
                   review)
                 </li>
                 <li>Duplicate or erroneous charges</li>
+                <li>
+                  You are removed from a webinar or class and support overturns
+                  the removal, or does not decide it within 72 hours: whatever
+                  is still unrefunded on your seat (see Terms 6.4)
+                </li>
               </ul>
 
               <h3 className="text-xl font-semibold mt-4 mb-2">
@@ -294,6 +299,10 @@ export default function RefundPolicyPage() {
               <ul>
                 <li>Late cancellations outside the allowed timeframe</li>
                 <li>No-shows or missed sessions by students</li>
+                <li>
+                  A seat whose removal for conduct support upholds, unless
+                  support decides a partial refund (see Terms 6.4)
+                </li>
                 <li>
                   Technical issues on the student's side (internet, device,
                   etc.)

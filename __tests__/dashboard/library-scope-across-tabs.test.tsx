@@ -7,6 +7,10 @@
 
 // Next's patched replaceState re-syncs `useSearchParams`; mirror that here.
 const urlListeners = new Set<() => void>();
+// The session-backed zone hook loads the auth client, which jsdom cannot import.
+jest.mock("@/lib/time/use-viewer-zone", () => ({
+  useViewerZone: () => ({ zone: "Asia/Kolkata", own: true }),
+}));
 jest.mock("next/navigation", () => {
   const { useSyncExternalStore } = jest.requireActual("react");
   return {

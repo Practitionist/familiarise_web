@@ -687,6 +687,8 @@ enum SupportCaseEventKind {
   CHAT_ACCESS_ENDED
   CHAT_SUPPORT_MESSAGE
   CHAT_REVIEW_NOTIFIED
+  /// A conduct removal case reached its review deadline undecided; the seat's unrefunded balance became owed.
+  REMOVAL_REVIEW_LAPSED
 }
 
 /// A staff grant to one booking chat, linked to a case. READ opens the audited
@@ -4340,7 +4342,6 @@ model Trial {
   status TrialStatus // Written at request: SCHEDULED (free) or AWAITING_PAYMENT (paid)
   notes  String?     @db.Text // Consultee's questions/goals
 
-  // One trial per consultant per consultee
   consulteeProfile   ConsulteeProfile @relation(fields: [consulteeProfileId], references: [id])
   consulteeProfileId String
 
@@ -4398,10 +4399,9 @@ model Trial {
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
 
-  // One LIVE trial per consultant. The pair is unique, so re-requesting after
-  // a terminal outcome requires clearing the old row — see
-  // `TRIAL_REQUEST_BLOCKING_STATUSES` in lib/trials/eligibility.ts.
-  @@unique([consulteeProfileId, consultantProfileId])
+  // A pair keeps every trial; at most one blocks a new request, enforced by
+  // `trial_one_blocking_per_pair_key` in prisma/sql/check-constraints.sql.
+  @@index([consulteeProfileId, consultantProfileId])
   @@index([consultantProfileId])
   @@index([subscriptionPlanId])
   @@index([organizationId])
@@ -8409,7 +8409,7 @@ model StreamRevocationRetry {
   nextRetryAt       DateTime?            @db.Timestamptz
   lastError         String?              @db.Text
   completedAt       DateTime?            @db.Timestamptz
-  /// SEAT_ACCESS_REVOKE only: the last Meeting id, in (createdAt, id) order, every room up to which the user is confirmed removed from.
+  /// SEAT_ACCESS_REVOKE and CONDUCT_CALL_BLOCK: the last Meeting id, in (createdAt, id) order, up to which every room is done for the user.
   resumeAfter       String?
   createdAt         DateTime             @default(now()) @db.Timestamptz
   updatedAt         DateTime             @updatedAt @db.Timestamptz
@@ -8428,6 +8428,8 @@ enum StreamRevocationKind {
   SEAT_ACCESS_REVOKE
   /// A refund's seats to revoke; planId is the Refund row, userId its payer.
   REFUND_ACCESS_REVOKE
+  /// The appointment's open rooms block the user while their conduct removal stands and unblock it once overturned; planId is the appointment.
+  CONDUCT_CALL_BLOCK
 }
 
 enum ErasureVendor {

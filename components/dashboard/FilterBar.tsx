@@ -11,7 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { cn } from "@/utils/tailwind";
+import { FilterMenu } from "./FilterMenu";
 
 const SEARCH_DEBOUNCE_MS = 300;
 
@@ -36,7 +36,7 @@ export interface FilterBarChips {
   options: FilterOption[];
   value: string | null;
   onChange: (value: string | null) => void;
-  /** Clicking the pressed chip clears it back to `null`. */
+  /** Offers "All" (`null`), and picking the current option again clears it. */
   clearable?: boolean;
 }
 
@@ -65,23 +65,33 @@ function DebouncedSearch({
   placeholder,
   value,
   onChange,
-}: Readonly<FilterBarSearch>) {
+  resetToken,
+}: Readonly<FilterBarSearch & { resetToken: number }>) {
   const id = useId();
   const [draft, setDraft] = useState(value);
   const [seen, setSeen] = useState(value);
   const [emitted, setEmitted] = useState<string | null>(null);
+  const [seenReset, setSeenReset] = useState(resetToken);
+  // Clear drops text still waiting on the debounce, keeping the same input.
+  if (resetToken !== seenReset) {
+    setSeenReset(resetToken);
+    setDraft(value);
+    setEmitted(null);
+  }
   // An outside change (Clear, back/forward) replaces what is typed; the echo
-  // of our own debounced emit does not, or it would eat keys typed since.
+  // of our own emit does not, even trimmed by the caller, or it would eat keys.
   if (value !== seen) {
     setSeen(value);
-    if (value !== emitted) setDraft(value);
+    if (value.trim() !== emitted?.trim()) setDraft(value);
+    // One echo per emit: a later outside change to the same text still applies.
+    setEmitted(null);
   }
   const onChangeRef = useRef(onChange);
   useEffect(() => {
     onChangeRef.current = onChange;
   });
   useEffect(() => {
-    if (draft === value) return;
+    if (draft.trim() === value.trim()) return;
     const timer = setTimeout(() => {
       setEmitted(draft);
       onChangeRef.current(draft);
@@ -111,9 +121,9 @@ function DebouncedSearch({
 }
 
 /**
- * The list filter row (#1527 §15): a labelled debounced search, one chip group
- * with `aria-pressed`, optional selects and Clear. Pair with `useListParams`
- * so every value lives in the URL.
+ * The list filter row: a labelled debounced search, the chip group as one
+ * "Label: Value" menu, optional selects and Clear, all on one wrapping row.
+ * Pair with `useListParams` so every value lives in the URL.
  */
 export function FilterBar({
   search,
@@ -124,87 +134,68 @@ export function FilterBar({
   children,
   className,
 }: Readonly<FilterBarProps>) {
+  const [resetToken, setResetToken] = useState(0);
   const showClear =
     onClear &&
     (canClear ?? (Boolean(search?.value) || (chips?.value ?? null) !== null));
 
-  return (
-    <div className={cn("space-y-3", className)}>
-      {chips && (
-        <div
-          role="group"
-          aria-label={chips.label}
-          className="-mx-1 flex items-center gap-2 overflow-x-auto px-1 scrollbar-hide"
-        >
-          {chips.options.map((option) => {
-            const pressed = chips.value === option.value;
-            return (
-              <button
-                key={option.value}
-                type="button"
-                aria-pressed={pressed}
-                onClick={() =>
-                  chips.onChange(
-                    pressed && chips.clearable ? null : option.value,
-                  )
-                }
-                className={cn(
-                  "shrink-0 rounded-full border px-3 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  pressed
-                    ? "border-foreground bg-foreground text-background"
-                    : "border-border bg-card text-muted-foreground hover:border-foreground/30 hover:text-foreground",
-                )}
-              >
-                {option.label}
-                {option.count !== undefined && (
-                  <span className="ml-1.5 tabular-nums opacity-80">
-                    {option.count}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
-      )}
+  if (!search && !chips && !selects?.length && !children && !showClear) {
+    return null;
+  }
 
-      {(search || selects?.length || children || showClear) && (
-        <div className="flex flex-wrap items-center gap-2">
-          {search && <DebouncedSearch {...search} />}
-          {selects?.map((select) => (
-            <Select
-              key={select.key}
-              value={select.value}
-              onValueChange={select.onChange}
+  return (
+    <div className={className}>
+      <div className="flex flex-wrap items-center gap-2">
+        {search && <DebouncedSearch {...search} resetToken={resetToken} />}
+        {chips && (
+          <FilterMenu
+            label={chips.label}
+            options={chips.options}
+            value={chips.value}
+            onChange={chips.onChange}
+            // A non-clearable group leads with its own "All" option.
+            allValue={
+              chips.clearable ? null : (chips.options[0]?.value ?? null)
+            }
+          />
+        )}
+        {selects?.map((select) => (
+          <Select
+            key={select.key}
+            value={select.value}
+            onValueChange={select.onChange}
+          >
+            <SelectTrigger
+              className="h-9 w-auto min-w-[140px] text-sm"
+              aria-label={select.label}
             >
-              <SelectTrigger
-                className="h-9 w-auto min-w-[140px] text-sm"
-                aria-label={select.label}
-              >
-                <SelectValue placeholder={select.label} />
-              </SelectTrigger>
-              <SelectContent>
-                {select.options.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          ))}
-          {children}
-          {showClear && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-9"
-              onClick={onClear}
-            >
-              Clear
-            </Button>
-          )}
-        </div>
-      )}
+              <SelectValue placeholder={select.label} />
+            </SelectTrigger>
+            <SelectContent>
+              {select.options.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ))}
+        {children}
+        {showClear && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-9 text-muted-foreground"
+            onClick={() => {
+              setResetToken((k) => k + 1);
+              onClear?.();
+            }}
+          >
+            Clear
+          </Button>
+        )}
+      </div>
     </div>
   );
 }
