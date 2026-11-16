@@ -29,7 +29,10 @@ import prisma, {
   ALLOCATION_TX_MAX_WAIT_MS,
   ALLOCATION_TX_TIMEOUT_MS,
 } from "@/lib/prisma";
-import { liveParticipant } from "@/lib/booking/participants";
+import {
+  liveParticipant,
+  NOT_COLLABORATOR_ROW,
+} from "@/lib/booking/participants";
 import {
   assertRemediationCounts,
   MAINTENANCE_REMEDIATION_CAPACITY,
@@ -89,9 +92,10 @@ function findAffectedSlots(tx: Tx, appointmentId: string) {
     include: {
       appointment: {
         include: {
-          // #1554 — the roster is the appointment's live participants.
+          // The roster is the appointment's live participants; a collaborator's
+          // old row is not one.
           participants: {
-            where: liveParticipant(),
+            where: { ...liveParticipant(), ...NOT_COLLABORATOR_ROW },
             take: MAINTENANCE_REMEDIATION_CAPACITY.participants + 1,
             select: { userId: true },
           },

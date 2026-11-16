@@ -6,7 +6,10 @@
 
 import { orgOwnedAppointmentWhere } from "./list-appointments";
 import prisma from "@/lib/prisma";
-import { liveParticipant } from "@/lib/booking/participants";
+import {
+  liveParticipant,
+  NOT_COLLABORATOR_ROW,
+} from "@/lib/booking/participants";
 import type { DocumentReviewStatus, Prisma } from "@prisma/client";
 import type { Scope } from "./parse";
 import { assertNeverScope, ORG_SCOPE_READABLE_STATUSES } from "./parse";
@@ -103,7 +106,11 @@ export function buildUserAppointmentAccessOr(
     { subscription: { requestedBy: { userId } } },
     { trial: { consulteeProfile: { userId } } },
     { trial: { consultantProfile: { userId } } },
-    { participants: { some: liveParticipant(userId) } },
+    {
+      participants: {
+        some: { ...liveParticipant(userId), ...NOT_COLLABORATOR_ROW },
+      },
+    },
     {
       consultation: {
         consultationPlan: {

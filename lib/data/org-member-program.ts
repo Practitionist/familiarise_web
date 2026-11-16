@@ -10,7 +10,10 @@
  */
 import type { AppointmentsType } from "@prisma/client";
 import prisma from "@/lib/prisma";
-import { liveParticipant } from "@/lib/booking/participants";
+import {
+  liveParticipant,
+  NOT_COLLABORATOR_ROW,
+} from "@/lib/booking/participants";
 import { toPlain } from "@/lib/data/serialize";
 // #1270 — the shared learner window, not a local copy of its value. Real join
 // (Stream client) lives on the consultee dashboard; the page links there, so
@@ -105,7 +108,11 @@ export async function getMyProgramData(params: {
               { trial: { consulteeProfileId } },
             ]
           : []),
-        { participants: { some: liveParticipant(userId) } },
+        {
+          participants: {
+            some: { ...liveParticipant(userId), ...NOT_COLLABORATOR_ROW },
+          },
+        },
       ],
     },
     select: {
