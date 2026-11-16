@@ -219,6 +219,8 @@ beforeEach(() => {
 
   const base = prisma as unknown as Record<string, Record<string, jest.Mock>>;
   base.appointment = mockTx.appointment;
+  // The slot batch's read and the transaction's reads see one team.
+  base.collaborator = mockTx.collaborator;
   base.class.findUnique = mockTx.class.findUnique;
   base.webinar.findUnique = mockTx.webinar.findUnique;
   mockTx.class.findUnique.mockResolvedValue(makeClassEvent());
@@ -346,8 +348,9 @@ describe("AE-2 — the webinar path is unchanged", () => {
     });
 
     expect(result.success).toBe(true);
-    // No accepted collaborators → the guard short-circuits before any probe.
-    expect(mockTx.collaborator.findMany).toHaveBeenCalledTimes(1);
+    // The slot batch, the re-read behind the plan lock and the guard each read
+    // the team; with nobody on it the guard short-circuits before any probe.
+    expect(mockTx.collaborator.findMany).toHaveBeenCalledTimes(3);
     expect(mockTx.appointmentOccurrence.findFirst).not.toHaveBeenCalled();
   });
 

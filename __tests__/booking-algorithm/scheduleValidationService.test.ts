@@ -328,6 +328,7 @@ describe("checkSlotAvailability", () => {
         some: {
           userId: { in: ["user-1"] },
           status: { in: ["HELD", "CONFIRMED", "ATTENDED"] },
+          role: { not: "COLLABORATOR" },
           NOT: expect.objectContaining({ status: "HELD" }),
         },
       },
