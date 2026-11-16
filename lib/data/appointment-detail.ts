@@ -13,7 +13,10 @@
 
 import { moveHasLapsed } from "@/lib/appointments/lapsed-move";
 import prisma from "@/lib/prisma";
-import { liveParticipant } from "@/lib/booking/participants";
+import {
+  liveParticipant,
+  NOT_COLLABORATOR_ROW,
+} from "@/lib/booking/participants";
 import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
 import type {
   AppointmentFeedbackRole,
@@ -261,7 +264,7 @@ async function loadAppointmentDetail(appointmentId: string) {
       },
       // #1554 — the roster: every live seat holder, with display fields.
       participants: {
-        where: liveParticipant(),
+        where: { ...liveParticipant(), ...NOT_COLLABORATOR_ROW },
         select: { userId: true, role: true, status: true, user: userSelect },
       },
     },
@@ -357,43 +360,40 @@ export function canAccessAppointment(
   return [...consulteeUserIds, ...consultantUserIds].includes(userId);
 }
 
-/**
- * What a given viewer may see of the money. A webinar's ten attendees each
- * have a Payment on the same appointment, and the read above returns all of
- * them; an attendee must get only their own. The host (plan consultant or
- * accepted collaborator) and platform staff see every seat.
- *
- * Only group kinds are scoped. A 1:1 booking has one payment that belongs to
- * the booking whoever made it — a sponsoring organisation's admin, say — and
- * the attending consultee must still see it (the 2026-09-12 QA pass found a
- * sponsored consultation rendering no payment at all). An org-paid seat on a
- * group event stays attributed to its payer until the AppointmentParticipant
- * reader flip (#1319 A9), which carries the seat→payment edge.
- */
-function canSeeFullGroupRoster(
-  userId: string,
-  detail: TAppointmentDetail,
-): boolean {
+/** The plan's own expert of this booking. */
+function isPlanExpert(userId: string, detail: TAppointmentDetail): boolean {
   const { appointment } = detail;
-  const primaryOwnerUserIds = [
+  return [
     appointment.consultation?.consultationPlan?.consultantProfile?.userId,
     appointment.subscription?.subscriptionPlan?.consultantProfile?.userId,
     appointment.webinar?.webinarPlan?.consultantProfile?.userId,
     appointment.class?.classPlan?.consultantProfile?.userId,
     appointment.trial?.subscriptionPlan?.consultantProfile?.userId,
-  ];
-  if (primaryOwnerUserIds.includes(userId)) return true;
-
-  const presenterCollaboratorUserIds = [
-    ...(appointment.webinar?.webinarPlan?.collaborators ?? []),
-    ...(appointment.class?.classPlan?.collaborators ?? []),
-  ]
-    .filter((c) => c.tier === "PRESENTER")
-    .map((c) => c.consultantProfile?.userId);
-
-  return presenterCollaboratorUserIds.includes(userId);
+  ].includes(userId);
 }
 
+/** An accepted presenter on the webinar or class plan. */
+function isPresenter(userId: string, detail: TAppointmentDetail): boolean {
+  const { appointment } = detail;
+  return [
+    ...(appointment.webinar?.webinarPlan?.collaborators ?? []),
+    ...(appointment.class?.classPlan?.collaborators ?? []),
+  ].some(
+    (c) => c.tier === "PRESENTER" && c.consultantProfile?.userId === userId,
+  );
+}
+
+/**
+ * What a given viewer may see of a booking's seats and money. A webinar's ten
+ * attendees each have a Payment on the same appointment, and the read above
+ * returns all of them. The plan's own expert and platform staff see every
+ * seat and every payment; a presenter sees every seat and no attendee's
+ * payment; crew and attendees see only their own rows.
+ *
+ * Only group kinds are scoped. A 1:1 booking has one payment that belongs to
+ * the booking whoever made it (a sponsoring organisation's admin, say), and
+ * the attending consultee must still see it.
+ */
 export function scopeAppointmentDetail<T extends TAppointmentDetail>(
   detail: T,
   viewerUserId: string,
@@ -401,9 +401,10 @@ export function scopeAppointmentDetail<T extends TAppointmentDetail>(
 ): T {
   const { webinarId, classId, payment, participants } = detail.appointment;
   const isGroup = !!webinarId || !!classId;
-  const everySeat =
-    !isGroup || privileged || canSeeFullGroupRoster(viewerUserId, detail);
-  const rows = everySeat
+  const everyPayment =
+    !isGroup || privileged || isPlanExpert(viewerUserId, detail);
+  const everySeat = everyPayment || isPresenter(viewerUserId, detail);
+  const rows = everyPayment
     ? payment
     : payment.filter((p) => p.userId === viewerUserId);
   const scopedParticipants = everySeat

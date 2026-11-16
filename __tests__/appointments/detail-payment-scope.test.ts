@@ -27,6 +27,8 @@ import {
 const HOST = "u-host";
 const A = "u-a";
 const B = "u-b";
+const PRESENTER = "u-presenter";
+const CREW = "u-crew";
 
 const detail = {
   appointment: {
@@ -34,7 +36,15 @@ const detail = {
     organizationId: null,
     webinarId: "web-1",
     classId: null,
-    webinar: { webinarPlan: { consultantProfile: { userId: HOST } } },
+    webinar: {
+      webinarPlan: {
+        consultantProfile: { userId: HOST },
+        collaborators: [
+          { tier: "PRESENTER", consultantProfile: { userId: PRESENTER } },
+          { tier: "CREW", consultantProfile: { userId: CREW } },
+        ],
+      },
+    },
     occurrences: [{}],
     participants: [
       { userId: A, role: "CONSULTEE", user: { id: A, name: "A", image: null } },
@@ -120,6 +130,15 @@ describe("scopeAppointmentDetail", () => {
     expect(
       scopeAppointmentDetail(detail, "u-staff", true).appointment.payment,
     ).toHaveLength(2);
+  });
+
+  it("gives a presenter every seat and no attendee's payment, and crew neither", () => {
+    const presenter = scopeAppointmentDetail(detail, PRESENTER).appointment;
+    expect(presenter.participants.map((p) => p.userId)).toEqual([A, B]);
+    expect(presenter.payment).toEqual([]);
+    const crew = scopeAppointmentDetail(detail, CREW).appointment;
+    expect(crew.participants).toEqual([]);
+    expect(crew.payment).toEqual([]);
   });
 
   it("keeps a receipt only on the payer's own rows, and on staff's", () => {
