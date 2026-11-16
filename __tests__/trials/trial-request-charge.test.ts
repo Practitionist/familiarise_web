@@ -42,15 +42,14 @@ jest.mock("../../lib/trials/schedule-notices", () => ({
   prepareTrialScheduledNotices: (...a: unknown[]) => prepareNotices(...a),
   stageTrialScheduledNotices: (...a: unknown[]) => stageNotices(...a),
 }));
-jest.mock("../../lib/novu/stage-then-attempt", () => ({
-  flushNotificationsAfter: jest.fn(async () => undefined),
-}));
-jest.mock("../../utils/appointmentlock", () => ({
-  lockRequestCap: jest.fn(async () => ({ key: "request-cap" })),
-  unlockRequestCap: jest.fn(async () => undefined),
-  RequestCapBusyError: class extends Error {},
-  BookingLockUnavailableError: class extends Error {},
-}));
+jest.mock("../../lib/novu/stage-then-attempt", () =>
+  jest
+    .requireActual("../fixtures/trial-request-mocks")
+    .flushNotificationsModule(),
+);
+jest.mock("../../utils/appointmentlock", () =>
+  jest.requireActual("../fixtures/trial-request-mocks").requestCapLockModule(),
+);
 const release = jest.fn(async () => undefined);
 const lockPick = jest.fn(async () => release);
 const bookTrial = jest.fn(async (_tx: unknown, args: { paid: boolean }) => ({
@@ -65,13 +64,14 @@ jest.mock("../../lib/trials/book-trial", () => ({
   bookTrialInTx: (...a: unknown[]) =>
     bookTrial(...(a as [unknown, { paid: boolean }])),
   TrialTimeRefusedError: class extends Error {},
+  TrialPairHeldError: class extends Error {},
 }));
 
 const plan = { trialPriceInPaise: 0, acceptingRequests: true };
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    trial: { findUnique: jest.fn(async () => null) },
+    trial: { findFirst: jest.fn(async () => null) },
     consultantProfile: { findUnique: jest.fn(async () => null) },
     subscriptionPlan: {
       findUnique: jest.fn(async () => ({

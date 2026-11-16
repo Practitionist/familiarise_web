@@ -1,6 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
-import { blocksNewTrialRequest } from "@/lib/trials/eligibility";
+import { blockingTrialWhere } from "@/lib/trials/eligibility";
 import { NextRequest, NextResponse } from "next/server";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 import {
@@ -45,14 +45,10 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    // Check if a trial already exists for this consultee-consultant pair
-    const existingTrial = await prisma.trial.findUnique({
-      where: {
-        consulteeProfileId_consultantProfileId: {
-          consulteeProfileId,
-          consultantProfileId,
-        },
-      },
+    // Only the pair's live or delivered trial blocks; ended ones stay as history.
+    const blockingTrial = await prisma.trial.findFirst({
+      where: blockingTrialWhere({ consulteeProfileId, consultantProfileId }),
+      orderBy: { requestedAt: "desc" },
       select: {
         id: true,
         status: true,
@@ -108,13 +104,6 @@ export async function GET(request: NextRequest) {
       },
     });
 
-    // A prior trial only blocks if it's live or was actually delivered — a
-    // declined, withdrawn or lapsed-unpaid trial frees the pair. See
-    // lib/trials/eligibility.ts for the abuse trade-off this represents.
-    const blockingTrial =
-      existingTrial && blocksNewTrialRequest(existingTrial.status)
-        ? existingTrial
-        : null;
     const isEligible = !blockingTrial && planTrialEnabled && !planNotPublished;
     let reason: string | null = null;
     if (blockingTrial) {

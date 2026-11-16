@@ -20,9 +20,10 @@
 import { AppointmentsType, TrialStatus } from "@prisma/client";
 
 import {
-  blocksNewTrialRequest,
   computeTrialPaymentDueAt,
   TRIAL_PAYMENT_WINDOW_MS,
+  TRIAL_REQUEST_BLOCKING_STATUSES,
+  TRIAL_REQUEST_FREEING_STATUSES,
 } from "../../lib/trials/eligibility";
 import { validateWebhookMetadata } from "../../schemas/webhooks/metadata";
 import { buildOccupiedAppointmentFilter } from "../../utils/scheduling-engine/occupancyPolicy";
@@ -61,19 +62,20 @@ describe("trial payment deadline", () => {
 });
 
 describe("trial re-request eligibility", () => {
-  it.each([
-    TrialStatus.AWAITING_PAYMENT,
-    TrialStatus.SCHEDULED,
-    TrialStatus.COMPLETED,
-    TrialStatus.CONVERTED,
-  ])("blocks a new request while %s", (status) => {
-    expect(blocksNewTrialRequest(status)).toBe(true);
-  });
-
-  it.each([TrialStatus.CANCELLED])("frees the pair after %s", (status) => {
-    // The learner never received a trial, so their one shot isn't spent.
-    // A lapsed unpaid trial lands on CANCELLED via the expiry job.
-    expect(blocksNewTrialRequest(status)).toBe(false);
+  it("classifies every trial status exactly once: live or delivered blocks, CANCELLED frees", () => {
+    expect(TRIAL_REQUEST_BLOCKING_STATUSES).toEqual([
+      TrialStatus.AWAITING_PAYMENT,
+      TrialStatus.SCHEDULED,
+      TrialStatus.COMPLETED,
+      TrialStatus.CONVERTED,
+    ]);
+    expect(TRIAL_REQUEST_FREEING_STATUSES).toEqual([TrialStatus.CANCELLED]);
+    expect(
+      [
+        ...TRIAL_REQUEST_BLOCKING_STATUSES,
+        ...TRIAL_REQUEST_FREEING_STATUSES,
+      ].sort(),
+    ).toEqual(Object.values(TrialStatus).sort());
   });
 });
 
