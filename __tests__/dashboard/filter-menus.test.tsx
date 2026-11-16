@@ -27,6 +27,9 @@ describe("datePresets", () => {
     expect(presets[0].range).toEqual({ from: "2026-11-15", to: "2026-11-15" });
     expect(presets[1].range).toEqual({ from: "2026-11-16", to: "2026-11-16" });
     expect(presets[2].range).toEqual({ from: "2026-11-09", to: "2026-11-15" });
+    // Both ends are inclusive, so "Next 7 days" is today plus six.
+    expect(presets[3].range).toEqual({ from: "2026-11-15", to: "2026-11-21" });
+    expect(presets[4].range).toEqual({ from: "2026-11-15", to: "2026-12-14" });
   });
 
   it("looks back on done tabs", () => {
@@ -38,6 +41,8 @@ describe("datePresets", () => {
       "This month",
       "Last 3 months",
     ]);
+    expect(presets[1].range).toEqual({ from: "2026-11-09", to: "2026-11-15" });
+    expect(presets[2].range).toEqual({ from: "2026-10-17", to: "2026-11-15" });
     expect(presets[3].range).toEqual({ from: "2026-11-01", to: "2026-11-30" });
   });
 });
@@ -46,7 +51,7 @@ describe("dateRangeLabel", () => {
   const presets = datePresets("future", NOW);
   it.each<[DateRange, string]>([
     [{ from: "", to: "" }, "Any date"],
-    [{ from: "2026-11-15", to: "2026-11-22" }, "Next 7 days"],
+    [{ from: "2026-11-15", to: "2026-11-21" }, "Next 7 days"],
     [{ from: "2026-11-20", to: "2026-11-20" }, "20 Nov"],
     [{ from: "2026-11-20", to: "2026-11-25" }, "20 Nov – 25 Nov"],
     [{ from: "2026-11-20", to: "" }, "From 20 Nov"],

@@ -37,7 +37,7 @@ function addDays(d: Date, n: number): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
 }
 
-/** Presets in the browser's calendar, matching the native date inputs they replace. */
+/** Presets in the browser's calendar; both ends are inclusive, so "Next 7 days" is today plus six. */
 export function datePresets(
   direction: DateRangeDirection,
   now: Date = new Date(),
@@ -65,15 +65,15 @@ export function datePresets(
       todayP,
       { label: "Tomorrow", range: day(addDays(today, 1), addDays(today, 1)) },
       thisWeek,
-      { label: "Next 7 days", range: day(today, addDays(today, 7)) },
-      { label: "Next 30 days", range: day(today, addDays(today, 30)) },
+      { label: "Next 7 days", range: day(today, addDays(today, 6)) },
+      { label: "Next 30 days", range: day(today, addDays(today, 29)) },
     ];
   }
   if (direction === "past") {
     return [
       todayP,
-      { label: "Last 7 days", range: day(addDays(today, -7), today) },
-      { label: "Last 30 days", range: day(addDays(today, -30), today) },
+      { label: "Last 7 days", range: day(addDays(today, -6), today) },
+      { label: "Last 30 days", range: day(addDays(today, -29), today) },
       thisMonth,
       { label: "Last 3 months", range: day(addDays(today, -90), today) },
     ];
