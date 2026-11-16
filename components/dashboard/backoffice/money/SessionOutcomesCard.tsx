@@ -21,8 +21,8 @@ import {
   needsHumanQuerySchema,
   needsHumanQueueSearch,
   needsHumanSortToken,
+  needsHumanPageSchema,
   type NeedsHumanItem,
-  type NeedsHumanPage,
   type NeedsHumanSort,
 } from "@/lib/backoffice/needs-human-queue";
 import { SESSION_OUTCOME_LABEL } from "@/lib/labels/session-labels";
@@ -169,7 +169,7 @@ export function SessionOutcomesCard({
         `/api/admin/sessions/needs-human?${needsHumanQueueSearch(page, sort)}`,
       );
       if (!res.ok) throw new Error("Failed to load");
-      return (await res.json()) as NeedsHumanPage;
+      return needsHumanPageSchema.parse(await res.json());
     },
     placeholderData: keepPreviousData,
     staleTime: 30_000,

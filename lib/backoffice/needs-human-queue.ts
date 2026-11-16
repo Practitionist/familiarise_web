@@ -3,14 +3,12 @@
  * and the route that parses. Client-safe: no Prisma here.
  */
 
-import type {
+import {
   AppointmentsType,
   OccurrenceCompletionStatus,
   OccurrenceOutcome,
 } from "@prisma/client";
 import { z } from "zod";
-
-import type { PersonLike } from "./person";
 
 export const NEEDS_HUMAN_PAGE_SIZE = 20;
 
@@ -90,33 +88,42 @@ export const NEEDS_HUMAN_SORT_OPTIONS = [
   label: string;
 }[];
 
-/** One parked session with the booking it belongs to, as the route returns it. */
-export interface NeedsHumanItem {
-  id: string;
-  appointmentId: string;
-  startsAt: string;
-  endsAt: string;
-  outcomeAt: string | null;
-  completionStatus: OccurrenceCompletionStatus;
-  outcome: OccurrenceOutcome | null;
-  lostMinutes: number | null;
-  endedReason: string | null;
-  /** Parked over 7 days; its booking's settlement is waiting on it. */
-  aged: boolean;
-  booking: {
-    type: AppointmentsType;
-    title: string;
-    expert: PersonLike | null;
-    /** The 1:1 learner; null on a webinar or class, which carries `attendeeLabel`. */
-    learner: PersonLike | null;
-    attendeeLabel: string | null;
-    removed: boolean;
-  };
-}
+const personSchema = z.object({
+  id: z.string().nullable(),
+  name: z.string().nullable(),
+  email: z.string().nullable(),
+});
 
-export interface NeedsHumanPage {
-  items: NeedsHumanItem[];
-  total: number;
-  page: number;
-  pageSize: number;
-}
+/** One parked session with the booking it belongs to, as the route returns it. */
+export const needsHumanItemSchema = z.object({
+  id: z.string(),
+  appointmentId: z.string(),
+  startsAt: z.string(),
+  endsAt: z.string(),
+  outcomeAt: z.string().nullable(),
+  completionStatus: z.nativeEnum(OccurrenceCompletionStatus),
+  outcome: z.nativeEnum(OccurrenceOutcome).nullable(),
+  lostMinutes: z.number().nullable(),
+  endedReason: z.string().nullable(),
+  /** Parked over 7 days; its booking's settlement is waiting on it. */
+  aged: z.boolean(),
+  booking: z.object({
+    type: z.nativeEnum(AppointmentsType),
+    title: z.string(),
+    expert: personSchema.nullable(),
+    /** The 1:1 learner; null on a webinar or class, which carries `attendeeLabel`. */
+    learner: personSchema.nullable(),
+    attendeeLabel: z.string().nullable(),
+    removed: z.boolean(),
+  }),
+});
+export type NeedsHumanItem = z.infer<typeof needsHumanItemSchema>;
+
+/** The route's body; the card parses it, so a malformed one takes the error path. */
+export const needsHumanPageSchema = z.object({
+  items: z.array(needsHumanItemSchema),
+  total: z.number().int().nonnegative(),
+  page: z.number().int().positive(),
+  pageSize: z.number().int().positive(),
+});
+export type NeedsHumanPage = z.infer<typeof needsHumanPageSchema>;

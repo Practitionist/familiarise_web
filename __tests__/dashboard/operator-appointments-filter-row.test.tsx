@@ -1,5 +1,11 @@
 import * as React from "react";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 // A URL store that re-renders on writes, standing in for the App Router's
@@ -32,8 +38,9 @@ jest.mock("@/lib/navigation/history", () => ({
 jest.mock("@/hooks/use-media-query", () => ({
   useMediaQuery: () => true,
 }));
+const mockToast = jest.fn();
 jest.mock("@/hooks/use-toast", () => ({
-  useToast: () => ({ toast: jest.fn() }),
+  useToast: () => ({ toast: mockToast }),
 }));
 jest.mock("@/components/dashboard/shared/AppointmentTimeline", () => ({
   AppointmentTimeline: () => null,
@@ -52,6 +59,7 @@ const APPOINTMENT = {
   status: "SCHEDULED",
   bookingSource: "DIRECT_CHECKOUT",
   free: true,
+  removed: false,
   hasIssue: false,
   issueType: null,
   payment: null,
@@ -162,4 +170,17 @@ it("a queue row opens its booking without narrowing the list underneath", async 
     await screen.findByRole("heading", { name: /Linked booking/ }),
   ).toBeInTheDocument();
   expect(window.location.search).toBe("?tab=completed&type=webinar&q=asha");
+});
+
+it("a 200 whose body is not an appointments page shows the error, not an empty list", async () => {
+  fetchMock.mockImplementation(async () => ({
+    ok: true,
+    json: async () => ({ appointments: [{ id: 1 }] }),
+  }));
+  jest.spyOn(console, "error").mockImplementation(() => undefined);
+  renderPage("/backoffice/appointments");
+  await waitFor(() => expect(mockToast).toHaveBeenCalled());
+  expect(mockToast.mock.calls[0][0]).toMatchObject({
+    description: "Failed to load appointments",
+  });
 });

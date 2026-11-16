@@ -108,6 +108,8 @@ export interface BookingTimeline {
   entries: BookingTimelineEntry[];
   /** True when older events exist beyond `TIMELINE_LIMIT` and were dropped. */
   truncated: boolean;
+  /** Every session of the booking, whatever the entries show; read with the keys, no extra statement. */
+  occurrenceIds: string[];
 }
 
 /**
@@ -221,8 +223,8 @@ export async function getBookingTimeline(
             ...entityMatches,
           ],
         },
-        // A self-edge with no reason records no change; excluding it before the
-        // limit keeps it from pushing a real move out of the window.
+        // A self-edge with no reason and no actor records nothing; excluding it
+        // before the limit keeps it from pushing a real move out of the window.
         {
           OR: [
             {
@@ -233,6 +235,7 @@ export async function getBookingTimeline(
               },
             },
             { reason: { not: null } },
+            { actorUserId: { not: null } },
           ],
         },
       ],
@@ -304,6 +307,7 @@ export async function getBookingTimeline(
     appointmentId: appointment.id,
     entries: merged.slice(0, TIMELINE_LIMIT),
     truncated,
+    occurrenceIds: appointment.occurrences.map((slot) => slot.id),
   };
 }
 

@@ -18,68 +18,7 @@ import {
   headlineUserIds,
   trialPricePaise,
 } from "@/lib/data/appointment-headline";
-
-type Participant = {
-  id: string;
-  name: string | null;
-  email: string | null;
-  avatar: string | null;
-} | null;
-
-type AppointmentPayment = {
-  id: string;
-  amount: number;
-  currency: string;
-  status: string;
-  gateway: string;
-  /** When a pending order's pay window closes. */
-  expiresAt?: string | null;
-} | null;
-
-export type StaffAppointment = {
-  id: string;
-  type: string;
-  title: string;
-  consultant: Participant;
-  consultee: Participant;
-  scheduledAt: string;
-  endsAt?: string;
-  duration: number;
-  status: string;
-  /** DIRECT_CHECKOUT or REQUEST_SUBMITTED for a 1:1 or plan; null otherwise. */
-  bookingSource: string | null;
-  /** Nothing is charged for this booking, so it has no payment to wait for. */
-  free: boolean;
-  /** The booking was soft-deleted; it is still listed, marked removed. */
-  removed: boolean;
-  hasIssue: boolean;
-  issueType: string | null;
-  payment: AppointmentPayment;
-  /** #1486 — an open reschedule proposal (pending review or countered). */
-  reschedule: {
-    status: string;
-    initiatorRole: string;
-    expiresAt: string;
-  } | null;
-  createdAt: string;
-};
-
-export type StaffAppointmentsPayload = {
-  appointments: StaffAppointment[];
-  counts: {
-    all: number;
-    issues: number;
-    scheduled: number;
-    completed: number;
-  };
-  pagination: {
-    total: number;
-    page: number;
-    limit: number;
-    totalPages: number;
-    hasMore: boolean;
-  };
-};
+import type { StaffAppointmentsPayload } from "@/lib/data/staff-appointments-schema";
 
 export type StaffAppointmentsParams = {
   type?: string | null;

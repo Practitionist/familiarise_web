@@ -95,3 +95,23 @@ it("sends whitelisted sorts and pages, names the people and the door, and opens 
   fireEvent.click(screen.getAllByText("Career chat")[0]);
   expect(onOpenBooking).toHaveBeenCalledWith("apt-1");
 });
+
+it("takes the error path on a 200 whose body is not a queue page", async () => {
+  global.fetch = jest.fn(async () => ({
+    ok: true,
+    json: async () => ({ items: "nope", total: "many" }),
+  })) as unknown as typeof fetch;
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <SessionOutcomesCard onOpenBooking={jest.fn()} />
+    </QueryClientProvider>,
+  );
+  expect(
+    (await screen.findAllByRole("button", { name: /retry|try again/i })).length,
+  ).toBeGreaterThan(0);
+  expect(screen.queryByText("Nothing is waiting.")).not.toBeInTheDocument();
+});

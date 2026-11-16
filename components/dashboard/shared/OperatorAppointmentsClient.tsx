@@ -41,10 +41,11 @@ import { useToast } from "@/hooks/use-toast";
 import { useListParams } from "@/hooks/useListParams";
 import { AppointmentTimeline } from "./AppointmentTimeline";
 import { OperatorTime } from "@/lib/time/operator-time";
-import type {
-  StaffAppointment,
-  StaffAppointmentsPayload,
-} from "@/lib/data/staff-appointments";
+import {
+  staffAppointmentsPayloadSchema,
+  type StaffAppointment,
+  type StaffAppointmentsPayload,
+} from "@/lib/data/staff-appointments-schema";
 
 type Appointment = StaffAppointment;
 
@@ -147,7 +148,7 @@ async function fetchAppointments(
   if (args.search) params.set("search", args.search);
   const response = await fetch(`/api/staff/appointments?${params}`);
   if (!response.ok) throw new Error("Failed to fetch appointments");
-  return response.json();
+  return staffAppointmentsPayloadSchema.parse(await response.json());
 }
 
 export function OperatorAppointmentsClient({

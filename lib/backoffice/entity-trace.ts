@@ -921,9 +921,8 @@ export async function readEntityTrace(args: {
       const timeline = await getBookingTimeline(A, { kind: "all" });
       const entries = timeline?.entries ?? [];
       const kept = entries.slice(0, TRACE_ROW_CAP);
-      for (const entry of entries) {
-        if (entry.entity === "OCCURRENCE") occurrenceIds.push(entry.entityId);
-      }
+      // From the booking's sessions, not the entries: a hidden row must not hide a session's audit.
+      occurrenceIds.push(...(timeline?.occurrenceIds ?? []));
       t.add(
         "booking",
         kept.flatMap((entry) =>

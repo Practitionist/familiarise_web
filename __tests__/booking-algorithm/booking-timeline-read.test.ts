@@ -38,18 +38,33 @@ type HistoryRow = {
   fromStatus: string;
   toStatus: string;
   reason: string | null;
+  actorUser: { id: string; name: string | null } | null;
 };
 
-/** Answers like the database: the self-edge exclusion in the WHERE runs before the LIMIT. */
+/** One arm of the exclusion OR, evaluated as Postgres would on a stored row. */
+function holds(arm: unknown, row: HistoryRow): boolean {
+  const text = JSON.stringify(arm);
+  if (
+    text ===
+    JSON.stringify({ NOT: { fromStatus: { equals: "field:toStatus" } } })
+  )
+    return row.fromStatus !== row.toStatus;
+  if (text === JSON.stringify({ reason: { not: null } }))
+    return row.reason !== null;
+  if (text === JSON.stringify({ actorUserId: { not: null } }))
+    return row.actorUser !== null;
+  throw new Error(`unknown exclusion arm ${text}`);
+}
+
+/** Answers like the database: the WHERE's self-edge exclusion runs before the LIMIT. */
 function servedLikeTheDatabase<R extends HistoryRow>(stored: R[]) {
-  return async (args: { where: { AND?: unknown[] }; take: number }) => {
-    const excludes = JSON.stringify(args.where.AND?.[1] ?? null).includes(
-      "field:toStatus",
-    );
-    const kept = excludes
-      ? stored.filter(
-          (row) => row.fromStatus !== row.toStatus || row.reason !== null,
-        )
+  return async (args: {
+    where: { AND?: [unknown, { OR: unknown[] }?] };
+    take: number;
+  }) => {
+    const arms = args.where.AND?.[1]?.OR;
+    const kept = arms
+      ? stored.filter((row) => arms.some((arm) => holds(arm, row)))
       : stored;
     return kept.slice(0, args.take);
   };
@@ -159,7 +174,7 @@ describe("getBookingTimeline", () => {
     expect(call.orderBy).toEqual([{ createdAt: "desc" }, { id: "asc" }]);
   });
 
-  it("hides a self-edge with no reason and keeps one that carries a reason", async () => {
+  it("hides a self-edge with neither reason nor actor, and keeps one that has either", async () => {
     historyFindMany.mockImplementation(
       servedLikeTheDatabase([
         {
@@ -182,6 +197,16 @@ describe("getBookingTimeline", () => {
           createdAt: new Date("2026-09-03T09:00:00.000Z"),
           actorUser: null,
         },
+        {
+          id: "hist-self-who",
+          entity: "SUBSCRIPTION",
+          entityId: "sub-1",
+          fromStatus: "APPROVED",
+          toStatus: "APPROVED",
+          reason: null,
+          createdAt: new Date("2026-09-03T08:00:00.000Z"),
+          actorUser: { id: "operator-1", name: "Operator" },
+        },
         ...historyRows(),
       ]),
     );
@@ -189,6 +214,8 @@ describe("getBookingTimeline", () => {
     const ids = timeline!.entries.map((entry) => entry.id);
     expect(ids).not.toContain("hist-self-bare");
     expect(ids).toContain("hist-self-why");
+    // An actor makes a same-status row an audit record.
+    expect(ids).toContain("hist-self-who");
   });
 
   it("lists an answered reschedule as one proposal and one outcome, in the drawer and the trace", async () => {
@@ -241,6 +268,7 @@ describe("getBookingTimeline", () => {
       OR: [
         { NOT: { fromStatus: { equals: "field:toStatus" } } },
         { reason: { not: null } },
+        { actorUserId: { not: null } },
       ],
     });
     expect(timeline!.entries.map((entry) => entry.id)).toContain("hist-1");
