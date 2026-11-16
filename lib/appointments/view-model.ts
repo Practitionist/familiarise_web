@@ -160,6 +160,8 @@ export interface AppointmentVM {
   bookingSource?: string | null;
   /** The viewer's own seat on a webinar or class. */
   seatStatus?: string | null;
+  /** When the learner's own seat was released, for its Cancelled line. */
+  seatReleasedAt?: Date | string | null;
   /** A charge on the booking succeeded; undefined when the read does not say. */
   paid?: boolean;
   /** When the unpaid pay window closes; null when none is open, undefined when not read. */

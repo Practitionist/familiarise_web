@@ -1,3 +1,4 @@
+import { CONDUCT_REMOVAL_CATEGORY } from "./case-topic";
 import {
   Prisma,
   type SupportCase,
@@ -71,9 +72,10 @@ import {
   settleDecidedRemoval,
 } from "./conduct-removal-case";
 import {
-  CONDUCT_REMOVAL_CATEGORY,
+  removalDecisionNotice,
   reviewedRemovalCaseId,
 } from "./conduct-removal-state";
+import type { RequiredNoticeKind } from "@/lib/notifications/required-notices";
 
 const id = z.string().min(1).max(128);
 const reason = z.string().trim().min(1).max(10_000);
@@ -226,10 +228,12 @@ export async function stageCaseNotice(
   recipients: string[],
   message: string,
   key: string,
+  required?: RequiredNoticeKind,
 ) {
   await stageBell(tx, {
     workflowId: NOVU_WORKFLOWS.SUPPORT_TICKET_UPDATE,
     recipients,
+    ...(required ? { required } : {}),
     dedupeKey: key,
     entityRef: key,
     payload: {
@@ -803,14 +807,22 @@ async function stageDecisionNotificationsTx(
       },
       tx,
     );
-  } else
+  } else {
+    // A removed learner hears of the decision on their removal whatever their switches say.
+    const removal =
+      (decision.outcome === "OVERTURNED" || decision.outcome === "UPHELD") &&
+      (await reviewedRemovalCaseId(tx, supportCase))
+        ? removalDecisionNotice(decision.outcome)
+        : null;
     await stageCaseNotice(
       tx,
       supportCase,
       await caseCorrespondentIds(supportCase, tx),
-      "A decision is ready",
+      removal?.message ?? "A decision is ready",
       `decision:${decision.id}`,
+      removal?.required,
     );
+  }
   const affectedRequests = await tx.supportCaseEvidenceRequest.findMany({
     where: { caseId, cancelledAt: null },
     distinct: ["recipientUserId"],

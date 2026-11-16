@@ -94,6 +94,46 @@ it("a host removing a free seat reaches the attendee whatever their switches say
   });
 });
 
+it("a conduct removal tells the attendee the host's reason, the case and the 72 hours, and links the case", async () => {
+  mockAppointmentFind.mockResolvedValue({
+    appointmentType: "CLASS",
+    organizationId: null,
+    occurrences: [],
+    webinar: null,
+    class: {
+      classPlan: { title: "Beginner Class", consultantProfile: party("h") },
+    },
+  });
+  mockUserFind.mockResolvedValue({ name: "Isabella" });
+  const removal = {
+    note: "Reason: Disrupting the session (talked over the host). Support case FAM-2026-000011 decides within 72 hours; reply there with your side.",
+    href: "/dashboard/support/c_case-1",
+  };
+
+  await notifySeatRemoved({
+    appointmentId: "a1",
+    attendeeUserId: "u1",
+    removal,
+  });
+
+  expect(mockCancelledBell.mock.calls[0][1]).toMatchObject({
+    seatRemoved: true,
+    removalNote: removal.note,
+    dashboardUrl: removal.href,
+  });
+  expect(mockCancelledEmail.mock.calls[0][1]).toMatchObject({
+    reason: removal.note,
+    dashboardUrl: removal.href,
+  });
+});
+
+it("the removed-seat bell template prints the removal note", () => {
+  const template = JSON.stringify(
+    jest.requireActual("@/lib/novu/templates/b2c"),
+  );
+  expect(template).toContain("payload.removalNote");
+});
+
 it.each([
   ["EXPIRED", { kind: "PROPOSAL_LAPSED", recipients: ["c", "e"] }],
   ["WITHDRAWN", { kind: "PROPOSAL_WITHDRAWN", recipients: ["e"] }],
@@ -200,4 +240,14 @@ it("a staging failure is logged as a scrubbed summary, never the error object", 
   expect(log.mock.calls[0]).toHaveLength(1);
   expect(String(log.mock.calls[0][0])).not.toContain("ravi@example.test");
   log.mockRestore();
+});
+
+it("a conduct removal's note names the reason, the host's words, the case and the 72 hours", () => {
+  expect(
+    jest
+      .requireActual("@/lib/booking/conduct-removal")
+      .removalNote("Disrupting the session", "talked over the host", "FAM-1"),
+  ).toBe(
+    "Reason: Disrupting the session (talked over the host). Support case FAM-1 decides within 72 hours; reply there with your side.",
+  );
 });

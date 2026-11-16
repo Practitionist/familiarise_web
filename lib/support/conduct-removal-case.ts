@@ -1,5 +1,6 @@
 /** The review case a conduct removal opens, its earnings hold, and what an overturn or the 72-hour lapse owes. */
 
+import { CONDUCT_REMOVAL_CATEGORY } from "./case-topic";
 import { Prisma } from "@prisma/client";
 
 import prisma, {
@@ -37,7 +38,6 @@ import { priorityForReason } from "./priority";
 import { allocateTicketReference } from "./reference";
 import { slaDeadlinesFor } from "./sla";
 import {
-  CONDUCT_REMOVAL_CATEGORY,
   CONDUCT_REMOVAL_REVIEW_HOURS,
   conductRemovalRefundKey,
   reviewedRemovalCaseId,

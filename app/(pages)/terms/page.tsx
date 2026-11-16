@@ -358,8 +358,8 @@ export default function TermsPage() {
               <ul>
                 <li>
                   The attendee&apos;s seat ends. They are removed from the
-                  session&apos;s chat and blocked from its live call, and are
-                  shown the reason the host recorded.
+                  session&apos;s chat and blocked from its calls, and are shown
+                  the reason the host recorded.
                 </li>
                 <li>
                   We open a support case for the attendee and hold the

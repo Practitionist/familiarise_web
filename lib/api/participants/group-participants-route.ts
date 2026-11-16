@@ -445,7 +445,7 @@ export async function handleConductRemoval(
     );
     if (!parsed.success) {
       return NextResponse.json(
-        { error: "Invalid removal request.", details: parsed.error.issues },
+        { error: "Choose a reason, and say why when the reason is Other." },
         { status: 400 },
       );
     }

@@ -235,6 +235,10 @@ function withReleasedSeat(
     appointmentId: null,
     bucket: "cancelled",
     needsActionReason: null,
+    // A released seat has no session ahead and one released line, wherever the row is drawn.
+    nextAt: null,
+    seatStatus: seat?.status,
+    seatReleasedAt: seat?.updatedAt ?? null,
     meta: line,
     raw: { ...vm.raw, rawOccurrences: [] },
   };

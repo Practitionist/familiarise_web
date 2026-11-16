@@ -603,6 +603,7 @@ type ChipVM = Pick<AppointmentVM, "status" | "kind"> &
       | "occurrences"
       | "bookingSource"
       | "seatStatus"
+      | "seatReleasedAt"
       | "paid"
       | "payDeadline"
       | "payLapsed"
@@ -620,6 +621,7 @@ function rowBookingStatus(vm: ChipVM, role: "consultee" | "consultant") {
       status: vm.status,
       source: vm.bookingSource,
       seatStatus: vm.seatStatus,
+      seatReleasedAt: vm.seatReleasedAt,
       paid: vm.paid,
       payDeadline: vm.payDeadline,
       payLapsed: vm.payLapsed,

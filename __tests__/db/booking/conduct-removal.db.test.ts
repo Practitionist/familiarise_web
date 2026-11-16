@@ -495,8 +495,15 @@ describe("overturn: refund first, through the bounded door", () => {
       listPaise: 0,
     });
     const { caseId } = (await remove(webinar, free.userId))!;
-    await decide(caseId, await actor("STAFF"), "OVERTURNED");
+    const decision = await decide(caseId, await actor("STAFF"), "OVERTURNED");
     expect(refundDoor).not.toHaveBeenCalled();
+    // The learner hears of the decision as a required removed-seat notice.
+    const notice = await prisma.notificationOutbox.findFirstOrThrow({
+      where: { entityRef: `decision:${rowId(decision)}` },
+      select: { recipients: true, payload: true },
+    });
+    expect(notice.recipients).toContain(free.userId);
+    expect(notice.payload).toMatchObject({ requiredNotice: "SEAT_RELEASED" });
   });
 });
 

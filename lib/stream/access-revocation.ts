@@ -905,7 +905,39 @@ export async function syncConductCallBlock(
       [userId],
       generation,
     );
+    return;
   }
+  await recordIntentFailure(
+    "CONDUCT_CALL_BLOCK",
+    appointmentId,
+    userId,
+    error,
+    generation,
+  );
+}
+
+/** Counts a failed drive on the writer's own generation, so ops sees why the intent is still owed. */
+async function recordIntentFailure(
+  kind: AccessRevocationKind,
+  planId: string,
+  userId: string,
+  error: string,
+  generation: Date | null,
+): Promise<void> {
+  if (!generation) return;
+  await prisma.streamRevocationRetry
+    .updateMany({
+      where: {
+        erasureRequestId: null,
+        kind,
+        planId,
+        userId,
+        status: { in: ["PENDING", "FAILED"] },
+        nextRetryAt: generation,
+      },
+      data: { status: "FAILED", attempts: { increment: 1 }, lastError: error },
+    })
+    .catch(() => undefined);
 }
 
 /** How long provisioning waits on Stream to take back an unsaved room's members. */

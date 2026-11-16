@@ -30,3 +30,12 @@ it.each(SURFACES)("%s says support decides within 72 hours", (file) => {
     new RegExp(String.raw`decide(s)?( it)? within ${hours} hours`),
   );
 });
+
+it("says the block covers every open room of the event, not one call", () => {
+  const dialog = readFileSync(
+    join(process.cwd(), "components/events/RemoveParticipantDialog.tsx"),
+    "utf8",
+  ).replace(/\s+/g, " ");
+  expect(dialog).not.toContain("this session&apos;s call");
+  expect(dialog).toContain("blocked from this event&apos;s calls");
+});

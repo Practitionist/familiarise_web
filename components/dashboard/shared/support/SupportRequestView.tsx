@@ -34,6 +34,7 @@ import {
   CASE_TOPIC_LABEL,
   threadTopic,
   type CaseTopic,
+  caseBookingLink,
 } from "@/lib/support/case-topic";
 import { throwSupportError } from "@/lib/support/error-copy";
 import {
@@ -410,11 +411,16 @@ function TicketRequest({
     history.timeline.length,
   );
   const appointmentId = data?.appointmentId ?? null;
+  const bookingLink =
+    appointmentId && data
+      ? caseBookingLink(data.topic, props.appointmentsBase ?? "", appointmentId)
+      : null;
   const booking = useQuery({
     queryKey: supportKeys.thread(appointmentId ?? ""),
     queryFn: () => fetchSupportThread(appointmentId ?? ""),
     enabled:
       appointmentId !== null &&
+      bookingLink?.readsBooking === true &&
       data?.canReply === true &&
       data?.viewerIsPresenter !== true,
     select: (thread) => thread.booking,
@@ -595,11 +601,15 @@ function TicketRequest({
                   : null
               }
               href={
-                props.appointmentsBase
-                  ? `${props.appointmentsBase}/${appointmentId}`
+                props.appointmentsBase && bookingLink
+                  ? bookingLink.href
                   : undefined
               }
-              hrefLabel="Go to booking"
+              hrefLabel={
+                bookingLink?.readsBooking === false
+                  ? "Go to your cancelled bookings"
+                  : "Go to booking"
+              }
             />
           )}
           {data.payment && (

@@ -1,8 +1,7 @@
 import prisma, { type PrismaLike } from "@/lib/prisma";
+import type { RequiredNoticeKind } from "@/lib/notifications/required-notices";
+import { CONDUCT_REMOVAL_CATEGORY } from "./case-topic";
 import { DEADLINE_HOURS } from "./deadline-policy";
-
-/** The support case category a host's conduct removal opens for the removed attendee. */
-export const CONDUCT_REMOVAL_CATEGORY = "CONDUCT_REMOVAL";
 
 /** How long support has to decide a conduct removal before the seat's unrefunded balance is owed. */
 export const CONDUCT_REMOVAL_REVIEW_HOURS = DEADLINE_HOURS.CONDUCT_REMOVAL;
@@ -80,4 +79,18 @@ export async function conductRemovalStands(
     select: { id: true },
   });
   return removal ? !(await removalOverturned(db, removal.id)) : false;
+}
+
+/** The required bell the removed learner gets when support decides their removal. */
+export function removalDecisionNotice(outcome: "OVERTURNED" | "UPHELD"): {
+  message: string;
+  required: RequiredNoticeKind;
+} {
+  return {
+    message:
+      outcome === "OVERTURNED"
+        ? "Support overturned your removal. Your seat is not given back; any refund was sent first."
+        : "Support upheld your removal. You can appeal within 7 days.",
+    required: "SEAT_RELEASED",
+  };
 }

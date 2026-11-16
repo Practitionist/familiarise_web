@@ -56,11 +56,16 @@ async function blockInRoom(
     );
   } catch (error) {
     if (!isExpectedStreamError(error)) throw error;
-    await beforeDeadline(
-      call.blockUser({ user_id: userId }),
-      deadlineMs,
-      onLate,
-    );
+    try {
+      await beforeDeadline(
+        call.blockUser({ user_id: userId }),
+        deadlineMs,
+        onLate,
+      );
+    } catch (blockError) {
+      // No such call at Stream: nobody can be in it, and a later room still needs the seat the removal ended.
+      if (!isExpectedStreamError(blockError)) throw blockError;
+    }
   }
 }
 

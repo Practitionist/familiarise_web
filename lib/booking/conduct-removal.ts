@@ -33,6 +33,19 @@ import {
 } from "./event-waitlist";
 import { liveParticipant, releaseParticipant } from "./participants";
 import { notifySeatRemoved } from "./seat-removed-notice";
+import { supportRequestHref } from "@/lib/novu/resolve-href";
+import { caseKeyOf } from "@/lib/support/case-key";
+import { CONDUCT_REMOVAL_REVIEW_HOURS } from "@/lib/support/conduct-removal-state";
+
+/** What the removed attendee's notice says after "removed you": the host's reason, the case and the 72 hours. */
+export function removalNote(
+  reasonLabel: string,
+  note: string | null,
+  caseReference: string,
+): string {
+  const why = note ? `${reasonLabel} (${note})` : reasonLabel;
+  return `Reason: ${why}. Support case ${caseReference} decides within ${CONDUCT_REMOVAL_REVIEW_HOURS} hours; reply there with your side.`;
+}
 
 interface ConductRemovalInput {
   appointmentId: string;
@@ -169,6 +182,16 @@ export async function removeAttendeeForConduct(
       notifySeatRemoved({
         appointmentId: input.appointmentId,
         attendeeUserId: input.targetUserId,
+        removal: {
+          note: removalNote(
+            CONDUCT_REMOVAL_REASON_LABELS[input.reason],
+            note,
+            done.supportCase.referenceNumber,
+          ),
+          href: supportRequestHref(
+            caseKeyOf({ kind: "case", id: done.supportCase.id }),
+          ),
+        },
       }),
     "conduct-removal.removed-notice",
   );

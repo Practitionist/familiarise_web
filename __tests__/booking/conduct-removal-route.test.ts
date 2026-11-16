@@ -168,3 +168,23 @@ it.each([["%20"], ["x".repeat(65)]])(
     expect(prisma.appointment.findFirst).not.toHaveBeenCalled();
   },
 );
+
+it("answers a bad body with a plain sentence, never the schema's internals", async () => {
+  mockSession.current = {
+    id: "caller",
+    role: "CONSULTANT",
+    consultantProfileId: "profile-host",
+  };
+  const response = await handleGroupConductRemoval(
+    new Request("http://test/remove", {
+      method: "POST",
+      body: JSON.stringify({ targetUserId: "learner-2", reason: "OTHER" }),
+    }),
+    "webinar",
+    "w1",
+  );
+  expect(response.status).toBe(400);
+  expect(await response.json()).toEqual({
+    error: "Choose a reason, and say why when the reason is Other.",
+  });
+});
