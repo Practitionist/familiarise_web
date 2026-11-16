@@ -38,8 +38,8 @@ jest.mock("../../lib/api/organizations/seat-count", () => ({
 jest.mock("../../lib/observability/report", () => ({
   reportSentryError: jest.fn(),
 }));
-jest.mock("../../lib/collaborators/standing", () => ({
-  removeCollaboratorStanding: jest.fn(async () => []),
+jest.mock("../../lib/collaborators/ending", () => ({
+  endCollaborationsForUser: jest.fn(async () => []),
 }));
 
 const mockDeleteSubscriber = jest.fn(async () => true);

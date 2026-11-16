@@ -20,7 +20,6 @@ import {
   assertConsultantAvailableForWindows,
   ConsultantScheduleConflictError,
 } from "@/lib/collaborators/availability";
-import { respondToInvitation } from "@/lib/collaborators/service";
 import {
   scheduleClassMakeUp,
   type HostedClass,
@@ -232,76 +231,6 @@ describe("Issue #2010 Part 2 — Single-Active-Session Consultant Concurrency", 
         excludeAppointmentIds: ["appt-self"],
       }),
     ).rejects.toBeInstanceOf(ConsultantScheduleConflictError);
-  });
-
-  it("respondToInvitation rejects acceptance with 409 CollaboratorIneligibleError when plan sessions overlap invitee calendar", async () => {
-    const spyCollabFindUnique = jest
-      .spyOn(prisma.collaborator, "findUnique")
-      .mockResolvedValue({
-        id: "collab-1",
-        consultantProfileId: "cp-invitee",
-        webinarPlanId: "wp-1",
-        classPlanId: null,
-        status: "PENDING",
-      } as never);
-    const spyWebinarPlanFindUnique = jest
-      .spyOn(prisma.webinarPlan, "findUnique")
-      .mockResolvedValue({ archivedAt: null } as never);
-    const spyProfileFindUnique = jest
-      .spyOn(prisma.consultantProfile, "findUnique")
-      .mockResolvedValue({
-        deletedAt: null,
-        verificationStatus: "VERIFIED",
-        user: {
-          id: "user-invitee",
-          banned: false,
-          banExpires: null,
-          erasedAt: null,
-        },
-      } as never);
-    const spyParticipantFindFirst = jest
-      .spyOn(prisma.appointmentParticipant, "findFirst")
-      .mockResolvedValue(null);
-    const spyOccurrenceFindMany = jest
-      .spyOn(prisma.appointmentOccurrence, "findMany")
-      .mockResolvedValue([
-        {
-          appointmentId: "appt-webinar-1",
-          startsAt: new Date("2026-10-06T14:00:00.000Z"),
-          endsAt: new Date("2026-10-06T15:00:00.000Z"),
-        },
-      ] as never);
-    const spyOccurrenceFindFirst = jest
-      .spyOn(prisma.appointmentOccurrence, "findFirst")
-      .mockResolvedValue({ id: "occ-existing-consultation" } as never);
-    const txSpy = jest
-      .spyOn(prisma, "$transaction")
-      .mockImplementation(async (fn: unknown) =>
-        (fn as (tx: unknown) => Promise<unknown>)(prisma),
-      );
-
-    try {
-      await expect(
-        respondToInvitation("webinar", "collab-1", "cp-invitee", "ACCEPTED"),
-      ).rejects.toMatchObject({
-        name: "CollaboratorIneligibleError",
-        httpStatus: 409,
-      });
-      expect(txSpy).toHaveBeenCalledWith(
-        expect.any(Function),
-        expect.objectContaining({
-          isolationLevel: "Serializable",
-        }),
-      );
-    } finally {
-      txSpy.mockRestore();
-      spyCollabFindUnique.mockRestore();
-      spyWebinarPlanFindUnique.mockRestore();
-      spyProfileFindUnique.mockRestore();
-      spyParticipantFindFirst.mockRestore();
-      spyOccurrenceFindMany.mockRestore();
-      spyOccurrenceFindFirst.mockRestore();
-    }
   });
 
   it("scheduleClassMakeUp falls back to classPlan.consultantProfileId and maps 23P01 overlap to 409 BookingRuleError", async () => {

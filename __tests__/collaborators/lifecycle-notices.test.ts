@@ -24,7 +24,9 @@ jest.mock("@/lib/novu/stage-then-attempt", () => ({
 jest.mock("@/lib/stream/org-access-revocation", () => ({
   revokeMemberStreamAccess: jest.fn(async () => ({ complete: true })),
 }));
+const GENERATION = new Date("2026-11-08T00:00:00Z");
 jest.mock("@/lib/stream/access-revocation", () => ({
+  persistCollaboratorRevocationInTx: jest.fn(async () => GENERATION),
   revokeCollaboratorAccess: (...args: unknown[]) => mockRevoke(...args),
   enqueueOrgMemberRevocationRetry: jest.fn(),
 }));
@@ -61,6 +63,7 @@ const row = {
   invitedById: "cp-host",
   role: "CO_HOST" as const,
   revenueShareBps: 2500,
+  acceptedAt: new Date("2026-11-01T00:00:00Z"),
   updatedAt: new Date("2026-11-07T00:00:00Z"),
 };
 const users: Record<string, Record<string, unknown>> = {
@@ -113,7 +116,10 @@ const tx: Record<string, Record<string, jest.Mock> | jest.Mock> & {
       status: "ACTIVE",
     })),
   },
-  collaborator: { updateManyAndReturn: jest.fn(async () => [row]) },
+  collaborator: {
+    findMany: jest.fn(async () => [{ id: row.id }]),
+    updateManyAndReturn: jest.fn(async () => [row]),
+  },
   programAssignment: { updateMany: jest.fn(async () => ({ count: 0 })) },
   orgAuditLog: { create: jest.fn() },
   organization: { findUnique: jest.fn(async () => null) },
@@ -166,10 +172,15 @@ it("an org member removal stages one WITHDRAWN notice per row for the host and n
     force: false,
   });
   expect(mockStageNotices).toHaveBeenCalledTimes(1);
-  expect(mockStageNotices).toHaveBeenCalledWith(tx, "WITHDRAWN", row);
+  expect(mockStageNotices).toHaveBeenCalledWith(tx, "WITHDRAWN", row, {});
+  expect(tx.collaborator.updateManyAndReturn).toHaveBeenCalledWith({
+    where: { id: "c-1", status: { in: ["PENDING", "ACCEPTED"] } },
+    data: { status: "REMOVED", endedByUserId: "u-admin" },
+  });
   expect(mockRevoke).toHaveBeenCalledWith(
-    expect.objectContaining({ planType: "webinar", planId: "wp-1" }),
+    { planType: "webinar", planId: "wp-1" },
     "u-guest",
+    GENERATION,
   );
   expect(mockFlush).toHaveBeenCalledTimes(1);
 });
