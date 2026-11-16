@@ -6,14 +6,7 @@ import { gatewayLabel } from "@/lib/labels/money-labels";
 import { paymentStatusBadge } from "@/lib/labels/session-labels";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { FilterBar } from "@/components/dashboard/FilterBar";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   ResponsiveTable,
@@ -239,91 +232,79 @@ export function PaymentsPage() {
       {/* Filters */}
       <Card>
         <CardContent className="pt-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-            <Input
-              placeholder="Search payment ID..."
-              className="min-w-0"
-              value={search}
-              onChange={(e) => {
-                setSearch(e.target.value);
+          <FilterBar
+            search={{
+              label: "Search payments",
+              placeholder: "Search payment ID...",
+              value: search,
+              onChange: (value) => {
+                setSearch(value);
                 handleFilterChange();
-              }}
-            />
-
-            <Select
-              value={status}
-              onValueChange={(value) => {
-                setStatus(
-                  value === "all" ? undefined : (value as PaymentStatus),
-                );
-                handleFilterChange();
-              }}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Statuses</SelectItem>
-                <SelectItem value="PENDING">Pending</SelectItem>
-                <SelectItem value="SUCCEEDED">Succeeded</SelectItem>
-                <SelectItem value="FAILED">Failed</SelectItem>
-                <SelectItem value="EXPIRED">Expired</SelectItem>
-              </SelectContent>
-            </Select>
-
-            <Select
-              value={gateway}
-              onValueChange={(value) => {
-                setGateway(
-                  value === "all" ? undefined : (value as PaymentGateway),
-                );
-                handleFilterChange();
-              }}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Gateway" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Gateways</SelectItem>
-                <SelectItem value="STRIPE">Stripe</SelectItem>
-                <SelectItem value="RAZORPAY">Razorpay</SelectItem>
-              </SelectContent>
-            </Select>
-
-            <Select
-              value={appointmentType}
-              onValueChange={(value) => {
-                setAppointmentType(
-                  value === "all" ? undefined : (value as AppointmentsType),
-                );
-                handleFilterChange();
-              }}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Type" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Types</SelectItem>
-                <SelectItem value="CONSULTATION">Consultation</SelectItem>
-                <SelectItem value="SUBSCRIPTION">Subscription</SelectItem>
-                <SelectItem value="WEBINAR">Webinar</SelectItem>
-                <SelectItem value="CLASS">Class</SelectItem>
-              </SelectContent>
-            </Select>
-
-            <Button
-              variant="outline"
-              onClick={() => {
-                setStatus(undefined);
-                setGateway(undefined);
-                setAppointmentType(undefined);
-                setSearch("");
-                setPage(1);
-              }}
-            >
-              Clear Filters
-            </Button>
-          </div>
+              },
+            }}
+            selects={[
+              {
+                key: "status",
+                label: "Status",
+                value: status ?? "all",
+                options: [
+                  { value: "all", label: "All Statuses" },
+                  { value: "PENDING", label: "Pending" },
+                  { value: "SUCCEEDED", label: "Succeeded" },
+                  { value: "FAILED", label: "Failed" },
+                  { value: "EXPIRED", label: "Expired" },
+                ],
+                onChange: (value) => {
+                  setStatus(
+                    value === "all" ? undefined : (value as PaymentStatus),
+                  );
+                  handleFilterChange();
+                },
+              },
+              {
+                key: "gateway",
+                label: "Gateway",
+                value: gateway ?? "all",
+                options: [
+                  { value: "all", label: "All Gateways" },
+                  { value: "STRIPE", label: "Stripe" },
+                  { value: "RAZORPAY", label: "Razorpay" },
+                ],
+                onChange: (value) => {
+                  setGateway(
+                    value === "all" ? undefined : (value as PaymentGateway),
+                  );
+                  handleFilterChange();
+                },
+              },
+              {
+                key: "type",
+                label: "Type",
+                value: appointmentType ?? "all",
+                options: [
+                  { value: "all", label: "All Types" },
+                  { value: "CONSULTATION", label: "Consultation" },
+                  { value: "SUBSCRIPTION", label: "Subscription" },
+                  { value: "WEBINAR", label: "Webinar" },
+                  { value: "CLASS", label: "Class" },
+                ],
+                onChange: (value) => {
+                  setAppointmentType(
+                    value === "all" ? undefined : (value as AppointmentsType),
+                  );
+                  handleFilterChange();
+                },
+              },
+            ]}
+            canClear={Boolean(search || status || gateway || appointmentType)}
+            onClear={() => {
+              setStatus(undefined);
+              setGateway(undefined);
+              setAppointmentType(undefined);
+              setSearch("");
+              setPage(1);
+            }}
+          />
         </CardContent>
       </Card>
 

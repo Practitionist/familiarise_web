@@ -5,15 +5,7 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   ResponsiveModal,
   ResponsiveModalContent,
@@ -23,6 +15,7 @@ import {
   ResponsiveModalTitle,
 } from "@/components/ui/responsive-modal";
 import { Label } from "@/components/ui/label";
+import { FilterBar } from "@/components/dashboard/FilterBar";
 import { PageHeader } from "@/components/dashboard/PageScaffold";
 import { Stat, StatRow } from "@/components/dashboard/Stat";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
@@ -31,7 +24,6 @@ import { bookingStatus } from "@/lib/appointments/booking-status";
 import { AwaitingPaymentPanel } from "./AwaitingPaymentPanel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
-  Search,
   Calendar,
   Clock,
   AlertTriangle,
@@ -128,12 +120,14 @@ const formatCurrency = (amount: number, currency: string = "INR") => {
 // a fetch waterfall. Filtered/paged views fall back to a client fetch.
 const DEFAULT_TYPE = "all";
 const DEFAULT_TAB = "all";
-const TYPE_FILTERS = new Set([
-  "consultation",
-  "subscription",
-  "webinar",
-  "class",
-]);
+const TYPE_OPTIONS = [
+  { value: "all", label: "All Types" },
+  { value: "consultation", label: "Consultation" },
+  { value: "subscription", label: "Subscription" },
+  { value: "webinar", label: "Webinar" },
+  { value: "class", label: "Class" },
+];
+const TYPE_FILTERS = new Set(TYPE_OPTIONS.map((option) => option.value));
 
 // #890 — queryKey is structural: [scope, { page, type, status, search }].
 // The page.tsx prefetch uses the identical default object below.
@@ -162,7 +156,7 @@ export function OperatorAppointmentsClient({
   // #1527 — a support case's booking card lands here as `?open=<id>`: search
   // for it on All, then open it. Consumed into `q` below.
   const linkedOpen = list.filters.open;
-  const debouncedSearch = linkedOpen ?? list.q;
+  const search = linkedOpen ?? list.q;
   const urlTab = list.filters.tab ?? DEFAULT_TAB;
   const activeTab =
     !linkedOpen && (TABS as readonly string[]).includes(urlTab)
@@ -185,32 +179,13 @@ export function OperatorAppointmentsClient({
   const [selectedAppointment, setSelectedAppointment] =
     useState<Appointment | null>(null);
 
-  // The input keeps its own draft; the URL gets it after a pause. An outside
-  // change (openBooking, Back) replaces the draft, but the echo of our own
-  // write does not, or it would eat keys typed since (same as FilterBar).
-  const [searchQuery, setSearchQuery] = useState(debouncedSearch);
-  const [seenSearch, setSeenSearch] = useState(debouncedSearch);
-  const [emittedSearch, setEmittedSearch] = useState<string | null>(null);
-  if (debouncedSearch !== seenSearch) {
-    setSeenSearch(debouncedSearch);
-    if (debouncedSearch !== emittedSearch) setSearchQuery(debouncedSearch);
-  }
-  useEffect(() => {
-    if (searchQuery.trim() === debouncedSearch) return;
-    const timer = setTimeout(() => {
-      setEmittedSearch(searchQuery.trim());
-      setParams({ q: searchQuery });
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [searchQuery, debouncedSearch, setParams]);
-
   const { data, isLoading, isFetching, refetch, error } =
     useQuery<StaffAppointmentsPayload>({
       queryKey: appointmentsKey({
         page,
         type: typeFilter,
         status: activeTab,
-        search: debouncedSearch,
+        search,
       }),
       // Tab, type, page and search all live in the key, so each combination is
       // its own query. Same fix as #346 on the appointments list.
@@ -220,7 +195,7 @@ export function OperatorAppointmentsClient({
         params.set("page", page.toString());
         if (typeFilter !== "all") params.set("type", typeFilter.toUpperCase());
         if (activeTab !== "all") params.set("status", activeTab);
-        if (debouncedSearch) params.set("search", debouncedSearch);
+        if (search) params.set("search", search);
 
         const response = await fetch(`/api/staff/appointments?${params}`);
         if (!response.ok) throw new Error("Failed to fetch appointments");
@@ -332,30 +307,26 @@ export function OperatorAppointmentsClient({
               <TabsTrigger value="completed">Completed</TabsTrigger>
             </TabsList>
 
-            <div className="flex gap-2">
-              <div className="relative flex-1 min-w-0">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  aria-label="Search appointments"
-                  placeholder="Search..."
-                  className="pl-9"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                />
-              </div>
-              <Select value={typeFilter} onValueChange={setTypeFilter}>
-                <SelectTrigger className="w-full max-w-[10rem] sm:w-40">
-                  <SelectValue placeholder="Type" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Types</SelectItem>
-                  <SelectItem value="consultation">Consultation</SelectItem>
-                  <SelectItem value="subscription">Subscription</SelectItem>
-                  <SelectItem value="webinar">Webinar</SelectItem>
-                  <SelectItem value="class">Class</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+            <FilterBar
+              search={{
+                label: "Search appointments",
+                placeholder: "Search...",
+                value: search,
+                onChange: list.setQ,
+              }}
+              selects={[
+                {
+                  key: "type",
+                  label: "Type",
+                  value: typeFilter,
+                  options: TYPE_OPTIONS,
+                  onChange: setTypeFilter,
+                },
+              ]}
+              onClear={() => setParams({ q: "", filters: { type: null } })}
+              canClear={Boolean(search) || typeFilter !== DEFAULT_TYPE}
+              className="min-w-0 flex-1"
+            />
           </div>
 
           {/* All Tabs Content */}

@@ -17,7 +17,7 @@ import {
 } from "@tanstack/react-query";
 import { NewsletterSource, NewsletterStatus } from "@prisma/client";
 import { format } from "date-fns";
-import { Download, Mail, Search, Send, Users } from "lucide-react";
+import { Download, Mail, Send, Users } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -36,6 +36,7 @@ import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
+import { FilterBar } from "@/components/dashboard/FilterBar";
 import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
 import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
@@ -149,6 +150,29 @@ function humanize(value: string): string {
   return lower.charAt(0).toUpperCase() + lower.slice(1);
 }
 
+const DEFAULT_FILTERS: Filters = {
+  status: ALL,
+  source: ALL,
+  search: "",
+  page: 1,
+};
+
+const STATUS_OPTIONS = [
+  { value: ALL, label: "All statuses" },
+  ...Object.values(NewsletterStatus).map((status) => ({
+    value: status,
+    label: humanize(status),
+  })),
+];
+
+const SOURCE_OPTIONS = [
+  { value: ALL, label: "All sources" },
+  ...Object.values(NewsletterSource).map((source) => ({
+    value: source,
+    label: humanize(source),
+  })),
+];
+
 const COLUMNS: ResponsiveColumn<Subscriber>[] = [
   {
     key: "email",
@@ -208,14 +232,7 @@ export function NewsletterManagement() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  const [filters, setFilters] = useState<Filters>({
-    status: ALL,
-    source: ALL,
-    search: "",
-    page: 1,
-  });
-  // Applied separately from the input so typing doesn't refetch per keystroke.
-  const [searchDraft, setSearchDraft] = useState("");
+  const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
 
   const [subject, setSubject] = useState("");
   const [htmlBody, setHtmlBody] = useState("");
@@ -565,66 +582,39 @@ export function NewsletterManagement() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="flex flex-col sm:flex-row gap-3">
-              <form
-                className="flex-1 flex gap-2"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  setFilters((prev) => ({
-                    ...prev,
-                    search: searchDraft,
-                    page: 1,
-                  }));
-                }}
-              >
-                <Input
-                  placeholder="Search by email or name"
-                  value={searchDraft}
-                  onChange={(event) => setSearchDraft(event.target.value)}
-                />
-                <Button type="submit" variant="outline" size="icon">
-                  <Search className="h-4 w-4" />
-                </Button>
-              </form>
-
-              <Select
-                value={filters.status}
-                onValueChange={(value) =>
-                  setFilters((prev) => ({ ...prev, status: value, page: 1 }))
-                }
-              >
-                <SelectTrigger className="sm:w-48">
-                  <SelectValue placeholder="Status" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL}>All statuses</SelectItem>
-                  {Object.values(NewsletterStatus).map((status) => (
-                    <SelectItem key={status} value={status}>
-                      {humanize(status)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-
-              <Select
-                value={filters.source}
-                onValueChange={(value) =>
-                  setFilters((prev) => ({ ...prev, source: value, page: 1 }))
-                }
-              >
-                <SelectTrigger className="sm:w-48">
-                  <SelectValue placeholder="Source" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL}>All sources</SelectItem>
-                  {Object.values(NewsletterSource).map((source) => (
-                    <SelectItem key={source} value={source}>
-                      {humanize(source)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            <FilterBar
+              search={{
+                label: "Search subscribers",
+                placeholder: "Search by email or name",
+                value: filters.search,
+                onChange: (search) =>
+                  setFilters((prev) => ({ ...prev, search, page: 1 })),
+              }}
+              selects={[
+                {
+                  key: "status",
+                  label: "Status",
+                  value: filters.status,
+                  options: STATUS_OPTIONS,
+                  onChange: (status) =>
+                    setFilters((prev) => ({ ...prev, status, page: 1 })),
+                },
+                {
+                  key: "source",
+                  label: "Source",
+                  value: filters.source,
+                  options: SOURCE_OPTIONS,
+                  onChange: (source) =>
+                    setFilters((prev) => ({ ...prev, source, page: 1 })),
+                },
+              ]}
+              onClear={() => setFilters(DEFAULT_FILTERS)}
+              canClear={
+                Boolean(filters.search) ||
+                filters.status !== ALL ||
+                filters.source !== ALL
+              }
+            />
 
             {renderSubscriberTable()}
 

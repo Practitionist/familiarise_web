@@ -15,13 +15,7 @@ import { ErrorState } from "@/components/dashboard/ErrorState";
 import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { FilterBar } from "@/components/dashboard/FilterBar";
 import {
   Tooltip,
   TooltipContent,
@@ -387,27 +381,23 @@ export function PayoutRunsPanel({
         <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0">
           <CardTitle className="text-base">Payout History</CardTitle>
           {totalPayoutsCount > 0 && (
-            <Select
-              value={statusFilter}
-              onValueChange={(v) => {
-                setStatusFilter(v as StatusFilter);
-                setPage(1);
-              }}
-            >
-              <SelectTrigger
-                className="h-8 w-[200px]"
-                aria-label="Filter by status"
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {STATUS_FILTERS.map((s) => (
-                  <SelectItem key={s} value={s}>
-                    {filterLabel(s)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <FilterBar
+              selects={[
+                {
+                  key: "status",
+                  label: "Filter by status",
+                  value: statusFilter,
+                  options: STATUS_FILTERS.map((s) => ({
+                    value: s,
+                    label: filterLabel(s),
+                  })),
+                  onChange: (v) => {
+                    setStatusFilter(v as StatusFilter);
+                    setPage(1);
+                  },
+                },
+              ]}
+            />
           )}
         </CardHeader>
         <CardContent>
