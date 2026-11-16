@@ -477,7 +477,7 @@ export default function ConsultationPricingToggle({
                     screen: the header and the checkout button stay put and only
                     the middle scrolls. Width steps up with the screen. */}
                 <DialogContent className="flex max-h-[min(calc(100dvh-1.5rem),52rem)] w-[calc(100vw-1.5rem)] flex-col gap-0 overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 p-0 text-white shadow-2xl sm:max-w-[640px] sm:rounded-2xl md:max-w-[880px] lg:max-w-[960px] xl:max-w-[1050px]">
-                  <DialogHeader className="shrink-0 border-b border-zinc-800 p-4 pr-12 sm:p-6 sm:pr-14 lg:p-8 lg:pr-14">
+                  <DialogHeader className="shrink-0 border-b border-zinc-800 p-4 pr-12 text-left sm:p-6 sm:pr-14 lg:p-8 lg:pr-14">
                     <DialogTitle className="text-lg sm:text-xl lg:text-2xl font-semibold">
                       Book {option.title} Consultation
                     </DialogTitle>

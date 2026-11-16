@@ -131,7 +131,7 @@ async function settleTrial(args: {
   const owed = trialRefundOwed({
     trialId: args.trialId,
     quote,
-    isConsultantInitiated: args.isConsultantInitiated,
+    side: args.isConsultantInitiated ? "consultant" : "consultee",
   });
   return refundCancelledTrial({
     trialId: args.trialId,

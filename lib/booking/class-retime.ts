@@ -26,6 +26,7 @@ import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { stageAppointmentRescheduledEmail } from "@/lib/email/senders/booking";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
+import { appointmentDashboardUrl } from "@/lib/appointments/calendar-links";
 import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
 import { seatHoldingParticipant } from "@/utils/scheduling-engine/occupancyPolicy";
 import { MAX_CLASS_SESSIONS_PER_DAY } from "@/utils/scheduling-engine/sessionCaps";
@@ -279,6 +280,12 @@ export async function retimeClassSeries(args: {
     hosted.appointment.organizationId,
     "appointments",
   );
+  // The seat holders' notice links to the booking itself.
+  const bookingUrl = appointmentDashboardUrl(appointmentId);
+  const moves = windows.map((w) => ({
+    from: w.session.startsAt,
+    to: w.startsAt,
+  }));
   const firstOld = movable[0].startsAt;
   const firstNew = windows[0].startsAt;
 
@@ -374,10 +381,22 @@ export async function retimeClassSeries(args: {
                   group.userIds,
                   {
                     ...moved,
+                    dashboardUrl: bookingUrl,
+                    moves: moves.map((m) => ({
+                      from: m.from.toISOString(),
+                      to: m.to.toISOString(),
+                    })),
                     leaveBy: retimeBy.toISOString(),
                     clash: group.clash,
                   },
-                  { tx, deferAttempt: true },
+                  {
+                    tx,
+                    deferAttempt: true,
+                    required: {
+                      kind: "SERIES_MOVED",
+                      recipients: group.userIds,
+                    },
+                  },
                 );
                 bells.push(...staged.map((r) => r.staged));
               }
@@ -421,10 +440,12 @@ export async function retimeClassSeries(args: {
         appointmentType: "class",
         oldStartsAt: firstOld,
         newStartsAt: firstNew,
+        moves,
         leaveBy: result.retimeBy,
         clash: group.clash,
         proposedBy: plan.consultantProfile?.user.name ?? undefined,
-        dashboardUrl,
+        requiredFor: group.userIds,
+        dashboardUrl: bookingUrl,
       }).catch(() => []),
     ),
   );

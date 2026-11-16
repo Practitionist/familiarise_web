@@ -81,7 +81,11 @@ export function detailEntitlement(
 
 type Money = bigint | number | string;
 type Priced = { price: Money; priceCurrency: string };
-type Requested = { status: string; requestedAt?: Date | string | null };
+type Requested = {
+  status: string;
+  requestedAt?: Date | string | null;
+  createdAt?: Date | string | null;
+};
 
 /**
  * The lifecycle relations as any read carries them — the detail payload or
@@ -118,6 +122,7 @@ export function lifecycleOf(
       status: a.trial.status,
       kind: "TRIAL",
       requestedAt: a.trial.requestedAt,
+      bookedAt: a.trial.createdAt,
     };
   }
   const request = a.consultation ?? a.subscription;
@@ -126,6 +131,7 @@ export function lifecycleOf(
       status: request.status,
       kind: a.consultation ? "CONSULTATION" : "SUBSCRIPTION",
       requestedAt: request.requestedAt,
+      bookedAt: request.createdAt,
     };
   }
   const event = a.webinar ?? a.class;

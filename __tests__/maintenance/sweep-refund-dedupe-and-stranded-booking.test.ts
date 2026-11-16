@@ -126,7 +126,10 @@ jest.mock("../../lib/email", () => ({
   refundOnItsWay: (paise: number) => `₹${paise / 100}`,
   SUBSCRIPTION_UNSCHEDULED_NUDGE_EMAIL_TYPE: "SUB_NUDGE",
   unscheduledNudgeEntityRef: (id: string, s: number) => `sub:${id}:${s}`,
-  sendUnscheduledSubscriptionNudgeEmail: jest.fn(async () => ({ sent: 1 })),
+  stageUnscheduledSubscriptionNudgeEmail: jest.fn(async () => ({
+    staged: [],
+    renderFailures: 0,
+  })),
   sendAppointmentCancelledEmail: jest.fn(async () => ({ sent: 1 })),
   sendRefundProcessedEmail: jest.fn(async () => ({ sent: 1 })),
 }));

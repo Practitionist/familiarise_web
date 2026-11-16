@@ -24,7 +24,7 @@ The strategy is chosen per query rather than globally for three reasons. First, 
 
 ### When to opt in
 
-**Rule:** use `relationLoadStrategy: "join"` only for list and detail reads with nested relations, and never on a write path. `lib/prisma.ts` keeps `"query"` as the default because `relationJoins` is a Prisma 7 preview feature, and that default stays for as long as the app is on Prisma 7. Prisma 8 loads `include` in one statement by design, and moving to it is a separate migration.
+**Rule:** use `relationLoadStrategy: "join"` for list and detail reads with nested relations, and on a write path only for the named booking reads in [Booking write paths](#booking-write-paths). `lib/prisma.ts` keeps `"query"` as the default because `relationJoins` is a Prisma 7 preview feature, and that default stays for as long as the app is on Prisma 7. Prisma 8 loads `include` in one statement by design, and moving to it is a separate migration.
 
 A reader should pass `relationLoadStrategy: "join"` when it runs on a request path and its `include` or `select` tree has three or more relation nodes. It also applies to any read that selects `_count`. Money columns are safe: BigInt columns travel through the JSON aggregation as text and come back as the same BigInt values, and the result extensions in `lib/prisma-extensions.ts` still convert them. Aggregates (`count`, `aggregate`, `groupBy`) do not accept the option, and do not need it. Do not opt in a read that selects a `Decimal` column while the upstream precision issue is open; none of the readers below selects one. `Payment.exchangeRateAtCheckout` is the one to watch: the pending-payments gateway read therefore uses an explicit `select` instead of `include`.
 
@@ -53,6 +53,33 @@ Before opting a reader in, snapshot its payload with the query strategy and comp
 The rows with a reasoned count were not measured against a database; the counts come from the number of relation nodes in each `include` or `select` tree (each node is one statement under `query`). The Earnings page as a whole dropped from 104 statements to 27. The three statements left in the session read are Better Auth's own session and user lookups and the joined membership read. Better Auth's `experimental.joins` option did not merge the first two through the Prisma adapter when tried, so they stay separate.
 
 **Tiny reference tables are cached, not just joined.** The `Domain`, `SubDomain` and `Tag` lists change only on an admin or consultant write, so `lib/data/taxonomy.ts` serves them from `unstable_cache` under the tag `taxonomy` and every write path calls `purgeTaxonomy()` after it commits (the consultant custom-tag upsert in `app/api/user/content/tags/route.ts`). The cached rows carry ids and names only, so no `Date` crosses the cache. The consultant-count variants on the landing page and explore filters stay under the `experts` tag.
+
+### Booking write paths
+
+The booking writes are where statement count hurts most, because several of their reads run inside a Serializable or interactive transaction that holds the connection. The reads below opt in by name; their selections are unchanged, so callers receive the same rows. `ensureConsulteeProfile` and the trial `create` read-back are in the list because a write helper's read is still a read. The reasoning and the options not chosen are in [the booking statement cuts](../decisions/2026-11-15-booking-statement-cuts.md).
+
+| Path                       | Joined reads (file)                                                                                                                                                                                                                                                                | Other cut                                                                              |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| Free webinar seat checkout | the four webinar loads (`lib/payments/checkout/pricing.ts`, `locks.ts`, `revalidate.ts`, `handlers/webinar.ts`), `resolvePaymentForEarnings` (`lib/payments/payouts/earnings-service.ts`), `classifyOpenOrders` (`lib/payments/checkout/order-reuse.ts`), `ensureConsulteeProfile` | the consumer-invoice reads are skipped when `hasBilledSupply` is false                 |
+| Free trial request         | the `trial.create` read-back (`lib/trials/book-trial.ts`), the bell recipients (`bellRecipientZones`)                                                                                                                                                                              | notice reads before the transaction, one insert per table inside it, `timeout: 15_000` |
+| Cancel a 1:1               | the route's appointment read, `resolveBookingRefundContext` (`lib/booking/cancellation-scope.ts`), the backup-interest read (`lib/booking/backup-interest.ts`)                                                                                                                     | none                                                                                   |
+| Leave an event seat        | `seatPayment` (read once per leave, `lib/booking/seat-leave.ts`), `readEventByAppointment` (`lib/booking/event-waitlist.ts`), the payment read in `refundRemovedAttendeeSeat`                                                                                                      | none                                                                                   |
+
+Counts per path, before and after (static traces every Prisma call; measured is the database-tier statement log; `BEGIN`, `COMMIT` and `SET TRANSACTION` count):
+
+| Path                                                    | Before | After | Source   |
+| ------------------------------------------------------- | ------ | ----- | -------- |
+| Free webinar seat checkout, `handleCheckout`            | 129    | 76    | measured |
+| of which inside the Serializable commit                 | 58     | 37    | measured |
+| Free 1:1 consultation checkout, `handleCheckout`        | 127    | 93    | measured |
+| Free trial request, the route                           | 46     | 29    | measured |
+| of which inside its transaction                         | 37     | 18    | measured |
+| `bookTrialInTx` alone, with `BEGIN` and `COMMIT`        | 21     | 16    | measured |
+| Cancel a free confirmed 1:1, the route                  | 52     | 21    | measured |
+| Leave a paid webinar seat, the committed leave          | 39     | 18    | measured |
+| `resolvePaymentForEarnings`'s read on a webinar payment | 17     | 1     | measured |
+
+A path's time is its count times about 95 ms, so a free webinar registration drops from about 12.3 s to about 7.2 s of round trips (measured with a mocked session and gateway; the refund door and the Stream calls are not in these counts). A booking write's interactive `$transaction` passes `maxWait` and `timeout`; Prisma's 5 s default is not a budget for a transaction of 30 statements.
 
 ## Companion conventions
 

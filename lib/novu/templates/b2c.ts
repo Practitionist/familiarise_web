@@ -42,11 +42,13 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
   {
     workflowId: W.APPOINTMENT_CANCELLED,
     name: "Appointment cancelled",
-    description: "Both parties. `cancelledBy` is a name or a capitalised role.",
+    description:
+      "Both parties. `cancelledBy` is a name or a capitalised role; with `seatRemoved`, the attendee a host removed from a class or webinar that goes ahead.",
     category: "appointments",
     inApp: {
-      subject: "Session cancelled",
-      body: "{{payload.cancelledBy}} cancelled the {{payload.appointmentType}} for {{payload.planTitle}}{% if payload.dateTime %} on {{payload.dateTime}}{% endif %}. Reason: {{payload.reason}}.",
+      subject:
+        "{% if payload.seatRemoved %}Removed from {{payload.planTitle}}{% else %}Session cancelled{% endif %}",
+      body: "{% if payload.seatRemoved %}{{payload.cancelledBy}} removed you from the {{payload.appointmentType}} {{payload.planTitle}}, so you no longer have a seat in it.{% else %}{{payload.cancelledBy}} cancelled the {{payload.appointmentType}} for {{payload.planTitle}}{% if payload.dateTime %} on {{payload.dateTime}}{% endif %}. Reason: {{payload.reason}}.{% endif %}",
       redirect: "dashboardUrl",
     },
   },
@@ -83,7 +85,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     category: "appointments",
     inApp: {
       subject: "Session refunded",
-      body: "A missed session of {{payload.planTitle}} was not made up, so {{payload.amount}} is on its way back to you.",
+      body: "A missed session of {{payload.planTitle}} was not made up, so {% if payload.refundStarted %}your {{payload.amount}} refund has started and usually reaches you in 5–7 working days{% else %}{{payload.amount}} is on its way back to you{% endif %}.",
       redirect: "dashboardUrl",
     },
   },
@@ -152,11 +154,11 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     workflowId: W.APPOINTMENT_RESCHEDULED,
     name: "Appointment rescheduled",
     description:
-      "Both parties. `outcome` is MOVED, PROPOSED, RELEASED, DECLINED, WITHDRAWN or EXPIRED (#1085, #1846).",
+      "Both parties. `outcome` is MOVED (with `movesText` for a series), PROPOSED (with `respondBy`), RELEASED, DECLINED, WITHDRAWN or EXPIRED.",
     category: "appointments",
     inApp: {
       subject: "Schedule change",
-      body: "{% if payload.outcome == 'MOVED' %}Your {{payload.appointmentType}} for {{payload.planTitle}} moved from {{payload.oldDateTime}} to {{payload.newDateTime}}.{% if payload.clash %} You already have a session then.{% endif %}{% if payload.leaveBy %} Keep your seat — nothing to do. Can't make it? Leave with a full refund until {{payload.leaveBy}}.{% endif %}{% elsif payload.outcome == 'PROPOSED' %}A new time was proposed for your {{payload.appointmentType}} for {{payload.planTitle}}: {{payload.newDateTime}} instead of {{payload.oldDateTime}}. Please review it.{% elsif payload.outcome == 'RELEASED' %}The {{payload.appointmentType}} for {{payload.planTitle}}{% if payload.oldDateTime %} on {{payload.oldDateTime}}{% endif %} was released. You will be told once a new time is set.{% elsif payload.outcome == 'DECLINED' %}The proposed new time for your {{payload.appointmentType}} for {{payload.planTitle}} was declined{% if payload.oldDateTime %}; it stays on {{payload.oldDateTime}}{% endif %}.{% elsif payload.outcome == 'EXPIRED' %}The proposed new time for your {{payload.appointmentType}} for {{payload.planTitle}} expired, so your original time stands{% if payload.oldDateTime %}: {{payload.oldDateTime}}{% endif %}.{% else %}The reschedule request for your {{payload.appointmentType}} for {{payload.planTitle}} was withdrawn{% if payload.oldDateTime %}; it stays on {{payload.oldDateTime}}{% endif %}.{% endif %}",
+      body: "{% if payload.outcome == 'MOVED' %}{% if payload.movesText %}{{payload.movedCount}} sessions of your {{payload.appointmentType}} for {{payload.planTitle}} moved: {{payload.movesText}}.{% else %}Your {{payload.appointmentType}} for {{payload.planTitle}} moved from {{payload.oldDateTime}} to {{payload.newDateTime}}.{% endif %}{% if payload.clash %} You already have a session then.{% endif %}{% if payload.leaveBy %} Keep your seat — nothing to do. Can't make it? Leave with a full refund until {{payload.leaveBy}}.{% endif %}{% elsif payload.outcome == 'PROPOSED' %}A new time was proposed for your {{payload.appointmentType}} for {{payload.planTitle}}: {{payload.newDateTime}} instead of {{payload.oldDateTime}}. Please review it{% if payload.respondBy %} by {{payload.respondBy}}, or the original time stands{% endif %}.{% elsif payload.outcome == 'RELEASED' %}The {{payload.appointmentType}} for {{payload.planTitle}}{% if payload.oldDateTime %} on {{payload.oldDateTime}}{% endif %} was released. You will be told once a new time is set.{% elsif payload.outcome == 'DECLINED' %}The proposed new time for your {{payload.appointmentType}} for {{payload.planTitle}} was declined{% if payload.oldDateTime %}; it stays on {{payload.oldDateTime}}{% endif %}.{% elsif payload.outcome == 'EXPIRED' %}The proposed new time for your {{payload.appointmentType}} for {{payload.planTitle}} expired, so your original time stands{% if payload.oldDateTime %}: {{payload.oldDateTime}}{% endif %}.{% else %}The proposed new time for your {{payload.appointmentType}} for {{payload.planTitle}} was withdrawn, so your original time stands{% if payload.oldDateTime %}: {{payload.oldDateTime}}{% endif %}.{% endif %}",
       redirect: "dashboardUrl",
     },
   },
@@ -210,12 +212,12 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     workflowId: W.NEW_BOOKING_REQUEST,
     name: "New booking request",
     description:
-      "The consultant, when a request needs their approval; with `nudgeHours`, a paid plan still waiting for session times (#1775 C-4); with `weekSummary`, the daily reminder for plan weeks with sessions still to place.",
+      "The consultant, when a request needs their approval; with `expiresAt`, a request 6 hours from lapsing unanswered; with `nudgeHours`, a paid plan still waiting for session times (with `refundAt`, when the buyer is refunded); with `weekSummary`, the daily reminder for plan weeks with sessions still to place.",
     category: "appointments",
     inApp: {
       subject:
-        "{% if payload.weekSummary %}Sessions to schedule this week{% elsif payload.nudgeHours %}Waiting for session times{% else %}New booking request{% endif %}",
-      body: "{% if payload.weekSummary %}{{payload.weekSummary}} Open it to auto-schedule in one tap.{% elsif payload.nudgeHours %}{{payload.consulteeName}}'s {{payload.appointmentType}} for {{payload.planTitle}} is waiting for session times — {{payload.nudgeHours}}h since payment. Schedule cycle 1 within 48h or the buyer is refunded in full.{% else %}{{payload.consulteeName}} requested a {{payload.appointmentType}} for {{payload.planTitle}}{% if payload.requestedDateTime %} on {{payload.requestedDateTime}}{% endif %}.{% endif %}",
+        "{% if payload.weekSummary %}Sessions to schedule this week{% elsif payload.expiresAt %}A request is about to lapse{% elsif payload.nudgeHours %}Waiting for session times{% else %}New booking request{% endif %}",
+      body: "{% if payload.weekSummary %}{{payload.weekSummary}} Open it to auto-schedule in one tap.{% elsif payload.expiresAt %}{{payload.consulteeName}}'s request for {{payload.planTitle}} lapses at {{payload.expiresAt}} unless you approve or decline it.{% elsif payload.nudgeHours %}{{payload.consulteeName}}'s {{payload.appointmentType}} for {{payload.planTitle}} is waiting for session times — {{payload.nudgeHours}}h since payment. Schedule cycle 1 {% if payload.refundAt %}by {{payload.refundAt}}{% else %}within 48h{% endif %} or {{payload.consulteeName}} is refunded in full.{% else %}{{payload.consulteeName}} requested a {{payload.appointmentType}} for {{payload.planTitle}}{% if payload.requestedDateTime %} on {{payload.requestedDateTime}}{% endif %}.{% endif %}",
       redirect: "dashboardUrl",
     },
   },
@@ -445,17 +447,6 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     },
   },
   {
-    workflowId: W.TRIAL_SESSION_REQUESTED,
-    name: "Trial requested",
-    description: "The consultant, when a consultee asks for a free trial.",
-    category: "trials",
-    inApp: {
-      subject: "Trial requested",
-      body: "{{payload.consulteeName}} requested a free trial session for {{payload.planTitle}}{% if payload.dateTime %} on {{payload.dateTime}}{% endif %}.",
-      redirect: "dashboardUrl",
-    },
-  },
-  {
     workflowId: W.TRIAL_SESSION_SCHEDULED,
     name: "Trial scheduled",
     description: "Both parties, once the trial is confirmed.",
@@ -469,11 +460,13 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
   {
     workflowId: W.TRIAL_SESSION_COMPLETED,
     name: "Trial completed",
-    description: "Both parties.",
+    description:
+      "Both parties; the learner's copy carries `continueWith` and opens the plan.",
     category: "trials",
     inApp: {
-      subject: "Trial complete",
-      body: "The trial session for {{payload.planTitle}} with {{payload.consultantName}} has ended.",
+      subject:
+        "{% if payload.continueWith %}Continue with {{payload.continueWith}}{% else %}Trial complete{% endif %}",
+      body: "The trial session for {{payload.planTitle}} with {% if payload.continueWith %}{{payload.continueWith}} has ended. Pick a plan to keep working together.{% else %}{{payload.consulteeName}} has ended.{% endif %}",
       redirect: "dashboardUrl",
     },
   },
@@ -493,11 +486,12 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     workflowId: W.TRIAL_REFUNDED,
     name: "Trial refunded",
     description:
-      "The learner, when a paid trial is declined or not answered within 48 h.",
+      "The learner, when the expert cancels a paid trial and its money moved.",
     category: "trials",
     inApp: {
-      subject: "Trial refunded in full",
-      body: "{{payload.consultantName}} couldn't take your {{payload.planTitle}} trial, so it is refunded in full.",
+      subject:
+        "{% if payload.refundStarted %}Trial refund started{% else %}Trial refunded in full{% endif %}",
+      body: "{% if payload.refundStarted %}{{payload.consultantName}} couldn't take your {{payload.planTitle}} trial. Your {{payload.amount}} refund has started and usually reaches you in 5–7 working days.{% else %}{{payload.consultantName}} couldn't take your {{payload.planTitle}} trial, so it is refunded in full.{% endif %}",
       redirect: "dashboardUrl",
     },
   },

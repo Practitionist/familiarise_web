@@ -9,11 +9,18 @@
  * (decision 6); an organiser removal is untouched.
  */
 
-const refundSeat = jest.fn(async () => ({
-  amountRefundedPaise: 100_000,
-  refundPct: 100,
-  rail: "GATEWAY",
-}));
+const refundSeat = jest.fn(
+  async (): Promise<{
+    amountRefundedPaise: number;
+    refundPct: number;
+    rail: string;
+    pending?: boolean;
+  }> => ({
+    amountRefundedPaise: 100_000,
+    refundPct: 100,
+    rail: "GATEWAY",
+  }),
+);
 // The notify-me hooks are pinned by their own suites; here they stage nothing.
 jest.mock("@/lib/booking/event-waitlist", () => ({
   stageSeatOpenedNotices: jest.fn(async () => ({ pages: [], email: null })),
@@ -22,9 +29,9 @@ jest.mock("@/lib/booking/event-waitlist", () => ({
   expireEventWaitlist: jest.fn(async () => ({ expired: 0, purged: 0 })),
   hasLapsedEventWaitlist: jest.fn(async () => false),
 }));
-const notifyFreeSeatRemoved = jest.fn(async (..._a: unknown[]) => undefined);
+const notifySeatRemoved = jest.fn(async (..._a: unknown[]) => undefined);
 jest.mock("@/lib/booking/seat-removed-notice", () => ({
-  notifyFreeSeatRemoved: (...a: unknown[]) => notifyFreeSeatRemoved(...a),
+  notifySeatRemoved: (...a: unknown[]) => notifySeatRemoved(...a),
 }));
 jest.mock("../../lib/payments/operations/event-refunds", () => ({
   refundRemovedAttendeeSeat: (...a: unknown[]) => refundSeat(...(a as [])),
@@ -231,7 +238,7 @@ it("leaves an organiser removal untouched (full, organiser-initiated)", async ()
 it("tells an attendee removed from a free seat, who gets no refund notice", async () => {
   slot.startsAt = inHours(1);
   await leave(false);
-  expect(notifyFreeSeatRemoved).not.toHaveBeenCalled();
+  expect(notifySeatRemoved).not.toHaveBeenCalled();
   const { default: db } = jest.requireMock("../../lib/prisma") as {
     default: {
       $transaction: (fn: (t: unknown) => unknown) => Promise<unknown>;
@@ -258,8 +265,26 @@ it("tells an attendee removed from a free seat, who gets no refund notice", asyn
   });
   await leave(false);
   await new Promise((resolve) => setImmediate(resolve));
-  expect(notifyFreeSeatRemoved).toHaveBeenCalledWith(
+  expect(notifySeatRemoved).toHaveBeenCalledWith(
     expect.objectContaining({ attendeeUserId: "u-1" }),
+  );
+});
+
+it("a host removal whose refund is still settling says the refund has started", async () => {
+  slot.startsAt = inHours(1);
+  refundSeat.mockResolvedValueOnce({
+    amountRefundedPaise: 50_000,
+    refundPct: 100,
+    rail: "GATEWAY",
+    pending: true,
+  });
+  await leave(false);
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(notifySeatRemoved).toHaveBeenCalledWith(
+    expect.objectContaining({
+      attendeeUserId: "u-1",
+      refundText: expect.stringContaining("refund has started"),
+    }),
   );
 });
 
@@ -296,6 +321,8 @@ it("refuses a class exit without the exit right (#1780 E-5)", async () => {
           }),
         },
         appointmentOccurrence: { findMany: async () => [] },
+        // The leave reads the seat's payment once, before the rule runs.
+        payment: { findFirst: async () => null },
       }),
   );
   await expect(

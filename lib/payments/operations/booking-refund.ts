@@ -33,6 +33,11 @@
  * SUCCEEDED payment through.
  */
 
+import {
+  noticeReason,
+  refundNoticeKind,
+  refundNoticeOverride,
+} from "./refund-cause";
 import { Prisma, PaymentStatus, RefundStatus } from "@prisma/client";
 import { transitionParticipant } from "@/lib/booking/participants";
 import {
@@ -173,12 +178,14 @@ type StagedRefundNotice = {
 function refundReceiptArgs(
   payment: { id: string; userId: string; currency: string },
   amountPaise: number,
+  reason: string | null | undefined,
 ) {
   return {
     userId: payment.userId,
     paymentId: payment.id,
     amountPaise,
     currency: payment.currency,
+    required: refundNoticeKind(reason) !== null,
   };
 }
 
@@ -191,6 +198,7 @@ async function stageRefundNotice(
     currency: string;
   },
   amountPaise: number,
+  reason: string | null | undefined,
   receipt?: PreparedSpecEmails | null,
 ): Promise<StagedRefundNotice> {
   const bell = await notifyRefundProcessed(
@@ -202,11 +210,15 @@ async function stageRefundNotice(
       // #1527 — the recipient is always the payer.
       dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
     },
-    { tx, entityRef: `payment:${payment.id}` },
+    {
+      tx,
+      entityRef: `payment:${payment.id}`,
+      required: refundNoticeOverride(reason, payment.userId),
+    },
   );
   const emails = await stageRefundProcessedEmail(
     tx,
-    refundReceiptArgs(payment, amountPaise),
+    refundReceiptArgs(payment, amountPaise, reason),
     receipt,
   );
   return { bell: bell?.staged ?? null, emails };
@@ -554,7 +566,12 @@ async function refundFreeCreditPayment(
           payerUserId: payment.userId,
         });
         // The Refund row is ₹0; the value that came back is the restored credit.
-        notice = await stageRefundNotice(tx, payment, restoredPaise);
+        notice = await stageRefundNotice(
+          tx,
+          payment,
+          restoredPaise,
+          noticeReason(settledOwed, input.reason),
+        );
         return {
           result: {
             refundId: refundRow.id,
@@ -741,7 +758,12 @@ export async function restoreSessionCredits(input: {
               now: new Date(),
             });
           }
-          notice = await stageRefundNotice(tx, payment, restoredPaise);
+          notice = await stageRefundNotice(
+            tx,
+            payment,
+            restoredPaise,
+            noticeReason(settledOwed, input.reason),
+          );
           return {
             refundId: refundRow.id,
             amountRefundedPaise: 0,
@@ -1319,7 +1341,7 @@ async function refundInternalFundedPayment(
     input.amountPaise === undefined
       ? null
       : await prepareRefundProcessedEmail(
-          refundReceiptArgs(payment, input.amountPaise),
+          refundReceiptArgs(payment, input.amountPaise, input.reason),
         ).catch(() => null);
   // Loaded before the transaction, so no module load runs while it holds the connection.
   const { persistRefundRevocationInTx } =
@@ -1435,7 +1457,13 @@ async function refundInternalFundedPayment(
             payerUserId: payment.userId,
           });
         }
-        notice = await stageRefundNotice(tx, payment, requested, receipt);
+        notice = await stageRefundNotice(
+          tx,
+          payment,
+          requested,
+          noticeReason(settledOwed, input.reason),
+          receipt,
+        );
         return {
           result: {
             refundId: refundRow.id,

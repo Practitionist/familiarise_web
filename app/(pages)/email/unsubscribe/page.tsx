@@ -26,7 +26,7 @@ type SearchParams = Promise<{
 const OPTIONAL_EMAILS =
   "booking updates and reminders, refunds and payouts, support replies, reviews, and subscription and trial updates";
 const REQUIRED_EMAILS =
-  "account and security notices, payment receipts, and invitations or decisions you must act on";
+  "account and security notices, payment receipts, invitations or decisions you must act on, and changes someone else makes to your booking";
 
 function first(value: string | string[] | undefined): string {
   return Array.isArray(value) ? (value[0] ?? "") : (value ?? "");
