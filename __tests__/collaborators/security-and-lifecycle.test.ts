@@ -37,7 +37,7 @@ jest.mock("../../lib/stream-client", () => ({
 jest.mock("../../lib/stream/event-channel-service", () => ({
   addUserToEventChannel: jest.fn(async () => ({ success: true })),
   checkEventChannelExists: jest.fn(async () => false),
-  removeUserFromEventChannel: jest.fn(async () => ({ success: true })),
+  removeUsersFromEventChannel: jest.fn(async () => ({ failedUserIds: [] })),
 }));
 
 const mockStageBell = jest.fn(async (..._args: unknown[]) => null);
@@ -84,10 +84,8 @@ jest.mock("../../lib/prisma", () => {
 });
 
 import prisma from "@/lib/prisma";
-import {
-  getCollaboratorsForUser,
-  revokeCollaboratorAccess,
-} from "@/lib/collaborators/service";
+import { getCollaboratorsForUser } from "@/lib/collaborators/service";
+import { driveCollaboratorRevocation } from "@/lib/stream/collaborator-access";
 import { expireStaleCollaboratorInvites } from "@/lib/collaborators/cleanup";
 import { readOfferingStats } from "@/lib/data/offering-stats";
 
@@ -272,13 +270,13 @@ describe("collaborator security, seat counting, SFU revocation, and lifecycle sw
         prisma.appointmentParticipant.findMany as jest.Mock
       ).mockResolvedValueOnce([]);
 
-      const result = await revokeCollaboratorAccess(
-        "webinar",
-        "wp-live",
+      const owed = await driveCollaboratorRevocation(
+        { planType: "webinar", planId: "wp-live" },
         "user-collab-removed",
+        Number.POSITIVE_INFINITY,
       );
 
-      expect(result).toEqual({ success: true });
+      expect(owed).toBeNull();
       expect(mockUpdateCallMembers).toHaveBeenCalledWith({
         remove_members: ["user-collab-removed"],
       });

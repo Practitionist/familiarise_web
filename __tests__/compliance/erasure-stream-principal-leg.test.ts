@@ -14,8 +14,8 @@ jest.mock("../../lib/api/organizations/seat-count", () => ({
 jest.mock("../../lib/observability/report", () => ({
   reportSentryError: jest.fn(),
 }));
-jest.mock("../../lib/collaborators/service", () => ({
-  revokeCollaboratorAccess: jest.fn(async () => ({ success: true })),
+jest.mock("../../lib/stream/collaborator-access", () => ({
+  driveCollaboratorRevocation: jest.fn(async () => null),
 }));
 jest.mock("../../lib/novu/client", () => ({
   isNovuConfigured: () => true,

@@ -51,7 +51,15 @@ jest.mock("@/lib/prisma", () => ({
     },
     webinar: { findUnique: (args: unknown) => mockEventFindUnique(args) },
     class: { findUnique: (args: unknown) => mockEventFindUnique(args) },
-    collaborator: { findFirst: async () => null },
+    // The roster's collaborator is still on the team when its grant is re-checked.
+    collaborator: {
+      findFirst: async (args: {
+        where: { consultantProfile?: { userId?: string } };
+      }) =>
+        args.where.consultantProfile?.userId === "collab"
+          ? { id: "c-1" }
+          : null,
+    },
     user: { findMany: async () => [] },
     meeting: { findMany: async () => mockState.meetings },
     streamRevocationRetry: {

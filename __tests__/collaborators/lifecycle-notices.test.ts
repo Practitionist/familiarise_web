@@ -6,7 +6,7 @@
 
 const mockStageNotices = jest.fn();
 const mockFlush = jest.fn(async (..._args: unknown[]) => undefined);
-const mockRevoke = jest.fn(async (..._args: unknown[]) => ({ success: true }));
+const mockRevoke = jest.fn(async (..._args: unknown[]) => undefined);
 jest.mock("@/lib/collaborators/notifications", () => {
   const actual = jest.requireActual("@/lib/collaborators/notifications");
   return {
@@ -21,14 +21,11 @@ jest.mock("@/lib/email/render", () => ({
 jest.mock("@/lib/novu/stage-then-attempt", () => ({
   flushNotificationsAfter: (...args: unknown[]) => mockFlush(...args),
 }));
-jest.mock("@/lib/collaborators/service", () => ({
-  revokeCollaboratorAccess: (...args: unknown[]) => mockRevoke(...args),
-}));
 jest.mock("@/lib/stream/org-access-revocation", () => ({
   revokeMemberStreamAccess: jest.fn(async () => ({ complete: true })),
 }));
 jest.mock("@/lib/stream/access-revocation", () => ({
-  enqueueCollaboratorRevocationRetry: jest.fn(),
+  revokeCollaboratorAccess: (...args: unknown[]) => mockRevoke(...args),
   enqueueOrgMemberRevocationRetry: jest.fn(),
 }));
 jest.mock("@/lib/enterprise/membership-guards", () => ({
@@ -170,6 +167,9 @@ it("an org member removal stages one WITHDRAWN notice per row for the host and n
   });
   expect(mockStageNotices).toHaveBeenCalledTimes(1);
   expect(mockStageNotices).toHaveBeenCalledWith(tx, "WITHDRAWN", row);
-  expect(mockRevoke).toHaveBeenCalledWith("webinar", "wp-1", "u-guest");
+  expect(mockRevoke).toHaveBeenCalledWith(
+    expect.objectContaining({ planType: "webinar", planId: "wp-1" }),
+    "u-guest",
+  );
   expect(mockFlush).toHaveBeenCalledTimes(1);
 });
