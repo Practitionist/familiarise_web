@@ -13,7 +13,7 @@ import {
 } from "@/lib/backoffice/money-list-schemas";
 import { gatewayLabel } from "@/lib/labels/money-labels";
 import { paymentStatusBadge } from "@/lib/labels/session-labels";
-import { OperatorTime } from "@/lib/time/operator-time";
+import { OperatorTimeStack } from "@/lib/time/operator-time";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FilterBar } from "@/components/dashboard/FilterBar";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -119,16 +119,18 @@ export function PaymentsPage() {
       key: "buyer",
       header: "Buyer",
       primary: true,
+      className: "max-w-[12rem]",
       cell: (payment) => <PersonCell person={payment.buyer} />,
     },
     {
       key: "booking",
       header: "Booking",
+      className: "max-w-[14rem]",
       cell: (payment) => (
         <div className="min-w-0 space-y-1">
           <BookingCell booking={payment.booking} basePath={basePath} />
           <p
-            className="truncate font-mono text-[11px] text-muted-foreground/70"
+            className="break-all font-mono text-[11px] text-muted-foreground/70"
             title={payment.paymentIntent}
           >
             {payment.paymentIntent}
@@ -139,39 +141,31 @@ export function PaymentsPage() {
     {
       key: "amount",
       header: "Amount",
+      className: "whitespace-nowrap",
       cell: (payment) => (
-        <span className="text-sm text-foreground">
-          {formatCurrencyAmount(payment.amount, payment.currency)}
-        </span>
+        <div>
+          <p className="text-sm text-foreground">
+            {formatCurrencyAmount(payment.amount, payment.currency)}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {gatewayLabel(payment.paymentGateway)}
+          </p>
+        </div>
       ),
     },
     {
       key: "status",
       header: "Status",
       cell: (payment) => (
-        <StatusBadge {...paymentStatusBadge(payment.paymentStatus)} />
+        <div className="flex flex-col items-start gap-1">
+          <StatusBadge {...paymentStatusBadge(payment.paymentStatus)} />
+          {payment.isMockPayment && (
+            <span className="rounded bg-muted px-2 py-0.5 text-[11px] font-medium text-foreground">
+              Mock
+            </span>
+          )}
+        </div>
       ),
-    },
-    {
-      key: "gateway",
-      header: "Gateway",
-      cell: (payment) => (
-        <span className="text-sm text-foreground">
-          {gatewayLabel(payment.paymentGateway)}
-        </span>
-      ),
-    },
-    {
-      key: "mock",
-      header: "Mock",
-      cell: (payment) =>
-        payment.isMockPayment ? (
-          <span className="px-2 py-1 rounded text-xs font-medium bg-muted text-foreground">
-            MOCK
-          </span>
-        ) : (
-          <span className="text-muted-foreground/70">—</span>
-        ),
     },
     {
       key: "invoice",
@@ -181,12 +175,8 @@ export function PaymentsPage() {
     {
       key: "date",
       header: "Date",
-      cell: (payment) => (
-        <OperatorTime
-          value={payment.createdAt}
-          className="text-sm text-muted-foreground"
-        />
-      ),
+      className: "text-sm",
+      cell: (payment) => <OperatorTimeStack value={payment.createdAt} />,
     },
   ];
 

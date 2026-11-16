@@ -127,6 +127,14 @@ const HISTORY_REASON_LABEL: Record<string, string> = {
 const capitalise = (text: string) =>
   text.charAt(0).toUpperCase() + text.slice(1);
 
+/** Whose share an earnings row is, in words. */
+const EARNING_ROLE_LABEL: Record<string, string> = {
+  OWNER: "Expert",
+  COLLABORATOR: "Collaborator",
+};
+const shareOf = (role: string) =>
+  EARNING_ROLE_LABEL[role] ?? capitalise(enumWords(role));
+
 /** A stored reason in words: a code becomes its label, free text passes through. */
 export function traceReason(reason: string | null | undefined): string | null {
   const raw = reason?.trim();
@@ -615,7 +623,7 @@ export async function readEntityTrace(args: {
               status: "Earnings recorded",
               ...money,
               detail: join([
-                `${e.role} share for ${e.consultantProfile.user.name}`,
+                `${shareOf(e.role)} share for ${e.consultantProfile.user.name}`,
                 `platform fee ${formatCurrencyAmount(Number(e.platformFeePaise), e.currency)}`,
               ]),
             }),
@@ -672,7 +680,7 @@ export async function readEntityTrace(args: {
             ...makeRow("earnings", e.id, "created", e.createdAt, {
               status: "Organisation earnings recorded",
               ...money,
-              detail: `${e.role} share for ${e.organization.name}`,
+              detail: `${shareOf(e.role)} share for ${e.organization.name}`,
             }),
             ...makeRow("earnings", e.id, "status", e.updatedAt, {
               status: `Organisation earnings now ${enumWords(e.status)}`,
@@ -1182,7 +1190,7 @@ export async function readEntityTrace(args: {
             `event:${ev.id}`,
             ev.createdAt,
             {
-              status: `${ev.category} ${ev.severity}`,
+              status: `${capitalise(enumWords(ev.category))} event (${enumWords(ev.severity)})`,
               detail: ev.message.slice(0, 200),
             },
           ),

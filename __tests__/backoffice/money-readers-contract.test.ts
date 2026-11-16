@@ -99,9 +99,24 @@ jest.mock("../../lib/prisma", () => ({
       ]),
     },
     user: {
-      findMany: mockSpy("user", () => [
-        { id: "user-8", name: "Olivia Brown", email: "olivia@example.test" },
-      ]),
+      // The target read asks for each buyer's payments; the approver read does not.
+      findMany: async (args: { select: { Payment?: unknown } }) => {
+        mockCalls.user = [...(mockCalls.user ?? []), args];
+        return args.select.Payment
+          ? [
+              {
+                ...mockBuyer,
+                Payment: [{ id: "pay-1", appointment: mockAppointment }],
+              },
+            ]
+          : [
+              {
+                id: "user-8",
+                name: "Olivia Brown",
+                email: "olivia@example.test",
+              },
+            ];
+      },
     },
     consultantEarnings: {
       count: async () => 1,
@@ -347,7 +362,8 @@ it("proposals page, and resolve their target in one read per kind", async () => 
     await listProposals("PROPOSED", new Date("2026-11-17T00:00:00Z"), 2),
   );
   expect(mockCalls.opsActionProposal[0]).toMatchObject({ skip: 20, take: 20 });
-  expect(mockCalls.payment).toHaveLength(1);
+  // The payment target rides the one batched user read.
+  expect(mockCalls.user).toHaveLength(1);
   expect(page.proposals[0].target).toMatchObject({
     person: { name: "Priya Anderson" },
     booking: { title: "Career coaching" },

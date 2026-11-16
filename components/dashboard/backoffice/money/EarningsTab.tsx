@@ -23,7 +23,7 @@ import {
   type EarningListItem,
 } from "@/lib/backoffice/money-list-schemas";
 import { earningStatusBadge } from "@/lib/labels/session-labels";
-import { OperatorTime } from "@/lib/time/operator-time";
+import { OperatorTimeStack } from "@/lib/time/operator-time";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { ReasonDialog } from "./ReasonDialog";
 import { useOpsDoor } from "./ops-door";
@@ -66,6 +66,7 @@ const earningColumns = (basePath: string): ResponsiveColumn<EarningRow>[] => [
     key: "consultant",
     header: "Expert",
     primary: true,
+    className: "max-w-[12rem]",
     cell: (r) => (
       <PersonCell
         person={{
@@ -79,34 +80,38 @@ const earningColumns = (basePath: string): ResponsiveColumn<EarningRow>[] => [
   {
     key: "buyer",
     header: "Buyer",
+    className: "max-w-[12rem]",
     cell: (r) => <PersonCell person={r.payment?.buyer} />,
   },
   {
     key: "booking",
     header: "Booking",
+    className: "max-w-[14rem]",
     cell: (r) => (
       <div className="min-w-0 space-y-1">
         <BookingCell booking={r.payment?.booking} basePath={basePath} />
-        <p className="truncate font-mono text-[11px] text-muted-foreground/70">
+        <p className="break-all font-mono text-[11px] text-muted-foreground/70">
           {r.paymentId}
         </p>
       </div>
     ),
   },
   {
+    // The share over its status, so the hold date and the door stay in view.
     key: "share",
     header: "Share",
-    cell: (r) => formatCurrencyAmount(r.consultantSharePaise, "INR"),
-  },
-  {
-    key: "status",
-    header: "Status",
-    cell: (r) => <StatusBadge {...earningStatusBadge(r.status)} />,
+    className: "whitespace-nowrap",
+    cell: (r) => (
+      <div className="flex flex-col items-start gap-1">
+        <span>{formatCurrencyAmount(r.consultantSharePaise, "INR")}</span>
+        <StatusBadge {...earningStatusBadge(r.status)} size="sm" />
+      </div>
+    ),
   },
   {
     key: "hold",
     header: "Hold until",
-    cell: (r) => <OperatorTime value={r.holdUntil} fallback="Not set" />,
+    cell: (r) => <OperatorTimeStack value={r.holdUntil} fallback="Not set" />,
   },
 ];
 

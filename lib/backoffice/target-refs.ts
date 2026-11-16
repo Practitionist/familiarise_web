@@ -1,7 +1,7 @@
 /**
  * What an audit row, a proposal or a support payment points at, in words: the
- * person and the booking behind a User, Payment, Appointment or session id.
- * One batched read per kind present on the page, so at most four statements.
+ * person and the booking behind a User, Payment, Appointment, session,
+ * Organization or Lead id. At most four batched reads a page, one per pair.
  */
 
 import prisma from "@/lib/prisma";
@@ -9,8 +9,6 @@ import { BOOKING_TITLE_SELECT, bookingRefOf } from "@/lib/data/booking-title";
 import type { TargetRef } from "./money-list-schemas";
 
 export const targetKey = (kind: string, id: string) => `${kind}:${id}`;
-
-const PERSON = { select: { id: true, name: true, email: true } } as const;
 
 /** The resolvable targets of a page, keyed by `targetKey`; other kinds are absent. */
 export async function resolveTargets(
@@ -23,60 +21,117 @@ export async function resolveTargets(
   const paymentIds = idsOf("Payment");
   const appointmentIds = idsOf("Appointment");
   const occurrenceIds = idsOf("AppointmentOccurrence");
+  const organizationIds = idsOf("Organization");
+  const leadIds = idsOf("Lead");
 
-  // In sequence: the pool may hold one connection.
-  const users = userIds.length
-    ? await prisma.user.findMany({
-        where: { id: { in: userIds } },
-        select: PERSON.select,
+  // In sequence: the pool may hold one connection. A user read also brings the
+  // page's payments by their buyer, and a booking read its sessions.
+  const users =
+    userIds.length || paymentIds.length
+      ? await prisma.user.findMany({
+          relationLoadStrategy: "join",
+          where: {
+            OR: [
+              ...(userIds.length ? [{ id: { in: userIds } }] : []),
+              ...(paymentIds.length
+                ? [{ Payment: { some: { id: { in: paymentIds } } } }]
+                : []),
+            ],
+          },
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            Payment: {
+              where: { id: { in: paymentIds } },
+              select: {
+                id: true,
+                appointment: { select: BOOKING_TITLE_SELECT },
+              },
+            },
+          },
+        })
+      : [];
+  const appointments =
+    appointmentIds.length || occurrenceIds.length
+      ? await prisma.appointment.findMany({
+          relationLoadStrategy: "join",
+          where: {
+            OR: [
+              ...(appointmentIds.length
+                ? [{ id: { in: appointmentIds } }]
+                : []),
+              ...(occurrenceIds.length
+                ? [{ occurrences: { some: { id: { in: occurrenceIds } } } }]
+                : []),
+            ],
+          },
+          select: {
+            ...BOOKING_TITLE_SELECT,
+            occurrences: {
+              where: { id: { in: occurrenceIds } },
+              select: { id: true },
+            },
+          },
+        })
+      : [];
+  const organizations = organizationIds.length
+    ? await prisma.organization.findMany({
+        where: { id: { in: organizationIds } },
+        select: { id: true, name: true },
       })
     : [];
-  const payments = paymentIds.length
-    ? await prisma.payment.findMany({
-        relationLoadStrategy: "join",
-        where: { id: { in: paymentIds } },
+  const leads = leadIds.length
+    ? await prisma.lead.findMany({
+        where: { id: { in: leadIds } },
         select: {
           id: true,
-          user: PERSON,
-          appointment: { select: BOOKING_TITLE_SELECT },
+          contactName: true,
+          contactEmail: true,
+          companyName: true,
         },
-      })
-    : [];
-  const appointments = appointmentIds.length
-    ? await prisma.appointment.findMany({
-        relationLoadStrategy: "join",
-        where: { id: { in: appointmentIds } },
-        select: BOOKING_TITLE_SELECT,
-      })
-    : [];
-  const occurrences = occurrenceIds.length
-    ? await prisma.appointmentOccurrence.findMany({
-        relationLoadStrategy: "join",
-        where: { id: { in: occurrenceIds } },
-        select: { id: true, appointment: { select: BOOKING_TITLE_SELECT } },
       })
     : [];
 
   const refs = new Map<string, TargetRef>();
-  for (const u of users) {
-    refs.set(targetKey("User", u.id), { person: u, booking: null });
+  const wantedUsers = new Set(userIds);
+  for (const { Payment: payments, ...person } of users) {
+    if (wantedUsers.has(person.id)) {
+      refs.set(targetKey("User", person.id), { person, booking: null });
+    }
+    for (const p of payments) {
+      refs.set(targetKey("Payment", p.id), {
+        person,
+        booking: bookingRefOf(p.appointment),
+      });
+    }
   }
-  for (const p of payments) {
-    refs.set(targetKey("Payment", p.id), {
-      person: p.user,
-      booking: bookingRefOf(p.appointment),
+  const wantedAppointments = new Set(appointmentIds);
+  for (const { occurrences, ...a } of appointments) {
+    const booking = bookingRefOf(a);
+    if (wantedAppointments.has(a.id)) {
+      refs.set(targetKey("Appointment", a.id), { person: null, booking });
+    }
+    for (const o of occurrences) {
+      refs.set(targetKey("AppointmentOccurrence", o.id), {
+        person: null,
+        booking,
+      });
+    }
+  }
+  for (const o of organizations) {
+    refs.set(targetKey("Organization", o.id), {
+      person: { id: o.id, name: o.name, email: null },
+      booking: null,
     });
   }
-  for (const a of appointments) {
-    refs.set(targetKey("Appointment", a.id), {
-      person: null,
-      booking: bookingRefOf(a),
-    });
-  }
-  for (const o of occurrences) {
-    refs.set(targetKey("AppointmentOccurrence", o.id), {
-      person: null,
-      booking: bookingRefOf(o.appointment),
+  for (const l of leads) {
+    const name = l.companyName
+      ? `${l.contactName} (${l.companyName})`
+      : l.contactName;
+    refs.set(targetKey("Lead", l.id), {
+      person: { id: l.id, name, email: l.contactEmail },
+      booking: null,
     });
   }
   return refs;

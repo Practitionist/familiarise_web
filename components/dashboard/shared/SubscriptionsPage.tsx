@@ -20,6 +20,7 @@ import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { TablePagination } from "@/components/dashboard/TablePagination";
 import { subscriptionDisplayStatus } from "@/lib/labels/backoffice-labels";
 import { OperatorTime } from "@/lib/time/operator-time";
+import { bookingHref } from "@/lib/backoffice/booking-href";
 import { PagedListFilterCard, statusSelect } from "./paged-list-filters";
 import {
   Sheet,
@@ -215,13 +216,17 @@ function SubscriptionDetailSheet({
                   Cancel Subscription (Audited)
                 </h4>
                 <div className="flex items-center justify-between gap-2">
-                  <Button size="sm" variant="outline" asChild>
-                    <Link
-                      href={`${basePath}/bookings?search=${encodeURIComponent(subscription.id)}`}
-                    >
-                      Open in Bookings Ops
-                    </Link>
-                  </Button>
+                  {subscription.appointmentId ? (
+                    <Button size="sm" variant="outline" asChild>
+                      <Link
+                        href={bookingHref(basePath, subscription.appointmentId)}
+                      >
+                        Open the booking
+                      </Link>
+                    </Button>
+                  ) : (
+                    <span />
+                  )}
                   <Button
                     size="sm"
                     variant="destructive"
@@ -519,13 +524,14 @@ export function SubscriptionsPage({
               onRowClick={(s) => setSelectedSubscription(s)}
               rowActions={(s) => (
                 <div className="flex items-center justify-end gap-1">
-                  <Button size="sm" variant="ghost" asChild>
-                    <Link
-                      href={`${basePath}/bookings?search=${encodeURIComponent(s.id)}`}
-                    >
-                      Ops
-                    </Link>
-                  </Button>
+                  {/* A subscription with no booking yet has nothing to open on Appointments. */}
+                  {s.appointmentId && (
+                    <Button size="sm" variant="ghost" asChild>
+                      <Link href={bookingHref(basePath, s.appointmentId)}>
+                        Ops
+                      </Link>
+                    </Button>
+                  )}
                   <Button
                     size="sm"
                     variant="ghost"

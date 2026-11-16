@@ -28,7 +28,8 @@ import { BookingCell } from "@/components/dashboard/backoffice/BookingCell";
 import { PersonCell } from "@/components/dashboard/backoffice/PersonCell";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { disputeStatus } from "@/lib/labels/backoffice-labels";
-import { disputeReasonText } from "@/lib/labels/money-labels";
+import { disputeReasonText, gatewayLabel } from "@/lib/labels/money-labels";
+import { humanizeEnum } from "@/lib/ui/tone";
 import { OperatorTime } from "@/lib/time/operator-time";
 import type { DisputeDetails } from "@/types/disputes";
 
@@ -221,7 +222,7 @@ export function DisputeDetailPage({
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
           <Button asChild variant="ghost">
-            <Link href={`${basePath}/disputes`}>
+            <Link href={`${basePath}/money/disputes`}>
               <ArrowLeft className="h-4 w-4 mr-2" />
               Back
             </Link>
@@ -291,7 +292,9 @@ export function DisputeDetailPage({
               </div>
               <div>
                 <p className="text-sm text-zinc-500">Payment Gateway</p>
-                <p className="font-medium">{dispute.paymentGateway}</p>
+                <p className="font-medium">
+                  {gatewayLabel(dispute.paymentGateway)}
+                </p>
               </div>
             </div>
 
@@ -380,7 +383,9 @@ export function DisputeDetailPage({
                 <div>
                   <p className="text-sm text-zinc-500">Payment Method</p>
                   <p className="font-medium">
-                    {dispute.payment.paymentMethod || "N/A"}
+                    {dispute.payment.paymentMethod
+                      ? humanizeEnum(dispute.payment.paymentMethod)
+                      : "N/A"}
                   </p>
                 </div>
               </div>
@@ -436,7 +441,10 @@ export function DisputeDetailPage({
                 <p className="text-zinc-500">Booking</p>
                 <p className="font-medium">
                   {dispute.evidencePack.booking
-                    ? `${dispute.evidencePack.booking.appointmentType} (${dispute.evidencePack.booking.appointmentId.slice(0, 8)})`
+                    ? (dispute.payment?.booking?.title ??
+                      humanizeEnum(
+                        dispute.evidencePack.booking.appointmentType,
+                      ))
                     : "No linked booking"}
                 </p>
               </div>

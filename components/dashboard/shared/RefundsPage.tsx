@@ -14,7 +14,7 @@ import {
 } from "@/lib/backoffice/money-list-schemas";
 import { gatewayLabel } from "@/lib/labels/money-labels";
 import { refundStatusBadge } from "@/lib/labels/session-labels";
-import { OperatorTime } from "@/lib/time/operator-time";
+import { OperatorTimeStack } from "@/lib/time/operator-time";
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 // `formatCurrencyAmount`, not the old major-unit formatter (deleted in #1396):
@@ -156,16 +156,18 @@ export function RefundsPage({
       key: "buyer",
       header: "Buyer",
       primary: true,
+      className: "max-w-[12rem]",
       cell: (refund) => <PersonCell person={refund.payment?.buyer} />,
     },
     {
       key: "booking",
       header: "Booking",
+      className: "max-w-[14rem]",
       cell: (refund) => (
         <div className="min-w-0 space-y-1">
           <BookingCell booking={refund.payment?.booking} basePath={basePath} />
           <p
-            className="truncate font-mono text-[11px] text-muted-foreground/70"
+            className="break-all font-mono text-[11px] text-muted-foreground/70"
             title={refund.refundId}
           >
             {refund.refundId}
@@ -176,15 +178,17 @@ export function RefundsPage({
     {
       key: "amount",
       header: "Amount",
-      className: "font-medium",
-      cell: (refund) =>
-        formatCurrencyAmount(refund.amountPaise, refund.currency),
-    },
-    {
-      key: "gateway",
-      header: "Gateway",
-      className: "text-sm text-muted-foreground",
-      cell: (refund) => gatewayLabel(refund.paymentGateway),
+      className: "whitespace-nowrap",
+      cell: (refund) => (
+        <div>
+          <p className="font-medium">
+            {formatCurrencyAmount(refund.amountPaise, refund.currency)}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {gatewayLabel(refund.paymentGateway)}
+          </p>
+        </div>
+      ),
     },
     {
       key: "status",
@@ -194,14 +198,15 @@ export function RefundsPage({
     {
       key: "reason",
       header: "Reason",
-      className: "text-sm text-muted-foreground max-w-[200px] truncate",
+      className:
+        "max-w-[12rem] text-sm text-muted-foreground [overflow-wrap:anywhere]",
       cell: (refund) => refund.reason || "-",
     },
     {
       key: "date",
       header: "Date",
       className: "text-sm text-muted-foreground",
-      cell: (refund) => <OperatorTime value={refund.createdAt} />,
+      cell: (refund) => <OperatorTimeStack value={refund.createdAt} />,
     },
   ];
 

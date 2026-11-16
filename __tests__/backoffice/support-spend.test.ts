@@ -60,7 +60,10 @@ jest.mock("../../lib/prisma", () => ({
     user: {
       findMany: async (args: {
         where: { id?: string; role?: string | { in: string[] } };
+        select?: { Payment?: unknown };
       }) => {
+        // The target read (payments by buyer) finds none in these fixtures.
+        if (args.select?.Payment) return [];
         mockUserFindMany(args);
         const { id, role } = args.where;
         return mockUsers.filter(

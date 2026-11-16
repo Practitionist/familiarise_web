@@ -24,10 +24,18 @@ export async function GET(req: NextRequest) {
 
     // Parse query parameters
     const { searchParams } = new URL(req.url);
-    // An unknown status reads as no filter, as it always has.
-    const status =
-      z.nativeEnum(EarningStatus).safeParse(searchParams.get("status")).data ??
-      null;
+    // An unknown status is a 400, as on the other money lists.
+    const statusParam = z
+      .nativeEnum(EarningStatus)
+      .optional()
+      .safeParse(searchParams.get("status") || undefined);
+    if (!statusParam.success) {
+      return NextResponse.json(
+        { error: "Invalid query parameters", code: "INVALID_QUERY" },
+        { status: 400 },
+      );
+    }
+    const status = statusParam.data ?? null;
     const { limit, offset } = readOffsetParams(searchParams);
 
     // #1771 K-3 — the Earnings tab filters by consultant and payment too.

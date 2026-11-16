@@ -127,7 +127,18 @@ export async function GET(req: NextRequest) {
     if (auth.error) return auth.error;
 
     const { searchParams } = new URL(req.url);
-    const status = searchParams.get("status");
+    // An unknown status is a 400, as on the other money lists.
+    const statusParam = z
+      .enum(["active", "expiring_soon", "expired", "cancelled"])
+      .optional()
+      .safeParse(searchParams.get("status") || undefined);
+    if (!statusParam.success) {
+      return NextResponse.json(
+        { error: "Invalid query parameters", code: "INVALID_QUERY" },
+        { status: 400 },
+      );
+    }
+    const status = statusParam.data ?? null;
     const search = searchParams.get("search");
     const { limit, offset } = readOffsetParams(searchParams);
     const orgId = searchParams.get("orgId");

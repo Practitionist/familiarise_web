@@ -337,6 +337,10 @@ function TraceTimeline({
       ),
     },
   ];
+  const listedPayments =
+    trace.kind === "payment"
+      ? trace.paymentIds.filter((id) => id !== trace.id)
+      : trace.paymentIds;
   const bookingLink = (id: string) => (
     <Link
       href={bookingHref(basePath, id)}
@@ -356,28 +360,39 @@ function TraceTimeline({
                 trace.kind === "appointment" ? (
                   bookingLink(trace.id)
                 ) : (
-                  <span className="font-mono text-xs">{trace.id}</span>
+                  <Link
+                    href={`${basePath}/payments/${trace.id}`}
+                    className="font-mono text-xs underline-offset-4 hover:underline"
+                  >
+                    {trace.id}
+                  </Link>
                 ),
             },
-            {
-              label: "Payments",
-              value:
-                trace.paymentIds.length === 0 ? (
-                  "None"
-                ) : (
-                  <span className="flex flex-col gap-1">
-                    {trace.paymentIds.map((id) => (
-                      <Link
-                        key={id}
-                        href={`${basePath}/payments/${id}`}
-                        className="font-mono text-xs underline-offset-4 hover:underline"
-                      >
-                        {id}
-                      </Link>
-                    ))}
-                  </span>
-                ),
-            },
+            // A payment trace names its own payment in the first row; the rest are its side charges.
+            ...(listedPayments.length === 0 && trace.kind === "payment"
+              ? []
+              : [
+                  {
+                    label:
+                      trace.kind === "payment" ? "Side charges" : "Payments",
+                    value:
+                      listedPayments.length === 0 ? (
+                        "None"
+                      ) : (
+                        <span className="flex flex-col gap-1">
+                          {listedPayments.map((id) => (
+                            <Link
+                              key={id}
+                              href={`${basePath}/payments/${id}`}
+                              className="font-mono text-xs underline-offset-4 hover:underline"
+                            >
+                              {id}
+                            </Link>
+                          ))}
+                        </span>
+                      ),
+                  },
+                ]),
             // A booking trace names its booking in the first row.
             ...(trace.kind === "appointment"
               ? []

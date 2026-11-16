@@ -46,17 +46,22 @@ jest.mock("../../lib/prisma", () => ({
     user: {
       findMany: async ({
         where,
+        select,
       }: {
         where: { id?: string; role?: string | { in: string[] } };
+        select?: { Payment?: unknown };
       }) =>
-        mockUsers.filter(
-          (u) =>
-            (where.id === undefined || u.id === where.id) &&
-            (where.role === undefined ||
-              (typeof where.role === "string"
-                ? u.role === where.role
-                : where.role.in.includes(u.role))),
-        ),
+        // The target read (payments by buyer) finds none in these fixtures.
+        select?.Payment
+          ? []
+          : mockUsers.filter(
+              (u) =>
+                (where.id === undefined || u.id === where.id) &&
+                (where.role === undefined ||
+                  (typeof where.role === "string"
+                    ? u.role === where.role
+                    : where.role.in.includes(u.role))),
+            ),
       count: async () => mockUsers.length,
     },
     opsActionLog: {

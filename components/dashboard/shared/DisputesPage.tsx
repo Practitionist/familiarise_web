@@ -12,7 +12,7 @@ import {
 } from "@/lib/backoffice/money-list-schemas";
 import { disputeStatus } from "@/lib/labels/backoffice-labels";
 import { gatewayLabel } from "@/lib/labels/money-labels";
-import { OperatorTime } from "@/lib/time/operator-time";
+import { OperatorTimeStack } from "@/lib/time/operator-time";
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
@@ -82,8 +82,8 @@ function DisputeDueCell({
 
   return (
     <div className={getDueCellClassName(isOverdue, isUrgent)}>
-      <div className="flex items-center gap-1.5">
-        <OperatorTime value={dueBy} />
+      <div className="flex flex-wrap items-center gap-1.5">
+        <OperatorTimeStack value={dueBy} />
         {isOverdue && (
           <Badge variant="destructive" className="text-[10px]">
             Overdue
@@ -116,21 +116,18 @@ const disputeColumns = (
     key: "buyer",
     header: "Buyer",
     primary: true,
+    className: "max-w-[12rem]",
     cell: (dispute) => <PersonCell person={dispute.payment?.buyer} />,
   },
   {
+    // The booking over the dispute's own ids, so the table fits its card.
     key: "booking",
-    header: "Booking",
+    header: "Booking and dispute",
+    className: "max-w-[14rem]",
     cell: (dispute) => (
-      <BookingCell booking={dispute.payment?.booking} basePath={basePath} />
-    ),
-  },
-  {
-    key: "disputeId",
-    header: "Dispute ID",
-    cell: (dispute) => (
-      <div>
-        <p className="font-mono text-sm">
+      <div className="min-w-0 space-y-1">
+        <BookingCell booking={dispute.payment?.booking} basePath={basePath} />
+        <p className="break-all font-mono text-xs">
           {dispute.disputeId?.slice(-12) || dispute.id.slice(-8).toUpperCase()}
         </p>
         <p className="text-xs text-muted-foreground/70">
@@ -149,7 +146,7 @@ const disputeColumns = (
           </button>
         </p>
         {dispute.payment && (
-          <p className="text-xs text-muted-foreground/70">
+          <p className="break-all text-xs text-muted-foreground/70">
             Payment: {dispute.payment.paymentIntent.slice(-12)}
           </p>
         )}
@@ -159,15 +156,17 @@ const disputeColumns = (
   {
     key: "amount",
     header: "Amount",
-    className: "font-medium",
-    cell: (dispute) =>
-      formatCurrencyAmount(dispute.amountPaise, dispute.currency),
-  },
-  {
-    key: "gateway",
-    header: "Gateway",
-    className: "text-sm text-muted-foreground",
-    cell: (dispute) => gatewayLabel(dispute.paymentGateway),
+    className: "whitespace-nowrap",
+    cell: (dispute) => (
+      <div>
+        <p className="font-medium">
+          {formatCurrencyAmount(dispute.amountPaise, dispute.currency)}
+        </p>
+        <p className="text-xs text-muted-foreground">
+          {gatewayLabel(dispute.paymentGateway)}
+        </p>
+      </div>
+    ),
   },
   {
     key: "status",
@@ -185,7 +184,7 @@ const disputeColumns = (
     key: "created",
     header: "Created",
     className: "text-sm text-muted-foreground",
-    cell: (dispute) => <OperatorTime value={dispute.createdAt} />,
+    cell: (dispute) => <OperatorTimeStack value={dispute.createdAt} />,
   },
 ];
 

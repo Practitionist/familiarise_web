@@ -16,11 +16,11 @@ export function BookingCell({
     <div className="min-w-0">
       <Link
         href={bookingHref(basePath, booking.id)}
-        className="block truncate text-sm font-medium text-foreground underline-offset-4 hover:underline"
+        className="block text-sm font-medium text-foreground underline-offset-4 [overflow-wrap:anywhere] hover:underline"
       >
         {booking.title}
       </Link>
-      <p className="truncate text-xs text-muted-foreground">
+      <p className="text-xs text-muted-foreground">
         {SESSION_TYPE_LABEL[booking.type]}
       </p>
     </div>

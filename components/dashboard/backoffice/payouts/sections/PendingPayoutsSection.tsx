@@ -140,7 +140,8 @@ const columns: ResponsiveColumn<Payout>[] = [
     header: "Earnings",
     cell: (payout) => (
       <span className="text-sm text-muted-foreground">
-        {payout.earningsCount} earnings
+        {payout.earningsCount}{" "}
+        {payout.earningsCount === 1 ? "earning" : "earnings"}
       </span>
     ),
   },

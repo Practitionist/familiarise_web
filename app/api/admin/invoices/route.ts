@@ -28,6 +28,19 @@ export async function GET(request: NextRequest) {
     const scope = sp.get("scope") ?? sp.get("tab") ?? "b2b";
     const q = sp.get("q")?.trim() ?? sp.get("search")?.trim() ?? "";
     const statusParam = sp.get("status")?.trim() ?? "";
+    // An unknown status is a 400, as on the other money lists; ALL is no filter.
+    const knownStatus =
+      statusParam === "" ||
+      statusParam === "ALL" ||
+      (scope === "b2c"
+        ? statusParam === "ISSUED" || statusParam === "CREDIT_NOTED"
+        : VALID_B2B_STATUSES.has(statusParam));
+    if (!knownStatus) {
+      return NextResponse.json(
+        { error: "Invalid query parameters", code: "INVALID_QUERY" },
+        { status: 400 },
+      );
+    }
     const showPii = auth.session.user.role === "ADMIN";
     const { page, limit, skip } = parsePagination(sp);
 

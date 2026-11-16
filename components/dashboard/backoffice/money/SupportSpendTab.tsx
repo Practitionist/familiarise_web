@@ -27,6 +27,7 @@ import type {
 } from "@/lib/backoffice/support-spend-types";
 import { OpsLogFiltersSchema, type OpsLogFilters } from "@/schemas/ops-log";
 import { OperatorTime } from "@/lib/time/operator-time";
+import { humanizeEnum } from "@/lib/ui/tone";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { TargetCell } from "./TargetCell";
 
@@ -179,7 +180,7 @@ function OperatorCard({
       <CardHeader>
         <CardTitle className="flex flex-wrap items-center gap-2 text-base">
           {operator.name}
-          <Badge variant="outline">{operator.role}</Badge>
+          <Badge variant="outline">{humanizeEnum(operator.role)}</Badge>
           {operator.capped ? null : (
             <Badge variant="secondary">No staff limits</Badge>
           )}

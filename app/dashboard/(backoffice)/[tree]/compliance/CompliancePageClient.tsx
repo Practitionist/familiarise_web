@@ -386,7 +386,7 @@ function FailedEmailsTab() {
         <div>
           <p className="font-medium">{m.subject}</p>
           <p className="text-xs text-muted-foreground">
-            {m.recipient} · {m.emailType}
+            {m.recipient} · {humanizeEnum(m.emailType)}
           </p>
         </div>
       ),

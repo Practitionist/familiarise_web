@@ -63,6 +63,38 @@ jest.mock("../../lib/prisma", () => ({
         },
       ]),
     },
+    consultantEarnings: {
+      findMany: jest.fn(async () => [
+        {
+          id: "earn_1",
+          role: "OWNER",
+          payoutId: null,
+          status: "PENDING",
+          consultantSharePaise: 120_000,
+          platformFeePaise: 30_000,
+          refundedShareAmount: 0,
+          currency: "INR",
+          holdUntil: null,
+          paidAt: null,
+          createdAt: mockAt,
+          updatedAt: mockAt,
+          consultantProfile: { user: { name: "Arjun Anderson" } },
+          holds: [],
+        },
+      ]),
+    },
+    systemEvent: {
+      findMany: jest.fn(async () => [
+        {
+          id: "ev_1",
+          category: "PAYMENT",
+          severity: "INFO",
+          message: "Captured",
+          correlationId: "pay_1",
+          createdAt: mockAt,
+        },
+      ]),
+    },
     ledgerTransaction: {
       findMany: jest.fn(async () => [
         {
@@ -136,6 +168,19 @@ it("labels the gateway, the ledger accounts and the reasons", async () => {
     name: "Priya Anderson",
     email: "priya@example.test",
   });
+});
+
+it("words the earnings role and the system event", async () => {
+  jest.spyOn(console, "warn").mockImplementation(() => undefined);
+  const trace = await readEntityTrace({
+    kind: "payment",
+    id: "pay_1",
+    viewer: { userId: "admin_1", role: "ADMIN", seesSystemEvents: true },
+  });
+  const text = JSON.stringify(trace?.rows.map((r) => [r.status, r.detail]));
+  expect(text).toContain("Expert share for Arjun Anderson");
+  expect(text).toContain("Payment event (info)");
+  expect(text).not.toMatch(/OWNER|PAYMENT INFO/);
 });
 
 it("words the booking history's reason codes and keeps free text", () => {
