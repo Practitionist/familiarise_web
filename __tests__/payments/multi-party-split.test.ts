@@ -130,6 +130,17 @@ function useFlatB2cFeeBps(bps: number) {
   mockPlanB2cPlatformFeePaise.mockImplementation(compute);
 }
 
+/** Routes the suite's fee double to the real fee module. */
+function useRealFeeModule() {
+  const real = jest.requireActual<
+    typeof import("../../lib/payments/pricing/platform-fee")
+  >("../../lib/payments/pricing/platform-fee");
+  mockSettleB2cPlatformFeePaise.mockImplementation(
+    real.settleB2cPlatformFeePaise,
+  );
+  mockPlanB2cPlatformFeePaise.mockImplementation(real.planB2cPlatformFeePaise);
+}
+
 function makeCollaboratorRow(opts: {
   id: string;
   consultantProfileId: string;
@@ -273,10 +284,18 @@ function makeSplitPayment(opts: {
   classPlanId?: string;
   paymentOrgId?: string;
   billingAccountId?: string;
+  /** The rate checkout stamps on every order, sponsored ones included. */
+  platformFeeBps?: number;
 }) {
   return {
     id: opts.id,
     userId: "u-buyer",
+    ...(opts.platformFeeBps !== undefined
+      ? {
+          platformFeeBps: opts.platformFeeBps,
+          attributionSource: "MARKETPLACE",
+        }
+      : {}),
     ...(opts.paymentOrgId ? { organizationId: opts.paymentOrgId } : {}),
     ...(opts.billingAccountId
       ? { billingAccountId: opts.billingAccountId }
@@ -338,6 +357,7 @@ describe("multi-party collaborator revenue splitting & settlement invariants", (
         webinarPlanId: "wp-solo",
       }),
       appointmentType: "WEBINAR",
+      teamAt: new Date("2026-10-09T10:00:00Z"),
       tx,
     });
 
@@ -425,6 +445,7 @@ describe("multi-party collaborator revenue splitting & settlement invariants", (
         webinarPlanId: "wp-org-1",
       }),
       appointmentType: "WEBINAR",
+      teamAt: new Date("2026-10-09T10:00:00Z"),
       tx,
     });
 
@@ -479,6 +500,7 @@ describe("multi-party collaborator revenue splitting & settlement invariants", (
         webinarPlanId: "wp-ownerless",
       }),
       appointmentType: "WEBINAR",
+      teamAt: new Date("2026-10-09T10:00:00Z"),
       tx,
     });
 
@@ -506,21 +528,21 @@ describe("multi-party collaborator revenue splitting & settlement invariants", (
     expectBalancedJournalWithDebits(100_000);
   });
 
-  it("4. B2B (0% platform fee) multi-party split: deducts 0 platform fee on all slices and credits full gross slices", async () => {
-    useFlatB2cFeeBps(0);
+  it("4. Sponsored seat: an organisation pays for a ₹10,000 class seat and each party still pays the stamped 20% fee on their own slice", async () => {
+    useRealFeeModule();
 
     const { tx, createdConsultantRows } = createEarningsTestHarness({
       collaborators: [
         makeCollaboratorRow({
           id: "collab-b2b",
           consultantProfileId: "cp-collab-b2b",
-          revenueShareBps: 3000,
+          revenueShareBps: 2000,
           role: "CO_INSTRUCTOR",
           name: "B2B Collab",
         }),
       ],
       classOwner: { consultantProfileId: "cp-host-b2b", organizationId: null },
-      paymentLegs: [{ source: "WALLET", amountPaise: 50_000 }],
+      paymentLegs: [{ source: "WALLET", amountPaise: 1_000_000 }],
       billingAccount: { ownerOrgId: "org-sponsor", fundingSource: "WALLET" },
       organization: { status: "ACTIVE" },
     });
@@ -528,14 +550,16 @@ describe("multi-party collaborator revenue splitting & settlement invariants", (
     await createEarningsFromPayment({
       payment: makeSplitPayment({
         id: "pay-b2b",
-        amount: 50_000,
+        amount: 1_000_000,
         appointmentId: "appt-b2b",
         consultantProfileId: "cp-host-b2b",
         classPlanId: "cp-plan-b2b",
         paymentOrgId: "org-sponsor",
         billingAccountId: "ba-sponsor",
+        platformFeeBps: 2000,
       }),
       appointmentType: "CLASS",
+      teamAt: new Date("2026-10-09T10:00:00Z"),
       tx,
     });
 
@@ -543,19 +567,19 @@ describe("multi-party collaborator revenue splitting & settlement invariants", (
     expect(createdConsultantRows[0]).toMatchObject({
       consultantProfileId: "cp-host-b2b",
       role: "OWNER",
-      grossAmount: 35_000,
-      platformFeePaise: 0,
-      consultantSharePaise: 35_000,
+      grossAmount: 800_000,
+      platformFeePaise: 160_000,
+      consultantSharePaise: 640_000,
     });
     expect(createdConsultantRows[1]).toMatchObject({
       consultantProfileId: "cp-collab-b2b",
       role: "COLLABORATOR",
-      grossAmount: 15_000,
-      platformFeePaise: 0,
-      consultantSharePaise: 15_000,
+      grossAmount: 200_000,
+      platformFeePaise: 40_000,
+      consultantSharePaise: 160_000,
     });
 
-    expectBalancedJournalWithDebits(50_000);
+    expectBalancedJournalWithDebits(1_000_000);
   });
 
   it("5. Ownerless org catalog plan with zero consultant earnings: refundEarnings still reverses OrganizationEarnings on partial and full refunds", async () => {

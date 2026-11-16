@@ -185,6 +185,10 @@ jest.mock("../../lib/referrals/referral-notify", () => ({
 }));
 
 import { handlePaymentSuccess } from "../../lib/payments/webhooks/handlers";
+import {
+  createEarningsFromPayment,
+  resolvePaymentForEarnings,
+} from "../../lib/payments/payouts";
 import { validateWebhookMetadata } from "../../schemas/webhooks/metadata";
 
 const PLAN_TITLE = "Career Strategy Deep Dive";
@@ -408,5 +412,60 @@ describe("credits-applied bell on capture", () => {
     );
 
     expect(stageCreditsApplied).not.toHaveBeenCalled();
+  });
+});
+
+describe("the split time a capture hands to earnings", () => {
+  const createEarnings = createEarningsFromPayment as jest.Mock;
+  const resolvePayment = resolvePaymentForEarnings as jest.Mock;
+  const RESOLVED = {
+    paymentForEarnings: {
+      id: "pay1",
+      createdAt: new Date("2026-09-30T07:00:00.000Z"),
+      capturedAt: new Date("2026-09-30T08:00:00.000Z"),
+    },
+    earningsAppointmentType: "CONSULTATION",
+    consultantProfileId: "consultant-profile-1",
+  };
+
+  beforeEach(() => {
+    resolvePayment.mockResolvedValue(RESOLVED);
+  });
+
+  afterEach(() => {
+    resolvePayment.mockResolvedValue(null);
+    createEarnings.mockReset();
+  });
+
+  it("splits inside the transaction, as of the capture time it stamps on the payment", async () => {
+    await handlePaymentSuccess(
+      "order1",
+      METADATA as unknown as Record<string, string>,
+      10000,
+    );
+
+    const stamped = webhookTx.payment.updateMany.mock.calls
+      .map(([args]) => args.data.capturedAt)
+      .find((value) => value instanceof Date);
+    expect(stamped).toBeInstanceOf(Date);
+    expect(createEarnings).toHaveBeenCalledTimes(1);
+    expect(createEarnings).toHaveBeenCalledWith(
+      expect.objectContaining({ tx: webhookTx, teamAt: stamped }),
+    );
+  });
+
+  it("retries a failed first attempt as of the capture time on the row, not the time of the retry", async () => {
+    createEarnings.mockRejectedValueOnce(new Error("ledger posting failed"));
+
+    await handlePaymentSuccess(
+      "order1",
+      METADATA as unknown as Record<string, string>,
+      10000,
+    );
+
+    expect(createEarnings).toHaveBeenCalledTimes(2);
+    const retry = createEarnings.mock.calls[1][0];
+    expect(retry.tx).toBeUndefined();
+    expect(retry.teamAt).toEqual(RESOLVED.paymentForEarnings.capturedAt);
   });
 });

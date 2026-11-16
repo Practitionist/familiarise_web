@@ -186,6 +186,7 @@ it("createEarningsFromPayment refuses a parked capture before writing anything",
     createEarningsFromPayment({
       payment,
       appointmentType: "CONSULTATION",
+      teamAt: new Date("2026-10-09T10:00:00Z"),
       tx: asTx(tx),
     }),
   ).rejects.toBeInstanceOf(ParkedCaptureEarningsError);
