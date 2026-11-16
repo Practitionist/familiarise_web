@@ -13,6 +13,8 @@
  */
 
 import { getBookingTimeline } from "../../lib/data/booking-history";
+import { bookingTraceStep } from "../../lib/backoffice/entity-trace";
+import { timelineStepLabel } from "../../components/dashboard/shared/AppointmentTimeline";
 
 const appointmentFindUnique = jest.fn();
 const historyFindMany = jest.fn();
@@ -106,13 +108,14 @@ describe("getBookingTimeline", () => {
       to: "RESCHEDULED",
       actor: null,
     });
-    // The proposal is the row the RescheduleRequest table contributes: no
-    // from-state, and the proposed-time count the #448 ask named.
+    // The proposal is the row the RescheduleRequest table contributes: it was
+    // proposed, and where it stands now rides beside it.
     expect(proposal).toMatchObject({
       kind: "reschedule",
       entity: "RESCHEDULE_REQUEST",
       from: null,
-      to: "ACCEPTED",
+      to: "PROPOSED",
+      outcome: "ACCEPTED",
       proposedSlotCount: 3,
       actor: { id: "user-1", name: "Asha" },
     });
@@ -132,6 +135,65 @@ describe("getBookingTimeline", () => {
     ]);
     // The window is cut in the database, so equal timestamps need a second key.
     expect(call.orderBy).toEqual([{ createdAt: "desc" }, { id: "asc" }]);
+  });
+
+  it("hides a self-edge with no reason and keeps one that carries a reason", async () => {
+    historyFindMany.mockResolvedValue([
+      {
+        id: "hist-self-bare",
+        entity: "SUBSCRIPTION",
+        entityId: "sub-1",
+        fromStatus: "APPROVED",
+        toStatus: "APPROVED",
+        reason: null,
+        createdAt: new Date("2026-09-03T10:00:00.000Z"),
+        actorUser: null,
+      },
+      {
+        id: "hist-self-why",
+        entity: "SUBSCRIPTION",
+        entityId: "sub-1",
+        fromStatus: "APPROVED",
+        toStatus: "APPROVED",
+        reason: "plan extended by ops",
+        createdAt: new Date("2026-09-03T09:00:00.000Z"),
+        actorUser: null,
+      },
+      ...historyRows(),
+    ]);
+    const timeline = await getBookingTimeline("appt-1", PRIVILEGED);
+    const ids = timeline!.entries.map((entry) => entry.id);
+    expect(ids).not.toContain("hist-self-bare");
+    expect(ids).toContain("hist-self-why");
+  });
+
+  it("lists an answered reschedule as one proposal and one outcome, in the drawer and the trace", async () => {
+    historyFindMany.mockResolvedValue([
+      {
+        id: "hist-answer",
+        entity: "RESCHEDULE_REQUEST",
+        entityId: "resched-1",
+        fromStatus: "PENDING_REVIEW",
+        toStatus: "ACCEPTED",
+        reason: null,
+        createdAt: new Date("2026-09-02T12:00:00.000Z"),
+        actorUser: { id: "user-2", name: "Ravi" },
+      },
+    ]);
+    const { entries } = (await getBookingTimeline("appt-1", PRIVILEGED))!;
+
+    const trace = entries.map(bookingTraceStep);
+    expect(trace.map((t) => t.status)).toEqual([
+      "Reschedule request: pending review → accepted",
+      "Reschedule proposed",
+    ]);
+    expect(trace[1].detail).toBe("clashes with a standup · now accepted");
+
+    const drawer = entries.map(timelineStepLabel);
+    expect(drawer).toEqual(["PENDING_REVIEW → ACCEPTED", "Proposed"]);
+    expect(drawer.filter((label) => label.includes("ACCEPTED"))).toHaveLength(
+      1,
+    );
   });
 
   it("flags truncation when the merge overflows the limit", async () => {

@@ -18,6 +18,8 @@ import { AlertTriangle, History, Loader2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
+import { formatOperatorInstant } from "@/lib/time/operator-zone";
+import { humanizeEnum } from "@/lib/ui/tone";
 import type {
   BookingTimeline,
   BookingTimelineEntry,
@@ -42,10 +44,15 @@ function entityLabel(entity: string): string {
   return ENTITY_LABEL[entity] ?? "Booking";
 }
 
-function relativeTime(iso: string): string {
+/** "3 hours ago", with the India-time instant one hover away. */
+function RelativeTime({ iso }: Readonly<{ iso: string }>) {
   const at = new Date(iso);
-  if (Number.isNaN(at.getTime())) return "unknown time";
-  return formatDistanceToNow(at, { addSuffix: true });
+  if (Number.isNaN(at.getTime())) return <>unknown time</>;
+  return (
+    <time dateTime={at.toISOString()} title={formatOperatorInstant(at)}>
+      {formatDistanceToNow(at, { addSuffix: true })}
+    </time>
+  );
 }
 
 /**
@@ -56,7 +63,9 @@ function actorLabel(entry: BookingTimelineEntry): string {
   return entry.actor?.name?.trim() || "system";
 }
 
-function transitionLabel(entry: BookingTimelineEntry): string {
+/** A status edge as "FROM → TO"; a reschedule row is the proposal, its answer is an edge. */
+export function timelineStepLabel(entry: BookingTimelineEntry): string {
+  if (entry.kind === "reschedule") return "Proposed";
   return entry.from ? `${entry.from} → ${entry.to}` : entry.to;
 }
 
@@ -69,17 +78,19 @@ function TimelineRow({ entry }: { entry: BookingTimelineEntry }) {
           {entityLabel(entry.entity)}
         </Badge>
         <span className="font-mono text-xs text-foreground">
-          {transitionLabel(entry)}
+          {timelineStepLabel(entry)}
         </span>
       </div>
       <p className="mt-1 text-xs text-muted-foreground">
-        {actorLabel(entry)} • {relativeTime(entry.createdAt)}
+        {actorLabel(entry)} • <RelativeTime iso={entry.createdAt} />
         {entry.kind === "reschedule" && (
           <>
             {" • "}
             {entry.proposedSlotCount === 1
               ? "1 proposed time"
               : `${entry.proposedSlotCount ?? 0} proposed times`}
+            {entry.outcome &&
+              ` • now ${humanizeEnum(entry.outcome).toLowerCase()}`}
           </>
         )}
       </p>

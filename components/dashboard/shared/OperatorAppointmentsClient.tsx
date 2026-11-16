@@ -33,11 +33,12 @@ import {
   BookOpen,
   RefreshCw,
   Loader2,
+  Sparkles,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useListParams } from "@/hooks/useListParams";
 import { AppointmentTimeline } from "./AppointmentTimeline";
-import { useZonedFormat } from "@/lib/time/zoned-format";
+import { OperatorTime } from "@/lib/time/operator-time";
 import type {
   StaffAppointment,
   StaffAppointmentsPayload,
@@ -55,6 +56,8 @@ const getTypeIcon = (type: string) => {
       return Monitor;
     case "class":
       return BookOpen;
+    case "trial":
+      return Sparkles;
     default:
       return Calendar;
   }
@@ -102,11 +105,6 @@ const TABS = [
   "completed",
 ] as const;
 
-// #1527 QA — date-fns patterns in the page's display zone (DisplayZoneProvider
-// in OperatorAppointmentsPage), not toLocaleString in the runtime zone.
-const DATE_PATTERN = "d MMM, hh:mm a";
-const FULL_DATE_PATTERN = "EEE, d MMM yyyy, hh:mm a";
-
 const formatCurrency = (amount: number, currency: string = "INR") => {
   return new Intl.NumberFormat("en-IN", {
     style: "currency",
@@ -120,10 +118,11 @@ const formatCurrency = (amount: number, currency: string = "INR") => {
 // a fetch waterfall. Filtered/paged views fall back to a client fetch.
 const DEFAULT_TYPE = "all";
 const DEFAULT_TAB = "all";
-const TYPE_OPTIONS = [
+export const TYPE_OPTIONS = [
   { value: "all", label: "All Types" },
   { value: "consultation", label: "Consultation" },
   { value: "subscription", label: "Subscription" },
+  { value: "trial", label: "Trial" },
   { value: "webinar", label: "Webinar" },
   { value: "class", label: "Class" },
 ];
@@ -144,11 +143,11 @@ export function OperatorAppointmentsClient({
   beforeContent,
   renderOps,
 }: Readonly<{
-  beforeContent?: ReactNode;
+  /** Drawn above the list; `openBooking` opens one booking's drawer. */
+  beforeContent?: (openBooking: (appointmentId: string) => void) => ReactNode;
   renderOps?: (appointmentId: string) => ReactNode;
 }>) {
   const { toast } = useToast();
-  const zoned = useZonedFormat();
   // Page, type, tab and search live in the URL, so reload and Back keep a
   // triager's place.
   const list = useListParams({ filterKeys: ["tab", "type", "open"] });
@@ -271,7 +270,7 @@ export function OperatorAppointmentsClient({
         }
       />
 
-      {beforeContent}
+      {beforeContent?.(openBooking)}
 
       {/* Global counts within the filters (#897), not the current page. */}
       <StatRow>
@@ -436,7 +435,9 @@ export function OperatorAppointmentsClient({
                               <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground/70">
                                 <span className="flex items-center gap-1">
                                   <Calendar className="h-3 w-3" />
-                                  {zoned(appointment.scheduledAt, DATE_PATTERN)}
+                                  <OperatorTime
+                                    value={appointment.scheduledAt}
+                                  />
                                 </span>
                                 {appointment.duration > 0 && (
                                   <span className="flex items-center gap-1">
@@ -604,10 +605,7 @@ export function OperatorAppointmentsClient({
                       Scheduled At
                     </Label>
                     <p>
-                      {zoned(
-                        selectedAppointment.scheduledAt,
-                        FULL_DATE_PATTERN,
-                      )}
+                      <OperatorTime value={selectedAppointment.scheduledAt} />
                     </p>
                   </div>
                   {selectedAppointment.duration > 0 && (

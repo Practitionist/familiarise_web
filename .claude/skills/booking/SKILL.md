@@ -71,6 +71,7 @@ sites are `app/api/scheduling/request-for-approval`, the consultation and
 subscription checkout handlers, and, as of 2026-09-19 (#1583 A-P1-06), the
 capture webhook's legacy consultation and subscription creators in
 `lib/payments/webhooks/handlers.ts` — every request birth now writes it.
+The one reader, `getBookingTimeline` (`lib/data/booking-history.ts`, behind the drawer timeline and the entity trace), hides a same-status row with no reason and lists a reschedule as "proposed", its answer being the request's own status row; the writes keep their self-edges.
 
 Participant seats follow the same shape outside `transitions.ts`. Every
 `AppointmentParticipant.status` write goes through `transitionParticipant` in

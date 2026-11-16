@@ -42,6 +42,7 @@ import {
 import type {
   BookingHistoryEntity,
   RescheduleInitiatorRole,
+  RescheduleRequestStatus,
 } from "@prisma/client";
 
 import type { Scope } from "@/lib/api/scope/parse";
@@ -79,7 +80,7 @@ export interface BookingTimelineEntry {
    * (#1333). Both are named constants in lib/booking/transitions.ts.
    */
   from: string | null;
-  /** On reschedule rows this is where the proposal ended up, not a transition. */
+  /** On reschedule rows this is always `RESCHEDULE_PROPOSED`: the row is the proposal, its answer is a status row. */
   to: string;
   reason: string | null;
   actor: BookingTimelineActor | null;
@@ -91,7 +92,12 @@ export interface BookingTimelineEntry {
   initiatorRole?: RescheduleInitiatorRole;
   /** Reschedule rows only — null while the proposal is still open. */
   resolvedAt?: string | null;
+  /** Reschedule rows only — where the proposal stands now. */
+  outcome?: RescheduleRequestStatus;
 }
+
+/** The `to` of a reschedule row: the proposal was raised; its answer is a status edge. */
+export const RESCHEDULE_PROPOSED = "PROPOSED";
 
 export interface BookingTimeline {
   appointmentId: string;
@@ -228,8 +234,10 @@ export async function getBookingTimeline(
     take: TIMELINE_LIMIT + 1,
   });
 
+  // A self-edge with no reason records no change, so it is not shown.
   const statusEntries: BookingTimelineEntry[] = history
     .slice(0, TIMELINE_LIMIT)
+    .filter((row) => row.fromStatus !== row.toStatus || row.reason !== null)
     .map((row) => ({
       id: row.id,
       kind: "status" as const,
@@ -252,7 +260,8 @@ export async function getBookingTimeline(
       entity: "RESCHEDULE_REQUEST",
       entityId: request.id,
       from: null,
-      to: request.status,
+      to: RESCHEDULE_PROPOSED,
+      outcome: request.status,
       reason: request.reason,
       actor: request.initiatedBy
         ? { id: request.initiatedBy.id, name: request.initiatedBy.name }

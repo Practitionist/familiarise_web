@@ -1,14 +1,10 @@
 /**
- * Staff Appointments API
- * Staff/Admin access to all appointments with filtering and pagination.
- *
- * Thin shell — the JSON-safe read lives in `lib/data/staff-appointments.ts`
- * (`getStaffAppointments`), shared with the server prefetch (#890) so SSR
- * hydration and the client fetch resolve identical payloads.
+ * Every appointment for the back office, filtered and paged. A thin shell over
+ * `getStaffAppointments`, which the page's server prefetch shares.
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { getStaffAppointments } from "@/lib/data/staff-appointments";
 import type { Scope } from "@/lib/api/scope/parse";
 
@@ -21,9 +17,8 @@ function positiveIntParam(raw: string | null, fallback: number): number {
 }
 
 /**
- * #674 defect 13 — `?orgId=` drills into one tenant; its absence is the
- * platform-wide view this endpoint exists for. requirePrivilegedAuth above is
- * what earns `all`, so no membership check is needed to widen it.
+ * `?orgId=` drills into one tenant; its absence is the platform-wide view.
+ * The `appointments.manage` gate is what earns `all`.
  */
 function staffScope(orgId: string | null): Scope {
   return orgId ? { kind: "org", orgId } : { kind: "all" };
@@ -31,7 +26,7 @@ function staffScope(orgId: string | null): Scope {
 
 export async function GET(req: NextRequest) {
   try {
-    const auth = await requirePrivilegedAuth();
+    const auth = await requireBackofficeSurface("appointments.manage");
     if (auth.error) return auth.error;
 
     const { searchParams } = new URL(req.url);

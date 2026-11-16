@@ -19,6 +19,7 @@ import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
+import { formatOperatorInstant } from "@/lib/time/operator-zone";
 import { humanizeEnum } from "@/lib/ui/tone";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
@@ -48,15 +49,18 @@ async function fetchApprovalPayments(): Promise<{
   return res.json() as Promise<{ approvalPayments: ApprovalPayment[] }>;
 }
 
+/** The pay link's deadline in words, with its India-time instant one hover away. */
 function deadline(p: ApprovalPayment) {
   const when = formatDistanceToNow(new Date(p.expiresAt), { addSuffix: true });
+  let badge = (
+    <StatusBadge label={`Expires ${when}`} tone="caution" variant="dot" />
+  );
   if (p.isExpired) {
-    return <StatusBadge label={`Link expired ${when}`} tone="critical" />;
+    badge = <StatusBadge label={`Link expired ${when}`} tone="critical" />;
+  } else if (p.isExpiringSoon) {
+    badge = <StatusBadge label={`Expires ${when}`} tone="warning" />;
   }
-  if (p.isExpiringSoon) {
-    return <StatusBadge label={`Expires ${when}`} tone="warning" />;
-  }
-  return <StatusBadge label={`Expires ${when}`} tone="caution" variant="dot" />;
+  return <span title={formatOperatorInstant(p.expiresAt)}>{badge}</span>;
 }
 
 /**

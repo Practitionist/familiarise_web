@@ -11,6 +11,8 @@ import {
   SESSION_OUTCOME_LABEL,
   slotStatusBadge,
 } from "@/lib/labels/session-labels";
+import { OperatorTime } from "@/lib/time/operator-time";
+import { operatorEndKind } from "@/lib/time/operator-zone";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
 import { BookingDocumentsOps } from "./BookingDocumentsOps";
@@ -25,8 +27,6 @@ type Session = BookingOpsView["sessions"][number];
 const DECIDED = new Set(["COMPLETED", "UNVERIFIED", "VOIDED"]);
 // The reschedule door releases only a session that still holds a future time.
 const RESCHEDULABLE = new Set(["SCHEDULED", "RESCHEDULED"]);
-
-const when = (iso: string) => new Date(iso).toLocaleString();
 
 const RESCHEDULE_COPY =
   "This only releases the time: the customer picks the new times, and both parties are notified. Nothing is refunded now, and a session within 24 hours cannot be moved.";
@@ -91,8 +91,12 @@ export function BookingOpsPanel({
               className="flex flex-wrap items-center justify-between gap-2 p-2"
             >
               <span className="min-w-0 flex-1">
-                #{s.ordinal} · {when(s.startsAt)} ·{" "}
-                {slotStatusBadge(s.completionStatus).label}
+                #{s.ordinal} · <OperatorTime value={s.startsAt} /> –{" "}
+                <OperatorTime
+                  value={s.endsAt}
+                  kind={operatorEndKind(s.startsAt, s.endsAt)}
+                />{" "}
+                · {slotStatusBadge(s.completionStatus).label}
                 {s.outcome ? ` · ${SESSION_OUTCOME_LABEL[s.outcome]}` : ""}
               </span>
               {DECIDED.has(s.completionStatus) &&

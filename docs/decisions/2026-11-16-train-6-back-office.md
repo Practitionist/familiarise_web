@@ -75,6 +75,25 @@ Routes that only a document names, such as payouts processing, settlement lines,
 
 Worked example of the leads change: Olivia Brown (ADMIN) moves a new enterprise lead from `NEW` to `CONTACTED` at 14:05 IST on 17 November with the reason "Called the HR head, demo booked". The route reads the lead's earlier status inside the transaction, the compare-and-set `updateMany` moves it only if it is still `NEW`, and one `OpsActionLog` row records Olivia, the action `lead.transition`, the before and after status and the reason. If Maria Brown (STAFF) calls the same API, the matrix refuses with 403 before anything is read.
 
+## The second pull request: the decision queue and the appointments area
+
+The second pull request changes only reads, paging and display on the Appointments page of both trees. It changes no money rule, no status transition and no schema.
+
+1. **"Sessions that need a decision" is a paged, sortable table.** `readSessionsNeedingHuman` (`lib/backoffice/session-outcomes.ts`) reads one page of 20 rows over the unchanged `NEEDS_HUMAN` predicate (`lib/booking/misses.ts`), which the nav counts and the needs-attention inbox also read.
+   - It costs three statements: one joined list, one count and one batched user read. The old read was two lists capped at 100 rows, with no booking or person on a row.
+   - `GET /api/admin/sessions/needs-human` parses `?page` (a positive whole number) and `?sort` through `needsHumanQuerySchema` (`lib/backoffice/needs-human-queue.ts`). The sort keys are `endsAt`, `startsAt`, `outcomeAt` (shown as "Waiting since") and `lostMinutes`, with a leading `-` for descending; anything else answers 400.
+   - The default order is the session's end, oldest first, so a session parked longest leads the first page. Each row still says whether it is over 7 days old (`isAgedNeedsHuman`, the same test the escalation uses), because its booking's settlement waits on it.
+   - A row names the booking, the expert and the learner (`PersonCell`), or "12 attendees" for a webinar or class, through the same `appointmentHeadline` helper the appointments list uses (`lib/data/appointment-headline.ts`). Clicking a row opens that booking's drawer.
+   - The queue keeps its page and sort in the card's own state, because the URL's `q`, `page` and `sort` belong to the appointments list below it.
+   - Worked example: 45 sessions are parked. The first page shows the 20 that ended earliest. An operator who sorts by "Lost" and moves to page 2 sends `?page=2&sort=lostMinutes` and reads rows 21 to 40 in that order.
+2. **Trials are on every tab and in the search.** The Scheduled, Completed and Issues tabs and their counts each have a trial arm (`buildStatusWhere` in `lib/data/staff-appointments.ts`), the search matches a trial's plan title, expert and learner, and the Type filter has "Trial".
+   - A trial is priced from what the buyer agreed to (`Trial.agreedPricePaise`), and from the plan's trial price only on rows from before that column, so a trial whose plan later went free does not read as free.
+   - A removed booking (`Appointment.deletedAt` set) stays listed, carries a "Removed" badge and counts under Issues. A trial booking whose trial row is gone is titled "Trial (record removed)" and reads Cancelled.
+3. **The booking drawer reads one clock.** The list row, "Scheduled At", the Ops panel's sessions, the class series doors and the documents panel print India time through `OperatorTime` or `formatOperatorInstant`, with the UTC instant on hover. A session's end prints its time alone when it falls on the start's India-time day. The relative times in the timeline and the pay-link deadline keep their words and carry the India-time instant in their tooltip.
+4. **The booking timeline and the entity trace show only real changes.** `getBookingTimeline` (`lib/data/booking-history.ts`) feeds both. It drops a status row whose before and after are the same and that carries no reason, and keeps such a row when it has a reason. A reschedule proposal is listed as "Reschedule proposed", with where it stands now beside it ("now accepted"); the answer is the status row of that reschedule request, so the outcome appears once. The history writes are unchanged.
+5. **Two more routes ask the matrix.** `GET /api/staff/appointments` and `GET /api/staff/appointments/[appointmentId]/timeline` moved from `requirePrivilegedAuth` to `appointments.manage`, which is the same ADMIN and STAFF set. The queue route keeps `classSeries.support`, the same set.
+   - Options not chosen: keeping the queue's two-list read with a higher cap. A cap hides rows past it, and the rows it did show could not be told apart.
+
 ## Limits that remain
 
 - Until the later pull requests merge, some screens still print times in the browser or server zone, and about fifty routes still ask a raw role question **(planned)**.
