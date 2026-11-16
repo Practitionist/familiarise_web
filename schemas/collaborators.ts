@@ -28,8 +28,14 @@ export const MAX_SHARE_PERCENT = 90;
 export const sharePercentSchema = z
   .number({ required_error: "Enter a revenue share" })
   .int("The revenue share must be a whole percent")
-  .min(MIN_SHARE_PERCENT, `The revenue share must be at least ${MIN_SHARE_PERCENT}%`)
-  .max(MAX_SHARE_PERCENT, `The revenue share cannot exceed ${MAX_SHARE_PERCENT}%`);
+  .min(
+    MIN_SHARE_PERCENT,
+    `The revenue share must be at least ${MIN_SHARE_PERCENT}%`,
+  )
+  .max(
+    MAX_SHARE_PERCENT,
+    `The revenue share cannot exceed ${MAX_SHARE_PERCENT}%`,
+  );
 
 const idSchema = z.string().trim().min(1).max(64);
 
@@ -83,8 +89,8 @@ export const seenTermsSchema = z
   .strict();
 
 export const respondToInvitationSchema = z.discriminatedUnion("response", [
-  z.object({ response: z.literal("ACCEPTED"), seenTerms: seenTermsSchema }).strict(),
-  z.object({ response: z.literal("DECLINED") }).strict(),
+  z.object({ response: z.literal("ACCEPTED"), seenTerms: seenTermsSchema }),
+  z.object({ response: z.literal("DECLINED") }),
 ]);
 
 export type SeenTerms = z.infer<typeof seenTermsSchema>;

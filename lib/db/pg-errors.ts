@@ -45,6 +45,11 @@ export function isUniqueViolation(error: unknown): boolean {
   return sqlState(error) === "23505";
 }
 
+/** Postgres 23514 — a CHECK, or a trigger that raises as one, refused the row. */
+export function isCheckViolation(error: unknown): boolean {
+  return sqlState(error) === "23514";
+}
+
 /** Postgres 23P01 — exclusion-constraint violation (e.g. `occurrence_no_confirmed_overlap`). */
 export function isExclusionViolation(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;

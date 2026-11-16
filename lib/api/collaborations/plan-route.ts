@@ -1,227 +1,88 @@
-import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
-import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
+import { getPlanTeamForUser } from "@/lib/collaborators/queries";
+import { inviteCollaborator } from "@/lib/collaborators/service";
+import type { PlanType } from "@/lib/collaborators/team";
+import { resolveCollaborationViewer } from "@/lib/collaborators/viewer";
+import prisma from "@/lib/prisma";
+import { applyRateLimit, collaboratorInviteLimiter } from "@/lib/rate-limit";
 import {
-  CollaboratorCapError,
-  CollaboratorIneligibleError,
-  getCollaboratorsForUser,
-  inviteCollaborator,
-} from "@/lib/collaborators/service";
-import { hasOrgPermission } from "@/lib/auth/org-permissions";
+  inviteCollaboratorSchemas,
+  planParamsSchema,
+} from "@/schemas/collaborators";
+import {
+  collaborationErrorResponse,
+  parseBody,
+  parseParams,
+  requireManager,
+  unauthorized,
+} from "./http";
 
-export type PlanCollaborationKind = "webinar" | "class";
+type RouteContext = { params: Promise<{ planId: string }> };
 
-interface CollaboratorInviteShape {
-  consultantProfileId: string;
-  role: string;
-  revenueSharePercentage: number;
-}
-
-interface PlanRecord {
-  consultantProfileId: string | null;
-  organizationId?: string | null;
-  consultantProfile: unknown;
-}
-
-interface PlanRouteConfig {
-  planKind: PlanCollaborationKind;
-  schema: z.ZodType<CollaboratorInviteShape, z.ZodTypeDef, unknown>;
-  fetchLogLabel: string;
-  inviteLogLabel: string;
-  findPlan: (planId: string) => Promise<PlanRecord | null>;
-  findExisting: (
-    planId: string,
-    consultantProfileId: string,
-  ) => Promise<unknown>;
-}
-
-async function isOrgCatalogAdmin(
-  userId: string,
-  organizationId: string | null | undefined,
-): Promise<boolean> {
-  if (!organizationId) return false;
-  const membership = await prisma.membership.findUnique({
-    where: {
-      userId_organizationId: {
-        userId,
-        organizationId,
-      },
-    },
-    select: {
-      status: true,
-      role: true,
-      organization: { select: { status: true } },
-    },
-  });
-  return Boolean(
-    membership?.status === "ACTIVE" &&
-    membership.organization.status !== "DEACTIVATED" &&
-    hasOrgPermission(membership.role, "catalog.manage"),
-  );
-}
-
-async function authorizePlanInviteCaller(
-  userId: string,
-  plan: PlanRecord,
-): Promise<{
-  allowed: boolean;
-  ownerProfileId: string | null;
-}> {
-  const ownerProfile = await prisma.consultantProfile.findFirst({
-    where: { userId },
-  });
-  const ownerProfileId = ownerProfile?.id ?? null;
-  const isOwner =
-    Boolean(ownerProfileId) && plan.consultantProfileId === ownerProfileId;
-  const isOrgAdmin =
-    !isOwner && (await isOrgCatalogAdmin(userId, plan.organizationId));
-  return { allowed: isOwner || isOrgAdmin, ownerProfileId };
-}
-
-export function createPlanCollaborationHandlers(config: PlanRouteConfig) {
-  const { planKind, schema, fetchLogLabel, inviteLogLabel } = config;
-
-  async function GET(
-    _req: NextRequest,
-    { params }: { params: Promise<{ planId: string }> },
-  ) {
+/** The list and invite handlers of one plan type; the webinar and class routes differ only in it. */
+export function planCollaborationHandlers(planType: PlanType) {
+  async function GET(_req: NextRequest, { params }: RouteContext) {
     try {
       const session = await getSession();
-      if (!session?.user?.id) {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-      }
-
-      const { planId } = await params;
-      const result = await getCollaboratorsForUser(
-        planKind,
-        planId,
+      if (!session?.user?.id) return unauthorized();
+      const { planId } = parseParams(planParamsSchema, await params);
+      const result = await getPlanTeamForUser(
+        { planType, planId },
         session.user.id,
       );
-
       if (result.status === "not_found") {
-        return NextResponse.json({ error: "Plan not found" }, { status: 404 });
+        return NextResponse.json(
+          { error: "Plan not found.", code: "NOT_FOUND" },
+          { status: 404 },
+        );
       }
       if (result.status === "forbidden") {
-        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-      }
-
-      return NextResponse.json({ data: result.data });
-    } catch (error) {
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "collaborations" } },
-      );
-      console.error(`Error fetching ${fetchLogLabel} collaborators:`, error);
-      return NextResponse.json(
-        { error: "Failed to fetch collaborators" },
-        { status: 500 },
-      );
-    }
-  }
-
-  async function POST(
-    req: NextRequest,
-    { params }: { params: Promise<{ planId: string }> },
-  ) {
-    try {
-      const session = await getSession();
-      if (!session?.user?.id) {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-      }
-
-      const { planId } = await params;
-
-      const plan = await config.findPlan(planId);
-      if (!plan) {
-        return NextResponse.json({ error: "Plan not found" }, { status: 404 });
-      }
-
-      const { allowed, ownerProfileId } = await authorizePlanInviteCaller(
-        session.user.id,
-        plan,
-      );
-      if (!allowed) {
         return NextResponse.json(
-          { error: "Only the plan owner can invite collaborators" },
+          { error: "You are not on this plan's team.", code: "FORBIDDEN" },
           { status: 403 },
         );
       }
-
-      const body = await req.json();
-      const parsed = schema.safeParse(body);
-      if (!parsed.success) {
-        return NextResponse.json(
-          { error: parsed.error.errors.map((e) => e.message).join(", ") },
-          { status: 400 },
-        );
-      }
-
-      const { consultantProfileId, role, revenueSharePercentage } = parsed.data;
-      if (
-        consultantProfileId === ownerProfileId ||
-        consultantProfileId === plan.consultantProfileId
-      ) {
-        return NextResponse.json(
-          { error: "You cannot invite yourself as a collaborator" },
-          { status: 400 },
-        );
-      }
-
-      const existingCollab = await config.findExisting(
-        planId,
-        consultantProfileId,
-      );
-      if (existingCollab) {
-        return NextResponse.json(
-          {
-            error:
-              "This consultant already has an active or pending collaboration on this plan",
-          },
-          { status: 409 },
-        );
-      }
-
-      const collab = await inviteCollaborator(
-        planKind,
-        planId,
-        consultantProfileId,
-        role,
-        revenueSharePercentage,
-        ownerProfileId,
-      );
-
-      if (!collab) {
-        return NextResponse.json(
-          {
-            error:
-              "Failed to invite. Revenue share may exceed limit (max 90% total for collaborators).",
-          },
-          { status: 400 },
-        );
-      }
-
-      return NextResponse.json({ data: collab });
+      const { viewer } = result;
+      return NextResponse.json({
+        data: result.data,
+        viewer: viewer.kind,
+        canManage: viewer.kind === "manager" && viewer.canWrite,
+      });
     } catch (error) {
-      if (error instanceof CollaboratorCapError) {
-        return NextResponse.json({ error: error.message }, { status: 409 });
-      }
-      if (error instanceof CollaboratorIneligibleError) {
-        return NextResponse.json(
-          { error: error.message },
-          { status: error.httpStatus },
-        );
-      }
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "collaborations" } },
+      return collaborationErrorResponse(error, `${planType}.team.list`);
+    }
+  }
+
+  async function POST(req: NextRequest, { params }: RouteContext) {
+    try {
+      const session = await getSession();
+      if (!session?.user?.id) return unauthorized();
+      const { planId } = parseParams(planParamsSchema, await params);
+      const ref = { planType, planId };
+      const access = await resolveCollaborationViewer(
+        prisma,
+        ref,
+        session.user.id,
       );
-      console.error(`Error inviting ${inviteLogLabel} collaborator:`, error);
-      return NextResponse.json(
-        { error: "Failed to invite collaborator" },
-        { status: 500 },
+      requireManager(access);
+      const limited = await applyRateLimit(
+        collaboratorInviteLimiter,
+        `collab-invite:${session.user.id}`,
       );
+      if (limited) return limited;
+
+      const body = await parseBody(req, inviteCollaboratorSchemas[planType]);
+      const data = await inviteCollaborator({
+        ref,
+        consultantProfileId: body.consultantProfileId,
+        role: body.role,
+        sharePercent: body.sharePercent,
+        invitedByProfileId: access.callerProfileId,
+      });
+      return NextResponse.json({ data }, { status: 201 });
+    } catch (error) {
+      return collaborationErrorResponse(error, `${planType}.team.invite`);
     }
   }
 
