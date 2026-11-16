@@ -41,7 +41,7 @@ type HistoryRow = {
 };
 
 /** Answers like the database: the self-edge exclusion in the WHERE runs before the LIMIT. */
-function servedLikeTheDatabase(stored: HistoryRow[]) {
+function servedLikeTheDatabase<R extends HistoryRow>(stored: R[]) {
   return async (args: { where: { AND?: unknown[] }; take: number }) => {
     const excludes = JSON.stringify(args.where.AND?.[1] ?? null).includes(
       "field:toStatus",
@@ -239,7 +239,7 @@ describe("getBookingTimeline", () => {
 
     expect(historyFindMany.mock.calls[0][0].where.AND[1]).toEqual({
       OR: [
-        { fromStatus: { not: "field:toStatus" } },
+        { NOT: { fromStatus: { equals: "field:toStatus" } } },
         { reason: { not: null } },
       ],
     });

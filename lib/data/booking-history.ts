@@ -226,8 +226,10 @@ export async function getBookingTimeline(
         {
           OR: [
             {
-              fromStatus: {
-                not: prisma.bookingStatusHistory.fields.toStatus,
+              NOT: {
+                fromStatus: {
+                  equals: prisma.bookingStatusHistory.fields.toStatus,
+                },
               },
             },
             { reason: { not: null } },
