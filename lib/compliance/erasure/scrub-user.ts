@@ -82,10 +82,8 @@ import {
 } from "@/lib/auth/session-access-log";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { releaseSeatsForTerminatedAssignments } from "@/lib/api/organizations/seat-count";
-import {
-  removeCollaboratorStanding,
-  type CollaborationRef,
-} from "@/lib/collaborators/standing";
+import { endCollaborationsForUser } from "@/lib/collaborators/ending";
+import type { PlanRef } from "@/lib/collaborators/team";
 import { reportSentryError } from "@/lib/observability/report";
 import {
   createRunFailureReporter,
@@ -875,7 +873,7 @@ export async function scrubUser(
       Boolean(a.razorpayContactId || a.razorpayFundAccId),
     );
 
-  let collaborationsRemoved: CollaborationRef[] = [];
+  let collaborationsRemoved: PlanRef[] = [];
   let archivedProducts: { consultantProfileId: string; slug: string }[] = [];
   let supportAttachmentPathsToRemove: string[] = [];
   let erasureRequestId: string | null = null;
@@ -984,7 +982,13 @@ export async function scrubUser(
 
     // #1580 — an erased consultant otherwise stays an ACCEPTED collaborator in
     // every split and roster; the same flip the moderation ban runs.
-    collaborationsRemoved = await removeCollaboratorStanding(tx, userId);
+    // The erasure's own outbox rows below record the access to take back.
+    collaborationsRemoved = (
+      await endCollaborationsForUser(tx, userId, {
+        endedByUserId: null,
+        ownRevocationQueue: true,
+      })
+    ).map((ended) => ended.ref);
 
     // #1593 — the OUTBOX: every Stream revocation this scrub owes is a durable
     // row before the side effect is attempted, in the same transaction as the
@@ -1142,16 +1146,15 @@ export async function scrubUser(
   for (const { planType, planId } of collaborationsRemoved) {
     let error: string | null = null;
     try {
-      // Lazy: the service pulls Stream and Novu, which the scrub does not need
-      // unless a collaboration was actually flipped.
-      const { revokeCollaboratorAccess } =
-        await import("@/lib/collaborators/service");
-      const { success } = await revokeCollaboratorAccess(
-        planType,
-        planId,
+      // Lazy: the scrub needs Stream only when a collaboration was flipped.
+      // The erasure's own outbox row owns the retry, so the drive is unbudgeted.
+      const { driveCollaboratorRevocation } =
+        await import("@/lib/stream/collaborator-access");
+      error = await driveCollaboratorRevocation(
+        { planType, planId },
         userId,
+        Number.POSITIVE_INFINITY,
       );
-      if (!success) error = "Collaborator Stream access not fully revoked";
     } catch (caught) {
       error = caught instanceof Error ? caught.message : String(caught);
     }

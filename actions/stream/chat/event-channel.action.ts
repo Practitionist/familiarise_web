@@ -29,6 +29,8 @@ import {
 import { getSession } from "@/lib/auth-server";
 import { isPrivileged } from "@/lib/auth-helpers";
 import { Refusal, type RefusalShape } from "@/lib/errors/refusal";
+import type { PlanRef } from "@/lib/collaborators/team";
+import { fenceCollaboratorGrant } from "@/lib/stream/access-revocation";
 import {
   addUserToEventChannel as addUserToEventChannelInternal,
   checkEventChannelExists as checkEventChannelExistsInternal,
@@ -296,6 +298,7 @@ function recordActiveCollabRows(
 async function collectAcceptedCollaboratorTargets(
   userId: string,
   consultantProfileId: string,
+  collaboratorPlans: PlanRef[],
   collabChannelIds: Set<string>,
   eventIds: { type: EventType; id: string }[],
   selfHealEvents: { type: "webinar" | "class"; id: string }[],
@@ -343,6 +346,10 @@ async function collectAcceptedCollaboratorTargets(
 
   for (const collab of acceptedCollaborations) {
     if (collab.webinarPlanId) {
+      collaboratorPlans.push({
+        planType: "webinar",
+        planId: collab.webinarPlanId,
+      });
       collabChannelIds.add(collabChannelId("webinar", collab.webinarPlanId));
       const rows = (collab.webinarPlan?.webinars ?? []).map((w) => ({
         id: w.id,
@@ -361,6 +368,7 @@ async function collectAcceptedCollaboratorTargets(
       );
     }
     if (collab.classPlanId) {
+      collaboratorPlans.push({ planType: "class", planId: collab.classPlanId });
       collabChannelIds.add(collabChannelId("class", collab.classPlanId));
       const rows = (collab.classPlan?.classes ?? []).map((c) => ({
         id: c.id,
@@ -538,6 +546,7 @@ export async function syncUserEventChannels(userId: string): Promise<{
     ]);
     const selfHealEvents: { type: "webinar" | "class"; id: string }[] = [];
     const collabPresenterDmPairs: DmPair[] = [];
+    const collaboratorPlans: PlanRef[] = [];
 
     if (user.consultantProfileId) {
       await addHostedPlanCollabChannels(
@@ -547,6 +556,7 @@ export async function syncUserEventChannels(userId: string): Promise<{
       await collectAcceptedCollaboratorTargets(
         userId,
         user.consultantProfileId,
+        collaboratorPlans,
         collabChannelIds,
         eventIds,
         selfHealEvents,
@@ -569,6 +579,11 @@ export async function syncUserEventChannels(userId: string): Promise<{
         ),
       );
     }
+
+    // A collaboration that ended while these grants were in flight takes them back.
+    await Promise.all(
+      collaboratorPlans.map((ref) => fenceCollaboratorGrant(ref, userId)),
+    );
 
     const mergedDmPairMap = new Map<string, DmPair>();
     for (const pair of [

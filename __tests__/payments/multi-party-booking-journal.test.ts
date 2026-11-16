@@ -289,6 +289,7 @@ describe("#773 multi-party booking journal", () => {
     await createEarningsFromPayment({
       payment: makePayment(),
       appointmentType: "WEBINAR",
+      teamAt: new Date("2026-10-09T10:00:00Z"),
     });
 
     // Exactly ONE booking txn, keyed booking:<paymentId>.
@@ -395,6 +396,7 @@ describe("#773 multi-party booking journal", () => {
         taxAmount: 0,
       }),
       appointmentType: "WEBINAR",
+      teamAt: new Date("2026-10-09T10:00:00Z"),
     });
 
     expect(capturedLedgerTxns).toHaveLength(1);
@@ -443,6 +445,7 @@ describe("#773 multi-party booking journal", () => {
     const ownerId = await createEarningsFromPayment({
       payment: makePayment(),
       appointmentType: "WEBINAR",
+      teamAt: new Date("2026-10-09T10:00:00Z"),
     });
 
     expect(ownerId).not.toBeNull();
@@ -460,6 +463,7 @@ describe("#773 multi-party booking journal", () => {
     const result = await createEarningsFromPayment({
       payment: makePayment(),
       appointmentType: "WEBINAR",
+      teamAt: new Date("2026-10-09T10:00:00Z"),
     });
 
     expect(result).toBe("earn-existing");
@@ -495,6 +499,7 @@ describe("#1458 org-overage rails keep the booking journal balanced", () => {
         taxAmount: 39_406,
       }),
       appointmentType: "CONSULTATION",
+      teamAt: new Date("2026-10-09T10:00:00Z"),
     });
 
     const txn = capturedLedgerTxns[0];
@@ -536,6 +541,7 @@ describe("#1458 org-overage rails keep the booking journal balanced", () => {
         taxAmount: 0,
       }),
       appointmentType: "CONSULTATION",
+      teamAt: new Date("2026-10-09T10:00:00Z"),
     });
 
     const txn = capturedLedgerTxns[0];
@@ -573,6 +579,7 @@ describe("a LICENSE-funded booking", () => {
         taxAmount: 0,
       }),
       appointmentType: "CONSULTATION",
+      teamAt: new Date("2026-10-09T10:00:00Z"),
     });
 
     const txn = capturedLedgerTxns[0];

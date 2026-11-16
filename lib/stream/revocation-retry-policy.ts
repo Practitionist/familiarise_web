@@ -9,6 +9,7 @@ export const UNCAPPED_REVOCATION_KINDS = [
   "REFUND_ACCESS_REVOKE",
   "ERASURE_REVOKE",
   "CONDUCT_CALL_BLOCK",
+  "COLLAB_REVOKE",
 ] as const satisfies readonly StreamRevocationKind[];
 
 export const PAST_CAP_RETRY_MS = 24 * 60 * 60_000;

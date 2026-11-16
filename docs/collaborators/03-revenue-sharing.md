@@ -6,14 +6,14 @@ All multi-party settlement math in `lib/collaborators/service.ts` and `lib/payme
 
 When a participant pays `grossAmount` paise for a webinar or class with accepted collaborators, settlement divides **`grossAmount` directly into per-party gross slices first**, and then applies **at most one fee schedule** (either that party's active organization rate card or the standalone B2C marketplace rate) to each slice:
 
-1. **Collaborator Gross Slices**: Each `ACCEPTED` collaborator $i$ receives:
+1. **Collaborator Gross Slices**: The team is the collaborators on the plan at the sale's split time (`acceptedAt <= at` and not ended by `at`): a seat's capture time, also on any retry of its earnings, and for a replay the start of the recorded session. Each collaborator $i$ on that team receives:
    $$\text{grossSlice}_i = \left\lfloor \frac{\text{grossAmount} \times \text{revenueShareBps}_i}{10000} \right\rfloor$$
 2. **Owner Residual Gross Slice**: The primary host (or owning catalog organization when `consultantProfileId === null`) receives the exact remainder so zero paise are ever minted or lost:
    $$\text{ownerGrossSlice} = \text{grossAmount} - \sum_{i} \text{grossSlice}_i$$
 3. **Independent Single-Fee Decomposition Per Slice**:
-   - **B2B Sponsored Booking (`isB2B = true`)**: `platformFeePaise = 0`; each party retains `100%` of their gross slice (or their org rate card's non-marketplace split).
-   - **Standalone Solo Party (`resolveOrgSplit(...) === null`)**:
-     $$\text{platformFeePaise}_k = \left\lfloor \frac{\text{grossSlice}_k \times 20}{100} \right\rfloor, \quad \text{consultantSharePaise}_k = \text{grossSlice}_k - \text{platformFeePaise}_k$$
+   - **Standalone Solo Party (`resolveOrgSplit(...) === null`)**: pays the rate stamped on the payment at checkout (`Payment.platformFeeBps`), else the active fee schedule's rate for the sale's source:
+     $$\text{platformFeePaise}_k = \left\lfloor \frac{\text{grossSlice}_k \times \text{platformFeeBps}}{10000} \right\rfloor, \quad \text{consultantSharePaise}_k = \text{grossSlice}_k - \text{platformFeePaise}_k$$
+   - **Sponsored (organisation-paid) seat**: no special rate. Checkout stamps the schedule's rate on every order, so each standalone party pays it on its own slice. A sponsored ₹10,000 seat stamped at 20% with a 20% collaborator pays the host ₹6,400 and the collaborator ₹1,600, and the platform keeps ₹2,000.
    - **Org-Affiliated Party (`resolveOrgSplit(tx, profileId, grossSlice_k, ...)`)**:
      Decomposes $\text{grossSlice}_k$ **once** according to that party's own HOST/HYBRID organization rate card $(\text{platformBps}, \text{orgBps}, \text{consultantBps})$:
      $$\text{platformFeePaise}_k = \left\lfloor \frac{\text{grossSlice}_k \times \text{platformBps}}{10000} \right\rfloor$$
@@ -31,9 +31,9 @@ sequenceDiagram
     participant DB as PostgreSQL (Earnings + Ledger)
 
     WH->>ES: createEarningsFromPayment(payment, tx)
-    ES->>CS: calculateRevenueSplit(planType, planId, grossAmount, tx)
+    ES->>CS: calculateRevenueSplit({ planType, planId }, grossAmount, tx, { at })
     CS-->>ES: Gross slices [OWNER (residual), COLLAB_1, COLLAB_2]
-    loop For each split k (OWNER + ACCEPTED collaborators)
+    loop For each split k (OWNER + the team at the split time)
         ES->>RC: resolveOrgSplit(tx, split.consultantProfileId, split.share)
         RC-->>ES: Single fee decomposition (platformFee, orgShare, consultantNet)
     end

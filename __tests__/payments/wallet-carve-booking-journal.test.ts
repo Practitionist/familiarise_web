@@ -168,6 +168,7 @@ function makeWorld(legPaise: number) {
         typeof createEarningsFromPayment
       >[0]["payment"],
       appointmentType: "CONSULTATION",
+      teamAt: new Date("2026-10-09T10:00:00Z"),
       tx: txDouble(tx),
     });
   const carve = () =>

@@ -124,6 +124,7 @@ it("10 sessions at 3 per week → 4 tranches summing exactly to the fee and the 
   const ownerId = await createEarningsFromPayment({
     payment: payment(gross),
     appointmentType: "SUBSCRIPTION",
+    teamAt: new Date("2026-10-09T10:00:00Z"),
   });
 
   expect(ownerId).toBe("earn-1");
@@ -152,6 +153,7 @@ it("a non-subscription payment keeps its single row with a stamped hold and no o
   await createEarningsFromPayment({
     payment: payment(50_000),
     appointmentType: "CONSULTATION",
+    teamAt: new Date("2026-10-09T10:00:00Z"),
   });
 
   expect(created).toHaveLength(1);
@@ -173,6 +175,7 @@ it("new earnings look for an open support case still holding their payment", asy
   await createEarningsFromPayment({
     payment: payment(50_000),
     appointmentType: "CONSULTATION",
+    teamAt: new Date("2026-10-09T10:00:00Z"),
   });
 
   expect(tx.supportCase.findMany).toHaveBeenCalledWith(

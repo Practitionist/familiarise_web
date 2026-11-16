@@ -249,6 +249,7 @@ describe("daily ops digest", () => {
             "REFUND_ACCESS_REVOKE",
             "ERASURE_REVOKE",
             "CONDUCT_CALL_BLOCK",
+            "COLLAB_REVOKE",
           ],
         },
         attempts: { gte: 6 },

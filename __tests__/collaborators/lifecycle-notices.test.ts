@@ -6,7 +6,7 @@
 
 const mockStageNotices = jest.fn();
 const mockFlush = jest.fn(async (..._args: unknown[]) => undefined);
-const mockRevoke = jest.fn(async (..._args: unknown[]) => ({ success: true }));
+const mockRevoke = jest.fn(async (..._args: unknown[]) => undefined);
 jest.mock("@/lib/collaborators/notifications", () => {
   const actual = jest.requireActual("@/lib/collaborators/notifications");
   return {
@@ -21,14 +21,13 @@ jest.mock("@/lib/email/render", () => ({
 jest.mock("@/lib/novu/stage-then-attempt", () => ({
   flushNotificationsAfter: (...args: unknown[]) => mockFlush(...args),
 }));
-jest.mock("@/lib/collaborators/service", () => ({
-  revokeCollaboratorAccess: (...args: unknown[]) => mockRevoke(...args),
-}));
 jest.mock("@/lib/stream/org-access-revocation", () => ({
   revokeMemberStreamAccess: jest.fn(async () => ({ complete: true })),
 }));
+const GENERATION = new Date("2026-11-08T00:00:00Z");
 jest.mock("@/lib/stream/access-revocation", () => ({
-  enqueueCollaboratorRevocationRetry: jest.fn(),
+  persistCollaboratorRevocationInTx: jest.fn(async () => GENERATION),
+  revokeCollaboratorAccess: (...args: unknown[]) => mockRevoke(...args),
   enqueueOrgMemberRevocationRetry: jest.fn(),
 }));
 jest.mock("@/lib/enterprise/membership-guards", () => ({
@@ -64,6 +63,7 @@ const row = {
   invitedById: "cp-host",
   role: "CO_HOST" as const,
   revenueShareBps: 2500,
+  acceptedAt: new Date("2026-11-01T00:00:00Z"),
   updatedAt: new Date("2026-11-07T00:00:00Z"),
 };
 const users: Record<string, Record<string, unknown>> = {
@@ -78,6 +78,7 @@ const users: Record<string, Record<string, unknown>> = {
 const tx: Record<string, Record<string, jest.Mock> | jest.Mock> & {
   notificationOutbox: { upsert: jest.Mock };
   failedEmail: { create: jest.Mock };
+  collaborator: { findMany: jest.Mock; updateManyAndReturn: jest.Mock };
 } = {
   $transaction: jest.fn(async (run: (db: unknown) => unknown) => run(tx)),
   webinarPlan: {
@@ -116,7 +117,10 @@ const tx: Record<string, Record<string, jest.Mock> | jest.Mock> & {
       status: "ACTIVE",
     })),
   },
-  collaborator: { updateManyAndReturn: jest.fn(async () => [row]) },
+  collaborator: {
+    findMany: jest.fn(async () => [{ id: row.id }]),
+    updateManyAndReturn: jest.fn(async () => [row]),
+  },
   programAssignment: { updateMany: jest.fn(async () => ({ count: 0 })) },
   orgAuditLog: { create: jest.fn() },
   organization: { findUnique: jest.fn(async () => null) },
@@ -169,7 +173,15 @@ it("an org member removal stages one WITHDRAWN notice per row for the host and n
     force: false,
   });
   expect(mockStageNotices).toHaveBeenCalledTimes(1);
-  expect(mockStageNotices).toHaveBeenCalledWith(tx, "WITHDRAWN", row);
-  expect(mockRevoke).toHaveBeenCalledWith("webinar", "wp-1", "u-guest");
+  expect(mockStageNotices).toHaveBeenCalledWith(tx, "WITHDRAWN", row, {});
+  expect(tx.collaborator.updateManyAndReturn).toHaveBeenCalledWith({
+    where: { id: "c-1", status: { in: ["PENDING", "ACCEPTED"] } },
+    data: { status: "REMOVED", endedByUserId: "u-admin" },
+  });
+  expect(mockRevoke).toHaveBeenCalledWith(
+    { planType: "webinar", planId: "wp-1" },
+    "u-guest",
+    GENERATION,
+  );
   expect(mockFlush).toHaveBeenCalledTimes(1);
 });

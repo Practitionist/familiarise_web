@@ -3,13 +3,15 @@ import { isPrivileged } from "@/lib/auth-helpers";
 import { hasAnyOrgPermission } from "@/lib/auth/org-permissions";
 
 export type CollabChannelAccess =
-  "ok" | "forbidden" | "not_found" | "org_deactivated";
+  "ok" | "collaborator" | "forbidden" | "not_found" | "org_deactivated";
 
 /**
  * Who may hold a seat in a plan's `collab-` channel: staff, the host, an
  * ACCEPTED collaborator, or an ACTIVE member of the plan's live org with
  * `messaging.read` or `catalog.manage`. The open route and the membership
  * reconciler both decide with this, so one cannot admit whom the other removes.
+ * `collaborator` is admission that rests on the collaboration alone, which the
+ * open route re-checks after its grant.
  */
 export async function collabChannelAccess(
   userId: string,
@@ -40,7 +42,7 @@ export async function collabChannelAccess(
   if (plan.organization?.status === "DEACTIVATED") return "org_deactivated";
   if (plan.consultantProfile?.userId === userId) return "ok";
   if (plan.collaborators.some((c) => c.consultantProfile.userId === userId)) {
-    return "ok";
+    return "collaborator";
   }
 
   if (plan.organizationId) {

@@ -32,6 +32,7 @@ import type {
   StreamRevocationKind,
 } from "@prisma/client";
 import type { AccessRevocationRow } from "@/lib/stream/access-revocation";
+import type { PlanRef } from "@/lib/collaborators/team";
 import prisma, { type PrismaLike } from "@/lib/prisma";
 import { createRunFailureReporter } from "@/lib/observability/run-failures";
 import { nextRetryAt } from "@/lib/retry/backoff";
@@ -381,11 +382,11 @@ async function executeErasureRevocationRow(
   deps: {
     principalPrefix: string;
     eraseStreamPrincipalFootprint: (userId: string) => Promise<void>;
-    revokeCollaboratorAccess: (
-      planType: "webinar" | "class",
-      planId: string,
+    driveCollaboratorRevocation: (
+      ref: PlanRef,
       userId: string,
-    ) => Promise<{ success: boolean }>;
+      deadlineMs: number,
+    ) => Promise<string | null>;
   },
 ): Promise<string | null> {
   if (row.planId.startsWith(deps.principalPrefix)) {
@@ -399,12 +400,11 @@ async function executeErasureRevocationRow(
   if (!row.planType) return "Erasure retry has no plan type";
   const planType = row.planType === "WEBINAR" ? "webinar" : "class";
   try {
-    const { success } = await deps.revokeCollaboratorAccess(
-      planType,
-      row.planId,
+    return await deps.driveCollaboratorRevocation(
+      { planType, planId: row.planId },
       row.erasureRequest.userId,
+      Number.POSITIVE_INFINITY,
     );
-    return success ? null : "Collaborator Stream access not fully revoked";
   } catch (error_) {
     return errMsg(error_);
   }
@@ -503,7 +503,8 @@ function canStartRevocationRow(
   const isSeatKind =
     kind === "SEAT_ACCESS_REVOKE" ||
     kind === "REFUND_ACCESS_REVOKE" ||
-    kind === "CONDUCT_CALL_BLOCK";
+    kind === "CONDUCT_CALL_BLOCK" ||
+    kind === "COLLAB_REVOKE";
   return !isSeatKind || remainingMs >= MIN_SEAT_REVOCATION_SLICE_MS;
 }
 
@@ -583,14 +584,14 @@ async function drainErasureRevocations(
 
   const { STREAM_PRINCIPAL_PLAN_ID_PREFIX, eraseStreamPrincipalFootprint } =
     await import("@/lib/compliance/erasure/scrub-user");
-  const { revokeCollaboratorAccess } =
-    await import("@/lib/collaborators/service");
+  const { driveCollaboratorRevocation } =
+    await import("@/lib/stream/collaborator-access");
   const { redriveAccessRevocation } =
     await import("@/lib/stream/access-revocation");
   const deps = {
     principalPrefix: STREAM_PRINCIPAL_PLAN_ID_PREFIX,
     eraseStreamPrincipalFootprint,
-    revokeCollaboratorAccess,
+    driveCollaboratorRevocation,
     redriveAccessRevocation,
   };
   for (const row of rows) {
@@ -782,7 +783,7 @@ async function retryOne(
 }
 
 /**
- * #1580 — re-run `revokeCollaboratorAccess` for every plan the action flipped.
+ * Re-drives the collaborator revocation for every plan the action flipped.
  * Always applicable: the rows are REMOVED whatever became of the ban, and the
  * Stream removal is idempotent. Shares the attempt and age budget above.
  */
@@ -816,18 +817,18 @@ async function retryCollaboratorRevocation(
     return;
   }
 
-  // Lazy, as in side-effects.ts: the service pulls Stream and Novu.
-  const { revokeCollaboratorAccess } =
-    await import("@/lib/collaborators/service");
+  // Lazy, as in side-effects.ts: only a row with plans needs Stream.
+  const { driveCollaboratorRevocation } =
+    await import("@/lib/stream/collaborator-access");
   const failed: string[] = [];
   for (const { planType, planId } of plans) {
     try {
-      const { success } = await revokeCollaboratorAccess(
-        planType,
-        planId,
+      const error = await driveCollaboratorRevocation(
+        { planType, planId },
         row.report.targetUserId,
+        Number.POSITIVE_INFINITY,
       );
-      if (!success) failed.push(`${planType}:${planId}`);
+      if (error) failed.push(`${planType}:${planId}`);
     } catch (error) {
       failed.push(`${planType}:${planId} (${errMsg(error)})`);
     }

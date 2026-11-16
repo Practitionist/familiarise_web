@@ -168,7 +168,7 @@ describe("Event Channel Actions", () => {
         await import("../../actions/stream/chat/event-channel.action");
 
       await expect(
-        checkEventChannelExists("invalid" as any, "id-123"),
+        checkEventChannelExists("invalid" as "webinar", "id-123"),
       ).rejects.toThrow();
     });
 
@@ -441,6 +441,10 @@ describe("Event Channel Actions", () => {
           collaborators: [{ consultantProfile: { userId: "cohost-1" } }],
         },
         appointments: [],
+      });
+      // The co-host is still on the team when the roster's grant is re-checked.
+      (mockPrisma.collaborator.findFirst as jest.Mock).mockResolvedValue({
+        id: "collab-1",
       });
 
       const { addUserToEventChannel } =

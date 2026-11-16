@@ -328,7 +328,7 @@ async function queueSection(db: Db, now: Date): Promise<SectionBody> {
   };
 }
 
-/** Seat, refund and erasure revocations still retrying daily past their attempt cap. */
+/** Revocations of a kind that never gives up, still retrying daily past their attempt cap. */
 async function revocationSection(db: Db): Promise<SectionBody> {
   const total = await db.streamRevocationRetry.count({
     where: PAST_CAP_REVOCATION_WHERE,

@@ -20,10 +20,8 @@ import type {
 } from "@prisma/client";
 import { EarningStatus, EarningsHoldReason } from "@prisma/client";
 import prisma, { type Tx } from "@/lib/prisma";
-import {
-  removeCollaboratorStanding,
-  type CollaborationRef,
-} from "@/lib/collaborators/standing";
+import { endCollaborationsForUser } from "@/lib/collaborators/ending";
+import type { PlanRef } from "@/lib/collaborators/team";
 import { recomputeConsultantRating } from "@/lib/reviews";
 import {
   getStreamChatClient,
@@ -104,7 +102,7 @@ export interface TransactionalEffectResult {
   /** Whose public surfaces need purging once the transaction commits. */
   reviewRemovedConsultantProfileId?: string;
   banExpires?: string | null;
-  collaborationsRemoved?: CollaborationRef[];
+  collaborationsRemoved?: PlanRef[];
   stagedBells?: StagedTrigger[];
   stagedEmails?: StagedEmailBundleEntry[];
   /** Revoked sessions for the access log; phase 2 stamps them, never persisted. */
@@ -379,7 +377,7 @@ async function applyActionEffects(
     case "USER_BANNED":
       return banOrSuspendUser(tx, input);
     case "PROFILE_UNVERIFIED":
-      return unverifyProfiles(tx, report.targetUserId);
+      return unverifyProfiles(tx, report.targetUserId, input.staffUserId);
     case "CONTENT_REMOVED":
       if (report.type !== "REVIEW") return {};
       return softDeleteReview(tx, report.reviewId);
@@ -405,7 +403,7 @@ async function banOrSuspendUser(
   tx: Tx,
   input: ModerationSideEffectInput,
 ): Promise<TransactionalEffectResult> {
-  const { actionType, report, notes, suspensionDays } = input;
+  const { actionType, report, notes, suspensionDays, staffUserId } = input;
   const banExpires =
     actionType === "USER_SUSPENDED"
       ? new Date(Date.now() + (suspensionDays ?? 7) * 86_400_000)
@@ -439,14 +437,15 @@ async function banOrSuspendUser(
     if (earningsHeld !== undefined) result.earningsHeld = earningsHeld;
   }
 
-  // #1580 C-P0-4 — a moderated account otherwise stays an ACCEPTED collaborator
-  // in every split, roster and recording; the flip is shared with erasure.
-  const collaborationsRemoved = await removeCollaboratorStanding(
-    tx,
-    report.targetUserId,
-  );
-  if (collaborationsRemoved.length > 0) {
-    result.collaborationsRemoved = collaborationsRemoved;
+  // A ban is permanent, so it ends every collaboration. A suspension has an
+  // end date: the account cannot sign in meanwhile and keeps its place.
+  if (actionType === "USER_BANNED") {
+    const teams = await endCollaborationsAsModeration(
+      tx,
+      report.targetUserId,
+      staffUserId,
+    );
+    if (teams.length > 0) result.collaborationsRemoved = teams;
   }
   return result;
 }
@@ -480,9 +479,22 @@ async function holdBannedConsultantEarnings(
   return placed.length;
 }
 
+/** Ends the user's collaborations; returns the plans whose team they were on. */
+async function endCollaborationsAsModeration(
+  tx: Tx,
+  targetUserId: string,
+  staffUserId: string,
+): Promise<PlanRef[]> {
+  const ended = await endCollaborationsForUser(tx, targetUserId, {
+    endedByUserId: staffUserId,
+  });
+  return ended.filter((e) => e.wasOnTeam).map((e) => e.ref);
+}
+
 async function unverifyProfiles(
   tx: Tx,
   targetUserId: string,
+  staffUserId: string,
 ): Promise<TransactionalEffectResult> {
   // Both fields: explore + the booking gate filter on verificationStatus,
   // while isVerified is the projected display flag.
@@ -490,7 +502,16 @@ async function unverifyProfiles(
     where: { userId: targetUserId },
     data: { isVerified: false, verificationStatus: "REJECTED" },
   });
-  return { profilesUnverified: updated.count };
+  // Only a verified expert holds a place on a team.
+  const teams = await endCollaborationsAsModeration(
+    tx,
+    targetUserId,
+    staffUserId,
+  );
+  return {
+    profilesUnverified: updated.count,
+    ...(teams.length > 0 ? { collaborationsRemoved: teams } : {}),
+  };
 }
 
 async function softDeleteReview(
@@ -637,7 +658,6 @@ export async function applyBestEffortEffects(
       input.report.targetUserId,
       transactional.collaborationsRemoved,
       summary,
-      errors,
     );
   }
 
@@ -664,35 +684,18 @@ async function runBulkCancellations(
   }
 }
 
-// #1580 C-P0-4 — the Stream side of the rows phase 1 moved to REMOVED. The ban
-// notification already went out, so the per-plan removal Novu is skipped.
+// The Stream side of the collaborations phase 1 ended. Their transaction wrote
+// each revocation, so whatever this attempt leaves the revocation sweep finishes.
 async function runCollaboratorRevocations(
   targetUserId: string,
-  plans: CollaborationRef[],
+  plans: PlanRef[],
   summary: SideEffectSummary,
-  errors: string[],
 ): Promise<void> {
-  const failed: string[] = [];
-  // Lazy: a static import would pull the auth + email graph into every action.
+  // Lazy: a static import would pull the Stream graph into every action.
   const { revokeCollaboratorAccess } =
-    await import("@/lib/collaborators/service");
-  for (const { planType, planId } of plans) {
-    try {
-      const { success } = await revokeCollaboratorAccess(
-        planType,
-        planId,
-        targetUserId,
-      );
-      if (!success) failed.push(`${planType}:${planId}`);
-    } catch (error) {
-      failed.push(`${planType}:${planId}`);
-      captureModerationError(error);
-    }
-  }
-  summary.collaboratorRevocation = failed.length === 0 ? "ok" : "failed";
-  if (failed.length > 0) {
-    errors.push(`collaborator-revoke: ${failed.join(", ")}`);
-  }
+    await import("@/lib/stream/access-revocation");
+  for (const ref of plans) await revokeCollaboratorAccess(ref, targetUserId);
+  summary.collaboratorRevocation = "ok";
 }
 
 /**

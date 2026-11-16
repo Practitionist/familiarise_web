@@ -1,21 +1,23 @@
 import prisma from "@/lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
+import { reportSentryError } from "@/lib/observability/report";
 import {
-  flushNotificationsAfter,
-  type StagedNotificationBundle,
-} from "@/lib/novu/stage-then-attempt";
-import { stageCollaboratorNotifications } from "./notifications";
-
-const STALE_INVITE_MS = 14 * 24 * 60 * 60 * 1000;
+  afterCollaborationEnded,
+  endCollaboration,
+  type EndedCollaboration,
+} from "./ending";
+import { inviteLapsedBefore } from "./rules";
 
 export interface ExpireStaleCollaboratorInvitesResult {
   expired: number;
   scanned: number;
+  failed: number;
 }
 
 /**
- * Transitions PENDING collaborator invitations older than 14 days to DECLINED
- * via conditional CAS update; each expiry stages its notices in the same transaction.
+ * Ends invitations nobody answered within the invitation window as EXPIRED,
+ * one transaction each, so each expiry and its notices commit together and a
+ * row answered or edited in the meantime is left alone.
  */
 export async function expireStaleCollaboratorInvites(
   limit = 50,
@@ -25,9 +27,7 @@ export async function expireStaleCollaboratorInvites(
     "expire-stale-collaborator-invites",
     { failMode: "open" },
     async () => {
-      const now = new Date();
-      const cutoff = new Date(now.getTime() - STALE_INVITE_MS);
-
+      const cutoff = inviteLapsedBefore(new Date());
       const candidates = await prisma.collaborator.findMany({
         where: { status: "PENDING", updatedAt: { lt: cutoff } },
         take: effectiveLimit,
@@ -35,33 +35,40 @@ export async function expireStaleCollaboratorInvites(
         select: { id: true },
       });
 
-      let expired = 0;
-      const staged: StagedNotificationBundle[] = [];
+      const ended: EndedCollaboration[] = [];
+      const failures: { id: string; error: unknown }[] = [];
       for (const { id } of candidates) {
-        const notices = await prisma.$transaction(async (tx) => {
-          const updated = await tx.collaborator.updateMany({
-            where: { id, status: "PENDING", updatedAt: { lt: cutoff } },
-            data: { status: "DECLINED", respondedAt: now },
-          });
-          if (updated.count === 0) return null;
-          const row = await tx.collaborator.findUniqueOrThrow({
-            where: { id },
-          });
-          return stageCollaboratorNotifications(tx, "EXPIRED", row);
-        });
-        if (!notices) continue;
-        expired += 1;
-        staged.push(notices);
+        try {
+          const one = await prisma.$transaction((tx) =>
+            endCollaboration(tx, {
+              collaboratorId: id,
+              to: "EXPIRED",
+              endedByUserId: null,
+              where: { updatedAt: { lt: cutoff } },
+            }),
+          );
+          if (one) ended.push(one);
+        } catch (error) {
+          failures.push({ id, error });
+        }
       }
-
-      await flushNotificationsAfter(
-        {
-          bells: staged.flatMap((n) => n.bells ?? []),
-          emails: staged.flatMap((n) => n.emails ?? []),
-        },
-        "collaborator.expired",
-      );
-      return { expired, scanned: candidates.length };
+      if (failures.length > 0) {
+        reportSentryError(failures[0].error, {
+          subsystem: "collaborators",
+          op: "expireStaleCollaboratorInvites",
+          extra: {
+            failed: failures.length,
+            scanned: candidates.length,
+            collaboratorIds: failures.map((f) => f.id),
+          },
+        });
+      }
+      await afterCollaborationEnded(ended, "collaborator.expired");
+      return {
+        expired: ended.length,
+        scanned: candidates.length,
+        failed: failures.length,
+      };
     },
   );
 }

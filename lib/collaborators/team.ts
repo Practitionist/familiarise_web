@@ -49,6 +49,33 @@ export function planWhere(ref: PlanRef): Prisma.CollaboratorWhereInput {
 }
 
 /**
+ * The plan's appointments a collaborator is party to: live, not called off.
+ * An Appointment carries no status of its own; the event row does.
+ */
+export function livePlanAppointmentsWhere(
+  ref: PlanRef,
+): Prisma.AppointmentWhereInput {
+  return {
+    deletedAt: null,
+    ...(ref.planType === "webinar"
+      ? {
+          webinar: {
+            webinarPlanId: ref.planId,
+            deletedAt: null,
+            status: { not: "CANCELLED" },
+          },
+        }
+      : {
+          class: {
+            classPlanId: ref.planId,
+            deletedAt: null,
+            status: { not: "CANCELLED" },
+          },
+        }),
+  };
+}
+
+/**
  * Locks the plan row for the rest of the transaction, so team changes and
  * schedule changes on one plan queue instead of reading each other's stale
  * state. NO KEY UPDATE does not block inserts of rows that reference the plan.
@@ -82,17 +109,22 @@ export async function currentTeam(
  * Who was on the plan's team at `at`: accepted at or before it and not ended
  * by it. Reads the rows' own period, so the answer is the same whenever it is
  * asked, which is what a payment split retried later depends on.
+ * `liveProfilesOnly` leaves out a member whose profile is erased today.
  */
 export async function teamAsOf(
   db: PrismaLike,
   ref: PlanRef,
   at: Date,
+  opts: { liveProfilesOnly?: boolean } = {},
 ): Promise<TeamMember[]> {
   const rows = await db.collaborator.findMany({
     where: {
       ...planWhere(ref),
       acceptedAt: { lte: at },
       OR: [{ endedAt: null }, { endedAt: { gt: at } }],
+      ...(opts.liveProfilesOnly
+        ? { consultantProfile: { deletedAt: null } }
+        : {}),
     },
     select: TEAM_MEMBER_SELECT,
     orderBy: [{ acceptedAt: "asc" }, { id: "asc" }],

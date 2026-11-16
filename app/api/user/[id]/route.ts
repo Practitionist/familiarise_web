@@ -24,8 +24,10 @@ import {
 } from "@/lib/compliance/erasure/scrub-user";
 import { checkActiveAppointments } from "@/app/api/user/consultants/utils/consultant-appointments";
 import { deleteSubscriber } from "@/lib/novu/subscriber";
-import { removeCollaboratorStanding } from "@/lib/collaborators/standing";
-import { revokeCollaboratorAccess } from "@/lib/collaborators/service";
+import {
+  afterCollaborationEnded,
+  endCollaborationsForUser,
+} from "@/lib/collaborators/ending";
 import { requireFreshSession } from "@/lib/auth/step-up";
 import { recordOpsAction } from "@/lib/backoffice/ops-action-log";
 import { supportRetainedHistoryCount } from "@/lib/support/erasure";
@@ -516,7 +518,9 @@ async function executeUserHardDeleteOrFallbackScrub(
   auditRetainedUntil.setUTCFullYear(auditRetainedUntil.getUTCFullYear() + 7);
   let endedSessions: EndedSessions[] = [];
   const removedCollaborations = await prisma.$transaction(async (tx) => {
-    const removed = await removeCollaboratorStanding(tx, id);
+    const removed = await endCollaborationsForUser(tx, id, {
+      endedByUserId: null,
+    });
     await tx.consentArtifact.updateMany({
       where: { userId: id },
       data: {
@@ -535,9 +539,7 @@ async function executeUserHardDeleteOrFallbackScrub(
   // After commit, so a failed access-log write never fails the deletion.
   await stampSessionEnds(endedSessions, { forgetUser: true });
 
-  for (const c of removedCollaborations) {
-    await revokeCollaboratorAccess(c.planType, c.planId, id);
-  }
+  await afterCollaborationEnded(removedCollaborations, "user.delete");
 
   const novuErased = await deleteSubscriber(id);
 

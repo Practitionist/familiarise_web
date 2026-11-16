@@ -108,8 +108,11 @@ jest.mock("../../lib/observability/report", () => ({
 // but the REAL resolveMeetingAccess — exercised below through requireActual —
 // is nothing but database reads.
 // The seat fence has its own suite; here every grant re-checks as still admitted.
+const mockCollaboratorFence = jest.fn();
 jest.mock("../../lib/stream/access-revocation", () => ({
   fenceSeatGrants: jest.fn(async () => ({ verified: true, lost: [] })),
+  fenceCollaboratorGrant: (...args: unknown[]) =>
+    mockCollaboratorFence(...args),
 }));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
@@ -371,6 +374,44 @@ describe("POST /api/meetings/[meetingId]/join", () => {
     expect(mockUpdateCallMembers).toHaveBeenCalledWith({
       update_members: [{ user_id: "user_1", role: "co_presenter" }],
     });
+  });
+
+  it("re-checks a collaborator after the grant: an ended one is refused, an unread one is never admitted", async () => {
+    const plan = { planType: "webinar", planId: "plan-1" };
+    mockResolveMeetingAccess.mockResolvedValue({
+      hasAccess: true,
+      role: "host",
+      coPresenter: true,
+      collaboratorOf: plan,
+      message: "Access granted as accepted co-presenter",
+      reason: "granted",
+      streamCallId: "slot-abc",
+    });
+    mockCollaboratorFence.mockResolvedValueOnce({ verified: true, lost: true });
+    mockCollaboratorFence.mockResolvedValueOnce({ verified: false });
+    mockCollaboratorFence.mockResolvedValueOnce({
+      verified: true,
+      lost: false,
+    });
+
+    const ended = await POST(req, { params });
+    const unread = await POST(req, { params });
+    const admitted = await POST(req, { params });
+
+    expect(mockCollaboratorFence).toHaveBeenCalledWith(plan, "user_1");
+    expect(ended.status).toBe(403);
+    await expect(ended.json()).resolves.toMatchObject({
+      code: "COLLABORATION_ENDED",
+    });
+    expect(unread.status).toBe(503);
+    expect(admitted.status).toBe(200);
+  });
+
+  it("never re-checks a collaboration for a caller admitted another way", async () => {
+    const res = await POST(req, { params });
+
+    expect(res.status).toBe(200);
+    expect(mockCollaboratorFence).not.toHaveBeenCalled();
   });
 
   it("refuses a suspended account before touching Stream", async () => {
@@ -735,6 +776,9 @@ describe("resolveMeetingAccess still admits a live session", () => {
 
     expect(access.hasAccess).toBe(true);
     expect(access.role).toBe("participant");
+    expect(access).toMatchObject({
+      collaboratorOf: { planType: "webinar", planId: expect.any(String) },
+    });
   });
 
   it("lets a disconnected participant back into a session that just completed", async () => {

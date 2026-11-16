@@ -71,7 +71,7 @@ const userUpdate = jest.fn(async () => ({}));
 const tx = models({
   ...supportScrubModels(),
   payoutAccount: { updateMany: payoutAccountUpdate },
-  collaborator: { updateManyAndReturn: jest.fn(async () => []) },
+  collaborator: { findMany: jest.fn(async () => []) },
   erasureRequest: { findFirst: jest.fn(async () => null) },
 });
 const db = models({
