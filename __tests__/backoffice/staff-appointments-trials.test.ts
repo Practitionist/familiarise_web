@@ -29,6 +29,14 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
+jest.mock("../../lib/auth-helpers", () => ({
+  requireBackofficeSurface: async () => ({
+    session: { user: { id: "op-1", role: "STAFF" } },
+  }),
+}));
+
+import { NextRequest } from "next/server";
+import { GET } from "../../app/api/staff/appointments/route";
 import {
   buildStatusWhere,
   getStaffAppointments,
@@ -184,4 +192,20 @@ it("lists the reported removed trial as removed and cancelled, never scheduled",
     issueType: "Removed",
   });
   expect(staffStatus(row).label).toBe("Cancelled");
+});
+
+it("clamps the route's page size to 100 and falls back on junk", async () => {
+  for (const [raw, take] of [
+    ["900", 100],
+    ["50", 50],
+    ["abc", 20],
+    ["0", 20],
+  ] as const) {
+    mockFindMany.mockClear();
+    const res = await GET(
+      new NextRequest(`http://test/api/staff/appointments?limit=${raw}`),
+    );
+    expect(res.status).toBe(200);
+    expect(mockFindMany.mock.calls[0][0]).toMatchObject({ take });
+  }
 });

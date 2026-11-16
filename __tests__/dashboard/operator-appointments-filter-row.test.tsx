@@ -133,3 +133,33 @@ it("typing searches after the pause, and Clear resets search and type", async ()
   expect(window.location.search).toBe("");
   expect(input).toHaveValue("");
 });
+
+it("a queue row opens its booking without narrowing the list underneath", async () => {
+  window.history.replaceState(
+    null,
+    "",
+    "/backoffice/appointments?tab=completed&type=webinar&q=asha",
+  );
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <OperatorAppointmentsClient
+        beforeContent={(openBooking) => (
+          <button type="button" onClick={() => openBooking("apt_linked")}>
+            Open from the queue
+          </button>
+        )}
+      />
+    </QueryClientProvider>,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Open from the queue" }));
+
+  expect(
+    await screen.findByRole("heading", { name: /Linked booking/ }),
+  ).toBeInTheDocument();
+  expect(window.location.search).toBe("?tab=completed&type=webinar&q=asha");
+});

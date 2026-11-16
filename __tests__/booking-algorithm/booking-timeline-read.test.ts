@@ -27,11 +27,33 @@ jest.mock("../../lib/prisma", () => ({
     },
     bookingStatusHistory: {
       findMany: (args: unknown) => historyFindMany(args),
+      fields: { toStatus: "field:toStatus" },
     },
   },
 }));
 
 const PRIVILEGED = { kind: "all" } as const;
+
+type HistoryRow = {
+  fromStatus: string;
+  toStatus: string;
+  reason: string | null;
+};
+
+/** Answers like the database: the self-edge exclusion in the WHERE runs before the LIMIT. */
+function servedLikeTheDatabase(stored: HistoryRow[]) {
+  return async (args: { where: { AND?: unknown[] }; take: number }) => {
+    const excludes = JSON.stringify(args.where.AND?.[1] ?? null).includes(
+      "field:toStatus",
+    );
+    const kept = excludes
+      ? stored.filter(
+          (row) => row.fromStatus !== row.toStatus || row.reason !== null,
+        )
+      : stored;
+    return kept.slice(0, args.take);
+  };
+}
 
 function appointmentRow() {
   return {
@@ -127,7 +149,7 @@ describe("getBookingTimeline", () => {
     // Each id is paired with the entity its writer stamps, so a same-id row of
     // another type cannot enter another appointment's trail.
     const call = historyFindMany.mock.calls[0][0];
-    expect(call.where.OR).toEqual([
+    expect(call.where.AND[0].OR).toEqual([
       { appointmentId: "appt-1" },
       { entity: "CONSULTATION", entityId: { in: ["consult-1"] } },
       { entity: "OCCURRENCE", entityId: { in: ["slot-1"] } },
@@ -138,29 +160,31 @@ describe("getBookingTimeline", () => {
   });
 
   it("hides a self-edge with no reason and keeps one that carries a reason", async () => {
-    historyFindMany.mockResolvedValue([
-      {
-        id: "hist-self-bare",
-        entity: "SUBSCRIPTION",
-        entityId: "sub-1",
-        fromStatus: "APPROVED",
-        toStatus: "APPROVED",
-        reason: null,
-        createdAt: new Date("2026-09-03T10:00:00.000Z"),
-        actorUser: null,
-      },
-      {
-        id: "hist-self-why",
-        entity: "SUBSCRIPTION",
-        entityId: "sub-1",
-        fromStatus: "APPROVED",
-        toStatus: "APPROVED",
-        reason: "plan extended by ops",
-        createdAt: new Date("2026-09-03T09:00:00.000Z"),
-        actorUser: null,
-      },
-      ...historyRows(),
-    ]);
+    historyFindMany.mockImplementation(
+      servedLikeTheDatabase([
+        {
+          id: "hist-self-bare",
+          entity: "SUBSCRIPTION",
+          entityId: "sub-1",
+          fromStatus: "APPROVED",
+          toStatus: "APPROVED",
+          reason: null,
+          createdAt: new Date("2026-09-03T10:00:00.000Z"),
+          actorUser: null,
+        },
+        {
+          id: "hist-self-why",
+          entity: "SUBSCRIPTION",
+          entityId: "sub-1",
+          fromStatus: "APPROVED",
+          toStatus: "APPROVED",
+          reason: "plan extended by ops",
+          createdAt: new Date("2026-09-03T09:00:00.000Z"),
+          actorUser: null,
+        },
+        ...historyRows(),
+      ]),
+    );
     const timeline = await getBookingTimeline("appt-1", PRIVILEGED);
     const ids = timeline!.entries.map((entry) => entry.id);
     expect(ids).not.toContain("hist-self-bare");
@@ -190,10 +214,56 @@ describe("getBookingTimeline", () => {
     expect(trace[1].detail).toBe("clashes with a standup · now accepted");
 
     const drawer = entries.map(timelineStepLabel);
-    expect(drawer).toEqual(["PENDING_REVIEW → ACCEPTED", "Proposed"]);
-    expect(drawer.filter((label) => label.includes("ACCEPTED"))).toHaveLength(
+    expect(drawer).toEqual(["Pending Review → Accepted", "Proposed"]);
+    expect(drawer.filter((label) => label.includes("Accepted"))).toHaveLength(
       1,
     );
+  });
+
+  it("excludes hidden self-edges in the query, so 200 of them cannot push a real move out of the window", async () => {
+    const selfEdges = Array.from({ length: 200 }, (_, index) => ({
+      id: `self-${String(index).padStart(3, "0")}`,
+      entity: "CONSULTATION",
+      entityId: "consult-1",
+      fromStatus: "APPROVED",
+      toStatus: "APPROVED",
+      reason: null,
+      createdAt: new Date(Date.UTC(2026, 8, 3, 13, 0, index)),
+      actorUser: null,
+    }));
+    const realMove = historyRows()[1];
+    const stored = [...selfEdges.reverse(), realMove];
+    historyFindMany.mockImplementation(servedLikeTheDatabase(stored));
+
+    const timeline = await getBookingTimeline("appt-1", PRIVILEGED);
+
+    expect(historyFindMany.mock.calls[0][0].where.AND[1]).toEqual({
+      OR: [
+        { fromStatus: { not: "field:toStatus" } },
+        { reason: { not: null } },
+      ],
+    });
+    expect(timeline!.entries.map((entry) => entry.id)).toContain("hist-1");
+    expect(timeline!.truncated).toBe(false);
+  });
+
+  it("reads an outcome reason token as words", async () => {
+    historyFindMany.mockResolvedValue([
+      {
+        ...historyRows()[0],
+        id: "h-sweep",
+        reason: "session-outcome:NOBODY_JOINED",
+      },
+      {
+        ...historyRows()[1],
+        id: "h-ops",
+        reason: "ops:session.set-outcome:HELD",
+      },
+    ]);
+    const { entries } = (await getBookingTimeline("appt-1", PRIVILEGED))!;
+    const reasons = Object.fromEntries(entries.map((e) => [e.id, e.reason]));
+    expect(reasons["h-sweep"]).toBe("Outcome sweep: Nobody joined");
+    expect(reasons["h-ops"]).toBe("Set by ops: Held");
   });
 
   it("flags truncation when the merge overflows the limit", async () => {

@@ -63,10 +63,11 @@ function actorLabel(entry: BookingTimelineEntry): string {
   return entry.actor?.name?.trim() || "system";
 }
 
-/** A status edge as "FROM → TO"; a reschedule row is the proposal, its answer is an edge. */
+/** A status edge in words ("Scheduled → Unverified"); a reschedule row is the proposal, its answer is an edge. */
 export function timelineStepLabel(entry: BookingTimelineEntry): string {
   if (entry.kind === "reschedule") return "Proposed";
-  return entry.from ? `${entry.from} → ${entry.to}` : entry.to;
+  const to = humanizeEnum(entry.to);
+  return entry.from ? `${humanizeEnum(entry.from)} → ${to}` : to;
 }
 
 function TimelineRow({ entry }: { entry: BookingTimelineEntry }) {
@@ -77,7 +78,7 @@ function TimelineRow({ entry }: { entry: BookingTimelineEntry }) {
         <Badge variant="secondary" className="bg-muted text-muted-foreground">
           {entityLabel(entry.entity)}
         </Badge>
-        <span className="font-mono text-xs text-foreground">
+        <span className="text-xs text-foreground">
           {timelineStepLabel(entry)}
         </span>
       </div>

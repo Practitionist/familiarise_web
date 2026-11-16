@@ -4,17 +4,25 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { getStaffAppointments } from "@/lib/data/staff-appointments";
 import type { Scope } from "@/lib/api/scope/parse";
 
-// Coerce a query param to a positive integer; NaN / <1 / non-integer falls
-// back to `fallback`. `parseInt("abc")` returns NaN (truthy), so a bare
-// `|| default` never triggers — and the data layer doesn't clamp the offset.
-function positiveIntParam(raw: string | null, fallback: number): number {
-  const n = Number(raw);
-  return Number.isInteger(n) && n > 0 ? n : fallback;
-}
+/** A positive whole number, else `fallback`; never above `max`. */
+const positiveInt = (fallback: number, max: number) =>
+  z.coerce
+    .number()
+    .int()
+    .positive()
+    .catch(fallback)
+    .transform((n) => Math.min(n, max));
+
+/** Paging is clamped: a page holds at most 100 rows, as the decision queue does. */
+const PagingSchema = z.object({
+  page: positiveInt(1, 10_000),
+  limit: positiveInt(20, 100),
+});
 
 /**
  * `?orgId=` drills into one tenant; its absence is the platform-wide view.
@@ -37,8 +45,10 @@ export async function GET(req: NextRequest) {
       dateFrom: searchParams.get("dateFrom"),
       dateTo: searchParams.get("dateTo"),
       scope: staffScope(searchParams.get("orgId")),
-      page: positiveIntParam(searchParams.get("page"), 1),
-      limit: positiveIntParam(searchParams.get("limit"), 20),
+      ...PagingSchema.parse({
+        page: searchParams.get("page") ?? undefined,
+        limit: searchParams.get("limit") ?? undefined,
+      }),
     });
 
     return NextResponse.json(result);

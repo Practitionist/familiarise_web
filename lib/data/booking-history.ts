@@ -41,9 +41,12 @@ import {
 } from "@/lib/booking/allocation/schedule-choice";
 import type {
   BookingHistoryEntity,
+  OccurrenceOutcome,
   RescheduleInitiatorRole,
   RescheduleRequestStatus,
 } from "@prisma/client";
+
+import { SESSION_OUTCOME_LABEL } from "@/lib/labels/session-labels";
 
 import type { Scope } from "@/lib/api/scope/parse";
 import prisma from "@/lib/prisma";
@@ -208,12 +211,28 @@ export async function getBookingTimeline(
 
   const history = await prisma.bookingStatusHistory.findMany({
     where: {
-      OR: [
-        { appointmentId: appointment.id },
-        // One `{ entity, entityId }` pair per source, never a bare id list:
-        // `entityId` is polymorphic and unconstrained, so a bare list would
-        // admit a row of a different type that happened to carry the same id.
-        ...entityMatches,
+      AND: [
+        {
+          OR: [
+            { appointmentId: appointment.id },
+            // One `{ entity, entityId }` pair per source, never a bare id list:
+            // `entityId` is polymorphic and unconstrained, so a bare list would
+            // admit a row of a different type that happened to carry the same id.
+            ...entityMatches,
+          ],
+        },
+        // A self-edge with no reason records no change; excluding it before the
+        // limit keeps it from pushing a real move out of the window.
+        {
+          OR: [
+            {
+              fromStatus: {
+                not: prisma.bookingStatusHistory.fields.toStatus,
+              },
+            },
+            { reason: { not: null } },
+          ],
+        },
       ],
     },
     select: {
@@ -234,10 +253,8 @@ export async function getBookingTimeline(
     take: TIMELINE_LIMIT + 1,
   });
 
-  // A self-edge with no reason records no change, so it is not shown.
   const statusEntries: BookingTimelineEntry[] = history
     .slice(0, TIMELINE_LIMIT)
-    .filter((row) => row.fromStatus !== row.toStatus || row.reason !== null)
     .map((row) => ({
       id: row.id,
       kind: "status" as const,
@@ -245,7 +262,6 @@ export async function getBookingTimeline(
       entityId: row.entityId,
       from: row.fromStatus,
       to: row.toStatus,
-      // A scheduling token reads as words; any other reason is already copy.
       reason: scheduleReasonCopy(row.reason),
       actor: row.actorUser
         ? { id: row.actorUser.id, name: row.actorUser.name }
@@ -289,7 +305,23 @@ export async function getBookingTimeline(
   };
 }
 
+const OUTCOME_REASONS: [prefix: string, words: string][] = [
+  ["session-outcome:", "Outcome sweep"],
+  ["ops:session.set-outcome:", "Set by ops"],
+];
+
+const isOutcome = (value: string): value is OccurrenceOutcome =>
+  Object.hasOwn(SESSION_OUTCOME_LABEL, value);
+
+/** A scheduling or outcome token reads as words; any other reason is already copy. */
 function scheduleReasonCopy(reason: string | null): string | null {
   const token = parseScheduleReason(reason);
-  return token ? SCHEDULE_REASON_COPY[token] : reason;
+  if (token) return SCHEDULE_REASON_COPY[token];
+  for (const [prefix, words] of OUTCOME_REASONS) {
+    const outcome = reason?.startsWith(prefix) && reason.slice(prefix.length);
+    if (outcome && isOutcome(outcome)) {
+      return `${words}: ${SESSION_OUTCOME_LABEL[outcome]}`;
+    }
+  }
+  return reason;
 }

@@ -54,7 +54,7 @@ beforeEach(() => {
   global.fetch = fetchMock as unknown as typeof fetch;
 });
 
-it("sends whitelisted sorts and pages, names the people, and opens the booking", async () => {
+it("sends whitelisted sorts and pages, names the people and the door, and opens the booking", async () => {
   const onOpenBooking = jest.fn();
   render(
     <QueryClientProvider client={new QueryClient()}>
@@ -66,17 +66,30 @@ it("sends whitelisted sorts and pages, names the people, and opens the booking",
   expect((await screen.findAllByText("Career chat")).length).toBeGreaterThan(0);
   expect(screen.getAllByText("Asha").length).toBeGreaterThan(0);
   expect(screen.getAllByText("r@x.test").length).toBeGreaterThan(0);
-  expect(screen.getAllByText(/settlement on hold/).length).toBeGreaterThan(0);
+  expect(screen.getAllByText("Over 7 days").length).toBeGreaterThan(0);
+  expect(
+    screen.getAllByRole("button", {
+      name: "Set outcome for Career chat, 1 Nov 2026, 3:30 pm IST",
+    }).length,
+  ).toBeGreaterThan(0);
 
-  fireEvent.click(screen.getAllByRole("button", { name: "Lost" })[0]);
+  fireEvent.click(
+    screen.getAllByRole("button", { name: "Outcome · minutes lost" })[0],
+  );
   await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
   fireEvent.click(screen.getAllByRole("button", { name: /Next/ })[0]);
   await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+  // The compact picker is the sort control on a phone, and reaches "Ended".
+  fireEvent.change(screen.getByRole("combobox", { name: "Sort" }), {
+    target: { value: "-endsAt" },
+  });
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
 
   expect(sentQueries()).toEqual([
     { page: 1, sort: { key: "endsAt", dir: "asc" } },
     { page: 1, sort: { key: "lostMinutes", dir: "asc" } },
     { page: 2, sort: { key: "lostMinutes", dir: "asc" } },
+    { page: 1, sort: { key: "endsAt", dir: "desc" } },
   ]);
 
   fireEvent.click(screen.getAllByText("Career chat")[0]);

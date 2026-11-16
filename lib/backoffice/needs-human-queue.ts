@@ -59,6 +59,10 @@ export const needsHumanQuerySchema = z.object({
   sort: z.enum(SORT_TOKENS).default("endsAt").transform(sortOf),
 });
 
+/** A sort as its `?sort` token: the key, with a leading `-` for descending. */
+export const needsHumanSortToken = (sort: NeedsHumanSort): string =>
+  sort.dir === "desc" ? `-${sort.key}` : sort.key;
+
 /** The query string the queue card sends for one page and sort. */
 export function needsHumanQueueSearch(
   page: number,
@@ -66,10 +70,25 @@ export function needsHumanQueueSearch(
 ): string {
   const params = new URLSearchParams({
     page: String(page),
-    sort: sort.dir === "desc" ? `-${sort.key}` : sort.key,
+    sort: needsHumanSortToken(sort),
   });
   return params.toString();
 }
+
+/** The sorts the compact picker offers, as `?sort` tokens and words. */
+export const NEEDS_HUMAN_SORT_OPTIONS = [
+  { token: "endsAt", label: "Ended, oldest first" },
+  { token: "-endsAt", label: "Ended, newest first" },
+  { token: "startsAt", label: "Session, earliest first" },
+  { token: "-startsAt", label: "Session, latest first" },
+  { token: "outcomeAt", label: "Waiting longest" },
+  { token: "-outcomeAt", label: "Waiting shortest" },
+  { token: "-lostMinutes", label: "Most minutes lost" },
+  { token: "lostMinutes", label: "Fewest minutes lost" },
+] as const satisfies readonly {
+  token: (typeof SORT_TOKENS)[number];
+  label: string;
+}[];
 
 /** One parked session with the booking it belongs to, as the route returns it. */
 export interface NeedsHumanItem {

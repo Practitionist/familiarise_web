@@ -27,6 +27,10 @@ jest.mock("../../lib/prisma", () => ({
     user: { findMany: (args: unknown) => mockUsers(args) },
   },
 }));
+// The overturn door in the same module takes the appointment lock; this suite never does.
+jest.mock("../../utils/appointmentlock", () => ({
+  withAppointmentLock: jest.fn(),
+}));
 jest.mock("../../lib/auth-helpers", () => ({
   requireBackofficeSurface: async () => ({
     session: { user: { id: "op-1", role: "STAFF" } },

@@ -17,14 +17,20 @@ import {
   NEEDS_HUMAN_DEFAULT_SORT,
   NEEDS_HUMAN_PAGE_SIZE,
   NEEDS_HUMAN_SORT_KEYS,
+  NEEDS_HUMAN_SORT_OPTIONS,
+  needsHumanQuerySchema,
   needsHumanQueueSearch,
+  needsHumanSortToken,
   type NeedsHumanItem,
   type NeedsHumanPage,
   type NeedsHumanSort,
 } from "@/lib/backoffice/needs-human-queue";
 import { SESSION_OUTCOME_LABEL } from "@/lib/labels/session-labels";
 import { OperatorTime } from "@/lib/time/operator-time";
-import { operatorEndKind } from "@/lib/time/operator-zone";
+import {
+  formatOperatorInstant,
+  operatorEndKind,
+} from "@/lib/time/operator-zone";
 import { humanizeEnum } from "@/lib/ui/tone";
 import { SetOutcomeDialog } from "./SetOutcomeDialog";
 
@@ -41,74 +47,109 @@ function toQueueSort(sort: TableSort): NeedsHumanSort | null {
 
 const QUEUE_KEY = ["sessions-needs-human"] as const;
 
-const columns: ResponsiveColumn<NeedsHumanItem>[] = [
-  {
-    key: "booking",
-    header: "Booking",
-    primary: true,
-    cell: (s) => (
-      <div className="min-w-0">
-        <p className="truncate font-medium">{s.booking.title || "Booking"}</p>
-        <p className="text-xs text-muted-foreground">
-          {humanizeEnum(s.booking.type)}
-          {s.booking.removed ? " · Removed" : ""}
-        </p>
-      </div>
-    ),
-  },
-  {
-    key: "expert",
-    header: "Expert",
-    cell: (s) => <PersonCell person={s.booking.expert} />,
-  },
-  {
-    key: "learner",
-    header: "Learner",
-    cell: (s) =>
-      s.booking.attendeeLabel ? (
-        <span className="text-sm">{s.booking.attendeeLabel}</span>
-      ) : (
-        <PersonCell person={s.booking.learner} />
+const NOWRAP = "whitespace-nowrap";
+const CAP = "min-w-0 max-w-[11rem]";
+
+/** Stacked cells keep the table inside the card at 1440 px; the door sits in the outcome cell. */
+function queueColumns(
+  onSetOutcome: (s: NeedsHumanItem) => void,
+): ResponsiveColumn<NeedsHumanItem>[] {
+  return [
+    {
+      key: "booking",
+      header: "Booking",
+      primary: true,
+      cell: (s) => (
+        <div className={CAP}>
+          <p className="truncate font-medium">{s.booking.title || "Booking"}</p>
+          <p className="text-xs text-muted-foreground">
+            {humanizeEnum(s.booking.type)}
+            {s.booking.removed ? " · Removed" : ""}
+          </p>
+        </div>
       ),
-  },
-  {
-    key: "startsAt",
-    header: "Session",
-    sortable: true,
-    cell: (s) => <OperatorTime value={s.startsAt} />,
-  },
-  {
-    key: "endsAt",
-    header: "Ended",
-    sortable: true,
-    cell: (s) => (
-      <OperatorTime
-        value={s.endsAt}
-        kind={operatorEndKind(s.startsAt, s.endsAt)}
-      />
-    ),
-  },
-  {
-    key: "outcomeAt",
-    header: "Waiting since",
-    sortable: true,
-    cell: (s) => (
-      <div className="space-y-1">
-        <OperatorTime value={s.outcomeAt ?? s.endsAt} />
-        {s.aged && (
-          <StatusBadge label="Over 7 days; settlement on hold" tone="warning" />
-        )}
-      </div>
-    ),
-  },
-  { key: "outcome", header: "Outcome", cell: whyParked },
-  {
-    key: "lostMinutes",
-    header: "Lost",
-    sortable: true,
-    cell: (s) => (s.lostMinutes ? `${s.lostMinutes} min` : "—"),
-  },
-];
+    },
+    {
+      key: "people",
+      header: "Expert / learner",
+      cell: (s) => (
+        <div className={`${CAP} space-y-2`}>
+          <PersonCell person={s.booking.expert} />
+          {s.booking.attendeeLabel ? (
+            <p className="text-sm text-muted-foreground">
+              {s.booking.attendeeLabel}
+            </p>
+          ) : (
+            <PersonCell person={s.booking.learner} />
+          )}
+        </div>
+      ),
+    },
+    {
+      key: "startsAt",
+      header: "Session",
+      sortable: true,
+      cell: (s) => (
+        <div className="text-sm">
+          <OperatorTime value={s.startsAt} kind="date" className={NOWRAP} />
+          <p className={`text-xs text-muted-foreground ${NOWRAP}`}>
+            <OperatorTime value={s.startsAt} kind="time" /> to{" "}
+            <OperatorTime
+              value={s.endsAt}
+              kind={operatorEndKind(s.startsAt, s.endsAt)}
+            />
+          </p>
+        </div>
+      ),
+    },
+    {
+      key: "outcomeAt",
+      header: "Waiting since",
+      sortable: true,
+      // The sort puts a session with no verdict yet last, so its cell shows none.
+      cell: (s) => (
+        <div className="space-y-1 text-sm">
+          <OperatorTime value={s.outcomeAt} kind="date" className={NOWRAP} />
+          {s.outcomeAt && (
+            <p className={`text-xs text-muted-foreground ${NOWRAP}`}>
+              <OperatorTime value={s.outcomeAt} kind="time" />
+            </p>
+          )}
+          {s.aged && (
+            <span title="Its booking's settlement is on hold until this is decided.">
+              <StatusBadge label="Over 7 days" tone="warning" />
+            </span>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: "lostMinutes",
+      // Sorts by the minutes lost, which the cell's second line shows.
+      header: "Outcome · minutes lost",
+      sortable: true,
+      cell: (s) => (
+        <div className={`${CAP} space-y-1 text-sm`}>
+          <p>{whyParked(s)}</p>
+          <p className="text-xs text-muted-foreground">
+            {s.lostMinutes ? `${s.lostMinutes} min lost` : "No minutes lost"}
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            aria-label={`Set outcome for ${s.booking.title || "booking"}, ${formatOperatorInstant(s.startsAt)}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onSetOutcome(s);
+            }}
+          >
+            Set outcome
+          </Button>
+        </div>
+      ),
+    },
+  ];
+}
 
 /**
  * Sessions the outcome sweep could not decide, a page at a time, and the door
@@ -140,14 +181,35 @@ export function SessionOutcomesCard({
 
   return (
     <Card>
-      <CardHeader>
+      <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0">
         <CardTitle className="text-lg">
           Sessions that need a decision{total > 0 ? ` (${total})` : ""}
         </CardTitle>
+        <label className="flex items-center gap-2 text-sm text-muted-foreground">
+          Sort
+          <select
+            className="rounded-md border border-border bg-background px-2 py-1 text-foreground"
+            value={needsHumanSortToken(sort)}
+            onChange={(e) => {
+              const picked = needsHumanQuerySchema.shape.sort.safeParse(
+                e.target.value,
+              );
+              if (!picked.success) return;
+              setSort(picked.data);
+              setPage(1);
+            }}
+          >
+            {NEEDS_HUMAN_SORT_OPTIONS.map((o) => (
+              <option key={o.token} value={o.token}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
         <ResponsiveTable<NeedsHumanItem>
-          columns={columns}
+          columns={queueColumns(setTarget)}
           rows={queue.data?.items ?? []}
           getRowId={(s) => s.id}
           isLoading={queue.isLoading && !queue.data}
@@ -161,11 +223,6 @@ export function SessionOutcomesCard({
             setSort(picked);
             setPage(1);
           }}
-          rowActions={(s) => (
-            <Button size="sm" variant="outline" onClick={() => setTarget(s)}>
-              Set outcome
-            </Button>
-          )}
           empty={<p className="text-muted-foreground">Nothing is waiting.</p>}
         />
         {total > NEEDS_HUMAN_PAGE_SIZE && (

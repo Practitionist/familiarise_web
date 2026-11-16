@@ -21,6 +21,8 @@ import { Stat, StatRow } from "@/components/dashboard/Stat";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { humanizeEnum } from "@/lib/ui/tone";
 import { bookingStatus } from "@/lib/appointments/booking-status";
+import { gatewayLabel } from "@/lib/labels/money-labels";
+import { paymentStatusBadge } from "@/lib/labels/session-labels";
 import { AwaitingPaymentPanel } from "./AwaitingPaymentPanel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -128,15 +130,24 @@ export const TYPE_OPTIONS = [
 ];
 const TYPE_FILTERS = new Set(TYPE_OPTIONS.map((option) => option.value));
 
-// #890 — queryKey is structural: [scope, { page, type, status, search }].
-// The page.tsx prefetch uses the identical default object below.
-function appointmentsKey(args: {
-  page: number;
-  type: string;
-  status: string;
-  search: string;
-}) {
+type ListArgs = { page: number; type: string; status: string; search: string };
+
+// The query key is structural; the page's server prefetch uses the default object.
+function appointmentsKey(args: ListArgs) {
   return ["staff-appointments", args] as const;
+}
+
+async function fetchAppointments(
+  args: ListArgs,
+): Promise<StaffAppointmentsPayload> {
+  const params = new URLSearchParams();
+  params.set("page", args.page.toString());
+  if (args.type !== "all") params.set("type", args.type.toUpperCase());
+  if (args.status !== "all") params.set("status", args.status);
+  if (args.search) params.set("search", args.search);
+  const response = await fetch(`/api/staff/appointments?${params}`);
+  if (!response.ok) throw new Error("Failed to fetch appointments");
+  return response.json();
 }
 
 export function OperatorAppointmentsClient({
@@ -168,7 +179,7 @@ export function OperatorAppointmentsClient({
   const setTypeFilter = (next: string) =>
     list.setFilter("type", next === DEFAULT_TYPE ? null : next);
 
-  // An Awaiting-payment row opens its booking: search by id, then open it.
+  // A booking to open: found on the list's page, or read on its own by id.
   const [pendingOpenId, setPendingOpenId] = useState<string | null>(linkedOpen);
   useEffect(() => {
     if (linkedOpen) {
@@ -178,32 +189,37 @@ export function OperatorAppointmentsClient({
   const [selectedAppointment, setSelectedAppointment] =
     useState<Appointment | null>(null);
 
+  const listArgs: ListArgs = {
+    page,
+    type: typeFilter,
+    status: activeTab,
+    search,
+  };
   const { data, isLoading, isFetching, refetch, error } =
     useQuery<StaffAppointmentsPayload>({
-      queryKey: appointmentsKey({
-        page,
-        type: typeFilter,
-        status: activeTab,
-        search,
-      }),
+      queryKey: appointmentsKey(listArgs),
       // Tab, type, page and search all live in the key, so each combination is
-      // its own query. Same fix as #346 on the appointments list.
+      // its own query.
       placeholderData: keepPreviousData,
-      queryFn: async () => {
-        const params = new URLSearchParams();
-        params.set("page", page.toString());
-        if (typeFilter !== "all") params.set("type", typeFilter.toUpperCase());
-        if (activeTab !== "all") params.set("status", activeTab);
-        if (search) params.set("search", search);
-
-        const response = await fetch(`/api/staff/appointments?${params}`);
-        if (!response.ok) throw new Error("Failed to fetch appointments");
-        return response.json();
-      },
+      queryFn: () => fetchAppointments(listArgs),
       refetchOnWindowFocus: false,
       // The Awaiting payment tab reads its own source (approval payments).
       enabled: activeTab !== "awaiting-payment",
     });
+  // Opening a booking from the queue or Awaiting payment leaves the list's
+  // q/tab/type alone: the booking is read by id beside it.
+  const linkedArgs: ListArgs = {
+    page: 1,
+    type: DEFAULT_TYPE,
+    status: DEFAULT_TAB,
+    search: pendingOpenId ?? "",
+  };
+  const linked = useQuery<StaffAppointmentsPayload>({
+    queryKey: appointmentsKey(linkedArgs),
+    queryFn: () => fetchAppointments(linkedArgs),
+    refetchOnWindowFocus: false,
+    enabled: pendingOpenId !== null,
+  });
 
   useEffect(() => {
     if (error) {
@@ -239,12 +255,11 @@ export function OperatorAppointmentsClient({
   else if (appointments.length === 0) tabPanelKind = "empty";
   else tabPanelKind = "list";
 
-  const openBooking = (appointmentId: string) => {
-    setParams({ q: appointmentId, filters: { tab: null, type: null } });
+  const openBooking = (appointmentId: string) =>
     setPendingOpenId(appointmentId);
-  };
   const toOpen = pendingOpenId
-    ? appointments.find((a) => a.id === pendingOpenId)
+    ? (appointments.find((a) => a.id === pendingOpenId) ??
+      linked.data?.appointments.find((a) => a.id === pendingOpenId))
     : undefined;
   if (toOpen) {
     setPendingOpenId(null);
@@ -454,7 +469,12 @@ export function OperatorAppointmentsClient({
                                       appointment.payment.amount,
                                       appointment.payment.currency,
                                     )}{" "}
-                                    • {appointment.payment.status.toLowerCase()}
+                                    •{" "}
+                                    {
+                                      paymentStatusBadge(
+                                        appointment.payment.status,
+                                      ).label
+                                    }
                                   </span>
                                 )}
                               </div>
@@ -635,13 +655,19 @@ export function OperatorAppointmentsClient({
                       </div>
                       <div>
                         <p className="text-xs text-muted-foreground">Status</p>
-                        <p className="capitalize">
-                          {selectedAppointment.payment.status.toLowerCase()}
+                        <p>
+                          {
+                            paymentStatusBadge(
+                              selectedAppointment.payment.status,
+                            ).label
+                          }
                         </p>
                       </div>
                       <div>
                         <p className="text-xs text-muted-foreground">Gateway</p>
-                        <p>{selectedAppointment.payment.gateway}</p>
+                        <p>
+                          {gatewayLabel(selectedAppointment.payment.gateway)}
+                        </p>
                       </div>
                     </div>
                   </div>

@@ -62,7 +62,14 @@ const appointment = {
   removed: false,
   hasIssue: false,
   issueType: null,
-  payment: null,
+  payment: {
+    id: "p1",
+    amount: 50_000,
+    currency: "INR",
+    status: "SUCCEEDED",
+    gateway: "DODO_PAYMENTS",
+    expiresAt: null,
+  },
   reschedule: null,
   createdAt: "2026-11-01T10:00:00.000Z",
 };
@@ -130,4 +137,7 @@ it("prints the row, Scheduled At and every session in IST, with UTC on hover", a
   // The session's end sits on the same IST day, so it prints its time alone.
   expect(within(drawer).getByText("4:00 pm IST")).toBeInTheDocument();
   expect(drawer.textContent).not.toMatch(/\d{1,2}\/\d{1,2}\/\d{4}/);
+  // The payment card names its gateway and status in words, not enum tokens.
+  expect(within(drawer).getByText("Dodo Payments")).toBeInTheDocument();
+  expect(drawer.textContent).not.toMatch(/DODO_PAYMENTS|SUCCEEDED/);
 });
