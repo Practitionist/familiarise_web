@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { CollaboratorStatus, PlanEmailSupport, Prisma } from "@prisma/client";
 import {
   planCollaboratorConsultantSelect,
+  planCollaboratorScalars,
   planConsultantSelect,
 } from "@/lib/api/plans/consultant-projection";
 import {
@@ -39,7 +40,8 @@ export async function GET(request: NextRequest) {
       classContents: true,
       collaborators: {
         where: { status: CollaboratorStatus.ACCEPTED },
-        include: {
+        select: {
+          ...planCollaboratorScalars,
           consultantProfile: { select: planCollaboratorConsultantSelect },
         },
       },
