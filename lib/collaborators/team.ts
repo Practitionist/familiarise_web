@@ -49,6 +49,33 @@ export function planWhere(ref: PlanRef): Prisma.CollaboratorWhereInput {
 }
 
 /**
+ * The plan's appointments a collaborator is party to: live, not called off.
+ * An Appointment carries no status of its own; the event row does.
+ */
+export function livePlanAppointmentsWhere(
+  ref: PlanRef,
+): Prisma.AppointmentWhereInput {
+  return {
+    deletedAt: null,
+    ...(ref.planType === "webinar"
+      ? {
+          webinar: {
+            webinarPlanId: ref.planId,
+            deletedAt: null,
+            status: { not: "CANCELLED" },
+          },
+        }
+      : {
+          class: {
+            classPlanId: ref.planId,
+            deletedAt: null,
+            status: { not: "CANCELLED" },
+          },
+        }),
+  };
+}
+
+/**
  * Locks the plan row for the rest of the transaction, so team changes and
  * schedule changes on one plan queue instead of reading each other's stale
  * state. NO KEY UPDATE does not block inserts of rows that reference the plan.

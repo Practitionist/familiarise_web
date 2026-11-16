@@ -1,4 +1,3 @@
-import * as Sentry from "@sentry/nextjs";
 import {
   LIVE_CLASS_COLLABORATOR,
   LIVE_WEBINAR_COLLABORATOR,
@@ -13,20 +12,9 @@ import {
 import prisma, { type PrismaLike, type Tx } from "@/lib/prisma";
 import { Prisma, type CollaboratorRole } from "@prisma/client";
 import type { Collaborator, CollaboratorStatus } from "@prisma/client";
-import {
-  addUserToEventChannel,
-  checkEventChannelExists,
-  removeUserFromEventChannel,
-} from "@/lib/stream/event-channel-service";
-import {
-  getStreamChatClient,
-  getStreamVideoClient,
-  isExpectedStreamError,
-} from "@/lib/stream-client";
-import { CALL_MEMBER_ROLE, STREAM_CALL_TYPE } from "@/lib/stream/call-cid";
-import { MAX_CALL_DURATION_MS } from "@/lib/meetings/duration-cap";
-import { enqueueCollaboratorRevocationRetry } from "@/lib/stream/access-revocation";
-import { getPlatformVideoConfig } from "@/lib/stream/video-config";
+import { revokeCollaboratorAccess } from "@/lib/stream/access-revocation";
+import { grantCollaboratorAccess } from "@/lib/stream/collaborator-access";
+import { livePlanAppointmentsWhere } from "@/lib/collaborators/team";
 import {
   WEBINAR_COLLABORATOR_ROLES,
   CLASS_COLLABORATOR_ROLES,
@@ -209,10 +197,7 @@ async function assertNotAttendee(
   userId: string,
   db: PrismaLike = prisma,
 ): Promise<void> {
-  const appointment: Prisma.AppointmentWhereInput = livePlanAppointmentsWhere(
-    planType,
-    planId,
-  );
+  const appointment = livePlanAppointmentsWhere({ planType, planId });
   const seat = await db.appointmentParticipant.findFirst({
     where: { ...liveParticipant(userId), role: "CONSULTEE", appointment },
     select: { id: true },
@@ -261,7 +246,7 @@ async function assertInviteeAvailableForPlanEvents(
   const planOccurrences = await db.appointmentOccurrence.findMany({
     where: {
       ...OCCUPYING_OCCURRENCE_WHERE,
-      appointment: livePlanAppointmentsWhere(planType, planId),
+      appointment: livePlanAppointmentsWhere({ planType, planId }),
     },
     select: {
       appointmentId: true,
@@ -376,151 +361,6 @@ export async function inviteCollaborator(
   return txResult.collaborator;
 }
 
-async function syncOpenCallPresenterRole(
-  planType: PlanType,
-  planId: string,
-  userId: string,
-  role: CollaboratorRole,
-): Promise<void> {
-  try {
-    const [occurrences, plan] = await Promise.all([
-      prisma.appointmentOccurrence.findMany({
-        where: {
-          deletedAt: null,
-          endsAt: { gt: new Date(Date.now() - MAX_CALL_DURATION_MS) },
-          appointment: livePlanAppointmentsWhere(planType, planId),
-          meeting: { is: { endedAt: null } },
-        },
-        select: {
-          startsAt: true,
-          endsAt: true,
-          meeting: { select: { streamCallId: true } },
-        },
-      }),
-      planType === "webinar"
-        ? prisma.webinarPlan.findUnique({
-            where: { id: planId },
-            select: { consultantProfile: { select: { userId: true } } },
-          })
-        : prisma.classPlan.findUnique({
-            where: { id: planId },
-            select: { consultantProfile: { select: { userId: true } } },
-          }),
-    ]);
-    if (occurrences.length === 0) return;
-
-    const hostUserId = plan?.consultantProfile?.userId ?? userId;
-    const callRole = PRESENTER_ROLES.includes(role)
-      ? "co_presenter"
-      : CALL_MEMBER_ROLE;
-    const appointmentType = planType === "webinar" ? "WEBINAR" : "CLASS";
-    const { buildCallSettingsOverride } =
-      await import("@/lib/meetings/room-ready");
-    const videoConfig = await getPlatformVideoConfig();
-    const video = getStreamVideoClient().video;
-
-    const results = await Promise.allSettled(
-      occurrences.flatMap(({ startsAt, endsAt, meeting }) => {
-        if (!meeting) return [];
-        const maxDurationSeconds = Math.max(
-          900,
-          Math.ceil((endsAt.getTime() - startsAt.getTime()) / 1000) + 900,
-        );
-        const settingsOverride = buildCallSettingsOverride(
-          appointmentType,
-          maxDurationSeconds,
-          undefined,
-          videoConfig,
-        );
-        const call = video.call(STREAM_CALL_TYPE, meeting.streamCallId);
-        return [
-          (async () => {
-            await call.getOrCreate({
-              data: {
-                created_by_id: hostUserId,
-                members: [{ user_id: userId, role: callRole }],
-                settings_override: settingsOverride,
-              },
-            });
-            await call.updateCallMembers({
-              update_members: [{ user_id: userId, role: callRole }],
-            });
-          })(),
-        ];
-      }),
-    );
-    const failures = results.filter(
-      (r): r is PromiseRejectedResult =>
-        r.status === "rejected" && !isExpectedStreamError(r.reason),
-    );
-    if (failures.length > 0) {
-      reportSentryError(failures[0].reason, {
-        subsystem: "stream",
-        op: "respondToInvitation.syncOpenCallRole",
-        extra: {
-          planId,
-          planType,
-          failed: failures.length,
-          total: results.length,
-        },
-      });
-    }
-  } catch (error) {
-    reportSentryError(error, {
-      subsystem: "stream",
-      op: "respondToInvitation.syncOpenCallRole",
-      extra: { planId, planType },
-    });
-  }
-}
-
-async function runAcceptedInvitationSideEffects(
-  planType: PlanType,
-  planId: string,
-  consultantProfileId: string,
-  acceptedUserId: string | null,
-  role: CollaboratorRole,
-): Promise<void> {
-  try {
-    const plan =
-      planType === "webinar"
-        ? await prisma.webinarPlan.findUnique({
-            where: { id: planId },
-            select: { organizationId: true },
-          })
-        : await prisma.classPlan.findUnique({
-            where: { id: planId },
-            select: { organizationId: true },
-          });
-    const { createCollaboratorChannel } =
-      await import("@/actions/stream/chat/channel.action");
-    await createCollaboratorChannel(planType, planId);
-    if (plan?.organizationId) {
-      const customSet: Record<string, unknown> = {
-        organization_id: plan.organizationId,
-      };
-      await getStreamChatClient()
-        .channel("messaging", `collab-${planType}-${planId}`)
-        .updatePartial({ set: customSet });
-    }
-  } catch (err) {
-    Sentry.captureException(
-      err instanceof Error ? err : new Error(String(err)),
-      { tags: { subsystem: "stream" }, level: "warning" },
-    );
-    console.error("Failed to create collaborator channel:", err);
-  }
-
-  await syncCollaboratorParticipants(planType, planId, consultantProfileId);
-
-  if (acceptedUserId) {
-    await Promise.all([
-      syncAcceptedCollaboratorEventChannels(planType, planId, acceptedUserId),
-      syncOpenCallPresenterRole(planType, planId, acceptedUserId, role),
-    ]);
-  }
-}
-
 /**
  * Respond to a collaboration invitation (accept or decline).
  * When accepted, auto-creates a collaborator Stream chat channel.
@@ -548,7 +388,7 @@ export async function respondToInvitation(
       ? await prisma.appointmentOccurrence.findMany({
           where: {
             ...OCCUPYING_OCCURRENCE_WHERE,
-            appointment: livePlanAppointmentsWhere(planType, planId),
+            appointment: livePlanAppointmentsWhere({ planType, planId }),
           },
           select: { startsAt: true, endsAt: true },
         })
@@ -614,94 +454,14 @@ export async function respondToInvitation(
   await flushNotificationsAfter(committed.notices, "collaborator.response");
 
   if (response === "ACCEPTED") {
-    await runAcceptedInvitationSideEffects(
-      planType,
-      planId,
-      consultantProfileId,
-      acceptedUserId,
-      updated.role,
-    );
+    await syncCollaboratorParticipants(planType, planId, consultantProfileId);
+    // Last, so its re-check also covers the participant rows written above.
+    if (acceptedUserId) {
+      await grantCollaboratorAccess({ planType, planId }, acceptedUserId);
+    }
   }
 
   return updated;
-}
-
-function fetchActivePlanEvents(
-  planType: PlanType,
-  planId: string,
-): Promise<{ id: string }[]> {
-  const activeStatuses = ["SCHEDULED", "COMPLETED"] as const;
-  if (planType === "webinar") {
-    if (!prisma.webinar?.findMany) return Promise.resolve([]);
-    return prisma.webinar.findMany({
-      where: {
-        webinarPlanId: planId,
-        deletedAt: null,
-        status: { in: [...activeStatuses] },
-      },
-      select: { id: true },
-    });
-  }
-  if (!prisma.class?.findMany) return Promise.resolve([]);
-  return prisma.class.findMany({
-    where: {
-      classPlanId: planId,
-      deletedAt: null,
-      status: { in: [...activeStatuses] },
-    },
-    select: { id: true },
-  });
-}
-
-async function syncAcceptedCollaboratorEventChannels(
-  planType: PlanType,
-  planId: string,
-  userId: string,
-): Promise<void> {
-  try {
-    const events = await fetchActivePlanEvents(planType, planId);
-
-    for (const event of events) {
-      if (await checkEventChannelExists(planType, event.id)) {
-        await addUserToEventChannel(planType, event.id, userId);
-      }
-    }
-  } catch (error) {
-    reportSentryError(error, {
-      subsystem: "collaborators",
-      op: "respondToInvitation.syncEventChannels",
-      level: "warning",
-      extra: { planId, planType, userId },
-    });
-  }
-}
-
-/**
- * The plan's appointments a collaborator is party to: live, not called off.
- * An Appointment carries no status of its own; the event row does.
- */
-function livePlanAppointmentsWhere(
-  planType: PlanType,
-  planId: string,
-): Prisma.AppointmentWhereInput {
-  return {
-    deletedAt: null,
-    ...(planType === "webinar"
-      ? {
-          webinar: {
-            webinarPlanId: planId,
-            deletedAt: null,
-            status: { not: "CANCELLED" },
-          },
-        }
-      : {
-          class: {
-            classPlanId: planId,
-            deletedAt: null,
-            status: { not: "CANCELLED" },
-          },
-        }),
-  };
 }
 
 /**
@@ -722,7 +482,7 @@ async function syncCollaboratorParticipants(
     });
     if (!profile) return;
     const appointments = await prisma.appointment.findMany({
-      where: livePlanAppointmentsWhere(planType, planId),
+      where: livePlanAppointmentsWhere({ planType, planId }),
       select: { id: true, organizationId: true },
     });
     if (appointments.length === 0) return;
@@ -766,14 +526,12 @@ async function syncCollaboratorParticipants(
   }
 }
 
-export type RemovedCollaborator = Collaborator & { accessRevoked: boolean };
-
 export async function removeCollaborator(
   planType: PlanType,
   collaborationId: string,
   planId: string,
   opts: { withdrawnByProfileId?: string } = {},
-): Promise<RemovedCollaborator | null> {
+): Promise<Collaborator | null> {
   const collab = await prisma.collaborator.findFirst({
     where: {
       id: collaborationId,
@@ -823,209 +581,12 @@ export async function removeCollaborator(
       return null;
     });
 
-  let accessRevoked = false;
+  // Persisted before any Stream call, so a revoke that does not finish stays owed to the sweep.
   if (profile?.userId) {
-    accessRevoked = (
-      await revokeCollaboratorAccess(planType, planId, profile.userId)
-    ).success;
-    if (!accessRevoked) {
-      await enqueueCollaboratorRevocationRetry(
-        planType,
-        planId,
-        profile.userId,
-      );
-    }
+    await revokeCollaboratorAccess({ planType, planId }, profile.userId);
   }
 
-  return { ...result, accessRevoked };
-}
-
-export async function revokeCollaboratorAccess(
-  planType: PlanType,
-  planId: string,
-  userId: string,
-): Promise<{ success: boolean }> {
-  let success = true;
-
-  try {
-    await transitionParticipant(
-      prisma,
-      {
-        userId,
-        role: "COLLABORATOR",
-        status: { not: "CANCELLED" },
-        appointment: livePlanAppointmentsWhere(planType, planId),
-      },
-      "CANCELLED",
-    );
-  } catch (error) {
-    success = false;
-    reportSentryError(error, {
-      subsystem: "collaborators",
-      op: "revokeCollaboratorAccess.participants",
-      extra: { planId, planType },
-    });
-  }
-
-  try {
-    const events =
-      planType === "webinar"
-        ? await prisma.webinar.findMany({
-            where: { webinarPlanId: planId },
-            select: { id: true },
-          })
-        : await prisma.class.findMany({
-            where: { classPlanId: planId },
-            select: { id: true },
-          });
-    const revocations = await Promise.all(
-      events.map((event) =>
-        removeUserFromEventChannel(planType, event.id, userId),
-      ),
-    );
-    const failedEventIds = events
-      .filter((_, i) => !revocations[i]?.success)
-      .map((event) => event.id);
-    if (failedEventIds.length > 0) {
-      success = false;
-      reportSentryError(
-        new Error(
-          `Chat access not revoked for ${failedEventIds.length} of ${events.length} ${planType} events`,
-        ),
-        {
-          subsystem: "stream",
-          op: "removeCollaborator.revokeEventChannels",
-          extra: { planId, planType, failedEventIds },
-        },
-      );
-    }
-    await getStreamChatClient()
-      .channel("messaging", `collab-${planType}-${planId}`)
-      .removeMembers([userId])
-      .catch((error) => {
-        if (isExpectedStreamError(error)) return;
-        success = false;
-        reportSentryError(error, {
-          subsystem: "stream",
-          op: "removeCollaborator.revokeCollabChannel",
-          extra: { planId, planType },
-        });
-      });
-  } catch (error) {
-    success = false;
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "stream" }, level: "warning" },
-    );
-    console.error("[collaborators] Failed to revoke Stream access:", error);
-  }
-
-  if (!(await revokeOpenCallPresenterRole(planType, planId, userId))) {
-    success = false;
-  }
-
-  return { success };
-}
-
-async function revokeSingleOpenCallMember(
-  call: ReturnType<ReturnType<typeof getStreamVideoClient>["video"]["call"]>,
-  userId: string,
-  isSeated: boolean,
-): Promise<void> {
-  const callErrors: unknown[] = [];
-  try {
-    await call.updateCallMembers(
-      isSeated
-        ? { update_members: [{ user_id: userId, role: CALL_MEMBER_ROLE }] }
-        : { remove_members: [userId] },
-    );
-  } catch (err) {
-    if (!isExpectedStreamError(err)) callErrors.push(err);
-  }
-  if (!isSeated) {
-    try {
-      await call.updateUserPermissions({
-        user_id: userId,
-        revoke_permissions: ["send-audio", "send-video", "screenshare"],
-      });
-    } catch (err) {
-      if (!isExpectedStreamError(err)) callErrors.push(err);
-    }
-    try {
-      await call.kickUser({ user_id: userId });
-    } catch (err) {
-      if (!isExpectedStreamError(err)) callErrors.push(err);
-    }
-  }
-  if (callErrors.length > 0) {
-    throw callErrors[0];
-  }
-}
-
-async function revokeOpenCallPresenterRole(
-  planType: PlanType,
-  planId: string,
-  userId: string,
-): Promise<boolean> {
-  try {
-    const occurrences = await prisma.appointmentOccurrence.findMany({
-      where: {
-        deletedAt: null,
-        endsAt: { gt: new Date(Date.now() - MAX_CALL_DURATION_MS) },
-        appointment: livePlanAppointmentsWhere(planType, planId),
-        meeting: { is: { endedAt: null } },
-      },
-      select: {
-        appointmentId: true,
-        meeting: { select: { streamCallId: true } },
-      },
-    });
-    if (occurrences.length === 0) return true;
-
-    const seats = await prisma.appointmentParticipant.findMany({
-      where: {
-        ...liveParticipant(userId),
-        role: { not: "COLLABORATOR" },
-        appointmentId: { in: occurrences.map((o) => o.appointmentId) },
-      },
-      select: { appointmentId: true },
-    });
-    const seated = new Set(seats.map((seat) => seat.appointmentId));
-
-    const video = getStreamVideoClient().video;
-    const results = await Promise.allSettled(
-      occurrences.flatMap(({ appointmentId, meeting }) => {
-        if (!meeting) return [];
-        const call = video.call(STREAM_CALL_TYPE, meeting.streamCallId);
-        return [
-          revokeSingleOpenCallMember(call, userId, seated.has(appointmentId)),
-        ];
-      }),
-    );
-    const failures = results.filter(
-      (r): r is PromiseRejectedResult =>
-        r.status === "rejected" && !isExpectedStreamError(r.reason),
-    );
-    if (failures.length === 0) return true;
-    reportSentryError(failures[0].reason, {
-      subsystem: "stream",
-      op: "removeCollaborator.revokeCallRole",
-      extra: {
-        planId,
-        planType,
-        failed: failures.length,
-        total: results.length,
-      },
-    });
-    return false;
-  } catch (error) {
-    reportSentryError(error, {
-      subsystem: "stream",
-      op: "removeCollaborator.revokeCallRole",
-      extra: { planId, planType },
-    });
-    return false;
-  }
+  return result;
 }
 
 /**
