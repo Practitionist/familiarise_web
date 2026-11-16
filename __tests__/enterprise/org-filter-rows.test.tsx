@@ -5,6 +5,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 const mockReplace = jest.fn();
 let mockSearch = "";
 
+// The session-backed zone hook loads the auth client, which jsdom cannot import.
+jest.mock("@/lib/time/use-viewer-zone", () => ({
+  useViewerZone: () => ({ zone: "Asia/Kolkata", own: true }),
+}));
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ replace: mockReplace, push: jest.fn() }),
   usePathname: () => "/dashboard/organization/org-1/appointments",
@@ -74,10 +78,9 @@ function pickOneDay() {
   fireEvent.click(screen.getByRole("button", { name: "Apply" }));
 }
 
-// Local midnight of the day to the last millisecond of it, in the test's zone.
-// 10 Nov as local instants: midnight to the last millisecond of the day.
-const DAY_FROM = new Date(2026, 10, 10).toISOString();
-const DAY_TO = new Date(new Date(2026, 10, 11).getTime() - 1).toISOString();
+// 10 Nov 2026 as a whole day in the mocked Kolkata viewer zone.
+const DAY_FROM = "2026-11-09T18:30:00.000Z";
+const DAY_TO = "2026-11-10T18:29:59.999Z";
 
 function lastQuery(path: string): URLSearchParams {
   const call = fetchMock.mock.calls
