@@ -14,6 +14,10 @@ import {
 } from "../../lib/auth/backoffice-permissions";
 
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
+jest.mock("../../lib/observability/report", () => ({
+  reportSentryError: jest.fn(),
+}));
+jest.mock("../../lib/api/after-safe", () => ({ scheduleAfter: jest.fn() }));
 jest.mock("../../lib/observability/throttled-capture", () => ({
   captureThrottled: jest.fn(),
 }));
@@ -39,23 +43,31 @@ jest.mock("../../lib/auth-helpers", () => ({
   },
 }));
 
-// Every model answers an empty read, so only the gate decides the status.
+// Every model answers an empty read and every write succeeds, so only the gate decides the status.
+const mockWrite = jest.fn(async () => ({ count: 1 }));
 jest.mock("../../lib/prisma", () => {
   const model = {
     count: async () => 0,
     findMany: async () => [],
     aggregate: async () => ({ _sum: {}, _count: 0 }),
     groupBy: async () => [],
+    updateMany: () => mockWrite(),
+    create: async () => ({ id: "ops-row" }),
   };
-  return {
-    __esModule: true,
-    default: new Proxy({}, { get: () => model }),
-  };
+  const db: Record<string, unknown> = new Proxy(
+    {},
+    {
+      get: (_target, prop) =>
+        prop === "$transaction"
+          ? (run: (tx: unknown) => Promise<unknown>) => run(db)
+          : model,
+    },
+  );
+  return { __esModule: true, default: db };
 });
-const mockSetFloor = jest.fn(async (paise: number) => paise);
 jest.mock("../../lib/trials/pricing-config", () => ({
+  PRICING_CONFIG_ID: "singleton",
   getMinTrialPriceInPaise: async () => 0,
-  setMinTrialPriceInPaise: (paise: number) => mockSetFloor(paise),
 }));
 jest.mock("../../lib/data/admin-stats", () => ({
   getAdminStats: async () => ({}),
@@ -90,6 +102,19 @@ import {
 import { GET as cancellationsGet } from "../../app/api/admin/analytics/cancellations/route";
 import { GET as maintenanceGet } from "../../app/api/admin/maintenance/route";
 import { GET as preflightGet } from "../../app/api/admin/maintenance/preflight/route";
+import { GET as metricsGet } from "../../app/api/staff/metrics/route";
+
+const floorPatch = () =>
+  trialPricingPatch(
+    new NextRequest("http://test/api/admin/trial-pricing", {
+      method: "PATCH",
+      body: JSON.stringify({
+        minTrialPriceInPaise: 9_900,
+        reason: "Raise the floor for launch",
+      }),
+    }),
+    { params: Promise.resolve({}) },
+  );
 
 const routes: Array<[string, BackofficeSurface, () => Promise<Response>]> = [
   ["GET /api/admin/stats", "analytics.read", () => statsGet()],
@@ -102,19 +127,10 @@ const routes: Array<[string, BackofficeSurface, () => Promise<Response>]> = [
       ),
   ],
   ["GET /api/admin/trial-pricing", "trialPricing.manage", trialPricingGet],
-  [
-    "PATCH /api/admin/trial-pricing",
-    "trialPricing.manage",
-    () =>
-      trialPricingPatch(
-        new Request("http://test/api/admin/trial-pricing", {
-          method: "PATCH",
-          body: JSON.stringify({ minTrialPriceInPaise: 9_900 }),
-        }),
-      ),
-  ],
+  ["PATCH /api/admin/trial-pricing", "trialPricing.manage", floorPatch],
   ["GET /api/admin/maintenance", "maintenance.manage", maintenanceGet],
   ["GET /api/admin/maintenance/preflight", "maintenance.manage", preflightGet],
+  ["GET /api/staff/metrics", "analytics.read", metricsGet],
 ];
 
 const cases = routes.flatMap(([name, surface, call]) =>
@@ -149,11 +165,6 @@ it.each(cases)(
 
 it("a refused trial-pricing PATCH never writes the floor", async () => {
   mockViewer.role = "STAFF";
-  await trialPricingPatch(
-    new Request("http://test/api/admin/trial-pricing", {
-      method: "PATCH",
-      body: JSON.stringify({ minTrialPriceInPaise: 9_900 }),
-    }),
-  );
-  expect(mockSetFloor).not.toHaveBeenCalled();
+  expect((await floorPatch()).status).toBe(403);
+  expect(mockWrite).not.toHaveBeenCalled();
 });

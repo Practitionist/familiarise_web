@@ -94,7 +94,7 @@ const count = (n: number) => n.toLocaleString("en-IN");
 const PERIOD_LABELS: Record<string, string> = {
   today: "Today",
   week: "This Week",
-  month: "This Month",
+  month: "This Month (IST)",
 };
 
 function getResolvedTicketsForPeriod(
@@ -191,7 +191,7 @@ export default function StaffMetricsPage() {
               <SelectContent>
                 <SelectItem value="today">Today</SelectItem>
                 <SelectItem value="week">This Week</SelectItem>
-                <SelectItem value="month">This Month</SelectItem>
+                <SelectItem value="month">This Month (IST)</SelectItem>
               </SelectContent>
             </Select>
             <Button
@@ -265,7 +265,7 @@ export default function StaffMetricsPage() {
                       <Stat
                         label="Resolution Rate"
                         value={`${resolutionRate}%`}
-                        hint={`${resolvedInPeriod} resolved (${periodLabel})`}
+                        hint={`${resolvedInPeriod} resolved · ${periodLabel}`}
                         icon={CheckCircle}
                         tone={resolutionRate >= 80 ? "success" : "neutral"}
                       />
@@ -275,7 +275,7 @@ export default function StaffMetricsPage() {
               )}
             </Section>
 
-            <Section title={`Queue Volume (${periodLabel})`}>
+            <Section title={`Queue Volume · ${periodLabel}`}>
               <StatRow>
                 {loading ? (
                   [1, 2, 3, 4].map((i) => <StatSkeleton key={i} />)
@@ -304,7 +304,7 @@ export default function StaffMetricsPage() {
                     <Stat
                       label="Active Users"
                       value={userMetrics.activeUsers}
-                      hint="With payments this month"
+                      hint="With payments this month (IST)"
                       icon={Activity}
                     />
                   </>

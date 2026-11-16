@@ -1,26 +1,29 @@
 /**
  * Back-office Metrics API: support-queue health plus the platform's people,
- * session and money totals, for ADMIN and STAFF alike.
+ * session and money totals, for ADMIN and STAFF alike (`analytics.read`).
+ * Every "this month" figure counts from one IST month start.
  */
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { getPlatformTotals } from "@/lib/backoffice/platform-totals";
+import { operatorMonthStart } from "@/lib/time/operator-zone";
 
 export async function GET() {
   try {
-    const auth = await requirePrivilegedAuth();
+    const auth = await requireBackofficeSurface("analytics.read");
     if (auth.error) return auth.error;
 
-    const now = new Date();
+    const requestedAt = new Date();
+    const startOfMonth = operatorMonthStart(requestedAt);
+    const now = new Date(requestedAt);
     const startOfToday = new Date(now.setHours(0, 0, 0, 0));
     const startOfWeek = new Date(now);
     startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
     startOfWeek.setHours(0, 0, 0, 0);
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
     // Fetch analytics data in parallel
     const [
@@ -95,7 +98,7 @@ export async function GET() {
           paymentStatus: "PENDING",
         },
       }),
-      getPlatformTotals(),
+      getPlatformTotals(requestedAt),
     ]);
 
     // Measure the first human reply rather than unrelated later edits.
