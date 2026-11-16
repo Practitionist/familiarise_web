@@ -1,6 +1,7 @@
 "use client";
 
 import { CalendarDays, Check, ChevronDown, X } from "lucide-react";
+import { addDays, endOfMonth, startOfMonth, subMonths } from "date-fns";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,6 +10,11 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  calendarDateKey,
+  calendarDayOf,
+  dayStartInstant,
+} from "@/lib/time/grid-zone";
 import { cn } from "@/utils/tailwind";
 
 /** Inclusive calendar days as `YYYY-MM-DD`; an empty side is open-ended. */
@@ -27,26 +33,38 @@ interface Preset {
 
 const EMPTY: DateRange = { from: "", to: "" };
 
-function isoDay(d: Date): string {
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${d.getFullYear()}-${m}-${day}`;
+/** The local-noon calendar date of a `YYYY-MM-DD` key, `offset` days on. */
+function calendarDateOf(iso: string, offset = 0): Date {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, m - 1, d + offset, 12);
 }
 
-function addDays(d: Date, n: number): Date {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
+/** The range as epoch-ms bounds of whole calendar days in `zone`; an empty side is null. */
+export function dateRangeBounds(
+  range: DateRange,
+  zone: string,
+): { fromMs: number | null; toMs: number | null } {
+  return {
+    fromMs: range.from
+      ? dayStartInstant(calendarDateOf(range.from), zone).getTime()
+      : null,
+    toMs: range.to
+      ? dayStartInstant(calendarDateOf(range.to, 1), zone).getTime() - 1
+      : null,
+  };
 }
 
-/** Presets in the browser's calendar; both ends are inclusive, so "Next 7 days" is today plus six. */
+/** Presets on the viewer's calendar; both ends are inclusive, so "Next 7 days" is today plus six. */
 export function datePresets(
   direction: DateRangeDirection,
+  zone: string,
   now: Date = new Date(),
 ): Preset[] {
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const today = calendarDayOf(now, zone);
   const monday = addDays(today, -((today.getDay() + 6) % 7));
   const day = (from: Date, to: Date) => ({
-    from: isoDay(from),
-    to: isoDay(to),
+    from: calendarDateKey(from),
+    to: calendarDateKey(to),
   });
   const todayP = { label: "Today", range: day(today, today) };
   const thisWeek = {
@@ -55,10 +73,7 @@ export function datePresets(
   };
   const thisMonth = {
     label: "This month",
-    range: day(
-      new Date(today.getFullYear(), today.getMonth(), 1),
-      new Date(today.getFullYear(), today.getMonth() + 1, 0),
-    ),
+    range: day(startOfMonth(today), endOfMonth(today)),
   };
   if (direction === "future") {
     return [
@@ -75,7 +90,8 @@ export function datePresets(
       { label: "Last 7 days", range: day(addDays(today, -6), today) },
       { label: "Last 30 days", range: day(addDays(today, -29), today) },
       thisMonth,
-      { label: "Last 3 months", range: day(addDays(today, -90), today) },
+      // Calendar months; date-fns clamps 31 May back to 28 Feb.
+      { label: "Last 3 months", range: day(subMonths(today, 3), today) },
     ];
   }
   return [todayP, thisWeek, thisMonth];
@@ -111,6 +127,8 @@ const TRIGGER =
 
 interface DateRangeMenuProps {
   value: DateRange;
+  /** The viewer's IANA zone; presets and bounds count its calendar days. */
+  zone: string;
   onChange: (value: DateRange) => void;
   direction?: DateRangeDirection;
 }
@@ -119,11 +137,12 @@ interface DateRangeMenuProps {
 export function DateRangeMenu({
   value,
   onChange,
+  zone,
   direction = "any",
 }: Readonly<DateRangeMenuProps>) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<DateRange>(value);
-  const presets = datePresets(direction);
+  const presets = datePresets(direction, zone);
   const active = value.from !== "" || value.to !== "";
   const label = dateRangeLabel(value, presets);
   const isPreset = presets.some(

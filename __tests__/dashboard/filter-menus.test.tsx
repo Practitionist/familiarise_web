@@ -4,6 +4,7 @@ import { useState } from "react";
 import { AppointmentsFilterBar } from "@/components/appointments/AppointmentsFilterBar";
 import type { TypeFilter } from "@/components/appointments/AppointmentsFilterBar";
 import {
+  dateRangeBounds,
   datePresets,
   dateRangeLabel,
   type DateRange,
@@ -11,12 +12,13 @@ import {
 import { FilterBar } from "@/components/dashboard/FilterBar";
 import { FilterMenu } from "@/components/dashboard/FilterMenu";
 
-// Sunday 15 Nov 2026, local time.
-const NOW = new Date(2026, 10, 15, 10, 0);
+// Sunday 15 Nov 2026, 15:30 in Kolkata.
+const ZONE = "Asia/Kolkata";
+const NOW = new Date("2026-11-15T10:00:00Z");
 
 describe("datePresets", () => {
   it("looks forward on to-do tabs, with the week running Monday to Sunday", () => {
-    const presets = datePresets("future", NOW);
+    const presets = datePresets("future", ZONE, NOW);
     expect(presets.map((p) => p.label)).toEqual([
       "Today",
       "Tomorrow",
@@ -33,7 +35,7 @@ describe("datePresets", () => {
   });
 
   it("looks back on done tabs", () => {
-    const presets = datePresets("past", NOW);
+    const presets = datePresets("past", ZONE, NOW);
     expect(presets.map((p) => p.label)).toEqual([
       "Today",
       "Last 7 days",
@@ -44,11 +46,48 @@ describe("datePresets", () => {
     expect(presets[1].range).toEqual({ from: "2026-11-09", to: "2026-11-15" });
     expect(presets[2].range).toEqual({ from: "2026-10-17", to: "2026-11-15" });
     expect(presets[3].range).toEqual({ from: "2026-11-01", to: "2026-11-30" });
+    expect(presets[4].range).toEqual({ from: "2026-08-15", to: "2026-11-15" });
+  });
+
+  it("counts Last 3 months in calendar months, clamped to the month's end", () => {
+    const presets = datePresets("past", ZONE, new Date("2026-05-31T06:00:00Z"));
+    expect(presets[4].range).toEqual({ from: "2026-02-28", to: "2026-05-31" });
+  });
+
+  it("takes today from the viewer's zone, not the device's", () => {
+    // 20:00 UTC on 15 Nov is already 01:30 on 16 Nov in Kolkata.
+    const late = new Date("2026-11-15T20:00:00Z");
+    expect(datePresets("any", ZONE, late)[0].range).toEqual({
+      from: "2026-11-16",
+      to: "2026-11-16",
+    });
+    expect(datePresets("any", "America/New_York", late)[0].range).toEqual({
+      from: "2026-11-15",
+      to: "2026-11-15",
+    });
+  });
+});
+
+describe("dateRangeBounds", () => {
+  it("spans whole calendar days in the viewer's zone", () => {
+    expect(
+      dateRangeBounds({ from: "2026-11-16", to: "2026-11-16" }, ZONE),
+    ).toEqual({
+      fromMs: Date.parse("2026-11-15T18:30:00Z"),
+      toMs: Date.parse("2026-11-16T18:30:00Z") - 1,
+    });
+  });
+
+  it("leaves an empty side open", () => {
+    expect(dateRangeBounds({ from: "", to: "2026-11-16" }, "UTC")).toEqual({
+      fromMs: null,
+      toMs: Date.parse("2026-11-17T00:00:00Z") - 1,
+    });
   });
 });
 
 describe("dateRangeLabel", () => {
-  const presets = datePresets("future", NOW);
+  const presets = datePresets("future", ZONE, NOW);
   it.each<[DateRange, string]>([
     [{ from: "", to: "" }, "Any date"],
     [{ from: "2026-11-15", to: "2026-11-21" }, "Next 7 days"],
@@ -159,6 +198,7 @@ describe("AppointmentsFilterBar", () => {
         onSearchChange={setSearch}
         dateRange={range}
         onDateRangeChange={setRange}
+        zone={ZONE}
         dateDirection="future"
       />
     );
