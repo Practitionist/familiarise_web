@@ -51,21 +51,44 @@ function cadence(everyMinutes: number): string {
   return `Every ${everyMinutes} minutes`;
 }
 
-/** A human label for a ticker schedule, read from the schedule catalog rather than copied. */
-export function scheduleLabel(schedule: JobSchedule | undefined): string {
+// India keeps one offset all year, so the IST label is the UTC window shifted by it.
+const IST_OFFSET_MINUTES = 330;
+
+function describeSchedule(
+  schedule: JobSchedule | undefined,
+  shiftMinutes: number,
+  zone: "IST" | "UTC",
+): string {
   if (!schedule) return "GitHub Actions (currently budget-blocked)";
   const every = cadence(schedule.everyMinutes);
   const w = schedule.window;
   if (!w) return every;
-  const span = `${clock(w.startMinuteUtc)}–${clock(w.startMinuteUtc + w.windowMinutes)} UTC`;
+  const start = w.startMinuteUtc + shiftMinutes;
+  // A window that opens after 18:30 UTC opens on the next calendar day in IST.
+  const nextDay = start >= 1440;
+  const span = `${clock(start)}–${clock(start + w.windowMinutes)} ${zone}`;
   let days = "daily";
-  if (w.weekdayUtc !== undefined) days = `on ${WEEKDAYS[w.weekdayUtc]}`;
-  else if (w.dayOfMonthUtc !== undefined) {
+  if (w.weekdayUtc !== undefined) {
+    days = `on ${WEEKDAYS[(w.weekdayUtc + (nextDay ? 1 : 0)) % 7]}`;
+  } else if (w.dayOfMonthUtc !== undefined) {
+    const day = nextDay
+      ? `the day after day ${w.dayOfMonthUtc}`
+      : `day ${w.dayOfMonthUtc}`;
     days = w.monthsUtc
-      ? `on day ${w.dayOfMonthUtc} of months ${w.monthsUtc.join(", ")}`
-      : `on day ${w.dayOfMonthUtc} of each month`;
+      ? `on ${day} of months ${w.monthsUtc.join(", ")}`
+      : `on ${day} of each month`;
   }
   return `${every}, ${span} ${days}`;
+}
+
+/** A human label for a ticker schedule in IST, read from the schedule catalog rather than copied. */
+export function scheduleLabel(schedule: JobSchedule | undefined): string {
+  return describeSchedule(schedule, IST_OFFSET_MINUTES, "IST");
+}
+
+/** The same schedule as the catalog defines it, in UTC. */
+export function scheduleLabelUtc(schedule: JobSchedule | undefined): string {
+  return describeSchedule(schedule, 0, "UTC");
 }
 
 /** A windowed job repeats its latest due window by hand, so it cannot run before its first window. */
@@ -83,6 +106,7 @@ export function systemJobCards(now = new Date()): SystemJobCard[] {
     description: meta.description,
     category: meta.category,
     schedule: scheduleLabel(scheduleFor(id)),
+    scheduleUtc: scheduleLabelUtc(scheduleFor(id)),
     confirmPhrase: runConfirmPhrase({
       id,
       jobName: getCleanupJobHandlers(id)?.job ?? id,

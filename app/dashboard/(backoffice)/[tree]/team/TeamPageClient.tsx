@@ -172,9 +172,7 @@ export function TeamPageClient() {
       key: "lastActive",
       header: "Last active",
       className: "text-sm text-muted-foreground",
-      cell: (row) => (
-        <OperatorTime value={row.lastActiveAt} kind="date" fallback="Never" />
-      ),
+      cell: (row) => <OperatorTime value={row.lastActiveAt} fallback="Never" />,
     },
     ...(mayManage
       ? [

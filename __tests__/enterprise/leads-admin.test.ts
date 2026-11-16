@@ -126,9 +126,16 @@ describe("leads routes on leads.manage", () => {
 });
 
 describe("PATCH /api/admin/leads/[leadId]", () => {
-  it("needs a reason of at least five characters", async () => {
-    const res = await drive({ status: "CONTACTED", reason: "ok" });
+  it.each([
+    ["too short", { status: "CONTACTED", reason: "ok" }],
+    ["missing", { status: "CONTACTED" }],
+  ])("refuses a %s reason with the readable message", async (_c, body) => {
+    const res = await drive(body);
     expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: "Give a reason of at least 5 characters.",
+      code: "INVALID_BODY",
+    });
     expect(mockLead.updateMany).not.toHaveBeenCalled();
   });
 

@@ -125,7 +125,7 @@ function JobCard({ job, isRunning, onRun }: JobCardProps) {
           </p>
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground/70">
             <Clock className="h-3.5 w-3.5" />
-            <span>{job.schedule}</span>
+            <span title={job.scheduleUtc}>{job.schedule}</span>
           </div>
         </div>
       </div>

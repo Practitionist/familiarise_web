@@ -90,6 +90,9 @@ it("sets the floor by CAS and records it before and after in paise", async () =>
 it("refuses without a reason and writes nothing", async () => {
   const res = await patch({ minTrialPriceInPaise: 9_900 });
   expect(res.status).toBe(400);
+  expect((await res.json()).error).toBe(
+    "Give a reason of at least 5 characters.",
+  );
   expect(mockConfig.updateMany).not.toHaveBeenCalled();
   expect(mockOpsLog.create).not.toHaveBeenCalled();
 });
