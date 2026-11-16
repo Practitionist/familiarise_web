@@ -118,7 +118,7 @@ describe("leads routes on leads.manage", () => {
     ["CONSULTANT", 403],
   ] as const)("PATCH as %s answers %i", async (role, status) => {
     mockViewer.role = role;
-    const res = await drive({ status: "CONTACTED", reason });
+    const res = await drive({ from: "NEW", status: "CONTACTED", reason });
     expect(res.status).toBe(status);
     expect(mockGate).toHaveBeenCalledWith("leads.manage");
     expect(mockLead.updateMany).toHaveBeenCalledTimes(status === 403 ? 0 : 1);
@@ -127,8 +127,8 @@ describe("leads routes on leads.manage", () => {
 
 describe("PATCH /api/admin/leads/[leadId]", () => {
   it.each([
-    ["too short", { status: "CONTACTED", reason: "ok" }],
-    ["missing", { status: "CONTACTED" }],
+    ["too short", { from: "NEW", status: "CONTACTED", reason: "ok" }],
+    ["missing", { from: "NEW", status: "CONTACTED" }],
   ])("refuses a %s reason with the readable message", async (_c, body) => {
     const res = await drive(body);
     expect(res.status).toBe(400);
@@ -141,13 +141,13 @@ describe("PATCH /api/admin/leads/[leadId]", () => {
 
   it("keeps the rate limit in front of the door", async () => {
     mockLimit.mockResolvedValue(new Response(null, { status: 429 }));
-    const res = await drive({ status: "CONTACTED", reason });
+    const res = await drive({ from: "NEW", status: "CONTACTED", reason });
     expect(res.status).toBe(429);
     expect(mockLead.findUnique).not.toHaveBeenCalled();
   });
 
   it("moves the lead by CAS on its prior status and writes one audit row", async () => {
-    const res = await drive({ status: "CONTACTED", reason });
+    const res = await drive({ from: "NEW", status: "CONTACTED", reason });
     expect(res.status).toBe(200);
     expect((await res.json()).lead).toEqual({
       id: "lead_1",
@@ -177,7 +177,7 @@ describe("PATCH /api/admin/leads/[leadId]", () => {
 
   it("409 LEAD_NOT_CLAIMABLE when another operator moved it first", async () => {
     mockLead.updateMany.mockResolvedValue({ count: 0 });
-    const res = await drive({ status: "CONTACTED", reason });
+    const res = await drive({ from: "NEW", status: "CONTACTED", reason });
     expect(res.status).toBe(409);
     expect((await res.json()).code).toBe("LEAD_NOT_CLAIMABLE");
     expect(mockOpsLog.create).not.toHaveBeenCalled();
@@ -185,15 +185,35 @@ describe("PATCH /api/admin/leads/[leadId]", () => {
 
   it("409 LEAD_NOT_CLAIMABLE for a move the flow does not allow", async () => {
     mockLead.findUnique.mockResolvedValue({ status: "CLOSED_WON" });
-    const res = await drive({ status: "CLOSED_LOST", reason });
+    const res = await drive({
+      from: "CLOSED_WON",
+      status: "CLOSED_LOST",
+      reason,
+    });
     expect(res.status).toBe(409);
     expect((await res.json()).code).toBe("LEAD_NOT_CLAIMABLE");
     expect(mockLead.updateMany).not.toHaveBeenCalled();
   });
 
+  it("409 LEAD_NOT_CLAIMABLE when the confirmed status is stale", async () => {
+    // The operator confirmed NEW → Lost; another operator has since moved it to CONTACTED.
+    mockLead.findUnique.mockResolvedValue({ status: "CONTACTED" });
+    const res = await drive({ from: "NEW", status: "CLOSED_LOST", reason });
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("LEAD_NOT_CLAIMABLE");
+    expect(mockLead.updateMany).not.toHaveBeenCalled();
+    expect(mockOpsLog.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses a body without the confirmed status", async () => {
+    const res = await drive({ status: "CONTACTED", reason });
+    expect(res.status).toBe(400);
+    expect(mockLead.findUnique).not.toHaveBeenCalled();
+  });
+
   it("404 for a lead that does not exist", async () => {
     mockLead.findUnique.mockResolvedValue(null);
-    const res = await drive({ status: "CONTACTED", reason });
+    const res = await drive({ from: "NEW", status: "CONTACTED", reason });
     expect(res.status).toBe(404);
   });
 });

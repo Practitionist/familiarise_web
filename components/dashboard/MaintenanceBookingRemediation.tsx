@@ -8,7 +8,10 @@ import { Label } from "@/components/ui/label";
 import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { OperatorTime } from "@/lib/time/operator-time";
-import { fromOperatorWallTime } from "@/lib/time/operator-zone";
+import {
+  fromOperatorWallTime,
+  operatorEndKind,
+} from "@/lib/time/operator-zone";
 
 const previewSchema = z.object({
   token: z.string(),
@@ -195,7 +198,10 @@ export function MaintenanceBookingRemediation({
                   </p>
                   <p>
                     <OperatorTime value={booking.startsAt} /> –{" "}
-                    <OperatorTime value={booking.endsAt} kind="time" />
+                    <OperatorTime
+                      value={booking.endsAt}
+                      kind={operatorEndKind(booking.startsAt, booking.endsAt)}
+                    />
                   </p>
                   <p>
                     {booking.participants.join(", ") ||

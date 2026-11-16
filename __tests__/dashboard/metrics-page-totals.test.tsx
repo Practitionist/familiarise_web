@@ -63,6 +63,9 @@ it("renders the totals cards", async () => {
   ).toBeInTheDocument();
   expect(screen.getByText("+7 this month (IST)")).toBeInTheDocument();
   expect(
+    screen.getByText("Cancelled consultation requests"),
+  ).toBeInTheDocument();
+  expect(
     screen.queryByText("Platform totals could not be loaded."),
   ).not.toBeInTheDocument();
 });

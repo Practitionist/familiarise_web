@@ -23,20 +23,17 @@ The error it returns has three shapes, and the status is the contract (#1716). A
 
 ## `requireAdminAuth()`
 
-> **Strict ADMIN only.** STAFF gets 403.
+> **Strict ADMIN only.** STAFF gets 403. Do not add a new caller: a new back-office route uses `requireBackofficeSurface(key)` with an ADMIN-only key.
 
-Use this for routes that mutate platform-level state irreversibly. These are things where a STAFF member accidentally clicking a button in the wrong dashboard tab shouldn't be able to do real damage.
+These routes still call it, and each moves onto the matrix with its own screen's pull request:
 
-**Routes that must use this:**
-
-- `/api/admin/maintenance/**` — site-wide maintenance mode toggle (now gated on the matrix key `maintenance.manage`, which is also ADMIN only; see `requireBackofficeSurface()`)
-- `/api/admin/system-jobs/run` — manual cron triggers
-- `/api/admin/newsletter/send` — mass email
-- `/api/admin/payouts` (POST only) — batch payout creation (GET stays privileged)
-- `/api/admin/payouts/[id]` (POST only) — approve/reject payouts (GET stays privileged)
-- `/api/admin/payouts/process` — real money transfers
-- `/api/admin/tds` (POST only) — TDS filing (GET stays privileged)
-- `/api/admin/exchange-rates` (POST only) — FX cache invalidation
+- `/api/admin/compliance/gst-register` and `/api/admin/compliance/tds-return`
+- `/api/admin/erasure-requests/[id]/process` and `/api/admin/erasure-requests/[id]/reject`
+- `/api/admin/exchange-rates`
+- `/api/admin/newsletter/broadcast`
+- `/api/admin/organizations`
+- `/api/admin/support/compliance-report` and `/api/admin/support/health`
+- `/api/admin/system-events`
 
 ```ts
 export async function POST() {
@@ -48,15 +45,25 @@ export async function POST() {
 
 ## `requirePrivilegedAuth()`
 
-> **ADMIN or STAFF.** Everyone else gets 403.
+> **ADMIN or STAFF.** Everyone else gets 403. Do not add a new caller: a new back-office route uses `requireBackofficeSurface(key)` with a key both roles hold.
 
-Use this for the vast majority of `/api/admin/**` and `/api/staff/**` routes — anything that should be accessible to both admin and staff operators: moderation queues, support tools, dashboards, read endpoints, shared analytics, etc.
+These routes and helpers still call it, and each moves onto the matrix with its own screen's pull request:
 
-**Routes that should use this:**
-
-- All `/api/staff/**` routes
-- All `/api/admin/**` routes that are NOT in the `requireAdminAuth` list above
-- Read-only endpoints, moderation queues, support ticket views, analytics dashboards
+- `/api/admin/disputes` and `/api/admin/disputes/[disputeId]`
+- `/api/admin/documents`
+- `/api/admin/newsletter`
+- `/api/admin/payments` and `/api/admin/payments/[paymentId]`
+- `/api/admin/refunds`
+- `/api/admin/settlements/lines`
+- `/api/admin/subscriptions`
+- `/api/admin/users` and `/api/admin/users/[userId]`
+- `/api/admin/verification` and `/api/admin/verification/[verificationId]`
+- `/api/staff/appointments` and `/api/staff/appointments/[appointmentId]/timeline`
+- `/api/staff/feedbacks` and `/api/staff/feedbacks/[feedbackId]`
+- `/api/staff/moderation/reports`, `/api/staff/moderation/reports/[reportId]` (and its `action` and `unban` doors), `/api/staff/moderation/reviews`, `/api/staff/moderation/reviews/[reviewId]` and `/api/staff/moderation/stats`
+- `/api/staff/stats`
+- `/api/user/consent`
+- the shared readers in `lib/api/operators/` (`invoices.ts`, `payouts.ts`, `stats.ts`, `verification.ts`) and `lib/data/staff-appointments.ts` and `lib/data/staff-stats.ts`
 
 ```ts
 export async function GET(req: NextRequest) {
@@ -71,7 +78,7 @@ export async function GET(req: NextRequest) {
 
 > **The permission matrix.** The answer comes from `BACKOFFICE_PERMISSIONS` in `lib/auth/backoffice-permissions.ts`, so a role grant is visible in the one file that lists every grant.
 
-Use this for every back-office route that needs a role distinction, and for any new route in `/api/admin/**` or `/api/staff/**`. The two raw guards above are being retired route by route as each screen moves onto the matrix; do not add a new caller. A route moved in the first back-office pull request is `/api/admin/leads` (`leads.manage`), `/api/admin/trial-pricing` (`trialPricing.manage`), `/api/admin/stats` and `/api/admin/analytics/cancellations` (`analytics.read`) and `/api/admin/maintenance/**` (`maintenance.manage`). A mutation that must leave an audit row uses `withOpsAction` (`lib/backoffice/ops-action-log.ts`), which calls this helper and then writes the `OpsActionLog` row with the operator's reason. The matrix and its policy are in [the authorization matrices](../authorization/01-authorization-matrices.md).
+Use this for every back-office route that needs a role distinction, and for any new route in `/api/admin/**` or `/api/staff/**`. The two raw guards above are being retired route by route as each screen moves onto the matrix; do not add a new caller. A route moved in the first back-office pull request is `/api/admin/leads` (`leads.manage`), `/api/admin/trial-pricing` (`trialPricing.manage`), `/api/admin/stats`, `/api/admin/analytics/cancellations` and `/api/staff/metrics` (`analytics.read`) and `/api/admin/maintenance/**` (`maintenance.manage`). A mutation that must leave an audit row uses `withOpsAction` (`lib/backoffice/ops-action-log.ts`), which calls this helper and then writes the `OpsActionLog` row with the operator's reason. The matrix and its policy are in [the authorization matrices](../authorization/01-authorization-matrices.md).
 
 ```ts
 export async function GET() {
@@ -85,9 +92,9 @@ export async function GET() {
 
 > **Strict STAFF only.** ADMIN gets 403.
 
-Use this for the (rare) routes that are specifically staff-scoped and where an ADMIN should NOT have access. Examples: a route returning "support tickets assigned to me as a staff member" where an admin wouldn't have that view. Most admin/staff routes want `requirePrivilegedAuth` instead.
+Use this for the (rare) routes that are specifically staff-scoped and where an ADMIN should NOT have access. Examples: a route returning "support tickets assigned to me as a staff member" where an admin wouldn't have that view. Most back-office routes want `requireBackofficeSurface(key)` instead.
 
-If you're about to reach for this helper, ask yourself: "does it make sense for an admin to call this?" If yes, use `requirePrivilegedAuth`. If no (truly staff-only), use `requireStaffAuth`. As of this ADR landing, **zero routes use `requireStaffAuth`** — it's here for when a future staff-only view appears.
+If you're about to reach for this helper, ask yourself: "does it make sense for an admin to call this?" If yes, use `requireBackofficeSurface(key)` with a key both roles hold. If no (truly staff-only), use `requireStaffAuth`. As of this ADR landing, **zero routes use `requireStaffAuth`** — it's here for when a future staff-only view appears.
 
 ```ts
 export async function GET() {
@@ -176,8 +183,9 @@ Use these when you need to return an error outside one of the auth helpers (e.g.
 Is the route public (no login required)?
 ├─ YES → no helper needed. middleware.ts lets it through.
 └─ NO → does it require a specific role?
-         ├─ Strict ADMIN only (mutates platform state) → requireAdminAuth
-         ├─ ADMIN or STAFF (read/moderation — most common) → requirePrivilegedAuth
+         ├─ A back-office route (/api/admin/**, /api/staff/**)
+         │    ├─ An audited write (needs a reason and an OpsActionLog row) → withOpsAction(key, action, …)
+         │    └─ Anything else → requireBackofficeSurface(key)
          ├─ Strict STAFF only (rare; reject admins too) → requireStaffAuth
          ├─ The resource owner OR a privileged operator → requireApiAuth + checkOwnership
          ├─ Event participants + operators (consult/subscription/webinar/class) → requireApiAuth + authorizeEventAccess

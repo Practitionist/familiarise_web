@@ -51,6 +51,8 @@ const transition = withOpsAction(
         select: { status: true },
       });
       if (!prior) throw new OpsRefusal("NOT_FOUND", "Lead not found.", 404);
+      // A confirmation made against a status another operator has since moved is stale.
+      if (body.from !== prior.status) throw NOT_CLAIMABLE();
       if (!ALLOWED_FROM[to].includes(prior.status)) throw NOT_CLAIMABLE();
       const claim = await tx.lead.updateMany({
         where: { id: leadId, status: prior.status },

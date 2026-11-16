@@ -1055,10 +1055,10 @@ The platform runs 25+ automated jobs. Staff can monitor them and trigger manual 
 - Support-queue figures: SLA attainment and breaches, average first response, resolution rate, and queue volume for a chosen period (tickets resolved, open cases, users helped, active users)
 - Platform Overview: total appointments and pending payments
 - People: total users (with the new users this month), experts, learners (each with how many are active) and staff members
-- Sessions: total, completed, upcoming and cancelled
+- Sessions: total, completed and upcoming bookings, plus cancelled consultation requests (a different population: it counts `Consultation` rows, not the bookings in the total)
 - Revenue: total revenue (succeeded payments, all time), revenue this month (IST) and refunds (succeeded refunds, all time), shown in rupees and stored in paise
 - "This month (IST)" starts at 00:00 IST on the 1st, not at the start of the UTC month; the support-queue periods (today, this week, this month) are also cut in IST
-- Times on this page and every other back-office page show in IST, and the tooltip shows the UTC instant
+- IST with the UTC instant in a tooltip is the pass condition only on the screens Train 6a moved: Leads ("Received"), Users ("Joined"), Team ("Last active"), Maintenance (the ETA, the preflight check time, the window history and booking remediation), System jobs (run times, run requests and the schedule windows), job run metrics, the entity trace, and the digital-product download evidence in the refund door. Appointments and the money tabs (Approvals, Incidents, Disputes and the rest) already read in IST through the shared display zone but do not yet print the zone label or the UTC tooltip; they, and the remaining back-office screens, move in later Train 6 PRs
 
 There are no revenue trends, user growth, booking conversion or cancellation charts; the page never had them.
 

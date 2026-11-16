@@ -15,6 +15,7 @@ export interface PlatformTotals {
     total: number;
     completed: number;
     upcoming: number;
+    /** Cancelled consultation requests: a different population from `total`. */
     cancelled: number;
   };
   revenue: { totalPaise: number; thisMonthPaise: number };

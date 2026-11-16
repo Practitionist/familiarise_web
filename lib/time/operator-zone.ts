@@ -38,6 +38,17 @@ export function formatOperatorInstant(
   return date ? inZone(date, OPERATOR_ZONE, kind) : EMPTY;
 }
 
+/** How to print a range's end: its time alone on the start's IST day, else its date and time. */
+export function operatorEndKind(
+  start: Instant,
+  end: Instant,
+): OperatorInstantKind {
+  return formatOperatorInstant(start, "date") ===
+    formatOperatorInstant(end, "date")
+    ? "time"
+    : "dateTime";
+}
+
 /** The same instant in UTC, for a tooltip beside the India-time text. */
 export function formatUtcInstant(instant: Instant): string {
   const date = toDate(instant);

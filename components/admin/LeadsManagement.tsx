@@ -90,7 +90,12 @@ export function LeadsManagement() {
   const leads = query.data?.pages.flatMap((p) => p.leads) ?? [];
 
   // Throws keep the dialog open with the message shown inside it.
-  const transition = async (id: string, status: LeadStatus, raw?: string) => {
+  const transition = async (
+    id: string,
+    from: LeadStatus,
+    status: LeadStatus,
+    raw?: string,
+  ) => {
     const reason = opsReasonSchema.safeParse(raw ?? "");
     if (!reason.success) {
       throw new Error(reason.error.issues[0]?.message ?? "Give a reason.");
@@ -98,7 +103,7 @@ export function LeadsManagement() {
     const res = await fetch(`/api/admin/leads/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status, reason: reason.data }),
+      body: JSON.stringify({ from, status, reason: reason.data }),
     });
     if (!res.ok) {
       const b = await res.json().catch(() => ({}));
@@ -235,7 +240,8 @@ export function LeadsManagement() {
           placeholder: "What happened with this lead?",
         }}
         onConfirm={async ({ reason }) => {
-          if (move) await transition(move.lead.id, move.to, reason);
+          if (move)
+            await transition(move.lead.id, move.lead.status, move.to, reason);
         }}
       />
     </>

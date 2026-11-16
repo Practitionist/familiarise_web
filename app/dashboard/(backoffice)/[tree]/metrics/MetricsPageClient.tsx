@@ -409,8 +409,9 @@ export default function StaffMetricsPage() {
                           icon={CalendarClock}
                         />
                         <Stat
-                          label="Cancelled Sessions"
+                          label="Cancelled consultation requests"
                           value={count(totals.sessions.cancelled)}
+                          hint="Consultation requests, not the sessions above"
                           icon={CalendarX}
                           tone="critical"
                         />

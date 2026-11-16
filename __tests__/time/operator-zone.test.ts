@@ -15,6 +15,7 @@ import {
   formatUtcInstant,
   operatorMonthStart,
   operatorPeriodStarts,
+  operatorEndKind,
   fromOperatorWallTime,
   toOperatorWallTime,
 } from "../../lib/time/operator-zone";
@@ -112,6 +113,17 @@ describe("operator time", () => {
     expect(fromOperatorWallTime("")).toBeNull();
     expect(fromOperatorWallTime("2026-04-01")).toBeNull();
     expect(toOperatorWallTime(null)).toBe("");
+  });
+
+  it("prints a range's end date only when it is another IST day", () => {
+    // 16 Nov 23:30 IST to 17 Nov 06:30 IST.
+    expect(
+      operatorEndKind("2026-11-16T18:00:00.000Z", "2026-11-17T01:00:00.000Z"),
+    ).toBe("dateTime");
+    // 09:00 to 10:00 IST on one day.
+    expect(
+      operatorEndKind("2026-11-16T03:30:00.000Z", "2026-11-16T04:30:00.000Z"),
+    ).toBe("time");
   });
 
   it("renders a <time> with the instant and its UTC reading", () => {

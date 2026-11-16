@@ -146,10 +146,12 @@ it("sends a body the door's schema accepts", async () => {
   expect(url).toBe("/api/admin/leads/lead_1");
   const sent: unknown = JSON.parse(String(init.body));
   expect(doorBody.parse(sent)).toEqual({
+    from: "NEW",
     status: "CONTACTED",
     reason: "Called the buyer back",
   });
   expect(sent).toEqual({
+    from: "NEW",
     status: "CONTACTED",
     reason: "Called the buyer back",
   });

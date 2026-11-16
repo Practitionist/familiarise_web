@@ -21,6 +21,7 @@ The staff and admin consoles were audited before launch. Four things were wrong 
 
 2. **D2: Analytics is folded into Metrics.** Metrics now carries the platform totals next to the support-queue figures, read through `lib/backoffice/platform-totals.ts` with the same `where` clauses the old endpoint used.
    - Kept: users and new users this month, experts, learners, staff, sessions (all, completed, upcoming, cancelled), the revenue total and this month, and refunds.
+   - The cancelled count reads `Consultation` rows with status `CANCELLED`, while the sessions total counts every `Appointment`, so the two are different populations. The read stays as Analytics had it, and the card is labelled "Cancelled consultation requests".
    - Dropped: average session value and top domains, which were not on the owner's list of totals to keep.
    - Deleted: the Analytics page, its client component, its loading file, its nav entry and `GET /api/admin/analytics`.
    - Kept on purpose: `GET /api/admin/analytics/cancellations`, because the mobile API document ([Cancellation API for mobile](../api/cancellation-api-mobile.md)) names it. It moves onto the matrix as `analytics.read` and is otherwise unchanged.
