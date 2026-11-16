@@ -64,21 +64,29 @@ function describeSchedule(
   const w = schedule.window;
   if (!w) return every;
   const start = w.startMinuteUtc + shiftMinutes;
-  // A window that opens after 18:30 UTC opens on the next calendar day in IST.
-  const nextDay = start >= 1440;
-  const span = `${clock(start)}–${clock(start + w.windowMinutes)} ${zone}`;
+  const end = start + w.windowMinutes;
+  // A window opening after 18:30 UTC opens on the next calendar day in IST.
+  const startsNextDay = start >= 1440;
+  const span =
+    w.windowMinutes >= 1440
+      ? "all day"
+      : `${clock(start)} ${zone} to ${clock(end)} ${zone}${
+          Math.floor(end / 1440) > Math.floor(start / 1440)
+            ? " the next day"
+            : ""
+        }`;
   let days = "daily";
   if (w.weekdayUtc !== undefined) {
-    days = `on ${WEEKDAYS[(w.weekdayUtc + (nextDay ? 1 : 0)) % 7]}`;
+    days = `on ${WEEKDAYS[(w.weekdayUtc + (startsNextDay ? 1 : 0)) % 7]}`;
   } else if (w.dayOfMonthUtc !== undefined) {
-    const day = nextDay
+    const day = startsNextDay
       ? `the day after day ${w.dayOfMonthUtc}`
       : `day ${w.dayOfMonthUtc}`;
     days = w.monthsUtc
       ? `on ${day} of months ${w.monthsUtc.join(", ")}`
       : `on ${day} of each month`;
   }
-  return `${every}, ${span} ${days}`;
+  return `${every}, ${span}, ${days}`;
 }
 
 /** A human label for a ticker schedule in IST, read from the schedule catalog rather than copied. */
