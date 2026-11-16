@@ -20,6 +20,7 @@ import {
 import { isExpectedBellDeadLetter } from "@/lib/backoffice/queue-predicates";
 import { nextRetryAt } from "@/lib/retry/backoff";
 import { getNovuClient, isNovuConfigured } from "./client";
+import { requiredNoticeOf } from "@/lib/notifications/required-notices";
 import { currentBellRecipients, unerasedRecipients } from "./policy";
 import { toWire } from "./templates";
 import type { NovuWorkflowId } from "./templates/types";
@@ -191,6 +192,43 @@ const STAGED_SELECT = {
   lastError: true,
 } as const;
 
+/** The PENDING row a trigger is staged as, keyed by its deterministic `transactionId`. */
+function stagedRowData(args: Omit<StageTriggerArgs, "tx">) {
+  return {
+    workflowId: args.workflowId,
+    kind: args.kind,
+    recipients: args.recipients,
+    payload: args.payload as Prisma.InputJsonObject,
+    transactionId: deriveTransactionId(
+      args.workflowId,
+      args.recipients,
+      args.payload,
+      args.dedupeKey,
+    ),
+    entityRef: args.entityRef ?? deriveEntityRef(args.payload) ?? null,
+    notBefore: args.notBefore ?? null,
+    status: "PENDING" as const,
+    nextRetryAt:
+      args.notBefore ?? new Date(Date.now() + INLINE_ATTEMPT_LEASE_MS),
+  };
+}
+
+/**
+ * Stages policy-filtered triggers inside `tx` in one insert; a row already staged under
+ * its `transactionId` is skipped and not returned, so the relay settles it.
+ */
+export async function stageTriggerBatch(
+  tx: Pick<Tx, "notificationOutbox">,
+  rows: ReadonlyArray<Omit<StageTriggerArgs, "tx">>,
+): Promise<StagedTrigger[]> {
+  if (rows.length === 0) return [];
+  return tx.notificationOutbox.createManyAndReturn({
+    data: rows.map(stagedRowData),
+    skipDuplicates: true,
+    select: STAGED_SELECT,
+  });
+}
+
 /**
  * Phase one: the row. An upsert on `transactionId` with an empty update, so
  * staging the same notification twice (a replayed webhook, a re-run job)
@@ -201,26 +239,9 @@ const STAGED_SELECT = {
 export async function stageTrigger(
   args: StageTriggerArgs,
 ): Promise<StagedTrigger | null> {
-  const transactionId = deriveTransactionId(
-    args.workflowId,
-    args.recipients,
-    args.payload,
-    args.dedupeKey,
-  );
-  const create = {
-    workflowId: args.workflowId,
-    kind: args.kind,
-    recipients: args.recipients,
-    payload: args.payload as Prisma.InputJsonObject,
-    transactionId,
-    entityRef: args.entityRef ?? deriveEntityRef(args.payload) ?? null,
-    notBefore: args.notBefore ?? null,
-    status: "PENDING" as const,
-    nextRetryAt:
-      args.notBefore ?? new Date(Date.now() + INLINE_ATTEMPT_LEASE_MS),
-  };
+  const create = stagedRowData(args);
   const query = {
-    where: { transactionId },
+    where: { transactionId: create.transactionId },
     create,
     update: {},
     select: STAGED_SELECT,
@@ -825,6 +846,7 @@ export async function attemptTrigger(
       recipients = await currentBellRecipients(
         row.workflowId as NovuWorkflowId,
         row.recipients,
+        { required: requiredNoticeOf(row.payload) !== null },
       );
     } catch (error) {
       return { success: false, error: asError(error), outcome: "PENDING" };

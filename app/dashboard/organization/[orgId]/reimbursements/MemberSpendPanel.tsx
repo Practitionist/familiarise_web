@@ -13,9 +13,10 @@ import { format } from "date-fns";
 import { Download } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useViewerZone } from "@/lib/time/use-viewer-zone";
 import {
   DateRangeMenu,
-  dateRangeToInstants,
+  dateRangeBounds,
   type DateRange,
 } from "@/components/dashboard/DateRangeMenu";
 import {
@@ -97,12 +98,13 @@ export function MemberSpendPanel({ orgId }: Readonly<{ orgId: string }>) {
   const searchParams = useSearchParams();
   const page = Number(searchParams?.get("page") ?? "1") || 1;
   const [range, setRange] = useState<DateRange>({ from: "", to: "" });
+  const { zone } = useViewerZone();
 
-  // Local-day bounds as ISO instants for the server's z.string().datetime();
+  // Viewer-zone day bounds as ISO instants for the server's z.string().datetime();
   // an open side is dropped, which the API reads as "no bound".
-  const instants = dateRangeToInstants(range);
-  const fromIso = instants.from?.toISOString();
-  const toIso = instants.to?.toISOString();
+  const { fromMs, toMs } = dateRangeBounds(range, zone);
+  const fromIso = fromMs === null ? undefined : new Date(fromMs).toISOString();
+  const toIso = toMs === null ? undefined : new Date(toMs).toISOString();
 
   const apiUrl = new URLSearchParams({ page: String(page) });
   if (fromIso) apiUrl.set("from", fromIso);
@@ -154,7 +156,12 @@ export function MemberSpendPanel({ orgId }: Readonly<{ orgId: string }>) {
         </Button>
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <DateRangeMenu value={range} onChange={setRange} direction="past" />
+        <DateRangeMenu
+          value={range}
+          onChange={setRange}
+          zone={zone}
+          direction="past"
+        />
       </div>
 
       {data && (

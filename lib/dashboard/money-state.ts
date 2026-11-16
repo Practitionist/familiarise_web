@@ -171,7 +171,10 @@ export interface BookingPresentationInput {
   request: {
     status: string | null | undefined;
     kind: string;
+    /** The hold clock: a reschedule restarts it, so it is not when the booking was made. */
     requestedAt?: Date | string | null;
+    /** When the booking was made (the row's creation). */
+    bookedAt?: Date | string | null;
   } | null;
   occurrences: OccurrenceInput[];
   /** The booking's own Payment rows (an attendee's own seat on a group event). */
@@ -792,7 +795,10 @@ function deriveTimeline(
   const payer = me(p, viewer === "CONSULTEE");
   const consultant = me(c, viewer === "CONSULTANT");
   const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-  const requestedAt = toDateOrNull(input.request?.requestedAt);
+  // The timeline names when the booking was made, not the hold clock a move restarts.
+  const requestedAt = toDateOrNull(
+    input.request?.bookedAt ?? input.request?.requestedAt,
+  );
   const requested: TimelineEvent = {
     at: requestedAt,
     actor: p,

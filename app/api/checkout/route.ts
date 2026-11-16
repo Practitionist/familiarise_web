@@ -7,6 +7,7 @@ import {
   logClassifiedError,
   isBusinessErrorCode,
   ErrorTypes,
+  withErrorReference,
 } from "@/lib/errors/classification/payment-error-classification";
 import { reportSentryError } from "@/lib/observability/report";
 import { NextRequest, NextResponse } from "next/server";
@@ -430,7 +431,9 @@ export async function POST(req: NextRequest) {
     const retryAfter = (error as { retryAfter?: unknown } | null)?.retryAfter;
     return NextResponse.json(
       {
-        error: classified.errorMessage,
+        error: classified.isBusinessError
+          ? classified.errorMessage
+          : withErrorReference(classified.errorMessage, errorId),
         errorType: classified.errorType,
         // #1834 — additive: the booking rule's own code (e.g. ENROLMENT_CLOSED), as bookingRuleResponse sends it.
         ...(error instanceof BookingRuleError ? { code: error.code } : {}),

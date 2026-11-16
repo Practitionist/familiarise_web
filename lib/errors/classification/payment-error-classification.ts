@@ -5,13 +5,11 @@
  * from *infrastructure failures* (unexpected, full stack trace for debugging).
  *
  * Usage:
- *   import { classifyError, logClassifiedError } from "@/lib/payments/error-classification";
+ *   import { classifyError, logClassifiedError } from "@/lib/errors/classification/payment-error-classification";
  *
  *   const classified = classifyError(error);
  *   logClassifiedError("Checkout", classified, error);
  */
-
-import * as Sentry from "@sentry/nextjs";
 
 // ============================================================================
 // Error Types — used by both server routes and frontend toast mapping
@@ -769,6 +767,18 @@ export interface ClassifiedError {
   httpStatus: number;
 }
 
+/** The copy an unrecognised failure answers with; its own message never reaches the client. */
+export const UNEXPECTED_ERROR_MESSAGE =
+  "Something went wrong. Please try again.";
+
+/** A reported fault's copy with the first eight characters of its Sentry event id. */
+export function withErrorReference(
+  message: string,
+  errorId: string | undefined,
+): string {
+  return errorId ? `${message} Reference: ${errorId.slice(0, 8)}.` : message;
+}
+
 /**
  * Classify an Error into a structured result for logging and response.
  *
@@ -824,9 +834,9 @@ export function classifyError(
     }
   }
 
-  // 4. Unrecognised — treat as unexpected
+  // 4. Unrecognised: the raw message stays in the server log and Sentry.
   return {
-    errorMessage: msg,
+    errorMessage: UNEXPECTED_ERROR_MESSAGE,
     errorType: ErrorTypes.UNKNOWN,
     isBusinessError: false,
     httpStatus: 500,
@@ -838,7 +848,8 @@ export function classifyError(
 // ============================================================================
 
 /**
- * Log a classified error with the right severity.
+ * Log a classified error with the right severity. Console only: the caller
+ * reports the fault to Sentry once, through `reportSentryError`.
  *
  * @param tag     - Short route identifier, e.g. "Checkout", "Refunds"
  * @param result  - Output from classifyError()
@@ -852,10 +863,6 @@ export function logClassifiedError(
   if (result.isBusinessError) {
     console.warn(`[${tag}] Business rule blocked: ${result.errorMessage}`);
   } else {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "payments" } },
-    );
     console.error(`[${tag}] Unexpected error:`, error);
   }
 }

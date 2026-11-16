@@ -55,6 +55,7 @@ import {
   type LibrarySession,
 } from "@/lib/library/library-query";
 import { cn } from "@/utils/tailwind";
+import { useViewerZone } from "@/lib/time/use-viewer-zone";
 import { MaterialsTable, ThreadTable } from "./DocumentTables";
 import { useLibraryDay, type LibraryColumn } from "./LibraryTable";
 import {
@@ -265,6 +266,7 @@ export function LibraryBrowser({
     useState<RecordingPlayerItem | null>(null);
   const list = useListParams({ filterKeys: FILTER_KEYS });
   const { q, page, filters } = list;
+  const { zone } = useViewerZone();
   const flat = filters.view === "flat";
   const docs = artifact === "documents";
 
@@ -582,6 +584,7 @@ export function LibraryBrowser({
       >
         <DateRangeMenu
           direction="past"
+          zone={zone}
           value={{ from: filters.from ?? "", to: filters.to ?? "" }}
           onChange={(range) =>
             list.setParams({

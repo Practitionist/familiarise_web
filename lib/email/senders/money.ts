@@ -104,6 +104,8 @@ export interface RefundProcessedEmailArgs {
   currency: string;
   planTitle?: string;
   creditNoteNumber?: string;
+  /** The other party's cancel caused this refund, so the notice is required. */
+  required?: boolean;
 }
 
 function refundProcessedSpec(
@@ -114,6 +116,7 @@ function refundProcessedSpec(
   return {
     emailType: MONEY_EMAIL_TYPES.REFUND_PROCESSED,
     category: "payments",
+    ...(args.required ? { requiredFor: [args.userId] } : {}),
     from: SENDERS.payments,
     entityRef: `payment:${args.paymentId}`,
     traceRenderFailure: true,

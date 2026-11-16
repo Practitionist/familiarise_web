@@ -5,6 +5,10 @@
   globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
+// The session-backed zone hook loads the auth client, which jsdom cannot import.
+jest.mock("@/lib/time/use-viewer-zone", () => ({
+  useViewerZone: () => ({ zone: "Asia/Kolkata", own: true }),
+}));
 jest.mock("next/navigation", () => ({
   usePathname: () => "/dashboard/consultee/c1/library",
   useSearchParams: () => new URLSearchParams(),

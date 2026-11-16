@@ -28,6 +28,7 @@ import { type AppointmentStatus, CancellationReason } from "@prisma/client";
 import { notifyAppointmentCancelled } from "@/lib/novu";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { refundOnItsWay } from "@/lib/email";
+import { refundStartedText } from "@/lib/notifications/refund-wording";
 import { stageAppointmentCancelledEmail } from "@/lib/email/senders/booking";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
@@ -81,6 +82,12 @@ import {
   stampWholeEventRefundsOwed,
   type WholeEventRefundSummary,
 } from "@/lib/payments/operations/event-refunds";
+import {
+  cancelRefundReason,
+  type CancelSide,
+  creditCancelRefundReason,
+  wholeEventCancelRefundReason,
+} from "@/lib/payments/operations/refund-cause";
 import { hasActiveDisputeForAppointment } from "@/lib/payments/dispute-guard";
 import {
   quoteBookingRefund,
@@ -366,23 +373,22 @@ function cancelRefundOwed(
   appointmentId: string,
   paymentId: string,
   quote: BookingRefundQuote,
-  isConsultantInitiated: boolean,
+  side: CancelSide,
 ): RefundOwedMarker | null {
   if (quote.creditRestoresInFull) {
     return {
       paymentId,
       amountPaise: null,
       key: cancelRefundKey(appointmentId, paymentId),
-      reason: `cancellation (credit-funded booking, credit restored in full from the ${quote.tierRefundPct}% tier)`,
+      reason: creditCancelRefundReason(quote.tierRefundPct, side),
     };
   }
   if (quote.refundPaise <= 0) return null;
-  const side = isConsultantInitiated ? "consultant" : "consultee";
   return {
     paymentId,
     amountPaise: quote.refundPaise,
     key: cancelRefundKey(appointmentId, paymentId),
-    reason: `cancellation (${quote.refundPct}% per booking-time policy, ${side}-initiated)`,
+    reason: cancelRefundReason(quote.refundPct, side),
   };
 }
 
@@ -574,8 +580,8 @@ function attendeeEmailGroups(
   );
   const ok = (ids: string[]) => uniq(ids).filter((id) => !failed.has(id));
   const cash = isClass
-    ? "The sessions not yet held are being refunded to you."
-    : "Your payment for this event is being refunded in full.";
+    ? "Your refund for the sessions not yet held has started and usually reaches you in 5–7 working days."
+    : "Your full refund for this event has started and usually reaches you in 5–7 working days.";
   return [
     { userIds: ok(a.gateway), refundText: cash },
     {
@@ -656,6 +662,8 @@ export async function POST(
     // Fetch appointment BEFORE transaction to avoid timeout on heavy queries
     const appointment = await prisma.appointment.findUnique({
       where: { id: appointmentId },
+      // Four optional booking branches: one joined statement, not one per level.
+      relationLoadStrategy: "join",
       include: {
         consultation: {
           include: {
@@ -863,7 +871,18 @@ export async function POST(
     if (appointment.class) eventKind = "class";
     else if (appointment.webinar) eventKind = "webinar";
     const eventId = appointment.class?.id ?? appointment.webinar?.id ?? null;
-    const eventRefundReason = `whole-event ${eventKind ?? "event"} cancellation (${validatedData.reason ?? "cancelled"})`;
+    // Platform staff who are not a party cancel for the platform, not for a side.
+    const staffCancel = isPrivilegedUser && !isParticipant;
+    const cancelSide: CancelSide = staffCancel
+      ? "staff"
+      : isConsultantInitiated
+        ? "consultant"
+        : "consultee";
+    const eventRefundReason = wholeEventCancelRefundReason(
+      eventKind ?? "event",
+      validatedData.reason ?? "cancelled",
+      staffCancel,
+    );
 
     // Transaction for critical database operations only (with increased timeout)
     // #1319 — serialize lifecycle mutations per appointment (lock order:
@@ -1069,7 +1088,7 @@ export async function POST(
                       appointmentId,
                       paidPayment.id,
                       quote,
-                      isConsultantInitiated,
+                      cancelSide,
                     )
                   : null;
               // Only the door that owns the marker drives it; a payment already
@@ -1396,7 +1415,20 @@ export async function POST(
         ].filter((id): id is string => !!id),
       ),
     );
+    // The host side cancelled: the buyer and every attendee hear it whatever
+    // their switches say; a staff cancel reaches every party but the actor.
+    const hostCancelled =
+      notificationMeta.cancelledBy === notificationMeta.consultantUserId ||
+      (isHostOrgOperator && session.user.id !== consulteeUserId);
+    const bookedUserIds = staffCancel
+      ? userIds.filter((id) => id !== session.user.id)
+      : hostCancelled
+        ? [consulteeUserId, ...attendeeUserIds].filter(
+            (id): id is string => !!id && id !== session.user.id,
+          )
+        : [];
     if (userIds.length > 0) {
+      // A refund still pending at the gateway has started; only a settled one is on its way.
       const refundText =
         refund?.status === "REFUNDED"
           ? refund.rail === "CREDITS"
@@ -1405,7 +1437,9 @@ export async function POST(
               ? "The amount has been returned to the sponsoring organisation's balance."
               : // The amount is in paise, so the currency is INR by construction.
                 refundOnItsWay(refund.amountRefundedPaise, "INR")
-          : undefined;
+          : refund?.status === "PENDING" && refund.amountRefundedPaise > 0
+            ? refundStartedText(refund.amountRefundedPaise, "INR")
+            : undefined;
       const emailArgs = {
         appointmentId,
         startsAt: appointment.occurrences?.[0]?.startsAt ?? null,
@@ -1425,31 +1459,41 @@ export async function POST(
             )
           : [];
       const [bellResults, ...stagedEmailBatches] = await Promise.all([
-        notifyAppointmentCancelled(userIds, {
-          ...notificationScope(appointment.organizationId),
-          appointmentId,
-          appointmentType: notificationMeta.appointmentType,
-          consultantName: notificationMeta.consultantName || "Consultant",
-          consulteeName: notificationMeta.consulteeName || "Consultee",
-          planTitle: planTitleOrSessionLabel(
-            notificationMeta.planTitle,
-            notificationMeta.appointmentType,
-          ),
-          dateTime: notificationMeta.dateTime,
-          dashboardUrl: notificationHref(
-            appointment.organizationId,
-            "appointments",
-          ),
-          reason: validatedData.reason || undefined,
-          cancelledBy:
-            notificationMeta.cancelledBy ===
-              notificationMeta.consultantUserId ||
-            (isHostOrgOperator && session.user.id !== consulteeUserId)
+        notifyAppointmentCancelled(
+          userIds,
+          {
+            ...notificationScope(appointment.organizationId),
+            appointmentId,
+            appointmentType: notificationMeta.appointmentType,
+            consultantName: notificationMeta.consultantName || "Consultant",
+            consulteeName: notificationMeta.consulteeName || "Consultee",
+            planTitle: planTitleOrSessionLabel(
+              notificationMeta.planTitle,
+              notificationMeta.appointmentType,
+            ),
+            dateTime: notificationMeta.dateTime,
+            dashboardUrl: notificationHref(
+              appointment.organizationId,
+              "appointments",
+            ),
+            reason: validatedData.reason || undefined,
+            cancelledBy: hostCancelled
               ? "consultant"
               : notificationMeta.cancelledBy === consulteeUserId
                 ? "consultee"
                 : "system",
-        }).catch((err) => {
+          },
+          bookedUserIds.length > 0
+            ? {
+                required: {
+                  kind: staffCancel
+                    ? "CANCELLED_BY_STAFF"
+                    : "CANCELLED_BY_HOST",
+                  recipients: bookedUserIds,
+                },
+              }
+            : undefined,
+        ).catch((err) => {
           console.error(
             "Failed to send appointment cancellation notification:",
             err,
@@ -1462,6 +1506,7 @@ export async function POST(
             userIds: group.userIds,
             refundText: group.refundText,
             refundUserIds: group.refundText ? group.userIds : [],
+            requiredFor: bookedUserIds,
           }).catch(() => []),
         ),
         stageAppointmentCancelledEmail(prisma, {
@@ -1479,6 +1524,7 @@ export async function POST(
           refundUserIds: refund
             ? [consulteeUserId].filter((id): id is string => !!id)
             : [],
+          requiredFor: bookedUserIds,
           dashboardUrl: notificationHref(
             appointment.organizationId,
             "appointments",

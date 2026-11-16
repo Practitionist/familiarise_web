@@ -1,4 +1,3 @@
-import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma, { type Tx } from "@/lib/prisma";
 import {
@@ -150,11 +149,7 @@ export async function GET(req: NextRequest) {
       },
     );
   } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "auth" } },
-    );
-    return apiError({ tag: "[Reviews.GET]", error });
+    return apiError({ tag: "[Reviews.GET]", error, subsystem: "auth" });
   }
 }
 
@@ -428,10 +423,6 @@ export async function POST(req: NextRequest) {
         { status: 409 },
       );
     }
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "auth" } },
-    );
-    return apiError({ tag: "[Reviews.POST]", error });
+    return apiError({ tag: "[Reviews.POST]", error, subsystem: "auth" });
   }
 }

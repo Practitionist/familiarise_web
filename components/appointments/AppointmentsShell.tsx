@@ -39,7 +39,7 @@ import {
   type TypeFilter,
 } from "./AppointmentsFilterBar";
 import {
-  dateRangeToInstants,
+  dateRangeBounds,
   type DateRangeDirection,
 } from "@/components/dashboard/DateRangeMenu";
 import { NextUpHero, type HeroStat } from "./NextUpHero";
@@ -289,9 +289,8 @@ export function AppointmentsShell({
   // numbers always describe what the user would see on click.
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const bounds = dateRangeToInstants(dateRange);
-    const fromMs = bounds.from?.getTime() ?? null;
-    const toMs = bounds.to?.getTime() ?? null;
+    // Range ends are calendar days in the zone the list groups by.
+    const { fromMs, toMs } = dateRangeBounds(dateRange, viewerZone.zone);
     return vms.filter((vm) => {
       if (!matchesTypeFilter(vm.kind, typeFilter)) return false;
       if (
@@ -309,7 +308,7 @@ export function AppointmentsShell({
       }
       return true;
     });
-  }, [vms, typeFilter, search, dateRange]);
+  }, [vms, typeFilter, search, dateRange, viewerZone.zone]);
 
   const byBucket = useMemo(() => {
     const map: Record<AppointmentBucket, AppointmentVM[]> = {
@@ -485,6 +484,7 @@ export function AppointmentsShell({
             onSearchChange={setSearch}
             dateRange={dateRange}
             onDateRangeChange={setDateRange}
+            zone={viewerZone.zone}
             dateDirection={dateDirectionOf(tab, view)}
             orgFilterSlot={orgFilterSlot}
           />

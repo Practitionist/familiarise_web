@@ -47,6 +47,8 @@ interface AppointmentsFilterBarProps {
   onSearchChange: (value: string) => void;
   dateRange: DateRange;
   onDateRangeChange: (value: DateRange) => void;
+  /** The viewer's IANA zone, which the date presets count days in. */
+  zone: string;
   /** Which date presets fit the open tab: coming-up, past, or both. */
   dateDirection?: DateRangeDirection;
   /** Role-specific filter control rendered at the end of the bar. */
@@ -60,6 +62,7 @@ export function AppointmentsFilterBar({
   onSearchChange,
   dateRange,
   onDateRangeChange,
+  zone,
   dateDirection = "any",
   orgFilterSlot,
 }: AppointmentsFilterBarProps) {
@@ -97,6 +100,7 @@ export function AppointmentsFilterBar({
       <DateRangeMenu
         value={dateRange}
         onChange={onDateRangeChange}
+        zone={zone}
         direction={dateDirection}
       />
 

@@ -343,11 +343,7 @@ export async function GET(
       },
     );
   } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "auth" } },
-    );
-    return apiError({ tag: "[Consultant.GET]", error });
+    return apiError({ tag: "[Consultant.GET]", error, subsystem: "auth" });
   }
 }
 
@@ -647,11 +643,7 @@ export async function PUT(
 
     return NextResponse.json({ data: { id }, uncoveredUpcoming });
   } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "auth" } },
-    );
-    return apiError({ tag: "[Consultant.PUT]", error });
+    return apiError({ tag: "[Consultant.PUT]", error, subsystem: "auth" });
   }
 }
 
@@ -722,11 +714,11 @@ export async function PATCH(
     purgeExpertSurfaces(id);
     return NextResponse.json({ data });
   } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "consultants" } },
-    );
-    return apiError({ tag: "[Consultant.PATCH]", error });
+    return apiError({
+      tag: "[Consultant.PATCH]",
+      error,
+      subsystem: "consultants",
+    });
   }
 }
 
@@ -882,10 +874,6 @@ export async function DELETE(
     purgeExpertSurfaces(id);
     return NextResponse.json({ message: "Consultant deleted successfully" });
   } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "auth" } },
-    );
-    return apiError({ tag: "[Consultant.DELETE]", error });
+    return apiError({ tag: "[Consultant.DELETE]", error, subsystem: "auth" });
   }
 }

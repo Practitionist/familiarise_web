@@ -1,4 +1,3 @@
-import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
@@ -266,10 +265,10 @@ export async function GET(request: NextRequest) {
         { headers: { "Cache-Control": "no-store" } },
       );
     }
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "consultants" } },
-    );
-    return apiError({ tag: "[Consultants.GET]", error });
+    return apiError({
+      tag: "[Consultants.GET]",
+      error,
+      subsystem: "consultants",
+    });
   }
 }

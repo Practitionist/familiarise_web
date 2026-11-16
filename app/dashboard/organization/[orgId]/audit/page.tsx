@@ -12,10 +12,11 @@ import {
 import { FilterBar } from "@/components/dashboard/FilterBar";
 import {
   DateRangeMenu,
-  dateRangeToInstants,
+  dateRangeBounds,
   type DateRange,
 } from "@/components/dashboard/DateRangeMenu";
 import { Button } from "@/components/ui/button";
+import { useViewerZone } from "@/lib/time/use-viewer-zone";
 import { Badge } from "@/components/ui/badge";
 import { humanizeEnum } from "@/lib/ui/tone";
 import { ORG_AUDIT_CATEGORY_LABEL } from "@/lib/labels/org-labels";
@@ -86,6 +87,7 @@ type AuditResponse = {
 
 export default function AuditLogPage({ params }: Readonly<PageProps>) {
   const { orgId } = use(params);
+  const { zone } = useViewerZone();
   // audit.read — same matrix entry the sidebar and the audit GET API check;
   // an EXPERT/LEARNER direct URL bounces to /home.
   const { allowed, isLoading: isGateLoading } = useRequireOrgAccess(orgId, {
@@ -107,14 +109,14 @@ export default function AuditLogPage({ params }: Readonly<PageProps>) {
     const p = new URLSearchParams();
     if (category !== "ALL") p.set("categories", category);
     if (search.trim()) p.set("q", search.trim());
-    // Local-day bounds: the first day from midnight, the last day through 23:59:59.999.
-    const { from, to } = dateRangeToInstants(range);
-    if (from) p.set("from", from.toISOString());
-    if (to) p.set("to", to.toISOString());
+    // Viewer-zone day bounds: the first day from its start, the last through its final millisecond.
+    const { fromMs, toMs } = dateRangeBounds(range, zone);
+    if (fromMs !== null) p.set("from", new Date(fromMs).toISOString());
+    if (toMs !== null) p.set("to", new Date(toMs).toISOString());
     const current = cursorStack[cursorStack.length - 1];
     if (current) p.set("cursor", current);
     return p.toString();
-  }, [category, search, range, cursorStack]);
+  }, [category, search, range, cursorStack, zone]);
 
   const { data, isLoading, isFetching } = useQuery<AuditResponse>({
     queryKey: ["org-audit-log", orgId, queryString],
@@ -271,6 +273,7 @@ export default function AuditLogPage({ params }: Readonly<PageProps>) {
               setRange(next);
               setCursorStack([]);
             }}
+            zone={zone}
             direction="past"
           />
           {canExport && (

@@ -32,32 +32,24 @@ jest.mock("../../lib/rate-limit", () => ({
   trialRequestRefusal: (...a: unknown[]) => trialRequestRefusal(...(a as [])),
   spendTrialRequest: (...a: unknown[]) => spendTrialRequest(...(a as [])),
 }));
-jest.mock("../../lib/email/senders/booking", () => ({
-  prepareTrialScheduledEmail: jest.fn(async () => ({
-    emailType: "TRIAL_SESSION_SCHEDULED",
-    entityRef: "trial:pending",
-    messages: [],
-    skipped: 0,
-    failed: 0,
-  })),
-}));
-const stageNotices = jest.fn(async () => ({
-  consulteeBell: null,
-  consultantBell: null,
+const prepared = { bells: [], emails: { prepared: {}, screened: [] } };
+const prepareNotices = jest.fn(async (..._args: unknown[]) => prepared);
+const stageNotices = jest.fn(async (..._args: unknown[]) => ({
+  bells: [],
   emails: [],
 }));
 jest.mock("../../lib/trials/schedule-notices", () => ({
-  stageTrialScheduledNotices: (...a: unknown[]) => stageNotices(...(a as [])),
+  prepareTrialScheduledNotices: (...a: unknown[]) => prepareNotices(...a),
+  stageTrialScheduledNotices: (...a: unknown[]) => stageNotices(...a),
 }));
-jest.mock("../../lib/novu/stage-then-attempt", () => ({
-  flushNotificationsAfter: jest.fn(async () => undefined),
-}));
-jest.mock("../../utils/appointmentlock", () => ({
-  lockRequestCap: jest.fn(async () => ({ key: "request-cap" })),
-  unlockRequestCap: jest.fn(async () => undefined),
-  RequestCapBusyError: class extends Error {},
-  BookingLockUnavailableError: class extends Error {},
-}));
+jest.mock("../../lib/novu/stage-then-attempt", () =>
+  jest
+    .requireActual("../fixtures/trial-request-mocks")
+    .flushNotificationsModule(),
+);
+jest.mock("../../utils/appointmentlock", () =>
+  jest.requireActual("../fixtures/trial-request-mocks").requestCapLockModule(),
+);
 const release = jest.fn(async () => undefined);
 const lockPick = jest.fn(async () => release);
 const bookTrial = jest.fn(async (_tx: unknown, args: { paid: boolean }) => ({
@@ -72,13 +64,14 @@ jest.mock("../../lib/trials/book-trial", () => ({
   bookTrialInTx: (...a: unknown[]) =>
     bookTrial(...(a as [unknown, { paid: boolean }])),
   TrialTimeRefusedError: class extends Error {},
+  TrialPairHeldError: class extends Error {},
 }));
 
 const plan = { trialPriceInPaise: 0, acceptingRequests: true };
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    trial: { findUnique: jest.fn(async () => null) },
+    trial: { findFirst: jest.fn(async () => null) },
     consultantProfile: { findUnique: jest.fn(async () => null) },
     subscriptionPlan: {
       findUnique: jest.fn(async () => ({
@@ -198,6 +191,7 @@ it("a paid trial holds the picked time and mints the order against its appointme
   expect(createIntent).toHaveBeenCalledWith(
     expect.objectContaining({ trialId: "trial-1", appointmentId: "apt-1" }),
   );
+  expect(prepareNotices).not.toHaveBeenCalled();
   expect(stageNotices).not.toHaveBeenCalled();
   expect((await res.json()).checkoutUrl).toBe("/checkout/plans/trial/trial-1");
   expect(release).toHaveBeenCalledTimes(1);
@@ -211,9 +205,13 @@ it("a free trial is confirmed with the request: notices staged, nothing minted",
     expect.anything(),
     expect.objectContaining({ paid: false }),
   );
+  expect(prepareNotices).toHaveBeenCalledWith(
+    expect.objectContaining({ startsAt: start }),
+  );
   expect(stageNotices).toHaveBeenCalledWith(
     expect.anything(),
-    expect.objectContaining({ trialId: "trial-1", startsAt: start }),
+    "trial-1",
+    prepared,
   );
   expect(createIntent).not.toHaveBeenCalled();
   expect((await res.json()).data.status).toBe("SCHEDULED");

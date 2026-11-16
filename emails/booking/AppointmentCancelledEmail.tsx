@@ -17,6 +17,8 @@ export interface AppointmentCancelledEmailProps {
   reason?: string;
   /** For the payer only, e.g. "A refund of ₹1,200 is on its way". */
   refundText?: string;
+  /** A host removed this one seat; the event itself goes ahead. */
+  removedFrom?: { eventLabel: string; planTitle: string };
   dashboardUrl: string;
   unsubscribeUrl?: string | null;
 }
@@ -27,9 +29,35 @@ export default function AppointmentCancelledEmail({
   cancelledBy,
   reason,
   refundText,
+  removedFrom,
   dashboardUrl,
   unsubscribeUrl,
 }: AppointmentCancelledEmailProps) {
+  if (removedFrom) {
+    const removedTitle = `You were removed from ${removedFrom.planTitle}`;
+    return (
+      <EmailLayout preview={removedTitle} unsubscribeUrl={unsubscribeUrl}>
+        <Text style={heading}>{removedTitle}</Text>
+        <Text style={paragraph}>Hi {recipientName},</Text>
+        <Text style={paragraph}>
+          {cancelledBy} removed you from the {removedFrom.eventLabel}{" "}
+          <strong>{removedFrom.planTitle}</strong>, so you no longer have a seat
+          in it.
+        </Text>
+        {reason && (
+          <Text style={paragraph}>
+            Reason given: <em>{reason}</em>
+          </Text>
+        )}
+        {refundText && <Text style={paragraph}>{refundText}</Text>}
+        <Section style={buttonContainer}>
+          <Button style={button} href={dashboardUrl}>
+            View details
+          </Button>
+        </Section>
+      </EmailLayout>
+    );
+  }
   const title = startsAtText
     ? `Your session on ${startsAtText} was cancelled`
     : "Your session was cancelled";

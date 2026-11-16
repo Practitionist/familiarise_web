@@ -183,6 +183,8 @@ export async function stageBackupInterestNotices(
       ...notifiable,
       AND: [{ windowStart: { gt: now } }],
     },
+    // One joined statement; under "query" the empty profile and user levels still run.
+    relationLoadStrategy: "join",
     select: {
       id: true,
       userId: true,

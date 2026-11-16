@@ -8,6 +8,7 @@ import { useState, type ReactNode } from "react";
 
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
 import { DateRangeMenu } from "@/components/dashboard/DateRangeMenu";
+import { useViewerZone } from "@/lib/time/use-viewer-zone";
 import { FilterBar } from "@/components/dashboard/FilterBar";
 import { PageHeader } from "@/components/dashboard/PageScaffold";
 import { Button } from "@/components/ui/button";
@@ -101,6 +102,7 @@ export function SupportInboxShell({
   const search = useSearchParams().toString();
   const list = useListParams({ filterKeys: INBOX_FILTER_KEYS });
   const f = list.filters;
+  const { zone } = useViewerZone();
   const view = (f.view as InboxView | null) ?? "needs-reply";
   const pick = (key: InboxFilterKey) => (value: string) =>
     list.setFilter(key, value === ANY ? null : value);
@@ -257,6 +259,7 @@ export function SupportInboxShell({
           >
             <DateRangeMenu
               direction="past"
+              zone={zone}
               value={{ from: f.from ?? "", to: f.to ?? "" }}
               onChange={(range) =>
                 list.setParams({

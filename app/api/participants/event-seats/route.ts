@@ -1,4 +1,3 @@
-import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { apiError } from "@/lib/errors";
@@ -55,10 +54,6 @@ export async function GET() {
       { headers: NO_STORE },
     );
   } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "bookings" } },
-    );
-    return apiError({ tag: "[EventSeats.GET]", error });
+    return apiError({ tag: "[EventSeats.GET]", error, subsystem: "bookings" });
   }
 }

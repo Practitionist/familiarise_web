@@ -413,6 +413,7 @@ export async function revalidateInsideLock(
 
         const webinar = await tx.webinar.findUnique({
           where: { id: data.eventId },
+          relationLoadStrategy: "join",
           include: {
             webinarPlan: {
               include: {

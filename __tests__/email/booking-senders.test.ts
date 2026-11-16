@@ -71,6 +71,8 @@ it("cancelled: delivers once when one of two recipients opted out", async () => 
   expect(mockLoadEmailRecipients).toHaveBeenCalledWith(
     ["user_1", "user_2"],
     "appointments",
+    undefined,
+    undefined,
   );
   expect(result).toEqual({ sent: 1, skipped: 1, failed: 0 });
   expect(mockDeliver).toHaveBeenCalledTimes(1);
@@ -105,6 +107,7 @@ it("booked (staged): reads recipients and stages through tx, never attempts", as
     ["user_1", "user_9"],
     "appointments",
     tx,
+    undefined,
   );
   expect(mockStage).toHaveBeenCalledTimes(1);
   expect(mockStage).toHaveBeenCalledWith(

@@ -172,14 +172,16 @@ beforeEach(() => {
 
 it("refuses a session that is no longer SCHEDULED and in the future", async () => {
   transition.mockResolvedValue(0);
-  await expect(cancelClassSession(hosted, "occ-5")).rejects.toMatchObject({
+  await expect(
+    cancelClassSession(hosted, "occ-5", "u-host"),
+  ).rejects.toMatchObject({
     code: "SESSION_NOT_CANCELLABLE",
   });
 });
 
 it("cancels without deletedAt, and the third miss flags the class exactly once", async () => {
   transition.mockResolvedValue(1);
-  await cancelClassSession(hosted, "occ-3");
+  await cancelClassSession(hosted, "occ-3", "u-host");
   const args = transition.mock.calls[0][1];
   expect(args.fromIn).toEqual(["SCHEDULED"]);
   expect(args.where.startsAt).toEqual({ gt: expect.any(Date) });
@@ -188,7 +190,7 @@ it("cancels without deletedAt, and the third miss flags the class exactly once",
 
   db.flagged = { id: "evt-1" };
   db.misses = 4;
-  await cancelClassSession(hosted, "occ-4");
+  await cancelClassSession(hosted, "occ-4", "u-host");
   expect(recordSystemError).toHaveBeenCalledTimes(1);
 });
 
@@ -203,13 +205,13 @@ const exitBells = () =>
 it("tells the learners once: on the miss that first trips the exit right", async () => {
   transition.mockResolvedValue(1);
   db.misses = 3;
-  const tripped = await cancelClassSession(hosted, "occ-3");
+  const tripped = await cancelClassSession(hosted, "occ-3", "u-host");
   expect(tripped).toMatchObject({ misses: 3, exitRight: true });
   expect(exitBells()).toHaveLength(1);
 
   jest.clearAllMocks();
   db.misses = 4;
-  const later = await cancelClassSession(hosted, "occ-4");
+  const later = await cancelClassSession(hosted, "occ-4", "u-host");
   expect(later).toMatchObject({ misses: 4, exitRight: true });
   expect(exitBells()).toHaveLength(0);
 });
@@ -219,13 +221,13 @@ it("a 100-session class: 3 host misses a month apart give no exit right, 3 insid
   db.N = 100;
   db.misses = 3;
   db.missGapDays = 31;
-  const spread = await cancelClassSession(hosted, "occ-3");
+  const spread = await cancelClassSession(hosted, "occ-3", "u-host");
   expect(spread).toMatchObject({ exitRight: false });
   expect(exitBells()).toHaveLength(0);
   expect(recordSystemError).not.toHaveBeenCalled();
 
   db.missGapDays = 10;
-  const clustered = await cancelClassSession(hosted, "occ-3");
+  const clustered = await cancelClassSession(hosted, "occ-3", "u-host");
   expect(clustered).toMatchObject({ exitRight: true });
   expect(exitBells()).toHaveLength(1);
   expect(recordSystemError).toHaveBeenCalledTimes(1);
@@ -236,11 +238,11 @@ it("a 100-session class with misses spread out trips at the 15th miss, not the 1
   db.N = 100;
   db.missGapDays = 31;
   db.misses = 14;
-  expect(await cancelClassSession(hosted, "occ-14")).toMatchObject({
+  expect(await cancelClassSession(hosted, "occ-14", "u-host")).toMatchObject({
     exitRight: false,
   });
   db.misses = 15;
-  expect(await cancelClassSession(hosted, "occ-15")).toMatchObject({
+  expect(await cancelClassSession(hosted, "occ-15", "u-host")).toMatchObject({
     exitRight: true,
   });
   expect(exitBells()).toHaveLength(1);
@@ -248,7 +250,7 @@ it("a 100-session class with misses spread out trips at the 15th miss, not the 1
 
 it("takes the class wrapper's row lock before reading the miss ledger", async () => {
   transition.mockResolvedValue(1);
-  await cancelClassSession(hosted, "occ-3");
+  await cancelClassSession(hosted, "occ-3", "u-host");
   const [sql] = db.rowLock.mock.calls[0] as [TemplateStringsArray];
   expect(sql.join("?")).toMatch(
     /FROM "Appointment" WHERE id = \? FOR NO KEY UPDATE/,
@@ -293,7 +295,7 @@ it("re-flags after a clear only on a later host cancellation", async () => {
   const clearedAt = new Date(Date.now() - 3_600_000);
   db.flagged = { createdAt: clearedAt, context: { cleared: true } };
   db.misses = 4;
-  await cancelClassSession(hosted, "occ-4");
+  await cancelClassSession(hosted, "occ-4", "u-host");
   expect(recordSystemError).toHaveBeenCalledTimes(1);
   const before = new Date(clearedAt.getTime() - 60_000);
   expect(
@@ -391,4 +393,18 @@ it("locks the host the make-up is written under, not the plan's current owner", 
     { consultantProfileId: string }[],
   ];
   expect(entries.map((e) => e.consultantProfileId)).toEqual(["cp-source-host"]);
+});
+
+it("a seat holder who cancels the session themself keeps their own switches", async () => {
+  db.misses = 1;
+  await cancelClassSession(hosted, "occ-1", "u-1");
+
+  const { stageBell } = jest.requireMock("../../lib/novu/stage-bell") as {
+    stageBell: jest.Mock;
+  };
+  const cancelBell = stageBell.mock.calls.find(
+    ([, args]) => args.dedupeKey === "occ-cancel:occ-1",
+  );
+  expect(cancelBell?.[1].recipients).toEqual(["u-1"]);
+  expect(cancelBell?.[1].required).toBeUndefined();
 });
