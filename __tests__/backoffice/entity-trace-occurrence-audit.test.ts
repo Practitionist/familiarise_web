@@ -72,7 +72,7 @@ import { readEntityTrace } from "../../lib/backoffice/entity-trace";
 it("keeps a session's console audit row when its only history is a hidden self-edge", async () => {
   jest.spyOn(console, "warn").mockImplementation(() => undefined);
   const trace = await readEntityTrace({
-    kind: "booking",
+    kind: "appointment",
     id: BOOKING,
     viewer: { userId: "admin-1", role: "ADMIN", seesSystemEvents: false },
   });
