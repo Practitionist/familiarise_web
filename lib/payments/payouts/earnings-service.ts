@@ -2135,11 +2135,7 @@ async function executeEarningsCreationInTx(
 
   if (splits.length > 0) {
     partySettlements = splitPlan
-      ? await settlePreplannedPartyFees(
-          tx,
-          payment,
-          splitPlan.partySettlements,
-        )
+      ? await settlePreplannedPartyFees(tx, payment, splitPlan.partySettlements)
       : (
           await resolvePartySettlements(tx, {
             payment,

@@ -398,7 +398,8 @@ describe("capture clock", () => {
       .split("const confirmed = recoverable")[1]
       .split("if (confirmed.count === 0)")[0];
     expect(confirm).toContain("paymentStatus: PaymentStatus.PENDING");
-    expect(confirm).toContain("capturedAt: new Date()");
+    // The CAS writes the one instant the capture also hands to its split.
+    expect(confirm).toMatch(/\bcapturedAt,/);
     // The replay short-circuit is `if (alreadyProcessed) { … }` — named once so
     // the parity check above and this guard are mutually exclusive (W1b). Slice
     // THAT block, not everything from `const recoverable =`: that span now also

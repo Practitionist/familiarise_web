@@ -300,7 +300,10 @@ describe("a seat is split among the team as of its capture", () => {
 
     await settleSeat(db, CAPTURED);
 
-    expect(netByExpert(db)).toEqual({ "cp-host": 640_000, "cp-collab": 160_000 });
+    expect(netByExpert(db)).toEqual({
+      "cp-host": 640_000,
+      "cp-collab": 160_000,
+    });
     expect(platformTake()).toBe(200_000);
   });
 
@@ -312,7 +315,10 @@ describe("a seat is split among the team as of its capture", () => {
 
     await settleSeat(db, CAPTURED);
 
-    expect(netByExpert(db)).toEqual({ "cp-host": 640_000, "cp-collab": 160_000 });
+    expect(netByExpert(db)).toEqual({
+      "cp-host": 640_000,
+      "cp-collab": 160_000,
+    });
     expect(platformTake()).toBe(200_000);
   });
 
@@ -399,7 +405,10 @@ describe("a capture decides its split inside its own transaction", () => {
     });
     await settleSeat(tx, CAPTURED, preplanned);
 
-    expect(netByExpert(tx)).toEqual({ "cp-host": 640_000, "cp-collab": 160_000 });
+    expect(netByExpert(tx)).toEqual({
+      "cp-host": 640_000,
+      "cp-collab": 160_000,
+    });
     expect(platformTake()).toBe(200_000);
   });
 
@@ -423,7 +432,10 @@ describe("a capture decides its split inside its own transaction", () => {
 
     expect(tx.collaborator.findMany).toHaveBeenCalledTimes(1);
     expect(tx.membership.findFirst).not.toHaveBeenCalled();
-    expect(netByExpert(tx)).toEqual({ "cp-host": 640_000, "cp-collab": 160_000 });
+    expect(netByExpert(tx)).toEqual({
+      "cp-host": 640_000,
+      "cp-collab": 160_000,
+    });
   });
 });
 
@@ -481,7 +493,12 @@ describe("the earnings sweep settles what the first attempt would have", () => {
     const db = makeDb({
       plans: [ORG_PLAN],
       payments: [orgSeat()],
-      rateCard: { id: "rc-1", platformBps: 1000, orgBps: 9000, consultantBps: 0 },
+      rateCard: {
+        id: "rc-1",
+        platformBps: 1000,
+        orgBps: 9000,
+        consultantBps: 0,
+      },
     });
     useAsGlobalClient(db);
 
