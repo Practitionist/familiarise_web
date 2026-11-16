@@ -78,6 +78,7 @@ const users: Record<string, Record<string, unknown>> = {
 const tx: Record<string, Record<string, jest.Mock> | jest.Mock> & {
   notificationOutbox: { upsert: jest.Mock };
   failedEmail: { create: jest.Mock };
+  collaborator: { findMany: jest.Mock; updateManyAndReturn: jest.Mock };
 } = {
   $transaction: jest.fn(async (run: (db: unknown) => unknown) => run(tx)),
   webinarPlan: {
