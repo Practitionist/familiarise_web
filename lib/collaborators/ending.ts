@@ -6,12 +6,12 @@ import {
 } from "@/lib/novu/stage-then-attempt";
 import { reportSentryError } from "@/lib/observability/report";
 import type { Tx } from "@/lib/prisma";
-import {
-  persistCollaboratorRevocationInTx,
-  revokeCollaboratorAccess,
-} from "@/lib/stream/access-revocation";
 import { stageCollaboratorNotifications } from "./notifications";
 import type { PlanRef } from "./team";
+
+// Loaded on first use: ban, erasure and member removal import this module and
+// must not load the Stream and auth graph until a collaboration really ends.
+const accessRevocation = () => import("@/lib/stream/access-revocation");
 
 /** The four ways a collaboration ends. */
 export type CollaborationEnding =
@@ -86,7 +86,9 @@ export async function endCollaboration(
   const wasOnTeam = collaborator.acceptedAt !== null;
   const revocationGeneration =
     wasOnTeam && !args.ownRevocationQueue
-      ? await persistCollaboratorRevocationInTx(tx, ref, profile.userId)
+      ? await (
+          await accessRevocation()
+        ).persistCollaboratorRevocationInTx(tx, ref, profile.userId)
       : null;
   const notices = await stageCollaboratorNotifications(
     tx,
@@ -155,8 +157,10 @@ export async function afterCollaborationEnded(
       },
       op,
     );
-    for (const e of list) {
-      if (!e.revocationGeneration) continue;
+    const owed = list.filter((e) => e.revocationGeneration);
+    if (owed.length === 0) return;
+    const { revokeCollaboratorAccess } = await accessRevocation();
+    for (const e of owed) {
       await revokeCollaboratorAccess(e.ref, e.userId, e.revocationGeneration);
     }
   } catch (error) {

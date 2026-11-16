@@ -262,7 +262,7 @@ describe.each([
           request("DELETE"),
           ctx("plan-9", "c-crew"),
         );
-        expect([403, 404]).toContain(res.status);
+        expect(res.status).toBe(404);
         expect(writes()).toEqual([]);
       });
 

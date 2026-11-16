@@ -66,13 +66,13 @@ export function planCollaborationHandlers(planType: PlanType) {
         session.user.id,
       );
       requireManager(access);
+      const body = await parseBody(req, inviteCollaboratorSchemas[planType]);
       const limited = await applyRateLimit(
         collaboratorInviteLimiter,
         `collab-invite:${session.user.id}`,
       );
       if (limited) return limited;
 
-      const body = await parseBody(req, inviteCollaboratorSchemas[planType]);
       const data = await inviteCollaborator({
         ref,
         consultantProfileId: body.consultantProfileId,

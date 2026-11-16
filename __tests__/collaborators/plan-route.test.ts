@@ -215,6 +215,7 @@ describe.each([
           await route.POST(request("POST", body), ctx("plan-1")),
         );
         expect(refusal).toMatchObject({ status: 400, code: "INVALID_TERMS" });
+        expect(mockRateLimit).not.toHaveBeenCalled();
         expect(mockInvite).not.toHaveBeenCalled();
       });
 

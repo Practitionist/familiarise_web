@@ -58,6 +58,9 @@ export async function deleteCollaborator(
     const { planId, id } = parseParams(memberParamsSchema, await params);
     const ref = { planType, planId };
     const access = await resolveCollaborationViewer(prisma, ref, userId);
+    if (!access.plan) {
+      throw new CollaborationError("NOT_FOUND", "Plan not found.");
+    }
 
     if (access.viewer.kind === "manager") {
       requireManager(access);
