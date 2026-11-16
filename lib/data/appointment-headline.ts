@@ -4,7 +4,7 @@
  * status, read through one select fragment and one batched user read.
  */
 
-import type { AppointmentsType, Prisma } from "@prisma/client";
+import type { AppointmentsType, BookingSource, Prisma } from "@prisma/client";
 
 import { liveParticipant } from "@/lib/booking/participants";
 
@@ -117,7 +117,7 @@ export interface AppointmentHeadline {
   attendeeLabel: string | null;
   /** The stored status of the booking's lifecycle row; null when that row is gone. */
   lifecycleStatus: string | null;
-  bookingSource: string | null;
+  bookingSource: BookingSource | null;
   durationMinutes: number;
 }
 
@@ -129,7 +129,7 @@ export interface HeadlineInput {
   _count: { participants: number };
   consultation: {
     status: string;
-    bookingSource: string | null;
+    bookingSource: BookingSource | null;
     consultationPlan: {
       title: string;
       durationInHours: number;
@@ -139,7 +139,7 @@ export interface HeadlineInput {
   } | null;
   subscription: {
     status: string;
-    bookingSource: string | null;
+    bookingSource: BookingSource | null;
     subscriptionPlan: { title: string; consultantProfile: UserRef };
     requestedBy: UserRef;
   } | null;
