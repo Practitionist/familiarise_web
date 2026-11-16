@@ -60,6 +60,12 @@ const bookLinkSchema = z.object({
   endsAt: z.string().datetime(),
 });
 
+/** Back from checkout after the chosen time was refused: the plan's dialog opens, nothing picked. */
+const chooseAgainLinkSchema = z.object({
+  conflict: z.literal("1"),
+  plan: z.string().min(1),
+});
+
 interface ConsultantDetailsForBooking {
   id: string;
   /** Absent on older payloads; INSTANT then. */
@@ -203,19 +209,26 @@ export default function ConsultationPricingToggle({
 
   // A notice link opens its plan's dialog once, with the time picked; the
   // picker then reads whether it is still free and which row it comes from.
+  // Checkout's "choose another time" opens the same dialog with nothing picked.
   const searchParams = useSearchParams();
   const bookLinkConsumedRef = useRef(false);
   useEffect(() => {
     if (bookLinkConsumedRef.current || !searchParams) return;
-    const link = bookLinkSchema.safeParse(
-      Object.fromEntries(searchParams.entries()),
-    );
-    if (!link.success) return;
-    if (!consultationOptions.some((opt) => opt.id === link.data.plan)) return;
+    const query = Object.fromEntries(searchParams.entries());
+    const link = bookLinkSchema.safeParse(query);
+    const chooseAgain = chooseAgainLinkSchema.safeParse(query);
+    let planId: string | null = null;
+    if (link.success) planId = link.data.plan;
+    else if (chooseAgain.success) planId = chooseAgain.data.plan;
+    if (!planId || !consultationOptions.some((opt) => opt.id === planId)) {
+      return;
+    }
     bookLinkConsumedRef.current = true;
-    setActiveConsultationOption(link.data.plan);
-    setDialogPlanId(link.data.plan);
-    setPick({ startsAt: link.data.startsAt, endsAt: link.data.endsAt });
+    setActiveConsultationOption(planId);
+    setDialogPlanId(planId);
+    if (link.success) {
+      setPick({ startsAt: link.data.startsAt, endsAt: link.data.endsAt });
+    }
   }, [searchParams, consultationOptions]);
 
   const handleRequestForApproval = async (planId: string) => {

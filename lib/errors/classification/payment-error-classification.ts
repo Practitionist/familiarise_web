@@ -144,6 +144,21 @@ export const ErrorTypes = {
 
 export type ErrorType = (typeof ErrorTypes)[keyof typeof ErrorTypes];
 
+/**
+ * Refusals that mean the chosen 1:1 time can never be bought as picked, so the
+ * buyer is sent back to the plan's grid. Lock contention, busy retries and
+ * payment failures are not here: the same time may still succeed.
+ */
+const TERMINAL_SLOT_REFUSAL_CODES: ReadonlySet<string> = new Set([
+  ErrorTypes.SLOT_TAKEN,
+  ErrorTypes.SLOT_TOO_SOON,
+  ErrorTypes.SLOT_NOT_ON_GRID,
+]);
+
+export function isTerminalSlotRefusal(code: string | undefined): boolean {
+  return code !== undefined && TERMINAL_SLOT_REFUSAL_CODES.has(code);
+}
+
 // ============================================================================
 // Business-logic error patterns
 // ============================================================================

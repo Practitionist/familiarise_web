@@ -1,6 +1,6 @@
 # The expert page's booking dialog: the dark single-time picker and the taken times you can wait on
 
-**Scope:** `app/explore/experts/[consultantId]/ExpertProfileClient.tsx`, `app/explore/experts/[consultantId]/components/ConsultationPricingToggle.tsx`, `components/scheduling/SingleTimePicker.tsx`, `components/scheduling/MonthGrid.tsx`, `lib/scheduling/single-session-options.ts`, `components/booking/NotifyWhenFreeButton.tsx`, `lib/booking/picked-time.ts`, `lib/booking/booking-mode.ts`, `app/api/scheduling/request-for-approval/route.ts`.
+**Scope:** `app/explore/experts/[consultantId]/ExpertProfileClient.tsx`, `app/explore/experts/[consultantId]/components/ConsultationPricingToggle.tsx`, `components/scheduling/SingleTimePicker.tsx`, `components/scheduling/MonthGrid.tsx`, `lib/scheduling/single-session-options.ts`, `components/booking/NotifyWhenFreeButton.tsx`, `lib/booking/picked-time.ts`, `lib/booking/booking-mode.ts`, `app/api/scheduling/request-for-approval/route.ts`, `app/explore/experts/[consultantId]/hooks/useChooseAnotherTime.ts`, `app/checkout/plans/adapters/use-consultation-checkout.tsx`.
 
 This page describes what a consultee sees in the "Book Now" dialog on an expert's public page, and the rules behind it. The dialog is one of the three time pickers the owner chose on 2026-11-12 ([the booking follow-up train](../decisions/2026-11-12-booking-follow-up-train.md), decision 2): the single-time picker, in its dark theme, with a buyer's rules. No state is carried by colour alone.
 
@@ -47,6 +47,14 @@ Waiters hear when the time frees: the cancel route stages notices for a cancelle
 
 "Book Now" on a plan card makes that card's plan the active one before it opens the dialog, so the request and the stashed purchase intent carry that card's plan. A guest's pick rides through sign-in in session storage (`utils/purchase-intent.ts`) and is restored once, opening that plan's dialog; the picker clears it if the time has gone.
 
+## Back from checkout when the time is gone
+
+A time can stop being buyable between the pick and the payment. Checkout sends the buyer back to this dialog, on the same plan with nothing picked, whenever the refusal means the time can never be bought as picked. The return address is `chooseAnotherTimeHref` in `app/explore/experts/[consultantId]/hooks/useChooseAnotherTime.ts`: `/explore/experts/<id>?conflict=1&plan=<planId>`. `conflict=1` makes the grid's next read skip the browser cache, and `plan` opens that plan's dialog (`chooseAgainLinkSchema` in `ConsultationPricingToggle`); a plan the expert does not offer opens nothing.
+
+- **Refused at Pay.** `isTerminalSlotRefusal` in `lib/errors/classification/payment-error-classification.ts` lists the codes: `SLOT_TAKEN` (409, another buyer was first), `SLOT_TOO_SOON` and `SLOT_NOT_ON_GRID` (400, from the Zod edge). The consultation checkout's `onCheckoutRefusal` toasts the refusal's own title and the server's sentence (for example "That Time Is Now Too Close" with "This time slot starts too soon (in 9 minutes)…") and returns the buyer to the dialog. The refusal may arrive from the route or through the Razorpay button's error callback; both reach the same handler.
+- **Not refused for good.** Lock contention, a busy or serialization conflict and payment failures keep the buyer on the checkout page with a toast, because the same time may still succeed.
+- **Gone before the page opens.** A time that has passed or starts inside the 15-minute lead still loads the plan, then shows "This time can't be booked" with one action, "Choose another time", linking to the same address. The minute-by-minute check shows the same view when the time passes while the page is open. The grid re-ask before Pay, when it finds the time no longer offered for any reason, toasts "That time is no longer available — pick another." and returns the buyer to the dialog.
+
 ## Pins
 
 | Pin                                                                        | File                                                           |
@@ -54,6 +62,8 @@ Waiters hear when the time frees: the cancel route stages notices for a cancelle
 | The option states, the taken list, the month summary and midnight          | `__tests__/scheduling/single-session-options.test.ts`          |
 | The keyboard grid, the taken-times disclosure, the host switch, just taken | `__tests__/scheduling/single-time-picker.test.tsx`             |
 | A poll that takes the pick, a held refusal, "Book Now" on the second card  | `__tests__/explore/selection-just-taken.test.tsx`              |
+| Checkout's return link opens the refused plan's dialog with nothing picked | `__tests__/explore/selection-just-taken.test.tsx`              |
+| Every terminal refusal at Pay returns to the grid; contention stays        | `__tests__/payments/checkout-choose-another-time.test.tsx`     |
 | "Notify me", "Waiting" with a withdraw, the inline refusal, sign-in        | `__tests__/growth/notify-toggle-wrappers.test.tsx`             |
 | A pick's checkout URL, request body and trial body parse at their doors    | `__tests__/booking/picked-time-contract.test.ts`               |
 | The request door's refusal for an instant-booking expert                   | `__tests__/booking-algorithm/consultant-request-gate.test.ts`  |
@@ -64,4 +74,5 @@ Waiters hear when the time frees: the cancel route stages notices for a cancelle
 - **The dialog's own calendar and slot list** (`renderCalendar` in `ExpertProfileClient`, `day-state.ts`, `SlotList.tsx`, `slot-list-policy.ts`, a week read beside the month read). Replaced by `SingleTimePicker` over one month read.
 - **A contended time offered as a request on an instant-booking expert** (the "Request" tag and the second arm of `consultationCtaFor`). A held time is taken with "Notify me"; the request door refuses instant-booking experts.
 - **"N times on this day are already taken" counting past and too-soon times**, and then the count line itself (`takenTimesLine`). Replaced by the "Show N taken times" disclosure.
+- **Only a taken time returned the buyer to the grid** (`useSlotJustTaken`). A too-soon or off-grid refusal toasted with no way forward, and a time gone at page load ended on "Please go back and select a new slot". Replaced by `useChooseAnotherTime` for every terminal refusal.
 - **"Notify me" only after a refusal** (a held time shown greyed among the free ones, "Notify me if this time opens"). Every taken time is listed behind the disclosure with "Notify me".

@@ -2,7 +2,8 @@
  * The public One-time dialog: a poll that takes the selected time clears the
  * pick and disables the button; "Book Now" on a second plan card books that
  * card's plan; a time the request door says is held clears the pick, says so
- * inline and opens the taken list with "Notify me".
+ * inline and opens the taken list with "Notify me"; checkout's "choose another
+ * time" link opens the refused plan's dialog.
  */
 import * as React from "react";
 import {
@@ -55,6 +56,7 @@ jest.mock("@/utils/purchase-intent", () => ({
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 
 import { backupBookHref } from "@/lib/booking/interest/backup-interest-list";
+import { chooseAnotherTimeHref } from "@/app/explore/experts/[consultantId]/hooks/useChooseAnotherTime";
 import ConsultationPricingToggle from "@/app/explore/experts/[consultantId]/components/ConsultationPricingToggle";
 import type { BookingMode } from "@prisma/client";
 
@@ -175,6 +177,35 @@ it("books the second card's plan, and reads a held time as taken", async () => {
   expect(
     screen.getByRole("button", { name: "Request this time" }),
   ).toBeDisabled();
+});
+
+it("checkout's choose-another-time link opens that plan's dialog with nothing picked", () => {
+  mockSearch = new URL(
+    chooseAnotherTimeHref("cp-1", "plan-b"),
+    "https://x.test",
+  ).searchParams;
+  render(<Dialog />);
+  expect(
+    screen.getByRole("heading", { name: /Book B Consultation/ }),
+  ).toBeVisible();
+  expect(time(/^11:00 am to 11:30 am, free/)).toHaveAttribute(
+    "aria-pressed",
+    "false",
+  );
+  expect(
+    screen.getByRole("button", { name: "Continue to Checkout" }),
+  ).toBeDisabled();
+});
+
+it("a link naming another expert's plan opens no dialog", () => {
+  mockSearch = new URL(
+    chooseAnotherTimeHref("cp-1", "someone-elses-plan"),
+    "https://x.test",
+  ).searchParams;
+  render(<Dialog />);
+  expect(
+    screen.queryByRole("heading", { name: /Book . Consultation/ }),
+  ).toBeNull();
 });
 
 it("a waitlist notice link opens its plan's dialog on that time, ready for checkout", () => {

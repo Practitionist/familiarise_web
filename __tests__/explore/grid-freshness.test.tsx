@@ -18,7 +18,7 @@ import {
   availabilityQueryKey,
   useAvailabilityWindow,
 } from "../../lib/scheduling/use-availability-window";
-import { useSlotJustTaken } from "../../app/explore/experts/[consultantId]/hooks/useSlotJustTaken";
+import { useChooseAnotherTime } from "../../app/explore/experts/[consultantId]/hooks/useChooseAnotherTime";
 import { useToast } from "../../hooks/use-toast";
 import {
   createGridPollInterval,
@@ -130,16 +130,16 @@ describe("the consultee grid poll", () => {
 });
 
 describe("a slot that was just taken", () => {
-  it("invalidates the grid, toasts, and returns the buyer to it", async () => {
+  it("invalidates the grid, toasts, and returns the buyer to the plan's picker", async () => {
     const client = new QueryClient();
     const key = availabilityQueryKey("cp-1", START, END, "UTC");
     client.setQueryData(key, {});
     let onTaken: () => void = () => undefined;
     function Probe() {
-      const handler = useSlotJustTaken("cp-1");
+      const choose = useChooseAnotherTime("cp-1", "plan-1");
       useEffect(() => {
-        onTaken = handler;
-      }, [handler]);
+        onTaken = () => choose({ title: SLOT_JUST_TAKEN_MESSAGE });
+      }, [choose]);
       return null;
     }
     await mount(
@@ -153,7 +153,9 @@ describe("a slot that was just taken", () => {
     expect(useToast().toast).toHaveBeenCalledWith(
       expect.objectContaining({ title: SLOT_JUST_TAKEN_MESSAGE }),
     );
-    expect(push).toHaveBeenCalledWith("/explore/experts/cp-1?conflict=1");
+    expect(push).toHaveBeenCalledWith(
+      "/explore/experts/cp-1?conflict=1&plan=plan-1",
+    );
   });
 
   it("the checkout mount check reports a taken atom, and fails open on a failed read", async () => {
