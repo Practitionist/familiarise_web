@@ -6,7 +6,10 @@ import { MaintenancePhase } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
 import redis from "@/lib/redis";
-import { recordOpsAction } from "@/lib/backoffice/ops-action-log";
+import {
+  recordOpsAction,
+  type OpsActor,
+} from "@/lib/backoffice/ops-action-log";
 import { REDIS_KEYS } from "@/lib/maintenance-keys";
 import { invalidateMaintenancePhaseCache } from "@/lib/maintenance-cron";
 import { mayWriteProductionState } from "@/lib/production-state";
@@ -49,18 +52,18 @@ export async function getMaintenanceState(): Promise<MaintenanceState> {
 /**
  * Set maintenance state in Redis and persist to Prisma. The window row and its
  * Redis mirror are production state, so another deploy writes neither.
+ * Every transition is audited against the operator who made it.
  */
 export async function setMaintenanceState(
   phase: MaintenancePhase,
   config: {
+    actor: OpsActor;
     reason?: string;
     estimatedEnd?: string;
     bypassSecret?: string;
-    startedBy?: string;
-    endedBy?: string;
     betterstackIncidentId?: string | null;
     auditReason?: string;
-  } = {},
+  },
 ): Promise<void> {
   if (!mayWriteProductionState(REDIS_KEYS.PHASE)) return;
   const estimatedEndDate =
@@ -81,7 +84,7 @@ export async function setMaintenanceState(
         data: {
           phase: MaintenancePhase.OFF,
           endedAt: new Date(),
-          endedBy: config.endedBy,
+          endedBy: config.actor.userId,
         },
       });
     } else if (activeWindow) {
@@ -101,18 +104,17 @@ export async function setMaintenanceState(
           phase,
           reason: config.reason,
           startedAt: new Date(),
-          startedBy: config.startedBy,
+          startedBy: config.actor.userId,
           estimatedEnd: estimatedEndDate,
           bypassSecret: config.bypassSecret,
           betterstackIncidentId: config.betterstackIncidentId,
         },
       });
     }
-    const actor = config.startedBy ?? config.endedBy;
-    if (actor && row) {
+    if (row) {
       await recordOpsAction(tx, {
-        actorUserId: actor,
-        actorRole: "ADMIN",
+        actorUserId: config.actor.userId,
+        actorRole: config.actor.role,
         surface: "maintenance.manage",
         action: "maintenance.transition",
         targetKind: "MaintenanceWindow",
