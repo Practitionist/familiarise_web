@@ -1605,6 +1605,14 @@ ALTER TABLE "Trial" DROP CONSTRAINT IF EXISTS "trial_agreed_price_valid";
 ALTER TABLE "Trial" ADD CONSTRAINT "trial_agreed_price_valid"
   CHECK ("agreedPricePaise" IS NULL OR "agreedPricePaise" >= 0);
 -- SPLIT
+-- A pair keeps every trial, but at most one live or delivered trial; only CANCELLED
+-- frees the pair. The list is TRIAL_REQUEST_BLOCKING_STATUSES (lib/trials/eligibility.ts).
+DROP INDEX IF EXISTS "trial_one_blocking_per_pair_key";
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "trial_one_blocking_per_pair_key"
+  ON "Trial" ("consulteeProfileId", "consultantProfileId")
+  WHERE "status" IN ('AWAITING_PAYMENT', 'SCHEDULED', 'COMPLETED', 'CONVERTED');
+-- SPLIT
 -- NULL means no limit on live 1:1 plan clients; a set limit is at least one.
 ALTER TABLE "ConsultantProfile" DROP CONSTRAINT IF EXISTS "consultant_profile_max_active_plan_clients_min";
 -- SPLIT

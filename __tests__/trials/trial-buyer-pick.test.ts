@@ -38,6 +38,8 @@ function fakeTx() {
   const tx = {
     appointment: { create: jest.fn(async () => ({ id: "apt-1" })) },
     trial: {
+      // The pair holds no blocking trial.
+      findFirst: jest.fn(async () => null),
       create: jest.fn(async ({ data }: { data: { status: string } }) => ({
         id: "trial-1",
         status: data.status,

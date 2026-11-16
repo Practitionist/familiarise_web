@@ -17,6 +17,7 @@ import type { Tx } from "@/lib/prisma";
 import { recordParticipants } from "@/lib/booking/participants";
 import { appendCreationHistory } from "@/lib/booking/transitions";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
+import { blockingTrialWhere } from "@/lib/trials/eligibility";
 import { payWindowEnd } from "@/lib/payments/operations/approval-payment";
 import {
   TRIAL_WINDOW_REFUSAL_COPY,
@@ -39,6 +40,14 @@ export class TrialTimeRefusedError extends Error {
     super(TRIAL_WINDOW_REFUSAL_COPY[code]);
     this.name = "TrialTimeRefusedError";
     this.httpStatus = TRIAL_WINDOW_REFUSAL_STATUS[code];
+  }
+}
+
+/** The pair already holds a live or delivered trial; nothing was written. */
+export class TrialPairHeldError extends Error {
+  constructor() {
+    super("The pair already holds a live or delivered trial");
+    this.name = "TrialPairHeldError";
   }
 }
 
@@ -74,14 +83,19 @@ export interface BookTrialArgs {
   now?: Date;
 }
 
-/**
- * Writes the trial, its appointment and its one session on the caller's
- * transaction, after `trialWindowRefusal` passes on the same client. The
- * caller holds the consultee lock and the slot atoms for the window.
- * Throws `TrialTimeRefusedError` when the time is not open; a concurrent
- * confirmed overlap surfaces as the exclusion violation (free trial only).
- */
+/** Writes the trial, its appointment and its session on the caller's transaction;
+ *  the caller holds the consultee lock and the window's slot atoms. */
 export async function bookTrialInTx(tx: Tx, args: BookTrialArgs) {
+  // Re-read under the caller's consultee lock, so a rival request for the pair has committed.
+  const held = await tx.trial.findFirst({
+    where: blockingTrialWhere({
+      consulteeProfileId: args.consulteeProfileId,
+      consultantProfileId: args.consultantProfileId,
+    }),
+    select: { id: true },
+  });
+  if (held) throw new TrialPairHeldError();
+
   const refusal = await trialWindowRefusal(tx, {
     consultantProfileId: args.consultantProfileId,
     consultantUserId: args.consultantUserId,

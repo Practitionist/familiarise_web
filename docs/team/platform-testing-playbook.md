@@ -559,7 +559,7 @@ graph TD
 
 ### Trial Sessions
 
-**What:** Trial sessions for subscription plans (free or paid via trialPriceInPaise). Limited to one trial per consultant-consultee pair.
+**What:** Trial sessions for subscription plans (free or paid via trialPriceInPaise). A consultant-consultee pair holds at most one live or delivered trial; after a cancelled one the learner may request again, and both trials stay listed.
 
 **Where:** `/dashboard/consultant/[id]/trials`
 
