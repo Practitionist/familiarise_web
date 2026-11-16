@@ -1142,16 +1142,15 @@ export async function scrubUser(
   for (const { planType, planId } of collaborationsRemoved) {
     let error: string | null = null;
     try {
-      // Lazy: the service pulls Stream and Novu, which the scrub does not need
-      // unless a collaboration was actually flipped.
-      const { revokeCollaboratorAccess } =
-        await import("@/lib/collaborators/service");
-      const { success } = await revokeCollaboratorAccess(
-        planType,
-        planId,
+      // Lazy: the scrub needs Stream only when a collaboration was flipped.
+      // The erasure's own outbox row owns the retry, so the drive is unbudgeted.
+      const { driveCollaboratorRevocation } =
+        await import("@/lib/stream/collaborator-access");
+      error = await driveCollaboratorRevocation(
+        { planType, planId },
         userId,
+        Number.POSITIVE_INFINITY,
       );
-      if (!success) error = "Collaborator Stream access not fully revoked";
     } catch (caught) {
       error = caught instanceof Error ? caught.message : String(caught);
     }

@@ -674,16 +674,17 @@ async function runCollaboratorRevocations(
 ): Promise<void> {
   const failed: string[] = [];
   // Lazy: a static import would pull the auth + email graph into every action.
-  const { revokeCollaboratorAccess } =
-    await import("@/lib/collaborators/service");
+  const { driveCollaboratorRevocation } =
+    await import("@/lib/stream/collaborator-access");
   for (const { planType, planId } of plans) {
     try {
-      const { success } = await revokeCollaboratorAccess(
-        planType,
-        planId,
+      // The action's own summary owns the retry, so the drive is unbudgeted.
+      const error = await driveCollaboratorRevocation(
+        { planType, planId },
         targetUserId,
+        Number.POSITIVE_INFINITY,
       );
-      if (!success) failed.push(`${planType}:${planId}`);
+      if (error) failed.push(`${planType}:${planId}`);
     } catch (error) {
       failed.push(`${planType}:${planId}`);
       captureModerationError(error);

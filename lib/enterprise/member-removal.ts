@@ -40,15 +40,12 @@ import {
 } from "@/lib/novu/stage-then-attempt";
 
 import {
-  enqueueCollaboratorRevocationRetry,
   enqueueOrgMemberRevocationRetry,
+  revokeCollaboratorAccess,
 } from "@/lib/stream/access-revocation";
 import { transitionParticipant } from "@/lib/booking/participants";
 import { getAppUrl } from "@/lib/url";
-import {
-  revokeCollaboratorAccess,
-  type PlanType,
-} from "@/lib/collaborators/service";
+import type { PlanType } from "@/lib/collaborators/team";
 
 export interface RemoveMemberInput {
   orgId: string;
@@ -428,19 +425,9 @@ export async function removeMember(
   );
   if (result.removedUserId) {
     const removedUserId = result.removedUserId;
+    // Each revoke is persisted before its Stream calls, so the sweep finishes what this leaves.
     for (const c of result.revokedCollaborations) {
-      const { success } = await revokeCollaboratorAccess(
-        c.planType,
-        c.planId,
-        removedUserId,
-      );
-      if (!success) {
-        await enqueueCollaboratorRevocationRetry(
-          c.planType,
-          c.planId,
-          removedUserId,
-        );
-      }
+      await revokeCollaboratorAccess(c, removedUserId);
     }
     await revokeRemovedMemberStream(input.orgId, removedUserId);
   }

@@ -38,8 +38,8 @@ jest.mock("../../lib/prisma", () => ({
     return mockLogDb;
   },
 }));
-jest.mock("../../lib/collaborators/service", () => ({
-  revokeCollaboratorAccess: jest.fn(async () => ({ success: true })),
+jest.mock("../../lib/stream/collaborator-access", () => ({
+  driveCollaboratorRevocation: jest.fn(async () => null),
 }));
 jest.mock("../../lib/stream-client", () => ({
   isStreamConfigured: jest.fn(() => true),
@@ -50,7 +50,7 @@ jest.mock("../../lib/stream-client", () => ({
   })),
 }));
 
-import { revokeCollaboratorAccess } from "@/lib/collaborators/service";
+import { driveCollaboratorRevocation } from "@/lib/stream/collaborator-access";
 import { scrubUser } from "@/lib/compliance/erasure/scrub-user";
 import { supportScrubModels } from "../fixtures/support-erasure-models";
 
@@ -115,10 +115,10 @@ describe("DPDP erasure flips collaborator rows", () => {
         data: { status: "REMOVED", respondedAt: expect.any(Date) },
       }),
     );
-    expect(revokeCollaboratorAccess).toHaveBeenCalledWith(
-      "webinar",
-      "wp-1",
+    expect(driveCollaboratorRevocation).toHaveBeenCalledWith(
+      { planType: "webinar", planId: "wp-1" },
       "u1",
+      Number.POSITIVE_INFINITY,
     );
   });
 
@@ -186,9 +186,9 @@ describe("DPDP erasure flips collaborator rows", () => {
   it("writes the outbox row inside the transaction and settles it after the attempt (#1593)", async () => {
     // The revocation fails this time: the row was already durable before the
     // attempt, and is left FAILED with its first retry slot for the sweep.
-    (revokeCollaboratorAccess as jest.Mock).mockResolvedValueOnce({
-      success: false,
-    });
+    (driveCollaboratorRevocation as jest.Mock).mockResolvedValueOnce(
+      "1 of 2 event channels not left",
+    );
 
     await scrubUser(db as never, "u1");
 

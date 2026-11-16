@@ -31,7 +31,6 @@ import {
 } from "@/lib/collaborators/standing";
 import { apiError } from "@/lib/errors";
 import { oneOnOnePlanDiscoverableWhere } from "@/lib/api/plans/visibility";
-import * as Sentry from "@sentry/nextjs";
 import { dateToMinuteUtc } from "@/utils/scheduling-engine/slotTimeUtils";
 import {
   AVAILABILITY_REFUSAL_STATUS,
@@ -722,35 +721,16 @@ export async function PATCH(
   }
 }
 
-// Best-effort after commit, as erasure and the moderation ban do: the rows are
-// REMOVED either way and a Stream miss is reported.
+// After commit: the rows are REMOVED either way. Each revoke is persisted
+// before its Stream calls, so the sweep finishes whatever this leaves.
 async function revokeRemovedCollaborations(
   removed: CollaborationRef[],
   userId: string,
 ): Promise<void> {
   if (removed.length === 0) return;
   const { revokeCollaboratorAccess } =
-    await import("@/lib/collaborators/service");
-  for (const { planType, planId } of removed) {
-    try {
-      const { success } = await revokeCollaboratorAccess(
-        planType,
-        planId,
-        userId,
-      );
-      if (!success) {
-        Sentry.captureMessage(
-          "Collaborator Stream access not fully revoked on consultant delete",
-          { level: "warning", extra: { planType, planId } },
-        );
-      }
-    } catch (error) {
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "collaborators" }, extra: { planType, planId } },
-      );
-    }
-  }
+    await import("@/lib/stream/access-revocation");
+  for (const ref of removed) await revokeCollaboratorAccess(ref, userId);
 }
 
 export async function DELETE(

@@ -66,12 +66,12 @@ jest.mock("../../lib/moderation/cancel-user-engagements", () => ({
     remaining: [],
   })),
 }));
-jest.mock("../../lib/collaborators/service", () => ({
-  revokeCollaboratorAccess: jest.fn(async () => ({ success: true })),
+jest.mock("../../lib/stream/collaborator-access", () => ({
+  driveCollaboratorRevocation: jest.fn(async () => null),
 }));
 
 import prisma from "@/lib/prisma";
-import { revokeCollaboratorAccess } from "@/lib/collaborators/service";
+import { driveCollaboratorRevocation } from "@/lib/stream/collaborator-access";
 import {
   applyBestEffortEffects,
   applyTransactionalEffects,
@@ -130,16 +130,16 @@ describe("a ban revokes collaborator standing", () => {
 
     const summary = await applyBestEffortEffects(input, transactional);
 
-    expect(revokeCollaboratorAccess).toHaveBeenCalledTimes(2);
-    expect(revokeCollaboratorAccess).toHaveBeenCalledWith(
-      "webinar",
-      "wp-1",
+    expect(driveCollaboratorRevocation).toHaveBeenCalledTimes(2);
+    expect(driveCollaboratorRevocation).toHaveBeenCalledWith(
+      { planType: "webinar", planId: "wp-1" },
       "u1",
+      Number.POSITIVE_INFINITY,
     );
-    expect(revokeCollaboratorAccess).toHaveBeenCalledWith(
-      "class",
-      "cp-9",
+    expect(driveCollaboratorRevocation).toHaveBeenCalledWith(
+      { planType: "class", planId: "cp-9" },
       "u1",
+      Number.POSITIVE_INFINITY,
     );
     expect(summary.collaboratorRevocation).toBe("ok");
     expect(summary.errors).toBeUndefined();
@@ -159,9 +159,9 @@ describe("a ban revokes collaborator standing", () => {
   });
 
   it("records a failed revocation per plan without blocking the other steps", async () => {
-    (revokeCollaboratorAccess as jest.Mock).mockResolvedValueOnce({
-      success: false,
-    });
+    (driveCollaboratorRevocation as jest.Mock).mockResolvedValueOnce(
+      "1 of 2 event channels not left",
+    );
     const summary = await applyBestEffortEffects(input, {
       collaborationsRemoved: [
         { planType: "webinar", planId: "wp-1" },

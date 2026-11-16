@@ -6,6 +6,7 @@ import { NextRequest } from "next/server";
 const mockCreateCollaboratorChannel = jest.fn();
 const mockAddMembers = jest.fn(async () => ({}));
 const mockWebinarPlanFindUnique = jest.fn();
+const mockFence = jest.fn();
 
 jest.mock("../../lib/auth-helpers", () => ({
   requireApiAuth: async () => ({
@@ -29,6 +30,9 @@ jest.mock("../../actions/stream/chat/channel.action", () => ({
   createCollaboratorChannel: (...args: unknown[]) =>
     mockCreateCollaboratorChannel(...args),
   createDirectMessageChannel: jest.fn(),
+}));
+jest.mock("../../lib/stream/access-revocation", () => ({
+  fenceCollaboratorGrant: (...args: unknown[]) => mockFence(...args),
 }));
 jest.mock("../../actions/stream/chat/user.action", () => ({
   upsertUsersToStream: jest.fn(async () => ({})),
@@ -89,5 +93,38 @@ describe("collaborator channel open", () => {
     expect(res.status).toBe(423);
     await expect(res.json()).resolves.toMatchObject({ code: "CHANNEL_FROZEN" });
     expect(mockAddMembers).not.toHaveBeenCalled();
+  });
+
+  const openChannel = { channelId: "collab-webinar-plan-1", frozen: false };
+
+  it("re-checks a collaborator after the add: an ended one is refused, an unread one is not vouched for", async () => {
+    mockWebinarPlanFindUnique.mockResolvedValue({
+      ...plan("ACTIVE"),
+      consultantProfile: { userId: "owner-user" },
+      collaborators: [{ consultantProfile: { userId: "host-user" } }],
+    });
+    mockCreateCollaboratorChannel.mockResolvedValue(openChannel);
+    mockFence.mockResolvedValueOnce({ verified: true, lost: true });
+    mockFence.mockResolvedValueOnce({ verified: false });
+
+    const ended = await openCollab();
+    const unread = await openCollab();
+
+    expect(mockFence).toHaveBeenCalledWith(
+      { planType: "webinar", planId: "plan-1" },
+      "host-user",
+    );
+    expect(ended.status).toBe(403);
+    expect(unread.status).toBe(503);
+  });
+
+  it("never re-checks a collaboration for the plan owner", async () => {
+    mockWebinarPlanFindUnique.mockResolvedValue(plan("ACTIVE"));
+    mockCreateCollaboratorChannel.mockResolvedValue(openChannel);
+
+    const res = await openCollab();
+
+    expect(res.status).toBe(200);
+    expect(mockFence).not.toHaveBeenCalled();
   });
 });

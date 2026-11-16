@@ -1493,16 +1493,6 @@ describe("a writer settles only the intent generation it wrote", () => {
       }),
     ]);
   });
-
-  it("gives a queued collaborator row a fresh generation the sweep can check", async () => {
-    const { enqueueCollaboratorRevocationRetry } =
-      await import("../../lib/stream/access-revocation");
-
-    await enqueueCollaboratorRevocationRetry("webinar", "plan-1", "collab-1");
-
-    const [written] = writtenGenerations();
-    expect(written.nextRetryAt).toBeInstanceOf(Date);
-  });
 });
 
 describe("Stream keys missing or refused", () => {

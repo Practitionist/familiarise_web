@@ -60,8 +60,8 @@ jest.mock("../../lib/moderation/cancel-user-engagements", () => ({
     remaining: [],
   })),
 }));
-jest.mock("../../lib/collaborators/service", () => ({
-  revokeCollaboratorAccess: jest.fn(async () => ({ success: true })),
+jest.mock("../../lib/stream/collaborator-access", () => ({
+  driveCollaboratorRevocation: jest.fn(async () => null),
 }));
 
 import { EarningStatus, EarningsHoldReason } from "@prisma/client";

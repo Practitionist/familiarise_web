@@ -27,6 +27,7 @@ jest.mock("../../lib/stream-client", () => ({
     },
   })),
   isExpectedStreamError: () => false,
+  isStreamConfigured: () => true,
 }));
 jest.mock("../../actions/stream/chat/event-channel.action", () => ({
   removeUserFromEventChannel: jest.fn(async () => ({ success: true })),
@@ -34,7 +35,7 @@ jest.mock("../../actions/stream/chat/event-channel.action", () => ({
 jest.mock("../../lib/stream/event-channel-service", () => ({
   addUserToEventChannel: jest.fn(async () => ({ success: true })),
   checkEventChannelExists: jest.fn(async () => false),
-  removeUserFromEventChannel: jest.fn(async () => ({ success: true })),
+  removeUsersFromEventChannel: jest.fn(async () => ({ failedUserIds: [] })),
 }));
 const mockStageBell = jest.fn(async (..._args: unknown[]) => null);
 const mockStageEmail = jest.fn(async (..._args: unknown[]) => []);
@@ -67,10 +68,12 @@ jest.mock("../../lib/prisma", () => {
     $transaction: jest.fn(async (run: (tx: unknown) => unknown) => run(db)),
     collaborator: {
       // Honour the ownership filter the withdraw path adds to the where.
+      // The revoke's own re-read asks for an ACCEPTED row, and finds none.
       findFirst: jest.fn(
         async ({ where }: { where: Record<string, unknown> }) =>
-          where.consultantProfileId === undefined ||
-          where.consultantProfileId === row.consultantProfileId
+          where.status !== "ACCEPTED" &&
+          (where.consultantProfileId === undefined ||
+            where.consultantProfileId === row.consultantProfileId)
             ? row
             : null,
       ),
@@ -97,6 +100,10 @@ jest.mock("../../lib/prisma", () => {
       findMany: jest.fn(async () => []),
     },
     appointmentOccurrence: { findMany: jest.fn(async () => []) },
+    streamRevocationRetry: {
+      updateMany: jest.fn(async () => ({ count: 0 })),
+      createMany: jest.fn(async () => ({ count: 1 })),
+    },
   };
   return { __esModule: true, default: db };
 });
@@ -111,7 +118,19 @@ describe("collaborator self-withdraw", () => {
     const result = await removeCollaborator("webinar", "c-1", "plan-1", {
       withdrawnByProfileId: "cp-collab",
     });
-    expect(result).toMatchObject({ status: "REMOVED", accessRevoked: true });
+    expect(result).toMatchObject({ status: "REMOVED" });
+    // The revoke is owed durably even though every Stream call succeeded.
+    expect(prisma.streamRevocationRetry.createMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: [
+          expect.objectContaining({
+            kind: "COLLAB_REVOKE",
+            userId: "u-collab",
+            planId: "plan-1",
+          }),
+        ],
+      }),
+    );
     // One WITHDRAWN notice to the host, staged in the removal's transaction.
     expect(mockStageBell).toHaveBeenCalledTimes(1);
     expect(mockStageBell).toHaveBeenCalledWith(
@@ -157,11 +176,10 @@ describe("collaborator self-withdraw", () => {
       [{ appointmentId: "appt-1" }],
     );
 
-    const result = await removeCollaborator("webinar", "c-1", "plan-1", {
+    await removeCollaborator("webinar", "c-1", "plan-1", {
       withdrawnByProfileId: "cp-collab",
     });
 
-    expect(result).toMatchObject({ accessRevoked: true });
     expect(mockUpdateCallMembers).toHaveBeenCalledWith({
       update_members: [{ user_id: "u-collab", role: "call_member" }],
     });

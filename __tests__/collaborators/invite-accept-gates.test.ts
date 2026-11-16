@@ -16,6 +16,9 @@ jest.mock("../../lib/stream-client", () => ({
 jest.mock("../../actions/stream/chat/event-channel.action", () => ({
   removeUserFromEventChannel: jest.fn(),
 }));
+jest.mock("../../lib/stream/collaborator-access", () => ({
+  grantCollaboratorAccess: jest.fn(async () => undefined),
+}));
 jest.mock("../../lib/novu/service", () => ({
   notifyCollaboratorInvited: jest.fn(async () => undefined),
   notifyCollaboratorAccepted: jest.fn(),

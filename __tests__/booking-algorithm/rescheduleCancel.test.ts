@@ -151,7 +151,6 @@ jest.mock("../../lib/stream/access-revocation", () => ({
   persistSeatRevocationInTx: jest.fn(async () => seatGeneration),
   revokeEndedSeatAccess: jest.fn().mockResolvedValue(undefined),
   fenceSeatGrants: jest.fn().mockResolvedValue({ verified: true, lost: [] }),
-  enqueueCollaboratorRevocationRetry: jest.fn().mockResolvedValue(undefined),
 }));
 
 // ─── Imports ────────────────────────────────────────────────────────────────
