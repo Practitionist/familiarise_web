@@ -162,7 +162,10 @@ async function handleCollabChannelOpen(
     const fence = await fenceCollaboratorGrant({ planType, planId }, userId);
     if (!fence.verified) {
       return NextResponse.json(
-        { error: "We could not confirm your access. Please try again." },
+        {
+          error: "We could not confirm your access. Please try again.",
+          code: "COLLABORATION_UNVERIFIED",
+        },
         { status: 503 },
       );
     }

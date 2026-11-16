@@ -1,8 +1,8 @@
 import prisma from "@/lib/prisma";
 import {
   liveParticipant,
+  NOT_COLLABORATOR_ROW,
   paidParticipant,
-  transitionParticipant,
 } from "@/lib/booking/participants";
 import {
   livePlanAppointmentsWhere,
@@ -29,35 +29,9 @@ const messageOf = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
 /**
- * The meeting gate and the event chat still read the collaborator's own
- * participant rows; this step goes when those readers filter on role.
+ * The plan's events whose chat the user must leave. Chat rule: only a paid
+ * learner seat on the event keeps its chat.
  */
-async function cancelParticipantRows(
-  ref: PlanRef,
-  userId: string,
-): Promise<boolean> {
-  try {
-    await transitionParticipant(
-      prisma,
-      {
-        userId,
-        role: "COLLABORATOR",
-        status: { not: "CANCELLED" },
-        appointment: livePlanAppointmentsWhere(ref),
-      },
-      "CANCELLED",
-    );
-    return true;
-  } catch (error) {
-    streamLogger.warn("Could not cancel collaborator participant rows", {
-      ...ref,
-      error: messageOf(error),
-    });
-    return false;
-  }
-}
-
-/** The plan's events whose chat the user has no paid learner seat in. */
 async function eventsWithoutPaidSeat(
   ref: PlanRef,
   userId: string,
@@ -143,7 +117,10 @@ async function removeFromPlanChat(
 
 type OpenRoom = { streamCallId: string; seated: boolean };
 
-/** The plan's rooms that can still be joined; `seated` marks a room the user also holds a seat in. */
+/**
+ * The plan's rooms that can still be joined. Room rule: any live row that is
+ * not the collaborator's own marks the room `seated`, and keeps them in it.
+ */
 async function openRooms(ref: PlanRef, userId: string): Promise<OpenRoom[]> {
   const occurrences = await prisma.appointmentOccurrence.findMany({
     where: {
@@ -161,7 +138,7 @@ async function openRooms(ref: PlanRef, userId: string): Promise<OpenRoom[]> {
   const seats = await prisma.appointmentParticipant.findMany({
     where: {
       ...liveParticipant(userId),
-      role: { not: "COLLABORATOR" },
+      ...NOT_COLLABORATOR_ROW,
       appointmentId: { in: occurrences.map((o) => o.appointmentId) },
     },
     select: { appointmentId: true },
@@ -183,26 +160,28 @@ type VideoCall = ReturnType<
   ReturnType<typeof getStreamVideoClient>["video"]["call"]
 >;
 
-/** A seat holder stays in the room as a plain member; anyone else is removed, muted and dropped. */
+/** A seat holder stays in the room as a plain, muted member; anyone else is removed, muted and dropped. */
 async function removeFromRoom(
   call: VideoCall,
   userId: string,
   seated: boolean,
 ): Promise<boolean> {
+  const mute = () =>
+    call.updateUserPermissions({
+      user_id: userId,
+      revoke_permissions: [...STREAM_PUBLISH_PERMISSIONS],
+    });
   const writes = seated
     ? [
         () =>
           call.updateCallMembers({
             update_members: [{ user_id: userId, role: CALL_MEMBER_ROLE }],
           }),
+        mute,
       ]
     : [
         () => call.updateCallMembers({ remove_members: [userId] }),
-        () =>
-          call.updateUserPermissions({
-            user_id: userId,
-            revoke_permissions: [...STREAM_PUBLISH_PERMISSIONS],
-          }),
+        mute,
         () => call.kickUser({ user_id: userId }),
       ];
   let done = true;
@@ -258,16 +237,12 @@ export async function driveCollaboratorRevocation(
   userId: string,
   deadlineMs: number,
 ): Promise<string | null> {
-  const owed: string[] = [];
-  if (!(await cancelParticipantRows(ref, userId))) {
-    owed.push("participant rows not cancelled");
-  }
   // Chat and video are separate services, so a stall in one never starves the other.
   const [chat, rooms] = await Promise.all([
     removeFromPlanChat(ref, userId, deadlineMs),
     removeFromOpenRooms(ref, userId, deadlineMs),
   ]);
-  owed.push(...chat, ...rooms);
+  const owed = [...chat, ...rooms];
   return owed.length === 0 ? null : owed.join("; ");
 }
 

@@ -2,7 +2,10 @@
 
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
-import { liveParticipant } from "@/lib/booking/participants";
+import {
+  liveParticipant,
+  NOT_COLLABORATOR_ROW,
+} from "@/lib/booking/participants";
 import {
   getStreamChatClient,
   withStreamCircuitBreaker,
@@ -1040,7 +1043,9 @@ async function getWebinarDataForUser(
     ? await prisma.webinar.findMany({
         where: {
           appointment: {
-            participants: { some: liveParticipant(userId) },
+            participants: {
+              some: { ...liveParticipant(userId), ...NOT_COLLABORATOR_ROW },
+            },
           },
         },
         select: webinarRetentionSelect,
@@ -1117,7 +1122,9 @@ async function getClassDataForUser(
     ? await prisma.class.findMany({
         where: {
           appointment: {
-            participants: { some: liveParticipant(userId) },
+            participants: {
+              some: { ...liveParticipant(userId), ...NOT_COLLABORATOR_ROW },
+            },
           },
         },
         select: classRetentionSelect,

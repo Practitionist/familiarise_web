@@ -2,7 +2,10 @@ import * as Sentry from "@sentry/nextjs";
 import type { StreamChat } from "stream-chat";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
-import { paidParticipant } from "@/lib/booking/participants";
+import {
+  NOT_COLLABORATOR_ROW,
+  paidParticipant,
+} from "@/lib/booking/participants";
 import {
   getStreamChatClient,
   isExpectedStreamError,
@@ -543,7 +546,7 @@ const groupEventPlanInclude = {
 // Chat membership follows a paid seat; an unpaid HELD one is not a member.
 const groupEventAppointmentInclude = {
   participants: {
-    where: paidParticipant(),
+    where: { ...paidParticipant(), ...NOT_COLLABORATOR_ROW },
     select: { userId: true },
   },
 };
@@ -776,7 +779,11 @@ export async function eventParticipantsAmong(
         select: { occurrences: { where: { deletedAt: null } } },
       },
       participants: {
-        where: { ...paidParticipant(), userId: { in: ids } },
+        where: {
+          ...paidParticipant(),
+          ...NOT_COLLABORATOR_ROW,
+          userId: { in: ids },
+        },
         select: { userId: true },
       },
     },

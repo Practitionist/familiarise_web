@@ -145,6 +145,14 @@ export function liveLearnerSeat(): Prisma.AppointmentParticipantWhereInput {
   return { ...liveParticipant(), role: "CONSULTEE" };
 }
 
+/**
+ * A collaborator's own participant row is history: it opens no room or chat
+ * and counts as nobody. Gates and counts spread this into their seat filter.
+ */
+export const NOT_COLLABORATOR_ROW = {
+  role: { not: "COLLABORATOR" },
+} satisfies Prisma.AppointmentParticipantWhereInput;
+
 /** Release one user's seat on the appointments `where` selects (#1554). */
 export async function releaseParticipant(
   tx: ParticipantTx,
