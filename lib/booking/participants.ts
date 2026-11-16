@@ -140,6 +140,11 @@ export function liveParticipant(
   };
 }
 
+/** A live learner seat. The host's row and a staff row are never one. */
+export function liveLearnerSeat(): Prisma.AppointmentParticipantWhereInput {
+  return { ...liveParticipant(), role: "CONSULTEE" };
+}
+
 /** Release one user's seat on the appointments `where` selects (#1554). */
 export async function releaseParticipant(
   tx: ParticipantTx,
