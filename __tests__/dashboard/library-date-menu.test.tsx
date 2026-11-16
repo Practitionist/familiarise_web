@@ -20,6 +20,7 @@ jest.mock("@/lib/navigation/history", () => ({
   replaceUrl: (url: string) => replaceUrl(url),
 }));
 
+import { formatInViewerZone } from "@/lib/time/viewer-zone";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -71,12 +72,8 @@ it("writes both days of a preset in one update", () => {
   expect(today).toBeDefined();
   act(() => today?.click());
 
-  const now = new Date();
-  const day = [
-    now.getFullYear(),
-    String(now.getMonth() + 1).padStart(2, "0"),
-    String(now.getDate()).padStart(2, "0"),
-  ].join("-");
+  // "Today" is the viewer zone's calendar day, not the runner's.
+  const day = formatInViewerZone(new Date(), "Asia/Kolkata", "yyyy-MM-dd");
   expect(replaceUrl).toHaveBeenCalledTimes(1);
   const params = new URLSearchParams(
     String(replaceUrl.mock.calls[0][0]).split("?")[1],
