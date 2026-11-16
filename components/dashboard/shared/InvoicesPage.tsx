@@ -191,6 +191,58 @@ function useInvoiceFilters() {
   };
 }
 
+interface OrgInvoiceSummary {
+  totalPaidPaise: number;
+  totalIssuedPaise: number;
+  totalOverduePaise: number;
+  counts: Record<string, number>;
+}
+
+interface ConsumerInvoiceSummary {
+  totalInvoices: number;
+  issuedCount: number;
+  creditNotedCount: number;
+  totalValuePaise: number;
+  taxableValuePaise: number;
+}
+
+/** One invoice tab's filters and its page of rows for `scope`. */
+function useInvoicePage<Item, Summary>({
+  scope,
+  apiEndpoint,
+  queryKeyPrefix,
+  failure,
+}: Readonly<{
+  scope: "b2b" | "b2c";
+  apiEndpoint: string;
+  queryKeyPrefix: string;
+  failure: string;
+}>) {
+  const filters = useInvoiceFilters();
+  const { statusFilter, query, page } = filters;
+  const result = useQuery<{
+    invoices: Item[];
+    pagination: InvoicePagination;
+    summary: Summary;
+  }>({
+    queryKey: [`${queryKeyPrefix}-${scope}`, statusFilter, query, page],
+    queryFn: async () => {
+      const params = new URLSearchParams({
+        scope,
+        page: page.toString(),
+        limit: "20",
+      });
+      if (statusFilter !== "ALL") params.set("status", statusFilter);
+      if (query) params.set("q", query);
+      const res = await fetch(`${apiEndpoint}?${params}`);
+      if (!res.ok) throw new Error(failure);
+      return res.json();
+    },
+    placeholderData: keepPreviousData,
+  });
+  return { ...filters, ...result };
+}
+
 function InvoiceAmountAndPdfAction({
   totalPaise,
   taxPaise,
@@ -410,38 +462,20 @@ function OrganizationInvoicesTab({
   const {
     statusFilter,
     q,
-    query,
     page,
     setPage,
     handleSearchChange,
     handleStatusChange,
     handleClear,
-  } = useInvoiceFilters();
-
-  const { data, isLoading, isError, refetch } = useQuery<{
-    invoices: OrgInvoiceItem[];
-    pagination: InvoicePagination;
-    summary: {
-      totalPaidPaise: number;
-      totalIssuedPaise: number;
-      totalOverduePaise: number;
-      counts: Record<string, number>;
-    };
-  }>({
-    queryKey: [`${queryKeyPrefix}-b2b`, statusFilter, query, page],
-    queryFn: async () => {
-      const params = new URLSearchParams({
-        scope: "b2b",
-        page: page.toString(),
-        limit: "20",
-      });
-      if (statusFilter !== "ALL") params.set("status", statusFilter);
-      if (query) params.set("q", query);
-      const res = await fetch(`${apiEndpoint}?${params}`);
-      if (!res.ok) throw new Error("Failed to fetch organization invoices");
-      return res.json();
-    },
-    placeholderData: keepPreviousData,
+    data,
+    isLoading,
+    isError,
+    refetch,
+  } = useInvoicePage<OrgInvoiceItem, OrgInvoiceSummary>({
+    scope: "b2b",
+    apiEndpoint,
+    queryKeyPrefix,
+    failure: "Failed to fetch organization invoices",
   });
 
   const invoices = data?.invoices ?? [];
@@ -558,39 +592,20 @@ function ConsumerInvoicesTab({
   const {
     statusFilter,
     q,
-    query,
     page,
     setPage,
     handleSearchChange,
     handleStatusChange,
     handleClear,
-  } = useInvoiceFilters();
-
-  const { data, isLoading, isError, refetch } = useQuery<{
-    invoices: ConsumerInvoiceItem[];
-    pagination: InvoicePagination;
-    summary: {
-      totalInvoices: number;
-      issuedCount: number;
-      creditNotedCount: number;
-      totalValuePaise: number;
-      taxableValuePaise: number;
-    };
-  }>({
-    queryKey: [`${queryKeyPrefix}-b2c`, statusFilter, query, page],
-    queryFn: async () => {
-      const params = new URLSearchParams({
-        scope: "b2c",
-        page: page.toString(),
-        limit: "20",
-      });
-      if (statusFilter !== "ALL") params.set("status", statusFilter);
-      if (query) params.set("q", query);
-      const res = await fetch(`${apiEndpoint}?${params}`);
-      if (!res.ok) throw new Error("Failed to fetch consumer invoices");
-      return res.json();
-    },
-    placeholderData: keepPreviousData,
+    data,
+    isLoading,
+    isError,
+    refetch,
+  } = useInvoicePage<ConsumerInvoiceItem, ConsumerInvoiceSummary>({
+    scope: "b2c",
+    apiEndpoint,
+    queryKeyPrefix,
+    failure: "Failed to fetch consumer invoices",
   });
 
   const invoices = data?.invoices ?? [];

@@ -1,4 +1,9 @@
-import { pagedListFilters } from "@/components/dashboard/shared/paged-list-filters";
+import {
+  GATEWAY_FILTER_OPTIONS,
+  gatewaySelect,
+  pagedListFilters,
+  statusSelect,
+} from "@/components/dashboard/shared/paged-list-filters";
 
 function setup(search = "", status = "all") {
   const setSearch = jest.fn();
@@ -45,5 +50,58 @@ describe("pagedListFilters", () => {
     expect(setSearch).toHaveBeenCalledWith("");
     expect(setStatus).toHaveBeenCalledWith("all");
     expect(setPage).toHaveBeenCalledWith(1);
+  });
+});
+
+describe("pagedListFilters with an ALL sentinel", () => {
+  it("reads and clears back to the list's own no-filter value", () => {
+    const setReason = jest.fn();
+    const setPage = jest.fn();
+    const select = (value: string) =>
+      pagedListFilters({
+        search: {
+          label: "Search",
+          placeholder: "",
+          value: "",
+          onChange: jest.fn(),
+        },
+        selects: [
+          {
+            key: "reason",
+            label: "Reason",
+            value,
+            options: [],
+            onChange: setReason,
+          },
+        ],
+        setPage,
+        allValue: "ALL",
+      });
+    expect(select("ALL").canClear).toBe(false);
+    expect(select("all").canClear).toBe(true);
+    select("FOUNDING_EXPERT").onClear?.();
+    expect(setReason).toHaveBeenCalledWith("ALL");
+    expect(setPage).toHaveBeenCalledWith(1);
+  });
+});
+
+describe("select builders", () => {
+  it("prefix the All option and name the filter", () => {
+    const onChange = jest.fn();
+    expect(
+      statusSelect("all", onChange, [{ value: "WON", label: "Won" }]),
+    ).toEqual({
+      key: "status",
+      label: "Status",
+      value: "all",
+      onChange,
+      options: [
+        { value: "all", label: "All Status" },
+        { value: "WON", label: "Won" },
+      ],
+    });
+    expect(gatewaySelect("STRIPE", onChange).options).toEqual(
+      GATEWAY_FILTER_OPTIONS,
+    );
   });
 });

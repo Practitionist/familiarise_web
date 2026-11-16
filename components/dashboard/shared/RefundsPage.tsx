@@ -14,8 +14,11 @@ import { formatCurrencyAmount } from "@/utils/formatting";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { FilterBar } from "@/components/dashboard/FilterBar";
-import { GATEWAY_FILTER_OPTIONS, pagedListFilters } from "./paged-list-filters";
+import {
+  gatewaySelect,
+  PagedListFilterCard,
+  statusSelect,
+} from "./paged-list-filters";
 import {
   ResponsiveTable,
   type ResponsiveColumn,
@@ -296,43 +299,24 @@ export function RefundsPage({
       </div>
 
       {/* Filters */}
-      <Card>
-        <CardContent className="p-4">
-          <FilterBar
-            {...pagedListFilters({
-              search: {
-                label: "Search refunds",
-                placeholder: "Search by refund ID...",
-                value: searchQuery,
-                onChange: setSearchQuery,
-              },
-              selects: [
-                {
-                  key: "status",
-                  label: "Status",
-                  value: statusFilter,
-                  options: [
-                    { value: "all", label: "All Status" },
-                    { value: "PENDING", label: "Pending" },
-                    { value: "SUCCEEDED", label: "Succeeded" },
-                    { value: "FAILED", label: "Failed" },
-                    { value: "CANCELLED", label: "Cancelled" },
-                  ],
-                  onChange: setStatusFilter,
-                },
-                {
-                  key: "gateway",
-                  label: "Gateway",
-                  value: gatewayFilter,
-                  options: GATEWAY_FILTER_OPTIONS,
-                  onChange: setGatewayFilter,
-                },
-              ],
-              setPage,
-            })}
-          />
-        </CardContent>
-      </Card>
+      <PagedListFilterCard
+        search={{
+          label: "Search refunds",
+          placeholder: "Search by refund ID...",
+          value: searchQuery,
+          onChange: setSearchQuery,
+        }}
+        selects={[
+          statusSelect(statusFilter, setStatusFilter, [
+            { value: "PENDING", label: "Pending" },
+            { value: "SUCCEEDED", label: "Succeeded" },
+            { value: "FAILED", label: "Failed" },
+            { value: "CANCELLED", label: "Cancelled" },
+          ]),
+          gatewaySelect(gatewayFilter, setGatewayFilter),
+        ]}
+        setPage={setPage}
+      />
 
       {/* Refunds Table */}
       <Card>

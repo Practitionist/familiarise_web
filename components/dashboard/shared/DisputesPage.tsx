@@ -9,8 +9,11 @@ import { useRouter } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { FilterBar } from "@/components/dashboard/FilterBar";
-import { GATEWAY_FILTER_OPTIONS, pagedListFilters } from "./paged-list-filters";
+import {
+  gatewaySelect,
+  PagedListFilterCard,
+  statusSelect,
+} from "./paged-list-filters";
 import {
   ResponsiveTable,
   type ResponsiveColumn,
@@ -381,54 +384,32 @@ export function DisputesPage({
       </div>
 
       {/* Filters */}
-      <Card>
-        <CardContent className="p-4">
-          <FilterBar
-            {...pagedListFilters({
-              search: {
-                label: "Search disputes",
-                placeholder: "Search by dispute ID...",
-                value: searchQuery,
-                onChange: setSearchQuery,
-              },
-              selects: [
-                {
-                  key: "status",
-                  label: "Status",
-                  value: statusFilter,
-                  options: [
-                    { value: "all", label: "All Status" },
-                    { value: "NEEDS_RESPONSE", label: "Needs Response" },
-                    {
-                      value: "WARNING_NEEDS_RESPONSE",
-                      label: "Warning - Needs Response",
-                    },
-                    { value: "UNDER_REVIEW", label: "Under Review" },
-                    {
-                      value: "WARNING_UNDER_REVIEW",
-                      label: "Warning - Under Review",
-                    },
-                    { value: "CHARGE_REFUNDED", label: "Charge Refunded" },
-                    { value: "WON", label: "Won" },
-                    { value: "LOST", label: "Lost" },
-                    { value: "CLOSED", label: "Closed" },
-                    { value: "WARNING_CLOSED", label: "Warning - Closed" },
-                  ],
-                  onChange: setStatusFilter,
-                },
-                {
-                  key: "gateway",
-                  label: "Gateway",
-                  value: gatewayFilter,
-                  options: GATEWAY_FILTER_OPTIONS,
-                  onChange: setGatewayFilter,
-                },
-              ],
-              setPage,
-            })}
-          />
-        </CardContent>
-      </Card>
+      <PagedListFilterCard
+        search={{
+          label: "Search disputes",
+          placeholder: "Search by dispute ID...",
+          value: searchQuery,
+          onChange: setSearchQuery,
+        }}
+        selects={[
+          statusSelect(statusFilter, setStatusFilter, [
+            { value: "NEEDS_RESPONSE", label: "Needs Response" },
+            {
+              value: "WARNING_NEEDS_RESPONSE",
+              label: "Warning - Needs Response",
+            },
+            { value: "UNDER_REVIEW", label: "Under Review" },
+            { value: "WARNING_UNDER_REVIEW", label: "Warning - Under Review" },
+            { value: "CHARGE_REFUNDED", label: "Charge Refunded" },
+            { value: "WON", label: "Won" },
+            { value: "LOST", label: "Lost" },
+            { value: "CLOSED", label: "Closed" },
+            { value: "WARNING_CLOSED", label: "Warning - Closed" },
+          ]),
+          gatewaySelect(gatewayFilter, setGatewayFilter),
+        ]}
+        setPage={setPage}
+      />
 
       {/* Disputes Table */}
       <Card>

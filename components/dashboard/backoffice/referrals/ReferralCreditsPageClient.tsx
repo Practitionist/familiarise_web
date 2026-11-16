@@ -24,6 +24,7 @@ import {
   type FilterBarProps,
 } from "@/components/dashboard/FilterBar";
 import { UrlTabs } from "@/components/dashboard/UrlTabs";
+import { pagedListFilters } from "@/components/dashboard/shared/paged-list-filters";
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { Badge } from "@/components/ui/badge";
@@ -1444,25 +1445,19 @@ function CreditsTabPanel({
       <ReferralsListCard<ReferralCreditItem>
         title={creditCountLabel}
         description="Inspect referral credit states (PENDING, VESTED, EXPIRED, VOID), balances, and payment redemptions."
-        filters={{
+        filters={pagedListFilters({
           search: {
             label: "Search by email, name, or referral code",
             placeholder: "Search by user email, name, referral code, or ID…",
             value: q,
-            onChange: (val) => {
-              setQ(val);
-              setPage(1);
-            },
+            onChange: setQ,
           },
           selects: [
             {
               key: "source",
               label: "Filter by source",
               value: sourceFilter,
-              onChange: (val) => {
-                setSourceFilter(val);
-                setPage(1);
-              },
+              onChange: setSourceFilter,
               options: [
                 { value: "ALL", label: "All sources" },
                 ...CREDIT_SOURCES.map((s) => ({
@@ -1475,10 +1470,7 @@ function CreditsTabPanel({
               key: "status",
               label: "Filter by status",
               value: statusFilter,
-              onChange: (val) => {
-                setStatusFilter(val);
-                setPage(1);
-              },
+              onChange: setStatusFilter,
               options: [
                 { value: "ALL", label: "All statuses" },
                 { value: "PENDING", label: "Pending" },
@@ -1489,15 +1481,9 @@ function CreditsTabPanel({
               ],
             },
           ],
-          onClear: () => {
-            setQ("");
-            setSourceFilter("ALL");
-            setStatusFilter("ALL");
-            setPage(1);
-          },
-          canClear:
-            Boolean(q) || sourceFilter !== "ALL" || statusFilter !== "ALL",
-        }}
+          setPage,
+          allValue: "ALL",
+        })}
         isLoading={creditsQuery.isLoading}
         loadingLabel="Loading credits…"
         emptyIcon={Gift}
@@ -1593,25 +1579,19 @@ function FeeWaiversTabPanel({
       <ReferralsListCard<FeeWaiverItem>
         title={waiverCountLabel}
         description="0% platform-fee session waivers granted to referred and referring experts."
-        filters={{
+        filters={pagedListFilters({
           search: {
             label: "Search fee waivers",
             placeholder: "Search by consultant name, email, or referral ID…",
             value: q,
-            onChange: (val) => {
-              setQ(val);
-              setPage(1);
-            },
+            onChange: setQ,
           },
           selects: [
             {
               key: "reason",
               label: "Filter by waiver reason",
               value: reasonFilter,
-              onChange: (val) => {
-                setReasonFilter(val);
-                setPage(1);
-              },
+              onChange: setReasonFilter,
               options: [
                 { value: "ALL", label: "All reasons" },
                 { value: "REFERRED_EXPERT", label: "Referred Expert" },
@@ -1623,10 +1603,7 @@ function FeeWaiversTabPanel({
               key: "status",
               label: "Filter by waiver status",
               value: statusFilter,
-              onChange: (val) => {
-                setStatusFilter(val);
-                setPage(1);
-              },
+              onChange: setStatusFilter,
               options: [
                 { value: "ALL", label: "All statuses" },
                 { value: "ACTIVE", label: "Active" },
@@ -1635,15 +1612,9 @@ function FeeWaiversTabPanel({
               ],
             },
           ],
-          onClear: () => {
-            setQ("");
-            setReasonFilter("ALL");
-            setStatusFilter("ALL");
-            setPage(1);
-          },
-          canClear:
-            Boolean(q) || reasonFilter !== "ALL" || statusFilter !== "ALL",
-        }}
+          setPage,
+          allValue: "ALL",
+        })}
         isLoading={waiversQuery.isLoading}
         loadingLabel="Loading fee waivers…"
         emptyIcon={Sparkles}

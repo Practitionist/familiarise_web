@@ -18,8 +18,7 @@ import {
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { FilterBar } from "@/components/dashboard/FilterBar";
-import { pagedListFilters } from "./paged-list-filters";
+import { PagedListFilterCard, statusSelect } from "./paged-list-filters";
 import {
   Sheet,
   SheetContent,
@@ -514,36 +513,23 @@ export function SubscriptionsPage({
         </Card>
       </div>
 
-      <Card>
-        <CardContent className="p-4">
-          <FilterBar
-            {...pagedListFilters({
-              search: {
-                label: "Search subscriptions",
-                placeholder: "Search by user name or email...",
-                value: searchQuery,
-                onChange: setSearchQuery,
-              },
-              selects: [
-                {
-                  key: "status",
-                  label: "Status",
-                  value: statusFilter,
-                  options: [
-                    { value: "all", label: "All Status" },
-                    { value: "active", label: "Active" },
-                    { value: "expiring_soon", label: "Expiring Soon" },
-                    { value: "expired", label: "Expired" },
-                    { value: "cancelled", label: "Cancelled" },
-                  ],
-                  onChange: setStatusFilter,
-                },
-              ],
-              setPage,
-            })}
-          />
-        </CardContent>
-      </Card>
+      <PagedListFilterCard
+        search={{
+          label: "Search subscriptions",
+          placeholder: "Search by user name or email...",
+          value: searchQuery,
+          onChange: setSearchQuery,
+        }}
+        selects={[
+          statusSelect(statusFilter, setStatusFilter, [
+            { value: "active", label: "Active" },
+            { value: "expiring_soon", label: "Expiring Soon" },
+            { value: "expired", label: "Expired" },
+            { value: "cancelled", label: "Cancelled" },
+          ]),
+        ]}
+        setPage={setPage}
+      />
 
       <Card>
         <CardContent className="p-0 sm:p-6">
