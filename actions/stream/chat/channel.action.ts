@@ -41,7 +41,10 @@ import {
   forEachChunk,
 } from "@/lib/stream/batch";
 import { collabChannelId } from "@/lib/stream-channel-ids";
-import { fenceSeatGrants } from "@/lib/stream/access-revocation";
+import {
+  fenceCollaboratorGrant,
+  fenceSeatGrants,
+} from "@/lib/stream/access-revocation";
 
 // Input validation schemas
 const channelTypeSchema = z.enum(["messaging", "team"]);
@@ -848,6 +851,13 @@ export async function createCollaboratorChannel(
       removed: toRemove,
     });
   }
+
+  // A collaborator removed while this roster was being written is taken back out.
+  await Promise.all(
+    collaboratorUserIds
+      .filter((id) => roster.includes(id))
+      .map((id) => fenceCollaboratorGrant({ planType, planId }, id)),
+  );
 
   streamLogger.debug("Collaborator channel reconciled", {
     channelId,

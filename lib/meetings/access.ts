@@ -5,6 +5,7 @@ import { isReleasedForReschedule } from "@/utils/scheduling-engine/types";
 import prisma from "@/lib/prisma";
 import { liveParticipant, paidParticipant } from "@/lib/booking/participants";
 import { isPresenterRole } from "@/lib/collaborators/roles";
+import { planWhere, type PlanRef } from "@/lib/collaborators/team";
 import { checkConsent } from "@/lib/compliance/dpdp";
 import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
 import {
@@ -60,6 +61,8 @@ interface MeetingResolved {
   canReopen?: boolean;
   /** An accepted presenter collaborator on a webinar or class plan, not the plan owner. */
   coPresenter?: boolean;
+  /** Set when access rests on an accepted collaboration alone: the plan it is on. */
+  collaboratorOf?: PlanRef;
   streamCallId: string;
   meetingId: string;
   appointment: MeetingAppointment;
@@ -332,6 +335,7 @@ export async function resolveMeetingAccess(
     role: Exclude<MeetingRole, null>,
     message: string,
     coPresenter = false,
+    collaboratorOf?: PlanRef,
   ): Promise<MeetingAccess> => {
     const bookingStatus =
       appointment.consultation?.status ??
@@ -414,6 +418,7 @@ export async function resolveMeetingAccess(
       message,
       reason: "granted",
       ...(coPresenter ? { coPresenter } : {}),
+      ...(collaboratorOf ? { collaboratorOf } : {}),
       streamCallId,
       meetingId,
       appointment,
@@ -433,21 +438,31 @@ export async function resolveMeetingAccess(
   if (userProfile?.consultantProfileId) {
     const webinarPlanId = appointment.webinar?.webinarPlan?.id;
     const classPlanId = appointment.class?.classPlan?.id;
+    const plan: PlanRef | null = webinarPlanId
+      ? { planType: "webinar", planId: webinarPlanId }
+      : classPlanId
+        ? { planType: "class", planId: classPlanId }
+        : null;
 
-    if (webinarPlanId || classPlanId) {
+    if (plan) {
       const collab = await prisma.collaborator.findFirst({
         where: {
           consultantProfileId: userProfile.consultantProfileId,
           status: "ACCEPTED",
           consultantProfile: { deletedAt: null },
-          ...(webinarPlanId ? { webinarPlanId } : { classPlanId }),
+          ...planWhere(plan),
         },
         select: { id: true, role: true },
       });
       if (collab) {
         return isPresenterRole(collab.role)
-          ? grant("host", "Access granted as accepted co-presenter", true)
-          : grant("participant", "Access granted as accepted collaborator");
+          ? grant("host", "Access granted as accepted co-presenter", true, plan)
+          : grant(
+              "participant",
+              "Access granted as accepted collaborator",
+              false,
+              plan,
+            );
       }
     }
   }

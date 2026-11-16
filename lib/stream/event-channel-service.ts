@@ -33,6 +33,7 @@ import {
 import { OPENABLE_EVENT_STATUSES } from "@/lib/stream/dm-eligibility-statuses";
 import { ConsentRequiredError } from "@/lib/compliance/dpdp";
 import { isUpsertRefusal } from "@/lib/stream/connect-failure";
+import type { PlanRef } from "@/lib/collaborators/team";
 
 export const STREAM_SERVER_TRUSTED = Symbol.for(
   "familiarise.stream.serverTrusted",
@@ -135,12 +136,13 @@ const MODERATOR_COLLABORATOR_ROLES = new Set([
   "MODERATOR",
 ]);
 
-async function resolveEventCollaboratorChannelRole(
+/** The user's accepted collaboration on the event's plan, with the channel role it carries. */
+async function resolveEventCollaboration(
   eventType: EventType,
   eventId: string,
   userId: string,
-): Promise<"channel_moderator" | undefined> {
-  if (eventType !== "webinar" && eventType !== "class") return undefined;
+): Promise<{ ref: PlanRef; channelRole?: "channel_moderator" } | null> {
+  if (eventType !== "webinar" && eventType !== "class") return null;
 
   const collab = await prisma.collaborator.findFirst({
     where: {
@@ -150,14 +152,17 @@ async function resolveEventCollaboratorChannelRole(
         ? { webinarPlan: { webinars: { some: { id: eventId } } } }
         : { classPlan: { classes: { some: { id: eventId } } } }),
     },
-    select: { role: true },
+    select: { role: true, webinarPlanId: true, classPlanId: true },
   });
+  const planId = collab?.webinarPlanId ?? collab?.classPlanId;
+  if (!collab || !planId) return null;
 
-  if (collab && MODERATOR_COLLABORATOR_ROLES.has(collab.role)) {
-    return "channel_moderator";
-  }
-
-  return undefined;
+  return {
+    ref: { planType: eventType, planId },
+    ...(MODERATOR_COLLABORATOR_ROLES.has(collab.role)
+      ? { channelRole: "channel_moderator" as const }
+      : {}),
+  };
 }
 
 async function tryAddToExistingChannel(
@@ -237,12 +242,52 @@ export async function addUserToEventChannel(
   }
 }
 
-/** `addUserToEventChannel` without the fence; the caller fences `granted` once after all its writes. */
+/** The collaborators one event-channel write granted, all on the event's plan. */
+interface CollaboratorGrants {
+  ref: PlanRef | null;
+  userIds: Set<string>;
+}
+
+/**
+ * `addUserToEventChannel` without the seat fence; the caller fences `granted`
+ * once after all its writes. Collaborators it granted are re-checked here.
+ */
 export async function grantEventChannelMember(
   eventType: EventType,
   eventId: string,
   userId: string,
   granted: EventChannelGrants,
+): Promise<EventChannelJoin> {
+  const collaborators: CollaboratorGrants = { ref: null, userIds: new Set() };
+  try {
+    return await writeEventChannelMember(
+      eventType,
+      eventId,
+      userId,
+      granted,
+      collaborators,
+    );
+  } finally {
+    const { ref } = collaborators;
+    if (ref && collaborators.userIds.size > 0) {
+      // Lazy: access-revocation imports this module.
+      const { fenceCollaboratorGrant } =
+        await import("@/lib/stream/access-revocation");
+      await Promise.all(
+        Array.from(collaborators.userIds, (id) =>
+          fenceCollaboratorGrant(ref, id),
+        ),
+      );
+    }
+  }
+}
+
+async function writeEventChannelMember(
+  eventType: EventType,
+  eventId: string,
+  userId: string,
+  granted: EventChannelGrants,
+  collaborators: CollaboratorGrants,
 ): Promise<EventChannelJoin> {
   eventTypeSchema.parse(eventType);
   eventIdSchema.parse(eventId);
@@ -263,11 +308,17 @@ export async function grantEventChannelMember(
     return { success: false, channelId, reason: "account_refused" };
   }
 
-  const collaboratorChannelRole = await resolveEventCollaboratorChannelRole(
+  // Read before the write, so the grant made on it can be re-checked after.
+  const collaboration = await resolveEventCollaboration(
     eventType,
     eventId,
     userId,
   );
+  const collaboratorChannelRole = collaboration?.channelRole;
+  if (collaboration) {
+    collaborators.ref = collaboration.ref;
+    collaborators.userIds.add(userId);
+  }
   const memberSpec = collaboratorChannelRole
     ? [{ user_id: userId, channel_role: collaboratorChannelRole }]
     : [userId];
@@ -320,6 +371,12 @@ export async function grantEventChannelMember(
     const droppedIds = new Set(upsertResult?.droppedIds ?? []);
     const syncedMembers = allMembers.filter((id) => !droppedIds.has(id));
     granted.userIds.push(...syncedMembers);
+    if ("collaborators" in eventData) {
+      collaborators.ref = eventData.collaborators.ref;
+      for (const id of eventData.collaborators.userIds) {
+        if (syncedMembers.includes(id)) collaborators.userIds.add(id);
+      }
+    }
 
     const eventChannelData = {
       name,
@@ -492,6 +549,7 @@ const groupEventAppointmentInclude = {
 };
 
 function buildGroupEventData(
+  ref: PlanRef,
   plan: {
     title: string;
     organizationId: string | null;
@@ -527,6 +585,10 @@ function buildGroupEventData(
     consultantId,
     members,
     moderatorIds,
+    collaborators: {
+      ref,
+      userIds: collaborators.map((c) => c.consultantProfile.userId),
+    },
     name: plan.title,
     organizationId,
   };
@@ -543,7 +605,11 @@ export async function getEventData(eventType: EventType, eventId: string) {
         },
       });
       if (!webinar) return null;
-      return buildGroupEventData(webinar.webinarPlan, webinar.appointment);
+      return buildGroupEventData(
+        { planType: "webinar", planId: webinar.webinarPlanId },
+        webinar.webinarPlan,
+        webinar.appointment,
+      );
     }
 
     case "class": {
@@ -555,7 +621,11 @@ export async function getEventData(eventType: EventType, eventId: string) {
         },
       });
       if (!classData) return null;
-      return buildGroupEventData(classData.classPlan, classData.appointment);
+      return buildGroupEventData(
+        { planType: "class", planId: classData.classPlanId },
+        classData.classPlan,
+        classData.appointment,
+      );
     }
 
     case "consultation": {
