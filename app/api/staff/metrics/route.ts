@@ -1,7 +1,7 @@
 /**
  * Back-office Metrics API: support-queue health plus the platform's people,
  * session and money totals, for ADMIN and STAFF alike (`analytics.read`).
- * Every "this month" figure counts from one IST month start.
+ * Every "today", "this week" and "this month" figure counts from an IST start.
  */
 
 import * as Sentry from "@sentry/nextjs";
@@ -10,7 +10,7 @@ import prisma from "@/lib/prisma";
 
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { getPlatformTotals } from "@/lib/backoffice/platform-totals";
-import { operatorMonthStart } from "@/lib/time/operator-zone";
+import { operatorPeriodStarts } from "@/lib/time/operator-zone";
 
 export async function GET() {
   try {
@@ -18,12 +18,11 @@ export async function GET() {
     if (auth.error) return auth.error;
 
     const requestedAt = new Date();
-    const startOfMonth = operatorMonthStart(requestedAt);
-    const now = new Date(requestedAt);
-    const startOfToday = new Date(now.setHours(0, 0, 0, 0));
-    const startOfWeek = new Date(now);
-    startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
-    startOfWeek.setHours(0, 0, 0, 0);
+    const {
+      day: startOfToday,
+      week: startOfWeek,
+      month: startOfMonth,
+    } = operatorPeriodStarts(requestedAt);
 
     // Fetch analytics data in parallel
     const [

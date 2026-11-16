@@ -92,8 +92,8 @@ const inr = (paise: number) => formatCurrencyAmount(paise, "INR");
 const count = (n: number) => n.toLocaleString("en-IN");
 
 const PERIOD_LABELS: Record<string, string> = {
-  today: "Today",
-  week: "This Week",
+  today: "Today (IST)",
+  week: "This Week (IST)",
   month: "This Month (IST)",
 };
 
@@ -163,7 +163,7 @@ export default function StaffMetricsPage() {
     rawMetrics?.platformMetrics ?? DEFAULT_METRICS.platformMetrics;
   const totals = rawMetrics?.platformTotals ?? DEFAULT_METRICS.platformTotals;
 
-  const periodLabel = PERIOD_LABELS[period] ?? "This Week";
+  const periodLabel = PERIOD_LABELS[period] ?? PERIOD_LABELS.week;
   const resolvedInPeriod = getResolvedTicketsForPeriod(supportMetrics, period);
   const openCases = slaStats.data?.openCases ?? supportMetrics.openTickets;
   const slaBreaches = slaStats.data?.slaBreaches ?? 0;
@@ -189,8 +189,8 @@ export default function StaffMetricsPage() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="today">Today</SelectItem>
-                <SelectItem value="week">This Week</SelectItem>
+                <SelectItem value="today">Today (IST)</SelectItem>
+                <SelectItem value="week">This Week (IST)</SelectItem>
                 <SelectItem value="month">This Month (IST)</SelectItem>
               </SelectContent>
             </Select>
@@ -298,7 +298,7 @@ export default function StaffMetricsPage() {
                     <Stat
                       label="Users Helped"
                       value={userMetrics.usersHelpedThisWeek}
-                      hint="Distinct users this week"
+                      hint="Distinct users this week (IST)"
                       icon={Users}
                     />
                     <Stat

@@ -49,3 +49,29 @@ export function operatorMonthStart(now: Date): Date {
   const month = formatInViewerZone(now, OPERATOR_ZONE, "yyyy-MM");
   return fromZonedTime(`${month}-01T00:00:00`, OPERATOR_ZONE);
 }
+
+export interface OperatorPeriodStarts {
+  /** 00:00 India time today. */
+  day: Date;
+  /** 00:00 India time on the Sunday that opens this calendar week. */
+  week: Date;
+  /** 00:00 India time on the first of this month. */
+  month: Date;
+}
+
+const midnightIn = (wallDate: string) =>
+  fromZonedTime(`${wallDate}T00:00:00`, OPERATOR_ZONE);
+
+/** The day, week and month starts every operator "today / this week / this month" counts from. */
+export function operatorPeriodStarts(now: Date): OperatorPeriodStarts {
+  const today = formatInViewerZone(now, OPERATOR_ZONE, "yyyy-MM-dd");
+  const [y, m, d] = today.split("-").map(Number);
+  // ISO weekday 1 (Mon) to 7 (Sun); Sunday opens the week, as getDay() did.
+  const sinceSunday = Number(formatInViewerZone(now, OPERATOR_ZONE, "i")) % 7;
+  const sunday = new Date(Date.UTC(y, m - 1, d - sinceSunday));
+  return {
+    day: midnightIn(today),
+    week: midnightIn(sunday.toISOString().slice(0, 10)),
+    month: operatorMonthStart(now),
+  };
+}

@@ -14,6 +14,7 @@ import {
   formatOperatorInstant,
   formatUtcInstant,
   operatorMonthStart,
+  operatorPeriodStarts,
 } from "../../lib/time/operator-zone";
 
 // 00:00 IST on 1 Apr 2026 is 18:30 UTC the day before.
@@ -60,6 +61,35 @@ describe("operator time", () => {
     expect(
       operatorMonthStart(new Date(BEFORE_UTC_MIDNIGHT)).toISOString(),
     ).toBe(IST_MIDNIGHT);
+  });
+
+  it("starts the day at 00:00 IST and the week on the IST Sunday", () => {
+    const iso = (now: string) => {
+      const p = operatorPeriodStarts(new Date(now));
+      return {
+        day: p.day.toISOString(),
+        week: p.week.toISOString(),
+        month: p.month.toISOString(),
+      };
+    };
+    // Sun 12 Apr 2026, 00:00 IST: the week opens today.
+    expect(iso("2026-04-11T18:30:00.000Z")).toEqual({
+      day: "2026-04-11T18:30:00.000Z",
+      week: "2026-04-11T18:30:00.000Z",
+      month: "2026-03-31T18:30:00.000Z",
+    });
+    // Sat 11 Apr 2026, 23:59 IST: still the week that opened Sun 5 Apr.
+    expect(iso("2026-04-11T18:29:00.000Z")).toEqual({
+      day: "2026-04-10T18:30:00.000Z",
+      week: "2026-04-04T18:30:00.000Z",
+      month: "2026-03-31T18:30:00.000Z",
+    });
+    // Thu 2 Apr 2026, 05:30 IST (UTC midnight): the week crosses the month.
+    expect(iso("2026-04-02T00:00:00.000Z")).toEqual({
+      day: "2026-04-01T18:30:00.000Z",
+      week: "2026-03-28T18:30:00.000Z",
+      month: "2026-03-31T18:30:00.000Z",
+    });
   });
 
   it("renders a <time> with the instant and its UTC reading", () => {
