@@ -34,6 +34,8 @@ export type EndCollaborationArgs = {
   where?: Prisma.CollaboratorWhereInput;
   /** The notice to stage instead of the one named after `to`; `anonymous` withholds the collaborator's name. */
   notice?: { event?: CollaborationLifecycleEvent; anonymous?: boolean };
+  /** True when the caller records the access to take back in a queue of its own that never gives up. */
+  ownRevocationQueue?: boolean;
 };
 
 /** What the caller hands to `afterCollaborationEnded` once its transaction commits. */
@@ -82,9 +84,10 @@ export async function endCollaboration(
   if (!ref || !profile) return null;
 
   const wasOnTeam = collaborator.acceptedAt !== null;
-  const revocationGeneration = wasOnTeam
-    ? await persistCollaboratorRevocationInTx(tx, ref, profile.userId)
-    : null;
+  const revocationGeneration =
+    wasOnTeam && !args.ownRevocationQueue
+      ? await persistCollaboratorRevocationInTx(tx, ref, profile.userId)
+      : null;
   const notices = await stageCollaboratorNotifications(
     tx,
     args.notice?.event ?? args.to,
@@ -109,7 +112,7 @@ export async function endCollaboration(
 export async function endCollaborationsForUser(
   tx: Tx,
   userId: string,
-  opts: { endedByUserId: string | null },
+  opts: { endedByUserId: string | null; ownRevocationQueue?: boolean },
 ): Promise<EndedCollaboration[]> {
   const rows = await tx.collaborator.findMany({
     where: {
@@ -126,6 +129,7 @@ export async function endCollaborationsForUser(
       to: "REMOVED",
       endedByUserId: opts.endedByUserId,
       notice: { event: "WITHDRAWN", anonymous: true },
+      ownRevocationQueue: opts.ownRevocationQueue,
     });
     if (one) ended.push(one);
   }

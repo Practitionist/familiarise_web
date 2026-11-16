@@ -33,19 +33,13 @@ import {
   type StagedOnboardingEmail,
 } from "@/lib/email";
 import { scheduleAfter } from "@/lib/api/after-safe";
-import { stageCollaboratorNotifications } from "@/lib/collaborators/notifications";
 import {
-  flushNotificationsAfter,
-  type StagedNotificationBundle,
-} from "@/lib/novu/stage-then-attempt";
-
-import {
-  enqueueOrgMemberRevocationRetry,
-  revokeCollaboratorAccess,
-} from "@/lib/stream/access-revocation";
-import { transitionParticipant } from "@/lib/booking/participants";
+  afterCollaborationEnded,
+  endCollaboration,
+  type EndedCollaboration,
+} from "@/lib/collaborators/ending";
+import { enqueueOrgMemberRevocationRetry } from "@/lib/stream/access-revocation";
 import { getAppUrl } from "@/lib/url";
-import type { PlanType } from "@/lib/collaborators/team";
 
 export interface RemoveMemberInput {
   orgId: string;
@@ -60,19 +54,13 @@ export interface RemoveMemberInput {
 
 export type RemoveMemberResult = { removed: boolean };
 
-interface RevokedOrgCollaboration {
-  planType: PlanType;
-  planId: string;
-}
-
 interface PostCommit {
   removedUserId: string | null;
   expertNotice: { userId: string; payload: OrgExpertRemovedPayload } | null;
   memberBells: StagedTrigger[];
   email: StagedOnboardingEmail | null;
-  revokedCollaborations: RevokedOrgCollaboration[];
-  /** One WITHDRAWN notice per plan host, staged with the removal. */
-  collaborationNotices: StagedNotificationBundle[];
+  /** The member's collaborations on this organisation's plans, ended with the removal. */
+  endedCollaborations: EndedCollaboration[];
   endedSessions: EndedSessions[];
 }
 
@@ -109,16 +97,14 @@ async function validateSelfLeaveObligations(
   return obligations;
 }
 
-async function collectAndCancelOrgCollaborations(
+/** Ends the member's invitations and team places on this organisation's plans. */
+async function endOrgCollaborations(
   tx: Tx,
   orgId: string,
   userId: string,
-  now: Date,
-): Promise<{
-  revoked: RevokedOrgCollaboration[];
-  notices: StagedNotificationBundle[];
-}> {
-  const rows = await tx.collaborator.updateManyAndReturn({
+  endedByUserId: string,
+): Promise<EndedCollaboration[]> {
+  const rows = await tx.collaborator.findMany({
     where: {
       status: { in: ["PENDING", "ACCEPTED"] },
       consultantProfile: { userId },
@@ -127,41 +113,21 @@ async function collectAndCancelOrgCollaborations(
         { classPlan: { organizationId: orgId } },
       ],
     },
-    data: { status: "REMOVED" },
+    select: { id: true },
+    orderBy: { id: "asc" },
   });
-  if (rows.length === 0) return { revoked: [], notices: [] };
-  // Through the participant map, so a REFUNDED seat stays terminal.
-  await transitionParticipant(
-    tx,
-    {
-      userId,
-      role: "COLLABORATOR",
-      appointment: {
-        deletedAt: null,
-        occurrences: {
-          some: { startsAt: { gt: now }, deletedAt: null },
-        },
-        OR: [
-          { webinar: { webinarPlan: { organizationId: orgId } } },
-          { class: { classPlan: { organizationId: orgId } } },
-        ],
-      },
-    },
-    "CANCELLED",
-  );
-
-  const revoked: RevokedOrgCollaboration[] = [];
-  const notices: StagedNotificationBundle[] = [];
-  for (const row of rows) {
+  const ended: EndedCollaboration[] = [];
+  for (const { id } of rows) {
     // The member hears of the removal itself; only the host hears of each plan.
-    notices.push(await stageCollaboratorNotifications(tx, "WITHDRAWN", row));
-    if (row.webinarPlanId) {
-      revoked.push({ planType: "webinar", planId: row.webinarPlanId });
-    } else if (row.classPlanId) {
-      revoked.push({ planType: "class", planId: row.classPlanId });
-    }
+    const one = await endCollaboration(tx, {
+      collaboratorId: id,
+      to: "REMOVED",
+      endedByUserId,
+      notice: { event: "WITHDRAWN" },
+    });
+    if (one) ended.push(one);
   }
-  return { revoked, notices };
+  return ended;
 }
 
 async function removeInTx(
@@ -182,8 +148,7 @@ async function removeInTx(
       expertNotice: null,
       memberBells: [],
       email: null,
-      revokedCollaborations: [],
-      collaborationNotices: [],
+      endedCollaborations: [],
       endedSessions: [],
     };
   }
@@ -221,8 +186,12 @@ async function removeInTx(
     await recomputeConsultantIsIndependent(tx, current.consultantProfileId);
   }
 
-  const { revoked: revokedCollaborations, notices: collaborationNotices } =
-    await collectAndCancelOrgCollaborations(tx, orgId, current.userId, now);
+  const endedCollaborations = await endOrgCollaborations(
+    tx,
+    orgId,
+    current.userId,
+    actorUserId,
+  );
 
   const terminated = await tx.programAssignment.updateMany({
     where: {
@@ -281,8 +250,7 @@ async function removeInTx(
       expertNotice: null,
       memberBells: [],
       email: null,
-      revokedCollaborations,
-      collaborationNotices,
+      endedCollaborations,
       endedSessions,
     };
   }
@@ -310,8 +278,7 @@ async function removeInTx(
       removedUserId: current.userId,
       email,
       memberBells: [],
-      revokedCollaborations,
-      collaborationNotices,
+      endedCollaborations,
       endedSessions,
       expertNotice: {
         userId: current.userId,
@@ -343,8 +310,7 @@ async function removeInTx(
     expertNotice: null,
     memberBells,
     email,
-    revokedCollaborations,
-    collaborationNotices,
+    endedCollaborations,
     endedSessions,
   };
 }
@@ -416,20 +382,12 @@ export async function removeMember(
       if (staged) await attemptOnboardingEmail(staged);
     }, "org.member-removal.onboarding-email");
   }
-  await flushNotificationsAfter(
-    {
-      bells: result.collaborationNotices.flatMap((n) => n.bells ?? []),
-      emails: result.collaborationNotices.flatMap((n) => n.emails ?? []),
-    },
+  await afterCollaborationEnded(
+    result.endedCollaborations,
     "org.member-removal.collaborator-withdrawn",
   );
   if (result.removedUserId) {
-    const removedUserId = result.removedUserId;
-    // Each revoke is persisted before its Stream calls, so the sweep finishes what this leaves.
-    for (const c of result.revokedCollaborations) {
-      await revokeCollaboratorAccess(c, removedUserId);
-    }
-    await revokeRemovedMemberStream(input.orgId, removedUserId);
+    await revokeRemovedMemberStream(input.orgId, result.removedUserId);
   }
   return { removed: result.removed };
 }

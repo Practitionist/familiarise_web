@@ -45,25 +45,44 @@ export const planParamsSchema = z.object({ planId: idSchema });
 export const memberParamsSchema = z.object({ planId: idSchema, id: idSchema });
 export const collaborationParamsSchema = z.object({ id: idSchema });
 
+type PlanKind = "webinar" | "class";
+
+export type InviteCollaboratorBody = {
+  consultantProfileId: string;
+  role: CollaboratorRole;
+  sharePercent: number;
+};
+
+export type UpdatePendingTermsBody = {
+  role?: CollaboratorRole;
+  sharePercent?: number;
+};
+
 const inviteBody = {
   consultantProfileId: idSchema,
   sharePercent: sharePercentSchema,
 };
 
-export const inviteCollaboratorSchemas = {
+export const inviteCollaboratorSchemas: Record<
+  PlanKind,
+  z.ZodType<InviteCollaboratorBody, z.ZodTypeDef, unknown>
+> = {
   webinar: z
     .object({ ...inviteBody, role: z.enum(WEBINAR_COLLABORATOR_ROLES) })
     .strict(),
   class: z
     .object({ ...inviteBody, role: z.enum(CLASS_COLLABORATOR_ROLES) })
     .strict(),
-} as const;
+};
 
-const atLeastOneTerm = (body: { role?: unknown; sharePercent?: unknown }) =>
+const atLeastOneTerm = (body: UpdatePendingTermsBody) =>
   body.role !== undefined || body.sharePercent !== undefined;
 
 /** A pending invitation's terms: the role, the share, or both. */
-export const updatePendingTermsSchemas = {
+export const updatePendingTermsSchemas: Record<
+  PlanKind,
+  z.ZodType<UpdatePendingTermsBody, z.ZodTypeDef, unknown>
+> = {
   webinar: z
     .object({
       role: z.enum(WEBINAR_COLLABORATOR_ROLES).optional(),
@@ -78,7 +97,7 @@ export const updatePendingTermsSchemas = {
     })
     .strict()
     .refine(atLeastOneTerm, "Change the role, the share, or both"),
-} as const;
+};
 
 /** The terms the invitee was looking at when they pressed Accept. */
 export const seenTermsSchema = z
