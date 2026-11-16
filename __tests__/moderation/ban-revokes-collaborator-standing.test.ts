@@ -3,13 +3,10 @@
  */
 
 /**
- * #1580 C-P0-4 — a banned collaborator used to stay ACCEPTED: still in every
- * future split, on rosters and recordings, and on the public co-host list.
- * Phase 1 now moves their PENDING/ACCEPTED rows to REMOVED and hands the
- * affected plans to phase 2, which runs the same Stream revocation
- * `removeCollaborator` runs. Reinstatement does not restore the rows.
+ * A ban ends the user's collaborations in the action's transaction and hands
+ * the teams they were on to phase 2, which revokes their Stream access. A
+ * pending invitation held no access, so it is ended but not revoked.
  */
-
 jest.mock("@/lib/collaborators/notifications", () => ({
   stageCollaboratorNotifications: jest.fn(async () => ({})),
 }));
@@ -66,12 +63,23 @@ jest.mock("../../lib/moderation/cancel-user-engagements", () => ({
     remaining: [],
   })),
 }));
-jest.mock("../../lib/stream/collaborator-access", () => ({
-  driveCollaboratorRevocation: jest.fn(async () => null),
+const mockRevoke = jest.fn(async (..._args: unknown[]) => undefined);
+jest.mock("../../lib/stream/access-revocation", () => ({
+  revokeCollaboratorAccess: (...args: unknown[]) => mockRevoke(...args),
+}));
+const webinarTeam = { planType: "webinar", planId: "wp-1" };
+const classTeam = { planType: "class", planId: "cp-9" };
+const mockEndCollaborations = jest.fn(async (..._args: unknown[]) => [
+  { ref: webinarTeam, wasOnTeam: true },
+  { ref: classTeam, wasOnTeam: true },
+  { ref: { planType: "class", planId: "cp-invited" }, wasOnTeam: false },
+]);
+jest.mock("../../lib/collaborators/ending", () => ({
+  endCollaborationsForUser: (...args: unknown[]) =>
+    mockEndCollaborations(...args),
 }));
 
 import prisma from "@/lib/prisma";
-import { driveCollaboratorRevocation } from "@/lib/stream/collaborator-access";
 import {
   applyBestEffortEffects,
   applyTransactionalEffects,
@@ -91,14 +99,6 @@ const tx = {
     findMany: jest.fn(async () => []),
     updateMany: jest.fn(async () => ({ count: 0 })),
   },
-  collaborator: {
-    // One statement flips and returns the rows, so the revocation list is
-    // exactly what was flipped.
-    updateManyAndReturn: jest.fn(async () => [
-      { collaboratorType: "WEBINAR", webinarPlanId: "wp-1", classPlanId: null },
-      { collaboratorType: "CLASS", webinarPlanId: null, classPlanId: "cp-9" },
-    ]),
-  },
 };
 
 const input = {
@@ -113,34 +113,23 @@ const input = {
 };
 
 describe("a ban revokes collaborator standing", () => {
-  it("flips both rows to REMOVED in phase 1 and revokes both plans in phase 2", async () => {
+  it("ends the collaborations in phase 1 and revokes each team in phase 2", async () => {
     const transactional = await applyTransactionalEffects(tx as never, input);
 
-    expect(tx.collaborator.updateManyAndReturn).toHaveBeenCalledWith({
-      where: {
-        consultantProfileId: "cp-1",
-        status: { in: ["PENDING", "ACCEPTED"] },
-      },
-      data: { status: "REMOVED", respondedAt: expect.any(Date) },
+    expect(mockEndCollaborations).toHaveBeenCalledWith(tx, "u1", {
+      endedByUserId: "admin-1",
     });
     expect(transactional.collaborationsRemoved).toEqual([
-      { planType: "webinar", planId: "wp-1" },
-      { planType: "class", planId: "cp-9" },
+      webinarTeam,
+      classTeam,
     ]);
 
     const summary = await applyBestEffortEffects(input, transactional);
 
-    expect(driveCollaboratorRevocation).toHaveBeenCalledTimes(2);
-    expect(driveCollaboratorRevocation).toHaveBeenCalledWith(
-      { planType: "webinar", planId: "wp-1" },
-      "u1",
-      Number.POSITIVE_INFINITY,
-    );
-    expect(driveCollaboratorRevocation).toHaveBeenCalledWith(
-      { planType: "class", planId: "cp-9" },
-      "u1",
-      Number.POSITIVE_INFINITY,
-    );
+    expect(mockRevoke.mock.calls).toEqual([
+      [webinarTeam, "u1"],
+      [classTeam, "u1"],
+    ]);
     expect(summary.collaboratorRevocation).toBe("ok");
     expect(summary.errors).toBeUndefined();
   });
@@ -156,20 +145,5 @@ describe("a ban revokes collaborator standing", () => {
     const summary = await applyBestEffortEffects(input, transactional);
     expect(summary).not.toHaveProperty("stagedSessionEnds");
     expect(prisma.$executeRaw).not.toHaveBeenCalled();
-  });
-
-  it("records a failed revocation per plan without blocking the other steps", async () => {
-    (driveCollaboratorRevocation as jest.Mock).mockResolvedValueOnce(
-      "1 of 2 event channels not left",
-    );
-    const summary = await applyBestEffortEffects(input, {
-      collaborationsRemoved: [
-        { planType: "webinar", planId: "wp-1" },
-        { planType: "class", planId: "cp-9" },
-      ],
-    });
-    expect(summary.collaboratorRevocation).toBe("failed");
-    expect(summary.errors).toEqual(["collaborator-revoke: webinar:wp-1"]);
-    expect(summary.stream).toBe("ok");
   });
 });

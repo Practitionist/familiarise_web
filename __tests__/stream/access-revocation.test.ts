@@ -1264,6 +1264,7 @@ describe("event access predicate", () => {
     const query = mockRevocationPrisma.webinar.findFirst.mock.calls[0][0];
     expect(query.select.appointment.select.participants.where).toEqual({
       ...paidParticipant(),
+      role: { not: "COLLABORATOR" },
       userId: { in: ["attendee-keep"] },
     });
   });

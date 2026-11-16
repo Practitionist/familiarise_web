@@ -116,6 +116,9 @@ describe("collaborator channel open", () => {
     );
     expect(ended.status).toBe(403);
     expect(unread.status).toBe(503);
+    await expect(unread.json()).resolves.toMatchObject({
+      code: "COLLABORATION_UNVERIFIED",
+    });
   });
 
   it("never re-checks a collaboration for the plan owner", async () => {

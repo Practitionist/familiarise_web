@@ -5,6 +5,7 @@
 const mockChatRemove = jest.fn();
 const mockEventRemove = jest.fn();
 const mockCallUpdate = jest.fn();
+const mockCallMute = jest.fn();
 const mockReport = jest.fn();
 
 type Intent = { nextRetryAt: Date; status: string };
@@ -51,7 +52,7 @@ jest.mock("../../lib/stream-client", () => ({
     video: {
       call: (_type: string, id: string) => ({
         updateCallMembers: (payload: unknown) => mockCallUpdate(id, payload),
-        updateUserPermissions: jest.fn(async () => ({})),
+        updateUserPermissions: (payload: unknown) => mockCallMute(id, payload),
         kickUser: jest.fn(async () => ({})),
       }),
     },
@@ -192,7 +193,7 @@ describe("a collaboration accepted again", () => {
 });
 
 describe("the drive", () => {
-  it("keeps a paid learner seat in that event's chat and its room, and removes the rest", async () => {
+  it("keeps a paid learner seat in that event's chat and its room without publish, removes the rest, and writes no participant row", async () => {
     mockDb.appointmentOccurrence.findMany.mockResolvedValue([
       { appointmentId: "a-1", meeting: { streamCallId: "occurrence-1" } },
       { appointmentId: "a-2", meeting: { streamCallId: "occurrence-2" } },
@@ -223,6 +224,15 @@ describe("the drive", () => {
         { update_members: [{ user_id: "u-1", role: "call_member" }] },
       ],
     ]);
+    const mute = {
+      user_id: "u-1",
+      revoke_permissions: ["send-audio", "send-video", "screenshare"],
+    };
+    expect(mockCallMute.mock.calls).toEqual([
+      ["occurrence-1", mute],
+      ["occurrence-2", mute],
+    ]);
+    expect(mockDb.appointmentParticipant.updateMany).not.toHaveBeenCalled();
   });
 });
 
