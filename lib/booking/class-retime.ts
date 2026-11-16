@@ -8,7 +8,8 @@
  * a full refund until `retimeBy`. A move is not a cancel, so it is never a
  * host miss and never counts toward a learner's exit right.
  *
- * Lock order: event checkout → appointment → host + co-host slot batch.
+ * Lock order: event checkout → appointment → host + co-host slot batch, then
+ * the plan row as the transaction's first row lock.
  */
 import { followClassSessions } from "@/lib/booking/allocation/event-data";
 import type { Prisma } from "@prisma/client";
@@ -35,9 +36,11 @@ import { isDeadOccurrence } from "@/lib/appointments/occurrences";
 import { BookingRuleError } from "./booking-rule-error";
 import { eventTimeRefusal } from "./event-time-rules";
 import { RESCHEDULE_LEAD_TIME_MS } from "./lead-time";
+import { collaboratorUserIds } from "@/lib/collaborators/recipients";
 import {
   acceptedCohostProfileIds,
   hostBatchEntries,
+  lockPlanForMove,
   withHostSlotBatch,
 } from "./host-slot-batch";
 import {
@@ -300,6 +303,7 @@ export async function retimeClassSeries(args: {
           ),
           () =>
             prisma.$transaction(async (tx) => {
+              await lockPlanForMove(tx, "CLASS", plan.id, profiles);
               const { schedulingTimezone } = await assertSnapshotCurrent(
                 tx,
                 hosted.cls.id,
@@ -400,14 +404,10 @@ export async function retimeClassSeries(args: {
                 );
                 bells.push(...staged.map((r) => r.staged));
               }
-              // The host and accepted co-hosts hear of a move someone else made.
-              const cohosts = await tx.consultantProfile.findMany({
-                where: { id: { in: cohostProfileIds } },
-                select: { userId: true },
-              });
+              // The host and the plan's team hear of a move someone else made.
               const hostSide = [
                 plan.consultantProfile?.user.id,
-                ...cohosts.map((c) => c.userId),
+                ...(await collaboratorUserIds("class", plan.id, tx)),
               ].filter(
                 (id): id is string =>
                   !!id && id !== actorUserId && !seatUserIds.includes(id),

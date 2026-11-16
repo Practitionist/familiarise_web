@@ -4,7 +4,10 @@
  */
 
 import prisma from "@/lib/prisma";
-import { liveParticipant } from "@/lib/booking/participants";
+import {
+  liveParticipant,
+  NOT_COLLABORATOR_ROW,
+} from "@/lib/booking/participants";
 import { isPresenterRole } from "@/lib/collaborators/roles";
 import type { CollaboratorRole } from "@prisma/client";
 
@@ -198,7 +201,7 @@ export async function getEventAttendeeIds(
       : { appointmentId: appointment.id };
 
   const seats = await prisma.appointmentParticipant.findMany({
-    where: { ...scope, ...liveParticipant() },
+    where: { ...scope, ...liveParticipant(), ...NOT_COLLABORATOR_ROW },
     select: { userId: true },
   });
 

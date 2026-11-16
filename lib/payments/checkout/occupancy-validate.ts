@@ -6,7 +6,10 @@ import {
   loadPublishedCoverage,
   windowAtoms,
 } from "@/utils/scheduling-engine/availabilityCoverage";
-import { liveParticipant } from "@/lib/booking/participants";
+import {
+  liveParticipant,
+  NOT_COLLABORATOR_ROW,
+} from "@/lib/booking/participants";
 import type { Tx } from "@/lib/prisma";
 import type { CheckoutInput } from "@/schemas/checkout";
 import { Prisma } from "@prisma/client";
@@ -255,7 +258,10 @@ export async function validateSlotAvailability(
                     {
                       appointment: {
                         participants: {
-                          some: liveParticipant(consultantUserId),
+                          some: {
+                            ...liveParticipant(consultantUserId),
+                            ...NOT_COLLABORATOR_ROW,
+                          },
                         },
                       },
                     },
@@ -307,7 +313,12 @@ export async function validateSlotAvailability(
             ? [
                 {
                   appointment: {
-                    participants: { some: liveParticipant(consultantUserId) },
+                    participants: {
+                      some: {
+                        ...liveParticipant(consultantUserId),
+                        ...NOT_COLLABORATOR_ROW,
+                      },
+                    },
                   },
                 },
               ]

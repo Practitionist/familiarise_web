@@ -7,7 +7,10 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { liveParticipant } from "@/lib/booking/participants";
+import {
+  liveParticipant,
+  NOT_COLLABORATOR_ROW,
+} from "@/lib/booking/participants";
 import { isPaymentEntitled } from "@/lib/payments/utils/refund-balance";
 import {
   isAppointmentOwner,
@@ -162,6 +165,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         where: {
           appointmentId: appointment.id,
           ...liveParticipant(session.user.id),
+          ...NOT_COLLABORATOR_ROW,
         },
         select: { id: true },
       });

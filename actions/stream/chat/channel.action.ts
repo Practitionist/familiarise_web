@@ -20,7 +20,10 @@
 
 import { z } from "zod";
 import prisma from "@/lib/prisma";
-import { paidParticipant } from "@/lib/booking/participants";
+import {
+  NOT_COLLABORATOR_ROW,
+  paidParticipant,
+} from "@/lib/booking/participants";
 import { getStreamChatClient } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
 import { markChannelExists } from "@/lib/stream-cache";
@@ -324,7 +327,7 @@ async function loadEventChannelData(
           appointment: {
             include: {
               participants: {
-                where: paidParticipant(),
+                where: { ...paidParticipant(), ...NOT_COLLABORATOR_ROW },
                 select: { userId: true },
               },
             },
@@ -387,7 +390,7 @@ async function loadEventChannelData(
           appointment: {
             include: {
               participants: {
-                where: paidParticipant(),
+                where: { ...paidParticipant(), ...NOT_COLLABORATOR_ROW },
                 select: { userId: true },
               },
             },

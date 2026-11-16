@@ -376,6 +376,45 @@ describe("POST /api/meetings/[meetingId]/join", () => {
     });
   });
 
+  it.each([
+    [
+      "a presenter keeps every publish permission",
+      { role: "host", coPresenter: true },
+      [{ grant_permissions: ["send-audio", "send-video", "screenshare"] }],
+    ],
+    [
+      "speaking crew talk and show their camera, without screen share",
+      { role: "participant", speakingCrew: true },
+      [
+        { revoke_permissions: ["screenshare"] },
+        { grant_permissions: ["send-audio", "send-video"] },
+      ],
+    ],
+    [
+      "support crew join as attendees",
+      { role: "participant" },
+      [{ revoke_permissions: ["send-audio", "send-video", "screenshare"] }],
+    ],
+  ])("on joining a webinar, %s", async (_name, tier, permissionWrites) => {
+    mockResolveMeetingAccess.mockResolvedValue({
+      hasAccess: true,
+      ...tier,
+      collaboratorOf: { planType: "webinar", planId: "plan-1" },
+      message: "Access granted as accepted collaborator",
+      reason: "granted",
+      streamCallId: "slot-abc",
+      appointment: { id: "appt-1", appointmentType: "WEBINAR" },
+    });
+    mockCollaboratorFence.mockResolvedValue({ verified: true, lost: false });
+
+    const res = await POST(req, { params });
+
+    expect(res.status).toBe(200);
+    expect(mockUpdateUserPermissions.mock.calls).toEqual(
+      permissionWrites.map((write) => [{ user_id: "user_1", ...write }]),
+    );
+  });
+
   it("re-checks a collaborator after the grant: an ended one is refused, an unread one is never admitted", async () => {
     const plan = { planType: "webinar", planId: "plan-1" };
     mockResolveMeetingAccess.mockResolvedValue({
@@ -728,10 +767,48 @@ describe("resolveMeetingAccess still admits a live session", () => {
     expect(db.appointmentParticipant.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
         // The fulfilled-entitlement predicate; its cases are pinned in paid-participant.test.ts.
-        where: { appointmentId: "appt-1", ...paidParticipant("user_1") },
+        where: {
+          appointmentId: "appt-1",
+          ...paidParticipant("user_1"),
+          role: { not: "COLLABORATOR" },
+        },
       }),
     );
   });
+
+  it("refuses someone whose only row is their own from a collaboration that has ended", async () => {
+    seedAccess(webinar("SCHEDULED"));
+    db.user.findUnique.mockResolvedValue({ consultantProfileId: "cp-ex" });
+    // The old row is still CONFIRMED; Postgres returns it unless the gate leaves staff rows out.
+    db.appointmentParticipant.findFirst.mockImplementation(
+      async (args: { where: { role?: { not?: string } } }) =>
+        args.where.role?.not === "COLLABORATOR" ? null : { id: "staff-row" },
+    );
+
+    const access = await resolveMeetingAccess("slot-abc", "user_1");
+
+    expect(access.hasAccess).toBe(false);
+  });
+
+  it.each([
+    ["GUEST_SPEAKER", true],
+    ["TEACHING_ASSISTANT", true],
+    ["TECHNICAL_SUPPORT", false],
+  ])(
+    "marks an accepted %s as speaking crew: %s",
+    async (role, speakingCrew) => {
+      seedAccess(webinar("SCHEDULED"), { joinerIsParticipant: false });
+      db.user.findUnique.mockResolvedValue({ consultantProfileId: "cp-crew" });
+      db.collaborator.findFirst.mockResolvedValue({ id: "collab-1", role });
+
+      const access = await resolveMeetingAccess("slot-abc", "user_1");
+
+      expect(access.role).toBe("participant");
+      expect("speakingCrew" in access && access.speakingCrew === true).toBe(
+        speakingCrew,
+      );
+    },
+  );
 
   it("keeps the live-seat probe for a 1:1, which has its own payment gate", async () => {
     seedAccess(consultation("APPROVED"));

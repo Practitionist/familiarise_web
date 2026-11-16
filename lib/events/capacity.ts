@@ -145,7 +145,7 @@ function assertParticipantsIncluded(
 ): void {
   if (appointment && !("participants" in appointment)) {
     throw new Error(
-      `${caller}: appointment.participants was not included in the query — the participant count would silently read 0. Include { participants: { where: liveParticipant(), select: { userId: true } } }.`,
+      `${caller}: appointment.participants was not included in the query — the participant count would silently read 0. Include { participants: { where: seatHoldingParticipant(now), select: { userId: true } } }.`,
     );
   }
 }

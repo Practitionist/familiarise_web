@@ -14,7 +14,10 @@ import { getSession } from "@/lib/auth-server";
 import { isPrivileged } from "@/lib/auth-helpers";
 import { streamLogger } from "@/lib/stream-logger";
 import prisma from "@/lib/prisma";
-import { liveParticipant } from "@/lib/booking/participants";
+import {
+  liveParticipant,
+  NOT_COLLABORATOR_ROW,
+} from "@/lib/booking/participants";
 
 export async function GET(req: NextRequest) {
   const isDev = process.env.NODE_ENV === "development";
@@ -129,7 +132,9 @@ export async function GET(req: NextRequest) {
         : prisma.webinar.count({
             where: {
               appointment: {
-                participants: { some: liveParticipant(userId) },
+                participants: {
+                  some: { ...liveParticipant(userId), ...NOT_COLLABORATOR_ROW },
+                },
               },
             },
           }),
@@ -142,7 +147,9 @@ export async function GET(req: NextRequest) {
         : prisma.class.count({
             where: {
               appointment: {
-                participants: { some: liveParticipant(userId) },
+                participants: {
+                  some: { ...liveParticipant(userId), ...NOT_COLLABORATOR_ROW },
+                },
               },
             },
           }),

@@ -154,6 +154,20 @@ export async function POST(
         };
         assertValidUpdateUserPermissions(grantPayload);
         await call.updateUserPermissions(grantPayload);
+      } else if (isOneToMany && access.speakingCrew) {
+        // Speaking crew talk and show their camera from the moment they join; sharing a screen stays with the hosts.
+        const revokePayload = {
+          user_id: userId,
+          revoke_permissions: ["screenshare"],
+        };
+        assertValidUpdateUserPermissions(revokePayload);
+        await call.updateUserPermissions(revokePayload);
+        const grantPayload = {
+          user_id: userId,
+          grant_permissions: ["send-audio", "send-video"],
+        };
+        assertValidUpdateUserPermissions(grantPayload);
+        await call.updateUserPermissions(grantPayload);
       } else if (isOneToMany) {
         const revokePayload = {
           user_id: userId,
