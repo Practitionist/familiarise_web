@@ -57,7 +57,8 @@ interface StaffMetrics {
     totalAppointments: number;
     pendingPayments: number;
   };
-  platformTotals: PlatformTotals;
+  /** Null when the totals read failed; the support figures still render. */
+  platformTotals: PlatformTotals | null;
 }
 
 const DEFAULT_METRICS: StaffMetrics = {
@@ -76,16 +77,18 @@ const DEFAULT_METRICS: StaffMetrics = {
     totalAppointments: 0,
     pendingPayments: 0,
   },
-  platformTotals: {
-    monthStartsAt: "",
-    users: { total: 0, newThisMonth: 0 },
-    experts: { total: 0, active: 0 },
-    learners: { total: 0, active: 0 },
-    staff: { total: 0 },
-    sessions: { total: 0, completed: 0, upcoming: 0, cancelled: 0 },
-    revenue: { totalPaise: 0, thisMonthPaise: 0 },
-    refunds: { totalPaise: 0 },
-  },
+  platformTotals: null,
+};
+
+const DEFAULT_TOTALS: PlatformTotals = {
+  monthStartsAt: "",
+  users: { total: 0, newThisMonth: 0 },
+  experts: { total: 0, active: 0 },
+  learners: { total: 0, active: 0 },
+  staff: { total: 0 },
+  sessions: { total: 0, completed: 0, upcoming: 0, cancelled: 0 },
+  revenue: { totalPaise: 0, thisMonthPaise: 0 },
+  refunds: { totalPaise: 0 },
 };
 
 const inr = (paise: number) => formatCurrencyAmount(paise, "INR");
@@ -161,7 +164,8 @@ export default function StaffMetricsPage() {
   const userMetrics = rawMetrics?.userMetrics ?? DEFAULT_METRICS.userMetrics;
   const platformMetrics =
     rawMetrics?.platformMetrics ?? DEFAULT_METRICS.platformMetrics;
-  const totals = rawMetrics?.platformTotals ?? DEFAULT_METRICS.platformTotals;
+  const totalsUnavailable = rawMetrics?.platformTotals === null;
+  const totals = rawMetrics?.platformTotals ?? DEFAULT_TOTALS;
 
   const periodLabel = PERIOD_LABELS[period] ?? PERIOD_LABELS.week;
   const resolvedInPeriod = getResolvedTicketsForPeriod(supportMetrics, period);
@@ -185,7 +189,7 @@ export default function StaffMetricsPage() {
         actions={
           <div className="flex items-center gap-2">
             <Select value={period} onValueChange={setPeriod}>
-              <SelectTrigger aria-label="Select period" className="w-36">
+              <SelectTrigger aria-label="Select period" className="w-44">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -340,103 +344,113 @@ export default function StaffMetricsPage() {
               </StatRow>
             </Section>
 
-            <Section title="People">
-              <StatRow>
-                {loading ? (
-                  [1, 2, 3, 4].map((i) => <StatSkeleton key={i} />)
-                ) : (
-                  <>
-                    <Stat
-                      label="Total Users"
-                      value={count(totals.users.total)}
-                      hint={`+${count(totals.users.newThisMonth)} this month (IST)`}
-                      icon={Users}
-                    />
-                    <Stat
-                      label="Experts"
-                      value={count(totals.experts.total)}
-                      hint={`${count(totals.experts.active)} active`}
-                      icon={UserCog}
-                    />
-                    <Stat
-                      label="Learners"
-                      value={count(totals.learners.total)}
-                      hint={`${count(totals.learners.active)} active`}
-                      icon={GraduationCap}
-                    />
-                    <Stat
-                      label="Staff Members"
-                      value={count(totals.staff.total)}
-                      icon={ShieldCheck}
-                    />
-                  </>
-                )}
-              </StatRow>
-            </Section>
+            {totalsUnavailable ? (
+              <Section title="Platform totals">
+                <p className="text-sm text-muted-foreground">
+                  Platform totals could not be loaded.
+                </p>
+              </Section>
+            ) : (
+              <>
+                <Section title="People">
+                  <StatRow>
+                    {loading ? (
+                      [1, 2, 3, 4].map((i) => <StatSkeleton key={i} />)
+                    ) : (
+                      <>
+                        <Stat
+                          label="Total Users"
+                          value={count(totals.users.total)}
+                          hint={`+${count(totals.users.newThisMonth)} this month (IST)`}
+                          icon={Users}
+                        />
+                        <Stat
+                          label="Experts"
+                          value={count(totals.experts.total)}
+                          hint={`${count(totals.experts.active)} active`}
+                          icon={UserCog}
+                        />
+                        <Stat
+                          label="Learners"
+                          value={count(totals.learners.total)}
+                          hint={`${count(totals.learners.active)} active`}
+                          icon={GraduationCap}
+                        />
+                        <Stat
+                          label="Staff Members"
+                          value={count(totals.staff.total)}
+                          icon={ShieldCheck}
+                        />
+                      </>
+                    )}
+                  </StatRow>
+                </Section>
 
-            <Section title="Sessions">
-              <StatRow>
-                {loading ? (
-                  [1, 2, 3, 4].map((i) => <StatSkeleton key={i} />)
-                ) : (
-                  <>
-                    <Stat
-                      label="Total Sessions"
-                      value={count(totals.sessions.total)}
-                      icon={Activity}
-                    />
-                    <Stat
-                      label="Completed Sessions"
-                      value={count(totals.sessions.completed)}
-                      icon={CalendarCheck}
-                      tone="success"
-                    />
-                    <Stat
-                      label="Upcoming Sessions"
-                      value={count(totals.sessions.upcoming)}
-                      icon={CalendarClock}
-                    />
-                    <Stat
-                      label="Cancelled Sessions"
-                      value={count(totals.sessions.cancelled)}
-                      icon={CalendarX}
-                      tone="critical"
-                    />
-                  </>
-                )}
-              </StatRow>
-            </Section>
+                <Section title="Sessions">
+                  <StatRow>
+                    {loading ? (
+                      [1, 2, 3, 4].map((i) => <StatSkeleton key={i} />)
+                    ) : (
+                      <>
+                        <Stat
+                          label="Total Sessions"
+                          value={count(totals.sessions.total)}
+                          icon={Activity}
+                        />
+                        <Stat
+                          label="Completed Sessions"
+                          value={count(totals.sessions.completed)}
+                          icon={CalendarCheck}
+                          tone="success"
+                        />
+                        <Stat
+                          label="Upcoming Sessions"
+                          value={count(totals.sessions.upcoming)}
+                          icon={CalendarClock}
+                        />
+                        <Stat
+                          label="Cancelled Sessions"
+                          value={count(totals.sessions.cancelled)}
+                          icon={CalendarX}
+                          tone="critical"
+                        />
+                      </>
+                    )}
+                  </StatRow>
+                </Section>
 
-            <Section title="Revenue">
-              <StatRow>
-                {loading ? (
-                  [1, 2, 3].map((i) => <StatSkeleton key={i} />)
-                ) : (
-                  <>
-                    <Stat
-                      label="Total Revenue"
-                      value={inr(totals.revenue.totalPaise)}
-                      hint="Succeeded payments, all time"
-                      icon={IndianRupee}
-                    />
-                    <Stat
-                      label="Revenue this month (IST)"
-                      value={inr(totals.revenue.thisMonthPaise)}
-                      hint="Since 00:00 IST on the 1st"
-                      icon={IndianRupee}
-                      tone="success"
-                    />
-                    <Stat
-                      label="Refunds"
-                      value={inr(totals.refunds.totalPaise)}
-                      hint="Succeeded refunds, all time"
-                      icon={RotateCcw}
-                      tone="critical"
-                    />
-                  </>
-                )}
-              </StatRow>
-            </Section>
+                <Section title="Revenue">
+                  <StatRow>
+                    {loading ? (
+                      [1, 2, 3].map((i) => <StatSkeleton key={i} />)
+                    ) : (
+                      <>
+                        <Stat
+                          label="Total Revenue"
+                          value={inr(totals.revenue.totalPaise)}
+                          hint="Succeeded payments, all time"
+                          icon={IndianRupee}
+                        />
+                        <Stat
+                          label="Revenue this month (IST)"
+                          value={inr(totals.revenue.thisMonthPaise)}
+                          hint="Since 00:00 IST on the 1st"
+                          icon={IndianRupee}
+                          tone="success"
+                        />
+                        <Stat
+                          label="Refunds"
+                          value={inr(totals.refunds.totalPaise)}
+                          hint="Succeeded refunds, all time"
+                          icon={RotateCcw}
+                          tone="critical"
+                        />
+                      </>
+                    )}
+                  </StatRow>
+                </Section>
+              </>
+            )}
           </>
         )}
       </DashboardContent>

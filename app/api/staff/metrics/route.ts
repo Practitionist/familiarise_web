@@ -10,6 +10,8 @@ import prisma from "@/lib/prisma";
 
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { getPlatformTotals } from "@/lib/backoffice/platform-totals";
+import { reportSentryError } from "@/lib/observability/report";
+import { CASE_OPEN_WHERE } from "@/lib/support/inbox-query";
 import { operatorPeriodStarts } from "@/lib/time/operator-zone";
 
 export async function GET() {
@@ -23,6 +25,16 @@ export async function GET() {
       week: startOfWeek,
       month: startOfMonth,
     } = operatorPeriodStarts(requestedAt);
+    // The totals fail alone: the support figures still answer, with platformTotals null.
+    const totalsRead = getPlatformTotals(requestedAt).catch(
+      (error: unknown) => {
+        reportSentryError(error, {
+          subsystem: "staff",
+          op: "metrics.platform-totals",
+        });
+        return null;
+      },
+    );
 
     // Fetch analytics data in parallel
     const [
@@ -34,7 +46,6 @@ export async function GET() {
       activeUsers,
       totalAppointments,
       pendingAppointments,
-      platformTotals,
     ] = await Promise.all([
       // Tickets resolved today
       prisma.supportCase.count({
@@ -60,13 +71,8 @@ export async function GET() {
           updatedAt: { gte: startOfMonth },
         },
       }),
-      // Open tickets
-      prisma.supportCase.count({
-        where: {
-          deletedAt: null,
-          status: { in: ["OPEN", "IN_PROGRESS"] },
-        },
-      }),
+      // Open cases, as the support inbox counts them.
+      prisma.supportCase.count({ where: CASE_OPEN_WHERE }),
       // Unique users helped this week (distinct users who had tickets resolved)
       prisma.supportCase
         .findMany({
@@ -97,7 +103,6 @@ export async function GET() {
           paymentStatus: "PENDING",
         },
       }),
-      getPlatformTotals(requestedAt),
     ]);
 
     // Measure the first human reply rather than unrelated later edits.
@@ -144,7 +149,7 @@ export async function GET() {
         totalAppointments,
         pendingPayments: pendingAppointments,
       },
-      platformTotals,
+      platformTotals: await totalsRead,
     });
   } catch (error) {
     Sentry.captureException(

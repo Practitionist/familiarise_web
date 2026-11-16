@@ -3,12 +3,17 @@
  */
 
 /**
- * Metrics counts "today", "this week" (the calendar week from Sunday) and
- * "this month" from 00:00 IST, whatever zone the server runs in. Run under
- * TZ=UTC and TZ=America/Los_Angeles; the expectations do not change.
+ * The Metrics API. It counts "today", "this week" (the calendar week from
+ * Sunday) and "this month" from 00:00 IST whatever zone the server runs in
+ * (run under TZ=UTC and TZ=America/Los_Angeles); it counts open cases as the
+ * support inbox does; and a failed totals read leaves the support figures up.
  */
 
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
+const mockReport = jest.fn();
+jest.mock("../../lib/observability/report", () => ({
+  reportSentryError: (...args: unknown[]) => mockReport(...args),
+}));
 jest.mock("../../lib/auth-helpers", () => ({
   requireBackofficeSurface: async () => ({
     session: { user: { id: "staff-1", role: "STAFF" } },
@@ -17,6 +22,7 @@ jest.mock("../../lib/auth-helpers", () => ({
 
 type Call = { model: string; method: string; args: unknown };
 const mockCalls: Call[] = [];
+const mockFail = { model: "" };
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: new Proxy(
@@ -28,6 +34,7 @@ jest.mock("../../lib/prisma", () => ({
           {
             get: (_inner, method: string) => async (args?: unknown) => {
               mockCalls.push({ model, method, args });
+              if (model === mockFail.model) throw new Error("read failed");
               if (method === "findMany") return [];
               if (method === "aggregate") return { _sum: {} };
               return 0;
@@ -39,6 +46,12 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 import { GET } from "../../app/api/staff/metrics/route";
+import { CASE_OPEN_WHERE } from "../../lib/support/inbox-query";
+
+beforeEach(() => {
+  mockFail.model = "";
+  mockReport.mockClear();
+});
 
 const gte = (c: Call, field: string): string | undefined => {
   const where = (c.args as { where?: Record<string, { gte?: Date }> })?.where;
@@ -95,4 +108,40 @@ it("opens a new IST month while UTC is still in the old one", async () => {
     activeUsers: [start],
     totalsMonth: start,
   });
+});
+
+it("counts open cases with the support inbox's definition", async () => {
+  mockCalls.length = 0;
+  expect((await GET()).status).toBe(200);
+  const counts = mockCalls.filter(
+    (c) => c.model === "supportCase" && c.method === "count",
+  );
+  expect(counts.map((c) => c.args)).toContainEqual({ where: CASE_OPEN_WHERE });
+  expect(
+    counts.filter(
+      (c) =>
+        JSON.stringify(c.args).includes("IN_PROGRESS") ||
+        JSON.stringify(c.args).includes('"OPEN"'),
+    ),
+  ).toEqual([]);
+});
+
+it("answers the support figures with platformTotals null when the totals fail", async () => {
+  // Refunds are read only by the totals.
+  mockFail.model = "refund";
+  const res = await GET();
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.platformTotals).toBeNull();
+  expect(body.supportMetrics).toMatchObject({ openTickets: 0 });
+  expect(mockReport).toHaveBeenCalledTimes(1);
+  expect(mockReport).toHaveBeenCalledWith(expect.any(Error), {
+    subsystem: "staff",
+    op: "metrics.platform-totals",
+  });
+});
+
+it("still fails whole when a support read fails", async () => {
+  mockFail.model = "supportCase";
+  expect((await GET()).status).toBe(500);
 });

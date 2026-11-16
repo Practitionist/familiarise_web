@@ -44,6 +44,26 @@ export function formatUtcInstant(instant: Instant): string {
   return date ? inZone(date, UTC_ZONE, "dateTime") : EMPTY;
 }
 
+/** An instant as the IST wall time a datetime-local input shows ("2026-04-01T05:30"); "" for none. */
+export function toOperatorWallTime(
+  instant: Instant | null | undefined,
+): string {
+  const date =
+    instant === null || instant === undefined ? null : toDate(instant);
+  return date
+    ? formatInViewerZone(date, OPERATOR_ZONE, "yyyy-MM-dd'T'HH:mm")
+    : "";
+}
+
+const WALL_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/;
+
+/** The instant an IST wall time typed into a datetime-local input names; null when empty or malformed. */
+export function fromOperatorWallTime(wall: string): Date | null {
+  if (!WALL_TIME.test(wall)) return null;
+  const date = fromZonedTime(wall, OPERATOR_ZONE);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
 /** 00:00 India time on the first of the India-time month that holds `now`. */
 export function operatorMonthStart(now: Date): Date {
   const month = formatInViewerZone(now, OPERATOR_ZONE, "yyyy-MM");

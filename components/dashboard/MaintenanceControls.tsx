@@ -26,6 +26,10 @@ import { MaintenanceBookingRemediation } from "@/components/dashboard/Maintenanc
 import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import { Badge } from "@/components/ui/badge";
 import { OperatorTime } from "@/lib/time/operator-time";
+import {
+  fromOperatorWallTime,
+  toOperatorWallTime,
+} from "@/lib/time/operator-zone";
 import { Label } from "@/components/ui/label";
 
 const phaseSchema = z.enum(["OFF", "DEGRADED", "OFFLINE"]);
@@ -56,23 +60,9 @@ const responseSchema = z.object({
 type MaintenanceState = z.infer<typeof stateSchema>;
 type MaintenanceWindow = z.infer<typeof responseSchema>["history"][number];
 
-function toLocalDatetime(iso: string | null): string {
-  if (!iso) return "";
-  try {
-    const d = new Date(iso);
-    // Format as YYYY-MM-DDTHH:MM for datetime-local input
-    const pad = (n: number) => n.toString().padStart(2, "0");
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  } catch {
-    return "";
-  }
-}
-
-function toIsoDatetime(localDatetime: string): string | undefined {
-  if (!localDatetime) return undefined;
-  const parsed = new Date(localDatetime);
-  if (Number.isNaN(parsed.getTime())) return undefined;
-  return parsed.toISOString();
+// The ETA input is an IST wall time, like every operator time.
+function toIsoDatetime(wallTime: string): string | undefined {
+  return fromOperatorWallTime(wallTime)?.toISOString();
 }
 
 export default function MaintenanceControls() {
@@ -122,7 +112,7 @@ export default function MaintenanceControls() {
       // Pre-fill form when active
       if (data.state?.phase && data.state.phase !== "OFF") {
         setReason(data.state.reason || "");
-        setEstimatedEnd(toLocalDatetime(data.state.estimatedEnd));
+        setEstimatedEnd(toOperatorWallTime(data.state.estimatedEnd));
         if (data.state.bypassSecret) {
           setBypassSecret(data.state.bypassSecret);
         }
@@ -512,7 +502,7 @@ export default function MaintenanceControls() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="eta">
-                Estimated End (does not reopen the site)
+                Estimated End, IST (does not reopen the site)
               </Label>
               <Input
                 id="eta"

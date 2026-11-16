@@ -15,6 +15,8 @@ import {
   formatUtcInstant,
   operatorMonthStart,
   operatorPeriodStarts,
+  fromOperatorWallTime,
+  toOperatorWallTime,
 } from "../../lib/time/operator-zone";
 
 // 00:00 IST on 1 Apr 2026 is 18:30 UTC the day before.
@@ -90,6 +92,26 @@ describe("operator time", () => {
       week: "2026-03-28T18:30:00.000Z",
       month: "2026-03-31T18:30:00.000Z",
     });
+  });
+
+  it("reads and fills datetime-local inputs as IST wall time", () => {
+    expect(fromOperatorWallTime("2026-04-01T05:30")?.toISOString()).toBe(
+      UTC_MIDNIGHT,
+    );
+    expect(fromOperatorWallTime("2026-04-01T00:00")?.toISOString()).toBe(
+      IST_MIDNIGHT,
+    );
+    expect(toOperatorWallTime(UTC_MIDNIGHT)).toBe("2026-04-01T05:30");
+    expect(toOperatorWallTime(IST_MIDNIGHT)).toBe("2026-04-01T00:00");
+    // A round trip lands on the same instant.
+    expect(
+      fromOperatorWallTime(
+        toOperatorWallTime(BEFORE_UTC_MIDNIGHT),
+      )?.toISOString(),
+    ).toBe(BEFORE_UTC_MIDNIGHT);
+    expect(fromOperatorWallTime("")).toBeNull();
+    expect(fromOperatorWallTime("2026-04-01")).toBeNull();
+    expect(toOperatorWallTime(null)).toBe("");
   });
 
   it("renders a <time> with the instant and its UTC reading", () => {
