@@ -3,7 +3,10 @@ import { z } from "zod";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { Prisma, RefundStatus, PaymentGateway } from "@prisma/client";
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
+import { readPageParams } from "@/lib/backoffice/list-paging";
+import type { RefundListItem } from "@/lib/backoffice/money-list-schemas";
+import { BOOKING_TITLE_SELECT, bookingRefOf } from "@/lib/data/booking-title";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import {
   classSeriesLedgers,
@@ -18,63 +21,98 @@ import {
   refundInFlightOr,
 } from "@/lib/backoffice/refund-doors";
 
+const RefundFiltersSchema = z.object({
+  status: z.nativeEnum(RefundStatus).optional(),
+  gateway: z.nativeEnum(PaymentGateway).optional(),
+  search: z.string().trim().max(200).optional(),
+});
+
+/** Allowlist: gateway metadata and failure text never leave the server. */
+const REFUND_LIST_SELECT = {
+  id: true,
+  refundId: true,
+  amountPaise: true,
+  currency: true,
+  status: true,
+  reason: true,
+  paymentGateway: true,
+  createdAt: true,
+  payment: {
+    select: {
+      id: true,
+      paymentIntent: true,
+      user: { select: { id: true, name: true, email: true } },
+      appointment: { select: BOOKING_TITLE_SELECT },
+    },
+  },
+} satisfies Prisma.RefundSelect;
+
 export async function GET(req: NextRequest) {
   try {
-    const auth = await requirePrivilegedAuth();
+    const auth = await requireBackofficeSurface("refunds.read");
     if (auth.error) return auth.error;
 
-    // Parse query parameters
     const searchParams = req.nextUrl.searchParams;
-    const page = parseInt(searchParams.get("page") || "1");
-    const limit = parseInt(searchParams.get("limit") || "20");
-    const status = searchParams.get("status") as RefundStatus | null;
-    const gateway = searchParams.get("gateway") as PaymentGateway | null;
-    const search = searchParams.get("search");
-
-    // Build where clause
-    const where: Prisma.RefundWhereInput = {};
-
-    if (status) {
-      where.status = status;
+    const filters = RefundFiltersSchema.safeParse({
+      status: searchParams.get("status") || undefined,
+      gateway: searchParams.get("gateway") || undefined,
+      search: searchParams.get("search") || undefined,
+    });
+    if (!filters.success) {
+      return NextResponse.json(
+        { error: "Invalid query parameters", code: "INVALID_QUERY" },
+        { status: 400 },
+      );
     }
+    const { status, gateway, search } = filters.data;
+    const { page, limit, skip } = readPageParams(searchParams);
 
-    if (gateway) {
-      where.paymentGateway = gateway;
-    }
+    const where: Prisma.RefundWhereInput = {
+      ...(status ? { status } : {}),
+      ...(gateway ? { paymentGateway: gateway } : {}),
+      ...(search
+        ? { refundId: { contains: search, mode: "insensitive" } }
+        : {}),
+    };
 
-    if (search) {
-      where.refundId = {
-        contains: search,
-        mode: "insensitive",
-      };
-    }
-
-    // Fetch refunds with pagination. pending/succeeded/failed counts are
-    // dashboard-wide (unfiltered by search/gateway) — #997 secondary
-    // findings: the stat cards used to `.filter()` the current page's
-    // `refunds` array, so they silently showed ≤`limit` (20) instead of the
-    // true platform-wide count.
-    const [refunds, total, pendingCount, succeededCount, failedCount] =
+    // The status counts are dashboard-wide, unfiltered by search or gateway.
+    const [rows, total, pendingCount, succeededCount, failedCount] =
       await Promise.all([
         prisma.refund.findMany({
+          relationLoadStrategy: "join",
           where,
-          skip: (page - 1) * limit,
+          skip,
           take: limit,
           orderBy: { createdAt: "desc" },
-          include: {
-            payment: {
-              select: {
-                id: true,
-                paymentIntent: true,
-              },
-            },
-          },
+          select: REFUND_LIST_SELECT,
         }),
         prisma.refund.count({ where }),
         prisma.refund.count({ where: { status: "PENDING" } }),
         prisma.refund.count({ where: { status: "SUCCEEDED" } }),
         prisma.refund.count({ where: { status: "FAILED" } }),
       ]);
+
+    // Field by field, so the body is the allowlist whatever the row carries.
+    const refunds = rows.map(({ payment, ...r }): RefundListItem => ({
+      id: r.id,
+      refundId: r.refundId,
+      amountPaise: Number(r.amountPaise),
+      currency: r.currency,
+      status: r.status,
+      reason: r.reason,
+      paymentGateway: r.paymentGateway,
+      createdAt: r.createdAt.toISOString(),
+      payment: payment && {
+        id: payment.id,
+        paymentIntent: payment.paymentIntent,
+        buyer: payment.user && {
+          id: payment.user.id,
+          name: payment.user.name,
+          email: payment.user.email,
+        },
+        booking: bookingRefOf(payment.appointment),
+      },
+    }));
 
     return NextResponse.json({
       refunds,

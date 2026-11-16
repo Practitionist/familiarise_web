@@ -23,7 +23,9 @@ import {
   paymentStatusBadge,
   refundStatusBadge,
 } from "@/lib/labels/session-labels";
-import { humanizeEnum } from "@/lib/ui/tone";
+import { BookingCell } from "@/components/dashboard/backoffice/BookingCell";
+import { PersonCell } from "@/components/dashboard/backoffice/PersonCell";
+import { OperatorTime } from "@/lib/time/operator-time";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import type {
   PaymentDetail,
@@ -208,14 +210,14 @@ export function PaymentDetailPage({
             <div>
               <Label className="text-muted-foreground">Created At</Label>
               <p className="text-foreground">
-                {new Date(payment.createdAt).toLocaleString()}
+                <OperatorTime value={payment.createdAt} />
               </p>
             </div>
             {payment.expiresAt && (
               <div>
                 <Label className="text-muted-foreground">Expires At</Label>
                 <p className="text-foreground">
-                  {new Date(payment.expiresAt).toLocaleString()}
+                  <OperatorTime value={payment.expiresAt} />
                 </p>
               </div>
             )}
@@ -254,29 +256,20 @@ export function PaymentDetailPage({
             {payment.appointment ? (
               <>
                 <div>
-                  <Label className="text-muted-foreground">
-                    Appointment Type
-                  </Label>
-                  <p className="font-medium text-foreground">
-                    {humanizeEnum(payment.appointment.appointmentType)}
-                  </p>
-                </div>
-                <div>
-                  <Label className="text-muted-foreground">
-                    Appointment ID
-                  </Label>
-                  <p className="font-mono text-sm text-foreground break-all">
+                  <Label className="text-muted-foreground">Booking</Label>
+                  <div className="mt-1">
+                    <BookingCell
+                      booking={payment.booking}
+                      basePath={basePath}
+                    />
+                  </div>
+                  <p className="font-mono text-xs text-muted-foreground break-all">
                     {payment.appointment.id}
                   </p>
                 </div>
                 <div>
-                  <Label className="text-muted-foreground">User</Label>
-                  <p className="text-foreground">
-                    {payment.user?.name || "N/A"}
-                  </p>
-                  <p className="text-sm text-muted-foreground">
-                    {payment.user?.email}
-                  </p>
+                  <Label className="text-muted-foreground">Buyer</Label>
+                  <PersonCell className="mt-1" person={payment.user} />
                 </div>
               </>
             ) : payment.digitalProductPurchase ? (
@@ -289,13 +282,8 @@ export function PaymentDetailPage({
                   </p>
                 </div>
                 <div>
-                  <Label className="text-muted-foreground">User</Label>
-                  <p className="text-foreground">
-                    {payment.user?.name || "N/A"}
-                  </p>
-                  <p className="text-sm text-muted-foreground">
-                    {payment.user?.email}
-                  </p>
+                  <Label className="text-muted-foreground">Buyer</Label>
+                  <PersonCell className="mt-1" person={payment.user} />
                 </div>
               </>
             ) : (
@@ -364,7 +352,7 @@ export function PaymentDetailPage({
                       {refund.reason}
                     </p>
                     <p className="text-xs text-muted-foreground/70 mt-1">
-                      {new Date(refund.createdAt).toLocaleString()}
+                      <OperatorTime value={refund.createdAt} />
                     </p>
                   </div>
                   <StatusBadge {...refundStatusBadge(refund.status)} />
@@ -401,7 +389,7 @@ export function PaymentDetailPage({
                         {disputeReasonText(dispute.reason)}
                       </p>
                       <p className="text-xs text-muted-foreground/70 mt-1">
-                        {new Date(dispute.createdAt).toLocaleString()}
+                        <OperatorTime value={dispute.createdAt} />
                       </p>
                     </div>
                     <StatusBadge {...disputeStatus(dispute.status)} />

@@ -49,6 +49,7 @@ jest.mock("../../lib/prisma", () => {
   const model = {
     count: async () => 0,
     findMany: async () => [],
+    findUnique: async () => null,
     aggregate: async () => ({ _sum: {}, _count: 0 }),
     groupBy: async () => [],
     updateMany: () => mockWrite(),
@@ -107,6 +108,10 @@ jest.mock("../../lib/rate-limit", () => ({
   applyRateLimit: async () => null,
   participantReadLimiter: {},
 }));
+jest.mock("../../lib/storage/private-finance-object", () => ({
+  privateFinanceObjectExists: async () => false,
+  createPrivateFinanceSignedUrl: jest.fn(),
+}));
 
 import { GET as statsGet } from "../../app/api/admin/stats/route";
 import {
@@ -120,6 +125,17 @@ import { GET as metricsGet } from "../../app/api/staff/metrics/route";
 import { GET as staffAppointmentsGet } from "../../app/api/staff/appointments/route";
 import { GET as staffTimelineGet } from "../../app/api/staff/appointments/[appointmentId]/timeline/route";
 import { GET as needsHumanGet } from "../../app/api/admin/sessions/needs-human/route";
+import { GET as paymentsGet } from "../../app/api/admin/payments/route";
+import { GET as paymentGet } from "../../app/api/admin/payments/[paymentId]/route";
+import { GET as refundsGet } from "../../app/api/admin/refunds/route";
+import { GET as disputesGet } from "../../app/api/admin/disputes/route";
+import { GET as disputeGet } from "../../app/api/admin/disputes/[disputeId]/route";
+import { GET as subscriptionsGet } from "../../app/api/admin/subscriptions/route";
+import { GET as tdsReturnGet } from "../../app/api/admin/compliance/tds-return/route";
+import { GET as gstRegisterGet } from "../../app/api/admin/compliance/gst-register/route";
+import { POST as erasureProcess } from "../../app/api/admin/erasure-requests/[id]/process/route";
+import { POST as erasureReject } from "../../app/api/admin/erasure-requests/[id]/reject/route";
+import { GET as settlementLinesGet } from "../../app/api/admin/settlements/lines/route";
 
 const APPOINTMENT_ID = "3b0a1b7c-42cd-465e-8b4d-8dccba7f8820";
 
@@ -135,7 +151,15 @@ const floorPatch = () =>
     { params: Promise.resolve({}) },
   );
 
-const routes: Array<[string, BackofficeSurface, () => Promise<Response>]> = [
+const get = (path: string) => new NextRequest(`http://test${path}`);
+const idParams = <K extends string>(key: K) => ({
+  params: Promise.resolve({ [key]: "row-1" } as Record<K, string>),
+});
+
+/** A permitted call reaches its read; a missing row or file answers 404 there. */
+const routes: Array<
+  [string, BackofficeSurface, () => Promise<Response>, number?]
+> = [
   ["GET /api/admin/stats", "analytics.read", () => statsGet()],
   [
     "GET /api/admin/analytics/cancellations",
@@ -177,9 +201,90 @@ const routes: Array<[string, BackofficeSurface, () => Promise<Response>]> = [
         new NextRequest("http://test/api/admin/sessions/needs-human"),
       ),
   ],
+  [
+    "GET /api/admin/payments",
+    "payments.read",
+    () => paymentsGet(get("/api/admin/payments")),
+  ],
+  [
+    "GET /api/admin/payments/[id]",
+    "payments.read",
+    () => paymentGet(get("/api/admin/payments/row-1"), idParams("paymentId")),
+    404,
+  ],
+  [
+    "GET /api/admin/refunds",
+    "refunds.read",
+    () => refundsGet(get("/api/admin/refunds")),
+  ],
+  [
+    "GET /api/admin/disputes",
+    "disputes.read",
+    () => disputesGet(get("/api/admin/disputes")),
+  ],
+  [
+    "GET /api/admin/disputes/[id]",
+    "disputes.read",
+    () => disputeGet(get("/api/admin/disputes/row-1"), idParams("disputeId")),
+    404,
+  ],
+  [
+    "GET /api/admin/subscriptions",
+    "subscriptions.read",
+    () => subscriptionsGet(get("/api/admin/subscriptions")),
+  ],
+  [
+    "GET /api/admin/compliance/tds-return",
+    "tds.read",
+    () =>
+      tdsReturnGet(
+        get("/api/admin/compliance/tds-return?financialYear=2026-27&quarter=2"),
+      ),
+    404,
+  ],
+  [
+    "GET /api/admin/compliance/gst-register",
+    "compliance.manage",
+    () =>
+      gstRegisterGet(get("/api/admin/compliance/gst-register?period=2026-10")),
+    404,
+  ],
+  [
+    "POST /api/admin/erasure-requests/[id]/process",
+    "compliance.manage",
+    () =>
+      erasureProcess(
+        new NextRequest(
+          "http://test/api/admin/erasure-requests/row-1/process",
+          {
+            method: "POST",
+          },
+        ),
+        idParams("id"),
+      ),
+    404,
+  ],
+  [
+    "POST /api/admin/erasure-requests/[id]/reject",
+    "compliance.manage",
+    () =>
+      erasureReject(
+        new NextRequest("http://test/api/admin/erasure-requests/row-1/reject", {
+          method: "POST",
+          body: JSON.stringify({ reason: "Open dispute on the account" }),
+        }),
+        idParams("id"),
+      ),
+    404,
+  ],
+  [
+    "GET /api/admin/settlements/lines",
+    "payouts.read",
+    () => settlementLinesGet(get("/api/admin/settlements/lines")),
+  ],
 ];
 
-const cases = routes.flatMap(([name, surface, call]) =>
+const cases = routes.flatMap(([name, surface, call, ok = 200]) =>
   (["ADMIN", "STAFF", "CONSULTANT"] as const).map(
     (role) =>
       [
@@ -187,7 +292,7 @@ const cases = routes.flatMap(([name, surface, call]) =>
         role,
         surface,
         call,
-        hasBackofficePermission(role, surface) ? 200 : 403,
+        hasBackofficePermission(role, surface) ? ok : 403,
       ] as const,
   ),
 );

@@ -1,8 +1,11 @@
 import type {
   DisputeStatus,
+  OpsActionProposalStatus,
+  OrgInvoiceStatus,
   OrgStatus,
   SupportPriority,
   SupportCaseStatus,
+  SystemJobStatus,
 } from "@prisma/client";
 
 import { humanizeEnum, type Tone } from "@/lib/ui/tone";
@@ -73,3 +76,73 @@ export const ORG_STATUS: Record<OrgStatus, ToneLabel> = {
 };
 export const orgStatus = (v: string | null | undefined) =>
   resolve(ORG_STATUS, v);
+
+/** The subscription list's derived plan state, as the route sends it (lower case). */
+export const SUBSCRIPTION_DISPLAY_STATUS: Record<
+  "active" | "expiring_soon" | "expired" | "cancelled",
+  ToneLabel
+> = {
+  active: { label: "Active", tone: "success" },
+  expiring_soon: { label: "Expiring soon", tone: "warning" },
+  expired: { label: "Expired", tone: "neutral" },
+  cancelled: { label: "Cancelled", tone: "neutral" },
+};
+export const subscriptionDisplayStatus = (v: string | null | undefined) =>
+  resolve(SUBSCRIPTION_DISPLAY_STATUS, v?.toLowerCase());
+
+export const ORG_INVOICE_STATUS: Record<OrgInvoiceStatus, ToneLabel> = {
+  DRAFT: { label: "Draft", tone: "neutral" },
+  ISSUED: { label: "Issued", tone: "info" },
+  PAID: { label: "Paid", tone: "success" },
+  OVERDUE: { label: "Overdue", tone: "critical" },
+  VOID: { label: "Void", tone: "neutral" },
+  CANCELLED: { label: "Cancelled", tone: "neutral" },
+  REFUNDED: { label: "Refunded", tone: "neutral" },
+};
+export const orgInvoiceStatus = (v: string | null | undefined) =>
+  resolve(ORG_INVOICE_STATUS, v);
+
+/** A consumer tax invoice is issued, or reversed by a credit note. */
+export const CONSUMER_INVOICE_STATUS: Record<
+  "ISSUED" | "CREDIT_NOTED",
+  ToneLabel
+> = {
+  ISSUED: { label: "Issued", tone: "info" },
+  CREDIT_NOTED: { label: "Credit note issued", tone: "caution" },
+};
+export const consumerInvoiceStatus = (v: string | null | undefined) =>
+  resolve(CONSUMER_INVOICE_STATUS, v);
+
+export const PROPOSAL_STATUS: Record<OpsActionProposalStatus, ToneLabel> = {
+  PROPOSED: { label: "Waiting for a second admin", tone: "warning" },
+  APPROVED: { label: "Approved", tone: "info" },
+  EXECUTED: { label: "Approved and run", tone: "success" },
+  REJECTED: { label: "Rejected", tone: "neutral" },
+  EXPIRED: { label: "Expired", tone: "neutral" },
+};
+export const proposalStatus = (v: string | null | undefined) =>
+  resolve(PROPOSAL_STATUS, v);
+
+/** Where a declared incident's settle run stands. */
+export type IncidentPhase = "VOIDING" | "REMEDYING" | "SETTLED";
+export const INCIDENT_PHASE: Record<IncidentPhase, ToneLabel> = {
+  VOIDING: { label: "Voiding sessions", tone: "warning" },
+  REMEDYING: { label: "Remedies in progress", tone: "info" },
+  SETTLED: { label: "Settled", tone: "success" },
+};
+export function incidentPhase(i: {
+  settledAt: string | null;
+  enumeratedAt: string | null;
+}): ToneLabel {
+  if (i.settledAt) return INCIDENT_PHASE.SETTLED;
+  return i.enumeratedAt ? INCIDENT_PHASE.REMEDYING : INCIDENT_PHASE.VOIDING;
+}
+
+export const RECONCILE_JOB_STATUS: Record<SystemJobStatus, ToneLabel> = {
+  RUNNING: { label: "Running", tone: "info" },
+  COMPLETED: { label: "Completed", tone: "success" },
+  FAILED: { label: "Failed", tone: "critical" },
+  CANCELLED: { label: "Stood down", tone: "neutral" },
+};
+export const reconcileJobStatus = (v: string | null | undefined) =>
+  resolve(RECONCILE_JOB_STATUS, v);

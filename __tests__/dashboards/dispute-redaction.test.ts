@@ -14,7 +14,7 @@ jest.mock("@sentry/nextjs", () => ({
 }));
 jest.mock("../../lib/auth-helpers", () => ({
   __esModule: true,
-  requirePrivilegedAuth: jest.fn(),
+  requireBackofficeSurface: jest.fn(),
 }));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
@@ -29,12 +29,12 @@ jest.mock("../../lib/prisma", () => ({
 
 import { NextRequest } from "next/server";
 import prisma from "../../lib/prisma";
-import { requirePrivilegedAuth } from "../../lib/auth-helpers";
+import { requireBackofficeSurface } from "../../lib/auth-helpers";
 import { GET as listDisputes } from "../../app/api/admin/disputes/route";
 import { GET as readDispute } from "../../app/api/admin/disputes/[disputeId]/route";
 
 const asRole = (role: "STAFF" | "ADMIN") =>
-  (requirePrivilegedAuth as jest.Mock).mockResolvedValue({
+  (requireBackofficeSurface as jest.Mock).mockResolvedValue({
     session: { user: { id: `${role}-1`, role } },
   });
 

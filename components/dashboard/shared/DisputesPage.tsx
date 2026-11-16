@@ -1,8 +1,19 @@
 "use client";
 
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
+import { BookingCell } from "@/components/dashboard/backoffice/BookingCell";
+import { PersonCell } from "@/components/dashboard/backoffice/PersonCell";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { TablePagination } from "@/components/dashboard/TablePagination";
+import {
+  disputeListPageSchema,
+  readListBody,
+  type DisputeListItem,
+} from "@/lib/backoffice/money-list-schemas";
+import { disputeStatus } from "@/lib/labels/backoffice-labels";
 import { gatewayLabel } from "@/lib/labels/money-labels";
-import { useState } from "react";
+import { OperatorTime } from "@/lib/time/operator-time";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
@@ -23,7 +34,6 @@ import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 // and rounded to whole rupees, so 12,345 paise printed as ₹123 rather than
 // ₹123.45, and any currency with different minor-unit rules was wrong too.
 import { formatCurrencyAmount } from "@/utils/formatting";
-import { disputeStatusLabel } from "@/lib/labels/money-labels";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   AlertTriangle,
@@ -32,63 +42,10 @@ import {
   AlertCircle,
   Clock,
   CheckCircle,
-  XCircle,
   Eye,
 } from "lucide-react";
-import type { Dispute, DisputeListResponse } from "@/types/disputes";
 
-const getStatusColor = (status: string) => {
-  switch (status.toUpperCase()) {
-    case "WON":
-      return "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300";
-    case "LOST":
-      return "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300";
-    case "NEEDS_RESPONSE":
-    case "WARNING_NEEDS_RESPONSE":
-      return "bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300";
-    case "UNDER_REVIEW":
-    case "WARNING_UNDER_REVIEW":
-      return "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300";
-    case "CHARGE_REFUNDED":
-      return "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300";
-    case "CLOSED":
-    case "WARNING_CLOSED":
-      return "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
-    default:
-      return "bg-muted text-muted-foreground";
-  }
-};
-
-const getStatusIcon = (status: string) => {
-  switch (status.toUpperCase()) {
-    case "WON":
-    case "CHARGE_REFUNDED":
-      return <CheckCircle className="h-3 w-3" />;
-    case "LOST":
-      return <XCircle className="h-3 w-3" />;
-    case "NEEDS_RESPONSE":
-    case "WARNING_NEEDS_RESPONSE":
-      return <AlertTriangle className="h-3 w-3" />;
-    case "UNDER_REVIEW":
-    case "WARNING_UNDER_REVIEW":
-      return <Clock className="h-3 w-3" />;
-    case "CLOSED":
-    case "WARNING_CLOSED":
-      return <AlertCircle className="h-3 w-3" />;
-    default:
-      return null;
-  }
-};
-
-const formatDate = (dateString: string) => {
-  return new Date(dateString).toLocaleString("en-IN", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-};
+const PAGE_SIZE = 20;
 
 const getDaysUntilDue = (dueBy: string | null) => {
   if (!dueBy) return null;
@@ -126,7 +83,7 @@ function DisputeDueCell({
   return (
     <div className={getDueCellClassName(isOverdue, isUrgent)}>
       <div className="flex items-center gap-1.5">
-        <span>{formatDate(dueBy)}</span>
+        <OperatorTime value={dueBy} />
         {isOverdue && (
           <Badge variant="destructive" className="text-[10px]">
             Overdue
@@ -152,11 +109,25 @@ function DisputeDueCell({
   );
 }
 
-const DISPUTE_COLUMNS: ResponsiveColumn<Dispute>[] = [
+const disputeColumns = (
+  basePath: string,
+): ResponsiveColumn<DisputeListItem>[] => [
+  {
+    key: "buyer",
+    header: "Buyer",
+    primary: true,
+    cell: (dispute) => <PersonCell person={dispute.payment?.buyer} />,
+  },
+  {
+    key: "booking",
+    header: "Booking",
+    cell: (dispute) => (
+      <BookingCell booking={dispute.payment?.booking} basePath={basePath} />
+    ),
+  },
   {
     key: "disputeId",
     header: "Dispute ID",
-    primary: true,
     cell: (dispute) => (
       <div>
         <p className="font-mono text-sm">
@@ -201,15 +172,7 @@ const DISPUTE_COLUMNS: ResponsiveColumn<Dispute>[] = [
   {
     key: "status",
     header: "Status",
-    cell: (dispute) => (
-      <Badge
-        className={`${getStatusColor(dispute.status)} gap-1`}
-        variant="secondary"
-      >
-        {getStatusIcon(dispute.status)}
-        {disputeStatusLabel(dispute.status)}
-      </Badge>
-    ),
+    cell: (dispute) => <StatusBadge {...disputeStatus(dispute.status)} />,
   },
   {
     key: "dueBy",
@@ -222,7 +185,7 @@ const DISPUTE_COLUMNS: ResponsiveColumn<Dispute>[] = [
     key: "created",
     header: "Created",
     className: "text-sm text-muted-foreground",
-    cell: (dispute) => formatDate(dispute.createdAt),
+    cell: (dispute) => <OperatorTime value={dispute.createdAt} />,
   },
 ];
 
@@ -256,23 +219,26 @@ export function DisputesPage({
       statusFilter,
       gatewayFilter,
     ],
-    queryFn: async (): Promise<DisputeListResponse> => {
+    queryFn: async () => {
       const params = new URLSearchParams();
       params.set("page", page.toString());
-      params.set("limit", "20");
+      params.set("limit", String(PAGE_SIZE));
       if (searchQuery) params.set("search", searchQuery);
       if (statusFilter !== "all") params.set("status", statusFilter);
       if (gatewayFilter !== "all") params.set("gateway", gatewayFilter);
 
       const response = await fetch(`${apiEndpoint}?${params}`);
-      if (!response.ok) throw new Error("Failed to fetch disputes");
-      return response.json();
+      return readListBody(
+        response,
+        disputeListPageSchema,
+        "Failed to fetch disputes",
+      );
     },
     placeholderData: keepPreviousData,
   });
 
+  const columns = useMemo(() => disputeColumns(basePath), [basePath]);
   const disputes = data?.disputes ?? [];
-  const totalPages = data?.totalPages ?? 1;
   const total = data?.total ?? 0;
   const urgentCount = data?.urgentDisputes ?? 0;
   const underReviewCount = data?.stats?.underReviewCount ?? 0;
@@ -282,7 +248,7 @@ export function DisputesPage({
     router.push(`${basePath}/disputes/${disputeId}`);
   };
 
-  const renderRowActions = (dispute: Dispute) => (
+  const renderRowActions = (dispute: DisputeListItem) => (
     <Button asChild variant="ghost" size="icon" className="h-8 w-8">
       <Link
         href={`${basePath}/disputes/${dispute.id}`}
@@ -437,8 +403,8 @@ export function DisputesPage({
             </div>
           )}
           {(!isError || Boolean(data)) && !isPending && (
-            <ResponsiveTable<Dispute>
-              columns={DISPUTE_COLUMNS}
+            <ResponsiveTable<DisputeListItem>
+              columns={columns}
               rows={disputes}
               getRowId={(d) => d.id}
               onRowClick={(d) => handleViewDispute(d.id)}
@@ -454,28 +420,12 @@ export function DisputesPage({
         </CardContent>
       </Card>
 
-      {/* Pagination */}
-      {totalPages > 1 && (
-        <div className="flex justify-center gap-2">
-          <Button
-            variant="outline"
-            disabled={page <= 1}
-            onClick={() => setPage(page - 1)}
-          >
-            Previous
-          </Button>
-          <span className="flex items-center px-4 text-sm text-muted-foreground">
-            Page {page} of {totalPages}
-          </span>
-          <Button
-            variant="outline"
-            disabled={page >= totalPages}
-            onClick={() => setPage(page + 1)}
-          >
-            Next
-          </Button>
-        </div>
-      )}
+      <TablePagination
+        page={page}
+        pageSize={PAGE_SIZE}
+        total={total}
+        onPageChange={setPage}
+      />
     </div>
   );
 }

@@ -46,9 +46,30 @@ function interfaceMoneyField(src: string, name: string): string {
   return match![1];
 }
 
+/** The money field a Zod response schema declares. */
+function zodMoneyField(src: string, name: string): string {
+  const start = src.indexOf(`export const ${name} = z.object({`);
+  expect(start).toBeGreaterThan(-1);
+  const block = src.slice(start, src.indexOf("\n});", start));
+  const match = block.match(/^\s+(amount|amountPaise):\s*z\.number\(\)/m);
+  expect(match).not.toBeNull();
+  return match![1];
+}
+
+describe("the money list schemas name the field the model declares", () => {
+  it.each([
+    ["Payment", "paymentListItemSchema"],
+    ["Refund", "refundListItemSchema"],
+    ["Dispute", "disputeListItemSchema"],
+  ])("%s matches %s", (model, schema) => {
+    expect(
+      zodMoneyField(read("lib/backoffice/money-list-schemas.ts"), schema),
+    ).toBe(schemaMoneyField(model));
+  });
+});
+
 describe("client money interfaces name the field the schema declares", () => {
   it.each([
-    ["Refund", "types/payments.ts", "Refund"],
     // The admin dashboard's Recent Refunds list had the same defect and this
     // test did not cover it, so it shipped the same literal "₹NaN" to the
     // operator home page. Covering every hand-written interface over a money
@@ -60,13 +81,11 @@ describe("client money interfaces name the field the schema declares", () => {
     // carried whatever the model declared and nothing typechecked the gap.
     ["Refund", "types/payments.ts", "PaymentDetailRefund"],
     ["Dispute", "types/payments.ts", "PaymentDetailDispute"],
-    ["Dispute", "types/disputes.ts", "Dispute"],
     ["Dispute", "types/disputes.ts", "DisputeDetails"],
     // The `Payment`-backed interfaces. These are correct today and cost
     // nothing to hold in place; `RecentRefund` was correct once too. Their
     // model declares a bare `amount`, so they also stop an over-eager rename
     // sweep from "fixing" them into `amountPaise`.
-    ["Payment", "types/payments.ts", "Payment"],
     ["Payment", "types/payments.ts", "RecentPayment"],
     ["Payment", "types/payments.ts", "PaymentDetail"],
     // #1527 — the support case's payment card (types/tickets.ts retired).

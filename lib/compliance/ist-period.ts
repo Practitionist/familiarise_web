@@ -55,6 +55,18 @@ export function istFinancialYearStart(now: Date = new Date()): Date {
   return new Date(Date.UTC(year, 3, 1) - IST_OFFSET_MS);
 }
 
+/** The IST calendar date holding `now`, as `YYYY-MM-DD`. */
+export function istDateKey(now: Date = new Date()): string {
+  return new Date(now.getTime() + IST_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+/** The Indian financial year holding `now`, labelled `2026-27`. */
+export function istFinancialYearLabel(now: Date = new Date()): string {
+  const start = new Date(istFinancialYearStart(now).getTime() + IST_OFFSET_MS);
+  const year = start.getUTCFullYear();
+  return `${year}-${String(year + 1).slice(2)}`;
+}
+
 /** The instant that begins the IST calendar month named by `YYYY-MM`. */
 export function istMonthStart(period: string): Date {
   const [year, month] = period.split("-").map(Number);

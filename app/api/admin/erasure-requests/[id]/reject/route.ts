@@ -9,7 +9,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
-import { requireAdminAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 
 const BodySchema = z.object({
   reason: z.string().trim().min(1).max(2000),
@@ -19,7 +19,7 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const auth = await requireAdminAuth();
+  const auth = await requireBackofficeSurface("compliance.manage");
   if (auth.error) return auth.error;
   const { id } = await params;
 

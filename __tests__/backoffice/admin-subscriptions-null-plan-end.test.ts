@@ -8,7 +8,7 @@
  */
 
 jest.mock("../../lib/auth-helpers", () => ({
-  requirePrivilegedAuth: jest.fn(async () => ({ error: null })),
+  requireBackofficeSurface: jest.fn(async () => ({ error: null })),
 }));
 jest.mock("../../lib/backoffice/ops-action-log", () => ({
   withOpsAction: () => jest.fn(),

@@ -1,10 +1,19 @@
 "use client";
 
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
+import { BookingCell } from "@/components/dashboard/backoffice/BookingCell";
+import { PersonCell } from "@/components/dashboard/backoffice/PersonCell";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { TablePagination } from "@/components/dashboard/TablePagination";
 import { traceHref } from "@/lib/backoffice/entity-trace-types";
+import {
+  paymentListPageSchema,
+  readListBody,
+  type PaymentListItem,
+} from "@/lib/backoffice/money-list-schemas";
 import { gatewayLabel } from "@/lib/labels/money-labels";
 import { paymentStatusBadge } from "@/lib/labels/session-labels";
-import { Button } from "@/components/ui/button";
+import { OperatorTime } from "@/lib/time/operator-time";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FilterBar } from "@/components/dashboard/FilterBar";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -13,16 +22,16 @@ import {
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
 import { DashboardHeader } from "@/components/dashboard/PageScaffold";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useState } from "react";
+import { z } from "zod";
 import {
   PaymentGateway,
   PaymentStatus,
   AppointmentsType,
 } from "@prisma/client";
 import { formatCurrencyAmount } from "@/utils/formatting";
-import type { PaymentListResponse, Payment } from "@/types/payments";
 
 // Fetch payments with filters
 async function fetchPayments(params: {
@@ -32,7 +41,7 @@ async function fetchPayments(params: {
   gateway?: PaymentGateway;
   appointmentType?: AppointmentsType;
   search?: string;
-}): Promise<PaymentListResponse> {
+}) {
   const searchParams = new URLSearchParams({
     page: params.page.toString(),
     limit: params.limit.toString(),
@@ -43,10 +52,11 @@ async function fetchPayments(params: {
   });
 
   const response = await fetch(`/api/admin/payments?${searchParams}`);
-  if (!response.ok) {
-    throw new Error("Failed to fetch payments");
-  }
-  return response.json() as Promise<PaymentListResponse>;
+  return readListBody(
+    response,
+    paymentListPageSchema,
+    "Failed to fetch payments",
+  );
 }
 
 /**
@@ -55,7 +65,7 @@ async function fetchPayments(params: {
  * cell means the payment was org-funded and is invoiced to the organization
  * instead, which is the correct answer rather than a gap to chase.
  */
-function renderInvoiceCell(payment: Payment) {
+function renderInvoiceCell(payment: PaymentListItem) {
   if (!payment.consumerInvoice) {
     return <span className="text-muted-foreground/70">—</span>;
   }
@@ -69,6 +79,8 @@ function renderInvoiceCell(payment: Payment) {
   );
 }
 
+const PAGE_SIZE = 20;
+
 export function PaymentsPage() {
   // #1527 — a staff-tree row must link inside the staff tree.
   const { basePath } = useBackofficeCapability();
@@ -79,7 +91,7 @@ export function PaymentsPage() {
     AppointmentsType | undefined
   >();
   const [search, setSearch] = useState("");
-  const limit = 20;
+  const limit = PAGE_SIZE;
 
   const { data, isLoading, error } = useQuery({
     queryKey: [
@@ -92,22 +104,34 @@ export function PaymentsPage() {
     ],
     queryFn: () =>
       fetchPayments({ page, limit, status, gateway, appointmentType, search }),
-    staleTime: 30 * 1000, // 30 seconds
+    staleTime: 30 * 1000,
+    placeholderData: keepPreviousData,
   });
 
   const handleFilterChange = () => {
     setPage(1); // Reset to first page when filters change
   };
 
-  const columns: ResponsiveColumn<Payment>[] = [
+  const columns: ResponsiveColumn<PaymentListItem>[] = [
     {
-      key: "paymentId",
-      header: "Payment ID",
+      key: "buyer",
+      header: "Buyer",
       primary: true,
+      cell: (payment) => <PersonCell person={payment.buyer} />,
+    },
+    {
+      key: "booking",
+      header: "Booking",
       cell: (payment) => (
-        <span className="font-mono text-sm text-foreground">
-          {payment.paymentIntent?.substring(0, 20)}...
-        </span>
+        <div className="min-w-0 space-y-1">
+          <BookingCell booking={payment.booking} basePath={basePath} />
+          <p
+            className="truncate font-mono text-[11px] text-muted-foreground/70"
+            title={payment.paymentIntent}
+          >
+            {payment.paymentIntent}
+          </p>
+        </div>
       ),
     },
     {
@@ -123,19 +147,7 @@ export function PaymentsPage() {
       key: "status",
       header: "Status",
       cell: (payment) => (
-        <span
-          className={`px-2 py-1 rounded text-xs font-medium ${
-            payment.paymentStatus === "SUCCEEDED"
-              ? "bg-green-100 text-green-800 dark:bg-green-950/40 dark:text-green-400"
-              : payment.paymentStatus === "PENDING"
-                ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-950/40 dark:text-yellow-400"
-                : payment.paymentStatus === "EXPIRED"
-                  ? "bg-muted text-muted-foreground"
-                  : "bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-400"
-          }`}
-        >
-          {paymentStatusBadge(payment.paymentStatus).label}
-        </span>
+        <StatusBadge {...paymentStatusBadge(payment.paymentStatus)} />
       ),
     },
     {
@@ -144,15 +156,6 @@ export function PaymentsPage() {
       cell: (payment) => (
         <span className="text-sm text-foreground">
           {gatewayLabel(payment.paymentGateway)}
-        </span>
-      ),
-    },
-    {
-      key: "type",
-      header: "Type",
-      cell: (payment) => (
-        <span className="text-sm text-foreground">
-          {payment.appointment?.appointmentType || "N/A"}
         </span>
       ),
     },
@@ -177,14 +180,15 @@ export function PaymentsPage() {
       key: "date",
       header: "Date",
       cell: (payment) => (
-        <span className="text-sm text-muted-foreground">
-          {new Date(payment.createdAt).toLocaleDateString()}
-        </span>
+        <OperatorTime
+          value={payment.createdAt}
+          className="text-sm text-muted-foreground"
+        />
       ),
     },
   ];
 
-  const renderRowActions = (payment: Payment) => (
+  const renderRowActions = (payment: PaymentListItem) => (
     <span className="flex gap-3">
       <Link
         href={`${basePath}/payments/${payment.id}`}
@@ -255,9 +259,7 @@ export function PaymentsPage() {
                   { value: "EXPIRED", label: "Expired" },
                 ],
                 onChange: (value) => {
-                  setStatus(
-                    value === "all" ? undefined : (value as PaymentStatus),
-                  );
+                  setStatus(z.nativeEnum(PaymentStatus).safeParse(value).data);
                   handleFilterChange();
                 },
               },
@@ -272,7 +274,7 @@ export function PaymentsPage() {
                 ],
                 onChange: (value) => {
                   setGateway(
-                    value === "all" ? undefined : (value as PaymentGateway),
+                    z.nativeEnum(PaymentGateway).safeParse(value).data,
                   );
                   handleFilterChange();
                 },
@@ -290,7 +292,7 @@ export function PaymentsPage() {
                 ],
                 onChange: (value) => {
                   setAppointmentType(
-                    value === "all" ? undefined : (value as AppointmentsType),
+                    z.nativeEnum(AppointmentsType).safeParse(value).data,
                   );
                   handleFilterChange();
                 },
@@ -319,7 +321,7 @@ export function PaymentsPage() {
             </div>
           ) : (
             <div className="space-y-2">
-              <ResponsiveTable<Payment>
+              <ResponsiveTable<PaymentListItem>
                 columns={columns}
                 rows={data.payments}
                 getRowId={(p) => p.id}
@@ -331,34 +333,13 @@ export function PaymentsPage() {
                 }
               />
 
-              {/* Pagination */}
-              {data.payments.length > 0 && (
-                <div className="flex flex-col gap-3 pt-4 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="text-sm text-muted-foreground">
-                    Showing {(page - 1) * limit + 1} to{" "}
-                    {Math.min(page * limit, data.total)} of {data.total}{" "}
-                    payments
-                  </div>
-                  <div className="flex gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setPage((p) => Math.max(1, p - 1))}
-                      disabled={page === 1}
-                    >
-                      Previous
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setPage((p) => p + 1)}
-                      disabled={page * limit >= data.total}
-                    >
-                      Next
-                    </Button>
-                  </div>
-                </div>
-              )}
+              <TablePagination
+                className="pt-4"
+                page={page}
+                pageSize={limit}
+                total={data.total}
+                onPageChange={setPage}
+              />
             </div>
           )}
         </CardContent>

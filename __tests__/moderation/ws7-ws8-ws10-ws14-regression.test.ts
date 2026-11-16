@@ -92,6 +92,8 @@ jest.mock("../../lib/auth-helpers", () => {
     requireApiAuth: (...args: unknown[]) => mockRequireApiAuth(...args),
     requirePrivilegedAuth: (...args: unknown[]) =>
       mockRequirePrivilegedAuth(...args),
+    // The admin dispute routes ask the matrix; the same mock answers for an operator.
+    requireBackofficeSurface: () => mockRequirePrivilegedAuth(),
   };
 });
 
