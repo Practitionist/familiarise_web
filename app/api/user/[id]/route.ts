@@ -25,7 +25,7 @@ import {
 import { checkActiveAppointments } from "@/app/api/user/consultants/utils/consultant-appointments";
 import { deleteSubscriber } from "@/lib/novu/subscriber";
 import { removeCollaboratorStanding } from "@/lib/collaborators/standing";
-import { revokeCollaboratorAccess } from "@/lib/collaborators/service";
+import { revokeCollaboratorAccess } from "@/lib/stream/access-revocation";
 import { requireFreshSession } from "@/lib/auth/step-up";
 import { recordOpsAction } from "@/lib/backoffice/ops-action-log";
 import { supportRetainedHistoryCount } from "@/lib/support/erasure";
@@ -536,7 +536,7 @@ async function executeUserHardDeleteOrFallbackScrub(
   await stampSessionEnds(endedSessions, { forgetUser: true });
 
   for (const c of removedCollaborations) {
-    await revokeCollaboratorAccess(c.planType, c.planId, id);
+    await revokeCollaboratorAccess(c, id);
   }
 
   const novuErased = await deleteSubscriber(id);
