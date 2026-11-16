@@ -2,6 +2,7 @@
 const mockCascade = jest.fn();
 const mockPurge = jest.fn();
 const mockChatSweep = jest.fn();
+const mockConductRemovals = jest.fn();
 const mockFlush = jest.fn(async (..._args: unknown[]) => undefined);
 const mockReportSentryError = jest.fn();
 jest.mock("../../lib/cron/with-cron-lock", () => ({
@@ -18,6 +19,11 @@ jest.mock("../../lib/support/evidence-retention", () => ({
 }));
 jest.mock("../../lib/support/chat-sweep", () => ({
   sweepSupportChatAccess: (...args: unknown[]) => mockChatSweep(...args),
+}));
+jest.mock("../../lib/support/conduct-removal-case", () => ({
+  hasConductRemovalLapse: async () => false,
+  sweepConductRemovalDeadlines: (...args: unknown[]) =>
+    mockConductRemovals(...args),
 }));
 jest.mock("../../lib/novu/stage-bell", () => ({
   stageBell: jest.fn(async () => null),
@@ -77,6 +83,7 @@ beforeEach(() => {
     emails: [email],
   });
   mockPurge.mockResolvedValue({ casesPurged: 2, filesDeleted: 3 });
+  mockConductRemovals.mockResolvedValue({ lapsed: 1 });
   mockChatSweep.mockImplementation(
     async ({ stagedBells }: { stagedBells: unknown[] }) => {
       stagedBells.push(chatBell);
@@ -97,7 +104,11 @@ it("runs the cascade and purge arms with their own small bounds and reports thei
   expect(mockChatSweep).toHaveBeenCalledWith(
     expect.objectContaining({ limit: 10, now }),
   );
+  expect(mockConductRemovals).toHaveBeenCalledWith(
+    expect.objectContaining({ limit: 5, now }),
+  );
   expect(result).toMatchObject({
+    conductRemovalsLapsed: 1,
     success: true,
     incidentsCascaded: 1,
     evidenceCasesPurged: 2,

@@ -7,6 +7,10 @@ const mockReleaseEarnings = jest.fn(
 );
 const mockReportSentryError = jest.fn();
 const mockMoneyDoorsRefusal = jest.fn();
+jest.mock("../../lib/support/conduct-removal-case", () => ({
+  hasConductRemovalLapse: jest.fn(async () => false),
+  sweepConductRemovalDeadlines: jest.fn(async () => ({ lapsed: 0 })),
+}));
 jest.mock("../../lib/support/case-service", () => ({
   ...jest.requireActual("../../lib/support/case-service"),
   moneyDoorsRefusal: () => mockMoneyDoorsRefusal(),

@@ -1855,6 +1855,7 @@ const TOPIC_ARTICLES: Record<CaseTopic, readonly string[]> = {
     "booking/timezones",
     "booking/picking-slots",
   ],
+  removal: ["booking/cancel-and-no-show", "payments/refunds-explained"],
   session: [
     "booking/cancel-and-no-show",
     "video/dropped-call",

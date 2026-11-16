@@ -1,3 +1,4 @@
+import { CONDUCT_REMOVAL_CATEGORY } from "./case-topic";
 import {
   Prisma,
   type SupportCase,
@@ -65,6 +66,16 @@ import {
   holdPaymentForCase,
   releaseCaseHoldRows,
 } from "./case-holds";
+import {
+  conductRemovalDecidedTx,
+  removalRefundOutstandingTx,
+  settleDecidedRemoval,
+} from "./conduct-removal-case";
+import {
+  removalDecisionNotice,
+  reviewedRemovalCaseId,
+} from "./conduct-removal-state";
+import type { RequiredNoticeKind } from "@/lib/notifications/required-notices";
 
 const id = z.string().min(1).max(128);
 const reason = z.string().trim().min(1).max(10_000);
@@ -217,10 +228,12 @@ export async function stageCaseNotice(
   recipients: string[],
   message: string,
   key: string,
+  required?: RequiredNoticeKind,
 ) {
   await stageBell(tx, {
     workflowId: NOVU_WORKFLOWS.SUPPORT_TICKET_UPDATE,
     recipients,
+    ...(required ? { required } : {}),
     dedupeKey: key,
     entityRef: key,
     payload: {
@@ -552,6 +565,8 @@ export async function readCaseResolution(caseId: string, actor: CaseActor) {
     isAppeal: Boolean(
       supportCase.appealOfDecisionId || supportCase.appealOfModerationActionId,
     ),
+    /** A host's conduct removal is upheld or overturned, like an appeal. */
+    reviewsRemoval: supportCase.category === CONDUCT_REMOVAL_CATEGORY,
     legalHoldAt: staff ? supportCase.legalHoldAt : null,
     /** Supersede and legal hold are admin-only. */
     isAdmin: actor.role === "ADMIN",
@@ -792,14 +807,22 @@ async function stageDecisionNotificationsTx(
       },
       tx,
     );
-  } else
+  } else {
+    // A removed learner hears of the decision on their removal whatever their switches say.
+    const removal =
+      (decision.outcome === "OVERTURNED" || decision.outcome === "UPHELD") &&
+      (await reviewedRemovalCaseId(tx, supportCase))
+        ? removalDecisionNotice(decision.outcome)
+        : null;
     await stageCaseNotice(
       tx,
       supportCase,
       await caseCorrespondentIds(supportCase, tx),
-      "A decision is ready",
+      removal?.message ?? "A decision is ready",
       `decision:${decision.id}`,
+      removal?.required,
     );
+  }
   const affectedRequests = await tx.supportCaseEvidenceRequest.findMany({
     where: { caseId, cancelledAt: null },
     distinct: ["recipientUserId"],
@@ -857,6 +880,34 @@ async function assertDecisionMatchesMoney(
   }
 }
 
+/**
+ * An overturned removal is refunded first: a first decision through the recommendation and its
+ * bounded review, an admin's correction of a decided case through the admin Refunds door.
+ */
+async function assertRemovalRefundedFirst(
+  tx: Tx,
+  supportCase: SupportCase,
+  outcome: ActionInput<"DECIDE">["outcome"],
+  correcting: boolean,
+) {
+  if (outcome !== "OVERTURNED") return;
+  const outstanding = await removalRefundOutstandingTx(tx, supportCase);
+  if (!outstanding) return;
+  const { owed, paymentId } = outstanding;
+  const what =
+    owed === "credits"
+      ? "Restore this seat's credits"
+      : `Refund the ₹${(owed / 100).toFixed(2)} still unrefunded on this seat`;
+  throw new CaseActionError(
+    "REFUND_FIRST",
+    correcting
+      ? `${what} first with Issue refund on payment ${paymentId} (/dashboard/admin/payments/${paymentId}?refund=1, the admin Refunds door), then come back and record the overturn.`
+      : `${what} first: recommend it and have it approved (an admin approves above your limit), then record the overturn.`,
+    409,
+    { paymentId },
+  );
+}
+
 /** Deciding releases the case's payout holds, so every recommendation must be reviewed or voided first. */
 async function assertNoOpenRecommendation(tx: Tx, caseId: string) {
   const open = await tx.supportFinancialRecommendation.findFirst({
@@ -888,7 +939,7 @@ async function assertUndecidedForApproval(
 
 const APPEAL_OUTCOMES: ReadonlySet<string> = new Set(["UPHELD", "OVERTURNED"]);
 
-/** Problems are resolved, not decided; appeals are upheld or overturned; incidents get a remedy outcome. */
+/** Problems are resolved, not decided; appeals and conduct removals are upheld or overturned; incidents get a remedy outcome. */
 function assertDecisionFitsCase(
   supportCase: SupportCase,
   outcome: ActionInput<"DECIDE">["outcome"],
@@ -907,12 +958,13 @@ function assertDecisionFitsCase(
   const appeal = Boolean(
     supportCase.appealOfDecisionId || supportCase.appealOfModerationActionId,
   );
-  if (appeal !== APPEAL_OUTCOMES.has(outcome))
+  const removal = supportCase.category === CONDUCT_REMOVAL_CATEGORY;
+  if ((appeal || removal) !== APPEAL_OUTCOMES.has(outcome))
     throw new CaseActionError(
       "OUTCOME_NOT_ALLOWED",
-      appeal
-        ? "An appeal is decided as upheld or overturned."
-        : "Upheld and overturned apply only to appeals.",
+      appeal || removal
+        ? "An appeal or a conduct removal is decided as upheld or overturned."
+        : "Upheld and overturned apply only to appeals and conduct removals.",
       400,
     );
 }
@@ -955,6 +1007,7 @@ async function recordCaseDecisionTx(
       caseDecidedDetail(latest),
     );
   await assertDecisionMatchesMoney(tx, caseId, input.outcome);
+  await assertRemovalRefundedFirst(tx, supportCase, input.outcome, false);
   await assertNoOpenRecommendation(tx, caseId);
   const restoredConsultantProfileId = await reverseModerationIfOverturned(
     tx,
@@ -995,6 +1048,7 @@ async function recordCaseDecisionTx(
     input.outcome,
   );
   await stageDecisionNotificationsTx(tx, supportCase, decision);
+  await conductRemovalDecidedTx(tx, supportCase, input.outcome);
   return { ...decision, restoredConsultantProfileId };
 }
 
@@ -1014,6 +1068,16 @@ async function assertSupersedeKeepsEffects(
     throw new CaseActionError(
       "COMPENSATING_ACTION_REQUIRED",
       "The moderation action was already reversed. Reinstate it from moderation first.",
+    );
+  // An overturned removal was refunded and unblocked; upholding it again cannot undo either.
+  if (
+    latest.outcome === "OVERTURNED" &&
+    outcome !== "OVERTURNED" &&
+    (await reviewedRemovalCaseId(tx, supportCase))
+  )
+    throw new CaseActionError(
+      "COMPENSATING_ACTION_REQUIRED",
+      "The removal was overturned: its seat was refunded and its call block lifted. It cannot be upheld again.",
     );
   if (latest.outcome !== "REFUND_APPROVED" || outcome === "REFUND_APPROVED")
     return;
@@ -1074,6 +1138,7 @@ async function supersedeDecisionTx(
     );
   await assertSupersedeKeepsEffects(tx, supportCase, latest, input.outcome);
   await assertDecisionMatchesMoney(tx, caseId, input.outcome);
+  await assertRemovalRefundedFirst(tx, supportCase, input.outcome, true);
   const restoredConsultantProfileId =
     latest.outcome === "OVERTURNED"
       ? undefined
@@ -1103,6 +1168,8 @@ async function supersedeDecisionTx(
     },
   });
   await stageDecisionNotificationsTx(tx, supportCase, decision);
+  if (latest.outcome !== "OVERTURNED")
+    await conductRemovalDecidedTx(tx, supportCase, input.outcome);
   return { ...decision, restoredConsultantProfileId };
 }
 
@@ -1743,13 +1810,15 @@ export async function performCaseAction(
       );
     throw error;
   });
-  if (input.action === "DECIDE" && input.outcome === "OVERTURNED")
+  if (input.action === "DECIDE" && input.outcome === "OVERTURNED") {
+    await settleDecidedRemoval(caseId);
     purgeReviewSurfaces(
       "restoredConsultantProfileId" in result &&
         typeof result.restoredConsultantProfileId === "string"
         ? result.restoredConsultantProfileId
         : undefined,
     );
+  }
   if (input.action === "REVIEW_REFUND" && input.approve)
     return {
       ...result,

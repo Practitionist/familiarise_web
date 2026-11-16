@@ -501,7 +501,9 @@ function canStartRevocationRow(
   const remainingMs = runDeadlineMs - Date.now();
   if (remainingMs <= 0) return false;
   const isSeatKind =
-    kind === "SEAT_ACCESS_REVOKE" || kind === "REFUND_ACCESS_REVOKE";
+    kind === "SEAT_ACCESS_REVOKE" ||
+    kind === "REFUND_ACCESS_REVOKE" ||
+    kind === "CONDUCT_CALL_BLOCK";
   return !isSeatKind || remainingMs >= MIN_SEAT_REVOCATION_SLICE_MS;
 }
 
@@ -546,7 +548,7 @@ async function redriveRevocationRow(
 }
 
 /**
- * Stops starting rows at `runDeadlineMs`, and before a seat or refund row once
+ * Stops starting rows at `runDeadlineMs`, and before a seat, refund or block row once
  * less than its minimum slice is left; an unstarted row stays due for the next run.
  */
 async function drainErasureRevocations(

@@ -29,6 +29,10 @@ import {
   purgeExpiredSupportEvidence,
 } from "./evidence-retention";
 import { hasChatAccessWork, sweepSupportChatAccess } from "./chat-sweep";
+import {
+  hasConductRemovalLapse,
+  sweepConductRemovalDeadlines,
+} from "./conduct-removal-case";
 import { activeHolds, caseHoldEvents, releaseAllCaseHolds } from "./case-holds";
 import { endCaseChatAccessTx } from "./chat-access-end";
 import {
@@ -57,6 +61,8 @@ const PROBLEM_CASCADE_CAP = 10;
 const EVIDENCE_PURGE_CAP = 5;
 // Each chat-access step is a Stream round trip or a short transaction per row.
 const CHAT_ACCESS_CAP = 10;
+// Each lapsed removal is a transaction, a refund and a Stream drive.
+const CONDUCT_REMOVAL_CAP = 5;
 // One run reads at most SLA_SCAN_PAGE_CAP pages of SLA_SCAN_PAGE_SIZE candidates, from the lowest id.
 const SLA_SCAN_PAGE_SIZE = 200;
 const SLA_SCAN_PAGE_CAP = 10;
@@ -117,6 +123,8 @@ export interface SupportSlaSweepResult {
   /** Channels whose support lock was re-applied or cleared. */
   chatBoundariesSynced: number;
   chatReviewNotices: number;
+  /** Conduct removals past their review deadline whose unrefunded balance became owed. */
+  conductRemovalsLapsed: number;
   disputeNoticesStaged: number;
   errors: string[];
 }
@@ -1003,6 +1011,8 @@ export async function hasSupportSlaSweepWork(
   if (outOfTime()) return true;
   if (await hasChatAccessWork(db, now)) return true;
   if (outOfTime()) return true;
+  if (await hasConductRemovalLapse(db, now)) return true;
+  if (outOfTime()) return true;
   const dispute = await db.dispute.findFirst({
     where: { OR: [disputeDeadlineWhere(now), LIVE_DISPUTE_WHERE] },
     select: { id: true },
@@ -1025,6 +1035,7 @@ export async function hasSupportSlaSweepWork(
 /**
  * Single background sweep for support SLA warnings/breaches, 28-day RESOLVED auto-close,
  * resolved-problem incident cascade, 180-day evidence purge, chat-access expiry,
+ * the 72-hour conduct removal review deadline,
  * Stream join/leave retries and post-decision review notices,
  * T-72h / T-24h dispute deadlines and one page for disputes due within 12 h or past due.
  * Collects row errors and reports to Sentry at most once.
@@ -1195,6 +1206,11 @@ export async function runSupportSlaSweep(opts?: {
         );
       }
     }
+    const conductRemovals = await sweepConductRemovalDeadlines({
+      limit: Math.min(limit, CONDUCT_REMOVAL_CAP),
+      now,
+      errors,
+    });
     await flushNotificationsAfter(
       {
         bells: stagedBells,
@@ -1234,6 +1250,7 @@ export async function runSupportSlaSweep(opts?: {
       chatInterventionsLeft: chatAccess.left,
       chatBoundariesSynced: chatAccess.boundaries,
       chatReviewNotices: chatAccess.notices,
+      conductRemovalsLapsed: conductRemovals.lapsed,
       disputeNoticesStaged,
       errors,
     };
