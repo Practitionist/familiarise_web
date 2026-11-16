@@ -6,7 +6,7 @@ import {
   getMyCollaborations,
   getHostedCollaborations,
   getOrgHostedCollaborations,
-} from "@/lib/collaborators/service";
+} from "@/lib/collaborators/queries";
 import {
   ORG_SCOPE_READABLE_STATUSES,
   resolveOrgScope,

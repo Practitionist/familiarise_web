@@ -190,6 +190,12 @@ export const orgWalletTopUpLimiter = makeLimiter(
 );
 /** 20 per hour per org — POST /api/organizations/[orgId]/invitations */
 export const orgInviteLimiter = makeLimiter(20, "1 h", "rl:org-invite");
+/** 10 per hour per inviting user — POST /api/collaborations/{webinar,class}/[planId] */
+export const collaboratorInviteLimiter = makeLimiter(
+  10,
+  "1 h",
+  "rl:collab-invite",
+);
 /** 5 per minute per org — outbound webhook CRUD + secret rotation */
 export const orgWebhookLimiter = makeLimiter(5, "1 m", "rl:org-webhook");
 /** 1 per 24h per org — POST /api/organizations/[orgId]/data-exports */

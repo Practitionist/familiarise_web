@@ -82,10 +82,8 @@ import {
 } from "@/lib/auth/session-access-log";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { releaseSeatsForTerminatedAssignments } from "@/lib/api/organizations/seat-count";
-import {
-  removeCollaboratorStanding,
-  type CollaborationRef,
-} from "@/lib/collaborators/standing";
+import { endCollaborationsForUser } from "@/lib/collaborators/ending";
+import type { PlanRef } from "@/lib/collaborators/team";
 import { reportSentryError } from "@/lib/observability/report";
 import {
   createRunFailureReporter,
@@ -875,7 +873,7 @@ export async function scrubUser(
       Boolean(a.razorpayContactId || a.razorpayFundAccId),
     );
 
-  let collaborationsRemoved: CollaborationRef[] = [];
+  let collaborationsRemoved: PlanRef[] = [];
   let archivedProducts: { consultantProfileId: string; slug: string }[] = [];
   let supportAttachmentPathsToRemove: string[] = [];
   let erasureRequestId: string | null = null;
@@ -984,7 +982,13 @@ export async function scrubUser(
 
     // #1580 — an erased consultant otherwise stays an ACCEPTED collaborator in
     // every split and roster; the same flip the moderation ban runs.
-    collaborationsRemoved = await removeCollaboratorStanding(tx, userId);
+    // The erasure's own outbox rows below record the access to take back.
+    collaborationsRemoved = (
+      await endCollaborationsForUser(tx, userId, {
+        endedByUserId: null,
+        ownRevocationQueue: true,
+      })
+    ).map((ended) => ended.ref);
 
     // #1593 — the OUTBOX: every Stream revocation this scrub owes is a durable
     // row before the side effect is attempted, in the same transaction as the

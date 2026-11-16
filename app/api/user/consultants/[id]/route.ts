@@ -26,9 +26,9 @@ import { checkActiveAppointments } from "../utils/consultant-appointments";
 import { getSession } from "@/lib/auth-server";
 import { purgeExpertSurfaces } from "@/lib/data/public-cache";
 import {
-  removeCollaboratorStanding,
-  type CollaborationRef,
-} from "@/lib/collaborators/standing";
+  afterCollaborationEnded,
+  endCollaborationsForUser,
+} from "@/lib/collaborators/ending";
 import { apiError } from "@/lib/errors";
 import { oneOnOnePlanDiscoverableWhere } from "@/lib/api/plans/visibility";
 import { dateToMinuteUtc } from "@/utils/scheduling-engine/slotTimeUtils";
@@ -721,18 +721,6 @@ export async function PATCH(
   }
 }
 
-// After commit: the rows are REMOVED either way. Each revoke is persisted
-// before its Stream calls, so the sweep finishes whatever this leaves.
-async function revokeRemovedCollaborations(
-  removed: CollaborationRef[],
-  userId: string,
-): Promise<void> {
-  if (removed.length === 0) return;
-  const { revokeCollaboratorAccess } =
-    await import("@/lib/stream/access-revocation");
-  for (const ref of removed) await revokeCollaboratorAccess(ref, userId);
-}
-
 export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -808,9 +796,14 @@ export async function DELETE(
           where: { id },
           data: { deletedAt: new Date() },
         });
-        return removeCollaboratorStanding(tx, session.user.id);
+        return endCollaborationsForUser(tx, session.user.id, {
+          endedByUserId: session.user.id,
+        });
       });
-      await revokeRemovedCollaborations(collaborationsRemoved, session.user.id);
+      await afterCollaborationEnded(
+        collaborationsRemoved,
+        "consultant.deactivate",
+      );
       // deletedAt is one of the two public gates — the profile has just left
       // both public surfaces.
       purgeExpertSurfaces(id);
@@ -824,7 +817,9 @@ export async function DELETE(
     // cascade with the profile, so their plans are captured in the same
     // transaction as the deletes, before the profile goes (#1580).
     const hardRemoved = await prisma.$transaction(async (tx) => {
-      const removed = await removeCollaboratorStanding(tx, session.user.id);
+      const removed = await endCollaborationsForUser(tx, session.user.id, {
+        endedByUserId: session.user.id,
+      });
       await tx.availabilityWindowWeekly.deleteMany({
         where: { consultantProfileId: id },
       });
@@ -850,7 +845,7 @@ export async function DELETE(
       await tx.consultantProfile.delete({ where: { id } });
       return removed;
     });
-    await revokeRemovedCollaborations(hardRemoved, session.user.id);
+    await afterCollaborationEnded(hardRemoved, "consultant.delete");
     purgeExpertSurfaces(id);
     return NextResponse.json({ message: "Consultant deleted successfully" });
   } catch (error) {
