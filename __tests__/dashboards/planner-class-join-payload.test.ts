@@ -516,4 +516,30 @@ describe("planner GET projects consultantProfile", () => {
       userId: "u-1",
     });
   });
+
+  it("counts a webinar's seats and sends nobody's id, and a collaborator's old row is not a seat", async () => {
+    db.webinar.findMany.mockResolvedValueOnce([
+      {
+        id: "w-1",
+        webinarPlanId: "wp-1",
+        webinarPlan: { id: "wp-1", topics: [] },
+        appointment: {
+          id: "appt-w-1",
+          participants: [{ userId: "buyer-a" }, { userId: "buyer-b" }],
+          occurrences: [],
+        },
+      },
+    ]);
+    db.appointmentWaitlist.groupBy.mockResolvedValueOnce([]);
+    const res = await GET(new Request("http://localhost/api/x"), {
+      params: Promise.resolve({ consultantId: "cp-1" }),
+    });
+    const body = await res.json();
+    expect(body.data.participantCounts["w-1"]).toBe(2);
+    expect(body.data.webinars[0].appointment.participants).toEqual([]);
+    const [webinarQuery] = db.webinar.findMany.mock.calls[0];
+    expect(
+      webinarQuery.include.appointment.include.participants.where,
+    ).toMatchObject({ role: { not: "COLLABORATOR" } });
+  });
 });

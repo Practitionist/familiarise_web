@@ -2,7 +2,10 @@ import { PROFILE_OWNER_SELECT } from "@/lib/booking/list-selects";
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { liveParticipant } from "@/lib/booking/participants";
+import {
+  liveParticipant,
+  NOT_COLLABORATOR_ROW,
+} from "@/lib/booking/participants";
 import { Prisma } from "@prisma/client";
 import { transformNestedPlanTopics } from "@/lib/topics";
 import {
@@ -26,10 +29,9 @@ const webinarInclude = {
   },
   appointment: {
     include: {
-      // #1554 — the seat count is the live roster; ids only, so the planner
-      // payload never carries a User row per attendee.
+      // Read for the seat count only: the ids are dropped before the answer.
       participants: {
-        where: liveParticipant(),
+        where: { ...liveParticipant(), ...NOT_COLLABORATOR_ROW },
         select: { userId: true },
       },
       occurrences: {
@@ -220,7 +222,7 @@ async function getClassParticipantCounts(
         appointment: {
           select: {
             participants: {
-              where: liveParticipant(),
+              where: { ...liveParticipant(), ...NOT_COLLABORATOR_ROW },
               select: { userId: true },
             },
           },
@@ -480,6 +482,11 @@ export async function GET(
       if (event.appointment) {
         event.waitingCount = waitingCounts.get(event.appointment.id) ?? 0;
       }
+    }
+
+    // Counted above; who holds the seats is not the planner's to send.
+    for (const webinar of webinars) {
+      if (webinar.appointment) webinar.appointment.participants = [];
     }
 
     const plannerData: PlannerData = {

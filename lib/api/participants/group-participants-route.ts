@@ -4,6 +4,8 @@ import { z } from "zod";
 import type { Session } from "@/lib/auth";
 import prisma, { type PrismaLike } from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
+import type { PlanRef } from "@/lib/collaborators/team";
+import { resolveCollaborationViewer } from "@/lib/collaborators/viewer";
 import { readSeatPayments } from "@/lib/data/seat-payments";
 import {
   requireApiAuth,
@@ -184,6 +186,10 @@ async function queryGroupEventForRead(
       event: webinarEvent,
       appointment: webinarEvent.appointment,
       collaborators: webinarEvent.webinarPlan.collaborators,
+      planRef: {
+        planType: "webinar",
+        planId: webinarEvent.webinarPlanId,
+      } satisfies PlanRef,
     };
   }
 
@@ -203,6 +209,10 @@ async function queryGroupEventForRead(
     event: classEvent,
     appointment: classEvent.appointment,
     collaborators: classEvent.classPlan.collaborators,
+    planRef: {
+      planType: "class",
+      planId: classEvent.classPlanId,
+    } satisfies PlanRef,
   };
 }
 
@@ -228,11 +238,24 @@ export async function handleGroupParticipantsGet(
 
     const participants = deduplicateParticipants(loaded.appointment);
     const appointmentId = loaded.appointment?.id;
+    // A presenter reads the roster, never what an attendee paid. A viewer the
+    // team rule does not know is an organisation member the gate above admitted.
+    const { viewer } = isPrivileged(session.user.role)
+      ? { viewer: null }
+      : await resolveCollaborationViewer(
+          prisma,
+          loaded.planRef,
+          session.user.id,
+        );
+    const sendsPayments =
+      !viewer || viewer.kind === "manager" || viewer.kind === "none";
     const [seatPayments, waitingCount] = await Promise.all([
-      readSeatPayments(
-        appointmentId ? [appointmentId] : [],
-        participants.map((u) => u.id),
-      ),
+      sendsPayments
+        ? readSeatPayments(
+            appointmentId ? [appointmentId] : [],
+            participants.map((u) => u.id),
+          )
+        : null,
       // A count only: the host never sees who is waiting.
       appointmentId
         ? prisma.appointmentWaitlist.count({
@@ -245,7 +268,7 @@ export async function handleGroupParticipantsGet(
       [loaded.key]: loaded.event,
       participants,
       collaborators: loaded.collaborators,
-      seatPayments,
+      ...(seatPayments && { seatPayments }),
       waitingCount,
     });
   } catch (error) {

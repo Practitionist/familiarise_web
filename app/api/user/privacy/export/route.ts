@@ -6,7 +6,8 @@
  *
  * Returns a JSON bundle containing:
  *   1. `personalDataSummary` (§11(1)(a)): The user's account profile, role
- *      profiles, professional background, booking history, payments/invoices,
+ *      profiles, professional background, booking history, collaborations on
+ *      other experts' plans, payments/invoices,
  *      support tickets, staff access to their booking chats, DPDP grievances,
  *      notification/cookie preferences, and the sign-in access log (start, end,
  *      end reason, IP address and user agent of each session).
@@ -40,6 +41,7 @@ import {
   MEMBER_STATUS_LABEL,
 } from "@/lib/labels/org-labels";
 import { userRoleLabel } from "@/lib/labels/personal-dashboard";
+import { bpsToPercent } from "@/lib/collaborators/rules";
 
 /** Statute citations behind each plain sentence in `statutoryRetentionAndRightsInfo`. */
 const RETENTION_LEGAL_BASIS = {
@@ -71,6 +73,7 @@ export async function GET() {
       support,
       participations,
       sessionAccessLog,
+      collaborationRows,
     ] = await Promise.all([
       prisma.user.findUnique({
         where: { id: userId },
@@ -256,11 +259,41 @@ export async function GET() {
         },
       }),
       readSessionAccessLog(userId),
+      // The user's own invitations and places on other experts' plans, ended
+      // ones included. Nothing about the inviter or the rest of the team.
+      prisma.collaborator.findMany({
+        where: { consultantProfile: { userId } },
+        orderBy: { createdAt: "desc" },
+        take: 200,
+        select: {
+          id: true,
+          role: true,
+          status: true,
+          revenueShareBps: true,
+          createdAt: true,
+          acceptedAt: true,
+          endedAt: true,
+          webinarPlan: { select: { title: true } },
+          classPlan: { select: { title: true } },
+        },
+      }),
     ]);
 
     if (!user) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
+
+    const collaborations = collaborationRows.map((c) => ({
+      id: c.id,
+      planType: c.webinarPlan ? "WEBINAR" : "CLASS",
+      planTitle: c.webinarPlan?.title ?? c.classPlan?.title ?? null,
+      role: c.role,
+      status: c.status,
+      revenueSharePercent: bpsToPercent(c.revenueShareBps),
+      invitedAt: c.createdAt,
+      acceptedAt: c.acceptedAt,
+      endedAt: c.endedAt,
+    }));
 
     const consumerInvoices = rawConsumerInvoices.map((inv) => ({
       ...inv,
@@ -420,6 +453,7 @@ export async function GET() {
         },
         activitySummary: {
           appointmentParticipations: participations,
+          collaborations,
           payments,
           consumerInvoices,
           ...support,

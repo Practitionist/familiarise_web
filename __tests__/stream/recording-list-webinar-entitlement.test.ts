@@ -58,6 +58,7 @@ describe("listRecordingsScoped: plan-wide webinar recordings", () => {
     expect(seat).toEqual({
       userId: "u-1",
       status: { in: LIVE_PARTICIPANT_STATUSES },
+      role: { not: "COLLABORATOR" },
     });
     expect(LIVE_PARTICIPANT_STATUSES).not.toContain("REFUNDED");
   });
