@@ -11,6 +11,8 @@ import {
   getTDSSummary,
   getIndianFinancialYear,
 } from "@/lib/payments/tax/tds-service";
+import { istFilingDate } from "@/lib/compliance/ist-period";
+import { MAX_PAGE_SIZE } from "@/lib/backoffice/list-paging";
 
 function notFoundIfGated() {
   if (!ENABLE_TDS_ADMIN_VIEW) {
@@ -42,6 +44,171 @@ const TdsFilingShape = {
   reportedInForm26Q: z.boolean().optional(),
 };
 
+/** The consultants view pages on the server; its filters run before the page is cut. */
+const ConsultantsQuerySchema = z.object({
+  page: z.coerce.number().int().positive().max(10_000).catch(1),
+  pageSize: z.coerce
+    .number()
+    .int()
+    .positive()
+    .catch(25)
+    .transform((n) => Math.min(n, MAX_PAGE_SIZE)),
+  filing: z.enum(["ALL", "FILED", "PENDING"]).catch("ALL"),
+  q: z.string().trim().max(200).optional(),
+});
+
+/**
+ * One page of deductees for a financial year. The groupings are one row per
+ * deductee; names and PAN digits are read for the page only.
+ */
+async function readConsultantsPage(
+  fy: string,
+  query: z.infer<typeof ConsultantsQuerySchema>,
+  showPii: boolean,
+) {
+  const [deducteeGroups, unfiledGroups] = await Promise.all([
+    prisma.tDSRecord.groupBy({
+      by: ["consultantProfileId", "organizationId"],
+      where: { financialYear: fy },
+      _sum: { tdsDeducted: true },
+      _max: { cumulativeAmountCredited: true },
+      _count: true,
+    }),
+    prisma.tDSRecord.groupBy({
+      by: ["consultantProfileId", "organizationId"],
+      where: { financialYear: fy, reportedInForm26Q: false },
+      _count: true,
+    }),
+  ]);
+  const unfiledByKey = new Map(
+    unfiledGroups.map((g) => [deducteeKey(g), g._count]),
+  );
+  const allProfileIds = deducteeGroups.flatMap((g) =>
+    g.consultantProfileId ? [g.consultantProfileId] : [],
+  );
+  const allOrgIds = deducteeGroups.flatMap((g) =>
+    g.organizationId ? [g.organizationId] : [],
+  );
+
+  let matched: Set<string> | null = null;
+  if (query.q) {
+    const contains = { contains: query.q, mode: "insensitive" as const };
+    const [profileHits, orgHits] = await Promise.all([
+      allProfileIds.length
+        ? prisma.consultantProfile.findMany({
+            relationLoadStrategy: "join",
+            where: {
+              id: { in: allProfileIds },
+              OR: [
+                { id: contains },
+                { user: { name: contains } },
+                ...(showPii ? [{ user: { email: contains } }] : []),
+                { taxInfo: { panLast4: contains } },
+              ],
+            },
+            select: { id: true },
+          })
+        : [],
+      allOrgIds.length
+        ? prisma.organization.findMany({
+            relationLoadStrategy: "join",
+            where: {
+              id: { in: allOrgIds },
+              OR: [{ name: contains }, { taxInfo: { legalName: contains } }],
+            },
+            select: { id: true },
+          })
+        : [],
+    ]);
+    matched = new Set([
+      ...profileHits.map((p) => `consultant:${p.id}`),
+      ...orgHits.map((o) => `org:${o.id}`),
+    ]);
+  }
+
+  const rows = deducteeGroups
+    .map((g) => ({ g, key: deducteeKey(g) }))
+    .filter(({ key }) => {
+      const allFiled = (unfiledByKey.get(key) ?? 0) === 0;
+      if (query.filing === "FILED" && !allFiled) return false;
+      if (query.filing === "PENDING" && allFiled) return false;
+      return matched === null || matched.has(key);
+    })
+    // Largest withholding first; the key breaks ties so a page is stable.
+    .sort(
+      (a, b) =>
+        Number(b.g._sum.tdsDeducted ?? 0) - Number(a.g._sum.tdsDeducted ?? 0) ||
+        (a.key < b.key ? -1 : Number(a.key > b.key)),
+    );
+  const pageRows = rows.slice(
+    (query.page - 1) * query.pageSize,
+    query.page * query.pageSize,
+  );
+  const profileIds = pageRows.flatMap(({ g }) =>
+    g.consultantProfileId ? [g.consultantProfileId] : [],
+  );
+  const orgIds = pageRows.flatMap(({ g }) =>
+    g.organizationId ? [g.organizationId] : [],
+  );
+  const [profiles, orgs] = await Promise.all([
+    profileIds.length > 0
+      ? prisma.consultantProfile.findMany({
+          relationLoadStrategy: "join",
+          where: { id: { in: profileIds } },
+          select: {
+            id: true,
+            userId: true,
+            user: { select: { id: true, name: true, email: true } },
+            taxInfo: { select: { panLast4: true, panVerified: true } },
+          },
+        })
+      : [],
+    orgIds.length > 0
+      ? prisma.organization.findMany({
+          relationLoadStrategy: "join",
+          where: { id: { in: orgIds } },
+          select: {
+            id: true,
+            name: true,
+            taxInfo: { select: { legalName: true } },
+          },
+        })
+      : [],
+  ]);
+  const profileById = new Map(profiles.map((p) => [p.id, p]));
+  const orgById = new Map(orgs.map((o) => [o.id, o]));
+
+  return {
+    financialYear: fy,
+    consultants: pageRows.map(({ g, key }) => {
+      const profile = g.consultantProfileId
+        ? profileById.get(g.consultantProfileId)
+        : undefined;
+      const org = g.organizationId ? orgById.get(g.organizationId) : undefined;
+      return {
+        deducteeKey: key,
+        deducteeType: g.consultantProfileId ? "CONSULTANT" : "ORGANIZATION",
+        consultantProfileId: g.consultantProfileId,
+        organizationId: g.organizationId,
+        userId: profile?.userId ?? null,
+        consultantName:
+          profile?.user.name ?? org?.taxInfo?.legalName ?? org?.name ?? null,
+        consultantEmail: showPii ? (profile?.user.email ?? null) : null,
+        panLast4: profile?.taxInfo?.panLast4 ?? null,
+        panVerified: profile?.taxInfo?.panVerified ?? false,
+        totalCredited: Number(g._max.cumulativeAmountCredited ?? 0),
+        totalTDS: Number(g._sum.tdsDeducted ?? 0),
+        recordCount: g._count,
+        allFiled: (unfiledByKey.get(key) ?? 0) === 0,
+      };
+    }),
+    total: rows.length,
+    deducteeCount: deducteeGroups.length,
+    page: query.page,
+    pageSize: query.pageSize,
+  };
+}
+
 export async function GET(req: NextRequest) {
   const gated = notFoundIfGated();
   if (gated) return gated;
@@ -64,107 +231,15 @@ export async function GET(req: NextRequest) {
     }
 
     if (view === "consultants") {
-      const [deducteeGroups, unfiledGroups] = await Promise.all([
-        prisma.tDSRecord.groupBy({
-          by: ["consultantProfileId", "organizationId"],
-          where: { financialYear: fy },
-          _sum: { tdsDeducted: true },
-          _max: { cumulativeAmountCredited: true },
-          _count: true,
-        }),
-        prisma.tDSRecord.groupBy({
-          by: ["consultantProfileId", "organizationId"],
-          where: { financialYear: fy, reportedInForm26Q: false },
-          _count: true,
-        }),
-      ]);
-
-      const unfiledByKey = new Map<string, number>();
-      for (const g of unfiledGroups) {
-        unfiledByKey.set(deducteeKey(g), g._count);
-      }
-
-      const profileIds = deducteeGroups
-        .map((b) => b.consultantProfileId)
-        .filter((id): id is string => Boolean(id));
-      const orgIds = deducteeGroups
-        .map((b) => b.organizationId)
-        .filter((id): id is string => Boolean(id));
-
-      const [profiles, orgs] = await Promise.all([
-        profileIds.length > 0
-          ? prisma.consultantProfile.findMany({
-              where: { id: { in: profileIds } },
-              select: {
-                id: true,
-                userId: true,
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                  },
-                },
-                taxInfo: {
-                  select: {
-                    panLast4: true,
-                    panVerified: true,
-                  },
-                },
-              },
-            })
-          : [],
-        orgIds.length > 0
-          ? prisma.organization.findMany({
-              where: { id: { in: orgIds } },
-              select: {
-                id: true,
-                name: true,
-                taxInfo: {
-                  select: {
-                    legalName: true,
-                  },
-                },
-              },
-            })
-          : [],
-      ]);
-
-      const profileById = new Map(profiles.map((p) => [p.id, p]));
-      const orgById = new Map(orgs.map((o) => [o.id, o]));
-
-      const consultants = deducteeGroups.map((row) => {
-        const key = deducteeKey(row);
-        const profile = row.consultantProfileId
-          ? profileById.get(row.consultantProfileId)
-          : undefined;
-        const org = row.organizationId
-          ? orgById.get(row.organizationId)
-          : undefined;
-        const unfiledCount = unfiledByKey.get(key) ?? 0;
-
-        return {
-          deducteeKey: key,
-          deducteeType: row.consultantProfileId ? "CONSULTANT" : "ORGANIZATION",
-          consultantProfileId: row.consultantProfileId,
-          organizationId: row.organizationId,
-          userId: profile?.userId ?? null,
-          consultantName:
-            profile?.user.name ?? org?.taxInfo?.legalName ?? org?.name ?? null,
-          consultantEmail: showPii ? (profile?.user.email ?? null) : null,
-          panLast4: profile?.taxInfo?.panLast4 ?? null,
-          panVerified: profile?.taxInfo?.panVerified ?? false,
-          totalCredited: Number(row._max.cumulativeAmountCredited ?? 0),
-          totalTDS: Number(row._sum.tdsDeducted ?? 0),
-          recordCount: row._count,
-          allFiled: unfiledCount === 0,
-        };
+      const consultantsQuery = ConsultantsQuerySchema.parse({
+        page: searchParams.get("page") ?? undefined,
+        pageSize: searchParams.get("pageSize") ?? undefined,
+        filing: searchParams.get("filing") ?? undefined,
+        q: searchParams.get("q") ?? undefined,
       });
-
-      return NextResponse.json({
-        financialYear: fy,
-        consultants,
-      });
+      return NextResponse.json(
+        await readConsultantsPage(fy, consultantsQuery, showPii),
+      );
     }
 
     if (view === "form26q") {
@@ -325,11 +400,12 @@ export const POST = withOpsAction(
 
       let effectiveFilingDate: Date | null = null;
       if (filingDate) {
-        const parsedDate = new Date(filingDate);
-        if (Number.isNaN(parsedDate.getTime()) || parsedDate > new Date()) {
+        // The day the return was filed in India: 00:00 IST, today or earlier.
+        const parsedDate = istFilingDate(filingDate, new Date());
+        if (!parsedDate) {
           throw new OpsRefusal(
             "INVALID_FILING_DATE",
-            "Filing date must be a valid non-future date.",
+            "Filing date must be a real date (YYYY-MM-DD), today or earlier in India time.",
             400,
           );
         }

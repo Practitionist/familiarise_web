@@ -7,7 +7,6 @@ import {
   RefreshCw,
   Loader2,
   CheckCircle,
-  Clock,
   XCircle,
   AlertTriangle,
   Users,
@@ -16,8 +15,11 @@ import {
 } from "lucide-react";
 
 import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { TablePagination } from "@/components/dashboard/TablePagination";
+import { subscriptionDisplayStatus } from "@/lib/labels/backoffice-labels";
+import { OperatorTime } from "@/lib/time/operator-time";
 import { PagedListFilterCard, statusSelect } from "./paged-list-filters";
 import {
   Sheet,
@@ -36,7 +38,6 @@ import { BookingOpsPanel } from "@/components/dashboard/backoffice/money/Booking
 import { DoorDialog } from "@/components/dashboard/backoffice/money/DoorDialog";
 import { PlatformCancelDoor } from "@/components/dashboard/backoffice/money/PlatformCancelDoor";
 import { formatCurrencyAmount } from "@/utils/formatting";
-import { subscriptionStatusLabel } from "@/lib/labels/money-labels";
 import type {
   SubscriptionListItem,
   SubscriptionListResponse,
@@ -57,45 +58,8 @@ export interface EnrichedSubscriptionItem extends SubscriptionListItem {
   sessionsScheduled?: number;
 }
 
-const getStatusColor = (status: string) => {
-  switch (status.toLowerCase()) {
-    case "active":
-      return "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300";
-    case "expiring_soon":
-      return "bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300";
-    case "expired":
-    case "cancelled":
-      return "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300";
-    default:
-      return "bg-muted text-muted-foreground";
-  }
-};
-
-const getStatusIcon = (status: string) => {
-  switch (status.toLowerCase()) {
-    case "active":
-      return <CheckCircle className="h-3 w-3" />;
-    case "expiring_soon":
-      return <AlertTriangle className="h-3 w-3" />;
-    case "expired":
-    case "cancelled":
-      return <XCircle className="h-3 w-3" />;
-    default:
-      return <Clock className="h-3 w-3" />;
-  }
-};
-
 const formatCurrency = (amount: number, currency: string = "INR") =>
   formatCurrencyAmount(amount, currency);
-
-const formatDate = (dateString: string | null) => {
-  if (!dateString) return "-";
-  return new Date(dateString).toLocaleDateString("en-IN", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
-};
 
 const EMPTY_STATS = { activeCount: 0, expiringCount: 0, expiredCount: 0 };
 const CANCEL_INVALIDATE = [["admin-subscriptions"], ["booking-ops"]];
@@ -177,13 +141,9 @@ function SubscriptionDetailSheet({
           <div className="divide-y rounded-lg border px-3">
             <div className="flex items-center justify-between py-2.5">
               <span className="text-muted-foreground">Status</span>
-              <Badge
-                className={`${getStatusColor(subscription.status)} gap-1`}
-                variant="secondary"
-              >
-                {getStatusIcon(subscription.status)}
-                {subscriptionStatusLabel(subscription.status)}
-              </Badge>
+              <StatusBadge
+                {...subscriptionDisplayStatus(subscription.status)}
+              />
             </div>
 
             <UserLinkRow
@@ -214,8 +174,10 @@ function SubscriptionDetailSheet({
               <span className="text-muted-foreground">Cycle Dates</span>
               <span className="flex items-center gap-1 text-xs">
                 <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
-                {formatDate(subscription.startDate)} →{" "}
-                {formatDate(subscription.endDate)}
+                <OperatorTime
+                  value={subscription.startDate}
+                  kind="date"
+                /> → <OperatorTime value={subscription.endDate} kind="date" />
               </span>
             </div>
 
@@ -365,9 +327,11 @@ const SUBSCRIPTION_COLUMNS: ResponsiveColumn<EnrichedSubscriptionItem>[] = [
     header: "Period",
     cell: (subscription) => (
       <div className="text-sm">
-        <p>{formatDate(subscription.startDate)}</p>
+        <p>
+          <OperatorTime value={subscription.startDate} kind="date" />
+        </p>
         <p className="text-muted-foreground/70">
-          to {formatDate(subscription.endDate)}
+          to <OperatorTime value={subscription.endDate} kind="date" />
         </p>
       </div>
     ),
@@ -376,13 +340,7 @@ const SUBSCRIPTION_COLUMNS: ResponsiveColumn<EnrichedSubscriptionItem>[] = [
     key: "status",
     header: "Status",
     cell: (subscription) => (
-      <Badge
-        className={`${getStatusColor(subscription.status)} gap-1`}
-        variant="secondary"
-      >
-        {getStatusIcon(subscription.status)}
-        {subscriptionStatusLabel(subscription.status)}
-      </Badge>
+      <StatusBadge {...subscriptionDisplayStatus(subscription.status)} />
     ),
   },
 ];
@@ -434,8 +392,6 @@ export function SubscriptionsPage({
   const subscriptions = data?.subscriptions ?? [];
   const stats = data?.stats ?? EMPTY_STATS;
   const total = data?.pagination.total ?? 0;
-  const hasMore = data?.pagination.hasMore ?? false;
-  const totalPages = Math.ceil(total / LIMIT);
 
   return (
     <div className="space-y-6">
@@ -590,30 +546,12 @@ export function SubscriptionsPage({
         </CardContent>
       </Card>
 
-      {totalPages > 1 && (
-        <div className="flex items-center justify-between">
-          <div className="text-sm text-muted-foreground">
-            Showing {(page - 1) * LIMIT + 1} to {Math.min(page * LIMIT, total)}{" "}
-            of {total}
-          </div>
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              disabled={page <= 1}
-              onClick={() => setPage(page - 1)}
-            >
-              Previous
-            </Button>
-            <Button
-              variant="outline"
-              disabled={!hasMore}
-              onClick={() => setPage(page + 1)}
-            >
-              Next
-            </Button>
-          </div>
-        </div>
-      )}
+      <TablePagination
+        page={page}
+        pageSize={LIMIT}
+        total={total}
+        onPageChange={setPage}
+      />
 
       <SubscriptionDetailSheet
         key={selectedSubscription?.id ?? "none"}

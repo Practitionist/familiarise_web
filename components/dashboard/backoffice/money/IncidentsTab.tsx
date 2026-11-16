@@ -1,44 +1,71 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
+import { z } from "zod";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PageHeader } from "@/components/dashboard/PageScaffold";
-import type {
-  IncidentListRow,
-  SuggestedWindow,
-} from "@/lib/backoffice/incidents-read";
-import { useZonedFormat } from "@/lib/time/zoned-format";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { TablePagination } from "@/components/dashboard/TablePagination";
+import { readListBody } from "@/lib/backoffice/money-list-schemas";
+import { incidentPhase } from "@/lib/labels/backoffice-labels";
+import { OperatorTime } from "@/lib/time/operator-time";
+import {
+  fromOperatorWallTime,
+  toOperatorWallTime,
+} from "@/lib/time/operator-zone";
 import { ReasonDialog } from "./ReasonDialog";
 import { useOpsDoor } from "./ops-door";
 
 const QUERY_KEY = ["money-incidents"] as const;
-const WHEN = "d MMM yyyy, hh:mm a";
+const count = z.number().int().nonnegative();
 
-async function fetchIncidents(): Promise<{
-  incidents: IncidentListRow[];
-  suggestions: SuggestedWindow[];
-}> {
-  const res = await fetch("/api/admin/incidents");
-  if (!res.ok) throw new Error("Failed to load");
-  return res.json() as Promise<Awaited<ReturnType<typeof fetchIncidents>>>;
+/** The route's body; a malformed one takes the error path. */
+export const incidentsPageSchema = z.object({
+  incidents: z.array(
+    z.object({
+      id: z.string(),
+      startsAt: z.string(),
+      endsAt: z.string(),
+      reason: z.string(),
+      declaredBy: z.string().nullable(),
+      createdAt: z.string(),
+      enumeratedAt: z.string().nullable(),
+      reportedAt: z.string().nullable(),
+      settledAt: z.string().nullable(),
+      remedies: z.object({
+        due: count,
+        done: count,
+        rebooked: count,
+        failed: count,
+      }),
+    }),
+  ),
+  total: count,
+  page: z.number().int().positive(),
+  pageSize: z.number().int().positive(),
+  suggestions: z.array(
+    z.object({ startsAt: z.string(), endsAt: z.string(), signals: count }),
+  ),
+});
+type IncidentListRow = z.infer<typeof incidentsPageSchema>["incidents"][number];
+
+async function fetchIncidents(page: number) {
+  const res = await fetch(`/api/admin/incidents?page=${page}`);
+  return readListBody(res, incidentsPageSchema, "Failed to load");
 }
 
-/** An ISO instant as the browser's `datetime-local` value. */
-function toLocalInput(iso: string): string {
-  const d = new Date(iso);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-function statusOf(i: IncidentListRow): string {
-  if (i.settledAt) return "Settled";
-  if (i.enumeratedAt) return "Remedies in progress";
-  return "Voiding sessions";
+/** An IST window as typed, or null while either end is empty or malformed. */
+export function incidentWindowBody(startsAt: string, endsAt: string) {
+  const start = fromOperatorWallTime(startsAt);
+  const end = fromOperatorWallTime(endsAt);
+  return start && end
+    ? { startsAt: start.toISOString(), endsAt: end.toISOString() }
+    : null;
 }
 
 /**
@@ -48,14 +75,15 @@ function statusOf(i: IncidentListRow): string {
 export function IncidentsTab({
   canDeclare,
 }: Readonly<{ canDeclare: boolean }>) {
-  const zoned = useZonedFormat();
+  const [page, setPage] = useState(1);
   const [startsAt, setStartsAt] = useState("");
   const [endsAt, setEndsAt] = useState("");
   const [declaring, setDeclaring] = useState(false);
   const [settling, setSettling] = useState<IncidentListRow | null>(null);
   const { data } = useQuery({
-    queryKey: QUERY_KEY,
-    queryFn: fetchIncidents,
+    queryKey: [...QUERY_KEY, page],
+    queryFn: () => fetchIncidents(page),
+    placeholderData: keepPreviousData,
     staleTime: 15_000,
   });
   const declare = useOpsDoor({
@@ -68,7 +96,8 @@ export function IncidentsTab({
     invalidate: [QUERY_KEY],
     onDone: () => setSettling(null),
   });
-  const windowReady = startsAt !== "" && endsAt !== "";
+  const declared = incidentWindowBody(startsAt, endsAt);
+  const windowReady = declared !== null;
 
   return (
     <div className="space-y-6">
@@ -83,7 +112,7 @@ export function IncidentsTab({
           </CardHeader>
           <CardContent className="flex flex-wrap items-end gap-4">
             <div className="space-y-1.5">
-              <Label htmlFor="incident-starts">Started</Label>
+              <Label htmlFor="incident-starts">Started (IST)</Label>
               <Input
                 id="incident-starts"
                 type="datetime-local"
@@ -92,7 +121,7 @@ export function IncidentsTab({
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="incident-ends">Ended</Label>
+              <Label htmlFor="incident-ends">Ended (IST)</Label>
               <Input
                 id="incident-ends"
                 type="datetime-local"
@@ -130,16 +159,16 @@ export function IncidentsTab({
                   className="flex flex-wrap items-center justify-between gap-3 py-2 text-sm"
                 >
                   <span>
-                    {zoned(s.startsAt, WHEN)} to {zoned(s.endsAt, WHEN)}:{" "}
-                    {s.signals} signals
+                    <OperatorTime value={s.startsAt} /> to{" "}
+                    <OperatorTime value={s.endsAt} />: {s.signals} signals
                   </span>
                   {canDeclare && (
                     <Button
                       variant="outline"
                       size="sm"
                       onClick={() => {
-                        setStartsAt(toLocalInput(s.startsAt));
-                        setEndsAt(toLocalInput(s.endsAt));
+                        setStartsAt(toOperatorWallTime(s.startsAt));
+                        setEndsAt(toOperatorWallTime(s.endsAt));
                       }}
                     >
                       Declare this window
@@ -169,10 +198,13 @@ export function IncidentsTab({
                   className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm"
                 >
                   <div className="min-w-0 flex-1">
-                    <p className="font-medium">
-                      {zoned(i.startsAt, WHEN)} to {zoned(i.endsAt, WHEN)} ·{" "}
-                      {statusOf(i)}
-                    </p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="font-medium">
+                        <OperatorTime value={i.startsAt} /> to{" "}
+                        <OperatorTime value={i.endsAt} />
+                      </p>
+                      <StatusBadge {...incidentPhase(i)} size="sm" />
+                    </div>
                     <p className="text-muted-foreground">{i.reason}</p>
                     <p className="text-muted-foreground">
                       Remedies: {i.remedies.due} due, {i.remedies.done} done,{" "}
@@ -190,6 +222,13 @@ export function IncidentsTab({
               ))}
             </ul>
           )}
+          <TablePagination
+            className="pt-4"
+            page={page}
+            pageSize={data?.pageSize ?? 20}
+            total={data?.total ?? 0}
+            onPageChange={setPage}
+          />
         </CardContent>
       </Card>
       <ReasonDialog
@@ -201,13 +240,10 @@ export function IncidentsTab({
         pending={declare.isPending}
         canConfirm={windowReady}
         onConfirm={(reason) =>
+          declared &&
           declare.mutate({
             url: "/api/admin/incidents",
-            body: {
-              startsAt: new Date(startsAt).toISOString(),
-              endsAt: new Date(endsAt).toISOString(),
-              reason,
-            },
+            body: { ...declared, reason },
           })
         }
       />

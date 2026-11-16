@@ -57,6 +57,7 @@ jest.mock("../../lib/prisma", () => ({
                 ? u.role === where.role
                 : where.role.in.includes(u.role))),
         ),
+      count: async () => mockUsers.length,
     },
     opsActionLog: {
       findMany: (args: unknown) => mockOpsFindMany(args),
@@ -76,9 +77,12 @@ beforeEach(() => {
   mockOpsFindMany.mockClear();
 });
 
+const spendRequest = () =>
+  new NextRequest("http://localhost/api/admin/support-spend");
+
 describe("GET /api/admin/support-spend", () => {
   it("gives staff their own row only", async () => {
-    const res = await getSpend();
+    const res = await getSpend(spendRequest());
     expect(res.status).toBe(200);
     expect(res.headers.get("Cache-Control")).toBe("no-store");
     const body = (await res.json()) as { operators: { userId: string }[] };
@@ -93,7 +97,7 @@ describe("GET /api/admin/support-spend", () => {
   it("gives an admin every operator", async () => {
     mockViewer.id = "admin-1";
     mockViewer.role = "ADMIN";
-    const body = (await (await getSpend()).json()) as {
+    const body = (await (await getSpend(spendRequest())).json()) as {
       operators: { userId: string }[];
     };
     const ids = body.operators.map((o) => o.userId);
@@ -105,7 +109,7 @@ describe("GET /api/admin/support-spend", () => {
 
   it("refuses a non-operator", async () => {
     mockViewer.role = "CONSULTANT";
-    expect((await getSpend()).status).toBe(403);
+    expect((await getSpend(spendRequest())).status).toBe(403);
     expect(mockOpsFindMany).not.toHaveBeenCalled();
   });
 });

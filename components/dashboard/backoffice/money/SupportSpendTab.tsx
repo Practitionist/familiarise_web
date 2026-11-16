@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useState, type ReactNode } from "react";
+import { z } from "zod";
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,31 +12,97 @@ import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
+import { TablePagination } from "@/components/dashboard/TablePagination";
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
 import { AUDIT_TAB, moneyHubHref } from "@/lib/backoffice/money-tabs";
+import {
+  readListBody,
+  targetRefSchema,
+} from "@/lib/backoffice/money-list-schemas";
 import type {
   SupportSpendOperator,
   SupportSpendPayment,
   SupportSpendReport,
 } from "@/lib/backoffice/support-spend-types";
-import type { OpsLogFilters } from "@/schemas/ops-log";
+import { OpsLogFiltersSchema, type OpsLogFilters } from "@/schemas/ops-log";
+import { OperatorTime } from "@/lib/time/operator-time";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { TargetCell } from "./TargetCell";
 
 const inr = (paise: number) => formatCurrencyAmount(paise, "INR");
 const plural = (count: number, noun: string) =>
   `${count} ${noun}${count === 1 ? "" : "s"}`;
 
-async function fetchReport(): Promise<SupportSpendReport> {
-  const res = await fetch("/api/admin/support-spend");
-  if (!res.ok) throw new Error("Failed to load support spend");
-  return res.json() as Promise<SupportSpendReport>;
+const count = z.number().int().nonnegative();
+const paise = z.number();
+
+/** The route's body; a malformed one takes the error path. */
+export const supportSpendReportSchema = z.object({
+  operators: z.array(
+    z.object({
+      userId: z.string(),
+      name: z.string(),
+      role: z.string(),
+      capped: z.boolean(),
+      refunds: z.object({
+        istDayPaise: paise,
+        rolling24hPaise: paise,
+        rolling30dPaise: paise,
+        count30d: count,
+        platformCancel30dPaise: paise,
+        platformCancelUnsplit30dPaise: paise,
+      }),
+      remainingDailyCapPaise: paise.nullable(),
+      holds: z.object({
+        appliedIstDay: count,
+        applied30d: count,
+        released30d: count,
+        heldPaise30d: paise,
+        appliedWithoutAmount30d: count,
+      }),
+      payments: z.array(
+        z.object({
+          paymentId: z.string(),
+          target: targetRefSchema.nullable(),
+          supportCommittedPaise: paise,
+          platformCancelPaise: paise,
+          remainingPerPaymentPaise: paise.nullable(),
+          holdsApplied: count,
+        }),
+      ),
+      audit: z.object({
+        supportRefunds: OpsLogFiltersSchema,
+        platformCancels: OpsLogFiltersSchema,
+        holdsApplied: OpsLogFiltersSchema,
+      }),
+    }),
+  ),
+  total: count,
+  page: z.number().int().positive(),
+  pageSize: z.number().int().positive(),
+  windows: z.object({
+    istDayStart: z.string(),
+    rolling24hStart: z.string(),
+    rolling30dStart: z.string(),
+  }),
+  caps: z.object({ perPaymentPaise: paise, rolling24hPaise: paise }),
+  fetchedAt: z.string(),
+});
+
+async function fetchReport(page: number): Promise<SupportSpendReport> {
+  const res = await fetch(`/api/admin/support-spend?page=${page}`);
+  return readListBody(
+    res,
+    supportSpendReportSchema,
+    "Failed to load support spend",
+  );
 }
 
 function Figure({
   label,
   value,
   hint,
-}: Readonly<{ label: string; value: string; hint?: string }>) {
+}: Readonly<{ label: string; value: string; hint?: ReactNode }>) {
   return (
     <div className="rounded-md border p-3">
       <p className="text-xs text-muted-foreground">{label}</p>
@@ -54,12 +122,20 @@ function paymentColumns(
       header: "Payment",
       primary: true,
       cell: (p) => (
-        <Link
-          className="underline"
-          href={`${basePath}/payments/${p.paymentId}`}
-        >
-          {p.paymentId}
-        </Link>
+        <div className="min-w-0 space-y-1">
+          <TargetCell
+            kind="Payment"
+            id={p.paymentId}
+            target={p.target}
+            basePath={basePath}
+          />
+          <Link
+            className="text-xs underline"
+            href={`${basePath}/payments/${p.paymentId}`}
+          >
+            Open payment
+          </Link>
+        </div>
       ),
     },
     {
@@ -118,7 +194,11 @@ function OperatorCard({
           <Figure
             label="Refunds, last 24 hours (limit basis)"
             value={inr(refunds.rolling24hPaise)}
-            hint={`Since ${new Date(report.windows.rolling24hStart).toLocaleString()}`}
+            hint={
+              <>
+                Since <OperatorTime value={report.windows.rolling24hStart} />
+              </>
+            }
           />
           <Figure
             label="Daily limit left (last 24 hours)"
@@ -200,11 +280,16 @@ export function SupportSpendTab({
   initial,
 }: Readonly<{ initial: SupportSpendReport }>) {
   const { basePath, role } = useBackofficeCapability();
-  const { data } = useQuery({
-    queryKey: ["money-support-spend"],
-    queryFn: fetchReport,
-    initialData: initial,
-    initialDataUpdatedAt: new Date(initial.fetchedAt).getTime(),
+  const [page, setPage] = useState(1);
+  const seeded = page === initial.page;
+  const { data = initial } = useQuery({
+    queryKey: ["money-support-spend", page],
+    queryFn: () => fetchReport(page),
+    initialData: seeded ? initial : undefined,
+    initialDataUpdatedAt: seeded
+      ? new Date(initial.fetchedAt).getTime()
+      : undefined,
+    placeholderData: keepPreviousData,
     staleTime: 30_000,
   });
   return (
@@ -229,6 +314,12 @@ export function SupportSpendTab({
           />
         ))
       )}
+      <TablePagination
+        page={page}
+        pageSize={data.pageSize}
+        total={data.total}
+        onPageChange={setPage}
+      />
     </div>
   );
 }

@@ -61,6 +61,7 @@ describe("the money list schemas name the field the model declares", () => {
     ["Payment", "paymentListItemSchema"],
     ["Refund", "refundListItemSchema"],
     ["Dispute", "disputeListItemSchema"],
+    ["ConsultantPayout", "payoutListItemSchema"],
   ])("%s matches %s", (model, schema) => {
     expect(
       zodMoneyField(read("lib/backoffice/money-list-schemas.ts"), schema),
@@ -91,7 +92,6 @@ describe("client money interfaces name the field the schema declares", () => {
     // #1527 — the support case's payment card (types/tickets.ts retired).
     ["Payment", "types/support-case.ts", "CasePayment"],
     ["Payment", "types/subscriptions.ts", "SubscriptionListItem"],
-    ["ConsultantPayout", "types/payouts.ts", "Payout"],
   ])("%s (schema) matches %s → %s", (model, file, iface) => {
     expect(interfaceMoneyField(read(file), iface)).toBe(
       schemaMoneyField(model),

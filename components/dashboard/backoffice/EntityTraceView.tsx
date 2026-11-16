@@ -10,8 +10,16 @@ import {
 } from "@/components/dashboard/PageScaffold";
 import { KeyValueList, Section } from "@/components/dashboard/Section";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { PersonCell } from "@/components/dashboard/backoffice/PersonCell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   ResponsiveTable,
   type ResponsiveColumn,
@@ -31,7 +39,7 @@ import { humanizeEnum } from "@/lib/ui/tone";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
 export type EntityTraceViewProps =
-  | { mode: "lookup"; invalid: boolean }
+  | { mode: "lookup"; invalid: boolean; kind?: TraceKind; id?: string }
   | { mode: "missing"; kind: TraceKind; id: string }
   | { mode: "user"; candidates: TraceCandidates }
   | { mode: "trace"; trace: EntityTrace; seesSystemEvents: boolean };
@@ -81,11 +89,41 @@ function ExternalLink({
   );
 }
 
+/** What the lookup form shows: the kind and id the page is tracing now. */
+export function lookupDefaults(props: EntityTraceViewProps): {
+  kind: TraceKind;
+  id: string;
+} {
+  switch (props.mode) {
+    case "trace":
+      return { kind: props.trace.kind, id: props.trace.id };
+    case "user":
+      return { kind: "user", id: props.candidates.userId };
+    case "missing":
+      return { kind: props.kind, id: props.id };
+    case "lookup":
+      return { kind: props.kind ?? "payment", id: props.id ?? "" };
+  }
+}
+
+const KIND_OPTIONS: { value: TraceKind; label: string }[] = [
+  { value: "payment", label: "Payment id" },
+  { value: "appointment", label: "Booking id" },
+  { value: "user", label: "User id" },
+];
+
 /** A GET form, so a trace is a shareable URL and needs no client state. */
 function LookupForm({
   basePath,
   invalid,
-}: Readonly<{ basePath: string; invalid: boolean }>) {
+  kind,
+  id,
+}: Readonly<{
+  basePath: string;
+  invalid: boolean;
+  kind: TraceKind;
+  id: string;
+}>) {
   return (
     <Section title="Look up" variant="card">
       <form
@@ -97,16 +135,18 @@ function LookupForm({
           <label htmlFor="trace-kind" className="text-xs text-muted-foreground">
             Kind
           </label>
-          <select
-            id="trace-kind"
-            name="kind"
-            defaultValue="payment"
-            className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-          >
-            <option value="payment">Payment id</option>
-            <option value="appointment">Booking id</option>
-            <option value="user">User id</option>
-          </select>
+          <Select name="kind" defaultValue={kind}>
+            <SelectTrigger id="trace-kind" className="h-9 w-40">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {KIND_OPTIONS.map((o) => (
+                <SelectItem key={o.value} value={o.value}>
+                  {o.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
         <div className="flex min-w-72 flex-1 flex-col gap-1">
           <label htmlFor="trace-id" className="text-xs text-muted-foreground">
@@ -115,6 +155,7 @@ function LookupForm({
           <Input
             id="trace-id"
             name="id"
+            defaultValue={id}
             required
             autoComplete="off"
             aria-invalid={invalid}
@@ -241,53 +282,69 @@ function TraceTimeline({
   trace: EntityTrace;
   seesSystemEvents: boolean;
 }>) {
+  // Four stacked columns, and a Detail that wraps long ids, so the table fits its card.
   const columns: ResponsiveColumn<TraceRow>[] = [
     {
       key: "when",
       header: "When",
       primary: true,
-      cell: (r) => <span className="whitespace-nowrap">{when(r.at)}</span>,
+      className: "w-44 align-top",
+      cell: (r) => <span className="text-xs sm:text-sm">{when(r.at)}</span>,
     },
-    { key: "source", header: "Source", cell: (r) => SOURCE_LABEL[r.source] },
-    { key: "status", header: "What happened", cell: (r) => r.status },
+    {
+      key: "status",
+      header: "What happened",
+      className: "align-top",
+      cell: (r) => (
+        <div className="min-w-0">
+          <p className="text-sm text-foreground">{r.status}</p>
+          <p className="text-xs text-muted-foreground">
+            {SOURCE_LABEL[r.source]} · {r.actor ?? "System"}
+          </p>
+        </div>
+      ),
+    },
     {
       key: "amount",
       header: "Amount",
+      className: "whitespace-nowrap align-top",
       cell: (r) =>
         r.amountPaise === null
           ? "—"
           : formatCurrencyAmount(r.amountPaise, r.currency ?? "INR"),
     },
-    { key: "actor", header: "Actor", cell: (r) => r.actor ?? "System" },
     {
       key: "detail",
       header: "Detail",
+      className: "max-w-md align-top",
       cell: (r) => (
-        <span className="break-words text-xs text-muted-foreground">
-          {r.detail ?? ""}
-        </span>
-      ),
-    },
-    {
-      key: "links",
-      header: "Links",
-      cell: (r) => (
-        <span className="flex flex-wrap gap-2 text-xs">
-          {r.sentryHref && (
-            <ExternalLink href={r.sentryHref}>Sentry</ExternalLink>
-          )}
-          {r.source === "opsAction" && (
-            <Link
-              href={`${basePath}/money/audit?targetId=${encodeURIComponent(r.entityId)}`}
-              className="underline-offset-4 hover:underline"
-            >
-              Audit
-            </Link>
-          )}
-        </span>
+        <div className="min-w-0 space-y-1 text-xs text-muted-foreground">
+          {r.detail && <p className="[overflow-wrap:anywhere]">{r.detail}</p>}
+          <span className="flex flex-wrap gap-2">
+            {r.sentryHref && (
+              <ExternalLink href={r.sentryHref}>Sentry</ExternalLink>
+            )}
+            {r.source === "opsAction" && (
+              <Link
+                href={`${basePath}/money/audit?targetId=${encodeURIComponent(r.entityId)}`}
+                className="underline-offset-4 hover:underline"
+              >
+                Audit
+              </Link>
+            )}
+          </span>
+        </div>
       ),
     },
   ];
+  const bookingLink = (id: string) => (
+    <Link
+      href={bookingHref(basePath, id)}
+      className="font-mono text-xs underline-offset-4 hover:underline"
+    >
+      {id}
+    </Link>
+  );
   return (
     <>
       <Section title="Summary" variant="card">
@@ -295,7 +352,12 @@ function TraceTimeline({
           items={[
             {
               label: KIND_LABEL[trace.kind],
-              value: <span className="font-mono text-xs">{trace.id}</span>,
+              value:
+                trace.kind === "appointment" ? (
+                  bookingLink(trace.id)
+                ) : (
+                  <span className="font-mono text-xs">{trace.id}</span>
+                ),
             },
             {
               label: "Payments",
@@ -316,27 +378,25 @@ function TraceTimeline({
                   </span>
                 ),
             },
-            {
-              label: "Booking",
-              value: trace.appointmentId ? (
-                <Link
-                  href={bookingHref(basePath, trace.appointmentId)}
-                  className="font-mono text-xs underline-offset-4 hover:underline"
-                >
-                  {trace.appointmentId}
-                </Link>
-              ) : (
-                "None"
-              ),
-            },
+            // A booking trace names its booking in the first row.
+            ...(trace.kind === "appointment"
+              ? []
+              : [
+                  {
+                    label: "Booking",
+                    value: trace.appointmentId
+                      ? bookingLink(trace.appointmentId)
+                      : "None",
+                  },
+                ]),
             {
               label: "Customer",
-              value: trace.userId ? (
+              value: trace.customer ? (
                 <Link
-                  href={`${basePath}/users/${trace.userId}`}
-                  className="underline-offset-4 hover:underline"
+                  href={`${basePath}/users/${trace.customer.id}`}
+                  className="block underline-offset-4 hover:underline"
                 >
-                  Open User 360
+                  <PersonCell person={trace.customer} />
                 </Link>
               ) : (
                 "Unknown"
@@ -377,6 +437,7 @@ function TraceTimeline({
 /** The read-only entity trace: one payment's or booking's life as a timeline. */
 export function EntityTraceView(props: Readonly<EntityTraceViewProps>) {
   const { basePath } = useBackofficeCapability();
+  const defaults = lookupDefaults(props);
   let body: ReactNode = null;
   if (props.mode === "missing") {
     body = (
@@ -403,8 +464,11 @@ export function EntityTraceView(props: Readonly<EntityTraceViewProps>) {
       />
       <DashboardContent>
         <LookupForm
+          // A new trace remounts the form, so its defaults follow the URL.
+          key={`${defaults.kind}:${defaults.id}`}
           basePath={basePath}
           invalid={props.mode === "lookup" && props.invalid}
+          {...defaults}
         />
         {body}
       </DashboardContent>

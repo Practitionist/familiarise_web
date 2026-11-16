@@ -1,8 +1,15 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "next/navigation";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
+import { z } from "zod";
 import {
   FileText,
   CheckCircle2,
@@ -44,6 +51,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { readListBody } from "@/lib/backoffice/money-list-schemas";
+import { istDateKey, istFinancialYearLabel } from "@/lib/compliance/ist-period";
+import { replaceUrl } from "@/lib/navigation/history";
 import { formatCurrencyAmount as formatCurrencyFromMinorUnit } from "@/utils/formatting";
 
 function StatCard({
@@ -92,19 +102,68 @@ interface QuarterSummary {
   unfiledRecords: number;
 }
 
-interface ConsultantBreakdown {
-  deducteeKey?: string;
-  consultantProfileId: string | null;
-  organizationId?: string | null;
-  userId: string | null;
-  consultantName: string | null;
-  consultantEmail: string | null;
-  panLast4: string | null;
-  panVerified: boolean;
-  totalCredited: number;
-  totalTDS: number;
-  recordCount: number;
-  allFiled: boolean;
+const consultantBreakdownSchema = z.object({
+  deducteeKey: z.string(),
+  consultantProfileId: z.string().nullable(),
+  organizationId: z.string().nullable(),
+  userId: z.string().nullable(),
+  consultantName: z.string().nullable(),
+  consultantEmail: z.string().nullable(),
+  panLast4: z.string().nullable(),
+  panVerified: z.boolean(),
+  /** Paise. */
+  totalCredited: z.number(),
+  /** Paise. */
+  totalTDS: z.number(),
+  recordCount: z.number().int().nonnegative(),
+  allFiled: z.boolean(),
+});
+type ConsultantBreakdown = z.infer<typeof consultantBreakdownSchema>;
+
+/** One page of the consultants view; `deducteeCount` counts every deductee in the year. */
+export const consultantsPageSchema = z.object({
+  financialYear: z.string(),
+  consultants: z.array(consultantBreakdownSchema),
+  total: z.number().int().nonnegative(),
+  deducteeCount: z.number().int().nonnegative(),
+  page: z.number().int().positive(),
+  pageSize: z.number().int().positive(),
+});
+
+const CONSULTANTS_PAGE_SIZE = 25;
+const EXPORT_PAGE_SIZE = 100;
+
+function consultantsUrl(
+  fy: string,
+  page: number,
+  pageSize: number,
+  filing: string,
+  q: string,
+): string {
+  const params = new URLSearchParams({
+    fy,
+    view: "consultants",
+    page: String(page),
+    pageSize: String(pageSize),
+    filing,
+  });
+  if (q.trim()) params.set("q", q.trim());
+  return `/api/admin/tds?${params}`;
+}
+
+async function fetchConsultantsPage(
+  fy: string,
+  page: number,
+  pageSize: number,
+  filing: string,
+  q: string,
+) {
+  const res = await fetch(consultantsUrl(fy, page, pageSize, filing, q));
+  return readListBody(
+    res,
+    consultantsPageSchema,
+    "Failed to fetch consultant breakdown",
+  );
 }
 
 const QUARTER_LABELS: Record<number, string> = {
@@ -114,14 +173,9 @@ const QUARTER_LABELS: Record<number, string> = {
   4: "Q4 (Jan–Mar)",
 };
 
-function getCurrentFY(): string {
-  const now = new Date();
-  const month = now.getMonth() + 1;
-  const year = now.getFullYear();
-  if (month >= 4) {
-    return `${year}-${String(year + 1).slice(2)}`;
-  }
-  return `${year - 1}-${String(year).slice(2)}`;
+/** The financial year open in India now; 1 April starts at 00:00 IST. */
+export function getCurrentFY(now: Date = new Date()): string {
+  return istFinancialYearLabel(now);
 }
 
 function getRecentFYs(): string[] {
@@ -147,9 +201,8 @@ function RecordFilingDialog({
 }>) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [filingDate, setFilingDate] = useState(() =>
-    new Date().toISOString().slice(0, 10),
-  );
+  // Today in India, which is the date a filing made now is recorded under.
+  const [filingDate, setFilingDate] = useState(() => istDateKey(new Date()));
   const [ackNumber, setAckNumber] = useState("");
   const [reason, setReason] = useState("");
   const [reportedInForm26Q, setReportedInForm26Q] = useState(true);
@@ -209,7 +262,7 @@ function RecordFilingDialog({
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <Label htmlFor="tds-filing-date">Filing Date *</Label>
+              <Label htmlFor="tds-filing-date">Filing date (IST) *</Label>
               <Input
                 id="tds-filing-date"
                 type="date"
@@ -300,9 +353,22 @@ function RecordFilingDialog({
 export default function AdminTDSPage() {
   const { basePath, can } = useBackofficeCapability();
   const canManage = can("tds.read") && basePath.startsWith("/dashboard/admin");
-  const [selectedFY, setSelectedFY] = useState(getCurrentFY);
+  const [selectedFY, setSelectedFY] = useState(() => getCurrentFY());
   const [searchQuery, setSearchQuery] = useState("");
   const [filingFilter, setFilingFilter] = useState<string>("ALL");
+  const page = z.coerce
+    .number()
+    .int()
+    .positive()
+    .catch(1)
+    .parse(useSearchParams().get("page") ?? undefined);
+  // A new filter or year opens on its first page.
+  const toFirstPage = () => {
+    const next = new URLSearchParams(window.location.search);
+    if (!next.has("page")) return;
+    next.delete("page");
+    replaceUrl(next.size ? `?${next}` : window.location.pathname);
+  };
   const [filingQuarter, setFilingQuarter] = useState<number | null>(null);
   const recentFYs = getRecentFYs();
 
@@ -322,47 +388,51 @@ export default function AdminTDSPage() {
     data: consultantData,
     isLoading: loadingConsultants,
     isError: errorConsultants,
-  } = useQuery<{
-    financialYear: string;
-    consultants: ConsultantBreakdown[];
-  }>({
-    queryKey: ["admin-tds-consultants", selectedFY],
-    queryFn: async () => {
-      const res = await fetch(
-        `/api/admin/tds?fy=${selectedFY}&view=consultants`,
-      );
-      if (!res.ok) throw new Error("Failed to fetch consultant breakdown");
-      return res.json();
-    },
+  } = useQuery({
+    queryKey: [
+      "admin-tds-consultants",
+      selectedFY,
+      page,
+      filingFilter,
+      searchQuery.trim(),
+    ],
+    queryFn: () =>
+      fetchConsultantsPage(
+        selectedFY,
+        page,
+        CONSULTANTS_PAGE_SIZE,
+        filingFilter,
+        searchQuery,
+      ),
+    placeholderData: keepPreviousData,
   });
 
   const quarters = quarterlyData?.quarters || [];
   const totalTDS = quarters.reduce((s, q) => s + q.totalTDSDeducted, 0);
   const totalCredited = quarters.reduce((s, q) => s + q.totalAmountCredited, 0);
   const totalUnfiled = quarters.reduce((s, q) => s + q.unfiledRecords, 0);
-  const totalConsultants = new Set(
-    (consultantData?.consultants || []).map(
-      (c) => c.consultantProfileId ?? c.userId ?? "",
-    ),
-  ).size;
+  const totalConsultants = consultantData?.deducteeCount ?? 0;
+  const consultants = consultantData?.consultants ?? [];
+  const matchingTotal = consultantData?.total ?? 0;
 
-  const filteredConsultants = useMemo(() => {
-    const all = consultantData?.consultants ?? [];
-    return all.filter((c) => {
-      if (filingFilter === "FILED" && !c.allFiled) return false;
-      if (filingFilter === "PENDING" && c.allFiled) return false;
-      if (!searchQuery.trim()) return true;
-      const needle = searchQuery.trim().toLowerCase();
-      return (
-        (c.consultantName ?? "").toLowerCase().includes(needle) ||
-        (c.consultantEmail ?? "").toLowerCase().includes(needle) ||
-        (c.panLast4 ?? "").toLowerCase().includes(needle) ||
-        (c.consultantProfileId ?? "").toLowerCase().includes(needle)
+  // The export covers every matching deductee, read a page of 100 at a time.
+  const exportAllMatching = async (): Promise<ConsultantBreakdown[]> => {
+    const all: ConsultantBreakdown[] = [];
+    for (let p = 1; ; p++) {
+      const batch = await fetchConsultantsPage(
+        selectedFY,
+        p,
+        EXPORT_PAGE_SIZE,
+        filingFilter,
+        searchQuery,
       );
-    });
-  }, [consultantData?.consultants, filingFilter, searchQuery]);
+      all.push(...batch.consultants);
+      if (p * EXPORT_PAGE_SIZE >= batch.total) return all;
+    }
+  };
 
-  const handleExportCsv = () => {
+  const handleExportCsv = async () => {
+    const filteredConsultants = await exportAllMatching();
     const sanitizeCsvCell = (value: string) => {
       const isNumeric = /^[+-]?\d+(\.\d+)?$/.test(value.trim());
       const safe =
@@ -412,7 +482,13 @@ export default function AdminTDSPage() {
         subtitle="Track tax deducted at source, Challan / BSR filings, Form 26Q (Form 140), and Form 16A (Form 131) compliance"
         actions={
           <div className="flex items-center gap-2">
-            <Select value={selectedFY} onValueChange={setSelectedFY}>
+            <Select
+              value={selectedFY}
+              onValueChange={(fy) => {
+                setSelectedFY(fy);
+                toFirstPage();
+              }}
+            >
               <SelectTrigger
                 aria-label="Select financial year"
                 className="h-9 w-[140px]"
@@ -430,8 +506,8 @@ export default function AdminTDSPage() {
             <Button
               size="sm"
               variant="outline"
-              onClick={handleExportCsv}
-              disabled={filteredConsultants.length === 0}
+              onClick={() => void handleExportCsv()}
+              disabled={matchingTotal === 0}
             >
               <Download className="mr-1.5 h-4 w-4" /> Export CSV
             </Button>
@@ -550,10 +626,10 @@ export default function AdminTDSPage() {
           description="Experts with statutory withholding in the selected financial year."
           isLoading={loadingConsultants}
           isError={errorConsultants}
-          items={filteredConsultants}
-          total={filteredConsultants.length}
-          page={1}
-          perPage={Math.max(25, filteredConsultants.length)}
+          items={consultants}
+          total={matchingTotal}
+          page={page}
+          perPage={CONSULTANTS_PAGE_SIZE}
           rowKey={(c) =>
             c.deducteeKey ??
             c.consultantProfileId ??
@@ -567,7 +643,10 @@ export default function AdminTDSPage() {
                 label: "Search experts",
                 placeholder: "Search by expert name, email, or PAN last 4…",
                 value: searchQuery,
-                onChange: setSearchQuery,
+                onChange: (v) => {
+                  setSearchQuery(v);
+                  toFirstPage();
+                },
               }}
               selects={[
                 {
@@ -579,13 +658,17 @@ export default function AdminTDSPage() {
                     { value: "FILED", label: "Filed" },
                     { value: "PENDING", label: "Pending" },
                   ],
-                  onChange: setFilingFilter,
+                  onChange: (v) => {
+                    setFilingFilter(v);
+                    toFirstPage();
+                  },
                 },
               ]}
               canClear={Boolean(searchQuery) || filingFilter !== "ALL"}
               onClear={() => {
                 setSearchQuery("");
                 setFilingFilter("ALL");
+                toFirstPage();
               }}
             />
           }

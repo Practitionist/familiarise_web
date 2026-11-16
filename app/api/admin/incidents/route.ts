@@ -1,10 +1,11 @@
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import {
+  INCIDENTS_PAGE_SIZE,
   readIncidentSuggestions,
   readIncidents,
 } from "@/lib/backoffice/incidents-read";
@@ -14,13 +15,26 @@ import {
 } from "@/lib/booking/platform-incidents";
 
 /** The Incidents tab: declared incidents with remedy counts, and the read-only suggestions. */
-export async function GET() {
+export async function GET(req: NextRequest) {
   const auth = await requireBackofficeSurface("incidents.read");
   if (auth.error) return auth.error;
-  const incidents = await readIncidents();
+  const page = z.coerce
+    .number()
+    .int()
+    .positive()
+    .max(10_000)
+    .catch(1)
+    .parse(req.nextUrl.searchParams.get("page") ?? undefined);
+  const { rows, total } = await readIncidents(page);
   const suggestions = await readIncidentSuggestions();
   return NextResponse.json(
-    { incidents, suggestions },
+    {
+      incidents: rows,
+      total,
+      page,
+      pageSize: INCIDENTS_PAGE_SIZE,
+      suggestions,
+    },
     { headers: { "Cache-Control": "no-store" } },
   );
 }

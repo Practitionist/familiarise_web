@@ -3,6 +3,7 @@ import { OrgInvoiceStatus, type Prisma } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
+import { BOOKING_TITLE_SELECT, bookingRefOf } from "@/lib/data/booking-title";
 import { outstandingPaiseByInvoice } from "@/lib/payments/billing/org-invoice-settlement";
 
 const VALID_B2B_STATUSES: ReadonlySet<string> = new Set<string>(
@@ -56,6 +57,7 @@ export async function GET(request: NextRequest) {
 
       const [rows, total, agg, creditNotedCount] = await Promise.all([
         prisma.consumerInvoice.findMany({
+          relationLoadStrategy: "join",
           where,
           include: {
             creditNotes: {
@@ -64,6 +66,10 @@ export async function GET(request: NextRequest) {
                 creditNoteNumber: true,
                 totalPaise: true,
               },
+            },
+            // The booking the invoice bills, named in the same read.
+            payment: {
+              select: { appointment: { select: BOOKING_TITLE_SELECT } },
             },
           },
           orderBy: { issuedAt: "desc" },
@@ -103,6 +109,7 @@ export async function GET(request: NextRequest) {
         issuedAt: inv.issuedAt,
         status: inv.creditNotes.length > 0 ? "CREDIT_NOTED" : "ISSUED",
         creditNoteNumber: inv.creditNotes[0]?.creditNoteNumber ?? null,
+        booking: bookingRefOf(inv.payment.appointment),
         pdfUrl: `/api/payments/${inv.paymentId}/invoice/pdf`,
       }));
 

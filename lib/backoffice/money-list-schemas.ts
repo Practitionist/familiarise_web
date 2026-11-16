@@ -6,8 +6,12 @@
 import {
   AppointmentsType,
   DisputeStatus,
+  EarningStatus,
+  OpsActionProposalStatus,
   PaymentGateway,
   PaymentStatus,
+  PayoutMethod,
+  PayoutStatus,
   RefundStatus,
 } from "@prisma/client";
 import { z } from "zod";
@@ -27,12 +31,26 @@ export const bookingRefSchema = z.object({
   title: z.string(),
 });
 
+/** What a console target names: the person and the booking behind its id. */
+export const targetRefSchema = z.object({
+  person: personRefSchema.nullable(),
+  booking: bookingRefSchema.nullable(),
+});
+export type TargetRef = z.infer<typeof targetRefSchema>;
+
 const pageMeta = {
   total: z.number().int().nonnegative(),
   page: z.number().int().positive(),
   limit: z.number().int().positive(),
   totalPages: z.number().int().nonnegative(),
 };
+
+const offsetPagination = z.object({
+  total: z.number().int().nonnegative(),
+  limit: z.number().int().positive(),
+  offset: z.number().int().nonnegative(),
+  hasMore: z.boolean(),
+});
 
 export const paymentListItemSchema = z.object({
   id: z.string(),
@@ -115,6 +133,120 @@ export const disputeListPageSchema = z.object({
     wonCount: z.number().int().nonnegative(),
   }),
 });
+
+/** One expert payout as `getOperatorPayouts` returns it. */
+export const payoutListItemSchema = z.object({
+  id: z.string(),
+  consultantProfileId: z.string(),
+  consultantUserId: z.string(),
+  consultantName: z.string(),
+  consultantEmail: z.string().nullable(),
+  /** Paise. */
+  amount: z.number(),
+  currency: z.string(),
+  status: z.nativeEnum(PayoutStatus),
+  method: z.nativeEnum(PayoutMethod),
+  provider: z.nativeEnum(PaymentGateway),
+  kind: z.string().nullable(),
+  earningsCount: z.number().int().nonnegative(),
+  approvedAt: z.string().nullable(),
+  processedAt: z.string().nullable(),
+  failureReason: z.string().nullable(),
+  createdAt: z.string(),
+  /** The MSME statutory pay-by date; null for a vendor that is not MSME. */
+  mustPayByDate: z.string().nullable(),
+});
+export type PayoutListItem = z.infer<typeof payoutListItemSchema>;
+
+export const payoutListPageSchema = z.object({
+  payouts: z.array(payoutListItemSchema),
+  pagination: offsetPagination,
+});
+
+/** One organisation payout, with who created, org-approved and co-approved it. */
+export const orgPayoutListItemSchema = z.object({
+  id: z.string(),
+  organizationId: z.string(),
+  organization: z.object({ name: z.string(), slug: z.string() }),
+  /** Paise. */
+  amountPaise: z.number(),
+  currency: z.string(),
+  status: z.nativeEnum(PayoutStatus),
+  createdAt: z.string(),
+  platformApprovalRequiredAt: z.string().nullable(),
+  platformHeldAt: z.string().nullable(),
+  createdByUser: personRefSchema.nullable(),
+  orgApprovedByUser: personRefSchema.nullable(),
+  approvedByUser: personRefSchema.nullable(),
+});
+export type OrgPayoutListItem = z.infer<typeof orgPayoutListItemSchema>;
+
+export const orgPayoutListPageSchema = z.object({
+  payouts: z.array(orgPayoutListItemSchema),
+  pagination: offsetPagination,
+});
+
+/** One expert earning, with the payment it came from and who paid for what. */
+export const earningListItemSchema = z.object({
+  id: z.string(),
+  paymentId: z.string(),
+  consultantProfileId: z.string(),
+  /** Paise. */
+  consultantSharePaise: z.number(),
+  status: z.nativeEnum(EarningStatus),
+  holdUntil: z.string().nullable(),
+  consultantProfile: z.object({
+    userId: z.string(),
+    user: z.object({
+      name: z.string().nullable(),
+      email: z.string().nullable(),
+    }),
+  }),
+  payment: z
+    .object({
+      id: z.string(),
+      buyer: personRefSchema.nullable(),
+      booking: bookingRefSchema.nullable(),
+    })
+    .nullable(),
+});
+export type EarningListItem = z.infer<typeof earningListItemSchema>;
+
+export const earningListPageSchema = z.object({
+  earnings: z.array(earningListItemSchema),
+  pagination: offsetPagination,
+});
+
+const namedUserSchema = z.object({ id: z.string(), name: z.string() });
+
+/** One second-approval proposal, with what its target names. */
+export const proposalListItemSchema = z.object({
+  id: z.string(),
+  action: z.string(),
+  surface: z.string(),
+  targetKind: z.string(),
+  targetId: z.string(),
+  target: targetRefSchema.nullable(),
+  /** Paise; null for an action without a bounded amount. */
+  amountPaise: z.number().nullable(),
+  reason: z.string(),
+  status: z.nativeEnum(OpsActionProposalStatus),
+  proposedBy: namedUserSchema.nullable(),
+  decidedBy: namedUserSchema.nullable(),
+  decidedAt: z.string().nullable(),
+  decisionReason: z.string().nullable(),
+  expiresAt: z.string(),
+  createdAt: z.string(),
+});
+export type ProposalListItem = z.infer<typeof proposalListItemSchema>;
+
+export const proposalPageSchema = z.object({
+  proposals: z.array(proposalListItemSchema),
+  total: z.number().int().nonnegative(),
+  page: z.number().int().positive(),
+  pageSize: z.number().int().positive(),
+});
+export type ProposalPage = z.infer<typeof proposalPageSchema>;
 
 /** Parses a list body, so a malformed 200 takes the screen's error path. */
 export async function readListBody<S extends z.ZodTypeAny>(

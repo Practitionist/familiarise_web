@@ -84,9 +84,8 @@ describe("GET /api/admin/compliance/gst-register", () => {
     const res = await GET(request("?period=2026-10"));
 
     expect(res.status).toBe(403);
-    await expect(res.json()).resolves.toMatchObject({
-      error: expect.stringContaining("admin access required"),
-    });
+    // `compliance.manage` is ADMIN-only on the permission matrix.
+    await expect(res.json()).resolves.toMatchObject({ code: "FORBIDDEN" });
     expect(objectExists).not.toHaveBeenCalled();
   });
 

@@ -8,40 +8,49 @@ import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useState } from "react";
 import { Check, X } from "lucide-react";
 
 import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import { ErrorState } from "@/components/dashboard/ErrorState";
+import { TablePagination } from "@/components/dashboard/TablePagination";
+import { PersonCell } from "@/components/dashboard/backoffice/PersonCell";
+import {
+  payoutListPageSchema,
+  readListBody,
+  type PayoutListItem,
+} from "@/lib/backoffice/money-list-schemas";
+import { OperatorTime } from "@/lib/time/operator-time";
 import { needsTypedConfirm } from "@/lib/ui/typed-confirm";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
-import type { Payout } from "@/types/payouts";
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
 import { fetchWithReauth } from "@/lib/auth/reauth-client";
 
-interface PayoutListResponse {
-  payouts: Payout[];
-  pagination: {
-    total: number;
-    limit: number;
-    offset: number;
-    hasMore: boolean;
-  };
-}
+type Payout = PayoutListItem;
 
-// #1771 K-4 — "instant" narrows to above-cap instant payouts awaiting approval.
-async function fetchPendingPayouts(
-  instantOnly: boolean,
-): Promise<PayoutListResponse> {
-  const response = await fetch(
-    `/api/admin/payouts?status=PENDING&limit=100${instantOnly ? "&kind=INSTANT" : ""}`,
+const PAGE_SIZE = 20;
+
+/** One page of payouts awaiting approval; "instant" narrows to above-cap instant ones. */
+async function fetchPendingPayouts(instantOnly: boolean, page: number) {
+  const params = new URLSearchParams({
+    status: "PENDING",
+    limit: String(PAGE_SIZE),
+    offset: String((page - 1) * PAGE_SIZE),
+  });
+  if (instantOnly) params.set("kind", "INSTANT");
+  const response = await fetch(`/api/admin/payouts?${params}`);
+  return readListBody(
+    response,
+    payoutListPageSchema,
+    "Failed to fetch payouts",
   );
-  if (!response.ok) {
-    throw new Error("Failed to fetch payouts");
-  }
-  return response.json() as Promise<PayoutListResponse>;
 }
 
 type PayoutActionResult = { success: boolean; message: string };
@@ -90,14 +99,13 @@ const columns: ResponsiveColumn<Payout>[] = [
     header: "Expert",
     primary: true,
     cell: (payout) => (
-      <div>
-        <p className="text-sm font-medium text-foreground">
-          {payout.consultantName}
-        </p>
-        <p className="text-xs text-muted-foreground">
-          {payout.consultantEmail}
-        </p>
-      </div>
+      <PersonCell
+        person={{
+          id: payout.consultantUserId,
+          name: payout.consultantName,
+          email: payout.consultantEmail,
+        }}
+      />
     ),
   },
   {
@@ -159,7 +167,7 @@ const columns: ResponsiveColumn<Payout>[] = [
               : "text-sm text-muted-foreground"
           }
         >
-          {due.toLocaleDateString()}
+          <OperatorTime value={due} kind="date" />
           {urgent && (
             <span className="ml-1">
               ({daysLeft < 0 ? "overdue" : `${daysLeft}d`})
@@ -173,9 +181,11 @@ const columns: ResponsiveColumn<Payout>[] = [
     key: "date",
     header: "Date",
     cell: (payout) => (
-      <span className="text-sm text-muted-foreground">
-        {new Date(payout.createdAt).toLocaleDateString()}
-      </span>
+      <OperatorTime
+        value={payout.createdAt}
+        kind="date"
+        className="text-sm text-muted-foreground"
+      />
     ),
   },
 ];
@@ -186,13 +196,15 @@ export default function PendingPayoutsSection() {
   const queryClient = useQueryClient();
   const [selectedPayout, setSelectedPayout] = useState<Payout | null>(null);
   const [instantOnly, setInstantOnly] = useState(false);
+  const [page, setPage] = useState(1);
   const [dialogType, setDialogType] = useState<"approve" | "reject" | null>(
     null,
   );
 
   const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ["admin-payouts-pending", instantOnly],
-    queryFn: () => fetchPendingPayouts(instantOnly),
+    queryKey: ["admin-payouts-pending", instantOnly, page],
+    queryFn: () => fetchPendingPayouts(instantOnly, page),
+    placeholderData: keepPreviousData,
     staleTime: 30 * 1000,
   });
 
@@ -262,7 +274,10 @@ export default function PendingPayoutsSection() {
               size="sm"
               variant={instantOnly ? "default" : "outline"}
               aria-pressed={instantOnly}
-              onClick={() => setInstantOnly((v) => !v)}
+              onClick={() => {
+                setInstantOnly((v) => !v);
+                setPage(1);
+              }}
             >
               Instant, waiting for approval
             </Button>
@@ -276,17 +291,25 @@ export default function PendingPayoutsSection() {
               ))}
             </div>
           ) : (
-            <ResponsiveTable<Payout>
-              columns={columns}
-              rows={data.payouts}
-              getRowId={(p) => p.id}
-              rowActions={canManage ? renderRowActions : undefined}
-              empty={
-                <div className="text-center py-12">
-                  <p className="text-muted-foreground">No pending payouts</p>
-                </div>
-              }
-            />
+            <div className="space-y-4">
+              <ResponsiveTable<Payout>
+                columns={columns}
+                rows={data.payouts}
+                getRowId={(p) => p.id}
+                rowActions={canManage ? renderRowActions : undefined}
+                empty={
+                  <div className="text-center py-12">
+                    <p className="text-muted-foreground">No pending payouts</p>
+                  </div>
+                }
+              />
+              <TablePagination
+                page={page}
+                pageSize={PAGE_SIZE}
+                total={data.pagination.total}
+                onPageChange={setPage}
+              />
+            </div>
           )}
         </CardContent>
       </Card>

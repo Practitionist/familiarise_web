@@ -8,7 +8,10 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import { EarningStatus } from "@prisma/client";
+import { z } from "zod";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
+import { readOffsetParams } from "@/lib/backoffice/list-paging";
+import { BOOKING_TITLE_SELECT, bookingRefOf } from "@/lib/data/booking-title";
 
 /**
  * GET /api/admin/earnings
@@ -21,14 +24,11 @@ export async function GET(req: NextRequest) {
 
     // Parse query parameters
     const { searchParams } = new URL(req.url);
-    const statusParam = searchParams.get("status");
-    const validStatuses = Object.values(EarningStatus);
+    // An unknown status reads as no filter, as it always has.
     const status =
-      statusParam && validStatuses.includes(statusParam as EarningStatus)
-        ? (statusParam as EarningStatus)
-        : null;
-    const limit = parseInt(searchParams.get("limit") || "20");
-    const offset = parseInt(searchParams.get("offset") || "0");
+      z.nativeEnum(EarningStatus).safeParse(searchParams.get("status")).data ??
+      null;
+    const { limit, offset } = readOffsetParams(searchParams);
 
     // #1771 K-3 — the Earnings tab filters by consultant and payment too.
     const consultantProfileId = searchParams.get("consultantProfileId");
@@ -40,8 +40,9 @@ export async function GET(req: NextRequest) {
     };
 
     // Get earnings
-    const [earnings, total] = await Promise.all([
+    const [rows, total] = await Promise.all([
       prisma.consultantEarnings.findMany({
+        relationLoadStrategy: "join",
         where,
         include: {
           // #946 allowlist — this route is requirePrivilegedAuth, so STAFF read
@@ -58,6 +59,8 @@ export async function GET(req: NextRequest) {
               id: true,
               amount: true,
               currency: true,
+              user: { select: { id: true, name: true, email: true } },
+              appointment: { select: BOOKING_TITLE_SELECT },
             },
           },
           payout: {
@@ -73,6 +76,16 @@ export async function GET(req: NextRequest) {
       }),
       prisma.consultantEarnings.count({ where }),
     ]);
+    const earnings = rows.map(({ payment, ...r }) => ({
+      ...r,
+      payment: payment && {
+        id: payment.id,
+        amount: payment.amount,
+        currency: payment.currency,
+        buyer: payment.user,
+        booking: bookingRefOf(payment.appointment),
+      },
+    }));
 
     return NextResponse.json(
       {
@@ -87,7 +100,10 @@ export async function GET(req: NextRequest) {
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "admin" } },
+    );
     console.error("Error fetching earnings:", error);
     return NextResponse.json(
       { error: "Failed to fetch earnings" },
