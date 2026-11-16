@@ -131,6 +131,24 @@ export const consultantsPageSchema = z.object({
 });
 
 const CONSULTANTS_PAGE_SIZE = 25;
+
+/**
+ * Every row behind a paged read: it steps by the page size the server
+ * answered and stops at the total or at an empty page.
+ */
+export async function collectConsultantPages<T>(
+  read: (
+    page: number,
+  ) => Promise<{ consultants: T[]; total: number; pageSize: number }>,
+): Promise<T[]> {
+  const all: T[] = [];
+  for (let page = 1; ; page++) {
+    const batch = await read(page);
+    all.push(...batch.consultants);
+    if (batch.consultants.length === 0) return all;
+    if (page * batch.pageSize >= batch.total) return all;
+  }
+}
 const EXPORT_PAGE_SIZE = 100;
 
 function consultantsUrl(
@@ -415,24 +433,29 @@ export default function AdminTDSPage() {
   const consultants = consultantData?.consultants ?? [];
   const matchingTotal = consultantData?.total ?? 0;
 
-  // The export covers every matching deductee, read a page of 100 at a time.
-  const exportAllMatching = async (): Promise<ConsultantBreakdown[]> => {
-    const all: ConsultantBreakdown[] = [];
-    for (let p = 1; ; p++) {
-      const batch = await fetchConsultantsPage(
-        selectedFY,
-        p,
-        EXPORT_PAGE_SIZE,
-        filingFilter,
-        searchQuery,
-      );
-      all.push(...batch.consultants);
-      if (p * EXPORT_PAGE_SIZE >= batch.total) return all;
-    }
-  };
+  const { toast } = useToast();
 
+  // The export covers every matching deductee, read a page of 100 at a time.
   const handleExportCsv = async () => {
-    const filteredConsultants = await exportAllMatching();
+    let filteredConsultants: ConsultantBreakdown[];
+    try {
+      filteredConsultants = await collectConsultantPages((p) =>
+        fetchConsultantsPage(
+          selectedFY,
+          p,
+          EXPORT_PAGE_SIZE,
+          filingFilter,
+          searchQuery,
+        ),
+      );
+    } catch {
+      toast({
+        title: "The export did not finish",
+        description: "A page of the breakdown could not load. Try again.",
+        variant: "destructive",
+      });
+      return;
+    }
     const sanitizeCsvCell = (value: string) => {
       const isNumeric = /^[+-]?\d+(\.\d+)?$/.test(value.trim());
       const safe =

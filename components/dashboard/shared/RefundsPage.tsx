@@ -16,7 +16,7 @@ import { gatewayLabel } from "@/lib/labels/money-labels";
 import { refundStatusBadge } from "@/lib/labels/session-labels";
 import { OperatorTime } from "@/lib/time/operator-time";
 import { useState, useEffect } from "react";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 // `formatCurrencyAmount`, not the old major-unit formatter (deleted in #1396):
 // refunds carry paise. The old call had both halves wrong — a field the payload
 // has never contained, passed to the rupees formatter — so it rendered ₹NaN
@@ -26,6 +26,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
   gatewaySelect,
+  keepPreviousPageOnly,
   PagedListFilterCard,
   statusSelect,
 } from "./paged-list-filters";
@@ -74,13 +75,20 @@ export function RefundsPage({
   const [gatewayFilter, setGatewayFilter] = useState("all");
   const [page, setPage] = useState(1);
 
+  const queryKey = [
+    queryKeyPrefix,
+    page,
+    searchQuery,
+    statusFilter,
+    gatewayFilter,
+  ];
   const {
     data: refundsData,
     isLoading: loading,
     refetch: refetchRefunds,
     error: refundsError,
   } = useQuery({
-    queryKey: [queryKeyPrefix, page, searchQuery, statusFilter, gatewayFilter],
+    queryKey,
     queryFn: async () => {
       const params = new URLSearchParams();
       params.set("page", page.toString());
@@ -95,7 +103,7 @@ export function RefundsPage({
         "Failed to fetch refunds",
       );
     },
-    placeholderData: keepPreviousData,
+    placeholderData: keepPreviousPageOnly(queryKey, 1),
   });
 
   // Show toast on error (React Query v5 removed onError callback)

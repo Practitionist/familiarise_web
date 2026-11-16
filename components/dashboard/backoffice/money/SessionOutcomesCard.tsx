@@ -186,7 +186,7 @@ export function SessionOutcomesCard({
           Sessions that need a decision{total > 0 ? ` (${total})` : ""}
         </CardTitle>
         <label className="flex items-center gap-2 text-sm text-muted-foreground">
-          Sort
+          <span>Sort</span>
           <select
             className="rounded-md border border-border bg-background px-2 py-1 text-foreground"
             value={needsHumanSortToken(sort)}

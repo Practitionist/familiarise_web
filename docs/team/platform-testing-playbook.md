@@ -1304,9 +1304,8 @@ Use these checklists to systematically test every feature. Check off each item a
 - [ ] On Money, check that Payments, Refunds, Disputes and Earnings name the buyer and the booking on every row, and that the names match the payment in the database
 - [ ] Page each money list to its last page and check that the "1–20 of N" total matches a count in the database
 - [ ] As STAFF, open the payments and refunds API responses in the network panel and check that no `payerVpaHash`, `payerPhoneHash`, `metadata` or `failureReason` appears, and that the disputes list carries no buyer email
-- [ ] Check that Approvals, Audit and Support spend name the person and the booking a row points at, and fall back to the kind and id for anything else
+- [ ] Check that Audit and Support spend name the person and the booking a row points at, and fall back to the kind and id for anything else
 - [ ] On Payouts, page "Awaiting approval", export a page as CSV and check the file is named with today's IST date; check the trend's last bar is today in IST
-- [ ] On TDS, check that the financial year selected on load is the one open in India, record a filing dated today and check that it is stored as 00:00 IST that day
 - [ ] On Trace, open a booking trace and check that the form shows "Booking id" and the id, the summary lists Booking once and names the customer, and the timeline fits its card
 
 ## Admin Testing Checklist
@@ -1320,6 +1319,8 @@ Use these checklists to systematically test every feature. Check off each item a
 - [ ] Disable maintenance mode
 - [ ] Verify bypass secret works during maintenance
 - [ ] View TDS records
+- [ ] On TDS, check that the financial year selected on load is the one open in India, record a filing dated today and check that it is stored as 00:00 IST that day
+- [ ] Check that Approvals pages, badges each proposal's status and names the person and the booking it points at
 - [ ] Manage platform configuration
 
 ## Cross-Role Scenarios

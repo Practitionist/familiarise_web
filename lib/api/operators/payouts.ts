@@ -170,6 +170,7 @@ export async function getOperatorPayouts(
       orderBy: [
         { mustPayByDate: { sort: "asc", nulls: "last" } },
         { createdAt: "desc" },
+        { id: "asc" },
       ],
       take: limit,
       skip: offset,

@@ -83,7 +83,7 @@ export async function GET(req: NextRequest) {
           where,
           skip,
           take: limit,
-          orderBy: { createdAt: "desc" },
+          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
           select: REFUND_LIST_SELECT,
         }),
         prisma.refund.count({ where }),

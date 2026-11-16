@@ -80,7 +80,7 @@ export function IncidentsTab({
   const [endsAt, setEndsAt] = useState("");
   const [declaring, setDeclaring] = useState(false);
   const [settling, setSettling] = useState<IncidentListRow | null>(null);
-  const { data } = useQuery({
+  const { data, error } = useQuery({
     queryKey: [...QUERY_KEY, page],
     queryFn: () => fetchIncidents(page),
     placeholderData: keepPreviousData,
@@ -147,7 +147,11 @@ export function IncidentsTab({
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {(data?.suggestions ?? []).length === 0 ? (
+          {error && !data ? (
+            <p className="text-sm text-destructive">
+              Outage signals could not load.
+            </p>
+          ) : (data?.suggestions ?? []).length === 0 ? (
             <p className="text-sm text-muted-foreground">
               No hour in the last 7 days stands out from the baseline.
             </p>
@@ -186,7 +190,11 @@ export function IncidentsTab({
       </Card>
       <Card>
         <CardContent className="pt-6">
-          {(data?.incidents ?? []).length === 0 ? (
+          {error && !data ? (
+            <p className="text-sm text-destructive">
+              Incidents could not load.
+            </p>
+          ) : (data?.incidents ?? []).length === 0 ? (
             <p className="text-sm text-muted-foreground">
               No incident has been declared.
             </p>

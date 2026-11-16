@@ -128,10 +128,18 @@ describe("payments list", () => {
       title: "Spoken Hindi, beginners",
     });
     const select = mockPaymentFindMany.mock.calls[0][0].select;
-    expect(Object.keys(select)).not.toEqual(expect.arrayContaining(PII));
+    expect(Object.keys(select).filter((k) => PII.includes(k))).toEqual([]);
     expect(mockPaymentFindMany.mock.calls[0][0].relationLoadStrategy).toBe(
       "join",
     );
+  });
+
+  it("orders pages by creation and then id, so tied rows never repeat", async () => {
+    await call(paymentsGet, "/api/admin/payments?page=2");
+    expect(mockPaymentFindMany.mock.calls[0][0].orderBy).toEqual([
+      { createdAt: "desc" },
+      { id: "desc" },
+    ]);
   });
 
   it.each([
@@ -165,6 +173,14 @@ describe("refunds list", () => {
       limit: 20,
       totalPages: 3,
     });
+  });
+
+  it("orders pages by creation and then id", async () => {
+    await call(refundsGet, "/api/admin/refunds?page=2");
+    expect(mockRefundFindMany.mock.calls[0][0].orderBy).toEqual([
+      { createdAt: "desc" },
+      { id: "desc" },
+    ]);
   });
 
   it("clamps the page size at 100", async () => {

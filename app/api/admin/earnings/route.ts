@@ -70,20 +70,35 @@ export async function GET(req: NextRequest) {
             },
           },
         },
-        orderBy: { createdAt: "desc" },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
         take: limit,
         skip: offset,
       }),
       prisma.consultantEarnings.count({ where }),
     ]);
-    const earnings = rows.map(({ payment, ...r }) => ({
-      ...r,
-      payment: payment && {
-        id: payment.id,
-        amount: payment.amount,
-        currency: payment.currency,
-        buyer: payment.user,
-        booking: bookingRefOf(payment.appointment),
+    // Field by field, so the body is what the Earnings tab reads whatever the row carries.
+    const earnings = rows.map((r) => ({
+      id: r.id,
+      paymentId: r.paymentId,
+      consultantProfileId: r.consultantProfileId,
+      consultantSharePaise: r.consultantSharePaise,
+      status: r.status,
+      holdUntil: r.holdUntil,
+      consultantProfile: {
+        userId: r.consultantProfile.userId,
+        user: {
+          name: r.consultantProfile.user.name,
+          email: r.consultantProfile.user.email,
+        },
+      },
+      payment: {
+        id: r.payment.id,
+        buyer: {
+          id: r.payment.user.id,
+          name: r.payment.user.name,
+          email: r.payment.user.email,
+        },
+        booking: bookingRefOf(r.payment.appointment),
       },
     }));
 

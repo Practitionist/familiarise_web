@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { z } from "zod";
+import { pageNumberSchema } from "@/lib/backoffice/list-paging";
 
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { readSupportSpend } from "@/lib/backoffice/support-spend";
@@ -14,13 +14,9 @@ export async function GET(req: NextRequest) {
       role: String(auth.session.user.role ?? ""),
     },
     now: new Date(),
-    page: z.coerce
-      .number()
-      .int()
-      .positive()
-      .max(10_000)
-      .catch(1)
-      .parse(req.nextUrl.searchParams.get("page") ?? undefined),
+    page: pageNumberSchema.parse(
+      req.nextUrl.searchParams.get("page") ?? undefined,
+    ),
   });
   return NextResponse.json(report, {
     headers: { "Cache-Control": "no-store" },

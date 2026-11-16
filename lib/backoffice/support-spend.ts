@@ -264,11 +264,6 @@ export async function readSupportSpend(args: {
       };
     },
   );
-  operators.sort(
-    (a, b) =>
-      b.refunds.rolling30dPaise - a.refunds.rolling30dPaise ||
-      a.name.localeCompare(b.name),
-  );
   return {
     operators,
     total,

@@ -130,7 +130,7 @@ export function AuditTab({
   // A half-typed date would read as "no rows"; hold the query until it parses.
   const sinceInvalid = !OpsLogFiltersSchema.shape.since.safeParse(active.since)
     .success;
-  const { data } = useQuery({
+  const { data, error } = useQuery({
     queryKey: ["money-audit", active, page],
     queryFn: () => fetchPage(active, page),
     initialData: pristine ? initial : undefined,
@@ -185,19 +185,27 @@ export function AuditTab({
             rows={sinceInvalid ? [] : (data?.rows ?? [])}
             getRowId={(r) => r.id}
             empty={
-              <p className="py-8 text-center text-sm text-muted-foreground">
-                {sinceInvalid
-                  ? "Finish the Since date to see matching actions."
-                  : "No actions match these filters."}
-              </p>
+              error && !data ? (
+                <p className="py-8 text-center text-sm text-destructive">
+                  The audit log could not load.
+                </p>
+              ) : (
+                <p className="py-8 text-center text-sm text-muted-foreground">
+                  {sinceInvalid
+                    ? "Finish the Since date to see matching actions."
+                    : "No actions match these filters."}
+                </p>
+              )
             }
           />
-          <TablePagination
-            page={page}
-            pageSize={data?.pageSize ?? 50}
-            total={sinceInvalid ? 0 : (data?.total ?? 0)}
-            onPageChange={setPage}
-          />
+          {data && !sinceInvalid && (
+            <TablePagination
+              page={page}
+              pageSize={data.pageSize}
+              total={data.total}
+              onPageChange={setPage}
+            />
+          )}
         </CardContent>
       </Card>
     </div>

@@ -64,6 +64,8 @@ jest.mock("../../lib/prisma", () => ({
       count: async () => 0,
     },
     supportFinancialRecommendation: { findMany: async () => [] },
+    refund: { findMany: async () => [] },
+    payment: { findMany: async () => [] },
   },
 }));
 
@@ -105,6 +107,27 @@ describe("GET /api/admin/support-spend", () => {
     expect(ids).toEqual(
       expect.arrayContaining(["admin-1", "staff-1", "staff-2"]),
     );
+  });
+
+  it("keeps the page in the name order it was read in, whatever each spent", async () => {
+    mockViewer.id = "admin-1";
+    mockViewer.role = "ADMIN";
+    mockOpsFindMany.mockResolvedValueOnce([
+      {
+        actorUserId: "staff-2",
+        action: "support.refund.review",
+        after: { approved: true, paymentId: "pay-1", movedPaise: 90_000 },
+        createdAt: new Date(),
+      },
+    ] as never);
+    const body = (await (await getSpend(spendRequest())).json()) as {
+      operators: { name: string }[];
+    };
+    expect(body.operators.map((o) => o.name)).toEqual([
+      "Asha",
+      "Bela",
+      "Chitra",
+    ]);
   });
 
   it("refuses a non-operator", async () => {

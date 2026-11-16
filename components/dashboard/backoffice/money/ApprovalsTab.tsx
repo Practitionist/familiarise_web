@@ -46,7 +46,7 @@ export function ApprovalsTab({ viewerId }: Readonly<{ viewerId: string }>) {
     proposal: ProposalListItem;
     decision: "approve" | "reject";
   } | null>(null);
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, error } = useQuery({
     queryKey: [...queryKey(status), page],
     queryFn: () => fetchProposals(status, page),
     placeholderData: keepPreviousData,
@@ -83,7 +83,11 @@ export function ApprovalsTab({ viewerId }: Readonly<{ viewerId: string }>) {
       </div>
       <Card>
         <CardContent className="pt-6">
-          {proposals.length === 0 ? (
+          {error && proposals.length === 0 ? (
+            <p className="text-sm text-destructive">
+              Approvals could not load.
+            </p>
+          ) : proposals.length === 0 ? (
             <p className="text-sm text-muted-foreground">
               {isLoading ? "Loading…" : "Nothing here."}
             </p>

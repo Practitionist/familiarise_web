@@ -3,11 +3,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
+import { pageNumberSchema } from "@/lib/backoffice/list-paging";
 import { listProposals } from "@/lib/backoffice/ops-proposals";
 
 const QuerySchema = z.object({
   status: z.nativeEnum(OpsActionProposalStatus).default("PROPOSED"),
-  page: z.coerce.number().int().positive().max(10_000).catch(1),
+  page: pageNumberSchema,
 });
 
 /** GET ?status=&page= — one page of second-approval proposals in one effective status (expiry read live). */

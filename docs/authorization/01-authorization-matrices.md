@@ -160,6 +160,8 @@ A route is on the matrix when its first line is `requireBackofficeSurface(key)`,
 | `/api/admin/compliance/gst-register`, `erasure-requests/[id]/process` and `/reject`  | `compliance.manage`   | ADMIN          | Same people as before. A refusal is a 403 with `code: "FORBIDDEN"`.                                                                 |
 | `/api/admin/settlements/lines`                                                       | `payouts.read`        | ADMIN or STAFF | Same people as before; the key now names the grant.                                                                                 |
 
+**Emails on the money rows.** STAFF see the emails a money row names: the creator and approvers on Org payouts, the buyer on Payments, Refunds, Earnings and the refunds waiting for a human, and the person behind an Audit or Support spend target. This matches the payment detail. Three gates still withhold an email from STAFF: the disputes list and detail (`disputes.manage`), and Invoices and TDS (`showPii`, ADMIN only). The decision is D10 in the back-office record.
+
 About forty other admin and staff routes still call a raw role guard. They move onto the matrix with the pull request that owns their screen **(planned)**, and the last of those pull requests deletes `requirePrivilegedAuth` and `requireAdminAuth` once nothing calls them. Do not add a new caller. The decision record is [the 2026-11-16 back-office record](../decisions/2026-11-16-train-6-back-office.md).
 
 ### What an operator sees: time and totals

@@ -22,7 +22,8 @@ import {
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
 import { DashboardHeader } from "@/components/dashboard/PageScaffold";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
+import { keepPreviousPageOnly } from "./paged-list-filters";
 import Link from "next/link";
 import { useState } from "react";
 import { z } from "zod";
@@ -93,19 +94,20 @@ export function PaymentsPage() {
   const [search, setSearch] = useState("");
   const limit = PAGE_SIZE;
 
+  const queryKey = [
+    "operator-payments",
+    page,
+    status,
+    gateway,
+    appointmentType,
+    search,
+  ];
   const { data, isLoading, error } = useQuery({
-    queryKey: [
-      "operator-payments",
-      page,
-      status,
-      gateway,
-      appointmentType,
-      search,
-    ],
+    queryKey,
     queryFn: () =>
       fetchPayments({ page, limit, status, gateway, appointmentType, search }),
     staleTime: 30 * 1000,
-    placeholderData: keepPreviousData,
+    placeholderData: keepPreviousPageOnly(queryKey, 1),
   });
 
   const handleFilterChange = () => {

@@ -8,17 +8,13 @@ import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
-import {
-  keepPreviousData,
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Check, X } from "lucide-react";
 
 import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import { ErrorState } from "@/components/dashboard/ErrorState";
+import { keepPreviousPageOnly } from "@/components/dashboard/shared/paged-list-filters";
 import { TablePagination } from "@/components/dashboard/TablePagination";
 import { PersonCell } from "@/components/dashboard/backoffice/PersonCell";
 import {
@@ -201,10 +197,12 @@ export default function PendingPayoutsSection() {
     null,
   );
 
+  const queryKey = ["admin-payouts-pending", instantOnly, page];
+  // A filter change never leaves the other filter's rows, and their Approve buttons, on screen.
   const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ["admin-payouts-pending", instantOnly, page],
+    queryKey,
     queryFn: () => fetchPendingPayouts(instantOnly, page),
-    placeholderData: keepPreviousData,
+    placeholderData: keepPreviousPageOnly(queryKey, 2),
     staleTime: 30 * 1000,
   });
 

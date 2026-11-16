@@ -12,7 +12,7 @@ import {
   getIndianFinancialYear,
 } from "@/lib/payments/tax/tds-service";
 import { istFilingDate } from "@/lib/compliance/ist-period";
-import { MAX_PAGE_SIZE } from "@/lib/backoffice/list-paging";
+import { MAX_PAGE_SIZE, pageNumberSchema } from "@/lib/backoffice/list-paging";
 
 function notFoundIfGated() {
   if (!ENABLE_TDS_ADMIN_VIEW) {
@@ -46,7 +46,7 @@ const TdsFilingShape = {
 
 /** The consultants view pages on the server; its filters run before the page is cut. */
 const ConsultantsQuerySchema = z.object({
-  page: z.coerce.number().int().positive().max(10_000).catch(1),
+  page: pageNumberSchema,
   pageSize: z.coerce
     .number()
     .int()
@@ -231,14 +231,23 @@ export async function GET(req: NextRequest) {
     }
 
     if (view === "consultants") {
-      const consultantsQuery = ConsultantsQuerySchema.parse({
+      const consultantsQuery = ConsultantsQuerySchema.safeParse({
         page: searchParams.get("page") ?? undefined,
         pageSize: searchParams.get("pageSize") ?? undefined,
         filing: searchParams.get("filing") ?? undefined,
         q: searchParams.get("q") ?? undefined,
       });
+      if (!consultantsQuery.success) {
+        return NextResponse.json(
+          {
+            error: "Invalid query parameters",
+            details: consultantsQuery.error.issues,
+          },
+          { status: 400 },
+        );
+      }
       return NextResponse.json(
-        await readConsultantsPage(fy, consultantsQuery, showPii),
+        await readConsultantsPage(fy, consultantsQuery.data, showPii),
       );
     }
 

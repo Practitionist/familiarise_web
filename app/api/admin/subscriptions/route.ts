@@ -213,7 +213,7 @@ export async function GET(req: NextRequest) {
               },
             },
           },
-          orderBy: { createdAt: "desc" },
+          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
           take: limit,
           skip: offset,
         }),

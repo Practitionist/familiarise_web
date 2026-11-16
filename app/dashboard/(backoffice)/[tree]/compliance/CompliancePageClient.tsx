@@ -369,7 +369,9 @@ function FailedEmailsTab() {
     queryKey: ["compliance-emails", status, page],
     queryFn: () =>
       getPage(
-        `/api/admin/failed-emails${status ? `?status=${status}` : ""}`,
+        status
+          ? `/api/admin/failed-emails?status=${encodeURIComponent(status)}`
+          : "/api/admin/failed-emails",
         failedEmailSchema,
         page,
       ),

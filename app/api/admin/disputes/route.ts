@@ -94,8 +94,12 @@ async function loadDisputePage(params: {
       skip,
       take: limit,
       orderBy: isActionableOpen
-        ? [{ dueBy: { sort: "asc", nulls: "last" } }, { createdAt: "desc" }]
-        : [{ createdAt: "desc" }],
+        ? [
+            { dueBy: { sort: "asc", nulls: "last" } },
+            { createdAt: "desc" },
+            { id: "desc" },
+          ]
+        : [{ createdAt: "desc" }, { id: "desc" }],
       relationLoadStrategy: "join",
       select,
     });
@@ -123,6 +127,7 @@ async function loadDisputePage(params: {
           orderBy: [
             { dueBy: { sort: "asc", nulls: "last" } },
             { createdAt: "desc" },
+            { id: "desc" },
           ],
           relationLoadStrategy: "join",
           select,
@@ -133,7 +138,7 @@ async function loadDisputePage(params: {
           where: closedWhere,
           skip: closedSkip,
           take: closedTake,
-          orderBy: [{ createdAt: "desc" }],
+          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
           relationLoadStrategy: "join",
           select,
         })

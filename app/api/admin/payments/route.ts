@@ -79,7 +79,7 @@ export async function GET(req: NextRequest) {
         where,
         skip,
         take: limit,
-        orderBy: { createdAt: "desc" },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
         select: PAYMENT_LIST_SELECT,
       }),
       prisma.payment.count({ where }),

@@ -12,6 +12,7 @@ import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
+import { ErrorState } from "@/components/dashboard/ErrorState";
 import { TablePagination } from "@/components/dashboard/TablePagination";
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
 import { AUDIT_TAB, moneyHubHref } from "@/lib/backoffice/money-tabs";
@@ -282,7 +283,7 @@ export function SupportSpendTab({
   const { basePath, role } = useBackofficeCapability();
   const [page, setPage] = useState(1);
   const seeded = page === initial.page;
-  const { data = initial } = useQuery({
+  const { data, error, refetch } = useQuery({
     queryKey: ["money-support-spend", page],
     queryFn: () => fetchReport(page),
     initialData: seeded ? initial : undefined,
@@ -302,22 +303,28 @@ export function SupportSpendTab({
             : "Your refunds and holds against the staff limits."
         }
       />
-      {data.operators.length === 0 ? (
+      {/* A page that never loaded says so; another page's operators never stand in for it. */}
+      {!data && error ? (
+        <ErrorState
+          title="This page of support spend could not load."
+          onRetry={() => void refetch()}
+        />
+      ) : null}
+      {data && data.operators.length === 0 ? (
         <p className="text-sm text-muted-foreground">No operators to show.</p>
-      ) : (
-        data.operators.map((operator) => (
-          <OperatorCard
-            key={operator.userId}
-            operator={operator}
-            report={data}
-            basePath={basePath}
-          />
-        ))
-      )}
+      ) : null}
+      {data?.operators.map((operator) => (
+        <OperatorCard
+          key={operator.userId}
+          operator={operator}
+          report={data}
+          basePath={basePath}
+        />
+      ))}
       <TablePagination
         page={page}
-        pageSize={data.pageSize}
-        total={data.total}
+        pageSize={data?.pageSize ?? initial.pageSize}
+        total={data?.total ?? initial.total}
         onPageChange={setPage}
       />
     </div>
