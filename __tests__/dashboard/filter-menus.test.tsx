@@ -247,22 +247,37 @@ describe("AppointmentsFilterBar", () => {
 });
 
 describe("an active filter menu", () => {
-  it("keeps its trigger and clear button inside one outlined box", () => {
+  it("keeps its trigger and clear button in one box, and clears", () => {
+    const onChange = jest.fn();
+    render(
+      <FilterMenu
+        label="Status"
+        options={[{ value: "OPEN", label: "Open" }]}
+        value="OPEN"
+        onChange={onChange}
+      />,
+    );
+    const trigger = screen.getByRole("button", { name: "Status: Open" });
+    const clear = screen.getByRole("button", { name: "Clear status filter" });
+    expect(clear.parentElement).toBe(trigger.parentElement);
+    fireEvent.click(clear);
+    expect(onChange).toHaveBeenLastCalledWith(null);
+  });
+
+  it("disables the trigger and the clear button together", () => {
     render(
       <FilterMenu
         label="Status"
         options={[{ value: "OPEN", label: "Open" }]}
         value="OPEN"
         onChange={jest.fn()}
+        disabled
       />,
     );
-    const trigger = screen.getByRole("button", { name: "Status: Open" });
-    const clear = screen.getByRole("button", { name: "Clear status filter" });
-    expect(clear.parentElement).toBe(trigger.parentElement);
-    expect(trigger.parentElement).toHaveClass("border", "border-foreground");
-    // The box owns the border; neither half paints its own fill or edge.
-    expect(trigger.className).not.toMatch(/\bborder|bg-foreground/);
-    expect(clear.className).not.toMatch(/\bborder|bg-foreground/);
+    expect(screen.getByRole("button", { name: "Status: Open" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Clear status filter" }),
+    ).toBeDisabled();
   });
 });
 
