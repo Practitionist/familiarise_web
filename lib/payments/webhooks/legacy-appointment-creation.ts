@@ -14,10 +14,7 @@ import {
 import type { Tx } from "@/lib/prisma";
 import { buildOccurrenceForWindow } from "@/lib/appointments/occurrences";
 import { firstCycleWindow, purchaseTermsOf } from "@/lib/booking/entitlement";
-import {
-  liveParticipant,
-  recordParticipants,
-} from "@/lib/booking/participants";
+import { recordParticipants } from "@/lib/booking/participants";
 import { appendCreationHistory } from "@/lib/booking/transitions";
 import { seatPayerOrganizationId } from "@/lib/data/org-sponsored-seats";
 import { isOrgFundedPaymentMethod } from "@/lib/payments/org-funded";
@@ -25,6 +22,7 @@ import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import { getClassCapacity, getWebinarCapacity } from "@/lib/events/capacity";
 import { reportSentryError } from "@/lib/observability/report";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
+import { seatHoldingParticipant } from "@/utils/scheduling-engine/occupancyPolicy";
 import type { PaymentWithUser } from "./staged-emails";
 
 export interface ConsultationData {
@@ -389,7 +387,10 @@ async function createWebinar(tx: Tx, data: EventData) {
       appointment: {
         include: {
           occurrences: true,
-          participants: { where: liveParticipant(), select: { userId: true } },
+          participants: {
+            where: seatHoldingParticipant(new Date()),
+            select: { userId: true },
+          },
         },
       },
     },
@@ -455,7 +456,10 @@ async function createClass(tx: Tx, data: EventData) {
       appointment: {
         include: {
           occurrences: { select: { id: true } },
-          participants: { where: liveParticipant(), select: { userId: true } },
+          participants: {
+            where: seatHoldingParticipant(new Date()),
+            select: { userId: true },
+          },
         },
       },
     },

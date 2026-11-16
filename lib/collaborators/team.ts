@@ -49,15 +49,19 @@ export function planWhere(ref: PlanRef): Prisma.CollaboratorWhereInput {
 }
 
 /**
- * Locks the plan row for the rest of the transaction, so team changes and
- * schedule changes on one plan queue instead of reading each other's stale
- * state. NO KEY UPDATE does not block inserts of rows that reference the plan.
+ * Orders this transaction after every earlier holder on the plan, so team
+ * changes and schedule changes on one plan queue. A Read Committed caller's
+ * later statements see those holders' commits. A Serializable caller that
+ * queued behind one fails with 40001, so it must run inside
+ * `withSerializableRetry`, which replays it on a fresh snapshot. The write
+ * keeps every value and changes no key column, so it takes the NO KEY UPDATE
+ * row lock and never blocks an insert of a row that references the plan.
  */
 export async function lockPlanRow(tx: Tx, ref: PlanRef): Promise<void> {
   if (ref.planType === "webinar") {
-    await tx.$queryRaw`SELECT 1 FROM "WebinarPlan" WHERE "id" = ${ref.planId} FOR NO KEY UPDATE`;
+    await tx.$executeRaw`UPDATE "WebinarPlan" SET "updatedAt" = "updatedAt" WHERE "id" = ${ref.planId}`;
   } else {
-    await tx.$queryRaw`SELECT 1 FROM "ClassPlan" WHERE "id" = ${ref.planId} FOR NO KEY UPDATE`;
+    await tx.$executeRaw`UPDATE "ClassPlan" SET "updatedAt" = "updatedAt" WHERE "id" = ${ref.planId}`;
   }
 }
 
