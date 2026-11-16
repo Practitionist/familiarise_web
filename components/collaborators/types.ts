@@ -1,8 +1,10 @@
 /**
- * Shared types for the collaborations surface (InvitationsPanel and its
- * extracted cards). Shapes mirror `GET /api/collaborations` exactly —
- * do not widen/narrow without checking the route's select.
+ * What the collaborations screens receive. The shapes mirror
+ * `GET /api/collaborations` and a plan's team list; check the route's select
+ * before changing one.
  */
+
+import type { CollaboratorRole } from "@prisma/client";
 
 // ─── Shared schedule types ───────────────────────────────────────────────────
 
@@ -12,7 +14,7 @@ export interface SlotSchedule {
   isTentative: boolean;
 }
 
-/** Enrolment is counted on the appointment (#1554), not per occurrence. */
+/** Enrolment is counted on the appointment, not per occurrence. */
 export interface AppointmentSchedule {
   occurrences: SlotSchedule[];
   _count: { participants: number };
@@ -24,14 +26,14 @@ export interface WebinarEventSchedule {
   appointment: AppointmentSchedule | null;
 }
 
-/** #1819 — a class session carries what the batch card derivation reads. */
+/** A class session carries what the batch card derivation reads. */
 export interface ClassSlotSchedule extends SlotSchedule {
   ordinal: number;
   completionStatus: string;
   deletedAt: string | null;
 }
 
-/** #1554 — one wrapper appointment per class batch. */
+/** One wrapper appointment per class batch. */
 export interface ClassEventSchedule {
   id: string;
   status: string;
@@ -43,31 +45,43 @@ export interface ClassEventSchedule {
   } | null;
 }
 
+// ─── Team rows ───────────────────────────────────────────────────────────────
+
+export type PlanType = "webinar" | "class";
+
+export interface Person {
+  name: string | null;
+  image: string | null;
+}
+
+/** One invited or accepted collaborator of a plan, as a screen receives it. */
+export interface TeamMember {
+  id: string;
+  role: CollaboratorRole;
+  status: "PENDING" | "ACCEPTED";
+  /** Null when the viewer may not see it: a collaborator sees only their own share. */
+  revenueShareBps: number | null;
+  /** When a pending invitation lapses; sent to a plan's manager and on the plan's own team list. */
+  expiresAt?: string | null;
+  consultantProfile: { id: string; user: Person };
+}
+
 // ─── Collaborator perspective types ──────────────────────────────────────────
 
 export interface PlanOwner {
   id: string;
-  user: { name: string | null; image: string | null };
+  user: Person;
 }
 
-export interface PlanCollaboratorInfo {
-  id: string;
-  role: string;
-  /** Null for a peer: a collaborator sees only their own share. */
-  revenueShareBps: number | null;
-  status: "PENDING" | "ACCEPTED";
-  consultantProfile: {
-    id: string;
-    user: { name: string | null; image: string | null };
-  };
-}
-
+/** The viewer's own invitation or place on a plan. */
 export interface Collaboration {
   id: string;
-  role: string;
+  role: CollaboratorRole;
   revenueShareBps: number;
   status: "PENDING" | "ACCEPTED";
   createdAt: string;
+  /** When the invitation was sent or its terms last changed; it lapses a fixed time after this. */
+  updatedAt: string;
   payoutAccountReady?: boolean;
   webinarPlan?: {
     id: string;
@@ -79,8 +93,8 @@ export interface Collaboration {
     level: string | null;
     webinars: WebinarEventSchedule[];
     consultantProfile: PlanOwner | null;
-    collaborators: PlanCollaboratorInfo[];
-  };
+    collaborators: TeamMember[];
+  } | null;
   classPlan?: {
     id: string;
     title: string;
@@ -93,32 +107,20 @@ export interface Collaboration {
     lateJoinUntilSession: number | null;
     classes: ClassEventSchedule[];
     consultantProfile: PlanOwner | null;
-    collaborators: PlanCollaboratorInfo[];
-  };
-  invitedBy: {
-    user: { name: string | null; image?: string | null };
+    collaborators: TeamMember[];
   } | null;
+  invitedBy: { user: { name: string | null } } | null;
 }
 
-/** A collaboration flattened with its plan type/title/price by the panel. */
+/** A collaboration flattened with its plan's type, id, title and price by the panel. */
 export type CollaborationWithPlan = Collaboration & {
-  planType: "webinar" | "class";
+  planType: PlanType;
+  planId: string;
   planTitle: string;
   planPrice: number;
 };
 
 // ─── Host perspective types ──────────────────────────────────────────────────
-
-export interface CollaboratorInfo {
-  id: string;
-  role: string;
-  revenueShareBps: number;
-  status: "PENDING" | "ACCEPTED";
-  consultantProfile: {
-    id: string;
-    user: { name: string | null; image: string | null };
-  };
-}
 
 export interface HostedWebinarPlan {
   id: string;
@@ -128,9 +130,9 @@ export interface HostedWebinarPlan {
   maxParticipants: number;
   language: string | null;
   level: string | null;
-  /** The plan's host — read by the org-wide view (#1527 P1-8). */
-  consultantProfile?: { user: { name: string | null; image: string | null } };
-  collaborators: CollaboratorInfo[];
+  /** The plan's host; absent on an organisation plan with no owning expert. */
+  consultantProfile?: { user: Person } | null;
+  collaborators: TeamMember[];
   webinars: WebinarEventSchedule[];
 }
 
@@ -144,20 +146,21 @@ export interface HostedClassPlan {
   durationInMonths: number;
   totalSessions: number;
   lateJoinUntilSession: number | null;
-  /** The plan's host — read by the org-wide view (#1527 P1-8). */
-  consultantProfile?: { user: { name: string | null; image: string | null } };
-  collaborators: CollaboratorInfo[];
+  /** The plan's host; absent on an organisation plan with no owning expert. */
+  consultantProfile?: { user: Person } | null;
+  collaborators: TeamMember[];
   classes: ClassEventSchedule[];
 }
 
 /** A hosted plan flattened to a uniform card entry by the panel. */
 export interface HostedPlanEntry {
-  planType: "webinar" | "class";
+  planType: PlanType;
+  planId: string;
   title: string;
   price: number;
-  collaborators: CollaboratorInfo[];
+  collaborators: TeamMember[];
   /** Set on the org-wide view, where the viewer is not the host. */
-  host?: { name: string | null; image: string | null };
+  host?: Person | null;
   webinarPlan?: HostedWebinarPlan;
   classPlan?: HostedClassPlan;
 }
@@ -169,7 +172,7 @@ export interface CollaborationsData {
   classCollaborations: Collaboration[];
   hostedWebinarPlans: HostedWebinarPlan[];
   hostedClassPlans: HostedClassPlan[];
-  hostUser?: { name: string | null; image: string | null };
+  hostUser?: Person;
 }
 
 // ─── Structural subsets consumed by the schedule summary components ─────────
