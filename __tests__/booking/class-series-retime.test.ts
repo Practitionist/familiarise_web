@@ -22,6 +22,7 @@ jest.mock("../../utils/appointmentlock", () => ({
 jest.mock("../../lib/booking/host-slot-batch", () => ({
   acceptedCohostProfileIds: jest.fn(async () => []),
   hostBatchEntries: jest.fn(() => []),
+  lockPlanForMove: jest.fn(async () => undefined),
   withHostSlotBatch: jest.fn((_entries: unknown, run: () => unknown) => run()),
 }));
 jest.mock("../../lib/novu/service", () => ({

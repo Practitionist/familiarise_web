@@ -78,7 +78,10 @@ import {
 } from "@/lib/booking/reschedule-proposals";
 import { resolveConsumedPreferenceRequests } from "@/lib/booking/allocation/preference";
 import { findIdempotentAllocation } from "@/lib/booking/allocation/idempotency";
-import { assertCollaboratorsFree } from "@/lib/booking/allocation/collaborators";
+import {
+  assertCollaboratorsFree,
+  lockPlanForAllocation,
+} from "@/lib/booking/allocation/collaborators";
 import { createAppointments } from "@/lib/booking/allocation/commit/create-appointments";
 import { deleteExistingAppointments } from "@/lib/booking/allocation/commit/release-tentative";
 import {
@@ -502,15 +505,13 @@ export async function manualAllocate(
     }
     // Lock order: consultant → consultee → slot batch over every busy profile.
     // Picked times never wait: a held one is a typed 409 naming the times.
-    slotGrant = await lockPickedSlots(
-      slots,
-      await allocationBatchProfiles({
-        eventType,
-        planId,
-        consultantProfileId,
-        consulteeUserId,
-      }),
-    );
+    const batchProfiles = await allocationBatchProfiles({
+      eventType,
+      planId,
+      consultantProfileId,
+      consulteeUserId,
+    });
+    slotGrant = await lockPickedSlots(slots, batchProfiles);
 
     // SHORT write-only transaction (see autoAllocate for the rationale).
     return await bookingTransaction(
@@ -526,6 +527,8 @@ export async function manualAllocate(
           slotStrings,
         );
         if (lockedReplay) return lockedReplay;
+        // The plan row, before any read of the team (see autoAllocate).
+        await lockPlanForAllocation(tx, eventType, planId, batchProfiles);
         // A sold webinar or class is re-timed, never re-planned.
         if (!isTopUp) await assertGroupEventUnsoldInTx(tx, eventType, eventId);
         // #1766 — see autoAllocate: a stale tab must not append twice.

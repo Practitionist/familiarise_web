@@ -55,8 +55,11 @@ import { seatHoldingParticipant } from "@/utils/scheduling-engine/occupancyPolic
 import {
   acceptedCohostProfileIds,
   hostBatchEntries,
+  lockPlanForMove,
   withHostSlotBatch,
 } from "./host-slot-batch";
+import { collaboratorUserIds } from "@/lib/collaborators/recipients";
+import { notificationHref } from "@/lib/novu/resolve-href";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { isExclusionViolation } from "@/lib/db/pg-errors";
 import {
@@ -137,6 +140,17 @@ const zoned = (d: Date, zone: string): string =>
   formatNotificationDateTime(d, zone) ??
   formatNotificationDateTime(d, DEFAULT_NOTIFICATION_TIMEZONE) ??
   d.toISOString();
+
+/** The plan's team as bell recipients, minus the actor and anyone already told as a seat holder. */
+async function teamToTell(
+  tx: Tx,
+  classPlanId: string,
+  alreadyTold: readonly (string | null)[],
+): Promise<string[]> {
+  const skip = new Set(alreadyTold);
+  const team = await collaboratorUserIds("class", classPlanId, tx);
+  return team.filter((userId) => !skip.has(userId));
+}
 
 export interface ClassActor {
   userId: string;
@@ -313,15 +327,37 @@ export async function cancelClassSession(
       const bells: StagedTrigger[] = [];
       let cancelEmailArgs: AppointmentCancelledEmailArgs | null = null;
       let exitEmailArgs: ClassExitAvailableEmailArgs | null = null;
+      const cancelBell = (url: string) => (zone: string) => ({
+        planTitle: hosted.cls.classPlan.title,
+        consultantName: hostName,
+        dateTime: zoned(session.startsAt, zone),
+        makeUpBy: zoned(makeUpBy, zone),
+        dashboardUrl: url,
+      });
+      // The plan's team hears of the cancelled session; their switches apply.
+      const team = await teamToTell(tx, hosted.cls.classPlan.id, [
+        actorUserId,
+        ...seatUserIds,
+      ]);
+      if (team.length > 0) {
+        bells.push(
+          ...(await stageBellsByZone(
+            tx,
+            NOVU_WORKFLOWS.CLASS_SESSION_CANCELLED,
+            team,
+            cancelBell(
+              notificationHref(
+                hosted.appointment.organizationId,
+                "appointments",
+              ),
+            ),
+            `occ-cancel:${occurrenceId}:team`,
+          )),
+        );
+      }
       if (seatUserIds.length > 0) {
-        const cancelPayload = (zone: string) => ({
-          planTitle: hosted.cls.classPlan.title,
-          consultantName: hostName,
-          dateTime: zoned(session.startsAt, zone),
-          makeUpBy: zoned(makeUpBy, zone),
-          // Every seat holder here is a consultee.
-          dashboardUrl,
-        });
+        // Every seat holder here is a consultee.
+        const cancelPayload = cancelBell(dashboardUrl);
         // A seat holder who cancelled the session themself keeps their own switches.
         const others = seatUserIds.filter((id) => id !== actorUserId);
         const own = seatUserIds.filter((id) => id === actorUserId);
@@ -653,7 +689,8 @@ export async function scheduleClassMakeUp(
   }
   const appointmentId = hosted.appointment.id;
   const plan = hosted.cls.classPlan;
-  // Lock order: event checkout → appointment → slot batch (host + ACCEPTED co-hosts).
+  // Lock order: event checkout → appointment → slot batch (host + ACCEPTED
+  // co-hosts), then the plan row as the transaction's first row lock.
   const result = await withEventCheckoutLock(
     { appointmentType: "CLASS", eventId: hosted.cls.id },
     () =>
@@ -682,6 +719,7 @@ export async function scheduleClassMakeUp(
         ];
         return withHostSlotBatch(hostBatchEntries(profiles, lockWindows), () =>
           prisma.$transaction(async (tx) => {
+            await lockPlanForMove(tx, "CLASS", plan.id, profiles);
             const now = new Date();
             const source = await tx.appointmentOccurrence.findFirst({
               where: { id: sourceOccurrenceId, appointmentId },
@@ -781,6 +819,26 @@ export async function scheduleClassMakeUp(
                     dashboardUrl,
                   }),
                   `makeup:${sourceOccurrenceId}${group.clash ? ":clash" : ""}`,
+                )),
+              );
+            }
+            // The plan's team hears of the make-up, with no leave offer.
+            const team = await teamToTell(tx, plan.id, seatUserIds);
+            if (team.length > 0) {
+              bells.push(
+                ...(await stageBellsByZone(
+                  tx,
+                  NOVU_WORKFLOWS.CLASS_MAKEUP_SCHEDULED,
+                  team,
+                  (zone) => ({
+                    planTitle: hosted.cls.classPlan.title,
+                    dateTime: zoned(startsAt, zone),
+                    dashboardUrl: notificationHref(
+                      hosted.appointment.organizationId,
+                      "appointments",
+                    ),
+                  }),
+                  `makeup:${sourceOccurrenceId}:team`,
                 )),
               );
             }
