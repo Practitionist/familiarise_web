@@ -19,8 +19,10 @@ const mockState: {
   onAdd: (ids: string[]) => void;
   onCreate: () => void;
   failRemainder: boolean;
+  collabEnded: boolean;
 } = {
   failRemainder: false,
+  collabEnded: false,
   channelExists: true,
   meetings: [],
   adds: [],
@@ -51,12 +53,13 @@ jest.mock("@/lib/prisma", () => ({
     },
     webinar: { findUnique: (args: unknown) => mockEventFindUnique(args) },
     class: { findUnique: (args: unknown) => mockEventFindUnique(args) },
-    // The roster's collaborator is still on the team when its grant is re-checked.
+    // The roster's collaborator is on the team at the re-check unless a test ends it.
     collaborator: {
       findFirst: async (args: {
         where: { consultantProfile?: { userId?: string } };
       }) =>
-        args.where.consultantProfile?.userId === "collab"
+        args.where.consultantProfile?.userId === "collab" &&
+        !mockState.collabEnded
           ? { id: "c-1" }
           : null,
     },
@@ -264,6 +267,7 @@ describe("event chat and call membership follows seats holding access", () => {
     mockState.onAdd = () => undefined;
     mockState.onCreate = () => undefined;
     mockState.failRemainder = false;
+    mockState.collabEnded = false;
     mockAppointmentUpdateMany.mockResolvedValue({ count: 1 });
   });
 
@@ -442,6 +446,23 @@ describe("event chat and call membership follows seats holding access", () => {
     await addUserToEventChannel("class", "event-1", "newcomer");
 
     expect([...mockChat].sort()).toEqual(["collab", "host", "newcomer"]);
+  });
+  it("a first join that creates the channel takes back a collaborator removed meanwhile", async () => {
+    arrange("CLASS", seatsWith(pay()));
+    mockState.channelExists = false;
+    mockState.onCreate = () => {
+      mockState.collabEnded = true;
+    };
+
+    await addUserToEventChannel("class", "event-1", "newcomer");
+
+    expect(mockChat.has("collab")).toBe(false);
+    expect(mockIntentCreateMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({ kind: "COLLAB_REVOKE", userId: "collab" }),
+      ],
+      skipDuplicates: true,
+    });
   });
   it("a first join whose remainder add throws still takes back an ended seat from the first chunk", async () => {
     const seats = [
