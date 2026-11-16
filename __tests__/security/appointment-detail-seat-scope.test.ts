@@ -9,6 +9,8 @@
  * selects email.
  */
 
+import type { CollaboratorTier } from "@prisma/client";
+
 const mockSeatScopeDb = {
   appointment: { findUnique: jest.fn() },
   webinarPlan: { findUnique: jest.fn() },
@@ -43,7 +45,10 @@ const PROFILES: Record<string, string> = {
   "crew-user": "crew-profile",
   "former-user": "former-profile",
 };
-const TEAM: Record<string, { id: string; status: string; tier: string }> = {
+const TEAM: Record<
+  string,
+  { id: string; status: string; tier: CollaboratorTier }
+> = {
   "cohost-profile": { id: "collab-1", status: "ACCEPTED", tier: "PRESENTER" },
   "crew-profile": { id: "collab-2", status: "ACCEPTED", tier: "CREW" },
 };

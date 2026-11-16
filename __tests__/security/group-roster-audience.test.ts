@@ -8,6 +8,8 @@
  * crew get the 404 of a missing event.
  */
 
+import type { CollaboratorTier } from "@prisma/client";
+
 const mockRosterDb = {
   webinar: { findFirst: jest.fn() },
   payment: { findMany: jest.fn() },
@@ -53,7 +55,10 @@ const PROFILES: Record<string, string> = {
   "cohost-user": "cohost-profile",
   "crew-user": "crew-profile",
 };
-const TEAM: Record<string, { id: string; status: string; tier: string }> = {
+const TEAM: Record<
+  string,
+  { id: string; status: string; tier: CollaboratorTier }
+> = {
   "cohost-profile": { id: "collab-1", status: "ACCEPTED", tier: "PRESENTER" },
   "crew-profile": { id: "collab-2", status: "ACCEPTED", tier: "CREW" },
 };
