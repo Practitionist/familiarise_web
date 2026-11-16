@@ -40,10 +40,11 @@ const REMIND_SELECT = {
   appointment: {
     select: {
       id: true,
+      deletedAt: true,
       organizationId: true,
       organization: { select: { name: true } },
       payment: {
-        where: { paymentStatus: PaymentStatus.PENDING },
+        where: { paymentStatus: PaymentStatus.PENDING, deletedAt: null },
         orderBy: { createdAt: "desc" as const },
         take: 1,
         select: {
@@ -118,7 +119,10 @@ export async function remindApprovedPayment(args: {
     });
 
   const now = new Date();
-  const payment = liveReminderPayment(row, now);
+  // A soft-deleted booking or order is gone, as the abandoned-payment sweep reads it.
+  const payment = row.appointment?.deletedAt
+    ? null
+    : liveReminderPayment(row, now);
   if (!payment || !row.appointment || !row.pendingPaymentUrl) {
     throw notAwaitingPayment(args.id);
   }
