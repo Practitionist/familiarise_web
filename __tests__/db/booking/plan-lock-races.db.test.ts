@@ -89,26 +89,22 @@ describe("the plan lock", () => {
         consultantProfileId: host.consultantProfileId,
       },
     });
-    const before = {
-      webinar: await prisma.webinarPlan.findUniqueOrThrow({
-        where: { id: planId },
-      }),
-      class: await prisma.classPlan.findUniqueOrThrow({
-        where: { id: classPlan.id },
-      }),
-    };
+    // Rows as JSON: the client decorates each row object it returns.
+    const rows = async () =>
+      JSON.stringify([
+        await prisma.webinarPlan.findUniqueOrThrow({ where: { id: planId } }),
+        await prisma.classPlan.findUniqueOrThrow({
+          where: { id: classPlan.id },
+        }),
+      ]);
+    const before = await rows();
 
     await prisma.$transaction(async (tx) => {
       await lockPlanRow(tx, { planType: "webinar", planId });
       await lockPlanRow(tx, { planType: "class", planId: classPlan.id });
     });
 
-    expect(
-      await prisma.webinarPlan.findUniqueOrThrow({ where: { id: planId } }),
-    ).toEqual(before.webinar);
-    expect(
-      await prisma.classPlan.findUniqueOrThrow({ where: { id: classPlan.id } }),
-    ).toEqual(before.class);
+    expect(await rows()).toBe(before);
   });
 
   it("refuses a move whose slot batch missed a member of the team", async () => {

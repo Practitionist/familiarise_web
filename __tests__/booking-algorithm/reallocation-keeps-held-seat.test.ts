@@ -286,7 +286,10 @@ describe("a re-plan carries learner seats only", () => {
 
   it("re-seats the learner and never the collaborator when the payment-free wrapper is replaced", async () => {
     const world = classWorld(
-      [session("occ-a", 1, 7, "SCHEDULED"), session("occ-b", 2, 8, "SCHEDULED")],
+      [
+        session("occ-a", 1, 7, "SCHEDULED"),
+        session("occ-b", 2, 8, "SCHEDULED"),
+      ],
       { payments: [], seats: staffedSeats() },
     );
     expect(learnerSeats(world)).toHaveLength(1);
@@ -310,25 +313,28 @@ describe("a re-plan carries learner seats only", () => {
   it.each([
     ["an in-progress re-plan", false, true],
     ["a reschedule's released sessions", true, false],
-  ])("collects only learner seats from %s", async (_, onlyTentative, inProgress) => {
-    const world = classWorld(
-      [
-        {
-          ...session("occ-a", 1, 7, "RESCHEDULED"),
-          isTentative: true,
-        },
-      ],
-      { payments: [], seats: staffedSeats() },
-    );
-    const freed = await deleteExistingAppointments(
-      world.tx as unknown as Tx,
-      "class",
-      "class-1",
-      onlyTentative,
-      inProgress,
-    );
-    expect(freed.enrolledUserIds).toEqual([LEARNER]);
-  });
+  ])(
+    "collects only learner seats from %s",
+    async (_, onlyTentative, inProgress) => {
+      const world = classWorld(
+        [
+          {
+            ...session("occ-a", 1, 7, "RESCHEDULED"),
+            isTentative: true,
+          },
+        ],
+        { payments: [], seats: staffedSeats() },
+      );
+      const freed = await deleteExistingAppointments(
+        world.tx as unknown as Tx,
+        "class",
+        "class-1",
+        onlyTentative,
+        inProgress,
+      );
+      expect(freed.enrolledUserIds).toEqual([LEARNER]);
+    },
+  );
 
   it("reads only learner seats off the surviving sessions for a top-up", async () => {
     const appointment = {

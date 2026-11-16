@@ -220,7 +220,7 @@ export async function retimeWebinar(args: {
                 seatUserIds.filter((id) => id !== args.actorUserId),
                 clashing,
               );
-              const moved = {
+              const movedNotice = {
                 ...notificationScope(pre.organizationId),
                 outcome: "MOVED" as const,
                 oldDateTime: session.startsAt.toISOString(),
@@ -237,7 +237,7 @@ export async function retimeWebinar(args: {
                 const staged = await notifyAppointmentRescheduled(
                   group.userIds,
                   {
-                    ...moved,
+                    ...movedNotice,
                     leaveBy: retimeBy.toISOString(),
                     clash: group.clash,
                   },
@@ -259,10 +259,14 @@ export async function retimeWebinar(args: {
                 (id) => id !== args.actorUserId && !seatUserIds.includes(id),
               );
               if (team.length > 0) {
-                const staged = await notifyAppointmentRescheduled(team, moved, {
-                  tx,
-                  deferAttempt: true,
-                });
+                const staged = await notifyAppointmentRescheduled(
+                  team,
+                  movedNotice,
+                  {
+                    tx,
+                    deferAttempt: true,
+                  },
+                );
                 bells.push(...staged.map((r) => r.staged));
               }
               return {
