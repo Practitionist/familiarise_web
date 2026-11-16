@@ -18,6 +18,7 @@ import type {
   JobRunMetrics as Metrics,
   MetricsEnvironment,
 } from "@/lib/backoffice/job-run-metrics";
+import { OperatorTime } from "@/lib/time/operator-time";
 import { toneTextClass, type Tone } from "@/lib/ui/tone";
 import { cn } from "@/utils/tailwind";
 
@@ -236,11 +237,10 @@ export function JobRunMetrics({
                 </TableCell>
               )}
               <TableCell className="whitespace-nowrap text-xs">
-                {job.lastSuccessAt
-                  ? new Date(job.lastSuccessAt).toLocaleString("en-IN", {
-                      timeZone: "Asia/Kolkata",
-                    })
-                  : "None recorded"}
+                <OperatorTime
+                  value={job.lastSuccessAt}
+                  fallback="None recorded"
+                />
               </TableCell>
               <TableCell>
                 <StatusBadge {...WINDOW[job.missed.state]} variant="dot" />

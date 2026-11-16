@@ -4,14 +4,13 @@
  * GET   — current minTrialPriceInPaise
  * PATCH — set minTrialPriceInPaise (0 keeps free trials allowed)
  *
- * ADMIN or STAFF may decide the floor — the product decision is theirs,
- * consultants only price above it.
+ * Gated on `trialPricing.manage` (ADMIN only); consultants price above the floor.
  */
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import {
   getMinTrialPriceInPaise,
   setMinTrialPriceInPaise,
@@ -22,7 +21,7 @@ const patchSchema = z.object({
 });
 
 export async function GET() {
-  const auth = await requirePrivilegedAuth();
+  const auth = await requireBackofficeSurface("trialPricing.manage");
   if (auth.error) return auth.error;
 
   try {
@@ -38,7 +37,7 @@ export async function GET() {
 }
 
 export async function PATCH(request: Request) {
-  const auth = await requirePrivilegedAuth();
+  const auth = await requireBackofficeSurface("trialPricing.manage");
   if (auth.error) return auth.error;
 
   // Malformed JSON is a client error, not a Sentry-worthy exception.

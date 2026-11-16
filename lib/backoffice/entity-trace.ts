@@ -2,6 +2,7 @@ import prisma from "@/lib/prisma";
 import { getBookingTimeline } from "@/lib/data/booking-history";
 import { sentrySearchHref } from "@/lib/observability/sentry-issues";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { formatOperatorInstant } from "@/lib/time/operator-zone";
 import {
   TRACE_SOURCES,
   type EntityTrace,
@@ -397,7 +398,8 @@ export async function readEntityTrace(args: {
               detail: join([
                 d.reason,
                 `gateway ${d.disputeId}`,
-                d.dueBy && `respond by ${d.dueBy.toISOString().slice(0, 10)}`,
+                d.dueBy &&
+                  `respond by ${formatOperatorInstant(d.dueBy, "date")}`,
               ]),
             }),
             ...makeRow("dispute", d.id, "evidence", d.evidenceSubmittedAt, {
@@ -543,7 +545,7 @@ export async function readEntityTrace(args: {
               ...money,
               detail: join([
                 e.holdUntil &&
-                  `held until ${e.holdUntil.toISOString().slice(0, 10)}`,
+                  `held until ${formatOperatorInstant(e.holdUntil, "date")}`,
                 Number(e.refundedShareAmount) > 0 &&
                   `refunded share ${formatCurrencyAmount(Number(e.refundedShareAmount), e.currency)}`,
               ]),

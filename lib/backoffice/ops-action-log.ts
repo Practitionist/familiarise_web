@@ -14,6 +14,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import prisma, { type Tx } from "@/lib/prisma";
+import type { Session } from "@/lib/auth";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { requireFreshSession } from "@/lib/auth/step-up";
 import {
@@ -25,18 +26,12 @@ import { scheduleAfter } from "@/lib/api/after-safe";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
 import { UserRoleEnum } from "@/schemas/user";
 import { OpsRefusal, refusalCode, refusalResponse } from "./ops-refusal";
+import { opsReasonSchema } from "./ops-reason";
 import {
   markProposalExecuted,
   openProposal,
   requiresSecondApprover,
 } from "./ops-proposals";
-
-/** A reason an auditor can read later; five characters rules out "ok"/"fix". */
-export const opsReasonSchema = z
-  .string()
-  .trim()
-  .min(5, "Give a reason of at least 5 characters.")
-  .max(1000);
 
 export interface OpsActionInput {
   id?: string;
@@ -78,6 +73,14 @@ export async function recordOpsAction(
 export interface OpsActor {
   userId: string;
   role: string;
+}
+
+/** The audited actor of a gated request: its user and the role the session carries. */
+export function opsActorOf(session: Session): OpsActor {
+  return {
+    userId: session.user.id,
+    role: String(session.user.role ?? "UNKNOWN"),
+  };
 }
 
 export interface OpsDoorContext<B> {
@@ -286,10 +289,7 @@ export function withOpsAction<S extends z.ZodRawShape>(
     }
     const ctx: Ctx = {
       body: parsed.data as Body<S> & { reason: string },
-      actor: {
-        userId: auth.session.user.id,
-        role: String(auth.session.user.role ?? "UNKNOWN"),
-      },
+      actor: opsActorOf(auth.session),
       params:
         ((await route?.params) as Record<string, string> | undefined) ?? {},
       opsActionId: randomUUID(),

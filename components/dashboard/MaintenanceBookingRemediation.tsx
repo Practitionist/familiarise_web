@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { OperatorTime } from "@/lib/time/operator-time";
 
 const previewSchema = z.object({
   token: z.string(),
@@ -180,8 +181,8 @@ export function MaintenanceBookingRemediation({
                     {booking.type} · {booking.sessions} session(s)
                   </p>
                   <p>
-                    {new Date(booking.startsAt).toLocaleString()} –{" "}
-                    {new Date(booking.endsAt).toLocaleTimeString()}
+                    <OperatorTime value={booking.startsAt} /> –{" "}
+                    <OperatorTime value={booking.endsAt} kind="time" />
                   </p>
                   <p>
                     {booking.participants.join(", ") ||
@@ -239,7 +240,7 @@ export function MaintenanceBookingRemediation({
               </p>
               <p>{request.reason}</p>
               <p className="text-muted-foreground">
-                Requested {new Date(request.createdAt).toLocaleString()}
+                Requested <OperatorTime value={request.createdAt} />
               </p>
               {request.items
                 .filter((item) => item.lastError)

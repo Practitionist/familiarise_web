@@ -27,6 +27,7 @@ import {
   type SystemJobCard,
 } from "@/lib/cron/job-categories";
 import type { Tone } from "@/lib/ui/tone";
+import { OperatorTime } from "@/lib/time/operator-time";
 import type { MetricsEnvironment } from "@/lib/backoffice/job-run-metrics";
 import {
   formatDuration,
@@ -319,16 +320,6 @@ export function SystemJobsPanel({
   const jobsIn = (category: JobCategory) =>
     jobs.filter((job) => job.category === category);
 
-  const formatExecutionTime = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.toLocaleString("en-IN", {
-      day: "numeric",
-      month: "short",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  };
-
   return (
     <div className={cn("space-y-8", className)}>
       <AdminRunRequests refreshKey={requestsKey} />
@@ -381,7 +372,7 @@ export function SystemJobsPanel({
                       </p>
                       <p className="text-xs text-muted-foreground">
                         by {execution.triggeredBy?.name || "System"} •{" "}
-                        {formatExecutionTime(execution.startedAt)}
+                        <OperatorTime value={execution.startedAt} />
                       </p>
                     </div>
                   </div>

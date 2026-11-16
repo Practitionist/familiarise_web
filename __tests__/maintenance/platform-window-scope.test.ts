@@ -3,14 +3,13 @@
  */
 
 /**
- * #1598 P1-W01 — `setMaintenanceState` reads the "active window" without an
- * org scope, so `OFF` closed a tenant's per-org row and an OFFLINE call
- * re-labelled it as platform-wide. The pin: the platform read filters on
- * `organizationId: null`, so an active per-org row is never the match.
+ * `setMaintenanceState` scopes its "active window" read to the platform
+ * (`organizationId: null`), so an active per-org row is never the match.
  */
 
+const recordOpsAction = jest.fn();
 jest.mock("../../lib/backoffice/ops-action-log", () => ({
-  recordOpsAction: jest.fn(),
+  recordOpsAction: (...args: unknown[]) => recordOpsAction(...args),
 }));
 jest.mock("../../lib/redis", () => ({
   __esModule: true,
@@ -57,9 +56,11 @@ beforeEach(() => {
   });
 });
 
-describe("setMaintenanceState platform scope (#1598 P1-W01)", () => {
+const actor = { userId: "ops_1", role: "ADMIN" };
+
+describe("setMaintenanceState platform scope", () => {
   it("OFF does not close an active per-org window", async () => {
-    await setMaintenanceState(MaintenancePhase.OFF, { endedBy: "ops" });
+    await setMaintenanceState(MaintenancePhase.OFF, { actor });
     expect(updateMany).toHaveBeenCalledTimes(1);
     expect(updateMany.mock.calls[0][0].where).toMatchObject({
       organizationId: null,
@@ -68,8 +69,29 @@ describe("setMaintenanceState platform scope (#1598 P1-W01)", () => {
   });
 
   it("OFFLINE creates a platform row instead of re-labelling the org's", async () => {
-    await setMaintenanceState(MaintenancePhase.OFFLINE, { reason: "deploy" });
+    await setMaintenanceState(MaintenancePhase.OFFLINE, {
+      actor,
+      reason: "deploy",
+    });
     expect(update).not.toHaveBeenCalled();
     expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it("audits the transition as the session's actor and role", async () => {
+    create.mockResolvedValue({ id: "win_platform" });
+    await setMaintenanceState(MaintenancePhase.DEGRADED, {
+      actor: { userId: "ops_2", role: "STAFF" },
+      reason: "Planned upgrade",
+    });
+    expect(create.mock.calls[0][0].data.startedBy).toBe("ops_2");
+    expect(recordOpsAction).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        actorUserId: "ops_2",
+        actorRole: "STAFF",
+        action: "maintenance.transition",
+        targetId: "win_platform",
+      }),
+    );
   });
 });

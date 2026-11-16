@@ -25,6 +25,7 @@ import { Button } from "@/components/ui/button";
 import { MaintenanceBookingRemediation } from "@/components/dashboard/MaintenanceBookingRemediation";
 import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import { Badge } from "@/components/ui/badge";
+import { OperatorTime } from "@/lib/time/operator-time";
 import { Label } from "@/components/ui/label";
 
 const phaseSchema = z.enum(["OFF", "DEGRADED", "OFFLINE"]);
@@ -380,7 +381,7 @@ export default function MaintenanceControls() {
               )}
               {isActive && state?.estimatedEnd && (
                 <p className="text-sm text-muted-foreground mt-0.5">
-                  ETA: {new Date(state.estimatedEnd).toLocaleString()}
+                  ETA: <OperatorTime value={state.estimatedEnd} />
                 </p>
               )}
             </div>
@@ -433,7 +434,8 @@ export default function MaintenanceControls() {
                   </Badge>
                 )}
                 <span className="text-xs text-muted-foreground/70">
-                  Checked {new Date(preflight.checkedAt).toLocaleTimeString()}
+                  Checked{" "}
+                  <OperatorTime value={preflight.checkedAt} kind="time" />
                 </span>
               </div>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
@@ -725,12 +727,10 @@ export default function MaintenanceControls() {
                         {w.reason || "—"}
                       </td>
                       <td className="py-2.5 pr-4 text-muted-foreground whitespace-nowrap">
-                        {w.startedAt
-                          ? new Date(w.startedAt).toLocaleString()
-                          : "—"}
+                        <OperatorTime value={w.startedAt} />
                       </td>
                       <td className="py-2.5 pr-4 text-muted-foreground whitespace-nowrap">
-                        {w.endedAt ? new Date(w.endedAt).toLocaleString() : "—"}
+                        <OperatorTime value={w.endedAt} />
                       </td>
                     </tr>
                   ))}

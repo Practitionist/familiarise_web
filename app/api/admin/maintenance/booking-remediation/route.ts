@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { requireAdminAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { requireFreshSession } from "@/lib/auth/step-up";
-import {
-  recordOpsAction,
-  opsReasonSchema,
-} from "@/lib/backoffice/ops-action-log";
+import { opsActorOf, recordOpsAction } from "@/lib/backoffice/ops-action-log";
+import { opsReasonSchema } from "@/lib/backoffice/ops-reason";
 import prisma from "@/lib/prisma";
 import {
   confirmRemediation,
@@ -26,7 +24,7 @@ const confirmSchema = z.object({
 });
 
 export async function GET(request: NextRequest) {
-  const auth = await requireAdminAuth();
+  const auth = await requireBackofficeSurface("maintenance.manage");
   if (auth.error) return auth.error;
   const windowId = z
     .string()
@@ -63,7 +61,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const auth = await requireAdminAuth();
+  const auth = await requireBackofficeSurface("maintenance.manage");
   if (auth.error) return auth.error;
   const stale = requireFreshSession(auth.session);
   if (stale) return stale;
@@ -116,9 +114,10 @@ export async function POST(request: NextRequest) {
           appointmentId,
         })),
       });
+      const actor = opsActorOf(auth.session);
       await recordOpsAction(tx, {
-        actorUserId: auth.session.user.id,
-        actorRole: "ADMIN",
+        actorUserId: actor.userId,
+        actorRole: actor.role,
         surface: "maintenance.manage",
         action: "maintenance.booking-remediation.confirm",
         targetKind: "MaintenanceRemediation",
