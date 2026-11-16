@@ -9,6 +9,7 @@ import {
   FileActionError,
   friendlyErrorFromResponse,
 } from "@/lib/documents/file-errors";
+import { formatOperatorInstant } from "@/lib/time/operator-zone";
 
 const ThreadsSchema = z.object({
   threads: z.array(
@@ -26,8 +27,6 @@ const ThreadsSchema = z.object({
 type RemovalAction =
   | { action: "remove"; reason: "USER_REQUEST" | "SUPPORT_ACTION" }
   | { action: "decline" };
-
-const when = (iso: string) => new Date(iso).toLocaleString();
 
 /**
  * A booking's document threads for support: remove a thread (the reason is
@@ -108,7 +107,7 @@ export function BookingDocumentsOps({
               {t.title} · from the {t.uploadedBy} · {t.versions}{" "}
               {t.versions === 1 ? "version" : "versions"}
               {t.removalRequestedAt
-                ? ` · removal requested ${when(t.removalRequestedAt)}`
+                ? ` · removal requested ${formatOperatorInstant(t.removalRequestedAt)}`
                 : ""}
             </span>
             <span className="flex flex-wrap gap-1.5">

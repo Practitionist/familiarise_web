@@ -9,7 +9,7 @@ import { bookingStatus } from "@/lib/appointments/booking-status";
 import { mapConsultantAppointments } from "@/lib/appointments/map-consultant";
 import { mapConsulteeEvents } from "@/lib/appointments/map-consultee";
 import { appointmentStatusChip } from "@/lib/appointments/occurrences";
-import type { StaffAppointment } from "@/lib/data/staff-appointments";
+import type { StaffAppointment } from "@/lib/data/staff-appointments-schema";
 import type { TConsulteeEventsResponse } from "@/types/consultee-events";
 
 const NOW = new Date();

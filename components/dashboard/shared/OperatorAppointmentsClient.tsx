@@ -5,15 +5,7 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   ResponsiveModal,
   ResponsiveModalContent,
@@ -23,15 +15,18 @@ import {
   ResponsiveModalTitle,
 } from "@/components/ui/responsive-modal";
 import { Label } from "@/components/ui/label";
+import { ErrorState } from "@/components/dashboard/ErrorState";
+import { FilterBar } from "@/components/dashboard/FilterBar";
 import { PageHeader } from "@/components/dashboard/PageScaffold";
 import { Stat, StatRow } from "@/components/dashboard/Stat";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { humanizeEnum } from "@/lib/ui/tone";
 import { bookingStatus } from "@/lib/appointments/booking-status";
+import { gatewayLabel } from "@/lib/labels/money-labels";
+import { paymentStatusBadge } from "@/lib/labels/session-labels";
 import { AwaitingPaymentPanel } from "./AwaitingPaymentPanel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
-  Search,
   Calendar,
   Clock,
   AlertTriangle,
@@ -41,15 +36,17 @@ import {
   BookOpen,
   RefreshCw,
   Loader2,
+  Sparkles,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useListParams } from "@/hooks/useListParams";
 import { AppointmentTimeline } from "./AppointmentTimeline";
-import { useZonedFormat } from "@/lib/time/zoned-format";
-import type {
-  StaffAppointment,
-  StaffAppointmentsPayload,
-} from "@/lib/data/staff-appointments";
+import { OperatorTime } from "@/lib/time/operator-time";
+import {
+  staffAppointmentsPayloadSchema,
+  type StaffAppointment,
+  type StaffAppointmentsPayload,
+} from "@/lib/data/staff-appointments-schema";
 
 type Appointment = StaffAppointment;
 
@@ -63,6 +60,8 @@ const getTypeIcon = (type: string) => {
       return Monitor;
     case "class":
       return BookOpen;
+    case "trial":
+      return Sparkles;
     default:
       return Calendar;
   }
@@ -110,11 +109,6 @@ const TABS = [
   "completed",
 ] as const;
 
-// #1527 QA — date-fns patterns in the page's display zone (DisplayZoneProvider
-// in OperatorAppointmentsPage), not toLocaleString in the runtime zone.
-const DATE_PATTERN = "d MMM, hh:mm a";
-const FULL_DATE_PATTERN = "EEE, d MMM yyyy, hh:mm a";
-
 const formatCurrency = (amount: number, currency: string = "INR") => {
   return new Intl.NumberFormat("en-IN", {
     style: "currency",
@@ -128,33 +122,45 @@ const formatCurrency = (amount: number, currency: string = "INR") => {
 // a fetch waterfall. Filtered/paged views fall back to a client fetch.
 const DEFAULT_TYPE = "all";
 const DEFAULT_TAB = "all";
-const TYPE_FILTERS = new Set([
-  "consultation",
-  "subscription",
-  "webinar",
-  "class",
-]);
+export const TYPE_OPTIONS = [
+  { value: "all", label: "All Types" },
+  { value: "consultation", label: "Consultation" },
+  { value: "subscription", label: "Subscription" },
+  { value: "trial", label: "Trial" },
+  { value: "webinar", label: "Webinar" },
+  { value: "class", label: "Class" },
+];
+const TYPE_FILTERS = new Set(TYPE_OPTIONS.map((option) => option.value));
 
-// #890 — queryKey is structural: [scope, { page, type, status, search }].
-// The page.tsx prefetch uses the identical default object below.
-function appointmentsKey(args: {
-  page: number;
-  type: string;
-  status: string;
-  search: string;
-}) {
+type ListArgs = { page: number; type: string; status: string; search: string };
+
+// The query key is structural; the page's server prefetch uses the default object.
+function appointmentsKey(args: ListArgs) {
   return ["staff-appointments", args] as const;
+}
+
+async function fetchAppointments(
+  args: ListArgs,
+): Promise<StaffAppointmentsPayload> {
+  const params = new URLSearchParams();
+  params.set("page", args.page.toString());
+  if (args.type !== "all") params.set("type", args.type.toUpperCase());
+  if (args.status !== "all") params.set("status", args.status);
+  if (args.search) params.set("search", args.search);
+  const response = await fetch(`/api/staff/appointments?${params}`);
+  if (!response.ok) throw new Error("Failed to fetch appointments");
+  return staffAppointmentsPayloadSchema.parse(await response.json());
 }
 
 export function OperatorAppointmentsClient({
   beforeContent,
   renderOps,
 }: Readonly<{
-  beforeContent?: ReactNode;
+  /** Drawn above the list; `openBooking` opens one booking's drawer. */
+  beforeContent?: (openBooking: (appointmentId: string) => void) => ReactNode;
   renderOps?: (appointmentId: string) => ReactNode;
 }>) {
   const { toast } = useToast();
-  const zoned = useZonedFormat();
   // Page, type, tab and search live in the URL, so reload and Back keep a
   // triager's place.
   const list = useListParams({ filterKeys: ["tab", "type", "open"] });
@@ -162,7 +168,7 @@ export function OperatorAppointmentsClient({
   // #1527 — a support case's booking card lands here as `?open=<id>`: search
   // for it on All, then open it. Consumed into `q` below.
   const linkedOpen = list.filters.open;
-  const debouncedSearch = linkedOpen ?? list.q;
+  const search = linkedOpen ?? list.q;
   const urlTab = list.filters.tab ?? DEFAULT_TAB;
   const activeTab =
     !linkedOpen && (TABS as readonly string[]).includes(urlTab)
@@ -175,7 +181,7 @@ export function OperatorAppointmentsClient({
   const setTypeFilter = (next: string) =>
     list.setFilter("type", next === DEFAULT_TYPE ? null : next);
 
-  // An Awaiting-payment row opens its booking: search by id, then open it.
+  // A booking to open: found on the list's page, or read on its own by id.
   const [pendingOpenId, setPendingOpenId] = useState<string | null>(linkedOpen);
   useEffect(() => {
     if (linkedOpen) {
@@ -185,51 +191,37 @@ export function OperatorAppointmentsClient({
   const [selectedAppointment, setSelectedAppointment] =
     useState<Appointment | null>(null);
 
-  // The input keeps its own draft; the URL gets it after a pause. An outside
-  // change (openBooking, Back) replaces the draft, but the echo of our own
-  // write does not, or it would eat keys typed since (same as FilterBar).
-  const [searchQuery, setSearchQuery] = useState(debouncedSearch);
-  const [seenSearch, setSeenSearch] = useState(debouncedSearch);
-  const [emittedSearch, setEmittedSearch] = useState<string | null>(null);
-  if (debouncedSearch !== seenSearch) {
-    setSeenSearch(debouncedSearch);
-    if (debouncedSearch !== emittedSearch) setSearchQuery(debouncedSearch);
-  }
-  useEffect(() => {
-    if (searchQuery.trim() === debouncedSearch) return;
-    const timer = setTimeout(() => {
-      setEmittedSearch(searchQuery.trim());
-      setParams({ q: searchQuery });
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [searchQuery, debouncedSearch, setParams]);
-
+  const listArgs: ListArgs = {
+    page,
+    type: typeFilter,
+    status: activeTab,
+    search,
+  };
   const { data, isLoading, isFetching, refetch, error } =
     useQuery<StaffAppointmentsPayload>({
-      queryKey: appointmentsKey({
-        page,
-        type: typeFilter,
-        status: activeTab,
-        search: debouncedSearch,
-      }),
+      queryKey: appointmentsKey(listArgs),
       // Tab, type, page and search all live in the key, so each combination is
-      // its own query. Same fix as #346 on the appointments list.
+      // its own query.
       placeholderData: keepPreviousData,
-      queryFn: async () => {
-        const params = new URLSearchParams();
-        params.set("page", page.toString());
-        if (typeFilter !== "all") params.set("type", typeFilter.toUpperCase());
-        if (activeTab !== "all") params.set("status", activeTab);
-        if (debouncedSearch) params.set("search", debouncedSearch);
-
-        const response = await fetch(`/api/staff/appointments?${params}`);
-        if (!response.ok) throw new Error("Failed to fetch appointments");
-        return response.json();
-      },
+      queryFn: () => fetchAppointments(listArgs),
       refetchOnWindowFocus: false,
       // The Awaiting payment tab reads its own source (approval payments).
       enabled: activeTab !== "awaiting-payment",
     });
+  // Opening a booking from the queue or Awaiting payment leaves the list's
+  // q/tab/type alone: the booking is read by id beside it.
+  const linkedArgs: ListArgs = {
+    page: 1,
+    type: DEFAULT_TYPE,
+    status: DEFAULT_TAB,
+    search: pendingOpenId ?? "",
+  };
+  const linked = useQuery<StaffAppointmentsPayload>({
+    queryKey: appointmentsKey(linkedArgs),
+    queryFn: () => fetchAppointments(linkedArgs),
+    refetchOnWindowFocus: false,
+    enabled: pendingOpenId !== null,
+  });
 
   useEffect(() => {
     if (error) {
@@ -241,6 +233,19 @@ export function OperatorAppointmentsClient({
       });
     }
   }, [error, toast]);
+
+  // The linked read fails out of sight of the list, so it says so twice: a toast and a retry above the list.
+  const linkedError = pendingOpenId !== null ? linked.error : null;
+  useEffect(() => {
+    if (linkedError) {
+      console.error("Error opening appointment:", linkedError);
+      toast({
+        title: "Error",
+        description: "Failed to open the booking",
+        variant: "destructive",
+      });
+    }
+  }, [linkedError, toast]);
 
   // `isFetching` still drives the refresh button's spinner — that is what it is
   // for. It must NOT drive the panel body: with keepPreviousData the rows are
@@ -266,11 +271,15 @@ export function OperatorAppointmentsClient({
   else tabPanelKind = "list";
 
   const openBooking = (appointmentId: string) => {
-    setParams({ q: appointmentId, filters: { tab: null, type: null } });
+    // A second click on a booking whose read failed asks again.
+    if (appointmentId === pendingOpenId && linked.isError) {
+      void linked.refetch();
+    }
     setPendingOpenId(appointmentId);
   };
   const toOpen = pendingOpenId
-    ? appointments.find((a) => a.id === pendingOpenId)
+    ? (appointments.find((a) => a.id === pendingOpenId) ??
+      linked.data?.appointments.find((a) => a.id === pendingOpenId))
     : undefined;
   if (toOpen) {
     setPendingOpenId(null);
@@ -296,7 +305,16 @@ export function OperatorAppointmentsClient({
         }
       />
 
-      {beforeContent}
+      {beforeContent?.(openBooking)}
+
+      {linkedError && (
+        <ErrorState
+          title="Couldn't open that booking"
+          description="The list below is unchanged. Try again to open it."
+          onRetry={() => void linked.refetch()}
+          error={linkedError}
+        />
+      )}
 
       {/* Global counts within the filters (#897), not the current page. */}
       <StatRow>
@@ -332,30 +350,26 @@ export function OperatorAppointmentsClient({
               <TabsTrigger value="completed">Completed</TabsTrigger>
             </TabsList>
 
-            <div className="flex gap-2">
-              <div className="relative flex-1 min-w-0">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  aria-label="Search appointments"
-                  placeholder="Search..."
-                  className="pl-9"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                />
-              </div>
-              <Select value={typeFilter} onValueChange={setTypeFilter}>
-                <SelectTrigger className="w-full max-w-[10rem] sm:w-40">
-                  <SelectValue placeholder="Type" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Types</SelectItem>
-                  <SelectItem value="consultation">Consultation</SelectItem>
-                  <SelectItem value="subscription">Subscription</SelectItem>
-                  <SelectItem value="webinar">Webinar</SelectItem>
-                  <SelectItem value="class">Class</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+            <FilterBar
+              search={{
+                label: "Search appointments",
+                placeholder: "Search...",
+                value: search,
+                onChange: list.setQ,
+              }}
+              selects={[
+                {
+                  key: "type",
+                  label: "Type",
+                  value: typeFilter,
+                  options: TYPE_OPTIONS,
+                  onChange: setTypeFilter,
+                },
+              ]}
+              onClear={() => setParams({ q: "", filters: { type: null } })}
+              canClear={Boolean(search) || typeFilter !== DEFAULT_TYPE}
+              className="min-w-0 flex-1"
+            />
           </div>
 
           {/* All Tabs Content */}
@@ -465,7 +479,9 @@ export function OperatorAppointmentsClient({
                               <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground/70">
                                 <span className="flex items-center gap-1">
                                   <Calendar className="h-3 w-3" />
-                                  {zoned(appointment.scheduledAt, DATE_PATTERN)}
+                                  <OperatorTime
+                                    value={appointment.scheduledAt}
+                                  />
                                 </span>
                                 {appointment.duration > 0 && (
                                   <span className="flex items-center gap-1">
@@ -482,7 +498,12 @@ export function OperatorAppointmentsClient({
                                       appointment.payment.amount,
                                       appointment.payment.currency,
                                     )}{" "}
-                                    • {appointment.payment.status.toLowerCase()}
+                                    •{" "}
+                                    {
+                                      paymentStatusBadge(
+                                        appointment.payment.status,
+                                      ).label
+                                    }
                                   </span>
                                 )}
                               </div>
@@ -633,10 +654,7 @@ export function OperatorAppointmentsClient({
                       Scheduled At
                     </Label>
                     <p>
-                      {zoned(
-                        selectedAppointment.scheduledAt,
-                        FULL_DATE_PATTERN,
-                      )}
+                      <OperatorTime value={selectedAppointment.scheduledAt} />
                     </p>
                   </div>
                   {selectedAppointment.duration > 0 && (
@@ -666,13 +684,19 @@ export function OperatorAppointmentsClient({
                       </div>
                       <div>
                         <p className="text-xs text-muted-foreground">Status</p>
-                        <p className="capitalize">
-                          {selectedAppointment.payment.status.toLowerCase()}
+                        <p>
+                          {
+                            paymentStatusBadge(
+                              selectedAppointment.payment.status,
+                            ).label
+                          }
                         </p>
                       </div>
                       <div>
                         <p className="text-xs text-muted-foreground">Gateway</p>
-                        <p>{selectedAppointment.payment.gateway}</p>
+                        <p>
+                          {gatewayLabel(selectedAppointment.payment.gateway)}
+                        </p>
                       </div>
                     </div>
                   </div>

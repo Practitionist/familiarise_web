@@ -11,13 +11,7 @@ import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { FilterBar } from "@/components/dashboard/FilterBar";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { payoutStatusBadge } from "@/lib/labels/session-labels";
 import { formatCurrencyAmount } from "@/utils/formatting";
@@ -191,27 +185,31 @@ export function OrgPayoutsTab() {
       />
       <Card>
         <CardContent className="pt-6 space-y-4">
-          <div className="grid gap-2 sm:grid-cols-2">
-            <Select value={status} onValueChange={setStatus}>
-              <SelectTrigger aria-label="Status">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Every status</SelectItem>
-                {STATUSES.map((s) => (
-                  <SelectItem key={s} value={s}>
-                    {payoutStatusBadge(s).label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+          <FilterBar
+            selects={[
+              {
+                key: "status",
+                label: "Status",
+                value: status,
+                options: [
+                  { value: "all", label: "Every status" },
+                  ...STATUSES.map((s) => ({
+                    value: s,
+                    label: payoutStatusBadge(s).label,
+                  })),
+                ],
+                onChange: setStatus,
+              },
+            ]}
+          >
             <Input
+              className="h-9 w-48"
               aria-label="Organisation id"
               placeholder="Organisation id"
               value={orgId}
               onChange={(e) => setOrgId(e.target.value)}
             />
-          </div>
+          </FilterBar>
           {error ? (
             <p className="text-sm text-destructive">
               Organisation payouts could not load.

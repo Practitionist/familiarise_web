@@ -7,6 +7,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { OperatorTime } from "@/lib/time/operator-time";
+import {
+  fromOperatorWallTime,
+  operatorEndKind,
+} from "@/lib/time/operator-zone";
 
 const previewSchema = z.object({
   token: z.string(),
@@ -45,6 +50,22 @@ const requestsSchema = z.object({
 });
 type RemediationRequest = z.infer<typeof requestsSchema>["requests"][number];
 
+/** The preview request for an IST From/Until pair typed into the two inputs. */
+export function previewBody(
+  windowId: string,
+  startsAt: string,
+  endsAt: string,
+) {
+  const from = fromOperatorWallTime(startsAt);
+  const until = fromOperatorWallTime(endsAt);
+  if (!from || !until) throw new Error("Enter both times in full (IST).");
+  return {
+    windowId,
+    startsAt: from.toISOString(),
+    endsAt: until.toISOString(),
+  };
+}
+
 export function MaintenanceBookingRemediation({
   windowId,
 }: Readonly<{
@@ -81,11 +102,7 @@ export function MaintenanceBookingRemediation({
       const body =
         confirm && preview
           ? { token: preview.token, confirmation: preview.confirmation, reason }
-          : {
-              windowId,
-              startsAt: new Date(startsAt).toISOString(),
-              endsAt: new Date(endsAt).toISOString(),
-            };
+          : previewBody(windowId, startsAt, endsAt);
       const response = await fetch(
         "/api/admin/maintenance/booking-remediation",
         {
@@ -130,7 +147,7 @@ export function MaintenanceBookingRemediation({
         </p>
         <div className="grid gap-3 sm:grid-cols-2">
           <Label>
-            From
+            From (IST)
             <Input
               type="datetime-local"
               value={startsAt}
@@ -141,7 +158,7 @@ export function MaintenanceBookingRemediation({
             />
           </Label>
           <Label>
-            Until
+            Until (IST)
             <Input
               type="datetime-local"
               value={endsAt}
@@ -180,8 +197,11 @@ export function MaintenanceBookingRemediation({
                     {booking.type} · {booking.sessions} session(s)
                   </p>
                   <p>
-                    {new Date(booking.startsAt).toLocaleString()} –{" "}
-                    {new Date(booking.endsAt).toLocaleTimeString()}
+                    <OperatorTime value={booking.startsAt} /> –{" "}
+                    <OperatorTime
+                      value={booking.endsAt}
+                      kind={operatorEndKind(booking.startsAt, booking.endsAt)}
+                    />
                   </p>
                   <p>
                     {booking.participants.join(", ") ||
@@ -239,7 +259,7 @@ export function MaintenanceBookingRemediation({
               </p>
               <p>{request.reason}</p>
               <p className="text-muted-foreground">
-                Requested {new Date(request.createdAt).toLocaleString()}
+                Requested <OperatorTime value={request.createdAt} />
               </p>
               {request.items
                 .filter((item) => item.lastError)

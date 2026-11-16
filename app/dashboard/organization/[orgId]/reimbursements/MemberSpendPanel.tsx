@@ -13,8 +13,12 @@ import { format } from "date-fns";
 import { Download } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { useViewerZone } from "@/lib/time/use-viewer-zone";
+import {
+  DateRangeMenu,
+  dateRangeBounds,
+  type DateRange,
+} from "@/components/dashboard/DateRangeMenu";
 import {
   ScopedListTable,
   type Column,
@@ -93,16 +97,14 @@ const COLUMNS: Column<ReimbursementRow>[] = [
 export function MemberSpendPanel({ orgId }: Readonly<{ orgId: string }>) {
   const searchParams = useSearchParams();
   const page = Number(searchParams?.get("page") ?? "1") || 1;
-  const [fromDate, setFromDate] = useState("");
-  const [toDate, setToDate] = useState("");
+  const [range, setRange] = useState<DateRange>({ from: "", to: "" });
+  const { zone } = useViewerZone();
 
-  // ISO-encode the date inputs so the server's z.string().datetime()
-  // parser accepts them. Empty inputs are dropped — the API treats
-  // missing from/to as "no bound".
-  const fromIso = fromDate ? new Date(fromDate).toISOString() : undefined;
-  const toIso = toDate
-    ? new Date(`${toDate}T23:59:59.999`).toISOString()
-    : undefined;
+  // Viewer-zone day bounds as ISO instants for the server's z.string().datetime();
+  // an open side is dropped, which the API reads as "no bound".
+  const { fromMs, toMs } = dateRangeBounds(range, zone);
+  const fromIso = fromMs === null ? undefined : new Date(fromMs).toISOString();
+  const toIso = toMs === null ? undefined : new Date(toMs).toISOString();
 
   const apiUrl = new URLSearchParams({ page: String(page) });
   if (fromIso) apiUrl.set("from", fromIso);
@@ -153,27 +155,13 @@ export function MemberSpendPanel({ orgId }: Readonly<{ orgId: string }>) {
           </a>
         </Button>
       </div>
-      <div className="grid max-w-md grid-cols-1 gap-3 sm:grid-cols-2">
-        <div className="space-y-1.5">
-          <Label htmlFor="from-date">From</Label>
-          <Input
-            id="from-date"
-            type="date"
-            value={fromDate}
-            onChange={(e) => setFromDate(e.target.value)}
-            max={toDate || undefined}
-          />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="to-date">To</Label>
-          <Input
-            id="to-date"
-            type="date"
-            value={toDate}
-            onChange={(e) => setToDate(e.target.value)}
-            min={fromDate || undefined}
-          />
-        </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <DateRangeMenu
+          value={range}
+          onChange={setRange}
+          zone={zone}
+          direction="past"
+        />
       </div>
 
       {data && (

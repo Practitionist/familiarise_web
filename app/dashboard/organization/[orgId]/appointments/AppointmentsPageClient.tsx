@@ -31,16 +31,8 @@ import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { format } from "date-fns";
-import { Search } from "lucide-react";
 
-import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { FilterBar } from "@/components/dashboard/FilterBar";
 import {
   ScopedListTable,
   type Column,
@@ -128,8 +120,16 @@ const APPOINTMENT_TYPES = [
   "CLASS",
 ] as const;
 
+const TYPE_OPTIONS = [
+  { value: "all", label: "All types" },
+  ...APPOINTMENT_TYPES.map((t) => ({ value: t, label: humanizeEnum(t) })),
+];
+
 /** The booking words a row can show, in lifecycle order, for the filter. */
-const STATUS_OPTIONS = BOOKING_WORDS;
+const STATUS_OPTIONS = [
+  { value: "all", label: "Any status" },
+  ...BOOKING_WORDS.map((s) => ({ value: s, label: s })),
+];
 
 function getPlanTitle(row: AppointmentRow): string {
   return (
@@ -369,49 +369,37 @@ export function AppointmentsPageClient({ orgId }: { orgId: string }) {
 
   const toolbar = (
     <div className="space-y-2">
-      <div
-        role="search"
-        aria-label="Filter organization appointments"
-        className="flex flex-col gap-3 sm:flex-row sm:items-center"
-      >
-        <div className="relative flex-1 min-w-0">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            aria-label="Search plan or member on this page"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search plan or member on this page…"
-            className="pl-8"
-          />
-        </div>
-
-        <Select value={typeFilter ?? "all"} onValueChange={setTypeFilter}>
-          <SelectTrigger className="w-full sm:w-44" aria-label="Type">
-            <SelectValue placeholder="All types" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All types</SelectItem>
-            {APPOINTMENT_TYPES.map((t) => (
-              <SelectItem key={t} value={t}>
-                {humanizeEnum(t)}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <Select value={status} onValueChange={setStatus}>
-          <SelectTrigger className="w-full sm:w-44" aria-label="Status">
-            <SelectValue placeholder="Any status" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Any status</SelectItem>
-            {STATUS_OPTIONS.map((s) => (
-              <SelectItem key={s} value={s}>
-                {s}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+      <div role="search" aria-label="Filter organization appointments">
+        <FilterBar
+          search={{
+            label: "Search plan or member on this page",
+            placeholder: "Search plan or member on this page…",
+            value: search,
+            onChange: setSearch,
+          }}
+          selects={[
+            {
+              key: "type",
+              label: "Type",
+              value: typeFilter ?? "all",
+              options: TYPE_OPTIONS,
+              onChange: setTypeFilter,
+            },
+            {
+              key: "status",
+              label: "Status",
+              value: status,
+              options: STATUS_OPTIONS,
+              onChange: setStatus,
+            },
+          ]}
+          onClear={() => {
+            setSearch("");
+            setStatus("all");
+            if (typeFilter) setTypeFilter("all");
+          }}
+          canClear={isNarrowed || typeFilter !== undefined}
+        />
       </div>
       {isNarrowed && (
         <p aria-live="polite" className="text-xs text-muted-foreground">

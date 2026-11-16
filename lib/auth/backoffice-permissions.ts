@@ -91,6 +91,8 @@ export type BackofficeSurface =
   | "organizations.manage"
   | "announcements.manage"
   | "analytics.read"
+  // The platform trial-price floor every expert prices above.
+  | "trialPricing.manage"
   | "systemJobs.manage"
   | "maintenance.manage"
   // Call, screen-share and recording quality: a cost lever staff and admin both own.
@@ -187,6 +189,8 @@ export const BACKOFFICE_PERMISSIONS: Record<
   "organizations.manage": ADMIN_ONLY,
   "announcements.manage": ADMIN_ONLY,
   "analytics.read": OPERATORS,
+  // A platform price rule, so admin's like the rest of platform config.
+  "trialPricing.manage": ADMIN_ONLY,
   "systemJobs.manage": ADMIN_ONLY,
   "maintenance.manage": ADMIN_ONLY,
   "videoConfig.manage": OPERATORS,

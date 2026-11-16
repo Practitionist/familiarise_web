@@ -57,7 +57,10 @@ import { getStaffAppointments } from "@/lib/data/staff-appointments";
 import { staffStatus } from "@/components/dashboard/shared/OperatorAppointmentsClient";
 import { mapConsultantAppointments } from "@/lib/appointments/map-consultant";
 import { mapConsulteeEvents } from "@/lib/appointments/map-consultee";
-import { appointmentStatusChip } from "@/lib/appointments/occurrences";
+import {
+  appointmentStatusChip,
+  appointmentStatusLine,
+} from "@/lib/appointments/occurrences";
 import { openProposalTarget } from "@/lib/appointments/consultee-affordances";
 import { processAllEvents } from "@/app/dashboard/consultee/[consulteeId]/(features)/home/event-processor";
 import {
@@ -129,6 +132,33 @@ describe("a pay-first 1:1 reads the same word through each list's real reader", 
     expect(appointmentStatusChip(vms[0], "consultee").label).toBe("Confirmed");
     expect(vms[0].needsActionReason).not.toBe("PAY_NOW");
     expect(vms[0].bucket).toBe("waiting");
+  });
+});
+
+describe("a seat the host removed reads once, with no next session", () => {
+  it("lists under Cancelled with one released line and no session ahead", async () => {
+    const { vms } = await learnerVms(() => {
+      const seat = storedSeat("paid");
+      const appointment = seat.appointment as Row & {
+        participants: Row[];
+      };
+      mockRows.webinar = [
+        {
+          ...seat,
+          appointment: {
+            ...appointment,
+            participants: [
+              { ...appointment.participants[0], status: "CANCELLED" },
+            ],
+          },
+        },
+      ];
+    });
+    const vm = vms[0];
+    expect(vm.bucket).toBe("cancelled");
+    expect(vm.nextAt).toBeNull();
+    // The sheet prints the status line only when it differs from the row's meta.
+    expect(appointmentStatusLine(vm, "consultee")).toBe(vm.meta);
   });
 });
 

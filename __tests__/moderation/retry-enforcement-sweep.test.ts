@@ -367,6 +367,7 @@ describe("retryModerationEnforcement", () => {
               "SEAT_ACCESS_REVOKE",
               "REFUND_ACCESS_REVOKE",
               "ERASURE_REVOKE",
+              "CONDUCT_CALL_BLOCK",
             ],
           },
         },

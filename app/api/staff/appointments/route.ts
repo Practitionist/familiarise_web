@@ -1,29 +1,32 @@
 /**
- * Staff Appointments API
- * Staff/Admin access to all appointments with filtering and pagination.
- *
- * Thin shell — the JSON-safe read lives in `lib/data/staff-appointments.ts`
- * (`getStaffAppointments`), shared with the server prefetch (#890) so SSR
- * hydration and the client fetch resolve identical payloads.
+ * Every appointment for the back office, filtered and paged. A thin shell over
+ * `getStaffAppointments`, which the page's server prefetch shares.
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { z } from "zod";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { getStaffAppointments } from "@/lib/data/staff-appointments";
 import type { Scope } from "@/lib/api/scope/parse";
 
-// Coerce a query param to a positive integer; NaN / <1 / non-integer falls
-// back to `fallback`. `parseInt("abc")` returns NaN (truthy), so a bare
-// `|| default` never triggers — and the data layer doesn't clamp the offset.
-function positiveIntParam(raw: string | null, fallback: number): number {
-  const n = Number(raw);
-  return Number.isInteger(n) && n > 0 ? n : fallback;
-}
+/** A positive whole number, else `fallback`; never above `max`. */
+const positiveInt = (fallback: number, max: number) =>
+  z.coerce
+    .number()
+    .int()
+    .positive()
+    .catch(fallback)
+    .transform((n) => Math.min(n, max));
+
+/** Paging is clamped: a page holds at most 100 rows, as the decision queue does. */
+const PagingSchema = z.object({
+  page: positiveInt(1, 10_000),
+  limit: positiveInt(20, 100),
+});
 
 /**
- * #674 defect 13 — `?orgId=` drills into one tenant; its absence is the
- * platform-wide view this endpoint exists for. requirePrivilegedAuth above is
- * what earns `all`, so no membership check is needed to widen it.
+ * `?orgId=` drills into one tenant; its absence is the platform-wide view.
+ * The `appointments.manage` gate is what earns `all`.
  */
 function staffScope(orgId: string | null): Scope {
   return orgId ? { kind: "org", orgId } : { kind: "all" };
@@ -31,7 +34,7 @@ function staffScope(orgId: string | null): Scope {
 
 export async function GET(req: NextRequest) {
   try {
-    const auth = await requirePrivilegedAuth();
+    const auth = await requireBackofficeSurface("appointments.manage");
     if (auth.error) return auth.error;
 
     const { searchParams } = new URL(req.url);
@@ -42,8 +45,10 @@ export async function GET(req: NextRequest) {
       dateFrom: searchParams.get("dateFrom"),
       dateTo: searchParams.get("dateTo"),
       scope: staffScope(searchParams.get("orgId")),
-      page: positiveIntParam(searchParams.get("page"), 1),
-      limit: positiveIntParam(searchParams.get("limit"), 20),
+      ...PagingSchema.parse({
+        page: searchParams.get("page") ?? undefined,
+        limit: searchParams.get("limit") ?? undefined,
+      }),
     });
 
     return NextResponse.json(result);

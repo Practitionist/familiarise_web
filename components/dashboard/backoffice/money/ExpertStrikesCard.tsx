@@ -7,14 +7,13 @@ import {
   EXPERT_STRIKE_THRESHOLD,
   type ExpertStrikeReviewRow,
 } from "@/lib/booking/expert-reliability-rules";
-import { useZonedFormat } from "@/lib/time/zoned-format";
+import { OperatorTime } from "@/lib/time/operator-time";
 
 /**
  * D10 — experts with reliability strikes (expert cancels of confirmed bookings,
  * consultant no-shows) in the last 90 days. Read-only: no money is taken.
  */
 export function ExpertStrikesCard() {
-  const zoned = useZonedFormat();
   const list = useQuery({
     queryKey: ["expert-strikes"] as const,
     queryFn: async () => {
@@ -50,7 +49,7 @@ export function ExpertStrikesCard() {
             </span>
             {row.lastStrikeAt && (
               <span className="text-muted-foreground">
-                last {zoned(row.lastStrikeAt, "d MMM yyyy")}
+                last <OperatorTime value={row.lastStrikeAt} />
               </span>
             )}
           </div>

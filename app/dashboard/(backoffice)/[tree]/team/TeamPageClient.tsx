@@ -46,6 +46,7 @@ import {
   type RowAction,
 } from "./team-row-actions";
 import { fetchWithReauth } from "@/lib/auth/reauth-client";
+import { OperatorTime } from "@/lib/time/operator-time";
 
 type Role = MemberRow["role"];
 
@@ -171,10 +172,7 @@ export function TeamPageClient() {
       key: "lastActive",
       header: "Last active",
       className: "text-sm text-muted-foreground",
-      cell: (row) =>
-        row.lastActiveAt
-          ? new Date(row.lastActiveAt).toLocaleDateString()
-          : "Never",
+      cell: (row) => <OperatorTime value={row.lastActiveAt} fallback="Never" />,
     },
     ...(mayManage
       ? [

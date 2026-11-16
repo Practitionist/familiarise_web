@@ -40,8 +40,14 @@ function Facts({ items }: Readonly<{ items: [string, ReactNode][] }>) {
 
 function bookingStatusLabel(booking: CaseBooking): string {
   if (!booking.status) return "—";
-  return bookingStatus({ kind: booking.kind, status: booking.status }, "STAFF")
-    .label;
+  return bookingStatus(
+    {
+      kind: booking.kind,
+      status: booking.status,
+      seatStatus: booking.seatStatus,
+    },
+    "STAFF",
+  ).label;
 }
 
 function SentryIssuesSection({
