@@ -77,7 +77,7 @@ graph TB
 ```mermaid
 graph TB
     subgraph "Role Hierarchy"
-        ADMIN["ADMIN<br/>Full platform control<br/>Analytics, configuration,<br/>tax management"]
+        ADMIN["ADMIN<br/>Full platform control<br/>Configuration, maintenance,<br/>tax management"]
         STAFF["STAFF<br/>Day-to-day operations<br/>Payments, moderation,<br/>support, payouts"]
         CONSULTANT["CONSULTANT<br/>Service provider<br/>Creates services, manages<br/>appointments, earns money"]
         CONSULTEE["CONSULTEE<br/>Service consumer<br/>Books sessions, attends<br/>calls, leaves reviews"]
@@ -88,12 +88,12 @@ graph TB
     STAFF --> CONSULTEE
 ```
 
-| Role           | Who They Are                       | What They Can Do                                                                     |
-| -------------- | ---------------------------------- | ------------------------------------------------------------------------------------ |
-| **Consultee**  | A client/learner seeking expertise | Browse experts, book sessions, join video calls, leave reviews, manage referrals     |
-| **Consultant** | A professional offering expertise  | Create services, set availability, conduct sessions, earn money, manage payouts      |
-| **Staff**      | Operations team member             | Manage payments, refunds, disputes, moderation, support tickets, system jobs         |
-| **Admin**      | Platform owner/super admin         | Everything staff can do + analytics, configuration, maintenance mode, tax management |
+| Role           | Who They Are                       | What They Can Do                                                                 |
+| -------------- | ---------------------------------- | -------------------------------------------------------------------------------- |
+| **Consultee**  | A client/learner seeking expertise | Browse experts, book sessions, join video calls, leave reviews, manage referrals |
+| **Consultant** | A professional offering expertise  | Create services, set availability, conduct sessions, earn money, manage payouts  |
+| **Staff**      | Operations team member             | Manage payments, refunds, disputes, moderation, support tickets, system jobs     |
+| **Admin**      | Platform owner/super admin         | Everything staff can do + configuration, maintenance mode, tax management        |
 
 ## The 4 Service Types
 
@@ -1048,6 +1048,20 @@ The platform runs 25+ automated jobs. Staff can monitor them and trigger manual 
 | **Disputes**     | alert deadlines, handle lost, reconcile                                            | Track dispute windows and outcomes                         |
 | **Other**        | auth token cleanup, webhook archival, discount expiration, document reconciliation | General platform hygiene                                   |
 
+### Metrics
+
+**Where:** `/dashboard/staff/metrics` and `/dashboard/admin/metrics` (the same page in both trees; both roles see every card, including revenue and refunds)
+
+- Support-queue figures: SLA attainment and breaches, average first response, resolution rate, and queue volume for a chosen period (tickets resolved, open cases, users helped, active users)
+- Platform Overview: total appointments and pending payments
+- People: total users (with the new users this month), experts, learners (each with how many are active) and staff members
+- Sessions: total, completed and upcoming bookings, plus cancelled consultation requests (a different population: it counts `Consultation` rows, not the bookings in the total)
+- Revenue: total revenue (succeeded payments, all time), revenue this month (IST) and refunds (succeeded refunds, all time), shown in rupees and stored in paise
+- "This month (IST)" starts at 00:00 IST on the 1st, not at the start of the UTC month; the support-queue periods (today, this week, this month) are also cut in IST
+- IST with the UTC instant in a tooltip is the pass condition only on the screens Train 6a moved: Leads ("Received"), Users ("Joined"), Team ("Last active"), Maintenance (the ETA, the preflight check time, the window history and booking remediation), System jobs (run times, run requests and the schedule windows), job run metrics, the entity trace, and the digital-product download evidence in the refund door. Appointments and the money tabs (Approvals, Incidents, Disputes and the rest) already read in IST through the shared display zone but do not yet print the zone label or the UTC tooltip; they, and the remaining back-office screens, move in later Train 6 PRs
+
+There are no revenue trends, user growth, booking conversion or cancellation charts; the page never had them.
+
 ### Announcements & Newsletters
 
 **Where:** `/dashboard/staff/[id]/announcements`
@@ -1071,16 +1085,6 @@ The platform runs 25+ automated jobs. Staff can monitor them and trigger manual 
 ## 3.8 Admin Dashboard
 
 Admins have everything staff has, plus:
-
-### Platform Analytics
-
-**Where:** `/dashboard/admin/analytics`
-
-- Revenue trends
-- User growth
-- Booking conversion rates
-- Cancellation analytics
-- Service type distribution
 
 ### Approval Payments
 
@@ -1291,13 +1295,19 @@ Use these checklists to systematically test every feature. Check off each item a
 - [ ] Create an announcement
 - [ ] View all users
 - [ ] View subscription status
+- [ ] Open Metrics and see the platform totals and the support-queue figures
+- [ ] Check that a time on a back-office page shows IST and its tooltip shows UTC
+- [ ] On Appointments, page through "Sessions that need a decision", sort it by Lost and by Waiting since, and check that each row names the booking, the expert and the learner (or the attendee count) and opens that booking when clicked
+- [ ] Open a booking's drawer and check that "Scheduled At" and every session print the same IST time, with UTC on hover
+- [ ] Filter Appointments by Trial, and find a cancelled trial under Issues and a scheduled one under Scheduled
+- [ ] Check that a booking's timeline lists an answered reschedule once as "Proposed" and once as its answer, with no "approved → approved" row
 
 ## Admin Testing Checklist
 
 - [ ] All staff checklist items
-- [ ] View platform analytics
-- [ ] View revenue trends
-- [ ] View cancellation analytics
+- [ ] Open Metrics in the admin tree and check the all-time totals match the staff tree
+- [ ] Check "this month (IST)" revenue against a SQL read cut at 00:00 IST
+- [ ] Change the trial-price floor (ADMIN passes; a STAFF account gets 403) and restore the value
 - [ ] Process approval payments
 - [ ] Enable maintenance mode
 - [ ] Disable maintenance mode

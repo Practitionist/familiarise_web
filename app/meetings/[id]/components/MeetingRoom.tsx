@@ -35,6 +35,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import CallExitButton from "./EndCallButton";
 import CallEnded from "./CallEnded";
+import { ReportConcernButton } from "@/components/events/ReportConcernButton";
+import { AttendeeModeration } from "./AttendeeModeration";
 import { MuteAllButton } from "./MuteAllButton";
 import RecordingControls from "./RecordingControls";
 import { ScreenShareControl } from "./ScreenShareControl";
@@ -456,9 +458,22 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
               }
               return (
                 <div className="min-h-0 flex-1 overflow-y-auto">
+                  {isHost && isOneToMany && (
+                    <AttendeeModeration
+                      eventTitle={info.offeringTitle ?? info.fallbackTitle}
+                    />
+                  )}
                   <CallParticipantsList
                     onClose={() => setActiveSideTab(null)}
                   />
+                  {isOneToMany && call && (
+                    <div className="border-t border-zinc-800 p-3">
+                      <ReportConcernButton
+                        endpoint={`/api/meetings/${encodeURIComponent(call.id)}/support`}
+                        className="text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
+                      />
+                    </div>
+                  )}
                 </div>
               );
             })()}

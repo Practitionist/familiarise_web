@@ -55,7 +55,6 @@ export {
   getConsultantEarningsSummary,
   getConsultantEarnings,
   refundEarnings,
-  getEarningsStats,
   // Organization earnings (PROVIDER/HYBRID 3-way split)
   getOrgEarningsSummary,
   getOrgEarnings,

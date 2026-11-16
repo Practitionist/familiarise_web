@@ -15,8 +15,8 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { AlertTriangle, Plus } from "lucide-react";
 
 import { useOrgRole } from "../useOrgRole";
+import { FilterBar } from "@/components/dashboard/FilterBar";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
   Card,
   CardContent,
@@ -24,13 +24,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 
 import { CreatePurchaseOrderDialog } from "./components/CreatePurchaseOrderDialog";
 import { EditPurchaseOrderDialog } from "./components/EditPurchaseOrderDialog";
@@ -43,6 +36,11 @@ import { PurchaseOrdersTable } from "./components/PurchaseOrdersTable";
 import { fetchPurchaseOrders } from "./utils/api";
 import { PO_STATUS, PO_STATUSES } from "./utils/formatting";
 import type { PoStatus, PurchaseOrderRow } from "./utils/types";
+
+const STATUS_OPTIONS = [
+  { value: "ALL", label: "All statuses" },
+  ...PO_STATUSES.map((value) => ({ value, label: PO_STATUS[value].label })),
+];
 
 export function PurchaseOrdersPanel({ orgId }: Readonly<{ orgId: string }>) {
   // #1132 — PO mutations are `purchaseOrders.manage` (OWNER + BILLING_ADMIN).
@@ -160,34 +158,30 @@ export function PurchaseOrdersPanel({ orgId }: Readonly<{ orgId: string }>) {
                 deleted.
               </CardDescription>
             </div>
-            <div className="flex gap-2 flex-shrink-0">
-              <div className="w-40">
-                <Select
-                  value={statusFilter}
-                  onValueChange={(v) => setStatusFilter(v as PoStatus | "ALL")}
-                >
-                  <SelectTrigger aria-label="Filter by status">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="ALL">All statuses</SelectItem>
-                    {PO_STATUSES.map((value) => (
-                      <SelectItem key={value} value={value}>
-                        {PO_STATUS[value].label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="w-48">
-                <Input
-                  aria-label="Search PO number"
-                  placeholder="Search PO number…"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                />
-              </div>
-            </div>
+            <FilterBar
+              className="md:min-w-[22rem]"
+              search={{
+                label: "Search PO number",
+                placeholder: "Search PO number…",
+                value: searchTerm,
+                onChange: setSearchTerm,
+              }}
+              selects={[
+                {
+                  key: "status",
+                  label: "Filter by status",
+                  value: statusFilter,
+                  options: STATUS_OPTIONS,
+                  onChange: (v) =>
+                    setStatusFilter(PO_STATUSES.find((s) => s === v) ?? "ALL"),
+                },
+              ]}
+              onClear={() => {
+                setSearchTerm("");
+                setStatusFilter("ALL");
+              }}
+              canClear={statusFilter !== "ALL" || searchTerm.trim() !== ""}
+            />
           </div>
         </CardHeader>
         <CardContent>

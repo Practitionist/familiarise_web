@@ -41,6 +41,7 @@ import {
   XIcon,
 } from "lucide-react";
 import { useState } from "react";
+import { z } from "zod";
 import { Channel } from "stream-chat";
 import { useChatContext } from "stream-chat-react";
 import {
@@ -56,7 +57,16 @@ import {
 } from "@/lib/stream-channel-ids";
 import { isSupportStreamUser } from "@/lib/stream/support-user";
 import { addMemberToChannel } from "@/actions/stream/chat/member.action";
-import { removeUserFromEventChannel } from "@/actions/stream/chat/event-channel.action";
+import {
+  RemoveParticipantDialog,
+  type RemovalChoice,
+} from "@/components/events/RemoveParticipantDialog";
+
+const removalResponse = z.object({
+  removed: z.boolean(),
+  caseReference: z.string().optional(),
+});
+const refusalBody = z.object({ error: z.string().min(1) });
 
 interface ChannelMember {
   id: string;
@@ -79,6 +89,10 @@ export const ChannelInfoAndManageDialog = ({
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
   const [showAddMembers, setShowAddMembers] = useState(false);
+  const [removalTarget, setRemovalTarget] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
   const { client, setActiveChannel } = useChatContext();
   const { toast } = useToast();
   const [members, setMembers] = useState<ChannelMember[]>([]);
@@ -122,8 +136,15 @@ export const ChannelInfoAndManageDialog = ({
   const creatorId = channel.data?.created_by?.id ?? channel.data?.created_by_id;
 
   const isEventOwner = isEvent && viewerOwnsChannel(creatorId, client?.userID);
+  // The plan owner and accepted co-hosts hold channel_moderator; the server decides who may remove.
+  const isEventModerator =
+    isEvent &&
+    !!client?.userID &&
+    channel.state.members?.[client.userID]?.channel_role ===
+      "channel_moderator";
   // Stream refuses member changes while support has access; Support's seat is the visible signal.
-  const canRemoveMembers = isEventOwner && !displayInfo.hasSupport;
+  const canRemoveMembers =
+    (isEventOwner || isEventModerator) && !displayInfo.hasSupport;
 
   // Get the other user's ID for 1-on-1 DMs (for block/report). Support is
   // never the counterparty, so it can't be blocked or reported from here.
@@ -229,40 +250,48 @@ export const ChannelInfoAndManageDialog = ({
     }
   };
 
-  const handleRemoveMember = async (memberId: string) => {
-    // Support leaves only through the audited staff route.
-    if (!client?.userID || !canRemoveMembers || isSupportStreamUser(memberId)) {
+  // Removing an attendee from an event is a conduct removal: the seat, the call
+  // and the chat all go, with a reason and a support review (not a chat-only kick).
+  const handleRemoveMember = async (choice: RemovalChoice) => {
+    const eventChannel = parseEventChannelId(channel.id);
+    if (
+      !removalTarget ||
+      !eventChannel ||
+      choice.mode !== "CONDUCT" ||
+      isSupportStreamUser(removalTarget.id)
+    ) {
       return;
     }
-
-    const eventChannel = parseEventChannelId(channel.id);
-    if (!eventChannel) return;
-
-    setIsLoading(true);
-    try {
-      // Stream denies channel owners removeMembers; the server action authorises the host.
-      const result = await removeUserFromEventChannel(
-        eventChannel.eventType,
-        eventChannel.eventId,
-        memberId,
+    const response = await fetch(
+      `/api/participants/${eventChannel.eventType}/${eventChannel.eventId}/remove`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          targetUserId: removalTarget.id,
+          reason: choice.reason,
+          note: choice.note,
+        }),
+      },
+    );
+    const body: unknown = await response.json().catch(() => null);
+    const parsed = removalResponse.safeParse(body);
+    if (!response.ok || !parsed.success) {
+      throw new Error(
+        refusalBody.safeParse(body).data?.error ??
+          "We couldn't remove them. Try again.",
       );
-      if (!result.success) throw new Error("Member removal was refused");
-      toast({
-        title: "Success",
-        description: "Member removed successfully",
-      });
-      // Refresh the member list
-      loadMembers();
-    } catch (error) {
-      console.error("Error removing member:", error);
-      toast({
-        title: "Error",
-        description: "Failed to remove member",
-        variant: "destructive",
-      });
-    } finally {
-      setIsLoading(false);
     }
+    if (!parsed.data.removed) {
+      throw new Error(
+        "They aren't an attendee of this event, so nothing changed.",
+      );
+    }
+    toast({
+      title: `${removalTarget.name} was removed`,
+      description: `Support case ${parsed.data.caseReference ?? ""} reviews it.`,
+    });
+    loadMembers();
   };
 
   const handleLeaveChannel = async () => {
@@ -740,7 +769,12 @@ export const ChannelInfoAndManageDialog = ({
                         variant="ghost"
                         size="sm"
                         className="h-8 w-8 p-0"
-                        onClick={() => handleRemoveMember(member.id)}
+                        onClick={() =>
+                          setRemovalTarget({
+                            id: member.id,
+                            name: member.name || member.id,
+                          })
+                        }
                         disabled={isLoading}
                         // Named, because every row otherwise announced the
                         // same thing and you could not tell who you removed.
@@ -839,6 +873,16 @@ export const ChannelInfoAndManageDialog = ({
       />
 
       {/* Leave Channel Confirmation Dialog */}
+      <RemoveParticipantDialog
+        open={removalTarget !== null}
+        onOpenChange={(next) => {
+          if (!next) setRemovalTarget(null);
+        }}
+        attendeeName={removalTarget?.name ?? null}
+        eventTitle={displayName}
+        allowNoFault={false}
+        onSubmit={handleRemoveMember}
+      />
       <AlertDialog open={showLeaveConfirm} onOpenChange={setShowLeaveConfirm}>
         <AlertDialogContent>
           <AlertDialogHeader>

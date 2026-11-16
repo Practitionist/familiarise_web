@@ -42,6 +42,7 @@ import type {
 import { ORG_ROLE_RANK } from "@/lib/auth/role-ranks";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import type { Tone } from "@/lib/ui/tone";
+import { formatOperatorInstant } from "@/lib/time/operator-zone";
 
 // ───────────────────────────── Capability ─────────────────────────────
 
@@ -193,12 +194,7 @@ export const PAYOUT_RECIPIENT_NAME: Record<PayoutRecipient, string> = {
 
 /** A date as audit prose reads it: India time, "8 Nov 2026". */
 export function formatAuditDate(date: Date): string {
-  return date.toLocaleDateString("en-IN", {
-    timeZone: "Asia/Kolkata",
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
+  return formatOperatorInstant(date, "date");
 }
 
 // ───────────────────────────── Program ─────────────────────────────

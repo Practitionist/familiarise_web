@@ -1,92 +1,37 @@
 /**
- * Shared read for the staff appointments table. #890
- *
- * Single entry point behind GET /api/staff/appointments AND the staff
- * appointments server page's SSR prefetch, so the SSR-hydrated cache and the
- * client useQuery (queryKey ["staff-appointments", filters]) resolve identical
- * payloads — both paths funnel through here and can't drift. Auth stays at the
- * call site: the route runs requirePrivilegedAuth(); the prefetch runs under
- * the dashboard layout's gate.
- *
- * The query + display formatting moved here verbatim from the route. The ONLY
- * shape change vs. the old route is Date→ISO string on the per-row
- * scheduledAt / endsAt / createdAt fields, which is exactly what the route's
- * NextResponse.json did on the wire — so the payload is byte-identical, it's
- * just now also safe to dehydrate into the React Query cache.
+ * The staff appointments table, shared by GET /api/staff/appointments and the
+ * page's SSR prefetch so both resolve the same JSON-safe payload. Auth stays at
+ * the call site.
  */
 
 import { withLapsedMoveRestored } from "@/lib/appointments/lapsed-move";
 import prisma from "@/lib/prisma";
-import { liveParticipant } from "@/lib/booking/participants";
 import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
 import { AppointmentsType, Prisma } from "@prisma/client";
+import { z } from "zod";
 import { toPlain } from "@/lib/data/serialize";
 import type { Scope } from "@/lib/api/scope/parse";
 import { scopeToWhereOrgId } from "@/lib/api/scope/parse";
+import {
+  APPOINTMENT_HEADLINE_SELECT,
+  appointmentHeadline,
+  headlineUserIds,
+  trialPricePaise,
+} from "@/lib/data/appointment-headline";
+import type {
+  StaffAppointmentsPayload,
+  StaffAppointmentType,
+  STAFF_ISSUE_TYPES,
+} from "@/lib/data/staff-appointments-schema";
 
-type Participant = {
-  id: string;
-  name: string | null;
-  email: string | null;
-  avatar: string | null;
-} | null;
+type StaffIssueType = (typeof STAFF_ISSUE_TYPES)[number];
 
-type AppointmentPayment = {
-  id: string;
-  amount: number;
-  currency: string;
-  status: string;
-  gateway: string;
-  /** When a pending order's pay window closes. */
-  expiresAt?: string | null;
-} | null;
-
-/** Group events stand in for a person in the staff list — "12 attendees". */
-function attendeeLabel(count: number, noun: string): string {
-  return `${count} ${noun}${count === 1 ? "" : "s"}`;
-}
-
-export type StaffAppointment = {
-  id: string;
-  type: string;
-  title: string;
-  consultant: Participant;
-  consultee: Participant;
-  scheduledAt: string;
-  endsAt?: string;
-  duration: number;
-  status: string;
-  /** DIRECT_CHECKOUT or REQUEST_SUBMITTED for a 1:1 or plan; null otherwise. */
-  bookingSource: string | null;
-  /** Nothing is charged for this booking, so it has no payment to wait for. */
-  free: boolean;
-  hasIssue: boolean;
-  issueType: string | null;
-  payment: AppointmentPayment;
-  /** #1486 — an open reschedule proposal (pending review or countered). */
-  reschedule: {
-    status: string;
-    initiatorRole: string;
-    expiresAt: string;
-  } | null;
-  createdAt: string;
-};
-
-export type StaffAppointmentsPayload = {
-  appointments: StaffAppointment[];
-  counts: {
-    all: number;
-    issues: number;
-    scheduled: number;
-    completed: number;
-  };
-  pagination: {
-    total: number;
-    page: number;
-    limit: number;
-    totalPages: number;
-    hasMore: boolean;
-  };
+const STAFF_TYPE: Record<AppointmentsType, StaffAppointmentType> = {
+  CONSULTATION: "consultation",
+  SUBSCRIPTION: "subscription",
+  WEBINAR: "webinar",
+  CLASS: "class",
+  TRIAL: "trial",
 };
 
 export type StaffAppointmentsParams = {
@@ -106,38 +51,60 @@ export type StaffAppointmentsParams = {
   limit?: number;
 };
 
+/** A trial priced above zero, at request or (rows from before the column) on its plan. */
+const PRICED_TRIAL = {
+  OR: [
+    { agreedPricePaise: { gt: 0 } },
+    {
+      agreedPricePaise: null,
+      subscriptionPlan: { trialPriceInPaise: { gt: 0 } },
+    },
+  ],
+} satisfies Prisma.TrialWhereInput;
+
 /**
- * #897 — map the derived display status (the staff tabs: scheduled / completed
- * / issue) to a DB condition across the four event types, so filtering and the
- * tab counts run in the query instead of on an already-paginated page.
- *
- * "issue" mirrors the per-row hasIssue rule: cancelled, OR no payment with a
- * non-PENDING status (webinar/class have no PENDING state, so any unpaid one
- * qualifies). Returns null for "all"/unknown — no status constraint.
+ * The staff tabs (scheduled / completed / issue) as a DB condition across the
+ * five booking kinds, so filtering and tab counts run in the query. "issue"
+ * mirrors the row's `hasIssue`: removed, cancelled (a trial wrapper whose trial
+ * row is gone reads cancelled), or unpaid while not a pending request.
+ * Returns null for "all" or an unknown tab.
  */
-function buildStatusWhere(
+export function buildStatusWhere(
   status: string | null,
 ): Prisma.AppointmentWhereInput | null {
-  if (status === "scheduled" || status === "completed") {
-    const s = status === "scheduled" ? "SCHEDULED" : "COMPLETED";
-    // A confirmed 1:1 or plan is stored APPROVED; webinars and classes are SCHEDULED.
-    const request = status === "scheduled" ? "APPROVED" : "COMPLETED";
+  if (status === "scheduled") {
+    // A confirmed 1:1 or plan is stored APPROVED; events and trials are SCHEDULED.
     return {
       OR: [
-        { consultation: { status: request } },
-        { subscription: { status: request } },
-        { webinar: { status: s } },
-        { class: { status: s } },
+        { consultation: { status: "APPROVED" } },
+        { subscription: { status: "APPROVED" } },
+        { webinar: { status: "SCHEDULED" } },
+        { class: { status: "SCHEDULED" } },
+        { trial: { status: "SCHEDULED" } },
+      ],
+    };
+  }
+  if (status === "completed") {
+    return {
+      OR: [
+        { consultation: { status: "COMPLETED" } },
+        { subscription: { status: "COMPLETED" } },
+        { webinar: { status: "COMPLETED" } },
+        { class: { status: "COMPLETED" } },
+        { trial: { status: { in: ["COMPLETED", "CONVERTED"] } } },
       ],
     };
   }
   if (status === "issue") {
     return {
       OR: [
+        { deletedAt: { not: null } },
         { consultation: { status: "CANCELLED" } },
         { subscription: { status: "CANCELLED" } },
         { webinar: { status: "CANCELLED" } },
         { class: { status: "CANCELLED" } },
+        { trial: { status: "CANCELLED" } },
+        { appointmentType: "TRIAL", trial: { is: null } },
         {
           AND: [
             { payment: { none: {} } },
@@ -147,6 +114,7 @@ function buildStatusWhere(
                 { subscription: { status: { not: "PENDING" } } },
                 { webinarId: { not: null } },
                 { classId: { not: null } },
+                { trial: PRICED_TRIAL },
               ],
             },
           ],
@@ -168,7 +136,7 @@ function buildStatusWhere(
 export async function getStaffAppointments(
   params: StaffAppointmentsParams,
 ): Promise<StaffAppointmentsPayload> {
-  const type = (params.type as AppointmentsType | null) ?? null;
+  const type = z.nativeEnum(AppointmentsType).safeParse(params.type).data;
   const status = params.status ?? null;
   const search = params.search ?? null;
   const dateFrom = params.dateFrom ?? null;
@@ -186,7 +154,7 @@ export async function getStaffAppointments(
   // single page (which broke page sizes and totals).
   const baseWhere: Prisma.AppointmentWhereInput = { ...orgWhere };
 
-  if (type && Object.values(AppointmentsType).includes(type)) {
+  if (type) {
     baseWhere.appointmentType = type;
   }
 
@@ -202,6 +170,12 @@ export async function getStaffAppointments(
 
   // Handle search across multiple fields
   if (search) {
+    const people = {
+      OR: [
+        { name: { contains: search, mode: "insensitive" } },
+        { email: { contains: search, mode: "insensitive" } },
+      ],
+    } satisfies Prisma.UserWhereInput;
     baseWhere.OR = [
       { id: { contains: search, mode: "insensitive" } },
       // Consultation search
@@ -262,6 +236,16 @@ export async function getStaffAppointments(
           },
         },
       },
+      // Trial search: its plan, its expert and its learner
+      {
+        trial: {
+          subscriptionPlan: {
+            title: { contains: search, mode: "insensitive" },
+          },
+        },
+      },
+      { trial: { consultantProfile: { user: people } } },
+      { trial: { consulteeProfile: { user: people } } },
     ];
   }
 
@@ -286,7 +270,10 @@ export async function getStaffAppointments(
     prisma.appointment.findMany({
       relationLoadStrategy: "join",
       where: listWhere,
-      include: {
+      select: {
+        id: true,
+        createdAt: true,
+        ...APPOINTMENT_HEADLINE_SELECT,
         // #1486 / #1527 — read-only: a reschedule still waiting on a party.
         rescheduleRequests: {
           where: { status: { in: RESCHEDULE_OPEN_STATUSES } },
@@ -307,88 +294,6 @@ export async function getStaffAppointments(
             startsAt: true,
             endsAt: true,
             isTentative: true,
-          },
-        },
-        // #1554 — the attendee count is the live participant roster.
-        _count: { select: { participants: { where: liveParticipant() } } },
-        consultation: {
-          select: {
-            id: true,
-            status: true,
-            bookingSource: true,
-            consultationPlan: {
-              select: {
-                id: true,
-                title: true,
-                price: true,
-                priceCurrency: true,
-                durationInHours: true,
-                consultantProfile: { select: { userId: true } },
-              },
-            },
-            requestedBy: { select: { userId: true } },
-          },
-        },
-        subscription: {
-          select: {
-            id: true,
-            status: true,
-            bookingSource: true,
-            subscriptionPlan: {
-              select: {
-                id: true,
-                title: true,
-                price: true,
-                priceCurrency: true,
-                consultantProfile: { select: { userId: true } },
-              },
-            },
-            requestedBy: { select: { userId: true } },
-          },
-        },
-        trial: {
-          select: {
-            status: true,
-            subscriptionPlan: {
-              select: {
-                title: true,
-                trialPriceInPaise: true,
-                consultantProfile: { select: { userId: true } },
-              },
-            },
-            consulteeProfile: { select: { userId: true } },
-          },
-        },
-        webinar: {
-          select: {
-            id: true,
-            status: true,
-            webinarPlan: {
-              select: {
-                id: true,
-                title: true,
-                price: true,
-                priceCurrency: true,
-                maxParticipants: true,
-                consultantProfile: { select: { userId: true } },
-              },
-            },
-          },
-        },
-        class: {
-          select: {
-            id: true,
-            status: true,
-            classPlan: {
-              select: {
-                id: true,
-                title: true,
-                price: true,
-                priceCurrency: true,
-                maxParticipants: true,
-                consultantProfile: { select: { userId: true } },
-              },
-            },
           },
         },
         payment: {
@@ -423,112 +328,28 @@ export async function getStaffAppointments(
     }),
   ]);
 
-  // Sentry FAMILIARISE_WEB-6X (#1527): selecting `user` under each of the six
-  // profile paths made Prisma issue six `users WHERE id IN (…)` loads per
-  // page; one batched read by id replaces them.
-  const userIds = new Set<string>();
-  for (const apt of appointments) {
-    for (const id of [
-      apt.consultation?.consultationPlan.consultantProfile.userId,
-      apt.consultation?.requestedBy.userId,
-      apt.subscription?.subscriptionPlan.consultantProfile.userId,
-      apt.subscription?.requestedBy.userId,
-      apt.webinar?.webinarPlan.consultantProfile?.userId,
-      apt.class?.classPlan.consultantProfile?.userId,
-      apt.trial?.subscriptionPlan.consultantProfile.userId,
-      apt.trial?.consulteeProfile.userId,
-    ]) {
-      if (id) userIds.add(id);
-    }
-  }
+  // One batched user read for the page's people, not one per relation path.
+  const userIds = headlineUserIds(appointments);
   const users =
-    userIds.size > 0
+    userIds.length > 0
       ? await prisma.user.findMany({
-          where: { id: { in: [...userIds] } },
+          where: { id: { in: userIds } },
           select: { id: true, name: true, email: true, image: true },
         })
       : [];
   const usersById = new Map(users.map((u) => [u.id, u]));
-  const userOf = (id: string | null | undefined) =>
-    (id && usersById.get(id)) || null;
 
   // Format appointments for frontend
   const now = new Date();
   const formattedAppointments = appointments.map((row) => {
     // A move past its deadline reads as the original until the sweep ends it.
     const apt = withLapsedMoveRestored(row, now);
-    // Get consultant and consultee info based on type
-    let consultant = null;
-    let consultee = null;
-    let title = "";
-    let aptStatus = null;
-    let duration = 0;
-    const attendeeCount = apt._count.participants;
-
-    let bookingSource: string | null = null;
-    switch (apt.appointmentType) {
-      case "TRIAL":
-        if (apt.trial) {
-          consultant = userOf(
-            apt.trial.subscriptionPlan.consultantProfile.userId,
-          );
-          consultee = userOf(apt.trial.consulteeProfile.userId);
-          title = apt.trial.subscriptionPlan.title;
-          aptStatus = apt.trial.status;
-        }
-        break;
-      case "CONSULTATION":
-        if (apt.consultation) {
-          consultant = userOf(
-            apt.consultation.consultationPlan.consultantProfile.userId,
-          );
-          consultee = userOf(apt.consultation.requestedBy.userId);
-          title = apt.consultation.consultationPlan.title;
-          aptStatus = apt.consultation.status;
-          bookingSource = apt.consultation.bookingSource;
-          duration = apt.consultation.consultationPlan.durationInHours * 60;
-        }
-        break;
-      case "SUBSCRIPTION":
-        if (apt.subscription) {
-          consultant = userOf(
-            apt.subscription.subscriptionPlan.consultantProfile.userId,
-          );
-          consultee = userOf(apt.subscription.requestedBy.userId);
-          title = apt.subscription.subscriptionPlan.title;
-          aptStatus = apt.subscription.status;
-          bookingSource = apt.subscription.bookingSource;
-        }
-        break;
-      case "WEBINAR":
-        if (apt.webinar) {
-          consultant = userOf(
-            apt.webinar.webinarPlan.consultantProfile?.userId,
-          );
-          consultee = {
-            id: "",
-            name: attendeeLabel(attendeeCount, "attendee"),
-            email: "",
-            image: null,
-          };
-          title = apt.webinar.webinarPlan.title;
-          aptStatus = apt.webinar.status;
-        }
-        break;
-      case "CLASS":
-        if (apt.class) {
-          consultant = userOf(apt.class.classPlan.consultantProfile?.userId);
-          consultee = {
-            id: "",
-            name: attendeeLabel(attendeeCount, "student"),
-            email: "",
-            image: null,
-          };
-          title = apt.class.classPlan.title;
-          aptStatus = apt.class.status;
-        }
-        break;
-    }
+    const headline = appointmentHeadline(apt, usersById);
+    const consultant = headline.expert;
+    const consultee = headline.attendeeLabel
+      ? { id: "", name: headline.attendeeLabel, email: "", image: null }
+      : headline.learner;
+    const aptStatus = headline.lifecycleStatus;
 
     const slot = apt.occurrences[0];
     const payment = apt.payment[0];
@@ -536,8 +357,6 @@ export async function getStaffAppointments(
     // A wrapper whose lifecycle row is gone (a trial re-requested by the pair)
     // has nothing live, so it reads cancelled rather than claiming a state.
     let displayStatus = "cancelled";
-    if (!title && apt.appointmentType === "TRIAL")
-      title = "Trial (record removed)";
     if (aptStatus) {
       const statusStr = String(aptStatus).toLowerCase();
       if (statusStr === "cancelled") displayStatus = "cancelled";
@@ -551,24 +370,30 @@ export async function getStaffAppointments(
     const free =
       !payment &&
       (apt.trial
-        ? Number(apt.trial.subscriptionPlan.trialPriceInPaise ?? 0) === 0
+        ? trialPricePaise(apt.trial) === 0
         : Number(
             apt.consultation?.consultationPlan.price ??
               apt.subscription?.subscriptionPlan.price ??
               -1,
           ) === 0);
-    // Check if there's an issue (cancelled, no payment, etc.)
+    // A removed booking is listed as removed, never hidden.
+    const removed = apt.deletedAt !== null;
     const hasIssue =
+      removed ||
       displayStatus === "cancelled" ||
       (!payment && !free && aptStatus !== "PENDING");
+    let issueType: StaffIssueType | null = null;
+    if (removed) issueType = "Removed";
+    else if (displayStatus === "cancelled") issueType = "Cancelled";
+    else if (hasIssue) issueType = "Payment pending";
 
     // Date→ISO so the payload is JSON-safe verbatim (matches NextResponse.json)
     const scheduledAtDate = slot?.startsAt || apt.createdAt;
 
     return {
       id: apt.id,
-      type: apt.appointmentType.toLowerCase(),
-      title,
+      type: STAFF_TYPE[apt.appointmentType],
+      title: headline.title,
       consultant: consultant
         ? {
             id: consultant.id,
@@ -579,24 +404,21 @@ export async function getStaffAppointments(
         : null,
       consultee: consultee
         ? {
-            id: (consultee as { id?: string }).id || "",
-            name: (consultee as { name?: string | null }).name ?? null,
-            email: (consultee as { email?: string | null }).email ?? null,
-            avatar: (consultee as { image?: string | null }).image ?? null,
+            id: consultee.id,
+            name: consultee.name,
+            email: consultee.email,
+            avatar: consultee.image,
           }
         : null,
       scheduledAt: scheduledAtDate.toISOString(),
       endsAt: slot?.endsAt ? slot.endsAt.toISOString() : undefined,
-      duration,
+      duration: headline.durationMinutes,
       status: displayStatus,
-      bookingSource,
+      bookingSource: headline.bookingSource,
       free,
+      removed,
       hasIssue,
-      issueType: hasIssue
-        ? displayStatus === "cancelled"
-          ? "Cancelled"
-          : "Payment pending"
-        : null,
+      issueType,
       payment: payment
         ? {
             id: payment.id,

@@ -204,46 +204,6 @@ export interface AdminDashboardStats {
 }
 
 // ─── Earnings (admin/payouts) ──────────────────────────────────────
-export interface EarningsStats {
-  pending: {
-    count: number;
-    consultantSharePaise: number;
-    platformFeePaise: number;
-  };
-  ready: {
-    count: number;
-    consultantSharePaise: number;
-    platformFeePaise: number;
-  };
-  /**
-   * #837 split BATCHED out of READY. `getEarningsStats` has returned this
-   * bucket ever since; this interface never declared it, so the admin earnings
-   * dashboard had no way to render money that had left "Ready" and not yet
-   * reached "Paid" — cleared earnings in transit, counted nowhere.
-   */
-  batched: {
-    count: number;
-    consultantSharePaise: number;
-    platformFeePaise: number;
-  };
-  paid: {
-    count: number;
-    consultantSharePaise: number;
-    platformFeePaise: number;
-  };
-  held: {
-    count: number;
-    consultantSharePaise: number;
-    platformFeePaise: number;
-  };
-  refunded: {
-    count: number;
-    consultantSharePaise: number;
-    platformFeePaise: number;
-  };
-  totalPlatformRevenue: number;
-}
-
 export interface Earning {
   id: string;
   consultantProfile: {

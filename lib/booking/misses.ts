@@ -81,13 +81,14 @@ export const NEEDS_HUMAN = {
 /** A session parked for ops longer than this escalates: its booking's settlement is waiting on it. */
 export const NEEDS_HUMAN_ESCALATE_DAYS = 7;
 
-/** Parked for ops more than {@link NEEDS_HUMAN_ESCALATE_DAYS}; read by the escalation and the ops list. */
+const agedCutoff = (now: Date) =>
+  new Date(now.getTime() - NEEDS_HUMAN_ESCALATE_DAYS * 24 * 3_600_000);
+
+/** Parked for ops more than {@link NEEDS_HUMAN_ESCALATE_DAYS}, from the verdict or else the call's end. */
 export function agedNeedsHumanWhere(
   now: Date,
 ): Prisma.AppointmentOccurrenceWhereInput {
-  const cutoff = new Date(
-    now.getTime() - NEEDS_HUMAN_ESCALATE_DAYS * 24 * 3_600_000,
-  );
+  const cutoff = agedCutoff(now);
   return {
     AND: [
       NEEDS_HUMAN,
@@ -99,4 +100,12 @@ export function agedNeedsHumanWhere(
       },
     ],
   };
+}
+
+/** The same age test as {@link agedNeedsHumanWhere}, for one row already read. */
+export function isAgedNeedsHuman(
+  row: { outcomeAt: Date | null; endsAt: Date },
+  now: Date,
+): boolean {
+  return (row.outcomeAt ?? row.endsAt) < agedCutoff(now);
 }
