@@ -65,23 +65,33 @@ function DebouncedSearch({
   placeholder,
   value,
   onChange,
-}: Readonly<FilterBarSearch>) {
+  resetToken,
+}: Readonly<FilterBarSearch & { resetToken: number }>) {
   const id = useId();
   const [draft, setDraft] = useState(value);
   const [seen, setSeen] = useState(value);
   const [emitted, setEmitted] = useState<string | null>(null);
+  const [seenReset, setSeenReset] = useState(resetToken);
+  // Clear drops text still waiting on the debounce, keeping the same input.
+  if (resetToken !== seenReset) {
+    setSeenReset(resetToken);
+    setDraft(value);
+    setEmitted(null);
+  }
   // An outside change (Clear, back/forward) replaces what is typed; the echo
-  // of our own debounced emit does not, or it would eat keys typed since.
+  // of our own emit does not, even trimmed by the caller, or it would eat keys.
   if (value !== seen) {
     setSeen(value);
-    if (value !== emitted) setDraft(value);
+    if (value.trim() !== emitted?.trim()) setDraft(value);
+    // One echo per emit: a later outside change to the same text still applies.
+    setEmitted(null);
   }
   const onChangeRef = useRef(onChange);
   useEffect(() => {
     onChangeRef.current = onChange;
   });
   useEffect(() => {
-    if (draft === value) return;
+    if (draft.trim() === value.trim()) return;
     const timer = setTimeout(() => {
       setEmitted(draft);
       onChangeRef.current(draft);
@@ -124,6 +134,7 @@ export function FilterBar({
   children,
   className,
 }: Readonly<FilterBarProps>) {
+  const [resetToken, setResetToken] = useState(0);
   const showClear =
     onClear &&
     (canClear ?? (Boolean(search?.value) || (chips?.value ?? null) !== null));
@@ -135,7 +146,7 @@ export function FilterBar({
   return (
     <div className={className}>
       <div className="flex flex-wrap items-center gap-2">
-        {search && <DebouncedSearch {...search} />}
+        {search && <DebouncedSearch {...search} resetToken={resetToken} />}
         {chips && (
           <FilterMenu
             label={chips.label}
@@ -176,7 +187,10 @@ export function FilterBar({
             variant="ghost"
             size="sm"
             className="h-9 text-muted-foreground"
-            onClick={onClear}
+            onClick={() => {
+              setResetToken((k) => k + 1);
+              onClear?.();
+            }}
           >
             Clear
           </Button>

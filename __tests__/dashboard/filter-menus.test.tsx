@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { useState } from "react";
 
 import { AppointmentsFilterBar } from "@/components/appointments/AppointmentsFilterBar";
@@ -273,5 +273,74 @@ describe("FilterMenu edge cases", () => {
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Clear role filter" }));
     expect(onChange).toHaveBeenLastCalledWith("ALL");
+  });
+});
+
+describe("FilterBar search", () => {
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => jest.useRealTimers());
+
+  it("keeps a typed trailing space when the caller stores the value trimmed", () => {
+    function Harness() {
+      const [q, setQ] = useState("");
+      return (
+        <FilterBar
+          search={{
+            label: "Search users",
+            value: q,
+            onChange: (v) => setQ(v.trim()),
+          }}
+        />
+      );
+    }
+    render(<Harness />);
+    const box = screen.getByRole("searchbox", { name: "Search users" });
+    fireEvent.change(box, { target: { value: "John " } });
+    act(() => jest.advanceTimersByTime(400));
+    expect(box).toHaveValue("John ");
+    fireEvent.change(box, { target: { value: "John Doe" } });
+    act(() => jest.advanceTimersByTime(400));
+    expect(box).toHaveValue("John Doe");
+  });
+
+  it("still replaces the typed text on an outside change such as Clear", () => {
+    function Harness() {
+      const [q, setQ] = useState("");
+      return (
+        <>
+          <FilterBar
+            search={{
+              label: "Search users",
+              value: q,
+              onChange: (v) => setQ(v.trim()),
+            }}
+          />
+          <button type="button" onClick={() => setQ("")}>
+            Reset
+          </button>
+        </>
+      );
+    }
+    render(<Harness />);
+    const box = screen.getByRole("searchbox", { name: "Search users" });
+    fireEvent.change(box, { target: { value: "John" } });
+    act(() => jest.advanceTimersByTime(400));
+    fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+    expect(box).toHaveValue("");
+  });
+});
+
+describe("menu popups", () => {
+  it("are named for screen readers", () => {
+    render(
+      <FilterMenu
+        label="Status"
+        options={[]}
+        value={null}
+        onChange={jest.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Status: All" }));
+    expect(screen.getByRole("dialog", { name: "Status" })).toBeInTheDocument();
   });
 });

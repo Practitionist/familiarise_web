@@ -7,12 +7,11 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { useDebouncedCallback } from "use-debounce";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { FilterBar } from "@/components/dashboard/FilterBar";
 import {
   Select,
   SelectContent,
@@ -39,7 +38,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
-  Search,
   MessageSquare,
   Clock,
   CheckCircle2,
@@ -153,34 +151,16 @@ export function FeedbackPage({
   const [selectedFeedback, setSelectedFeedback] =
     useState<PlatformFeedback | null>(null);
 
-  // Debounced search
-  const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [localSearchValue, setLocalSearchValue] = useState("");
-
-  const debouncedSetSearch = useDebouncedCallback((value: string) => {
-    setDebouncedSearch(value);
-    setPage(1);
-  }, 300);
-
-  const handleSearchChange = (value: string) => {
-    setLocalSearchValue(value);
-    debouncedSetSearch(value);
-  };
+  const [searchQuery, setSearchQuery] = useState("");
 
   const { data, isPending, isFetching, isError, refetch } = useQuery({
-    queryKey: [
-      "admin-feedbacks",
-      apiEndpoint,
-      page,
-      statusFilter,
-      debouncedSearch,
-    ],
+    queryKey: ["admin-feedbacks", apiEndpoint, page, statusFilter, searchQuery],
     queryFn: async (): Promise<FeedbackListResponse> => {
       const params = new URLSearchParams({
         page: page.toString(),
         limit: "20",
         ...(statusFilter !== "all" && { status: statusFilter }),
-        ...(debouncedSearch && { search: debouncedSearch }),
+        ...(searchQuery && { search: searchQuery }),
       });
 
       const response = await fetch(`${apiEndpoint}?${params}`);
@@ -455,35 +435,35 @@ export function FeedbackPage({
       {/* Filters */}
       <Card className="border-0 shadow-sm">
         <CardContent className="p-4">
-          <div className="flex flex-col sm:flex-row gap-4">
-            <div className="relative min-w-0 flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/70" />
-              <Input
-                placeholder="Search by title, description, or user..."
-                value={localSearchValue}
-                onChange={(e) => handleSearchChange(e.target.value)}
-                className="pl-10"
-              />
-            </div>
-            <Select
-              value={statusFilter}
-              onValueChange={(v) => {
-                setStatusFilter(v);
+          <FilterBar
+            search={{
+              label: "Search feedback",
+              placeholder: "Search by title, description, or user...",
+              value: searchQuery,
+              onChange: (value) => {
+                setSearchQuery(value);
                 setPage(1);
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-48">
-                <SelectValue placeholder="Filter by status" />
-              </SelectTrigger>
-              <SelectContent>
-                {STATUS_OPTIONS.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+              },
+            }}
+            selects={[
+              {
+                key: "status",
+                label: "Filter by status",
+                value: statusFilter,
+                options: STATUS_OPTIONS,
+                onChange: (v) => {
+                  setStatusFilter(v);
+                  setPage(1);
+                },
+              },
+            ]}
+            canClear={Boolean(searchQuery) || statusFilter !== "all"}
+            onClear={() => {
+              setSearchQuery("");
+              setStatusFilter("all");
+              setPage(1);
+            }}
+          />
         </CardContent>
       </Card>
 

@@ -192,7 +192,7 @@ export function DateRangeMenu({
             )}
           </button>
         </PopoverTrigger>
-        <PopoverContent className="w-64 p-1">
+        <PopoverContent className="w-64 p-1" aria-label="Date">
           <fieldset aria-label="Date" className="m-0 min-w-0 border-0 p-0">
             {[{ label: "Any date", range: EMPTY }, ...presets].map((p) => {
               const selected =
