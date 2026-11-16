@@ -12,6 +12,8 @@ import {
 } from "@/lib/backoffice/capability";
 import { operatorHasBeenAskedForConsent } from "@/lib/compliance/operator-consent";
 import { ENABLE_TDS_ADMIN_VIEW } from "@/lib/feature-flags";
+import { OPERATOR_ZONE } from "@/lib/time/operator-zone";
+import { DisplayZoneProvider } from "@/lib/time/zoned-format";
 
 /**
  * #1527 Q3 — one layout for both back-office trees. The tree segment is
@@ -49,7 +51,10 @@ export default async function BackofficeLayout({
         // #863 — the TDS page 404s while the flag is off; hide its nav item.
         showTds={ENABLE_TDS_ADMIN_VIEW}
       >
-        {children}
+        {/* Every back-office time reads in India time, on the server and in the browser. */}
+        <DisplayZoneProvider zone={OPERATOR_ZONE}>
+          {children}
+        </DisplayZoneProvider>
         {askConsent ? <OperatorConsentGate /> : null}
       </OperatorDashboardShell>
     </BackofficeCapabilityProvider>

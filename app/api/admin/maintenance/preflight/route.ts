@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { requireAdminAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import prisma from "@/lib/prisma";
 
 /**
@@ -10,7 +10,7 @@ import prisma from "@/lib/prisma";
  * decision before activating maintenance mode.
  */
 export async function GET() {
-  const auth = await requireAdminAuth();
+  const auth = await requireBackofficeSurface("maintenance.manage");
   if (auth.error) return auth.error;
 
   const now = new Date();

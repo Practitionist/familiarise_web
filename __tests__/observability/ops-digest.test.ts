@@ -244,7 +244,12 @@ describe("daily ops digest", () => {
       where: {
         status: { in: ["PENDING", "FAILED"] },
         kind: {
-          in: ["SEAT_ACCESS_REVOKE", "REFUND_ACCESS_REVOKE", "ERASURE_REVOKE"],
+          in: [
+            "SEAT_ACCESS_REVOKE",
+            "REFUND_ACCESS_REVOKE",
+            "ERASURE_REVOKE",
+            "CONDUCT_CALL_BLOCK",
+          ],
         },
         attempts: { gte: 6 },
       },

@@ -20,13 +20,7 @@ import { format } from "date-fns";
 import { documentReviewStatusBadge } from "@/lib/labels/session-labels";
 
 import { Badge } from "@/components/ui/badge";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { FilterBar } from "@/components/dashboard/FilterBar";
 import {
   ScopedListTable,
   type Column,
@@ -170,30 +164,33 @@ export function DocumentsPage() {
   });
 
   const toolbar = (
-    <Select
-      value={status}
-      onValueChange={(v) => {
-        setStatus(v);
-        // Drop the page param rather than setting it to 1 — a filter change
-        // makes the old offset meaningless.
-        const sp = new URLSearchParams(searchParams?.toString() ?? "");
-        sp.delete("page");
-        const qs = sp.toString();
-        router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
-      }}
-    >
-      <SelectTrigger className="w-full sm:w-56">
-        <SelectValue placeholder="Any review status" />
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value="all">Any review status</SelectItem>
-        {REVIEW_STATUSES.map((s) => (
-          <SelectItem key={s} value={s}>
-            {documentReviewStatusBadge(s).label}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+    <FilterBar
+      selects={[
+        {
+          key: "reviewStatus",
+          label: "Review status",
+          value: status,
+          options: [
+            { value: "all", label: "Any review status" },
+            ...REVIEW_STATUSES.map((s) => ({
+              value: s,
+              label: documentReviewStatusBadge(s).label,
+            })),
+          ],
+          onChange: (v) => {
+            setStatus(v);
+            // Drop the page param rather than setting it to 1 — a filter change
+            // makes the old offset meaningless.
+            const sp = new URLSearchParams(searchParams?.toString() ?? "");
+            sp.delete("page");
+            const qs = sp.toString();
+            router.replace(qs ? `${pathname}?${qs}` : pathname, {
+              scroll: false,
+            });
+          },
+        },
+      ]}
+    />
   );
 
   return (

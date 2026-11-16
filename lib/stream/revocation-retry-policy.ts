@@ -8,6 +8,7 @@ export const UNCAPPED_REVOCATION_KINDS = [
   "SEAT_ACCESS_REVOKE",
   "REFUND_ACCESS_REVOKE",
   "ERASURE_REVOKE",
+  "CONDUCT_CALL_BLOCK",
   "COLLAB_REVOKE",
 ] as const satisfies readonly StreamRevocationKind[];
 

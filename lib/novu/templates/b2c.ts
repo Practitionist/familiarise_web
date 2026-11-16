@@ -43,12 +43,12 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     workflowId: W.APPOINTMENT_CANCELLED,
     name: "Appointment cancelled",
     description:
-      "Both parties. `cancelledBy` is a name or a capitalised role; with `seatRemoved`, the attendee a host removed from a class or webinar that goes ahead.",
+      "Both parties. `cancelledBy` is a name or a capitalised role; with `seatRemoved`, the attendee a host removed from a class or webinar that goes ahead; `removalNote` carries a conduct removal's reason and its support case.",
     category: "appointments",
     inApp: {
       subject:
         "{% if payload.seatRemoved %}Removed from {{payload.planTitle}}{% else %}Session cancelled{% endif %}",
-      body: "{% if payload.seatRemoved %}{{payload.cancelledBy}} removed you from the {{payload.appointmentType}} {{payload.planTitle}}, so you no longer have a seat in it.{% else %}{{payload.cancelledBy}} cancelled the {{payload.appointmentType}} for {{payload.planTitle}}{% if payload.dateTime %} on {{payload.dateTime}}{% endif %}. Reason: {{payload.reason}}.{% endif %}",
+      body: "{% if payload.seatRemoved %}{{payload.cancelledBy}} removed you from the {{payload.appointmentType}} {{payload.planTitle}}, so you no longer have a seat in it.{% if payload.removalNote %} {{payload.removalNote}}{% endif %}{% else %}{{payload.cancelledBy}} cancelled the {{payload.appointmentType}} for {{payload.planTitle}}{% if payload.dateTime %} on {{payload.dateTime}}{% endif %}. Reason: {{payload.reason}}.{% endif %}",
       redirect: "dashboardUrl",
     },
   },

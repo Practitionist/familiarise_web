@@ -278,6 +278,12 @@ export const OWNER_ONLY_MEMBER_PERMISSIONS = [
 ];
 
 /**
+ * A conduct removal ends the seat, records the reason and opens a support review,
+ * so no client role kicks or blocks inside a call; the server does both as admin.
+ */
+const SERVER_ONLY_CALL_MODERATION = ["kick-user", "block-user"];
+
+/**
  * A sealed room stays sealed at Stream: reopening rotates to a fresh call id, so no
  * member ever needs to join a call Stream has ended.
  */
@@ -324,7 +330,10 @@ export function intendedDefaultCallTypeGrants(
   }
   for (const role of ["user", CALL_MEMBER_ROLE]) {
     const held = grants[role];
-    if (held) grants[role] = ownerScoped(held);
+    if (held)
+      grants[role] = ownerScoped(held).filter(
+        (g) => !matchesPermissionWithScope(g, SERVER_ONLY_CALL_MODERATION),
+      );
   }
 
   const memberGrants = (grants[CALL_MEMBER_ROLE] ?? []).filter(

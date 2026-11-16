@@ -1,18 +1,13 @@
 /**
- * GET /api/staff/appointments/[appointmentId]/timeline — the booking audit
- * trail for one appointment (#1319 PR 8, #448).
- *
- * Thin shell over `getBookingTimeline`, mirroring the sibling
- * `/api/staff/appointments` route exactly: `requirePrivilegedAuth` is the gate,
- * and passing it is what earns the `all` scope, so no membership check widens
- * it (#674 defect 13). ADR 20 keeps this off the organization surfaces — an org
- * role has no per-session drill-in to hang a timeline off.
+ * GET /api/staff/appointments/[appointmentId]/timeline — one booking's audit
+ * trail. Gated on `appointments.manage`, which earns the `all` scope; org roles
+ * get no per-session drill-in (ADR 20).
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { getBookingTimeline } from "@/lib/data/booking-history";
 import { applyRateLimit, participantReadLimiter } from "@/lib/rate-limit";
 
@@ -26,7 +21,7 @@ const TimelineParams = z.object({ appointmentId: z.string().uuid() });
 
 export async function GET(_req: NextRequest, { params }: RouteParams) {
   try {
-    const auth = await requirePrivilegedAuth();
+    const auth = await requireBackofficeSurface("appointments.manage");
     if (auth.error) return auth.error;
 
     const parsed = TimelineParams.safeParse(await params);

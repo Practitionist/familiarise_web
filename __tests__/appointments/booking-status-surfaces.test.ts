@@ -13,7 +13,7 @@ import { appointmentStatusChip } from "@/lib/appointments/occurrences";
 import { viewerSeatReleased } from "@/lib/appointments/presentation-input";
 import { seatLapsedOrReleased } from "@/lib/appointments/status";
 import type { TAppointmentDetail } from "@/lib/data/appointment-detail";
-import type { StaffAppointment } from "@/lib/data/staff-appointments";
+import type { StaffAppointment } from "@/lib/data/staff-appointments-schema";
 
 const NOW = new Date("2026-11-14T10:00:00Z");
 const staffRow = (over: Partial<StaffAppointment>) =>

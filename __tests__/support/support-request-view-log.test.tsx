@@ -14,6 +14,7 @@ const articles = {
   cancellation: [],
   scheduling: [],
   session: [],
+  removal: [],
   technical: [],
   recordings: [],
   documents: [],

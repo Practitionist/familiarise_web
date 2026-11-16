@@ -7,6 +7,10 @@ const mockReportStandingFinding = jest.fn(
     return true;
   },
 );
+jest.mock("../../lib/support/conduct-removal-case", () => ({
+  hasConductRemovalLapse: jest.fn(async () => false),
+  sweepConductRemovalDeadlines: jest.fn(async () => ({ lapsed: 0 })),
+}));
 jest.mock("../../lib/cron/with-cron-lock", () => ({
   withCronLock: jest.fn(
     async (_job: string, _opts: unknown, fn: () => Promise<unknown>) => fn(),

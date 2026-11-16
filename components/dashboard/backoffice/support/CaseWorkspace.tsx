@@ -499,6 +499,11 @@ export function CaseWorkspace({
               Resolve by {when(data.resolutionDueAt)}
             </span>
           )}
+          {data.reviewDueAt && (
+            <span className="text-xs font-medium text-foreground">
+              Removal decision due {when(data.reviewDueAt)}
+            </span>
+          )}
           <Select
             value={data.priority ?? "MEDIUM"}
             disabled={busy}
