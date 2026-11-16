@@ -5,9 +5,9 @@ import { planEditorResponse } from "@/lib/api/plans/detail-response";
 import { apiError } from "@/lib/errors";
 
 /**
- * GET /api/plans/classes/[classPlanId]/editor — the offering editor's read: the
- * same plan detail as the public GET, but host or co-host only and never
- * cached, so a save never starts from a stale copy.
+ * GET /api/plans/classes/[classPlanId]/editor: the offering editor's read. The same
+ * plan detail as the public GET, for the plan's manager and its accepted
+ * collaborators only, and never cached, so a save never starts from a stale copy.
  */
 export async function GET(
   _request: NextRequest,
@@ -16,6 +16,7 @@ export async function GET(
   try {
     const { classPlanId } = await params;
     return await planEditorResponse(
+      { planType: "class", planId: classPlanId },
       () => fetchClassPlanDetail(classPlanId),
       "Class plan not found",
     );
