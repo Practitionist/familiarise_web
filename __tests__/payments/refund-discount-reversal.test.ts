@@ -23,7 +23,7 @@ jest.mock("../../lib/api/organizations/wallet", () => ({
     ownerOrgId: "org-iitm",
   })),
 }));
-jest.mock("../../lib/collaborators/service", () => ({
+jest.mock("../../lib/collaborators/revenue-split", () => ({
   calculateRevenueSplit: jest.fn(async () => []),
 }));
 jest.mock("../../lib/api/organizations/program-helpers", () => ({

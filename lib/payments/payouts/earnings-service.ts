@@ -39,7 +39,7 @@ import {
   holdHoursFor,
   resolveEarningsAnchor,
 } from "./earnings-hold";
-import { calculateRevenueSplit } from "@/lib/collaborators/service";
+import { calculateRevenueSplit } from "@/lib/collaborators/revenue-split";
 import {
   planB2cPlatformFeePaise,
   settleB2cPlatformFeePaise,

@@ -27,7 +27,6 @@ import { CALL_MEMBER_ROLE, STREAM_CALL_TYPE } from "@/lib/stream/call-cid";
 import { MAX_CALL_DURATION_MS } from "@/lib/meetings/duration-cap";
 import { enqueueCollaboratorRevocationRetry } from "@/lib/stream/access-revocation";
 import { getPlatformVideoConfig } from "@/lib/stream/video-config";
-import type { RevenueSplit } from "@/types/collaborators";
 import {
   WEBINAR_COLLABORATOR_ROLES,
   CLASS_COLLABORATOR_ROLES,
@@ -1667,73 +1666,4 @@ async function validateRevenueSharesTx(
   const currentTotal = collabs.reduce((sum, c) => sum + c.revenueShareBps, 0);
 
   return currentTotal + pctToBps(newShare) <= MAX_COLLAB_BPS;
-}
-
-export async function calculateRevenueSplit(
-  planType: PlanType,
-  planId: string,
-  totalAmount: number,
-  db: PrismaLike = prisma,
-  opts: { excludeBuyerUserId?: string } = {},
-): Promise<RevenueSplit[]> {
-  const collabs = await getCollaborators(planType, planId, db);
-  const acceptedCollabs = collabs.filter(
-    (c) =>
-      c.status === "ACCEPTED" &&
-      c.consultantProfile.userId !== opts.excludeBuyerUserId,
-  );
-
-  if (acceptedCollabs.length === 0) {
-    return [];
-  }
-
-  const splits: RevenueSplit[] = [];
-
-  const bpsSum = acceptedCollabs.reduce((a, c) => a + c.revenueShareBps, 0);
-  if (bpsSum > MAX_COLLAB_BPS) {
-    throw new Error(
-      `calculateRevenueSplit: collaborator shares sum to ${bpsSum} bps (> ${MAX_COLLAB_BPS}) on ${planType} plan ${planId}`,
-    );
-  }
-  let collaboratorTotal = 0;
-  for (const collab of acceptedCollabs) {
-    const share = Math.floor((totalAmount * collab.revenueShareBps) / 10_000);
-    collaboratorTotal += share;
-    splits.push({
-      consultantProfileId: collab.consultantProfileId,
-      share,
-      role: collab.role,
-    });
-  }
-
-  const ownerShare = totalAmount - collaboratorTotal;
-
-  let ownerConsultantProfileId: string | null = null;
-  let ownerOrganizationId: string | null = null;
-  if (planType === "webinar") {
-    const plan = await db.webinarPlan.findUnique({
-      where: { id: planId },
-      select: { consultantProfileId: true, organizationId: true },
-    });
-    ownerConsultantProfileId = plan?.consultantProfileId ?? null;
-    ownerOrganizationId = plan?.organizationId ?? null;
-  } else {
-    const plan = await db.classPlan.findUnique({
-      where: { id: planId },
-      select: { consultantProfileId: true, organizationId: true },
-    });
-    ownerConsultantProfileId = plan?.consultantProfileId ?? null;
-    ownerOrganizationId = plan?.organizationId ?? null;
-  }
-
-  if (ownerConsultantProfileId || ownerOrganizationId) {
-    splits.unshift({
-      consultantProfileId: ownerConsultantProfileId,
-      organizationId: ownerOrganizationId,
-      share: ownerShare,
-      role: "OWNER",
-    });
-  }
-
-  return splits;
 }

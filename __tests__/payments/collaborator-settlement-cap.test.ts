@@ -26,7 +26,7 @@ jest.mock("../../lib/prisma", () => ({
   default: {},
 }));
 
-import { calculateRevenueSplit } from "@/lib/collaborators/service";
+import { calculateRevenueSplit } from "@/lib/collaborators/revenue-split";
 
 function txWithShares(bps: number[]) {
   return {

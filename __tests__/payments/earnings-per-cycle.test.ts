@@ -17,7 +17,7 @@ const PROFILE_ID = "cp-1";
 jest.mock("../../lib/feature-flags", () => ({ ENABLE_HOST_ORGS: false }));
 // Collaborator splits are webinar/class only; the module drags Stream and
 // Better Auth in through its imports, so it is stubbed like the sibling suites.
-jest.mock("../../lib/collaborators/service", () => ({
+jest.mock("../../lib/collaborators/revenue-split", () => ({
   calculateRevenueSplit: jest.fn(),
 }));
 jest.mock("../../lib/api/organizations/rate-card", () => ({

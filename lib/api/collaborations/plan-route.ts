@@ -3,9 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
-import { isPrivileged } from "@/lib/auth-helpers";
 import {
-  calculateRevenueSplit,
   CollaboratorCapError,
   CollaboratorIneligibleError,
   getCollaboratorsForUser,
@@ -38,12 +36,6 @@ interface PlanRouteConfig {
     consultantProfileId: string,
   ) => Promise<unknown>;
 }
-
-const revenueSplitAmountSchema = z.coerce
-  .number()
-  .int()
-  .min(0)
-  .max(1_000_000_000);
 
 async function isOrgCatalogAdmin(
   userId: string,
@@ -234,116 +226,4 @@ export function createPlanCollaborationHandlers(config: PlanRouteConfig) {
   }
 
   return { GET, POST };
-}
-
-async function authorizeRevenueSplitReader(
-  planType: PlanCollaborationKind,
-  planId: string,
-  userId: string,
-  consultantProfileId: string | null | undefined,
-): Promise<{ denied: NextResponse | null; canSeeAll: boolean }> {
-  const plan =
-    planType === "webinar"
-      ? await prisma.webinarPlan.findUnique({
-          where: { id: planId },
-          select: { consultantProfileId: true, organizationId: true },
-        })
-      : await prisma.classPlan.findUnique({
-          where: { id: planId },
-          select: { consultantProfileId: true, organizationId: true },
-        });
-  if (!plan) {
-    return {
-      denied: NextResponse.json({ error: "Plan not found" }, { status: 404 }),
-      canSeeAll: false,
-    };
-  }
-
-  const isOwner =
-    Boolean(consultantProfileId) &&
-    consultantProfileId === plan.consultantProfileId;
-  if (isOwner) return { denied: null, canSeeAll: true };
-
-  if (await isOrgCatalogAdmin(userId, plan.organizationId)) {
-    return { denied: null, canSeeAll: true };
-  }
-
-  const collab = consultantProfileId
-    ? await prisma.collaborator.findFirst({
-        where: {
-          ...(planType === "webinar"
-            ? { webinarPlanId: planId }
-            : { classPlanId: planId }),
-          consultantProfileId,
-          status: "ACCEPTED",
-        },
-      })
-    : null;
-
-  if (!collab) {
-    return {
-      denied: NextResponse.json({ error: "Forbidden" }, { status: 403 }),
-      canSeeAll: false,
-    };
-  }
-
-  return { denied: null, canSeeAll: false };
-}
-
-export async function handlePlanRevenueSplitGet(
-  planType: PlanCollaborationKind,
-  planId: string,
-  req?: NextRequest,
-): Promise<NextResponse> {
-  try {
-    const session = await getSession();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    let canSeeAll = isPrivileged(session.user.role);
-    if (!canSeeAll) {
-      const auth = await authorizeRevenueSplitReader(
-        planType,
-        planId,
-        session.user.id,
-        session.user.consultantProfileId,
-      );
-      if (auth.denied) return auth.denied;
-      canSeeAll = auth.canSeeAll;
-    }
-
-    const rawAmount = req?.nextUrl.searchParams.get("amount");
-    const amountParsed = revenueSplitAmountSchema.safeParse(
-      rawAmount || "10000",
-    );
-    if (!amountParsed.success) {
-      return NextResponse.json(
-        { error: "amount must be an integer between 0 and 1,000,000,000" },
-        { status: 400 },
-      );
-    }
-
-    const allSplits = await calculateRevenueSplit(
-      planType,
-      planId,
-      amountParsed.data,
-    );
-    const splits = canSeeAll
-      ? allSplits
-      : allSplits.filter(
-          (s) => s.consultantProfileId === session.user.consultantProfileId,
-        );
-    return NextResponse.json({ data: splits });
-  } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "collaborations" } },
-    );
-    console.error("Error calculating revenue split:", error);
-    return NextResponse.json(
-      { error: "Failed to calculate revenue split" },
-      { status: 500 },
-    );
-  }
 }

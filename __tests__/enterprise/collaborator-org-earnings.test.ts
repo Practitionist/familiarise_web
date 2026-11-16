@@ -38,7 +38,7 @@ jest.mock("../../lib/feature-flags", () => ({
   ENABLE_HOST_ORGS: true,
 }));
 
-jest.mock("../../lib/collaborators/service", () => ({
+jest.mock("../../lib/collaborators/revenue-split", () => ({
   calculateRevenueSplit: jest.fn(),
 }));
 
@@ -183,7 +183,7 @@ jest.mock("../../lib/prisma", () => {
 });
 
 import prisma from "@/lib/prisma";
-import { calculateRevenueSplit } from "@/lib/collaborators/service";
+import { calculateRevenueSplit } from "@/lib/collaborators/revenue-split";
 import { resolveEffectiveRateCard } from "@/lib/api/organizations/rate-card";
 import { createEarningsFromPayment } from "@/lib/payments/payouts/earnings-service";
 

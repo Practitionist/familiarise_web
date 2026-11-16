@@ -44,7 +44,7 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 import globalPrisma from "@/lib/prisma";
-import { calculateRevenueSplit } from "@/lib/collaborators/service";
+import { calculateRevenueSplit } from "@/lib/collaborators/revenue-split";
 
 function makeTx() {
   return {

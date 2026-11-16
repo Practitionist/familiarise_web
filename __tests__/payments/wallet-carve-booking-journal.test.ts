@@ -30,7 +30,7 @@ jest.mock("../../lib/api/organizations/wallet", () => ({
     .fn()
     .mockResolvedValue({ balanceAfter: 0, ownerOrgId: "org-iitm" }),
 }));
-jest.mock("../../lib/collaborators/service", () => ({
+jest.mock("../../lib/collaborators/revenue-split", () => ({
   calculateRevenueSplit: jest.fn().mockResolvedValue([]),
 }));
 
