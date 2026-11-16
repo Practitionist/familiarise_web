@@ -60,9 +60,10 @@ export const APPOINTMENT_HEADLINE_SELECT = {
           title: true,
           trialPriceInPaise: true,
           trialDurationMinutes: true,
-          consultantProfile: USER_ID,
         },
       },
+      // The trial's own host, who may not be the plan's author.
+      consultantProfile: USER_ID,
       consulteeProfile: USER_ID,
     },
   },
@@ -160,8 +161,8 @@ interface HeadlineTrial {
     title: string;
     trialPriceInPaise: number | bigint;
     trialDurationMinutes: number;
-    consultantProfile: UserRef;
   };
+  consultantProfile: UserRef;
   consulteeProfile: UserRef;
 }
 
@@ -180,7 +181,7 @@ export function headlineUserIds(rows: readonly HeadlineInput[]): string[] {
       row.subscription?.requestedBy.userId,
       row.webinar?.webinarPlan.consultantProfile?.userId,
       row.class?.classPlan.consultantProfile?.userId,
-      row.trial?.subscriptionPlan.consultantProfile.userId,
+      row.trial?.consultantProfile.userId,
       row.trial?.consulteeProfile.userId,
     ]) {
       if (id) ids.add(id);
@@ -220,7 +221,7 @@ export function appointmentHeadline(
       return {
         ...empty,
         title: t.subscriptionPlan.title,
-        expert: userOf(t.subscriptionPlan.consultantProfile.userId),
+        expert: userOf(t.consultantProfile.userId),
         learner: userOf(t.consulteeProfile.userId),
         lifecycleStatus: t.status,
         durationMinutes: t.subscriptionPlan.trialDurationMinutes,

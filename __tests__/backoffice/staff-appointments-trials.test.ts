@@ -24,6 +24,7 @@ jest.mock("../../lib/prisma", () => ({
       findMany: async () => [
         { id: "u-expert", name: "Asha", email: "a@x.test", image: null },
         { id: "u-learner", name: "Ravi", email: "r@x.test", image: null },
+        { id: "u-host", name: "Bela", email: "b@x.test", image: null },
       ],
     },
   },
@@ -37,6 +38,10 @@ jest.mock("../../lib/auth-helpers", () => ({
 
 import { NextRequest } from "next/server";
 import { GET } from "../../app/api/staff/appointments/route";
+import {
+  staffAppointmentSchema,
+  staffAppointmentsPayloadSchema,
+} from "../../lib/data/staff-appointments-schema";
 import {
   buildStatusWhere,
   getStaffAppointments,
@@ -56,7 +61,7 @@ const base = {
   class: null,
 };
 
-/** A paid trial priced at request; the plan has since gone free. */
+/** A paid trial priced at request; the plan has since gone free. Asha wrote the plan, Bela hosts the trial. */
 const pricedTrial = {
   ...base,
   id: "apt-trial",
@@ -73,6 +78,7 @@ const pricedTrial = {
       trialDurationMinutes: 30,
       consultantProfile: { userId: "u-expert" },
     },
+    consultantProfile: { userId: "u-host" },
     consulteeProfile: { userId: "u-learner" },
   },
 };
@@ -142,13 +148,13 @@ it("searches a trial's plan, expert and learner", async () => {
           },
         },
       },
-      {
-        trial: {
-          subscriptionPlan: { consultantProfile: { user: people } },
-        },
-      },
+      { trial: { consultantProfile: { user: people } } },
       { trial: { consulteeProfile: { user: people } } },
     ]),
+  );
+  // The plan's author is not the trial's expert.
+  expect(JSON.stringify(where.OR)).not.toContain(
+    '"subscriptionPlan":{"consultantProfile"',
   );
 });
 
@@ -173,7 +179,8 @@ it("prices a trial from what the buyer agreed to, not the plan's later price", a
     free: false,
     removed: false,
     duration: 30,
-    consultant: { name: "Asha" },
+    // The trial's own consultant hosts it, whoever wrote the plan.
+    consultant: { name: "Bela" },
     consultee: { name: "Ravi" },
   });
   expect(staffStatus(appointments[0]).label).toBe("Awaiting payment");
@@ -207,5 +214,24 @@ it("clamps the route's page size to 100 and falls back on junk", async () => {
     );
     expect(res.status).toBe(200);
     expect(mockFindMany.mock.calls[0][0]).toMatchObject({ take });
+  }
+});
+
+it("the reader's own payload parses, and a misspelt enum does not", async () => {
+  mockFindMany.mockResolvedValueOnce([pricedTrial, removedWrapper]);
+  const payload = await getStaffAppointments({ scope: { kind: "all" } });
+  expect(staffAppointmentsPayloadSchema.safeParse(payload).success).toBe(true);
+
+  const row = payload.appointments[1];
+  for (const bad of [
+    { bookingSource: "DIRECT_CHEKOUT" },
+    { type: "TRIAL" },
+    { status: "scheduledd" },
+    { issueType: "Broken" },
+    { payment: { ...row.payment, gateway: "PAYPAL" } },
+  ]) {
+    expect(staffAppointmentSchema.safeParse({ ...row, ...bad }).success).toBe(
+      false,
+    );
   }
 });

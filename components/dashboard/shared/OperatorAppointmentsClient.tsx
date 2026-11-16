@@ -15,6 +15,7 @@ import {
   ResponsiveModalTitle,
 } from "@/components/ui/responsive-modal";
 import { Label } from "@/components/ui/label";
+import { ErrorState } from "@/components/dashboard/ErrorState";
 import { FilterBar } from "@/components/dashboard/FilterBar";
 import { PageHeader } from "@/components/dashboard/PageScaffold";
 import { Stat, StatRow } from "@/components/dashboard/Stat";
@@ -233,6 +234,19 @@ export function OperatorAppointmentsClient({
     }
   }, [error, toast]);
 
+  // The linked read fails out of sight of the list, so it says so twice: a toast and a retry above the list.
+  const linkedError = pendingOpenId !== null ? linked.error : null;
+  useEffect(() => {
+    if (linkedError) {
+      console.error("Error opening appointment:", linkedError);
+      toast({
+        title: "Error",
+        description: "Failed to open the booking",
+        variant: "destructive",
+      });
+    }
+  }, [linkedError, toast]);
+
   // `isFetching` still drives the refresh button's spinner — that is what it is
   // for. It must NOT drive the panel body: with keepPreviousData the rows are
   // on screen and correct-but-stale, and replacing them with a spinner on every
@@ -256,8 +270,13 @@ export function OperatorAppointmentsClient({
   else if (appointments.length === 0) tabPanelKind = "empty";
   else tabPanelKind = "list";
 
-  const openBooking = (appointmentId: string) =>
+  const openBooking = (appointmentId: string) => {
+    // A second click on a booking whose read failed asks again.
+    if (appointmentId === pendingOpenId && linked.isError) {
+      void linked.refetch();
+    }
     setPendingOpenId(appointmentId);
+  };
   const toOpen = pendingOpenId
     ? (appointments.find((a) => a.id === pendingOpenId) ??
       linked.data?.appointments.find((a) => a.id === pendingOpenId))
@@ -287,6 +306,15 @@ export function OperatorAppointmentsClient({
       />
 
       {beforeContent?.(openBooking)}
+
+      {linkedError && (
+        <ErrorState
+          title="Couldn't open that booking"
+          description="The list below is unchanged. Try again to open it."
+          onRetry={() => void linked.refetch()}
+          error={linkedError}
+        />
+      )}
 
       {/* Global counts within the filters (#897), not the current page. */}
       <StatRow>

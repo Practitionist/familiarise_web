@@ -18,7 +18,21 @@ import {
   headlineUserIds,
   trialPricePaise,
 } from "@/lib/data/appointment-headline";
-import type { StaffAppointmentsPayload } from "@/lib/data/staff-appointments-schema";
+import type {
+  StaffAppointmentsPayload,
+  StaffAppointmentType,
+  STAFF_ISSUE_TYPES,
+} from "@/lib/data/staff-appointments-schema";
+
+type StaffIssueType = (typeof STAFF_ISSUE_TYPES)[number];
+
+const STAFF_TYPE: Record<AppointmentsType, StaffAppointmentType> = {
+  CONSULTATION: "consultation",
+  SUBSCRIPTION: "subscription",
+  WEBINAR: "webinar",
+  CLASS: "class",
+  TRIAL: "trial",
+};
 
 export type StaffAppointmentsParams = {
   type?: string | null;
@@ -230,7 +244,7 @@ export async function getStaffAppointments(
           },
         },
       },
-      { trial: { subscriptionPlan: { consultantProfile: { user: people } } } },
+      { trial: { consultantProfile: { user: people } } },
       { trial: { consulteeProfile: { user: people } } },
     ];
   }
@@ -368,7 +382,7 @@ export async function getStaffAppointments(
       removed ||
       displayStatus === "cancelled" ||
       (!payment && !free && aptStatus !== "PENDING");
-    let issueType: string | null = null;
+    let issueType: StaffIssueType | null = null;
     if (removed) issueType = "Removed";
     else if (displayStatus === "cancelled") issueType = "Cancelled";
     else if (hasIssue) issueType = "Payment pending";
@@ -378,7 +392,7 @@ export async function getStaffAppointments(
 
     return {
       id: apt.id,
-      type: apt.appointmentType.toLowerCase(),
+      type: STAFF_TYPE[apt.appointmentType],
       title: headline.title,
       consultant: consultant
         ? {

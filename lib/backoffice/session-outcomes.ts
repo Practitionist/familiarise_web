@@ -29,6 +29,7 @@ import {
   headlineUserIds,
   type HeadlineUser,
 } from "@/lib/data/appointment-headline";
+import { meetingEndReasonSchema } from "@/lib/meetings/end-reasons";
 import { withAppointmentLock } from "@/utils/appointmentlock";
 import {
   NEEDS_HUMAN_DEFAULT_SORT,
@@ -353,7 +354,9 @@ export async function readSessionsNeedingHuman({
       completionStatus: row.completionStatus,
       outcome: row.outcome,
       lostMinutes: row.lostMinutes,
-      endedReason: row.meeting?.endedReason ?? null,
+      // A sidecar CHECK keeps the column to the known reasons.
+      endedReason:
+        meetingEndReasonSchema.safeParse(row.meeting?.endedReason).data ?? null,
       aged: isAgedNeedsHuman(row, now),
       booking: {
         type: row.appointment.appointmentType,

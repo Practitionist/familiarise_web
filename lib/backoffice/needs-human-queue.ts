@@ -10,6 +10,8 @@ import {
 } from "@prisma/client";
 import { z } from "zod";
 
+import { meetingEndReasonSchema } from "@/lib/meetings/end-reasons";
+
 export const NEEDS_HUMAN_PAGE_SIZE = 20;
 
 /** The columns the queue may sort by; `outcomeAt` is when the session started waiting. */
@@ -104,7 +106,7 @@ export const needsHumanItemSchema = z.object({
   completionStatus: z.nativeEnum(OccurrenceCompletionStatus),
   outcome: z.nativeEnum(OccurrenceOutcome).nullable(),
   lostMinutes: z.number().nullable(),
-  endedReason: z.string().nullable(),
+  endedReason: meetingEndReasonSchema.nullable(),
   /** Parked over 7 days; its booking's settlement is waiting on it. */
   aged: z.boolean(),
   booking: z.object({
