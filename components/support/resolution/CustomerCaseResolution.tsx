@@ -2,6 +2,7 @@
 
 import { formatDateLabel, formatDateTimeLabel } from "@/lib/time/display";
 import { AppealAction } from "./AppealAction";
+import { removalOutcomeCopy } from "./removal-outcome";
 import {
   decisionInForce,
   OUTCOME_LABEL,
@@ -15,20 +16,28 @@ type Decision = CaseResolution["decisions"][number];
 function DecisionCard({
   decision,
   inForce,
-  appealable,
-}: Readonly<{ decision: Decision; inForce: boolean; appealable: boolean }>) {
+  resolution,
+}: Readonly<{
+  decision: Decision;
+  inForce: boolean;
+  resolution: { reviewsRemoval?: boolean; isAppeal: boolean };
+}>) {
+  const copy = removalOutcomeCopy(resolution, decision.outcome);
   const appealOpen =
     inForce &&
-    appealable &&
+    copy.appealable &&
     decision.appealUntil !== null &&
     new Date(decision.appealUntil).getTime() > Date.now();
   return (
     <article className="space-y-2 rounded-lg border border-border p-3">
       <h4 className="font-medium">
-        {OUTCOME_LABEL[decision.outcome]}
+        {copy.label ?? OUTCOME_LABEL[decision.outcome]}
         {inForce ? "" : " · Replaced by a later decision"}
       </h4>
       <p className="whitespace-pre-wrap">{decision.explanation}</p>
+      {inForce && copy.note && (
+        <p className="text-muted-foreground">{copy.note}</p>
+      )}
       <p className="text-xs text-muted-foreground">
         Decided {formatDateLabel(new Date(decision.createdAt))}
         {appealOpen && decision.appealUntil
@@ -65,7 +74,10 @@ export function CustomerCaseResolution({
               key={decision.id}
               decision={decision}
               inForce={decision.id === current?.id}
-              appealable={!query.data?.isAppeal}
+              resolution={{
+                reviewsRemoval: query.data?.reviewsRemoval,
+                isAppeal: query.data?.isAppeal ?? false,
+              }}
             />
           ))}
         </>

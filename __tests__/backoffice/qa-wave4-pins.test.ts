@@ -60,7 +60,7 @@ describe("QA wave 4 (backoffice)", () => {
     ).not.toContain("toLocaleString(");
     expect(
       read("components/dashboard/shared/OperatorAppointmentsPage.tsx"),
-    ).toContain("<DisplayZoneProvider zone={viewerZone.zone}>");
+    ).toContain("<DisplayZoneProvider zone={OPERATOR_ZONE}>");
     expect(read("components/dashboard/ContextSwitcher.tsx")).toContain(
       "const user = hydrated ? session?.user : undefined;",
     );

@@ -4,13 +4,18 @@ import {
 } from "@/actions/maintenance/drain-sessions";
 import { pauseDiscountCodes } from "@/actions/maintenance/pause-discount-codes";
 import { runPostRecovery } from "@/actions/maintenance/post-recovery";
-import { MaintenancePhase } from "@prisma/client";
+import { MaintenancePhase, Prisma } from "@prisma/client";
 import crypto from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { createIncident, resolveIncident } from "@/lib/betterstack";
-import { requireAdminAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
+import {
+  opsActorOf,
+  recordOpsAction,
+  type OpsActor,
+} from "@/lib/backoffice/ops-action-log";
 import {
   getMaintenanceState,
   setMaintenanceState,
@@ -27,11 +32,27 @@ import {
 } from "@/lib/cron/with-cron-lock";
 import { captureThrottled } from "@/lib/observability/throttled-capture";
 
-async function requireAdmin() {
-  const result = await requireAdminAuth();
+async function requireOperator() {
+  const result = await requireBackofficeSurface("maintenance.manage");
   if (result.error) return { error: result.error };
-  return { userId: result.session.user.id };
+  return { actor: opsActorOf(result.session) };
 }
+
+// Ended windows are history: their bypass secrets and incident ids stay server-side.
+const historySelect = {
+  id: true,
+  phase: true,
+  reason: true,
+  scheduledAt: true,
+  startedAt: true,
+  endedAt: true,
+  estimatedEnd: true,
+  startedBy: true,
+  endedBy: true,
+  offlineActivatedAt: true,
+  createdAt: true,
+  updatedAt: true,
+} satisfies Prisma.MaintenanceWindowSelect;
 
 const postSchema = z.object({
   phase: z.enum(["DEGRADED", "OFFLINE"]),
@@ -47,13 +68,13 @@ const patchSchema = z.object({
 });
 const endSchema = z.object({ reason: z.string().trim().min(5).max(1000) });
 
-async function activateOffline() {
+async function activateOffline(actor: OpsActor, reason: string) {
   const window = await prisma.maintenanceWindow.findFirstOrThrow({
     where: { organizationId: null, phase: "OFFLINE" },
     orderBy: { createdAt: "desc" },
   });
   if (window.offlineActivatedAt) return null;
-  await pauseDiscountCodes();
+  const discounts = await pauseDiscountCodes();
   const drain = await drainActiveSessions();
   if (
     drain.errors.length ||
@@ -69,9 +90,30 @@ async function activateOffline() {
       },
       { status: 503 },
     );
-  await prisma.maintenanceWindow.updateMany({
-    where: { id: window.id, phase: "OFFLINE", offlineActivatedAt: null },
-    data: { offlineActivatedAt: new Date() },
+  const activatedAt = new Date();
+  // One audit row per activation: only the request whose CAS stamps the window writes it.
+  await prisma.$transaction(async (tx) => {
+    const { count } = await tx.maintenanceWindow.updateMany({
+      where: { id: window.id, phase: "OFFLINE", offlineActivatedAt: null },
+      data: { offlineActivatedAt: activatedAt },
+    });
+    if (count === 0) return;
+    await recordOpsAction(tx, {
+      actorUserId: actor.userId,
+      actorRole: actor.role,
+      surface: "maintenance.manage",
+      action: "maintenance.offline-activated",
+      targetKind: "MaintenanceWindow",
+      targetId: window.id,
+      reason,
+      before: { offlineActivatedAt: null },
+      after: {
+        offlineActivatedAt: activatedAt.toISOString(),
+        discountCodesPaused: discounts.paused,
+        sessionsDrained: drain.drained,
+        recordingsStopped: drain.recordingsStopped,
+      },
+    });
   });
   return null;
 }
@@ -81,8 +123,8 @@ async function activateOffline() {
  * Returns current maintenance state + recent maintenance windows.
  */
 export async function GET() {
-  const auth = await requireAdmin();
-  if ("error" in auth && auth.error) return auth.error;
+  const auth = await requireOperator();
+  if (auth.error) return auth.error;
 
   const [state, recentWindows] = await Promise.all([
     getMaintenanceState(),
@@ -90,6 +132,7 @@ export async function GET() {
       where: { organizationId: null },
       orderBy: { createdAt: "desc" },
       take: 20,
+      select: historySelect,
     }),
   ]);
 
@@ -108,7 +151,7 @@ async function retryMaintenanceActivation(
   currentState: MaintenanceState,
   targetPhase: z.infer<typeof postSchema>["phase"],
   reason: string,
-  userId: string,
+  actor: OpsActor,
 ) {
   if (currentState.phase !== targetPhase)
     return NextResponse.json(
@@ -121,10 +164,10 @@ async function retryMaintenanceActivation(
     estimatedEnd: currentState.estimatedEnd ?? undefined,
     bypassSecret: currentState.bypassSecret ?? undefined,
     betterstackIncidentId: currentState.betterstackIncidentId,
-    startedBy: userId,
+    actor,
   });
   if (targetPhase === "OFFLINE") {
-    const incomplete = await activateOffline();
+    const incomplete = await activateOffline(actor, reason);
     if (incomplete) return incomplete;
   }
   return NextResponse.json({
@@ -140,8 +183,8 @@ async function retryMaintenanceActivation(
  * Start maintenance mode.
  */
 async function startMaintenance(request: NextRequest) {
-  const auth = await requireAdmin();
-  if ("error" in auth && auth.error) return auth.error;
+  const auth = await requireOperator();
+  if (auth.error) return auth.error;
 
   let body: unknown;
   try {
@@ -197,7 +240,7 @@ async function startMaintenance(request: NextRequest) {
       currentState,
       targetPhase,
       reason,
-      auth.userId,
+      auth.actor,
     );
   }
   const bypassSecret = crypto.randomUUID();
@@ -211,12 +254,12 @@ async function startMaintenance(request: NextRequest) {
     reason,
     estimatedEnd: estimatedEndDate?.toISOString(),
     bypassSecret,
-    startedBy: auth.userId,
+    actor: auth.actor,
     betterstackIncidentId,
   });
 
   if (targetPhase === "OFFLINE") {
-    const incomplete = await activateOffline();
+    const incomplete = await activateOffline(auth.actor, reason);
     if (incomplete) return incomplete;
   }
   return NextResponse.json({
@@ -263,8 +306,8 @@ async function recoverOfflineMaintenance(currentState: MaintenanceState) {
  * Update maintenance phase or config (e.g., transition DEGRADED ↔ OFFLINE, update ETA).
  */
 async function updateMaintenance(request: NextRequest) {
-  const auth = await requireAdmin();
-  if ("error" in auth && auth.error) return auth.error;
+  const auth = await requireOperator();
+  if (auth.error) return auth.error;
 
   let body: unknown;
   try {
@@ -328,11 +371,11 @@ async function updateMaintenance(request: NextRequest) {
     estimatedEnd: nextEstimatedEnd,
     bypassSecret: currentState.bypassSecret ?? undefined,
     betterstackIncidentId,
-    startedBy: auth.userId,
+    actor: auth.actor,
   });
 
   if (targetPhase === "OFFLINE") {
-    const incomplete = await activateOffline();
+    const incomplete = await activateOffline(auth.actor, reason);
     if (incomplete) return incomplete;
   }
   return NextResponse.json({
@@ -347,8 +390,8 @@ async function updateMaintenance(request: NextRequest) {
  * End maintenance mode (set phase=OFF).
  */
 async function endMaintenance(request: NextRequest) {
-  const auth = await requireAdmin();
-  if ("error" in auth && auth.error) return auth.error;
+  const auth = await requireOperator();
+  if (auth.error) return auth.error;
   const body: unknown = await request.json().catch(() => null);
   const parsed = endSchema.safeParse(body);
   if (!parsed.success)
@@ -359,7 +402,7 @@ async function endMaintenance(request: NextRequest) {
   const currentState = await getMaintenanceState();
   if (currentState.phase === "OFF") {
     await setMaintenanceState(MaintenancePhase.OFF, {
-      endedBy: auth.userId,
+      actor: auth.actor,
       auditReason: parsed.data.reason,
     });
     return NextResponse.json({ phase: "OFF", alreadyEnded: true });
@@ -394,7 +437,7 @@ async function endMaintenance(request: NextRequest) {
   if (currentState.betterstackIncidentId)
     await resolveIncident(currentState.betterstackIncidentId);
   await setMaintenanceState(MaintenancePhase.OFF, {
-    endedBy: auth.userId,
+    actor: auth.actor,
     auditReason: parsed.data.reason,
   });
   return NextResponse.json({ phase: "OFF", recovery, chat });
@@ -403,8 +446,8 @@ async function endMaintenance(request: NextRequest) {
 async function control(
   run: () => Promise<NextResponse>,
 ): Promise<NextResponse> {
-  const auth = await requireAdmin();
-  if ("error" in auth && auth.error) return auth.error;
+  const auth = await requireOperator();
+  if (auth.error) return auth.error;
   // Another deploy would flip production: the window, its Redis mirror and the drains are all shared.
   if (!mayWriteProductionState(REDIS_KEYS.PHASE))
     return NextResponse.json(

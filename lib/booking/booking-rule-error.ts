@@ -57,7 +57,8 @@ export type BookingRuleCode =
   | "EVENT_NOT_FULL"
   | "WAITLIST_DISABLED"
   | "WAITLIST_FULL"
-  | "EVENT_WAITLIST_CAP";
+  | "EVENT_WAITLIST_CAP"
+  | "REMOVAL_NOT_ALLOWED";
 
 export class BookingRuleError extends Error {
   constructor(

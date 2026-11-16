@@ -140,6 +140,18 @@
       "reason": "One row per expert per plan became one row per period on the team, so the total unique gives way to the partial unique collaborator_one_active_{webinar,class} in check-constraints.sql, which the sidecar step creates straight after the push.",
       "trackedBy": "#2803",
       "expires": "2026-12-07"
+    },
+    {
+      "statement": "ALTER TYPE \"StreamRevocationKind\" ADD VALUE 'CONDUCT_CALL_BLOCK'",
+      "reason": "The revocation kind that blocks a conduct-removed attendee from the appointment's rooms and unblocks them once support overturns it. Additive, so only the drift check reads it; it goes with this PR's own push.",
+      "trackedBy": "#2799",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "ALTER TYPE \"SupportCaseEventKind\" ADD VALUE 'REMOVAL_REVIEW_LAPSED'",
+      "reason": "The case event the support SLA sweep writes once when a conduct removal passes its 72-hour review deadline undecided. Additive, so only the drift check reads it; it goes with this PR's own push.",
+      "trackedBy": "#2799",
+      "expires": "2026-12-31"
     }
   ],
   "knownDivergences": [

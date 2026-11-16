@@ -20,13 +20,18 @@ const tx = {
     createMany: (...args: unknown[]) => createItems(...args),
   },
 };
-jest.mock("../../lib/auth-helpers", () => ({ requireAdminAuth: () => auth() }));
+jest.mock("../../lib/auth-helpers", () => ({
+  requireBackofficeSurface: (...args: unknown[]) => auth(...args),
+}));
 jest.mock("../../lib/auth/step-up", () => ({
   requireFreshSession: (...args: unknown[]) => freshness(...args),
 }));
 jest.mock("../../lib/backoffice/ops-action-log", () => ({
-  opsReasonSchema: jest.requireActual("zod").z.string().trim().min(5).max(1000),
   recordOpsAction: (...args: unknown[]) => audit(...args),
+  opsActorOf: (session: { user: { id: string; role: string } }) => ({
+    userId: session.user.id,
+    role: session.user.role,
+  }),
 }));
 jest.mock("../../lib/observability/throttled-capture", () => ({
   captureThrottled: jest.fn(),
@@ -86,7 +91,7 @@ const request = (body: unknown) =>
 beforeEach(() => {
   jest.clearAllMocks();
   process.env.BETTER_AUTH_SECRET = "isolated-route-test-secret";
-  auth.mockResolvedValue({ session: { user: { id: "admin" } } });
+  auth.mockResolvedValue({ session: { user: { id: "admin", role: "ADMIN" } } });
   freshness.mockReturnValue(null);
   createRequest.mockResolvedValue({ count: 1 });
   transaction.mockImplementation((run) => run(tx));
@@ -95,11 +100,12 @@ beforeEach(() => {
     { id: "booking", _count: { occurrences: 1, participants: 0, payment: 0 } },
   ]);
 });
-it("requires ADMIN authorization before previewing or queueing", async () => {
+it("requires the maintenance surface before previewing or queueing", async () => {
   auth.mockResolvedValue({
     error: NextResponse.json({ error: "Forbidden" }, { status: 403 }),
   });
   expect((await POST(request(input))).status).toBe(403);
+  expect(auth).toHaveBeenCalledWith("maintenance.manage");
   expect(transaction).not.toHaveBeenCalled();
 });
 it("requires a fresh session before accepting confirmation", async () => {
@@ -126,6 +132,7 @@ it("commits the request, selected items and ADMIN audit through the same transac
     tx,
     expect.objectContaining({
       actorUserId: "admin",
+      actorRole: "ADMIN",
       action: "maintenance.booking-remediation.confirm",
     }),
   );

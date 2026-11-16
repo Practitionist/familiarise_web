@@ -11,8 +11,7 @@ import { formatCurrencyAmount } from "@/utils/formatting";
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
 import { DoorDialog, type Door } from "./DoorDialog";
 import { RefundDoorDialog, type RefundDoor } from "./RefundDoorDialog";
-
-const when = (iso: string) => new Date(iso).toLocaleString();
+import { formatOperatorInstant } from "@/lib/time/operator-zone";
 
 function seatLabel(s: ClassSeriesView["seats"][number]): string {
   const rail = s.rail ? fundingRailLabel(s.rail) : "Unpaid";
@@ -71,7 +70,7 @@ export function ClassSeriesDoors({ classId }: Readonly<{ classId: string }>) {
               <p>
                 Reliability flag:{" "}
                 {v.reliability.active
-                  ? `on since ${when(v.reliability.since ?? "")}`
+                  ? `on since ${formatOperatorInstant(v.reliability.since ?? "")}`
                   : "off"}
                 .
               </p>
@@ -131,7 +130,10 @@ export function ClassSeriesDoors({ classId }: Readonly<{ classId: string }>) {
 
           <Section title="Upcoming sessions">
             {v.upcoming.map((o) => (
-              <Row key={o.id} label={`#${o.ordinal} · ${when(o.startsAt)}`}>
+              <Row
+                key={o.id}
+                label={`#${o.ordinal} · ${formatOperatorInstant(o.startsAt)}`}
+              >
                 <Button
                   size="sm"
                   variant="outline"
@@ -156,8 +158,10 @@ export function ClassSeriesDoors({ classId }: Readonly<{ classId: string }>) {
             {v.cancelledSessions.map((o) => (
               <Row
                 key={o.id}
-                label={`#${o.ordinal} · ${o.voided ? "voided" : "cancelled"} · was ${when(o.startsAt)} · ${
-                  o.makeUp ? `made up ${when(o.makeUp.startsAt)}` : "no make-up"
+                label={`#${o.ordinal} · ${o.voided ? "voided" : "cancelled"} · was ${formatOperatorInstant(o.startsAt)} · ${
+                  o.makeUp
+                    ? `made up ${formatOperatorInstant(o.makeUp.startsAt)}`
+                    : "no make-up"
                 }${o.seatsSettledAt ? " · settled" : ""}`}
               >
                 {!o.makeUp && !o.seatsSettledAt && (

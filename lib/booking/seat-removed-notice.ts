@@ -12,6 +12,8 @@ export async function notifySeatRemoved(args: {
   attendeeUserId: string;
   /** Set while a refund is pending at the gateway; its settlement sends the refund notice. */
   refundText?: string;
+  /** A conduct removal: the host's reason and the support case, and the case page to open. */
+  removal?: { note: string; href: string };
 }): Promise<void> {
   const [appointment, attendee] = await Promise.all([
     prisma.appointment.findUnique({
@@ -39,10 +41,9 @@ export async function notifySeatRemoved(args: {
     appointment.webinar?.webinarPlan ?? appointment.class?.classPlan ?? null;
   const consultantName = plan?.consultantProfile?.user?.name || "The organiser";
   const startsAt = appointment.occurrences[0]?.startsAt ?? null;
-  const dashboardUrl = notificationHref(
-    appointment.organizationId,
-    "appointments",
-  );
+  const dashboardUrl =
+    args.removal?.href ??
+    notificationHref(appointment.organizationId, "appointments");
   const [bells, emails] = await Promise.all([
     notifyAppointmentCancelled(
       [args.attendeeUserId],
@@ -60,6 +61,7 @@ export async function notifySeatRemoved(args: {
         dashboardUrl,
         cancelledBy: "consultant",
         seatRemoved: true,
+        ...(args.removal ? { removalNote: args.removal.note } : {}),
       },
       {
         required: { kind: "SEAT_RELEASED", recipients: [args.attendeeUserId] },
@@ -69,6 +71,7 @@ export async function notifySeatRemoved(args: {
       appointmentId: args.appointmentId,
       userIds: [args.attendeeUserId],
       requiredFor: [args.attendeeUserId],
+      ...(args.removal ? { reason: args.removal.note } : {}),
       ...(args.refundText
         ? { refundText: args.refundText, refundUserIds: [args.attendeeUserId] }
         : {}),

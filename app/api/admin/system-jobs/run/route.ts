@@ -15,10 +15,8 @@ import { z } from "zod";
 
 import prisma from "@/lib/prisma";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
-import {
-  opsReasonSchema,
-  recordOpsAction,
-} from "@/lib/backoffice/ops-action-log";
+import { recordOpsAction } from "@/lib/backoffice/ops-action-log";
+import { opsReasonSchema } from "@/lib/backoffice/ops-reason";
 import { reportSentryError } from "@/lib/observability/report";
 import { scheduleAfter } from "@/lib/api/after-safe";
 import { getMaintenanceState } from "@/lib/maintenance-edge";

@@ -134,13 +134,13 @@ const prisma = new PrismaClient({
 
 **Files**:
 
-- `app/api/admin/stats/route.ts` (lines 35, 43, 55)
-- `app/api/admin/analytics/route.ts` (lines 28-130) — **12+ count() calls in Promise.all()**
-- `app/api/staff/metrics/route.ts` (lines 49-111)
+- `app/api/admin/stats/route.ts`
+- `lib/backoffice/platform-totals.ts` — **the platform totals read by Metrics: fourteen `count()` and `aggregate()` calls in one `Promise.all()`** (these moved here from the deleted Analytics endpoint)
+- `app/api/staff/metrics/route.ts`
 
-**Problem**: Multiple `prisma.payment.count()`, `prisma.refund.count()`, `prisma.dispute.count()` calls without indexed filters. Each count on a 10K+ row table = 10-50ms. The analytics endpoint runs 12+ counts in parallel = 120-600ms total.
+**Problem**: Multiple `prisma.payment.count()`, `prisma.refund.count()`, `prisma.dispute.count()` calls without indexed filters. Each count on a 10K+ row table = 10-50ms. The platform-totals read runs fourteen counts and sums in parallel = 120-600ms total.
 
-At 100K rows, each count takes 100-500ms. The analytics page becomes unusable (2-6 second load).
+At 100K rows, each count takes 100-500ms. The Metrics page becomes unusable (2-6 second load).
 
 **Approaches**:
 
@@ -846,7 +846,7 @@ npx prisma migrate deploy
 | --------------------------- | --------------- | --------------- | ----------- |
 | >150 concurrent connections | Micro           | Small           | +$65/month  |
 | >300 concurrent connections | Small           | Medium          | +$65/month  |
-| Analytics queries >500ms    | Medium          | Large           | +$130/month |
+| Metrics queries >500ms      | Medium          | Large           | +$130/month |
 | Need read replicas          | Large           | Large + Replica | +$260/month |
 | >800 concurrent connections | Large           | XL              | +$260/month |
 

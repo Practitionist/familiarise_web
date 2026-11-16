@@ -89,6 +89,7 @@ const OPS_SURFACE_WINDOW: Record<BackofficeSurface, "money" | "other"> = {
   "organizations.manage": "other",
   "announcements.manage": "other",
   "analytics.read": "other",
+  "trialPricing.manage": "money",
   "systemJobs.manage": "other",
   "maintenance.manage": "other",
   "videoConfig.manage": "other",

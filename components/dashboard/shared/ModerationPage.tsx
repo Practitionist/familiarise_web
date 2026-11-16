@@ -1,7 +1,7 @@
 "use client";
 
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { formatDistanceToNow } from "date-fns";
 import {
   keepPreviousData,
@@ -12,6 +12,7 @@ import {
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { FilterBar } from "@/components/dashboard/FilterBar";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
@@ -33,7 +34,6 @@ import { formatReportReference } from "@/lib/moderation/report-reference";
 import { humanizeEnum, type Tone } from "@/lib/ui/tone";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
-  Search,
   Flag,
   CheckCircle2,
   XCircle,
@@ -462,10 +462,6 @@ export function ModerationPage() {
   const { can, basePath } = useBackofficeCapability();
   const [activeTab, setActiveTab] = useState("reports");
   const [searchQuery, setSearchQuery] = useState("");
-  // #997 secondary findings — the reports list used to fetch all PENDING
-  // reports and substring-search every keystroke client-side. Debounce and
-  // send the query to the server instead.
-  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [selectedReport, setSelectedReport] =
     useState<ModerationReportItem | null>(null);
   // Keyed by report so closing one report never reopens the dialog on the next.
@@ -481,11 +477,6 @@ export function ModerationPage() {
 
   const { toast } = useToast();
   const queryClient = useQueryClient();
-
-  useEffect(() => {
-    const timer = setTimeout(() => setDebouncedSearch(searchQuery), 300);
-    return () => clearTimeout(timer);
-  }, [searchQuery]);
 
   // Fetch moderation stats
   const {
@@ -516,13 +507,13 @@ export function ModerationPage() {
     isError: reportsError,
     refetch: refetchReports,
   } = useQuery({
-    queryKey: ["staff-moderation-reports", statusFilter, debouncedSearch],
+    queryKey: ["staff-moderation-reports", statusFilter, searchQuery],
     queryFn: async (): Promise<{
       reports: ModerationReportItem[];
       capabilities?: ModerationCapabilities;
     }> => {
       const params = new URLSearchParams({ status: statusFilter });
-      if (debouncedSearch) params.set("search", debouncedSearch);
+      if (searchQuery) params.set("search", searchQuery);
       const response = await fetch(`/api/staff/moderation/reports?${params}`);
       if (!response.ok) throw new Error("Failed to fetch reports");
       return response.json();
@@ -930,30 +921,28 @@ export function ModerationPage() {
         <TabsContent value="reports" className="space-y-4">
           <Card>
             <CardContent className="space-y-3 p-4">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder="Search reports..."
-                  className="pl-9"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                {REPORT_STATUS_FILTERS.map((filter) => (
-                  <Button
-                    key={filter.value}
-                    type="button"
-                    size="sm"
-                    variant={
-                      statusFilter === filter.value ? "default" : "outline"
-                    }
-                    onClick={() => setStatusFilter(filter.value)}
-                  >
-                    {filter.label}
-                  </Button>
-                ))}
-              </div>
+              <FilterBar
+                search={{
+                  label: "Search reports",
+                  placeholder: "Search reports...",
+                  value: searchQuery,
+                  onChange: setSearchQuery,
+                }}
+                selects={[
+                  {
+                    key: "status",
+                    label: "Status",
+                    value: statusFilter,
+                    options: [...REPORT_STATUS_FILTERS],
+                    onChange: setStatusFilter,
+                  },
+                ]}
+                canClear={Boolean(searchQuery) || statusFilter !== "PENDING"}
+                onClear={() => {
+                  setSearchQuery("");
+                  setStatusFilter("PENDING");
+                }}
+              />
             </CardContent>
           </Card>
 

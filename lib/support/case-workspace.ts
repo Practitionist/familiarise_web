@@ -1,3 +1,4 @@
+import { CONDUCT_REMOVAL_CATEGORY } from "./case-topic";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { findUserIssues } from "@/lib/observability/sentry-issues";
@@ -85,13 +86,22 @@ const BOOKING_SELECT = {
  * `requesterName` fills the learner for a class or webinar: those hold no
  * per-seat requester, and the case's requester is the attendee (#1527).
  */
-async function readBooking(
+export async function readCaseBooking(
   appointmentId: string,
-  requesterName: string | null,
+  requester: { id: string; name: string | null },
 ): Promise<CaseBooking | null> {
+  const requesterName = requester.name;
   const a = await prisma.appointment.findUnique({
     where: { id: appointmentId },
-    select: BOOKING_SELECT,
+    select: {
+      ...BOOKING_SELECT,
+      // The requester's own seat: a removed or departed attendee's booking is not the event's.
+      participants: {
+        where: { userId: requester.id, role: "CONSULTEE" },
+        select: { status: true },
+        take: 1,
+      },
+    },
   });
   if (!a) return null;
   const expert =
@@ -121,6 +131,7 @@ async function readBooking(
       a.class?.status ??
       a.webinar?.status ??
       null,
+    seatStatus: a.participants[0]?.status ?? null,
   };
 }
 
@@ -193,7 +204,12 @@ export async function readCaseWorkspace(
     c.subjects.find((s) => s.subjectType === "PAYMENT")?.subjectId ?? null;
   const [booking, payment, pastCases, sentryIssues, duplicates] =
     await Promise.all([
-      c.appointmentId ? readBooking(c.appointmentId, c.requester.name) : null,
+      c.appointmentId
+        ? readCaseBooking(c.appointmentId, {
+            id: c.requesterUserId,
+            name: c.requester.name,
+          })
+        : null,
       grants.showPayment ? readPayment(paymentId) : null,
       prisma.supportCase.findMany({
         where: {
@@ -259,6 +275,8 @@ export async function readCaseWorkspace(
     sla: slaStateOf(c),
     ackDueAt: iso(c.ackDueAt),
     resolutionDueAt: iso(c.resolutionDueAt),
+    reviewDueAt:
+      c.category === CONDUCT_REMOVAL_CATEGORY ? iso(c.statutoryDueAt) : null,
     lastMessageAt: iso(c.lastMessageAt),
     createdAt: c.createdAt.toISOString(),
     updatedAt: c.updatedAt.toISOString(),

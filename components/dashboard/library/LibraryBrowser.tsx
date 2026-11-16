@@ -9,7 +9,7 @@
  */
 
 import Link from "next/link";
-import { useId, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import {
   keepPreviousData,
   useQuery,
@@ -18,7 +18,6 @@ import {
 import { ChevronDown, FolderOpen } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Collapsible,
@@ -27,6 +26,7 @@ import {
 } from "@/components/ui/collapsible";
 import { EmptyState } from "@/components/dashboard/EmptyState";
 import { ErrorState } from "@/components/dashboard/ErrorState";
+import { DateRangeMenu } from "@/components/dashboard/DateRangeMenu";
 import { FilterBar } from "@/components/dashboard/FilterBar";
 import { TablePagination } from "@/components/dashboard/TablePagination";
 import {
@@ -55,6 +55,7 @@ import {
   type LibrarySession,
 } from "@/lib/library/library-query";
 import { cn } from "@/utils/tailwind";
+import { useViewerZone } from "@/lib/time/use-viewer-zone";
 import { MaterialsTable, ThreadTable } from "./DocumentTables";
 import { useLibraryDay, type LibraryColumn } from "./LibraryTable";
 import {
@@ -240,32 +241,6 @@ function SessionGroup({
   );
 }
 
-function DateField({
-  label,
-  value,
-  onChange,
-}: Readonly<{
-  label: string;
-  value: string | null;
-  onChange: (value: string | null) => void;
-}>) {
-  const id = useId();
-  return (
-    <div className="flex items-center gap-1.5">
-      <label htmlFor={id} className="text-xs text-muted-foreground">
-        {label}
-      </label>
-      <Input
-        id={id}
-        type="date"
-        value={value ?? ""}
-        onChange={(e) => onChange(e.target.value || null)}
-        className="h-9 w-[9.5rem] text-sm"
-      />
-    </div>
-  );
-}
-
 /** True when `key` is `base` plus a query string, i.e. the same list. */
 function sameList(key: QueryKey, base: QueryKey) {
   return (
@@ -291,6 +266,7 @@ export function LibraryBrowser({
     useState<RecordingPlayerItem | null>(null);
   const list = useListParams({ filterKeys: FILTER_KEYS });
   const { q, page, filters } = list;
+  const { zone } = useViewerZone();
   const flat = filters.view === "flat";
   const docs = artifact === "documents";
 
@@ -606,15 +582,15 @@ export function LibraryBrowser({
         }
         canClear={filtered}
       >
-        <DateField
-          label="From"
-          value={filters.from}
-          onChange={(v) => list.setFilter("from", v)}
-        />
-        <DateField
-          label="To"
-          value={filters.to}
-          onChange={(v) => list.setFilter("to", v)}
+        <DateRangeMenu
+          direction="past"
+          zone={zone}
+          value={{ from: filters.from ?? "", to: filters.to ?? "" }}
+          onChange={(range) =>
+            list.setParams({
+              filters: { from: range.from || null, to: range.to || null },
+            })
+          }
         />
         <div
           role="group"

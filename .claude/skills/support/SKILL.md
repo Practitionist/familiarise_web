@@ -19,7 +19,8 @@ Terse rules for agents. The human explanation is in `docs/support/` (start at `d
 - Case service: `lib/support/case-service.ts` (`createOrReuseSupportCase`, `appendSupportCaseTurn`, `executePatchLifecycleTx`), `lib/support/case-transitions.ts` (`CASE_TRANSITIONS`).
 - Actions (evidence, decisions, recommendations, holds): `lib/support/case-actions.ts` (`performCaseAction`, `performCaseActionTx`). Doors: `lib/support/refund-door.ts`, `lib/support/case-doors.ts`. Caps: `lib/support/money-policy.ts`. Holds: `lib/support/case-holds.ts`.
 - Access: `lib/support/case-access.ts` (`canCorrespondOnCase`, `caseCorrespondentIds`, `visibleCaseAccess`, `projectCaseForViewer`).
-- Sweep: `lib/support/sla-sweep.ts` (`runSupportSlaSweep`), `lib/support/problem-cascade.ts`, `lib/support/evidence-retention.ts`; registered once as `support-sla-sweep` in `lib/cron/cleanup-registry.ts`.
+- Sweep: `lib/support/sla-sweep.ts` (`runSupportSlaSweep`), `lib/support/problem-cascade.ts`, `lib/support/evidence-retention.ts`, `lib/support/conduct-removal-case.ts` (the 72-hour conduct removal arm); registered once as `support-sla-sweep` in `lib/cron/cleanup-registry.ts`.
+- Conduct removals: a `CONDUCT_REMOVAL` case is decided `UPHELD` or `OVERTURNED` like an appeal. An overturn is refused (`REFUND_FIRST`) until the seat's unrefunded balance is sent through `RECOMMEND_REFUND` and the bounded `REVIEW_REFUND` (an admin approves above the staff limits); it then writes the unblock intent (`conductRemovalDecidedTx`) and `settleDecidedRemoval` drives it. The 72-hour lapse, also owed after a late decision, stamps a full-balance marker keyed `conduct-removal:<caseId>` and writes no unblock: the block stays until support overturns. An upheld removal refunds nothing automatically. Record: `docs/decisions/2026-11-15-conduct-removal.md`.
 - Privacy: `lib/support/privacy-export.ts`, `lib/support/erasure.ts`.
 - Chat access: `lib/support/chat-access.ts`, `lib/support/chat-doors.ts`, `lib/support/chat-access-end.ts`, `lib/support/chat-sweep.ts`, `lib/support/chat-transcript.ts`, `lib/stream/support-intervention.ts`.
 - Sidecar: `prisma/sql/check-constraints.sql` (search `support_`, `earnings_hold_`, `ops_action_proposal_one_open_key`).
@@ -59,6 +60,12 @@ Terse rules for agents. The human explanation is in `docs/support/` (start at `d
 - Never write a JS reconciler for a rule the sidecar already enforces (AGENTS.md §1.3); never add a second scheduler, Redis cron lock or `jobs/` wrapper for the sweep (AGENTS.md §1.1, §1.4).
 - Never capture to Sentry per row in a sweep arm; collect into `errors` and report once.
 - Never run `prisma db push`, `npm run db:*` or the DB race tier against the shared database.
+
+## Back office
+
+- Show every time on an operator screen through `lib/time/operator-zone.ts` (`OPERATOR_ZONE` is `Asia/Kolkata`; `formatOperatorInstant`, and `<OperatorTime>` in `lib/time/operator-time.tsx`, print IST with the UTC instant in the tooltip; `operatorMonthStart` cuts a month at 00:00 IST). The back-office layout mounts one `DisplayZoneProvider` with that zone. Never format an operator time with the browser, server or viewer-profile zone; a support page that does is still to be moved **(planned, with the people-and-support screens)**.
+- Show a person through the one person helper (`formatPerson` in `lib/backoffice/person.ts` and `<PersonCell>` in `components/dashboard/backoffice/PersonCell.tsx`: name, email, muted id, "Removed user" fallback), not a hand-built cell.
+- A staff action that changes state is a `withOpsAction` door (`lib/backoffice/ops-action-log.ts`): a matrix key, a reason of at least 5 characters and an `OpsActionLog` row. Guard a new route with `requireBackofficeSurface(key)`; do not add a caller of `requirePrivilegedAuth` or `requireAdminAuth`. There is no staff door to void a session or to end a paid trial; use the refund and incident doors, and see the record `docs/decisions/2026-11-16-train-6-back-office.md`.
 
 ## Planned (owner decisions 2026-11-04, not built yet)
 
