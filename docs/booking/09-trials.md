@@ -2,7 +2,7 @@
 
 ## Overview
 
-A trial session is a one-time session that lets a consultee try a consultant's subscription plan before committing to a paid subscription. Trials are tied to a `SubscriptionPlan` that has `trialEnabled: true`, and each consultee-consultant pair is limited to exactly one trial (enforced by a unique constraint).
+A trial session is a one-time session that lets a consultee try a consultant's subscription plan before committing to a paid subscription. Trials are tied to a `SubscriptionPlan` that has `trialEnabled: true`, and a consultee-consultant pair may hold at most one trial that is live or delivered at a time (enforced by a partial unique index). A pair keeps every trial it had: after a cancelled or lapsed trial the learner may ask again, and the request adds a new row beside the earlier one.
 
 Key characteristics:
 
@@ -49,18 +49,25 @@ Key characteristics:
 
 ### Constraints
 
-| Constraint                                            | Type   | Purpose                                   |
-| ----------------------------------------------------- | ------ | ----------------------------------------- |
-| `@@unique([consulteeProfileId, consultantProfileId])` | Unique | One trial per consultee-consultant pair   |
-| `appointmentId @unique`                               | Unique | One-to-one relationship with Appointment  |
-| `convertedToSubscriptionId @unique`                   | Unique | One-to-one relationship with Subscription |
+| Constraint                                                                      | Type           | Purpose                                                                                |
+| ------------------------------------------------------------------------------- | -------------- | -------------------------------------------------------------------------------------- |
+| `trial_one_blocking_per_pair_key` (sidecar, `prisma/sql/check-constraints.sql`) | Partial unique | At most one `AWAITING_PAYMENT`, `SCHEDULED`, `COMPLETED` or `CONVERTED` trial per pair |
+| `appointmentId @unique`                                                         | Unique         | One-to-one relationship with Appointment                                               |
+| `convertedToSubscriptionId @unique`                                             | Unique         | One-to-one relationship with Subscription                                              |
+
+The index's status list is `TRIAL_REQUEST_BLOCKING_STATUSES` in `lib/trials/eligibility.ts`, and the two must stay equal. Only `CANCELLED` frees the pair, and it is terminal, so a row enters the blocking set only at insert; no transition can make the index refuse a status change. `__tests__/db/booking/trial-history.db.test.ts` runs every status against the index.
+
+### One pair, several trials
+
+Learner X requests a paid trial with expert Y and never pays; the expire-unpaid-trials sweep cancels it. X asks again for a later time. The table now holds two rows for (X, Y): the first `CANCELLED`, still linked to its own appointment, payment order and price, and the second `AWAITING_PAYMENT` with a new appointment. A third request while the second is open is refused with 409 `TRIAL_ALREADY_REQUESTED`. Readers that ask whether the pair may book read the blocking trial (`blockingTrialWhere`); readers that show history read every row.
 
 ### Indexes
 
-| Index                 | Purpose                     |
-| --------------------- | --------------------------- |
-| `consultantProfileId` | Filter trials by consultant |
-| `subscriptionPlanId`  | Filter trials by plan       |
+| Index                                       | Purpose                                     |
+| ------------------------------------------- | ------------------------------------------- |
+| `[consulteeProfileId, consultantProfileId]` | Read a pair's trials (eligibility, history) |
+| `consultantProfileId`                       | Filter trials by consultant                 |
+| `subscriptionPlanId`                        | Filter trials by plan                       |
 
 ### TrialStatus Enum
 
@@ -180,12 +187,12 @@ sequenceDiagram
 ### Step-by-step
 
 1. **Pick** — on the expert page, "Book Trial" opens the mentorship dialog on its trial step (step one is the start-date choice; Back returns to it). The step shows the dark single-time picker: a month of the expert's availability read with the learner's own busy times (`consulteeUserId`), cut into windows of the trial's length by `windowsForDay` at `leadMsFor("request", { settled })` — 15 minutes for a free trial, 2 hours for a paid one, which still has to be paid. Before `POST /api/trials` the step checks `/api/trials/check-eligibility`; after a free booking it calls `invalidateAvailability`.
-2. **Validate before anything is held** — the route refuses a window of the wrong length (400 `WINDOW_DURATION_MISMATCH`) or one inside the lead (409 `REQUEST_TOO_SOON`) before it reads or clears the pair's earlier freed trial row. Every validity check, including the plan lookup, runs before the request limiter, so a refused request costs no attempt.
+2. **Validate before anything is held** — the route refuses a window of the wrong length (400 `WINDOW_DURATION_MISMATCH`) or one inside the lead (409 `REQUEST_TOO_SOON`) before it reads the pair's trials. It then reads the pair's blocking trial (live or delivered) and refuses with 409 `TRIAL_ALREADY_REQUESTED` if one exists; an earlier cancelled trial is left exactly as it is. Every validity check, including the plan lookup, runs before the request limiter, so a refused request costs no attempt.
 
    The limiter (`trialRequestLimiter`, 3 trials per 24 hours per caller, privileged roles included) is read without spending by `trialRequestRefusal` and spent by `spendTrialRequest` only once a trial has been created (`lib/rate-limit.ts`). A caller who has already created three answers 429 `RATE_LIMITED` with `retryAfterSeconds`, `retryAt` and a `Retry-After` header, and the trial step shows when they may retry in their own zone. If Redis is slow or down the read lets the request through. For example, Daniel Brown's requests are refused twice because the plan is still a draft; he then books a trial once, and he has spent one of his three, not three.
 
 3. **Lock** — the expert's request-cap lock (its count and the insert run under it), then `lockTrialPick`: the consultee lock and one all-or-nothing slot batch over the host and, for a learner who is an expert too, their own calendar. Contention answers 423 `SLOT_BUSY`; Redis down answers 503.
-4. **Write** — `bookTrialInTx` (`lib/trials/book-trial.ts`) checks `trialWindowRefusal` on the transaction's client (400 `OUTSIDE_AVAILABILITY`, 409 `SLOT_TAKEN`), creates the appointment with its one session (stamped with `consultantProfileId`), the seats and the trial in its final status (with the sold price frozen on the row), and appends the one creation history row. A free trial's session is confirmed, so a concurrent confirmed overlap meets `occurrence_no_confirmed_overlap` and answers 409 `SLOT_TAKEN`.
+4. **Write** — `bookTrialInTx` (`lib/trials/book-trial.ts`) checks `trialWindowRefusal` on the transaction's client (400 `OUTSIDE_AVAILABILITY`, 409 `SLOT_TAKEN`), creates the appointment with its one session (stamped with `consultantProfileId`), the seats and the trial in its final status (with the sold price frozen on the row), and appends the one creation history row. A free trial's session is confirmed, so a concurrent confirmed overlap meets `occurrence_no_confirmed_overlap` and answers 409 `SLOT_TAKEN`. Two requests for the same pair that both passed the route's read are caught twice: `bookTrialInTx` re-reads the pair's blocking trial under the consultee lock (`TrialPairHeldError`), and `trial_one_blocking_per_pair_key` refuses the loser's insert. Either way the loser answers the same 409 `TRIAL_ALREADY_REQUESTED`, and a unique violation on any other constraint stays a 500.
 5. **Pay (paid trial only)** — the order is minted after the commit against the trial's appointment and persisted as the pay page (`persistTrialPayLink`). The pay window, `Trial.paymentDueAt` and `Payment.expiresAt` alike, is `payWindowEnd`: 24 hours, but never later than 15 minutes before the session. The capture webhook moves the trial `AWAITING_PAYMENT → SCHEDULED`, stamps `Trial.paymentId`, and `confirmExistingAppointment` confirms the held session and seats in place. An unpaid hold past `paymentDueAt` is cancelled and tombstoned by the expire-unpaid-trials sweep, which frees the time. A capture that lands after the held session already started (between the pay window closing and that sweep) never confirms it: the capture webhook cancels the trial, tombstones the hold and parks the payment for the full automatic refund, answering `captured_after_release`.
 6. **Session, completion, conversion** — both parties join through Stream; the auto-complete pass (every 30 minutes) completes the trial once its confirmed session has ended (1-hour buffer); a plan with the same expert paid within 30 days converts it.
 
@@ -227,7 +234,7 @@ A free trial is booked for Friday 10:00. On Monday the learner moves it to Satur
 | **Payment**          | Per plan's `trialPriceInPaise` (0 = free, the default); a priced trial holds its time until captured | Required (via checkout)                   |
 | **Duration**         | Fixed per plan (`trialDurationMinutes`, 30 or 60 min, default 30)                                    | Variable (`durationInHours`, 0.5-4h)      |
 | **Locks**            | Consultee lock + shared `slot-booking:` atoms (`lockTrialPick`)                                      | Consultee lock + shared atoms             |
-| **Uniqueness**       | One per consultee-consultant pair                                                                    | Multiple allowed                          |
+| **Uniqueness**       | At most one live or delivered trial per pair; ended trials stay as history                           | Multiple allowed                          |
 | **Conversion**       | Leads to Subscription (`convertedToSubscriptionId`)                                                  | Standalone                                |
 | **Status field**     | `status` (TrialStatus enum)                                                                          | `status` (AppointmentStatus enum)         |
 | **Appointment type** | `TRIAL`                                                                                              | `CONSULTATION`                            |
@@ -336,6 +343,7 @@ Users can disable trial notifications via `NotificationPreference.trialNotificat
 
 ## Deprecated & Superseded Approaches
 
+- **One trial row per pair (`@@unique([consulteeProfileId, consultantProfileId])`), deleted on re-request.** A request after a cancelled trial deleted the earlier row so the insert could pass the unique, leaving its appointment with no trial. Superseded by the partial unique index and a new row per request ([decision record](../decisions/2026-11-15-trial-history-many-per-pair.md)).
 - **A trial request with no time ("the expert will contact you to schedule").** The learner now picks the time on the trial step of the mentorship dialog; `POST /api/trials` requires `slot`.
 - **Charging a paid trial at request against a session-less placeholder, then the consultant accepting it.** A paid trial now holds the learner's picked time as `AWAITING_PAYMENT` and the capture confirms it.
 - **A `PENDING` "awaiting the expert" trial, its accept and decline (`REJECTED`), and the 48-hour `TRIAL_UNANSWERED` refund.** A trial is created directly as `SCHEDULED` or `AWAITING_PAYMENT`, so nothing waits on the expert; `PENDING` and `REJECTED` were removed from `TrialStatus`, with `TrialAcceptDialog` and the inbox's "Pick a time" and "Decline" trial actions.
