@@ -20,6 +20,7 @@ jest.mock("../../lib/prisma", () => ({
     subscription: { findUnique: jest.fn() },
     webinar: { findUnique: jest.fn() },
     class: { findUnique: jest.fn() },
+    membership: { count: jest.fn() },
   },
 }));
 
@@ -106,5 +107,60 @@ describe("canReadEventSlots", () => {
         eventIds: noEvent,
       }),
     ).resolves.toBe(false);
+  });
+
+  it("admits the named expert of an organisation's webinar only while an active expert of that organisation", async () => {
+    userFindUnique.mockResolvedValue({
+      consultantProfileId: "consultant-1",
+      consulteeProfileId: null,
+    });
+    (prisma.webinar.findUnique as jest.Mock).mockResolvedValue({
+      webinarPlan: {
+        consultantProfileId: "consultant-1",
+        organizationId: "org-1",
+      },
+    });
+    const membershipCount = prisma.membership.count as jest.Mock;
+    const read = () =>
+      canReadEventSlots({
+        userId: "u1",
+        filter: { consultantProfileId: null, consulteeProfileId: null },
+        eventIds: { ...noEvent, webinarId: "web-1" },
+      });
+
+    membershipCount.mockResolvedValue(1);
+    await expect(read()).resolves.toBe(true);
+    expect(membershipCount).toHaveBeenCalledWith({
+      where: {
+        organizationId: "org-1",
+        consultantProfileId: "consultant-1",
+        status: "ACTIVE",
+        role: "EXPERT",
+      },
+    });
+
+    membershipCount.mockResolvedValue(0);
+    await expect(read()).resolves.toBe(false);
+  });
+
+  it("reads no membership for a personal plan's expert", async () => {
+    userFindUnique.mockResolvedValue({
+      consultantProfileId: "consultant-1",
+      consulteeProfileId: null,
+    });
+    (prisma.webinar.findUnique as jest.Mock).mockResolvedValue({
+      webinarPlan: {
+        consultantProfileId: "consultant-1",
+        organizationId: null,
+      },
+    });
+    await expect(
+      canReadEventSlots({
+        userId: "u1",
+        filter: { consultantProfileId: null, consulteeProfileId: null },
+        eventIds: { ...noEvent, webinarId: "web-1" },
+      }),
+    ).resolves.toBe(true);
+    expect(prisma.membership.count).not.toHaveBeenCalled();
   });
 });
