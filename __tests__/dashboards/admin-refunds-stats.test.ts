@@ -11,7 +11,7 @@
 
 import { NextRequest } from "next/server";
 import { GET } from "../../app/api/admin/refunds/route";
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import prisma from "@/lib/prisma";
 
 // Same-process limiter-store isolation (see admin-refund-error-mapping).
@@ -23,7 +23,7 @@ jest.mock("../../lib/rate-limit", () => ({
 
 jest.mock("../../lib/auth-helpers", () => ({
   __esModule: true,
-  requirePrivilegedAuth: jest.fn(),
+  requireBackofficeSurface: jest.fn(),
 }));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
@@ -35,7 +35,7 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
-const mockedAuth = requirePrivilegedAuth as jest.Mock;
+const mockedAuth = requireBackofficeSurface as jest.Mock;
 const mockedFindMany = prisma.refund.findMany as jest.Mock;
 const mockedCount = prisma.refund.count as jest.Mock;
 
@@ -45,7 +45,9 @@ function req(url: string) {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockedAuth.mockResolvedValue({ session: { user: { id: "staff-1", role: "STAFF" } } });
+  mockedAuth.mockResolvedValue({
+    session: { user: { id: "staff-1", role: "STAFF" } },
+  });
   mockedFindMany.mockResolvedValue([]);
 });
 
@@ -57,7 +59,9 @@ describe("GET /api/admin/refunds — stats", () => {
       .mockResolvedValueOnce(240) // succeededCount (unfiltered)
       .mockResolvedValueOnce(5); // failedCount (unfiltered)
 
-    const res = await GET(req("http://localhost/api/admin/refunds?search=re_123"));
+    const res = await GET(
+      req("http://localhost/api/admin/refunds?search=re_123"),
+    );
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.stats).toEqual({
@@ -69,16 +73,26 @@ describe("GET /api/admin/refunds — stats", () => {
 
   it("scopes the status-breakdown counts by status only (not the request's search/gateway)", async () => {
     mockedCount.mockResolvedValue(0);
-    await GET(req("http://localhost/api/admin/refunds?gateway=RAZORPAY&search=x"));
+    await GET(
+      req("http://localhost/api/admin/refunds?gateway=RAZORPAY&search=x"),
+    );
 
-    expect(mockedCount.mock.calls[1][0]).toEqual({ where: { status: "PENDING" } });
-    expect(mockedCount.mock.calls[2][0]).toEqual({ where: { status: "SUCCEEDED" } });
-    expect(mockedCount.mock.calls[3][0]).toEqual({ where: { status: "FAILED" } });
+    expect(mockedCount.mock.calls[1][0]).toEqual({
+      where: { status: "PENDING" },
+    });
+    expect(mockedCount.mock.calls[2][0]).toEqual({
+      where: { status: "SUCCEEDED" },
+    });
+    expect(mockedCount.mock.calls[3][0]).toEqual({
+      where: { status: "FAILED" },
+    });
   });
 
   it("403s when the caller isn't privileged", async () => {
     mockedAuth.mockResolvedValue({
-      error: new Response(JSON.stringify({ error: "Forbidden" }), { status: 403 }),
+      error: new Response(JSON.stringify({ error: "Forbidden" }), {
+        status: 403,
+      }),
     });
     const res = await GET(req("http://localhost/api/admin/refunds"));
     expect(res.status).toBe(403);

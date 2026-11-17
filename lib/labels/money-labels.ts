@@ -5,6 +5,7 @@
 
 import type {
   DisputeStatus,
+  LedgerAccountKind,
   PaymentGateway,
   PayoutMethod,
   WalletReason,
@@ -68,6 +69,26 @@ export function disputeReasonText(reason: string | null | undefined): string {
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
+/** The double-entry account kinds, as an operator reads a ledger posting. */
+export const LEDGER_ACCOUNT_LABEL: Record<LedgerAccountKind, string> = {
+  CASH: "Cash",
+  WALLET: "Organisation wallet",
+  PLATFORM_FEE: "Platform fee",
+  PLATFORM_PROMO: "Platform promotions",
+  REFERRAL_CREDIT_LIABILITY: "Referral credit owed",
+  DISCOUNT: "Discounts",
+  CONSULTANT_PAYABLE: "Owed to expert",
+  ORG_PAYABLE: "Owed to organisation",
+  ORG_RECEIVABLE: "Owed by organisation",
+  CONSULTANT_RECEIVABLE: "Owed by expert",
+  TDS_PAYABLE: "TDS owed",
+  GST_PAYABLE: "GST owed",
+  UNAPPLIED_RECEIPTS: "Unapplied receipts",
+  GATEWAY_CLEARING: "Gateway clearing",
+  GATEWAY_FEE: "Gateway fees",
+  GST_INPUT_CREDIT: "GST input credit",
+};
+
 /** Subscription plan statuses come off the wire in lower case. */
 export const SUBSCRIPTION_STATUS_LABEL: Record<string, string> = {
   active: "Active",
@@ -90,6 +111,8 @@ function label(map: Record<string, string>, value: string | null | undefined) {
 
 export const gatewayLabel = (v: string | null | undefined) =>
   label(PAYMENT_GATEWAY_LABEL, v);
+export const ledgerAccountLabel = (v: string | null | undefined) =>
+  label(LEDGER_ACCOUNT_LABEL, v);
 export const payoutMethodLabel = (v: string | null | undefined) =>
   label(PAYOUT_METHOD_LABEL, v);
 export const walletReasonLabel = (v: string | null | undefined) =>

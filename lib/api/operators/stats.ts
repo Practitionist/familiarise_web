@@ -1,10 +1,7 @@
 /**
  * Shared operator dashboard statistics.
  *
- * Used by both the admin and staff dashboard home screens. Extracted from
- * the previously-duplicated `app/api/admin/stats/route.ts` and
- * `app/api/staff/stats/route.ts` to give a single source of truth and
- * eliminate drift between the two dashboards' numbers.
+ * The operator home's totals, read by `app/api/admin/stats/route.ts`.
  *
  * Future work (see `docs/enterprise/00-foundations/01-overview.md` follow-ups):
  * extract similar shared functions for payments listing, invoice listing,
@@ -15,7 +12,7 @@
  */
 
 import prisma from "@/lib/prisma";
-import { PaymentStatus, SupportCaseStatus } from "@prisma/client";
+import { PaymentStatus } from "@prisma/client";
 import { sumPaise } from "@/lib/payments/utils/money";
 
 export type OperatorDashboardStats = {
@@ -138,132 +135,5 @@ export async function getOperatorDashboardStats(): Promise<OperatorDashboardStat
     recentPayments,
     recentRefunds,
     gatewayStats: formattedGatewayStats,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Staff dashboard stats
-// ---------------------------------------------------------------------------
-//
-// The staff dashboard home screen surfaces a different mix of numbers than
-// the admin dashboard — it focuses on support workload (open tickets,
-// resolved-this-week, recent open tickets) and consultant moderation
-// (pending reviews) rather than payments. Keeping the staff variant
-// separate avoids forcing one giant union type on either caller.
-
-type StaffDashboardRecentTicket = {
-  id: string;
-  /** #705 — the reference staff and the user name the ticket by. */
-  referenceNumber: string | null;
-  subject: string;
-  user: string;
-  userImage: string | null;
-  status: string;
-  priority: string;
-  createdAt: Date;
-};
-
-export type StaffDashboardStats = {
-  openTickets: number;
-  usersAssisted: number;
-  pendingReviews: number;
-  resolvedToday: number;
-  recentTickets: StaffDashboardRecentTicket[];
-};
-
-/**
- * Fetch the staff dashboard stats payload.
- *
- * Single source of truth for the staff dashboard home screen — call from
- * `/api/staff/stats` after running `requirePrivilegedAuth()`.
- */
-export async function getStaffDashboardStats(): Promise<StaffDashboardStats> {
-  const now = new Date();
-  const todayStart = new Date(now);
-  todayStart.setHours(0, 0, 0, 0);
-
-  const weekStart = new Date(now);
-  weekStart.setDate(weekStart.getDate() - 7);
-
-  const [
-    openTickets,
-    resolvedThisWeek,
-    pendingReviews,
-    resolvedToday,
-    recentTickets,
-  ] = await Promise.all([
-    prisma.supportCase.count({
-      where: {
-        deletedAt: null,
-        status: {
-          in: [
-            SupportCaseStatus.OPEN,
-            SupportCaseStatus.IN_PROGRESS,
-            SupportCaseStatus.ESCALATED,
-          ],
-        },
-      },
-    }),
-    prisma.supportCase.count({
-      where: {
-        deletedAt: null,
-        status: {
-          in: [SupportCaseStatus.RESOLVED, SupportCaseStatus.CLOSED],
-        },
-        updatedAt: { gte: weekStart },
-      },
-    }),
-    prisma.consultantReview.count({
-      where: {
-        createdAt: { gte: weekStart },
-        deletedAt: null,
-      },
-    }),
-    prisma.supportCase.count({
-      where: {
-        deletedAt: null,
-        status: {
-          in: [SupportCaseStatus.RESOLVED, SupportCaseStatus.CLOSED],
-        },
-        updatedAt: { gte: todayStart },
-      },
-    }),
-    prisma.supportCase.findMany({
-      where: {
-        deletedAt: null,
-        status: {
-          in: [SupportCaseStatus.OPEN, SupportCaseStatus.IN_PROGRESS],
-        },
-      },
-      include: {
-        requester: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            image: true,
-          },
-        },
-      },
-      orderBy: [{ priority: "desc" }, { createdAt: "desc" }],
-      take: 4,
-    }),
-  ]);
-
-  return {
-    openTickets,
-    usersAssisted: resolvedThisWeek,
-    pendingReviews,
-    resolvedToday,
-    recentTickets: recentTickets.map((ticket) => ({
-      id: ticket.id,
-      referenceNumber: ticket.referenceNumber,
-      subject: ticket.title,
-      user: ticket.requester.name || ticket.requester.email || "Unknown",
-      userImage: ticket.requester.image,
-      status: ticket.status.toLowerCase(),
-      priority: ticket.priority.toLowerCase(),
-      createdAt: ticket.createdAt,
-    })),
   };
 }

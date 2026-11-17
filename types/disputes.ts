@@ -3,44 +3,14 @@
  * Used by admin/disputes, staff/disputes and their detail pages.
  */
 
+import type { BookingRef } from "@/lib/data/booking-title";
+
 /**
  * Represents a JSON value from Prisma's Json type.
  * Used for fields like `evidence` and `metadata` that store arbitrary JSON.
  */
 type JsonValue =
   string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
-
-export interface Dispute {
-  id: string;
-  disputeId: string;
-  /** Paise. Was declared as `amount`, which the API never returned. */
-  amountPaise: number;
-  currency: string;
-  status: string;
-  reason: string | null;
-  paymentGateway: string;
-  dueBy: string | null;
-  createdAt: string;
-  payment: {
-    id: string;
-    paymentIntent: string;
-  } | null;
-}
-
-export interface DisputeListResponse {
-  disputes: Dispute[];
-  total: number;
-  urgentDisputes: number;
-  // #997 secondary findings — dashboard-wide counts (unfiltered by the
-  // current search/status/gateway), like `urgentDisputes` above.
-  stats: {
-    underReviewCount: number;
-    wonCount: number;
-  };
-  page: number;
-  limit: number;
-  totalPages: number;
-}
 
 export interface DisputeDetails {
   id: string;
@@ -75,6 +45,8 @@ export interface DisputeDetails {
       /** Present only for viewers holding `disputes.manage`. */
       email?: string;
     };
+    /** The booking's plan title, beside its id and kind. */
+    booking: BookingRef | null;
   } | null;
   evidencePack?: DisputeEvidencePack;
 }

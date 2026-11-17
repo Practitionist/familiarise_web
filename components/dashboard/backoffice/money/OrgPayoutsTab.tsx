@@ -13,22 +13,22 @@ import {
 } from "@/components/ui/responsive-table";
 import { FilterBar } from "@/components/dashboard/FilterBar";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { TablePagination } from "@/components/dashboard/TablePagination";
+import { PersonCell } from "@/components/dashboard/backoffice/PersonCell";
+import {
+  orgPayoutListPageSchema,
+  readListBody,
+  type OrgPayoutListItem,
+} from "@/lib/backoffice/money-list-schemas";
 import { payoutStatusBadge } from "@/lib/labels/session-labels";
+import { OperatorTime } from "@/lib/time/operator-time";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { ReasonDialog } from "./ReasonDialog";
 import { useOpsDoor } from "./ops-door";
 
-interface OrgPayoutRow {
-  id: string;
-  organizationId: string;
-  organization: { name: string; slug: string };
-  amountPaise: number;
-  currency: string;
-  status: string;
-  createdAt: string;
-  platformApprovalRequiredAt: string | null;
-  platformHeldAt: string | null;
-}
+type OrgPayoutRow = OrgPayoutListItem;
+
+const PAGE_SIZE = 20;
 
 type Door = "approve" | "hold" | "release";
 
@@ -79,11 +79,41 @@ function doorsFor(r: OrgPayoutRow): Door[] {
   return doors;
 }
 
-async function fetchOrgPayouts(filters: Record<string, string>) {
-  const params = new URLSearchParams({ limit: "50", ...filters });
+async function fetchOrgPayouts(filters: Record<string, string>, page: number) {
+  const params = new URLSearchParams({
+    ...filters,
+    limit: String(PAGE_SIZE),
+    offset: String((page - 1) * PAGE_SIZE),
+  });
   const res = await fetch(`/api/admin/org-payouts?${params}`);
-  if (!res.ok) throw new Error("Failed to load organisation payouts");
-  return (await res.json()) as { payouts: OrgPayoutRow[] };
+  return readListBody(
+    res,
+    orgPayoutListPageSchema,
+    "Failed to load organisation payouts",
+  );
+}
+
+/** Who created the payout, who approved it for the organisation, and who co-approved it. */
+function Approvals({ r }: Readonly<{ r: OrgPayoutRow }>) {
+  const people: [string, OrgPayoutRow["createdByUser"]][] = [
+    ["Created by", r.createdByUser],
+    ["Organisation approval", r.orgApprovedByUser],
+    ["Platform approval", r.approvedByUser],
+  ];
+  const named = people.filter(([, person]) => person !== null);
+  if (named.length === 0) {
+    return <span className="text-sm text-muted-foreground">—</span>;
+  }
+  return (
+    <div className="space-y-2">
+      {named.map(([label, person]) => (
+        <div key={label}>
+          <p className="text-xs text-muted-foreground">{label}</p>
+          <PersonCell person={person} />
+        </div>
+      ))}
+    </div>
+  );
 }
 
 const columns: ResponsiveColumn<OrgPayoutRow>[] = [
@@ -124,10 +154,11 @@ const columns: ResponsiveColumn<OrgPayoutRow>[] = [
       </div>
     ),
   },
+  { key: "people", header: "Approvals", cell: (r) => <Approvals r={r} /> },
   {
     key: "created",
     header: "Created",
-    cell: (r) => new Date(r.createdAt).toLocaleString(),
+    cell: (r) => <OperatorTime value={r.createdAt} />,
   },
 ];
 
@@ -158,6 +189,7 @@ function payoutActions(onAct: (acting: Acting) => void) {
 export function OrgPayoutsTab() {
   const [status, setStatus] = useState("PENDING");
   const [orgId, setOrgId] = useState("");
+  const [page, setPage] = useState(1);
   const [acting, setActing] = useState<Acting | null>(null);
   const rowActions = useMemo(() => payoutActions(setActing), []);
 
@@ -166,8 +198,8 @@ export function OrgPayoutsTab() {
     ...(orgId.trim() ? { orgId: orgId.trim() } : {}),
   };
   const { data, isLoading, error } = useQuery({
-    queryKey: [...QUERY_KEY, filters],
-    queryFn: () => fetchOrgPayouts(filters),
+    queryKey: [...QUERY_KEY, filters, page],
+    queryFn: () => fetchOrgPayouts(filters, page),
     placeholderData: keepPreviousData,
     staleTime: 15_000,
   });
@@ -198,7 +230,10 @@ export function OrgPayoutsTab() {
                     label: payoutStatusBadge(s).label,
                   })),
                 ],
-                onChange: setStatus,
+                onChange: (v) => {
+                  setStatus(v);
+                  setPage(1);
+                },
               },
             ]}
           >
@@ -207,7 +242,10 @@ export function OrgPayoutsTab() {
               aria-label="Organisation id"
               placeholder="Organisation id"
               value={orgId}
-              onChange={(e) => setOrgId(e.target.value)}
+              onChange={(e) => {
+                setOrgId(e.target.value);
+                setPage(1);
+              }}
             />
           </FilterBar>
           {error ? (
@@ -215,17 +253,25 @@ export function OrgPayoutsTab() {
               Organisation payouts could not load.
             </p>
           ) : (
-            <ResponsiveTable<OrgPayoutRow>
-              columns={columns}
-              rows={isLoading ? [] : (data?.payouts ?? [])}
-              getRowId={(r) => r.id}
-              rowActions={rowActions}
-              empty={
-                <p className="py-8 text-center text-sm text-muted-foreground">
-                  {isLoading ? "Loading…" : "No payouts match these filters."}
-                </p>
-              }
-            />
+            <>
+              <ResponsiveTable<OrgPayoutRow>
+                columns={columns}
+                rows={isLoading ? [] : (data?.payouts ?? [])}
+                getRowId={(r) => r.id}
+                rowActions={rowActions}
+                empty={
+                  <p className="py-8 text-center text-sm text-muted-foreground">
+                    {isLoading ? "Loading…" : "No payouts match these filters."}
+                  </p>
+                }
+              />
+              <TablePagination
+                page={page}
+                pageSize={PAGE_SIZE}
+                total={data?.pagination.total ?? 0}
+                onPageChange={setPage}
+              />
+            </>
           )}
         </CardContent>
         <ReasonDialog

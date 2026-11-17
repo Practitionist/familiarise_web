@@ -8,7 +8,6 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { FilterBar } from "@/components/dashboard/FilterBar";
@@ -51,14 +50,19 @@ import {
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { PlatformFeedbackStatus } from "@prisma/client";
-import type { PlatformFeedback, FeedbackCounts } from "@/types/feedback";
-import { PLATFORM_FEEDBACK_STATUS_LABEL } from "@/lib/labels/session-labels";
+import { readListBody } from "@/lib/backoffice/money-list-schemas";
+import {
+  feedbackPageSchema,
+  type FeedbackCounts,
+  type PlatformFeedback,
+} from "@/lib/backoffice/people-list-schemas";
+import { feedbackStatus } from "@/lib/labels/backoffice-labels";
+import { OperatorTime } from "@/lib/time/operator-time";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { TablePagination } from "@/components/dashboard/TablePagination";
+import { PersonCell } from "@/components/dashboard/backoffice/PersonCell";
 
-interface FeedbackListResponse {
-  feedbacks: PlatformFeedback[];
-  counts: FeedbackCounts;
-  pagination: { totalPages: number };
-}
+const PAGE_SIZE = 20;
 
 const EMPTY_COUNTS: FeedbackCounts = {
   total: 0,
@@ -81,23 +85,6 @@ const STATUS_OPTIONS: {
   { value: "CLOSED", label: "Closed" },
 ];
 
-const getStatusColor = (status: PlatformFeedbackStatus) => {
-  switch (status) {
-    case "PENDING":
-      return "bg-amber-100 text-amber-700 border-amber-200";
-    case "ACKNOWLEDGED":
-      return "bg-blue-100 text-blue-700 border-blue-200";
-    case "IN_PROGRESS":
-      return "bg-purple-100 text-purple-700 border-purple-200";
-    case "RESOLVED":
-      return "bg-green-100 text-green-700 border-green-200";
-    case "CLOSED":
-      return "bg-muted text-muted-foreground border-border";
-    default:
-      return "bg-muted text-muted-foreground border-border";
-  }
-};
-
 const getStatusIcon = (status: PlatformFeedbackStatus) => {
   switch (status) {
     case "PENDING":
@@ -112,19 +99,6 @@ const getStatusIcon = (status: PlatformFeedbackStatus) => {
     default:
       return <AlertCircle className="h-4 w-4 text-muted-foreground" />;
   }
-};
-
-const formatDate = (dateString: string) => {
-  const date = new Date(dateString);
-  const now = new Date();
-  const diff = now.getTime() - date.getTime();
-  const hours = Math.floor(diff / (1000 * 60 * 60));
-  const days = Math.floor(hours / 24);
-
-  if (hours < 1) return "Just now";
-  if (hours < 24) return `${hours}h ago`;
-  if (days < 7) return `${days}d ago`;
-  return date.toLocaleDateString();
 };
 
 export interface FeedbackPageProps {
@@ -155,24 +129,26 @@ export function FeedbackPage({
 
   const { data, isPending, isFetching, isError, refetch } = useQuery({
     queryKey: ["admin-feedbacks", apiEndpoint, page, statusFilter, searchQuery],
-    queryFn: async (): Promise<FeedbackListResponse> => {
+    queryFn: async () => {
       const params = new URLSearchParams({
         page: page.toString(),
-        limit: "20",
+        limit: String(PAGE_SIZE),
         ...(statusFilter !== "all" && { status: statusFilter }),
         ...(searchQuery && { search: searchQuery }),
       });
 
       const response = await fetch(`${apiEndpoint}?${params}`);
-      if (!response.ok) throw new Error("Failed to fetch feedbacks");
-      return response.json();
+      return readListBody(
+        response,
+        feedbackPageSchema,
+        "Failed to fetch feedbacks",
+      );
     },
     placeholderData: keepPreviousData,
   });
 
   const feedbacks = data?.feedbacks ?? [];
   const counts = data?.counts ?? EMPTY_COUNTS;
-  const totalPages = data?.pagination.totalPages ?? 1;
 
   const updateStatus = useMutation({
     mutationFn: async ({
@@ -283,15 +259,17 @@ export function FeedbackPage({
       key: "user",
       header: "User",
       cell: (feedback) => (
-        <div className="flex items-center gap-2">
-          <Avatar className="h-7 w-7">
-            <AvatarImage src={feedback.user.image || ""} />
-            <AvatarFallback className="text-xs">
-              {feedback.user.name?.charAt(0) || "U"}
-            </AvatarFallback>
-          </Avatar>
-          <span className="text-sm">{feedback.user.name || "Unknown"}</span>
-        </div>
+        <PersonCell
+          person={feedback.user}
+          leading={
+            <Avatar className="h-7 w-7">
+              <AvatarImage src={feedback.user.image || ""} />
+              <AvatarFallback className="text-xs">
+                {feedback.user.name?.charAt(0) || "U"}
+              </AvatarFallback>
+            </Avatar>
+          }
+        />
       ),
     },
     {
@@ -318,17 +296,13 @@ export function FeedbackPage({
     {
       key: "status",
       header: "Status",
-      cell: (feedback) => (
-        <Badge variant="outline" className={getStatusColor(feedback.status)}>
-          {PLATFORM_FEEDBACK_STATUS_LABEL[feedback.status]}
-        </Badge>
-      ),
+      cell: (feedback) => <StatusBadge {...feedbackStatus(feedback.status)} />,
     },
     {
       key: "submitted",
       header: "Submitted",
       className: "text-muted-foreground text-sm",
-      cell: (feedback) => formatDate(feedback.createdAt),
+      cell: (feedback) => <OperatorTime value={feedback.createdAt} />,
     },
   ];
 
@@ -508,30 +482,12 @@ export function FeedbackPage({
         </CardContent>
       </Card>
 
-      {/* Pagination */}
-      {totalPages > 1 && (
-        <div className="flex items-center justify-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
-            disabled={page === 1}
-          >
-            Previous
-          </Button>
-          <span className="text-sm text-muted-foreground">
-            Page {page} of {totalPages}
-          </span>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            disabled={page === totalPages}
-          >
-            Next
-          </Button>
-        </div>
-      )}
+      <TablePagination
+        page={data?.pagination.page ?? page}
+        pageSize={data?.pagination.limit ?? PAGE_SIZE}
+        total={data?.pagination.total ?? 0}
+        onPageChange={setPage}
+      />
 
       {/* Detail Dialog */}
       <ResponsiveModal
@@ -547,7 +503,7 @@ export function FeedbackPage({
                   {selectedFeedback.title}
                 </ResponsiveModalTitle>
                 <ResponsiveModalDescription>
-                  Submitted {formatDate(selectedFeedback.createdAt)}
+                  Submitted <OperatorTime value={selectedFeedback.createdAt} />
                 </ResponsiveModalDescription>
               </ResponsiveModalHeader>
 

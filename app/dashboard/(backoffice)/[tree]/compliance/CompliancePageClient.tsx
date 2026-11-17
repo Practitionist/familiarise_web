@@ -1,15 +1,22 @@
 "use client";
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { formatDistanceToNow } from "date-fns";
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
+import { z } from "zod";
 
 import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import { FilterBar } from "@/components/dashboard/FilterBar";
 import { PageHeader } from "@/components/dashboard/PageScaffold";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { TablePagination } from "@/components/dashboard/TablePagination";
 import { UrlTabs } from "@/components/dashboard/UrlTabs";
+import { PersonCell } from "@/components/dashboard/backoffice/PersonCell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -17,18 +24,55 @@ import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
+import { readListBody } from "@/lib/backoffice/money-list-schemas";
 import { BREACH_REPORTING_DEADLINE_HOURS } from "@/lib/backoffice/queue-predicates";
 import {
   EMAIL_REPLAY_EXPLANATIONS,
-  type EmailReplayRefusal,
+  emailReplayRefusalSchema,
 } from "@/lib/email/replay-policy";
+import { OperatorTime } from "@/lib/time/operator-time";
 import { humanizeEnum, type Tone } from "@/lib/ui/tone";
 import { GstRegisterDownload } from "./GstRegisterDownload";
 
-async function getJson<T>(url: string): Promise<T> {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error("Failed to load");
-  return ((await res.json()) as { data: T }).data;
+const PAGE_SIZE = 20;
+
+/** A compliance list page: its rows, the total behind them, and where it is. */
+export const pageOf = <T extends z.ZodTypeAny>(row: T) =>
+  z.object({
+    data: z.array(row),
+    total: z.number().int().nonnegative(),
+    page: z.number().int().positive(),
+    pageSize: z.number().int().positive(),
+  });
+
+async function getPage<T extends z.ZodTypeAny>(
+  url: string,
+  row: T,
+  page: number,
+) {
+  const sep = url.includes("?") ? "&" : "?";
+  const res = await fetch(`${url}${sep}page=${page}&limit=${PAGE_SIZE}`);
+  return readListBody(res, pageOf(row), "Failed to load");
+}
+
+function Pager({
+  page,
+  total,
+  onPageChange,
+}: Readonly<{
+  page: number;
+  total: number | undefined;
+  onPageChange: (page: number) => void;
+}>) {
+  return (
+    <TablePagination
+      className="pt-2"
+      page={page}
+      pageSize={PAGE_SIZE}
+      total={total ?? 0}
+      onPageChange={onPageChange}
+    />
+  );
 }
 
 async function postJson(url: string, body?: Record<string, unknown>) {
@@ -54,13 +98,18 @@ function useInvalidate() {
 
 // ── Erasure requests ────────────────────────────────────────────────────
 
-interface Erasure {
-  id: string;
-  status: string;
-  requestedAt: string;
-  reason: string | null;
-  user: { id: string; name: string | null; email: string };
-}
+export const erasureSchema = z.object({
+  id: z.string(),
+  status: z.string(),
+  requestedAt: z.string(),
+  reason: z.string().nullable(),
+  user: z.object({
+    id: z.string(),
+    name: z.string().nullable(),
+    email: z.string(),
+  }),
+});
+type Erasure = z.infer<typeof erasureSchema>;
 
 const ERASURE_TONE: Record<string, Tone> = {
   PENDING: "warning",
@@ -71,9 +120,11 @@ const ERASURE_TONE: Record<string, Tone> = {
 
 function ErasureTab() {
   const invalidate = useInvalidate();
+  const [page, setPage] = useState(1);
   const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ["compliance-erasure"],
-    queryFn: () => getJson<Erasure[]>("/api/admin/erasure-requests"),
+    queryKey: ["compliance-erasure", page],
+    queryFn: () => getPage("/api/admin/erasure-requests", erasureSchema, page),
+    placeholderData: keepPreviousData,
   });
   const open = (e: Erasure) =>
     e.status === "PENDING" || e.status === "IN_PROGRESS";
@@ -82,12 +133,7 @@ function ErasureTab() {
       key: "user",
       header: "Person",
       primary: true,
-      cell: (e) => (
-        <div>
-          <p className="font-medium">{e.user.name ?? "Unnamed"}</p>
-          <p className="text-xs text-muted-foreground">{e.user.email}</p>
-        </div>
-      ),
+      cell: (e) => <PersonCell person={e.user} />,
     },
     {
       key: "status",
@@ -101,71 +147,87 @@ function ErasureTab() {
     },
     // No statutory erasure deadline is encoded anywhere yet, so the page
     // shows how long a request has been open instead of inventing one.
-    { key: "age", header: "Requested", cell: (e) => ago(e.requestedAt) },
+    {
+      key: "age",
+      header: "Requested",
+      cell: (e) => (
+        <div>
+          <p>{ago(e.requestedAt)}</p>
+          <OperatorTime
+            value={e.requestedAt}
+            className="text-xs text-muted-foreground"
+          />
+        </div>
+      ),
+    },
   ];
   return (
-    <ResponsiveTable<Erasure>
-      columns={columns}
-      rows={data ?? []}
-      getRowId={(e) => e.id}
-      isLoading={isLoading && !data}
-      error={error && !data ? error : undefined}
-      onRetry={() => void refetch()}
-      rowActions={(e) =>
-        open(e) ? (
-          <div className="flex gap-2">
-            <ConfirmDialog
-              trigger={<Button size="sm">Process</Button>}
-              title={`Erase ${e.user.email}?`}
-              description="Their personal data is scrubbed for good. Refused while money is still moving for them."
-              confirmLabel="Erase"
-              tone="destructive"
-              requireTyped="ERASE"
-              onConfirm={async () => {
-                await postJson(`/api/admin/erasure-requests/${e.id}/process`);
-                invalidate("compliance-erasure");
-              }}
-            />
-            <ConfirmDialog
-              trigger={
-                <Button size="sm" variant="outline">
-                  Reject
-                </Button>
-              }
-              title="Reject this erasure request?"
-              description="The reason is stored on the request; the law allows a refusal only on a lawful ground."
-              confirmLabel="Reject"
-              requireReason={{ label: "Lawful ground for refusing" }}
-              onConfirm={async ({ reason }) => {
-                await postJson(`/api/admin/erasure-requests/${e.id}/reject`, {
-                  reason,
-                });
-                invalidate("compliance-erasure");
-              }}
-            />
-          </div>
-        ) : null
-      }
-      empty={
-        <p className="py-10 text-center text-sm text-muted-foreground">
-          No erasure requests.
-        </p>
-      }
-    />
+    <div className="space-y-2">
+      <ResponsiveTable<Erasure>
+        columns={columns}
+        rows={data?.data ?? []}
+        getRowId={(e) => e.id}
+        isLoading={isLoading && !data}
+        error={error && !data ? error : undefined}
+        onRetry={() => void refetch()}
+        rowActions={(e) =>
+          open(e) ? (
+            <div className="flex gap-2">
+              <ConfirmDialog
+                trigger={<Button size="sm">Process</Button>}
+                title={`Erase ${e.user.email}?`}
+                description="Their personal data is scrubbed for good. Refused while money is still moving for them."
+                confirmLabel="Erase"
+                tone="destructive"
+                requireTyped="ERASE"
+                onConfirm={async () => {
+                  await postJson(`/api/admin/erasure-requests/${e.id}/process`);
+                  invalidate("compliance-erasure");
+                }}
+              />
+              <ConfirmDialog
+                trigger={
+                  <Button size="sm" variant="outline">
+                    Reject
+                  </Button>
+                }
+                title="Reject this erasure request?"
+                description="The reason is stored on the request; the law allows a refusal only on a lawful ground."
+                confirmLabel="Reject"
+                requireReason={{ label: "Lawful ground for refusing" }}
+                onConfirm={async ({ reason }) => {
+                  await postJson(`/api/admin/erasure-requests/${e.id}/reject`, {
+                    reason,
+                  });
+                  invalidate("compliance-erasure");
+                }}
+              />
+            </div>
+          ) : null
+        }
+        empty={
+          <p className="py-10 text-center text-sm text-muted-foreground">
+            No erasure requests.
+          </p>
+        }
+      />
+      <Pager page={page} total={data?.total} onPageChange={setPage} />
+    </div>
   );
 }
 
 // ── Data breaches ───────────────────────────────────────────────────────
 
-interface Breach {
-  id: string;
-  detectedAt: string;
-  reportedAt: string | null;
-  rootCause: string;
-  dpbReference: string | null;
-  principalsNotifiedAt: string | null;
-  affectedCount: number;
-}
+export const breachSchema = z.object({
+  id: z.string(),
+  detectedAt: z.string(),
+  reportedAt: z.string().nullable(),
+  rootCause: z.string(),
+  dpbReference: z.string().nullable(),
+  principalsNotifiedAt: z.string().nullable(),
+  affectedCount: z.number().int().nonnegative(),
+});
+type Breach = z.infer<typeof breachSchema>;
 
 const HOUR_MS = 3_600_000;
 
@@ -187,9 +249,11 @@ function BreachesTab() {
   // The breach alert email links `?tab=breaches&id=…`; that row is marked.
   const highlight = useSearchParams().get("id");
   const [affected, setAffected] = useState("");
+  const [page, setPage] = useState(1);
   const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ["compliance-breaches"],
-    queryFn: () => getJson<Breach[]>("/api/admin/data-breaches"),
+    queryKey: ["compliance-breaches", page],
+    queryFn: () => getPage("/api/admin/data-breaches", breachSchema, page),
+    placeholderData: keepPreviousData,
   });
   const columns: ResponsiveColumn<Breach>[] = [
     {
@@ -202,7 +266,8 @@ function BreachesTab() {
             {b.rootCause.slice(0, 80)}
           </p>
           <p className="text-xs text-muted-foreground">
-            Detected {ago(b.detectedAt)} · {b.affectedCount} people
+            Detected <OperatorTime value={b.detectedAt} /> ({ago(b.detectedAt)})
+            · {b.affectedCount} people
           </p>
         </div>
       ),
@@ -257,7 +322,7 @@ function BreachesTab() {
       </ConfirmDialog>
       <ResponsiveTable<Breach>
         columns={columns}
-        rows={data ?? []}
+        rows={data?.data ?? []}
         getRowId={(b) => b.id}
         isLoading={isLoading && !data}
         error={error && !data ? error : undefined}
@@ -268,23 +333,25 @@ function BreachesTab() {
           </p>
         }
       />
+      <Pager page={page} total={data?.total} onPageChange={setPage} />
     </div>
   );
 }
 
 // ── Failed emails ───────────────────────────────────────────────────────
 
-interface FailedEmail {
-  id: string;
-  recipient: string;
-  subject: string;
-  emailType: string;
-  status: string;
-  attempts: number;
-  lastError: string | null;
-  createdAt: string;
-  replayRefusal: EmailReplayRefusal | null;
-}
+export const failedEmailSchema = z.object({
+  id: z.string(),
+  recipient: z.string(),
+  subject: z.string(),
+  emailType: z.string(),
+  status: z.string(),
+  attempts: z.number().int().nonnegative(),
+  lastError: z.string().nullable(),
+  createdAt: z.string(),
+  replayRefusal: emailReplayRefusalSchema.nullable(),
+});
+type FailedEmail = z.infer<typeof failedEmailSchema>;
 
 const EMAIL_STATUSES = ["DEAD_LETTER", "RETRY", "PENDING", "SENT"];
 const EMAIL_TONE: Record<string, Tone> = {
@@ -297,12 +364,18 @@ const EMAIL_TONE: Record<string, Tone> = {
 function FailedEmailsTab() {
   const invalidate = useInvalidate();
   const [status, setStatus] = useState<string | null>("DEAD_LETTER");
+  const [page, setPage] = useState(1);
   const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ["compliance-emails", status],
+    queryKey: ["compliance-emails", status, page],
     queryFn: () =>
-      getJson<FailedEmail[]>(
-        `/api/admin/failed-emails?limit=100${status ? `&status=${status}` : ""}`,
+      getPage(
+        status
+          ? `/api/admin/failed-emails?status=${encodeURIComponent(status)}`
+          : "/api/admin/failed-emails",
+        failedEmailSchema,
+        page,
       ),
+    placeholderData: keepPreviousData,
   });
   const columns: ResponsiveColumn<FailedEmail>[] = [
     {
@@ -313,7 +386,7 @@ function FailedEmailsTab() {
         <div>
           <p className="font-medium">{m.subject}</p>
           <p className="text-xs text-muted-foreground">
-            {m.recipient} · {m.emailType}
+            {m.recipient} · {humanizeEnum(m.emailType)}
           </p>
         </div>
       ),
@@ -340,63 +413,69 @@ function FailedEmailsTab() {
     },
   ];
   return (
-    <ResponsiveTable<FailedEmail>
-      columns={columns}
-      rows={data ?? []}
-      getRowId={(m) => m.id}
-      isLoading={isLoading && !data}
-      error={error && !data ? error : undefined}
-      onRetry={() => void refetch()}
-      toolbar={
-        <FilterBar
-          chips={{
-            label: "Status",
-            options: EMAIL_STATUSES.map((value) => ({
-              value,
-              label: humanizeEnum(value),
-            })),
-            value: status,
-            onChange: setStatus,
-            clearable: true,
-          }}
-        />
-      }
-      rowActions={(m) => {
-        if (m.status !== "DEAD_LETTER") return null;
-        if (m.replayRefusal) {
-          return (
-            <span className="max-w-xs text-xs text-muted-foreground">
-              {EMAIL_REPLAY_EXPLANATIONS[m.replayRefusal]}
-            </span>
-          );
-        }
-        return (
-          <ConfirmDialog
-            trigger={
-              <Button size="sm" variant="outline">
-                Replay
-              </Button>
-            }
-            title="Send this email again?"
-            description={`"${m.subject}" to ${m.recipient}, exactly as it was rendered.`}
-            confirmLabel="Replay"
-            requireReason={{ label: "Reason for replay", minLength: 5 }}
-            onConfirm={async ({ reason }) => {
-              await postJson("/api/admin/failed-emails", {
-                ids: [m.id],
-                reason,
-              });
-              invalidate("compliance-emails");
+    <div className="space-y-2">
+      <ResponsiveTable<FailedEmail>
+        columns={columns}
+        rows={data?.data ?? []}
+        getRowId={(m) => m.id}
+        isLoading={isLoading && !data}
+        error={error && !data ? error : undefined}
+        onRetry={() => void refetch()}
+        toolbar={
+          <FilterBar
+            chips={{
+              label: "Status",
+              options: EMAIL_STATUSES.map((value) => ({
+                value,
+                label: humanizeEnum(value),
+              })),
+              value: status,
+              onChange: (v) => {
+                setStatus(v);
+                setPage(1);
+              },
+              clearable: true,
             }}
           />
-        );
-      }}
-      empty={
-        <p className="py-10 text-center text-sm text-muted-foreground">
-          No emails in this state.
-        </p>
-      }
-    />
+        }
+        rowActions={(m) => {
+          if (m.status !== "DEAD_LETTER") return null;
+          if (m.replayRefusal) {
+            return (
+              <span className="max-w-xs text-xs text-muted-foreground">
+                {EMAIL_REPLAY_EXPLANATIONS[m.replayRefusal]}
+              </span>
+            );
+          }
+          return (
+            <ConfirmDialog
+              trigger={
+                <Button size="sm" variant="outline">
+                  Replay
+                </Button>
+              }
+              title="Send this email again?"
+              description={`"${m.subject}" to ${m.recipient}, exactly as it was rendered.`}
+              confirmLabel="Replay"
+              requireReason={{ label: "Reason for replay", minLength: 5 }}
+              onConfirm={async ({ reason }) => {
+                await postJson("/api/admin/failed-emails", {
+                  ids: [m.id],
+                  reason,
+                });
+                invalidate("compliance-emails");
+              }}
+            />
+          );
+        }}
+        empty={
+          <p className="py-10 text-center text-sm text-muted-foreground">
+            No emails in this state.
+          </p>
+        }
+      />
+      <Pager page={page} total={data?.total} onPageChange={setPage} />
+    </div>
   );
 }
 

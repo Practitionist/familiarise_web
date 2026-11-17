@@ -4,6 +4,7 @@ import prisma from "@/lib/prisma";
 import { istDayStart } from "@/lib/compliance/ist-period";
 import { isDateOnlySince, type OpsLogFilters } from "@/schemas/ops-log";
 import type { OpsLogPage } from "./ops-log-types";
+import { resolveTargets, targetKey } from "./target-refs";
 
 export const OPS_LOG_PAGE_SIZE = 50;
 
@@ -38,6 +39,7 @@ export async function readOpsLog(args: {
   const page = Math.max(1, Math.floor(args.page) || 1);
   const [rows, total] = await Promise.all([
     prisma.opsActionLog.findMany({
+      relationLoadStrategy: "join",
       where,
       orderBy: { createdAt: "desc" },
       skip: (page - 1) * OPS_LOG_PAGE_SIZE,
@@ -46,6 +48,9 @@ export async function readOpsLog(args: {
     }),
     prisma.opsActionLog.count({ where }),
   ]);
+  const targets = await resolveTargets(
+    rows.map((r) => ({ kind: r.targetKind, id: r.targetId })),
+  );
   return {
     rows: rows.map((r) => ({
       id: r.id,
@@ -57,6 +62,7 @@ export async function readOpsLog(args: {
       action: r.action,
       targetKind: r.targetKind,
       targetId: r.targetId,
+      target: targets.get(targetKey(r.targetKind, r.targetId)) ?? null,
       reason: r.reason,
       before: r.before,
       after: r.after,

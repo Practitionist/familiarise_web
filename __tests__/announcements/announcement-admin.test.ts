@@ -19,10 +19,25 @@ jest.mock("@/lib/prisma", () => ({
     announcement: {
       findUnique: (...args: unknown[]) => mockFindUnique(...args),
       findMany: (...args: unknown[]) => mockFindMany(...args),
+      count: async () => 1,
       update: (...args: unknown[]) => mockUpdate(...args),
     },
   },
 }));
+const mockManageRole = { current: "ADMIN" };
+jest.mock("@/lib/auth-helpers", () => {
+  const { NextResponse } =
+    jest.requireActual<typeof import("next/server")>("next/server");
+  const { hasBackofficePermission } = jest.requireActual<
+    typeof import("@/lib/auth/backoffice-permissions")
+  >("@/lib/auth/backoffice-permissions");
+  return {
+    requireBackofficeSurface: async (surface: "announcements.manage") =>
+      hasBackofficePermission(mockManageRole.current as "ADMIN", surface)
+        ? { session: { user: { id: "admin-1", role: mockManageRole.current } } }
+        : { error: NextResponse.json({ code: "FORBIDDEN" }, { status: 403 }) },
+  };
+});
 jest.mock("@/lib/auth-server", () => ({
   getSession: (...args: unknown[]) => mockGetSession(...args),
 }));
@@ -114,31 +129,45 @@ describe("PATCH /api/announcements/[id]", () => {
 });
 
 describe("GET /api/announcements/manage", () => {
-  it("lists inactive rows too, uncached", async () => {
+  const list = (query = "") =>
+    listForAdmin(
+      new NextRequest(`http://localhost/api/announcements/manage${query}`),
+    );
+
+  beforeEach(() => {
+    mockManageRole.current = "ADMIN";
+  });
+
+  it("lists inactive rows too, one page at a time, uncached", async () => {
     mockFindMany.mockResolvedValue([{ id: "ann-1", isActive: false }]);
 
-    const response = await listForAdmin();
+    const response = await list("?page=2");
 
     expect(response.status).toBe(200);
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     expect(mockFindMany).toHaveBeenCalledWith({
-      orderBy: { createdAt: "desc" },
-      take: 100,
+      orderBy: [{ createdAt: "desc" }, { id: "asc" }],
+      skip: 20,
+      take: 20,
     });
     await expect(response.json()).resolves.toEqual({
       success: true,
       data: [{ id: "ann-1", isActive: false }],
+      total: 1,
+      page: 2,
+      limit: 20,
     });
   });
 
-  it("is admin-only", async () => {
-    mockGetSession.mockResolvedValue({
-      user: { id: "u-1", role: "CONSULTEE" },
-    });
+  it.each(["STAFF", "CONSULTEE"])(
+    "refuses %s on announcements.manage",
+    async (role) => {
+      mockManageRole.current = role;
 
-    const response = await listForAdmin();
+      const response = await list();
 
-    expect(response.status).toBe(403);
-    expect(mockFindMany).not.toHaveBeenCalled();
-  });
+      expect(response.status).toBe(403);
+      expect(mockFindMany).not.toHaveBeenCalled();
+    },
+  );
 });

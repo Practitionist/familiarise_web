@@ -43,7 +43,7 @@ import {
   type RequestStage,
 } from "@/lib/support/request-stage";
 import { invalidateSupportCase, supportKeys } from "@/lib/support/support-keys";
-import { formatDateLabel } from "@/lib/time/display";
+import { useZoneClock } from "@/lib/time/use-zone-clock";
 import { humanizeEnum } from "@/lib/ui/tone";
 import type { ArticleLink } from "@/types/support-case";
 import { formatCurrencyAmount } from "@/utils/formatting";
@@ -70,8 +70,11 @@ export interface SupportRequestViewProps {
   articles: Record<CaseTopic, ArticleLink[]>;
 }
 
-const day = (iso: string | null | undefined) =>
-  iso ? formatDateLabel(new Date(iso)) : null;
+/** A date in the viewer's zone (the page's DisplayZoneProvider), or null. */
+function useDay() {
+  const clock = useZoneClock();
+  return (iso: string | null | undefined) => (iso ? clock.date(iso) : null);
+}
 
 function StatusTimeline({ stage }: Readonly<{ stage: RequestStage }>) {
   const steps = [...REQUEST_STEPS.slice(0, 2), stage.settledLabel];
@@ -174,6 +177,7 @@ function SessionRequest({
   props,
 }: Readonly<{ appointmentId: string; props: SupportRequestViewProps }>) {
   const t = useSupportThread(appointmentId, { seedCategory: props.intent });
+  const day = useDay();
   const booking = t.data?.booking ?? null;
   const category = t.thread?.category ?? props.intent;
   const topic: CaseTopic = category ? threadTopic(category) : "session";
@@ -331,6 +335,8 @@ function TicketRequest({
 }: Readonly<{ ticketId: string; props: SupportRequestViewProps }>) {
   const qc = useQueryClient();
   const { toast } = useToast();
+  const clock = useZoneClock();
+  const day = useDay();
   const [draft, setDraft] = useState("");
   const [offline, setOffline] = useState(false);
   const pendingTurns = useRef(new Map<string, string>());
@@ -512,7 +518,7 @@ function TicketRequest({
               </div>
               {replyOwed && (
                 <p className="text-center text-[11px] text-muted-foreground">
-                  {describeWait(data.ackDueAt)}
+                  {describeWait(data.ackDueAt, clock.zone)}
                 </p>
               )}
               {data.canReply && !data.viewerIsPresenter && (
@@ -581,7 +587,7 @@ function TicketRequest({
             />
             {replyOwed && (
               <p className="text-muted-foreground">
-                {describeWait(data.ackDueAt)}
+                {describeWait(data.ackDueAt, clock.zone)}
               </p>
             )}
             {data.organization && <p>{data.organization.name}</p>}

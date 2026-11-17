@@ -13,20 +13,24 @@ import {
 } from "@/components/ui/responsive-table";
 import { FilterBar } from "@/components/dashboard/FilterBar";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { TablePagination } from "@/components/dashboard/TablePagination";
+import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
+import { BookingCell } from "@/components/dashboard/backoffice/BookingCell";
+import { PersonCell } from "@/components/dashboard/backoffice/PersonCell";
+import {
+  earningListPageSchema,
+  readListBody,
+  type EarningListItem,
+} from "@/lib/backoffice/money-list-schemas";
 import { earningStatusBadge } from "@/lib/labels/session-labels";
+import { OperatorTimeStack } from "@/lib/time/operator-time";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { ReasonDialog } from "./ReasonDialog";
 import { useOpsDoor } from "./ops-door";
 
-interface EarningRow {
-  id: string;
-  paymentId: string;
-  consultantProfileId: string;
-  consultantSharePaise: number;
-  status: string;
-  holdUntil: string | null;
-  consultantProfile: { user: { name: string; email: string } };
-}
+type EarningRow = EarningListItem;
+
+const PAGE_SIZE = 20;
 
 // #1527 — PENDING_TRUST (org-funded, awaiting the org's first invoice) was
 // unfilterable; HELD leads because the page opens on it.
@@ -47,40 +51,67 @@ function doorFor(status: string): "hold" | "release" | null {
   return null;
 }
 
-async function fetchEarnings(filters: Record<string, string>) {
-  const params = new URLSearchParams({ limit: "50", ...filters });
+async function fetchEarnings(filters: Record<string, string>, page: number) {
+  const params = new URLSearchParams({
+    ...filters,
+    limit: String(PAGE_SIZE),
+    offset: String((page - 1) * PAGE_SIZE),
+  });
   const res = await fetch(`/api/admin/earnings?${params}`);
-  if (!res.ok) throw new Error("Failed to load earnings");
-  return (await res.json()) as { earnings: EarningRow[] };
+  return readListBody(res, earningListPageSchema, "Failed to load earnings");
 }
 
-const columns: ResponsiveColumn<EarningRow>[] = [
+const earningColumns = (basePath: string): ResponsiveColumn<EarningRow>[] => [
   {
     key: "consultant",
     header: "Expert",
     primary: true,
+    className: "max-w-[12rem]",
     cell: (r) => (
-      <div>
-        <p className="text-sm font-medium">{r.consultantProfile.user.name}</p>
-        <p className="text-xs text-muted-foreground">{r.paymentId}</p>
+      <PersonCell
+        person={{
+          id: r.consultantProfile.userId,
+          name: r.consultantProfile.user.name,
+          email: r.consultantProfile.user.email,
+        }}
+      />
+    ),
+  },
+  {
+    key: "buyer",
+    header: "Buyer",
+    className: "max-w-[12rem]",
+    cell: (r) => <PersonCell person={r.payment?.buyer} />,
+  },
+  {
+    key: "booking",
+    header: "Booking",
+    className: "max-w-[14rem]",
+    cell: (r) => (
+      <div className="min-w-0 space-y-1">
+        <BookingCell booking={r.payment?.booking} basePath={basePath} />
+        <p className="break-all font-mono text-[11px] text-muted-foreground/70">
+          {r.paymentId}
+        </p>
       </div>
     ),
   },
   {
+    // The share over its status, so the hold date and the door stay in view.
     key: "share",
     header: "Share",
-    cell: (r) => formatCurrencyAmount(r.consultantSharePaise, "INR"),
-  },
-  {
-    key: "status",
-    header: "Status",
-    cell: (r) => <StatusBadge {...earningStatusBadge(r.status)} />,
+    className: "whitespace-nowrap",
+    cell: (r) => (
+      <div className="flex flex-col items-start gap-1">
+        <span>{formatCurrencyAmount(r.consultantSharePaise, "INR")}</span>
+        <StatusBadge {...earningStatusBadge(r.status)} size="sm" />
+      </div>
+    ),
   },
   {
     key: "hold",
     header: "Hold until",
-    cell: (r) =>
-      r.holdUntil ? new Date(r.holdUntil).toLocaleString() : "Not set",
+    cell: (r) => <OperatorTimeStack value={r.holdUntil} fallback="Not set" />,
   },
 ];
 
@@ -112,6 +143,9 @@ export function EarningsTab() {
   const [status, setStatus] = useState("HELD");
   const [consultantProfileId, setConsultantProfileId] = useState("");
   const [paymentId, setPaymentId] = useState("");
+  const [page, setPage] = useState(1);
+  const { basePath } = useBackofficeCapability();
+  const columns = useMemo(() => earningColumns(basePath), [basePath]);
   const [acting, setActing] = useState<Acting | null>(null);
   const rowActions = useMemo(() => earningActions(setActing), []);
 
@@ -123,8 +157,8 @@ export function EarningsTab() {
     ...(paymentId.trim() ? { paymentId: paymentId.trim() } : {}),
   };
   const { data, isLoading, error } = useQuery({
-    queryKey: [...QUERY_KEY, filters],
-    queryFn: () => fetchEarnings(filters),
+    queryKey: [...QUERY_KEY, filters, page],
+    queryFn: () => fetchEarnings(filters, page),
     placeholderData: keepPreviousData,
     staleTime: 15_000,
   });
@@ -155,7 +189,10 @@ export function EarningsTab() {
                     label: earningStatusBadge(s).label,
                   })),
                 ],
-                onChange: setStatus,
+                onChange: (v) => {
+                  setStatus(v);
+                  setPage(1);
+                },
               },
             ]}
           >
@@ -164,30 +201,46 @@ export function EarningsTab() {
               aria-label="Expert profile id"
               placeholder="Expert profile id"
               value={consultantProfileId}
-              onChange={(e) => setConsultantProfileId(e.target.value)}
+              onChange={(e) => {
+                setConsultantProfileId(e.target.value);
+                setPage(1);
+              }}
             />
             <Input
               className="h-9 w-48"
               aria-label="Payment id"
               placeholder="Payment id"
               value={paymentId}
-              onChange={(e) => setPaymentId(e.target.value)}
+              onChange={(e) => {
+                setPaymentId(e.target.value);
+                setPage(1);
+              }}
             />
           </FilterBar>
           {error ? (
             <p className="text-sm text-destructive">Earnings could not load.</p>
           ) : (
-            <ResponsiveTable<EarningRow>
-              columns={columns}
-              rows={isLoading ? [] : (data?.earnings ?? [])}
-              getRowId={(r) => r.id}
-              rowActions={rowActions}
-              empty={
-                <p className="py-8 text-center text-sm text-muted-foreground">
-                  {isLoading ? "Loading…" : "No earnings match these filters."}
-                </p>
-              }
-            />
+            <>
+              <ResponsiveTable<EarningRow>
+                columns={columns}
+                rows={isLoading ? [] : (data?.earnings ?? [])}
+                getRowId={(r) => r.id}
+                rowActions={rowActions}
+                empty={
+                  <p className="py-8 text-center text-sm text-muted-foreground">
+                    {isLoading
+                      ? "Loading…"
+                      : "No earnings match these filters."}
+                  </p>
+                }
+              />
+              <TablePagination
+                page={page}
+                pageSize={PAGE_SIZE}
+                total={data?.pagination.total ?? 0}
+                onPageChange={setPage}
+              />
+            </>
           )}
         </CardContent>
         <ReasonDialog

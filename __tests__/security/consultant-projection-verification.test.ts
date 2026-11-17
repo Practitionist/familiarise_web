@@ -10,7 +10,7 @@
 import { allKeys, readSource as read } from "../fixtures/consultant-projection";
 import { NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { GET } from "../../app/api/admin/verification/[verificationId]/route";
 import { getVerificationQueue } from "../../lib/api/operators/verification";
 import {
@@ -21,11 +21,11 @@ import {
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 jest.mock("../../lib/auth-helpers", () => ({
   __esModule: true,
-  requirePrivilegedAuth: jest.fn(),
+  requireBackofficeSurface: jest.fn(),
 }));
 jest.mock("../../lib/verification/review-route", () => ({
   __esModule: true,
-  handleReviewPatch: jest.fn(),
+  reviewVerificationDoor: jest.fn(),
   withDownloadUrls: <T>(docs: T[]) => docs,
 }));
 jest.mock("../../lib/prisma", () => ({
@@ -50,7 +50,11 @@ const verificationDb = (
     };
   }
 ).consultantProfileVerification;
-const mockedAuth = requirePrivilegedAuth as unknown as jest.Mock;
+const mockedAuth = requireBackofficeSurface as unknown as jest.Mock;
+const QUEUE_ARGS = {
+  status: "PENDING" as const,
+  paging: { page: 1, limit: 20, skip: 0 },
+};
 
 const user = {
   id: "u-1",
@@ -95,6 +99,15 @@ describe("GET /api/admin/verification/[verificationId]", () => {
     expect(
       CONSULTANT_PII_FIELDS.filter((f) => allKeys(profile).includes(f)),
     ).toEqual([]);
+  });
+
+  it("keeps each document's storage key on the server", async () => {
+    await GET(new NextRequest("http://localhost/api/admin/verification/v-1"), {
+      params: Promise.resolve({ verificationId: "v-1" }),
+    });
+    const args = verificationDb.findUnique.mock.calls[0][0];
+    expect(args.include.documents.select).toMatchObject({ fileUrl: true });
+    expect(args.include.documents.select).not.toHaveProperty("storagePath");
   });
 
   it("returns a verification object", async () => {
@@ -144,7 +157,7 @@ describe("getVerificationQueue", () => {
   });
 
   it("reads exactly the review-modal columns from the profile", async () => {
-    await getVerificationQueue();
+    await getVerificationQueue(QUEUE_ARGS);
     const args = verificationDb.findMany.mock.calls[0][0];
     const profile = args.include.consultantProfile;
     expect(profile).not.toHaveProperty("include");
@@ -165,7 +178,7 @@ describe("getVerificationQueue", () => {
   });
 
   it("flattens the row into the queue shape without profile columns", async () => {
-    const result = await getVerificationQueue();
+    const result = await getVerificationQueue(QUEUE_ARGS);
     const [row] = result.verifications;
     expect(Object.keys(row.consultant).sort()).toEqual(
       [

@@ -1,11 +1,18 @@
 "use client";
 
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+
 import { Section } from "@/components/dashboard/Section";
+import { TablePagination } from "@/components/dashboard/TablePagination";
 import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
-import type { PendingSsoApproval } from "@/lib/backoffice/org-detail";
+import type {
+  PendingSsoApproval,
+  PendingSsoPage,
+} from "@/lib/backoffice/org-detail";
+import { OperatorTime } from "@/lib/time/operator-time";
 
 const columns: ResponsiveColumn<PendingSsoApproval>[] = [
   {
@@ -25,16 +32,24 @@ const columns: ResponsiveColumn<PendingSsoApproval>[] = [
     key: "submitted",
     header: "Submitted",
     className: "text-sm text-muted-foreground",
-    cell: (p) => new Date(p.submittedAt).toLocaleDateString(),
+    cell: (p) => <OperatorTime value={p.submittedAt} kind="date" />,
   },
 ];
 
-/** The SSO approval queue; approve or revoke on the org's detail page. */
+/** The SSO approval queue, paged by `?ssoPage`; approve or revoke on the org's detail page. */
 export function PendingSsoApprovals({
-  rows,
+  pending,
   basePath,
-}: Readonly<{ rows: PendingSsoApproval[]; basePath: string }>) {
-  if (rows.length === 0) return null;
+}: Readonly<{ pending: PendingSsoPage; basePath: string }>) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  if (pending.total === 0) return null;
+  const toPage = (page: number) => {
+    const next = new URLSearchParams(searchParams.toString());
+    next.set("ssoPage", String(page));
+    router.replace(`${pathname}?${next}`, { scroll: false });
+  };
   return (
     <Section
       title="Pending SSO approvals"
@@ -43,9 +58,16 @@ export function PendingSsoApprovals({
     >
       <ResponsiveTable<PendingSsoApproval>
         columns={columns}
-        rows={rows}
+        rows={pending.rows}
         getRowId={(p) => p.providerId}
         getRowHref={(p) => `${basePath}/organizations/${p.orgId}`}
+      />
+      <TablePagination
+        className="pt-4"
+        page={pending.page}
+        pageSize={pending.pageSize}
+        total={pending.total}
+        onPageChange={toPage}
       />
     </Section>
   );

@@ -89,7 +89,6 @@ jest.mock("../../lib/prisma", () => {
 jest.mock("../../lib/auth-helpers", () => ({
   requireOrgAccess: jest.fn(),
   requireBackofficeSurface: jest.fn(),
-  requirePrivilegedAuth: jest.fn(),
   requireApiAuth: jest.fn(),
 }));
 

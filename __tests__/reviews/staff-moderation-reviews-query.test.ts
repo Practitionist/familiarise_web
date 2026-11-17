@@ -16,7 +16,7 @@ jest.mock("@sentry/nextjs", () => ({
 
 jest.mock("../../lib/auth-helpers", () => ({
   __esModule: true,
-  requirePrivilegedAuth: jest.fn(),
+  requireBackofficeSurface: jest.fn(),
 }));
 
 jest.mock("../../lib/prisma", () => ({
@@ -31,11 +31,11 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 import { NextRequest } from "next/server";
-import { requirePrivilegedAuth } from "../../lib/auth-helpers";
+import { requireBackofficeSurface } from "../../lib/auth-helpers";
 import prisma from "../../lib/prisma";
 import { GET } from "../../app/api/staff/moderation/reviews/route";
 
-const mockedAuth = requirePrivilegedAuth as jest.Mock;
+const mockedAuth = requireBackofficeSurface as jest.Mock;
 const mockedFindMany = prisma.consultantReview.findMany as jest.Mock;
 const mockedCount = prisma.consultantReview.count as jest.Mock;
 const mockedGroupBy = prisma.consultantReview.groupBy as jest.Mock;
@@ -57,16 +57,20 @@ beforeEach(() => {
 });
 
 describe("GET /api/staff/moderation/reviews query validation", () => {
-  it("rejects a non-numeric page with 400, before Prisma sees NaN", async () => {
+  it("reads a non-numeric page as page 1, so Prisma never sees NaN", async () => {
     const res = await GET(request("?page=abc"));
-    expect(res.status).toBe(400);
-    expect(mockedFindMany).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    expect(mockedFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ skip: 0, take: 20 }),
+    );
   });
 
-  it("caps the page size", async () => {
+  it("clamps the page size to 100", async () => {
     const res = await GET(request("?limit=5000"));
-    expect(res.status).toBe(400);
-    expect(mockedFindMany).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    expect(mockedFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ take: 100 }),
+    );
   });
 
   it("rejects a rating bound outside 1..5", async () => {

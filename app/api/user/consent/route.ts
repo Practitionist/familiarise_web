@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import {
+  forbiddenResponse,
+  isPrivileged,
+  requireApiAuth,
+} from "@/lib/auth-helpers";
 import { recordOperatorConsent } from "@/lib/compliance/operator-consent";
 
 /**
@@ -10,8 +14,11 @@ import { recordOperatorConsent } from "@/lib/compliance/operator-consent";
  * org members already have their own consent paths.
  */
 export async function POST() {
-  const auth = await requirePrivilegedAuth();
+  const auth = await requireApiAuth();
   if (auth.error) return auth.error;
+  if (!isPrivileged(auth.session.user.role)) {
+    return forbiddenResponse("Forbidden — operators only", "FORBIDDEN");
+  }
   const created = await recordOperatorConsent(auth.session.user.id);
   return NextResponse.json({ granted: true, created });
 }

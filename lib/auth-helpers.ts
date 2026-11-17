@@ -138,31 +138,16 @@ async function requireRoleGate(
   predicate: (role: UserRole | undefined) => boolean,
   message: string,
   { expectUser = false }: ApiAuthOptions = {},
+  code?: string,
 ): Promise<ApiAuthResult> {
   const auth = await requireApiAuth();
   if (auth.error) return { error: auth.error };
   if (!predicate(auth.session.user.role as UserRole | undefined)) {
-    return { error: forbiddenResponse(message) };
+    return { error: forbiddenResponse(message, code) };
   }
   const changed = expectUser && (await identityChanged(auth.session.user.id));
   if (changed) return { error: changed };
   return { session: auth.session };
-}
-
-/** Strict ADMIN-only auth. */
-export async function requireAdminAuth(): Promise<ApiAuthResult> {
-  return requireRoleGate(
-    (role) => role === "ADMIN",
-    "Forbidden — admin access required",
-  );
-}
-
-/** Privileged operator auth — ADMIN or STAFF. */
-export async function requirePrivilegedAuth(): Promise<ApiAuthResult> {
-  return requireRoleGate(
-    (role) => isPrivileged(role),
-    "Forbidden — admin or staff access required",
-  );
 }
 
 /** Surface-scoped back-office auth. */
@@ -174,6 +159,7 @@ export async function requireBackofficeSurface(
     (role) => !!role && hasBackofficePermission(role, surface),
     "Forbidden — insufficient back-office permissions",
     options,
+    "FORBIDDEN",
   );
 }
 
@@ -195,9 +181,15 @@ export function checkOwnership(
   return session.user[profileKeyMap[profileType]] === resourceOwnerId;
 }
 
-/** Creates a standardized 403 Forbidden response. */
-export function forbiddenResponse(message = "Forbidden"): NextResponse {
-  return NextResponse.json({ error: message }, { status: 403 });
+/** Creates a standardized 403 Forbidden response; `code` is added when given. */
+export function forbiddenResponse(
+  message = "Forbidden",
+  code?: string,
+): NextResponse {
+  return NextResponse.json(
+    code ? { error: message, code } : { error: message },
+    { status: 403 },
+  );
 }
 
 async function hasOrgEventAccess(
