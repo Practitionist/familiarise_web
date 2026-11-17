@@ -1,3 +1,4 @@
+import { isActiveOrgExpert } from "@/lib/enterprise/membership-guards";
 import prisma from "@/lib/prisma";
 
 /**
@@ -29,6 +30,8 @@ export interface EventSlotsEventIds {
 interface EventParties {
   consultantProfileId: string | null;
   requestedById: string | null;
+  /** The organisation that owns a webinar or class plan; null for any other event. */
+  groupPlanOrganizationId: string | null;
 }
 
 async function eventParties(
@@ -47,6 +50,7 @@ async function eventParties(
           consultantProfileId:
             row.consultationPlan?.consultantProfileId ?? null,
           requestedById: row.requestedById,
+          groupPlanOrganizationId: null,
         }
       : null;
   }
@@ -63,30 +67,41 @@ async function eventParties(
           consultantProfileId:
             row.subscriptionPlan?.consultantProfileId ?? null,
           requestedById: row.requestedById,
+          groupPlanOrganizationId: null,
         }
       : null;
   }
   if (ids.webinarId) {
     const row = await prisma.webinar.findUnique({
       where: { id: ids.webinarId },
-      select: { webinarPlan: { select: { consultantProfileId: true } } },
+      select: {
+        webinarPlan: {
+          select: { consultantProfileId: true, organizationId: true },
+        },
+      },
     });
     return row
       ? {
           consultantProfileId: row.webinarPlan?.consultantProfileId ?? null,
           requestedById: null,
+          groupPlanOrganizationId: row.webinarPlan?.organizationId ?? null,
         }
       : null;
   }
   if (ids.classId) {
     const row = await prisma.class.findUnique({
       where: { id: ids.classId },
-      select: { classPlan: { select: { consultantProfileId: true } } },
+      select: {
+        classPlan: {
+          select: { consultantProfileId: true, organizationId: true },
+        },
+      },
     });
     return row
       ? {
           consultantProfileId: row.classPlan?.consultantProfileId ?? null,
           requestedById: null,
+          groupPlanOrganizationId: row.classPlan?.organizationId ?? null,
         }
       : null;
   }
@@ -115,11 +130,23 @@ export async function canReadEventSlots(params: {
   // The event id AND-narrows the read, so nothing beyond that booking leaks.
   const parties = await eventParties(params.eventIds);
   if (!parties) return false;
-  const isDeliveringConsultant =
-    !!user.consultantProfileId &&
-    parties.consultantProfileId === user.consultantProfileId;
   const isRequestingConsultee =
     !!user.consulteeProfileId &&
     parties.requestedById === user.consulteeProfileId;
-  return isDeliveringConsultant || isRequestingConsultee;
+  if (isRequestingConsultee) return true;
+  if (
+    !user.consultantProfileId ||
+    parties.consultantProfileId !== user.consultantProfileId
+  )
+    return false;
+  // On an organisation's webinar or class plan the named expert delivers only
+  // while an active expert of that organisation.
+  return (
+    !parties.groupPlanOrganizationId ||
+    isActiveOrgExpert(
+      prisma,
+      parties.groupPlanOrganizationId,
+      user.consultantProfileId,
+    )
+  );
 }

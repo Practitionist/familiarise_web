@@ -15,6 +15,7 @@ import type { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
 import { isPrivileged } from "@/lib/auth-helpers";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
+import { managesGroupPlanAsNamedExpert } from "@/lib/enterprise/membership-guards";
 import prisma from "@/lib/prisma";
 import {
   readAppointmentDetail,
@@ -80,12 +81,23 @@ export async function authorizeAppointment(
   // Staff who are also on the roster keep the whole view: privilege is
   // decided here, not by which branch admitted them.
   const privileged = isPrivileged(session.user.role);
+  // What the caller reads of a group booking's seats and money.
+  const scoped = async (asPrivileged: boolean) =>
+    scopeAppointmentDetail(detail, {
+      userId: session.user.id,
+      privileged: asPrivileged,
+      managesGroupPlan: await managesGroupPlanAsNamedExpert(
+        prisma,
+        detail.appointment,
+        session.user.id,
+      ),
+    });
   if (canAccessAppointment(session.user.id, detail)) {
     return {
       userId: session.user.id,
       isOrgParty: false,
       organizationId: await seatOrg(),
-      detail: scopeAppointmentDetail(detail, session.user.id, privileged),
+      detail: await scoped(privileged),
     };
   }
   if (privileged) {
@@ -109,7 +121,7 @@ export async function authorizeAppointment(
       userId: session.user.id,
       isOrgParty: false,
       organizationId: await seatOrg(),
-      detail: scopeAppointmentDetail(detail, session.user.id, false),
+      detail: await scoped(false),
     };
   }
   // #support-hub — org-party branch. Grants the operator their OWN thread on

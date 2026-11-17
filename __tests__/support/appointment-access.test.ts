@@ -137,11 +137,11 @@ describe("authorizeAppointment — legitimate access", () => {
     mockedCanAccess.mockReturnValue(true);
     mockedIsPrivileged.mockReturnValue(true);
     await authorizeAppointment("a1");
-    expect(mockedScope).toHaveBeenCalledWith(
-      expect.anything(),
-      "staff-attendee",
-      true,
-    );
+    expect(mockedScope).toHaveBeenCalledWith(expect.anything(), {
+      userId: "staff-attendee",
+      privileged: true,
+      managesGroupPlan: false,
+    });
   });
 
   it("platform staff passes without consulting memberships", async () => {
