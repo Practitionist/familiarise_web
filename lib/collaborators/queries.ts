@@ -1,6 +1,7 @@
 import type { CollaboratorStatus } from "@prisma/client";
 import { scopeToWhereOrgId, type Scope } from "@/lib/api/scope/parse";
 import { liveParticipant } from "@/lib/booking/participants";
+import { managedAsNamedExpertWhere } from "@/lib/enterprise/membership-guards";
 import prisma, { type PrismaLike } from "@/lib/prisma";
 import {
   LIVE_CLASS_COLLABORATOR,
@@ -280,13 +281,16 @@ export async function getMyCollaborations(consultantProfileId: string) {
   };
 }
 
-/** The plans an expert hosts that carry collaborators, in one workspace scope. */
+/**
+ * The plans an expert manages that carry collaborators, in one workspace
+ * scope: an organisation's plan only while its active expert.
+ */
 export async function getHostedCollaborations(
   consultantProfileId: string,
   scope: Scope = { kind: "personal" },
 ) {
   return hostedCollaborationsWhere({
-    consultantProfileId,
+    ...managedAsNamedExpertWhere(consultantProfileId),
     ...scopeToWhereOrgId(scope),
   });
 }
@@ -298,7 +302,9 @@ export async function getOrgHostedCollaborations(organizationId: string) {
 
 async function hostedCollaborationsWhere(
   planFilter:
-    | { consultantProfileId: string; organizationId?: string | null }
+    | (ReturnType<typeof managedAsNamedExpertWhere> & {
+        organizationId?: string | null;
+      })
     | { organizationId: string },
 ) {
   const [webinarPlans, classPlans] = await Promise.all([

@@ -15,6 +15,7 @@ import {
   valuesAtKey,
 } from "../fixtures/consultant-projection";
 import { CONSULTANT_PII_FIELDS } from "../../lib/data/consultant-public";
+import { matchesWhere, type Where } from "../fixtures/mem-db";
 
 const mockCollaboratorFindMany = jest.fn();
 const mockWebinarPlanFindMany = jest.fn();
@@ -70,6 +71,43 @@ beforeEach(() => {
   mockCollaboratorFindMany.mockResolvedValue([]);
   mockWebinarPlanFindMany.mockResolvedValue([]);
   mockClassPlanFindMany.mockResolvedValue([]);
+});
+
+describe("the plans an expert hosts with collaborators", () => {
+  const stored = (standing: string) => [
+    {
+      id: "wp-personal",
+      consultantProfileId: "cp-1",
+      organizationId: null,
+      organization: null,
+      archivedAt: null,
+      collaborators: [{ status: "ACCEPTED" }],
+    },
+    {
+      id: "wp-org",
+      consultantProfileId: "cp-1",
+      organizationId: "org-1",
+      organization: {
+        memberships: [
+          { consultantProfileId: "cp-1", status: standing, role: "EXPERT" },
+        ],
+      },
+      archivedAt: null,
+      collaborators: [{ status: "ACCEPTED" }],
+    },
+  ];
+  const listedAs = async (standing: string) => {
+    mockWebinarPlanFindMany.mockImplementation(async (args: { where: Where }) =>
+      stored(standing).filter((row) => matchesWhere(row, args.where)),
+    );
+    const hosted = await getHostedCollaborations("cp-1", { kind: "all" });
+    return hosted.webinarPlans.map((plan) => plan.id);
+  };
+
+  it("list an organisation's plan for its named expert only while an active expert of that organisation", async () => {
+    expect(await listedAs("ACTIVE")).toEqual(["wp-personal", "wp-org"]);
+    expect(await listedAs("SUSPENDED")).toEqual(["wp-personal"]);
+  });
 });
 
 describe("collaborations consultant projection (behavioural)", () => {
