@@ -7,18 +7,30 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { fireEvent, render, renderHook, screen } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  renderHook,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 
 jest.mock("@/hooks/use-toast", () => ({
   useToast: () => ({ toast: jest.fn() }),
 }));
 
 import VerificationReviewModal from "@/components/admin/VerificationReviewModal";
-import { parseWholeBps } from "@/components/dashboard/backoffice/fees/PlatformFeesPageClient";
+import {
+  makerOrSystem,
+  parseWholeBps,
+} from "@/components/dashboard/backoffice/fees/PlatformFeesPageClient";
+import { OperatorTime } from "@/lib/time/operator-time";
 import { usePageWithinTotal } from "@/components/dashboard/shared/paged-list-filters";
 import { SupportBubble } from "@/components/support/SupportBubble";
 import type { VerificationItem } from "@/lib/backoffice/people-list-schemas";
 import { OPERATOR_ZONE } from "@/lib/time/operator-zone";
+import { opsReasonSchema } from "@/lib/backoffice/ops-reason";
+import { ReviewVerificationSchema } from "@/schemas/verifications";
 import { DisplayZoneProvider } from "@/lib/time/zoned-format";
 
 const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
@@ -82,6 +94,45 @@ it("clears the audit reason when the modal moves to another applicant", () => {
   ).toBe("");
 });
 
+it("keeps the decision buttons off until the audit reason is long enough, and Reject until the applicant's reason is given", async () => {
+  const fetchMock = jest.fn().mockResolvedValue({
+    ok: true,
+    status: 200,
+    json: async () => ({ message: "ok" }),
+  });
+  globalThis.fetch = fetchMock as unknown as typeof fetch;
+  render(
+    <VerificationReviewModal
+      verification={applicant("a", "Aarav Anderson")}
+      open
+      onOpenChange={jest.fn()}
+      onVerificationComplete={jest.fn()}
+    />,
+  );
+  const button = (name: RegExp) => screen.getByRole("button", { name });
+  expect(button(/^Approve$/)).toBeDisabled();
+  expect(button(/^Reject$/)).toBeDisabled();
+  fireEvent.change(screen.getByLabelText(/Reason for the audit log/), {
+    target: { value: "ID does not match" },
+  });
+  expect(button(/^Approve$/)).toBeEnabled();
+  expect(button(/^Reject$/)).toBeDisabled();
+  expect(button(/Request Changes/)).toBeDisabled();
+  fireEvent.change(screen.getByLabelText(/Brief Reason/), {
+    target: { value: "The ID photo is unreadable." },
+  });
+  expect(button(/^Reject$/)).toBeEnabled();
+  fireEvent.click(button(/^Reject$/));
+  await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+  const sent = JSON.parse(fetchMock.mock.calls[0][1].body);
+  expect(
+    ReviewVerificationSchema.extend({ reason: opsReasonSchema }).parse(sent),
+  ).toMatchObject({
+    status: "REJECTED",
+    rejectionReason: "The ID photo is unreadable.",
+  });
+});
+
 it.each([
   ["1500", 1500],
   ["0", 0],
@@ -116,6 +167,39 @@ it("lets a moderation review card's text column shrink below its content on a ph
   expect(card).toContain(
     '<div className="flex min-w-0 flex-wrap items-center gap-2">',
   );
+});
+
+it("a moderation review card names the reviewer, never their profile id", () => {
+  const src = read("components/dashboard/shared/ModerationPage.tsx");
+  const card = src.slice(src.indexOf("{reviews.map((review) => {"));
+  expect(card).not.toContain("id: review.reviewer.profileId");
+  expect(card).toContain("name: review.reviewer.name");
+});
+
+it("keeps a moderation review's date on one line, whichever card it is on", () => {
+  const src = read("components/dashboard/shared/ModerationPage.tsx");
+  const card = src.slice(src.indexOf("{reviews.map((review) => {"));
+  expect(card).toMatch(
+    /<span className="[^"]*whitespace-nowrap[^"]*">\s*\{formatDate\(review\.createdAt\)\}/,
+  );
+});
+
+it("names a fee schedule written by no user System, never Removed user", () => {
+  expect(makerOrSystem({ id: "system-seed", name: null, email: null })).toEqual(
+    {
+      id: "system-seed",
+      name: "System",
+      email: null,
+    },
+  );
+  const person = { id: "u-1", name: "Maria Brown", email: "m@example.test" };
+  expect(makerOrSystem(person)).toBe(person);
+});
+
+it("a date-only operator cell says its day is the IST day on hover", () => {
+  render(<OperatorTime value="2026-10-23T22:23:00Z" kind="date" />);
+  const cell = screen.getByText("24 Oct 2026");
+  expect(cell.getAttribute("title")).toMatch(/^IST day · /);
 });
 
 it("a staff chat time reads IST with its UTC reading on hover", () => {

@@ -279,7 +279,8 @@ export default function StaffMetricsPage() {
               )}
             </Section>
 
-            <Section title={`Queue Volume · ${periodLabel}`}>
+            {/* Mixed windows: each tile's hint names its own period. */}
+            <Section title="Queue Volume">
               <StatRow>
                 {loading ? (
                   [1, 2, 3, 4].map((i) => <StatSkeleton key={i} />)
@@ -300,9 +301,9 @@ export default function StaffMetricsPage() {
                       tone={openCases > 0 ? "warning" : "neutral"}
                     />
                     <Stat
-                      label="Users Helped"
+                      label="Users Helped This Week"
                       value={userMetrics.usersHelpedThisWeek}
-                      hint="Distinct users this week (IST)"
+                      hint="Distinct users, this week (IST)"
                       icon={Users}
                     />
                     <Stat

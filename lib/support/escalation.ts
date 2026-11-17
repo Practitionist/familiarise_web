@@ -7,6 +7,7 @@
  * so a money threshold or keyword can be tuned without touching flow graphs.
  */
 
+import { CASE_TOPIC_LABEL, threadTopic } from "./case-topic";
 import type { SupportContext, SupportTurnResult } from "./types";
 
 /** Word-bounded human/legal escalation triggers so substrings never false-match. */
@@ -61,15 +62,47 @@ const BOT_PROMISES_PREFIX = "Bot told the customer:";
 
 const oneLine = (s: string) => s.replace(/[\r\n]+/g, " ").trim();
 
+/** The generic escalation reasons, in words; a flow's own code reads as a sentence. */
+const REASON_LABEL: Record<string, string> = {
+  flow_terminal: "The help flow ended at a hand-off",
+  node_escalated: "The help flow handed off",
+  platform_escalated: "The help flow handed off",
+  keyword: "The customer asked for a person",
+  general_human: "The customer asked for a person",
+  high_value_refund: "Refund above the review threshold",
+};
+const ACRONYMS = new Set(["GST", "PAN", "TDS", "AV", "UPI"]);
+
+/** `payment_deducted_unconfirmed` → "Payment deducted unconfirmed". */
+function codeSentence(code: string): string {
+  const words = code
+    .split("_")
+    .filter(Boolean)
+    .map((w) =>
+      ACRONYMS.has(w.toUpperCase()) ? w.toUpperCase() : w.toLowerCase(),
+    );
+  if (words.length === 0) return code;
+  words[0] = words[0].charAt(0).toUpperCase() + words[0].slice(1);
+  return words.join(" ");
+}
+
+const reasonLabel = (reason: string) =>
+  REASON_LABEL[reason] ??
+  (/^[a-z][a-z_]*$/.test(reason) ? codeSentence(reason) : reason);
+
+/** A thread category reads as its case topic; a flow title is already words. */
+const topicLabel = (topic: string) =>
+  /^[A-Z][A-Z_]*$/.test(topic) ? CASE_TOPIC_LABEL[threadTopic(topic)] : topic;
+
 /** Structured handoff brief written to ticket descriptions at escalation time. */
 export function escalationBrief(input: EscalationBriefInput): string {
   const lines: string[] = [];
   const fields: ReadonlyArray<[string, string | null | undefined]> = [
     ["Customer ask", input.customerAsk],
-    ["Topic", input.topic],
+    ["Topic", input.topic ? topicLabel(input.topic) : null],
     ["Flow path", input.path],
     ["Bot response", input.botSaid],
-    ["Escalation reason", input.reason],
+    ["Escalation reason", input.reason ? reasonLabel(input.reason) : null],
   ];
   for (const [label, value] of fields) {
     const clean = value ? oneLine(value) : "";

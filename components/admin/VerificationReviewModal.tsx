@@ -140,6 +140,10 @@ export function VerificationReviewModal({
     }));
   };
 
+  // The decision doors stay off until their reasons would pass the server's checks.
+  const auditReasonReady = opsReasonSchema.safeParse(auditReason).success;
+  const applicantReasonReady = rejectionReason.trim().length > 0;
+
   const handleVerification = async (
     status: "APPROVED" | "REJECTED" | "NEEDS_INFO",
   ) => {
@@ -632,7 +636,7 @@ export function VerificationReviewModal({
             variant="outline"
             className="text-amber-600 border-amber-200 hover:bg-amber-50"
             onClick={() => handleVerification("NEEDS_INFO")}
-            disabled={submitting}
+            disabled={submitting || !auditReasonReady || !applicantReasonReady}
           >
             {submitting ? (
               <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -645,7 +649,7 @@ export function VerificationReviewModal({
             variant="outline"
             className="text-red-600 border-red-200 hover:bg-red-50"
             onClick={() => handleVerification("REJECTED")}
-            disabled={submitting}
+            disabled={submitting || !auditReasonReady || !applicantReasonReady}
           >
             {submitting ? (
               <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -657,7 +661,7 @@ export function VerificationReviewModal({
           <Button
             className="bg-green-600 hover:bg-green-700"
             onClick={() => handleVerification("APPROVED")}
-            disabled={submitting}
+            disabled={submitting || !auditReasonReady}
           >
             {submitting ? (
               <Loader2 className="h-4 w-4 mr-2 animate-spin" />

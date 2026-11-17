@@ -40,7 +40,12 @@ export function OperatorTime({
   return (
     <time
       dateTime={date.toISOString()}
-      title={formatUtcInstant(date)}
+      // A bare date is the IST day; the hover says so beside the UTC reading.
+      title={
+        kind === "date"
+          ? `IST day · ${formatUtcInstant(date)}`
+          : formatUtcInstant(date)
+      }
       className={className}
     >
       {formatOperatorInstant(date, kind)}

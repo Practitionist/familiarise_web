@@ -17,6 +17,7 @@ import {
 import { userRoleLabel } from "@/lib/labels/personal-dashboard";
 import { OperatorTime } from "@/lib/time/operator-time";
 import { readListBody } from "@/lib/backoffice/money-list-schemas";
+import { countLabel } from "@/lib/ui/count-label";
 import {
   userListPageSchema,
   type UserListItem,
@@ -107,7 +108,13 @@ export function OperatorUsersPage() {
     <div className="space-y-6">
       <PageHeader
         title="Users"
-        description={`${data?.total ?? 0} people on the platform. Open one for their bookings, payments, tickets and reports.`}
+        description={countLabel(
+          { loading: isPending && !data, failed: !!error && !data },
+          data?.total ?? 0,
+          (total) =>
+            `${total} people on the platform. Open one for their bookings, payments, tickets and reports.`,
+          "The people on the platform couldn't be loaded. Retry below.",
+        )}
       />
       <ResponsiveTable<UserListItem>
         columns={columns}
