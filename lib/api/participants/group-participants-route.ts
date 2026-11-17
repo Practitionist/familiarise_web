@@ -30,6 +30,10 @@ import {
   hasOrgPermission,
   rolesWithOrgPermission,
 } from "@/lib/auth/org-permissions";
+import {
+  managedAsNamedExpertWhere,
+  orgPlanEditRefusal,
+} from "@/lib/enterprise/membership-guards";
 
 export type GroupEventKind = "webinar" | "class";
 
@@ -90,8 +94,9 @@ function buildPlanAccessClauses(
   );
   return {
     OR: [
+      // The plan's own expert, on an organisation's plan only while its active expert.
       ...(session.user.consultantProfileId
-        ? [{ consultantProfileId: session.user.consultantProfileId }]
+        ? [managedAsNamedExpertWhere(session.user.consultantProfileId)]
         : []),
       {
         organization: {
@@ -434,7 +439,13 @@ async function canRemoveForConduct(
     appointment?.webinar?.webinarPlan ?? appointment?.class?.classPlan;
   if (!plan) return false;
   if (isPrivileged(session.user.role)) return true;
-  if (profileId && plan.consultantProfileId === profileId) return true;
+  if (
+    profileId &&
+    plan.consultantProfileId === profileId &&
+    !(await orgPlanEditRefusal(db, plan, profileId))
+  ) {
+    return true;
+  }
   if (plan.collaborators.length > 0) return true;
   if (!plan.organizationId) return false;
   const membership = await db.membership.findFirst({
