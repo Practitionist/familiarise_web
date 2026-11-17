@@ -117,7 +117,8 @@ const INBOX_APPOINTMENT_SELECT = {
         deletedAt: true,
       },
     },
-    payment: { select: BUYER_PAYMENT_DISPLAY_SELECT },
+    deletedAt: true,
+    payment: { select: { ...BUYER_PAYMENT_DISPLAY_SELECT, deletedAt: true } },
     organization: { select: { name: true } },
     // #1760 — the EXPIRED edge tells a lapsed pay link from an unanswered
     // request. #1846 added the second arm: a consultant's withdraw-approval now
@@ -250,6 +251,31 @@ async function keysetWhere(
       { id: { in: band.ids } },
     ],
   };
+}
+
+type ReminderRequest = Omit<
+  Parameters<typeof liveReminderPayment>[0],
+  "appointment"
+> & {
+  appointment: {
+    deletedAt: Date | null;
+    payment: readonly {
+      paymentStatus: string;
+      createdAt: Date;
+      expiresAt: Date | null;
+      deletedAt: Date | null;
+    }[];
+  } | null;
+};
+
+/** The Remind rule on live rows only, as the detail page and the remind route read it. */
+function liveInboxReminderExpiry(r: ReminderRequest, now: Date): Date | null {
+  if (!r.appointment || r.appointment.deletedAt) return null;
+  const payment = r.appointment.payment.filter((p) => !p.deletedAt);
+  return (
+    liveReminderPayment({ ...r, appointment: { payment } }, now)?.expiresAt ??
+    null
+  );
 }
 
 // Typed off the calls, not GetPayload: the read-path `$extends` hands money
@@ -494,7 +520,7 @@ function consultationRow(
       id: c.id,
       kind: "consultation",
       appointmentId: c.appointment?.id ?? null,
-      reminderExpiresAt: liveReminderPayment(c, now)?.expiresAt ?? null,
+      reminderExpiresAt: liveInboxReminderExpiry(c, now),
       planTitle: c.consultationPlan.title,
       requester: {
         name: c.requestedBy.user.name ?? "Learner",
@@ -644,7 +670,7 @@ function subscriptionRow(
       id: s.id,
       kind,
       appointmentId: s.appointment?.id ?? null,
-      reminderExpiresAt: liveReminderPayment(s, now)?.expiresAt ?? null,
+      reminderExpiresAt: liveInboxReminderExpiry(s, now),
       planTitle: s.subscriptionPlan.title,
       requester: {
         name: s.requestedBy.user.name ?? "Learner",

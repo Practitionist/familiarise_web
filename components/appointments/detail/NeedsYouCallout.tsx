@@ -25,6 +25,7 @@ import {
 import { toast } from "@/components/ui/use-toast";
 import type { AllocationAttemptKey } from "@/hooks/scheduling/useScheduling";
 import { useHoldCountdown } from "@/hooks/useHoldCountdown";
+import { useRerenderAfter } from "@/hooks/useRerenderAfter";
 import type { BookingPresentation } from "@/lib/dashboard/money-state";
 import {
   allocatedElsewhere,
@@ -63,6 +64,8 @@ export interface RequestDecision {
  * resolves on 2xx and throws an `ApiResponseError` otherwise.
  */
 export interface AwaitingPaymentActions {
+  /** The open pay order's expiry while the remind route would accept; null hides Remind. */
+  reminderExpiresAt: string | null;
   remind: () => Promise<{ nextAllowedAt: string }>;
   withdraw: () => Promise<unknown>;
   /** Refetch: the row moved (withdrawn here, or changed elsewhere). */
@@ -410,6 +413,10 @@ function RemindOrWithdraw({
   const [withdrawOpen, setWithdrawOpen] = useState(false);
   const [withdrawing, setWithdrawing] = useState(false);
   const cooling = !!nextAllowedAt && Date.parse(nextAllowedAt) > Date.now();
+  useRerenderAfter(actions.reminderExpiresAt);
+  const canRemind =
+    !!actions.reminderExpiresAt &&
+    Date.parse(actions.reminderExpiresAt) > Date.now();
 
   const remind = async () => {
     setReminding(true);
@@ -483,20 +490,22 @@ function RemindOrWithdraw({
       actions={
         <>
           {deadline && <TimeLeft deadline={deadline} />}
-          <Button
-            size="sm"
-            disabled={busy || cooling}
-            onClick={() => void remind()}
-          >
-            {reminding ? (
-              <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-            ) : (
-              <BellRing className="mr-1.5 h-4 w-4" />
-            )}
-            {cooling && nextAllowedAt
-              ? `Reminder sent · ${nextReminderIn(nextAllowedAt)}`
-              : "Remind"}
-          </Button>
+          {canRemind && (
+            <Button
+              size="sm"
+              disabled={busy || cooling}
+              onClick={() => void remind()}
+            >
+              {reminding ? (
+                <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+              ) : (
+                <BellRing className="mr-1.5 h-4 w-4" />
+              )}
+              {cooling && nextAllowedAt
+                ? `Reminder sent · ${nextReminderIn(nextAllowedAt)}`
+                : "Remind"}
+            </Button>
+          )}
           <Button
             size="sm"
             variant="outline"

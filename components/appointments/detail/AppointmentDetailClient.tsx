@@ -1252,6 +1252,7 @@ export function AppointmentDetailClient({
           awaitingPayment={
             role === "consultant" && requestPath
               ? {
+                  reminderExpiresAt: detail.reminderExpiresAt,
                   remind: remindMutation.mutateAsync,
                   withdraw: withdrawMutation.mutateAsync,
                   onChanged: refreshDetail,
