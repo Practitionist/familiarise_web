@@ -34,7 +34,7 @@ it("refuses a consultant with a coded 403", async () => {
 
   expect(error?.status).toBe(403);
   expect(await error?.json()).toEqual({
-    error: "Forbidden — insufficient back-office permissions",
+    error: "Your role can't open this part of the back office.",
     code: "FORBIDDEN",
   });
 });

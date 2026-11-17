@@ -21,10 +21,20 @@ import { POST as cancelAppointment } from "@/app/api/appointments/[appointmentId
 
 const Params = z.object({ appointmentId: z.string().uuid() });
 
+const REFUND_PREVIEW_MESSAGE =
+  "Open the cancel preview to see the refund, then confirm the cancel.";
+
 const Body = z.object({
   cancellationReason: CancellationReasonEnum.optional(),
   notes: z.string().max(2000).optional(),
-  expectedRefundPaise: z.number().int().nonnegative().safe(),
+  expectedRefundPaise: z
+    .number({
+      required_error: REFUND_PREVIEW_MESSAGE,
+      invalid_type_error: REFUND_PREVIEW_MESSAGE,
+    })
+    .int()
+    .nonnegative()
+    .safe(),
   expectedCreditRestoresInFull: z.boolean().optional(),
   expectedPaid: z.boolean().optional(),
 });

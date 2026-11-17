@@ -47,7 +47,10 @@ export async function classSessionRoute(
   try {
     const hosted = await readHostedClass(appointmentId);
     if (!hosted.found) {
-      return NextResponse.json({ error: "Class not found" }, { status: 404 });
+      return NextResponse.json(
+        { error: "Class not found", code: "NOT_FOUND" },
+        { status: 404 },
+      );
     }
     if (opts.hostOnly) {
       // The same host side as cancel and reschedule: the plan's expert or an
@@ -64,7 +67,7 @@ export async function classSessionRoute(
       }
       if (host !== "consultant" && host !== "host-org") {
         return NextResponse.json(
-          { error: "Only the class host can do this" },
+          { error: "Only the class host can do this", code: "FORBIDDEN" },
           { status: 403 },
         );
       }

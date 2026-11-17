@@ -159,7 +159,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
 
     if (!trial) {
       return NextResponse.json(
-        { error: "Trial session not found" },
+        { error: "Trial session not found", code: "NOT_FOUND" },
         { status: 404 },
       );
     }
@@ -225,7 +225,11 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     const parseResult = UpdateTrialSchema.safeParse(body);
     if (!parseResult.success) {
       return NextResponse.json(
-        { error: "Validation failed", details: parseResult.error.issues },
+        {
+          error: "Validation failed",
+          code: "VALIDATION_FAILED",
+          details: parseResult.error.issues,
+        },
         { status: 400 },
       );
     }
@@ -266,7 +270,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
     if (!existingTrial) {
       return NextResponse.json(
-        { error: "Trial session not found" },
+        { error: "Trial session not found", code: "NOT_FOUND" },
         { status: 404 },
       );
     }
@@ -316,7 +320,10 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       const currentStatus = existingTrial.status;
       if (!validTransitions[currentStatus]?.includes(status)) {
         return NextResponse.json(
-          { error: `Cannot transition from ${currentStatus} to ${status}` },
+          {
+            error: `Cannot transition from ${currentStatus} to ${status}`,
+            code: "INVALID_TRANSITION",
+          },
           { status: 400 },
         );
       }
@@ -330,7 +337,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
       if (!isTrialConsultant && !isTrialConsultee && !isPrivilegedUser) {
         return NextResponse.json(
-          { error: "Not a participant of this trial" },
+          { error: "Not a participant of this trial", code: "FORBIDDEN" },
           { status: 403 },
         );
       }
@@ -346,7 +353,10 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       if (isTrialConsultee && !isTrialConsultant && !isPrivilegedUser) {
         if (status !== TrialStatus.CANCELLED) {
           return NextResponse.json(
-            { error: "Consultees can only cancel trial sessions" },
+            {
+              error: "Consultees can only cancel trial sessions",
+              code: "FORBIDDEN",
+            },
             { status: 403 },
           );
         }
@@ -359,7 +369,10 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         !isPrivilegedUser
       ) {
         return NextResponse.json(
-          { error: "Only the consultant can convert a trial" },
+          {
+            error: "Only the consultant can convert a trial",
+            code: "FORBIDDEN",
+          },
           { status: 403 },
         );
       }
@@ -487,6 +500,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
             {
               error:
                 "subscriptionId is required when converting a trial to a subscription",
+              code: "VALIDATION_FAILED",
             },
             { status: 400 },
           );
@@ -505,7 +519,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
         if (!subscription) {
           return NextResponse.json(
-            { error: "Subscription not found" },
+            { error: "Subscription not found", code: "NOT_FOUND" },
             { status: 404 },
           );
         }
@@ -516,6 +530,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           return NextResponse.json(
             {
               error: "Subscription must belong to the same plan as the trial",
+              code: "VALIDATION_FAILED",
             },
             { status: 400 },
           );
@@ -526,6 +541,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
             {
               error:
                 "Subscription must belong to the same consultee as the trial",
+              code: "VALIDATION_FAILED",
             },
             { status: 400 },
           );
@@ -539,6 +555,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
             {
               error:
                 "Subscription must be approved or active before converting a trial",
+              code: "VALIDATION_FAILED",
             },
             { status: 400 },
           );
@@ -667,6 +684,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         {
           error:
             "Subscription must be approved or active before converting a trial",
+          code: "VALIDATION_FAILED",
         },
         { status: 400 },
       );
@@ -790,7 +808,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
 
     if (!existingTrial) {
       return NextResponse.json(
-        { error: "Trial session not found" },
+        { error: "Trial session not found", code: "NOT_FOUND" },
         { status: 404 },
       );
     }
@@ -812,7 +830,10 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
 
     if (!cancellableStatuses.includes(existingTrial.status)) {
       return NextResponse.json(
-        { error: `Cannot cancel a trial in ${existingTrial.status} status` },
+        {
+          error: `Cannot cancel a trial in ${existingTrial.status} status`,
+          code: "INVALID_TRANSITION",
+        },
         { status: 400 },
       );
     }

@@ -152,7 +152,11 @@ export async function POST(request: NextRequest) {
     const validationResult = SubscriptionPlanSchema.safeParse(planData);
     if (!validationResult.success) {
       return NextResponse.json(
-        { error: "Validation failed", details: validationResult.error.issues },
+        {
+          error: "Validation failed",
+          code: "VALIDATION_FAILED",
+          details: validationResult.error.issues,
+        },
         { status: 400 },
       );
     }
