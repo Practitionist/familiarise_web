@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { GatewaySettlementLineStatus } from "@prisma/client";
 import prisma from "@/lib/prisma";
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { reportSentryError } from "@/lib/observability/report";
 
 const querySchema = z.object({
@@ -13,7 +13,7 @@ const querySchema = z.object({
 
 /** Settlement recon lines for ops, newest first; `?status=` narrows to one outcome. */
 export async function GET(req: NextRequest) {
-  const auth = await requirePrivilegedAuth();
+  const auth = await requireBackofficeSurface("payouts.read");
   if (auth.error) return auth.error;
 
   const params = req.nextUrl.searchParams;

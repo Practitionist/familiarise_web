@@ -33,7 +33,7 @@ export type AdminPayoutsQuery = z.infer<typeof adminPayoutsQuerySchema>;
 export const adminOrgPayoutsQuerySchema = z.object({
   status: z.nativeEnum(PayoutStatus).nullish(),
   orgId: z.string().max(128).nullish(),
-  limit: z.coerce.number().int().min(1).max(200).default(50),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
   offset: z.coerce.number().int().min(0).default(0),
 });
 

@@ -46,6 +46,7 @@ function report(): SupportSpendReport {
         payments: [
           {
             paymentId: "pay-1",
+            target: null,
             supportCommittedPaise: 450_000,
             platformCancelPaise: 400_000,
             remainingPerPaymentPaise: 50_000,
@@ -93,6 +94,9 @@ function report(): SupportSpendReport {
       rolling30dStart: SINCE,
     },
     caps: { perPaymentPaise: 500_000, rolling24hPaise: 5_000_000 },
+    total: 2,
+    page: 1,
+    pageSize: 10,
     fetchedAt: new Date().toISOString(),
   };
 }
@@ -178,10 +182,9 @@ describe("SupportSpendTab", () => {
       action: "support.refund.review",
       since: SINCE,
     });
-    expect(screen.getAllByRole("link", { name: "pay-1" })[0]).toHaveAttribute(
-      "href",
-      "/dashboard/admin/payments/pay-1",
-    );
+    expect(
+      screen.getAllByRole("link", { name: "Open payment" })[0],
+    ).toHaveAttribute("href", "/dashboard/admin/payments/pay-1");
   });
 
   it("tells a staff viewer the figures are their own", () => {

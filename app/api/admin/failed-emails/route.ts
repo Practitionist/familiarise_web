@@ -28,6 +28,7 @@ import prisma from "@/lib/prisma";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
+import { readPageParams } from "@/lib/backoffice/list-paging";
 import { DEAD_LETTER_EMAIL_WHERE } from "@/lib/backoffice/queue-predicates";
 import {
   deliveryPolicyOf,
@@ -47,10 +48,7 @@ export async function GET(req: NextRequest) {
   if (auth.error) return auth.error;
 
   const url = new URL(req.url);
-  const limit = Math.min(
-    Math.max(parseInt(url.searchParams.get("limit") ?? "50", 10) || 50, 1),
-    200,
-  );
+  const { page, limit, skip } = readPageParams(url.searchParams, 50);
   const statusParam = url.searchParams.get("status");
   const status = statusParam ? StatusSchema.safeParse(statusParam) : undefined;
   if (status && !status.success) {
@@ -64,9 +62,11 @@ export async function GET(req: NextRequest) {
       ? DEAD_LETTER_EMAIL_WHERE
       : { status: status.data }
     : undefined;
+  const total = await prisma.failedEmail.count({ where });
   const rows = await prisma.failedEmail.findMany({
     where,
-    orderBy: { createdAt: "desc" },
+    orderBy: [{ createdAt: "desc" }, { id: "asc" }],
+    skip,
     take: limit,
     // Don't ship the rendered html/text bodies in the list view — they can be
     // large and carry PII. Operators replay by id; detail isn't needed here.
@@ -93,6 +93,9 @@ export async function GET(req: NextRequest) {
       ...row,
       replayRefusal: emailReplayRefusal(row, now),
     })),
+    total,
+    page,
+    pageSize: limit,
   });
 }
 

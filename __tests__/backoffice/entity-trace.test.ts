@@ -96,6 +96,8 @@ jest.mock("@/components/dashboard/backoffice/EntityTraceView", () => ({
 
 import TracePage from "@/app/dashboard/(backoffice)/[tree]/trace/page";
 import {
+  bookingStepLabel,
+  enumWords,
   mergeTimeline,
   readEntityTrace,
   TRACE_PAYMENT_CAP,
@@ -195,4 +197,15 @@ it("gates the page on the Payments tab's surface", async () => {
     searchParams: Promise.resolve({}),
   });
   expect(mockRequirePage).toHaveBeenCalledWith("payments.read", "staff");
+});
+
+it("names booking steps and statuses in words, not enum names", () => {
+  expect(
+    bookingStepLabel("RESCHEDULE_REQUEST", "PENDING_REVIEW", "DECLINED"),
+  ).toBe("Reschedule request: pending review → declined");
+  expect(bookingStepLabel("CONSULTATION", null, "CREATED")).toBe(
+    "Consultation: created",
+  );
+  // Acronyms keep their capitals inside a sentence.
+  expect(enumWords("UPI_COLLECT")).toBe("UPI collect");
 });

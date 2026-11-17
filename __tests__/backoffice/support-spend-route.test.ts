@@ -46,23 +46,31 @@ jest.mock("../../lib/prisma", () => ({
     user: {
       findMany: async ({
         where,
+        select,
       }: {
         where: { id?: string; role?: string | { in: string[] } };
+        select?: { Payment?: unknown };
       }) =>
-        mockUsers.filter(
-          (u) =>
-            (where.id === undefined || u.id === where.id) &&
-            (where.role === undefined ||
-              (typeof where.role === "string"
-                ? u.role === where.role
-                : where.role.in.includes(u.role))),
-        ),
+        // The target read (payments by buyer) finds none in these fixtures.
+        select?.Payment
+          ? []
+          : mockUsers.filter(
+              (u) =>
+                (where.id === undefined || u.id === where.id) &&
+                (where.role === undefined ||
+                  (typeof where.role === "string"
+                    ? u.role === where.role
+                    : where.role.in.includes(u.role))),
+            ),
+      count: async () => mockUsers.length,
     },
     opsActionLog: {
       findMany: (args: unknown) => mockOpsFindMany(args),
       count: async () => 0,
     },
     supportFinancialRecommendation: { findMany: async () => [] },
+    refund: { findMany: async () => [] },
+    payment: { findMany: async () => [] },
   },
 }));
 
@@ -76,9 +84,12 @@ beforeEach(() => {
   mockOpsFindMany.mockClear();
 });
 
+const spendRequest = () =>
+  new NextRequest("http://localhost/api/admin/support-spend");
+
 describe("GET /api/admin/support-spend", () => {
   it("gives staff their own row only", async () => {
-    const res = await getSpend();
+    const res = await getSpend(spendRequest());
     expect(res.status).toBe(200);
     expect(res.headers.get("Cache-Control")).toBe("no-store");
     const body = (await res.json()) as { operators: { userId: string }[] };
@@ -93,7 +104,7 @@ describe("GET /api/admin/support-spend", () => {
   it("gives an admin every operator", async () => {
     mockViewer.id = "admin-1";
     mockViewer.role = "ADMIN";
-    const body = (await (await getSpend()).json()) as {
+    const body = (await (await getSpend(spendRequest())).json()) as {
       operators: { userId: string }[];
     };
     const ids = body.operators.map((o) => o.userId);
@@ -103,9 +114,30 @@ describe("GET /api/admin/support-spend", () => {
     );
   });
 
+  it("keeps the page in the name order it was read in, whatever each spent", async () => {
+    mockViewer.id = "admin-1";
+    mockViewer.role = "ADMIN";
+    mockOpsFindMany.mockResolvedValueOnce([
+      {
+        actorUserId: "staff-2",
+        action: "support.refund.review",
+        after: { approved: true, paymentId: "pay-1", movedPaise: 90_000 },
+        createdAt: new Date(),
+      },
+    ] as never);
+    const body = (await (await getSpend(spendRequest())).json()) as {
+      operators: { name: string }[];
+    };
+    expect(body.operators.map((o) => o.name)).toEqual([
+      "Asha",
+      "Bela",
+      "Chitra",
+    ]);
+  });
+
   it("refuses a non-operator", async () => {
     mockViewer.role = "CONSULTANT";
-    expect((await getSpend()).status).toBe(403);
+    expect((await getSpend(spendRequest())).status).toBe(403);
     expect(mockOpsFindMany).not.toHaveBeenCalled();
   });
 });

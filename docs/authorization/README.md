@@ -28,22 +28,20 @@ Why there are three and why they stay separate:
 Every helper returns `{ session }` or `{ error: NextResponse }`; return the
 error as is.
 
-| Helper                              | Admits                                              | Refusal                          |
-| ----------------------------------- | --------------------------------------------------- | -------------------------------- |
-| `requireApiAuth()`                  | Any live, unbanned session; operators need 2FA      | 401, 403 suspended, 428, 503     |
-| `requireApiSession()`               | As above without the 2FA gate (session probe only)  | 401, 403, 503                    |
-| `requireAdminAuth()`                | `ADMIN`                                             | 403                              |
-| `requireStaffAuth()`                | `STAFF` only (rejects `ADMIN`)                      | 403                              |
-| `requirePrivilegedAuth()`           | `ADMIN` or `STAFF`                                  | 403                              |
-| `requireBackofficeSurface(surface)` | Roles granted `surface` in `BACKOFFICE_PERMISSIONS` | 403                              |
-| `requireOrgAccess(orgId, opts)`     | Active member holding `opts.permission`             | 403, 404, 409 (see §3)           |
-| `authorizeEventAccess(...)`         | Event consultant, consultee, collaborator, operator | returns a 403 response or `null` |
-| `checkOwnership(...)`               | Boolean profile-id match                            | caller decides                   |
+| Helper                              | Admits                                                     | Refusal                          |
+| ----------------------------------- | ---------------------------------------------------------- | -------------------------------- |
+| `requireApiAuth()`                  | Any live, unbanned session; operators need 2FA             | 401, 403 suspended, 428, 503     |
+| `requireApiSession()`               | As above without the 2FA gate (session probe only)         | 401, 403, 503                    |
+| `requireBackofficeSurface(surface)` | Roles granted `surface` in `BACKOFFICE_PERMISSIONS`        | 403 `FORBIDDEN`                  |
+| `isPrivileged(role)`                | Boolean: `ADMIN` or `STAFF`, for a branch inside a handler | caller decides                   |
+| `requireOrgAccess(orgId, opts)`     | Active member holding `opts.permission`                    | 403, 404, 409 (see §3)           |
+| `authorizeEventAccess(...)`         | Event consultant, consultee, collaborator, operator        | returns a 403 response or `null` |
+| `checkOwnership(...)`               | Boolean profile-id match                                   | caller decides                   |
 
-All role helpers call `requireApiAuth()` first, so they inherit its 401/428/503.
-Prefer `requireBackofficeSurface` over the coarse role helpers on any back-office
-route: pick the surface, not the role. `forbiddenResponse()` and
-`unauthorizedResponse()` build plain 403/401 bodies. The decision matrix for
+`requireBackofficeSurface` and `requireOrgAccess` call `requireApiAuth()` first,
+so they inherit its 401/428/503. Every back-office route picks a surface, never a
+role: no helper asks for a role by name. `forbiddenResponse(message, code?)`
+builds a plain 403 body. The decision matrix for
 operator routes is in [`../api/auth-helpers.md`](../api/auth-helpers.md).
 
 ### Operator 2FA gate

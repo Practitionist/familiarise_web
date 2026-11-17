@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { useCaseTimeline } from "./useCaseTimeline";
+import { useZoneClock } from "@/lib/time/use-zone-clock";
+import { zoneClock } from "@/lib/time/zone-clock";
 import { useToast } from "@/hooks/use-toast";
 import {
   SupportRequestError,
@@ -155,28 +157,29 @@ function appendMessages(
 }
 
 /**
- * "We'll reply by 4:30 PM" beats "soon": a concrete wait is what the hand-off
+ * "We'll reply by 4:30 pm" beats "soon": a concrete wait is what the hand-off
  * research found cuts abandonment, and this one is a promise already made at
- * intake rather than a guess.
+ * intake rather than a guess. The time and "today" are read in `zone`.
  */
-export function describeWait(ackDueAt: string | null | undefined): string {
+export function describeWait(
+  ackDueAt: string | null | undefined,
+  zone: string,
+  now: Date = new Date(),
+): string {
   const FALLBACK = "Our team will reply here and by email.";
   if (!ackDueAt) return FALLBACK;
   const due = new Date(ackDueAt);
   if (Number.isNaN(due.getTime())) return FALLBACK;
   // Past our own deadline — say so rather than showing a promise that lapsed.
-  if (due.getTime() < Date.now()) {
+  if (due.getTime() < now.getTime()) {
     return "Our team is taking longer than usual. You'll get a reply here and by email.";
   }
-  const time = due.toLocaleTimeString([], {
-    hour: "numeric",
-    minute: "2-digit",
-  });
-  if (due.toDateString() === new Date().toDateString()) {
+  const clock = zoneClock(zone);
+  const time = clock.time(due);
+  if (clock.dayKey(due) === clock.dayKey(now)) {
     return `Our team will reply by ${time} today.`;
   }
-  const day = due.toLocaleDateString([], { day: "numeric", month: "short" });
-  return `Our team will reply by ${time} on ${day}.`;
+  return `Our team will reply by ${time} on ${clock.dayMonth(due)}.`;
 }
 
 export function describeAction(a: SupportAction): string | null {
@@ -227,6 +230,7 @@ export function useSupportThread(
     Record<string, { body: string; vars: TurnVars }>
   >({});
   const { toast } = useToast();
+  const clock = useZoneClock();
   const qc = useQueryClient();
   const queryKey = supportKeys.thread(appointmentId);
 
@@ -530,7 +534,10 @@ export function useSupportThread(
       !isResolved &&
       !isClosed &&
       !thread?.supportTicket?.acknowledgedAt
-        ? describeWait(thread?.supportTicket?.ackDueAt ?? lastReplyByAt)
+        ? describeWait(
+            thread?.supportTicket?.ackDueAt ?? lastReplyByAt,
+            clock.zone,
+          )
         : null,
     handoffIndex,
   };

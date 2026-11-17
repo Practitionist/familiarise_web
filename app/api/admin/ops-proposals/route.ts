@@ -3,13 +3,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
+import { pageNumberSchema } from "@/lib/backoffice/list-paging";
 import { listProposals } from "@/lib/backoffice/ops-proposals";
 
 const QuerySchema = z.object({
   status: z.nativeEnum(OpsActionProposalStatus).default("PROPOSED"),
+  page: pageNumberSchema,
 });
 
-/** GET ?status= — second-approval proposals in one effective status (expiry read live). */
+/** GET ?status=&page= — one page of second-approval proposals in one effective status (expiry read live). */
 export async function GET(req: NextRequest) {
   const auth = await requireBackofficeSurface("payments.manage");
   if (auth.error) return auth.error;
@@ -22,9 +24,12 @@ export async function GET(req: NextRequest) {
       { status: 400 },
     );
   }
-  const proposals = await listProposals(parsed.data.status, new Date());
-  return NextResponse.json(
-    { proposals },
-    { headers: { "Cache-Control": "no-store" } },
+  const result = await listProposals(
+    parsed.data.status,
+    new Date(),
+    parsed.data.page,
   );
+  return NextResponse.json(result, {
+    headers: { "Cache-Control": "no-store" },
+  });
 }

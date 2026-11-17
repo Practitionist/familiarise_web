@@ -6,6 +6,9 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { PageHeader } from "@/components/dashboard/PageScaffold";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { reconcileJobStatus } from "@/lib/labels/backoffice-labels";
+import { OperatorTime } from "@/lib/time/operator-time";
 import { ReasonDialog } from "./ReasonDialog";
 import { useOpsDoor } from "./ops-door";
 
@@ -40,11 +43,16 @@ function ledgerVerdict(
   }
 }
 
-function lastRun(job: ReconcileJobRow): string {
-  if (!job.last) return "Never run.";
-  const when = new Date(job.last.startedAt).toLocaleString();
-  const errors = job.last.errorCount ? `, ${job.last.errorCount} errors` : "";
-  return `Last run ${when}: ${job.last.status.toLowerCase()}${errors}.`;
+function LastRun({ job }: Readonly<{ job: ReconcileJobRow }>) {
+  if (!job.last) return <>Never run.</>;
+  const errors = job.last.errorCount ? `${job.last.errorCount} errors` : null;
+  return (
+    <span className="inline-flex flex-wrap items-center gap-2">
+      Last run <OperatorTime value={job.last.startedAt} />
+      <StatusBadge {...reconcileJobStatus(job.last.status)} size="sm" />
+      {errors}
+    </span>
+  );
 }
 
 /** What the last console run of a job did, in the operator's words. */
@@ -95,7 +103,9 @@ export function ReconcileTab() {
                 <div className="min-w-0 flex-1 text-sm">
                   <p className="font-medium">{job.label}</p>
                   <p className="text-muted-foreground">{job.description}</p>
-                  <p className="text-muted-foreground">{lastRun(job)}</p>
+                  <p className="text-muted-foreground">
+                    <LastRun job={job} />
+                  </p>
                   {lastBatch[job.key] && (
                     <output className="block font-medium">
                       {batchLine(lastBatch[job.key])}
@@ -117,7 +127,7 @@ export function ReconcileTab() {
           {data?.ledgerReport && (
             <p className="mt-3 text-sm text-muted-foreground">
               Latest ledger report ({data.ledgerReport.scope}):{" "}
-              {new Date(data.ledgerReport.runAt).toLocaleString()},{" "}
+              <OperatorTime value={data.ledgerReport.runAt} />,{" "}
               {ledgerVerdict(data.ledgerReport)}.
             </p>
           )}

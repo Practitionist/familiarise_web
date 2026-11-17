@@ -77,7 +77,7 @@ graph TB
 ```mermaid
 graph TB
     subgraph "Role Hierarchy"
-        ADMIN["ADMIN<br/>Full platform control<br/>Analytics, configuration,<br/>tax management"]
+        ADMIN["ADMIN<br/>Full platform control<br/>Configuration, maintenance,<br/>tax management"]
         STAFF["STAFF<br/>Day-to-day operations<br/>Payments, moderation,<br/>support, payouts"]
         CONSULTANT["CONSULTANT<br/>Service provider<br/>Creates services, manages<br/>appointments, earns money"]
         CONSULTEE["CONSULTEE<br/>Service consumer<br/>Books sessions, attends<br/>calls, leaves reviews"]
@@ -88,12 +88,12 @@ graph TB
     STAFF --> CONSULTEE
 ```
 
-| Role           | Who They Are                       | What They Can Do                                                                     |
-| -------------- | ---------------------------------- | ------------------------------------------------------------------------------------ |
-| **Consultee**  | A client/learner seeking expertise | Browse experts, book sessions, join video calls, leave reviews, manage referrals     |
-| **Consultant** | A professional offering expertise  | Create services, set availability, conduct sessions, earn money, manage payouts      |
-| **Staff**      | Operations team member             | Manage payments, refunds, disputes, moderation, support tickets, system jobs         |
-| **Admin**      | Platform owner/super admin         | Everything staff can do + analytics, configuration, maintenance mode, tax management |
+| Role           | Who They Are                       | What They Can Do                                                                 |
+| -------------- | ---------------------------------- | -------------------------------------------------------------------------------- |
+| **Consultee**  | A client/learner seeking expertise | Browse experts, book sessions, join video calls, leave reviews, manage referrals |
+| **Consultant** | A professional offering expertise  | Create services, set availability, conduct sessions, earn money, manage payouts  |
+| **Staff**      | Operations team member             | Manage payments, refunds, disputes, moderation, support tickets, system jobs     |
+| **Admin**      | Platform owner/super admin         | Everything staff can do + configuration, maintenance mode, tax management        |
 
 ## The 4 Service Types
 
@@ -1016,10 +1016,11 @@ graph TD
 
 **Sub-features:**
 
-- **Profile Verification:** Review consultant profiles for legitimacy. Approve/reject with notes.
-- **Report Management:** Handle user reports (review, profile, message, document issues).
-- **Review Moderation:** Check reviews for spam/abuse. Remove if needed.
-- **Stats:** See moderation trends and action history.
+- **Profile Verification** (its own page, `users.verify`): review consultant profiles and approve, reject or ask for more, with a reason for the audit log that the applicant does not see.
+- **Report Management:** handle user reports. Every decision, including Dismiss, opens a confirm that asks for a reason, and each writes an audit row. Suspend, Ban, Lift ban and removing a public review are ADMIN only.
+- **Review Moderation:** check reviews for spam or abuse and remove one with a reason (ADMIN). An anonymous review shows its author to staff, labelled "Anonymous to the public".
+- **Stats:** the four cards; "Resolved Today" counts from 00:00 IST.
+- Reports and reviews page 20 at a time with "1–20 of N".
 
 ### Support Tickets
 
@@ -1048,39 +1049,48 @@ The platform runs 25+ automated jobs. Staff can monitor them and trigger manual 
 | **Disputes**     | alert deadlines, handle lost, reconcile                                            | Track dispute windows and outcomes                         |
 | **Other**        | auth token cleanup, webhook archival, discount expiration, document reconciliation | General platform hygiene                                   |
 
+### Metrics
+
+**Where:** `/dashboard/staff/metrics` and `/dashboard/admin/metrics` (the same page in both trees; both roles see every card, including revenue and refunds)
+
+- Support-queue figures: SLA attainment and breaches, average first response, resolution rate, and queue volume for a chosen period (tickets resolved, open cases, users helped, active users)
+- Platform Overview: total appointments and pending payments
+- People: total users (with the new users this month), experts, learners (each with how many are active) and staff members
+- Sessions: total, completed and upcoming bookings, plus cancelled consultation requests (a different population: it counts `Consultation` rows, not the bookings in the total)
+- Revenue: total revenue (succeeded payments, all time), revenue this month (IST) and refunds (succeeded refunds, all time), shown in rupees and stored in paise
+- "This month (IST)" starts at 00:00 IST on the 1st, not at the start of the UTC month; the support-queue periods (today, this week, this month) are also cut in IST
+- IST with the UTC instant in a tooltip is the pass condition on every back-office screen, the support inbox and case workspace included. The same support components on a customer's own Support pages print that customer's profile zone instead
+
+There are no revenue trends, user growth, booking conversion or cancellation charts; the page never had them.
+
 ### Announcements & Newsletters
 
-**Where:** `/dashboard/staff/[id]/announcements`
+**Where:** `/dashboard/admin/announcements` and `/dashboard/<tree>/newsletter`
 
-- Create platform-wide announcements
-- Send newsletters to users
-- Schedule announcements
-- Track engagement
+- Create platform-wide announcements (ADMIN); the list pages 20 at a time
+- Triage the newsletter list (ADMIN or STAFF); every send, the test send included, asks for a reason and writes an audit row (ADMIN)
 
 ### User Management
 
-**Where:** `/dashboard/staff/[id]/users`
+**Where:** `/dashboard/<tree>/users`
 
-- View all users by role
+- View all users by role, 20 a page, newest first
 - Search by name/email
-- View user details
-- Suspend or ban users
+- Open User 360: each section loads on its own, so one that fails shows its own error with a retry
+- Suspend or ban users from User 360 (ADMIN, with a reason)
+
+### Referral credits and Platform fees
+
+**Where:** `/dashboard/<tree>/referral-credits` and `/dashboard/<tree>/platform-fees`
+
+- Referral credits: credits, fee waivers and the program economics (`referrals.read`, writes ADMIN); referrals held for review are ADMIN only (`referrals.manage`)
+- Platform fees: the take-rate schedules, who proposed and who approved each, and the propose and approve doors (`payments.read`, writes ADMIN); the effective-from time is typed in IST
 
 ---
 
 ## 3.8 Admin Dashboard
 
 Admins have everything staff has, plus:
-
-### Platform Analytics
-
-**Where:** `/dashboard/admin/analytics`
-
-- Revenue trends
-- User growth
-- Booking conversion rates
-- Cancellation analytics
-- Service type distribution
 
 ### Approval Payments
 
@@ -1291,18 +1301,42 @@ Use these checklists to systematically test every feature. Check off each item a
 - [ ] Create an announcement
 - [ ] View all users
 - [ ] View subscription status
+- [ ] Open Metrics and see the platform totals and the support-queue figures
+- [ ] Check that a time on a back-office page shows IST and its tooltip shows UTC
+- [ ] On Appointments, page through "Sessions that need a decision", sort it by Lost and by Waiting since, and check that each row names the booking, the expert and the learner (or the attendee count) and opens that booking when clicked
+- [ ] Open a booking's drawer and check that "Scheduled At" and every session print the same IST time, with UTC on hover
+- [ ] Filter Appointments by Trial, and find a cancelled trial under Issues and a scheduled one under Scheduled
+- [ ] Check that a booking's timeline lists an answered reschedule once as "Proposed" and once as its answer, with no "approved → approved" row
+- [ ] On Money, check that Payments, Refunds, Disputes and Earnings name the buyer and the booking on every row, and that the names match the payment in the database
+- [ ] Page each money list to its last page and check that the "1–20 of N" total matches a count in the database
+- [ ] As STAFF, open the payments and refunds API responses in the network panel and check that no `payerVpaHash`, `payerPhoneHash`, `metadata` or `failureReason` appears, and that the disputes list carries no buyer email
+- [ ] Check that Audit and Support spend name the person and the booking a row points at, and fall back to the kind and id for anything else
+- [ ] On Payouts, page "Awaiting approval", export a page as CSV and check the file is named with today's IST date; check the trend's last bar is today in IST
+- [ ] On Trace, open a booking trace and check that the form shows "Booking id" and the id, the summary lists Booking once and names the customer, and the timeline fits its card
+- [ ] On Moderation, page the reports and the reviews past their first page, and check "1–N of total" matches a count in the database
+- [ ] Dismiss a report with a reason and find its `OpsActionLog` row (`moderation.action.NO_ACTION`) with your name, the reason and the status before and after
+- [ ] As STAFF, check that Suspend, Ban and Lift ban are not offered, and that an anonymous review names its author under "Anonymous to the public"
+- [ ] On Verification, page the expert queue, decide a request with a reason, and check the network panel shows no document `fileUrl` in the list
+- [ ] On Feedback and Announcements, page past the first page; on Leads, check that a failed load says so instead of "No leads in this view"
+- [ ] Open a support case and check that every message time reads IST with UTC on hover; sign in as a seed learner whose profile zone is not IST and check the same case reads in their zone with no IST label
+- [ ] Filter the support inbox by one day and check the cases created between 00:00 and 23:59 IST that day are the ones listed
 
 ## Admin Testing Checklist
 
 - [ ] All staff checklist items
-- [ ] View platform analytics
-- [ ] View revenue trends
-- [ ] View cancellation analytics
+- [ ] Open Metrics in the admin tree and check the all-time totals match the staff tree
+- [ ] Check "this month (IST)" revenue against a SQL read cut at 00:00 IST
+- [ ] Change the trial-price floor (ADMIN passes; a STAFF account gets 403) and restore the value
 - [ ] Process approval payments
 - [ ] Enable maintenance mode
 - [ ] Disable maintenance mode
 - [ ] Verify bypass secret works during maintenance
 - [ ] View TDS records
+- [ ] On TDS, check that the financial year selected on load is the one open in India, record a filing dated today and check that it is stored as 00:00 IST that day
+- [ ] Check that Approvals pages, badges each proposal's status and names the person and the booking it points at
+- [ ] On Organizations, check that dates read as IST dates (not `9/14/2026`) and that the SSO approvals and the verification queue page past their first page
+- [ ] On Platform fees, propose a schedule with an IST effective-from time and approve it with a second admin; check that Referral credits no longer shows fee schedules
+- [ ] Send a newsletter test with a reason and find its audit row (`newsletter.broadcast`)
 - [ ] Manage platform configuration
 
 ## Cross-Role Scenarios

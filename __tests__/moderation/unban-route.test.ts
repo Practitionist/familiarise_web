@@ -46,15 +46,33 @@ jest.mock("../../lib/prisma", () => ({
     moderationReport: {
       findUnique: jest.fn(async () => ({ id: "r1", targetUserId: "u1" })),
     },
+    opsActionLog: { create: jest.fn(async () => ({ id: "ops-1" })) },
     $transaction: jest.fn((fn: (client: typeof tx) => Promise<unknown>) =>
       fn(tx),
     ),
   },
 }));
 
+const mockRole: { current: "ADMIN" | "STAFF" } = { current: "ADMIN" };
 jest.mock("../../lib/auth-helpers", () => ({
   __esModule: true,
-  requirePrivilegedAuth: jest.fn(),
+  requireBackofficeSurface: jest.fn(async (surface: string) => {
+    const { hasBackofficePermission } = jest.requireActual<
+      typeof import("../../lib/auth/backoffice-permissions")
+    >("../../lib/auth/backoffice-permissions");
+    const { NextResponse } =
+      jest.requireActual<typeof import("next/server")>("next/server");
+    return hasBackofficePermission(mockRole.current, surface as never)
+      ? {
+          session: {
+            user: {
+              id: `${mockRole.current}-1`.toLowerCase(),
+              role: mockRole.current,
+            },
+          },
+        }
+      : { error: NextResponse.json({ code: "FORBIDDEN" }, { status: 403 }) };
+  }),
 }));
 
 jest.mock("../../lib/moderation/side-effects", () => ({
@@ -64,14 +82,14 @@ jest.mock("../../lib/moderation/side-effects", () => ({
 }));
 
 import { POST } from "../../app/api/staff/moderation/reports/[reportId]/unban/route";
-import { requirePrivilegedAuth } from "../../lib/auth-helpers";
+import { requireBackofficeSurface } from "../../lib/auth-helpers";
 import prisma from "../../lib/prisma";
 import {
   persistActionSideEffects,
   restoreStreamAccess,
 } from "../../lib/moderation/side-effects";
 
-const mockedAuth = requirePrivilegedAuth as jest.Mock;
+const mockedAuth = requireBackofficeSurface as jest.Mock;
 const mockedRestore = restoreStreamAccess as jest.Mock;
 const mockedPersist = persistActionSideEffects as jest.Mock;
 
@@ -80,27 +98,26 @@ const call = (notes = "wrongful ban") =>
     new Request("http://localhost/unban", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ notes }),
+      body: JSON.stringify({ notes, reason: "The ban was a mistake" }),
     }) as never,
     { params: Promise.resolve({ reportId: "r1" }) },
   );
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockedAuth.mockResolvedValue({
-    session: { user: { id: "admin-1", role: "ADMIN" } },
-  });
+  mockRole.current = "ADMIN";
   mockedRestore.mockResolvedValue(undefined);
 });
 
 describe("POST /api/staff/moderation/reports/[reportId]/unban", () => {
   it("refuses a staff moderator — reversing a ban is as destructive as taking one", async () => {
-    mockedAuth.mockResolvedValue({
-      session: { user: { id: "staff-1", role: "STAFF" } },
-    });
+    mockRole.current = "STAFF";
 
     const res = await call();
 
+    expect(mockedAuth).toHaveBeenCalledWith("users.moderate", {
+      expectUser: true,
+    });
     expect(res.status).toBe(403);
     expect(mockedRestore).not.toHaveBeenCalled();
     expect(prisma.$transaction).not.toHaveBeenCalled();

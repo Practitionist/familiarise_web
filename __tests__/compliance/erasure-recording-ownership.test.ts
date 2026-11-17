@@ -55,7 +55,9 @@ jest.mock("../../lib/prisma", () => ({
 }));
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 jest.mock("../../lib/auth-helpers", () => ({
-  requireAdminAuth: async () => ({ session: { user: { id: "admin" } } }),
+  requireBackofficeSurface: async () => ({
+    session: { user: { id: "admin" } },
+  }),
 }));
 jest.mock("../../lib/novu/client", () => ({ isNovuConfigured: () => true }));
 jest.mock("../../lib/novu/subscriber", () => ({

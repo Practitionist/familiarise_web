@@ -1,6 +1,7 @@
 /**
  * GET /api/admin/org-payouts — organisation payouts for the money console,
  * newest first, filtered by status and org; staff read it too (`payouts.read`).
+ * Who created and approved each row is one batched user read per page.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -33,8 +34,9 @@ export async function GET(req: NextRequest) {
       ...(query.status ? { status: query.status } : {}),
       ...(query.orgId ? { organizationId: query.orgId } : {}),
     };
-    const [payouts, total] = await Promise.all([
+    const [rows, total] = await Promise.all([
       prisma.organizationPayout.findMany({
+        relationLoadStrategy: "join",
         where,
         select: {
           id: true,
@@ -62,6 +64,27 @@ export async function GET(req: NextRequest) {
       }),
       prisma.organizationPayout.count({ where }),
     ]);
+    const userIds = [
+      ...new Set(
+        rows.flatMap((r) => [r.createdBy, r.orgApprovedBy, r.approvedBy]),
+      ),
+    ].filter((id): id is string => Boolean(id));
+    const users = userIds.length
+      ? await prisma.user.findMany({
+          where: { id: { in: userIds } },
+          select: { id: true, name: true, email: true },
+        })
+      : [];
+    const byId = new Map(users.map((u) => [u.id, u]));
+    // A removed user keeps their id, so the row still says who it was.
+    const person = (id: string | null) =>
+      id ? (byId.get(id) ?? { id, name: null, email: null }) : null;
+    const payouts = rows.map((r) => ({
+      ...r,
+      createdByUser: person(r.createdBy),
+      orgApprovedByUser: person(r.orgApprovedBy),
+      approvedByUser: person(r.approvedBy),
+    }));
 
     return NextResponse.json(
       {

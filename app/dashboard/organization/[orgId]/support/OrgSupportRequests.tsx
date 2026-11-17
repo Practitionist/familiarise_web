@@ -19,6 +19,8 @@ import { caseKeyOf } from "@/lib/support/case-key";
 import { humanizeEnum, type Tone } from "@/lib/ui/tone";
 import { ISSUE_TYPE_LABELS } from "@/utils/supportTicketUrl";
 import { supportKeys } from "@/lib/support/support-keys";
+import { useZoneClock } from "@/lib/time/use-zone-clock";
+import type { ZoneClock } from "@/lib/time/zone-clock";
 
 const PAGE_SIZE = 20;
 
@@ -49,13 +51,10 @@ const STATUS_TONE: Record<string, Tone> = {
   CLOSED: "neutral",
 };
 
-const DATE = new Intl.DateTimeFormat("en-IN", {
-  day: "numeric",
-  month: "short",
-  year: "numeric",
-});
-
-function buildColumns(orgId: string): ResponsiveColumn<OrgTicketRow>[] {
+function buildColumns(
+  orgId: string,
+  clock: ZoneClock,
+): ResponsiveColumn<OrgTicketRow>[] {
   return [
     {
       key: "subject",
@@ -111,7 +110,7 @@ function buildColumns(orgId: string): ResponsiveColumn<OrgTicketRow>[] {
       header: "Created",
       cell: (t) => (
         <span className="whitespace-nowrap text-muted-foreground">
-          {DATE.format(new Date(t.createdAt))}
+          {clock.date(t.createdAt)}
         </span>
       ),
     },
@@ -120,7 +119,7 @@ function buildColumns(orgId: string): ResponsiveColumn<OrgTicketRow>[] {
       header: "Updated",
       cell: (t) => (
         <span className="whitespace-nowrap text-muted-foreground">
-          {DATE.format(new Date(t.updatedAt))}
+          {clock.date(t.updatedAt)}
         </span>
       ),
     },
@@ -129,7 +128,8 @@ function buildColumns(orgId: string): ResponsiveColumn<OrgTicketRow>[] {
 
 export function OrgSupportRequests({ orgId }: Readonly<{ orgId: string }>) {
   const { page, setPage } = useListParams();
-  const columns = useMemo(() => buildColumns(orgId), [orgId]);
+  const clock = useZoneClock();
+  const columns = useMemo(() => buildColumns(orgId, clock), [orgId, clock]);
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: supportKeys.orgRequests(orgId, page),
     queryFn: async (): Promise<OrgTicketsPage> => {

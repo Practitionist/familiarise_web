@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/card";
 import { cn } from "@/utils/tailwind";
 import styles from "./support-layout.module.css";
+import { operatorYearMonth } from "@/lib/time/operator-zone";
 
 const SupportHealthPayloadSchema = z.object({
   days: z.number().optional(),
@@ -65,9 +66,11 @@ type ComplianceReportPayload = z.infer<typeof ComplianceReportPayloadSchema>;
 export function SupportHealthAndComplianceOverview({
   tree,
 }: Readonly<{ tree: string }>) {
-  const istNow = new Date(Date.now() + 330 * 60_000);
-  const [selectedYear, setSelectedYear] = useState(istNow.getUTCFullYear());
-  const [selectedMonth, setSelectedMonth] = useState(istNow.getUTCMonth() + 1);
+  const [{ year: istYear, month: istMonth }] = useState(() =>
+    operatorYearMonth(new Date()),
+  );
+  const [selectedYear, setSelectedYear] = useState(istYear);
+  const [selectedMonth, setSelectedMonth] = useState(istMonth);
 
   const isAdmin = tree === "admin";
 
@@ -216,13 +219,11 @@ export function SupportHealthAndComplianceOverview({
                   value={selectedYear}
                   onChange={(e) => setSelectedYear(Number(e.target.value))}
                 >
-                  {[istNow.getUTCFullYear() - 1, istNow.getUTCFullYear()].map(
-                    (yr) => (
-                      <option key={yr} value={yr}>
-                        {yr}
-                      </option>
-                    ),
-                  )}
+                  {[istYear - 1, istYear].map((yr) => (
+                    <option key={yr} value={yr}>
+                      {yr}
+                    </option>
+                  ))}
                 </select>
                 <select
                   aria-label="Compliance month"

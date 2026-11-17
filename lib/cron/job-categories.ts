@@ -24,7 +24,10 @@ export interface SystemJobCard {
   title: string;
   description: string;
   category: JobCategory;
+  /** The schedule window in IST, as operators read every time. */
   schedule: string;
+  /** The same window in UTC, the zone the schedule catalog defines it in. */
+  scheduleUtc: string;
   /** The typed phrase a manual run asks for, or null when a reason is enough. */
   confirmPhrase: string | null;
   /** Why Run is disabled right now, or null when it is available. */

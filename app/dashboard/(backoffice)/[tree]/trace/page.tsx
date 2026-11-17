@@ -40,7 +40,15 @@ export default async function BackofficeTracePage({
   };
   const parsed = TraceQuery.safeParse({ kind: first("kind"), id: first("id") });
   if (!parsed.success) {
-    return <EntityTraceView mode="lookup" invalid={Boolean(first("id"))} />;
+    // A refused id still fills the form, so the operator can correct it.
+    return (
+      <EntityTraceView
+        mode="lookup"
+        invalid={Boolean(first("id"))}
+        kind={TraceQuery.shape.kind.safeParse(first("kind")).data}
+        id={first("id")?.slice(0, 200)}
+      />
+    );
   }
   const { kind, id } = parsed.data;
 

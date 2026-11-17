@@ -1,9 +1,20 @@
 "use client";
 
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
+import { BookingCell } from "@/components/dashboard/backoffice/BookingCell";
+import { PersonCell } from "@/components/dashboard/backoffice/PersonCell";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { TablePagination } from "@/components/dashboard/TablePagination";
 import Link from "next/link";
 import { traceHref } from "@/lib/backoffice/entity-trace-types";
+import {
+  readListBody,
+  refundListPageSchema,
+  type RefundListItem,
+} from "@/lib/backoffice/money-list-schemas";
 import { gatewayLabel } from "@/lib/labels/money-labels";
+import { refundStatusBadge } from "@/lib/labels/session-labels";
+import { OperatorTimeStack } from "@/lib/time/operator-time";
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 // `formatCurrencyAmount`, not the old major-unit formatter (deleted in #1396):
@@ -12,10 +23,10 @@ import { useQuery } from "@tanstack/react-query";
 // rather than a number that was merely 100× too large.
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   gatewaySelect,
+  keepPreviousPageOnly,
   PagedListFilterCard,
   statusSelect,
 } from "./paged-list-filters";
@@ -32,50 +43,10 @@ import {
   CheckCircle,
   XCircle,
   Clock,
-  Ban,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import type { Refund, RefundListResponse } from "@/types/payments";
 
-const getStatusColor = (status: string) => {
-  switch (status.toUpperCase()) {
-    case "SUCCEEDED":
-      return "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300";
-    case "PENDING":
-      return "bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300";
-    case "FAILED":
-      return "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300";
-    case "CANCELLED":
-      return "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
-    default:
-      return "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
-  }
-};
-
-const getStatusIcon = (status: string) => {
-  switch (status.toUpperCase()) {
-    case "SUCCEEDED":
-      return <CheckCircle className="h-3 w-3" />;
-    case "PENDING":
-      return <Clock className="h-3 w-3" />;
-    case "FAILED":
-      return <XCircle className="h-3 w-3" />;
-    case "CANCELLED":
-      return <Ban className="h-3 w-3" />;
-    default:
-      return null;
-  }
-};
-
-const formatDate = (dateString: string) => {
-  return new Date(dateString).toLocaleString("en-IN", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-};
+const PAGE_SIZE = 20;
 
 export interface RefundsPageProps {
   /** API endpoint to fetch refunds from */
@@ -104,24 +75,35 @@ export function RefundsPage({
   const [gatewayFilter, setGatewayFilter] = useState("all");
   const [page, setPage] = useState(1);
 
+  const queryKey = [
+    queryKeyPrefix,
+    page,
+    searchQuery,
+    statusFilter,
+    gatewayFilter,
+  ];
   const {
     data: refundsData,
     isLoading: loading,
     refetch: refetchRefunds,
     error: refundsError,
-  } = useQuery<RefundListResponse>({
-    queryKey: [queryKeyPrefix, page, searchQuery, statusFilter, gatewayFilter],
+  } = useQuery({
+    queryKey,
     queryFn: async () => {
       const params = new URLSearchParams();
       params.set("page", page.toString());
-      params.set("limit", "20");
+      params.set("limit", String(PAGE_SIZE));
       if (searchQuery) params.set("search", searchQuery);
       if (statusFilter !== "all") params.set("status", statusFilter);
       if (gatewayFilter !== "all") params.set("gateway", gatewayFilter);
       const response = await fetch(`${apiEndpoint}?${params}`);
-      if (!response.ok) throw new Error("Failed to fetch refunds");
-      return response.json() as Promise<RefundListResponse>;
+      return readListBody(
+        response,
+        refundListPageSchema,
+        "Failed to fetch refunds",
+      );
     },
+    placeholderData: keepPreviousPageOnly(queryKey, 1),
   });
 
   // Show toast on error (React Query v5 removed onError callback)
@@ -136,8 +118,7 @@ export function RefundsPage({
     }
   }, [refundsError, toast]);
 
-  const refunds: Refund[] = refundsData?.refunds ?? [];
-  const totalPages = refundsData?.totalPages ?? 1;
+  const refunds: RefundListItem[] = refundsData?.refunds ?? [];
   const total = refundsData?.total ?? 0;
 
   // #997 secondary findings — server-computed, dashboard-wide (previously
@@ -149,7 +130,7 @@ export function RefundsPage({
     failed: refundsData?.stats?.failedCount ?? 0,
   };
 
-  const renderRowActions = (refund: Refund) =>
+  const renderRowActions = (refund: RefundListItem) =>
     refund.payment ? (
       <span className="flex items-center gap-1">
         <Button variant="ghost" size="sm" asChild>
@@ -170,61 +151,62 @@ export function RefundsPage({
       </span>
     ) : null;
 
-  const columns: ResponsiveColumn<Refund>[] = [
+  const columns: ResponsiveColumn<RefundListItem>[] = [
     {
-      key: "refundId",
-      header: "Refund ID",
+      key: "buyer",
+      header: "Buyer",
       primary: true,
+      className: "max-w-[12rem]",
+      cell: (refund) => <PersonCell person={refund.payment?.buyer} />,
+    },
+    {
+      key: "booking",
+      header: "Booking",
+      className: "max-w-[14rem]",
       cell: (refund) => (
-        <div>
-          <p className="font-mono text-sm">
-            {refund.refundId?.slice(-12) || refund.id.slice(-8).toUpperCase()}
+        <div className="min-w-0 space-y-1">
+          <BookingCell booking={refund.payment?.booking} basePath={basePath} />
+          <p
+            className="break-all font-mono text-[11px] text-muted-foreground/70"
+            title={refund.refundId}
+          >
+            {refund.refundId}
           </p>
-          {refund.payment && (
-            <p className="text-xs text-muted-foreground/70">
-              Payment: {refund.payment.paymentIntent.slice(-12)}
-            </p>
-          )}
         </div>
       ),
     },
     {
       key: "amount",
       header: "Amount",
-      className: "font-medium",
-      cell: (refund) =>
-        formatCurrencyAmount(refund.amountPaise, refund.currency),
-    },
-    {
-      key: "gateway",
-      header: "Gateway",
-      className: "text-sm text-muted-foreground",
-      cell: (refund) => gatewayLabel(refund.paymentGateway),
+      className: "whitespace-nowrap",
+      cell: (refund) => (
+        <div>
+          <p className="font-medium">
+            {formatCurrencyAmount(refund.amountPaise, refund.currency)}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {gatewayLabel(refund.paymentGateway)}
+          </p>
+        </div>
+      ),
     },
     {
       key: "status",
       header: "Status",
-      cell: (refund) => (
-        <Badge
-          className={`${getStatusColor(refund.status)} gap-1`}
-          variant="secondary"
-        >
-          {getStatusIcon(refund.status)}
-          {refund.status.toLowerCase()}
-        </Badge>
-      ),
+      cell: (refund) => <StatusBadge {...refundStatusBadge(refund.status)} />,
     },
     {
       key: "reason",
       header: "Reason",
-      className: "text-sm text-muted-foreground max-w-[200px] truncate",
+      className:
+        "max-w-[12rem] text-sm text-muted-foreground [overflow-wrap:anywhere]",
       cell: (refund) => refund.reason || "-",
     },
     {
       key: "date",
       header: "Date",
       className: "text-sm text-muted-foreground",
-      cell: (refund) => formatDate(refund.createdAt),
+      cell: (refund) => <OperatorTimeStack value={refund.createdAt} />,
     },
   ];
 
@@ -326,7 +308,7 @@ export function RefundsPage({
               <Loader2 className="h-8 w-8 animate-spin text-muted-foreground/70" />
             </div>
           ) : (
-            <ResponsiveTable<Refund>
+            <ResponsiveTable<RefundListItem>
               columns={columns}
               rows={refunds}
               getRowId={(r) => r.id}
@@ -342,28 +324,12 @@ export function RefundsPage({
         </CardContent>
       </Card>
 
-      {/* Pagination */}
-      {totalPages > 1 && (
-        <div className="flex justify-center gap-2">
-          <Button
-            variant="outline"
-            disabled={page <= 1}
-            onClick={() => setPage(page - 1)}
-          >
-            Previous
-          </Button>
-          <span className="flex items-center px-4 text-sm text-muted-foreground">
-            Page {page} of {totalPages}
-          </span>
-          <Button
-            variant="outline"
-            disabled={page >= totalPages}
-            onClick={() => setPage(page + 1)}
-          >
-            Next
-          </Button>
-        </div>
-      )}
+      <TablePagination
+        page={page}
+        pageSize={PAGE_SIZE}
+        total={total}
+        onPageChange={setPage}
+      />
     </div>
   );
 }
