@@ -18,6 +18,12 @@ export const ALLOWLIST: readonly Allowance[] = [
     reason:
       "zod 3 has no patched release; the zod 4 migration removes it. Request bodies are capped by the host.",
   },
+  {
+    id: "GHSA-fc5q-39xc-vjpf",
+    until: "2026-12-17",
+    reason:
+      "picomatch has no patched release; it reaches production only through @sentry/nextjs's build-time rollup plugin, which matches repo-authored globs, never request input.",
+  },
 ];
 
 const BLOCKING = new Set(["high", "critical"]);
