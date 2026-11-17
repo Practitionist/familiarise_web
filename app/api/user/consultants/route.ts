@@ -34,6 +34,13 @@ const ORG_SLUG = z
   .max(64)
   .regex(/^[a-z0-9-]+$/);
 
+/** A price bound in paise: only a safe non-negative integer counts; anything else is no bound. */
+function pricePaiseParam(raw: string | null): number | undefined {
+  if (raw === null || raw.trim() === "") return undefined;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
+
 export async function GET(request: NextRequest) {
   // Hoisted out of the try so the fail-open branch can echo them back in `meta`.
   const searchParams = request.nextUrl.searchParams;
@@ -66,8 +73,8 @@ export async function GET(request: NextRequest) {
     const rawMinPrice = searchParams.get("minPrice");
     const rawMaxPrice = searchParams.get("maxPrice");
     const rawMinRating = searchParams.get("minRating");
-    const minPrice = rawMinPrice ? parseFloat(rawMinPrice) : undefined;
-    const maxPrice = rawMaxPrice ? parseFloat(rawMaxPrice) : undefined;
+    const minPrice = pricePaiseParam(rawMinPrice);
+    const maxPrice = pricePaiseParam(rawMaxPrice);
     const minRating = rawMinRating ? parseFloat(rawMinRating) : undefined;
 
     // The unfiltered first page is the explore landing's default view — serve it
@@ -139,10 +146,8 @@ export async function GET(request: NextRequest) {
     // Both bounds must hold on the same buyer-visible plan, and either rail
     // (1:1 session or mentorship) qualifies the expert.
     const priceRange: { gte?: number; lte?: number } = {};
-    if (minPrice !== undefined && !Number.isNaN(minPrice))
-      priceRange.gte = minPrice;
-    if (maxPrice !== undefined && !Number.isNaN(maxPrice))
-      priceRange.lte = maxPrice;
+    if (minPrice !== undefined) priceRange.gte = minPrice;
+    if (maxPrice !== undefined) priceRange.lte = maxPrice;
     if (priceRange.gte !== undefined || priceRange.lte !== undefined) {
       const planInRange = {
         some: { price: priceRange, ...oneOnOnePlanDiscoverableWhere() },

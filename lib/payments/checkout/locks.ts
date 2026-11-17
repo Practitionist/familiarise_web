@@ -2,6 +2,7 @@
 // one unit through utils/appointmentlock, and the in-lock plan re-read.
 
 import { Refusal } from "@/lib/errors/refusal";
+import { EVENT_SEAT_TIMES_SENT_MESSAGE } from "@/lib/errors/classification/payment-error-classification";
 import { assertExpertTakesDirectCheckout } from "@/lib/booking/booking-rule-error";
 import type { BookingMode } from "@prisma/client";
 import {
@@ -207,10 +208,13 @@ export async function acquireCheckoutLock(
     ) {
       consultantProfileId = planData.consultantProfile!.id;
     } else {
-      // For WEBINAR/CLASS with slots (shouldn't happen but handle gracefully)
-      throw new Error(
-        "Invalid checkout configuration: slot-based checkout for event type",
-      );
+      // The schema refuses this first; a direct caller gets the same 400.
+      throw new Refusal({
+        code: "EVENT_SEAT_TIMES_SENT",
+        httpStatus: 400,
+        userMessage: EVENT_SEAT_TIMES_SENT_MESSAGE,
+        devMessage: `${appointmentType} checkout carried startsAt/endsAt`,
+      });
     }
 
     console.log(
