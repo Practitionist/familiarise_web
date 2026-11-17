@@ -21,7 +21,14 @@ const plan = {
   schedulingTimezone: "UTC",
 };
 const session = (id: string, at: number): ReleasableSession => ({
-  slots: [{ id, appointmentId: "a", startsAt: new Date(at).toISOString() }],
+  slots: [
+    {
+      id,
+      appointmentId: "a",
+      startsAt: new Date(at).toISOString(),
+      isTentative: false,
+    },
+  ],
   startTime: new Date(at),
   endTime: new Date(at + 3_600_000),
 });
@@ -55,7 +62,9 @@ it("stops a pick that would cross into another plan week, with the server's sent
   const rows = screen.getAllByRole("button", { pressed: false });
   fireEvent.click(rows[rows.length - 1]);
   expect(onSelectionChange).not.toHaveBeenCalled();
-  expect(screen.getByRole("status")).toHaveTextContent(RELEASE_ONE_WEEK_MESSAGE);
+  expect(screen.getByRole("status")).toHaveTextContent(
+    RELEASE_ONE_WEEK_MESSAGE,
+  );
 });
 
 it("still adds a session in the same week", () => {

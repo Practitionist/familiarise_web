@@ -125,9 +125,10 @@ export async function assertSubscriptionDemandRoom(
     },
   });
   if (firstWeekPlaceable(firstWeek) === 0) {
-    throw Object.assign(
-      new Error(NOT_PLACEABLE_MESSAGE),
-      { httpStatus: 409, code: "NOT_PLACEABLE", reasons: firstWeek.reasons },
-    );
+    throw Object.assign(new Error(NOT_PLACEABLE_MESSAGE), {
+      httpStatus: 409,
+      code: "NOT_PLACEABLE",
+      reasons: firstWeek.reasons,
+    });
   }
 }

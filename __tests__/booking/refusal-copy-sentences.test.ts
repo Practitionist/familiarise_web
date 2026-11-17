@@ -18,6 +18,7 @@ import {
   allocationFailedWithCode,
   soldEventMoveCopy,
 } from "@/lib/scheduling/allocationMessages";
+import { RESCHEDULE_MIN_LEAD_HOURS } from "@/lib/booking/lead-time";
 import { saveFailedTitle } from "@/components/offerings/editor/feasibility-feedback";
 
 const IST = { zone: "Asia/Kolkata", own: true };
@@ -113,13 +114,13 @@ describe("the cancellation note names the zero tier and the freeze", () => {
 
 describe("USE_RETIME explains the inside-24-hour case", () => {
   it("a webinar", () => {
-    expect(soldEventMoveCopy("webinar", 3)).toBe(
-      'This webinar already has 3 booked seats, so its times can\'t be re-planned here. Use "Move to a new date" on the event page: attendees are told and may leave with a full refund. Inside 24 hours of the start it can\'t be moved at all: cancel it instead, and everyone is refunded in full.',
+    expect(soldEventMoveCopy("webinar", RESCHEDULE_MIN_LEAD_HOURS, 3)).toBe(
+      "This webinar already has 3 booked seats, so its times can't be re-planned here. Use \"Move to a new date\" on the event page: attendees are told and may leave with a full refund. Inside 24 hours of the start it can't be moved at all: cancel it instead, and everyone is refunded in full.",
     );
   });
 
   it("a class", () => {
-    expect(soldEventMoveCopy("class")).toMatch(
+    expect(soldEventMoveCopy("class", RESCHEDULE_MIN_LEAD_HOURS)).toMatch(
       /^This class already has booked seats.*"Move upcoming sessions".*A session that starts within 24 hours can't be moved: cancel that session and schedule a make-up instead\.$/,
     );
   });
@@ -139,10 +140,18 @@ describe("failed-save titles name the action", () => {
 
   it("an edit of a live plan says changes, never publish", () => {
     expect(
-      saveFailedTitle({ publish: true, wasPublished: true, notFeasible: false }),
+      saveFailedTitle({
+        publish: true,
+        wasPublished: true,
+        notFeasible: false,
+      }),
     ).toBe("Couldn't save your changes");
     expect(
-      saveFailedTitle({ publish: true, wasPublished: false, notFeasible: false }),
+      saveFailedTitle({
+        publish: true,
+        wasPublished: false,
+        notFeasible: false,
+      }),
     ).toBe("Couldn't publish");
     expect(
       saveFailedTitle({ publish: true, wasPublished: true, notFeasible: true }),

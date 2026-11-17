@@ -46,12 +46,15 @@ describe("viewerWasCharged", () => {
     expect(viewerWasCharged("SPONSORED", [coPay], "member-1")).toBe(true);
   });
 
-  it.each(["PAID", "PARTIALLY_REFUNDED", "REFUND_PENDING", "REFUNDED", "DISPUTED"] as const)(
-    "%s is money taken",
-    (state) => {
-      expect(viewerWasCharged(state, [], "member-1")).toBe(true);
-    },
-  );
+  it.each([
+    "PAID",
+    "PARTIALLY_REFUNDED",
+    "REFUND_PENDING",
+    "REFUNDED",
+    "DISPUTED",
+  ] as const)("%s is money taken", (state) => {
+    expect(viewerWasCharged(state, [], "member-1")).toBe(true);
+  });
 
   it.each(["FREE", "NOT_DUE", "DUE"] as const)("%s is not", (state) => {
     expect(viewerWasCharged(state, [], "member-1")).toBe(false);

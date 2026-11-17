@@ -19,6 +19,7 @@ import {
   ALREADY_SCHEDULED_COPY,
   soldEventMoveCopy,
 } from "@/lib/scheduling/allocationMessages";
+import { RESCHEDULE_MIN_LEAD_HOURS } from "@/lib/booking/lead-time";
 
 /**
  * The allocation transaction's first statement: an advisory xact lock per
@@ -126,7 +127,7 @@ export async function assertGroupEventUnsoldInTx(
   });
   if (liveSeats > 0) {
     throw new AllocationConflictError(
-      soldEventMoveCopy(eventType, liveSeats),
+      soldEventMoveCopy(eventType, RESCHEDULE_MIN_LEAD_HOURS, liveSeats),
       "USE_RETIME",
       { liveSeats },
     );

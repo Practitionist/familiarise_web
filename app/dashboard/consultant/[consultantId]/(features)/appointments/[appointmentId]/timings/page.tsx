@@ -22,6 +22,7 @@ import { isEventIdFormat } from "@/schemas/slotAllocation/validationSchemas";
 
 import { planTypeLabel } from "@/lib/labels/plan-labels";
 import { soldEventMoveCopy } from "@/lib/scheduling/allocationMessages";
+import { RESCHEDULE_MIN_LEAD_HOURS } from "@/lib/booking/lead-time";
 import { ManageTimingsClient } from "./ManageTimingsClient";
 
 /**
@@ -138,6 +139,7 @@ export default async function ManageTimingsPage({
                 target.appointment.appointmentType === "CLASS"
                   ? "class"
                   : "webinar",
+                RESCHEDULE_MIN_LEAD_HOURS,
               )}
             </p>
             <Button asChild size="sm">

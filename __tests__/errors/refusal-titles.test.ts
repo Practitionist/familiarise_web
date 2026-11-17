@@ -48,10 +48,12 @@ describe("refusal titles", () => {
     expect(getErrorToast(ErrorTypes.SUBSCRIPTION_ALREADY_ACTIVE).title).toBe(
       "You already have this plan",
     );
-    expect(getErrorToast(ErrorTypes.EVENT_FULL).title).toBe("This session is full");
-    expect(getErrorToast(ErrorTypes.DUPLICATE_REGISTRATION).description).not.toMatch(
-      /!/,
+    expect(getErrorToast(ErrorTypes.EVENT_FULL).title).toBe(
+      "This session is full",
     );
+    expect(
+      getErrorToast(ErrorTypes.DUPLICATE_REGISTRATION).description,
+    ).not.toMatch(/!/);
   });
 
   it("a coded refusal takes its title from the table and keeps the server's sentence", () => {

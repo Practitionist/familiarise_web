@@ -20,6 +20,7 @@ const articles = {
   documents: [],
   account: [],
   organisation: [],
+  general: [],
   other: [],
 };
 

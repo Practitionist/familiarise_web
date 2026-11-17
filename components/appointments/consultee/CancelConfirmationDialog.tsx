@@ -164,9 +164,7 @@ export function CancelConfirmationDialog({
       retry: false,
     });
   // The first figure shown this opening, so a server re-quote is named in the dialog.
-  const [firstQuotedPaise, setFirstQuotedPaise] = useState<number | null>(
-    null,
-  );
+  const [firstQuotedPaise, setFirstQuotedPaise] = useState<number | null>(null);
   const quotedPaise =
     preview && preview.paid !== false ? preview.estimatedRefundPaise : null;
   useEffect(() => {

@@ -329,7 +329,9 @@ export function useEventActions({
         "Couldn't request a reschedule",
       );
       toast({
-        title: alreadyOpen ? "You already have a reschedule open" : refused.title,
+        title: alreadyOpen
+          ? "You already have a reschedule open"
+          : refused.title,
         description: alreadyOpen
           ? "Your first request went through — open it to withdraw it or see the new times."
           : refused.description,

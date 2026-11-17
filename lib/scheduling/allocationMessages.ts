@@ -11,7 +11,6 @@
 import { formatClockTime, formatDayLabel } from "@/lib/time/display";
 import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
 import { REQUEST_INDETERMINATE_ERROR } from "./allocationService";
-import { RESCHEDULE_MIN_LEAD_HOURS } from "@/lib/booking/lead-time";
 
 export interface AllocationToast {
   title: string;
@@ -404,13 +403,14 @@ export const allocationFailedWithCode = (
   return allocationFailed(reason, title);
 };
 
-
 /**
  * Why a sold webinar or class is not re-planned on Timings, and what moves it:
  * the event page's move control, which is not offered inside the reschedule lead.
  */
 export function soldEventMoveCopy(
   eventType: "webinar" | "class",
+  /** `RESCHEDULE_MIN_LEAD_HOURS`, passed in to keep this module free of the payments imports. */
+  leadHours: number,
   liveSeats?: number,
 ): string {
   const seats =
@@ -421,8 +421,8 @@ export function soldEventMoveCopy(
     eventType === "class" ? "Move upcoming sessions" : "Move to a new date";
   const inside =
     eventType === "class"
-      ? `A session that starts within ${RESCHEDULE_MIN_LEAD_HOURS} hours can't be moved: cancel that session and schedule a make-up instead.`
-      : `Inside ${RESCHEDULE_MIN_LEAD_HOURS} hours of the start it can't be moved at all: cancel it instead, and everyone is refunded in full.`;
+      ? `A session that starts within ${leadHours} hours can't be moved: cancel that session and schedule a make-up instead.`
+      : `Inside ${leadHours} hours of the start it can't be moved at all: cancel it instead, and everyone is refunded in full.`;
   return (
     `This ${eventType} already has ${seats}, so its times can't be re-planned here. ` +
     `Use "${control}" on the event page: attendees are told and may leave with a full refund. ${inside}`

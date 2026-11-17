@@ -5,6 +5,9 @@
 import * as React from "react";
 import { render, screen } from "@testing-library/react";
 
+let mockListed: unknown;
+let mockOverrides: Record<string, React.ComponentType> | undefined;
+
 jest.mock("../../providers/MaintenanceProvider", () => ({
   useMaintenanceState: () => ({ phase: "NORMAL" }),
 }));

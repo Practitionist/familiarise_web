@@ -59,14 +59,12 @@ const TrialQuoteChangedSchema = z
       creditRestoresInFull: z.boolean(),
     }),
   })
-  .transform(
-    ({ code, quote }): RefundQuoteChanged => ({
-      code,
-      refundPaise: quote.estimatedRefundPaise,
-      refundPct: quote.refundPct,
-      creditRestoresInFull: quote.creditRestoresInFull,
-    }),
-  );
+  .transform(({ code, quote }): RefundQuoteChanged => ({
+    code,
+    refundPaise: quote.estimatedRefundPaise,
+    refundPct: quote.refundPct,
+    creditRestoresInFull: quote.creditRestoresInFull,
+  }));
 
 /** The server's new figure from a 409 `REFUND_QUOTE_CHANGED` body (appointment or trial door), or null for any other answer. */
 export function readRefundQuoteChanged(

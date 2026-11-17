@@ -113,7 +113,8 @@ describe("the re-quote reader and toast", () => {
       ),
     ).toEqual({
       title: "The refund has changed",
-      description: "It is now ₹750.00. Check it in the dialog and confirm again.",
+      description:
+        "It is now ₹750.00. Check it in the dialog and confirm again.",
     });
   });
 });
