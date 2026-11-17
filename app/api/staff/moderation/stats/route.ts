@@ -14,6 +14,7 @@ import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import type { ModerationStatsBody } from "@/lib/backoffice/moderation-schemas";
 import { operatorPeriodStarts } from "@/lib/time/operator-zone";
 import { z } from "zod";
+import { reportSentryError } from "@/lib/observability/report";
 
 // The ?days= window of the breakdowns: a bad value reads as 7, at most a year.
 const daysSchema = z.coerce
@@ -103,7 +104,11 @@ export async function GET(req: NextRequest) {
     };
     return NextResponse.json(body);
   } catch (error) {
-    console.error("Error fetching moderation stats:", error);
+    reportSentryError(error, {
+      subsystem: "moderation",
+      op: "moderation.stats",
+      expected: false,
+    });
     return NextResponse.json(
       { error: "Failed to fetch stats" },
       { status: 500 },

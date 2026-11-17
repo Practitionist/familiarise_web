@@ -10,6 +10,7 @@ import {
 import { PARTY_USER_SELECT } from "@/lib/booking/list-selects";
 import { publicProfileUserSelect } from "@/lib/data/consultant-public";
 import { checkConsulteeActiveBookings } from "../../consultants/utils/consultee-bookings";
+import { readJsonBody } from "@/lib/api/parse";
 
 export async function GET(
   req: NextRequest,
@@ -105,7 +106,9 @@ export async function PATCH(
       );
     }
 
-    const body = await req.json();
+    const read = await readJsonBody(req);
+    if (read.error) return read.error;
+    const body = read.body;
 
     const existingConsultee = await prisma.consulteeProfile.findUnique({
       where: { id: id },

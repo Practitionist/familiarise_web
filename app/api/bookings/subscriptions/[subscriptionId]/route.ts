@@ -195,7 +195,11 @@ export async function PATCH(
     const patchResult = PatchSubscriptionStatusSchema.safeParse(body);
     if (!patchResult.success) {
       return NextResponse.json(
-        { error: "Validation failed", details: patchResult.error.issues },
+        {
+          error: "Validation failed",
+          code: "VALIDATION_FAILED",
+          details: patchResult.error.issues,
+        },
         { status: 400 },
       );
     }

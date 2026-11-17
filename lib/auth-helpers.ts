@@ -150,6 +150,10 @@ async function requireRoleGate(
   return { session: auth.session };
 }
 
+/** The 403 sentence for a role that cannot open a back-office surface. */
+export const BACKOFFICE_FORBIDDEN_MESSAGE =
+  "Your role can't open this part of the back office.";
+
 /** Surface-scoped back-office auth. */
 export async function requireBackofficeSurface(
   surface: BackofficeSurface,
@@ -157,7 +161,7 @@ export async function requireBackofficeSurface(
 ): Promise<ApiAuthResult> {
   return requireRoleGate(
     (role) => !!role && hasBackofficePermission(role, surface),
-    "Forbidden — insufficient back-office permissions",
+    BACKOFFICE_FORBIDDEN_MESSAGE,
     options,
     "FORBIDDEN",
   );

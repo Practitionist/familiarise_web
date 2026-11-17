@@ -134,6 +134,20 @@ Each type has a dedicated handler in `lib/payments/checkout/handlers/` (`consult
 | WEBINAR      | `handleWebinarCheckout()`      | Seats the buyer with a `HELD` `AppointmentParticipant` on the existing shared appointment (no new occurrences). Validates: not full, not ended, user not already registered.             |
 | CLASS        | `handleClassCheckout()`        | Seats the buyer with a `HELD` `AppointmentParticipant` on the class wrapper, which covers every session (no new occurrences). Validates: not full, not ended, user not already enrolled. |
 
+### Seat re-buy
+
+A buyer has one `Payment` per shared webinar or class appointment, so a second purchase finds the first one and `seatRebuyRefusal` (`lib/payments/checkout/seats.ts`) decides what to say. Only an `EXPIRED` or `FAILED` payment is re-minted in place. Every other prior payment refuses, with the same answer from pricing, the payment write and the waitlist:
+
+| Prior payment and its seat                                      | Answer                                  |
+| --------------------------------------------------------------- | --------------------------------------- |
+| `EXPIRED` or `FAILED`                                           | Re-minted in place                      |
+| `PENDING`                                                       | 409 `PAYMENT_ALREADY_EXISTS`            |
+| A priced seat refunded in full                                  | 409 `SEAT_REBUY_UNSUPPORTED` (refunded) |
+| Every seat it funded is `CANCELLED` or `REFUNDED`, free or paid | 409 `SEAT_REBUY_UNSUPPORTED` (left)     |
+| Anything else (a live `HELD`, `CONFIRMED` or `ATTENDED` seat)   | 409 `ALREADY_REGISTERED`                |
+
+A free seat has no refund rows, so the participant status is the only sign that its holder left. For example, Priya Anderson (seed learner) takes a free seat on a webinar and later leaves it. Her `Payment` stays `SUCCEEDED` at 0 paise with no refund row, and her participant row ends `CANCELLED` or `REFUNDED` depending on the door that released it. When she tries to join again she is told she left the event and to contact support, not that she is already registered. Buying a left seat again is not supported yet; nothing is re-minted for it ([Train 7 decisions](../decisions/2026-11-17-train-7.md), D1).
+
 ### Gateway order cleanup
 
 **Files**: `lib/payments/checkout/orchestrate.ts`, `lib/payments/checkout/gateway-intent.ts`

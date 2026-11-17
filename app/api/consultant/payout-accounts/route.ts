@@ -19,6 +19,7 @@ import {
   consultantPayoutFreezeUrl,
   emailPayoutAccountChanged,
 } from "@/lib/payments/payouts/payout-account-change";
+import { readJsonBody } from "@/lib/api/parse";
 
 // Validation schemas
 const createBankAccountSchema = z.object({
@@ -87,7 +88,9 @@ export async function POST(req: NextRequest) {
     const stale = requireFreshSession(session);
     if (stale) return stale;
 
-    const body = await req.json();
+    const read = await readJsonBody(req);
+    if (read.error) return read.error;
+    const body = read.body;
     const data = createBankAccountSchema.parse(body);
 
     // Get consultant profile with user info

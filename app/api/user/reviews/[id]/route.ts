@@ -20,6 +20,7 @@ import { purgeReviewSurfaces } from "@/lib/data/public-cache";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { applyRateLimit, reviewWriteLimiter } from "@/lib/rate-limit";
 import { UpdateReviewSchema } from "@/schemas/feedbacks";
+import { readJsonBody } from "@/lib/api/parse";
 
 export async function GET(
   req: NextRequest,
@@ -85,7 +86,9 @@ export async function PUT(
       return forbiddenResponse("You can only update your own reviews");
     }
 
-    const parsed = UpdateReviewSchema.safeParse(await req.json());
+    const read = await readJsonBody(req);
+    if (read.error) return read.error;
+    const parsed = UpdateReviewSchema.safeParse(read.body);
     if (!parsed.success) {
       return NextResponse.json(
         { error: "Validation failed", details: parsed.error.issues },
