@@ -186,6 +186,8 @@ function gstSplit(
   return ` (${formatCurrencyAmount(base, pending.currency)} + ${pct}% GST)`;
 }
 
+const APPROVE_FAILED_TITLE = "Couldn't approve this request";
+
 function ApproveOrDecline({
   decision,
   names,
@@ -235,6 +237,7 @@ function ApproveOrDecline({
           allocationFailedWithCode(
             result.error ?? "Failed to allocate slots",
             result.errorCode,
+            APPROVE_FAILED_TITLE,
           ),
         );
         return;
@@ -264,6 +267,7 @@ function ApproveOrDecline({
       toast(
         allocationFailed(
           error instanceof Error ? error.message : "Failed to allocate slots",
+          APPROVE_FAILED_TITLE,
         ),
       );
     } finally {

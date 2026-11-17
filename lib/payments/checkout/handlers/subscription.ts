@@ -113,7 +113,7 @@ export async function handleSubscriptionCheckout(
   if (sessionsLeft > 0) {
     throw Object.assign(
       new Error(
-        `You already have this plan with ${sessionsLeft} session${sessionsLeft === 1 ? "" : "s"} left — schedule those first.`,
+        `You already have this plan with ${sessionsLeft} session${sessionsLeft === 1 ? "" : "s"} left. Your expert schedules them, so you can buy it again once they are used.`,
       ),
       { httpStatus: 409, code: "SUBSCRIPTION_ALREADY_ACTIVE" },
     );

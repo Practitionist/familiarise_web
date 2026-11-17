@@ -227,7 +227,7 @@ export function OperatorAppointmentsClient({
     if (error) {
       console.error("Error fetching appointments:", error);
       toast({
-        title: "Error",
+        title: "Couldn't load bookings",
         description: "Failed to load appointments",
         variant: "destructive",
       });
@@ -240,7 +240,7 @@ export function OperatorAppointmentsClient({
     if (linkedError) {
       console.error("Error opening appointment:", linkedError);
       toast({
-        title: "Error",
+        title: "Couldn't open the booking",
         description: "Failed to open the booking",
         variant: "destructive",
       });

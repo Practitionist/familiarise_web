@@ -342,7 +342,7 @@ describe("double-buy guard", () => {
       httpStatus: 409,
       code: "SUBSCRIPTION_ALREADY_ACTIVE",
       message:
-        "You already have this plan with 20 sessions left — schedule those first.",
+        "You already have this plan with 20 sessions left. Your expert schedules them, so you can buy it again once they are used.",
     });
     expect(tx.subscription.create).not.toHaveBeenCalled();
     // The tx catch rethrows any registered code unchanged and the route
@@ -352,7 +352,7 @@ describe("double-buy guard", () => {
       httpStatus: 409,
       errorType: "SUBSCRIPTION_ALREADY_ACTIVE_ERROR",
       errorMessage:
-        "You already have this plan with 20 sessions left — schedule those first.",
+        "You already have this plan with 20 sessions left. Your expert schedules them, so you can buy it again once they are used.",
     });
     // The read drops the window terms: status + plan + buyer only.
     const { where } = (tx.subscription.findMany as jest.Mock).mock.calls[0][0];

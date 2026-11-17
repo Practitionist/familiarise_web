@@ -119,7 +119,7 @@ export const AddMembersDialog = ({
         if (requestId !== requestIdRef.current) return;
         console.error("Error searching consultees:", error);
         toast({
-          title: "Error",
+          title: "Couldn't search learners",
           description: "Failed to search consultees",
           variant: "destructive",
         });
@@ -186,7 +186,7 @@ export const AddMembersDialog = ({
     } catch (error) {
       console.error("Error adding members:", error);
       toast({
-        title: "Error",
+        title: "Couldn't add members",
         description:
           error instanceof Error && error.message
             ? error.message

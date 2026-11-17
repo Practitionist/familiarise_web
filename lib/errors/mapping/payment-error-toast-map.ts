@@ -37,60 +37,60 @@ interface ToastMessage {
 
 const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
   [ErrorTypes.PAYMENT_CONFIG]: {
-    title: "Payment System Unavailable",
+    title: "Payments are unavailable right now",
     description:
       "We're unable to connect to the payment system right now. This is a temporary issue on our end. Please try again in a few minutes, or contact support if the problem persists.",
   },
   [ErrorTypes.PAYMENT_PROCESSING]: {
-    title: "Payment Could Not Be Processed",
+    title: "Your payment didn't go through",
     description:
       "Your payment couldn't be completed. This could be due to insufficient funds, an invalid card, or a temporary bank issue. Please check your payment details and try again, or use a different payment method.",
   },
   [ErrorTypes.DATABASE]: {
-    title: "Unable to Save Your Booking",
+    title: "We couldn't save your booking",
     description:
       "We encountered an issue while saving your information. Your payment has not been processed. Please refresh the page and try again. If this continues, contact support.",
   },
   [ErrorTypes.NOT_FOUND]: {
-    title: "Booking Information Not Found",
+    title: "We couldn't find this booking",
     description: null, // Use the server's specific message
   },
   [ErrorTypes.EVENT_EXPIRED]: {
-    title: "Event Has Ended",
+    title: "This event has ended",
     description: null, // Use the server's specific message
   },
   [ErrorTypes.AVAILABILITY]: {
-    title: "No Longer Available",
+    title: "No longer available",
     description: null, // Use the server's specific message
   },
   // #1757 — capacity is a modelled refusal; the copy points at the two ways out.
   [ErrorTypes.EVENT_FULL]: {
-    title: "This Session Is Full",
+    title: "This session is full",
     description:
       "This session is full. Pick another time, or use Notify me on the event page to hear when a seat opens.",
   },
   [ErrorTypes.DUPLICATE_REGISTRATION]: {
-    title: "Already Registered",
+    title: "You're already registered",
     description:
-      "You're already registered for this event! Check your dashboard to view your registration details and upcoming sessions.",
+      "You're already registered for this event. Check your dashboard to view your registration details and upcoming sessions.",
   },
   [ErrorTypes.REFUND_BLOCKED]: {
-    title: "Refund Not Allowed",
+    title: "This refund isn't allowed",
     description: null, // Use the server's specific message
   },
   [ErrorTypes.LOCK_CONTENTION]: {
-    title: "Operation In Progress",
+    title: "Something is already in progress",
     description: null, // Use the server's specific message
   },
   [ErrorTypes.UNSUPPORTED_CONFIG]: {
-    title: "Configuration Not Supported",
+    title: "This set-up isn't supported",
     description: null, // Use the server's specific message
   },
   // #1351 — the server message names the env flag that fences the rail, which
   // is operator detail, so this entry carries its own description instead of
   // passing that through to the buyer.
   [ErrorTypes.GATEWAY_UNAVAILABLE]: {
-    title: "This payment method is not available",
+    title: "This payment method isn't available",
     description:
       "This payment method isn't available right now. Please go back and choose a different one.",
   },
@@ -98,31 +98,31 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
   // rejections, so each toast says so and points at the one action that
   // actually unblocks the buyer, instead of the generic gateway copy above.
   [ErrorTypes.SELF_BOOKING]: {
-    title: "This Is Your Own Event",
+    title: "This is your own event",
     description:
       "You host or co-host this event, so you cannot book a seat on it.",
   },
   [ErrorTypes.WALLET_FROZEN]: {
-    title: "Wallet On Hold",
+    title: "Your organisation's wallet is on hold",
     description:
       "Your organisation's wallet is frozen; ask your billing admin or support before booking again.",
   },
   // Checkout raises this for the booking member's own SESSION_BOOKING consent
   // on an org-funded booking; the checkout toast links to the fix (#1527 3c).
   [ErrorTypes.CONSENT_REQUIRED]: {
-    title: "Your Permission Is Needed",
+    title: "Your permission is needed",
     description:
       "Your organisation needs your permission to book sessions for you. You can give it in Settings › Account › Data consent. You weren't charged.",
   },
   [ErrorTypes.CONSENT_WITHDRAWN]: {
-    title: "Booking Not Available",
+    title: "This expert has paused bookings",
     description:
       "This consultant has paused bookings; your card was not charged.",
   },
   // #1407 — the fix is an admin action on the organisation, not a retry, so the
   // copy names it rather than inviting the buyer to try again.
   [ErrorTypes.DOMAIN_VERIFICATION_REQUIRED]: {
-    title: "Domain Verification Required",
+    title: "Domain verification required",
     description:
       "Invoice funding needs a verified domain on your organisation; ask your billing admin to verify it, or pay by card instead. Your card was not charged.",
   },
@@ -130,131 +130,131 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
   // not collect on. Neither is fixed by retrying, so each toast names the person
   // who can actually unblock the booking.
   [ErrorTypes.PROGRAM_CAP_EXHAUSTED]: {
-    title: "Programme Budget Used Up",
+    title: "Programme budget used up",
     description:
       "Your organisation's programme budget for this cycle is used up. Ask your organisation admin, or pay yourself if you can. You weren't charged.",
   },
   [ErrorTypes.PROGRAM_SESSION_CAP_REACHED]: {
-    title: "Programme Limit Reached",
+    title: "Programme limit reached",
     description:
       "This booking exceeds your programme's limits. Ask your organisation admin, or book it yourself. You weren't charged.",
   },
   [ErrorTypes.OVERAGE_CHARGE_MEMBER_UNSUPPORTED]: {
-    title: "Can't Book Through Your Organisation",
+    title: "You can't book this through your organisation",
     description:
       "This session can't be booked on your organisation's account right now, and we've told our team. You can still book it yourself. You weren't charged.",
   },
   // #1467 — the organisation's entitlement, not the booking, is what stops
   // these. Retrying changes nothing, so each toast names the admin who can.
   [ErrorTypes.PROGRAM_ASSIGNMENT_INACTIVE]: {
-    title: "No Programme Covers This Booking",
+    title: "No programme covers this booking",
     description:
       "Your organisation has no programme for you that covers this kind of session, usually because it has ended. Ask your organisation admin to add you to one, or book it yourself. You weren't charged.",
   },
   [ErrorTypes.BILLING_SUSPENDED_DUNNING]: {
-    title: "Organisation Billing Suspended",
+    title: "Organisation billing suspended",
     description:
       "Your organisation has an overdue invoice, so new sponsored bookings are paused until it is paid. Ask your billing admin to settle it, or book this session yourself. You were not charged.",
   },
   // #1477 — the wallet is fine, it is simply short, so the copy asks for the
   // one action that clears it rather than inviting a retry that cannot succeed.
   [ErrorTypes.WALLET_INSUFFICIENT_FUNDS]: {
-    title: "Wallet Balance Too Low",
+    title: "Wallet balance too low",
     description:
       "Your organisation's wallet does not cover this booking. Ask your billing admin to top it up.",
   },
   // #1582 B-P1-01b/c — the server's userMessage already names the fix, so
   // these pass it through under a title that says whose action it is.
   [ErrorTypes.ORG_NOT_OPERATIONAL]: {
-    title: "Organisation Cannot Sponsor Right Now",
+    title: "Your organisation can't sponsor this right now",
     description: null,
   },
   [ErrorTypes.ORG_CANNOT_SPONSOR]: {
-    title: "Sponsorship Not Enabled",
+    title: "Sponsorship isn't turned on",
     description: null,
   },
   [ErrorTypes.ORG_MEMBERSHIP_REQUIRED]: {
-    title: "Not An Active Member",
+    title: "You're not an active member",
     description: null,
   },
   [ErrorTypes.SPONSOR_SEAT_ROLE]: {
-    title: "Sponsored Seats Are For Learners",
+    title: "Sponsored seats are for learners",
     description: null,
   },
   [ErrorTypes.ORG_CREDIT_LIMIT_REACHED]: {
-    title: "Organisation Credit Limit Reached",
+    title: "Organisation credit limit reached",
     description: null,
   },
   [ErrorTypes.CONSULTANT_NOT_ON_PANEL]: {
-    title: "Consultant Not On Your Panel",
+    title: "This expert isn't on your panel",
     description: null,
   },
   [ErrorTypes.CONSULTANT_EXCLUSIVE_ENGAGEMENT]: {
-    title: "Consultant Books Through Their Organisation",
+    title: "This expert books through their organisation",
     description: null,
   },
   [ErrorTypes.SUBSCRIPTION_ALREADY_ACTIVE]: {
-    title: "You Already Have This Plan",
+    title: "You already have this plan",
     description: null,
   },
   [ErrorTypes.NOT_PLACEABLE]: {
-    title: "No Free Time In The First Week",
+    title: "No free time in the first week",
     description: null,
   },
   [ErrorTypes.PLAN_CLIENTS_FULL]: {
-    title: "This Expert Is Fully Booked",
+    title: "This expert is fully booked",
     description: PLAN_CLIENTS_FULL_MESSAGE,
   },
   [ErrorTypes.REQUEST_APPROVAL_REQUIRED]: {
-    title: "This Expert Reviews Requests First",
+    title: "This expert reviews requests first",
     description: REQUEST_APPROVAL_REQUIRED_MESSAGE,
   },
   [ErrorTypes.CURRENCY_UNSUPPORTED]: {
-    title: "Currency Not Supported",
+    title: "This currency isn't supported",
     description: null,
   },
   [ErrorTypes.CREDIT_SHORTFALL]: {
-    title: "Credits Changed — Please Retry",
+    title: "Your credits changed, so try again",
     description: null,
   },
   [ErrorTypes.DISCOUNT_CURRENCY_MISMATCH]: {
-    title: "Discount Code Not Applicable",
+    title: "This discount code doesn't apply",
     description: null,
   },
   [ErrorTypes.DISCOUNT_CODE_INVALID]: {
-    title: "Discount Code Not Valid",
+    title: "This discount code isn't valid",
     description: null,
   },
   [ErrorTypes.DISCOUNT_EXHAUSTED]: {
-    title: "Discount Code Fully Redeemed",
+    title: "This discount code is used up",
     description: null,
   },
   // The verify route's non-2xx: the capture may still confirm by webhook, so
   // the copy must not claim the payment failed (PR-G makes verify emit it).
   [ErrorTypes.VERIFICATION_FAILED]: {
-    title: "Payment Still Being Confirmed",
+    title: "Your payment is still being confirmed",
     description:
       "We could not verify the payment yet — it is still being confirmed. Check your bookings in a moment before paying again.",
   },
   [ErrorTypes.UNKNOWN]: {
-    title: "Something Went Wrong",
+    title: "Something went wrong",
     description: null, // Use the server's specific message
   },
   // #1775 / #1780 — each refusal's thrown sentence says what to do next.
   [ErrorTypes.BOOKING_RULE]: {
-    title: "Not Available For This Booking",
+    title: "Not available for this booking",
     description: null,
   },
   // Contended checkout locks (literal codes from the route, not ErrorTypes
   // values until registered above): someone else is mid-checkout, so the fix
   // is waiting — never a second payment. Your card was not charged.
   [ErrorTypes.EVENT_CHECKOUT_BUSY]: {
-    title: "Someone Just Beat You To It",
+    title: "Someone just beat you to it",
     description:
       "Another buyer is checking out right now. Wait a few seconds and retry — your card was not charged.",
   },
   [ErrorTypes.CONSULTEE_BOOKING_BUSY]: {
-    title: "Booking Already In Progress",
+    title: "A booking is already in progress",
     description:
       "Another booking is already in progress on your account. Finish or wait for it, then retry — your card was not charged.",
   },
@@ -266,29 +266,29 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
   // A replay while the first attempt's seat order is still being minted; the
   // client waits and retries, so this is what a repeated answer reads.
   [ErrorTypes.CHECKOUT_IN_PROGRESS]: {
-    title: "Still Preparing Your Checkout",
+    title: "Still preparing your checkout",
     description:
       "Your checkout is still being prepared. Try again in a moment — your card was not charged.",
   },
   [ErrorTypes.DISCOUNT_NOT_APPLICABLE]: {
-    title: "Discount Code Not Valid Here",
+    title: "This discount code isn't valid here",
     description: null,
   },
   [ErrorTypes.GST_REGISTRATION_REQUIRED]: {
-    title: "Organisation Booking Not Available Yet",
+    title: "Organisation booking isn't available yet",
     description: null,
   },
   [ErrorTypes.GST_CONFIG_INVALID]: {
-    title: "Checkout Temporarily Unavailable",
+    title: "Checkout is briefly unavailable",
     description: null,
   },
   [ErrorTypes.SEAT_HOLD_LAPSED]: {
-    title: "Your Reserved Seat Expired",
+    title: "Your reserved seat expired",
     description:
       "Payment didn't open before your reserved seat expired. You weren't charged. Please start checkout again.",
   },
   [ErrorTypes.SERIALIZATION_CONFLICT]: {
-    title: "Someone Else Was Booking",
+    title: "Someone else was booking",
     description:
       "Someone else was booking at the same moment. You weren't charged. Please try again in a moment.",
   },
@@ -296,7 +296,7 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
   // this is deliberately NOT a "wait and retry" and points at the two ways out
   // (a different time, or the waitlist) exactly like the #1757 EVENT_FULL row.
   [ErrorTypes.EVENT_SOLD_OUT]: {
-    title: "This Session Is Full",
+    title: "This session is full",
     description:
       "This session is full. Pick another time, or use Notify me on the event page to hear when a seat opens. Your card was not charged.",
   },
@@ -306,12 +306,12 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
   // action though — wait and retry — so the copy says exactly that and never
   // implies the buyer did anything.
   [ErrorTypes.EVENT_CHECKOUT_LOCK_UNAVAILABLE]: {
-    title: "The Booking System Is Briefly Busy",
+    title: "The booking system is briefly busy",
     description:
       "We couldn't secure a place for you in the queue for this session. Your card was not charged — please try again in a moment.",
   },
   [ErrorTypes.BOOKING_LOCK_UNAVAILABLE]: {
-    title: "The Booking System Is Briefly Busy",
+    title: "The booking system is briefly busy",
     description:
       "We couldn't take the booking safely just now. Your card was not charged — please try again in a moment.",
   },
@@ -322,11 +322,11 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
   // never told the listing stopped being available, only that their chosen
   // minute had passed.
   [ErrorTypes.SLOT_TOO_SOON]: {
-    title: "That Time Is Now Too Close",
+    title: "That time is now too close",
     description: null, // The server names how many minutes are left; keep its words.
   },
   [ErrorTypes.SLOT_NOT_ON_GRID]: {
-    title: "That Time Isn't Bookable",
+    title: "That time isn't bookable",
     description: null, // "Times start on the hour or half hour" — already exact.
   },
   [ErrorTypes.SLOT_TAKEN]: {
@@ -356,6 +356,25 @@ const TYPED_CODE_TOAST_MAP: Record<string, ToastMessage> = {
   [ErrorTypes.SLOT_TOO_SOON]: ERROR_TOAST_MAP[ErrorTypes.SLOT_TOO_SOON],
   [ErrorTypes.SLOT_NOT_ON_GRID]: ERROR_TOAST_MAP[ErrorTypes.SLOT_NOT_ON_GRID],
   [ErrorTypes.SLOT_TAKEN]: ERROR_TOAST_MAP[ErrorTypes.SLOT_TAKEN],
+  // Booking refusals: the server's sentence names the next step, so only the title lives here.
+  EXPERT_RESCHEDULE_CAP: {
+    title: "No reschedules left on this booking",
+    description: null,
+  },
+  MAX_RESCHEDULES_EXCEEDED: {
+    title: "No moves left for this session",
+    description: null,
+  },
+  MAKEUP_WINDOW_LAPSED: {
+    title: "This makeup can't be booked",
+    description: null,
+  },
+  USE_RETIME: {
+    title: "Move this event instead",
+    description: null,
+  },
+  SUBSCRIPTION_ALREADY_ACTIVE:
+    ERROR_TOAST_MAP[ErrorTypes.SUBSCRIPTION_ALREADY_ACTIVE],
 };
 
 // ============================================================================
@@ -375,7 +394,7 @@ const TYPED_CODE_TOAST_MAP: Record<string, ToastMessage> = {
  */
 const REFUND_CODE_TOAST_MAP: Record<string, ToastMessage> = {
   REFUND_IN_FLIGHT: {
-    title: "Refund Already In Progress",
+    title: "Your refund is already in progress",
     description:
       "Your refund is already being processed and does not need to be requested again. " +
       "It can take a few moments to settle with the bank — refresh this page shortly to see the updated status.",
@@ -438,4 +457,20 @@ export function getErrorToast(
     FALLBACK_DESCRIPTIONS[ErrorTypes.UNKNOWN]!;
 
   return { title: entry.title, description };
+}
+
+/**
+ * The toast for a refusal that carries a typed `code`: the title from the
+ * code table above, or the caller's own title for a code it does not list.
+ */
+export function codedRefusalToast(
+  code: string | null | undefined,
+  serverMessage: string,
+  fallbackTitle: string,
+): { title: string; description: string } {
+  const entry = code ? TYPED_CODE_TOAST_MAP[code] : undefined;
+  return {
+    title: entry?.title ?? fallbackTitle,
+    description: entry?.description ?? serverMessage,
+  };
 }

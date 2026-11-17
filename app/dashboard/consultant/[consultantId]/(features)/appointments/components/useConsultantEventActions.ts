@@ -26,10 +26,12 @@ import {
   cancelPreviewUrl,
   cancelRefusalFrom,
   readRefundQuoteChanged,
+  refundChangedToast,
   shownQuoteBody,
   type ShownCancelQuote,
 } from "@/lib/appointments/cancel-requote";
 import { fetchWithIdentity } from "@/lib/auth/identity-header";
+import { codedRefusalToast } from "@/lib/errors/mapping/payment-error-toast-map";
 import {
   rescheduleTimesTaken,
   takenStartsFrom,
@@ -152,7 +154,7 @@ export function useConsultantEventActions({
   ): Promise<boolean> => {
     if (!appointmentId) {
       toast({
-        title: "Error",
+        title: "Couldn't open this booking",
         description: "Appointment ID is missing",
         variant: "destructive",
       });
@@ -227,8 +229,11 @@ export function useConsultantEventActions({
         );
       }
       toast({
-        title: "Error",
-        description: userMessageFrom(error, "Failed to request reschedule"),
+        ...codedRefusalToast(
+          error instanceof ApiResponseError ? error.code : undefined,
+          userMessageFrom(error, "Failed to request reschedule"),
+          "Couldn't request a reschedule",
+        ),
         variant: "destructive",
       });
       return false;
@@ -244,7 +249,7 @@ export function useConsultantEventActions({
   const handleRetime = async (startsAt: string): Promise<boolean> => {
     if (!appointmentId) {
       toast({
-        title: "Error",
+        title: "Couldn't open this booking",
         description: "Appointment ID is missing",
         variant: "destructive",
       });
@@ -298,7 +303,7 @@ export function useConsultantEventActions({
   ): Promise<boolean> => {
     if (!appointmentId) {
       toast({
-        title: "Error",
+        title: "Couldn't open this booking",
         description: "Appointment ID is missing",
         variant: "destructive",
       });
@@ -338,16 +343,12 @@ export function useConsultantEventActions({
           return true;
         }
         if (requote) {
-          applyRefundRequote(
+          const currency = applyRefundRequote(
             queryClient,
             cancelPreviewUrl(appointmentId),
             requote,
           );
-          toast({
-            title: "The refund has changed",
-            description:
-              "Check the new amount in the dialog and confirm again.",
-          });
+          toast(refundChangedToast(requote, currency));
           return false;
         }
         const refusal =
@@ -411,7 +412,7 @@ export function useConsultantEventActions({
         { tags: { subsystem: "client" } },
       );
       toast({
-        title: "Error",
+        title: "Couldn't cancel this booking",
         description: actionFailureMessage(
           error,
           "Failed to cancel appointment",
@@ -445,6 +446,15 @@ export function useConsultantEventActions({
       try {
         await requireJsonResponse(response, "Failed to cancel trial");
       } catch (error) {
+        const requote =
+          error instanceof ApiResponseError && error.status === 409
+            ? readRefundQuoteChanged(error.body)
+            : null;
+        if (requote) {
+          const currency = applyRefundRequote(queryClient, previewUrl, requote);
+          toast(refundChangedToast(requote, currency));
+          return false;
+        }
         if (error instanceof ApiResponseError && error.status === 409) {
           void queryClient.invalidateQueries({
             queryKey: cancelPreviewQueryKey(previewUrl),
@@ -472,7 +482,7 @@ export function useConsultantEventActions({
         );
       }
       toast({
-        title: "Error",
+        title: "Couldn't cancel this trial",
         description: actionFailureMessage(error, "Failed to cancel trial"),
         variant: "destructive",
       });

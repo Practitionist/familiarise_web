@@ -733,7 +733,7 @@ export function ModerationPage() {
     },
     onError: (error) => {
       toast({
-        title: "Error",
+        title: "Couldn't apply the action",
         description:
           error instanceof Error ? error.message : "Failed to process action",
         variant: "destructive",
@@ -792,7 +792,7 @@ export function ModerationPage() {
     },
     onError: (error) => {
       toast({
-        title: "Error",
+        title: "Couldn't lift the ban",
         description:
           error instanceof Error ? error.message : "Failed to lift the ban",
         variant: "destructive",
@@ -897,7 +897,7 @@ export function ModerationPage() {
     },
     onError: (error) => {
       toast({
-        title: "Error",
+        title: "Couldn't delete the review",
         description:
           error instanceof Error ? error.message : "Failed to delete review",
         variant: "destructive",

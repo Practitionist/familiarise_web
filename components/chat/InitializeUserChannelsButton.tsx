@@ -29,7 +29,7 @@ export const InitializeUserChannelsButton = ({
   const handleInitializeChannels = async () => {
     if (!userId) {
       toast({
-        title: "Error",
+        title: "Couldn't sync your channels",
         description: "User ID is required",
         variant: "destructive",
       });
@@ -43,7 +43,7 @@ export const InitializeUserChannelsButton = ({
       // The action answers a refusal (no session) as a value, never a throw.
       if (!result.success) {
         toast({
-          title: "Error",
+          title: "Couldn't sync your channels",
           description:
             result.refusal?.message ??
             `Failed to synchronize channels: ${result.error ?? "unknown error"}`,
@@ -65,7 +65,7 @@ export const InitializeUserChannelsButton = ({
     } catch (error) {
       console.error("Error initializing channels via action:", error);
       toast({
-        title: "Error",
+        title: "Couldn't sync your channels",
         description: `Failed to synchronize channels: ${(error as Error).message}`,
         variant: "destructive",
       });

@@ -48,7 +48,14 @@ import type {
 } from "@/lib/appointments/view-model";
 import { useEventActions } from "@/components/appointments/consultee/useEventActions";
 import { CancelConfirmationDialog } from "@/components/appointments/consultee/CancelConfirmationDialog";
-import type { ShownCancelQuote } from "@/lib/appointments/cancel-requote";
+import {
+  applyRefundRequote,
+  cancelPreviewQueryKey,
+  readRefundQuoteChanged,
+  refundChangedToast,
+  type ShownCancelQuote,
+} from "@/lib/appointments/cancel-requote";
+import { errorMessageFromBody } from "@/lib/fetch-helpers";
 import { bookingPayHref } from "@/lib/appointments/trial-checkout-href";
 import { operatorOpsHref } from "@/lib/backoffice/booking-href";
 import { OPS_HINT_LABEL } from "@/components/appointments/OperatorOpsHint";
@@ -602,11 +609,13 @@ export function useConsulteeAppointmentsAdapter(options?: {
   // #1846 — the quoted cancel: DELETE carries the refund the dialog showed,
   // and the server refunds only that amount. A changed quote answers 409; the
   // preview refetches so the dialog shows the new number before a retry.
+  /** Resolves false when the dialog stays open: a re-quoted refund or a refusal to read. */
   const cancelTrial = async (
     id: string,
     title: string,
     quote?: { estimatedRefundPaise: number },
-  ) => {
+  ): Promise<boolean> => {
+    const previewUrl = `/api/trials/${id}/cancel/preview`;
     const response = await fetch(`/api/trials/${id}`, {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
@@ -614,21 +623,33 @@ export function useConsulteeAppointmentsAdapter(options?: {
         quote ? { confirmedRefundPaise: quote.estimatedRefundPaise } : {},
       ),
     });
-    const data = await response.json().catch(() => ({}));
+    const data: unknown = await response.json().catch(() => ({}));
     if (!response.ok) {
+      const requote =
+        response.status === 409 ? readRefundQuoteChanged(data) : null;
+      if (requote) {
+        const currency = applyRefundRequote(queryClient, previewUrl, requote);
+        toast(refundChangedToast(requote, currency));
+        return false;
+      }
       if (response.status === 409) {
         void queryClient.invalidateQueries({
-          queryKey: ["cancel-refund-preview"],
+          queryKey: cancelPreviewQueryKey(previewUrl),
         });
+        toast({
+          title: "This trial can't be cancelled right now",
+          description: errorMessageFromBody(data, "Failed to cancel trial"),
+          variant: "destructive",
+        });
+        return false;
       }
-      throw new Error(
-        (data as { error?: string }).error || "Failed to cancel trial",
-      );
+      throw new Error(errorMessageFromBody(data, "Failed to cancel trial"));
     }
     toast({
       title: "Trial cancelled",
       description: `Your trial "${title}" has been cancelled.`,
     });
+    return true;
   };
 
   const leaveEvent = async (
@@ -680,7 +701,7 @@ export function useConsulteeAppointmentsAdapter(options?: {
     try {
       if (destructive === "cancel-trial") {
         if (!id) throw new Error("Trial id is missing");
-        await cancelTrial(id, activeVm.title, quote);
+        if (!(await cancelTrial(id, activeVm.title, quote))) return;
       } else if (destructive === "leave-event") {
         if (!id) throw new Error("Event id is missing");
         const userId = session?.user?.id;
@@ -712,7 +733,10 @@ export function useConsulteeAppointmentsAdapter(options?: {
     } catch (error) {
       Sentry.captureException(error);
       toast({
-        title: "Error",
+        title:
+          destructive === "leave-event"
+            ? "Couldn't leave this event"
+            : "Couldn't cancel this trial",
         description:
           error instanceof Error ? error.message : "Something went wrong",
         variant: "destructive",

@@ -230,7 +230,7 @@ export function VerificationReviewModal({
       onVerificationComplete();
     } catch (error) {
       toast({
-        title: "Error",
+        title: "Couldn't save the review",
         description:
           error instanceof Error
             ? error.message

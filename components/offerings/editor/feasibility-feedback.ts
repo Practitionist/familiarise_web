@@ -27,3 +27,14 @@ export function feasibilityRefusalOf(error: unknown): string[] | null {
     ? parsed.data.reasons.map((reason) => reason.message)
     : [];
 }
+
+/** The failed-save toast title: what the click was, and why when the hours refused it. */
+export function saveFailedTitle(args: {
+  publish: boolean;
+  wasPublished: boolean;
+  notFeasible: boolean;
+}): string {
+  if (args.notFeasible) return "Your open hours can't fit this plan";
+  if (args.wasPublished) return "Couldn't save your changes";
+  return args.publish ? "Couldn't publish" : "Couldn't save the draft";
+}

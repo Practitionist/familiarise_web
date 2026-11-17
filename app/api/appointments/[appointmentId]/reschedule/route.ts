@@ -82,6 +82,7 @@ import { holdHoursFor } from "@/lib/payments/payouts/earnings-hold";
 import {
   MAX_CONSULTEE_RESCHEDULES,
   MAX_EXPERT_RESCHEDULES,
+  expertRescheduleCapMessage,
   consulteeCapReached,
   priorReschedules as priorRescheduleCount,
   trialCapReached,
@@ -691,9 +692,7 @@ async function requestReschedule(
             if (trialCapReached(prior)) {
               throw initiatorRole === "CONSULTANT"
                 ? Object.assign(
-                    new Error(
-                      "You've already moved this trial once. If the time no longer works, cancel it — the learner gets a full refund.",
-                    ),
+                    new Error(expertRescheduleCapMessage("trial")),
                     { httpStatus: 409, code: "EXPERT_RESCHEDULE_CAP" },
                   )
                 : Object.assign(
@@ -713,10 +712,7 @@ async function requestReschedule(
               prior.total >= MAX_EXPERT_RESCHEDULES
             ) {
               throw Object.assign(
-                new Error(
-                  `You've already rescheduled this booking ${MAX_EXPERT_RESCHEDULES} times. ` +
-                    "If the time no longer works, cancel instead — the client gets a full refund.",
-                ),
+                new Error(expertRescheduleCapMessage("booking")),
                 { httpStatus: 409, code: "EXPERT_RESCHEDULE_CAP" },
               );
             }
