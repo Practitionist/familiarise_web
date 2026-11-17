@@ -328,13 +328,34 @@ async function queueSection(db: Db, now: Date): Promise<SectionBody> {
   };
 }
 
-/** Revocations of a kind that never gives up, still retrying daily past their attempt cap. */
-async function revocationSection(db: Db): Promise<SectionBody> {
+/**
+ * Revocations of a kind that never gives up, still retrying daily past their
+ * attempt cap, and every collaborator revocation not yet done with the age of
+ * the oldest: a former team member keeps their access until it is.
+ */
+async function revocationSection(db: Db, now: Date): Promise<SectionBody> {
+  const items: DigestItem[] = [];
+  const collaborators = await db.streamRevocationRetry.aggregate({
+    where: { kind: "COLLAB_REVOKE", status: { in: ["PENDING", "FAILED"] } },
+    _count: { _all: true },
+    _min: { createdAt: true },
+  });
+  const oldest = collaborators._min.createdAt;
+  if (collaborators._count._all > 0 && oldest) {
+    const ageMs = now.getTime() - oldest.getTime();
+    items.push({
+      text: `${collaborators._count._all} collaborator access revocations still owed (oldest ${formatAge(ageMs)})`,
+      isNew: ageMs < DAY_MS,
+    });
+  }
   const total = await db.streamRevocationRetry.count({
     where: PAST_CAP_REVOCATION_WHERE,
   });
   if (total === 0) {
-    return { items: [], notes: ["No access revocation is past its cap."] };
+    return {
+      items,
+      notes: items.length === 0 ? ["No access revocation is owed."] : [],
+    };
   }
   // A row reaches exactly the cap on the attempt that crossed it; the next one is a day later.
   const crossed = {
@@ -352,16 +373,12 @@ async function revocationSection(db: Db): Promise<SectionBody> {
           })
         ).map((row) => row.id)
       : undefined;
-  return {
-    items: [
-      {
-        text: `${total} Stream access revocations still owed past the retry cap (${fresh} new)`,
-        isNew: fresh > 0,
-        ...(ids ? { ids } : {}),
-      },
-    ],
-    notes: [],
-  };
+  items.push({
+    text: `${total} Stream access revocations still owed past the retry cap (${fresh} new)`,
+    isNew: fresh > 0,
+    ...(ids ? { ids } : {}),
+  });
+  return { items, notes: [] };
 }
 
 async function webhookSection(db: Db, now: Date): Promise<SectionBody> {
@@ -852,7 +869,7 @@ export async function runOpsDigest(
     await read("Held email", () => heldEmailSection(db, now));
     await read("Dead letters", () => deadLetterSection(db, now));
     await read("Queue ages", () => queueSection(db, now));
-    await read("Access revocations", () => revocationSection(db));
+    await read("Access revocations", () => revocationSection(db, now));
     await read("Inbound webhooks", () => webhookSection(db, now));
     await read("Telemetry", () => telemetrySection(db, environment, now));
     await read("Sentry ingest", () => canarySection(db, environment, now));
