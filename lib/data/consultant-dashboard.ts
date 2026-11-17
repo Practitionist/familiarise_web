@@ -15,6 +15,7 @@
 import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
+import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
 import {
   PERSONAL_PLAN_HOST,
   READABLE_ORG_PLAN_HOST,
@@ -344,6 +345,25 @@ const appointmentSelect = {
       },
     },
   },
+  // The open move, so Home's badge reads "Being moved" like the list.
+  rescheduleRequests: {
+    where: { status: { in: RESCHEDULE_OPEN_STATUSES } },
+    orderBy: { createdAt: "desc" as const },
+    take: 1,
+    select: {
+      id: true,
+      status: true,
+      reason: true,
+      expiresAt: true,
+      initiatorRole: true,
+      initiatedById: true,
+      proposedTimes: {
+        orderBy: { startsAt: "asc" as const },
+        take: 1,
+        select: { startsAt: true, endsAt: true },
+      },
+    },
+  },
 } satisfies Prisma.AppointmentSelect;
 
 // Derived via the extended client — raw GetPayload would re-introduce
@@ -645,6 +665,7 @@ export async function getConsultantDashboard(
             },
           }
         : undefined,
+      rescheduleRequests: appointment.rescheduleRequests,
     }),
   );
 

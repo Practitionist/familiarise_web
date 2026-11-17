@@ -4,9 +4,14 @@ import prisma from "@/lib/prisma";
 import { findUserIssues } from "@/lib/observability/sentry-issues";
 import type {
   CaseBooking,
+  CaseBookingFacts,
   CasePayment,
   CaseWorkspace,
 } from "@/types/support-case";
+import { listStatusFacts } from "@/lib/appointments/list-status-facts";
+import type { OpenRescheduleProposal } from "@/lib/appointments/consultee-affordances";
+import { toDate } from "@/lib/appointments/view-model";
+import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
 import { caseKeyOf, type CaseRef } from "./case-key";
 import { isPresenterAuthoredMessage } from "./case-message-actor";
 import { PLAN_TITLE_SELECT, planTitle } from "./case-read";
@@ -21,6 +26,7 @@ const BOOKING_SELECT = {
   consultation: {
     select: {
       status: true,
+      bookingSource: true,
       requestedBy: { select: { user: { select: { name: true } } } },
       consultationPlan: {
         select: {
@@ -33,6 +39,7 @@ const BOOKING_SELECT = {
   subscription: {
     select: {
       status: true,
+      bookingSource: true,
       requestedBy: { select: { user: { select: { name: true } } } },
       subscriptionPlan: {
         select: {
@@ -101,6 +108,40 @@ export async function readCaseBooking(
         select: { status: true },
         take: 1,
       },
+      // The requester's own payment on a class or webinar; any payment on a 1:1.
+      payment: {
+        where: {
+          deletedAt: null,
+          OR: [
+            { userId: requester.id },
+            { appointment: { webinarId: null, classId: null } },
+          ],
+        },
+        select: {
+          paymentStatus: true,
+          expiresAt: true,
+          amount: true,
+          currency: true,
+        },
+      },
+      rescheduleRequests: {
+        where: { status: { in: RESCHEDULE_OPEN_STATUSES } },
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: {
+          id: true,
+          status: true,
+          reason: true,
+          expiresAt: true,
+          initiatorRole: true,
+          initiatedById: true,
+          proposedTimes: {
+            orderBy: { startsAt: "asc" },
+            take: 1,
+            select: { startsAt: true, endsAt: true },
+          },
+        },
+      },
     },
   });
   if (!a) return null;
@@ -132,6 +173,41 @@ export async function readCaseBooking(
       a.webinar?.status ??
       null,
     seatStatus: a.participants[0]?.status ?? null,
+    facts: caseStatusFacts(a),
+  };
+}
+
+/** The list-status facts the other screens read, serialised for the drawer. */
+function caseStatusFacts(a: {
+  id: string;
+  consultation: { bookingSource: string } | null;
+  subscription: { bookingSource: string } | null;
+  payment: {
+    paymentStatus: string;
+    expiresAt: Date | null;
+    amount: number;
+    currency: string;
+  }[];
+  rescheduleRequests: OpenRescheduleProposal[];
+}): CaseBookingFacts {
+  const facts = listStatusFacts(a, []);
+  const r = facts.reschedule;
+  return {
+    source:
+      a.consultation?.bookingSource ?? a.subscription?.bookingSource ?? null,
+    paid: !!facts.paid,
+    payDeadline: facts.payDeadline ? iso(toDate(facts.payDeadline)) : null,
+    payLapsed: !!facts.payLapsed,
+    reschedule: r
+      ? {
+          by: r.by,
+          proposedStartsAt: r.proposedStartsAt
+            ? iso(toDate(r.proposedStartsAt))
+            : null,
+          originalStartsAt: null,
+          expiresAt: r.expiresAt ? iso(toDate(r.expiresAt)) : null,
+        }
+      : null,
   };
 }
 

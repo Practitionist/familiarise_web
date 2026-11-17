@@ -75,6 +75,21 @@ export interface CaseBooking {
   status: string | null;
   /** The requester's own seat on a class or webinar; null for a 1:1. */
   seatStatus: string | null;
+  /** The payment and open-move facts the list status reads. */
+  facts: CaseBookingFacts;
+}
+
+export interface CaseBookingFacts {
+  source: string | null;
+  paid: boolean;
+  payDeadline: string | null;
+  payLapsed: boolean;
+  reschedule: {
+    by: "CONSULTANT" | "REQUESTER";
+    proposedStartsAt: string | null;
+    originalStartsAt: string | null;
+    expiresAt: string | null;
+  } | null;
 }
 
 export interface CasePayment {

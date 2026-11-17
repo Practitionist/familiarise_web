@@ -11,7 +11,7 @@ import {
 } from "react";
 import type { Channel, ChannelSort, Event } from "stream-chat";
 import { useChatContext } from "stream-chat-react";
-import { getChannelTypeFromId } from "@/lib/stream-channel-ids";
+import { getChannelTypeFromId, isEventChannel } from "@/lib/stream-channel-ids";
 import { ChannelItem } from "./ChannelItem";
 import { ChannelSearch } from "./ChannelSearch";
 import { NewMessageDialog } from "./NewMessageDialog";
@@ -195,7 +195,7 @@ function sortUpdatedChannels(
 
 export const ChatSidebar = () => {
   const { client, setActiveChannel } = useChatContext();
-  const { openConversation } = useChatPane();
+  const { openConversation, markLinkUnavailable } = useChatPane();
   const { toast } = useToast();
   // The app role, NOT `client.user.role` — mapRoleToStream collapses every
   // non-staff account to Stream's `"user"`, so the old `=== "consultant"`
@@ -1010,6 +1010,15 @@ export const ChatSidebar = () => {
       if (cancelled) return;
       completed = true;
       initialSelectionDoneRef.current = false;
+      markLinkUnavailable?.(
+        deepLinkEventType ||
+          (deepLinkChannelId &&
+            isEventChannel(
+              parseDeepLinkChannelTarget(deepLinkChannelId).channelId,
+            ))
+          ? "event"
+          : "conversation",
+      );
       toast({
         title: "Unable to open conversation",
         description,
@@ -1142,6 +1151,7 @@ export const ChatSidebar = () => {
     scope,
     handleChannelSelect,
     toast,
+    markLinkUnavailable,
   ]);
 
   // Debug Stream tools: local hostname only — never on deployed/preview hosts

@@ -22,6 +22,7 @@ import {
 } from "./occurrences";
 import { normalizeStatus } from "./status";
 import { trialMeta } from "./trial-labels";
+import { bookingStatus, type BookingStatus } from "./booking-status";
 import {
   sortOccurrences,
   toDate,
@@ -93,6 +94,8 @@ export interface ConsultantAppointmentsInput {
   scheduledTrials?: ConsultantTrialLike[];
   unscheduledClasses?: UnscheduledClassLike[];
   unscheduledWebinars?: UnscheduledWebinarLike[];
+  /** The signed-in user, so an open move is filed by who answers it. */
+  viewerUserId?: string | null;
   /** Viewer's consultantProfile id — resolves their collaborator role. */
   consultantId: string;
 }
@@ -197,6 +200,21 @@ export function getAppointmentLifecycleStatus(
   return eventFacts(appointment).status;
 }
 
+/** The consultant Home's status for a bare appointment, an open move included. */
+export function consultantHomeStatus(appointment: TAppointment): BookingStatus {
+  return bookingStatus(
+    {
+      kind: appointment.appointmentType,
+      status: getAppointmentLifecycleStatus(appointment),
+      source:
+        appointment.consultation?.bookingSource ??
+        appointment.subscription?.bookingSource,
+      reschedule: listStatusFacts(appointment, []).reschedule,
+    },
+    "CONSULTANT",
+  );
+}
+
 interface PlanCollaboratorLike {
   consultantProfileId: string;
   role: string;
@@ -261,6 +279,7 @@ function mapSingle(
   appointment: TAppointmentWithSeats,
   consultantId: string,
   now: Date,
+  viewerUserId?: string | null,
 ): AppointmentVM {
   const occurrences = sortOccurrences(occurrencesOfAppointment(appointment));
   const { title, counterpart, status } = eventFacts(appointment, consultantId);
@@ -269,7 +288,10 @@ function mapSingle(
     appointment.consultation?.bookingSource ??
     appointment.subscription?.bookingSource ??
     null;
-  const facts = listStatusFacts(appointment, occurrences);
+  const facts = listStatusFacts(appointment, occurrences, {
+    side: "CONSULTANT",
+    userId: viewerUserId,
+  });
   return {
     id: `appointment-${appointment.id}`,
     // Always the viewing consultant: this is their own list.
@@ -289,6 +311,7 @@ function mapSingle(
         holdOpen: holdOpenFrom(facts, now),
         paid: facts.paid,
         moving: !!facts.reschedule,
+        moveMine: facts.reschedule?.mine,
       },
       "consultant",
     ),
@@ -314,6 +337,7 @@ function mapGroup(
   children: TAppointmentWithSeats[],
   consultantId: string,
   now: Date,
+  viewerUserId?: string | null,
 ): AppointmentVM {
   const first = children[0];
   const occurrences = sortOccurrences(
@@ -325,7 +349,10 @@ function mapGroup(
   const completed = live.filter((s) => isOccurrenceOver(s, now)).length;
   const target = nextActionableChild(children, now);
   const source = first.subscription?.bookingSource ?? null;
-  const facts = listStatusFacts(first, occurrences);
+  const facts = listStatusFacts(first, occurrences, {
+    side: "CONSULTANT",
+    userId: viewerUserId,
+  });
   const groupId =
     first.appointmentType === "SUBSCRIPTION"
       ? `subscription-${first.subscriptionId}`
@@ -348,6 +375,7 @@ function mapGroup(
         holdOpen: holdOpenFrom(facts, now),
         paid: facts.paid,
         moving: !!facts.reschedule,
+        moveMine: facts.reschedule?.mine,
       },
       "consultant",
     ),
@@ -506,6 +534,7 @@ export function mapConsultantAppointments(
     unscheduledClasses = [],
     unscheduledWebinars = [],
     consultantId,
+    viewerUserId,
   } = input;
 
   // Group subscription/class children under their parent (one row per
@@ -528,10 +557,10 @@ export function mapConsultantAppointments(
   const vms: AppointmentVM[] = [];
   for (const [key, children] of Array.from(groups.entries())) {
     if (key.startsWith("single-")) {
-      vms.push(mapSingle(children[0], consultantId, now));
+      vms.push(mapSingle(children[0], consultantId, now, viewerUserId));
     } else {
       children.sort((a, b) => firstSlotTime(a) - firstSlotTime(b));
-      vms.push(mapGroup(children, consultantId, now));
+      vms.push(mapGroup(children, consultantId, now, viewerUserId));
     }
   }
 

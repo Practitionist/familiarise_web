@@ -36,6 +36,8 @@ export interface BucketInput {
   paid?: boolean;
   /** An open reschedule: the booking waits on the other side's answer, not on a payment. */
   moving?: boolean;
+  /** The viewer proposed that move; undefined when the caller cannot say. */
+  moveMine?: boolean;
   /** The viewer's own webinar or class seat is held on a payment that has not succeeded. */
   unpaidSeat?: boolean;
   now?: Date;
@@ -91,6 +93,12 @@ export function deriveBucket(
       needsActionReason: "PAY_NOW",
     };
   }
+  // A pending move is filed by who answers next: the proposer waits, the other side answers.
+  if (input.moving && input.moveMine !== undefined && isPendingStatus(status)) {
+    return input.moveMine
+      ? { bucket: "waiting", needsActionReason: "PENDING_APPROVAL" }
+      : { bucket: "needsAction", needsActionReason: "ANSWER_MOVE" };
+  }
   // The viewer's own unpaid seat decides a group row: pay while it holds, else it is over.
   if (input.unpaidSeat) {
     return input.holdOpen === false
@@ -142,5 +150,6 @@ export function deriveBucket(
 export function noSessionLabel(reason: NeedsActionReason | null): string {
   if (reason === "AWAITING_SCHEDULING") return "Awaiting scheduling";
   if (reason === "NEEDS_RESCHEDULING") return "Needs rescheduling";
+  if (reason === "ANSWER_MOVE") return "Answer the new time";
   return "Not scheduled";
 }

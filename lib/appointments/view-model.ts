@@ -28,7 +28,9 @@ export type NeedsActionReason =
   /** Approved, and no session has been placed yet (a plan awaiting its first cycle). */
   | "AWAITING_SCHEDULING"
   /** Approved, but every session it had was released or cancelled. */
-  | "NEEDS_RESCHEDULING";
+  | "NEEDS_RESCHEDULING"
+  /** The other side proposed a move; the viewer answers it. */
+  | "ANSWER_MOVE";
 
 /**
  * Minimal structural occurrence shape. Both Prisma's bare AppointmentOccurrence

@@ -59,11 +59,11 @@ import {
   getProximityLabel,
   type OccurrenceJoinState,
 } from "@/lib/appointments/occurrences";
-import { getAppointmentLifecycleStatus } from "@/lib/appointments/map-consultant";
 import {
-  bookingStatus,
-  bookingStatusBadge,
-} from "@/lib/appointments/booking-status";
+  consultantHomeStatus,
+  getAppointmentLifecycleStatus,
+} from "@/lib/appointments/map-consultant";
+import { bookingStatusBadge } from "@/lib/appointments/booking-status";
 import { TAppointment } from "@/types/appointment";
 import { useNowTick } from "@/hooks/use-now-tick";
 import { getInitials } from "@/utils/formatting";
@@ -78,18 +78,7 @@ import { formatForViewer, type ViewerZone } from "@/lib/time/viewer-zone";
 
 /** A row's chip: the one booking status, as the expert sees it. */
 function homeStatusBadge(appointment: TAppointment) {
-  return bookingStatusBadge(
-    bookingStatus(
-      {
-        kind: appointment.appointmentType,
-        status: getAppointmentLifecycleStatus(appointment),
-        source:
-          appointment.consultation?.bookingSource ??
-          appointment.subscription?.bookingSource,
-      },
-      "CONSULTANT",
-    ),
-  );
+  return bookingStatusBadge(consultantHomeStatus(appointment));
 }
 
 /** One pattern for both Home lists; the zone label rides along when the
