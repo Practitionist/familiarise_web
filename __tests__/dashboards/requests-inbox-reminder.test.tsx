@@ -148,6 +148,20 @@ describe.each(["consultation"] as const)("%s reminder eligibility", (kind) => {
         },
       },
     ],
+    [
+      "soft-deleted only pending order",
+      {
+        ...base,
+        appointment: {
+          ...appointment,
+          payment: [{ ...payment, deletedAt: hoursAgo(1) }],
+        },
+      },
+    ],
+    [
+      "soft-deleted appointment",
+      { ...base, appointment: { ...appointment, deletedAt: hoursAgo(1) } },
+    ],
   ])("hides Remind for %s", async (_label, request) => {
     const row = await readOne(request);
     expect(row.reminderExpiresAt).toBeNull();
