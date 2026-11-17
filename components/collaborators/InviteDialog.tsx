@@ -61,9 +61,7 @@ export function parseShare(text: string, max: number): number | null {
 }
 
 /** Why this plan cannot take another invitation now, or null when it can. */
-function inviteBlockedReason(
-  team: readonly TeamMember[],
-): string | null {
+function inviteBlockedReason(team: readonly TeamMember[]): string | null {
   if (team.length >= MAX_COLLABORATORS_PER_PLAN) {
     return `This plan already has ${MAX_COLLABORATORS_PER_PLAN} invited or accepted collaborators, the most a plan can have.`;
   }
