@@ -522,18 +522,18 @@ graph TD
     C -->|Accept| D[Collaborator Active]
     C -->|Decline| E[Invitation Declined]
     D --> F[Revenue Split Configured<br/>e.g., 70% Owner / 30% Co-Host]
-    F --> G[After session, earnings<br/>split automatically]
+    F --> G[Each seat paid for while they are<br/>on the team is split at capture]
 ```
 
 **How to test:**
 
 1. Create a webinar or class
-2. Go to the plan → Add Collaborator
+2. Open the saved plan in the offering editor → Collaborators tab → Invite
 3. Search for another consultant, assign a role (Co-Host, Moderator, Guest Speaker, etc.)
-4. Set revenue share percentage
+4. Set the revenue share (a whole percent from 1 to 90) and review the invitation
 5. Switch to the other consultant's account — they should see the invitation
-6. Accept the invitation
-7. After a paid session, check that earnings split correctly
+6. Accept the invitation (the accept confirms the role and share shown)
+7. After a seat is paid for, check that its earnings are split between the owner and the collaborator; a seat paid for after the collaborator is removed must not include them
 
 **Collaborator roles:**
 
@@ -1392,8 +1392,8 @@ erDiagram
     CONSULTANT_PROFILE ||--o{ CONSULTANT_EARNINGS : earns
     CONSULTANT_EARNINGS ||--o| PAYOUT : "paid via"
 
-    WEBINAR_PLAN ||--o{ WEBINAR_COLLABORATOR : "has collaborators"
-    CLASS_PLAN ||--o{ CLASS_COLLABORATOR : "has collaborators"
+    WEBINAR_PLAN ||--o{ COLLABORATOR : "has collaborators"
+    CLASS_PLAN ||--o{ COLLABORATOR : "has collaborators"
 
     USER ||--o| REFERRAL_CODE : "has referral code"
     REFERRAL_CODE ||--o{ REFERRAL : "tracks referrals"
@@ -1402,22 +1402,22 @@ erDiagram
 
 ## Key Status Enums Reference
 
-| Entity                   | Statuses                                                                     | Meaning                                   |
-| ------------------------ | ---------------------------------------------------------------------------- | ----------------------------------------- |
-| **Payment**              | PENDING → SUCCEEDED / FAILED / EXPIRED                                       | Payment processing lifecycle              |
-| **Refund**               | PENDING → SUCCEEDED / FAILED / CANCELLED                                     | Refund processing                         |
-| **Dispute**              | NEEDS_RESPONSE → UNDER_REVIEW → WON / LOST / CHARGE_REFUNDED                 | Chargeback lifecycle                      |
-| **Earnings**             | PENDING → HELD → READY → PAID / REFUNDED                                     | Consultant money lifecycle                |
-| **Payout**               | PENDING → APPROVED → PROCESSING → COMPLETED / FAILED                         | Money transfer to bank                    |
-| **Request**              | PENDING → APPROVED → SCHEDULED → COMPLETED / REJECTED / CANCELLED / EXPIRED  | Booking request lifecycle                 |
-| **Trial**                | PENDING → SCHEDULED → COMPLETED → CONVERTED / CANCELLED / REJECTED           | Trial lifecycle                           |
-| **Window interest**      | WAITING → NOTIFIED → BOOKED / EXPIRED                                        | "Notify me if this time opens" (1:1 only) |
-| **Document Review**      | PENDING → IN_REVIEW → APPROVED / REJECTED / NEEDS_REVISION                   | Document review workflow                  |
-| **Recording**            | RECORDING → PROCESSING → READY → TRANSFERRING → AVAILABLE / FAILED / EXPIRED | Recording storage lifecycle               |
-| **Profile Verification** | PENDING → APPROVED / REJECTED / NEEDS_INFO                                   | Consultant verification                   |
-| **Moderation Report**    | PENDING → UNDER_REVIEW → DISMISSED / ACTION_TAKEN / ESCALATED                | Content moderation                        |
-| **Support Ticket**       | OPEN → IN_PROGRESS → RESOLVED / CLOSED                                       | Support workflow                          |
-| **Collaborator**         | PENDING → ACCEPTED / DECLINED / REMOVED                                      | Collaboration invitation                  |
+| Entity                   | Statuses                                                                          | Meaning                                   |
+| ------------------------ | --------------------------------------------------------------------------------- | ----------------------------------------- |
+| **Payment**              | PENDING → SUCCEEDED / FAILED / EXPIRED                                            | Payment processing lifecycle              |
+| **Refund**               | PENDING → SUCCEEDED / FAILED / CANCELLED                                          | Refund processing                         |
+| **Dispute**              | NEEDS_RESPONSE → UNDER_REVIEW → WON / LOST / CHARGE_REFUNDED                      | Chargeback lifecycle                      |
+| **Earnings**             | PENDING → HELD → READY → PAID / REFUNDED                                          | Consultant money lifecycle                |
+| **Payout**               | PENDING → APPROVED → PROCESSING → COMPLETED / FAILED                              | Money transfer to bank                    |
+| **Request**              | PENDING → APPROVED → SCHEDULED → COMPLETED / REJECTED / CANCELLED / EXPIRED       | Booking request lifecycle                 |
+| **Trial**                | PENDING → SCHEDULED → COMPLETED → CONVERTED / CANCELLED / REJECTED                | Trial lifecycle                           |
+| **Window interest**      | WAITING → NOTIFIED → BOOKED / EXPIRED                                             | "Notify me if this time opens" (1:1 only) |
+| **Document Review**      | PENDING → IN_REVIEW → APPROVED / REJECTED / NEEDS_REVISION                        | Document review workflow                  |
+| **Recording**            | RECORDING → PROCESSING → READY → TRANSFERRING → AVAILABLE / FAILED / EXPIRED      | Recording storage lifecycle               |
+| **Profile Verification** | PENDING → APPROVED / REJECTED / NEEDS_INFO                                        | Consultant verification                   |
+| **Moderation Report**    | PENDING → UNDER_REVIEW → DISMISSED / ACTION_TAKEN / ESCALATED                     | Content moderation                        |
+| **Support Ticket**       | OPEN → IN_PROGRESS → RESOLVED / CLOSED                                            | Support workflow                          |
+| **Collaborator**         | PENDING → ACCEPTED / DECLINED / EXPIRED / REMOVED; ACCEPTED → REMOVED / WITHDRAWN | Collaboration invitation                  |
 
 ---
 
