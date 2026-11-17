@@ -2,6 +2,10 @@ import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { reportSentryError } from "@/lib/observability/report";
 import { readJsonBody } from "@/lib/api/parse";
+import { z } from "zod";
+
+const CreateTopicsBody = z.object({ names: z.array(z.unknown()).min(1) });
+const DeleteTopicsBody = z.object({ ids: z.array(z.string()).min(1) });
 
 export async function GET(req: NextRequest) {
   try {
@@ -42,17 +46,15 @@ export async function POST(req: NextRequest) {
   try {
     const read = await readJsonBody(req);
     if (read.error) return read.error;
-    const body = read.body;
-    const { names } = body;
-    console.log("Received topic creation request:", { names });
-
-    // Validate request
-    if (!Array.isArray(names) || names.length === 0) {
+    const parsed = CreateTopicsBody.safeParse(read.body);
+    if (!parsed.success) {
       return NextResponse.json(
         { error: "Topics array is required" },
         { status: 400 },
       );
     }
+    const { names } = parsed.data;
+    console.log("Received topic creation request:", { names });
 
     // Process each name to ensure it's a string and not empty
     const validNames = names.filter(
@@ -130,15 +132,14 @@ export async function DELETE(req: NextRequest) {
   try {
     const read = await readJsonBody(req);
     if (read.error) return read.error;
-    const body = read.body;
-    const { ids } = body;
-
-    if (!Array.isArray(ids) || ids.length === 0) {
+    const parsed = DeleteTopicsBody.safeParse(read.body);
+    if (!parsed.success) {
       return NextResponse.json(
         { error: "Topic IDs array is required" },
         { status: 400 },
       );
     }
+    const { ids } = parsed.data;
 
     console.log("Request to delete topics with IDs:", ids);
 

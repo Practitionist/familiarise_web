@@ -53,7 +53,8 @@ export async function GET(request: NextRequest) {
     if (sort === "trending") {
       const ranked = await getClassTrendingRank(JSON.stringify(where));
 
-      return rankAndPaginate(
+      // Awaited so a failed page fetch reaches this catch and its capture.
+      return await rankAndPaginate(
         ranked,
         (ids) =>
           prisma.classPlan.findMany({

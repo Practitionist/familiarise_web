@@ -14,7 +14,10 @@ jest.mock("@/lib/observability/report", () => ({
 
 import { NextRequest } from "next/server";
 import { DELETE as deletePlanImage } from "@/app/api/plans/image/route";
-import { POST as createTopics } from "@/app/api/user/content/topics/route";
+import {
+  DELETE as deleteTopics,
+  POST as createTopics,
+} from "@/app/api/user/content/topics/route";
 
 const junk = (path: string, method: string) =>
   new NextRequest(`http://x${path}`, { method, body: "{not json" });
@@ -34,3 +37,21 @@ it.each([
   expect((await res.json()).code).toBe("MALFORMED_JSON");
   expect(reportSentryError).not.toHaveBeenCalled();
 });
+
+it.each([
+  ["POST", createTopics, "Topics array is required"],
+  ["DELETE", deleteTopics, "Topic IDs array is required"],
+] as const)(
+  "%s /api/user/content/topics with a JSON null body answers 400",
+  async (method, handler, error) => {
+    const res = await handler(
+      new NextRequest("http://x/api/user/content/topics", {
+        method,
+        body: "null",
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error });
+    expect(reportSentryError).not.toHaveBeenCalled();
+  },
+);

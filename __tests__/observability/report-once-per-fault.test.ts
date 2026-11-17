@@ -1,6 +1,6 @@
 /**
  * A fault is captured once: reporting the same error again, or an error that
- * wraps it as `cause`, answers with the first event id and sends nothing.
+ * wraps it as `cause` or `originalError`, answers with the first event id and sends nothing.
  */
 
 let next = 0;
@@ -11,6 +11,7 @@ jest.mock("@sentry/core", () => ({
 }));
 
 import { reportSentryError } from "../../lib/observability/report";
+import { PaymentError } from "../../lib/payments/core/types";
 
 beforeEach(() => {
   captureException.mockClear();
@@ -25,6 +26,19 @@ it("captures a rethrown fault once and returns its first id", () => {
     cause: fault,
   });
   expect(reportSentryError(wrapper, { subsystem: "checkout" })).toBe(first);
+  expect(captureException).toHaveBeenCalledTimes(1);
+});
+
+it("returns the gateway event id for the PaymentError that wraps it", () => {
+  const gateway = new Error("razorpay 502");
+  const first = reportSentryError(gateway, { subsystem: "payments" });
+  const wrapped = new PaymentError(
+    "Payment gateway temporarily unavailable",
+    "GATEWAY_ERROR",
+    "RAZORPAY",
+    gateway,
+  );
+  expect(reportSentryError(wrapped, { subsystem: "payments" })).toBe(first);
   expect(captureException).toHaveBeenCalledTimes(1);
 });
 
