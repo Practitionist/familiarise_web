@@ -371,6 +371,14 @@ export async function stageCollaboratorNotifications(
   };
 }
 
+/** The claim scope of the one reminder an invitation gets before it lapses. */
+export const INVITE_REMINDER_SCOPE = "collaborator.invite-expiring";
+
+/** The reminder's claim key, which is also its bell's dedupe key: an edit to the terms starts a new one. */
+export const inviteReminderKey = (
+  row: Pick<Collaborator, "id" | "updatedAt">,
+): string => collaboratorNoticeKey(row, "EXPIRING_SOON");
+
 /**
  * Claims the one reminder an invitation gets for its current terms. The claim
  * commits with the notice, so a second run finds it and stages nothing.
@@ -380,11 +388,11 @@ async function claimReminder(
   row: CollaboratorNoticeRow,
   userId: string,
 ): Promise<boolean> {
-  const key = collaboratorNoticeKey(row, "EXPIRING_SOON");
+  const key = inviteReminderKey(row);
   const claimed = await tx.idempotencyRecord.createMany({
     data: [
       {
-        scope: "collaborator.invite-expiring",
+        scope: INVITE_REMINDER_SCOPE,
         key,
         userId,
         requestHash: key,

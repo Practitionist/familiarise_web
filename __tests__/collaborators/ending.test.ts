@@ -9,9 +9,17 @@ const mockFlush = jest.fn();
 const mockPersist = jest.fn();
 const mockRevoke = jest.fn();
 const mockReport = jest.fn();
+const mockOutOfTime = jest.fn(() => false);
+const reminderKey = (r: { id: string; updatedAt: Date }) =>
+  `${r.id}:EXPIRING_SOON:${r.updatedAt.toISOString()}`;
 jest.mock("@/lib/collaborators/notifications", () => ({
+  INVITE_REMINDER_SCOPE: "collaborator.invite-expiring",
+  inviteReminderKey: (r: { id: string; updatedAt: Date }) => reminderKey(r),
   stageCollaboratorNotifications: (...args: unknown[]) =>
     mockStageNotices(...args),
+}));
+jest.mock("@/lib/cron/run-deadline", () => ({
+  startDeadlineShare: () => () => mockOutOfTime(),
 }));
 jest.mock("@/lib/novu/stage-then-attempt", () => ({
   flushNotificationsAfter: (...args: unknown[]) => mockFlush(...args),
@@ -51,7 +59,7 @@ type Where = {
   consultantProfileId?: string;
   webinarPlanId?: string;
   status?: string | { in: string[] };
-  updatedAt?: { lt: Date };
+  updatedAt?: Date | { lt: Date; gte?: Date };
   consultantProfile?: { userId: string };
 };
 type Write = { where: Where; data: Partial<Row> };
@@ -65,6 +73,8 @@ const USER_OF: Record<string, string> = {
 };
 
 let rows: Row[] = [];
+/** The reminders already claimed, by key. */
+let reminded: Set<string> = new Set();
 const row = (over: Partial<Row> = {}): Row => ({
   id: "c-1",
   consultantProfileId: "cp-guest",
@@ -83,7 +93,12 @@ function matches(r: Row, where: Where): boolean {
   const { status, updatedAt, consultantProfile } = where;
   if (typeof status === "string" && r.status !== status) return false;
   if (typeof status === "object" && !status.in.includes(r.status)) return false;
-  if (updatedAt && !(r.updatedAt < updatedAt.lt)) return false;
+  if (updatedAt instanceof Date) {
+    if (r.updatedAt.getTime() !== updatedAt.getTime()) return false;
+  } else if (updatedAt) {
+    if (!(r.updatedAt < updatedAt.lt)) return false;
+    if (updatedAt.gte && r.updatedAt < updatedAt.gte) return false;
+  }
   if (
     consultantProfile &&
     USER_OF[r.consultantProfileId] !== consultantProfile.userId
@@ -102,7 +117,13 @@ function matches(r: Row, where: Where): boolean {
 const mockTx = {
   collaborator: {
     findMany: jest.fn(async ({ where }: { where: Where }) =>
-      rows.filter((r) => matches(r, where)).map(({ id }) => ({ id })),
+      rows
+        .filter((r) => matches(r, where))
+        .map(({ id, updatedAt }) => ({ id, updatedAt })),
+    ),
+    findFirst: jest.fn(
+      async ({ where }: { where: Where }) =>
+        rows.find((r) => matches(r, where)) ?? null,
     ),
     updateManyAndReturn: jest.fn(async ({ where, data }: Write) => {
       const hit = rows.filter((r) => matches(r, where));
@@ -123,6 +144,10 @@ jest.mock("@/lib/prisma", () => ({
     $transaction: (run: (tx: unknown) => unknown) => mockTransaction(run),
     get collaborator() {
       return mockTx.collaborator;
+    },
+    idempotencyRecord: {
+      findMany: async ({ where }: { where: { key: { in: string[] } } }) =>
+        where.key.in.filter((key) => reminded.has(key)).map((key) => ({ key })),
     },
   },
 }));
@@ -154,10 +179,15 @@ const STATUSES = [
 
 beforeEach(() => {
   rows = [];
-  mockStageNotices.mockImplementation(async (_tx, event: string, r: Row) => ({
-    bells: [{ id: `bell:${r.id}:${event}` }],
-    emails: [{ list: [{ id: `mail:${r.id}` }], emailType: event }],
-  }));
+  reminded = new Set();
+  mockOutOfTime.mockReturnValue(false);
+  mockStageNotices.mockImplementation(async (_tx, event: string, r: Row) => {
+    if (event === "EXPIRING_SOON") reminded.add(reminderKey(r));
+    return {
+      bells: [{ id: `bell:${r.id}:${event}` }],
+      emails: [{ list: [{ id: `mail:${r.id}` }], emailType: event }],
+    };
+  });
   mockFlush.mockResolvedValue(undefined);
   mockPersist.mockResolvedValue(GENERATION);
   mockRevoke.mockResolvedValue(undefined);
@@ -446,7 +476,7 @@ describe("the invitation expiry sweep", () => {
   it("ends a lapsed invitation as EXPIRED and leaves alone one edited since the cutoff", async () => {
     rows = [
       row({ id: "lapsed", updatedAt: daysAgo(15) }),
-      row({ id: "fresh", updatedAt: daysAgo(13) }),
+      row({ id: "fresh", updatedAt: daysAgo(5) }),
       onTeam({ id: "member", updatedAt: daysAgo(40) }),
     ];
     // The invitee's terms were changed after the sweep listed the row.
@@ -457,8 +487,10 @@ describe("the invitation expiry sweep", () => {
 
     await expect(expireStaleCollaboratorInvites()).resolves.toEqual({
       expired: 1,
+      reminded: 0,
       scanned: 2,
       failed: 0,
+      hasMore: false,
     });
 
     expect(rows.map((r) => r.status)).toEqual([
@@ -502,8 +534,10 @@ describe("the invitation expiry sweep", () => {
 
     await expect(expireStaleCollaboratorInvites()).resolves.toEqual({
       expired: 1,
+      reminded: 0,
       scanned: 3,
       failed: 2,
+      hasMore: false,
     });
 
     expect(rows.map((r) => r.status)).toEqual([
@@ -520,5 +554,66 @@ describe("the invitation expiry sweep", () => {
         extra: { failed: 2, scanned: 3, collaboratorIds: ["a", "b"] },
       },
     );
+  });
+  it("reminds an invitee once, three days before the invitation lapses, and a second run does nothing", async () => {
+    rows = [
+      row({ id: "soon", updatedAt: daysAgo(12) }),
+      row({ id: "early", updatedAt: daysAgo(5) }),
+      onTeam({ id: "member", updatedAt: daysAgo(12) }),
+    ];
+
+    await expect(expireStaleCollaboratorInvites()).resolves.toMatchObject({
+      expired: 0,
+      reminded: 1,
+      scanned: 1,
+    });
+    expect(mockStageNotices).toHaveBeenCalledTimes(1);
+    expect(mockStageNotices).toHaveBeenCalledWith(
+      mockTx,
+      "EXPIRING_SOON",
+      expect.objectContaining({ id: "soon" }),
+    );
+    expect(rows[0].status).toBe("PENDING");
+
+    await expect(expireStaleCollaboratorInvites()).resolves.toMatchObject({
+      reminded: 0,
+      scanned: 0,
+    });
+    expect(mockStageNotices).toHaveBeenCalledTimes(1);
+
+    // New terms restart the window, so the invitation is reminded again.
+    rows[0].updatedAt = daysAgo(11.5);
+    await expect(expireStaleCollaboratorInvites()).resolves.toMatchObject({
+      reminded: 1,
+    });
+  });
+
+  it("starts no row past its time budget, leaves the rest for the next run and reports once", async () => {
+    rows = [
+      ...["a", "b", "c"].map((id) => row({ id, updatedAt: daysAgo(20) })),
+      row({ id: "soon", updatedAt: daysAgo(12) }),
+    ];
+    mockOutOfTime
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(false)
+      .mockReturnValue(true);
+    mockTx.collaborator.updateManyAndReturn.mockRejectedValueOnce(
+      new Error("first failure"),
+    );
+
+    await expect(expireStaleCollaboratorInvites()).resolves.toEqual({
+      expired: 1,
+      reminded: 0,
+      scanned: 3,
+      failed: 1,
+      hasMore: true,
+    });
+    expect(rows.map((r) => r.status)).toEqual([
+      "PENDING",
+      "EXPIRED",
+      "PENDING",
+      "PENDING",
+    ]);
+    expect(mockReport).toHaveBeenCalledTimes(1);
   });
 });
