@@ -362,6 +362,8 @@ it("tells the plan's team of a cancelled session and of its make-up, once and ne
     }),
   ]);
   expect(teamBells()[0]).not.toHaveProperty("required");
+  // The team's own sentence: no make-up deadline or refund is promised to it.
+  expect(teamBells()[0].payload).toMatchObject({ forTeam: true });
 
   stageBell.mockClear();
   db.occurrenceCreate.mockResolvedValue({ id: "occ-make-up" });
@@ -381,6 +383,30 @@ it("tells the plan's team of a cancelled session and of its make-up, once and ne
   ]);
   // The free-leave offer is the seats' alone.
   expect(teamBells()[0].payload).not.toHaveProperty("leaveBy");
+});
+
+it("tells the plan's team that a session did not count, in its own sentence and not as a required notice", async () => {
+  db.team = ["u-cohost", "u-1"];
+  const { stageBell } = jest.requireMock("../../lib/novu/stage-bell") as {
+    stageBell: jest.Mock;
+  };
+  stageBell.mockClear();
+
+  await relabel("occ-3");
+
+  const toTeam = stageBell.mock.calls
+    .map(([, bell]) => bell)
+    .filter((bell) => bell.recipients.includes("u-cohost"));
+  expect(toTeam).toEqual([
+    expect.objectContaining({
+      workflowId: "class-session-cancelled",
+      recipients: ["u-cohost"],
+      dedupeKey: "occ-void:occ-3:team",
+      payload: expect.objectContaining({ forTeam: true, voided: true }),
+    }),
+  ]);
+  expect(toTeam[0]).not.toHaveProperty("required");
+  expect(toTeam[0].payload).not.toHaveProperty("makeUpBy");
 });
 
 it("refuses a make-up onto host time any other booking holds, and takes the host's atoms first", async () => {
