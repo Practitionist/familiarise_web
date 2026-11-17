@@ -1,7 +1,7 @@
 "use client";
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -37,6 +37,80 @@ async function fetchProposals(status: Status, page: number) {
   return readListBody(res, proposalPageSchema, "Failed to load");
 }
 
+/** One proposal: what it does, what it points at, who asked, and the doors while it waits. */
+function ProposalRow({
+  p,
+  viewerId,
+  basePath,
+  onDecide,
+}: Readonly<{
+  p: ProposalListItem;
+  viewerId: string;
+  basePath: string;
+  onDecide: (decision: "approve" | "reject") => void;
+}>) {
+  const own = p.proposedBy?.id === viewerId;
+  return (
+    <li className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm">
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="font-medium">
+            {p.action} ·{" "}
+            {p.amountPaise === null
+              ? "Unlimited"
+              : formatCurrencyAmount(p.amountPaise, "INR")}
+          </p>
+          <StatusBadge {...proposalStatus(p.status)} size="sm" />
+        </div>
+        <div className="my-2">
+          <TargetCell
+            kind={p.targetKind}
+            id={p.targetId}
+            target={p.target}
+            basePath={basePath}
+          />
+        </div>
+        <p className="text-muted-foreground">{p.reason}</p>
+        <p className="text-muted-foreground">
+          Proposed by {p.proposedBy?.name ?? "a removed user"} on{" "}
+          <OperatorTime value={p.createdAt} />
+          {p.status === "PROPOSED" && (
+            <>
+              {" "}
+              · expires <OperatorTime value={p.expiresAt} />
+            </>
+          )}
+          {p.decidedBy ? ` · decided by ${p.decidedBy.name}` : ""}
+        </p>
+        {p.decisionReason && (
+          <p className="text-muted-foreground">{p.decisionReason}</p>
+        )}
+      </div>
+      {p.status === "PROPOSED" && (
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            disabled={own}
+            title={
+              own ? "A different admin must approve your proposal" : undefined
+            }
+            onClick={() => onDecide("approve")}
+          >
+            Approve
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => onDecide("reject")}
+          >
+            Reject
+          </Button>
+        </div>
+      )}
+    </li>
+  );
+}
+
 /** Money actions above ₹25,000 held for a second admin; the proposer cannot approve their own. */
 export function ApprovalsTab({ viewerId }: Readonly<{ viewerId: string }>) {
   const { basePath } = useBackofficeCapability();
@@ -59,6 +133,17 @@ export function ApprovalsTab({ viewerId }: Readonly<{ viewerId: string }>) {
     onFailed: () => setDeciding(null),
   });
   const proposals = data?.proposals ?? [];
+  // A failed load says so; an empty queue says it is empty.
+  let listEmpty: ReactNode = null;
+  if (proposals.length === 0) {
+    listEmpty = error ? (
+      <p className="text-sm text-destructive">Approvals could not load.</p>
+    ) : (
+      <p className="text-sm text-muted-foreground">
+        {isLoading ? "Loading…" : "Nothing here."}
+      </p>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -83,85 +168,18 @@ export function ApprovalsTab({ viewerId }: Readonly<{ viewerId: string }>) {
       </div>
       <Card>
         <CardContent className="pt-6">
-          {error && proposals.length === 0 ? (
-            <p className="text-sm text-destructive">
-              Approvals could not load.
-            </p>
-          ) : proposals.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              {isLoading ? "Loading…" : "Nothing here."}
-            </p>
-          ) : (
+          {listEmpty ?? (
             <ul className="divide-y divide-border">
               {proposals.map((p) => (
-                <li
+                <ProposalRow
                   key={p.id}
-                  className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="font-medium">
-                        {p.action} ·{" "}
-                        {p.amountPaise === null
-                          ? "Unlimited"
-                          : formatCurrencyAmount(p.amountPaise, "INR")}
-                      </p>
-                      <StatusBadge {...proposalStatus(p.status)} size="sm" />
-                    </div>
-                    <div className="my-2">
-                      <TargetCell
-                        kind={p.targetKind}
-                        id={p.targetId}
-                        target={p.target}
-                        basePath={basePath}
-                      />
-                    </div>
-                    <p className="text-muted-foreground">{p.reason}</p>
-                    <p className="text-muted-foreground">
-                      Proposed by {p.proposedBy?.name ?? "a removed user"} on{" "}
-                      <OperatorTime value={p.createdAt} />
-                      {p.status === "PROPOSED" && (
-                        <>
-                          {" "}
-                          · expires <OperatorTime value={p.expiresAt} />
-                        </>
-                      )}
-                      {p.decidedBy ? ` · decided by ${p.decidedBy.name}` : ""}
-                    </p>
-                    {p.decisionReason && (
-                      <p className="text-muted-foreground">
-                        {p.decisionReason}
-                      </p>
-                    )}
-                  </div>
-                  {p.status === "PROPOSED" && (
-                    <div className="flex gap-2">
-                      <Button
-                        size="sm"
-                        disabled={p.proposedBy?.id === viewerId}
-                        title={
-                          p.proposedBy?.id === viewerId
-                            ? "A different admin must approve your proposal"
-                            : undefined
-                        }
-                        onClick={() =>
-                          setDeciding({ proposal: p, decision: "approve" })
-                        }
-                      >
-                        Approve
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() =>
-                          setDeciding({ proposal: p, decision: "reject" })
-                        }
-                      >
-                        Reject
-                      </Button>
-                    </div>
-                  )}
-                </li>
+                  p={p}
+                  viewerId={viewerId}
+                  basePath={basePath}
+                  onDecide={(decision) =>
+                    setDeciding({ proposal: p, decision })
+                  }
+                />
               ))}
             </ul>
           )}

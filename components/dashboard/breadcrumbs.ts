@@ -105,6 +105,30 @@ function resolveSegmentCrumb(ctx: Readonly<SegmentCrumbCtx>): Crumb | null {
   return navigable ? { label, href: acc } : { label };
 }
 
+/** Every value the route's dynamic params hold, flattened. */
+function routeParamValues(
+  routeParams: Readonly<Record<string, string | string[] | undefined>> | null,
+): Set<string> {
+  const values = new Set<string>();
+  for (const value of Object.values(routeParams ?? {})) {
+    for (const part of Array.isArray(value) ? value : [value]) {
+      if (part) values.add(part);
+    }
+  }
+  return values;
+}
+
+/** A linked crumb whose list lives elsewhere points at that list. */
+function withListHome(
+  crumb: Crumb,
+  acc: string,
+  basePath: string,
+  listHrefs: Readonly<Record<string, string>> | undefined,
+): Crumb {
+  const home = listHrefs?.[acc.slice(basePath.length + 1)];
+  return home && crumb.href ? { ...crumb, href: `${basePath}/${home}` } : crumb;
+}
+
 export function useDashboardBreadcrumbs(
   input: Readonly<DashboardBreadcrumbsInput>,
 ): Crumb[] {
@@ -119,12 +143,7 @@ export function useDashboardBreadcrumbs(
   const { overrideLabel } = useBreadcrumbOverride();
   const routeParams = useParams();
   return useMemo(() => {
-    const paramValues = new Set<string>();
-    for (const value of Object.values(routeParams ?? {})) {
-      for (const part of Array.isArray(value) ? value : [value]) {
-        if (part) paramValues.add(part);
-      }
-    }
+    const paramValues = routeParamValues(routeParams);
     const parts = pathname.startsWith(basePath)
       ? pathname.slice(basePath.length).split("/").filter(Boolean)
       : [];
@@ -149,13 +168,7 @@ export function useDashboardBreadcrumbs(
         pathlessSegments,
         paramValues,
       });
-      const home = listHrefs?.[acc.slice(basePath.length + 1)];
-      if (crumb)
-        crumbs.push(
-          home && crumb.href
-            ? { ...crumb, href: `${basePath}/${home}` }
-            : crumb,
-        );
+      if (crumb) crumbs.push(withListHome(crumb, acc, basePath, listHrefs));
     }
     // The current page is plain text; a trailing link survives only when the
     // last visible crumb is a parent (its record-id child was stripped).

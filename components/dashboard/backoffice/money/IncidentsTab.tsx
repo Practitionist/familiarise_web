@@ -1,7 +1,7 @@
 "use client";
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { z } from "zod";
 
 import { Button } from "@/components/ui/button";
@@ -59,6 +59,24 @@ async function fetchIncidents(page: number) {
   return readListBody(res, incidentsPageSchema, "Failed to load");
 }
 
+/** A card's body: its failure, its empty text, or its rows. */
+function ListBody({
+  failure,
+  empty,
+  emptyText,
+  children,
+}: Readonly<{
+  failure: string | null;
+  empty: boolean;
+  emptyText: string;
+  children: ReactNode;
+}>) {
+  if (failure) return <p className="text-sm text-destructive">{failure}</p>;
+  if (empty)
+    return <p className="text-sm text-muted-foreground">{emptyText}</p>;
+  return <>{children}</>;
+}
+
 /** An IST window as typed, or null while either end is empty or malformed. */
 export function incidentWindowBody(startsAt: string, endsAt: string) {
   const start = fromOperatorWallTime(startsAt);
@@ -96,6 +114,9 @@ export function IncidentsTab({
     invalidate: [QUERY_KEY],
     onDone: () => setSettling(null),
   });
+  const failed = Boolean(error) && !data;
+  const suggestions = data?.suggestions ?? [];
+  const incidents = data?.incidents ?? [];
   const declared = incidentWindowBody(startsAt, endsAt);
   const windowReady = declared !== null;
 
@@ -147,17 +168,13 @@ export function IncidentsTab({
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {error && !data ? (
-            <p className="text-sm text-destructive">
-              Outage signals could not load.
-            </p>
-          ) : (data?.suggestions ?? []).length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No hour in the last 7 days stands out from the baseline.
-            </p>
-          ) : (
+          <ListBody
+            failure={failed ? "Outage signals could not load." : null}
+            empty={suggestions.length === 0}
+            emptyText="No hour in the last 7 days stands out from the baseline."
+          >
             <ul className="divide-y divide-border">
-              {(data?.suggestions ?? []).map((s) => (
+              {suggestions.map((s) => (
                 <li
                   key={s.startsAt}
                   className="flex flex-wrap items-center justify-between gap-3 py-2 text-sm"
@@ -181,7 +198,7 @@ export function IncidentsTab({
                 </li>
               ))}
             </ul>
-          )}
+          </ListBody>
           <p className="mt-3 text-sm text-muted-foreground">
             Signals are unverified or outage session verdicts, unexpected call
             ends and failed webhooks. Nothing here declares an incident.
@@ -190,17 +207,13 @@ export function IncidentsTab({
       </Card>
       <Card>
         <CardContent className="pt-6">
-          {error && !data ? (
-            <p className="text-sm text-destructive">
-              Incidents could not load.
-            </p>
-          ) : (data?.incidents ?? []).length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No incident has been declared.
-            </p>
-          ) : (
+          <ListBody
+            failure={failed ? "Incidents could not load." : null}
+            empty={incidents.length === 0}
+            emptyText="No incident has been declared."
+          >
             <ul className="divide-y divide-border">
-              {(data?.incidents ?? []).map((i) => (
+              {incidents.map((i) => (
                 <li
                   key={i.id}
                   className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm"
@@ -229,7 +242,7 @@ export function IncidentsTab({
                 </li>
               ))}
             </ul>
-          )}
+          </ListBody>
           <TablePagination
             className="pt-4"
             page={page}

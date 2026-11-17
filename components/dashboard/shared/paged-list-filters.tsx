@@ -114,8 +114,7 @@ export function keepPreviousPageOnly<T>(
     previous: T | undefined,
     previousQuery: { queryKey: readonly unknown[] } | undefined,
   ): T | undefined =>
-    previousQuery &&
-    previousQuery.queryKey.length === queryKey.length &&
+    previousQuery?.queryKey.length === queryKey.length &&
     previousQuery.queryKey.every(
       (part, i) => i === pageIndex || Object.is(part, queryKey[i]),
     )

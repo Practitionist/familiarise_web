@@ -311,7 +311,7 @@ export function SupportSpendTab({
           onRetry={() => void refetch()}
         />
       ) : null}
-      {data && data.operators.length === 0 ? (
+      {data?.operators.length === 0 ? (
         <p className="text-sm text-muted-foreground">No operators to show.</p>
       ) : null}
       {data?.operators.map((operator) => (
