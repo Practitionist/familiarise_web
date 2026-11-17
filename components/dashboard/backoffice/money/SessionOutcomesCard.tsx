@@ -47,7 +47,8 @@ function toQueueSort(sort: TableSort): NeedsHumanSort | null {
 
 const QUEUE_KEY = ["sessions-needs-human"] as const;
 
-const NOWRAP = "whitespace-nowrap";
+// One line in the table; a phone card wraps the time rather than clip it.
+const NOWRAP = "md:whitespace-nowrap";
 const CAP = "min-w-0 max-w-[11rem]";
 
 /** Stacked cells keep the table inside the card at 1440 px; the door sits in the outcome cell. */
@@ -137,6 +138,7 @@ function queueColumns(
           <Button
             size="sm"
             variant="outline"
+            className="max-w-full"
             aria-label={`Set outcome for ${s.booking.title || "booking"}, ${formatOperatorInstant(s.startsAt)}`}
             onClick={(e) => {
               e.stopPropagation();

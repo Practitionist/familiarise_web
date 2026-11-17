@@ -413,7 +413,7 @@ export function ResponsiveTable<T>({
                     <dl className="mt-3 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm">
                       {cardColumns.map((col) => (
                         <React.Fragment key={col.key}>
-                          <dt className="text-muted-foreground">
+                          <dt className="max-w-[9rem] text-muted-foreground">
                             {col.cardLabel ?? col.header}
                           </dt>
                           <dd className="min-w-0 text-right text-foreground [overflow-wrap:anywhere]">

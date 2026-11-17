@@ -33,6 +33,8 @@ export interface DashboardBreadcrumbsInput {
   pathlessSegments?: ReadonlySet<string>;
   /** Consultant only: where an editor's `offerings/<type>` crumbs point. */
   offeringsConfig?: OfferingsCrumbConfig;
+  /** A list segment whose page lives elsewhere, by its path under `basePath` ("payments" → "money/payments"). */
+  listHrefs?: Readonly<Record<string, string>>;
 }
 
 // Opaque record IDs are replaced by the page’s human label or omitted.
@@ -106,8 +108,14 @@ function resolveSegmentCrumb(ctx: Readonly<SegmentCrumbCtx>): Crumb | null {
 export function useDashboardBreadcrumbs(
   input: Readonly<DashboardBreadcrumbsInput>,
 ): Crumb[] {
-  const { pathname, basePath, pageLabels, pathlessSegments, offeringsConfig } =
-    input;
+  const {
+    pathname,
+    basePath,
+    pageLabels,
+    pathlessSegments,
+    offeringsConfig,
+    listHrefs,
+  } = input;
   const { overrideLabel } = useBreadcrumbOverride();
   const routeParams = useParams();
   return useMemo(() => {
@@ -141,7 +149,13 @@ export function useDashboardBreadcrumbs(
         pathlessSegments,
         paramValues,
       });
-      if (crumb) crumbs.push(crumb);
+      const home = listHrefs?.[acc.slice(basePath.length + 1)];
+      if (crumb)
+        crumbs.push(
+          home && crumb.href
+            ? { ...crumb, href: `${basePath}/${home}` }
+            : crumb,
+        );
     }
     // The current page is plain text; a trailing link survives only when the
     // last visible crumb is a parent (its record-id child was stripped).
@@ -157,6 +171,7 @@ export function useDashboardBreadcrumbs(
     pageLabels,
     pathlessSegments,
     offeringsConfig,
+    listHrefs,
     routeParams,
   ]);
 }
