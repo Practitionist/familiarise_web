@@ -7,6 +7,7 @@ import {
   CollaboratorIneligibleError,
   respondToInvitation,
 } from "@/lib/collaborators/service";
+import { readJsonBody } from "@/lib/api/parse";
 
 export async function PATCH(
   req: NextRequest,
@@ -19,7 +20,9 @@ export async function PATCH(
     }
 
     const { id } = await params;
-    const body = await req.json();
+    const read = await readJsonBody(req);
+    if (read.error) return read.error;
+    const body = read.body;
     const { response, planType } = body;
 
     if (!response || !["ACCEPTED", "DECLINED"].includes(response)) {

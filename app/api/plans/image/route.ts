@@ -9,6 +9,7 @@ import {
 import { apiError } from "@/lib/errors";
 import { purgeDigitalProductSurfaces } from "@/lib/data/public-cache";
 import { z } from "zod";
+import { readJsonBody } from "@/lib/api/parse";
 
 // Must list every TPlanImageType member. It admitted only two, so a
 // consultation or subscription upload 400'd here before verifyPlanOwnership
@@ -93,7 +94,9 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const body = await request.json();
+    const read = await readJsonBody(request);
+    if (read.error) return read.error;
+    const body = read.body;
     const parseResult = planImageSchema.safeParse(body);
 
     if (!parseResult.success) {

@@ -23,6 +23,7 @@ import {
 } from "@/lib/scheduling/availability-contract";
 import { settleAvailabilityWrite } from "@/lib/scheduling/uncovered-upcoming";
 import { parseRequestListQueryOrRespond } from "@/lib/booking/request-route-guards";
+import { readJsonBody } from "@/lib/api/parse";
 
 export async function GET(req: NextRequest) {
   try {
@@ -131,7 +132,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const body = await req.json();
+    const read = await readJsonBody(req);
+    if (read.error) return read.error;
+    const body = read.body;
     const {
       consultantProfileId,
       startDay,

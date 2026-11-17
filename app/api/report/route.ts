@@ -20,6 +20,7 @@ import {
 import { streamLogger } from "@/lib/stream-logger";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
 import { formatReportReference } from "@/lib/moderation/report-reference";
+import { readJsonBody } from "@/lib/api/parse";
 
 // Normalize content identity before deduplication and storage.
 function contentScopeFor(
@@ -106,7 +107,9 @@ export async function POST(req: NextRequest) {
     const tooLarge = assertBodySize(req);
     if (tooLarge) return tooLarge;
 
-    const body = await req.json();
+    const read = await readJsonBody(req);
+    if (read.error) return read.error;
+    const body = read.body;
     const parsed = CreateReportSchema.safeParse(body);
     if (!parsed.success) {
       return NextResponse.json(

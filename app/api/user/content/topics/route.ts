@@ -1,6 +1,7 @@
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { reportSentryError } from "@/lib/observability/report";
+import { readJsonBody } from "@/lib/api/parse";
 
 export async function GET(req: NextRequest) {
   try {
@@ -39,7 +40,9 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
+    const read = await readJsonBody(req);
+    if (read.error) return read.error;
+    const body = read.body;
     const { names } = body;
     console.log("Received topic creation request:", { names });
 
@@ -125,7 +128,9 @@ export async function POST(req: NextRequest) {
 // Add DELETE endpoint for rolling back newly created topics
 export async function DELETE(req: NextRequest) {
   try {
-    const body = await req.json();
+    const read = await readJsonBody(req);
+    if (read.error) return read.error;
+    const body = read.body;
     const { ids } = body;
 
     if (!Array.isArray(ids) || ids.length === 0) {
