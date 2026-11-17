@@ -43,7 +43,10 @@ import {
 function actions(row: InboxRowInput, now = NOW) {
   return rowActions(
     row,
-    deriveBookingPresentation(row.presentation, "CONSULTANT", { now }),
+    deriveBookingPresentation(row.presentation, "CONSULTANT", {
+      viewerZone: "UTC",
+      now,
+    }),
     now,
   );
 }

@@ -28,8 +28,10 @@ const ALLOWED: Record<string, string> = {
     "projects a weekly pattern onto dates in the class zone",
   "lib/booking/entitlement.ts": "cycle boundaries in the scheduling zone",
   "lib/booking/week-nudge.ts": "the week a nudge counts, in the host zone",
-  "lib/dashboard/earnings-state.ts": "payout-day labels in the payout zone (IST)",
-  "lib/data/consultant-dashboard.ts": "server-side day buckets for the home tab",
+  "lib/dashboard/earnings-state.ts":
+    "payout-day labels in the payout zone (IST)",
+  "lib/data/consultant-dashboard.ts":
+    "server-side day buckets for the home tab",
   "lib/scheduling/grid-quota.ts": "per-day and per-week quota keys",
   "lib/stream/search-date.ts": "parses a typed search date in a zone",
   "utils/schedule/weekly-projection.ts":
