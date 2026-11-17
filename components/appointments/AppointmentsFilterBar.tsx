@@ -69,10 +69,9 @@ export function AppointmentsFilterBar({
   return (
     <div className="space-y-3">
       {/* Every type stays in view, one tap away; the padding keeps focus rings unclipped. */}
-      <div
-        role="group"
+      <fieldset
         aria-label="Type"
-        className="-mx-1 flex items-center gap-2 overflow-x-auto px-1 py-0.5 scrollbar-hide"
+        className="-mx-1 flex min-w-0 items-center gap-2 overflow-x-auto border-0 px-1 py-0.5 scrollbar-hide"
       >
         {TYPE_OPTIONS.map((option) => {
           const pressed = typeFilter === option.value;
@@ -83,7 +82,7 @@ export function AppointmentsFilterBar({
               aria-pressed={pressed}
               onClick={() => onTypeChange(option.value)}
               className={cn(
-                "shrink-0 rounded-full border px-3 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                "inline-flex min-h-9 shrink-0 items-center rounded-full border px-3 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:min-h-0",
                 pressed
                   ? "border-foreground bg-foreground text-background"
                   : "border-border bg-card text-muted-foreground hover:border-foreground/30 hover:text-foreground",
@@ -93,7 +92,7 @@ export function AppointmentsFilterBar({
             </button>
           );
         })}
-      </div>
+      </fieldset>
 
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative min-w-[180px] basis-full sm:max-w-sm sm:flex-1 sm:basis-auto">
