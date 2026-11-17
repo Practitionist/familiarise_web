@@ -6,8 +6,12 @@
 // needs, so each ends the account's invitations and team places as REMOVED in
 // the action's own transaction. A suspension has an end date and ends none.
 
+const mockStageNotices = jest.fn(async (..._args: unknown[]) => ({}));
+const mockSendOwed = jest.fn(async (..._args: unknown[]) => undefined);
 jest.mock("@/lib/collaborators/notifications", () => ({
-  stageCollaboratorNotifications: jest.fn(async () => ({})),
+  stageCollaboratorNotifications: (...args: unknown[]) =>
+    mockStageNotices(...args),
+  sendOwedCohostEmails: (...args: unknown[]) => mockSendOwed(...args),
 }));
 jest.mock("@sentry/nextjs", () => ({
   captureException: jest.fn(),
@@ -208,6 +212,25 @@ describe("collaborations when an account loses its standing", () => {
       expect(summary.errors).toBeUndefined();
     },
   );
+
+  it("phase 2 stages the seat holders' emails of a banned co-presenter and keeps them out of the summary", async () => {
+    const owed = { collaboratorId: "c-1", userIds: ["u-l1"] };
+    mockStageNotices.mockResolvedValueOnce({ learnerEmails: owed });
+    const transactional = await applyTransactionalEffects(
+      tx as never,
+      input("USER_BANNED"),
+    );
+    expect(mockSendOwed).not.toHaveBeenCalled();
+
+    const summary = await applyBestEffortEffects(
+      input("USER_BANNED"),
+      transactional,
+    );
+    expect(mockSendOwed.mock.calls).toEqual([
+      [[owed], "moderation.collaborationsRemoved"],
+    ]);
+    expect(summary).not.toHaveProperty("owedCohostEmails");
+  });
 
   it("a time-limited suspension ends no collaboration", async () => {
     const transactional = await applyTransactionalEffects(

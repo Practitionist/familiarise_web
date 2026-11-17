@@ -5,11 +5,13 @@
 
 const mockStageNotices = jest.fn(async (..._args: unknown[]) => ({}));
 const mockGrant = jest.fn(async (..._args: unknown[]) => undefined);
+const mockSendOwed = jest.fn(async (..._args: unknown[]) => undefined);
 const mockWithHostSlotBatch = jest.fn();
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 jest.mock("@/lib/collaborators/notifications", () => ({
   stageCollaboratorNotifications: (...args: unknown[]) =>
     mockStageNotices(...args),
+  sendOwedCohostEmails: (...args: unknown[]) => mockSendOwed(...args),
 }));
 jest.mock("@/lib/novu/stage-then-attempt", () => ({
   flushNotificationsAfter: jest.fn(async () => undefined),
@@ -266,6 +268,24 @@ describe("accepting an invitation", () => {
     );
     expect(mockGrant.mock.invocationCallOrder[0]).toBeGreaterThan(
       Math.max(...statementOrder()),
+    );
+  });
+
+  it("stages the seat holders' emails of the new co-presenter once the accept has committed", async () => {
+    const owed = { collaboratorId: "c-1", userIds: ["u-l1"] };
+    mockStageNotices.mockResolvedValueOnce({ learnerEmails: owed });
+    const committed = jest.fn();
+    mockTransaction.mockImplementationOnce(async (run) => {
+      const result = await run(mockTx);
+      committed();
+      return result;
+    });
+    await accept();
+    expect(mockSendOwed.mock.calls).toEqual([
+      [[owed], "collaborator.accepted"],
+    ]);
+    expect(mockSendOwed.mock.invocationCallOrder[0]).toBeGreaterThan(
+      committed.mock.invocationCallOrder[0],
     );
   });
 

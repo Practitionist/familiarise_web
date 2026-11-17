@@ -18,7 +18,10 @@ import {
   endCollaboration,
   type EndedCollaboration,
 } from "@/lib/collaborators/ending";
-import { stageCollaboratorNotifications } from "@/lib/collaborators/notifications";
+import {
+  sendOwedCohostEmails,
+  stageCollaboratorNotifications,
+} from "@/lib/collaborators/notifications";
 import { PRESENTER_ROLES, tierForRole } from "@/lib/collaborators/roles";
 import {
   bpsToPercent,
@@ -741,6 +744,10 @@ async function acceptInvitation(
 
   await flushNotificationsAfter(committed.notices, "collaborator.accepted");
   await grantCollaboratorAccess(ref, committed.userId);
+  const { learnerEmails } = committed.notices;
+  if (learnerEmails) {
+    await sendOwedCohostEmails([learnerEmails], "collaborator.accepted");
+  }
   return summaryOf(committed.collaborator, ref);
 }
 

@@ -7,8 +7,12 @@
 // per plan after it, through the erasure's own outbox.
 
 // Digital product erasure has its own suite; these scrubs own no products.
+const mockStageNotices = jest.fn(async (..._args: unknown[]) => ({}));
+const mockSendOwed = jest.fn(async (..._args: unknown[]) => undefined);
 jest.mock("@/lib/collaborators/notifications", () => ({
-  stageCollaboratorNotifications: jest.fn(async () => ({})),
+  stageCollaboratorNotifications: (...args: unknown[]) =>
+    mockStageNotices(...args),
+  sendOwedCohostEmails: (...args: unknown[]) => mockSendOwed(...args),
 }));
 jest.mock("../../lib/compliance/erasure/mail-footprint", () => ({
   scrubMailFootprintTx: jest.fn(),
@@ -140,6 +144,22 @@ describe("DPDP erasure flips collaborator rows", () => {
       { planType: "webinar", planId: "wp-1" },
       "u1",
       Number.POSITIVE_INFINITY,
+    );
+  });
+
+  it("stages the seat holders' emails of an erased co-presenter once the scrub has committed", async () => {
+    const owed = { collaboratorId: "c-1", userIds: ["u-l1"] };
+    mockStageNotices.mockResolvedValueOnce({ learnerEmails: owed });
+    const committed = jest.fn();
+    db.$transaction.mockImplementationOnce(async (fn) => {
+      const result = await fn(tx);
+      committed();
+      return result;
+    });
+    await scrubUser(db as never, "u1");
+    expect(mockSendOwed.mock.calls).toEqual([[[owed], "scrubUser"]]);
+    expect(mockSendOwed.mock.invocationCallOrder[0]).toBeGreaterThan(
+      committed.mock.invocationCallOrder[0],
     );
   });
 
