@@ -2,20 +2,27 @@
 
 // Each collaborator transition stages its bells and emails inside its own
 // transaction, to the party that did not make it; a co-presenter joining or
-// leaving is told to the plan's seat holders; and an org member removal stages
-// only the host's WITHDRAWN notice per row.
+// leaving rings the plan's seat holders there and mails them once it has
+// committed; and an org member removal stages only the host's WITHDRAWN notice
+// per row.
 
 const mockStageNotices = jest.fn();
 const mockFlush = jest.fn(async (..._args: unknown[]) => undefined);
 const mockRevoke = jest.fn(async (..._args: unknown[]) => undefined);
+const mockReport = jest.fn();
 jest.mock("@/lib/collaborators/notifications", () => {
   const actual = jest.requireActual("@/lib/collaborators/notifications");
   return {
     stageCollaboratorNotifications: (...args: unknown[]) =>
       mockStageNotices(...args) ??
       actual.stageCollaboratorNotifications(...args),
+    sendOwedCohostEmails: actual.sendOwedCohostEmails,
   };
 });
+jest.mock("@/lib/observability/report", () => ({
+  ...jest.requireActual("@/lib/observability/report"),
+  reportSentryError: (...args: unknown[]) => mockReport(...args),
+}));
 jest.mock("@/lib/email/render", () => ({
   renderEmail: jest.fn(async () => ({ html: "<p>hi</p>", text: "hi" })),
 }));
@@ -89,9 +96,17 @@ let plan: {
 };
 let seatHolders: string[];
 let claims: Set<string>;
+type Claim = { scope: string; key: string; userId: string };
+const claimOf = (c: Claim) => `${c.scope}|${c.key}|${c.userId}`;
 
 type Created = { recipients: string[]; payload: Record<string, unknown> };
 const tx: Record<string, Record<string, jest.Mock> | jest.Mock> & {
+  $transaction: jest.Mock;
+  idempotencyRecord: {
+    createMany: jest.Mock;
+    findMany: jest.Mock;
+    createManyAndReturn: jest.Mock;
+  };
   notificationOutbox: { upsert: jest.Mock; createManyAndReturn: jest.Mock };
   failedEmail: { create: jest.Mock; createManyAndReturn: jest.Mock };
   membership: { findFirst: jest.Mock; findMany: jest.Mock };
@@ -140,6 +155,19 @@ const tx: Record<string, Record<string, jest.Mock> | jest.Mock> & {
       for (const d of fresh) claims.add(d.key);
       return { count: fresh.length };
     }),
+    findMany: jest.fn(
+      async (q: {
+        where: Omit<Claim, "userId"> & { userId: { in: string[] } };
+      }) =>
+        q.where.userId.in
+          .filter((userId) => claims.has(claimOf({ ...q.where, userId })))
+          .map((userId) => ({ userId })),
+    ),
+    createManyAndReturn: jest.fn(async (q: { data: Claim[] }) => {
+      const fresh = q.data.filter((d) => !claims.has(claimOf(d)));
+      for (const d of fresh) claims.add(claimOf(d));
+      return fresh.map(({ userId }) => ({ userId }));
+    }),
   },
   membership: {
     findFirst: jest.fn(async () => ({
@@ -170,7 +198,11 @@ jest.mock("@/lib/prisma", () => ({
 }));
 
 import { rolesWithOrgPermission } from "@/lib/auth/org-permissions";
-import { stageCollaboratorNotifications } from "@/lib/collaborators/notifications";
+import {
+  sendOwedCohostEmails,
+  stageCollaboratorNotifications,
+} from "@/lib/collaborators/notifications";
+import { renderEmail } from "@/lib/email/render";
 import { removeMember } from "@/lib/enterprise/member-removal";
 import { requiredNoticeOf } from "@/lib/notifications/required-notices";
 
@@ -334,17 +366,24 @@ describe("seat holders", () => {
     "hear, as a required notice, that the co-presenter changed on %s",
     async (event, sentence) => {
       seatHolders = ["u-l1", "u-l2"];
-      await stage(event);
+      const notices = await stage(event);
       expect(learnerBells()).toHaveLength(1);
       expect(learnerBells()[0].recipients).toEqual(["u-l1", "u-l2"]);
       expect(learnerBells()[0].payload).toMatchObject({ sentence });
       expect(requiredNoticeOf(learnerBells()[0].payload)).toBe(
         "COHOST_CHANGED",
       );
-      expect(learnerEmailsTo()).toEqual([
-        "u-l1@example.com",
-        "u-l2@example.com",
-      ]);
+      // The transaction renders and stages the lifecycle emails only.
+      expect(renderEmail).toHaveBeenCalledTimes(emailsTo().length);
+      expect(learnerEmailsTo()).toEqual([]);
+      expect(notices.learnerEmails).toEqual({
+        event: event === "ACCEPTED" ? "COHOST_JOINED" : "COHOST_LEFT",
+        userIds: ["u-l1", "u-l2"],
+        cohostName: "Guest",
+        planTitle: "Systems",
+        planType: "webinar",
+        collaboratorId: "c-1",
+      });
     },
   );
 
@@ -360,9 +399,75 @@ describe("seat holders", () => {
     ["a declined invitation", "DECLINED", { acceptedAt: null }, ["u-l1"]],
   ] as const)("hear nothing about %s", async (_what, event, over, seats) => {
     seatHolders = [...seats];
-    await stage(event, over as Partial<typeof row>);
+    const notices = await stage(event, over as Partial<typeof row>);
     expect(learnerBells()).toEqual([]);
-    expect(learnerEmailsTo()).toEqual([]);
+    expect(notices.learnerEmails).toBeUndefined();
+  });
+});
+
+describe("the seat holders' emails, once the change has committed", () => {
+  const owedTo = (userIds: string[]) => ({
+    event: "COHOST_JOINED" as const,
+    userIds,
+    cohostName: "Guest",
+    planTitle: "Systems",
+    planType: "webinar" as const,
+    collaboratorId: "c-1",
+  });
+  const learners = (count: number) => {
+    const ids = Array.from({ length: count }, (_, i) => `u-s${i}`);
+    for (const id of ids) users[id] = person(id);
+    return ids;
+  };
+  const addressOf = (id: string) => `${id}@example.com`;
+  const rowsPerInsert = () =>
+    tx.failedEmail.createManyAndReturn.mock.calls.map(
+      ([q]) => (q as { data: unknown[] }).data.length,
+    );
+
+  it("are staged one per seat holder, fifty to a transaction, then handed over to be attempted", async () => {
+    const ids = learners(120);
+    await sendOwedCohostEmails([owedTo(ids)], "test.op");
+    expect(tx.$transaction).toHaveBeenCalledTimes(3);
+    expect(rowsPerInsert()).toEqual([50, 50, 20]);
+    expect(learnerEmailsTo()).toEqual(ids.map(addressOf));
+    expect(mockFlush).toHaveBeenCalledTimes(1);
+    const [bundle, op] = mockFlush.mock.calls[0] as [
+      { emails: { list: unknown[]; emailType: string }[] },
+      string,
+    ];
+    expect(op).toBe("test.op");
+    expect(bundle.emails).toHaveLength(1);
+    expect(bundle.emails[0].emailType).toBe("plan_cohost_joined");
+    expect(bundle.emails[0].list).toHaveLength(120);
+  });
+
+  it("are not staged again by a repeat of the same change, nor by one racing it", async () => {
+    const owed = owedTo(["u-l1", "u-l2"]);
+    await sendOwedCohostEmails([owed], "test.op");
+    expect(learnerEmailsTo()).toEqual(["u-l1", "u-l2"].map(addressOf));
+
+    await sendOwedCohostEmails([owed], "test.op");
+    // A racing repeat reads no claim, and loses every claim in its transaction.
+    tx.idempotencyRecord.findMany.mockResolvedValueOnce([]);
+    await sendOwedCohostEmails([owed], "test.op");
+    expect(learnerEmailsTo()).toHaveLength(2);
+    expect(mockFlush).toHaveBeenCalledTimes(1);
+  });
+
+  it("lose only the batch that failed, which is reported once for the call", async () => {
+    const ids = learners(120);
+    tx.$transaction.mockRejectedValueOnce(new Error("db"));
+    await expect(
+      sendOwedCohostEmails([owedTo(ids)], "test.op"),
+    ).resolves.toBeUndefined();
+    expect(learnerEmailsTo()).toEqual(ids.slice(50).map(addressOf));
+    expect(mockReport).toHaveBeenCalledTimes(1);
+    expect(mockReport).toHaveBeenCalledWith(expect.any(Error), {
+      subsystem: "collaborators",
+      op: "test.op.cohostEmails",
+      extra: { failed: 1, batches: 3, collaboratorIds: ["c-1"] },
+    });
   });
 });
 

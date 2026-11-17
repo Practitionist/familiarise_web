@@ -21,7 +21,9 @@ import type {
 import { EarningStatus, EarningsHoldReason } from "@prisma/client";
 import prisma, { type Tx } from "@/lib/prisma";
 import { endCollaborationsForUser } from "@/lib/collaborators/ending";
+import { sendOwedCohostEmails } from "@/lib/collaborators/notifications";
 import type { PlanRef } from "@/lib/collaborators/team";
+import type { OwedCohostEmails } from "@/lib/email/senders/collaborators";
 import { recomputeConsultantRating } from "@/lib/reviews";
 import {
   getStreamChatClient,
@@ -103,6 +105,8 @@ export interface TransactionalEffectResult {
   reviewRemovedConsultantProfileId?: string;
   banExpires?: string | null;
   collaborationsRemoved?: PlanRef[];
+  /** The seat holders' emails of a co-presenter who left; phase 2 stages them, never persisted. */
+  owedCohostEmails?: OwedCohostEmails[];
   stagedBells?: StagedTrigger[];
   stagedEmails?: StagedEmailBundleEntry[];
   /** Revoked sessions for the access log; phase 2 stamps them, never persisted. */
@@ -440,12 +444,10 @@ async function banOrSuspendUser(
   // A ban is permanent, so it ends every collaboration. A suspension has an
   // end date: the account cannot sign in meanwhile and keeps its place.
   if (actionType === "USER_BANNED") {
-    const teams = await endCollaborationsAsModeration(
-      tx,
-      report.targetUserId,
-      staffUserId,
+    Object.assign(
+      result,
+      await endCollaborationsAsModeration(tx, report.targetUserId, staffUserId),
     );
-    if (teams.length > 0) result.collaborationsRemoved = teams;
   }
   return result;
 }
@@ -479,16 +481,26 @@ async function holdBannedConsultantEarnings(
   return placed.length;
 }
 
-/** Ends the user's collaborations; returns the plans whose team they were on. */
+/**
+ * Ends the user's collaborations; returns the plans whose team they were on
+ * and the seat holders' emails owed for a co-presenter among them.
+ */
 async function endCollaborationsAsModeration(
   tx: Tx,
   targetUserId: string,
   staffUserId: string,
-): Promise<PlanRef[]> {
+): Promise<
+  Pick<TransactionalEffectResult, "collaborationsRemoved" | "owedCohostEmails">
+> {
   const ended = await endCollaborationsForUser(tx, targetUserId, {
     endedByUserId: staffUserId,
   });
-  return ended.filter((e) => e.wasOnTeam).map((e) => e.ref);
+  const teams = ended.filter((e) => e.wasOnTeam).map((e) => e.ref);
+  const owed = ended.flatMap((e) => e.notices.learnerEmails ?? []);
+  return {
+    ...(teams.length > 0 ? { collaborationsRemoved: teams } : {}),
+    ...(owed.length > 0 ? { owedCohostEmails: owed } : {}),
+  };
 }
 
 async function unverifyProfiles(
@@ -503,14 +515,9 @@ async function unverifyProfiles(
     data: { isVerified: false, verificationStatus: "REJECTED" },
   });
   // Only a verified expert holds a place on a team.
-  const teams = await endCollaborationsAsModeration(
-    tx,
-    targetUserId,
-    staffUserId,
-  );
   return {
     profilesUnverified: updated.count,
-    ...(teams.length > 0 ? { collaborationsRemoved: teams } : {}),
+    ...(await endCollaborationsAsModeration(tx, targetUserId, staffUserId)),
   };
 }
 
@@ -637,7 +644,11 @@ export async function applyBestEffortEffects(
   transactional: TransactionalEffectResult,
 ): Promise<SideEffectSummary> {
   const { actionType } = input;
-  const { stagedSessionEnds = [], ...committed } = transactional;
+  const {
+    stagedSessionEnds = [],
+    owedCohostEmails = [],
+    ...committed
+  } = transactional;
   // The ban or suspension has committed; a failed log write cannot undo it.
   await stampSessionEnds(stagedSessionEnds);
   const summary: SideEffectSummary = {
@@ -658,6 +669,12 @@ export async function applyBestEffortEffects(
       input.report.targetUserId,
       transactional.collaborationsRemoved,
       summary,
+    );
+  }
+  if (owedCohostEmails.length > 0) {
+    await sendOwedCohostEmails(
+      owedCohostEmails,
+      "moderation.collaborationsRemoved",
     );
   }
 

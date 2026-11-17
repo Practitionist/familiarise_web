@@ -9,8 +9,9 @@ import { paidParticipant } from "@/lib/booking/participants";
 import type { Tx } from "@/lib/prisma";
 import { goHref } from "@/lib/dashboard/go";
 import {
-  stageCohostChangeEmails,
+  stageCohostChangeEmailBatch,
   stageCollaboratorLifecycleEmail,
+  type OwedCohostEmails,
 } from "@/lib/email/senders/collaborators";
 import type { StagedRecipientEmail } from "@/lib/email/send-to-recipients";
 import {
@@ -24,13 +25,17 @@ import {
 import { stagePages, type StagedTrigger } from "@/lib/novu/outbox";
 import { resolveRecipientBellPolicy } from "@/lib/novu/policy";
 import { stageBell } from "@/lib/novu/stage-bell";
-import type { StagedNotificationBundle } from "@/lib/novu/stage-then-attempt";
+import {
+  flushNotificationsAfter,
+  type StagedNotificationBundle,
+} from "@/lib/novu/stage-then-attempt";
 import {
   NOVU_WORKFLOWS,
   notificationScope,
   type CollaboratorNoticePayload,
   type PlanCohostChangePayload,
 } from "@/lib/novu/workflows";
+import { reportSentryError } from "@/lib/observability/report";
 import { getAppUrl } from "@/lib/url";
 import { isPresenterRole } from "./roles";
 import { inviteExpiresAt } from "./rules";
@@ -158,7 +163,9 @@ async function seatHolderUserIds(tx: Tx, ref: PlanRef): Promise<string[]> {
 
 /**
  * Tells a plan's seat holders that its named co-presenter joined or left. The
- * notice is required and says nothing beyond the fact.
+ * notice is required and says nothing beyond the fact. The bell is staged
+ * here, with the change; the email copy is returned as still owed, for
+ * `sendOwedCohostEmails` once the change has committed.
  */
 async function stageCohostChange(
   tx: Tx,
@@ -167,11 +174,14 @@ async function stageCohostChange(
   ref: PlanRef,
   plan: { title: string; organizationId: string | null },
   cohost: { userId: string | undefined; name: string | null },
-): Promise<StagedNotificationBundle> {
+): Promise<{
+  bells: (StagedTrigger | null)[];
+  learnerEmails: OwedCohostEmails;
+} | null> {
   const seatHolders = (await seatHolderUserIds(tx, ref)).filter(
     (userId) => userId !== cohost.userId,
   );
-  if (seatHolders.length === 0) return {};
+  if (seatHolders.length === 0) return null;
   const workflowId =
     event === "COHOST_JOINED"
       ? NOVU_WORKFLOWS.PLAN_COHOST_JOINED
@@ -193,28 +203,86 @@ async function stageCohostChange(
     dedupeKey: collaboratorNoticeKey(row, event),
     entityRef: `collaborator:${row.id}`,
   });
-  const emails = await stageCohostChangeEmails(tx, {
-    event,
-    userIds: seatHolders,
-    cohostName: cohost.name,
-    planTitle: plan.title,
-    planType: ref.planType,
-    collaboratorId: row.id,
-  });
-  return { bells, emails: [emails] };
+  return {
+    bells,
+    learnerEmails: {
+      event,
+      userIds: seatHolders,
+      cohostName: cohost.name,
+      planTitle: plan.title,
+      planType: ref.planType,
+      collaboratorId: row.id,
+    },
+  };
 }
+
+/** Seat holders whose emails one short transaction stages. */
+const COHOST_EMAIL_BATCH = 50;
+
+/**
+ * Runs once a co-host change has committed: stages the seat holders' emails
+ * in batches, each in its own short transaction, and hands them over to be
+ * attempted. The bell committed with the change and the email is its copy.
+ * Never throws; the batches that failed are reported once for the call.
+ */
+export async function sendOwedCohostEmails(
+  owed: readonly OwedCohostEmails[],
+  op: string,
+): Promise<void> {
+  const failures: unknown[] = [];
+  let batches = 0;
+  for (const change of owed) {
+    const list: StagedRecipientEmail[] = [];
+    let emailType: string | null = null;
+    for (let i = 0; i < change.userIds.length; i += COHOST_EMAIL_BATCH) {
+      batches += 1;
+      try {
+        const staged = await stageCohostChangeEmailBatch(
+          change,
+          change.userIds.slice(i, i + COHOST_EMAIL_BATCH),
+        );
+        list.push(...staged.list);
+        emailType = staged.emailType;
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (!emailType || list.length === 0) continue;
+    try {
+      await flushNotificationsAfter({ emails: [{ list, emailType }] }, op);
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  if (failures.length === 0) return;
+  reportSentryError(failures[0], {
+    subsystem: "collaborators",
+    op: `${op}.cohostEmails`,
+    extra: {
+      failed: failures.length,
+      batches,
+      collaboratorIds: owed.map((change) => change.collaboratorId),
+    },
+  });
+}
+
+/** One transition's staged notices, and the seat holders' emails it owes once it commits. */
+export type CollaboratorNotices = StagedNotificationBundle & {
+  learnerEmails?: OwedCohostEmails;
+};
 
 /**
  * Stages one transition's bells and emails inside its transaction, to the
  * party that did not make it. When the plan's named co-presenter joins or
- * leaves the team, its seat holders are told as well.
+ * leaves the team, its seat holders' bell is staged as well and their emails
+ * are returned as owed: plain data for `sendOwedCohostEmails` after the commit.
  */
 export async function stageCollaboratorNotifications(
   tx: Tx,
   event: CollaborationLifecycleEvent,
   row: CollaboratorNoticeRow,
   opts: { collaboratorName?: string } = {},
-): Promise<StagedNotificationBundle> {
+): Promise<CollaboratorNotices> {
   const planId = row.webinarPlanId ?? row.classPlanId;
   if (!planId) return {};
   const ref: PlanRef = {
@@ -365,9 +433,11 @@ export async function stageCollaboratorNotifications(
     userId: invitee?.userId,
     name: opts.collaboratorName ? null : (nameOf(invitee) ?? null),
   });
+  if (!learners) return bundle;
   return {
-    bells: [...bells, ...(learners.bells ?? [])],
-    emails: [...(bundle.emails ?? []), ...(learners.emails ?? [])],
+    bells: [...bells, ...learners.bells],
+    emails: bundle.emails,
+    learnerEmails: learners.learnerEmails,
   };
 }
 

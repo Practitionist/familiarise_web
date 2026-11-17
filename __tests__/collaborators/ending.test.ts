@@ -6,6 +6,7 @@
 
 const mockStageNotices = jest.fn();
 const mockFlush = jest.fn();
+const mockSendOwed = jest.fn();
 const mockPersist = jest.fn();
 const mockRevoke = jest.fn();
 const mockReport = jest.fn();
@@ -17,6 +18,7 @@ jest.mock("@/lib/collaborators/notifications", () => ({
   inviteReminderKey: (r: { id: string; updatedAt: Date }) => reminderKey(r),
   stageCollaboratorNotifications: (...args: unknown[]) =>
     mockStageNotices(...args),
+  sendOwedCohostEmails: (...args: unknown[]) => mockSendOwed(...args),
 }));
 jest.mock("@/lib/cron/run-deadline", () => ({
   startDeadlineShare: () => () => mockOutOfTime(),
@@ -357,6 +359,18 @@ describe("afterCollaborationEnded", () => {
     expect(mockRevoke.mock.calls).toEqual([[ref, "u-a", GENERATION]]);
   });
 
+  it("stages the seat holders' emails last, also when taking access back fails", async () => {
+    const owed = { collaboratorId: "a", userIds: ["u-l1"] };
+    const withOwed = ended("a", GENERATION);
+    withOwed.notices = { ...withOwed.notices, learnerEmails: owed as never };
+    mockRevoke.mockRejectedValueOnce(new Error("stream"));
+    await afterCollaborationEnded([withOwed, ended("b", null)], "test.op");
+    expect(mockSendOwed.mock.calls).toEqual([[[owed], "test.op"]]);
+    expect(mockSendOwed.mock.invocationCallOrder[0]).toBeGreaterThan(
+      mockRevoke.mock.invocationCallOrder[0],
+    );
+  });
+
   it("does nothing for an empty list", async () => {
     await afterCollaborationEnded([], "test.op");
     expect(mockFlush).not.toHaveBeenCalled();
@@ -397,6 +411,23 @@ describe("leaving and removing through the service", () => {
       collaboratorId: "c-1",
       removedByUserId: "u-host",
     });
+
+  it("stages the seat holders' emails of a removed co-presenter once the removal has committed", async () => {
+    rows = [onTeam()];
+    const owed = { collaboratorId: "c-1", userIds: ["u-l1"] };
+    mockStageNotices.mockResolvedValueOnce({ learnerEmails: owed });
+    const committed = jest.fn();
+    mockTransaction.mockImplementationOnce(async (run) => {
+      const result = await run(mockTx);
+      committed();
+      return result;
+    });
+    await remove();
+    expect(mockSendOwed.mock.calls).toEqual([[[owed], "collaborator.removed"]]);
+    expect(mockSendOwed.mock.invocationCallOrder[0]).toBeGreaterThan(
+      committed.mock.invocationCallOrder[0],
+    );
+  });
 
   it("records WITHDRAWN when a team member leaves, with the revocation, and takes access back after the commit", async () => {
     rows = [onTeam()];

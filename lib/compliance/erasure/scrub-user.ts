@@ -83,7 +83,9 @@ import {
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { releaseSeatsForTerminatedAssignments } from "@/lib/api/organizations/seat-count";
 import { endCollaborationsForUser } from "@/lib/collaborators/ending";
+import { sendOwedCohostEmails } from "@/lib/collaborators/notifications";
 import type { PlanRef } from "@/lib/collaborators/team";
+import type { OwedCohostEmails } from "@/lib/email/senders/collaborators";
 import { reportSentryError } from "@/lib/observability/report";
 import {
   createRunFailureReporter,
@@ -874,6 +876,7 @@ export async function scrubUser(
     );
 
   let collaborationsRemoved: PlanRef[] = [];
+  let owedCohostEmails: OwedCohostEmails[] = [];
   let archivedProducts: { consultantProfileId: string; slug: string }[] = [];
   let supportAttachmentPathsToRemove: string[] = [];
   let erasureRequestId: string | null = null;
@@ -983,12 +986,14 @@ export async function scrubUser(
     // #1580 — an erased consultant otherwise stays an ACCEPTED collaborator in
     // every split and roster; the same flip the moderation ban runs.
     // The erasure's own outbox rows below record the access to take back.
-    collaborationsRemoved = (
-      await endCollaborationsForUser(tx, userId, {
-        endedByUserId: null,
-        ownRevocationQueue: true,
-      })
-    ).map((ended) => ended.ref);
+    const endedCollaborations = await endCollaborationsForUser(tx, userId, {
+      endedByUserId: null,
+      ownRevocationQueue: true,
+    });
+    collaborationsRemoved = endedCollaborations.map((ended) => ended.ref);
+    owedCohostEmails = endedCollaborations.flatMap(
+      (ended) => ended.notices.learnerEmails ?? [],
+    );
 
     // #1593 — the OUTBOX: every Stream revocation this scrub owes is a durable
     // row before the side effect is attempted, in the same transaction as the
@@ -1191,6 +1196,11 @@ export async function scrubUser(
           extra: { planType, planId },
         }),
       );
+  }
+
+  // The seat holders' bell committed with the scrub; their email is its copy.
+  if (owedCohostEmails.length > 0) {
+    await sendOwedCohostEmails(owedCohostEmails, "scrubUser");
   }
 
   const principalFailures = await settlePrincipalStreamErasure(

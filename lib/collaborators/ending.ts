@@ -1,12 +1,13 @@
 import type { Collaborator, CollaboratorStatus, Prisma } from "@prisma/client";
 import type { CollaborationLifecycleEvent } from "@/emails/collaborations/CollaborationLifecycleEmail";
-import {
-  flushNotificationsAfter,
-  type StagedNotificationBundle,
-} from "@/lib/novu/stage-then-attempt";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { reportSentryError } from "@/lib/observability/report";
 import type { Tx } from "@/lib/prisma";
-import { stageCollaboratorNotifications } from "./notifications";
+import {
+  sendOwedCohostEmails,
+  stageCollaboratorNotifications,
+  type CollaboratorNotices,
+} from "./notifications";
 import type { PlanRef } from "./team";
 
 // Loaded on first use: ban, erasure and member removal import this module and
@@ -46,7 +47,8 @@ export type EndedCollaboration = {
   wasOnTeam: boolean;
   /** The revocation the transaction wrote; null when the row never held access. */
   revocationGeneration: Date | null;
-  notices: StagedNotificationBundle;
+  /** The staged notices, and the seat holders' emails owed after the commit. */
+  notices: CollaboratorNotices;
 };
 
 function refOf(row: Collaborator): PlanRef | null {
@@ -139,9 +141,11 @@ export async function endCollaborationsForUser(
 }
 
 /**
- * Runs once the ending transaction has committed: attempts the notices now
- * and takes back the access of anyone who was on the team. Never throws; what
- * it leaves undone is already recorded and the sweeps finish it.
+ * Runs once the ending transaction has committed: attempts the notices now,
+ * takes back the access of anyone who was on the team, then stages the seat
+ * holders' emails of a co-presenter who left. Never throws; the notices and
+ * the revocations it leaves undone are already recorded and the sweeps finish
+ * them.
  */
 export async function afterCollaborationEnded(
   ended: EndedCollaboration | readonly EndedCollaboration[],
@@ -158,10 +162,11 @@ export async function afterCollaborationEnded(
       op,
     );
     const owed = list.filter((e) => e.revocationGeneration);
-    if (owed.length === 0) return;
-    const { revokeCollaboratorAccess } = await accessRevocation();
-    for (const e of owed) {
-      await revokeCollaboratorAccess(e.ref, e.userId, e.revocationGeneration);
+    if (owed.length > 0) {
+      const { revokeCollaboratorAccess } = await accessRevocation();
+      for (const e of owed) {
+        await revokeCollaboratorAccess(e.ref, e.userId, e.revocationGeneration);
+      }
     }
   } catch (error) {
     reportSentryError(error, {
@@ -170,4 +175,6 @@ export async function afterCollaborationEnded(
       extra: { collaboratorIds: list.map((e) => e.collaborator.id) },
     });
   }
+  const learnerEmails = list.flatMap((e) => e.notices.learnerEmails ?? []);
+  if (learnerEmails.length > 0) await sendOwedCohostEmails(learnerEmails, op);
 }
