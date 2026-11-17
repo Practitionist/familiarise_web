@@ -7,7 +7,7 @@
  * `lib/time/display.ts`), never date-fns-tz `formatInTimeZone`, which builds a
  * host-local Date and prints a wall time inside the browser's spring-forward
  * hour an hour late. UI code under app/ and components/ never imports it;
- * server zone math in lib/ and utils/ may, and each such file is listed here.
+ * zone math in lib/ and utils/ may (some is bundled client-side), each listed.
  */
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -19,14 +19,11 @@ const IMPORT = new RegExp(
   `import[^;]*\\b${["formatIn", "TimeZone"].join("")}\\b[^;]*from\\s+["']date-fns-tz["']`,
 );
 
-/** Server zone math allowed to use date-fns-tz, each with its reason. */
+/** Zone math allowed to use date-fns-tz, each with its reason. */
 const ALLOWED: Record<string, string> = {
   "lib/appointments/session-schedule.ts":
     "day keys in the scheduling zone and UTC date-range labels",
   "lib/booking/batch-cards.ts": "batch weekday and day labels in the plan zone",
-  "lib/booking/class-pattern.ts":
-    "projects a weekly pattern onto dates in the class zone",
-  "lib/booking/entitlement.ts": "cycle boundaries in the scheduling zone",
   "lib/booking/week-nudge.ts": "the week a nudge counts, in the host zone",
   "lib/dashboard/earnings-state.ts":
     "payout-day labels in the payout zone (IST)",
