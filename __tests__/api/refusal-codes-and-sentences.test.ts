@@ -44,16 +44,34 @@ const post = (url: string, body: unknown, method = "POST") =>
   new NextRequest(url, { method, body: JSON.stringify(body) });
 
 it.each([
-  ["list", () => validateListRequestStatusPatch(AppointmentStatus.CANCELLED, true, false)],
-  ["detail", () => validateDetailRequestStatusPatch(AppointmentStatus.CANCELLED, true, false, false)],
-])("the %s status PATCH names no route path when refusing a cancel", async (_n, run) => {
-  const body = await run()!.json();
-  expect(body.code).toBe("USE_CANCEL_ENDPOINT");
-  expect(body.error).not.toMatch(/\/api\//);
-});
+  [
+    "list",
+    () =>
+      validateListRequestStatusPatch(AppointmentStatus.CANCELLED, true, false),
+  ],
+  [
+    "detail",
+    () =>
+      validateDetailRequestStatusPatch(
+        AppointmentStatus.CANCELLED,
+        true,
+        false,
+        false,
+      ),
+  ],
+])(
+  "the %s status PATCH names no route path when refusing a cancel",
+  async (_n, run) => {
+    const body = await run()!.json();
+    expect(body.code).toBe("USE_CANCEL_ENDPOINT");
+    expect(body.error).not.toMatch(/\/api\//);
+  },
+);
 
 it("refuses a back-office tree the role lacks with a code", async () => {
-  const res = await navCounts(new NextRequest("http://x/api/backoffice/nav-counts?tree=nope"));
+  const res = await navCounts(
+    new NextRequest("http://x/api/backoffice/nav-counts?tree=nope"),
+  );
   expect(res.status).toBe(403);
   expect(await res.json()).toEqual({
     error: "Your role can't open this part of the back office.",
@@ -63,11 +81,15 @@ it("refuses a back-office tree the role lacks with a code", async () => {
 
 it("asks an org allocate for its reason in a sentence", async () => {
   const res = await orgAllocate(
-    post(`http://x/api/organizations/org-1/appointments/${ID}/allocate`, { isAuto: true }),
+    post(`http://x/api/organizations/org-1/appointments/${ID}/allocate`, {
+      isAuto: true,
+    }),
     { params: Promise.resolve({ orgId: "org-1", appointmentId: ID }) },
   );
   expect(res.status).toBe(400);
-  expect((await res.json()).error).toMatch(/^Give a reason of at least 5 characters/);
+  expect((await res.json()).error).toMatch(
+    /^Give a reason of at least 5 characters/,
+  );
 });
 
 it("asks a staff cancel with no refund preview for it in a sentence", async () => {

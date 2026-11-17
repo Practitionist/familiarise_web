@@ -25,14 +25,12 @@ import { feasibilityRefusalOf } from "@/components/offerings/editor/feasibility-
 import { isExpectedRefusal } from "@/lib/errors/client-refusal";
 
 const answer = (status: number, body: unknown) =>
-  jest
-    .spyOn(global, "fetch")
-    .mockResolvedValue(
-      new Response(JSON.stringify(body), {
-        status,
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
+  jest.spyOn(global, "fetch").mockResolvedValue(
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
 
 const saves = {
   webinar: () => WebinarService.saveWebinar({}, null, "cp-1"),

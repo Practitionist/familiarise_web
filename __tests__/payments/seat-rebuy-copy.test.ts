@@ -16,7 +16,10 @@ import {
 
 // The row `findPriorSeatPayment` selects.
 const prior = (
-  over: Pick<PriorSeatPayment, "amount" | "refunds" | "appointmentParticipants">,
+  over: Pick<
+    PriorSeatPayment,
+    "amount" | "refunds" | "appointmentParticipants"
+  >,
 ): PriorSeatPayment => ({
   id: "pay-1",
   userId: "u-1",

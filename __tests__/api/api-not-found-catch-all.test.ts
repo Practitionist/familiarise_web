@@ -26,7 +26,8 @@ function apiRoutes(): string[] {
       if (entry.isDirectory()) walk(full);
       else if (entry.name === "route.ts") {
         out.push(
-          "/" + path.relative("app", path.dirname(full)).split(path.sep).join("/"),
+          "/" +
+            path.relative("app", path.dirname(full)).split(path.sep).join("/"),
         );
       }
     }

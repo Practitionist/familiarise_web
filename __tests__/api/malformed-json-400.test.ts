@@ -20,8 +20,14 @@ const junk = (path: string, method: string) =>
   new NextRequest(`http://x${path}`, { method, body: "{not json" });
 
 it.each([
-  ["DELETE /api/plans/image", () => deletePlanImage(junk("/api/plans/image", "DELETE"))],
-  ["POST /api/user/content/topics", () => createTopics(junk("/api/user/content/topics", "POST"))],
+  [
+    "DELETE /api/plans/image",
+    () => deletePlanImage(junk("/api/plans/image", "DELETE")),
+  ],
+  [
+    "POST /api/user/content/topics",
+    () => createTopics(junk("/api/user/content/topics", "POST")),
+  ],
 ])("%s answers 400 MALFORMED_JSON", async (_route, call) => {
   const res = await call();
   expect(res.status).toBe(400);

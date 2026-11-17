@@ -66,7 +66,10 @@ const reject = () =>
 beforeEach(() => captureException.mockClear());
 
 it.each([
-  ["an illegal transition", new IllegalTransitionError("Consultation", "REJECTED")],
+  [
+    "an illegal transition",
+    new IllegalTransitionError("Consultation", "REJECTED"),
+  ],
   ["a booking rule", new BookingRuleError("ALREADY_REGISTERED", "Taken")],
 ])("answers %s with 409 and no capture", async (_n, error) => {
   thrown.current = error;

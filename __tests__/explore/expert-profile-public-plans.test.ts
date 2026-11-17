@@ -22,7 +22,9 @@ function project(select: Select): Record<string, unknown> {
       const nested = spec as { select?: Select; include?: Select };
       const inner = nested.select ?? nested.include ?? {};
       row[key] =
-        key === "_count" ? project(inner) : [{ id: `${key}-1`, ...project(inner) }];
+        key === "_count"
+          ? project(inner)
+          : [{ id: `${key}-1`, ...project(inner) }];
     }
   }
   return row;
