@@ -56,12 +56,13 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
   {
     workflowId: W.CLASS_SESSION_CANCELLED,
     name: "Class session cancelled",
-    description: "Seat holders, when the host cancels one session of a class.",
+    description:
+      "Seat holders, and the plan's team in a sentence of their own, when one session of a class is cancelled.",
     category: "appointments",
     inApp: {
       subject:
         "{% if payload.voided %}A class session did not count{% else %}A class session was cancelled{% endif %}",
-      body: "{% if payload.voided %}Your {{payload.dateTime}} session of {{payload.planTitle}} lost too much time to count as held{% else %}Your {{payload.dateTime}} session of {{payload.planTitle}} was cancelled{% endif %} — {{payload.consultantName}} has until {{payload.makeUpBy}} to schedule a make-up, or that session is refunded automatically.",
+      body: "{% if payload.forTeam %}The {{payload.dateTime}} session of {{payload.planTitle}} {% if payload.voided %}did not count as held{% else %}was cancelled{% endif %}.{% else %}{% if payload.voided %}Your {{payload.dateTime}} session of {{payload.planTitle}} lost too much time to count as held{% else %}Your {{payload.dateTime}} session of {{payload.planTitle}} was cancelled{% endif %} — {{payload.consultantName}} has until {{payload.makeUpBy}} to schedule a make-up, or that session is refunded automatically.{% endif %}",
       redirect: "dashboardUrl",
     },
   },
@@ -789,14 +790,36 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     category: "appointments",
     inApp: {
       subject: "Collaboration invite",
-      body: "{{payload.ownerName}} invited you to join {{payload.planTitle}} ({{payload.planType | downcase}}) as {{payload.role | downcase | replace: '_', ' '}} with a {{payload.revenueSharePercentage}}% revenue share.",
+      body: "{% if payload.ownerName %}{{payload.ownerName}} invited you{% else %}You are invited{% endif %} to join {{payload.planTitle}} ({{payload.planType | downcase}}) as {{payload.role | downcase | replace: '_', ' '}} with a {{payload.revenueSharePercentage}}% revenue share.{% if payload.expiresOn %} Respond by {{payload.expiresOn}}.{% endif %}",
+      redirect: "dashboardUrl",
+    },
+  },
+  {
+    workflowId: W.COLLABORATOR_TERMS_CHANGED,
+    name: "Collaborator invitation terms changed",
+    description: "The invited consultant, when a pending invitation is edited.",
+    category: "appointments",
+    inApp: {
+      subject: "Invitation terms changed",
+      body: "Your invitation to {{payload.planTitle}} now reads {{payload.role | downcase | replace: '_', ' '}} with a {{payload.revenueSharePercentage}}% revenue share.{% if payload.expiresOn %} Respond by {{payload.expiresOn}}.{% endif %}",
+      redirect: "dashboardUrl",
+    },
+  },
+  {
+    workflowId: W.COLLABORATOR_INVITE_EXPIRING,
+    name: "Collaborator invite expiring",
+    description: "The invited consultant, once, before the invitation lapses.",
+    category: "appointments",
+    inApp: {
+      subject: "Invitation lapses soon",
+      body: "Your invitation to {{payload.planTitle}} as {{payload.role | downcase | replace: '_', ' '}} lapses{% if payload.expiresOn %} on {{payload.expiresOn}}{% else %} soon{% endif %}. Accept or decline before then.",
       redirect: "dashboardUrl",
     },
   },
   {
     workflowId: W.COLLABORATOR_ACCEPTED,
     name: "Collaborator accepted",
-    description: "The plan's owner.",
+    description: "The plan's host side.",
     category: "appointments",
     inApp: {
       subject: "Invite accepted",
@@ -807,18 +830,20 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
   {
     workflowId: W.COLLABORATOR_REMOVED,
     name: "Collaborator removed",
-    description: "The removed consultant.",
+    description:
+      "The consultant whose invitation was withdrawn or whose place on the team was ended.",
     category: "appointments",
     inApp: {
-      subject: "Removed from a plan",
-      body: "You are no longer a collaborator on {{payload.planTitle}} ({{payload.planType | downcase}}).",
+      subject:
+        "{% if payload.pendingInvite %}Invitation withdrawn{% else %}Removed from a plan{% endif %}",
+      body: "{% if payload.pendingInvite %}Your invitation to {{payload.planTitle}} ({{payload.planType | downcase}}) was withdrawn{% if payload.ownerName %} by {{payload.ownerName}}{% endif %}.{% else %}You are no longer a collaborator on {{payload.planTitle}} ({{payload.planType | downcase}}).{% endif %}",
       redirect: "dashboardUrl",
     },
   },
   {
     workflowId: W.COLLABORATOR_DECLINED,
     name: "Collaborator declined",
-    description: "The plan's owner, when an invitee declines.",
+    description: "The plan's host side, when an invitee declines.",
     category: "appointments",
     inApp: {
       subject: "Invite declined",
@@ -828,12 +853,12 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
   },
   {
     workflowId: W.COLLABORATOR_WITHDRAWN,
-    name: "Collaborator withdrew",
-    description: "The plan's owner, when a collaborator withdraws.",
+    name: "Collaborator left",
+    description: "The plan's host side, when a collaborator leaves the team.",
     category: "appointments",
     inApp: {
-      subject: "Collaborator withdrew",
-      body: "{{payload.collaboratorName}} withdrew from {{payload.planTitle}} ({{payload.planType | downcase}}).",
+      subject: "Collaborator left",
+      body: "{{payload.collaboratorName}} is no longer on the team of {{payload.planTitle}} ({{payload.planType | downcase}}).",
       redirect: "dashboardUrl",
     },
   },
@@ -841,11 +866,33 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     workflowId: W.COLLABORATOR_INVITE_EXPIRED,
     name: "Collaborator invite expired",
     description:
-      "Both plan owner and invitee, when a collaboration invite expires.",
+      "Both the plan's host side and the invitee, when an invitation lapses.",
     category: "appointments",
     inApp: {
       subject: "Collaboration invite expired",
       body: "The collaboration invitation for {{payload.planTitle}}{% if payload.collaboratorName %} ({{payload.collaboratorName}}){% endif %} expired without a response.",
+      redirect: "dashboardUrl",
+    },
+  },
+  {
+    workflowId: W.PLAN_COHOST_JOINED,
+    name: "Plan co-host joined",
+    description: "Seat holders, when a named co-presenter joins their plan.",
+    category: "appointments",
+    inApp: {
+      subject: "A new co-host",
+      body: "{{payload.sentence}}",
+      redirect: "dashboardUrl",
+    },
+  },
+  {
+    workflowId: W.PLAN_COHOST_LEFT,
+    name: "Plan co-host left",
+    description: "Seat holders, when a named co-presenter leaves their plan.",
+    category: "appointments",
+    inApp: {
+      subject: "A co-host change",
+      body: "{{payload.sentence}}",
       redirect: "dashboardUrl",
     },
   },

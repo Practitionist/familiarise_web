@@ -3,6 +3,7 @@
 import { STAFF_CANCEL_REFUND_REASON } from "@/lib/payments/operations/refund-cause";
 import { Prisma } from "@prisma/client";
 
+import { collaboratorUserIds } from "@/lib/collaborators/recipients";
 import { notifyAppointmentCancelled } from "@/lib/novu/service";
 import { stageAppointmentCancelledEmail } from "@/lib/email/senders/booking";
 import { notificationScope } from "@/lib/novu/workflows";
@@ -40,6 +41,8 @@ import {
 
 type NotificationPayload = {
   userIds: string[];
+  /** The plan's team: told by a bell their switches govern, with no email. */
+  teamIds?: string[];
   data: Parameters<typeof notifyAppointmentCancelled>[1];
 };
 
@@ -228,9 +231,16 @@ function noEffects(): FreezeEffects {
   };
 }
 
-function withNotification(notif: NotificationPayload | null): FreezeEffects {
+function withNotification(
+  notif: NotificationPayload | null,
+  team: string[] = [],
+): FreezeEffects {
   const effects = noEffects();
-  if (notif) effects.notifications.push(notif);
+  if (notif) {
+    // Anyone the required notice already reaches is not told twice.
+    const teamIds = team.filter((id) => !notif.userIds.includes(id));
+    effects.notifications.push({ ...notif, teamIds });
+  }
   return effects;
 }
 
@@ -363,6 +373,7 @@ async function freezeWebinar(
       planTitle: webinar.webinarPlan?.title || "Webinar",
       dateTime: ctx.earliestSlot.startsAt.toISOString(),
     }),
+    await collaboratorUserIds("webinar", webinar.webinarPlanId, tx),
   );
 }
 
@@ -393,6 +404,7 @@ async function freezeClass(
       planTitle: classEvent.classPlan?.title || "Class",
       dateTime: ctx.earliestSlot.startsAt.toISOString(),
     }),
+    await collaboratorUserIds("class", classEvent.classPlanId, tx),
   );
 }
 
@@ -527,7 +539,7 @@ async function freezeOneAppointment(tx: Tx, ctx: FreezeContext) {
       participants: ctx.appointment.participants.length,
       occurrences: ctx.slots.length,
       payments: ctx.appointment.payment.length,
-      recipients: new Set(notice.userIds).size,
+      recipients: new Set([...notice.userIds, ...(notice.teamIds ?? [])]).size,
     });
   effects.refunds.push(
     ...(await stampFreezeRefunds(
@@ -540,7 +552,7 @@ async function freezeOneAppointment(tx: Tx, ctx: FreezeContext) {
   await closeFrozenSlots(tx, ctx);
   for (const trialId of effects.trialsToTombstone)
     await softCancelTrialAppointmentInTx(tx, trialId);
-  for (const { userIds, data } of effects.notifications) {
+  for (const { userIds, teamIds = [], data } of effects.notifications) {
     // A maintenance freeze is staff ending the booking: every party is told whatever their switches say.
     await notifyAppointmentCancelled(userIds, data, {
       tx,
@@ -548,6 +560,13 @@ async function freezeOneAppointment(tx: Tx, ctx: FreezeContext) {
       dedupeKey: `maintenance-cancel:${ctx.appointment.id}`,
       required: { kind: "CANCELLED_BY_STAFF", recipients: userIds },
     });
+    if (teamIds.length > 0) {
+      await notifyAppointmentCancelled(teamIds, data, {
+        tx,
+        deferAttempt: true,
+        dedupeKey: `maintenance-cancel:${ctx.appointment.id}:team`,
+      });
+    }
     await stageAppointmentCancelledEmail(tx, {
       appointmentId: ctx.appointment.id,
       userIds,

@@ -219,6 +219,74 @@ describe("Novu workflow templates", () => {
     expect(rendered.redirect.url).toBe("/dashboard");
   });
 
+  it.each<[NovuWorkflowId, Record<string, unknown>, string, string]>([
+    [
+      "class-session-cancelled",
+      { forTeam: true, planTitle: "Systems", dateTime: "6 Sep" },
+      "A class session was cancelled",
+      "The 6 Sep session of Systems was cancelled.",
+    ],
+    [
+      "class-session-cancelled",
+      {
+        planTitle: "Systems",
+        dateTime: "6 Sep",
+        consultantName: "Asha",
+        makeUpBy: "20 Sep",
+      },
+      "A class session was cancelled",
+      "Your 6 Sep session of Systems was cancelled — Asha has until 20 Sep to schedule a make-up, or that session is refunded automatically.",
+    ],
+    [
+      "collaborator-removed",
+      {
+        pendingInvite: true,
+        ownerName: "Asha",
+        planTitle: "Systems",
+        planType: "webinar",
+      },
+      "Invitation withdrawn",
+      "Your invitation to Systems (webinar) was withdrawn by Asha.",
+    ],
+    [
+      "collaborator-removed",
+      { planTitle: "Systems", planType: "webinar" },
+      "Removed from a plan",
+      "You are no longer a collaborator on Systems (webinar).",
+    ],
+    [
+      "collaborator-invited",
+      {
+        planTitle: "Systems",
+        planType: "webinar",
+        role: "Co-host",
+        revenueSharePercentage: 25,
+        expiresOn: "21 Nov",
+      },
+      "Collaboration invite",
+      "You are invited to join Systems (webinar) as co-host with a 25% revenue share. Respond by 21 Nov.",
+    ],
+    [
+      "plan-cohost-left",
+      { sentence: "Ravi is no longer co-hosting Systems." },
+      "A co-host change",
+      "Ravi is no longer co-hosting Systems.",
+    ],
+  ])(
+    "%s renders the sentence its reader is owed (%#)",
+    (event, payload, subject, body) => {
+      const step = toFamilyDto(FAMILIES.find((f) => f.id === familyOf(event))!)
+        .steps[0] as { controlValues: Record<string, unknown> };
+      const rendered = JSON.parse(
+        new Liquid().parseAndRenderSync(JSON.stringify(step.controlValues), {
+          payload: toWire(event, { ...payload, dashboardUrl: "/dashboard" })
+            .payload,
+        }),
+      ) as { subject: string; body: string };
+      expect(rendered).toMatchObject({ subject, body });
+    },
+  );
+
   it("writes every family always-on, read-only and without a step condition", () => {
     for (const f of FAMILIES) {
       const dto = toFamilyDto(f);

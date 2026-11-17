@@ -499,7 +499,7 @@ export async function updatePendingTerms(
       });
       const notices = await stageCollaboratorNotifications(
         tx,
-        "INVITED",
+        "TERMS_CHANGED",
         collaborator,
       );
       return { collaborator, notices };

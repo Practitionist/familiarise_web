@@ -476,7 +476,7 @@ describe("editing a pending invitation's terms", () => {
     expect(mockStageNotices).toHaveBeenCalledTimes(1);
     expect(mockStageNotices).toHaveBeenCalledWith(
       mockTx,
-      "INVITED",
+      "TERMS_CHANGED",
       expect.objectContaining({ id: "c-1", revenueShareBps: 3000 }),
     );
   });

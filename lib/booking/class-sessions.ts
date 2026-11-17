@@ -345,12 +345,15 @@ export async function cancelClassSession(
             tx,
             NOVU_WORKFLOWS.CLASS_SESSION_CANCELLED,
             team,
-            cancelBell(
-              notificationHref(
-                hosted.appointment.organizationId,
-                "appointments",
-              ),
-            ),
+            (zone) => ({
+              ...cancelBell(
+                notificationHref(
+                  hosted.appointment.organizationId,
+                  "appointments",
+                ),
+              )(zone),
+              forTeam: true,
+            }),
             `occ-cancel:${occurrenceId}:team`,
           )),
         );
@@ -534,6 +537,28 @@ export async function onClassSessionVoided(
       cancelledBy: hostName,
       dashboardUrl,
     };
+  }
+  // The plan's team hears that the session did not count; their switches apply.
+  const team = await teamToTell(tx, cls.classPlan.id, seatUserIds);
+  if (team.length > 0) {
+    bells.push(
+      ...(await stageBellsByZone(
+        tx,
+        NOVU_WORKFLOWS.CLASS_SESSION_CANCELLED,
+        team,
+        (zone) => ({
+          forTeam: true,
+          voided: true,
+          planTitle: cls.classPlan.title,
+          dateTime: zoned(args.startsAt, zone),
+          dashboardUrl: notificationHref(
+            appointment.organizationId,
+            "appointments",
+          ),
+        }),
+        `occ-void:${args.occurrenceId}:team`,
+      )),
+    );
   }
   const { ledger, heldBefore } = await seriesLedgerAfterMiss(
     tx,

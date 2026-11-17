@@ -89,7 +89,8 @@ const FAMILY_DESCRIPTION: Record<FamilyId, string> = {
   "support-ticket": "Ops-facing and owner-facing support case events.",
   feedback: "Product feedback to admins; reviews to consultants.",
   account: "Verification, security, moderation and applications. No opt-out.",
-  collaborator: "Co-hosting invitations on a plan.",
+  collaborator:
+    "Co-hosting invitations and team changes on a plan, and a co-host change told to its seat holders.",
   platform:
     "Announcements and compliance alerts. Announcements follow the in-app switches; only required workflows are forced.",
   "org-billing": "Invoices, contracts, wallet, payouts and member overages.",
@@ -188,6 +189,10 @@ export const EVENT_FAMILY: Record<Ids[keyof Ids], FamilyId> = {
   "collaborator-declined": "collaborator",
   "collaborator-withdrawn": "collaborator",
   "collaborator-invite-expired": "collaborator",
+  "collaborator-terms-changed": "collaborator",
+  "collaborator-invite-expiring": "collaborator",
+  "plan-cohost-joined": "collaborator",
+  "plan-cohost-left": "collaborator",
 
   "general-announcement": "platform",
   "compliance-deadline-alert": "platform",
