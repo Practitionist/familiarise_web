@@ -56,12 +56,13 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
   {
     workflowId: W.CLASS_SESSION_CANCELLED,
     name: "Class session cancelled",
-    description: "Seat holders, when the host cancels one session of a class.",
+    description:
+      "Seat holders, and the plan's team in a sentence of their own, when one session of a class is cancelled.",
     category: "appointments",
     inApp: {
       subject:
         "{% if payload.voided %}A class session did not count{% else %}A class session was cancelled{% endif %}",
-      body: "{% if payload.voided %}Your {{payload.dateTime}} session of {{payload.planTitle}} lost too much time to count as held{% else %}Your {{payload.dateTime}} session of {{payload.planTitle}} was cancelled{% endif %} — {{payload.consultantName}} has until {{payload.makeUpBy}} to schedule a make-up, or that session is refunded automatically.",
+      body: "{% if payload.forTeam %}The {{payload.dateTime}} session of {{payload.planTitle}} {% if payload.voided %}did not count as held{% else %}was cancelled{% endif %}.{% else %}{% if payload.voided %}Your {{payload.dateTime}} session of {{payload.planTitle}} lost too much time to count as held{% else %}Your {{payload.dateTime}} session of {{payload.planTitle}} was cancelled{% endif %} — {{payload.consultantName}} has until {{payload.makeUpBy}} to schedule a make-up, or that session is refunded automatically.{% endif %}",
       redirect: "dashboardUrl",
     },
   },
