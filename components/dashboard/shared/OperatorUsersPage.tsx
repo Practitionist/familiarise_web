@@ -4,6 +4,7 @@ import { useState } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
+import { PersonCell } from "@/components/dashboard/backoffice/PersonCell";
 import { FilterBar } from "@/components/dashboard/FilterBar";
 import { PageHeader } from "@/components/dashboard/PageScaffold";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
@@ -14,7 +15,12 @@ import {
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
 import { userRoleLabel } from "@/lib/labels/personal-dashboard";
-import type { UserListItem, UserListResponse } from "@/types/admin-users";
+import { OperatorTime } from "@/lib/time/operator-time";
+import { readListBody } from "@/lib/backoffice/money-list-schemas";
+import {
+  userListPageSchema,
+  type UserListItem,
+} from "@/lib/backoffice/people-list-schemas";
 
 const PAGE_SIZE = 20; // the route's fixed page size
 
@@ -36,18 +42,15 @@ const columns: ResponsiveColumn<UserListItem>[] = [
     header: "User",
     primary: true,
     cell: (user) => (
-      <div className="flex items-center gap-3">
-        <Avatar>
-          <AvatarImage src={user.image || ""} />
-          <AvatarFallback>{initials(user)}</AvatarFallback>
-        </Avatar>
-        <div className="min-w-0">
-          <p className="font-medium text-foreground">
-            {user.name || "Unnamed"}
-          </p>
-          <p className="text-sm text-muted-foreground">{user.email}</p>
-        </div>
-      </div>
+      <PersonCell
+        person={user}
+        leading={
+          <Avatar>
+            <AvatarImage src={user.image || ""} />
+            <AvatarFallback>{initials(user)}</AvatarFallback>
+          </Avatar>
+        }
+      />
     ),
   },
   {
@@ -69,7 +72,7 @@ const columns: ResponsiveColumn<UserListItem>[] = [
     key: "joined",
     header: "Joined",
     className: "text-sm text-muted-foreground",
-    cell: (user) => new Date(user.createdAt).toLocaleDateString(),
+    cell: (user) => <OperatorTime value={user.createdAt} kind="date" />,
   },
 ];
 
@@ -85,13 +88,16 @@ export function OperatorUsersPage() {
 
   const { data, isPending, error, refetch } = useQuery({
     queryKey: ["operator-users", page, search, role],
-    queryFn: async (): Promise<UserListResponse> => {
+    queryFn: async () => {
       const params = new URLSearchParams({ page: String(page) });
       if (search) params.set("search", search);
       if (role) params.set("role", role);
       const response = await fetch(`/api/admin/users?${params}`);
-      if (!response.ok) throw new Error("Failed to fetch users");
-      return response.json();
+      return readListBody(
+        response,
+        userListPageSchema,
+        "Failed to fetch users",
+      );
     },
     // Keep the current page on screen while the next one loads.
     placeholderData: keepPreviousData,

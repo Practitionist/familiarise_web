@@ -43,7 +43,7 @@ import { throwSupportError } from "@/lib/support/error-copy";
 import { savedRepliesFor } from "@/lib/support/saved-replies";
 import { slaHint } from "@/lib/support/sla-hint";
 import { supportKeys } from "@/lib/support/support-keys";
-import { formatDateTimeLabel } from "@/lib/time/display";
+import { OperatorTime } from "@/lib/time/operator-time";
 import type {
   ArticleLink,
   CaseWorkspace as CaseData,
@@ -119,7 +119,7 @@ function useOperators(enabled: boolean) {
 }
 
 const when = (iso: string | null) =>
-  iso ? formatDateTimeLabel(new Date(iso)) : null;
+  iso ? <OperatorTime value={iso} /> : null;
 
 /** Nothing is merged server-side, so the customer is only told where the conversation continues. */
 export const duplicateMessage = (reference: string) =>
@@ -355,13 +355,10 @@ export function CaseWorkspace({
               {data.subject}
             </h2>
             <span className="min-w-0 break-words text-xs text-muted-foreground">
-              {[
-                data.reference,
-                CASE_TOPIC_LABEL[data.topic],
-                when(data.createdAt),
-              ]
+              {[data.reference, CASE_TOPIC_LABEL[data.topic]]
                 .filter(Boolean)
                 .join(" · ")}
+              {data.createdAt && <> · {when(data.createdAt)}</>}
             </span>
           </div>
           <div className="flex flex-wrap items-center gap-1.5">
@@ -458,9 +455,9 @@ export function CaseWorkspace({
               <span className="font-medium text-foreground">
                 {data.booking.title}
               </span>
-              {data.booking.firstStartsAt
-                ? ` · ${when(data.booking.firstStartsAt)}`
-                : ""}
+              {data.booking.firstStartsAt && (
+                <> · {when(data.booking.firstStartsAt)}</>
+              )}
             </span>
           )}
           {data.payment && (

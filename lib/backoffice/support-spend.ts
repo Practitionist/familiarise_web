@@ -25,6 +25,10 @@ import type {
   SupportSpendPayment,
   SupportSpendReport,
 } from "./support-spend-types";
+import { resolveTargets, targetKey } from "./target-refs";
+
+/** Operators per page; the window read covers only the page's operators. */
+export const SUPPORT_SPEND_PAGE_SIZE = 10;
 
 type BoundedRefundAction = (typeof BOUNDED_REFUND_ACTIONS)[number];
 
@@ -166,21 +170,27 @@ function emptyTally(user: {
 export async function readSupportSpend(args: {
   viewer: { userId: string; role: string };
   now: Date;
+  page?: number;
 }): Promise<SupportSpendReport> {
   const { viewer, now } = args;
+  const page = Math.max(1, Math.floor(args.page ?? 1) || 1);
   const windows = {
     istDay: istDayStart(now),
     rolling24h: new Date(now.getTime() - STAFF_REFUND_ROLLING_WINDOW_MS),
     rolling30d: new Date(now.getTime() - SUPPORT_SPEND_WINDOW_MS),
   };
+  const operatorWhere: Prisma.UserWhereInput =
+    viewer.role === "ADMIN"
+      ? { role: { in: ["ADMIN", "STAFF"] } }
+      : { id: viewer.userId, role: "STAFF" };
   const users = await prisma.user.findMany({
-    where:
-      viewer.role === "ADMIN"
-        ? { role: { in: ["ADMIN", "STAFF"] } }
-        : { id: viewer.userId, role: "STAFF" },
+    where: operatorWhere,
     select: { id: true, name: true, role: true },
-    orderBy: { name: "asc" },
+    orderBy: [{ name: "asc" }, { id: "asc" }],
+    skip: (page - 1) * SUPPORT_SPEND_PAGE_SIZE,
+    take: SUPPORT_SPEND_PAGE_SIZE,
   });
+  const total = await prisma.user.count({ where: operatorWhere });
   const tallies = new Map(users.map((user) => [user.id, emptyTally(user)]));
   const rows: SpendRow[] = tallies.size
     ? await prisma.opsActionLog.findMany({
@@ -205,9 +215,13 @@ export async function readSupportSpend(args: {
       tallyHold(tally, row, windows.istDay);
     else tallyRefund(tally, row, windows);
   }
-  const committed = await committedSupportPaiseByPayment(prisma, [
+  const paymentIds = [
     ...new Set([...tallies.values()].flatMap((t) => [...t.usage.keys()])),
-  ]);
+  ];
+  const committed = await committedSupportPaiseByPayment(prisma, paymentIds);
+  const targets = await resolveTargets(
+    paymentIds.map((id) => ({ kind: "Payment", id })),
+  );
   const operators = [...tallies.values()].map(
     ({ usage, ...tally }): SupportSpendOperator => {
       const payments = [...usage].map(
@@ -215,6 +229,7 @@ export async function readSupportSpend(args: {
           const supportCommittedPaise = committed.get(paymentId) ?? 0;
           return {
             paymentId,
+            target: targets.get(targetKey("Payment", paymentId)) ?? null,
             supportCommittedPaise,
             platformCancelPaise: use.platformCancelPaise,
             remainingPerPaymentPaise: tally.capped
@@ -249,13 +264,11 @@ export async function readSupportSpend(args: {
       };
     },
   );
-  operators.sort(
-    (a, b) =>
-      b.refunds.rolling30dPaise - a.refunds.rolling30dPaise ||
-      a.name.localeCompare(b.name),
-  );
   return {
     operators,
+    total,
+    page,
+    pageSize: SUPPORT_SPEND_PAGE_SIZE,
     windows: {
       istDayStart: windows.istDay.toISOString(),
       rolling24hStart: windows.rolling24h.toISOString(),

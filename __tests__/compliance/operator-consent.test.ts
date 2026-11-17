@@ -21,11 +21,19 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
-const mockRequirePrivilegedAuth = jest.fn();
-jest.mock("../../lib/auth-helpers", () => ({
-  __esModule: true,
-  requirePrivilegedAuth: () => mockRequirePrivilegedAuth(),
-}));
+const mockRequireApiAuth = jest.fn();
+jest.mock("../../lib/auth-helpers", () => {
+  const { NextResponse } =
+    jest.requireActual<typeof import("next/server")>("next/server");
+  return {
+    __esModule: true,
+    requireApiAuth: () => mockRequireApiAuth(),
+    isPrivileged: (role: string | undefined) =>
+      role === "ADMIN" || role === "STAFF",
+    forbiddenResponse: (error: string, code: string) =>
+      NextResponse.json({ error, code }, { status: 403 }),
+  };
+});
 
 import { NextResponse } from "next/server";
 import { POST } from "../../app/api/user/consent/route";
@@ -33,7 +41,7 @@ import { operatorHasBeenAskedForConsent } from "../../lib/compliance/operator-co
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockRequirePrivilegedAuth.mockResolvedValue({
+  mockRequireApiAuth.mockResolvedValue({
     session: { user: { id: "op1", role: "STAFF" } },
   });
   mockTx.consentArtifact.createMany.mockResolvedValue({ count: 3 });
@@ -65,13 +73,35 @@ it("writes nothing when the operator was already asked", async () => {
   expect(mockTx.consentArtifact.createMany).not.toHaveBeenCalled();
 });
 
-it("refuses non-operators through the privileged gate", async () => {
-  mockRequirePrivilegedAuth.mockResolvedValue({
-    error: NextResponse.json({ error: "Forbidden" }, { status: 403 }),
+it.each(["ADMIN", "STAFF"])(
+  "lets %s record their own consent",
+  async (role) => {
+    mockTx.consentArtifact.findFirst.mockResolvedValue(null);
+    mockRequireApiAuth.mockResolvedValue({
+      session: { user: { id: "op1", role } },
+    });
+    expect((await POST()).status).toBe(200);
+  },
+);
+
+it.each(["CONSULTANT", "CONSULTEE", undefined])(
+  "refuses role %s with 403 FORBIDDEN and writes nothing",
+  async (role) => {
+    mockRequireApiAuth.mockResolvedValue({
+      session: { user: { id: "u1", role } },
+    });
+    const res = await POST();
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toMatchObject({ code: "FORBIDDEN" });
+    expect(mockTx.consentArtifact.createMany).not.toHaveBeenCalled();
+  },
+);
+
+it("passes a sign-in failure through unchanged", async () => {
+  mockRequireApiAuth.mockResolvedValue({
+    error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
   });
-  const res = await POST();
-  expect(res.status).toBe(403);
-  expect(mockTx.consentArtifact.createMany).not.toHaveBeenCalled();
+  expect((await POST()).status).toBe(401);
 });
 
 it("counts a withdrawn artifact as asked", async () => {

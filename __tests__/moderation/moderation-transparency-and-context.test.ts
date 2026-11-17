@@ -63,7 +63,7 @@ const mockNotificationOutbox = {
 const mockTransaction = jest.fn();
 
 const mockGetSession = jest.fn();
-const mockRequirePrivilegedAuth = jest.fn();
+const mockRequireBackofficeSurface = jest.fn();
 const mockAuthorizeAppointment = jest.fn();
 const mockAttemptTrigger = jest.fn().mockResolvedValue({ success: true });
 const mockStageTrigger = jest.fn().mockResolvedValue({
@@ -120,6 +120,7 @@ jest.mock("../../lib/prisma", () => ({
     get notificationOutbox() {
       return mockNotificationOutbox;
     },
+    opsActionLog: { create: async () => ({ id: "ops-1" }) },
     $transaction: (...args: unknown[]) => mockTransaction(...args),
   },
 }));
@@ -129,8 +130,8 @@ jest.mock("../../lib/auth-server", () => ({
 }));
 
 jest.mock("../../lib/auth-helpers", () => ({
-  requirePrivilegedAuth: (...args: unknown[]) =>
-    mockRequirePrivilegedAuth(...args),
+  requireBackofficeSurface: (...args: unknown[]) =>
+    mockRequireBackofficeSurface(...args),
   requireApiAuth: async () => {
     const session = await mockGetSession();
     if (!session?.user) {
@@ -413,7 +414,7 @@ describe("Moderation transparency, review context & feedback CAS invariants", ()
 
   describe("PATCH /api/staff/moderation/reports/[reportId] terminal state guard", () => {
     it("rejects DISMISSED and ACTION_TAKEN on PATCH so resolutions must use POST .../action", async () => {
-      mockRequirePrivilegedAuth.mockResolvedValue({
+      mockRequireBackofficeSurface.mockResolvedValue({
         session: { user: { id: "staff-1", role: "STAFF" } },
       });
 
@@ -444,7 +445,7 @@ describe("Moderation transparency, review context & feedback CAS invariants", ()
       );
 
     beforeEach(() => {
-      mockRequirePrivilegedAuth.mockResolvedValue({
+      mockRequireBackofficeSurface.mockResolvedValue({
         session: { user: { id: "staff-1", role: "STAFF" } },
       });
       mockModerationReport.updateMany.mockReset();
@@ -460,6 +461,7 @@ describe("Moderation transparency, review context & feedback CAS invariants", ()
         status: "PENDING",
         expectedStatus: "ACTION_TAKEN",
         expectedAssignedToId: null,
+        reason: "Reopen for a second look",
       });
       expect(res.status).toBe(409);
       expect(mockModerationReport.updateMany).not.toHaveBeenCalled();
@@ -476,9 +478,12 @@ describe("Moderation transparency, review context & feedback CAS invariants", ()
         status: "ESCALATED",
         expectedStatus: "PENDING",
         expectedAssignedToId: null,
+        reason: "Escalating to the admin on call",
       });
       expect(stale.status).toBe(409);
-      expect((await patch({ status: "ESCALATED" })).status).toBe(400);
+      expect(
+        (await patch({ status: "ESCALATED", reason: "Escalate this" })).status,
+      ).toBe(400);
     });
   });
 
@@ -634,7 +639,7 @@ describe("Moderation transparency, review context & feedback CAS invariants", ()
 
   describe("PATCH /api/staff/feedbacks/[feedbackId] CAS & outbox notification", () => {
     it("returns 409 on concurrent status mutation and stages PLATFORM_FEEDBACK_UPDATE bell on transition", async () => {
-      mockRequirePrivilegedAuth.mockResolvedValue({
+      mockRequireBackofficeSurface.mockResolvedValue({
         session: { user: { id: "staff-1", role: "STAFF" } },
       });
 

@@ -26,6 +26,7 @@ import {
   type LinkedReportCase,
   type ReportCaseCategory,
 } from "@/schemas/moderation";
+import { formatOperatorInstant } from "@/lib/time/operator-zone";
 
 const CATEGORY_LABEL: Record<ReportCaseCategory, string> = {
   SAFETY_CONCERN: "Safety concern",
@@ -74,13 +75,7 @@ export function ReportCaseLink({
 }
 
 const formatStartsAt = (iso: string | null) =>
-  iso
-    ? new Date(iso).toLocaleDateString("en-IN", {
-        day: "numeric",
-        month: "short",
-        year: "numeric",
-      })
-    : "No session scheduled";
+  iso ? formatOperatorInstant(iso) : "No session scheduled";
 
 /** Picks a booking both users share, a category and a reason, and opens the reporter's case. */
 export function OpenReportCaseDialog({

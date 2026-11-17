@@ -1,7 +1,7 @@
 import { requireBackofficePage } from "@/lib/auth-guard";
 import MetricsPageClient from "./MetricsPageClient";
 
-/** Support-queue metrics — staff's Insights item (#1527: moved from the staff tree). */
+/** Metrics: support-queue health and the platform totals, in both trees. */
 export default async function Page({
   params,
 }: Readonly<{ params: Promise<{ tree: string }> }>) {

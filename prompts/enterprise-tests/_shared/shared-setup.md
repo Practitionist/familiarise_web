@@ -392,7 +392,7 @@ cards: `4111 1111 1111 1111`, OTP `1234`.
 - **FundingSource enum:** `prisma/schema.prisma enum FundingSource` (~737)
 - **Program subtypes:** `prisma/schema.prisma model Program` (~859), `LicensedSeatConfig` (~889), `CreditPoolConfig` (~900)
 - **OrgInvoiceCounter (Round-3):** `prisma/schema.prisma model OrgInvoiceCounter`
-- **Auth helpers:** `lib/auth-helpers.ts` — `requireApiAuth`, `requireOrgAccess(orgId, minRole)`, `requireOrgOwner(orgId)`, `requireAdminAuth`, `orgRoleSatisfies`, `ORG_ROLE_RANK`
+- **Auth helpers:** `lib/auth-helpers.ts` — `requireApiAuth`, `requireOrgAccess(orgId, minRole)`, `requireOrgOwner(orgId)`, `requireBackofficeSurface(key)`, `orgRoleSatisfies`, `ORG_ROLE_RANK`
 - **Create-org route:** `app/api/organizations/route.ts` (ORG_WORKSPACE gate at lines 129-142)
 - **Accept-invitation race:** `app/api/organizations/invitations/accept/route.ts` (atomic `updateMany WHERE status=pending`)
 - **Programs route (Round-3 v2 reject):** `app/api/organizations/[orgId]/programs/route.ts` — `ProgramsV2AttemptSchema`

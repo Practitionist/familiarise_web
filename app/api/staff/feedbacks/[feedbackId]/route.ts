@@ -2,7 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "lib/prisma";
 
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { goHref } from "@/lib/dashboard/go";
 import { stageFeedbackUpdateEmail } from "@/lib/email/senders/people";
 import { stageBell } from "@/lib/novu/stage-bell";
@@ -18,7 +18,7 @@ export async function GET(
   { params }: { params: Promise<{ feedbackId: string }> },
 ) {
   try {
-    const auth = await requirePrivilegedAuth();
+    const auth = await requireBackofficeSurface("feedback.manage");
     if (auth.error) return auth.error;
 
     const { feedbackId } = await params;
@@ -65,7 +65,7 @@ export async function PATCH(
   { params }: { params: Promise<{ feedbackId: string }> },
 ) {
   try {
-    const auth = await requirePrivilegedAuth();
+    const auth = await requireBackofficeSurface("feedback.manage");
     if (auth.error) return auth.error;
 
     const { feedbackId } = await params;

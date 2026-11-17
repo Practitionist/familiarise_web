@@ -1,7 +1,17 @@
 import prisma from "@/lib/prisma";
-import { getBookingTimeline } from "@/lib/data/booking-history";
+import {
+  getBookingTimeline,
+  type BookingTimelineEntry,
+} from "@/lib/data/booking-history";
+import { gatewayLabel, ledgerAccountLabel } from "@/lib/labels/money-labels";
+import {
+  cancellationReasonLabel,
+  refundReasonLabel,
+} from "@/lib/novu/humanize";
 import { sentrySearchHref } from "@/lib/observability/sentry-issues";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { formatOperatorInstant } from "@/lib/time/operator-zone";
+import { humanizeEnum } from "@/lib/ui/tone";
 import {
   TRACE_SOURCES,
   type EntityTrace,
@@ -83,8 +93,86 @@ function makeRow(
   ];
 }
 
+/** An enum value as words inside a sentence: "PENDING_REVIEW" → "pending review"; acronyms stay. */
+export function enumWords(value: string | null | undefined): string {
+  return humanizeEnum(value)
+    .split(" ")
+    .map((word) =>
+      word.length > 1 && word === word.toUpperCase()
+        ? word
+        : word.toLowerCase(),
+    )
+    .join(" ");
+}
+
+/** "Reschedule request: pending review → declined". */
+export function bookingStepLabel(
+  entity: string,
+  from: string | null | undefined,
+  to: string,
+): string {
+  const move = from ? `${enumWords(from)} → ${enumWords(to)}` : enumWords(to);
+  const name = enumWords(entity);
+  return `${name.charAt(0).toUpperCase()}${name.slice(1)}: ${move}`;
+}
+
 const join = (parts: (string | null | undefined | false)[]) =>
   parts.filter(Boolean).join(" · ") || null;
+
+const REASON_CODE = /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*$/;
+/** History reasons the booking writers store as codes (`HOST_CANCELLED_SESSION_REASON` among them). */
+const HISTORY_REASON_LABEL: Record<string, string> = {
+  HOST_CANCELLED_SESSION: "Host cancelled the session",
+};
+const capitalise = (text: string) =>
+  text.charAt(0).toUpperCase() + text.slice(1);
+
+/** Whose share an earnings row is, in words. */
+const EARNING_ROLE_LABEL: Record<string, string> = {
+  OWNER: "Expert",
+  COLLABORATOR: "Collaborator",
+};
+const shareOf = (role: string) =>
+  EARNING_ROLE_LABEL[role] ?? capitalise(enumWords(role));
+
+/** A stored reason in words: a code becomes its label, free text passes through. */
+export function traceReason(reason: string | null | undefined): string | null {
+  const raw = reason?.trim();
+  if (!raw) return null;
+  if (Object.hasOwn(HISTORY_REASON_LABEL, raw))
+    return HISTORY_REASON_LABEL[raw];
+  if (!REASON_CODE.test(raw)) return raw;
+  const label = cancellationReasonLabel(raw);
+  return label === raw ? capitalise(enumWords(raw)) : capitalise(label);
+}
+
+/** A refund's reason in words, as the refund notices word it. */
+function refundReasonText(reason: string | null): string | null {
+  if (!reason) return null;
+  return REASON_CODE.test(reason.trim())
+    ? traceReason(reason)
+    : (refundReasonLabel(reason) ?? null);
+}
+
+/** One timeline entry as a trace step; a proposal says it was proposed and where it stands now. */
+export function bookingTraceStep(entry: BookingTimelineEntry): {
+  status: string;
+  detail: string | null;
+} {
+  if (entry.kind === "reschedule") {
+    return {
+      status: "Reschedule proposed",
+      detail: join([
+        traceReason(entry.reason),
+        entry.outcome && `now ${enumWords(entry.outcome)}`,
+      ]),
+    };
+  }
+  return {
+    status: bookingStepLabel(entry.entity, entry.from, entry.to),
+    detail: traceReason(entry.reason),
+  };
+}
 
 class TraceCollector {
   readonly rows: TraceRow[] = [];
@@ -179,7 +267,7 @@ const PAYMENT_SELECT = {
   deletedAt: true,
   createdAt: true,
   updatedAt: true,
-  user: { select: { name: true } },
+  user: { select: { id: true, name: true, email: true } },
 } as const;
 
 async function readRootPayments(kind: EntityTrace["kind"], id: string) {
@@ -236,7 +324,7 @@ function paymentRows(p: RootPayment): TraceRow[] {
       ...money,
       actor: p.user.name,
       detail: join([
-        p.paymentGateway,
+        gatewayLabel(p.paymentGateway),
         `order ${p.paymentIntent}`,
         p.parentPaymentId && `side charge of ${p.parentPaymentId}`,
       ]),
@@ -257,7 +345,7 @@ function paymentRows(p: RootPayment): TraceRow[] {
     }),
     ...makeRow("payment", p.id, "deleted", p.deletedAt, { status: "Deleted" }),
     ...makeRow("payment", p.id, "status", p.updatedAt, {
-      status: `Now ${p.paymentStatus}`,
+      status: `Now ${enumWords(p.paymentStatus)}`,
       detail: "Last write to the payment row",
     }),
   ];
@@ -305,7 +393,7 @@ export async function readEntityTrace(args: {
         }),
       (l) =>
         makeRow("leg", l.id, "created", l.createdAt, {
-          status: `Funding leg ${l.source}`,
+          status: `Funding leg: ${enumWords(l.source)}`,
           amountPaise: l.amountPaise,
           currency: "INR",
           detail: l.sourceRef,
@@ -343,7 +431,10 @@ export async function readEntityTrace(args: {
             ...makeRow("refund", r.id, "created", r.createdAt, {
               status: "Refund created",
               ...money,
-              detail: join([`gateway ${r.refundId}`, r.reason]),
+              detail: join([
+                `gateway ${r.refundId}`,
+                refundReasonText(r.reason),
+              ]),
             }),
             ...makeRow("refund", r.id, "failed", r.failedAt, {
               status: "Refund failed",
@@ -358,7 +449,7 @@ export async function readEntityTrace(args: {
               status: "Refund deleted",
             }),
             ...makeRow("refund", r.id, "status", r.updatedAt, {
-              status: `Refund now ${r.status}`,
+              status: `Refund now ${enumWords(r.status)}`,
               ...money,
             }),
           ];
@@ -397,14 +488,15 @@ export async function readEntityTrace(args: {
               detail: join([
                 d.reason,
                 `gateway ${d.disputeId}`,
-                d.dueBy && `respond by ${d.dueBy.toISOString().slice(0, 10)}`,
+                d.dueBy &&
+                  `respond by ${formatOperatorInstant(d.dueBy, "date")}`,
               ]),
             }),
             ...makeRow("dispute", d.id, "evidence", d.evidenceSubmittedAt, {
               status: "Evidence submitted",
             }),
             ...makeRow("dispute", d.id, "status", d.updatedAt, {
-              status: `Dispute now ${d.status}`,
+              status: `Dispute now ${enumWords(d.status)}`,
               ...money,
             }),
           ];
@@ -440,15 +532,17 @@ export async function readEntityTrace(args: {
         const debits = txn.entries.filter((e) => e.direction === "DEBIT");
         const credits = txn.entries.filter((e) => e.direction === "CREDIT");
         const kinds = (list: typeof txn.entries) =>
-          [...new Set(list.map((e) => e.account.kind))].join(", ");
+          [
+            ...new Set(list.map((e) => ledgerAccountLabel(e.account.kind))),
+          ].join(", ");
         return makeRow("ledger", txn.id, "posted", txn.postedAt, {
-          status: `Ledger ${txn.kind}`,
+          status: `Ledger: ${enumWords(txn.kind)}`,
           amountPaise: debits.reduce((s, e) => s + Number(e.amountPaise), 0),
           currency: "INR",
           detail: join([
             `${txn.entries.length} entries`,
-            debits.length > 0 && `DR ${kinds(debits)}`,
-            credits.length > 0 && `CR ${kinds(credits)}`,
+            debits.length > 0 && `Debit ${kinds(debits)}`,
+            credits.length > 0 && `Credit ${kinds(credits)}`,
             txn.description,
           ]),
         });
@@ -468,7 +562,7 @@ export async function readEntityTrace(args: {
   ) =>
     holds.flatMap((h) => [
       ...makeRow("hold", h.id, "placed", h.placedAt, {
-        status: `Hold placed (${h.reason})`,
+        status: `Hold placed (${enumWords(h.reason)})`,
         detail: join([h.sourceRef, h.note]),
       }),
       ...makeRow("hold", h.id, "released", h.releasedAt, {
@@ -529,7 +623,7 @@ export async function readEntityTrace(args: {
               status: "Earnings recorded",
               ...money,
               detail: join([
-                `${e.role} share for ${e.consultantProfile.user.name}`,
+                `${shareOf(e.role)} share for ${e.consultantProfile.user.name}`,
                 `platform fee ${formatCurrencyAmount(Number(e.platformFeePaise), e.currency)}`,
               ]),
             }),
@@ -539,11 +633,11 @@ export async function readEntityTrace(args: {
               detail: e.payoutId && `payout ${e.payoutId}`,
             }),
             ...makeRow("earnings", e.id, "status", e.updatedAt, {
-              status: `Earnings now ${e.status}`,
+              status: `Earnings now ${enumWords(e.status)}`,
               ...money,
               detail: join([
                 e.holdUntil &&
-                  `held until ${e.holdUntil.toISOString().slice(0, 10)}`,
+                  `held until ${formatOperatorInstant(e.holdUntil, "date")}`,
                 Number(e.refundedShareAmount) > 0 &&
                   `refunded share ${formatCurrencyAmount(Number(e.refundedShareAmount), e.currency)}`,
               ]),
@@ -586,10 +680,10 @@ export async function readEntityTrace(args: {
             ...makeRow("earnings", e.id, "created", e.createdAt, {
               status: "Organisation earnings recorded",
               ...money,
-              detail: `${e.role} share for ${e.organization.name}`,
+              detail: `${shareOf(e.role)} share for ${e.organization.name}`,
             }),
             ...makeRow("earnings", e.id, "status", e.updatedAt, {
-              status: `Organisation earnings now ${e.status}`,
+              status: `Organisation earnings now ${enumWords(e.status)}`,
               ...money,
             }),
           ];
@@ -660,7 +754,7 @@ export async function readEntityTrace(args: {
             currency: p.currency,
           }),
           ...makeRow("payout", p.id, "status", p.updatedAt, {
-            status: `Payout now ${p.status}`,
+            status: `Payout now ${enumWords(p.status)}`,
             ...money,
             detail: p.failureReason,
           }),
@@ -719,7 +813,7 @@ export async function readEntityTrace(args: {
             detail: p.failureReason,
           }),
           ...makeRow("payout", p.id, "status", p.updatedAt, {
-            status: `Organisation payout now ${p.status}`,
+            status: `Organisation payout now ${enumWords(p.status)}`,
             ...money,
           }),
         ];
@@ -816,7 +910,7 @@ export async function readEntityTrace(args: {
             "issued",
             inv.issuedAt ?? inv.createdAt,
             {
-              status: `Organisation invoice ${inv.invoiceNumber} (now ${inv.status})`,
+              status: `Organisation invoice ${inv.invoiceNumber} (now ${enumWords(inv.status)})`,
               ...money,
               detail: "The payment was billed on this invoice",
             },
@@ -858,7 +952,7 @@ export async function readEntityTrace(args: {
         }),
       (cn) =>
         makeRow("creditNote", cn.id, "issued", cn.issuedAt ?? cn.createdAt, {
-          status: `Organisation credit note ${cn.creditNoteNumber} (now ${cn.status})`,
+          status: `Organisation credit note ${cn.creditNoteNumber} (now ${enumWords(cn.status)})`,
           amountPaise: cn.totalPaise,
           currency: "INR",
           detail: cn.reason,
@@ -872,9 +966,8 @@ export async function readEntityTrace(args: {
       const timeline = await getBookingTimeline(A, { kind: "all" });
       const entries = timeline?.entries ?? [];
       const kept = entries.slice(0, TRACE_ROW_CAP);
-      for (const entry of entries) {
-        if (entry.entity === "OCCURRENCE") occurrenceIds.push(entry.entityId);
-      }
+      // From the booking's sessions, not the entries: a hidden row must not hide a session's audit.
+      occurrenceIds.push(...(timeline?.occurrenceIds ?? []));
       t.add(
         "booking",
         kept.flatMap((entry) =>
@@ -884,9 +977,8 @@ export async function readEntityTrace(args: {
             `${entry.kind}:${entry.id}`,
             new Date(entry.createdAt),
             {
-              status: `${entry.entity} ${entry.from ? `${entry.from} → ` : ""}${entry.to}`,
+              ...bookingTraceStep(entry),
               actor: entry.actor?.name ?? null,
-              detail: entry.reason,
             },
           ),
         ),
@@ -968,7 +1060,7 @@ export async function readEntityTrace(args: {
             t.addCapped("support", c.events, CASE_EVENT_CAP, (events) =>
               events.flatMap((ev) =>
                 makeRow("support", c.id, `event:${ev.id}`, ev.createdAt, {
-                  status: `Case ${c.referenceNumber}: ${ev.kind}`,
+                  status: `Case ${c.referenceNumber}: ${enumWords(ev.kind)}`,
                   actor: ev.actor?.name ?? null,
                   detail:
                     ev.fromValue || ev.toValue
@@ -1098,7 +1190,7 @@ export async function readEntityTrace(args: {
             `event:${ev.id}`,
             ev.createdAt,
             {
-              status: `${ev.category} ${ev.severity}`,
+              status: `${capitalise(enumWords(ev.category))} event (${enumWords(ev.severity)})`,
               detail: ev.message.slice(0, 200),
             },
           ),
@@ -1113,6 +1205,7 @@ export async function readEntityTrace(args: {
     paymentIds: P,
     appointmentId: A,
     userId,
+    customer: payments[0]?.user ?? null,
     sentryHref: sentrySearchHref(args.id),
     rows: mergeTimeline(t.rows),
     sources: t.sourceReports(),

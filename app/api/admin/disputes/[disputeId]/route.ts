@@ -4,7 +4,8 @@ import { UserRole } from "@prisma/client";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
+import { BOOKING_TITLE_SELECT, bookingRefOf } from "@/lib/data/booking-title";
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
@@ -17,7 +18,7 @@ interface RouteParams {
 
 export async function GET(req: NextRequest, { params }: RouteParams) {
   try {
-    const auth = await requirePrivilegedAuth();
+    const auth = await requireBackofficeSurface("disputes.read");
     if (auth.error) return auth.error;
 
     const parsedRole = z.nativeEnum(UserRole).safeParse(auth.session.user.role);
@@ -28,6 +29,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     const resolvedParams = await params;
 
     const dispute = await prisma.dispute.findUnique({
+      relationLoadStrategy: "join",
       where: { id: resolvedParams.disputeId },
       select: {
         id: true,
@@ -65,8 +67,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
             },
             appointment: {
               select: {
-                id: true,
-                appointmentType: true,
+                ...BOOKING_TITLE_SELECT,
                 createdAt: true,
                 occurrences: {
                   where: { deletedAt: null },
@@ -187,6 +188,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         ? {
             ...dispute.payment,
             appointment: sanitizedAppointment,
+            booking: bookingRefOf(appt),
           }
         : null,
       evidencePack: canManageDisputes ? evidencePack : null,

@@ -20,6 +20,10 @@ jest.mock("react", () => ({
   cache: <T,>(fn: T) => fn,
 }));
 jest.mock("next/navigation", () => ({ notFound: () => mockNotFound() }));
+// The viewer-zone wrapper reads the session; these layouts are tested for their 404 alone.
+jest.mock("@/app/support/_components/ViewerZone", () => ({
+  ViewerZone: ({ children }: { children: unknown }) => children,
+}));
 jest.mock("@/lib/auth-guard", () => ({
   requireOnboarded: () => mockRequireOnboarded(),
 }));

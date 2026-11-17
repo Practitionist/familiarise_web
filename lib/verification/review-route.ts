@@ -1,22 +1,17 @@
 /**
- * The PATCH body of `/api/admin/verification/[id]`: validate, decide through
- * `reviewVerification` (which stages the consultant's bell and email in its
- * transaction), purge the public surfaces, and attempt the notices in `after()`.
+ * The PATCH door of `/api/admin/verification/[id]`: a reason, the decision
+ * through `reviewVerificationTx` (which stages the consultant's bell and email)
+ * and the audit row on one Serializable transaction, then the public-surface
+ * purge and the notice attempts after commit.
  */
 
-import { NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
+import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { ReviewVerificationSchema } from "@/schemas/verifications";
 import { purgeExpertSurfaces } from "@/lib/data/public-cache";
 import { attemptTrigger } from "@/lib/novu";
 import { attemptOnboardingEmail } from "@/lib/email";
-import { scheduleAfter } from "@/lib/api/after-safe";
-import {
-  reviewVerification,
-  REVIEW_REFUSAL_STATUS,
-  type ReviewDecision,
-} from "./review";
-import { documentDownloadPath } from "./documents";
+import { reviewVerificationTx, type ReviewDecision } from "./review";
+import { documentDownloadPath, REVIEW_DOCUMENT_SELECT } from "./documents";
 
 /** Replace the stored (possibly expired, signed) fileUrl with the ACL'd download route. */
 export function withDownloadUrls<T extends { id: string; fileUrl: string }>(
@@ -31,77 +26,54 @@ const DECISION_MESSAGE: Record<ReviewDecision, string> = {
   NEEDS_INFO: "More information requested",
 };
 
-export async function handleReviewPatch(
-  req: Request,
-  verificationId: string,
-  reviewerId: string,
-): Promise<NextResponse> {
-  // A malformed body is the caller's mistake, not a 500.
-  const body: unknown = await req.json().catch(() => undefined);
-  if (body === undefined) {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
-  }
-  const parsed = ReviewVerificationSchema.safeParse(body);
-  if (!parsed.success) {
-    // The schema's per-document refine fires before the core can; the
-    // response still carries the core's code so the modal can act on it.
-    const issueRequired = parsed.error.issues.some(
-      (issue) => issue.path.at(-1) === "issue",
-    );
-    return NextResponse.json(
-      {
-        error: "Validation failed",
-        ...(issueRequired && { code: "ISSUE_REQUIRED" }),
-        details: parsed.error.issues,
-      },
-      { status: 400 },
-    );
-  }
-  const {
-    status,
-    reviewNotes,
-    rejectionReason,
-    feedbackDetails,
-    documentFeedback,
-  } = parsed.data;
-
-  const outcome = await reviewVerification({
-    verificationId,
-    reviewerId,
-    status,
-    reviewNotes,
-    rejectionReason,
-    feedbackDetails,
-    documentFeedback,
-  });
-  if (!outcome.ok) {
-    return NextResponse.json(
-      { error: outcome.message, code: outcome.code },
-      { status: REVIEW_REFUSAL_STATUS[outcome.code] },
-    );
-  }
-
-  // VERIFIED puts the consultant on the public surfaces, anything else takes
-  // them off. Purge now rather than leave the ISR window to expire.
-  purgeExpertSurfaces(outcome.consultantProfileId);
-
-  // The notice rows were staged inside the decision's transaction; only
-  // the vendor attempts run after the response.
-  const { bell, email } = outcome.staged;
-  scheduleAfter(async () => {
-    if (bell?.success && bell.staged) await attemptTrigger(bell.staged);
-    if (email) await attemptOnboardingEmail(email);
-  }, "verification.review.post-commit");
-
-  const verification = await prisma.consultantProfileVerification.findUnique({
-    where: { id: verificationId },
-    include: { documents: true },
-  });
-  return NextResponse.json({
-    verification: verification
-      ? { ...verification, documents: withDownloadUrls(verification.documents) }
-      : null,
-    round: outcome.round,
-    message: DECISION_MESSAGE[status],
-  });
-}
+export const reviewVerificationDoor = withOpsAction(
+  "users.verify",
+  "verification.review",
+  ReviewVerificationSchema.shape,
+  {
+    mode: "tx",
+    run: async (tx, { body, actor, params }) => {
+      const verificationId = params.verificationId ?? "";
+      const decided = await reviewVerificationTx(tx, {
+        verificationId,
+        reviewerId: actor.userId,
+        status: body.status,
+        reviewNotes: body.reviewNotes,
+        rejectionReason: body.rejectionReason,
+        feedbackDetails: body.feedbackDetails,
+        documentFeedback: body.documentFeedback,
+      });
+      const verification = await tx.consultantProfileVerification.findUnique({
+        where: { id: verificationId },
+        include: { documents: { select: REVIEW_DOCUMENT_SELECT } },
+      });
+      const { bell, email } = decided.staged;
+      return {
+        target: { kind: "ConsultantProfileVerification", id: verificationId },
+        before: { status: decided.previousStatus },
+        after: {
+          status: body.status,
+          profileStatus: decided.profileStatus,
+          round: decided.round,
+        },
+        response: {
+          verification: verification
+            ? {
+                ...verification,
+                documents: withDownloadUrls(verification.documents),
+              }
+            : null,
+          round: decided.round,
+          message: DECISION_MESSAGE[body.status],
+        },
+        // VERIFIED puts the consultant on the public surfaces, anything else takes them off.
+        afterCommit: async () => {
+          purgeExpertSurfaces(decided.consultantProfileId);
+          if (bell?.success && bell.staged) await attemptTrigger(bell.staged);
+          if (email) await attemptOnboardingEmail(email);
+        },
+      };
+    },
+  },
+  { serializable: true },
+);

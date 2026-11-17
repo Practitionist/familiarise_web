@@ -7,7 +7,6 @@ import { useQuery } from "@tanstack/react-query";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -17,7 +16,6 @@ import {
   AlertCircle,
   Clock,
   CheckCircle,
-  XCircle,
   CreditCard,
   User,
   Calendar,
@@ -26,64 +24,14 @@ import {
 } from "lucide-react";
 import { RazorpayEvidenceForm } from "./RazorpayEvidenceForm";
 import { formatCurrencyAmount } from "@/utils/formatting";
-import {
-  disputeReasonText,
-  disputeStatusLabel,
-} from "@/lib/labels/money-labels";
+import { BookingCell } from "@/components/dashboard/backoffice/BookingCell";
+import { PersonCell } from "@/components/dashboard/backoffice/PersonCell";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { disputeStatus } from "@/lib/labels/backoffice-labels";
+import { disputeReasonText, gatewayLabel } from "@/lib/labels/money-labels";
+import { humanizeEnum } from "@/lib/ui/tone";
+import { OperatorTime } from "@/lib/time/operator-time";
 import type { DisputeDetails } from "@/types/disputes";
-
-const getStatusColor = (status: string) => {
-  switch (status.toUpperCase()) {
-    case "WON":
-      return "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300";
-    case "LOST":
-      return "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300";
-    case "NEEDS_RESPONSE":
-    case "WARNING_NEEDS_RESPONSE":
-      return "bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300";
-    case "UNDER_REVIEW":
-    case "WARNING_UNDER_REVIEW":
-      return "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300";
-    case "CHARGE_REFUNDED":
-      return "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300";
-    case "CLOSED":
-    case "WARNING_CLOSED":
-      return "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
-    default:
-      return "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
-  }
-};
-
-const getStatusIcon = (status: string) => {
-  switch (status.toUpperCase()) {
-    case "WON":
-    case "CHARGE_REFUNDED":
-      return <CheckCircle className="h-4 w-4" />;
-    case "LOST":
-      return <XCircle className="h-4 w-4" />;
-    case "NEEDS_RESPONSE":
-    case "WARNING_NEEDS_RESPONSE":
-      return <AlertTriangle className="h-4 w-4" />;
-    case "UNDER_REVIEW":
-    case "WARNING_UNDER_REVIEW":
-      return <Clock className="h-4 w-4" />;
-    case "CLOSED":
-    case "WARNING_CLOSED":
-      return <AlertCircle className="h-4 w-4" />;
-    default:
-      return null;
-  }
-};
-
-const formatDate = (dateString: string) => {
-  return new Date(dateString).toLocaleString("en-IN", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-};
 
 /** #1771 K-7 — a Razorpay draft sits in `evidence` with no submission stamp. */
 const isRazorpayDraft = (d: {
@@ -274,7 +222,7 @@ export function DisputeDetailPage({
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
           <Button asChild variant="ghost">
-            <Link href={`${basePath}/disputes`}>
+            <Link href={`${basePath}/money/disputes`}>
               <ArrowLeft className="h-4 w-4 mr-2" />
               Back
             </Link>
@@ -289,13 +237,7 @@ export function DisputeDetailPage({
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Badge
-            className={`${getStatusColor(dispute.status)} gap-1 text-sm px-3 py-1`}
-            variant="secondary"
-          >
-            {getStatusIcon(dispute.status)}
-            {disputeStatusLabel(dispute.status)}
-          </Badge>
+          <StatusBadge {...disputeStatus(dispute.status)} />
           {canSubmitEvidence && !showEvidenceForm && (
             <Button onClick={() => setShowEvidenceForm(true)}>
               Submit Evidence
@@ -350,7 +292,9 @@ export function DisputeDetailPage({
               </div>
               <div>
                 <p className="text-sm text-zinc-500">Payment Gateway</p>
-                <p className="font-medium">{dispute.paymentGateway}</p>
+                <p className="font-medium">
+                  {gatewayLabel(dispute.paymentGateway)}
+                </p>
               </div>
             </div>
 
@@ -369,7 +313,7 @@ export function DisputeDetailPage({
               >
                 <p className="text-sm text-zinc-500">Response Due By</p>
                 <p className={`font-medium ${isUrgent ? "text-red-600" : ""}`}>
-                  {formatDate(dispute.dueBy)}
+                  <OperatorTime value={dispute.dueBy} />
                 </p>
                 {daysUntilDue !== null && daysUntilDue >= 0 && (
                   <p
@@ -388,11 +332,15 @@ export function DisputeDetailPage({
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
                 <p className="text-sm text-zinc-500">Created</p>
-                <p className="font-medium">{formatDate(dispute.createdAt)}</p>
+                <p className="font-medium">
+                  <OperatorTime value={dispute.createdAt} />
+                </p>
               </div>
               <div>
                 <p className="text-sm text-zinc-500">Last Updated</p>
-                <p className="font-medium">{formatDate(dispute.updatedAt)}</p>
+                <p className="font-medium">
+                  <OperatorTime value={dispute.updatedAt} />
+                </p>
               </div>
             </div>
 
@@ -435,7 +383,9 @@ export function DisputeDetailPage({
                 <div>
                   <p className="text-sm text-zinc-500">Payment Method</p>
                   <p className="font-medium">
-                    {dispute.payment.paymentMethod || "N/A"}
+                    {dispute.payment.paymentMethod
+                      ? humanizeEnum(dispute.payment.paymentMethod)
+                      : "N/A"}
                   </p>
                 </div>
               </div>
@@ -444,14 +394,15 @@ export function DisputeDetailPage({
 
               <div className="flex items-center gap-3">
                 <User className="h-5 w-5 text-zinc-400" />
-                <div>
-                  <p className="font-medium">
-                    {dispute.payment.user?.name || "Unknown User"}
-                  </p>
-                  <p className="text-sm text-zinc-500">
-                    {dispute.payment.user?.email}
-                  </p>
-                </div>
+                <PersonCell person={dispute.payment.user} />
+              </div>
+
+              <div>
+                <p className="text-sm text-zinc-500">Booking</p>
+                <BookingCell
+                  booking={dispute.payment.booking}
+                  basePath={basePath}
+                />
               </div>
 
               <div className="flex items-center gap-3">
@@ -459,7 +410,7 @@ export function DisputeDetailPage({
                 <div>
                   <p className="text-sm text-zinc-500">Payment Date</p>
                   <p className="font-medium">
-                    {formatDate(dispute.payment.createdAt)}
+                    <OperatorTime value={dispute.payment.createdAt} />
                   </p>
                 </div>
               </div>
@@ -490,7 +441,10 @@ export function DisputeDetailPage({
                 <p className="text-zinc-500">Booking</p>
                 <p className="font-medium">
                   {dispute.evidencePack.booking
-                    ? `${dispute.evidencePack.booking.appointmentType} (${dispute.evidencePack.booking.appointmentId.slice(0, 8)})`
+                    ? (dispute.payment?.booking?.title ??
+                      humanizeEnum(
+                        dispute.evidencePack.booking.appointmentType,
+                      ))
                     : "No linked booking"}
                 </p>
               </div>
@@ -553,9 +507,14 @@ export function DisputeDetailPage({
                       and only for disputes recorded before the column existed.
                       Saying "submitted on N/A" made a known fact look like
                       missing data. */}
-                    {dispute.evidenceSubmittedAt
-                      ? `Evidence was submitted on ${formatDate(dispute.evidenceSubmittedAt)}`
-                      : "Evidence was submitted. The submission time was not recorded for this dispute."}
+                    {dispute.evidenceSubmittedAt ? (
+                      <>
+                        Evidence was submitted on{" "}
+                        <OperatorTime value={dispute.evidenceSubmittedAt} />
+                      </>
+                    ) : (
+                      "Evidence was submitted. The submission time was not recorded for this dispute."
+                    )}
                   </AlertDescription>
                 </Alert>
               )}
@@ -573,8 +532,8 @@ export function DisputeDetailPage({
               <FileText className="h-12 w-12 mb-4 text-zinc-300" />
               <p className="font-medium">
                 Evidence was submitted on{" "}
-                {formatDate(dispute.evidenceSubmittedAt)}. Only admins can view
-                it.
+                <OperatorTime value={dispute.evidenceSubmittedAt} />. Only
+                admins can view it.
               </p>
             </div>
           ) : (

@@ -5,6 +5,7 @@ import { Download } from "lucide-react";
 import { useState } from "react";
 
 import { FilterBar } from "@/components/dashboard/FilterBar";
+import { PersonCell } from "@/components/dashboard/backoffice/PersonCell";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { TablePagination } from "@/components/dashboard/TablePagination";
 import { Button } from "@/components/ui/button";
@@ -12,16 +13,19 @@ import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
+import {
+  payoutListPageSchema,
+  readListBody,
+  type PayoutListItem,
+} from "@/lib/backoffice/money-list-schemas";
+import { istDateKey } from "@/lib/compliance/ist-period";
 import { escapeCsvField } from "@/lib/csv/keyset-export";
 import { gatewayLabel, payoutMethodLabel } from "@/lib/labels/money-labels";
 import { payoutStatusBadge } from "@/lib/labels/session-labels";
-import type { Payout } from "@/types/payouts";
+import { OperatorTime } from "@/lib/time/operator-time";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
-interface PayoutListResponse {
-  payouts: Payout[];
-  pagination: { total: number; limit: number; offset: number };
-}
+type Payout = PayoutListItem;
 
 const PAGE_SIZE = 20;
 
@@ -29,7 +33,7 @@ async function fetchPayouts(
   statuses: readonly string[],
   page: number,
   search: string,
-): Promise<PayoutListResponse> {
+) {
   const params = new URLSearchParams({
     statusIn: statuses.join(","),
     limit: String(PAGE_SIZE),
@@ -37,12 +41,8 @@ async function fetchPayouts(
   });
   if (search) params.set("search", search);
   const res = await fetch(`/api/admin/payouts?${params}`);
-  if (!res.ok) throw new Error("Failed to fetch payouts");
-  return res.json() as Promise<PayoutListResponse>;
+  return readListBody(res, payoutListPageSchema, "Failed to fetch payouts");
 }
-
-const when = (iso?: string | null) =>
-  iso ? new Date(iso).toLocaleString() : "—";
 
 const columns: ResponsiveColumn<Payout>[] = [
   {
@@ -50,12 +50,13 @@ const columns: ResponsiveColumn<Payout>[] = [
     header: "Expert",
     primary: true,
     cell: (p) => (
-      <div>
-        <p className="text-sm font-medium text-foreground">
-          {p.consultantName}
-        </p>
-        <p className="text-xs text-muted-foreground">{p.consultantEmail}</p>
-      </div>
+      <PersonCell
+        person={{
+          id: p.consultantUserId,
+          name: p.consultantName,
+          email: p.consultantEmail,
+        }}
+      />
     ),
   },
   {
@@ -94,9 +95,10 @@ const columns: ResponsiveColumn<Payout>[] = [
     key: "updated",
     header: "Approved / processed",
     cell: (p) => (
-      <span className="text-sm text-muted-foreground">
-        {when(p.processedAt ?? p.approvedAt)}
-      </span>
+      <OperatorTime
+        value={p.processedAt ?? p.approvedAt}
+        className="text-sm text-muted-foreground"
+      />
     ),
   },
   {
@@ -110,6 +112,11 @@ const columns: ResponsiveColumn<Payout>[] = [
   },
 ];
 
+/** The CSV a page exports, named by the IST date it was taken on. */
+export function payoutCsvFilename(name: string, now: Date): string {
+  return `payouts-${name}-${istDateKey(now)}.csv`;
+}
+
 // #1527 review — consultantName/consultantEmail are user-controlled; escape
 // every cell (RFC 4180 quoting + formula-trigger neutralizing) rather than a
 // bare join, matching the statutory exporters' rule (lib/csv/keyset-export.ts).
@@ -119,7 +126,7 @@ function exportCsv(rows: Payout[], name: string) {
     [
       p.id,
       p.consultantName,
-      p.consultantEmail,
+      p.consultantEmail ?? "",
       (p.amount / 100).toFixed(2),
       p.currency,
       p.status,
@@ -133,7 +140,7 @@ function exportCsv(rows: Payout[], name: string) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `payouts-${name}-${new Date().toISOString().split("T")[0]}.csv`;
+  a.download = payoutCsvFilename(name, new Date());
   a.click();
   URL.revokeObjectURL(url);
 }

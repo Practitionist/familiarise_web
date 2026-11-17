@@ -5,7 +5,8 @@ import { Prisma } from "@prisma/client";
 import { z } from "zod";
 
 import prisma from "@/lib/prisma";
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
+import { readOffsetParams } from "@/lib/backoffice/list-paging";
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal";
 import {
@@ -122,14 +123,24 @@ function deriveSubscriptionDisplayStatus(
 
 export async function GET(req: NextRequest) {
   try {
-    const auth = await requirePrivilegedAuth();
+    const auth = await requireBackofficeSurface("subscriptions.read");
     if (auth.error) return auth.error;
 
     const { searchParams } = new URL(req.url);
-    const status = searchParams.get("status");
+    // An unknown status is a 400, as on the other money lists.
+    const statusParam = z
+      .enum(["active", "expiring_soon", "expired", "cancelled"])
+      .optional()
+      .safeParse(searchParams.get("status") || undefined);
+    if (!statusParam.success) {
+      return NextResponse.json(
+        { error: "Invalid query parameters", code: "INVALID_QUERY" },
+        { status: 400 },
+      );
+    }
+    const status = statusParam.data ?? null;
     const search = searchParams.get("search");
-    const limit = parseInt(searchParams.get("limit") || "20");
-    const offset = parseInt(searchParams.get("offset") || "0");
+    const { limit, offset } = readOffsetParams(searchParams);
     const orgId = searchParams.get("orgId");
 
     const now = new Date();
@@ -213,7 +224,7 @@ export async function GET(req: NextRequest) {
               },
             },
           },
-          orderBy: { createdAt: "desc" },
+          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
           take: limit,
           skip: offset,
         }),

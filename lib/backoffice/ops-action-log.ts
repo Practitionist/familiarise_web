@@ -9,11 +9,12 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import prisma, { type Tx } from "@/lib/prisma";
+import type { Session } from "@/lib/auth";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { requireFreshSession } from "@/lib/auth/step-up";
 import {
@@ -23,20 +24,15 @@ import {
 import { reportSentryError } from "@/lib/observability/report";
 import { scheduleAfter } from "@/lib/api/after-safe";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { UserRoleEnum } from "@/schemas/user";
 import { OpsRefusal, refusalCode, refusalResponse } from "./ops-refusal";
+import { opsReasonSchema } from "./ops-reason";
 import {
   markProposalExecuted,
   openProposal,
   requiresSecondApprover,
 } from "./ops-proposals";
-
-/** A reason an auditor can read later; five characters rules out "ok"/"fix". */
-export const opsReasonSchema = z
-  .string()
-  .trim()
-  .min(5, "Give a reason of at least 5 characters.")
-  .max(1000);
 
 export interface OpsActionInput {
   id?: string;
@@ -78,6 +74,14 @@ export async function recordOpsAction(
 export interface OpsActor {
   userId: string;
   role: string;
+}
+
+/** The audited actor of a gated request: its user and the role the session carries. */
+export function opsActorOf(session: Session): OpsActor {
+  return {
+    userId: session.user.id,
+    role: String(session.user.role ?? "UNKNOWN"),
+  };
 }
 
 export interface OpsDoorContext<B> {
@@ -138,7 +142,15 @@ interface OpsActionOptions<B> {
   /** IAM and money doors also need a session re-authenticated within 15 minutes. */
   stepUp?: boolean;
   secondApprover?: SecondApprover<B>;
+  /** A tx door whose reads decide its write runs Serializable, retried on a conflict. */
+  serializable?: boolean;
 }
+
+const SERIALIZABLE_TX = {
+  isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+  maxWait: 10_000,
+  timeout: 15_000,
+} as const;
 
 /** A proposal another ADMIN approved, replayed through its own door. */
 export interface ApprovedProposal {
@@ -223,7 +235,7 @@ export function withOpsAction<S extends z.ZodRawShape>(
     };
     let result: OpsDoorResult;
     if (door.mode === "tx") {
-      result = await prisma.$transaction(async (tx) => {
+      const work = async (tx: Tx) => {
         const r = await door.run(tx, ctx);
         await recordOpsAction(tx, row(r));
         if (
@@ -236,7 +248,12 @@ export function withOpsAction<S extends z.ZodRawShape>(
           );
         }
         return r;
-      });
+      };
+      result = options.serializable
+        ? await withSerializableRetry(() =>
+            prisma.$transaction(work, SERIALIZABLE_TX),
+          )
+        : await prisma.$transaction(work);
     } else {
       result = await runGatewayDoor(door, ctx, row);
       // The money already moved; a lost EXECUTED mark pages rather than failing the answer.
@@ -286,10 +303,7 @@ export function withOpsAction<S extends z.ZodRawShape>(
     }
     const ctx: Ctx = {
       body: parsed.data as Body<S> & { reason: string },
-      actor: {
-        userId: auth.session.user.id,
-        role: String(auth.session.user.role ?? "UNKNOWN"),
-      },
+      actor: opsActorOf(auth.session),
       params:
         ((await route?.params) as Record<string, string> | undefined) ?? {},
       opsActionId: randomUUID(),

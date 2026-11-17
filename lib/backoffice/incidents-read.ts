@@ -43,10 +43,18 @@ const countsBy = (
 ): Map<string, number> =>
   new Map(groups.map((g) => [g.incidentId, g._count._all]));
 
-export async function readIncidents(limit = 50): Promise<IncidentListRow[]> {
+export const INCIDENTS_PAGE_SIZE = 20;
+
+/** One page of declared incidents, newest first, with the total for the pager. */
+export async function readIncidents(
+  page = 1,
+): Promise<{ rows: IncidentListRow[]; total: number }> {
+  const total = await prisma.platformIncident.count();
   const incidents = await prisma.platformIncident.findMany({
-    orderBy: { startsAt: "desc" },
-    take: limit,
+    relationLoadStrategy: "join",
+    orderBy: [{ startsAt: "desc" }, { id: "desc" }],
+    skip: (page - 1) * INCIDENTS_PAGE_SIZE,
+    take: INCIDENTS_PAGE_SIZE,
     select: {
       id: true,
       startsAt: true,
@@ -59,7 +67,7 @@ export async function readIncidents(limit = 50): Promise<IncidentListRow[]> {
       declaredByUser: { select: { name: true } },
     },
   });
-  if (incidents.length === 0) return [];
+  if (incidents.length === 0) return { rows: [], total };
   const incidentId = { in: incidents.map((i) => i.id) };
   const due = await prisma.incidentRemedy.groupBy({
     by: ["incidentId"],
@@ -91,7 +99,7 @@ export async function readIncidents(limit = 50): Promise<IncidentListRow[]> {
     rebooked,
     failed,
   ].map(countsBy);
-  return incidents.map((i) => ({
+  const rows = incidents.map((i) => ({
     id: i.id,
     startsAt: i.startsAt.toISOString(),
     endsAt: i.endsAt.toISOString(),
@@ -108,6 +116,7 @@ export async function readIncidents(limit = 50): Promise<IncidentListRow[]> {
       failed: failedBy.get(i.id) ?? 0,
     },
   }));
+  return { rows, total };
 }
 
 export interface SuggestedWindow {

@@ -1,7 +1,8 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
+import { BOOKING_TITLE_SELECT, bookingRefOf } from "@/lib/data/booking-title";
 import {
   ADMIN_DIGITAL_PRODUCT_PURCHASE_SELECT,
   ADMIN_DISPUTE_SELECT,
@@ -19,15 +20,31 @@ interface RouteParams {
 
 export async function GET(req: NextRequest, { params }: RouteParams) {
   try {
-    const auth = await requirePrivilegedAuth();
+    const auth = await requireBackofficeSurface("payments.read");
     if (auth.error) return auth.error;
 
     const resolvedParams = await params;
 
-    // Fetch payment details
-    const payment = await prisma.payment.findUnique({
+    // Allowlist: the payer instrument hashes, idempotency keys and refund-owed notes stay on the server.
+    const row = await prisma.payment.findUnique({
+      relationLoadStrategy: "join",
       where: { id: resolvedParams.paymentId },
-      include: {
+      select: {
+        id: true,
+        amount: true,
+        originalAmount: true,
+        taxAmount: true,
+        welcomeDiscountPaise: true,
+        currency: true,
+        description: true,
+        receiptUrl: true,
+        paymentMethod: true,
+        paymentIntent: true,
+        paymentGateway: true,
+        paymentStatus: true,
+        isMockPayment: true,
+        expiresAt: true,
+        createdAt: true,
         user: {
           select: {
             id: true,
@@ -35,12 +52,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
             email: true,
           },
         },
-        appointment: {
-          select: {
-            id: true,
-            appointmentType: true,
-          },
-        },
+        appointment: { select: BOOKING_TITLE_SELECT },
         discountCode: { select: DISCOUNT_CODE_SUMMARY_SELECT },
         // Explicit selects, for two reasons. A bare `include` returns whatever
         // the model happens to carry, which is how the detail page came to read
@@ -70,11 +82,19 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       },
     });
 
-    if (!payment) {
+    if (!row) {
       return NextResponse.json({ error: "Payment not found" }, { status: 404 });
     }
 
-    return NextResponse.json(payment);
+    const { appointment, ...payment } = row;
+    return NextResponse.json({
+      ...payment,
+      appointment: appointment && {
+        id: appointment.id,
+        appointmentType: appointment.appointmentType,
+      },
+      booking: bookingRefOf(appointment),
+    });
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),

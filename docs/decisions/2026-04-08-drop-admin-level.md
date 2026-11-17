@@ -1,6 +1,6 @@
 # ADR: Drop the `AdminLevel` enum and consolidate admin/staff route auth
 
-- **Status**: Accepted
+- **Status**: Accepted. D2 and D3 are superseded: the role-named guards were replaced by the back-office permission matrix (`requireBackofficeSurface`) and deleted ([the 2026-11-16 back-office record](2026-11-16-train-6-back-office.md), D11). They are described below by what they admitted, not by name.
 - **Date**: 2026-04-08
 - **Author**: teetangh
 - **PR**: `feature/cleanup` → `dev`
@@ -67,28 +67,13 @@ If granular permissions become necessary later, the right answer is a proper `Pe
 
 ### D2: Introduce shared auth helpers in `lib/auth-helpers.ts`
 
-```ts
-// Strict ADMIN only — rejects STAFF. For system jobs, maintenance, exchange
-// rates, newsletter, payouts processing.
-export async function requireAdminAuth(): Promise<
-  { session: Session } | { error: NextResponse }
->;
+Three helpers, each with one role predicate:
 
-// Strict STAFF only — rejects ADMIN. For (rare) routes where even an admin
-// should not have access. No current routes use this; it's here for the
-// future case of staff-specific views that admins shouldn't see.
-export async function requireStaffAuth(): Promise<
-  { session: Session } | { error: NextResponse }
->;
+- an **ADMIN-only** guard, for system jobs, maintenance, exchange rates, the newsletter send, payouts processing;
+- a **STAFF-only** guard, for routes even an admin should not reach (no route ever used it);
+- an **ADMIN-or-STAFF** guard, the most common, for reads, moderation queues, support operations and the shared admin and staff API surface.
 
-// ADMIN or STAFF — the most common helper. For read endpoints, moderation
-// queues, support ops, and the shared admin/staff dashboard API surface.
-export async function requirePrivilegedAuth(): Promise<
-  { session: Session } | { error: NextResponse }
->;
-```
-
-Each helper enforces exactly one role predicate — the three are strict ADMIN, strict STAFF, and the union. Naming matches the predicate: `requireAdminAuth` is the strict admin gate, `requireStaffAuth` is the strict staff gate, `requirePrivilegedAuth` is the "either one" gate.
+Each helper enforced exactly one role predicate: strict ADMIN, strict STAFF, and the union.
 
 All three rely on the session's embedded `role` field (via BetterAuth's `customSession`) and do not re-query the database — one less round trip per admin/staff request.
 
@@ -96,7 +81,8 @@ All three rely on the session's embedded `role` field (via BetterAuth's `customS
 
 Decision matrix:
 
-**Strict `requireAdminAuth` (ADMIN only):**
+**The ADMIN-only guard:**
+
 - `app/api/admin/maintenance/route.ts` + `/preflight` — toggles site-wide maintenance mode
 - `app/api/admin/system-jobs/run/route.ts` — triggers cron jobs manually
 - `app/api/admin/newsletter/send/route.ts` — sends mass email
@@ -104,9 +90,9 @@ Decision matrix:
 - `app/api/admin/exchange-rates/route.ts` (POST) — invalidates FX cache
 - `app/api/admin/tds/route.ts` (POST only) — files Form 26Q with the income tax department (permanent compliance record; the GET handler for `view=form26q` which exposes decrypted PAN is also gated to strict ADMIN inline)
 
-**`requirePrivilegedAuth` (ADMIN + STAFF):** everything else.
+**The ADMIN-or-STAFF guard:** everything else.
 
-Both local `requireAdmin()` helpers (`admin/maintenance/route.ts`, `admin/exchange-rates/route.ts`) are replaced with thin wrappers around `requireAdminAuth()` that preserve their existing `{ userId }` return shape.
+Both local `requireAdmin()` helpers (`admin/maintenance/route.ts`, `admin/exchange-rates/route.ts`) are replaced with thin wrappers around the ADMIN-only guard that preserve their existing `{ userId }` return shape.
 
 ## Consequences
 

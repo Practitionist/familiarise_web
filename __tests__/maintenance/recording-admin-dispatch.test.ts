@@ -9,7 +9,6 @@ jest.mock("@sentry/nextjs", () => ({
 jest.mock("@sentry/core", () => jest.requireMock("@sentry/nextjs"));
 
 import { NextRequest, NextResponse } from "next/server";
-import * as zod from "zod";
 
 const dispatch = jest.fn();
 const audit = jest.fn().mockResolvedValue({ id: "audit" });
@@ -41,10 +40,7 @@ beforeAll(async () => {
   const dependencies = new Map<string, unknown>([
     ["@/lib/prisma", { __esModule: true, default: db }],
     ["@/lib/auth-helpers", { requireBackofficeSurface: authorize }],
-    [
-      "@/lib/backoffice/ops-action-log",
-      { recordOpsAction: audit, opsReasonSchema: zod.z.string().min(5) },
-    ],
+    ["@/lib/backoffice/ops-action-log", { recordOpsAction: audit }],
     ["@/lib/maintenance-edge", { getMaintenanceState: maintenance }],
     [
       "@/lib/maintenance-cron",

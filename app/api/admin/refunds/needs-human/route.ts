@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { readRefundNeedsHuman } from "@/lib/backoffice/needs-human";
+import { resolveTargets, targetKey } from "@/lib/backoffice/target-refs";
 
 /**
  * #1771 K-5 — credit seats the automatic paths could not settle: a series
@@ -13,7 +14,19 @@ import { readRefundNeedsHuman } from "@/lib/backoffice/needs-human";
 export async function GET() {
   const auth = await requireBackofficeSurface("refunds.read");
   if (auth.error) return auth.error;
-  const items = await readRefundNeedsHuman();
+  const rows = await readRefundNeedsHuman();
+  // Each item names who paid and for which booking, in one batched read.
+  const targets = await resolveTargets(
+    rows.flatMap((r) =>
+      r.paymentId ? [{ kind: "Payment", id: r.paymentId }] : [],
+    ),
+  );
+  const items = rows.map((r) => ({
+    ...r,
+    target: r.paymentId
+      ? (targets.get(targetKey("Payment", r.paymentId)) ?? null)
+      : null,
+  }));
   return NextResponse.json(
     { items },
     { headers: { "Cache-Control": "no-store" } },

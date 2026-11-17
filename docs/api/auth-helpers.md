@@ -21,73 +21,29 @@ export async function GET() {
 
 The error it returns has three shapes, and the status is the contract (#1716). A `401` means Better Auth found no session: no cookie, an expired row, or a row that is gone. A `403` means the account is suspended. A `503` with `code: "SESSION_LOOKUP_FAILED"` and a `Retry-After` header means the lookup itself did not complete — a cold-instance stall or a database fault on a cookie that may well be valid — and the client should retry rather than send the user to sign-in. The distinction is made in `lib/auth-session-lookup.ts`: a thrown lookup is a failure unless it is the 401 Better Auth raises when the refresh hook ends the session, and a null with a session cookie present is settled by one indexed read of the `Session` row. The page guards in `lib/auth-guard.ts` make the same distinction and throw `SessionLookupFailedError` to the nearest error boundary instead of clearing the cookie.
 
-## `requireAdminAuth()`
+## `requireBackofficeSurface(key)`
 
-> **Strict ADMIN only.** STAFF gets 403.
+> **The permission matrix.** The answer comes from `BACKOFFICE_PERMISSIONS` in `lib/auth/backoffice-permissions.ts`, so a role grant is visible in the one file that lists every grant.
 
-Use this for routes that mutate platform-level state irreversibly. These are things where a STAFF member accidentally clicking a button in the wrong dashboard tab shouldn't be able to do real damage.
+Use this for every route under `/api/admin/**` and `/api/staff/**`. It is the only role gate a back-office route has: there is no helper that asks "is this an admin" or "is this an admin or staff" directly, so every grant is a key in the matrix. A refused role gets 403 with `code: "FORBIDDEN"`. A mutation that must leave an audit row uses `withOpsAction` (`lib/backoffice/ops-action-log.ts`), which calls this helper and then writes the `OpsActionLog` row with the operator's reason. The matrix, its policy and the list of routes on each key are in [the authorization matrices](../authorization/01-authorization-matrices.md).
 
-**Routes that must use this:**
+A route that has no back-office screen of its own still names a key with the same people. For example, `/api/admin/system-events`, `/api/admin/exchange-rates` and `/api/admin/support/health` ask for `systemJobs.manage`, and `/api/admin/support/compliance-report` asks for `compliance.manage`; both keys are ADMIN only.
 
-- `/api/admin/maintenance/**` — site-wide maintenance mode toggle
-- `/api/admin/system-jobs/run` — manual cron triggers
-- `/api/admin/newsletter/send` — mass email
-- `/api/admin/payouts` (POST only) — batch payout creation (GET stays privileged)
-- `/api/admin/payouts/[id]` (POST only) — approve/reject payouts (GET stays privileged)
-- `/api/admin/payouts/process` — real money transfers
-- `/api/admin/tds` (POST only) — TDS filing (GET stays privileged)
-- `/api/admin/exchange-rates` (POST only) — FX cache invalidation
-
-```ts
-export async function POST() {
-  const auth = await requireAdminAuth();
-  if (auth.error) return auth.error;
-  // ... admin-only logic
-}
-```
-
-## `requirePrivilegedAuth()`
-
-> **ADMIN or STAFF.** Everyone else gets 403.
-
-Use this for the vast majority of `/api/admin/**` and `/api/staff/**` routes — anything that should be accessible to both admin and staff operators: moderation queues, support tools, dashboards, read endpoints, shared analytics, etc.
-
-**Routes that should use this:**
-
-- All `/api/staff/**` routes
-- All `/api/admin/**` routes that are NOT in the `requireAdminAuth` list above
-- Read-only endpoints, moderation queues, support ticket views, analytics dashboards
-
-```ts
-export async function GET(req: NextRequest) {
-  const auth = await requirePrivilegedAuth();
-  if (auth.error) return auth.error;
-  const session = auth.session;
-  // ... operator logic
-}
-```
-
-## `requireStaffAuth()`
-
-> **Strict STAFF only.** ADMIN gets 403.
-
-Use this for the (rare) routes that are specifically staff-scoped and where an ADMIN should NOT have access. Examples: a route returning "support tickets assigned to me as a staff member" where an admin wouldn't have that view. Most admin/staff routes want `requirePrivilegedAuth` instead.
-
-If you're about to reach for this helper, ask yourself: "does it make sense for an admin to call this?" If yes, use `requirePrivilegedAuth`. If no (truly staff-only), use `requireStaffAuth`. As of this ADR landing, **zero routes use `requireStaffAuth`** — it's here for when a future staff-only view appears.
+An operator's own action that is not a back-office surface, such as recording their own consent at `POST /api/user/consent`, uses `requireApiAuth()` and then `isPrivileged(role)`, and answers 403 `FORBIDDEN` to anyone else.
 
 ```ts
 export async function GET() {
-  const auth = await requireStaffAuth();
+  const auth = await requireBackofficeSurface("analytics.read");
   if (auth.error) return auth.error;
-  // ... staff-only logic (admins rejected)
+  // ... runs for exactly the roles the matrix lists for that key
 }
 ```
 
 ## `isPrivileged(role)`
 
-> **Legacy boolean check.** Still useful for inline conditionals.
+> **A boolean check for ADMIN or STAFF.** For inline conditionals only.
 
-Not a route helper — just a boolean function that takes a role string. Use it when you need to branch logic inside a handler (e.g., "admins see all rows, consultants see their own rows only"). Prefer the async helpers above when you're guarding a whole route.
+Not a route helper: a boolean function that takes a role string. Use it to branch inside a handler (for example, "operators see all rows, consultants see their own rows only"), or for an operator's self-service route as above. A back-office route uses `requireBackofficeSurface(key)` instead.
 
 ```ts
 export async function GET() {
@@ -151,8 +107,7 @@ if (authzError) return authzError;
 
 Small utilities that wrap `NextResponse.json` with canonical error shapes:
 
-- `unauthorizedResponse(message?)` → 401
-- `forbiddenResponse(message?)` → 403
+- `forbiddenResponse(message?, code?)` → 403, with `code` in the body when given
 
 Use these when you need to return an error outside one of the auth helpers (e.g., "found the resource but the state is wrong").
 
@@ -162,9 +117,9 @@ Use these when you need to return an error outside one of the auth helpers (e.g.
 Is the route public (no login required)?
 ├─ YES → no helper needed. middleware.ts lets it through.
 └─ NO → does it require a specific role?
-         ├─ Strict ADMIN only (mutates platform state) → requireAdminAuth
-         ├─ ADMIN or STAFF (read/moderation — most common) → requirePrivilegedAuth
-         ├─ Strict STAFF only (rare; reject admins too) → requireStaffAuth
+         ├─ A back-office route (/api/admin/**, /api/staff/**)
+         │    ├─ An audited write (needs a reason and an OpsActionLog row) → withOpsAction(key, action, …)
+         │    └─ Anything else → requireBackofficeSurface(key)
          ├─ The resource owner OR a privileged operator → requireApiAuth + checkOwnership
          ├─ Event participants + operators (consult/subscription/webinar/class) → requireApiAuth + authorizeEventAccess
          └─ Any authenticated user → requireApiAuth
@@ -179,3 +134,8 @@ Org-scoped routes use `requireOrgAccess(orgId, { permission: "<key>" })`, which 
 - [ADR — Drop the AdminLevel enum](../decisions/2026-04-08-drop-admin-level.md)
 - [`lib/auth-helpers.ts`](../../lib/auth-helpers.ts) — source
 - [`lib/api/operators/`](../../lib/api/operators) — shared operator utilities (extracted from duplicated admin/staff routes)
+
+## Deprecated & Superseded Approaches
+
+- **Two raw role guards** (one for ADMIN only, one for ADMIN or STAFF) once sat beside `requireBackofficeSurface` in `lib/auth-helpers.ts`. Every route that called them moved onto a matrix key with the same role set, and both were deleted, so a grant can no longer hide outside `BACKOFFICE_PERMISSIONS`. Do not add a role-named helper back; add or reuse a key.
+- **A strict STAFF-only guard and an `unauthorizedResponse` helper** were described here but never existed in `lib/auth-helpers.ts`.

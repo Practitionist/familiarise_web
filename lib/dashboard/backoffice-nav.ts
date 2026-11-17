@@ -11,6 +11,7 @@ import {
   FileWarning,
   Gauge,
   Gift,
+  Percent,
   Home,
   Inbox,
   Landmark,
@@ -48,7 +49,7 @@ import {
 } from "@/lib/backoffice/money-tabs";
 
 /**
- * The one nav definition behind both back-office trees (#1527 §7.5).
+ * The one nav definition behind both back-office trees.
  *
  * `/dashboard/admin` and `/dashboard/staff` are one route tree
  * (`(backoffice)/[tree]`); the tree picks the audience and the viewer's role
@@ -56,9 +57,8 @@ import {
  * `can(cap, surface)`, so an admin opening the staff tree sees exactly the
  * staff console.
  *
- * `metrics` is deliberately staff-only and `analytics` deliberately
- * admin-only: they are different pages against different endpoints (support
- * queue health vs platform revenue), not one page under two names.
+ * Metrics is the one Insights page in both trees: support-queue health plus
+ * the platform's people, session and money totals.
  *
  * The sidebar is COSMETIC. Page guards and route handlers re-check the same
  * matrix keys; hiding an item only keeps the nav honest.
@@ -220,6 +220,12 @@ function groupSpecs({ showTds = false }: BackofficeNavOptions): NavGroupSpec[] {
           surface: "referrals.read",
         },
         {
+          name: "Platform fees",
+          icon: Percent,
+          path: "platform-fees",
+          surface: "payments.read",
+        },
+        {
           name: "TDS",
           icon: Landmark,
           path: "tds",
@@ -297,20 +303,11 @@ function groupSpecs({ showTds = false }: BackofficeNavOptions): NavGroupSpec[] {
     {
       label: "Insights",
       items: [
-        // Two different pages, one per tree — see the file header.
-        {
-          name: "Analytics",
-          icon: BarChart3,
-          path: "analytics",
-          surface: "analytics.read",
-          only: "admin",
-        },
         {
           name: "Metrics",
           icon: BarChart3,
           path: "metrics",
           surface: "analytics.read",
-          only: "staff",
         },
       ],
     },

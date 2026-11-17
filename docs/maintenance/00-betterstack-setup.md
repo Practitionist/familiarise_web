@@ -313,6 +313,40 @@ Both functions fail gracefully: if `BETTERSTACK_API_KEY` is missing or the API c
 
 - **POST** (start maintenance): If phase is `OFFLINE`, calls `createIncident()`. Stores the returned `incidentId` in Redis as part of the maintenance config JSON (`maintenance:config`).
 - **DELETE** (end maintenance): Reads `betterstackIncidentId` from the current state and calls `resolveIncident()`.
+- **GET** (read state and history): the route is gated on the matrix key `maintenance.manage` (ADMIN only) through `requireBackofficeSurface`. `state` is the active window, so it carries the active window's `bypassSecret` and `betterstackIncidentId` (the controls panel needs both), with a signed `bypassCookieToken`. `history` is the last 20 platform windows through an explicit `select` (`historySelect`) that leaves out `bypassSecret` and `betterstackIncidentId`, so an ended window's secret never leaves the server. A window that is still active appears in `history` without its secret too. The shape:
+
+```json
+{
+  "state": {
+    "phase": "OFFLINE",
+    "reason": "Database upgrade",
+    "estimatedEnd": "2026-12-01T22:30:00.000Z",
+    "bypassSecret": "...",
+    "betterstackIncidentId": "12345",
+    "offlineActivatedAt": "2026-12-01T20:05:00.000Z",
+    "bypassCookieToken": "..."
+  },
+  "bypassCookieToken": "...",
+  "history": [
+    {
+      "id": "...",
+      "phase": "OFFLINE",
+      "reason": "Database upgrade",
+      "scheduledAt": null,
+      "startedAt": "2026-12-01T20:00:00.000Z",
+      "endedAt": null,
+      "estimatedEnd": "2026-12-01T22:30:00.000Z",
+      "startedBy": "...",
+      "endedBy": null,
+      "offlineActivatedAt": "2026-12-01T20:05:00.000Z",
+      "createdAt": "2026-12-01T20:00:00.000Z",
+      "updatedAt": "2026-12-01T20:05:00.000Z"
+    }
+  ]
+}
+```
+
+Every mutation of the route passes the signed-in operator as the required `actor` of `setMaintenanceState`, so its `maintenance.transition` audit row names the real role. The OFFLINE setup step also writes a `maintenance.offline-activated` row, once per activation, in the same transaction that stamps `offlineActivatedAt`.
 
 ### `lib/maintenance.ts`
 

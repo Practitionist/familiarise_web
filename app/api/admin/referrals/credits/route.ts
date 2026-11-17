@@ -162,7 +162,8 @@ export async function GET(req: NextRequest) {
           orderBy: { createdAt: "desc" },
         },
       },
-      orderBy: { createdAt: "desc" },
+      // Newest first; the id breaks a tie so a page never repeats a credit.
+      orderBy: [{ createdAt: "desc" }, { id: "asc" }],
       skip,
       take: limit,
     }),

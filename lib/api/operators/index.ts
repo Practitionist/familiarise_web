@@ -8,7 +8,6 @@
  *
  * Current migrations:
  *   - [x] getOperatorDashboardStats  ← used by /api/admin/stats
- *   - [x] getStaffDashboardStats     ← used by /api/staff/stats
  *   - [x] getOperatorInvoices        ← used by /api/admin/invoices (both dashboards)
  *   - [x] getOperatorPayouts         ← used by /api/admin/payouts
  *   - [x] getVerificationQueue       ← used by /api/admin/verification
@@ -18,12 +17,11 @@
  *   - [ ] getOperatorSupportTickets  ← TODO
  *
  * The route handlers remain thin shells that call these utilities after
- * running the appropriate auth helper (`requirePrivilegedAuth` or
- * `requireAdminAuth`).
+ * their back-office surface gate (`requireBackofficeSurface`).
  */
 
-export { getOperatorDashboardStats, getStaffDashboardStats } from "./stats";
-export type { OperatorDashboardStats, StaffDashboardStats } from "./stats";
+export { getOperatorDashboardStats } from "./stats";
+export type { OperatorDashboardStats } from "./stats";
 
 export { getOperatorInvoices } from "./invoices";
 export type { OperatorInvoice, OperatorInvoiceResult } from "./invoices";

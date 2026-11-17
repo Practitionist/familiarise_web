@@ -1,11 +1,8 @@
 /**
  * Shared operator invoice listing.
  *
- * Used by `app/api/admin/invoices/route.ts`, which both back-office trees now
- * call. This util was extracted when there were two routes duplicating the
- * query/response shape line-for-line; the staff route has since been deleted
- * rather than kept in sync, since `requirePrivilegedAuth` already admits both
- * roles and nothing about the listing differed between them.
+ * Used by `app/api/admin/invoices/route.ts` (`invoices.read`), which both
+ * back-office trees call.
  *
  * "Invoices" are surfaced as Payment rows whose status is SUCCEEDED (or any
  * status the caller passes via `status`). The shared util takes the parsed
@@ -22,10 +19,8 @@ export type OperatorInvoiceFilters = {
   limit?: number;
   offset?: number;
   /**
-   * #674 comment 7 — optional org-scope filter. When set, restricts the
-   * invoice list to Payments tagged with `Payment.organizationId = orgId`.
-   * Does not require additional auth (the route is already privileged
-   * via `requirePrivilegedAuth`).
+   * Optional org scope: restricts the list to Payments tagged with
+   * `Payment.organizationId = orgId`. The route's surface gate covers it.
    */
   orgId?: string | null;
 };
@@ -58,9 +53,8 @@ export type OperatorInvoiceResult = {
 /**
  * Fetch the operator invoice list for admin/staff dashboards.
  *
- * Single source of truth — call from any privileged-role route after running
- * `requirePrivilegedAuth()`. Do not re-implement these queries inside route
- * files.
+ * Single source of truth — call after the route's surface gate. Do not
+ * re-implement these queries inside route files.
  */
 /**
  * Clamp and finite-check a pagination value. Guards against `NaN` from

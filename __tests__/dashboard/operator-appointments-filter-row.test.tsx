@@ -1,5 +1,11 @@
 import * as React from "react";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 // A URL store that re-renders on writes, standing in for the App Router's
@@ -32,8 +38,9 @@ jest.mock("@/lib/navigation/history", () => ({
 jest.mock("@/hooks/use-media-query", () => ({
   useMediaQuery: () => true,
 }));
+const mockToast = jest.fn();
 jest.mock("@/hooks/use-toast", () => ({
-  useToast: () => ({ toast: jest.fn() }),
+  useToast: () => ({ toast: mockToast }),
 }));
 jest.mock("@/components/dashboard/shared/AppointmentTimeline", () => ({
   AppointmentTimeline: () => null,
@@ -41,17 +48,19 @@ jest.mock("@/components/dashboard/shared/AppointmentTimeline", () => ({
 
 import { OperatorAppointmentsClient } from "@/components/dashboard/shared/OperatorAppointmentsClient";
 
+// The shape `getStaffAppointments` returns: a lowercased kind and status.
 const APPOINTMENT = {
   id: "apt_linked",
-  type: "CONSULTATION",
+  type: "consultation",
   title: "Linked booking",
   consultant: { id: "c1", name: "Asha", email: null, avatar: null },
   consultee: { id: "u1", name: "Ravi", email: null, avatar: null },
   scheduledAt: "2026-11-20T10:00:00.000Z",
   duration: 30,
-  status: "SCHEDULED",
+  status: "approved",
   bookingSource: "DIRECT_CHECKOUT",
   free: true,
+  removed: false,
   hasIssue: false,
   issueType: null,
   payment: null,
@@ -132,4 +141,114 @@ it("typing searches after the pause, and Clear resets search and type", async ()
   fireEvent.click(screen.getByRole("button", { name: "Clear" }));
   expect(window.location.search).toBe("");
   expect(input).toHaveValue("");
+});
+
+it("a queue row opens its booking without narrowing the list underneath", async () => {
+  window.history.replaceState(
+    null,
+    "",
+    "/backoffice/appointments?tab=completed&type=webinar&q=asha",
+  );
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <OperatorAppointmentsClient
+        beforeContent={(openBooking) => (
+          <button type="button" onClick={() => openBooking("apt_linked")}>
+            Open from the queue
+          </button>
+        )}
+      />
+    </QueryClientProvider>,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Open from the queue" }));
+
+  expect(
+    await screen.findByRole("heading", { name: /Linked booking/ }),
+  ).toBeInTheDocument();
+  expect(window.location.search).toBe("?tab=completed&type=webinar&q=asha");
+});
+
+it("a 200 whose body is not an appointments page shows the error, not an empty list", async () => {
+  fetchMock.mockImplementation(async () => ({
+    ok: true,
+    json: async () => ({ appointments: [{ id: 1 }] }),
+  }));
+  jest.spyOn(console, "error").mockImplementation(() => undefined);
+  renderPage("/backoffice/appointments");
+  await waitFor(() => expect(mockToast).toHaveBeenCalled());
+  expect(mockToast.mock.calls[0][0]).toMatchObject({
+    description: "Failed to load appointments",
+  });
+});
+
+it("a failed linked read shows its error, and Try again or a second click retries", async () => {
+  let failures = 2;
+  fetchMock.mockImplementation(async (input: string) => {
+    const search = new URL(input, "http://x").searchParams.get("search");
+    if (search === APPOINTMENT.id && failures > 0) {
+      failures -= 1;
+      return { ok: false, json: async () => ({}) };
+    }
+    return {
+      ok: true,
+      json: async () => ({
+        appointments: search === APPOINTMENT.id ? [APPOINTMENT] : [],
+        counts: { all: 1, issues: 0, scheduled: 1, completed: 0 },
+        pagination: {
+          total: 1,
+          page: 1,
+          limit: 20,
+          totalPages: 1,
+          hasMore: false,
+        },
+      }),
+    };
+  });
+  jest.spyOn(console, "error").mockImplementation(() => undefined);
+  mockToast.mockClear();
+  window.history.replaceState(null, "", "/backoffice/appointments");
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <OperatorAppointmentsClient
+        beforeContent={(openBooking) => (
+          <button type="button" onClick={() => openBooking(APPOINTMENT.id)}>
+            Open from the queue
+          </button>
+        )}
+      />
+    </QueryClientProvider>,
+  );
+  const linkedCalls = () =>
+    fetchMock.mock.calls.filter((c) => searchParamOf(c) === APPOINTMENT.id)
+      .length;
+
+  fireEvent.click(screen.getByRole("button", { name: "Open from the queue" }));
+  expect(
+    await screen.findByText("Couldn't open that booking"),
+  ).toBeInTheDocument();
+  expect(mockToast).toHaveBeenCalledWith(
+    expect.objectContaining({ description: "Failed to open the booking" }),
+  );
+
+  // Clicking the same booking again retries rather than doing nothing.
+  fireEvent.click(screen.getByRole("button", { name: "Open from the queue" }));
+  await waitFor(() => expect(linkedCalls()).toBe(2));
+
+  fireEvent.click(await screen.findByRole("button", { name: "Try again" }));
+  expect(
+    await screen.findByRole("heading", { name: /Linked booking/ }),
+  ).toBeInTheDocument();
+  expect(linkedCalls()).toBe(3);
+  expect(
+    screen.queryByText("Couldn't open that booking"),
+  ).not.toBeInTheDocument();
 });

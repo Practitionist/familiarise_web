@@ -1,4 +1,4 @@
-> **⚠️ SUPERSEDED on 2026-04-08.** PR #647 (feature/cleanup) addressed the bulk of this doc's admin/staff findings: the sidebar is unified via `CollapsibleSidebar`, System Jobs + Maintenance are removed from the staff dashboard, ~46 admin/staff API routes use shared `requirePrivilegedAuth` helpers, 5 route pairs use shared `lib/api/operators/*` utilities, and 5–7 dashboard page pairs use shared `components/dashboard/shared/*Page.tsx` components. The enterprise dashboard design section is being rewritten in PR2 as `docs/enterprise/00-canonical-design.md`. Retained for historical context — the admin/staff overlap audit that informed PR #647 is still readable here.
+> **⚠️ SUPERSEDED on 2026-04-08.** PR #647 (feature/cleanup) addressed the bulk of this doc's admin/staff findings: the sidebar is unified via `CollapsibleSidebar`, System Jobs + Maintenance are removed from the staff dashboard, ~46 admin/staff API routes use shared role-guard helpers (since replaced by the permission matrix), 5 route pairs use shared `lib/api/operators/*` utilities, and 5–7 dashboard page pairs use shared `components/dashboard/shared/*Page.tsx` components. The enterprise dashboard design section is being rewritten in PR2 as `docs/enterprise/00-canonical-design.md`. Retained for historical context — the admin/staff overlap audit that informed PR #647 is still readable here.
 >
 > **⚠️ FURTHER SUPERSEDED on 2026-09-27.** PR #1842 (part of #1527) merged the admin and staff route trees into one `app/dashboard/(backoffice)/[tree]` tree with a `lib/backoffice/capability.ts` capability context, and replaced every hand-rolled shell (including the admin and staff sidebars) with one `DashboardShell`. It did not collapse the `/api/admin/**` and `/api/staff/**` API namespaces this doc also describes as duplicated: only the two routes that were genuinely identical were deleted, and most remaining routes were kept as-is because staff-facing reads are narrower than their admin equivalents, not copy-pasted. See `docs/dashboard/engineering-log-2026-09-27-dashboard-overhaul.md` and `docs/decisions/2026-09-27-backoffice-single-tree-and-capability.md` for the current architecture; this document remains historical context only.
 
@@ -118,17 +118,17 @@ CONSULTANT (DashboardSidebar - shared)  CONSULTEE (Top nav - different)
 
 ### Technology Stack (Dashboard-Specific)
 
-| Technology | Usage | Status |
-|-----------|-------|--------|
-| React Query (TanStack) | Data fetching, caching, pagination | Solid |
-| DashboardShell | Mobile sidebar drawer + desktop fixed layout | Shared (admin, consultant) |
-| DashboardSidebar | Sectioned nav with role-based colors, 40+ icons | Shared (admin, consultant) |
-| DashboardNavbar | Top bar with notifications + user dropdown | Shared |
-| StatCard | 5 variants, trend indicators | Used everywhere |
-| Framer Motion | Page transitions, skeleton loading | Used everywhere |
-| Stream.io | Video + Chat | Consultant only |
-| Novu | Notifications | All dashboards |
-| Charts/Visualization | **NONE** | Critical gap |
+| Technology             | Usage                                           | Status                     |
+| ---------------------- | ----------------------------------------------- | -------------------------- |
+| React Query (TanStack) | Data fetching, caching, pagination              | Solid                      |
+| DashboardShell         | Mobile sidebar drawer + desktop fixed layout    | Shared (admin, consultant) |
+| DashboardSidebar       | Sectioned nav with role-based colors, 40+ icons | Shared (admin, consultant) |
+| DashboardNavbar        | Top bar with notifications + user dropdown      | Shared                     |
+| StatCard               | 5 variants, trend indicators                    | Used everywhere            |
+| Framer Motion          | Page transitions, skeleton loading              | Used everywhere            |
+| Stream.io              | Video + Chat                                    | Consultant only            |
+| Novu                   | Notifications                                   | All dashboards             |
+| Charts/Visualization   | **NONE**                                        | Critical gap               |
 
 ---
 
@@ -153,38 +153,38 @@ NAV_SECTIONS (8 sections, 16 pages):
 
 ### 3.2 Feature Inventory
 
-| Page | Implementation Status | Quality | Notes |
-|------|----------------------|---------|-------|
-| Home/Overview | Fully implemented | Good | Real-time stats, gateway status, recent payments/refunds. 2-min auto-refetch. |
-| Announcements | Fully implemented | Good | Uses shared `AnnouncementsPage` component. CRUD with active/inactive toggle. |
-| Support Tickets | Fully implemented | Very Good | Full threading, status workflow, internal notes, linked entities. Best-implemented page. |
-| User Feedback | Fully implemented | Good | Star ratings, status workflow, detail dialogs. |
-| All Payments | Fully implemented | Good | Multi-filter, pagination (20/page), gateway/status/type filters. |
-| Approval Payments | Fully implemented | Good | Pending payment approval workflow. |
-| Subscriptions | Fully implemented | Adequate | Basic subscription management. |
-| Refunds | Fully implemented | Good | Status tracking, gateway filter, linked to original payment. |
-| Disputes | Fully implemented | Very Good | Urgency flags, deadline tracking, 3-day warning banner. Best financial page. |
-| Payouts (4 sub-pages) | Fully implemented | Good | Multi-stage workflow (pending → processing → completed). Summary cards. |
-| Invoices | Fully implemented | Adequate | Uses shared `InvoicesPage` component. PDF generation missing. |
-| **Analytics** | **Implemented but shallow** | **Poor** | **Just 4 stat cards (users, sessions, revenue, domains). No charts, no trends, no time range picker, no comparisons. Unacceptable for an admin dashboard.** |
-| Users | Fully implemented | Good | Two tabs (all + pending verification), search, filter by role, detail modal, dropdown actions. |
-| Waitlists | Fully implemented | Adequate | Basic waitlist management. |
-| System Jobs | Fully implemented | Adequate | Manual job trigger panel. |
-| Maintenance | Fully implemented | Adequate | Toggle degraded/offline mode. |
+| Page                  | Implementation Status       | Quality   | Notes                                                                                                                                                       |
+| --------------------- | --------------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Home/Overview         | Fully implemented           | Good      | Real-time stats, gateway status, recent payments/refunds. 2-min auto-refetch.                                                                               |
+| Announcements         | Fully implemented           | Good      | Uses shared `AnnouncementsPage` component. CRUD with active/inactive toggle.                                                                                |
+| Support Tickets       | Fully implemented           | Very Good | Full threading, status workflow, internal notes, linked entities. Best-implemented page.                                                                    |
+| User Feedback         | Fully implemented           | Good      | Star ratings, status workflow, detail dialogs.                                                                                                              |
+| All Payments          | Fully implemented           | Good      | Multi-filter, pagination (20/page), gateway/status/type filters.                                                                                            |
+| Approval Payments     | Fully implemented           | Good      | Pending payment approval workflow.                                                                                                                          |
+| Subscriptions         | Fully implemented           | Adequate  | Basic subscription management.                                                                                                                              |
+| Refunds               | Fully implemented           | Good      | Status tracking, gateway filter, linked to original payment.                                                                                                |
+| Disputes              | Fully implemented           | Very Good | Urgency flags, deadline tracking, 3-day warning banner. Best financial page.                                                                                |
+| Payouts (4 sub-pages) | Fully implemented           | Good      | Multi-stage workflow (pending → processing → completed). Summary cards.                                                                                     |
+| Invoices              | Fully implemented           | Adequate  | Uses shared `InvoicesPage` component. PDF generation missing.                                                                                               |
+| **Analytics**         | **Implemented but shallow** | **Poor**  | **Just 4 stat cards (users, sessions, revenue, domains). No charts, no trends, no time range picker, no comparisons. Unacceptable for an admin dashboard.** |
+| Users                 | Fully implemented           | Good      | Two tabs (all + pending verification), search, filter by role, detail modal, dropdown actions.                                                              |
+| Waitlists             | Fully implemented           | Adequate  | Basic waitlist management.                                                                                                                                  |
+| System Jobs           | Fully implemented           | Adequate  | Manual job trigger panel.                                                                                                                                   |
+| Maintenance           | Fully implemented           | Adequate  | Toggle degraded/offline mode.                                                                                                                               |
 
 ### 3.3 UX Issues
 
-| Issue | Severity | Description |
-|-------|----------|-------------|
-| **Unnamed nav sections** | Medium | Invoices, Analytics, and Users are in an unnamed section. The admin has to visually scan the entire sidebar to find them. They're semantically unrelated — Users belongs in a "People" section, Analytics should be prominent, Invoices belongs with Payments/Payouts. |
-| **Waitlists orphaned** | Low | Waitlists sits alone in its own unnamed section. Should be grouped with "Events" or "Operations." |
-| **Analytics is a dead end** | High | Admin analytics shows counts with no drill-down, no date range, no comparison to previous period. A stat that says "Total Revenue: ₹X" without context (up/down, this month vs last month, by service type) is almost useless. |
-| **No quick actions from home** | Medium | Home page shows recent payments and refunds but no quick action buttons (e.g., "Approve pending payouts," "View urgent disputes"). Admin has to navigate to each section. |
-| **Payouts split into 4 separate pages** | Medium | Pending, Processing, Completed, and Earnings are 4 separate nav items. This is overkill — a single Payouts page with tab/filter states would be cleaner and reduce sidebar clutter. |
-| **No search across entities** | Medium | Admin can search within individual pages (users, tickets, payments) but there's no global search. If an admin gets a complaint mentioning a payment ID, they have to know to go to the Payments page first. |
-| **No audit log** | Medium | No visibility into who did what. If a staff member approves a payout, there's no log. Critical for financial compliance. |
-| **Missing: Content Moderation** | High | Staff has a Content Moderation page (reports, profile verification). Admin doesn't — even though admin should have ultimate oversight. |
-| **Missing: Appointments view** | Medium | Staff can see all appointments. Admin can't. Admin should have at minimum an appointments overview (today's sessions, upcoming, completion rates). |
+| Issue                                   | Severity | Description                                                                                                                                                                                                                                                            |
+| --------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Unnamed nav sections**                | Medium   | Invoices, Analytics, and Users are in an unnamed section. The admin has to visually scan the entire sidebar to find them. They're semantically unrelated — Users belongs in a "People" section, Analytics should be prominent, Invoices belongs with Payments/Payouts. |
+| **Waitlists orphaned**                  | Low      | Waitlists sits alone in its own unnamed section. Should be grouped with "Events" or "Operations."                                                                                                                                                                      |
+| **Analytics is a dead end**             | High     | Admin analytics shows counts with no drill-down, no date range, no comparison to previous period. A stat that says "Total Revenue: ₹X" without context (up/down, this month vs last month, by service type) is almost useless.                                         |
+| **No quick actions from home**          | Medium   | Home page shows recent payments and refunds but no quick action buttons (e.g., "Approve pending payouts," "View urgent disputes"). Admin has to navigate to each section.                                                                                              |
+| **Payouts split into 4 separate pages** | Medium   | Pending, Processing, Completed, and Earnings are 4 separate nav items. This is overkill — a single Payouts page with tab/filter states would be cleaner and reduce sidebar clutter.                                                                                    |
+| **No search across entities**           | Medium   | Admin can search within individual pages (users, tickets, payments) but there's no global search. If an admin gets a complaint mentioning a payment ID, they have to know to go to the Payments page first.                                                            |
+| **No audit log**                        | Medium   | No visibility into who did what. If a staff member approves a payout, there's no log. Critical for financial compliance.                                                                                                                                               |
+| **Missing: Content Moderation**         | High     | Staff has a Content Moderation page (reports, profile verification). Admin doesn't — even though admin should have ultimate oversight.                                                                                                                                 |
+| **Missing: Appointments view**          | Medium   | Staff can see all appointments. Admin can't. Admin should have at minimum an appointments overview (today's sessions, upcoming, completion rates).                                                                                                                     |
 
 ### 3.4 What Works Well
 
@@ -213,36 +213,36 @@ System Jobs, Maintenance, Settings
 
 ### 4.2 Feature Inventory
 
-| Page | Implementation Status | Quality | Notes |
-|------|----------------------|---------|-------|
-| Home | Fully implemented | Good | Stats grid (open tickets, users assisted, pending reviews, resolved today), recent tickets, announcements, quick actions. |
-| Announcements | Fully implemented | Good | Same shared component as admin. |
-| Support Tickets | Fully implemented | Good | Same implementation as admin. |
-| User Feedback | Fully implemented | Good | Same implementation as admin. |
-| Users | Fully implemented | Good | Same implementation as admin. |
-| **Content Moderation** | **Fully implemented** | **Good** | **UNIQUE to staff. Two tabs: Content Reports + Profile Verifications. Status workflow, action buttons (approve/reject/request info). This should also be accessible from admin.** |
-| **Appointments** | **Fully implemented** | **Good** | **UNIQUE to staff. Tab view by status, filters by type/status/date. Detail modal. Should also be accessible from admin.** |
-| Waitlists | Fully implemented | Adequate | Same as admin. |
-| Payments | Fully implemented | Good | Same as admin (but single page vs admin's split). |
-| Payouts | Fully implemented | Good | Same as admin. |
-| Invoices | Fully implemented | Adequate | Same as admin. |
-| Refunds | Fully implemented | Good | Same as admin. |
-| Disputes | Fully implemented | Good | Same as admin. |
-| Subscriptions | Fully implemented | Adequate | Same as admin. |
-| Metrics | Implemented but shallow | Poor | Same problem as admin analytics — just stat cards. |
-| **System Jobs** | **Fully implemented** | **N/A** | **Should NOT be accessible to staff. This triggers background cron jobs and cleanup tasks. A staff member should never need this.** |
-| **Maintenance** | **Fully implemented** | **N/A** | **Should NOT be accessible to staff. Toggling maintenance mode can take the entire platform offline. This is a super-admin operation.** |
-| Settings | Fully implemented | Good | Profile, notification preferences, timezone. |
+| Page                   | Implementation Status   | Quality  | Notes                                                                                                                                                                             |
+| ---------------------- | ----------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Home                   | Fully implemented       | Good     | Stats grid (open tickets, users assisted, pending reviews, resolved today), recent tickets, announcements, quick actions.                                                         |
+| Announcements          | Fully implemented       | Good     | Same shared component as admin.                                                                                                                                                   |
+| Support Tickets        | Fully implemented       | Good     | Same implementation as admin.                                                                                                                                                     |
+| User Feedback          | Fully implemented       | Good     | Same implementation as admin.                                                                                                                                                     |
+| Users                  | Fully implemented       | Good     | Same implementation as admin.                                                                                                                                                     |
+| **Content Moderation** | **Fully implemented**   | **Good** | **UNIQUE to staff. Two tabs: Content Reports + Profile Verifications. Status workflow, action buttons (approve/reject/request info). This should also be accessible from admin.** |
+| **Appointments**       | **Fully implemented**   | **Good** | **UNIQUE to staff. Tab view by status, filters by type/status/date. Detail modal. Should also be accessible from admin.**                                                         |
+| Waitlists              | Fully implemented       | Adequate | Same as admin.                                                                                                                                                                    |
+| Payments               | Fully implemented       | Good     | Same as admin (but single page vs admin's split).                                                                                                                                 |
+| Payouts                | Fully implemented       | Good     | Same as admin.                                                                                                                                                                    |
+| Invoices               | Fully implemented       | Adequate | Same as admin.                                                                                                                                                                    |
+| Refunds                | Fully implemented       | Good     | Same as admin.                                                                                                                                                                    |
+| Disputes               | Fully implemented       | Good     | Same as admin.                                                                                                                                                                    |
+| Subscriptions          | Fully implemented       | Adequate | Same as admin.                                                                                                                                                                    |
+| Metrics                | Implemented but shallow | Poor     | Same problem as admin analytics — just stat cards.                                                                                                                                |
+| **System Jobs**        | **Fully implemented**   | **N/A**  | **Should NOT be accessible to staff. This triggers background cron jobs and cleanup tasks. A staff member should never need this.**                                               |
+| **Maintenance**        | **Fully implemented**   | **N/A**  | **Should NOT be accessible to staff. Toggling maintenance mode can take the entire platform offline. This is a super-admin operation.**                                           |
+| Settings               | Fully implemented       | Good     | Profile, notification preferences, timezone.                                                                                                                                      |
 
 ### 4.3 UX Issues
 
-| Issue | Severity | Description |
-|-------|----------|-------------|
-| **Custom sidebar component** | High | Staff uses a completely custom sidebar (`layout.tsx` lines 48-67) instead of the shared `DashboardSidebar` component. Different behavior (collapsible with tooltips), different styling, different nav structure (flat vs sectioned). This means sidebar bug fixes or improvements must be done in two places. |
-| **17 flat items = information overload** | High | 17 nav items without any grouping or sections. The admin dashboard groups them into sections (Support, Payments, Payouts, System). Staff dumps them all flat. A staff member has to scan 17 items to find what they need. |
-| **System Jobs + Maintenance exposed** | Critical | These should be admin-only. A MODERATOR-level staff member should not be able to trigger system cleanup jobs or put the platform in maintenance mode. No `AdminLevel` gating exists. |
-| **No role-based feature filtering** | High | A MODERATOR-level staff member sees the exact same 17 items as a SUPER_ADMIN. The `AdminLevel` enum (SUPER_ADMIN, ADMIN, MODERATOR) exists in the schema but is completely unused. |
-| **Home page has hardcoded announcements** | Low | The staff home page has announcement data that appears to be hardcoded or partially static, not fully API-driven. |
+| Issue                                     | Severity | Description                                                                                                                                                                                                                                                                                                    |
+| ----------------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Custom sidebar component**              | High     | Staff uses a completely custom sidebar (`layout.tsx` lines 48-67) instead of the shared `DashboardSidebar` component. Different behavior (collapsible with tooltips), different styling, different nav structure (flat vs sectioned). This means sidebar bug fixes or improvements must be done in two places. |
+| **17 flat items = information overload**  | High     | 17 nav items without any grouping or sections. The admin dashboard groups them into sections (Support, Payments, Payouts, System). Staff dumps them all flat. A staff member has to scan 17 items to find what they need.                                                                                      |
+| **System Jobs + Maintenance exposed**     | Critical | These should be admin-only. A MODERATOR-level staff member should not be able to trigger system cleanup jobs or put the platform in maintenance mode. No `AdminLevel` gating exists.                                                                                                                           |
+| **No role-based feature filtering**       | High     | A MODERATOR-level staff member sees the exact same 17 items as a SUPER_ADMIN. The `AdminLevel` enum (SUPER_ADMIN, ADMIN, MODERATOR) exists in the schema but is completely unused.                                                                                                                             |
+| **Home page has hardcoded announcements** | Low      | The staff home page has announcement data that appears to be hardcoded or partially static, not fully API-driven.                                                                                                                                                                                              |
 
 ### 4.4 What Works Well
 
@@ -285,23 +285,23 @@ Settings                     ✗        ✓       Admin MISSING (has no settings
 
 ### 5.2 What Should Be Where?
 
-| Feature | Who needs it? | Reasoning |
-|---------|--------------|-----------|
-| **Announcements** | Both | Both create/view platform announcements. Already using shared component correctly. |
-| **Support Tickets** | Both (staff as primary, admin as oversight) | Staff handles day-to-day tickets. Admin reviews escalations, bulk operations. Same UI, different default filters. |
-| **User Feedback** | Both | Similar to tickets — staff triages, admin reviews. |
-| **Users** | Both (admin has more power) | Staff views/searches users. Admin can also verify, suspend, change roles. |
-| **Content Moderation** | Both | Staff does day-to-day moderation. Admin handles escalations and should see the same reports. Currently admin-blind to this. |
-| **Appointments** | Both | Staff handles operational issues. Admin needs aggregate overview (today's sessions, completion rates). |
-| **Payments/Refunds/Disputes** | Both (admin has approval authority) | Staff views and escalates. Admin approves refunds, handles disputes. |
-| **Payouts** | Admin only | Payout approval is a financial authority operation. Staff should only see payout status for support context. |
-| **Approval Payments** | Admin only | Payment approval requires admin authority. |
-| **Invoices** | Both | Staff needs to find invoices for support. Admin manages the invoice system. |
-| **Waitlists** | Both | Operational feature — both need visibility. |
-| **Analytics/Metrics** | Both (different depth) | Staff sees support metrics (their tickets, response time). Admin sees platform-wide metrics (revenue, growth, health). |
-| **System Jobs** | Admin only (SUPER_ADMIN) | Manual cron trigger — never needed by staff. |
-| **Maintenance** | Admin only (SUPER_ADMIN) | Platform-wide operations — dangerous in wrong hands. |
-| **Settings** | Both | Both need profile settings. Admin additionally needs platform settings (commission rates, feature flags). |
+| Feature                       | Who needs it?                               | Reasoning                                                                                                                   |
+| ----------------------------- | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| **Announcements**             | Both                                        | Both create/view platform announcements. Already using shared component correctly.                                          |
+| **Support Tickets**           | Both (staff as primary, admin as oversight) | Staff handles day-to-day tickets. Admin reviews escalations, bulk operations. Same UI, different default filters.           |
+| **User Feedback**             | Both                                        | Similar to tickets — staff triages, admin reviews.                                                                          |
+| **Users**                     | Both (admin has more power)                 | Staff views/searches users. Admin can also verify, suspend, change roles.                                                   |
+| **Content Moderation**        | Both                                        | Staff does day-to-day moderation. Admin handles escalations and should see the same reports. Currently admin-blind to this. |
+| **Appointments**              | Both                                        | Staff handles operational issues. Admin needs aggregate overview (today's sessions, completion rates).                      |
+| **Payments/Refunds/Disputes** | Both (admin has approval authority)         | Staff views and escalates. Admin approves refunds, handles disputes.                                                        |
+| **Payouts**                   | Admin only                                  | Payout approval is a financial authority operation. Staff should only see payout status for support context.                |
+| **Approval Payments**         | Admin only                                  | Payment approval requires admin authority.                                                                                  |
+| **Invoices**                  | Both                                        | Staff needs to find invoices for support. Admin manages the invoice system.                                                 |
+| **Waitlists**                 | Both                                        | Operational feature — both need visibility.                                                                                 |
+| **Analytics/Metrics**         | Both (different depth)                      | Staff sees support metrics (their tickets, response time). Admin sees platform-wide metrics (revenue, growth, health).      |
+| **System Jobs**               | Admin only (SUPER_ADMIN)                    | Manual cron trigger — never needed by staff.                                                                                |
+| **Maintenance**               | Admin only (SUPER_ADMIN)                    | Platform-wide operations — dangerous in wrong hands.                                                                        |
+| **Settings**                  | Both                                        | Both need profile settings. Admin additionally needs platform settings (commission rates, feature flags).                   |
 
 ### 5.3 The Root Cause
 
@@ -342,12 +342,12 @@ These are well-structured and not the focus of this assessment, but a few notes:
 
 ### Consultant Dashboard — Issues
 
-| Issue | Severity | Description |
-|-------|----------|-------------|
-| **Analytics is "Coming Soon"** | High | Consultants have no visibility into their performance — bookings over time, revenue trends, popular services, consultee demographics. This is core to the consultant experience. |
-| **No calendar view** | Medium | Appointments page shows a list, but consultants think in terms of their calendar. A calendar view (week/month) would be the natural way to see their schedule. |
-| **Earnings has no visualization** | Medium | Just a table. A consultant wants to see "Am I earning more this month?" at a glance — a simple line chart would answer this instantly. |
-| **No way to see consultee feedback** | Medium | Consultant reviews exist in the schema but there's no dedicated page for consultants to view and respond to their reviews. |
+| Issue                                | Severity | Description                                                                                                                                                                      |
+| ------------------------------------ | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Analytics is "Coming Soon"**       | High     | Consultants have no visibility into their performance — bookings over time, revenue trends, popular services, consultee demographics. This is core to the consultant experience. |
+| **No calendar view**                 | Medium   | Appointments page shows a list, but consultants think in terms of their calendar. A calendar view (week/month) would be the natural way to see their schedule.                   |
+| **Earnings has no visualization**    | Medium   | Just a table. A consultant wants to see "Am I earning more this month?" at a glance — a simple line chart would answer this instantly.                                           |
+| **No way to see consultee feedback** | Medium   | Consultant reviews exist in the schema but there's no dedicated page for consultants to view and respond to their reviews.                                                       |
 
 ### Consultant Dashboard — The Scope of the Home Counts
 
@@ -452,9 +452,9 @@ Until the unified dashboard is built, immediately gate these behind an admin rol
 
 ```typescript
 // In staff layout, filter out system items for non-admin users
-const filteredItems = sidebarItems.filter(item => {
-  if (['system-jobs', 'maintenance'].includes(item.path)) {
-    return userDetails?.role === 'ADMIN';
+const filteredItems = sidebarItems.filter((item) => {
+  if (["system-jobs", "maintenance"].includes(item.path)) {
+    return userDetails?.role === "ADMIN";
   }
   return true;
 });
@@ -497,6 +497,7 @@ CURRENT:                                PROPOSED:
 ```
 
 Key changes:
+
 - **Payments consolidated**: 5 items → 1 page with tabs/filters (All, Pending Approval)
 - **Payouts consolidated**: 4 items → 1 page with tabs (Pending, Processing, Completed, Earnings)
 - **Users gets its own "People" section** — it's an important feature buried in a dump section
@@ -510,6 +511,7 @@ Admin is currently blind to content moderation. Port the staff's `moderation/pag
 #### 7.6 Add Appointments Overview to Admin
 
 Admin should see at minimum:
+
 - Today's scheduled sessions (count + list)
 - Completion rate (% of scheduled sessions that actually happened)
 - Cancellation trends
@@ -524,6 +526,7 @@ The platform needs time-series visualization. Recommended: **Recharts** (React-n
 Minimum charts needed:
 
 **Admin Analytics:**
+
 - Revenue over time (line chart, 30/90/365 day views)
 - User signups over time (area chart)
 - Sessions by type (bar chart: consultation vs subscription vs webinar vs class)
@@ -531,6 +534,7 @@ Minimum charts needed:
 - Payout trends (line chart)
 
 **Consultant Analytics (currently "Coming Soon"):**
+
 - Earnings over time (line chart)
 - Bookings by service type (bar chart)
 - Rating trend (line chart)
@@ -539,6 +543,7 @@ Minimum charts needed:
 #### 7.8 Add Global Search to Admin Dashboard
 
 Admin should be able to search across entities:
+
 - "PAY-12345" → finds a payment
 - "john@example.com" → finds a user
 - "TKT-67890" → finds a support ticket
@@ -548,6 +553,7 @@ Implementation: A `Cmd+K` style search bar in `DashboardNavbar` that queries a u
 #### 7.9 Add Audit Log
 
 Track who did what:
+
 - "Admin Olivia Brown approved payout PO-123 for ₹50,000"
 - "Staff Shubham resolved ticket TKT-456"
 - "Admin Olivia Brown put platform in maintenance mode"
@@ -562,14 +568,14 @@ Use the existing `AdminLevel` enum to conditionally render nav items and gate AP
 // Utility function
 function canAccess(adminLevel: AdminLevel, feature: string): boolean {
   const permissions: Record<string, AdminLevel[]> = {
-    'tickets':    ['MODERATOR', 'ADMIN', 'SUPER_ADMIN'],
-    'moderation': ['MODERATOR', 'ADMIN', 'SUPER_ADMIN'],
-    'payments':   ['ADMIN', 'SUPER_ADMIN'],
-    'payouts':    ['ADMIN', 'SUPER_ADMIN'],
-    'analytics':  ['ADMIN', 'SUPER_ADMIN'],
-    'system':     ['SUPER_ADMIN'],
-    'maintenance':['SUPER_ADMIN'],
-    'settings':   ['SUPER_ADMIN'],
+    tickets: ["MODERATOR", "ADMIN", "SUPER_ADMIN"],
+    moderation: ["MODERATOR", "ADMIN", "SUPER_ADMIN"],
+    payments: ["ADMIN", "SUPER_ADMIN"],
+    payouts: ["ADMIN", "SUPER_ADMIN"],
+    analytics: ["ADMIN", "SUPER_ADMIN"],
+    system: ["SUPER_ADMIN"],
+    maintenance: ["SUPER_ADMIN"],
+    settings: ["SUPER_ADMIN"],
   };
   return permissions[feature]?.includes(adminLevel) ?? false;
 }
@@ -620,6 +626,7 @@ Cons:
 #### Option C: Hybrid — Separate Org Dashboard, with Consultant Dashboard "Org Aware" (RECOMMENDED)
 
 Two changes:
+
 1. A NEW Organization Dashboard for org admin work (team management, billing, analytics, settings)
 2. The existing Consultant Dashboard gets subtle "org context" (org badge, org-branded header, link to org dashboard)
 
@@ -640,14 +647,15 @@ Cons:
 
 The fundamental insight is that **an org admin and a consultant have different jobs**:
 
-| | Org Admin's Job | Consultant's Job |
-|-|-----------------|------------------|
-| **Primary goal** | Manage team access, control spending, track ROI | Teach, schedule, earn |
-| **Key actions** | Invite members, review analytics, approve purchases, manage billing | Create plans, accept bookings, join calls, review documents |
-| **Data they care about** | Seat utilization, team progress, org spend, engagement rates | Personal earnings, upcoming sessions, client feedback |
-| **Frequency** | Weekly/monthly (admin is not their full-time job) | Daily (this is their work) |
+|                          | Org Admin's Job                                                     | Consultant's Job                                            |
+| ------------------------ | ------------------------------------------------------------------- | ----------------------------------------------------------- |
+| **Primary goal**         | Manage team access, control spending, track ROI                     | Teach, schedule, earn                                       |
+| **Key actions**          | Invite members, review analytics, approve purchases, manage billing | Create plans, accept bookings, join calls, review documents |
+| **Data they care about** | Seat utilization, team progress, org spend, engagement rates        | Personal earnings, upcoming sessions, client feedback       |
+| **Frequency**            | Weekly/monthly (admin is not their full-time job)                   | Daily (this is their work)                                  |
 
 Forcing these into one interface means:
+
 - A consultant sees org management items they rarely need (noise)
 - An HR manager using the org dashboard is forced into a teaching-oriented UI they don't understand
 - Permission logic becomes "is this person an org admin AND a consultant?" — complex
@@ -906,25 +914,25 @@ NAV_SECTIONS for Organization Dashboard:
 
 ### 9.5 Enterprise Dashboard — Role-Based Visibility
 
-| Page | OWNER | ADMIN | MANAGER | MEMBER |
-|------|-------|-------|---------|--------|
-| Overview (home) | Full stats | Full stats | Team stats | Personal stats |
-| Team → Members | Full CRUD | Full CRUD | View only | Hidden |
-| Team → Invitations | Full CRUD | Full CRUD | Hidden | Hidden |
-| Content → Library | Full access | Full access | Full access | Assigned only |
-| Content → Collections | Create/Edit | Create/Edit | View | View assigned |
-| Content → Assignments | Assign anyone | Assign anyone | Assign own team | Hidden |
-| Analytics → Engagement | Org-wide | Org-wide | Team only | Personal only |
-| Analytics → Progress | All members | All members | Team members | Self only |
-| Analytics → Reports | Export all | Export all | Export team | Hidden |
-| Billing → Plan | Full control | View only | Hidden | Hidden |
-| Billing → Invoices | Download | View | Hidden | Hidden |
-| Billing → Payment | Edit | Hidden | Hidden | Hidden |
-| Bookings | All org | All org | Team only | Personal only |
-| Settings → Profile | Edit | Edit | Hidden | Hidden |
-| Settings → Branding | Edit (Enterprise) | View | Hidden | Hidden |
-| Settings → SSO | Configure (Enterprise) | Hidden | Hidden | Hidden |
-| Settings → API | Manage (Enterprise) | Hidden | Hidden | Hidden |
+| Page                   | OWNER                  | ADMIN         | MANAGER         | MEMBER         |
+| ---------------------- | ---------------------- | ------------- | --------------- | -------------- |
+| Overview (home)        | Full stats             | Full stats    | Team stats      | Personal stats |
+| Team → Members         | Full CRUD              | Full CRUD     | View only       | Hidden         |
+| Team → Invitations     | Full CRUD              | Full CRUD     | Hidden          | Hidden         |
+| Content → Library      | Full access            | Full access   | Full access     | Assigned only  |
+| Content → Collections  | Create/Edit            | Create/Edit   | View            | View assigned  |
+| Content → Assignments  | Assign anyone          | Assign anyone | Assign own team | Hidden         |
+| Analytics → Engagement | Org-wide               | Org-wide      | Team only       | Personal only  |
+| Analytics → Progress   | All members            | All members   | Team members    | Self only      |
+| Analytics → Reports    | Export all             | Export all    | Export team     | Hidden         |
+| Billing → Plan         | Full control           | View only     | Hidden          | Hidden         |
+| Billing → Invoices     | Download               | View          | Hidden          | Hidden         |
+| Billing → Payment      | Edit                   | Hidden        | Hidden          | Hidden         |
+| Bookings               | All org                | All org       | Team only       | Personal only  |
+| Settings → Profile     | Edit                   | Edit          | Hidden          | Hidden         |
+| Settings → Branding    | Edit (Enterprise)      | View          | Hidden          | Hidden         |
+| Settings → SSO         | Configure (Enterprise) | Hidden        | Hidden          | Hidden         |
+| Settings → API         | Manage (Enterprise)    | Hidden        | Hidden          | Hidden         |
 
 ---
 
@@ -1054,16 +1062,16 @@ PHASE 4 (Month 3-6 — as enterprise grows):
 
 ## Appendix: Key File References
 
-| File | What to Change | Priority |
-|------|---------------|----------|
-| `app/dashboard/staff/[staffId]/layout.tsx` | Replace custom sidebar with DashboardSidebar, filter nav by role | P1 |
-| `app/dashboard/admin/layout.tsx` | Reorganize NAV_SECTIONS, add Moderation + Appointments | P1-P2 |
-| `components/dashboard/DashboardSidebar.tsx` | Add collapsible support (currently only in staff's custom version) | P1 |
-| `components/dashboard/DashboardNavbar.tsx` | Add dashboard switcher dropdown | P3 |
-| `app/dashboard/admin/analytics/page.tsx` | Replace stat-only page with Recharts visualizations | P2 |
-| `app/dashboard/consultant/[consultantId]/(features)/analytics/page.tsx` | Replace "Coming Soon" with real analytics | P2 |
-| `app/dashboard/organization/` | NEW directory — entire org dashboard | P3-P4 |
-| `components/dashboard/shared/` | Add more shared components (Moderation, Appointments) | P1-P2 |
+| File                                                                    | What to Change                                                     | Priority |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------ | -------- |
+| `app/dashboard/staff/[staffId]/layout.tsx`                              | Replace custom sidebar with DashboardSidebar, filter nav by role   | P1       |
+| `app/dashboard/admin/layout.tsx`                                        | Reorganize NAV_SECTIONS, add Moderation + Appointments             | P1-P2    |
+| `components/dashboard/DashboardSidebar.tsx`                             | Add collapsible support (currently only in staff's custom version) | P1       |
+| `components/dashboard/DashboardNavbar.tsx`                              | Add dashboard switcher dropdown                                    | P3       |
+| `app/dashboard/admin/analytics/page.tsx`                                | Replace stat-only page with Recharts visualizations                | P2       |
+| `app/dashboard/consultant/[consultantId]/(features)/analytics/page.tsx` | Replace "Coming Soon" with real analytics                          | P2       |
+| `app/dashboard/organization/`                                           | NEW directory — entire org dashboard                               | P3-P4    |
+| `components/dashboard/shared/`                                          | Add more shared components (Moderation, Appointments)              | P1-P2    |
 
 ---
 
@@ -1072,18 +1080,21 @@ PHASE 4 (Month 3-6 — as enterprise grows):
 For context, here's how competitors structure their admin-side dashboards:
 
 **TopMate (primary competitor):**
+
 - Single creator dashboard with sidebar
 - Sections: Home, Services, Earnings, Audience, Integrations, Settings
 - No enterprise/org dashboard (B2C only)
 - Very simple — we're already more feature-rich
 
 **Teachable (course platform with B2B):**
+
 - School admin dashboard + Student dashboard (separate)
 - Admin: Users, Courses, Sales, Emails, Settings
 - Enterprise: Organization dashboard with seat management, SSO, usage reports
 - Pattern: Separate dashboards for admin vs student vs org (matches our Option C)
 
 **Thinkific (course platform with B2B):**
+
 - Site admin + Org admin (separate dashboards)
 - Org features: Group management, bulk enrollment, progress reports
 - Pattern: Separate dashboards (matches our Option C)

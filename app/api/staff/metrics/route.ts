@@ -1,24 +1,40 @@
 /**
- * Staff Analytics API
- * Limited analytics metrics for staff members (excludes revenue data)
+ * Back-office Metrics API: support-queue health plus the platform's people,
+ * session and money totals, for ADMIN and STAFF alike (`analytics.read`).
+ * Every "today", "this week" and "this month" figure counts from an IST start.
  */
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
+import { getPlatformTotals } from "@/lib/backoffice/platform-totals";
+import { reportSentryError } from "@/lib/observability/report";
+import { CASE_OPEN_WHERE } from "@/lib/support/inbox-query";
+import { operatorPeriodStarts } from "@/lib/time/operator-zone";
+
 export async function GET() {
   try {
-    const auth = await requirePrivilegedAuth();
+    const auth = await requireBackofficeSurface("analytics.read");
     if (auth.error) return auth.error;
 
-    const now = new Date();
-    const startOfToday = new Date(now.setHours(0, 0, 0, 0));
-    const startOfWeek = new Date(now);
-    startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
-    startOfWeek.setHours(0, 0, 0, 0);
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const requestedAt = new Date();
+    const {
+      day: startOfToday,
+      week: startOfWeek,
+      month: startOfMonth,
+    } = operatorPeriodStarts(requestedAt);
+    // The totals fail alone: the support figures still answer, with platformTotals null.
+    const totalsRead = getPlatformTotals(requestedAt).catch(
+      (error: unknown) => {
+        reportSentryError(error, {
+          subsystem: "staff",
+          op: "metrics.platform-totals",
+        });
+        return null;
+      },
+    );
 
     // Fetch analytics data in parallel
     const [
@@ -28,8 +44,6 @@ export async function GET() {
       openTickets,
       usersHelpedThisWeek,
       activeUsers,
-      newSignupsThisMonth,
-      totalUsers,
       totalAppointments,
       pendingAppointments,
     ] = await Promise.all([
@@ -57,13 +71,8 @@ export async function GET() {
           updatedAt: { gte: startOfMonth },
         },
       }),
-      // Open tickets
-      prisma.supportCase.count({
-        where: {
-          deletedAt: null,
-          status: { in: ["OPEN", "IN_PROGRESS"] },
-        },
-      }),
+      // Open cases, as the support inbox counts them.
+      prisma.supportCase.count({ where: CASE_OPEN_WHERE }),
       // Unique users helped this week (distinct users who had tickets resolved)
       prisma.supportCase
         .findMany({
@@ -86,14 +95,6 @@ export async function GET() {
           distinct: ["userId"],
         })
         .then((payments) => payments.length),
-      // New signups this month
-      prisma.user.count({
-        where: {
-          createdAt: { gte: startOfMonth },
-        },
-      }),
-      // Total users
-      prisma.user.count(),
       // Total appointments
       prisma.appointment.count(),
       // Appointments with pending payments
@@ -143,13 +144,12 @@ export async function GET() {
       userMetrics: {
         usersHelpedThisWeek,
         activeUsers,
-        newSignupsThisMonth,
-        totalUsers,
       },
       platformMetrics: {
         totalAppointments,
         pendingPayments: pendingAppointments,
       },
+      platformTotals: await totalsRead,
     });
   } catch (error) {
     Sentry.captureException(

@@ -41,8 +41,12 @@ import {
 } from "@/lib/booking/allocation/schedule-choice";
 import type {
   BookingHistoryEntity,
+  OccurrenceOutcome,
   RescheduleInitiatorRole,
+  RescheduleRequestStatus,
 } from "@prisma/client";
+
+import { SESSION_OUTCOME_LABEL } from "@/lib/labels/session-labels";
 
 import type { Scope } from "@/lib/api/scope/parse";
 import prisma from "@/lib/prisma";
@@ -79,7 +83,7 @@ export interface BookingTimelineEntry {
    * (#1333). Both are named constants in lib/booking/transitions.ts.
    */
   from: string | null;
-  /** On reschedule rows this is where the proposal ended up, not a transition. */
+  /** On reschedule rows this is always `RESCHEDULE_PROPOSED`: the row is the proposal, its answer is a status row. */
   to: string;
   reason: string | null;
   actor: BookingTimelineActor | null;
@@ -91,7 +95,12 @@ export interface BookingTimelineEntry {
   initiatorRole?: RescheduleInitiatorRole;
   /** Reschedule rows only — null while the proposal is still open. */
   resolvedAt?: string | null;
+  /** Reschedule rows only — where the proposal stands now. */
+  outcome?: RescheduleRequestStatus;
 }
+
+/** The `to` of a reschedule row: the proposal was raised; its answer is a status edge. */
+export const RESCHEDULE_PROPOSED = "PROPOSED";
 
 export interface BookingTimeline {
   appointmentId: string;
@@ -99,6 +108,8 @@ export interface BookingTimeline {
   entries: BookingTimelineEntry[];
   /** True when older events exist beyond `TIMELINE_LIMIT` and were dropped. */
   truncated: boolean;
+  /** Every session of the booking, whatever the entries show; read with the keys, no extra statement. */
+  occurrenceIds: string[];
 }
 
 /**
@@ -202,12 +213,31 @@ export async function getBookingTimeline(
 
   const history = await prisma.bookingStatusHistory.findMany({
     where: {
-      OR: [
-        { appointmentId: appointment.id },
-        // One `{ entity, entityId }` pair per source, never a bare id list:
-        // `entityId` is polymorphic and unconstrained, so a bare list would
-        // admit a row of a different type that happened to carry the same id.
-        ...entityMatches,
+      AND: [
+        {
+          OR: [
+            { appointmentId: appointment.id },
+            // One `{ entity, entityId }` pair per source, never a bare id list:
+            // `entityId` is polymorphic and unconstrained, so a bare list would
+            // admit a row of a different type that happened to carry the same id.
+            ...entityMatches,
+          ],
+        },
+        // A self-edge with no reason and no actor records nothing; excluding it
+        // before the limit keeps it from pushing a real move out of the window.
+        {
+          OR: [
+            {
+              NOT: {
+                fromStatus: {
+                  equals: prisma.bookingStatusHistory.fields.toStatus,
+                },
+              },
+            },
+            { reason: { not: null } },
+            { actorUserId: { not: null } },
+          ],
+        },
       ],
     },
     select: {
@@ -237,7 +267,6 @@ export async function getBookingTimeline(
       entityId: row.entityId,
       from: row.fromStatus,
       to: row.toStatus,
-      // A scheduling token reads as words; any other reason is already copy.
       reason: scheduleReasonCopy(row.reason),
       actor: row.actorUser
         ? { id: row.actorUser.id, name: row.actorUser.name }
@@ -252,7 +281,8 @@ export async function getBookingTimeline(
       entity: "RESCHEDULE_REQUEST",
       entityId: request.id,
       from: null,
-      to: request.status,
+      to: RESCHEDULE_PROPOSED,
+      outcome: request.status,
       reason: request.reason,
       actor: request.initiatedBy
         ? { id: request.initiatedBy.id, name: request.initiatedBy.name }
@@ -277,10 +307,27 @@ export async function getBookingTimeline(
     appointmentId: appointment.id,
     entries: merged.slice(0, TIMELINE_LIMIT),
     truncated,
+    occurrenceIds: appointment.occurrences.map((slot) => slot.id),
   };
 }
 
+const OUTCOME_REASONS: [prefix: string, words: string][] = [
+  ["session-outcome:", "Outcome sweep"],
+  ["ops:session.set-outcome:", "Set by ops"],
+];
+
+const isOutcome = (value: string): value is OccurrenceOutcome =>
+  Object.hasOwn(SESSION_OUTCOME_LABEL, value);
+
+/** A scheduling or outcome token reads as words; any other reason is already copy. */
 function scheduleReasonCopy(reason: string | null): string | null {
   const token = parseScheduleReason(reason);
-  return token ? SCHEDULE_REASON_COPY[token] : reason;
+  if (token) return SCHEDULE_REASON_COPY[token];
+  for (const [prefix, words] of OUTCOME_REASONS) {
+    const outcome = reason?.startsWith(prefix) && reason.slice(prefix.length);
+    if (outcome && isOutcome(outcome)) {
+      return `${words}: ${SESSION_OUTCOME_LABEL[outcome]}`;
+    }
+  }
+  return reason;
 }

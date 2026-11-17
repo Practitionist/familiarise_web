@@ -4,29 +4,22 @@ import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { PlatformFeedbackStatusSchema } from "@/schemas/enums";
 
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
+import { readPageParams } from "@/lib/backoffice/list-paging";
 import * as Sentry from "@sentry/nextjs";
 
 const staffFeedbacksQuerySchema = z.object({
   status: z.union([PlatformFeedbackStatusSchema, z.literal("all")]).optional(),
-  page: z.coerce.number().int().min(1).default(1),
-  limit: z.coerce
-    .number()
-    .int()
-    .transform((n) => Math.min(100, Math.max(1, n)))
-    .default(20),
 });
 
 export async function GET(req: NextRequest) {
   try {
-    const auth = await requirePrivilegedAuth();
+    const auth = await requireBackofficeSurface("feedback.manage");
     if (auth.error) return auth.error;
 
     const { searchParams } = new URL(req.url);
     const parsedQuery = staffFeedbacksQuerySchema.safeParse({
       status: searchParams.get("status") ?? undefined,
-      page: searchParams.get("page") ?? undefined,
-      limit: searchParams.get("limit") ?? undefined,
     });
     if (!parsedQuery.success) {
       return NextResponse.json(
@@ -37,7 +30,8 @@ export async function GET(req: NextRequest) {
         { status: 400 },
       );
     }
-    const { status, page, limit } = parsedQuery.data;
+    const { status } = parsedQuery.data;
+    const { page, limit, skip } = readPageParams(searchParams, 20);
     const search = searchParams.get("search");
 
     const where: Prisma.PlatformFeedbackWhereInput = {};
@@ -57,6 +51,7 @@ export async function GET(req: NextRequest) {
 
     const [feedbacks, statusGroups] = await Promise.all([
       prisma.platformFeedback.findMany({
+        relationLoadStrategy: "join",
         where,
         include: {
           user: {
@@ -68,8 +63,9 @@ export async function GET(req: NextRequest) {
             },
           },
         },
-        orderBy: { createdAt: "desc" },
-        skip: (page - 1) * limit,
+        // Newest first; the id breaks a tie so a page never repeats a row.
+        orderBy: [{ createdAt: "desc" }, { id: "asc" }],
+        skip,
         take: limit,
       }),
       prisma.platformFeedback.groupBy({

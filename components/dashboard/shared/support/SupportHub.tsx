@@ -19,6 +19,7 @@ import { throwSupportError } from "@/lib/support/error-copy";
 import { supportKeys } from "@/lib/support/support-keys";
 import { CreateTicketDialog } from "./CreateTicketDialog";
 import { humanizeEnum, type Tone } from "@/lib/ui/tone";
+import { useZoneClock } from "@/lib/time/use-zone-clock";
 
 const Cases = z.object({
   data: z.array(
@@ -60,10 +61,6 @@ const STATUS_TONES: Record<string, Tone> = {
   RESOLVED: "success",
   CLOSED: "neutral",
 };
-const DATE_TIME = new Intl.DateTimeFormat("en-IN", {
-  dateStyle: "medium",
-  timeStyle: "short",
-});
 
 type PickerAppointment = z.infer<typeof Appointments>["items"][number];
 
@@ -105,6 +102,8 @@ export function SupportHub({
     filterKeys: ["context", "status"],
   });
   const [pickAppointment, setPickAppointment] = useState(false);
+  // The viewer's zone, pinned by the page's DisplayZoneProvider.
+  const clock = useZoneClock();
   const context = list.filters.context;
   const status = list.filters.status;
   const query = useQuery({
@@ -176,9 +175,7 @@ export function SupportHub({
                 <p className="text-sm font-medium">{title}</p>
                 <p className="text-xs text-muted-foreground">
                   {[
-                    startsAt
-                      ? DATE_TIME.format(new Date(startsAt))
-                      : "Time not set",
+                    startsAt ? clock.dateTime(startsAt) : "Time not set",
                     a.appointmentType ? humanizeEnum(a.appointmentType) : null,
                     a.organization?.name,
                   ]
@@ -237,7 +234,7 @@ export function SupportHub({
                     row.referenceNumber,
                     row.appointmentId ? "Appointment" : "Account & platform",
                     row.organization?.name,
-                    `Updated ${DATE_TIME.format(new Date(row.lastMessageAt))}`,
+                    `Updated ${clock.dateTime(row.lastMessageAt)}`,
                   ]
                     .filter(Boolean)
                     .join(" · ")}

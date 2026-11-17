@@ -10,6 +10,8 @@ import {
   YAxis,
 } from "recharts";
 
+import { formatCurrencyAmount } from "@/utils/formatting";
+
 export interface PayoutsChartDatum {
   day: string;
   label: string;
@@ -42,18 +44,12 @@ export default function PayoutsChart({ data }: PayoutsChartProps) {
             tickLine={false}
             axisLine={false}
             tickFormatter={(value: number) =>
-              value >= 1000
-                ? `${(value / 1000).toFixed(1)}k`
-                : String(value)
+              value >= 1000 ? `${(value / 1000).toFixed(1)}k` : String(value)
             }
           />
           <Tooltip
             formatter={(value: number) =>
-              value.toLocaleString(undefined, {
-                style: "currency",
-                currency: "INR",
-                maximumFractionDigits: 0,
-              })
+              formatCurrencyAmount(Math.round(value * 100), "INR")
             }
           />
           <Bar dataKey="total" fill="#71717a" radius={[4, 4, 0, 0]} />

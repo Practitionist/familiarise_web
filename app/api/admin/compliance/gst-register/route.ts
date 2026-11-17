@@ -8,14 +8,14 @@
  * This route is the only door: an ADMIN session exchanges a month for a
  * short-lived signed URL.
  *
- * ADMIN, not merely privileged: `requirePrivilegedAuth` admits STAFF, and the
- * register is the platform's own outward-supply return.
+ * `compliance.manage` is ADMIN-only: the register is the platform's own
+ * outward-supply return.
  */
 
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { requireAdminAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { applyRateLimit, gstRegisterDownloadLimiter } from "@/lib/rate-limit";
 import { gstOutwardRegisterCsvStoragePath } from "@/lib/compliance/gst-outward-register";
 import {
@@ -81,7 +81,7 @@ const NO_STORE = { "Cache-Control": "private, no-store" } as const;
  */
 export async function GET(req: NextRequest) {
   try {
-    const auth = await requireAdminAuth();
+    const auth = await requireBackofficeSurface("compliance.manage");
     if (auth.error) return auth.error;
 
     const limited = await applyRateLimit(
