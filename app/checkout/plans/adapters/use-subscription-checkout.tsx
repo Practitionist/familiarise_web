@@ -197,11 +197,13 @@ export function useSubscriptionCheckout(
     [plan, startIso, sessionsPerWeekTerm, durationInMonthsTerm, stalenessZone],
   );
 
-  // Periodic staleness check: warn once the first cycle has elapsed.
+  // Periodic staleness check: warn once the first cycle has elapsed, and drop
+  // that warning (only that one) when a later zone moves the end ahead again.
   useEffect(() => {
     if (!cycleEnd) return;
     const checkStaleness = () => {
       if (cycleEnd.getTime() < Date.now()) setStaleError(START_PASSED);
+      else setStaleError((error) => (error === START_PASSED ? null : error));
     };
     checkStaleness();
     const intervalId = setInterval(checkStaleness, 60_000);

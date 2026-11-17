@@ -6,7 +6,13 @@
  * paise, and Razorpay is offered.
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import type { ReactElement } from "react";
 import { Suspense } from "react";
 
@@ -321,6 +327,54 @@ describe("shared plan checkout", () => {
     expect(total).toBeTruthy();
     expect(screen.getByText("Pay with Razorpay")).toBeTruthy();
     expect(await screen.findByText(/You pay/)).toBeTruthy();
+  });
+
+  it("an elapsed-start warning from the viewer zone clears once the expert's zone says the cycle is still open", async () => {
+    // UTC cycle ends 17 Jan 00:00Z; the expert's (UTC-11) ends 17 Jan 11:00Z.
+    const now = jest
+      .spyOn(Date, "now")
+      .mockReturnValue(Date.parse("2026-01-17T05:00:00.000Z"));
+    let answerFeasibility: (zone: string) => void = () => {};
+    const feasibility = new Promise<string>((resolve) => {
+      answerFeasibility = resolve;
+    });
+    const answer = global.fetch as jest.Mock;
+    const routed = answer.getMockImplementation()!;
+    answer.mockImplementation(async (input: RequestInfo | URL) =>
+      String(input).startsWith("/api/plans/subscriptions/plan1/feasibility")
+        ? feasibility.then((zone) => ({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              verdict: "ok",
+              firstWeekPlaceable: 2,
+              sessionsPerWeek: 2,
+              notice: null,
+              fullyBooked: false,
+              zone,
+            }),
+          }))
+        : routed(input),
+    );
+    try {
+      renderPage(
+        <SubscriptionCheckoutPage
+          params={params}
+          searchParams={search({
+            schedulingPeriodStartsAt: "2026-01-10T12:00:00.000Z",
+          })}
+        />,
+      );
+      const warning =
+        "The start date has passed. Please go back and pick a new one.";
+      expect(
+        await screen.findByText(warning, {}, { timeout: 4000 }),
+      ).toBeTruthy();
+      await act(async () => answerFeasibility("Pacific/Pago_Pago"));
+      await waitFor(() => expect(screen.queryByText(warning)).toBeNull());
+    } finally {
+      now.mockRestore();
+    }
   });
 
   it("an elapsed start still says so when the feasibility read fails", async () => {
