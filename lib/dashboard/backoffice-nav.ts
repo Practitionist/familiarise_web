@@ -11,6 +11,7 @@ import {
   FileWarning,
   Gauge,
   Gift,
+  Percent,
   Home,
   Inbox,
   Landmark,
@@ -217,6 +218,12 @@ function groupSpecs({ showTds = false }: BackofficeNavOptions): NavGroupSpec[] {
           icon: Gift,
           path: "referral-credits",
           surface: "referrals.read",
+        },
+        {
+          name: "Platform fees",
+          icon: Percent,
+          path: "platform-fees",
+          surface: "payments.read",
         },
         {
           name: "TDS",

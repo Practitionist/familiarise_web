@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type ReactNode } from "react";
+import { z } from "zod";
 
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
 import { callOpsDoor } from "@/components/dashboard/backoffice/money/ops-door";
@@ -23,17 +24,30 @@ import {
 } from "@/components/ui/responsive-table";
 import { traceHref } from "@/lib/backoffice/entity-trace-types";
 import type { User360 } from "@/lib/backoffice/user-360";
-import { ticketStatus } from "@/lib/labels/backoffice-labels";
+import { formatPerson } from "@/lib/backoffice/person";
+import {
+  moderationReportStatus,
+  ticketStatus,
+} from "@/lib/labels/backoffice-labels";
+import { OperatorTime } from "@/lib/time/operator-time";
+import { formatOperatorInstant } from "@/lib/time/operator-zone";
 import { gatewayLabel } from "@/lib/labels/money-labels";
 import { paymentStatusBadge } from "@/lib/labels/session-labels";
 import { humanizeEnum, type Tone } from "@/lib/ui/tone";
 import { userRoleLabel } from "@/lib/labels/personal-dashboard";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import {
+  moderationActionBody,
+  unbanBody,
+} from "@/lib/backoffice/people-door-bodies";
 
-type Row<K extends keyof User360> =
-  User360[K] extends Array<infer R> ? R : never;
+type Row<K extends keyof User360> = User360[K] extends { rows: Array<infer R> }
+  ? R
+  : never;
 
-const day = (d: Date | string) => new Date(d).toLocaleDateString();
+const day = (d: Date | string) => <OperatorTime value={d} kind="date" />;
+
+const SECTION_FAILED = new Error("This section could not load.");
 
 // Cases must be `ProfileVerificationStatus` values (a test pins them to the
 // schema): an uncovered status would fall to "Not Submitted", a false claim.
@@ -56,27 +70,23 @@ const getVerificationStatusBadge = (
   }
 };
 
-const REPORT_TONE: Record<string, Tone> = {
-  PENDING: "warning",
-  UNDER_REVIEW: "caution",
-  ACTION_TAKEN: "critical",
-  ESCALATED: "critical",
-  DISMISSED: "neutral",
-};
-
 async function postJson(url: string, body: Record<string, unknown>) {
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  const json = (await res.json().catch(() => ({}))) as {
-    error?: string;
-    href?: string;
-  };
+  const parsed = doorAnswerSchema.safeParse(await res.json().catch(() => ({})));
+  const json = parsed.success ? parsed.data : {};
   if (!res.ok) throw new Error(json.error ?? "That did not go through.");
   return json;
 }
+
+/** A door's answer as this page reads it: a refusal's copy, or the dashboard link. */
+const doorAnswerSchema = z.object({
+  error: z.string().optional(),
+  href: z.string().optional(),
+});
 
 const PAN_STATE: Record<
   NonNullable<User360["pan"]>["state"],
@@ -155,6 +165,7 @@ export function User360Client({ data }: Readonly<{ data: User360 }>) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { profile } = data;
+  const person = formatPerson(profile);
   const canModerate = can("users.moderate");
   const canManagePayouts = can("payouts.manage");
   const canTrace = can("payments.read");
@@ -172,7 +183,7 @@ export function User360Client({ data }: Readonly<{ data: User360 }>) {
           View {facet === "consultant" ? "expert" : "learner"} dashboard
         </Button>
       }
-      title={`Open ${profile.name}'s dashboard?`}
+      title={`Open ${person.primary}'s dashboard?`}
       // #1527 QA B6 — nothing enforces read-only, so the copy doesn't promise it.
       description="You see their dashboard as they do. Anything you do there runs as you and is logged, and this visit is recorded in the audit log."
       confirmLabel="Open dashboard"
@@ -200,19 +211,22 @@ export function User360Client({ data }: Readonly<{ data: User360 }>) {
       }
       title={
         action === "USER_BANNED"
-          ? `Ban ${profile.name}?`
-          : `Suspend ${profile.name} for 7 days?`
+          ? `Ban ${person.primary}?`
+          : `Suspend ${person.primary} for 7 days?`
       }
       description="The account loses access and its upcoming appointments are cancelled."
       confirmLabel={action === "USER_BANNED" ? "Ban account" : "Suspend"}
       tone="destructive"
       requireReason={{ label: "Reason (kept on the report)" }}
       onConfirm={async ({ reason }) => {
-        await postJson(`/api/staff/moderation/reports/${report.id}/action`, {
-          actionType: action,
-          notes: reason,
-          ...(action === "USER_SUSPENDED" ? { suspensionDays: 7 } : {}),
-        });
+        await postJson(
+          `/api/staff/moderation/reports/${report.id}/action`,
+          moderationActionBody({
+            actionType: action,
+            reason: reason ?? "",
+            suspensionDays: 7,
+          }),
+        );
         void queryClient.invalidateQueries({
           queryKey: ["backoffice-nav-counts"],
         });
@@ -228,14 +242,15 @@ export function User360Client({ data }: Readonly<{ data: User360 }>) {
           Lift ban
         </Button>
       }
-      title={`Lift the ban on ${profile.name}?`}
+      title={`Lift the ban on ${person.primary}?`}
       description="The account can sign in and use chat again."
       confirmLabel="Lift ban"
       requireReason={{}}
       onConfirm={async ({ reason }) => {
-        await postJson(`/api/staff/moderation/reports/${report.id}/unban`, {
-          notes: reason,
-        });
+        await postJson(
+          `/api/staff/moderation/reports/${report.id}/unban`,
+          unbanBody({ reason: reason ?? "" }),
+        );
         router.refresh();
       }}
     />
@@ -303,12 +318,7 @@ export function User360Client({ data }: Readonly<{ data: User360 }>) {
     {
       key: "status",
       header: "Status",
-      cell: (r) => (
-        <StatusBadge
-          label={humanizeEnum(r.status)}
-          tone={REPORT_TONE[r.status] ?? "neutral"}
-        />
-      ),
+      cell: (r) => <StatusBadge {...moderationReportStatus(r.status)} />,
     },
     { key: "when", header: "Filed", cell: (r) => day(r.createdAt) },
   ];
@@ -373,7 +383,7 @@ export function User360Client({ data }: Readonly<{ data: User360 }>) {
     {
       key: "lastSeen",
       header: "Last seen",
-      cell: (i) => (i.lastSeen ? day(i.lastSeen) : "—"),
+      cell: (i) => day(i.lastSeen ?? ""),
     },
   ];
 
@@ -386,7 +396,7 @@ export function User360Client({ data }: Readonly<{ data: User360 }>) {
       <StatusBadge
         label={
           profile.banExpires
-            ? `Suspended until ${day(profile.banExpires)}`
+            ? `Suspended until ${formatOperatorInstant(profile.banExpires, "date")}`
             : "Banned"
         }
         tone="critical"
@@ -397,8 +407,8 @@ export function User360Client({ data }: Readonly<{ data: User360 }>) {
   return (
     <>
       <PageHeader
-        title={profile.name}
-        description={profile.email}
+        title={person.primary}
+        description={person.secondary ?? undefined}
         back={{ href: `${basePath}/users`, label: "Users" }}
         actions={
           <div className="flex flex-wrap gap-2">
@@ -422,7 +432,10 @@ export function User360Client({ data }: Readonly<{ data: User360 }>) {
                   ? "Complete"
                   : "Not finished",
               },
-              { label: "Joined", value: day(profile.createdAt) },
+              {
+                label: "Joined",
+                value: <OperatorTime value={profile.createdAt} />,
+              },
               {
                 label: "Location",
                 value:
@@ -463,7 +476,9 @@ export function User360Client({ data }: Readonly<{ data: User360 }>) {
         <Section title="Bookings" description="The ten most recent seats.">
           <ResponsiveTable
             columns={bookingColumns}
-            rows={data.bookings}
+            rows={data.bookings.rows}
+            error={data.bookings.failed ? SECTION_FAILED : undefined}
+            onRetry={() => router.refresh()}
             getRowId={(b) => b.id}
             rowActions={
               canTrace
@@ -477,7 +492,9 @@ export function User360Client({ data }: Readonly<{ data: User360 }>) {
         <Section title="Payments" description="The ten most recent payments.">
           <ResponsiveTable
             columns={paymentColumns}
-            rows={data.payments}
+            rows={data.payments.rows}
+            error={data.payments.failed ? SECTION_FAILED : undefined}
+            onRetry={() => router.refresh()}
             getRowId={(p) => p.id}
             getRowHref={(p) => `${basePath}/payments/${p.id}`}
             rowActions={
@@ -490,7 +507,9 @@ export function User360Client({ data }: Readonly<{ data: User360 }>) {
         <Section title="Support tickets">
           <ResponsiveTable
             columns={ticketColumns}
-            rows={data.tickets}
+            rows={data.tickets.rows}
+            error={data.tickets.failed ? SECTION_FAILED : undefined}
+            onRetry={() => router.refresh()}
             getRowId={(t) => t.id}
             // #1527 — each ticket opens as a case in the Support inbox.
             getRowHref={(t) => `${basePath}/support/c_${t.id}`}
@@ -517,7 +536,9 @@ export function User360Client({ data }: Readonly<{ data: User360 }>) {
         <Section title="Reports and bans">
           <ResponsiveTable
             columns={reportColumns}
-            rows={data.reports}
+            rows={data.reports.rows}
+            error={data.reports.failed ? SECTION_FAILED : undefined}
+            onRetry={() => router.refresh()}
             getRowId={(r) => r.id}
             rowActions={
               canModerate
@@ -541,13 +562,29 @@ export function User360Client({ data }: Readonly<{ data: User360 }>) {
           <Section title="Verification">
             <ResponsiveTable
               columns={verificationColumns}
-              rows={data.verifications}
+              rows={data.verifications.rows}
+              error={data.verifications.failed ? SECTION_FAILED : undefined}
+              onRetry={() => router.refresh()}
               getRowId={(v) => v.id}
               empty={<Empty>No verification submitted.</Empty>}
             />
           </Section>
         )}
 
+        {data.panFailed && (
+          <Section title="PAN" variant="card">
+            <p className="text-sm text-destructive">
+              The PAN state could not load.{" "}
+              <button
+                type="button"
+                className="underline"
+                onClick={() => router.refresh()}
+              >
+                Retry
+              </button>
+            </p>
+          </Section>
+        )}
         {data.pan && (
           <Section
             title="PAN"

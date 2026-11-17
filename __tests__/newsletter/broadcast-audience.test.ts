@@ -14,6 +14,9 @@ const mockBatchUpsert = jest.fn();
 const mockBatchSend = jest.fn();
 const mockFindSuppressed = jest.fn();
 const mockHeld = jest.fn();
+const mockOpsLog = jest.fn(
+  async (_args: { data: Record<string, unknown> }) => ({ id: "ops_1" }),
+);
 
 jest.mock("@/lib/prisma", () => ({
   __esModule: true,
@@ -28,13 +31,22 @@ jest.mock("@/lib/prisma", () => ({
       upsert: (...args: unknown[]) => mockBatchUpsert(...args),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
+    user: {
+      findUnique: async () => ({ email: "Admin@Familiarise.test" }),
+    },
+    opsActionLog: {
+      create: (args: { data: Record<string, unknown> }) => mockOpsLog(args),
+    },
   },
 }));
 jest.mock("@/lib/auth-helpers", () => ({
   requireBackofficeSurface: async () => ({
-    session: { user: { id: "admin_1", email: "Admin@Familiarise.test" } },
+    session: {
+      user: { id: "admin_1", role: "ADMIN", email: "Admin@Familiarise.test" },
+    },
   }),
 }));
+jest.mock("@/lib/api/after-safe", () => ({ scheduleAfter: jest.fn() }));
 jest.mock("@/lib/email", () => ({
   SENDERS: { newsletter: "Familiarise <news@familiarise.test>" },
   getResendClient: () => ({
@@ -66,8 +78,13 @@ import {
   settledSendable,
 } from "@/lib/newsletter/broadcast-audience";
 import { audienceWhere } from "@/lib/newsletter/service";
+import { broadcastSendBody } from "@/lib/backoffice/people-door-bodies";
 
-const message = { subject: "Launch", htmlBody: "<p>Hello</p>" };
+const message = {
+  subject: "Launch",
+  htmlBody: "<p>Hello</p>",
+  reason: "Launch announcement for the beta list",
+};
 
 function post(body: unknown) {
   return POST(
@@ -75,6 +92,7 @@ function post(body: unknown) {
       method: "POST",
       body: JSON.stringify(body),
     }),
+    { params: Promise.resolve({}) },
   );
 }
 
@@ -243,6 +261,67 @@ describe("newsletter broadcast audience", () => {
     expect(res.status).toBe(422);
     expect(await res.json()).toMatchObject({ code: "AUDIENCE_TOO_LARGE" });
     expect(mockBatchSend).not.toHaveBeenCalled();
+  });
+
+  it("refuses a send without a reason before reading the audience", async () => {
+    const { reason: _reason, ...noReason } = message;
+    const res = await post({ mode: "all", ...noReason });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ code: "INVALID_BODY" });
+    expect(mockFindMany).not.toHaveBeenCalled();
+    expect(mockOpsLog).not.toHaveBeenCalled();
+  });
+
+  it("audits a send with the admin, the reason and what went out; a preview writes no row", async () => {
+    mockFindMany.mockResolvedValue(subscribers(5));
+
+    await post({ mode: "preview" });
+    expect(mockOpsLog).not.toHaveBeenCalled();
+
+    const res = await post({ mode: "all", ...message });
+    expect(res.status).toBe(200);
+    expect(mockOpsLog).toHaveBeenCalledTimes(1);
+    expect(mockOpsLog.mock.calls[0]?.[0].data).toMatchObject({
+      actorUserId: "admin_1",
+      actorRole: "ADMIN",
+      surface: "newsletter.send",
+      action: "newsletter.broadcast",
+      targetKind: "NewsletterMessage",
+      reason: message.reason,
+      before: { matching: 5, sendable: 3 },
+      after: { status: "SUCCEEDED", mode: "all", sent: 3, subject: "Launch" },
+    });
+  });
+
+  it.each(["test", "warmup", "all"] as const)(
+    "accepts the %s body the newsletter screen builds",
+    async (mode) => {
+      mockFindMany.mockResolvedValue(subscribers(5));
+      const res = await post(
+        broadcastSendBody({
+          mode,
+          subject: message.subject,
+          htmlBody: message.htmlBody,
+          reason: message.reason,
+          audience: { tags: ["beta"] },
+          warmupLimit: 2,
+        }),
+      );
+      expect(res.status).toBe(200);
+    },
+  );
+
+  it("audits a refused send as FAILED with its code", async () => {
+    mockFindMany.mockResolvedValue([]);
+
+    const res = await post({ mode: "all", ...message });
+
+    expect(res.status).toBe(404);
+    expect(mockOpsLog.mock.calls[0]?.[0].data.after).toEqual({
+      status: "FAILED",
+      code: "NO_RECIPIENTS",
+    });
   });
 });
 

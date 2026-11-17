@@ -120,6 +120,7 @@ jest.mock("../../lib/prisma", () => ({
     get notificationOutbox() {
       return mockNotificationOutbox;
     },
+    opsActionLog: { create: async () => ({ id: "ops-1" }) },
     $transaction: (...args: unknown[]) => mockTransaction(...args),
   },
 }));
@@ -460,6 +461,7 @@ describe("Moderation transparency, review context & feedback CAS invariants", ()
         status: "PENDING",
         expectedStatus: "ACTION_TAKEN",
         expectedAssignedToId: null,
+        reason: "Reopen for a second look",
       });
       expect(res.status).toBe(409);
       expect(mockModerationReport.updateMany).not.toHaveBeenCalled();
@@ -476,9 +478,12 @@ describe("Moderation transparency, review context & feedback CAS invariants", ()
         status: "ESCALATED",
         expectedStatus: "PENDING",
         expectedAssignedToId: null,
+        reason: "Escalating to the admin on call",
       });
       expect(stale.status).toBe(409);
-      expect((await patch({ status: "ESCALATED" })).status).toBe(400);
+      expect(
+        (await patch({ status: "ESCALATED", reason: "Escalate this" })).status,
+      ).toBe(400);
     });
   });
 

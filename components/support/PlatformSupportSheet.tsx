@@ -34,6 +34,7 @@ import { isBareHumanRequest } from "@/lib/support/escalation";
 import { throwSupportError } from "@/lib/support/error-copy";
 import { supportKeys } from "@/lib/support/support-keys";
 import { describeWait } from "./useSupportThread";
+import { useZoneClock } from "@/lib/time/use-zone-clock";
 
 type Sender = "USER" | "BOT" | "AGENT" | "SYSTEM";
 
@@ -172,6 +173,7 @@ function PlatformDoneView({
   onFeedbackChange: (value: string) => void;
   onSubmitFeedback: () => void;
 }>) {
+  const clock = useZoneClock();
   if (done.resolved && !done.collectFeedback) {
     return (
       <div className="space-y-2">
@@ -251,7 +253,7 @@ function PlatformDoneView({
         ) : (
           <>Support case created — </>
         )}
-        {describeWait(done.replyByAt)}
+        {describeWait(done.replyByAt, clock.zone)}
         {requestHref && (
           <Link
             href={requestHref(done.ticketId)}

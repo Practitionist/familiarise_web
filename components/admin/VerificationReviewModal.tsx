@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { z } from "zod";
 import Image from "next/image";
 import {
   Dialog,
@@ -44,64 +45,13 @@ import {
   VERIFICATION_DOCUMENT_ISSUE_LABEL,
   VERIFICATION_DOCUMENT_ISSUE_VALUES,
 } from "@/lib/labels/verification-labels";
-
-interface Document {
-  id: string;
-  fileName: string;
-  originalName: string;
-  fileUrl: string;
-  description?: string | null;
-  isValid?: boolean | null;
-  staffFeedback?: string | null;
-}
-
-interface ProfileVerification {
-  id: string;
-  status: string;
-  notes: string | null;
-  rejectionReason?: string | null;
-  feedbackDetails?: string | null;
-  submittedAt: string;
-  consultant: {
-    profileId: string;
-    userId: string;
-    name: string | null;
-    email: string;
-    image?: string | null;
-    linkedinUrl?: string | null;
-    bio?: string | null;
-    domain: string;
-    experience: number | null;
-    headline: string | null;
-    description?: string | null;
-    isVerified: boolean;
-    verificationStatus: string;
-    subDomains?: { id: string; name: string }[];
-    workExperiences?: {
-      id: string;
-      company: string;
-      title: string;
-      startDate: string;
-      endDate?: string | null;
-      current: boolean;
-    }[];
-    education?: {
-      id: string;
-      institution: string;
-      degree: string;
-      field: string;
-      startYear: number;
-      endYear?: number | null;
-    }[];
-    certifications?: {
-      id: string;
-      name: string;
-      issuer: string;
-      issueDate: string;
-    }[];
-  };
-  documents: Document[];
-}
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { opsReasonSchema } from "@/lib/backoffice/ops-reason";
+import { verificationReviewBody } from "@/lib/backoffice/people-door-bodies";
+import type { VerificationItem } from "@/lib/backoffice/people-list-schemas";
+import { verificationStatus } from "@/lib/labels/backoffice-labels";
+import { documentDownloadPath } from "@/lib/verification/documents";
+import { OperatorTime } from "@/lib/time/operator-time";
 
 interface DocumentFeedback {
   documentId: string;
@@ -112,7 +62,7 @@ interface DocumentFeedback {
 }
 
 interface VerificationReviewModalProps {
-  verification: ProfileVerification | null;
+  verification: VerificationItem | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onVerificationComplete: () => void;
@@ -129,6 +79,7 @@ export function VerificationReviewModal({
   const [submitting, setSubmitting] = useState(false);
   const [rejectionReason, setRejectionReason] = useState("");
   const [feedbackDetails, setFeedbackDetails] = useState("");
+  const [auditReason, setAuditReason] = useState("");
   const [documentFeedback, setDocumentFeedback] = useState<
     Record<string, DocumentFeedback>
   >({});
@@ -138,6 +89,7 @@ export function VerificationReviewModal({
   const resetForm = () => {
     setRejectionReason("");
     setFeedbackDetails("");
+    setAuditReason("");
     setDocumentFeedback({});
     setShowDetailedFeedback(false);
   };
@@ -200,22 +152,20 @@ export function VerificationReviewModal({
       return;
     }
 
+    const reason = opsReasonSchema.safeParse(auditReason);
+    if (!reason.success) {
+      toast({
+        title: "Reason Required",
+        description: reason.error.issues[0]?.message,
+        variant: "destructive",
+      });
+      return;
+    }
+
     try {
       setSubmitting(true);
 
-      const payload: Record<string, unknown> = {
-        status,
-      };
-
-      if (status === "REJECTED" || status === "NEEDS_INFO") {
-        payload.rejectionReason = rejectionReason.trim();
-        if (feedbackDetails.trim()) {
-          payload.feedbackDetails = feedbackDetails.trim();
-        }
-      }
-
-      // Include document feedback if any. Every flagged document needs a
-      // reason code — the server refuses otherwise (ISSUE_REQUIRED).
+      // Every flagged document needs a reason code; the server refuses otherwise.
       const docFeedbackArray = Object.values(documentFeedback).filter(
         (df) => df.documentId,
       );
@@ -232,9 +182,13 @@ export function VerificationReviewModal({
         setSubmitting(false);
         return;
       }
-      if (docFeedbackArray.length > 0) {
-        payload.documentFeedback = docFeedbackArray;
-      }
+      const payload = verificationReviewBody({
+        status,
+        reason: reason.data,
+        applicantReason: rejectionReason,
+        feedbackDetails,
+        documentFeedback: docFeedbackArray,
+      });
 
       const response = await fetch(`${apiBasePath}/${verification.id}`, {
         method: "PATCH",
@@ -243,8 +197,14 @@ export function VerificationReviewModal({
       });
 
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || "Failed to update verification");
+        const refusal = z
+          .object({ error: z.string() })
+          .safeParse(await response.json().catch(() => null));
+        throw new Error(
+          refusal.success
+            ? refusal.data.error
+            : "Failed to update verification",
+        );
       }
 
       const statusMessages = {
@@ -340,17 +300,7 @@ export function VerificationReviewModal({
                 )}
               </div>
             </div>
-            <Badge
-              className={
-                verification.status === "PENDING"
-                  ? "bg-amber-100 text-amber-700"
-                  : verification.status === "APPROVED"
-                    ? "bg-green-100 text-green-700"
-                    : "bg-red-100 text-red-700"
-              }
-            >
-              {verification.status}
-            </Badge>
+            <StatusBadge {...verificationStatus(verification.status)} />
           </div>
 
           {/* Applicant Notes */}
@@ -487,7 +437,7 @@ export function VerificationReviewModal({
                         <p className="text-sm text-zinc-500">{cert.issuer}</p>
                         <p className="text-xs text-zinc-400">
                           Issued:{" "}
-                          {new Date(cert.issueDate).toLocaleDateString()}
+                          <OperatorTime value={cert.issueDate} kind="date" />
                         </p>
                       </CardContent>
                     </Card>
@@ -521,18 +471,11 @@ export function VerificationReviewModal({
                             onClick={(e) => {
                               e.preventDefault();
                               e.stopPropagation();
-                              if (doc.fileUrl) {
-                                window.open(
-                                  doc.fileUrl,
-                                  "_blank",
-                                  "noopener,noreferrer",
-                                );
-                              } else {
-                                console.error(
-                                  "No document URL found for document",
-                                  doc.id,
-                                );
-                              }
+                              window.open(
+                                documentDownloadPath(doc.id),
+                                "_blank",
+                                "noopener,noreferrer",
+                              );
                             }}
                           >
                             <Eye className="h-3 w-3 mr-1" />
@@ -646,6 +589,24 @@ export function VerificationReviewModal({
                 />
               </CollapsibleContent>
             </Collapsible>
+
+            <div>
+              <Label htmlFor="auditReason">
+                Reason for the audit log
+                <span className="ml-1 text-xs text-zinc-400">
+                  (required, at least 5 characters; the applicant does not see
+                  it)
+                </span>
+              </Label>
+              <Textarea
+                id="auditReason"
+                placeholder="e.g., ID and certificates match the profile"
+                value={auditReason}
+                onChange={(e) => setAuditReason(e.target.value)}
+                rows={2}
+                className="mt-1"
+              />
+            </div>
           </div>
         </div>
 

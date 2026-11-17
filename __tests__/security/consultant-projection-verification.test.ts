@@ -25,7 +25,7 @@ jest.mock("../../lib/auth-helpers", () => ({
 }));
 jest.mock("../../lib/verification/review-route", () => ({
   __esModule: true,
-  handleReviewPatch: jest.fn(),
+  reviewVerificationDoor: jest.fn(),
   withDownloadUrls: <T>(docs: T[]) => docs,
 }));
 jest.mock("../../lib/prisma", () => ({
@@ -51,6 +51,10 @@ const verificationDb = (
   }
 ).consultantProfileVerification;
 const mockedAuth = requireBackofficeSurface as unknown as jest.Mock;
+const QUEUE_ARGS = {
+  status: "PENDING" as const,
+  paging: { page: 1, limit: 20, skip: 0 },
+};
 
 const user = {
   id: "u-1",
@@ -144,7 +148,7 @@ describe("getVerificationQueue", () => {
   });
 
   it("reads exactly the review-modal columns from the profile", async () => {
-    await getVerificationQueue();
+    await getVerificationQueue(QUEUE_ARGS);
     const args = verificationDb.findMany.mock.calls[0][0];
     const profile = args.include.consultantProfile;
     expect(profile).not.toHaveProperty("include");
@@ -165,7 +169,7 @@ describe("getVerificationQueue", () => {
   });
 
   it("flattens the row into the queue shape without profile columns", async () => {
-    const result = await getVerificationQueue();
+    const result = await getVerificationQueue(QUEUE_ARGS);
     const [row] = result.verifications;
     expect(Object.keys(row.consultant).sort()).toEqual(
       [

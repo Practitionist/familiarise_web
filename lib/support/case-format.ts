@@ -1,10 +1,15 @@
-/** #1527 — short, stable time labels for the Support inbox. Pure. */
+/** Short, stable time labels for the Support inbox, which reads India time. Pure. */
+
+import { OPERATOR_ZONE } from "@/lib/time/operator-zone";
+import { zoneClock } from "@/lib/time/zone-clock";
+
+const inboxClock = zoneClock(OPERATOR_ZONE);
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
-/** "now", "12m", "5h", "3d", then a short date. */
+/** "now", "12m", "5h", "3d", then the IST day and month. */
 export function shortAge(iso: string, now: Date = new Date()): string {
   const then = new Date(iso);
   const ms = now.getTime() - then.getTime();
@@ -12,7 +17,7 @@ export function shortAge(iso: string, now: Date = new Date()): string {
   if (ms < HOUR) return `${Math.floor(ms / MINUTE)}m`;
   if (ms < DAY) return `${Math.floor(ms / HOUR)}h`;
   if (ms < 7 * DAY) return `${Math.floor(ms / DAY)}d`;
-  return then.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+  return inboxClock.dayMonth(then);
 }
 
 /** A duration such as "45m", "3h 20m" or "2d 4h"; "—" when unknown. */

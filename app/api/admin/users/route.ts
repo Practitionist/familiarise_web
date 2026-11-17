@@ -1,51 +1,51 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { Prisma, UserRole } from "@prisma/client";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
+import { pageNumberSchema } from "@/lib/backoffice/list-paging";
+
+const PAGE_SIZE = 20;
+
+const querySchema = z.object({
+  page: pageNumberSchema,
+  // "all" or an unknown role reads as no role filter.
+  role: z.nativeEnum(UserRole).optional().catch(undefined),
+  search: z.string().trim().max(200).optional().catch(undefined),
+  orgId: z.string().min(1).max(64).optional().catch(undefined),
+});
+
+/** GET /api/admin/users — one page of the user directory, newest first. */
 export async function GET(req: NextRequest) {
   try {
     const auth = await requireBackofficeSurface("users.read");
     if (auth.error) return auth.error;
 
-    // Parse query parameters
     const searchParams = req.nextUrl.searchParams;
-    const role = searchParams.get("role");
-    const search = searchParams.get("search");
-    const page = parseInt(searchParams.get("page") || "1");
-    const limit = 20;
-    const skip = (page - 1) * limit;
-    // #674 comment 7 — optional org-scope filter. Filters to users with
-    // an ACTIVE Membership at the given org. Useful for support staff
-    // looking up "all members of Acme."
-    const orgId = searchParams.get("orgId");
+    const { page, role, search, orgId } = querySchema.parse({
+      page: searchParams.get("page") ?? undefined,
+      role: searchParams.get("role") ?? undefined,
+      search: searchParams.get("search") || undefined,
+      orgId: searchParams.get("orgId") || undefined,
+    });
 
-    // Build where clause with proper typing
-    const where: Prisma.UserWhereInput = {};
+    const where: Prisma.UserWhereInput = {
+      ...(role ? { role } : {}),
+      ...(search
+        ? {
+            OR: [
+              { name: { contains: search, mode: "insensitive" } },
+              { email: { contains: search, mode: "insensitive" } },
+            ],
+          }
+        : {}),
+      // Users with an ACTIVE membership at one org, for "all members of Acme".
+      ...(orgId
+        ? { memberships: { some: { organizationId: orgId, status: "ACTIVE" } } }
+        : {}),
+    };
 
-    // Validate role against UserRole enum before using
-    if (
-      role &&
-      role !== "all" &&
-      Object.values(UserRole).includes(role as UserRole)
-    ) {
-      where.role = role as UserRole;
-    }
-
-    if (search) {
-      where.OR = [
-        { name: { contains: search, mode: "insensitive" } },
-        { email: { contains: search, mode: "insensitive" } },
-      ];
-    }
-
-    if (orgId) {
-      where.memberships = {
-        some: { organizationId: orgId, status: "ACTIVE" },
-      };
-    }
-
-    // Fetch users with pagination
     const [users, total] = await Promise.all([
       prisma.user.findMany({
         where,
@@ -53,13 +53,15 @@ export async function GET(req: NextRequest) {
           id: true,
           name: true,
           email: true,
+          image: true,
           role: true,
           onboardingCompleted: true,
           createdAt: true,
         },
-        orderBy: { createdAt: "desc" },
-        skip,
-        take: limit,
+        // Newest first; the id breaks a tie so a page never repeats a user.
+        orderBy: [{ createdAt: "desc" }, { id: "asc" }],
+        skip: (page - 1) * PAGE_SIZE,
+        take: PAGE_SIZE,
       }),
       prisma.user.count({ where }),
     ]);
@@ -68,7 +70,7 @@ export async function GET(req: NextRequest) {
       users,
       total,
       page,
-      totalPages: Math.ceil(total / limit),
+      totalPages: Math.ceil(total / PAGE_SIZE),
     });
   } catch (error) {
     Sentry.captureException(

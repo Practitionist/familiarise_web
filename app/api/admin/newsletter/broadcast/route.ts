@@ -4,7 +4,7 @@
  * Sends one newsletter through Resend's batch API (100 per call) to a filtered
  * audience of SUBSCRIBED addresses with a live MARKETING_COMMS consent, to the
  * calling admin only (`test`), or to the most recently confirmed N (`warmup`);
- * `preview` only counts. Every
+ * `preview` only counts. A send is an audited gateway door with a reason; every
  * message carries an unsubscribe footer and RFC 8058 one-click headers.
  */
 
@@ -13,6 +13,8 @@ import { NextRequest, NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
+import { withOpsAction } from "@/lib/backoffice/ops-action-log";
+import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { getResendClient, SENDERS } from "@/lib/email";
 import { createHash, randomUUID } from "node:crypto";
 import { resendErrorText } from "@/lib/email/classify";
@@ -39,19 +41,24 @@ const message = {
 };
 const audience = broadcastAudienceSchema.default({});
 
-const requestSchema = z.discriminatedUnion("mode", [
-  z.object({ mode: z.literal("preview"), audience }),
-  z.object({ mode: z.literal("test"), ...message }),
-  z.object({
-    mode: z.literal("warmup"),
-    limit: z.number().int().min(1).max(BROADCAST_AUDIENCE_LIMIT),
-    audience,
-    ...message,
-  }),
-  z.object({ mode: z.literal("all"), audience, ...message }),
-]);
+const previewSchema = z.object({ mode: z.literal("preview"), audience });
 
-type BroadcastRequest = z.infer<typeof requestSchema>;
+/** A send, flat so the audited door can extend it with `reason`. */
+const sendShape = {
+  mode: z.enum(["test", "warmup", "all"]),
+  limit: z.number().int().min(1).max(BROADCAST_AUDIENCE_LIMIT).optional(),
+  audience,
+  ...message,
+};
+const sendSchema = z
+  .object(sendShape)
+  .refine((b) => b.mode !== "warmup" || b.limit !== undefined, {
+    message: "A warm-up send needs a limit",
+    path: ["limit"],
+  });
+
+type BroadcastRequest =
+  z.infer<typeof previewSchema> | z.infer<typeof sendSchema>;
 
 const BATCH_SIZE = 100;
 
@@ -102,114 +109,171 @@ async function resolveRecipients(
   };
 }
 
-export async function POST(request: NextRequest): Promise<NextResponse> {
-  try {
-    const auth = await requireBackofficeSurface("newsletter.send");
-    if (auth.error) return auth.error;
-
-    const body = await request.json().catch(() => null);
-    const parsed = requestSchema.safeParse(body);
-    if (!parsed.success) {
-      return NextResponse.json(
-        { error: "Invalid input", details: parsed.error.flatten() },
-        { status: 400 },
-      );
-    }
-    const input = parsed.data;
-
-    const {
-      recipients,
-      matching,
-      skippedNoConsent,
-      skippedSuppressed,
-      skippedHeld,
-    } = await resolveRecipients(input, auth.session.user.email);
-    const counts = {
-      matching,
-      sendable: recipients.length,
-      skippedNoConsent,
-      skippedSuppressed,
-      skippedHeld,
-      limit: BROADCAST_AUDIENCE_LIMIT,
-    };
-
-    if (input.mode === "preview") return NextResponse.json(counts);
-
-    if (recipients.length > BROADCAST_AUDIENCE_LIMIT) {
-      return NextResponse.json(
-        {
-          error: AUDIENCE_TOO_LARGE_MESSAGE,
-          code: "AUDIENCE_TOO_LARGE",
-          ...counts,
-        },
-        { status: 422 },
-      );
-    }
-    if (recipients.length === 0) {
-      return NextResponse.json(
-        { error: "No sendable recipients in this audience", ...counts },
-        { status: 404 },
-      );
-    }
-
-    const resend = getResendClient();
-    if (!resend) {
-      return NextResponse.json(
-        { error: "Email service not configured (RESEND_API_KEY missing)" },
-        { status: 503 },
-      );
-    }
-
-    let sent = 0;
-    let failed = 0;
-    const errors: string[] = [];
-
-    for (let i = 0; i < recipients.length; i += BATCH_SIZE) {
-      const batch = recipients.slice(i, i + BATCH_SIZE);
-      const emails = batch.map((email) =>
-        buildMessage(email, input.subject, input.htmlBody, input.textBody),
-      );
-
-      const outcome = await sendBatch(
-        resend,
-        emails,
-        input.mode === "test" ? randomUUID() : "",
-      );
-      if (outcome.ok) {
-        sent += outcome.sent;
-      } else {
-        failed += batch.length;
-        errors.push(
-          `Batch ${Math.floor(i / BATCH_SIZE) + 1}: ${outcome.error}`,
-        );
-      }
-    }
-
-    console.log(
-      `[admin/newsletter/broadcast] mode=${input.mode} sent=${sent} failed=${failed} total=${recipients.length} skippedSuppressed=${skippedSuppressed} skippedHeld=${skippedHeld}`,
+/** `preview` only counts the audience: a read on the same key, with no audit row. */
+async function preview(body: unknown): Promise<NextResponse> {
+  const auth = await requireBackofficeSurface("newsletter.send");
+  if (auth.error) return auth.error;
+  const parsed = previewSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid input", details: parsed.error.flatten() },
+      { status: 400 },
     );
-
+  }
+  try {
+    const { recipients, ...counts } = await resolveRecipients(
+      parsed.data,
+      auth.session.user.email,
+    );
     return NextResponse.json({
-      success: true,
-      mode: input.mode,
-      sent,
-      failed,
-      total: recipients.length,
-      skippedSuppressed,
-      skippedHeld,
-      ...(errors.length > 0 && { errors }),
+      ...counts,
+      sendable: recipients.length,
+      limit: BROADCAST_AUDIENCE_LIMIT,
     });
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
       { tags: { subsystem: "newsletter" } },
     );
-    console.error("[admin/newsletter/broadcast]", error);
     return NextResponse.json(
-      { error: "Failed to send the newsletter" },
+      { error: "Failed to count the audience" },
       { status: 500 },
     );
   }
+}
+
+/** One send's content, for the audit row's target: the same message keeps one id. */
+function messageDigest(subject: string, htmlBody: string, textBody = "") {
+  return createHash("sha256")
+    .update(JSON.stringify([subject, htmlBody, textBody]))
+    .digest("hex")
+    .slice(0, 32);
+}
+
+const sendDoor = withOpsAction(
+  "newsletter.send",
+  "newsletter.broadcast",
+  sendShape,
+  {
+    mode: "gateway",
+    target: ({ body }) => ({
+      kind: "NewsletterMessage",
+      id: messageDigest(body.subject, body.htmlBody, body.textBody),
+    }),
+    run: async ({ body, actor }) => {
+      const input = sendSchema.parse(body);
+      // A test goes to the sending admin alone.
+      const actorEmail =
+        input.mode === "test"
+          ? await prisma.user.findUnique({
+              where: { id: actor.userId },
+              select: { email: true },
+            })
+          : null;
+      const {
+        recipients,
+        matching,
+        skippedNoConsent,
+        skippedSuppressed,
+        skippedHeld,
+      } = await resolveRecipients(input, actorEmail?.email ?? "");
+      const counts = {
+        matching,
+        sendable: recipients.length,
+        skippedNoConsent,
+        skippedSuppressed,
+        skippedHeld,
+        limit: BROADCAST_AUDIENCE_LIMIT,
+      };
+      if (recipients.length > BROADCAST_AUDIENCE_LIMIT) {
+        throw new OpsRefusal(
+          "AUDIENCE_TOO_LARGE",
+          AUDIENCE_TOO_LARGE_MESSAGE,
+          422,
+          counts,
+        );
+      }
+      if (recipients.length === 0) {
+        throw new OpsRefusal(
+          "NO_RECIPIENTS",
+          "No sendable recipients in this audience",
+          404,
+          counts,
+        );
+      }
+      const resend = getResendClient();
+      if (!resend) {
+        throw new OpsRefusal(
+          "EMAIL_NOT_CONFIGURED",
+          "Email service not configured (RESEND_API_KEY missing)",
+          503,
+        );
+      }
+
+      let sent = 0;
+      let failed = 0;
+      const errors: string[] = [];
+      for (let i = 0; i < recipients.length; i += BATCH_SIZE) {
+        const batch = recipients.slice(i, i + BATCH_SIZE);
+        const emails = batch.map((email) =>
+          buildMessage(email, input.subject, input.htmlBody, input.textBody),
+        );
+        const outcome = await sendBatch(
+          resend,
+          emails,
+          input.mode === "test" ? randomUUID() : "",
+        );
+        if (outcome.ok) {
+          sent += outcome.sent;
+        } else {
+          failed += batch.length;
+          errors.push(
+            `Batch ${Math.floor(i / BATCH_SIZE) + 1}: ${outcome.error}`,
+          );
+        }
+      }
+
+      console.log(
+        `[admin/newsletter/broadcast] mode=${input.mode} sent=${sent} failed=${failed} total=${recipients.length} skippedSuppressed=${skippedSuppressed} skippedHeld=${skippedHeld}`,
+      );
+      const result = {
+        mode: input.mode,
+        sent,
+        failed,
+        total: recipients.length,
+        skippedSuppressed,
+        skippedHeld,
+      };
+      return {
+        target: {
+          kind: "NewsletterMessage",
+          id: messageDigest(input.subject, input.htmlBody, input.textBody),
+        },
+        before: { matching, sendable: recipients.length },
+        after: { ...result, subject: input.subject },
+        response: {
+          success: true,
+          ...result,
+          ...(errors.length > 0 && { errors }),
+        },
+      };
+    },
+  },
+);
+
+/** Dispatches on `mode`: a preview counts, a send goes through the audited door. */
+export async function POST(
+  request: NextRequest,
+  route: { params: Promise<unknown> },
+): Promise<NextResponse> {
+  const body: unknown = await request
+    .clone()
+    .json()
+    .catch(() => null);
+  if (previewSchema.pick({ mode: true }).safeParse(body).success) {
+    return preview(body);
+  }
+  return sendDoor(request, route);
 }
 
 type BroadcastMessage = ReturnType<typeof buildMessage>;

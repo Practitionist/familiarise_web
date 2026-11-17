@@ -13,22 +13,15 @@ import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
-import type { PendingSsoApproval } from "@/lib/backoffice/org-detail";
+import { readListBody } from "@/lib/backoffice/money-list-schemas";
+import type { PendingSsoPage } from "@/lib/backoffice/org-detail";
+import {
+  organizationListPageSchema,
+  type OrganizationListItem as OrgListItem,
+} from "@/lib/backoffice/people-list-schemas";
 import { ORG_STATUS, orgStatus } from "@/lib/labels/backoffice-labels";
+import { OperatorTime } from "@/lib/time/operator-time";
 import { humanizeEnum } from "@/lib/ui/tone";
-
-export interface OrgListItem {
-  id: string;
-  name: string;
-  slug: string;
-  status: string;
-  canSponsor: boolean;
-  canHost: boolean;
-  billingEmail: string;
-  createdAt: string;
-  billingAccount: { id: string; fundingSource: string } | null;
-  _count: { memberships: number; contracts: number };
-}
 
 const PAGE_SIZE = 25; // the route's default page size
 
@@ -79,7 +72,7 @@ const columns: ResponsiveColumn<OrgListItem>[] = [
     key: "created",
     header: "Created",
     className: "text-sm text-muted-foreground",
-    cell: (o) => new Date(o.createdAt).toLocaleDateString(),
+    cell: (o) => <OperatorTime value={o.createdAt} kind="date" />,
   },
 ];
 
@@ -90,7 +83,7 @@ const columns: ResponsiveColumn<OrgListItem>[] = [
  */
 export default function OrganizationsPageClient({
   pendingSso,
-}: Readonly<{ pendingSso: PendingSsoApproval[] }>) {
+}: Readonly<{ pendingSso: PendingSsoPage }>) {
   const { basePath } = useBackofficeCapability();
   const [status, setStatus] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -106,11 +99,11 @@ export default function OrganizationsPageClient({
       if (status) params.set("status", status);
       if (search) params.set("search", search);
       const res = await fetch(`/api/admin/organizations?${params}`);
-      if (!res.ok) throw new Error("Failed to load organizations");
-      return (await res.json()) as {
-        data: OrgListItem[];
-        pagination: { total: number };
-      };
+      return readListBody(
+        res,
+        organizationListPageSchema,
+        "Organizations could not load.",
+      );
     },
     placeholderData: keepPreviousData,
   });
@@ -121,7 +114,7 @@ export default function OrganizationsPageClient({
         title="Organizations"
         description="Every organization on the platform. Open one to verify, suspend or invoice it."
       />
-      <PendingSsoApprovals rows={pendingSso} basePath={basePath} />
+      <PendingSsoApprovals pending={pendingSso} basePath={basePath} />
       <ResponsiveTable<OrgListItem>
         columns={columns}
         rows={data?.data ?? []}

@@ -28,20 +28,17 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { Plus, Trash2, Pencil, Megaphone, Loader2 } from "lucide-react";
 import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { TablePagination } from "@/components/dashboard/TablePagination";
+import { keepPreviousPageOnly } from "@/components/dashboard/shared/paged-list-filters";
+import { readListBody } from "@/lib/backoffice/money-list-schemas";
+import {
+  announcementPageSchema,
+  type Announcement,
+} from "@/lib/backoffice/people-list-schemas";
+import { OperatorTime } from "@/lib/time/operator-time";
 
-interface Announcement {
-  id: string;
-  title: string;
-  content: string;
-  isActive: boolean;
-  startDate: string | null;
-  endDate: string | null;
-  backgroundColor: string;
-  textColor: string;
-  linkUrl: string | null;
-  linkText: string | null;
-  createdAt: string;
-}
+const PAGE_SIZE = 20;
 
 const ApiErrorSchema = z.object({ error: z.string().optional() });
 const InboxAudienceSchema = z.object({
@@ -73,17 +70,28 @@ export function AnnouncementsPage({
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
+  const [page, setPage] = useState(1);
   const queryKey = [queryKeyPrefix];
+  const listKey = [queryKeyPrefix, page] as const;
 
-  const { data: announcements = [], isLoading } = useQuery({
-    queryKey,
-    queryFn: async (): Promise<Announcement[]> => {
-      const response = await fetch(`${apiBasePath}/manage`);
-      const result = await response.json().catch(() => null);
-      if (!response.ok) throw new Error("Could not load announcements.");
-      return result?.success ? result.data : [];
+  const list = useQuery({
+    queryKey: listKey,
+    queryFn: async () => {
+      const params = new URLSearchParams({
+        page: String(page),
+        limit: String(PAGE_SIZE),
+      });
+      const response = await fetch(`${apiBasePath}/manage?${params}`);
+      return readListBody(
+        response,
+        announcementPageSchema,
+        "Could not load announcements.",
+      );
     },
+    placeholderData: keepPreviousPageOnly(listKey, 1),
   });
+  const announcements = list.data?.data ?? [];
+  const isLoading = list.isLoading;
 
   // Counted only when an inbox post is being considered. The hook stays mounted,
   // so an earlier count is kept while it refetches and must not be confirmable.
@@ -223,14 +231,6 @@ export function AnnouncementsPage({
     } else {
       createMutation.mutate({ ...data, postToInbox });
     }
-  };
-
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
   };
 
   return (
@@ -395,6 +395,17 @@ export function AnnouncementsPage({
         <div className="flex items-center justify-center py-8">
           <Loader2 className="h-6 w-6 animate-spin" />
         </div>
+      ) : list.isError ? (
+        <Card>
+          <CardContent className="flex flex-col items-center gap-3 py-12">
+            <p role="alert" className="text-sm text-destructive">
+              Announcements could not load.
+            </p>
+            <Button variant="outline" size="sm" onClick={() => list.refetch()}>
+              Retry
+            </Button>
+          </CardContent>
+        </Card>
       ) : announcements.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12">
@@ -413,19 +424,18 @@ export function AnnouncementsPage({
                       {announcement.title}
                     </CardTitle>
                     <CardDescription>
-                      Created {formatDate(announcement.createdAt)}
+                      Created{" "}
+                      <OperatorTime
+                        value={announcement.createdAt}
+                        kind="date"
+                      />
                     </CardDescription>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span
-                      className={`px-2 py-1 rounded-full text-xs font-medium ${
-                        announcement.isActive
-                          ? "bg-green-100 text-green-700"
-                          : "bg-zinc-100 text-zinc-700"
-                      }`}
-                    >
-                      {announcement.isActive ? "Active" : "Inactive"}
-                    </span>
+                    <StatusBadge
+                      label={announcement.isActive ? "Active" : "Inactive"}
+                      tone={announcement.isActive ? "success" : "neutral"}
+                    />
                   </div>
                 </div>
               </CardHeader>
@@ -433,8 +443,8 @@ export function AnnouncementsPage({
                 <div
                   className="p-3 rounded-lg mb-4 text-sm"
                   style={{
-                    backgroundColor: announcement.backgroundColor,
-                    color: announcement.textColor,
+                    backgroundColor: announcement.backgroundColor ?? undefined,
+                    color: announcement.textColor ?? undefined,
                   }}
                 >
                   {announcement.content}
@@ -485,6 +495,12 @@ export function AnnouncementsPage({
               </CardContent>
             </Card>
           ))}
+          <TablePagination
+            page={list.data?.page ?? page}
+            pageSize={list.data?.limit ?? PAGE_SIZE}
+            total={list.data?.total ?? 0}
+            onPageChange={setPage}
+          />
         </div>
       )}
 
@@ -535,7 +551,9 @@ export function AnnouncementsPage({
                       id="edit-backgroundColor"
                       name="backgroundColor"
                       type="color"
-                      defaultValue={editingAnnouncement.backgroundColor}
+                      defaultValue={
+                        editingAnnouncement.backgroundColor ?? "#000000"
+                      }
                     />
                   </div>
                   <div className="space-y-2">
@@ -544,7 +562,7 @@ export function AnnouncementsPage({
                       id="edit-textColor"
                       name="textColor"
                       type="color"
-                      defaultValue={editingAnnouncement.textColor}
+                      defaultValue={editingAnnouncement.textColor ?? "#FFFFFF"}
                     />
                   </div>
                 </div>

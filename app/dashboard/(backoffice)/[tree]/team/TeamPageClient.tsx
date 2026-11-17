@@ -47,6 +47,7 @@ import {
 } from "./team-row-actions";
 import { fetchWithReauth } from "@/lib/auth/reauth-client";
 import { OperatorTime } from "@/lib/time/operator-time";
+import { PersonCell } from "@/components/dashboard/backoffice/PersonCell";
 
 type Role = MemberRow["role"];
 
@@ -144,16 +145,13 @@ export function TeamPageClient() {
       primary: true,
       cell: (row) => (
         <div className="min-w-0">
-          <p className="font-medium text-foreground">
-            {row.name || "Unnamed"}
-            {row.id === viewerId ? (
-              <span className="ml-2 text-xs text-muted-foreground">(you)</span>
-            ) : null}
-          </p>
+          <PersonCell
+            person={row}
+            suffix={row.id === viewerId ? "(you)" : undefined}
+          />
           {row.banned ? (
             <StatusBadge label="Suspended" tone="critical" variant="dot" />
           ) : null}
-          <p className="text-sm text-muted-foreground">{row.email}</p>
         </div>
       ),
     },

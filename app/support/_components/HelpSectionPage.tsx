@@ -3,6 +3,7 @@ import { PageHeader } from "@/components/dashboard/PageScaffold";
 import { EvidenceInbox } from "@/components/support/EvidenceInbox";
 import { ReportHistory } from "@/components/dashboard/shared/ReportHistory";
 import { ProductFeedbackPage } from "@/components/dashboard/shared/feedback/ProductFeedbackPage";
+import { ViewerZone } from "./ViewerZone";
 
 export function HelpSectionPage({
   section,
@@ -28,7 +29,9 @@ export function HelpSectionPage({
           title="Evidence requests"
           description="Information the platform investigation team has asked you to provide."
         />
-        <EvidenceInbox detailBase={`${basePath}/support/evidence`} />
+        <ViewerZone>
+          <EvidenceInbox detailBase={`${basePath}/support/evidence`} />
+        </ViewerZone>
       </>
     );
   notFound();

@@ -1,5 +1,6 @@
 import { SupportRequestsPage } from "@/components/dashboard/shared/support/SupportRequestsPage";
 import { SuggestedArticles } from "./SuggestedArticles";
+import { ViewerZone } from "./ViewerZone";
 
 /**
  * The personal trees' Support requests route body (#1527). One copy for both
@@ -14,13 +15,15 @@ export function PersonalSupportRequests({
   profileId: string;
 }>) {
   return (
-    <SupportRequestsPage
-      basePath={`/dashboard/${tree}/${profileId}`}
-      suggested={
-        <SuggestedArticles
-          audience={tree === "consultant" ? "expert" : "learner"}
-        />
-      }
-    />
+    <ViewerZone>
+      <SupportRequestsPage
+        basePath={`/dashboard/${tree}/${profileId}`}
+        suggested={
+          <SuggestedArticles
+            audience={tree === "consultant" ? "expert" : "learner"}
+          />
+        }
+      />
+    </ViewerZone>
   );
 }

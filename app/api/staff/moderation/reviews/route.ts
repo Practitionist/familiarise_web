@@ -9,14 +9,13 @@ import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
+import { readPageParams } from "@/lib/backoffice/list-paging";
+import type { ModerationReviewsPageInput } from "@/lib/backoffice/moderation-schemas";
 
-// `parseInt("abc")` is NaN, which Prisma rejects as `skip` — a 500 for a typo.
 const querySchema = z.object({
   consultantProfileId: z.string().min(1).optional(),
   minRating: z.coerce.number().int().min(1).max(5).optional(),
   maxRating: z.coerce.number().int().min(1).max(5).optional(),
-  page: z.coerce.number().int().min(1).default(1),
-  limit: z.coerce.number().int().min(1).max(100).default(20),
 });
 
 /**
@@ -28,18 +27,20 @@ export async function GET(req: NextRequest) {
     const auth = await requireBackofficeSurface("moderation.manage");
     if (auth.error) return auth.error;
 
-    const parsed = querySchema.safeParse(
-      Object.fromEntries(new URL(req.url).searchParams),
-    );
+    const { searchParams } = new URL(req.url);
+    const parsed = querySchema.safeParse({
+      consultantProfileId: searchParams.get("consultantProfileId") ?? undefined,
+      minRating: searchParams.get("minRating") ?? undefined,
+      maxRating: searchParams.get("maxRating") ?? undefined,
+    });
     if (!parsed.success) {
       return NextResponse.json(
         { error: "Invalid query", details: parsed.error.flatten() },
         { status: 400 },
       );
     }
-    const { consultantProfileId, minRating, maxRating, page, limit } =
-      parsed.data;
-    const offset = (page - 1) * limit;
+    const { consultantProfileId, minRating, maxRating } = parsed.data;
+    const { page, limit, skip: offset } = readPageParams(searchParams, 20);
 
     const where: Prisma.ConsultantReviewWhereInput = {};
 
@@ -55,6 +56,7 @@ export async function GET(req: NextRequest) {
 
     const [reviews, total] = await Promise.all([
       prisma.consultantReview.findMany({
+        relationLoadStrategy: "join",
         where,
         // An allowlist, not a bare include: the profiles carry statutory PII
         // this queue never renders, so it is not fetched either (#946, #1561).
@@ -96,7 +98,8 @@ export async function GET(req: NextRequest) {
             },
           },
         },
-        orderBy: { createdAt: "desc" },
+        // Newest first; the id breaks a tie so a page never repeats a review.
+        orderBy: [{ createdAt: "desc" }, { id: "asc" }],
         take: limit,
         skip: offset,
       }),
@@ -113,6 +116,7 @@ export async function GET(req: NextRequest) {
         email: review.consultantProfile.user.email,
         image: review.consultantProfile.user.image,
       },
+      // Sent even for an anonymous review: staff see its author, and the screen labels it.
       reviewer: {
         profileId: review.consulteeProfile.id,
         name: review.consulteeProfile.user.name,
@@ -155,7 +159,7 @@ export async function GET(req: NextRequest) {
       ratingDistribution.map((r) => [r.rating, r._count.id]),
     );
 
-    return NextResponse.json({
+    const body: ModerationReviewsPageInput = {
       reviews: formattedReviews,
       distribution,
       pagination: {
@@ -165,7 +169,8 @@ export async function GET(req: NextRequest) {
         totalPages: Math.ceil(total / limit),
         hasMore: offset + limit < total,
       },
-    });
+    };
+    return NextResponse.json(body);
   } catch (error) {
     console.error("Error fetching reviews:", error);
     return NextResponse.json(

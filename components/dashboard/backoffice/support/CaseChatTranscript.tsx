@@ -3,11 +3,11 @@
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { Button } from "@/components/ui/button";
 import type { Tone } from "@/lib/ui/tone";
-import { formatDateTimeLabel } from "@/lib/time/display";
+import { formatOperatorInstant } from "@/lib/time/operator-zone";
 import type { TranscriptMessage } from "@/schemas/support-chat";
 import { errorText, useTranscript } from "./case-chat-data";
 
-const when = (iso: string) => formatDateTimeLabel(new Date(iso));
+const when = (iso: string) => formatOperatorInstant(iso);
 
 const ROLE_KEY: Record<
   TranscriptMessage["role"],

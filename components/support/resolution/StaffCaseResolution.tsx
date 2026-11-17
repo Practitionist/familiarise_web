@@ -12,7 +12,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { formatDateTimeLabel } from "@/lib/time/display";
+import { formatOperatorInstant } from "@/lib/time/operator-zone";
 import { CaseAttachments } from "../CaseAttachments";
 import { FinancialPanel } from "./FinancialPanel";
 import { ReasonAction } from "./ReasonAction";
@@ -31,7 +31,7 @@ import {
 } from "./resolution-data";
 
 type Run = RunCaseAction;
-const when = (iso: string) => formatDateTimeLabel(new Date(iso));
+const when = (iso: string) => formatOperatorInstant(iso);
 
 /**
  * Records the case's decision. Once one exists only an admin may supersede it,
@@ -134,7 +134,7 @@ function DecisionDialog({
               <dt className="text-xs text-muted-foreground">Appeal window</dt>
               <dd>
                 The customer can appeal until {current ? "" : "about "}
-                {formatDateTimeLabel(appealUntil)}.
+                {formatOperatorInstant(appealUntil)}.
               </dd>
             </div>
           </dl>

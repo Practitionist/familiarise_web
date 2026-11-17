@@ -5,6 +5,7 @@ import prisma from "@/lib/prisma";
 import { attachmentCaseAccess } from "@/lib/support/case-attachments";
 import { evidenceAppointmentScope } from "@/lib/support/evidence-scope";
 import { EvidenceRequest } from "@/components/support/EvidenceInbox";
+import { ViewerZone } from "./ViewerZone";
 
 export async function DashboardEvidencePage({
   requestId,
@@ -35,9 +36,11 @@ export async function DashboardEvidencePage({
   )
     notFound();
   return (
-    <EvidenceRequest
-      requestId={requestId}
-      inboxHref={`${basePath}/support/evidence`}
-    />
+    <ViewerZone>
+      <EvidenceRequest
+        requestId={requestId}
+        inboxHref={`${basePath}/support/evidence`}
+      />
+    </ViewerZone>
   );
 }

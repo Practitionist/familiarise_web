@@ -315,7 +315,7 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
     expect(mockModerationReport.create).toHaveBeenCalledTimes(1);
   });
 
-  test("DELETE /api/staff/moderation/reviews/[reviewId] returns alreadyRemoved without re-purging cache", async () => {
+  test("DELETE /api/staff/moderation/reviews/[reviewId] answers 409 on an already-removed review without re-purging cache", async () => {
     mockRequireBackofficeSurface.mockResolvedValue({
       session: { user: { id: "admin-1", role: "ADMIN" } },
     });
@@ -336,8 +336,8 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
       params: Promise.resolve({ reviewId: "rev-1" }),
     });
     const body = await res.json();
-    expect(res.status).toBe(200);
-    expect(body.alreadyRemoved).toBe(true);
+    expect(res.status).toBe(409);
+    expect(body.code).toBe("REVIEW_ALREADY_REMOVED");
     expect(mockPurgeReviewSurfaces).not.toHaveBeenCalled();
   });
 

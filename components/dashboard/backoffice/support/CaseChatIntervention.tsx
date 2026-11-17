@@ -6,7 +6,7 @@ import { ReasonDialog } from "@/components/dashboard/backoffice/money/ReasonDial
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { formatDateTimeLabel } from "@/lib/time/display";
+import { formatOperatorInstant } from "@/lib/time/operator-zone";
 import {
   SUPPORT_CHAT_DEFAULT_INTERVENTION_HOURS,
   SUPPORT_CHAT_INTERVENTION_BASES,
@@ -29,7 +29,7 @@ import { CaseChatTargets, WithholdNoticeField } from "./CaseChatTargets";
 
 type InterventionHours = (typeof SUPPORT_CHAT_INTERVENTION_HOURS)[number];
 
-const when = (iso: string) => formatDateTimeLabel(new Date(iso));
+const when = (iso: string) => formatOperatorInstant(iso);
 
 const HOURS_LABEL: Record<InterventionHours, string> = {
   24: "24 hours",

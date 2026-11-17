@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { throwSupportError } from "@/lib/support/error-copy";
-import { formatDateTimeLabel } from "@/lib/time/display";
+import { formatOperatorInstant } from "@/lib/time/operator-zone";
 import { humanizeEnum } from "@/lib/ui/tone";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { sessionShareOf } from "@/lib/booking/entitlement";
@@ -69,7 +69,7 @@ type RefundPreview = z.infer<typeof Preview>["data"] & {
   recommendationId: string;
 };
 
-const when = (iso: string) => formatDateTimeLabel(new Date(iso));
+const when = (iso: string) => formatOperatorInstant(iso);
 const inr = (paise: number) => formatCurrencyAmount(paise, "INR");
 
 /** An approved remedy with no live refund: it failed, was cancelled, or never started. */

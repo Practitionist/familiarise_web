@@ -43,7 +43,7 @@ import { throwSupportError } from "@/lib/support/error-copy";
 import { savedRepliesFor } from "@/lib/support/saved-replies";
 import { slaHint } from "@/lib/support/sla-hint";
 import { supportKeys } from "@/lib/support/support-keys";
-import { formatDateTimeLabel } from "@/lib/time/display";
+import { formatOperatorInstant } from "@/lib/time/operator-zone";
 import type {
   ArticleLink,
   CaseWorkspace as CaseData,
@@ -118,8 +118,7 @@ function useOperators(enabled: boolean) {
   });
 }
 
-const when = (iso: string | null) =>
-  iso ? formatDateTimeLabel(new Date(iso)) : null;
+const when = (iso: string | null) => (iso ? formatOperatorInstant(iso) : null);
 
 /** Nothing is merged server-side, so the customer is only told where the conversation continues. */
 export const duplicateMessage = (reference: string) =>

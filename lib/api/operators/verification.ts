@@ -1,21 +1,17 @@
 /**
- * Shared operator profile-verification queue.
- *
- * Used by `app/api/admin/verification/route.ts`, which both back-office
- * trees read (the staff twin URL was deleted, #1527).
- *
- * The result shape matches the `ProfileVerification` type the frontend's
- * shared `VerificationQueue` component already consumes.
+ * Shared operator profile-verification queue, read by
+ * `app/api/admin/verification/route.ts` for both back-office trees. The page
+ * body is `verificationQueuePageSchema` (`lib/backoffice/people-list-schemas.ts`).
  */
 
 import prisma from "@/lib/prisma";
 import { ProfileVerificationStatus, Prisma } from "@prisma/client";
-import type { ProfileVerification } from "@/types/moderation";
+import type { PageParams } from "@/lib/backoffice/list-paging";
+import type { VerificationItem } from "@/lib/backoffice/people-list-schemas";
 
 export type OperatorVerificationFilters = {
-  status?: ProfileVerificationStatus | null;
-  page?: number;
-  limit?: number;
+  status: ProfileVerificationStatus;
+  paging: PageParams;
 };
 
 type OperatorVerificationCounts = {
@@ -27,7 +23,7 @@ type OperatorVerificationCounts = {
 };
 
 export type OperatorVerificationResult = {
-  verifications: ProfileVerification[];
+  verifications: VerificationItem[];
   counts: OperatorVerificationCounts;
   pagination: {
     total: number;
@@ -43,19 +39,15 @@ export type OperatorVerificationResult = {
  *
  * Single source of truth — call after the route's `users.verify` gate.
  */
-export async function getVerificationQueue(
-  filters: OperatorVerificationFilters = {},
-): Promise<OperatorVerificationResult> {
-  const status = filters.status ?? null;
-  const page = filters.page && filters.page > 0 ? filters.page : 1;
-  const limit = filters.limit && filters.limit > 0 ? filters.limit : 20;
-  const offset = (page - 1) * limit;
-
-  const where: Prisma.ConsultantProfileVerificationWhereInput = {};
-  if (status) where.status = status;
+export async function getVerificationQueue({
+  status,
+  paging: { page, limit, skip },
+}: OperatorVerificationFilters): Promise<OperatorVerificationResult> {
+  const where: Prisma.ConsultantProfileVerificationWhereInput = { status };
 
   const [verifications, total, statusCounts] = await Promise.all([
     prisma.consultantProfileVerification.findMany({
+      relationLoadStrategy: "join",
       where,
       include: {
         consultantProfile: {
@@ -75,7 +67,7 @@ export async function getVerificationQueue(
                 bio: true,
                 // Extended consultant professional background — rendered by
                 // the admin/staff VerificationReviewModal. Keep aligned with
-                // the `ProfileVerification` type in `types/moderation.ts`.
+                // `verificationItemSchema` in `lib/backoffice/people-list-schemas.ts`.
                 workExperiences: {
                   select: {
                     id: true,
@@ -113,14 +105,23 @@ export async function getVerificationQueue(
             subDomains: { select: { id: true, name: true } },
           },
         },
-        documents: true,
+        // No fileUrl: a document opens through its ACL'd download route.
+        documents: {
+          select: {
+            id: true,
+            fileName: true,
+            originalName: true,
+            fileSize: true,
+            mimeType: true,
+            description: true,
+          },
+          orderBy: { id: "asc" },
+        },
       },
-      orderBy: [
-        { status: "asc" }, // Pending first
-        { submittedAt: "asc" }, // Oldest first
-      ],
+      // Oldest submission first; the id breaks a tie so a page never repeats a row.
+      orderBy: [{ submittedAt: "asc" }, { id: "asc" }],
       take: limit,
-      skip: offset,
+      skip,
     }),
     prisma.consultantProfileVerification.count({ where }),
     prisma.consultantProfileVerification.groupBy({
@@ -134,7 +135,7 @@ export async function getVerificationQueue(
     (v) => v.consultantProfile && v.consultantProfile.user,
   );
 
-  const formattedVerifications: ProfileVerification[] = validVerifications.map(
+  const formattedVerifications: VerificationItem[] = validVerifications.map(
     (v) => ({
       id: v.id,
       status: v.status,
@@ -187,15 +188,7 @@ export async function getVerificationQueue(
           issueDate: c.issueDate.toISOString(),
         })),
       },
-      documents: v.documents.map((d) => ({
-        id: d.id,
-        fileName: d.fileName,
-        originalName: d.originalName,
-        fileSize: d.fileSize,
-        mimeType: d.mimeType,
-        fileUrl: d.fileUrl,
-        description: d.description,
-      })),
+      documents: v.documents,
       reviewedAt: v.reviewedAt?.toISOString() ?? null,
       reviewedById: v.reviewedById,
       reviewNotes: v.reviewNotes,
@@ -219,7 +212,7 @@ export async function getVerificationQueue(
       page,
       limit,
       totalPages: Math.ceil(total / limit),
-      hasMore: offset + limit < total,
+      hasMore: skip + limit < total,
     },
   };
 }

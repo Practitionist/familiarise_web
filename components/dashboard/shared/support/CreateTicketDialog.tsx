@@ -47,6 +47,7 @@ import {
   ISSUE_TYPE_LABELS,
   PLATFORM_ISSUE_TYPE_CATEGORIES,
 } from "@/utils/supportTicketUrl";
+import { useZoneClock } from "@/lib/time/use-zone-clock";
 
 export interface CreateTicketDefaults {
   issueType?: string;
@@ -90,6 +91,7 @@ export function CreateTicketDialog({
   requestHref?: (ticketId: string) => string;
 }) {
   const router = useRouter();
+  const clock = useZoneClock();
   const clientIntakeId = useRef<string | null>(null);
   const [open, setOpen] = useState(false);
   const [issueType, setIssueType] = useState<string>(defaults?.issueType ?? "");
@@ -153,7 +155,7 @@ export function CreateTicketDialog({
         title: ticket.referenceNumber
           ? `Support case ${ticket.referenceNumber} created`
           : "Support case created",
-        description: describeWait(ticket.ackDueAt),
+        description: describeWait(ticket.ackDueAt, clock.zone),
       });
       void qc.invalidateQueries({ queryKey: supportKeys.requests() });
       void qc.invalidateQueries({ queryKey: supportKeys.org() });

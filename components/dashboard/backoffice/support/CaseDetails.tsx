@@ -13,14 +13,14 @@ import { caseStatus } from "@/lib/labels/backoffice-labels";
 import { paymentStatusBadge } from "@/lib/labels/session-labels";
 import { bookingStatus } from "@/lib/appointments/booking-status";
 import { buildEngineeringEscalationHref } from "@/lib/support/callback-info";
-import { formatDateLabel } from "@/lib/time/display";
+import { formatOperatorInstant } from "@/lib/time/operator-zone";
 import { humanizeEnum } from "@/lib/ui/tone";
 import type { CaseBooking, CaseWorkspace } from "@/types/support-case";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { CaseChatPanel } from "./CaseChatPanel";
 
 const day = (iso: string | null) =>
-  iso ? formatDateLabel(new Date(iso)) : "—";
+  iso ? formatOperatorInstant(iso, "date") : "—";
 
 const linkClass =
   "text-sm font-medium text-foreground underline-offset-4 hover:underline";

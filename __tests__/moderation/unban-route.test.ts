@@ -46,6 +46,7 @@ jest.mock("../../lib/prisma", () => ({
     moderationReport: {
       findUnique: jest.fn(async () => ({ id: "r1", targetUserId: "u1" })),
     },
+    opsActionLog: { create: jest.fn(async () => ({ id: "ops-1" })) },
     $transaction: jest.fn((fn: (client: typeof tx) => Promise<unknown>) =>
       fn(tx),
     ),
@@ -97,7 +98,7 @@ const call = (notes = "wrongful ban") =>
     new Request("http://localhost/unban", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ notes }),
+      body: JSON.stringify({ notes, reason: "The ban was a mistake" }),
     }) as never,
     { params: Promise.resolve({ reportId: "r1" }) },
   );
@@ -114,7 +115,9 @@ describe("POST /api/staff/moderation/reports/[reportId]/unban", () => {
 
     const res = await call();
 
-    expect(mockedAuth).toHaveBeenCalledWith("users.moderate");
+    expect(mockedAuth).toHaveBeenCalledWith("users.moderate", {
+      expectUser: true,
+    });
     expect(res.status).toBe(403);
     expect(mockedRestore).not.toHaveBeenCalled();
     expect(prisma.$transaction).not.toHaveBeenCalled();

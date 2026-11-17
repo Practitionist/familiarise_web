@@ -21,6 +21,10 @@ const nonNegativeInt = z.coerce.number().int().min(0).catch(0);
 /** `?page` alone: a bad value reads as page 1, and a page past the cap is the cap. */
 export const pageNumberSchema = positiveInt(1, 10_000);
 
+/** A page size under another name (`?perPage`): a bad value reads as `fallback`, at most 100. */
+export const pageSizeSchema = (fallback: number) =>
+  positiveInt(fallback, MAX_PAGE_SIZE);
+
 export interface PageParams {
   page: number;
   limit: number;

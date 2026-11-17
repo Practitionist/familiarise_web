@@ -1,7 +1,8 @@
 /**
  * The moderation stat cards read 0 permanently — shape drift that `tsc` could
- * not see, because the client type is hand-written rather than derived from
- * the route.
+ * not see while the client type was hand-written. The route now builds its
+ * body as `ModerationStatsBody` and the page parses it with the same schema
+ * (`lib/backoffice/moderation-schemas.ts`), so the two cannot drift.
  *
  * The route wraps its counters in a `stats` envelope; the client returned the
  * whole envelope annotated as `ModerationStats`, so every field was
@@ -21,13 +22,15 @@ const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
 describe("moderation stats reach the cards", () => {
   const ROUTE = read("app/api/staff/moderation/stats/route.ts");
   const CLIENT = read("components/dashboard/shared/ModerationPage.tsx");
-  const TYPES = read("types/moderation.ts");
+  const SCHEMAS = read("lib/backoffice/moderation-schemas.ts");
 
-  /** Field names declared on the shared ModerationStats interface. */
+  /** Field names declared on the shared `moderationStatsSchema`. */
   const typeFields = (() => {
-    const start = TYPES.indexOf("export interface ModerationStats {");
-    const block = TYPES.slice(start, TYPES.indexOf("\n}", start));
-    return Array.from(block.matchAll(/^\s+(\w+):\s*number/gm), (m) => m[1]);
+    const start = SCHEMAS.indexOf(
+      "export const moderationStatsSchema = z.object({",
+    );
+    const block = SCHEMAS.slice(start, SCHEMAS.indexOf("\n});", start));
+    return Array.from(block.matchAll(/^\s+(\w+):\s*z\.number/gm), (m) => m[1]);
   })();
 
   /** Field names the route puts inside its `stats` envelope. */
@@ -52,16 +55,21 @@ describe("moderation stats reach the cards", () => {
     expect(unknown).toEqual([]);
   });
 
-  it("the client unwraps the stats envelope", () => {
-    // Returning `response.json()` typed as ModerationStats is the original
-    // bug: it typechecks and every field is undefined at runtime.
-    expect(CLIENT).toContain("{ stats: ModerationStats }");
+  it("the route builds, and the client parses, one schema's body and unwraps its envelope", () => {
+    // Returning `response.json()` cast to the counters is the original bug:
+    // it typechecks and every field is undefined at runtime.
+    expect(ROUTE).toContain("const body: ModerationStatsBody = {");
+    expect(CLIENT).toContain("moderationStatsBodySchema,");
     expect(CLIENT).toContain("return body.stats;");
+    expect(CLIENT).not.toMatch(/as \{ stats:/);
   });
 
-  it('"Resolved Today" counts from midnight, not the ?days= window', () => {
-    expect(ROUTE).toContain("startOfToday");
+  it('"Resolved Today" counts from 00:00 IST, not the ?days= window', () => {
+    expect(ROUTE).toContain(
+      "const startOfToday = operatorPeriodStarts(now).day;",
+    );
     expect(ROUTE).toContain("resolvedAt: { gte: startOfToday }");
+    expect(ROUTE).not.toContain("setHours(0, 0, 0, 0)");
   });
 
   it('"Reviews to Check" counts a queue, not every review ever written', () => {

@@ -11,6 +11,17 @@ import {
 } from "@/lib/backoffice/queue-predicates";
 
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
+import type { ModerationStatsBody } from "@/lib/backoffice/moderation-schemas";
+import { operatorPeriodStarts } from "@/lib/time/operator-zone";
+import { z } from "zod";
+
+// The ?days= window of the breakdowns: a bad value reads as 7, at most a year.
+const daysSchema = z.coerce
+  .number()
+  .int()
+  .min(1)
+  .catch(7)
+  .transform((n) => Math.min(n, 365));
 /**
  * GET /api/staff/moderation/stats
  * Get moderation statistics
@@ -21,16 +32,13 @@ export async function GET(req: NextRequest) {
     if (auth.error) return auth.error;
 
     const { searchParams } = new URL(req.url);
-    const days = parseInt(searchParams.get("days") || "7");
-    const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const days = daysSchema.parse(searchParams.get("days") ?? undefined);
+    const now = new Date();
+    const startDate = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
 
-    // The card reads "Resolved Today", so it counts from midnight — not from
-    // `startDate`, which is the ?days= window (7 by default) that drives the
-    // breakdowns below. Server-local midnight matches how every other
-    // operator "today" metric is computed (staff/metrics, operators/stats),
-    // and agreeing with those matters more than picking a different zone here.
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0);
+    // "Resolved Today" counts from 00:00 IST, like every operator "today", not
+    // from the ?days= window that drives the breakdowns below.
+    const startOfToday = operatorPeriodStarts(now).day;
 
     // The four counters behind the stat cards. Names match the card labels and
     // the shared `ModerationStats` type exactly — they used to differ from
@@ -76,7 +84,7 @@ export async function GET(req: NextRequest) {
       _count: { id: true },
     });
 
-    return NextResponse.json({
+    const body: ModerationStatsBody = {
       stats: {
         pendingReports,
         pendingProfiles,
@@ -91,8 +99,9 @@ export async function GET(req: NextRequest) {
         actionType: a.actionType,
         count: a._count.id,
       })),
-      period: { days, startDate, endDate: new Date() },
-    });
+      period: { days, startDate, endDate: now },
+    };
+    return NextResponse.json(body);
   } catch (error) {
     console.error("Error fetching moderation stats:", error);
     return NextResponse.json(

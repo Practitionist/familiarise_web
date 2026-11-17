@@ -1,13 +1,18 @@
 import type {
   DisputeStatus,
+  LeadStatus,
+  ModerationReportStatus,
   OpsActionProposalStatus,
   OrgInvoiceStatus,
   OrgStatus,
+  PlatformFeedbackStatus,
+  ProfileVerificationStatus,
   SupportPriority,
   SupportCaseStatus,
   SystemJobStatus,
 } from "@prisma/client";
 
+import { PLATFORM_FEEDBACK_STATUS_LABEL as FEEDBACK_LABEL } from "@/lib/labels/session-labels";
 import { humanizeEnum, type Tone } from "@/lib/ui/tone";
 
 /**
@@ -146,3 +151,47 @@ export const RECONCILE_JOB_STATUS: Record<SystemJobStatus, ToneLabel> = {
 };
 export const reconcileJobStatus = (v: string | null | undefined) =>
   resolve(RECONCILE_JOB_STATUS, v);
+
+export const VERIFICATION_STATUS: Record<ProfileVerificationStatus, ToneLabel> =
+  {
+    PENDING: { label: "Pending review", tone: "warning" },
+    NEEDS_INFO: { label: "Needs more info", tone: "caution" },
+    APPROVED: { label: "Approved", tone: "success" },
+    REJECTED: { label: "Rejected", tone: "critical" },
+    SUPERSEDED: { label: "Superseded", tone: "neutral" },
+  };
+export const verificationStatus = (v: string | null | undefined) =>
+  resolve(VERIFICATION_STATUS, v);
+
+export const MODERATION_REPORT_STATUS: Record<
+  ModerationReportStatus,
+  ToneLabel
+> = {
+  PENDING: { label: "Pending", tone: "warning" },
+  UNDER_REVIEW: { label: "Under review", tone: "info" },
+  ESCALATED: { label: "Escalated", tone: "critical" },
+  ACTION_TAKEN: { label: "Action taken", tone: "success" },
+  DISMISSED: { label: "Dismissed", tone: "neutral" },
+};
+export const moderationReportStatus = (v: string | null | undefined) =>
+  resolve(MODERATION_REPORT_STATUS, v);
+
+export const FEEDBACK_STATUS: Record<PlatformFeedbackStatus, ToneLabel> = {
+  PENDING: { label: FEEDBACK_LABEL.PENDING, tone: "warning" },
+  ACKNOWLEDGED: { label: FEEDBACK_LABEL.ACKNOWLEDGED, tone: "info" },
+  IN_PROGRESS: { label: FEEDBACK_LABEL.IN_PROGRESS, tone: "caution" },
+  RESOLVED: { label: FEEDBACK_LABEL.RESOLVED, tone: "success" },
+  CLOSED: { label: FEEDBACK_LABEL.CLOSED, tone: "neutral" },
+};
+export const feedbackStatus = (v: string | null | undefined) =>
+  resolve(FEEDBACK_STATUS, v);
+
+export const LEAD_STATUS: Record<LeadStatus, ToneLabel> = {
+  NEW: { label: "New", tone: "warning" },
+  CONTACTED: { label: "Contacted", tone: "info" },
+  QUALIFIED: { label: "Qualified", tone: "caution" },
+  CLOSED_WON: { label: "Won", tone: "success" },
+  CLOSED_LOST: { label: "Lost", tone: "neutral" },
+};
+export const leadStatus = (v: string | null | undefined) =>
+  resolve(LEAD_STATUS, v);

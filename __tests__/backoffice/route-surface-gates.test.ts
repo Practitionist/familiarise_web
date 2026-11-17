@@ -203,6 +203,8 @@ import { POST as reportUnban } from "../../app/api/staff/moderation/reports/[rep
 import { GET as reviewsGet } from "../../app/api/staff/moderation/reviews/route";
 import { DELETE as reviewDelete } from "../../app/api/staff/moderation/reviews/[reviewId]/route";
 import { GET as moderationStatsGet } from "../../app/api/staff/moderation/stats/route";
+import { GET as feeSchedulesGet } from "../../app/api/admin/fee-schedules/route";
+import { GET as announcementsManageGet } from "../../app/api/announcements/manage/route";
 
 const APPOINTMENT_ID = "3b0a1b7c-42cd-465e-8b4d-8dccba7f8820";
 
@@ -383,6 +385,7 @@ const routes: Array<
     () =>
       broadcastPost(
         send("POST", "/api/admin/newsletter/broadcast", { mode: "preview" }),
+        { params: Promise.resolve({}) },
       ),
   ],
   [
@@ -526,6 +529,16 @@ const routes: Array<
     "GET /api/staff/moderation/stats",
     "moderation.manage",
     () => moderationStatsGet(get("/api/staff/moderation/stats")),
+  ],
+  [
+    "GET /api/admin/fee-schedules",
+    "payments.read",
+    () => feeSchedulesGet(get("/api/admin/fee-schedules")),
+  ],
+  [
+    "GET /api/announcements/manage",
+    "announcements.manage",
+    () => announcementsManageGet(get("/api/announcements/manage")),
   ],
 ];
 

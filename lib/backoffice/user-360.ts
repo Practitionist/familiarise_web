@@ -1,5 +1,6 @@
 import prisma from "@/lib/prisma";
 import { toPlain } from "@/lib/data/serialize";
+import { reportSentryError } from "@/lib/observability/report";
 import { findUserIssues } from "@/lib/observability/sentry-issues";
 import {
   personNamesMatch,
@@ -7,15 +8,23 @@ import {
 } from "@/lib/payments/tax/pan-verification";
 
 /**
- * #1527 Q5 — User 360: one person across every back-office queue. Ten rows
- * per section, one query per section, run one after another: PG_POOL_MAX=1
- * serialises them anyway, and a failed section should not hide the others.
+ * User 360: one person across every back-office queue. Ten rows per section,
+ * newest first with an id tie-break, one query per section, run one after
+ * another (PG_POOL_MAX=1 serialises them anyway). A section that fails reads
+ * as failed on its own; the failures are reported once per page.
  */
 
 const TAKE = 10;
 
+/** A section's rows, or `failed` when its read threw. */
+export interface SectionRows<T> {
+  rows: T[];
+  failed: boolean;
+}
+
 async function readProfile(userId: string) {
   return prisma.user.findUnique({
+    relationLoadStrategy: "join",
     where: { id: userId },
     select: {
       id: true,
@@ -39,7 +48,7 @@ async function readProfile(userId: string) {
       staffProfile: { select: { id: true, department: true, position: true } },
       memberships: {
         take: TAKE,
-        orderBy: { createdAt: "desc" },
+        orderBy: [{ createdAt: "desc" }, { id: "asc" }],
         select: {
           role: true,
           status: true,
@@ -75,80 +84,114 @@ export async function readUser360(userId: string) {
   const profile = await readProfile(userId);
   if (!profile) return null;
 
-  const bookings = await prisma.appointmentParticipant.findMany({
-    where: { userId },
-    orderBy: { createdAt: "desc" },
-    take: TAKE,
-    select: {
-      id: true,
-      role: true,
-      status: true,
-      appointment: {
-        select: { id: true, appointmentType: true, createdAt: true },
-      },
-    },
-  });
-  const payments = await prisma.payment.findMany({
-    where: { userId },
-    orderBy: { createdAt: "desc" },
-    take: TAKE,
-    select: {
-      id: true,
-      amount: true,
-      currency: true,
-      paymentStatus: true,
-      paymentGateway: true,
-      createdAt: true,
-    },
-  });
-  const tickets = await prisma.supportCase.findMany({
-    where: { requesterUserId: userId, deletedAt: null },
-    orderBy: { createdAt: "desc" },
-    take: TAKE,
-    select: {
-      id: true,
-      referenceNumber: true,
-      title: true,
-      status: true,
-      priority: true,
-      createdAt: true,
-    },
-  });
-  const reports = await prisma.moderationReport.findMany({
-    where: { targetUserId: userId },
-    orderBy: { createdAt: "desc" },
-    take: TAKE,
-    select: {
-      id: true,
-      type: true,
-      status: true,
-      reason: true,
-      createdAt: true,
-    },
-  });
-  const verifications = profile.consultantProfile
-    ? await prisma.consultantProfileVerification.findMany({
-        where: { consultantProfileId: profile.consultantProfile.id },
-        orderBy: { submittedAt: "desc" },
-        take: TAKE,
-        select: {
-          id: true,
-          status: true,
-          submittedAt: true,
-          reviewedAt: true,
-          _count: { select: { documents: true } },
-        },
-      })
-    : [];
-  const pan = profile.consultantProfile
-    ? await readPanState(profile.consultantProfile.id, profile.name)
-    : null;
+  const failures: { section: string; error: unknown }[] = [];
+  const section = async <T>(
+    name: string,
+    read: () => Promise<T[]>,
+  ): Promise<SectionRows<T>> => {
+    try {
+      return { rows: await read(), failed: false };
+    } catch (error) {
+      failures.push({ section: name, error });
+      return { rows: [], failed: true };
+    }
+  };
+  const newestFirst = [{ createdAt: "desc" as const }, { id: "asc" as const }];
 
-  // Sentry triage. The last thing that asks an external service, and the only
-  // one that can fail, so it runs after every DB section has already resolved
-  // and cannot take the page down with it — `findUserIssues` swallows its own
-  // errors and returns `{ configured: false }`. Answers "which issues is this
-  // person hitting", which is the question the other six sections cannot.
+  const bookings = await section("bookings", () =>
+    prisma.appointmentParticipant.findMany({
+      relationLoadStrategy: "join",
+      where: { userId },
+      orderBy: newestFirst,
+      take: TAKE,
+      select: {
+        id: true,
+        role: true,
+        status: true,
+        appointment: {
+          select: { id: true, appointmentType: true, createdAt: true },
+        },
+      },
+    }),
+  );
+  const payments = await section("payments", () =>
+    prisma.payment.findMany({
+      where: { userId },
+      orderBy: newestFirst,
+      take: TAKE,
+      select: {
+        id: true,
+        amount: true,
+        currency: true,
+        paymentStatus: true,
+        paymentGateway: true,
+        createdAt: true,
+      },
+    }),
+  );
+  const tickets = await section("tickets", () =>
+    prisma.supportCase.findMany({
+      where: { requesterUserId: userId, deletedAt: null },
+      orderBy: newestFirst,
+      take: TAKE,
+      select: {
+        id: true,
+        referenceNumber: true,
+        title: true,
+        status: true,
+        priority: true,
+        createdAt: true,
+      },
+    }),
+  );
+  const reports = await section("reports", () =>
+    prisma.moderationReport.findMany({
+      where: { targetUserId: userId },
+      orderBy: newestFirst,
+      take: TAKE,
+      select: {
+        id: true,
+        type: true,
+        status: true,
+        reason: true,
+        createdAt: true,
+      },
+    }),
+  );
+  const consultantProfileId = profile.consultantProfile?.id;
+  const verifications = await section("verifications", async () =>
+    consultantProfileId
+      ? prisma.consultantProfileVerification.findMany({
+          where: { consultantProfileId },
+          orderBy: [{ submittedAt: "desc" }, { id: "asc" }],
+          take: TAKE,
+          select: {
+            id: true,
+            status: true,
+            submittedAt: true,
+            reviewedAt: true,
+            _count: { select: { documents: true } },
+          },
+        })
+      : [],
+  );
+  const panRead = await section("pan", async () =>
+    consultantProfileId
+      ? [await readPanState(consultantProfileId, profile.name)]
+      : [],
+  );
+
+  if (failures.length > 0) {
+    reportSentryError(failures[0].error, {
+      subsystem: "admin",
+      op: "user-360.sections",
+      extra: { userId, failed: failures.map((f) => f.section) },
+    });
+  }
+
+  // Sentry triage. The last thing that asks an external service; it runs
+  // after every DB section and swallows its own errors, so it cannot take the
+  // page down. It answers "which issues is this person hitting".
   const sentryIssues = await findUserIssues({ userId });
 
   // toPlain — money rows carry the result extension's symbols; the page
@@ -160,7 +203,8 @@ export async function readUser360(userId: string) {
     tickets,
     reports,
     verifications,
-    pan,
+    pan: panRead.rows[0] ?? null,
+    panFailed: panRead.failed,
     sentryIssues,
   });
 }

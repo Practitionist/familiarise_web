@@ -12,36 +12,35 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
+import { OrgStatus } from "@prisma/client";
+import { readPageParams } from "@/lib/backoffice/list-paging";
 import { ORG_AWAITING_VERIFICATION_WHERE } from "@/lib/backoffice/queue-predicates";
 
-const OrgStatusSchema = z.enum([
-  "PENDING_VERIFICATION",
-  "ACTIVE",
-  "SUSPENDED",
-  "DEACTIVATED",
-]);
+const OrgStatusSchema = z.nativeEnum(OrgStatus).optional();
 
 export async function GET(req: NextRequest) {
   const auth = await requireBackofficeSurface("organizations.manage");
   if (auth.error) return auth.error;
 
   const url = new URL(req.url);
-  const statusRaw = url.searchParams.get("status");
   const search = url.searchParams.get("search")?.trim() ?? "";
-  const page = Math.max(1, parseInt(url.searchParams.get("page") ?? "1", 10));
-  const limit = Math.min(
-    100,
-    Math.max(1, parseInt(url.searchParams.get("limit") ?? "25", 10)),
+  const { page, limit, skip } = readPageParams(url.searchParams, 25);
+  const statusFilter = OrgStatusSchema.safeParse(
+    url.searchParams.get("status") ?? undefined,
   );
-
-  const statusFilter = statusRaw ? OrgStatusSchema.safeParse(statusRaw) : null;
+  if (!statusFilter.success) {
+    return NextResponse.json(
+      { error: "Unknown organization status", code: "INVALID_STATUS" },
+      { status: 400 },
+    );
+  }
 
   // #1527 — `queue=verification` is the Verification page's Organizations
   // tab and its nav badge: the same predicate.
   const verificationQueue = url.searchParams.get("queue") === "verification";
   const where: Prisma.OrganizationWhereInput = {
     ...(verificationQueue ? ORG_AWAITING_VERIFICATION_WHERE : {}),
-    ...(!verificationQueue && statusFilter?.success
+    ...(!verificationQueue && statusFilter.data
       ? { status: statusFilter.data }
       : {}),
     ...(search
@@ -60,6 +59,7 @@ export async function GET(req: NextRequest) {
   const [total, organizations] = await Promise.all([
     prisma.organization.count({ where }),
     prisma.organization.findMany({
+      relationLoadStrategy: "join",
       where,
       select: {
         id: true,
@@ -80,8 +80,8 @@ export async function GET(req: NextRequest) {
           },
         },
       },
-      orderBy: [{ status: "asc" }, { createdAt: "desc" }],
-      skip: (page - 1) * limit,
+      orderBy: [{ status: "asc" }, { createdAt: "desc" }, { id: "asc" }],
+      skip,
       take: limit,
     }),
   ]);
