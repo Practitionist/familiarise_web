@@ -8,15 +8,14 @@
  * an object no anonymous URL reaches, and this route is the only door — an
  * ADMIN session exchanges the quarter for a short-lived signed URL.
  *
- * CR #1354 r1 — ADMIN, not merely privileged: `requirePrivilegedAuth` admits
- * STAFF, and this object is the same decrypted-PAN class of data that
- * `/api/admin/tds?view=form26q` has always gated on ADMIN alone.
+ * `tds.read` is ADMIN-only: this object is the same decrypted-PAN class of
+ * data that `/api/admin/tds?view=form26q` gates on ADMIN alone.
  */
 
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { requireAdminAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { applyRateLimit, moneyOpsLimiter } from "@/lib/rate-limit";
 import { tdsReturnCsvStoragePath } from "@/lib/compliance/tds-return";
 import {
@@ -53,7 +52,7 @@ const QuerySchema = z.object({
  */
 export async function GET(req: NextRequest) {
   try {
-    const auth = await requireAdminAuth();
+    const auth = await requireBackofficeSurface("tds.read");
     if (auth.error) return auth.error;
 
     const limited = await applyRateLimit(moneyOpsLimiter, auth.session.user.id);

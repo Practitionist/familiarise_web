@@ -1,22 +1,22 @@
 /**
- * Staff Moderation Report Action API
- * Take moderation action on a report — with real side-effects (#693).
+ * Staff Moderation Report Action API: resolve a report with its side effects.
+ * A gateway door: the Stream and session steps run after the transaction, so
+ * the audit row is written once the action has run, SUCCEEDED or FAILED.
  */
 
-import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import {
   ModerationActionType,
   ModerationReportType,
   Prisma,
-  UserRole,
 } from "@prisma/client";
 import { z } from "zod";
 
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
-import { parseJsonRequest } from "@/lib/api/parse";
 import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
+import { withOpsAction } from "@/lib/backoffice/ops-action-log";
+import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
+import { UserRoleEnum } from "@/schemas/user";
 import {
   applyTransactionalEffects,
   applyBestEffortEffects,
@@ -29,14 +29,7 @@ import {
 import * as Sentry from "@sentry/nextjs";
 import { purgeReviewSurfaces } from "@/lib/data/public-cache";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
-interface RouteParams {
-  params: Promise<{ reportId: string }>;
-}
 
-/**
- * POST /api/staff/moderation/reports/[reportId]/action
- * Take moderation action on a report
- */
 const VALID_ACTIONS: ModerationActionType[] = [
   "WARNING_ISSUED",
   "CONTENT_REMOVED",
@@ -56,16 +49,16 @@ type ModerationActionInput = {
   suspensionDays?: number;
 };
 
-// Action payload, validated before auth-gated side-effects. `notes` persists
-// on the action row — capped so one pasted log dump cannot bloat it.
-const moderationActionPayloadSchema = z.object({
+// `notes` persists on the action row, the door's `reason` when absent; capped so
+// one pasted log dump cannot bloat it.
+const moderationActionShape = {
   actionType: z.enum(
     VALID_ACTIONS as [ModerationActionType, ...ModerationActionType[]],
   ),
   notes: z.string().max(5000).optional(),
   suspensionDays: z.number().int().min(1).max(365).optional(),
   feedbackId: z.string().min(1).max(64).optional(),
-});
+};
 
 async function validateActionTargetBinding(
   report: {
@@ -76,63 +69,43 @@ async function validateActionTargetBinding(
   },
   actionType: ModerationActionType,
   feedbackId: string | undefined,
-): Promise<NextResponse | null> {
+): Promise<void> {
+  const unbound = (message: string) =>
+    new OpsRefusal("TARGET_NOT_BOUND", message);
   if (
     actionType === "CONTENT_REMOVED" &&
     report.type === "REVIEW" &&
     !report.reviewId
   ) {
-    return NextResponse.json(
-      { error: "This review report names no review to remove" },
-      { status: 409 },
-    );
+    throw unbound("This review report names no review to remove");
   }
   if (actionType === "REVIEW_EXCLUDED_FROM_AGGREGATE" && !report.reviewId) {
-    return NextResponse.json(
-      { error: "This report names no review to exclude from aggregate" },
-      { status: 409 },
-    );
+    throw unbound("This report names no review to exclude from aggregate");
   }
-  if (actionType !== "FEEDBACK_EXCLUDED_FROM_AGGREGATE") {
-    return null;
-  }
+  if (actionType !== "FEEDBACK_EXCLUDED_FROM_AGGREGATE") return;
   if (report.type !== "REVIEW" || !report.review?.appointmentId) {
-    return NextResponse.json(
-      {
-        error:
-          "Feedback exclusion requires a review report bound to an appointment",
-      },
-      { status: 409 },
+    throw unbound(
+      "Feedback exclusion requires a review report bound to an appointment",
     );
   }
   if (!feedbackId) {
-    return NextResponse.json(
-      {
-        error: "A feedbackId is required to exclude feedback from aggregate",
-      },
-      { status: 409 },
+    throw unbound(
+      "A feedbackId is required to exclude feedback from aggregate",
     );
   }
   const feedback = await prisma.appointmentFeedback.findUnique({
     where: { id: feedbackId },
     select: { id: true, userId: true, appointmentId: true },
   });
-  if (!feedback) {
-    return NextResponse.json({ error: "Feedback not found" }, { status: 404 });
-  }
+  if (!feedback) throw new OpsRefusal("NOT_FOUND", "Feedback not found", 404);
   if (
     feedback.userId !== report.targetUserId ||
     feedback.appointmentId !== report.review.appointmentId
   ) {
-    return NextResponse.json(
-      {
-        error:
-          "Feedback does not belong to the reported review's session and author",
-      },
-      { status: 409 },
+    throw unbound(
+      "Feedback does not belong to the reported review's session and author",
     );
   }
-  return null;
 }
 
 // Account-state side-effects commit atomically with the action row — the report
@@ -148,6 +121,11 @@ function applyModerationTransaction(
   return withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
+        // The audit row's before-state is what this transaction resolves from.
+        const before = await tx.moderationReport.findUnique({
+          where: { id: reportId },
+          select: { status: true },
+        });
         const moved = await tx.moderationReport.updateMany({
           where: {
             id: reportId,
@@ -160,9 +138,9 @@ function applyModerationTransaction(
           },
         });
         if (moved.count === 0) {
-          throw Object.assign(
-            new Error("This report has already been resolved"),
-            { httpStatus: 409 },
+          throw new OpsRefusal(
+            "REPORT_RESOLVED",
+            "This report has already been resolved",
           );
         }
 
@@ -193,7 +171,12 @@ function applyModerationTransaction(
           where: { id: reportId },
         });
 
-        return { action, updatedReport, transactional };
+        return {
+          action,
+          updatedReport,
+          transactional,
+          previousStatus: before?.status ?? null,
+        };
       },
       {
         isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
@@ -204,164 +187,146 @@ function applyModerationTransaction(
   );
 }
 
-function moderationActionErrorResponse(error: unknown): NextResponse {
-  if (error instanceof Error && "httpStatus" in error) {
-    const status =
-      typeof (error as { httpStatus?: number }).httpStatus === "number"
-        ? (error as { httpStatus: number }).httpStatus
-        : 500;
-    return NextResponse.json({ error: error.message }, { status });
-  }
-  Sentry.captureException(
-    error instanceof Error ? error : new Error(String(error)),
-    { tags: { subsystem: "staff" } },
-  );
-  console.error("Error taking moderation action:", error);
-  return NextResponse.json({ error: "Failed to take action" }, { status: 500 });
-}
+const ACCOUNT_DESTRUCTIVE = new Set<ModerationActionType>([
+  "USER_BANNED",
+  "USER_SUSPENDED",
+]);
 
-export async function POST(req: NextRequest, { params }: RouteParams) {
-  try {
-    const auth = await requirePrivilegedAuth();
-    if (auth.error) return auth.error;
-    const session = auth.session;
+/** POST /api/staff/moderation/reports/[reportId]/action — resolve the report. */
+export const POST = withOpsAction(
+  "moderation.manage",
+  (body) => `moderation.action.${body.actionType}`,
+  moderationActionShape,
+  {
+    mode: "gateway",
+    target: ({ params }) => ({
+      kind: "ModerationReport",
+      id: params.reportId ?? "",
+    }),
+    run: async ({ body, actor, params }) => {
+      const reportId = params.reportId ?? "";
+      const { actionType, suspensionDays, feedbackId } = body;
+      const notes = body.notes ?? body.reason;
 
-    const { reportId } = await params;
-    const { data: body, error: bodyError } = await parseJsonRequest(
-      moderationActionPayloadSchema,
-      req,
-    );
-    if (bodyError) return bodyError;
-    const { actionType, notes, suspensionDays, feedbackId } = body;
+      const role = UserRoleEnum.safeParse(actor.role);
+      const canModerateUsers =
+        role.success && hasBackofficePermission(role.data, "users.moderate");
+      if (ACCOUNT_DESTRUCTIVE.has(actionType) && !canModerateUsers) {
+        throw new OpsRefusal(
+          "FORBIDDEN",
+          "Forbidden — banning or suspending an account requires an admin",
+          403,
+        );
+      }
 
-    const parsedRole = z.nativeEnum(UserRole).safeParse(session.user.role);
-    const canModerateUsers =
-      parsedRole.success &&
-      hasBackofficePermission(parsedRole.data, "users.moderate");
-
-    const ACCOUNT_DESTRUCTIVE: ModerationActionType[] = [
-      "USER_BANNED",
-      "USER_SUSPENDED",
-    ];
-    if (ACCOUNT_DESTRUCTIVE.includes(actionType) && !canModerateUsers) {
-      return NextResponse.json(
-        {
-          error:
-            "Forbidden — banning or suspending an account requires an admin",
+      const report = await prisma.moderationReport.findUnique({
+        where: { id: reportId },
+        select: {
+          id: true,
+          type: true,
+          reason: true,
+          status: true,
+          reportedById: true,
+          targetUserId: true,
+          reviewId: true,
+          streamMessageId: true,
+          review: { select: { appointmentId: true } },
         },
-        { status: 403 },
-      );
-    }
+      });
+      if (!report) throw new OpsRefusal("NOT_FOUND", "Report not found", 404);
+      if (report.status === "ACTION_TAKEN" || report.status === "DISMISSED") {
+        throw new OpsRefusal(
+          "REPORT_RESOLVED",
+          "This report has already been resolved",
+        );
+      }
+      if (
+        actionType === "CONTENT_REMOVED" &&
+        report.type === "REVIEW" &&
+        !canModerateUsers
+      ) {
+        throw new OpsRefusal(
+          "FORBIDDEN",
+          "Removing public reviews requires administrator permission",
+          403,
+        );
+      }
+      await validateActionTargetBinding(report, actionType, feedbackId);
 
-    const report = await prisma.moderationReport.findUnique({
-      where: { id: reportId },
-      select: {
-        id: true,
-        type: true,
-        reason: true,
-        status: true,
-        reportedById: true,
-        targetUserId: true,
-        reviewId: true,
-        streamMessageId: true,
-        review: { select: { appointmentId: true } },
-      },
-    });
-
-    if (!report) {
-      return NextResponse.json({ error: "Report not found" }, { status: 404 });
-    }
-
-    if (report.status === "ACTION_TAKEN" || report.status === "DISMISSED") {
-      return NextResponse.json(
-        { error: "This report has already been resolved" },
-        { status: 409 },
-      );
-    }
-
-    if (
-      actionType === "CONTENT_REMOVED" &&
-      report.type === "REVIEW" &&
-      !canModerateUsers
-    ) {
-      return NextResponse.json(
-        { error: "Removing public reviews requires administrator permission" },
-        { status: 403 },
-      );
-    }
-
-    const bindingError = await validateActionTargetBinding(
-      report,
-      actionType,
-      feedbackId,
-    );
-    if (bindingError) return bindingError;
-
-    const input = {
-      actionType,
-      report: {
-        id: report.id,
-        type: report.type,
-        reason: report.reason,
-        reportedById: report.reportedById,
-        targetUserId: report.targetUserId,
-        reviewId: report.reviewId,
-        feedbackId,
-        streamMessageId: report.streamMessageId,
-      },
-      staffUserId: session.user.id,
-      notes,
-      suspensionDays,
-    };
-
-    // Rendered before the decision's transaction, which only stages them.
-    const drafts = await prepareModerationNotices(input);
-    const { action, updatedReport, transactional } =
-      await applyModerationTransaction(
-        reportId,
+      const input = {
         actionType,
+        report: {
+          id: report.id,
+          type: report.type,
+          reason: report.reason,
+          reportedById: report.reportedById,
+          targetUserId: report.targetUserId,
+          reviewId: report.reviewId,
+          feedbackId,
+          streamMessageId: report.streamMessageId,
+        },
+        staffUserId: actor.userId,
         notes,
-        session.user.id,
-        input,
-        drafts,
+        suspensionDays,
+      };
+
+      // Rendered before the decision's transaction, which only stages them.
+      const drafts = await prepareModerationNotices(input);
+      const { action, updatedReport, transactional, previousStatus } =
+        await applyModerationTransaction(
+          reportId,
+          actionType,
+          notes,
+          actor.userId,
+          input,
+          drafts,
+        );
+
+      if (transactional.reviewRemovedConsultantProfileId) {
+        purgeReviewSurfaces(transactional.reviewRemovedConsultantProfileId);
+      }
+
+      let sideEffects: SideEffectSummary = transactional;
+      try {
+        sideEffects = await applyBestEffortEffects(
+          { ...input, actionId: action.id },
+          transactional,
+        );
+      } catch (error) {
+        Sentry.captureException(
+          error instanceof Error ? error : new Error(String(error)),
+          { tags: { subsystem: "moderation" } },
+        );
+      }
+      // Session ends carry IPs and phase 2 has stamped them; never persist them.
+      const {
+        stagedBells,
+        stagedEmails,
+        stagedSessionEnds,
+        ...persistedSideEffects
+      } = sideEffects;
+      await persistActionSideEffects(action.id, persistedSideEffects);
+      await flushNotificationsAfter(
+        { bells: stagedBells, emails: stagedEmails },
+        "moderation.action",
       );
 
-    if (transactional.reviewRemovedConsultantProfileId) {
-      purgeReviewSurfaces(transactional.reviewRemovedConsultantProfileId);
-    }
-
-    let sideEffects: SideEffectSummary = transactional;
-    try {
-      sideEffects = await applyBestEffortEffects(
-        { ...input, actionId: action.id },
-        transactional,
-      );
-    } catch (error) {
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "moderation" } },
-      );
-    }
-    // Session ends carry IPs and phase 2 has stamped them; never persist them.
-    const {
-      stagedBells,
-      stagedEmails,
-      stagedSessionEnds,
-      ...persistedSideEffects
-    } = sideEffects;
-    await persistActionSideEffects(action.id, persistedSideEffects);
-    await flushNotificationsAfter(
-      { bells: stagedBells, emails: stagedEmails },
-      "moderation.action",
-    );
-
-    return NextResponse.json({
-      action,
-      report: updatedReport,
-      sideEffects: persistedSideEffects,
-      message: `Action '${actionType}' taken successfully`,
-    });
-  } catch (error) {
-    return moderationActionErrorResponse(error);
-  }
-}
+      return {
+        target: { kind: "ModerationReport", id: reportId },
+        // `status` is the gateway door's own SUCCEEDED or FAILED.
+        before: { reportStatus: previousStatus ?? report.status },
+        after: {
+          reportStatus: updatedReport.status,
+          actionType,
+          actionId: action.id,
+        },
+        response: {
+          action,
+          report: updatedReport,
+          sideEffects: persistedSideEffects,
+          message: `Action '${actionType}' taken successfully`,
+        },
+      };
+    },
+  },
+);

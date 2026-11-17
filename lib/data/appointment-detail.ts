@@ -17,6 +17,7 @@ import {
   liveParticipant,
   NOT_COLLABORATOR_ROW,
 } from "@/lib/booking/participants";
+import { liveReminderPayment } from "@/lib/booking/payment-reminder-eligibility";
 import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
 import type {
   AppointmentFeedbackRole,
@@ -54,6 +55,15 @@ const consultantProfileSelect = {
 
 const consulteeProfileSelect = {
   select: { id: true, userId: true, user: userSelect },
+} as const;
+
+// The 1:1 payer's email feeds the Remind gate only; it is dropped before the payload is built.
+const consultationPayerSelect = {
+  select: {
+    id: true,
+    userId: true,
+    user: { select: { ...userSelect.select, email: true } },
+  },
 } as const;
 
 // A mutable array: Prisma's `in` rejects the readonly tuple `as const` makes.
@@ -136,6 +146,13 @@ function historyActorSide(
   return "OTHER";
 }
 
+function withoutEmail<U extends { email: string | null }>({
+  email: _email,
+  ...user
+}: U): Omit<U, "email"> {
+  return user;
+}
+
 /**
  * Every booking page, its API and the authz helper read through here: a move
  * past its deadline is ended first, so the original session is what they see.
@@ -161,7 +178,7 @@ async function loadAppointmentDetail(appointmentId: string) {
           consultationPlan: {
             include: { consultantProfile: consultantProfileSelect },
           },
-          requestedBy: consulteeProfileSelect,
+          requestedBy: consultationPayerSelect,
         },
       },
       subscription: {
@@ -212,6 +229,7 @@ async function loadAppointmentDetail(appointmentId: string) {
           expiresAt: true,
           // #1775 C-5 — the 48 h allocate-or-refund clock.
           capturedAt: true,
+          deletedAt: true,
           // Which rail funded the row (lib/appointments/payment-display.ts):
           // an org-funded booking shows its sponsor and no amount.
           organizationId: true,
@@ -290,9 +308,31 @@ async function loadAppointmentDetail(appointmentId: string) {
       appointment.class?.classPlan.consultantProfile?.userId,
     ],
   };
+  const { consultation } = appointment;
+  // The inbox's Remind rule on live rows: the open order's expiry ships, the email never does.
+  const reminder =
+    consultation && !appointment.deletedAt
+      ? liveReminderPayment(
+          {
+            ...consultation,
+            appointment: {
+              payment: appointment.payment.filter((p) => !p.deletedAt),
+            },
+          },
+          new Date(),
+        )
+      : null;
   const detail = toPlain({
+    reminderExpiresAt: reminder?.expiresAt.toISOString() ?? null,
     appointment: {
       ...appointment,
+      consultation: consultation && {
+        ...consultation,
+        requestedBy: {
+          ...consultation.requestedBy,
+          user: withoutEmail(consultation.requestedBy.user),
+        },
+      },
       statusHistory: appointment.statusHistory.map(
         ({ actorUserId, ...edge }) => ({
           ...edge,

@@ -29,9 +29,7 @@ import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { humanizeEnum } from "@/lib/ui/tone";
 import { invalidateSupportCase, supportKeys } from "@/lib/support/support-keys";
-import { formatDateLabel, formatDateTimeLabel } from "@/lib/time/display";
-
-const when = (iso: string) => formatDateTimeLabel(new Date(iso));
+import { useZoneClock } from "@/lib/time/use-zone-clock";
 
 const Evidence = z.object({
   id: z.string(),
@@ -80,6 +78,7 @@ export function EvidenceInbox({
   organizationId,
 }: Readonly<{ detailBase: string; organizationId?: string }>) {
   const { data: session } = useSession();
+  const when = useZoneClock().dateTime;
   const [status, setStatus] = useState("all");
   const query = useQuery({
     queryKey: supportKeys.evidenceList(session?.user.id, organizationId),
@@ -158,6 +157,8 @@ export function EvidenceRequest({
   inboxHref,
 }: Readonly<{ requestId: string; inboxHref: string }>) {
   const { data: session } = useSession();
+  const clock = useZoneClock();
+  const when = clock.dateTime;
   const [body, setBody] = useState("");
   const [pending, setPending] = useState(false);
   const [confirming, setConfirming] = useState(false);
@@ -276,7 +277,7 @@ export function EvidenceRequest({
             >
               <p>
                 {humanizeEnum(decision.outcome)}. Recorded on{" "}
-                {formatDateLabel(new Date(decision.createdAt))}.
+                {clock.date(decision.createdAt)}.
               </p>
               {new Date(decision.appealUntil) > new Date() && (
                 <AppealAction

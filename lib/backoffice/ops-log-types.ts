@@ -1,3 +1,5 @@
+import type { TargetRef } from "./money-list-schemas";
+
 /** #1771 K-9 — one audit row as the Audit tab and its API twin return it. */
 export interface OpsLogRow {
   id: string;
@@ -9,6 +11,8 @@ export interface OpsLogRow {
   action: string;
   targetKind: string;
   targetId: string;
+  /** The person and booking behind the target; null for a kind that names neither. */
+  target: TargetRef | null;
   reason: string;
   before: unknown;
   after: unknown;

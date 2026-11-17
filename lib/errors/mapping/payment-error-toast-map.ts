@@ -25,6 +25,10 @@ import { REQUEST_APPROVAL_REQUIRED_MESSAGE } from "@/lib/booking/booking-rule-er
 export const SLOT_JUST_TAKEN_MESSAGE =
   "That time was just taken — pick another.";
 
+/** What a buyer sees when the grid stopped offering their chosen time, cause unknown. */
+export const SLOT_NO_LONGER_OFFERED_MESSAGE =
+  "That time is no longer available — pick another.";
+
 interface ToastMessage {
   title: string;
   /** Static description. When null, the raw error message is used. */

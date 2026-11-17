@@ -276,7 +276,8 @@ export async function listSubscribers(filters: SubscriberFilters) {
   const [items, total, byStatus] = await prisma.$transaction([
     prisma.newsletterSubscriber.findMany({
       where,
-      orderBy: { createdAt: "desc" },
+      // Newest first; the id breaks a tie so a page never repeats a row.
+      orderBy: [{ createdAt: "desc" }, { id: "asc" }],
       skip: (page - 1) * perPage,
       take: perPage,
       select: {

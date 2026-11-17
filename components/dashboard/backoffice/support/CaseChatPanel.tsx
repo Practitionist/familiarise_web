@@ -4,7 +4,7 @@ import { useState } from "react";
 import { ReasonDialog } from "@/components/dashboard/backoffice/money/ReasonDialog";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { Button } from "@/components/ui/button";
-import { formatDateTimeLabel } from "@/lib/time/display";
+import { OperatorTime } from "@/lib/time/operator-time";
 import {
   SUPPORT_CHAT_READ_HOURS,
   type ChatGrant,
@@ -20,7 +20,7 @@ import { CaseChatIntervention } from "./CaseChatIntervention";
 import { CaseChatTargets, WithholdNoticeField } from "./CaseChatTargets";
 import { CaseChatTranscript } from "./CaseChatTranscript";
 
-const when = (iso: string) => formatDateTimeLabel(new Date(iso));
+const when = (iso: string) => <OperatorTime value={iso} />;
 
 /** "Support in chat" while any Familiarise Support intervention on the case is live. */
 export function SupportInChatPill({ caseId }: Readonly<{ caseId: string }>) {

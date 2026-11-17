@@ -1,8 +1,16 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { Prisma, DisputeStatus, PaymentGateway } from "@prisma/client";
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import {
+  Prisma,
+  DisputeStatus,
+  PaymentGateway,
+  UserRole,
+} from "@prisma/client";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
+import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
+import type { DisputeListItem } from "@/lib/backoffice/money-list-schemas";
+import { BOOKING_TITLE_SELECT, bookingRefOf } from "@/lib/data/booking-title";
 import {
   OPEN_DISPUTE_STATUSES,
   OPEN_DISPUTE_WHERE,
@@ -43,37 +51,42 @@ const ACTIONABLE_OPEN_STATUSES: DisputeStatus[] = OPEN_DISPUTE_STATUSES.filter(
   (s) => s !== "UNDER_REVIEW",
 );
 
-/** List rows never carry evidence, billing details or internal notes; those live on the detail view behind `disputes.manage`. */
-const DISPUTE_LIST_SELECT = {
-  id: true,
-  disputeId: true,
-  amountPaise: true,
-  currency: true,
-  status: true,
-  reason: true,
-  paymentGateway: true,
-  paymentId: true,
-  dueBy: true,
-  isChargeRefundable: true,
-  evidenceSubmittedAt: true,
-  assignedToUserId: true,
-  createdAt: true,
-  updatedAt: true,
-  payment: {
-    select: {
-      id: true,
-      paymentIntent: true,
+/** List rows never carry evidence, billing details or internal notes; the buyer's email follows the detail view's `disputes.manage` gate. */
+const disputeListSelect = (withEmail: boolean) =>
+  ({
+    id: true,
+    disputeId: true,
+    amountPaise: true,
+    currency: true,
+    status: true,
+    reason: true,
+    paymentGateway: true,
+    paymentId: true,
+    dueBy: true,
+    isChargeRefundable: true,
+    evidenceSubmittedAt: true,
+    assignedToUserId: true,
+    createdAt: true,
+    updatedAt: true,
+    payment: {
+      select: {
+        id: true,
+        paymentIntent: true,
+        user: { select: { id: true, name: true, email: withEmail } },
+        appointment: { select: BOOKING_TITLE_SELECT },
+      },
     },
-  },
-} satisfies Prisma.DisputeSelect;
+  }) satisfies Prisma.DisputeSelect;
 
 async function loadDisputePage(params: {
   where: Prisma.DisputeWhereInput;
   status: DisputeStatus | null;
   skip: number;
   limit: number;
+  withEmail: boolean;
 }) {
   const { where, status, skip, limit } = params;
+  const select = disputeListSelect(params.withEmail);
   if (status) {
     const isActionableOpen = ACTIONABLE_OPEN_STATUSES.includes(status);
     return prisma.dispute.findMany({
@@ -81,9 +94,14 @@ async function loadDisputePage(params: {
       skip,
       take: limit,
       orderBy: isActionableOpen
-        ? [{ dueBy: { sort: "asc", nulls: "last" } }, { createdAt: "desc" }]
-        : [{ createdAt: "desc" }],
-      select: DISPUTE_LIST_SELECT,
+        ? [
+            { dueBy: { sort: "asc", nulls: "last" } },
+            { createdAt: "desc" },
+            { id: "desc" },
+          ]
+        : [{ createdAt: "desc" }, { id: "desc" }],
+      relationLoadStrategy: "join",
+      select,
     });
   }
 
@@ -109,8 +127,10 @@ async function loadDisputePage(params: {
           orderBy: [
             { dueBy: { sort: "asc", nulls: "last" } },
             { createdAt: "desc" },
+            { id: "desc" },
           ],
-          select: DISPUTE_LIST_SELECT,
+          relationLoadStrategy: "join",
+          select,
         })
       : Promise.resolve([]),
     closedTake > 0
@@ -118,8 +138,9 @@ async function loadDisputePage(params: {
           where: closedWhere,
           skip: closedSkip,
           take: closedTake,
-          orderBy: [{ createdAt: "desc" }],
-          select: DISPUTE_LIST_SELECT,
+          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+          relationLoadStrategy: "join",
+          select,
         })
       : Promise.resolve([]),
   ]);
@@ -129,7 +150,7 @@ async function loadDisputePage(params: {
 
 export async function GET(req: NextRequest) {
   try {
-    const auth = await requirePrivilegedAuth();
+    const auth = await requireBackofficeSurface("disputes.read");
     if (auth.error) return auth.error;
 
     const searchParams = req.nextUrl.searchParams;
@@ -176,6 +197,9 @@ export async function GET(req: NextRequest) {
     }
 
     const skip = (page - 1) * limit;
+    const role = z.nativeEnum(UserRole).safeParse(auth.session.user.role);
+    const withEmail =
+      role.success && hasBackofficePermission(role.data, "disputes.manage");
 
     const [total, urgentDisputes, underReviewCount, wonCount, disputes] =
       await Promise.all([
@@ -191,11 +215,31 @@ export async function GET(req: NextRequest) {
         }),
         prisma.dispute.count({ where: { status: "UNDER_REVIEW" } }),
         prisma.dispute.count({ where: { status: "WON" } }),
-        loadDisputePage({ where, status, skip, limit }),
+        loadDisputePage({ where, status, skip, limit, withEmail }),
       ]);
 
     return NextResponse.json({
-      disputes,
+      disputes: disputes.map(({ payment, ...d }): DisputeListItem => ({
+        id: d.id,
+        disputeId: d.disputeId,
+        amountPaise: Number(d.amountPaise),
+        currency: d.currency,
+        status: d.status,
+        reason: d.reason,
+        paymentGateway: d.paymentGateway,
+        dueBy: d.dueBy?.toISOString() ?? null,
+        createdAt: d.createdAt.toISOString(),
+        payment: payment && {
+          id: payment.id,
+          paymentIntent: payment.paymentIntent,
+          buyer: {
+            id: payment.user.id,
+            name: payment.user.name,
+            email: payment.user.email ?? null,
+          },
+          booking: bookingRefOf(payment.appointment),
+        },
+      })),
       total,
       urgentDisputes,
       stats: { underReviewCount, wonCount },

@@ -53,6 +53,8 @@ export interface EntityTrace {
   paymentIds: string[];
   appointmentId: string | null;
   userId: string | null;
+  /** The buyer of the first payment, named as every console screen names a person. */
+  customer: { id: string; name: string | null; email: string | null } | null;
   sentryHref: string | null;
   rows: TraceRow[];
   sources: TraceSourceReport[];

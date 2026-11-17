@@ -1,141 +1,75 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
-import { FileText, RefreshCw, User, Clock, CheckCircle2 } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
+import { FileText, RefreshCw, User, CheckCircle2 } from "lucide-react";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { TablePagination } from "@/components/dashboard/TablePagination";
+import { PersonCell } from "@/components/dashboard/backoffice/PersonCell";
+import {
+  keepPreviousPageOnly,
+  usePageWithinTotal,
+} from "@/components/dashboard/shared/paged-list-filters";
+import { readListBody } from "@/lib/backoffice/money-list-schemas";
+import {
+  verificationQueuePageSchema,
+  type VerificationItem,
+  type VerificationQueuePage,
+} from "@/lib/backoffice/people-list-schemas";
+import { verificationStatus } from "@/lib/labels/backoffice-labels";
+import { OperatorTime } from "@/lib/time/operator-time";
 import { VerificationReviewModal } from "./VerificationReviewModal";
 
-interface Document {
-  id: string;
-  fileName: string;
-  originalName: string;
-  fileUrl: string;
-  description?: string | null;
-  isValid?: boolean | null;
-  staffFeedback?: string | null;
-}
-
-interface ProfileVerification {
-  id: string;
-  status: string;
-  notes: string | null;
-  rejectionReason?: string | null;
-  feedbackDetails?: string | null;
-  submittedAt: string;
-  consultant: {
-    profileId: string;
-    userId: string;
-    name: string | null;
-    email: string;
-    image?: string | null;
-    linkedinUrl?: string | null;
-    domain: string;
-    experience: number | null;
-    headline: string | null;
-    isVerified: boolean;
-    verificationStatus: string;
-  };
-  documents: Document[];
-}
-
-interface VerificationQueueProps {
-  apiBasePath?: string;
-}
-
-const formatDate = (dateString: string) => {
-  const date = new Date(dateString);
-  return date.toLocaleDateString("en-US", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
-};
-
-const formatRelativeTime = (dateString: string) => {
-  const date = new Date(dateString);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-  const diffMins = Math.floor(diffMs / (1000 * 60));
-
-  if (diffMins < 60) return `${diffMins}m ago`;
-  if (diffHours < 24) return `${diffHours}h ago`;
-  if (diffDays < 7) return `${diffDays}d ago`;
-  return formatDate(dateString);
-};
-
-// #997 secondary findings — this queue used to fetch every PENDING
-// verification in one unbounded call. The API (`getVerificationQueue`) was
-// already paginated (default limit 20) — the client just never asked for
-// page 2, silently hiding anything past the first page. Page through it
-// with "Load more" instead.
 const PAGE_SIZE = 20;
+const API = "/api/admin/verification";
 
-export function VerificationQueue({
-  apiBasePath = "/api/admin/verification",
-}: VerificationQueueProps) {
-  const [verifications, setVerifications] = useState<ProfileVerification[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
+async function fetchQueue(page: number): Promise<VerificationQueuePage> {
+  const params = new URLSearchParams({
+    status: "PENDING",
+    page: String(page),
+    limit: String(PAGE_SIZE),
+  });
+  const res = await fetch(`${API}?${params}`);
+  return readListBody(
+    res,
+    verificationQueuePageSchema,
+    "Pending verifications could not load.",
+  );
+}
+
+const initials = (name: string | null) =>
+  (name || "?")
+    .split(" ")
+    .map((n) => n[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
+
+/** The expert verification queue, one server page at a time, oldest submission first. */
+export function VerificationQueue() {
   const [page, setPage] = useState(1);
-  const [hasMore, setHasMore] = useState(false);
-  const [total, setTotal] = useState(0);
-  const [selectedVerification, setSelectedVerification] =
-    useState<ProfileVerification | null>(null);
-  const { toast } = useToast();
-
-  const fetchVerifications = useCallback(
-    async (targetPage: number, append: boolean) => {
-      try {
-        if (append) setLoadingMore(true);
-        else setLoading(true);
-        const response = await fetch(
-          `${apiBasePath}?status=PENDING&page=${targetPage}&limit=${PAGE_SIZE}`,
-        );
-        if (!response.ok) throw new Error("Failed to fetch verifications");
-        const data: {
-          verifications?: ProfileVerification[];
-          pagination?: { total: number; hasMore: boolean };
-        } = await response.json();
-        const fetched = data.verifications ?? [];
-        setVerifications((prev) => (append ? [...prev, ...fetched] : fetched));
-        setTotal(data.pagination?.total ?? fetched.length);
-        setHasMore(data.pagination?.hasMore ?? false);
-        setPage(targetPage);
-      } catch (error) {
-        console.error("Error fetching verifications:", error);
-        toast({
-          title: "Error",
-          description: "Failed to load pending verifications",
-          variant: "destructive",
-        });
-      } finally {
-        if (append) setLoadingMore(false);
-        else setLoading(false);
-      }
-    },
-    [apiBasePath, toast],
+  const [selected, setSelected] = useState<VerificationItem | null>(null);
+  const queryKey = ["verification-queue", "PENDING", page] as const;
+  const { data, isLoading, isFetching, isPlaceholderData, error, refetch } =
+    useQuery({
+      queryKey,
+      queryFn: () => fetchQueue(page),
+      placeholderData: keepPreviousPageOnly<VerificationQueuePage>(queryKey, 2),
+    });
+  // Deciding the last applicant on a page moves back a page; only this page's own answer counts.
+  usePageWithinTotal(
+    page,
+    setPage,
+    isPlaceholderData ? undefined : data?.pagination.total,
+    PAGE_SIZE,
   );
 
-  useEffect(() => {
-    fetchVerifications(1, false);
-  }, [fetchVerifications]);
-
-  const handleRefresh = () => fetchVerifications(1, false);
-  const handleLoadMore = () => fetchVerifications(page + 1, true);
-
-  const handleVerificationComplete = () => {
-    fetchVerifications(1, false);
-    setSelectedVerification(null);
-  };
-
-  if (loading) {
+  if (isLoading) {
     return (
       <div className="space-y-4">
         {[1, 2, 3].map((i) => (
@@ -147,7 +81,6 @@ export function VerificationQueue({
                   <Skeleton className="h-4 w-48" />
                   <Skeleton className="h-3 w-32" />
                 </div>
-                <Skeleton className="h-8 w-24" />
               </div>
             </CardContent>
           </Card>
@@ -156,24 +89,35 @@ export function VerificationQueue({
     );
   }
 
-  if (verifications.length === 0) {
+  // A failed load says so; an empty queue says it is empty.
+  if (error || !data) {
+    return (
+      <Card>
+        <CardContent className="flex flex-col items-center gap-3 py-12">
+          <p role="alert" className="text-sm text-destructive">
+            {error instanceof Error
+              ? error.message
+              : "Pending verifications could not load."}
+          </p>
+          <Button variant="outline" size="sm" onClick={() => refetch()}>
+            <RefreshCw className="mr-2 h-4 w-4" />
+            Retry
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const { verifications, pagination } = data;
+  if (pagination.total === 0) {
     return (
       <Card>
         <CardContent className="flex flex-col items-center justify-center py-12">
-          <CheckCircle2 className="h-12 w-12 text-green-500 mb-4" />
-          <h3 className="font-semibold text-lg">All Caught Up!</h3>
-          <p className="text-zinc-500 text-sm mt-1">
+          <CheckCircle2 className="mb-4 h-12 w-12 text-green-500" />
+          <h3 className="text-lg font-semibold">All caught up</h3>
+          <p className="mt-1 text-sm text-muted-foreground">
             No pending verifications to review
           </p>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleRefresh}
-            className="mt-4"
-          >
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Refresh
-          </Button>
         </CardContent>
       </Card>
     );
@@ -183,18 +127,18 @@ export function VerificationQueue({
     <>
       <div className="space-y-4">
         <div className="flex items-center justify-between">
-          <p className="text-sm text-zinc-500">
-            {verifications.length} of {total} pending verification
-            {total !== 1 ? "s" : ""}
+          <p className="text-sm text-muted-foreground">
+            {pagination.total} pending verification
+            {pagination.total === 1 ? "" : "s"}
           </p>
           <Button
             variant="ghost"
             size="sm"
-            onClick={handleRefresh}
-            disabled={loading}
+            onClick={() => refetch()}
+            disabled={isFetching}
           >
             <RefreshCw
-              className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`}
+              className={`mr-2 h-4 w-4 ${isFetching ? "animate-spin" : ""}`}
             />
             Refresh
           </Button>
@@ -202,103 +146,80 @@ export function VerificationQueue({
 
         {verifications.map((verification) => {
           const consultant = verification.consultant;
-          // Skip verifications with missing consultant data
-          if (!consultant) {
-            console.warn(
-              "Skipping verification with missing consultant data:",
-              verification.id,
-            );
-            return null;
-          }
-
           return (
             <Card
               key={verification.id}
-              className="cursor-pointer hover:shadow-md transition-shadow hover:border-zinc-300 dark:hover:border-zinc-700"
-              onClick={() => setSelectedVerification(verification)}
+              className="cursor-pointer transition-shadow hover:border-zinc-300 hover:shadow-md dark:hover:border-zinc-700"
+              onClick={() => setSelected(verification)}
             >
               <CardContent className="p-4">
-                <div className="flex items-start justify-between">
-                  <div className="flex items-center gap-4">
-                    <Avatar className="h-12 w-12">
-                      <AvatarImage src={consultant.image || ""} />
-                      <AvatarFallback>
-                        {(consultant.name || "?")
-                          .split(" ")
-                          .map((n: string) => n[0])
-                          .join("")
-                          .toUpperCase()
-                          .slice(0, 2)}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div>
-                      <p className="font-medium">
-                        {consultant.name || "Unnamed"}
-                      </p>
-                      <p className="text-sm text-zinc-500">
-                        {consultant.email}
-                      </p>
-                      <div className="flex items-center gap-2 mt-1 flex-wrap">
-                        {consultant.domain && (
-                          <Badge variant="outline" className="text-xs">
-                            {consultant.domain}
-                          </Badge>
-                        )}
-                      </div>
-                    </div>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <PersonCell
+                      person={{
+                        id: consultant.userId,
+                        name: consultant.name,
+                        email: consultant.email,
+                      }}
+                      leading={
+                        <Avatar className="h-12 w-12">
+                          <AvatarImage src={consultant.image || ""} />
+                          <AvatarFallback>
+                            {initials(consultant.name)}
+                          </AvatarFallback>
+                        </Avatar>
+                      }
+                    />
+                    {consultant.domain && (
+                      <Badge variant="outline" className="mt-2 text-xs">
+                        {consultant.domain}
+                      </Badge>
+                    )}
                   </div>
-                  <div className="text-right">
-                    <Badge className="bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300">
-                      Pending Review
-                    </Badge>
-                    <div className="flex items-center gap-1 text-xs text-zinc-400 mt-2 justify-end">
-                      <Clock className="h-3 w-3" />
-                      {formatRelativeTime(verification.submittedAt)}
-                    </div>
+                  <div className="shrink-0 text-right">
+                    <StatusBadge {...verificationStatus(verification.status)} />
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Submitted{" "}
+                      <OperatorTime value={verification.submittedAt} />
+                    </p>
                   </div>
                 </div>
 
-                <div className="mt-3 flex items-center gap-4 text-sm text-zinc-500">
-                  <div className="flex items-center gap-1">
+                <div className="mt-3 flex items-center gap-4 text-sm text-muted-foreground">
+                  <span className="flex items-center gap-1">
                     <User className="h-4 w-4" />
                     {consultant.experience
                       ? `${consultant.experience} yrs exp`
                       : "No exp listed"}
-                  </div>
-                  <div className="flex items-center gap-1">
+                  </span>
+                  <span className="flex items-center gap-1">
                     <FileText className="h-4 w-4" />
                     {verification.documents.length} document
-                    {verification.documents.length !== 1 ? "s" : ""}
-                  </div>
+                    {verification.documents.length === 1 ? "" : "s"}
+                  </span>
                 </div>
               </CardContent>
             </Card>
           );
         })}
 
-        {hasMore && (
-          <div className="flex justify-center pt-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleLoadMore}
-              disabled={loadingMore}
-            >
-              {loadingMore ? (
-                <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-              ) : null}
-              Load more
-            </Button>
-          </div>
-        )}
+        <TablePagination
+          page={pagination.page}
+          pageSize={pagination.limit}
+          total={pagination.total}
+          onPageChange={setPage}
+        />
       </div>
 
       <VerificationReviewModal
-        verification={selectedVerification}
-        open={!!selectedVerification}
-        onOpenChange={(open) => !open && setSelectedVerification(null)}
-        onVerificationComplete={handleVerificationComplete}
-        apiBasePath={apiBasePath}
+        verification={selected}
+        open={!!selected}
+        onOpenChange={(open) => !open && setSelected(null)}
+        onVerificationComplete={() => {
+          setSelected(null);
+          void refetch();
+        }}
+        apiBasePath={API}
       />
     </>
   );

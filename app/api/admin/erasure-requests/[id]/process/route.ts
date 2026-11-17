@@ -12,7 +12,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
-import { requireAdminAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import {
   hasMoneyInFlight,
   moneyInFlightForUser,
@@ -24,7 +24,7 @@ export async function POST(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const auth = await requireAdminAuth();
+  const auth = await requireBackofficeSurface("compliance.manage");
   if (auth.error) return auth.error;
   const { id } = await params;
 

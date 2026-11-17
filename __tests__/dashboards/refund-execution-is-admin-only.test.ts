@@ -6,8 +6,8 @@
  * `POST /api/admin/refunds` executes a refund — it moves real money.
  *
  * The mutation resolves `refunds.manage` through BACKOFFICE_PERMISSIONS,
- * which is ADMIN-only, while GET stays privileged so staff keep the money
- * read they need for ticket context.
+ * which is ADMIN-only, while GET asks `refunds.read`, which staff hold for
+ * ticket context.
  */
 
 // Only the pure matrix module is imported. `lib/auth-helpers` drags the
@@ -33,14 +33,15 @@ describe("refund execution is admin-only", () => {
     const doorBody = src.slice(src.indexOf("const refundDoor"));
     expect(doorBody).toMatch(/withOpsAction\(\s*"refunds\.manage"/);
     expect(doorBody).toContain("stepUp: true");
-    expect(doorBody).not.toContain("requirePrivilegedAuth()");
+    expect(doorBody).not.toMatch(/require\w*Auth\(\)/);
 
     // GET keeps the wider grant — staff read every money surface.
     const getBody = src.slice(
       src.indexOf("export async function GET"),
       src.indexOf("const refundDoor"),
     );
-    expect(getBody).toContain("requirePrivilegedAuth()");
+    expect(getBody).toContain('requireBackofficeSurface("refunds.read")');
+    expect(hasBackofficePermission("STAFF", "refunds.read")).toBe(true);
   });
 
   it("refunds.manage excludes STAFF and admits ADMIN", () => {

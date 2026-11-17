@@ -24,6 +24,15 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { FilterBar } from "@/components/dashboard/FilterBar";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { TablePagination } from "@/components/dashboard/TablePagination";
+import { BookingCell } from "@/components/dashboard/backoffice/BookingCell";
+import type { BookingRef } from "@/lib/data/booking-title";
+import {
+  consumerInvoiceStatus,
+  orgInvoiceStatus,
+} from "@/lib/labels/backoffice-labels";
+import { OperatorTime } from "@/lib/time/operator-time";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
 function StatCard({
@@ -126,36 +135,9 @@ interface ConsumerInvoiceItem {
   issuedAt: string;
   status: "ISSUED" | "CREDIT_NOTED";
   creditNoteNumber: string | null;
+  /** The booking the invoice bills; null for a sale with no booking. */
+  booking: BookingRef | null;
   pdfUrl: string;
-}
-
-const INVOICE_STATUS_LABEL: Record<string, string> = {
-  PAID: "Paid",
-  ISSUED: "Issued",
-  OVERDUE: "Overdue",
-  DRAFT: "Draft",
-  CANCELLED: "Cancelled",
-  VOID: "Void",
-  REFUNDED: "Refunded",
-  CREDIT_NOTED: "Credit note issued",
-};
-
-function getStatusBadge(status: string) {
-  const styles: Record<string, string> = {
-    PAID: "bg-emerald-500/10 text-emerald-600 border-emerald-500/20",
-    ISSUED: "bg-blue-500/10 text-blue-600 border-blue-500/20",
-    OVERDUE: "bg-red-500/10 text-red-600 border-red-500/20",
-    DRAFT: "bg-zinc-500/10 text-zinc-600 border-zinc-500/20",
-    CANCELLED: "bg-zinc-500/10 text-zinc-500 border-zinc-500/20",
-    VOID: "bg-zinc-500/10 text-zinc-500 border-zinc-500/20",
-    REFUNDED: "bg-amber-500/10 text-amber-600 border-amber-500/20",
-    CREDIT_NOTED: "bg-amber-500/10 text-amber-600 border-amber-500/20",
-  };
-  return (
-    <Badge variant="outline" className={styles[status] || ""}>
-      {INVOICE_STATUS_LABEL[status] ?? "Other"}
-    </Badge>
-  );
 }
 
 function useInvoiceFilters() {
@@ -402,30 +384,14 @@ function InvoicesTabScaffold<T extends { id: string }>({
         <CardContent className="pt-6">
           {content}
 
-          {pagination && pagination.totalPages > 1 && (
-            <div className="flex items-center justify-between pt-4 border-t mt-4">
-              <p className="text-xs text-muted-foreground">
-                Page {pagination.page} of {pagination.totalPages}
-              </p>
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={page <= 1}
-                  onClick={() => onPageChange(page - 1)}
-                >
-                  Previous
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={page >= pagination.totalPages}
-                  onClick={() => onPageChange(page + 1)}
-                >
-                  Next
-                </Button>
-              </div>
-            </div>
+          {pagination && (
+            <TablePagination
+              className="mt-4 border-t pt-4"
+              page={page}
+              pageSize={pagination.limit}
+              total={pagination.total}
+              onPageChange={onPageChange}
+            />
           )}
         </CardContent>
       </Card>
@@ -541,7 +507,7 @@ function OrganizationInvoicesTab({
                 <span className="font-mono font-medium">
                   {inv.invoiceNumber}
                 </span>
-                {getStatusBadge(inv.status)}
+                <StatusBadge {...orgInvoiceStatus(inv.status)} size="sm" />
               </div>
               <div className="flex items-center gap-3 text-xs text-muted-foreground">
                 <a
@@ -555,12 +521,12 @@ function OrganizationInvoicesTab({
                 {inv.dueDate && (
                   <span className="flex items-center gap-1">
                     <Calendar className="h-3 w-3" />
-                    Due: {new Date(inv.dueDate).toLocaleDateString()}
+                    Due: <OperatorTime value={inv.dueDate} kind="date" />
                   </span>
                 )}
                 {inv.paidAt && (
                   <span className="text-emerald-600">
-                    Paid: {new Date(inv.paidAt).toLocaleDateString()}
+                    Paid: <OperatorTime value={inv.paidAt} kind="date" />
                   </span>
                 )}
               </div>
@@ -665,7 +631,7 @@ function ConsumerInvoicesTab({
                 <span className="font-mono font-medium">
                   {inv.invoiceNumber}
                 </span>
-                {getStatusBadge(inv.status)}
+                <StatusBadge {...consumerInvoiceStatus(inv.status)} size="sm" />
                 {inv.creditNoteNumber && (
                   <Badge variant="outline" className="font-mono text-xs">
                     CN: {inv.creditNoteNumber}
@@ -681,15 +647,19 @@ function ConsumerInvoicesTab({
                   {inv.buyerEmail ? ` (${inv.buyerEmail})` : ""}
                   <ExternalLink className="h-2.5 w-2.5" />
                 </a>
+                <BookingCell
+                  booking={inv.booking}
+                  basePath={dashboardBasePath}
+                />
                 <a
                   href={`${dashboardBasePath}/payments/${inv.paymentId}`}
                   className="font-mono hover:underline"
                 >
-                  Payment: {inv.paymentId.slice(0, 10)}…
+                  Payment
                 </a>
                 <span className="flex items-center gap-1">
                   <Calendar className="h-3 w-3" />
-                  Issued: {new Date(inv.issuedAt).toLocaleDateString()}
+                  Issued: <OperatorTime value={inv.issuedAt} kind="date" />
                 </span>
               </div>
             </div>

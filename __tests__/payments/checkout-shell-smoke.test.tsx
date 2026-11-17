@@ -50,9 +50,10 @@ jest.mock(
   }),
 );
 jest.mock(
-  "@/app/explore/experts/[consultantId]/hooks/useSlotJustTaken",
+  "@/app/explore/experts/[consultantId]/hooks/useChooseAnotherTime",
   () => ({
-    useSlotJustTaken: () => jest.fn(),
+    chooseAnotherTimeHref: () => "/explore/experts/cp1?conflict=1",
+    useChooseAnotherTime: () => jest.fn(),
   }),
 );
 jest.mock("@/lib/booking/batch-cards", () => ({

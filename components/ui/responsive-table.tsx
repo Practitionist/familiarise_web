@@ -367,7 +367,8 @@ export function ResponsiveTable<T>({
               rowInteraction(row);
             const buttonLike = !getRowHref?.(row) && onRowClick;
             return (
-              <li key={id}>
+              // min-w-0 here and on the value track: a long id wraps instead of widening the card past the screen.
+              <li key={id} className="min-w-0">
                 <Card
                   {...interaction}
                   role={buttonLike ? "button" : undefined}
@@ -409,13 +410,13 @@ export function ResponsiveTable<T>({
                   </div>
 
                   {cardColumns.length > 0 && (
-                    <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
+                    <dl className="mt-3 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm">
                       {cardColumns.map((col) => (
                         <React.Fragment key={col.key}>
-                          <dt className="text-muted-foreground">
+                          <dt className="max-w-[9rem] text-muted-foreground">
                             {col.cardLabel ?? col.header}
                           </dt>
-                          <dd className="min-w-0 text-right text-foreground">
+                          <dd className="min-w-0 text-right text-foreground [overflow-wrap:anywhere]">
                             {renderCell(col, row)}
                           </dd>
                         </React.Fragment>

@@ -4,14 +4,12 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  CheckCircle2,
   Eye,
   Gift,
   Loader2,
   Plus,
   RotateCcw,
   Settings2,
-  ShieldCheck,
   Sparkles,
 } from "lucide-react";
 
@@ -57,6 +55,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { formatOperatorInstant } from "@/lib/time/operator-zone";
 import { HeldReferralsPanel } from "./HeldReferralsPanel";
 
 const CREDIT_SOURCES = [
@@ -175,26 +174,8 @@ interface ReferralProgramConfigData {
   version: number;
 }
 
-interface PlatformFeeScheduleItem {
-  id: string;
-  marketplaceBps: number;
-  ownLinkBps: number;
-  effectiveFrom: string;
-  makerUserId: string;
-  checkerUserId: string | null;
-  approvedAt: string | null;
-  reason: string | null;
-  createdAt: string;
-}
-
-function fmtDate(d: string | null): string {
-  if (!d) return "—";
-  return new Date(d).toLocaleDateString("en-IN", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
-}
+const fmtDate = (d: string | null): string =>
+  d ? formatOperatorInstant(d, "date") : "—";
 
 function humanizeEnum(val: string): string {
   return val
@@ -1271,6 +1252,8 @@ function ReferralsListCard<T extends { id: string }>({
   onAction,
   filters,
   isLoading,
+  error,
+  onRetry,
   loadingLabel,
   emptyIcon: EmptyIcon,
   emptyMessage,
@@ -1287,6 +1270,9 @@ function ReferralsListCard<T extends { id: string }>({
   onAction?: () => void;
   filters: FilterBarProps;
   isLoading: boolean;
+  /** A failed load: shown in place of the list, never as an empty one. */
+  error: Error | null;
+  onRetry: () => void;
   loadingLabel: string;
   emptyIcon: typeof Gift;
   emptyMessage: string;
@@ -1321,13 +1307,21 @@ function ReferralsListCard<T extends { id: string }>({
             <Loader2 className="h-4 w-4 animate-spin" /> {loadingLabel}
           </div>
         )}
-        {!isLoading && rows.length === 0 && (
+        {!isLoading && error && (
+          <p role="alert" className="py-8 text-center text-sm text-destructive">
+            {error.message}{" "}
+            <button type="button" className="underline" onClick={onRetry}>
+              Retry
+            </button>
+          </p>
+        )}
+        {!isLoading && !error && rows.length === 0 && (
           <div className="py-12 text-center text-muted-foreground">
             <EmptyIcon className="mx-auto mb-3 h-10 w-10 text-muted-foreground/40" />
             <p className="text-sm">{emptyMessage}</p>
           </div>
         )}
-        {!isLoading && rows.length > 0 && (
+        {!isLoading && !error && rows.length > 0 && (
           <>
             <ResponsiveTable<T>
               columns={columns}
@@ -1485,6 +1479,10 @@ function CreditsTabPanel({
           allValue: "ALL",
         })}
         isLoading={creditsQuery.isLoading}
+        error={
+          creditsQuery.isError && !creditsQuery.data ? creditsQuery.error : null
+        }
+        onRetry={() => void creditsQuery.refetch()}
         loadingLabel="Loading credits…"
         emptyIcon={Gift}
         emptyMessage="No referral credits match the filter."
@@ -1616,6 +1614,10 @@ function FeeWaiversTabPanel({
           allValue: "ALL",
         })}
         isLoading={waiversQuery.isLoading}
+        error={
+          waiversQuery.isError && !waiversQuery.data ? waiversQuery.error : null
+        }
+        onRetry={() => void waiversQuery.refetch()}
         loadingLabel="Loading fee waivers…"
         emptyIcon={Sparkles}
         emptyMessage="No consultant fee waivers found."
@@ -1646,53 +1648,10 @@ function FeeWaiversTabPanel({
 }
 
 // ---------------------------------------------------------------------------
-// Tab 3: Program & Fee Config Panel (Maker-Checker)
+// Tab 4: Referral program economics
 // ---------------------------------------------------------------------------
 
-const FEE_SCHEDULE_COLUMNS: ResponsiveColumn<PlatformFeeScheduleItem>[] = [
-  {
-    key: "rates",
-    header: "Take Rates",
-    primary: true,
-    cell: (s) => (
-      <div className="font-medium tabular-nums">
-        Marketplace: {(s.marketplaceBps / 100).toFixed(2)}% ({s.marketplaceBps}{" "}
-        bps) · Own-Link: {(s.ownLinkBps / 100).toFixed(2)}% ({s.ownLinkBps} bps)
-      </div>
-    ),
-  },
-  {
-    key: "effectiveFrom",
-    header: "Effective From",
-    cell: (s) => (
-      <span className="text-xs text-muted-foreground">
-        {fmtDate(s.effectiveFrom)}
-      </span>
-    ),
-  },
-  {
-    key: "maker",
-    header: "Maker / Checker",
-    cell: (s) => (
-      <div className="text-xs text-muted-foreground">
-        <p>Maker: {s.makerUserId}</p>
-        {s.checkerUserId && <p>Checker: {s.checkerUserId}</p>}
-      </div>
-    ),
-  },
-  {
-    key: "status",
-    header: "Status",
-    cell: (s) => (
-      <StatusBadge
-        label={s.approvedAt ? "APPROVED" : "PENDING_CHECKER"}
-        tone={s.approvedAt ? "success" : "warning"}
-      />
-    ),
-  },
-];
-
-function ProgramAndFeeConfigTabPanel({
+function ProgramEconomicsTabPanel({
   canManage,
 }: Readonly<{ canManage: boolean }>) {
   const queryClient = useQueryClient();
@@ -1704,19 +1663,6 @@ function ProgramAndFeeConfigTabPanel({
       if (!res.ok) throw new Error("Failed to load referral program config");
       const json = (await res.json()) as { config: ReferralProgramConfigData };
       return json.config;
-    },
-  });
-
-  const schedulesQuery = useQuery({
-    queryKey: ["admin-fee-schedules"],
-    queryFn: async () => {
-      const res = await fetch("/api/admin/fee-schedules");
-      if (!res.ok) throw new Error("Failed to load platform fee schedules");
-      const json = (await res.json()) as {
-        active: { marketplaceBps: number; ownLinkBps: number };
-        schedules: PlatformFeeScheduleItem[];
-      };
-      return json;
     },
   });
 
@@ -1833,111 +1779,6 @@ function ProgramAndFeeConfigTabPanel({
       reason: configReason.trim(),
     });
   };
-
-  // Fee schedule proposal + approval state
-  const [marketplaceBps, setMarketplaceBps] = useState("1500");
-  const [ownLinkBps, setOwnLinkBps] = useState("500");
-  const [effectiveFrom, setEffectiveFrom] = useState("");
-  const [proposeReason, setProposeReason] = useState("");
-  const [proposeError, setProposeError] = useState<string | null>(null);
-  const [approveTarget, setApproveTarget] =
-    useState<PlatformFeeScheduleItem | null>(null);
-  const [approveReason, setApproveReason] = useState("");
-  const [approveError, setApproveError] = useState<string | null>(null);
-
-  const proposeMutation = useMutation({
-    mutationFn: async (payload: {
-      marketplaceBps: number;
-      ownLinkBps: number;
-      effectiveFrom: string;
-      reason: string;
-    }) => {
-      const res = await fetch("/api/admin/fee-schedules", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(
-          (json as { error?: string }).error ??
-            "Failed to propose fee schedule",
-        );
-      }
-      return json;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["admin-fee-schedules"] });
-      setProposeReason("");
-      setEffectiveFrom("");
-      setProposeError(null);
-    },
-    onError: (err: Error) => setProposeError(err.message),
-  });
-
-  const approveMutation = useMutation({
-    mutationFn: async (payload: { scheduleId: string; reason: string }) => {
-      const res = await fetch(
-        `/api/admin/fee-schedules/${payload.scheduleId}/approve`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ reason: payload.reason }),
-        },
-      );
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(
-          (json as { error?: string }).error ??
-            "Failed to approve fee schedule",
-        );
-      }
-      return json;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["admin-fee-schedules"] });
-      setApproveTarget(null);
-      setApproveReason("");
-      setApproveError(null);
-    },
-    onError: (err: Error) => setApproveError(err.message),
-  });
-
-  const handleProposeSchedule = () => {
-    setProposeError(null);
-    const mkt = Number.parseInt(marketplaceBps, 10);
-    const own = Number.parseInt(ownLinkBps, 10);
-    if (!Number.isInteger(mkt) || mkt < 0 || mkt > 5000) {
-      setProposeError("Marketplace BPS must be between 0 and 5000 (0–50%).");
-      return;
-    }
-    if (!Number.isInteger(own) || own < 0 || own > 5000) {
-      setProposeError("Own-link BPS must be between 0 and 5000 (0–50%).");
-      return;
-    }
-    if (!effectiveFrom.trim()) {
-      setProposeError("Effective-from date/time is required.");
-      return;
-    }
-    const effDate = new Date(effectiveFrom);
-    if (Number.isNaN(effDate.getTime())) {
-      setProposeError("Effective-from date/time is invalid.");
-      return;
-    }
-    if (proposeReason.trim().length < 5) {
-      setProposeError("Audit reason (at least 5 characters) is required.");
-      return;
-    }
-
-    proposeMutation.mutate({
-      marketplaceBps: mkt,
-      ownLinkBps: own,
-      effectiveFrom: effDate.toISOString(),
-      reason: proposeReason.trim(),
-    });
-  };
-
-  const schedules = schedulesQuery.data?.schedules ?? [];
 
   return (
     <div className="space-y-6">
@@ -2080,204 +1921,6 @@ function ProgramAndFeeConfigTabPanel({
           )}
         </CardContent>
       </Card>
-
-      <Card>
-        <CardHeader>
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-            <div>
-              <CardTitle className="flex items-center gap-2 text-base">
-                <ShieldCheck className="h-4 w-4" /> Platform Fee Schedules
-                (Maker-Checker)
-              </CardTitle>
-              <CardDescription>
-                Active take rates:{" "}
-                <strong>
-                  {schedulesQuery.data?.active
-                    ? `${(schedulesQuery.data.active.marketplaceBps / 100).toFixed(2)}% marketplace / ${(schedulesQuery.data.active.ownLinkBps / 100).toFixed(2)}% own-link`
-                    : "Loading…"}
-                </strong>
-                . A second admin must approve proposed fee schedules before they
-                take effect.
-              </CardDescription>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          {canManage && (
-            <div className="rounded-lg border bg-muted/20 p-4 space-y-4">
-              <h4 className="text-sm font-semibold">
-                Propose New Platform Fee Schedule (Maker)
-              </h4>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <div className="space-y-1.5">
-                  <Label htmlFor="fee-mkt-bps">Marketplace Fee (bps)</Label>
-                  <Input
-                    id="fee-mkt-bps"
-                    type="number"
-                    min={0}
-                    max={5000}
-                    value={marketplaceBps}
-                    onChange={(e) => setMarketplaceBps(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="fee-own-bps">Own-Link Fee (bps)</Label>
-                  <Input
-                    id="fee-own-bps"
-                    type="number"
-                    min={0}
-                    max={5000}
-                    value={ownLinkBps}
-                    onChange={(e) => setOwnLinkBps(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="fee-effective-from">Effective From *</Label>
-                  <Input
-                    id="fee-effective-from"
-                    type="datetime-local"
-                    value={effectiveFrom}
-                    onChange={(e) => setEffectiveFrom(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="fee-propose-reason">Audit reason *</Label>
-                  <Input
-                    id="fee-propose-reason"
-                    value={proposeReason}
-                    onChange={(e) => setProposeReason(e.target.value)}
-                    placeholder="Pricing committee approval ref"
-                  />
-                </div>
-              </div>
-              {proposeError && (
-                <p className="text-sm text-red-600">{proposeError}</p>
-              )}
-              <div className="flex justify-end">
-                <Button
-                  size="sm"
-                  onClick={handleProposeSchedule}
-                  disabled={proposeMutation.isPending}
-                >
-                  {proposeMutation.isPending ? (
-                    <>
-                      <Loader2 className="mr-1 h-4 w-4 animate-spin" />{" "}
-                      Proposing…
-                    </>
-                  ) : (
-                    "Propose Schedule"
-                  )}
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {schedulesQuery.isLoading && (
-            <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" /> Loading fee
-              schedules…
-            </div>
-          )}
-          {!schedulesQuery.isLoading && schedules.length === 0 && (
-            <p className="py-6 text-center text-sm text-muted-foreground">
-              No custom fee schedules proposed yet. Using default take rates.
-            </p>
-          )}
-          {!schedulesQuery.isLoading && schedules.length > 0 && (
-            <ResponsiveTable<PlatformFeeScheduleItem>
-              columns={FEE_SCHEDULE_COLUMNS}
-              rows={schedules}
-              getRowId={(s) => s.id}
-              rowActions={
-                canManage
-                  ? (s) =>
-                      !s.approvedAt ? (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => {
-                            setApproveTarget(s);
-                            setApproveReason("");
-                            setApproveError(null);
-                          }}
-                        >
-                          <CheckCircle2 className="mr-1 h-3.5 w-3.5" /> Approve
-                        </Button>
-                      ) : null
-                  : undefined
-              }
-            />
-          )}
-        </CardContent>
-      </Card>
-
-      {approveTarget && (
-        <ResponsiveModal
-          open={!!approveTarget}
-          onOpenChange={(v) => !v && setApproveTarget(null)}
-        >
-          <ResponsiveModalContent className="sm:max-w-md">
-            <ResponsiveModalHeader>
-              <ResponsiveModalTitle>
-                Approve Fee Schedule (Checker)
-              </ResponsiveModalTitle>
-            </ResponsiveModalHeader>
-            <div className="space-y-4">
-              <p className="text-sm text-muted-foreground">
-                Approve take rate schedule of{" "}
-                <strong className="text-foreground">
-                  {(approveTarget.marketplaceBps / 100).toFixed(2)}% marketplace
-                  / {(approveTarget.ownLinkBps / 100).toFixed(2)}% own-link
-                </strong>{" "}
-                effective {fmtDate(approveTarget.effectiveFrom)}. The maker (
-                <code>{approveTarget.makerUserId}</code>) cannot self-approve.
-              </p>
-              <div className="space-y-1.5">
-                <Label htmlFor="approve-schedule-reason">
-                  Checker approval reason *
-                </Label>
-                <Input
-                  id="approve-schedule-reason"
-                  value={approveReason}
-                  onChange={(e) => setApproveReason(e.target.value)}
-                  placeholder="Verified against pricing committee resolution"
-                />
-              </div>
-              {approveError && (
-                <p className="text-sm text-red-600">{approveError}</p>
-              )}
-            </div>
-            <ResponsiveModalFooter>
-              <Button variant="outline" onClick={() => setApproveTarget(null)}>
-                Cancel
-              </Button>
-              <Button
-                onClick={() => {
-                  if (approveReason.trim().length < 5) {
-                    setApproveError(
-                      "Approval reason must be at least 5 characters.",
-                    );
-                    return;
-                  }
-                  approveMutation.mutate({
-                    scheduleId: approveTarget.id,
-                    reason: approveReason.trim(),
-                  });
-                }}
-                disabled={approveMutation.isPending}
-              >
-                {approveMutation.isPending ? (
-                  <>
-                    <Loader2 className="mr-1 h-4 w-4 animate-spin" /> Approving…
-                  </>
-                ) : (
-                  "Approve Schedule"
-                )}
-              </Button>
-            </ResponsiveModalFooter>
-          </ResponsiveModalContent>
-        </ResponsiveModal>
-      )}
     </div>
   );
 }
@@ -2317,8 +1960,8 @@ export function ReferralCreditsPageClient() {
   return (
     <>
       <DashboardHeader
-        title="Referrals & Fee Schedules"
-        subtitle="Manage referral credit balances, expert fee waivers, program economics, and maker-checker take rates."
+        title="Referral credits"
+        subtitle="Referral credit balances, expert fee waivers, referrals held for review and the program economics. The platform take rates are on Platform fees."
         actions={headerAction}
       />
 
@@ -2350,8 +1993,8 @@ export function ReferralCreditsPageClient() {
             },
             {
               value: "config",
-              label: "Program & Fee Config",
-              content: <ProgramAndFeeConfigTabPanel canManage={canManage} />,
+              label: "Program economics",
+              content: <ProgramEconomicsTabPanel canManage={canManage} />,
             },
           ]}
         />

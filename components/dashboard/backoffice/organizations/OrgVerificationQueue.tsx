@@ -1,23 +1,24 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
+import { TablePagination } from "@/components/dashboard/TablePagination";
+import { usePageWithinTotal } from "@/components/dashboard/shared/paged-list-filters";
 import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
+import { readListBody } from "@/lib/backoffice/money-list-schemas";
+import {
+  organizationListPageSchema,
+  type OrganizationListItem as QueuedOrg,
+} from "@/lib/backoffice/people-list-schemas";
+import { OperatorTime } from "@/lib/time/operator-time";
 import { OrgLifecycleActions } from "./OrgLifecycleActions";
 
-interface QueuedOrg {
-  id: string;
-  name: string;
-  slug: string;
-  status: string;
-  billingEmail: string | null;
-  createdAt: string;
-  _count: { memberships: number };
-}
+const PAGE_SIZE = 25;
 
 const columns: ResponsiveColumn<QueuedOrg>[] = [
   {
@@ -36,7 +37,7 @@ const columns: ResponsiveColumn<QueuedOrg>[] = [
     key: "created",
     header: "Created",
     className: "text-sm text-muted-foreground",
-    cell: (o) => new Date(o.createdAt).toLocaleDateString(),
+    cell: (o) => <OperatorTime value={o.createdAt} kind="date" />,
   },
 ];
 
@@ -47,32 +48,55 @@ const columns: ResponsiveColumn<QueuedOrg>[] = [
  */
 export function OrgVerificationQueue() {
   const { basePath } = useBackofficeCapability();
-  const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ["admin-organizations", "verification-queue"],
+  const [page, setPage] = useState(1);
+  const { data, isLoading, isPlaceholderData, error, refetch } = useQuery({
+    queryKey: ["admin-organizations", "verification-queue", page],
     queryFn: async () => {
-      const res = await fetch(
-        "/api/admin/organizations?queue=verification&limit=100",
+      const params = new URLSearchParams({
+        queue: "verification",
+        page: String(page),
+        limit: String(PAGE_SIZE),
+      });
+      const res = await fetch(`/api/admin/organizations?${params}`);
+      return readListBody(
+        res,
+        organizationListPageSchema,
+        "Organizations could not load.",
       );
-      if (!res.ok) throw new Error("Failed to load organizations");
-      return (await res.json()) as { data: QueuedOrg[] };
     },
+    placeholderData: keepPreviousData,
   });
+  // Only this page's own answer may clamp it, not the previous page's placeholder.
+  usePageWithinTotal(
+    page,
+    setPage,
+    isPlaceholderData ? undefined : data?.pagination.total,
+    PAGE_SIZE,
+  );
 
   return (
-    <ResponsiveTable<QueuedOrg>
-      columns={columns}
-      rows={data?.data ?? []}
-      getRowId={(o) => o.id}
-      getRowHref={(o) => `${basePath}/organizations/${o.id}`}
-      rowActions={(o) => <OrgLifecycleActions org={o} />}
-      isLoading={isLoading && !data}
-      error={error && !data ? error : undefined}
-      onRetry={() => void refetch()}
-      empty={
-        <p className="py-10 text-center text-sm text-muted-foreground">
-          No organization is waiting on verification.
-        </p>
-      }
-    />
+    <div className="space-y-4">
+      <ResponsiveTable<QueuedOrg>
+        columns={columns}
+        rows={data?.data ?? []}
+        getRowId={(o) => o.id}
+        getRowHref={(o) => `${basePath}/organizations/${o.id}`}
+        rowActions={(o) => <OrgLifecycleActions org={o} />}
+        isLoading={isLoading && !data}
+        error={error && !data ? error : undefined}
+        onRetry={() => void refetch()}
+        empty={
+          <p className="py-10 text-center text-sm text-muted-foreground">
+            No organization is waiting on verification.
+          </p>
+        }
+      />
+      <TablePagination
+        page={page}
+        pageSize={PAGE_SIZE}
+        total={data?.pagination.total ?? 0}
+        onPageChange={setPage}
+      />
+    </div>
   );
 }

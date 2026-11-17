@@ -20,6 +20,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { opsReasonSchema } from "@/lib/backoffice/ops-reason";
+import { readListBody } from "@/lib/backoffice/money-list-schemas";
+import {
+  leadPageSchema,
+  type LeadRow,
+} from "@/lib/backoffice/people-list-schemas";
+import { LEAD_STATUS, leadStatus } from "@/lib/labels/backoffice-labels";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { OperatorTime } from "@/lib/time/operator-time";
 
 const STATUSES: Array<LeadStatus | "ALL"> = [
@@ -42,26 +49,7 @@ const NEXT_STATUSES: Record<LeadStatus, LeadStatus[]> = {
   CLOSED_LOST: [],
 };
 
-const STATUS_LABEL: Record<LeadStatus, string> = {
-  NEW: "New",
-  CONTACTED: "Contacted",
-  QUALIFIED: "Qualified",
-  CLOSED_WON: "Won",
-  CLOSED_LOST: "Lost",
-};
-
-interface LeadRow {
-  id: string;
-  sourceCategory: string;
-  companyName: string | null;
-  contactName: string;
-  contactEmail: string;
-  phone: string | null;
-  subject: string;
-  message: string;
-  status: LeadStatus;
-  createdAt: string;
-}
+const STATUS_LABEL = (s: LeadStatus) => LEAD_STATUS[s].label;
 
 export function LeadsManagement() {
   const queryClient = useQueryClient();
@@ -79,11 +67,7 @@ export function LeadsManagement() {
       if (statusFilter !== "ALL") params.set("status", statusFilter);
       if (pageParam) params.set("cursor", pageParam);
       const res = await fetch(`/api/admin/leads?${params.toString()}`);
-      if (!res.ok) throw new Error("Failed to load leads");
-      return (await res.json()) as {
-        leads: LeadRow[];
-        nextCursor: string | null;
-      };
+      return readListBody(res, leadPageSchema, "Failed to load leads");
     },
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
   });
@@ -128,7 +112,7 @@ export function LeadsManagement() {
             <SelectContent>
               {STATUSES.map((s) => (
                 <SelectItem key={s} value={s}>
-                  {s === "ALL" ? "All statuses" : STATUS_LABEL[s as LeadStatus]}
+                  {s === "ALL" ? "All statuses" : STATUS_LABEL(s as LeadStatus)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -136,10 +120,20 @@ export function LeadsManagement() {
         }
       />
       <div className="space-y-3">
+        {/* A failed load says so; only a loaded, empty view says it is empty. */}
         {query.isError && (
-          <p className="text-sm text-red-600">Failed to load leads.</p>
+          <p role="alert" className="text-sm text-destructive">
+            Failed to load leads.{" "}
+            <button
+              type="button"
+              className="underline"
+              onClick={() => void query.refetch()}
+            >
+              Retry
+            </button>
+          </p>
         )}
-        {leads.length === 0 && !query.isFetching && (
+        {leads.length === 0 && !query.isFetching && !query.isError && (
           <p className="text-sm text-zinc-500">No leads in this view.</p>
         )}
         {leads.map((lead) => (
@@ -168,6 +162,7 @@ export function LeadsManagement() {
                 )}
               </div>
               <div className="flex items-center gap-2">
+                <StatusBadge {...leadStatus(lead.status)} size="sm" />
                 {NEXT_STATUSES[lead.status].length > 0 ? (
                   <Select
                     value={lead.status}
@@ -181,7 +176,7 @@ export function LeadsManagement() {
                     <SelectTrigger className="w-36" id={`status-${lead.id}`}>
                       {/* Current status is excluded from the successor
                           items, so render its label as the trigger value. */}
-                      <SelectValue>{STATUS_LABEL[lead.status]}</SelectValue>
+                      <SelectValue>{STATUS_LABEL(lead.status)}</SelectValue>
                     </SelectTrigger>
                     <SelectContent>
                       {/* Only reachable targets — mirrors the route's
@@ -189,15 +184,13 @@ export function LeadsManagement() {
                           the API would reject. */}
                       {NEXT_STATUSES[lead.status].map((s) => (
                         <SelectItem key={s} value={s}>
-                          {STATUS_LABEL[s]}
+                          {STATUS_LABEL(s)}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 ) : (
-                  <span className="text-xs text-zinc-500">
-                    {STATUS_LABEL[lead.status]} — closed
-                  </span>
+                  <span className="text-xs text-zinc-500">Closed</span>
                 )}
                 <Button size="sm" variant="outline" asChild>
                   <a href={`mailto:${lead.contactEmail}`}>Reply</a>
@@ -230,7 +223,7 @@ export function LeadsManagement() {
         }}
         title={
           move
-            ? `Move ${move.lead.companyName ?? move.lead.contactName} to ${STATUS_LABEL[move.to]}?`
+            ? `Move ${move.lead.companyName ?? move.lead.contactName} to ${STATUS_LABEL(move.to)}?`
             : ""
         }
         description="The reason is kept in the audit log with the move."

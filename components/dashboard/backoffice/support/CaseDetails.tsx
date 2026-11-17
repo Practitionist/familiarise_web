@@ -13,14 +13,14 @@ import { caseStatus } from "@/lib/labels/backoffice-labels";
 import { paymentStatusBadge } from "@/lib/labels/session-labels";
 import { bookingStatus } from "@/lib/appointments/booking-status";
 import { buildEngineeringEscalationHref } from "@/lib/support/callback-info";
-import { formatDateLabel } from "@/lib/time/display";
+import { OperatorTime } from "@/lib/time/operator-time";
 import { humanizeEnum } from "@/lib/ui/tone";
 import type { CaseBooking, CaseWorkspace } from "@/types/support-case";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { CaseChatPanel } from "./CaseChatPanel";
 
 const day = (iso: string | null) =>
-  iso ? formatDateLabel(new Date(iso)) : "—";
+  iso ? <OperatorTime value={iso} kind="date" /> : "—";
 
 const linkClass =
   "text-sm font-medium text-foreground underline-offset-4 hover:underline";
@@ -84,9 +84,15 @@ function SentryIssuesSection({
             <ExternalLink className="h-3 w-3 shrink-0" aria-hidden />
           </a>
           <p className="text-xs text-muted-foreground">
-            {[issue.culprit, issue.lastSeen ? day(issue.lastSeen) : null]
-              .filter(Boolean)
-              .join(" · ") || humanizeEnum(issue.level ?? "error")}
+            {issue.culprit || issue.lastSeen ? (
+              <>
+                {issue.culprit}
+                {issue.culprit && issue.lastSeen ? " · " : null}
+                {issue.lastSeen ? day(issue.lastSeen) : null}
+              </>
+            ) : (
+              humanizeEnum(issue.level ?? "error")
+            )}
           </p>
         </li>
       ))}
@@ -155,9 +161,13 @@ export function CaseDetails({ data }: Readonly<{ data: CaseWorkspace }>) {
               [
                 "Dates",
                 booking.lastStartsAt &&
-                booking.lastStartsAt !== booking.firstStartsAt
-                  ? `${day(booking.firstStartsAt)} – ${day(booking.lastStartsAt)}`
-                  : day(booking.firstStartsAt),
+                booking.lastStartsAt !== booking.firstStartsAt ? (
+                  <>
+                    {day(booking.firstStartsAt)} – {day(booking.lastStartsAt)}
+                  </>
+                ) : (
+                  day(booking.firstStartsAt)
+                ),
               ],
               ["Status", bookingStatusLabel(booking)],
             ]}

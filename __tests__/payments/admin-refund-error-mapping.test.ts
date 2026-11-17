@@ -68,7 +68,7 @@ jest.mock("../../lib/auth-helpers", () => {
       session: { createdAt: new Date() },
     },
   });
-  return { requirePrivilegedAuth: auth, requireBackofficeSurface: auth };
+  return { requireBackofficeSurface: auth };
 });
 
 const reportSentryError = jest.fn();

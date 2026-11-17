@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/responsive-modal";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { useHoldCountdown } from "@/hooks/useHoldCountdown";
+import { useRerenderAfter } from "@/hooks/useRerenderAfter";
 import { useIsDesktop } from "@/hooks/use-media-query";
 import { subscriptionCycleHeading } from "@/lib/booking/entitlement";
 import {
@@ -33,7 +34,6 @@ import {
   tentativeAtomsOf,
   toStampDate,
   type InboxRowInput,
-  type Stamp,
 } from "@/lib/dashboard/requests-inbox-state";
 import {
   formatInViewerZone,
@@ -42,7 +42,7 @@ import {
 } from "@/lib/time/viewer-zone";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { cn } from "@/utils/tailwind";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import {
   CHECKOUT_HOLD_BADGE,
@@ -353,22 +353,6 @@ export interface InboxRowProps {
 
 /** 44 px targets on the phone (WCAG 2.5.5), compact from sm. */
 const TOUCH = "min-h-11 sm:min-h-8";
-
-/** The longest delay `setTimeout` honours; a later instant would fire at once. */
-const MAX_TIMER_MS = 2_147_483_647;
-
-/** Re-renders once just after `at`, so an action gated on that instant leaves on time. */
-function useRerenderAfter(at: Stamp | null) {
-  const [, setTick] = useState(0);
-  const target = at ? toStampDate(at).getTime() : null;
-  useEffect(() => {
-    if (target === null) return;
-    const delay = target - Date.now() + 1;
-    if (delay <= 0 || delay > MAX_TIMER_MS) return;
-    const id = setTimeout(() => setTick((n) => n + 1), delay);
-    return () => clearTimeout(id);
-  }, [target]);
-}
 
 export function InboxRow({
   row,

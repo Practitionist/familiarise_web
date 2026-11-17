@@ -69,6 +69,7 @@ The referral programme design, launch scope and fraud doctrine live in the `grow
 - **Support holds and remedies.** `EarningsHoldReason.SUPPORT_CASE` holds are placed by `lib/support/case-holds.ts`. A service complaint (`SupportCase`) refund is proposed as a `SupportFinancialRecommendation`, decided by a second operator, and only then executed through `refundBookingPayment` (`lib/support/case-actions.ts`); a recommendation moves no money. The staff caps in `lib/support/money-policy.ts` (`assertBoundedRefund`) are checked on that approve-and-execute path. A dispute is the gateway chargeback (`Dispute`), a different thing.
 - **Metrics totals.** The revenue total and this month on Metrics (both trees, ADMIN and STAFF) sum the same `SUCCEEDED` payments in paise (`lib/backoffice/platform-totals.ts`); "this month" starts at 00:00 IST.
 - **Ops proposals.** Back-office money doors above ₹25,000 answer `202` and wait for a second admin (`lib/backoffice/ops-proposals.ts`, `withOpsAction` in `lib/backoffice/ops-action-log.ts`).
+- **Money lists.** The back-office money lists select an allowlist and map it field by field (`lib/backoffice/money-list-schemas.ts` is the shared body, parsed by each screen); name a booking with `bookingRefOf` (`lib/data/booking-title.ts`) in the same joined read, and a console target with `resolveTargets` (`lib/backoffice/target-refs.ts`); page through `readPageParams` (at most 100 rows). A TDS filing date is the IST day (`istFilingDate`).
 
 ## Invoice capture recovery
 

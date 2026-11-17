@@ -16,7 +16,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { NewsletterSource, NewsletterStatus } from "@prisma/client";
-import { format } from "date-fns";
+import { z } from "zod";
 import { Download, Mail, Send, Users } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -43,6 +43,14 @@ import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { newsletterStatusBadge } from "@/lib/labels/session-labels";
+import { readListBody } from "@/lib/backoffice/money-list-schemas";
+import {
+  audiencePreviewSchema,
+  broadcastResultSchema,
+  subscriberPageSchema,
+  type SubscriberPage,
+} from "@/lib/backoffice/people-list-schemas";
+import { OperatorTime } from "@/lib/time/operator-time";
 import { useToast } from "@/components/ui/use-toast";
 import {
   BROADCAST_AUDIENCE_LIMIT,
@@ -50,29 +58,13 @@ import {
   settledSendable,
   type BroadcastAudience,
 } from "@/lib/newsletter/broadcast-audience";
+import { broadcastSendBody } from "@/lib/backoffice/people-door-bodies";
 
 const ALL = "all";
 const PER_PAGE = 50;
 
-type Subscriber = {
-  id: string;
-  email: string;
-  name: string | null;
-  status: NewsletterStatus;
-  source: NewsletterSource;
-  tags: string[];
-  confirmedAt: string | null;
-  unsubscribedAt: string | null;
-  createdAt: string;
-};
-
-type SubscribersResponse = {
-  items: Subscriber[];
-  total: number;
-  page: number;
-  perPage: number;
-  stats: Record<NewsletterStatus, number>;
-};
+type SubscribersResponse = SubscriberPage;
+type Subscriber = SubscriberPage["items"][number];
 
 type Filters = {
   status: string;
@@ -95,18 +87,12 @@ async function fetchSubscribers(
   filters: Filters,
 ): Promise<SubscribersResponse> {
   const response = await fetch(`/api/admin/newsletter?${toQuery(filters)}`);
-  if (!response.ok) throw new Error("Failed to load subscribers");
-  return response.json();
+  return readListBody(
+    response,
+    subscriberPageSchema,
+    "Subscribers could not load.",
+  );
 }
-
-type AudiencePreview = {
-  matching: number;
-  sendable: number;
-  skippedNoConsent: number;
-  skippedSuppressed: number;
-  skippedHeld: number;
-  limit: number;
-};
 
 type SendMode = "test" | "warmup" | "all";
 
@@ -116,15 +102,24 @@ const ROLE_LABELS: Record<(typeof BROADCAST_ROLES)[number], string> = {
   NO_ACCOUNT: "No account",
 };
 
-async function postBroadcast<T>(body: unknown): Promise<T> {
+/** Posts to the broadcast route and parses its answer; a refusal throws with the route's copy. */
+async function postBroadcast<S extends z.ZodTypeAny>(
+  body: unknown,
+  schema: S,
+): Promise<z.infer<S>> {
   const response = await fetch("/api/admin/newsletter/broadcast", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  const payload = await response.json();
-  if (!response.ok) throw new Error(payload.error ?? "Failed to send");
-  return payload as T;
+  const payload: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    const refusal = z.object({ error: z.string() }).safeParse(payload);
+    throw new Error(refusal.success ? refusal.data.error : "Failed to send");
+  }
+  const parsed = schema.safeParse(payload);
+  if (!parsed.success) throw new Error("The send's answer could not be read.");
+  return parsed.data;
 }
 
 function toAudience(
@@ -218,13 +213,12 @@ const COLUMNS: ResponsiveColumn<Subscriber>[] = [
   {
     key: "joined",
     header: "Signed up",
-    cell: (row) => format(new Date(row.createdAt), "MMM d, yyyy"),
+    cell: (row) => <OperatorTime value={row.createdAt} kind="date" />,
   },
   {
     key: "confirmed",
     header: "Confirmed",
-    cell: (row) =>
-      row.confirmedAt ? format(new Date(row.confirmedAt), "MMM d, yyyy") : "—",
+    cell: (row) => <OperatorTime value={row.confirmedAt} kind="date" />,
   },
 ];
 
@@ -258,21 +252,25 @@ export function NewsletterManagement() {
   const preview = useQuery({
     queryKey: ["admin-newsletter-audience", audience],
     queryFn: () =>
-      postBroadcast<AudiencePreview>({ mode: "preview", audience }),
+      postBroadcast({ mode: "preview", audience }, audiencePreviewSchema),
     enabled: canSend,
     placeholderData: keepPreviousData,
   });
 
   const broadcast = useMutation({
-    mutationFn: (mode: SendMode) =>
-      postBroadcast<{ sent: number; failed: number; total: number }>({
-        mode,
-        subject,
-        htmlBody,
-        ...(mode === "test" ? {} : { audience }),
-        ...(mode === "warmup" ? { limit: warmupLimit } : {}),
-      }),
-    onSuccess: (result, mode) => {
+    mutationFn: ({ mode, reason }: { mode: SendMode; reason: string }) =>
+      postBroadcast(
+        broadcastSendBody({
+          mode,
+          subject,
+          htmlBody,
+          reason,
+          audience,
+          warmupLimit,
+        }),
+        broadcastResultSchema,
+      ),
+    onSuccess: (result, { mode }) => {
       toast({
         title: mode === "test" ? "Test sent to you" : "Newsletter sent",
         description: `${result.sent} delivered, ${result.failed} failed, ${result.total} addressed.`,
@@ -281,15 +279,6 @@ export function NewsletterManagement() {
       setSubject("");
       setHtmlBody("");
       queryClient.invalidateQueries({ queryKey: ["admin-newsletter"] });
-    },
-    onError: (failure, mode) => {
-      // Dialog sends show their failure inside the dialog, which stays open.
-      if (mode !== "test") return;
-      toast({
-        title: "Test not sent",
-        description: failure.message,
-        variant: "destructive",
-      });
     },
   });
 
@@ -487,15 +476,26 @@ export function NewsletterManagement() {
               </div>
 
               <div className="flex flex-wrap items-end gap-3">
-                <Button
-                  variant="outline"
-                  disabled={
-                    broadcast.isPending || !messageReady || !previewReady
+                {/* Every send is an audited door: each dialog asks for the reason. */}
+                <ConfirmDialog
+                  trigger={
+                    <Button
+                      variant="outline"
+                      disabled={
+                        broadcast.isPending || !messageReady || !previewReady
+                      }
+                    >
+                      <Mail className="mr-2 h-4 w-4" /> Send test to me
+                    </Button>
                   }
-                  onClick={() => broadcast.mutate("test")}
-                >
-                  <Mail className="mr-2 h-4 w-4" /> Send test to me
-                </Button>
+                  title="Send a test to yourself?"
+                  description={`"${subject.trim()}" goes to your own address only.`}
+                  confirmLabel="Send test"
+                  requireReason={{ label: "Reason" }}
+                  onConfirm={async ({ reason = "" }) => {
+                    await broadcast.mutateAsync({ mode: "test", reason });
+                  }}
+                />
 
                 <div className="flex items-end gap-2">
                   <div className="space-y-1">
@@ -536,8 +536,9 @@ export function NewsletterManagement() {
                     title={`Send to the ${warmupCount} most recently confirmed?`}
                     description={`"${subject.trim()}" goes out now to the ${warmupCount} subscribers in this audience who confirmed most recently. An email cannot be recalled.`}
                     confirmLabel="Send warm-up"
-                    onConfirm={async () => {
-                      await broadcast.mutateAsync("warmup");
+                    requireReason={{ label: "Reason" }}
+                    onConfirm={async ({ reason = "" }) => {
+                      await broadcast.mutateAsync({ mode: "warmup", reason });
                     }}
                   />
                 </div>
@@ -561,8 +562,9 @@ export function NewsletterManagement() {
                   title={`Send to ${sendable} subscribers?`}
                   description={`"${subject.trim()}" goes out now to every sendable subscriber in this audience. An email cannot be recalled.`}
                   confirmLabel="Send newsletter"
-                  onConfirm={async () => {
-                    await broadcast.mutateAsync("all");
+                  requireReason={{ label: "Reason" }}
+                  onConfirm={async ({ reason = "" }) => {
+                    await broadcast.mutateAsync({ mode: "all", reason });
                   }}
                 />
               </div>

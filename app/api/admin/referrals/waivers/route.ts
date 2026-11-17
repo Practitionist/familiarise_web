@@ -115,7 +115,8 @@ export async function GET(req: NextRequest) {
           },
         },
       },
-      orderBy: { createdAt: "desc" },
+      // Newest first; the id breaks a tie so a page never repeats a waiver.
+      orderBy: [{ createdAt: "desc" }, { id: "asc" }],
       skip,
       take: limit,
     }),

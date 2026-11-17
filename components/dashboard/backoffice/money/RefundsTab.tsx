@@ -10,7 +10,10 @@ import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
+import { targetRefSchema } from "@/lib/backoffice/money-list-schemas";
+import { OperatorTime } from "@/lib/time/operator-time";
 import { callOpsDoor } from "./ops-door";
+import { TargetCell } from "./TargetCell";
 import { RefundDoorDialog, type RefundDoor } from "./RefundDoorDialog";
 
 const NeedsHumanList = z.object({
@@ -42,6 +45,8 @@ const NeedsHumanList = z.object({
       details: z.string().nullish(),
       /** An ended credit plan: ops may answer that no credit is owed. */
       creditPlan: z.boolean().optional(),
+      /** Who paid, and for which booking. */
+      target: targetRefSchema.nullable().optional(),
     }),
   ),
 });
@@ -92,6 +97,7 @@ function doorFor(item: NeedsHuman) {
 export function RefundDoorsPanel() {
   const params = useSearchParams();
   const tree = useParams<{ tree?: string }>()?.tree ?? "admin";
+  const basePath = `/dashboard/${tree}`;
   const linkedPayment = params.get("paymentId");
   // A booking's Ops actions link here with `?door=issue&paymentId=…`.
   const [open, setOpen] = useState<{
@@ -149,8 +155,19 @@ export function RefundDoorsPanel() {
                   key={item.id}
                   className="flex flex-wrap items-center justify-between gap-2 p-3 text-sm"
                 >
-                  <div className="min-w-0 flex-1">
+                  <div className="min-w-0 flex-1 space-y-1">
+                    {item.paymentId && item.target && (
+                      <TargetCell
+                        kind="Payment"
+                        id={item.paymentId}
+                        target={item.target}
+                        basePath={basePath}
+                      />
+                    )}
                     <span>{item.message}</span>
+                    <p className="text-xs text-muted-foreground">
+                      <OperatorTime value={item.createdAt} />
+                    </p>
                     {item.details && (
                       <details className="text-xs text-muted-foreground">
                         <summary>Details</summary>
