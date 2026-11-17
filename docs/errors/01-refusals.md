@@ -32,6 +32,19 @@ A server action cannot throw a refusal, because anything a `"use server"` functi
 
 The browser half lives in `lib/errors/client-refusal.ts`. `userMessageFrom(error, fallback?)` returns the sentence a toast should show for any of the three shapes a refusal travels in: an `ApiResponseError` from `requireJsonResponse` (its `message` is already the body's `error`, and `detail.error` is preferred when present), a `Refusal` thrown locally, or an `ActionResult` with `ok: false`. Anything else gets the generic fallback, never the raw text of an unknown error. `isExpectedRefusal(error)` is true for the same three shapes, with an `ApiResponseError` counting only when its status is a 4xx, and every client-side capture on a converted page is gated on it so that a refusal is shown and not reported. `refusalFromShape(shape)` rehydrates a wire refusal into a `Refusal` so client code can throw and match on it.
 
+## Where a refusal's title and words live
+
+A refusal toast has a title that names the problem and a body that says what to do next. The body is usually the server's own sentence (the refusal's `userMessage`), because the server knows the facts that make it specific: the deadline, the count, the amount. The title is chosen on the client from the refusal's `code`, in one table: `TYPED_CODE_TOAST_MAP` in `lib/errors/mapping/payment-error-toast-map.ts`, read through `codedRefusalToast(code, serverSentence, fallbackTitle)`. A code the table does not list keeps the caller's own title, which names the action that failed ("Couldn't request a reschedule"). Checkout's coarse error types keep their titles in `ERROR_TOAST_MAP` in the same file, read through `getErrorToast`. Every title is sentence case with no trailing "!", and no toast is titled "Error" or "Not done"; `__tests__/errors/refusal-titles.test.ts` fails if one comes back.
+
+For example, an expert's third reschedule of one booking answers 409 `EXPERT_RESCHEDULE_CAP`. The toast is titled "No reschedules left on this booking", and its body is the server's sentence, which says to cancel instead, that the client is refunded in full, and that the cancellation is recorded on the expert's reliability record. A class make-up refused with `MAKEUP_WINDOW_LAPSED` has one sentence for each of its five conditions, and the deadline one names the date in the viewer's zone, 14 days after the session was cancelled (`makeUpWindowRefusal` in `lib/booking/class-sessions.ts`).
+
+The code and the HTTP status of a refusal never change when its words do. A client branches on the code, so a copy change is safe for every caller.
+
 ## What is deliberately not on the rail
 
 Money refusals keep their own classes. `RefundError`, `RefundGatewayError` and `RefundValidationError` are modelled outcomes that still need a human, so where a route or a moderation job records one for follow-up it now reports it through `reportSentryError` as expected at `warning` rather than as an unexpected error, and the durable `recordSystemError` row is unchanged. Their throw sites and the money logic are untouched. Similarly, a genuine failure is still a failure: a 504 from a Novu trigger, a network error during checkout, or a 5xx from any route is captured exactly as before.
+
+## Deprecated & Superseded Approaches
+
+1. **"Error" as a toast title.** Thirty-eight catch blocks titled their toast "Error" and some back-office doors "Not done", so a person read the problem only in the body. Each now names what failed, and coded refusals take their title from the table above.
+2. **Title Case checkout titles.** The checkout table read "No Free Time In The First Week"; it is sentence case now.
