@@ -327,20 +327,13 @@ describe("who a removal names", () => {
 
 describe("seat holders", () => {
   it.each([
-    ["ACCEPTED", "u-guest is now co-hosting Systems."],
-    ["WITHDRAWN", "u-guest is no longer co-hosting Systems."],
-    ["REMOVED", "u-guest is no longer co-hosting Systems."],
+    ["ACCEPTED", "Guest is now co-hosting Systems."],
+    ["WITHDRAWN", "Guest is no longer co-hosting Systems."],
+    ["REMOVED", "Guest is no longer co-hosting Systems."],
   ] as const)(
     "hear, as a required notice, that the co-presenter changed on %s",
     async (event, sentence) => {
       seatHolders = ["u-l1", "u-l2"];
-      users["u-guest"] = person("u-guest");
-      tx.consultantProfile.findUnique.mockImplementation(
-        async ({ where }: { where: { id: string } }) =>
-          where.id === "cp-guest"
-            ? { userId: "u-guest", user: { name: "u-guest", erasedAt: null } }
-            : hostProfile,
-      );
       await stage(event);
       expect(learnerBells()).toHaveLength(1);
       expect(learnerBells()[0].recipients).toEqual(["u-l1", "u-l2"]);

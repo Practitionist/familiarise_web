@@ -481,8 +481,8 @@ describe("the invitation expiry sweep", () => {
     ];
     // The invitee's terms were changed after the sweep listed the row.
     mockTx.collaborator.findMany.mockResolvedValueOnce([
-      { id: "lapsed" },
-      { id: "fresh" },
+      { id: "lapsed", updatedAt: daysAgo(15) },
+      { id: "fresh", updatedAt: daysAgo(15) },
     ]);
 
     await expect(expireStaleCollaboratorInvites()).resolves.toEqual({
@@ -505,8 +505,8 @@ describe("the invitation expiry sweep", () => {
       id: "lapsed",
       status: { in: ["PENDING"] },
     });
-    const cutoffAgeDays = (Date.now() - where.updatedAt!.lt.getTime()) / DAY_MS;
-    expect(cutoffAgeDays).toBeCloseTo(14, 3);
+    const cutoff = where.updatedAt instanceof Date ? null : where.updatedAt?.lt;
+    expect((Date.now() - (cutoff?.getTime() ?? 0)) / DAY_MS).toBeCloseTo(14, 3);
     expect(data).toEqual({ status: "EXPIRED", endedByUserId: null });
     expect(mockStageNotices.mock.calls.map(([, event]) => event)).toEqual([
       "EXPIRED",
