@@ -147,24 +147,11 @@ export async function POST(
 
       const isOneToMany = isOneToManyAppointmentType(appointmentType);
 
-      if (isOneToMany && access.role === "host") {
+      // Hosts, presenters and speaking crew talk, show their camera and share a screen from the moment they join.
+      if (isOneToMany && (access.role === "host" || access.speakingCrew)) {
         const grantPayload = {
           user_id: userId,
           grant_permissions: [...PUBLISH_PERMISSIONS],
-        };
-        assertValidUpdateUserPermissions(grantPayload);
-        await call.updateUserPermissions(grantPayload);
-      } else if (isOneToMany && access.speakingCrew) {
-        // Speaking crew talk and show their camera from the moment they join; sharing a screen stays with the hosts.
-        const revokePayload = {
-          user_id: userId,
-          revoke_permissions: ["screenshare"],
-        };
-        assertValidUpdateUserPermissions(revokePayload);
-        await call.updateUserPermissions(revokePayload);
-        const grantPayload = {
-          user_id: userId,
-          grant_permissions: ["send-audio", "send-video"],
         };
         assertValidUpdateUserPermissions(grantPayload);
         await call.updateUserPermissions(grantPayload);

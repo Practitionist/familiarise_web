@@ -26,7 +26,7 @@ Two steps decide a join, and both read the `Collaborator` row at the time of the
 
 Notes on the table:
 
-- **Speaking crew talk from the moment they join.** They do not wait to be brought on stage. Sharing a screen stays with the host and the presenter.
+- **Speaking crew talk from the moment they join.** They do not wait to be brought on stage, and they can share a screen as the host and the presenter can.
 - **Support crew join as attendees.** A host can bring one on stage: the stage route (`app/api/meetings/[meetingId]/stage/route.ts`) accepts a member of the plan's current team (`currentTeam`) as its target, although they hold no seat.
 - **Presenter controls.** A presenter can record and end the session, as `ROLE_INFO` tells them on the invitation. Taking the room live is the host's alone: the host-live route refuses a caller marked `coPresenter`.
 - **The call type's grants are unchanged.** Everything above is a per-user permission write at join, not a change to what the `co_presenter` or `call_member` role may do on the Stream app.

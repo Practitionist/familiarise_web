@@ -19,7 +19,7 @@ export function tierForRole(role: CollaboratorRole): CollaboratorTier {
   return isPresenterRole(role) ? "PRESENTER" : "CREW";
 }
 
-/** Crew who join a session able to speak and show video; other crew join as attendees. */
+/** Crew who join a session able to speak, show video and share a screen; other crew join as attendees. */
 export const SPEAKING_CREW_ROLES: readonly CollaboratorRole[] = [
   "GUEST_SPEAKER",
   "GUEST_LECTURER",
@@ -43,7 +43,7 @@ const PRESENTER_CAN = [
 ] as const;
 
 const SPEAKING_CAN = [
-  "Joins each session able to speak and share video",
+  "Joins each session able to speak, show video and share a screen",
   "Joins the team chat and each session's chat",
 ] as const;
 

@@ -383,12 +383,9 @@ describe("POST /api/meetings/[meetingId]/join", () => {
       [{ grant_permissions: ["send-audio", "send-video", "screenshare"] }],
     ],
     [
-      "speaking crew talk and show their camera, without screen share",
+      "speaking crew talk, show their camera and share a screen",
       { role: "participant", speakingCrew: true },
-      [
-        { revoke_permissions: ["screenshare"] },
-        { grant_permissions: ["send-audio", "send-video"] },
-      ],
+      [{ grant_permissions: ["send-audio", "send-video", "screenshare"] }],
     ],
     [
       "support crew join as attendees",
