@@ -29,7 +29,7 @@ import {
   getDaysInMonth,
   type Day,
 } from "date-fns";
-import { formatInTimeZone } from "date-fns-tz";
+import { formatInViewerZone } from "@/lib/time/viewer-zone";
 import {
   ChevronLeft,
   ChevronRight,
@@ -1411,7 +1411,7 @@ export function UnifiedCalendar({
       ) {
         return;
       }
-      const key = formatInTimeZone(cell.startMs, gridZone, "yyyy-MM-dd");
+      const key = formatInViewerZone(cell.startMs, gridZone, "yyyy-MM-dd");
       const starts = byDay.get(key) ?? [];
       starts.push(cell.startMs);
       byDay.set(key, starts);

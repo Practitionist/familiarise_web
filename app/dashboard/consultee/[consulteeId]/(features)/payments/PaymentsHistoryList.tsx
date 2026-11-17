@@ -17,6 +17,7 @@ import {
   type MoneyState,
 } from "@/lib/dashboard/money-state";
 import type { ConsulteePaymentRow } from "@/lib/data/consultee-payments";
+import { useZoneClock } from "@/lib/time/use-zone-clock";
 import { FailedRefundNote } from "./FailedRefundNote";
 
 /**
@@ -50,10 +51,11 @@ interface Row {
   moneyState: MoneyState;
 }
 
-function toRow(payment: ConsulteePaymentRow): Row {
+function toRow(payment: ConsulteePaymentRow, viewerZone: string): Row {
   const { moneyState } = derivePaymentPresentation(
     payment.presentation,
     "CONSULTEE",
+    { viewerZone },
   );
   return { payment, moneyState };
 }
@@ -79,7 +81,11 @@ export function PaymentsHistoryList({
   /** Filters in force change what "empty" means. */
   emptyTitle?: string;
 }>) {
-  const rows = useMemo(() => payments.map(toRow), [payments]);
+  const { zone: viewerZone } = useZoneClock();
+  const rows = useMemo(
+    () => payments.map((payment) => toRow(payment, viewerZone)),
+    [payments, viewerZone],
+  );
 
   // Newest first, as the read orders them; the month header changes when the
   // month does.

@@ -60,7 +60,7 @@ Use G-SUB's allocate page (60-min sessions, 3 a week, 1 a day) and G-REQ's (90-m
 
 **Expect:**
 
-- 1: heading like "Choose times for 3 sessions (1 hour each)" or "0 of 3 picked for this cycle · …" (quote it); a dashed "Session 1 · point at a free time to preview it, then click to place it".
+- 1: heading like "Choose times for 3 sessions (1 hour each)" or "0 of 3 picked for this cycle · …" (quote it); a dashed "Session 1 · choose a free time on the grid".
 - 2: numbered picks "Session 1 · Mon <d> · 9:00 am–10:00 am", 2, 3, each with a remove button; the placeholder disappears at 3 of 3.
 - 3: the live text reads "1 of 3 times picked", "2 of 3 times picked", "3 of 3 times picked".
 - 4: the grid scrolls to the picks.

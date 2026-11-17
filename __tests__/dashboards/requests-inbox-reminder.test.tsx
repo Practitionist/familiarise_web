@@ -30,6 +30,7 @@ import {
   rowActions,
 } from "@/components/dashboard/shared/requests/InboxRow";
 import type { InboxRowInput } from "@/lib/dashboard/requests-inbox-state";
+import { formatInViewerZone } from "@/lib/time/viewer-zone";
 import {
   CP,
   NOW,
@@ -91,6 +92,26 @@ describe.each(["consultation"] as const)("%s reminder eligibility", (kind) => {
     expect(rows).toHaveLength(1);
     return rows[0];
   }
+
+  it("prints the hold's time in the viewer's profile zone, not the runtime's", async () => {
+    const row = await readOne(base);
+    const hold = row.presentation.holdExpiresAt as Date;
+    const html = renderToStaticMarkup(
+      <InboxRow
+        row={row}
+        viewer={{ zone: "America/Los_Angeles", own: true }}
+        selectable={false}
+        selected={false}
+        busy={false}
+        now={NOW}
+        onSelect={() => undefined}
+        onAction={() => undefined}
+      />,
+    );
+    expect(html).toContain(
+      formatInViewerZone(hold, "America/Los_Angeles", "EEE d MMM HH:mm"),
+    );
+  });
 
   it("offers a live reminder without exposing the recipient email or payment link", async () => {
     const row = await readOne(base);

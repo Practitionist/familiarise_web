@@ -369,7 +369,7 @@ export function InboxRow({
   const presentation = deriveBookingPresentation(
     row.presentation,
     "CONSULTANT",
-    { now },
+    { now, viewerZone: viewer.zone },
   );
   const { bookingState, moneyState } = presentation;
   useRerenderAfter(row.reminderExpiresAt);

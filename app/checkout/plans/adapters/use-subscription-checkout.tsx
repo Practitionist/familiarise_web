@@ -9,7 +9,6 @@ import {
   PLAN_EMAIL_SUPPORT_LABEL,
   planLevelLabel,
 } from "@/lib/labels/plan-labels";
-import { firstCycleWindow, lastInstantBefore } from "@/lib/booking/entitlement";
 import {
   planDurationText,
   planPriceLabel,
@@ -35,6 +34,7 @@ import {
 } from "../components/PlanCheckoutShell";
 import { CheckoutTotalNotes } from "../components/CheckoutTotals";
 import { reportPaymentsError } from "../utils";
+import { firstCycleLines } from "./first-cycle-lines";
 import { loadErrorMessage, planIncludes, searchParamsKey } from "./shared";
 
 // price arrives as number: extended client + JSON serialization
@@ -134,25 +134,6 @@ export function useSubscriptionCheckout(
     };
   }, [validatedSearchParams]);
 
-  // The first cycle as the buyer will see it, in their profile zone (display
-  // only; the persisted window is the server's).
-  const firstCycle = useMemo(() => {
-    const start = effectiveSearchParams?.schedulingPeriodStartsAt;
-    if (!planData?.data || !start) return null;
-    return firstCycleWindow(
-      {
-        sessionsPerWeek: planData.data.sessionsPerWeek ?? 1,
-        durationInMonths: planData.data.durationInMonths ?? 1,
-      },
-      new Date(start),
-      viewer.zone,
-    );
-  }, [
-    planData?.data,
-    effectiveSearchParams?.schedulingPeriodStartsAt,
-    viewer.zone,
-  ]);
-
   // The expert's room for this cadence over the first weeks, counting today's
   // bookings. Advisory: checkout itself refuses only an empty first week.
   const feasibilityQuery = useQuery({
@@ -175,6 +156,27 @@ export function useSubscriptionCheckout(
     },
   });
   const feasibility = feasibilityQuery.data ?? null;
+
+  // The first cycle in the zone the server cuts it in (the expert's scheduling
+  // zone, from the feasibility read), so the buyer reads the dates it stores.
+  const cycleZone = feasibility?.zone ?? null;
+  const startIso = effectiveSearchParams?.schedulingPeriodStartsAt;
+  const sessionsPerWeekTerm = plan?.sessionsPerWeek ?? 1;
+  const durationInMonthsTerm = plan?.durationInMonths ?? 1;
+  const firstCycle = useMemo(
+    () =>
+      cycleZone && plan && startIso
+        ? firstCycleLines(
+            startIso,
+            {
+              sessionsPerWeek: sessionsPerWeekTerm,
+              durationInMonths: durationInMonthsTerm,
+            },
+            cycleZone,
+          )
+        : null,
+    [cycleZone, plan, startIso, sessionsPerWeekTerm, durationInMonthsTerm],
+  );
 
   // Periodic staleness check: warn once the first cycle has elapsed.
   const cycleEnd = firstCycle?.end;
@@ -278,30 +280,21 @@ export function useSubscriptionCheckout(
           "string" && (
           <>
             <CheckoutDetailRow label="Starts" className="text-right text-sm">
-              {formatInViewerZone(
-                effectiveSearchParams.schedulingPeriodStartsAt,
-                viewer.zone,
-                DATE_PATTERN,
-              )}
+              {firstCycle?.starts ??
+                formatInViewerZone(
+                  effectiveSearchParams.schedulingPeriodStartsAt,
+                  viewer.zone,
+                  DATE_PATTERN,
+                )}
             </CheckoutDetailRow>
             {firstCycle && (
               <CheckoutDetailRow
                 label="First cycle"
                 className="text-right text-sm"
               >
-                {formatInViewerZone(
-                  firstCycle.start,
-                  viewer.zone,
-                  DATE_PATTERN,
-                )}{" "}
-                →{" "}
-                {formatInViewerZone(
-                  lastInstantBefore(firstCycle.end),
-                  viewer.zone,
-                  DATE_PATTERN,
-                )}{" "}
-                · {sessionsPerWeek} session{sessionsPerWeek === 1 ? "" : "s"}{" "}
-                per cycle · {plan?.totalSessions ?? "—"} in the plan
+                {firstCycle.cycle} · {sessionsPerWeek} session
+                {sessionsPerWeek === 1 ? "" : "s"} per cycle ·{" "}
+                {plan?.totalSessions ?? "—"} in the plan
               </CheckoutDetailRow>
             )}
             <Separator className="bg-border" />

@@ -16,7 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { CheckCircle } from "lucide-react";
 import { ClassPlanProgram } from "@/lib/explore/programs";
 import { useBuyerPrice } from "@/components/pricing/BuyerPriceProvider";
-import { formatInTimeZone } from "date-fns-tz";
+import { formatInViewerZone } from "@/lib/time/viewer-zone";
 import { eventCapacityFromCount } from "@/lib/events/capacity";
 import { FreeCancellationLine } from "@/components/events/FreeCancellationLine";
 import type { BatchCard } from "@/lib/booking/batch-cards";
@@ -151,7 +151,7 @@ export function ClientClassRegistration({
         <CardContent>
           <p className="text-muted-foreground mb-4">
             {startDate
-              ? `Class starts on ${formatInTimeZone(new Date(startDate), userTimeZone, "MMMM d, yyyy 'at' h:mm a zzz")}`
+              ? `Class starts on ${formatInViewerZone(new Date(startDate), userTimeZone, "MMMM d, yyyy 'at' h:mm a zzz")}`
               : "Start date to be announced"}
           </p>
           {isFull && (
@@ -204,7 +204,7 @@ export function ClientClassRegistration({
           </div>
           <p className="text-sm text-muted-foreground mb-4">
             {startDate
-              ? `Class starts on ${formatInTimeZone(new Date(startDate), userTimeZone, "MMMM d, yyyy 'at' h:mm a zzz")}`
+              ? `Class starts on ${formatInViewerZone(new Date(startDate), userTimeZone, "MMMM d, yyyy 'at' h:mm a zzz")}`
               : "Start date to be announced"}
           </p>
           <p className="text-sm text-muted-foreground">
@@ -226,7 +226,7 @@ export function ClientClassRegistration({
         <CardContent>
           <p className="text-sm text-muted-foreground mb-4">
             {startDate
-              ? `Class starts on ${formatInTimeZone(new Date(startDate), userTimeZone, "MMMM d, yyyy 'at' h:mm a zzz")}`
+              ? `Class starts on ${formatInViewerZone(new Date(startDate), userTimeZone, "MMMM d, yyyy 'at' h:mm a zzz")}`
               : "Start date to be announced"}
           </p>
           <Badge
@@ -260,7 +260,7 @@ export function ClientClassRegistration({
       <CardContent>
         <p className="text-sm text-muted-foreground mb-4">
           {startDate
-            ? `Class starts on ${formatInTimeZone(new Date(startDate), userTimeZone, "MMMM d, yyyy 'at' h:mm a zzz")}`
+            ? `Class starts on ${formatInViewerZone(new Date(startDate), userTimeZone, "MMMM d, yyyy 'at' h:mm a zzz")}`
             : "Start date to be announced"}
         </p>
         <FreeCancellationLine

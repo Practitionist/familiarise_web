@@ -77,6 +77,7 @@ import WebinarCheckoutPage from "@/app/checkout/plans/webinar/[planId]/page";
 import ClassCheckoutPage from "@/app/checkout/plans/class/[planId]/page";
 import ConsultationCheckoutPage from "@/app/checkout/plans/consultation/[planId]/page";
 import SubscriptionCheckoutPage from "@/app/checkout/plans/subscription/[planId]/page";
+import { firstCycleLines } from "@/app/checkout/plans/adapters/first-cycle-lines";
 
 const future = (hours: number) =>
   new Date(Date.now() + hours * 3_600_000).toISOString();
@@ -183,6 +184,9 @@ describe("shared plan checkout", () => {
     expect(heading).toBeTruthy();
     expect(total).toBeTruthy();
     expect(screen.getByText("Pay with Razorpay")).toBeTruthy();
+    // A viewer outside their own zone reads the label once per time.
+    expect(document.body.textContent).toMatch(/\d:\d\d [AP]M UTC/);
+    expect(document.body.textContent).not.toMatch(/UTC UTC/);
   });
 
   it("renders the class checkout", async () => {
@@ -287,6 +291,7 @@ describe("shared plan checkout", () => {
               sessionsPerWeek: 2,
               notice: null,
               fullyBooked: true,
+              zone: "Asia/Kolkata",
             }),
           }
         : routed(input),
@@ -316,5 +321,43 @@ describe("shared plan checkout", () => {
     expect(total).toBeTruthy();
     expect(screen.getByText("Pay with Razorpay")).toBeTruthy();
     expect(await screen.findByText(/You pay/)).toBeTruthy();
+  });
+
+  it("prints the first cycle in the zone the server cuts it in, with its label", async () => {
+    // 20:00 UTC, ten days out: the next calendar day in India.
+    const day = new Date(Date.now() + 10 * 86_400_000);
+    day.setUTCHours(20, 0, 0, 0);
+    const start = day.toISOString();
+    const answer = global.fetch as jest.Mock;
+    const routed = answer.getMockImplementation()!;
+    answer.mockImplementation(async (input: RequestInfo | URL) =>
+      String(input).startsWith("/api/plans/subscriptions/plan1/feasibility")
+        ? {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              verdict: "ok",
+              firstWeekPlaceable: 2,
+              sessionsPerWeek: 2,
+              notice: null,
+              fullyBooked: false,
+              zone: "Asia/Kolkata",
+            }),
+          }
+        : routed(input),
+    );
+    renderPage(
+      <SubscriptionCheckoutPage
+        params={params}
+        searchParams={search({ schedulingPeriodStartsAt: start })}
+      />,
+    );
+    const lines = firstCycleLines(start, basePlan, "Asia/Kolkata");
+    expect(
+      await screen.findByText(lines.starts, {}, { timeout: 4000 }),
+    ).toBeTruthy();
+    expect(
+      await screen.findByText((text) => text.startsWith(lines.cycle)),
+    ).toBeTruthy();
   });
 });

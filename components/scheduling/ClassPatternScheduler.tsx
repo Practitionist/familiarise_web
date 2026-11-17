@@ -28,7 +28,7 @@ import {
 import { useAvailabilityWindow } from "@/lib/scheduling/use-availability-window";
 import { formatDateTimeLabel } from "@/lib/time/display";
 import { MAX_CLASS_SESSIONS_PER_DAY } from "@/utils/scheduling-engine/sessionCaps";
-import { formatInTimeZone } from "date-fns-tz";
+import { formatInViewerZone } from "@/lib/time/viewer-zone";
 import { z } from "zod";
 import { cn } from "@/utils/tailwind";
 
@@ -111,7 +111,7 @@ export function ClassPatternScheduler({
   const notBeforeMs =
     now.getTime() + eventLeadMs(mode === "retime" ? "retime" : "makeup");
   const [startDate, setStartDate] = useState(() =>
-    formatInTimeZone(new Date(notBeforeMs), zone, "yyyy-MM-dd"),
+    formatInViewerZone(new Date(notBeforeMs), zone, "yyyy-MM-dd"),
   );
   const phase = startDatePhase(startDate, zone);
   const times = useMemo(() => dayTimes(phase), [phase]);
@@ -256,7 +256,7 @@ export function ClassPatternScheduler({
             id="class-start-date"
             type="date"
             value={startDate}
-            min={formatInTimeZone(new Date(notBeforeMs), zone, "yyyy-MM-dd")}
+            min={formatInViewerZone(new Date(notBeforeMs), zone, "yyyy-MM-dd")}
             onChange={(event) => setStartDate(event.target.value)}
           />
           <p className="text-xs text-muted-foreground">Times are in {zone}.</p>

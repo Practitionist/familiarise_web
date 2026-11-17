@@ -20,6 +20,7 @@
  * `consultantProfileId`, the page runs `requirePersonalProfileAccess`.
  */
 
+import { UTC_ZONE } from "@/lib/time/viewer-zone";
 import { withLapsedRequestRestored } from "@/lib/appointments/lapsed-move";
 import prisma from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
@@ -456,10 +457,11 @@ function hrefsFor(
 
 /** The last step every row takes: derive once, so bucket and words agree. */
 function finish(row: Omit<InboxRowInput, "bucket">, now: Date): InboxRowInput {
+  // Only the state and deadline are kept; InboxRow re-derives the words in the viewer's zone.
   const { bookingState, nextAction } = deriveBookingPresentation(
     row.presentation,
     "CONSULTANT",
-    { now },
+    { now, viewerZone: UTC_ZONE },
   );
   // A paid plan's clock is capture + 48 h, not the request hold; an open
   // proposal's clock is its own expiry, after which the original time stays.

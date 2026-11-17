@@ -4,6 +4,7 @@ import { useCallback, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useProvidedZone, useZonedFormat } from "@/lib/time/zoned-format";
+import { useZoneClock } from "@/lib/time/use-zone-clock";
 import {
   formatInViewerZone,
   isValidTimeZone,
@@ -361,6 +362,8 @@ export function AppointmentDetailClient({
   const sessionFeedback = useSessionFeedback(appointmentId);
   useSetBreadcrumbLabel(mapped?.vm.title);
   const viewerZone = useProvidedZone();
+  // The provided zone, else the browser's once hydrated: what every printed hold time reads in.
+  const { zone: clockZone } = useZoneClock();
   const now = useNowTick();
   const refreshDetail = () => {
     void queryClient.invalidateQueries({
@@ -466,7 +469,11 @@ export function AppointmentDetailClient({
     }),
     role === "consultant" ? "CONSULTANT" : "CONSULTEE",
     // Every deadline and time on the page reads in the viewer's profile zone.
-    { joinWindowMs, viewerZone, heldOccurrenceIds: sessionFeedback.rateable },
+    {
+      joinWindowMs,
+      viewerZone: clockZone,
+      heldOccurrenceIds: sessionFeedback.rateable,
+    },
   );
   const { bookingState, moneyState, nextAction } = presentation;
   const postApproval = POST_APPROVAL.has(bookingState.state);
@@ -931,7 +938,12 @@ export function AppointmentDetailClient({
       }
       action={
         manageHref ? (
-          <Button variant="ghost" size="sm" className="-my-1.5 h-8" asChild>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="-my-1.5 h-8 min-h-9 sm:min-h-0"
+            asChild
+          >
             <Link href={manageHref}>
               <Users className="mr-1.5 h-3.5 w-3.5" />
               Manage
@@ -1224,7 +1236,12 @@ export function AppointmentDetailClient({
   return (
     <DashboardErrorBoundary>
       <div className={cn("w-full space-y-4", stickyCta && "pb-24 md:pb-0")}>
-        <Button variant="ghost" size="sm" className="-ml-2" asChild>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="-ml-2 min-h-9 sm:min-h-0"
+          asChild
+        >
           <Link href={backHref}>
             <ArrowLeft className="mr-1.5 h-4 w-4" />
             All appointments

@@ -175,6 +175,7 @@ The fourth pull request moves the people screens (Users, User 360, Verification,
 17. **D17: Organizations dates are IST.** The organization list, its verification queue and the SSO approvals print dates through `OperatorTime` (they used the US format, `9/14/2026`).
 
 18. **D18: every viewer-zone time is read through Intl (closes #2842 "[time][ux][P3] Viewer-zone times print an hour late inside the browser's spring-forward hour (date-fns-tz formatInTimeZone)").** `formatInViewerZone` in `lib/time/viewer-zone.ts` renders the repo's date-fns tokens from `Intl.DateTimeFormat(...).formatToParts`, so `useZonedFormat`, `formatForViewer` and the customer layouts' `ViewerZone` no longer print a time inside the browser's spring-forward hour an hour late, and an unsupported token throws.
+    - UI code never imports date-fns-tz `formatInTimeZone`: no file under `app/` or `components/` may, and a time a person reads goes through `formatInViewerZone` or `lib/time/display.ts` with `{ zone }`. `__tests__/time/no-format-in-time-zone-in-ui.test.ts` fails if one comes back, and lists, each with its reason, the `lib/` and `utils/` files whose server zone math still uses it.
 
 What a page load costs, in Postgres statements (a relation read without a join is its own statement; `PG_POOL_MAX=1` runs them one at a time):
 
