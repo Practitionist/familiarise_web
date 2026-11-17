@@ -2,7 +2,8 @@ import { z } from "zod";
 
 /**
  * Notices that reach the recipient whatever their switches say, because
- * someone else changed the recipient's booking. Only erasure stops them.
+ * someone else changed the recipient's booking or their place on a plan's
+ * team. Only erasure stops them.
  */
 export const REQUIRED_NOTICE_KINDS = [
   "CANCELLED_BY_HOST",
@@ -18,6 +19,8 @@ export const REQUIRED_NOTICE_KINDS = [
   "EVENT_MOVED",
   "SEAT_RELEASED",
   "CLASS_SESSION_REFUNDED",
+  "COLLABORATION_CHANGED",
+  "COHOST_CHANGED",
 ] as const;
 
 export const RequiredNoticeKindSchema = z.enum(REQUIRED_NOTICE_KINDS);
@@ -38,6 +41,9 @@ export const REQUIRED_NOTICE_LABEL: Record<RequiredNoticeKind, string> = {
   EVENT_MOVED: "class and webinar time changes",
   SEAT_RELEASED: "removed seats",
   CLASS_SESSION_REFUNDED: "refunds for class sessions the host missed",
+  COLLABORATION_CHANGED:
+    "co-hosting invitations and what the other side does with them",
+  COHOST_CHANGED: "a co-host joining or leaving a class or webinar you booked",
 };
 
 /** A per-send override: these recipients get this notice whatever their switches say. */
@@ -60,6 +66,6 @@ export function requiredNoticeOf(payload: unknown): RequiredNoticeKind | null {
 }
 
 /** The Settings line; built from the kinds so the copy cannot drift from the rule. */
-export const ALWAYS_SENT_LINE = `Always sent: changes someone else makes to your booking (${[
+export const ALWAYS_SENT_LINE = `Always sent: changes someone else makes to your booking or your co-hosting (${[
   ...new Set(REQUIRED_NOTICE_KINDS.map((kind) => REQUIRED_NOTICE_LABEL[kind])),
 ].join(", ")}).`;

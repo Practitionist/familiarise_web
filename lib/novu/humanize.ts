@@ -14,7 +14,12 @@
  * for any consumer that has to compute or branch on it.
  */
 
-import type { CancellationReason, SupportCaseStatus } from "@prisma/client";
+import type {
+  CancellationReason,
+  CollaboratorRole,
+  SupportCaseStatus,
+} from "@prisma/client";
+import { ROLE_INFO } from "@/lib/collaborators/roles";
 import prisma, { type Db } from "@/lib/prisma";
 import { ZONE_ABBREVIATION } from "@/lib/time/viewer-zone";
 import {
@@ -384,28 +389,13 @@ export function disputeStatusLabel(
     : key.replace(/_/g, " ");
 }
 
-/**
- * A collaborator's role as prose ("Co-host", not "CO_HOST").
- *
- * The template downcases whatever it gets, so the payload carries Title
- * Case with real hyphens — `co host` (underscore replaced after the fact)
- * is what the raw enum produced.
- */
-const COLLABORATOR_ROLE_LABEL: Record<string, string> = {
-  CO_HOST: "Co-host",
-  MODERATOR: "Moderator",
-  GUEST_SPEAKER: "Guest speaker",
-  TECHNICAL_SUPPORT: "Technical support",
-  CO_INSTRUCTOR: "Co-instructor",
-  TEACHING_ASSISTANT: "Teaching assistant",
-};
-
+/** A collaborator's role as prose ("Co-host", not "CO_HOST"), from the one role table. */
 export function collaboratorRoleLabel(role: string | null | undefined): string {
   const raw = role?.trim();
   if (!raw) return "Collaborator";
   const key = raw.toUpperCase().replace(/[\s-]+/g, "_");
-  return Object.hasOwn(COLLABORATOR_ROLE_LABEL, key)
-    ? COLLABORATOR_ROLE_LABEL[key]
+  return Object.hasOwn(ROLE_INFO, key)
+    ? ROLE_INFO[key as CollaboratorRole].label
     : key
         .toLowerCase()
         .split("_")
