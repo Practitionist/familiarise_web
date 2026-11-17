@@ -21,6 +21,7 @@ import {
 } from "@/lib/auth-helpers";
 import { maxParticipantsSchema, PlanCadenceSchema } from "@/schemas/plans";
 import { planTotalSessions } from "@/lib/booking/entitlement";
+import { reportSentryError } from "@/lib/observability/report";
 
 export async function GET(request: NextRequest) {
   try {
@@ -78,7 +79,11 @@ export async function GET(request: NextRequest) {
 
     return paginatedResponse(classPlans, total, page, limit);
   } catch (error) {
-    console.error("Error fetching class plans:", error);
+    reportSentryError(error, {
+      subsystem: "plans",
+      op: "class-plans.list",
+      expected: false,
+    });
     return NextResponse.json(
       { error: "An error occurred while fetching class plans" },
       { status: 500 },
@@ -240,7 +245,11 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ data: newClassPlan }, { status: 201 });
   } catch (error) {
-    console.error("Error creating class plan:", error);
+    reportSentryError(error, {
+      subsystem: "plans",
+      op: "class-plans.create",
+      expected: false,
+    });
     return NextResponse.json(
       { error: "An error occurred while creating the class plan" },
       { status: 500 },

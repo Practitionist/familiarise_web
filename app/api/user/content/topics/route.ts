@@ -1,5 +1,6 @@
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
+import { reportSentryError } from "@/lib/observability/report";
 
 export async function GET(req: NextRequest) {
   try {
@@ -24,7 +25,11 @@ export async function GET(req: NextRequest) {
       { status: 200 },
     );
   } catch (error) {
-    console.error("Error fetching topics:", error);
+    reportSentryError(error, {
+      subsystem: "content",
+      op: "topics.list",
+      expected: false,
+    });
     return NextResponse.json(
       { error: "An error occurred while fetching topics" },
       { status: 500 },
@@ -105,7 +110,11 @@ export async function POST(req: NextRequest) {
       { status: 201 },
     );
   } catch (error) {
-    console.error("Error creating topics:", error);
+    reportSentryError(error, {
+      subsystem: "content",
+      op: "topics.create",
+      expected: false,
+    });
     return NextResponse.json(
       { error: "An error occurred while creating the topics" },
       { status: 500 },
@@ -173,7 +182,11 @@ export async function DELETE(req: NextRequest) {
       { status: 200 },
     );
   } catch (error) {
-    console.error("Error deleting topics:", error);
+    reportSentryError(error, {
+      subsystem: "content",
+      op: "topics.delete",
+      expected: false,
+    });
     return NextResponse.json(
       { error: "An error occurred while deleting topics" },
       { status: 500 },

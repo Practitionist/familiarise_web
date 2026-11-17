@@ -13,6 +13,7 @@ import {
   decodeAppointmentsCursor,
 } from "@/lib/appointments/window";
 import { canReadEventSlots } from "@/lib/booking/event-slots-access";
+import { reportSentryError } from "@/lib/observability/report";
 
 export async function GET(request: NextRequest) {
   const authResult = await requireApiAuth();
@@ -199,7 +200,11 @@ export async function GET(request: NextRequest) {
       meta: { nextCursor },
     });
   } catch (error) {
-    console.error("Error fetching appointments:", error);
+    reportSentryError(error, {
+      subsystem: "bookings",
+      op: "scheduling.appointments.list",
+      expected: false,
+    });
     return NextResponse.json(
       { error: "An error occurred while fetching appointments" },
       { status: 500 },

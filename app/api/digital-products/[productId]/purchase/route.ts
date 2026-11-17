@@ -26,6 +26,7 @@ import {
   DigitalProductPurchaseInProgressError,
   lockDigitalProductPurchase,
 } from "@/utils/appointmentlock";
+import { reportSentryError } from "@/lib/observability/report";
 
 type RouteParams = { params: Promise<{ productId: string }> };
 
@@ -239,7 +240,11 @@ export async function POST(_request: Request, { params }: RouteParams) {
     // A set but unusable PLATFORM_GSTIN refuses pricing with a typed 503.
     const refused = refusalJson(error);
     if (refused) return refused;
-    console.error("Error creating digital product purchase:", error);
+    reportSentryError(error, {
+      subsystem: "payments",
+      op: "digital-product.purchase",
+      expected: false,
+    });
     return NextResponse.json(
       { error: "Failed to start purchase" },
       { status: 500 },

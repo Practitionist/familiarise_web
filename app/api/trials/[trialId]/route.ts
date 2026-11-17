@@ -192,7 +192,11 @@ export async function GET(request: NextRequest, context: RouteContext) {
       : trial;
     return NextResponse.json({ data });
   } catch (error) {
-    console.error("Error fetching trial session:", error);
+    reportSentryError(error, {
+      subsystem: "bookings",
+      op: "trial.get",
+      expected: false,
+    });
     return NextResponse.json(
       { error: "An error occurred while fetching trial session" },
       { status: 500 },

@@ -9,6 +9,7 @@ import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { getSession } from "@/lib/auth-server";
 import { supportError } from "@/lib/api/support-http";
 import { assertBodySize } from "@/lib/validation/limits";
+import { reportSentryError } from "@/lib/observability/report";
 export async function GET() {
   try {
     const session = await getSession();
@@ -30,7 +31,11 @@ export async function GET() {
 
     return NextResponse.json(feedbacks);
   } catch (error) {
-    console.error("Error fetching feedbacks:", error);
+    reportSentryError(error, {
+      subsystem: "feedback",
+      op: "feedback.list",
+      expected: false,
+    });
     return NextResponse.json(
       {
         error: "An unexpected error occurred while fetching your feedback",
@@ -115,7 +120,11 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(feedback, { status: 201 });
   } catch (error) {
-    console.error("Error creating feedback:", error);
+    reportSentryError(error, {
+      subsystem: "feedback",
+      op: "feedback.create",
+      expected: false,
+    });
     return NextResponse.json(
       {
         error: "An unexpected error occurred while submitting your feedback",
