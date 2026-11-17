@@ -15,13 +15,12 @@ export function firstCycleLines(
   startIso: string,
   plan: EntitlementPlanShape,
   zone: string,
-): { starts: string; cycle: string; end: Date } {
+): { starts: string; cycle: string } {
   const window = firstCycleWindow(plan, new Date(startIso), zone);
   const day = (at: Date) => formatInViewerZone(at, zone, DATE_PATTERN);
   const label = zoneLabel(window.start, zone);
   return {
     starts: `${day(window.start)} ${label}`,
     cycle: `${day(window.start)} → ${day(lastInstantBefore(window.end))} ${label}`,
-    end: window.end,
   };
 }

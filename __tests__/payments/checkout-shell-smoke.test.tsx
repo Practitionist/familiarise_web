@@ -323,6 +323,33 @@ describe("shared plan checkout", () => {
     expect(await screen.findByText(/You pay/)).toBeTruthy();
   });
 
+  it("an elapsed start still says so when the feasibility read fails", async () => {
+    const answer = global.fetch as jest.Mock;
+    const routed = answer.getMockImplementation()!;
+    answer.mockImplementation(async (input: RequestInfo | URL) =>
+      String(input).startsWith("/api/plans/subscriptions/plan1/feasibility")
+        ? { ok: false, status: 500, json: async () => ({}) }
+        : routed(input),
+    );
+    renderPage(
+      <SubscriptionCheckoutPage
+        params={params}
+        searchParams={search({
+          schedulingPeriodStartsAt: new Date(
+            Date.now() - 60 * 86_400_000,
+          ).toISOString(),
+        })}
+      />,
+    );
+    expect(
+      await screen.findByText(
+        "The start date has passed. Please go back and pick a new one.",
+        {},
+        { timeout: 4000 },
+      ),
+    ).toBeTruthy();
+  });
+
   it("prints the first cycle in the zone the server cuts it in, with its label", async () => {
     // 20:00 UTC, ten days out: the next calendar day in India.
     const day = new Date(Date.now() + 10 * 86_400_000);

@@ -449,6 +449,17 @@ describe("Schedule Validation", () => {
       ).toBe("Fix the 2 times marked in red before saving.");
     });
 
+    it("blocks an overnight tail that overlaps the next day, as submit does", () => {
+      expect(
+        availabilitySaveBlocker({
+          monday: [{ startTime: "23:00", endTime: "01:00", isValid: true }],
+          tuesday: [{ startTime: "00:30", endTime: "02:00", isValid: true }],
+        }),
+      ).toBe(
+        "Fix this before saving: Monday, slot 1: Overnight tail overlaps with Tuesday slot starting at 00:30",
+      );
+    });
+
     it("lets a valid week save", () => {
       expect(
         availabilitySaveBlocker({

@@ -327,7 +327,7 @@ export const validateAllSlotsDetailed = (
 
 /**
  * Why the availability editor cannot save yet, or null when it can: the week
- * needs at least one row, and every row must be valid.
+ * needs a row, and it must pass the same validation `handleSubmit` runs.
  */
 export const availabilitySaveBlocker = (
   slots: Record<string, SlotType[]>,
@@ -337,7 +337,10 @@ export const availabilitySaveBlocker = (
     return "Add at least one available time before saving.";
   }
   const invalid = rows.filter((slot) => !slot.isValid).length;
-  if (invalid === 0) return null;
+  if (invalid === 0) {
+    const [firstError] = validateAllSlotsDetailed(slots).errors;
+    return firstError ? `Fix this before saving: ${firstError}` : null;
+  }
   return invalid === 1
     ? "Fix the time marked in red before saving."
     : `Fix the ${invalid} times marked in red before saving.`;

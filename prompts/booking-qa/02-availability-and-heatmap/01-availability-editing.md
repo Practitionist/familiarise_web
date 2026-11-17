@@ -70,7 +70,7 @@ Rules for this file:
 
 **Expect:**
 
-- Inline messages: 1 "Slots cannot overlap"; 2 "Start and end time cannot be the same"; 3 "A slot can be at most 12 hours"; 4 "Session duration must be in multiples of 30 minutes" (08:15 is a 15-min step the picker allows). Each red row's inputs carry `aria-invalid="true"` and are described by the message (inputs are named like "Monday start, slot 2").
+- Inline messages: 1 "Slots cannot overlap"; 2 "Start and end time cannot be the same"; 3 "A slot can be at most 12 hours"; 4 "A slot must be at least 30 minutes" (the 15-minute row fails the length rule before the 30-minute step rule). Each red row's inputs carry `aria-invalid="true"` and are described by the message (inputs are named like "Monday start, slot 2").
 - Save on each: disabled, with "Fix the time marked in red before saving." beside it; no PUT. A week with no rows disables Save with "Add at least one available time before saving.". DB unchanged.
 - A time off the half-hour grid in the consultant's zone moves on entry, with one line under the row: "Moved to 09:30–10:30 so it starts on the half-hour booking grid.".
 

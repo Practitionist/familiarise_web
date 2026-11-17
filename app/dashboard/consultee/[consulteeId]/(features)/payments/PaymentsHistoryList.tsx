@@ -32,16 +32,18 @@ import { FailedRefundNote } from "./FailedRefundNote";
 const isFailedRow = (p: ConsulteePaymentRow) =>
   p.status === "FAILED" || p.status === "EXPIRED";
 
-const MONTH = new Intl.DateTimeFormat("en-IN", {
-  month: "long",
-  year: "numeric",
-  timeZone: "Asia/Kolkata",
-});
-const DAY = new Intl.DateTimeFormat("en-IN", {
-  day: "numeric",
-  month: "short",
-  timeZone: "Asia/Kolkata",
-});
+const monthFormat = (timeZone: string) =>
+  new Intl.DateTimeFormat("en-IN", {
+    month: "long",
+    year: "numeric",
+    timeZone,
+  });
+const dayFormat = (timeZone: string) =>
+  new Intl.DateTimeFormat("en-IN", {
+    day: "numeric",
+    month: "short",
+    timeZone,
+  });
 
 const typeLabel = (type: string | null) =>
   type ? type.charAt(0) + type.slice(1).toLowerCase() : null;
@@ -89,16 +91,18 @@ export function PaymentsHistoryList({
 
   // Newest first, as the read orders them; the month header changes when the
   // month does.
+  const day = useMemo(() => dayFormat(viewerZone), [viewerZone]);
   const groups = useMemo(() => {
+    const monthFmt = monthFormat(viewerZone);
     const out: { month: string; rows: Row[] }[] = [];
     for (const row of rows) {
-      const month = MONTH.format(new Date(row.payment.createdAt));
+      const month = monthFmt.format(new Date(row.payment.createdAt));
       const last = out.at(-1);
       if (last?.month === month) last.rows.push(row);
       else out.push({ month, rows: [row] });
     }
     return out;
-  }, [rows]);
+  }, [rows, viewerZone]);
 
   if (payments.length === 0) {
     return (
@@ -125,6 +129,7 @@ export function PaymentsHistoryList({
                 key={row.payment.id}
                 row={row}
                 consulteeId={consulteeId}
+                day={day}
               />
             ))}
           </ul>
@@ -137,7 +142,8 @@ export function PaymentsHistoryList({
 function HistoryRow({
   row,
   consulteeId,
-}: Readonly<{ row: Row; consulteeId: string }>) {
+  day,
+}: Readonly<{ row: Row; consulteeId: string; day: Intl.DateTimeFormat }>) {
   const { payment, moneyState } = row;
   // #1527 — the row opens the charge itself; the booking is one link further.
   const detailHref = `/dashboard/consultee/${consulteeId}/payments/${payment.id}`;
@@ -196,7 +202,7 @@ function HistoryRow({
       <div className="flex shrink-0 flex-col items-end gap-1.5">
         <StatusBadge {...rowBadge(row)} size="sm" />
         <span className="text-xs text-muted-foreground">
-          {DAY.format(new Date(payment.createdAt))}
+          {day.format(new Date(payment.createdAt))}
         </span>
         {receipt && (
           <a

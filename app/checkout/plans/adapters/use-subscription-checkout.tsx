@@ -32,6 +32,7 @@ import {
   type CheckoutPlanAdapter,
   type CheckoutSearchParams,
 } from "../components/PlanCheckoutShell";
+import { firstCycleWindow } from "@/lib/booking/entitlement";
 import { CheckoutTotalNotes } from "../components/CheckoutTotals";
 import { reportPaymentsError } from "../utils";
 import { firstCycleLines } from "./first-cycle-lines";
@@ -178,8 +179,25 @@ export function useSubscriptionCheckout(
     [cycleZone, plan, startIso, sessionsPerWeekTerm, durationInMonthsTerm],
   );
 
+  // The elapsed-start check must not wait on feasibility, so it falls back to
+  // the viewer zone until the expert's zone arrives.
+  const stalenessZone = cycleZone ?? viewer.zone;
+  const cycleEnd = useMemo(
+    () =>
+      plan && startIso
+        ? firstCycleWindow(
+            {
+              sessionsPerWeek: sessionsPerWeekTerm,
+              durationInMonths: durationInMonthsTerm,
+            },
+            new Date(startIso),
+            stalenessZone,
+          ).end
+        : null,
+    [plan, startIso, sessionsPerWeekTerm, durationInMonthsTerm, stalenessZone],
+  );
+
   // Periodic staleness check: warn once the first cycle has elapsed.
-  const cycleEnd = firstCycle?.end;
   useEffect(() => {
     if (!cycleEnd) return;
     const checkStaleness = () => {
@@ -199,10 +217,10 @@ export function useSubscriptionCheckout(
       throw new Error("A start date is required for subscriptions");
     }
     // The first cycle the buyer was shown must not have fully elapsed.
-    if (firstCycle && firstCycle.end.getTime() < Date.now()) {
+    if (cycleEnd && cycleEnd.getTime() < Date.now()) {
       throw new Error(START_PASSED);
     }
-  }, [effectiveSearchParams, planData, firstCycle]);
+  }, [effectiveSearchParams, planData, cycleEnd]);
 
   const checkoutPlanFields = useMemo(
     () =>
