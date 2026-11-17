@@ -10,7 +10,10 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import { Calendar, Clock, Users, GraduationCap, ArrowLeft } from "lucide-react";
 import { deriveBatchCards } from "@/lib/booking/batch-cards";
-import { CoHostList } from "@/app/explore/programs/plans/components/CoHostList";
+import {
+  CoHostList,
+  hasPublicExpertPage,
+} from "@/app/explore/programs/plans/components/CoHostList";
 import { BatchSchedule } from "./BatchSchedule";
 import { ClientClassRegistration } from "./ClientClassRegistration";
 import { BuyerPrice } from "@/components/pricing/BuyerPriceProvider";
@@ -187,13 +190,15 @@ export function ClassDetails({
                     An experienced professional dedicated to sharing knowledge
                     and expertise.
                   </p>
-                  <Link
-                    href={`/explore/experts/${plan.consultantProfile?.id}`}
-                    className="inline-flex items-center gap-1 text-sm font-medium text-foreground hover:text-muted-foreground mt-3"
-                  >
-                    View Full Profile
-                    <ArrowLeft className="w-4 h-4 rotate-180" />
-                  </Link>
+                  {hasPublicExpertPage(plan.consultantProfile) && (
+                    <Link
+                      href={`/explore/experts/${plan.consultantProfile?.id}`}
+                      className="inline-flex items-center gap-1 text-sm font-medium text-foreground hover:text-muted-foreground mt-3"
+                    >
+                      View Full Profile
+                      <ArrowLeft className="w-4 h-4 rotate-180" />
+                    </Link>
+                  )}
                 </CardContent>
               </Card>
 

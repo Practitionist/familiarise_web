@@ -4,7 +4,10 @@
  */
 import { render, screen } from "@testing-library/react";
 
-import { CoHostList } from "@/app/explore/programs/plans/components/CoHostList";
+import {
+  CoHostList,
+  hasPublicExpertPage,
+} from "@/app/explore/programs/plans/components/CoHostList";
 
 const coHost = (id: string, name: string, verificationStatus: string) => ({
   id: `collab-${id}`,
@@ -41,5 +44,16 @@ describe("co-hosts on a public plan page", () => {
       <CoHostList title="Co-Hosts" unnamed="Co-host" collaborators={[]} />,
     );
     expect(container.innerHTML).toBe("");
+  });
+});
+
+describe("the host's profile link on a public plan page", () => {
+  it("is offered only for a verified host", () => {
+    expect(hasPublicExpertPage({ verificationStatus: "VERIFIED" })).toBe(true);
+    expect(hasPublicExpertPage({ verificationStatus: "UNDER_REVIEW" })).toBe(
+      false,
+    );
+    expect(hasPublicExpertPage({})).toBe(false);
+    expect(hasPublicExpertPage(null)).toBe(false);
   });
 });

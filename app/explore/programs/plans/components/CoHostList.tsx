@@ -13,6 +13,13 @@ type CoHostListProps = {
   className?: string;
 };
 
+/** Only a verified profile has an expert page the public can open. */
+export function hasPublicExpertPage(
+  profile: { verificationStatus?: string | null } | null | undefined,
+): boolean {
+  return profile?.verificationStatus === "VERIFIED";
+}
+
 /**
  * A plan's accepted co-hosts: name, face and role. The name links to the
  * expert page only when that page is public, which is a verified profile.
@@ -55,7 +62,7 @@ export function CoHostList({
               </div>
             </>
           );
-          return profile.verificationStatus === "VERIFIED" ? (
+          return hasPublicExpertPage(profile) ? (
             <Link
               key={collab.id}
               href={`/explore/experts/${profile.id}`}
