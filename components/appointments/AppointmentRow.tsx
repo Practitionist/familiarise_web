@@ -71,7 +71,7 @@ export function AppointmentRow({
   const proximity =
     vm.bucket === "past" || vm.bucket === "cancelled"
       ? null
-      : getProximityLabel(vm.nextAt);
+      : getProximityLabel(vm.nextAt, viewerZone.zone);
 
   const timeLabel = vm.nextAt
     ? formatInViewerZone(vm.nextAt, viewerZone.zone, "h:mm a")

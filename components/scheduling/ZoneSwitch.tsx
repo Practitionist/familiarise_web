@@ -48,7 +48,7 @@ export function ZoneSwitch({
             type="button"
             onClick={onToggle}
             aria-pressed={usingDeviceZone}
-            className="font-medium text-foreground underline decoration-dotted underline-offset-4 hover:decoration-solid focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
+            className="inline-flex min-h-9 items-center rounded-sm font-medium text-foreground underline decoration-dotted underline-offset-4 hover:decoration-solid focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:min-h-0"
           >
             {usingDeviceZone
               ? "Use my profile time zone"

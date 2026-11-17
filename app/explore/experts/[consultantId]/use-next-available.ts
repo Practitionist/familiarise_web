@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { formatInTimeZone } from "date-fns-tz";
+import { formatInViewerZone } from "@/lib/time/viewer-zone";
 import { nextAvailableWindow } from "@/lib/scheduling/booking-windows";
 import { useAvailabilityMonth } from "@/lib/scheduling/use-availability-window";
 
@@ -60,7 +60,7 @@ export function useNextAvailableLabel({
 
   const next = inThisMonth ?? inNextMonth;
   return next
-    ? formatInTimeZone(
+    ? formatInViewerZone(
         new Date(next.startsAt),
         timezone,
         "EEE d MMM, h:mm a zzz",

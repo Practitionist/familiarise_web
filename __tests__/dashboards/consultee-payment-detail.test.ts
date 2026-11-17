@@ -29,6 +29,7 @@ it("binds the charge to the payer and answers null for anyone else's", async () 
     paymentId: "pay-1",
     consulteeId: "ce-1",
     userId: "user-1",
+    viewerZone: "UTC",
   });
   expect(detail).toBeNull();
   expect(
@@ -54,6 +55,7 @@ it("answers null for another user's payment and never reads its refunds", async 
     paymentId: "pay-1",
     consulteeId: "ce-9",
     userId: "user-intruder",
+    viewerZone: "UTC",
   });
   expect(detail).toBeNull();
   expect(prisma.refund.findMany).not.toHaveBeenCalled();
@@ -102,6 +104,7 @@ it("never selects or returns the gateway's raw refund failure text", async () =>
     paymentId: "pay-1",
     consulteeId: "ce-1",
     userId: "user-1",
+    viewerZone: "UTC",
   });
   const select = (prisma.refund.findMany as jest.Mock).mock.calls[0][0].select;
   expect(select).not.toHaveProperty("failureReason");

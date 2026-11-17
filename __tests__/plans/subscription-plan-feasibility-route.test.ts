@@ -83,6 +83,7 @@ it("tells the buyer about thin weeks, counting today's bookings", async () => {
     notice:
       "This expert currently has room for about 1 of 3 sessions a week. Sessions that can't be scheduled before the plan ends are refunded.",
     fullyBooked: false,
+    zone: "Asia/Kolkata",
   });
   expect(assessExpertFeasibility).toHaveBeenCalledWith(
     expect.anything(),

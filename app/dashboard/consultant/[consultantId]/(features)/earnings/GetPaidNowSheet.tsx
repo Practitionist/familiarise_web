@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { formatInTimeZone } from "date-fns-tz";
+import { formatInViewerZone } from "@/lib/time/viewer-zone";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -153,7 +153,11 @@ export function GetPaidNowSheet({
         {usedToday && data?.nextAllowedAt && (
           <p className="mt-4 text-xs text-muted-foreground">
             You have used today&rsquo;s instant payout. The next one opens{" "}
-            {formatInTimeZone(data.nextAllowedAt, PAYOUT_ZONE, "d MMM, h:mm a")}
+            {formatInViewerZone(
+              data.nextAllowedAt,
+              PAYOUT_ZONE,
+              "d MMM, h:mm a",
+            )}
             .
           </p>
         )}

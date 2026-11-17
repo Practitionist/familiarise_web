@@ -235,6 +235,7 @@ function DashboardCard({ title, items }) {
 - **Tab Order**: Logical tab sequence through all interactive elements
 - **Focus Indicators**: Clear visual focus states with blue ring
 - **Skip Links**: Hidden skip navigation for screen readers
+- **Dialogs return focus**: closing a dialog puts focus back on the control that opened it. Radix returns focus only to its own `Trigger`, so `DialogContent` and `AlertDialogContent` (`components/ui/dialog.tsx`, `components/ui/alert-dialog.tsx`) remember what had focus when the dialog opened and return to it when nothing else took focus (`useReturnFocus` in `components/ui/use-return-focus.ts`). A dialog opened from state, with no `Trigger`, needs nothing extra. A dialog whose input has `autoFocus` still returns, because the first focus that arrives from outside records the opener. A dialog opened from a menu item returns to that menu's trigger, since the item unmounts with its menu. A caller whose `onCloseAutoFocus` calls `preventDefault()` keeps control. `__tests__/ui/dialog-return-focus.test.tsx` pins each case.
 
 ### Screen Reader Support
 

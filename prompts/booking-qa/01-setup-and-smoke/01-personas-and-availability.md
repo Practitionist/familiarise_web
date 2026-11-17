@@ -178,7 +178,7 @@ Conventions for the whole suite (from the old `wave0-shared-setup.md`, still val
 
 **Expect:**
 
-- Steps 1–3 never reach the DB. The editor marks the row red with an inline message as you type, and Save shows the "Validation Error" toast ("Please fix the following issues: monday slot 2: …"). Expected inline messages (`utils/scheduling-engine/interval-validation.ts`): step 1 "Session duration must be in multiples of 30 minutes"; step 2 "Session cannot exceed 12 hours"; step 3 "Slots cannot overlap". If the client lets one through, the server must answer 400 with `DURATION` ("Window N: duration must be between 30 minutes and 12 hours") or `OVERLAP` ("Windows i and j overlap"). Quote which layer refused and the exact text.
+- Steps 1–3 never reach the DB. The editor marks the row red with an inline message as you type, and Save is disabled with "Fix the time marked in red before saving." beside it (`availabilitySaveBlocker`). Expected inline messages (`utils/scheduling-engine/interval-validation.ts`): step 1 "A slot must be at least 30 minutes"; step 2 "A slot can be at most 12 hours"; step 3 "Slots cannot overlap". If the client lets one through, the server must answer 400 with `DURATION` ("Window N: duration must be between 30 minutes and 12 hours") or `OVERLAP` ("Windows i and j overlap"). Quote which layer refused and the exact text.
 - Step 4: one row 08:30–17:00 (coalesced), new id. The editor shows one row after reload.
 - Step 5: R-02 is back to 5 rows of 09:00–17:00 New York.
 

@@ -299,7 +299,7 @@ export function useWebinarCheckout(
             <CheckoutDetailRow label="Time">
               {formatForViewer(nextSession.startsAt, viewer, "h:mm a")}
               {" - "}
-              {formatForViewer(nextSession.endsAt, viewer, "h:mm a zzz")}
+              {formatForViewer(nextSession.endsAt, viewer, "h:mm a")}
             </CheckoutDetailRow>
           </>
         )}

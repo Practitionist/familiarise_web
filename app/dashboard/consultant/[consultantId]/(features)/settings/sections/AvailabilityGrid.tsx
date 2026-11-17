@@ -1,5 +1,6 @@
 "use client";
 
+import { useId } from "react";
 import { Button } from "components/ui/button";
 import { Input } from "components/ui/input";
 import { Label } from "components/ui/label";
@@ -46,6 +47,7 @@ export function AvailabilityGrid({
   onUpdateSlot,
   onDeleteSlot,
 }: AvailabilityGridProps) {
+  const baseId = useId();
   return (
     <div className="space-y-2">
       <div className="flex justify-between items-center">
@@ -59,42 +61,66 @@ export function AvailabilityGrid({
           Add Slot
         </Button>
       </div>
-      {slots?.map((slot, slotIndex) => (
-        <div key={`${dayKey}-${slotIndex}`} className="space-y-2">
-          <div className="grid grid-cols-[1fr_auto_1fr_auto] items-center gap-2">
-            <Input
-              type="time"
-              value={slot.startTime}
-              onChange={(e) =>
-                onUpdateSlot(dayKey, slotIndex, "startTime", e.target.value)
-              }
-              className={`min-w-0 ${!slot.isValid ? "border-red-500" : ""}`}
-              step={PICKER_STEP_SECONDS}
-            />
-            <span className="text-center text-sm text-zinc-500">to</span>
-            <Input
-              type="time"
-              value={slot.endTime}
-              onChange={(e) =>
-                onUpdateSlot(dayKey, slotIndex, "endTime", e.target.value)
-              }
-              className={`min-w-0 ${!slot.isValid ? "border-red-500" : ""}`}
-              step={PICKER_STEP_SECONDS}
-            />
-            <button
-              type="button"
-              onClick={() => onDeleteSlot(dayKey, slotIndex)}
-              className="rounded p-1 hover:bg-zinc-100 justify-self-center"
-              aria-label={`Delete slot ${slotIndex + 1} for ${label}`}
-            >
-              <TrashIcon className="h-5 w-5" />
-            </button>
+      {slots?.map((slot, slotIndex) => {
+        const n = slotIndex + 1;
+        const errorId = `${baseId}-${slotIndex}-error`;
+        const noticeId = `${baseId}-${slotIndex}-notice`;
+        const showError = !slot.isValid && Boolean(slot.errorMessage);
+        const describedBy =
+          [showError && errorId, slot.snapNotice && noticeId]
+            .filter(Boolean)
+            .join(" ") || undefined;
+        const inputClass = `min-w-0 ${!slot.isValid ? "border-red-500" : ""}`;
+        return (
+          <div key={`${dayKey}-${slotIndex}`} className="space-y-2">
+            <div className="grid grid-cols-[1fr_auto_1fr_auto] items-center gap-2">
+              <Input
+                type="time"
+                aria-label={`${label} start, slot ${n}`}
+                aria-invalid={!slot.isValid}
+                aria-describedby={describedBy}
+                value={slot.startTime}
+                onChange={(e) =>
+                  onUpdateSlot(dayKey, slotIndex, "startTime", e.target.value)
+                }
+                className={inputClass}
+                step={PICKER_STEP_SECONDS}
+              />
+              <span className="text-center text-sm text-zinc-500">to</span>
+              <Input
+                type="time"
+                aria-label={`${label} end, slot ${n}`}
+                aria-invalid={!slot.isValid}
+                aria-describedby={describedBy}
+                value={slot.endTime}
+                onChange={(e) =>
+                  onUpdateSlot(dayKey, slotIndex, "endTime", e.target.value)
+                }
+                className={inputClass}
+                step={PICKER_STEP_SECONDS}
+              />
+              <button
+                type="button"
+                onClick={() => onDeleteSlot(dayKey, slotIndex)}
+                className="rounded p-1 hover:bg-zinc-100 justify-self-center"
+                aria-label={`Delete slot ${n} for ${label}`}
+              >
+                <TrashIcon className="h-5 w-5" />
+              </button>
+            </div>
+            {showError && (
+              <p id={errorId} className="text-sm text-red-600">
+                {slot.errorMessage}
+              </p>
+            )}
+            {slot.snapNotice && (
+              <p id={noticeId} className="text-sm text-muted-foreground">
+                {slot.snapNotice}
+              </p>
+            )}
           </div>
-          {!slot.isValid && slot.errorMessage && (
-            <p className="text-red-500 text-sm">{slot.errorMessage}</p>
-          )}
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

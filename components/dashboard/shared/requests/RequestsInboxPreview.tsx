@@ -147,6 +147,7 @@ export function RequestsInboxPreview({
         const { bookingState } = deriveBookingPresentation(
           row.presentation,
           "CONSULTANT",
+          { viewerZone: viewer.zone },
         );
         const badge =
           row.kind === "next-cycle"

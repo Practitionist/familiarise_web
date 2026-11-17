@@ -13,6 +13,7 @@ import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { PaymentsHistoryList } from "@/app/dashboard/consultee/[consulteeId]/(features)/payments/PaymentsHistoryList";
 import { paymentFundingBreakdown } from "@/lib/appointments/payment-display";
+import { DisplayZoneProvider } from "@/lib/time/zoned-format";
 import type {
   ConsulteePaymentRow,
   ConsulteePaymentRefund,
@@ -148,5 +149,19 @@ describe("PaymentsHistoryList", () => {
 
   it("never shows a raw enum", () => {
     expect(html).not.toMatch(/\b(SUCCEEDED|REFUNDED|PENDING)\b/);
+  });
+
+  it("dates and month headers follow the viewer zone", () => {
+    const la = renderToStaticMarkup(
+      <DisplayZoneProvider zone="America/Los_Angeles">
+        <PaymentsHistoryList
+          consulteeId="c-1"
+          payments={[row("late", { createdAt: "2026-11-01T01:00:00Z" })]}
+        />
+      </DisplayZoneProvider>,
+    );
+    expect(la).toContain("October 2026");
+    expect(la).toContain("31 Oct");
+    expect(la).not.toContain("November 2026");
   });
 });

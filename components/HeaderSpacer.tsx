@@ -1,6 +1,6 @@
 "use client";
 
-import { usePathname } from "next/navigation";
+import { useChromePathname } from "@/lib/navigation/use-chrome-pathname";
 
 import { needsHeaderSpacer } from "@/lib/navigation/public-chrome";
 
@@ -21,7 +21,7 @@ import { needsHeaderSpacer } from "@/lib/navigation/public-chrome";
  * transparent nav on the organisations directory.
  */
 const HeaderSpacer = () => {
-  const pathname = usePathname();
+  const pathname = useChromePathname();
 
   if (!needsHeaderSpacer(pathname)) {
     return null;

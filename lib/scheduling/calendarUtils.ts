@@ -111,6 +111,33 @@ export function splitIntoSessions(
 }
 
 /**
+ * The picked atoms a conflict removes: every atom of each session holding a
+ * conflicting start. With no whole session to name, only the conflicting atoms.
+ */
+export function atomsOfConflictedSessions(
+  selectedSlots: CalendarInterval[],
+  slotsPerSession: number,
+  conflictStarts: ReadonlySet<number> | ReadonlyMap<number, unknown>,
+): CalendarInterval[] {
+  const doomed = splitIntoSessions(selectedSlots, slotsPerSession).flatMap(
+    (session) => {
+      const atoms = selectedSlots.filter(
+        (slot) =>
+          slot.startTime >= session.start && slot.endTime <= session.end,
+      );
+      return atoms.some((slot) => conflictStarts.has(slot.startTime.getTime()))
+        ? atoms
+        : [];
+    },
+  );
+  return doomed.length > 0
+    ? doomed
+    : selectedSlots.filter((slot) =>
+        conflictStarts.has(slot.startTime.getTime()),
+      );
+}
+
+/**
  * Count the number of distinct Sunday-start weeks overlapping [start, end].
  * Delegates to ScheduleCalculationService.countWeeks as the single source of truth.
  */

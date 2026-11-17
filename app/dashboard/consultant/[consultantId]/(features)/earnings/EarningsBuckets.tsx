@@ -13,7 +13,7 @@ import {
   Sparkles,
   Wallet,
 } from "lucide-react";
-import { formatInTimeZone } from "date-fns-tz";
+import { formatInViewerZone } from "@/lib/time/viewer-zone";
 
 import { DashboardContent } from "@/components/dashboard/PageScaffold";
 import { Section } from "@/components/dashboard/Section";
@@ -112,7 +112,7 @@ const SEGMENTS: Segment[] = ["AVAILABLE", "PENDING", "PAID_OUT"];
 
 const inr = (paise: number) => formatCurrencyAmount(paise, "INR");
 const onDay = (d: string | Date) =>
-  formatInTimeZone(d, PAYOUT_ZONE, "d MMM yyyy");
+  formatInViewerZone(d, PAYOUT_ZONE, "d MMM yyyy");
 const typeLabel = (type: string | null | undefined) =>
   type ? type.charAt(0) + type.slice(1).toLowerCase() : null;
 

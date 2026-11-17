@@ -395,6 +395,7 @@ export function HomeTab({
                             {(() => {
                               const proximity = getProximityLabel(
                                 getNextUpcomingSlotTime(appointment),
+                                viewerZone.zone,
                                 now,
                               );
                               return proximity ? (
@@ -608,6 +609,7 @@ export function HomeTab({
                             {(() => {
                               const proximity = getProximityLabel(
                                 startTime ?? null,
+                                viewerZone.zone,
                                 now,
                               );
                               return proximity ? (
