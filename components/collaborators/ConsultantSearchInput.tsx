@@ -244,6 +244,12 @@ export function ConsultantSearchInput({
                 // Keeps the caret in the field, so a tap picks without closing the list first.
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => pick(expert)}
+                // A screen reader's own cursor can rest on an option; Enter or Space picks it there.
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter" && e.key !== " ") return;
+                  e.preventDefault();
+                  pick(expert);
+                }}
                 className={cn(
                   "flex min-h-11 cursor-pointer items-center gap-3 px-3 py-2",
                   index === activeIndex && "bg-muted",

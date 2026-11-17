@@ -365,6 +365,17 @@ it("an invite is found by keyboard, reviewed with a rupee example, then sent as 
   fireEvent.keyDown(search, { key: "Enter" });
   expect(within(dialog).getByText("Priya")).toBeInTheDocument();
 
+  // An option also answers a key pressed on it, for a screen reader's own cursor.
+  fireEvent.click(within(dialog).getByRole("button", { name: /Change/ }));
+  const again = within(dialog).getByRole("combobox", { name: "Expert" });
+  fireEvent.focus(again);
+  fireEvent.change(again, { target: { value: "pri" } });
+  fireEvent.keyDown(await within(dialog).findByRole("option"), { key: " " });
+  expect(
+    within(dialog).queryByRole("combobox", { name: "Expert" }),
+  ).not.toBeInTheDocument();
+  expect(within(dialog).getByText("Priya")).toBeInTheDocument();
+
   fireEvent.click(within(dialog).getByRole("radio", { name: "Co-host" }));
   fireEvent.change(
     within(dialog).getByLabelText("Their share of each seat (%)"),
