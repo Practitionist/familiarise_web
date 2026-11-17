@@ -129,6 +129,12 @@ Is the route public (no login required)?
 
 Org-scoped routes use `requireOrgAccess(orgId, { permission: "<key>" })`, which requires an active membership in the organization whose role holds the named key of the org permission matrix in `lib/auth/org-permissions.ts`. There is no rank comparator and no OWNER-only wrapper; an owner-only route names an OWNER-only key such as `org.delete`. See [the authorization guide](../authorization/README.md) for the full option list.
 
+## Error bodies and unknown paths
+
+Every 4xx JSON body carries a sentence a person can read in `error` and a stable `code` a client can branch on, for example `{ "error": "Trial session not found", "code": "NOT_FOUND" }`. A schema failure answers `code: "VALIDATION_FAILED"` with the issues in `details`, malformed JSON answers 400 `MALFORMED_JSON` (`readJsonBody` in `lib/api/parse.ts`), and a refused back-office role answers 403 `FORBIDDEN` with `BACKOFFICE_FORBIDDEN_MESSAGE`. The sentence never names a route path or a bare schema word such as "Required".
+
+A path under `/api` that no route claims answers a JSON 404, `{ "error": "Not found", "code": "NOT_FOUND" }`, with `Cache-Control: no-store`, from the catch-all `app/api/[...notFound]/route.ts`. It exports `GET`, `POST`, `PUT`, `PATCH`, `DELETE` and `OPTIONS`. Next.js matches a static route first, then dynamic routes from the most to the least specific, so every real route (including `auth/[...all]` and every webhook) outranks it; `__tests__/api/api-not-found-catch-all.test.ts` checks that with Next's own route sorter. The catch-all sits inside the middleware matcher (`/api/(.*)`), so an unknown path still passes the maintenance gate and the client-IP stamp first. A method a real route does not export still answers 405 from that route, not 404.
+
 ## See also
 
 - [ADR — Drop the AdminLevel enum](../decisions/2026-04-08-drop-admin-level.md)
