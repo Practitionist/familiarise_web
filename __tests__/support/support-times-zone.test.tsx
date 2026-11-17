@@ -6,9 +6,6 @@
 
 import { render, screen } from "@testing-library/react";
 
-jest.mock("@/lib/auth-client", () => ({
-  useSession: () => ({ data: { user: { timezone: "Europe/Skopje" } } }),
-}));
 jest.mock("@/lib/time/viewer-zone-server", () => ({
   getViewerZone: async () => ({ zone: "America/Los_Angeles", own: true }),
 }));
@@ -114,10 +111,9 @@ describe("one bubble, two readers", () => {
     expect(screen.queryByText(/IST/)).toBeNull();
   });
 
-  it("without a provider reads the session's zone, never the browser's", () => {
+  it("without a provider prints UTC, labelled, never the browser's zone", () => {
     render(bubble);
-    // Europe/Skopje is UTC+1 in November.
-    expect(screen.getByText(/1:45\s?pm/i)).toBeTruthy();
+    expect(screen.getByText(/12:45\s?pm UTC/i)).toBeTruthy();
   });
 });
 

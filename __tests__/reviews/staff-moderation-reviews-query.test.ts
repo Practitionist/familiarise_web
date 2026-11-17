@@ -57,16 +57,20 @@ beforeEach(() => {
 });
 
 describe("GET /api/staff/moderation/reviews query validation", () => {
-  it("rejects a non-numeric page with 400, before Prisma sees NaN", async () => {
+  it("reads a non-numeric page as page 1, so Prisma never sees NaN", async () => {
     const res = await GET(request("?page=abc"));
-    expect(res.status).toBe(400);
-    expect(mockedFindMany).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    expect(mockedFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ skip: 0, take: 20 }),
+    );
   });
 
-  it("caps the page size", async () => {
+  it("clamps the page size to 100", async () => {
     const res = await GET(request("?limit=5000"));
-    expect(res.status).toBe(400);
-    expect(mockedFindMany).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    expect(mockedFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ take: 100 }),
+    );
   });
 
   it("rejects a rating bound outside 1..5", async () => {
