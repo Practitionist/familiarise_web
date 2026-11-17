@@ -5,6 +5,24 @@ import {
   type OperatorInstantKind,
 } from "./operator-zone";
 
+/** An instant on two lines, date over time, so a narrow column never wraps it word by word. */
+export function OperatorTimeStack({
+  value,
+  fallback = "—",
+}: Readonly<{ value: Instant | null | undefined; fallback?: string }>) {
+  if (value === null || value === undefined) return <>{fallback}</>;
+  return (
+    <span className="flex flex-col whitespace-nowrap">
+      <OperatorTime value={value} kind="date" />
+      <OperatorTime
+        value={value}
+        kind="time"
+        className="text-xs text-muted-foreground"
+      />
+    </span>
+  );
+}
+
 /** An instant in India time, with its UTC reading one hover away. */
 export function OperatorTime({
   value,

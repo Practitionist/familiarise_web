@@ -43,6 +43,7 @@ export type OperatorPayoutFilters = {
 export type OperatorPayout = {
   id: string;
   consultantProfileId: string;
+  consultantUserId: string;
   consultantName: string;
   consultantEmail: string;
   amount: number;
@@ -150,6 +151,7 @@ export async function getOperatorPayouts(
 
   const [payouts, total, stats] = await Promise.all([
     prisma.consultantPayout.findMany({
+      relationLoadStrategy: "join",
       where,
       include: {
         consultantProfile: {
@@ -159,9 +161,8 @@ export async function getOperatorPayouts(
             user: { select: { name: true, email: true } },
           },
         },
-        earnings: {
-          select: { id: true },
-        },
+        // A count, not every earning id, rides the joined read.
+        _count: { select: { earnings: true } },
       },
       // #863 — MSME §43B(h): pay micro/small vendors within their statutory
       // window first. Order by mustPayByDate ascending (soonest deadline on top,
@@ -169,6 +170,7 @@ export async function getOperatorPayouts(
       orderBy: [
         { mustPayByDate: { sort: "asc", nulls: "last" } },
         { createdAt: "desc" },
+        { id: "asc" },
       ],
       take: limit,
       skip: offset,
@@ -181,6 +183,7 @@ export async function getOperatorPayouts(
     payouts: payouts.map((p) => ({
       id: p.id,
       consultantProfileId: p.consultantProfileId,
+      consultantUserId: p.consultantProfile.userId,
       consultantName: p.consultantProfile.user.name || "Unknown",
       consultantEmail: p.consultantProfile.user.email,
       amount: p.amount,
@@ -190,7 +193,7 @@ export async function getOperatorPayouts(
       provider: p.provider,
       batchId: p.batchId,
       kind: p.kind,
-      earningsCount: p.earnings.length,
+      earningsCount: p._count.earnings,
       approvedAt: p.approvedAt,
       approvedBy: p.approvedBy,
       processedAt: p.processedAt,

@@ -101,3 +101,23 @@ export function PagedListFilterCard(props: Readonly<PagedListFiltersInput>) {
     </Card>
   );
 }
+
+/**
+ * `placeholderData` that keeps the previous rows only while the page alone
+ * changes; a filter change shows the loading state, never the old rows and total.
+ */
+export function keepPreviousPageOnly<T>(
+  queryKey: readonly unknown[],
+  pageIndex: number,
+) {
+  return (
+    previous: T | undefined,
+    previousQuery: { queryKey: readonly unknown[] } | undefined,
+  ): T | undefined =>
+    previousQuery?.queryKey.length === queryKey.length &&
+    previousQuery.queryKey.every(
+      (part, i) => i === pageIndex || Object.is(part, queryKey[i]),
+    )
+      ? previous
+      : undefined;
+}

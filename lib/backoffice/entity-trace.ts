@@ -3,6 +3,11 @@ import {
   getBookingTimeline,
   type BookingTimelineEntry,
 } from "@/lib/data/booking-history";
+import { gatewayLabel, ledgerAccountLabel } from "@/lib/labels/money-labels";
+import {
+  cancellationReasonLabel,
+  refundReasonLabel,
+} from "@/lib/novu/humanize";
 import { sentrySearchHref } from "@/lib/observability/sentry-issues";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { formatOperatorInstant } from "@/lib/time/operator-zone";
@@ -114,6 +119,41 @@ export function bookingStepLabel(
 const join = (parts: (string | null | undefined | false)[]) =>
   parts.filter(Boolean).join(" · ") || null;
 
+const REASON_CODE = /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*$/;
+/** History reasons the booking writers store as codes (`HOST_CANCELLED_SESSION_REASON` among them). */
+const HISTORY_REASON_LABEL: Record<string, string> = {
+  HOST_CANCELLED_SESSION: "Host cancelled the session",
+};
+const capitalise = (text: string) =>
+  text.charAt(0).toUpperCase() + text.slice(1);
+
+/** Whose share an earnings row is, in words. */
+const EARNING_ROLE_LABEL: Record<string, string> = {
+  OWNER: "Expert",
+  COLLABORATOR: "Collaborator",
+};
+const shareOf = (role: string) =>
+  EARNING_ROLE_LABEL[role] ?? capitalise(enumWords(role));
+
+/** A stored reason in words: a code becomes its label, free text passes through. */
+export function traceReason(reason: string | null | undefined): string | null {
+  const raw = reason?.trim();
+  if (!raw) return null;
+  if (Object.hasOwn(HISTORY_REASON_LABEL, raw))
+    return HISTORY_REASON_LABEL[raw];
+  if (!REASON_CODE.test(raw)) return raw;
+  const label = cancellationReasonLabel(raw);
+  return label === raw ? capitalise(enumWords(raw)) : capitalise(label);
+}
+
+/** A refund's reason in words, as the refund notices word it. */
+function refundReasonText(reason: string | null): string | null {
+  if (!reason) return null;
+  return REASON_CODE.test(reason.trim())
+    ? traceReason(reason)
+    : (refundReasonLabel(reason) ?? null);
+}
+
 /** One timeline entry as a trace step; a proposal says it was proposed and where it stands now. */
 export function bookingTraceStep(entry: BookingTimelineEntry): {
   status: string;
@@ -123,14 +163,14 @@ export function bookingTraceStep(entry: BookingTimelineEntry): {
     return {
       status: "Reschedule proposed",
       detail: join([
-        entry.reason,
+        traceReason(entry.reason),
         entry.outcome && `now ${enumWords(entry.outcome)}`,
       ]),
     };
   }
   return {
     status: bookingStepLabel(entry.entity, entry.from, entry.to),
-    detail: entry.reason,
+    detail: traceReason(entry.reason),
   };
 }
 
@@ -227,7 +267,7 @@ const PAYMENT_SELECT = {
   deletedAt: true,
   createdAt: true,
   updatedAt: true,
-  user: { select: { name: true } },
+  user: { select: { id: true, name: true, email: true } },
 } as const;
 
 async function readRootPayments(kind: EntityTrace["kind"], id: string) {
@@ -284,7 +324,7 @@ function paymentRows(p: RootPayment): TraceRow[] {
       ...money,
       actor: p.user.name,
       detail: join([
-        p.paymentGateway,
+        gatewayLabel(p.paymentGateway),
         `order ${p.paymentIntent}`,
         p.parentPaymentId && `side charge of ${p.parentPaymentId}`,
       ]),
@@ -391,7 +431,10 @@ export async function readEntityTrace(args: {
             ...makeRow("refund", r.id, "created", r.createdAt, {
               status: "Refund created",
               ...money,
-              detail: join([`gateway ${r.refundId}`, r.reason]),
+              detail: join([
+                `gateway ${r.refundId}`,
+                refundReasonText(r.reason),
+              ]),
             }),
             ...makeRow("refund", r.id, "failed", r.failedAt, {
               status: "Refund failed",
@@ -489,15 +532,17 @@ export async function readEntityTrace(args: {
         const debits = txn.entries.filter((e) => e.direction === "DEBIT");
         const credits = txn.entries.filter((e) => e.direction === "CREDIT");
         const kinds = (list: typeof txn.entries) =>
-          [...new Set(list.map((e) => e.account.kind))].join(", ");
+          [
+            ...new Set(list.map((e) => ledgerAccountLabel(e.account.kind))),
+          ].join(", ");
         return makeRow("ledger", txn.id, "posted", txn.postedAt, {
           status: `Ledger: ${enumWords(txn.kind)}`,
           amountPaise: debits.reduce((s, e) => s + Number(e.amountPaise), 0),
           currency: "INR",
           detail: join([
             `${txn.entries.length} entries`,
-            debits.length > 0 && `DR ${kinds(debits)}`,
-            credits.length > 0 && `CR ${kinds(credits)}`,
+            debits.length > 0 && `Debit ${kinds(debits)}`,
+            credits.length > 0 && `Credit ${kinds(credits)}`,
             txn.description,
           ]),
         });
@@ -578,7 +623,7 @@ export async function readEntityTrace(args: {
               status: "Earnings recorded",
               ...money,
               detail: join([
-                `${e.role} share for ${e.consultantProfile.user.name}`,
+                `${shareOf(e.role)} share for ${e.consultantProfile.user.name}`,
                 `platform fee ${formatCurrencyAmount(Number(e.platformFeePaise), e.currency)}`,
               ]),
             }),
@@ -635,7 +680,7 @@ export async function readEntityTrace(args: {
             ...makeRow("earnings", e.id, "created", e.createdAt, {
               status: "Organisation earnings recorded",
               ...money,
-              detail: `${e.role} share for ${e.organization.name}`,
+              detail: `${shareOf(e.role)} share for ${e.organization.name}`,
             }),
             ...makeRow("earnings", e.id, "status", e.updatedAt, {
               status: `Organisation earnings now ${enumWords(e.status)}`,
@@ -1145,7 +1190,7 @@ export async function readEntityTrace(args: {
             `event:${ev.id}`,
             ev.createdAt,
             {
-              status: `${ev.category} ${ev.severity}`,
+              status: `${capitalise(enumWords(ev.category))} event (${enumWords(ev.severity)})`,
               detail: ev.message.slice(0, 200),
             },
           ),
@@ -1160,6 +1205,7 @@ export async function readEntityTrace(args: {
     paymentIds: P,
     appointmentId: A,
     userId,
+    customer: payments[0]?.user ?? null,
     sentryHref: sentrySearchHref(args.id),
     rows: mergeTimeline(t.rows),
     sources: t.sourceReports(),

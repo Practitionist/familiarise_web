@@ -172,11 +172,17 @@ it("keeps internal dispute ID clicks and double-clicks from opening the dispute 
           paymentGateway: "RAZORPAY",
           dueBy: null,
           createdAt: "2026-11-01T00:00:00.000Z",
-          payment: { paymentIntent: "pay_intent_999999" },
+          payment: {
+            id: "pay-1",
+            paymentIntent: "pay_intent_999999",
+            buyer: { id: "user-1", name: "Priya Anderson", email: null },
+            booking: null,
+          },
         },
       ],
       total: 1,
       page: 1,
+      limit: 20,
       totalPages: 1,
       urgentDisputes: 0,
       stats: { underReviewCount: 0, wonCount: 0 },
@@ -239,8 +245,12 @@ it("renders copyable short Payout IDs with full-ID titles across Payouts, Pendin
               createdAt: "2026-11-01T00:00:00.000Z",
               platformApprovalRequiredAt: null,
               platformHeldAt: null,
+              createdByUser: null,
+              orgApprovedByUser: null,
+              approvedByUser: null,
             },
           ],
+          pagination: { total: 1, limit: 20, offset: 0, hasMore: false },
         }),
       } as Response;
     }
@@ -252,6 +262,8 @@ it("renders copyable short Payout IDs with full-ID titles across Payouts, Pendin
             id: url.includes("status=PENDING")
               ? "cm9pendpayout3344ccdd"
               : "cm9listpayout5566eeff",
+            consultantProfileId: "cp-1",
+            consultantUserId: "user-2",
             consultantName: "Aarav Anderson",
             consultantEmail: "aarav.anderson@gmail.com",
             amount: 75_000,
@@ -260,6 +272,7 @@ it("renders copyable short Payout IDs with full-ID titles across Payouts, Pendin
             method: "BANK_TRANSFER",
             provider: "RAZORPAY",
             earningsCount: 2,
+            kind: null,
             mustPayByDate: null,
             createdAt: "2026-11-01T00:00:00.000Z",
             approvedAt: "2026-11-01T00:00:00.000Z",

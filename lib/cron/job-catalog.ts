@@ -54,6 +54,13 @@ function cadence(everyMinutes: number): string {
 // India keeps one offset all year, so the IST label is the UTC window shifted by it.
 const IST_OFFSET_MINUTES = 330;
 
+/** "10:00 IST to 12:00 IST", with "the next day" when the window crosses midnight. */
+function windowSpan(start: number, end: number, zone: "IST" | "UTC"): string {
+  const crossesMidnight = Math.floor(end / 1440) > Math.floor(start / 1440);
+  const nextDay = crossesMidnight ? " the next day" : "";
+  return `${clock(start)} ${zone} to ${clock(end)} ${zone}${nextDay}`;
+}
+
 function describeSchedule(
   schedule: JobSchedule | undefined,
   shiftMinutes: number,
@@ -68,13 +75,7 @@ function describeSchedule(
   // A window opening after 18:30 UTC opens on the next calendar day in IST.
   const startsNextDay = start >= 1440;
   const span =
-    w.windowMinutes >= 1440
-      ? "all day"
-      : `${clock(start)} ${zone} to ${clock(end)} ${zone}${
-          Math.floor(end / 1440) > Math.floor(start / 1440)
-            ? " the next day"
-            : ""
-        }`;
+    w.windowMinutes >= 1440 ? "all day" : windowSpan(start, end, zone);
   let days = "daily";
   if (w.weekdayUtc !== undefined) {
     days = `on ${WEEKDAYS[(w.weekdayUtc + (startsNextDay ? 1 : 0)) % 7]}`;

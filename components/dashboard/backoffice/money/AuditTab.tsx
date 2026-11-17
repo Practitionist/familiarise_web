@@ -1,9 +1,9 @@
 "use client";
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { z } from "zod";
 
-import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { PageHeader } from "@/components/dashboard/PageScaffold";
 import { Input } from "@/components/ui/input";
@@ -11,10 +11,17 @@ import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
-import type { OpsLogPage, OpsLogRow } from "@/lib/backoffice/ops-log-types";
+import { TablePagination } from "@/components/dashboard/TablePagination";
+import type { OpsLogPage } from "@/lib/backoffice/ops-log-types";
+import {
+  readListBody,
+  targetRefSchema,
+} from "@/lib/backoffice/money-list-schemas";
 import { OpsLogFiltersSchema, type OpsLogFilters } from "@/schemas/ops-log";
 import { enumLabel } from "@/lib/labels/money-labels";
+import { OperatorTime } from "@/lib/time/operator-time";
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
+import { TargetCell } from "./TargetCell";
 
 const FILTERS: {
   key: keyof OpsLogFilters;
@@ -37,23 +44,45 @@ const filterKey = (filters: OpsLogFilters) =>
 const sameFilters = (a: OpsLogFilters, b: OpsLogFilters) =>
   filterKey(a) === filterKey(b);
 
-async function fetchPage(
-  filters: OpsLogFilters,
-  page: number,
-): Promise<OpsLogPage> {
+/** The audit route's body; a malformed one takes the error path. */
+export const opsLogPageSchema = z.object({
+  rows: z.array(
+    z.object({
+      id: z.string(),
+      createdAt: z.string(),
+      actorUserId: z.string().nullable(),
+      actorName: z.string().nullable(),
+      actorRole: z.string(),
+      surface: z.string(),
+      action: z.string(),
+      targetKind: z.string(),
+      targetId: z.string(),
+      target: targetRefSchema.nullable(),
+      reason: z.string(),
+      before: z.unknown(),
+      after: z.unknown(),
+    }),
+  ),
+  total: z.number().int().nonnegative(),
+  page: z.number().int().positive(),
+  pageSize: z.number().int().positive(),
+  fetchedAt: z.string(),
+});
+type AuditRow = z.infer<typeof opsLogPageSchema>["rows"][number];
+
+async function fetchPage(filters: OpsLogFilters, page: number) {
   const params = new URLSearchParams({ page: String(page) });
   for (const [k, v] of Object.entries(filters)) if (v) params.set(k, v);
   const res = await fetch(`/api/admin/ops-actions?${params}`);
-  if (!res.ok) throw new Error("Failed to load the audit log");
-  return res.json() as Promise<OpsLogPage>;
+  return readListBody(res, opsLogPageSchema, "Failed to load the audit log");
 }
 
-const columns: ResponsiveColumn<OpsLogRow>[] = [
+const auditColumns = (basePath: string): ResponsiveColumn<AuditRow>[] => [
   {
     key: "when",
     header: "When",
     primary: true,
-    cell: (r) => new Date(r.createdAt).toLocaleString(),
+    cell: (r) => <OperatorTime value={r.createdAt} />,
   },
   {
     key: "actor",
@@ -65,7 +94,14 @@ const columns: ResponsiveColumn<OpsLogRow>[] = [
   {
     key: "target",
     header: "Target",
-    cell: (r) => `${r.targetKind} ${r.targetId}`,
+    cell: (r) => (
+      <TargetCell
+        kind={r.targetKind}
+        id={r.targetId}
+        target={r.target}
+        basePath={basePath}
+      />
+    ),
   },
   { key: "reason", header: "Reason", cell: (r) => r.reason },
 ];
@@ -81,7 +117,9 @@ export function AuditTab({
 }: Readonly<{ initial: OpsLogPage; initialFilters?: OpsLogFilters }>) {
   // The read scopes by the viewer's ROLE, not the tree (ops-log-read.ts):
   // an admin in the staff tree still reads every row.
-  const viewerIsAdmin = useBackofficeCapability().role === "ADMIN";
+  const { role, basePath } = useBackofficeCapability();
+  const viewerIsAdmin = role === "ADMIN";
+  const columns = useMemo(() => auditColumns(basePath), [basePath]);
   const [filters, setFilters] = useState<OpsLogFilters>(initialFilters);
   const [page, setPage] = useState(1);
   // Blank filters leave the key, so a cleared filter is the seeded key again.
@@ -92,7 +130,7 @@ export function AuditTab({
   // A half-typed date would read as "no rows"; hold the query until it parses.
   const sinceInvalid = !OpsLogFiltersSchema.shape.since.safeParse(active.since)
     .success;
-  const { data } = useQuery({
+  const { data, error } = useQuery({
     queryKey: ["money-audit", active, page],
     queryFn: () => fetchPage(active, page),
     initialData: pristine ? initial : undefined,
@@ -103,9 +141,6 @@ export function AuditTab({
     staleTime: 15_000,
     enabled: !sinceInvalid,
   });
-  const lastPage = data
-    ? Math.max(1, Math.ceil(data.total / data.pageSize))
-    : 1;
 
   return (
     <div className="space-y-6">
@@ -145,41 +180,32 @@ export function AuditTab({
               or an ISO time.
             </p>
           ) : null}
-          <ResponsiveTable<OpsLogRow>
+          <ResponsiveTable<AuditRow>
             columns={columns}
             rows={sinceInvalid ? [] : (data?.rows ?? [])}
             getRowId={(r) => r.id}
             empty={
-              <p className="py-8 text-center text-sm text-muted-foreground">
-                {sinceInvalid
-                  ? "Finish the Since date to see matching actions."
-                  : "No actions match these filters."}
-              </p>
+              error && !data ? (
+                <p className="py-8 text-center text-sm text-destructive">
+                  The audit log could not load.
+                </p>
+              ) : (
+                <p className="py-8 text-center text-sm text-muted-foreground">
+                  {sinceInvalid
+                    ? "Finish the Since date to see matching actions."
+                    : "No actions match these filters."}
+                </p>
+              )
             }
           />
-          <div className="flex items-center justify-between text-sm">
-            <span className="text-muted-foreground">
-              Page {page} of {lastPage}
-            </span>
-            <span className="flex gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={page <= 1}
-                onClick={() => setPage((p) => p - 1)}
-              >
-                Newer
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={page >= lastPage}
-                onClick={() => setPage((p) => p + 1)}
-              >
-                Older
-              </Button>
-            </span>
-          </div>
+          {data && !sinceInvalid && (
+            <TablePagination
+              page={page}
+              pageSize={data.pageSize}
+              total={data.total}
+              onPageChange={setPage}
+            />
+          )}
         </CardContent>
       </Card>
     </div>

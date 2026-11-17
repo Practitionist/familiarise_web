@@ -26,6 +26,12 @@ import { backofficeLandingHref } from "@/lib/backoffice/capability";
 import { buildBackofficeDashboardNav } from "@/lib/dashboard/nav/backoffice";
 import { flattenNav } from "@/lib/dashboard/nav/types";
 
+/** The payment and dispute detail pages' lists live on the Money hub. */
+const LIST_HOMES = {
+  payments: "money/payments",
+  disputes: "money/disputes",
+} as const;
+
 export interface OperatorDashboardShellProps {
   userName: string | null;
   userImage: string | null;
@@ -73,6 +79,7 @@ export function OperatorDashboardShell({
     pathname,
     basePath: nav.basePath,
     pageLabels,
+    listHrefs: LIST_HOMES,
   });
 
   const displayName = userName || "Operator";

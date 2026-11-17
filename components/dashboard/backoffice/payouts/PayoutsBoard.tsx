@@ -9,6 +9,9 @@ import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
+import { z } from "zod";
+
+import { readListBody } from "@/lib/backoffice/money-list-schemas";
 
 import PendingPayoutsSection from "./sections/PendingPayoutsSection";
 import { PayoutListSection } from "./sections/PayoutListSection";
@@ -23,15 +26,14 @@ const PayoutsChart = dynamic(() => import("./PayoutsChart"), {
 
 // #1527 — five tabs covering every PayoutStatus; the inner Earnings tab is
 // gone (Earnings has its own Money item).
-type TabKey = "awaiting" | "scheduled" | "in-flight" | "failed" | "paid";
-
-const VALID_TABS: readonly TabKey[] = [
+const TabKeySchema = z.enum([
   "awaiting",
   "scheduled",
   "in-flight",
   "failed",
   "paid",
-] as const;
+]);
+type TabKey = z.infer<typeof TabKeySchema>;
 
 /** Old `?tab=` values keep landing somewhere sensible. */
 const LEGACY_TABS: Record<string, TabKey> = {
@@ -40,32 +42,26 @@ const LEGACY_TABS: Record<string, TabKey> = {
   completed: "paid",
 };
 
-const parseTab = (value: string | null): TabKey => {
-  if ((VALID_TABS as readonly string[]).includes(value ?? "")) {
-    return value as TabKey;
-  }
-  return LEGACY_TABS[value ?? ""] ?? "awaiting";
-};
+const parseTab = (value: string | null): TabKey =>
+  TabKeySchema.safeParse(value).data ?? LEGACY_TABS[value ?? ""] ?? "awaiting";
 
-interface PayoutTrendSeriesDatum {
-  day: string;
-  label: string;
-  totalPaise: number;
-}
-
-interface PayoutTrendResponse {
-  series: PayoutTrendSeriesDatum[];
-}
+/** Seven IST days, oldest first, each summed in paise. */
+export const payoutTrendSchema = z.object({
+  series: z.array(
+    z.object({ day: z.string(), label: z.string(), totalPaise: z.number() }),
+  ),
+});
 
 // #997 secondary findings — the 7-day bucketing used to run client-side over
 // a `?limit=100` guess (not 7-day-safe at scale). The server now returns an
 // already-bucketed, bounded 7-day series via /api/admin/payouts/trend.
-async function fetchPayoutTrend(): Promise<PayoutTrendResponse> {
+async function fetchPayoutTrend() {
   const response = await fetch("/api/admin/payouts/trend");
-  if (!response.ok) {
-    throw new Error("Failed to fetch payout trend");
-  }
-  return response.json() as Promise<PayoutTrendResponse>;
+  return readListBody(
+    response,
+    payoutTrendSchema,
+    "Failed to fetch payout trend",
+  );
 }
 
 export function PayoutsBoard() {
@@ -144,7 +140,7 @@ export function PayoutsBoard() {
       {/* Payout trend chart */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">Payouts - Last 7 Days</CardTitle>
+          <CardTitle className="text-lg">Payouts, last 7 days (IST)</CardTitle>
         </CardHeader>
         <CardContent>{trendBody}</CardContent>
       </Card>

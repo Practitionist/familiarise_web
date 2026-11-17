@@ -1,7 +1,6 @@
 /** @jest-environment node */
 jest.mock("../../lib/auth-helpers", () => ({
   requireBackofficeSurface: jest.fn(),
-  requirePrivilegedAuth: jest.fn(),
 }));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
