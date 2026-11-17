@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, ChevronDown, X } from "lucide-react";
+import { Check, ChevronDown } from "lucide-react";
 import { useState } from "react";
 import {
   Popover,
@@ -8,6 +8,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { cn } from "@/utils/tailwind";
+import { FilterPill, filterTriggerClass } from "./FilterPill";
 
 export interface FilterMenuOption {
   value: string;
@@ -32,12 +33,9 @@ export interface FilterMenuProps {
   onOptionIntent?: (value: string | null) => void;
 }
 
-const TRIGGER =
-  "inline-flex h-9 items-center gap-1.5 whitespace-nowrap border text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
-
 /**
- * One filter as a compact "Label: Value" menu. An active filter turns dark and
- * gets its own clear button (a sibling, since a button cannot nest in a button).
+ * One filter as a compact "Label: Value" menu. An active filter takes a dark
+ * outline and its own clear button.
  */
 export function FilterMenu({
   label,
@@ -61,24 +59,21 @@ export function FilterMenu({
       : [{ value: "", label: allLabel }, ...options];
 
   return (
-    <div className="inline-flex">
+    <FilterPill
+      active={active}
+      disabled={disabled}
+      clearLabel={`Clear ${label.toLowerCase()} filter`}
+      onClear={() => onChange(allValue)}
+    >
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <button
             type="button"
             aria-label={`${label}: ${shown}`}
             disabled={disabled}
-            className={cn(
-              TRIGGER,
-              "disabled:pointer-events-none disabled:opacity-50",
-              active
-                ? "rounded-l-lg border-foreground bg-foreground pl-3 pr-2 text-background"
-                : "rounded-lg border-border bg-card px-3 text-foreground hover:border-foreground/30",
-            )}
+            className={filterTriggerClass(active)}
           >
-            <span className={cn(!active && "text-muted-foreground")}>
-              {label}:
-            </span>
+            <span className="text-muted-foreground">{label}:</span>
             <span className="font-semibold">{shown}</span>
             {!active && (
               <ChevronDown
@@ -130,21 +125,6 @@ export function FilterMenu({
           </fieldset>
         </PopoverContent>
       </Popover>
-      {active && (
-        <button
-          type="button"
-          aria-label={`Clear ${label.toLowerCase()} filter`}
-          disabled={disabled}
-          onClick={() => onChange(allValue)}
-          className={cn(
-            TRIGGER,
-            "disabled:pointer-events-none disabled:opacity-50",
-            "rounded-r-lg border-l-0 border-foreground bg-foreground pl-1 pr-2.5 text-background/70 hover:text-background",
-          )}
-        >
-          <X className="h-3.5 w-3.5" aria-hidden />
-        </button>
-      )}
-    </div>
+    </FilterPill>
   );
 }
