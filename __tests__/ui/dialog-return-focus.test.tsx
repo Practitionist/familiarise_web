@@ -21,6 +21,12 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 function ControlledAlert() {
   const [open, setOpen] = React.useState(false);
@@ -85,6 +91,74 @@ describe("dialogs return focus to their opener", () => {
     fireEvent.keyDown(document.activeElement as Element, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     await waitFor(() => expect(opener).toHaveFocus());
+  });
+
+  it("a controlled Dialog whose input has autoFocus still focuses its opener", async () => {
+    function AutoFocused() {
+      const [open, setOpen] = React.useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>
+            Confirm it's you
+          </button>
+          <Dialog open={open} onOpenChange={setOpen}>
+            <DialogContent>
+              <DialogTitle>Confirm your password</DialogTitle>
+              <DialogDescription>Enter it again.</DialogDescription>
+              <input aria-label="Password" autoFocus />
+            </DialogContent>
+          </Dialog>
+        </>
+      );
+    }
+    render(<AutoFocused />);
+    const opener = openFrom("Confirm it's you");
+    await waitFor(() =>
+      expect(screen.getByLabelText("Password")).toHaveFocus(),
+    );
+    fireEvent.keyDown(document.activeElement as Element, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(opener).toHaveFocus());
+  });
+
+  it("a dialog opened from a menu item focuses the menu's trigger", async () => {
+    function FromMenu() {
+      const [open, setOpen] = React.useState(false);
+      return (
+        <>
+          <DropdownMenu>
+            <DropdownMenuTrigger>More actions</DropdownMenuTrigger>
+            <DropdownMenuContent>
+              <DropdownMenuItem onClick={() => setOpen(true)}>
+                Move to a new date
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <AlertDialog open={open} onOpenChange={setOpen}>
+            <AlertDialogContent>
+              <AlertDialogTitle>Move it?</AlertDialogTitle>
+              <AlertDialogDescription>Pick a date.</AlertDialogDescription>
+              <AlertDialogCancel>Keep it</AlertDialogCancel>
+            </AlertDialogContent>
+          </AlertDialog>
+        </>
+      );
+    }
+    render(<FromMenu />);
+    const trigger = screen.getByRole("button", { name: "More actions" });
+    trigger.focus();
+    fireEvent.keyDown(trigger, { key: "Enter" });
+    const item = await screen.findByRole("menuitem", {
+      name: "Move to a new date",
+    });
+    item.focus();
+    fireEvent.click(item);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Keep it" })).toHaveFocus(),
+    );
+    fireEvent.keyDown(document.activeElement as Element, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    await waitFor(() => expect(trigger).toHaveFocus());
   });
 
   it("a caller that prevents the close focus keeps control of it", async () => {

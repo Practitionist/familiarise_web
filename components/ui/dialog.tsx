@@ -39,10 +39,21 @@ const DialogContent = React.forwardRef<
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
 >(
   (
-    { className, children, onOpenAutoFocus, onCloseAutoFocus, ...props },
+    {
+      className,
+      children,
+      onOpenAutoFocus,
+      onCloseAutoFocus,
+      onFocusCapture,
+      ...props
+    },
     ref,
   ) => {
-    const focus = useReturnFocus({ onOpenAutoFocus, onCloseAutoFocus });
+    const focus = useReturnFocus({
+      onOpenAutoFocus,
+      onCloseAutoFocus,
+      onFocusCapture,
+    });
     return (
       <DialogPortal>
         <DialogOverlay />
