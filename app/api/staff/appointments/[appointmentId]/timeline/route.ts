@@ -10,6 +10,7 @@ import { z } from "zod";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { getBookingTimeline } from "@/lib/data/booking-history";
 import { applyRateLimit, participantReadLimiter } from "@/lib/rate-limit";
+import { reportSentryError } from "@/lib/observability/report";
 
 interface RouteParams {
   params: Promise<{ appointmentId: string }>;
@@ -54,7 +55,11 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json(timeline);
   } catch (error) {
-    console.error("Error fetching appointment timeline:", error);
+    reportSentryError(error, {
+      subsystem: "staff",
+      op: "staff.appointments.timeline",
+      expected: false,
+    });
     return NextResponse.json(
       { error: "Failed to fetch appointment timeline" },
       { status: 500 },

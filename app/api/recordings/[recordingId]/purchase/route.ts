@@ -35,6 +35,7 @@ import {
   lockRecordingPurchase,
   RecordingPurchaseInProgressError,
 } from "@/utils/appointmentlock";
+import { reportSentryError } from "@/lib/observability/report";
 
 type RouteParams = { params: Promise<{ recordingId: string }> };
 
@@ -423,7 +424,11 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
     // A set but unusable PLATFORM_GSTIN refuses pricing with a typed 503.
     const refused = refusalJson(error);
     if (refused) return refused;
-    console.error("Error creating replay purchase:", error);
+    reportSentryError(error, {
+      subsystem: "payments",
+      op: "recording.purchase",
+      expected: false,
+    });
     return NextResponse.json(
       { error: "Failed to start purchase" },
       { status: 500 },

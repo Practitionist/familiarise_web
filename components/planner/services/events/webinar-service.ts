@@ -3,6 +3,7 @@
  */
 
 import { toast } from "@/hooks/use-toast";
+import { requireJsonResponse } from "@/lib/fetch-helpers";
 import { WebinarEvent } from "@/types/planner-events";
 import {
   eventStatusPayload,
@@ -34,9 +35,9 @@ export class WebinarService {
         `/api/bookings/webinars/check-duplicate-title?${params}`,
       );
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(
-          errorData.error || "Failed to check for duplicate webinar titles",
+        await requireJsonResponse(
+          response,
+          "Failed to check for duplicate webinar titles",
         );
       }
 
@@ -69,7 +70,7 @@ export class WebinarService {
 
       const response = await fetch(`/api/bookings/webinars?${params}`);
       if (!response.ok) {
-        throw new Error("Failed to fetch webinars");
+        await requireJsonResponse(response, "Failed to fetch webinars");
       }
 
       const { data } = await response.json();
@@ -139,10 +140,9 @@ export class WebinarService {
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(
-          errorData.error ||
-            `Failed to ${isUpdate ? "update" : "create"} webinar`,
+        await requireJsonResponse(
+          response,
+          `Failed to ${isUpdate ? "update" : "create"} webinar`,
         );
       }
 
@@ -165,8 +165,7 @@ export class WebinarService {
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to delete webinar");
+        await requireJsonResponse(response, "Failed to delete webinar");
       }
 
       return true;

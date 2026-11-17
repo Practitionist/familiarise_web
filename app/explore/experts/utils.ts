@@ -127,6 +127,14 @@ function parseNumberParam(raw: string | null): number | undefined {
   return parsed;
 }
 
+/** A price bound in paise, read as the API reads it: only a safe whole number >= 0. */
+function parsePricePaiseParam(raw: string | null): number | undefined {
+  const parsed = parseNumberParam(raw);
+  return parsed !== undefined && Number.isSafeInteger(parsed)
+    ? parsed
+    : undefined;
+}
+
 /** Like `parseNumberParam` but floors the result to an integer. Used for
  *  filter params the API also parses as integers (`parseInt`) so the UI
  *  state and the filter we send to the API can't drift apart on
@@ -178,8 +186,8 @@ export function filtersFromSearchParams(
     // must round-trip to the same Free filter. The slider's isDefault
     // check at write time already coerces the all-range default to
     // undefined, so the read side doesn't need to.
-    minPrice: parseNumberParam(params.get("minPrice")),
-    maxPrice: parseNumberParam(params.get("maxPrice")),
+    minPrice: parsePricePaiseParam(params.get("minPrice")),
+    maxPrice: parsePricePaiseParam(params.get("maxPrice")),
     minRating: parseNumberParam(params.get("minRating")),
     companies: params.getAll("companies").filter(Boolean),
     language: params.get("language") || undefined,

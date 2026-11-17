@@ -6,6 +6,7 @@ import prisma from "@/lib/prisma";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { BOOKING_TITLE_SELECT, bookingRefOf } from "@/lib/data/booking-title";
 import { outstandingPaiseByInvoice } from "@/lib/payments/billing/org-invoice-settlement";
+import { reportSentryError } from "@/lib/observability/report";
 
 /** A tab's status filter: one of its own statuses, or none (empty or `ALL`). */
 const noFilter = z
@@ -252,7 +253,11 @@ export async function GET(request: NextRequest) {
       summary,
     });
   } catch (error) {
-    console.error("Error fetching invoices:", error);
+    reportSentryError(error, {
+      subsystem: "payments",
+      op: "admin.invoices.list",
+      expected: false,
+    });
     return NextResponse.json(
       { error: "Failed to fetch invoices" },
       { status: 500 },

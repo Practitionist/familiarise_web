@@ -27,6 +27,7 @@ import {
   DigitalProductPurchaseInProgressError,
   lockDigitalProductPurchase,
 } from "@/utils/appointmentlock";
+import { reportSentryError } from "@/lib/observability/report";
 
 type RouteParams = { params: Promise<{ productId: string }> };
 
@@ -125,7 +126,11 @@ export async function POST(_request: Request, { params }: RouteParams) {
         { status: error.httpStatus },
       );
     }
-    console.error("Error claiming digital product:", error);
+    reportSentryError(error, {
+      subsystem: "payments",
+      op: "digital-product.claim",
+      expected: false,
+    });
     return NextResponse.json(
       { error: "Failed to claim product" },
       { status: 500 },

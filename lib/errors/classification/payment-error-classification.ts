@@ -296,6 +296,10 @@ interface BusinessErrorEntry {
   userMessage?: string;
 }
 
+/** A webinar or class seat runs at its event's time, so checkout never takes one. */
+export const EVENT_SEAT_TIMES_SENT_MESSAGE =
+  "This seat runs at the event's own time. Refresh the page and try again.";
+
 const BUSINESS_ERROR_ENTRIES = [
   {
     code: "UNSUPPORTED_GATEWAY",
@@ -646,6 +650,13 @@ const BUSINESS_ERROR_ENTRIES = [
     code: "WINDOW_DURATION_MISMATCH",
     errorType: ErrorTypes.BOOKING_RULE,
     httpStatus: 400,
+  },
+  // A seat checkout that sent its own start or end time; the event sets the time.
+  {
+    code: "EVENT_SEAT_TIMES_SENT",
+    errorType: ErrorTypes.BOOKING_RULE,
+    httpStatus: 400,
+    userMessage: EVENT_SEAT_TIMES_SENT_MESSAGE,
   },
   // A seat checkout whose event is not on the plan it names.
   {

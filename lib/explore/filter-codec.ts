@@ -24,12 +24,6 @@ export function parseIntegerParam(raw: string | null): number | undefined {
   return Number.isNaN(parsed) ? undefined : parsed;
 }
 
-export function parseNumberParam(raw: string | null): number | undefined {
-  if (raw === null || raw.trim() === "") return undefined;
-  const parsed = Number(raw);
-  return Number.isNaN(parsed) ? undefined : parsed;
-}
-
 export function parseBooleanParam(raw: string | null): boolean {
   return raw === "true" || raw === "1";
 }

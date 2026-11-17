@@ -649,7 +649,11 @@ export async function POST(
         const result = CancelAppointmentSchema.safeParse(parsed);
         if (!result.success) {
           return NextResponse.json(
-            { error: "Validation failed", details: result.error.issues },
+            {
+              error: "Validation failed",
+              code: "VALIDATION_FAILED",
+              details: result.error.issues,
+            },
             { status: 400 },
           );
         }
@@ -721,7 +725,7 @@ export async function POST(
 
     if (!appointment) {
       return NextResponse.json(
-        { error: "Appointment not found" },
+        { error: "Appointment not found", code: "NOT_FOUND" },
         { status: 404 },
       );
     }
@@ -740,7 +744,10 @@ export async function POST(
 
     if (!actor.authorized) {
       return NextResponse.json(
-        { error: "You are not authorized to cancel this appointment" },
+        {
+          error: "You are not authorized to cancel this appointment",
+          code: "FORBIDDEN",
+        },
         { status: 403 },
       );
     }
@@ -1597,7 +1604,7 @@ export async function POST(
     }
     if (error instanceof Error && error.message === "Appointment not found") {
       return NextResponse.json(
-        { error: "Appointment not found" },
+        { error: "Appointment not found", code: "NOT_FOUND" },
         { status: 404 },
       );
     }
