@@ -100,22 +100,24 @@ jest.mock("../../lib/prisma", () => ({
     },
     user: {
       // The target read asks for each buyer's payments; the approver read does not.
-      findMany: async (args: { select: { Payment?: unknown } }) => {
+      findMany: async (args: {
+        where: { id?: { in: string[] } };
+        select: { Payment?: unknown };
+      }) => {
         mockCalls.user = [...(mockCalls.user ?? []), args];
-        return args.select.Payment
-          ? [
-              {
-                ...mockBuyer,
-                Payment: [{ id: "pay-1", appointment: mockAppointment }],
-              },
-            ]
-          : [
-              {
-                id: "user-8",
-                name: "Olivia Brown",
-                email: "olivia@example.test",
-              },
-            ];
+        if (args.select.Payment) {
+          return [
+            {
+              ...mockBuyer,
+              Payment: [{ id: "pay-1", appointment: mockAppointment }],
+            },
+          ];
+        }
+        // Only the ids the handler asks for come back, so a wrong batch cannot pass.
+        const known = [
+          { id: "user-8", name: "Olivia Brown", email: "olivia@example.test" },
+        ];
+        return known.filter((u) => args.where.id?.in.includes(u.id));
       },
     },
     consultantEarnings: {
@@ -284,12 +286,17 @@ describe("D10: STAFF see the emails the money rows name, as on the payment detai
     const page = orgPayoutListPageSchema.parse(
       await get(orgPayoutsGet, "/api/admin/org-payouts"),
     );
+    // One batched read for the creator and both approvers, with their emails.
+    expect(mockCalls.user).toHaveLength(1);
     expect(mockCalls.user[0]).toMatchObject({
+      where: { id: { in: ["user-9", "user-8"] } },
       select: { id: true, name: true, email: true },
     });
-    expect(page.payouts[0].orgApprovedByUser?.email).toBe(
-      "olivia@example.test",
-    );
+    expect(page.payouts[0].orgApprovedByUser).toEqual({
+      id: "user-8",
+      name: "Olivia Brown",
+      email: "olivia@example.test",
+    });
   });
 
   it("earnings send STAFF the buyer's email", async () => {

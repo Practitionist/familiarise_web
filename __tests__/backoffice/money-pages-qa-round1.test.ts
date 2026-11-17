@@ -93,7 +93,7 @@ jest.mock("../../lib/prisma", () => ({
       aggregate: async () => ({ _sum: {} }),
     },
     organizationInvoice: {
-      findMany: async () => [],
+      findMany: mockRead("organizationInvoice", () => []),
       count: async () => 0,
       groupBy: async () => [],
     },
@@ -187,6 +187,16 @@ describe("an unknown status filter is a 400", () => {
   ])("a known one still reads, %s", async (_name, route, path) => {
     expect((await get(route, path)).status).toBe(200);
   });
+});
+
+it("filters org invoices by the parsed status, and reads ALL as no filter", async () => {
+  for (const key of Object.keys(mockReads)) delete mockReads[key];
+  await get(invoicesGet, "/api/admin/invoices?status=OVERDUE");
+  await get(invoicesGet, "/api/admin/invoices?status=ALL");
+  expect(mockReads.organizationInvoice[0]).toMatchObject({
+    where: { AND: [{ status: "OVERDUE" }] },
+  });
+  expect(mockReads.organizationInvoice[1]).toMatchObject({ where: {} });
 });
 
 it.each([
