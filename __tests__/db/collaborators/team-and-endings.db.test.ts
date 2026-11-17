@@ -46,7 +46,10 @@ const owedRevocations = (ref: PlanRef, userId: string) =>
     where: { kind: "COLLAB_REVOKE", planId: ref.planId, userId },
   });
 
+// Postgres stamps the period to the microsecond and a Date keeps the
+// millisecond, so each probe sits a whole millisecond clear of the stamp.
 const msBefore = (at: Date) => new Date(at.getTime() - 1);
+const msAfter = (at: Date) => new Date(at.getTime() + 1);
 
 describe("the team as of a time", () => {
   it("holds a member from the accept until the ending, whenever it is asked", async () => {
@@ -55,8 +58,8 @@ describe("the team as of a time", () => {
 
     const { acceptedAt } = await accept(row.id);
     if (!acceptedAt) throw new Error("the accept stamped no time");
-    // The two stamps must differ by more than the millisecond a Date keeps.
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    // The probes need a few clear milliseconds between the two stamps.
+    await new Promise((resolve) => setTimeout(resolve, 10));
     const { endedAt } = await prisma.collaborator.update({
       where: { id: row.id },
       data: { status: "REMOVED" },
@@ -66,9 +69,9 @@ describe("the team as of a time", () => {
     const idsAt = async (at: Date) =>
       (await teamAsOf(prisma, ref, at)).map((m) => m.collaboratorId);
     expect(await idsAt(msBefore(acceptedAt))).toEqual([]);
-    expect(await idsAt(acceptedAt)).toEqual([row.id]);
+    expect(await idsAt(msAfter(acceptedAt))).toEqual([row.id]);
     expect(await idsAt(msBefore(endedAt))).toEqual([row.id]);
-    expect(await idsAt(endedAt)).toEqual([]);
+    expect(await idsAt(msAfter(endedAt))).toEqual([]);
   });
 
   it("never holds an invitation that was declined", async () => {
