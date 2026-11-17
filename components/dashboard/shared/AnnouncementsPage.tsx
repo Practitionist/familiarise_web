@@ -94,7 +94,13 @@ export function AnnouncementsPage({
     placeholderData: keepPreviousPageOnly(listKey, 1),
   });
   const announcements = list.data?.data ?? [];
-  usePageWithinTotal(page, setPage, list.data?.total, PAGE_SIZE);
+  // Only this page's own answer may clamp it, not the previous page's placeholder.
+  usePageWithinTotal(
+    page,
+    setPage,
+    list.isPlaceholderData ? undefined : list.data?.total,
+    PAGE_SIZE,
+  );
   const isLoading = list.isLoading;
 
   // Counted only when an inbox post is being considered. The hook stays mounted,

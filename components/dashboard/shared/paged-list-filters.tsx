@@ -128,7 +128,8 @@ export function keepPreviousPageOnly<T>(
 /**
  * Moves a pager back to the list's last page when the list shrank under it
  * (the last row of a page was resolved or deleted), so the page never reads
- * as empty while rows remain. `total` is undefined until the first load.
+ * as empty while rows remain. Pass `total` only from this page's own answer:
+ * undefined while it loads or while a placeholder shows the previous page's.
  */
 export function usePageWithinTotal(
   page: number,

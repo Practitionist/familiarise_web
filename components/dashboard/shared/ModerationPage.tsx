@@ -557,6 +557,7 @@ export function ModerationPage() {
   // Fetch moderation reports
   const {
     data: reportsData,
+    isPlaceholderData: reportsPlaceholder,
     isPending: loadingReports,
     isFetching: fetchingReports,
     isError: reportsError,
@@ -592,6 +593,7 @@ export function ModerationPage() {
   // Fetch reviews
   const {
     data: reviewsData,
+    isPlaceholderData: reviewsPlaceholder,
     isPending: loadingReviews,
     isFetching: fetchingReviews,
     isError: reviewsError,
@@ -613,16 +615,17 @@ export function ModerationPage() {
     placeholderData: keepPreviousData,
   });
   const reviews = reviewsData?.reviews ?? [];
+  // Only a page's own answer may clamp it, not the previous page's placeholder.
   usePageWithinTotal(
     reportsPage,
     setReportsPage,
-    reportsData?.pagination.total,
+    reportsPlaceholder ? undefined : reportsData?.pagination.total,
     PAGE_SIZE,
   );
   usePageWithinTotal(
     reviewsPage,
     setReviewsPage,
-    reviewsData?.pagination.total,
+    reviewsPlaceholder ? undefined : reviewsData?.pagination.total,
     PAGE_SIZE,
   );
 

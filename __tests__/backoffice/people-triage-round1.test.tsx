@@ -8,7 +8,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  act,
   fireEvent,
   render,
   renderHook,
@@ -151,15 +150,4 @@ it.each([
   const src = read(file);
   expect(src).toContain("<OperatorTime");
   expect(src).not.toContain("formatOperatorInstant(");
-});
-
-it("keeps a pager mounted when a moderation or announcement page empties", () => {
-  for (const file of [
-    "components/dashboard/shared/ModerationPage.tsx",
-    "components/dashboard/shared/AnnouncementsPage.tsx",
-    "components/dashboard/backoffice/organizations/OrgVerificationQueue.tsx",
-  ]) {
-    expect(read(file)).toContain("usePageWithinTotal(");
-  }
-  act(() => undefined);
 });

@@ -49,7 +49,7 @@ const columns: ResponsiveColumn<QueuedOrg>[] = [
 export function OrgVerificationQueue() {
   const { basePath } = useBackofficeCapability();
   const [page, setPage] = useState(1);
-  const { data, isLoading, error, refetch } = useQuery({
+  const { data, isLoading, isPlaceholderData, error, refetch } = useQuery({
     queryKey: ["admin-organizations", "verification-queue", page],
     queryFn: async () => {
       const params = new URLSearchParams({
@@ -66,7 +66,13 @@ export function OrgVerificationQueue() {
     },
     placeholderData: keepPreviousData,
   });
-  usePageWithinTotal(page, setPage, data?.pagination.total, PAGE_SIZE);
+  // Only this page's own answer may clamp it, not the previous page's placeholder.
+  usePageWithinTotal(
+    page,
+    setPage,
+    isPlaceholderData ? undefined : data?.pagination.total,
+    PAGE_SIZE,
+  );
 
   return (
     <div className="space-y-4">
