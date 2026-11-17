@@ -5,9 +5,6 @@
 import * as React from "react";
 import { render, screen } from "@testing-library/react";
 
-let mockListed: unknown;
-let mockOverrides: Record<string, React.ComponentType> | undefined;
-
 jest.mock("../../providers/MaintenanceProvider", () => ({
   useMaintenanceState: () => ({ phase: "NORMAL" }),
 }));
@@ -20,24 +17,13 @@ jest.mock("stream-chat-react", () => {
   return {
     Channel: passthrough,
     Window: passthrough,
-    MessageList: ({ messages }: { messages?: unknown }) => {
-      mockListed = messages;
-      return react.createElement("div", { "data-testid": "message-list" });
-    },
+    MessageList: () =>
+      react.createElement("div", { "data-testid": "message-list" }),
     VirtualizedMessageList: () =>
       react.createElement("div", { "data-testid": "message-list" }),
     MessageComposer: () =>
       react.createElement("div", { "data-testid": "message-composer" }),
-    WithComponents: ({
-      children,
-      overrides,
-    }: {
-      children?: React.ReactNode;
-      overrides?: Record<string, React.ComponentType>;
-    }) => {
-      mockOverrides = overrides;
-      return react.createElement("div", null, children);
-    },
+    WithComponents: passthrough,
     useChatContext: () => ({ channel: undefined }),
     useChannelStateContext: () => ({ messages: [], channel: undefined }),
   };
