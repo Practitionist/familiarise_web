@@ -48,7 +48,11 @@ jest.mock("../../lib/prisma", () => ({
     appointmentParticipant: { findMany: jest.fn().mockResolvedValue([]) },
     // #1580 C-P1-5 — group-event cancel and reschedule read the ACCEPTED
     // collaborators for the recipient list. Default to none.
-    collaborator: { findMany: jest.fn().mockResolvedValue([]) },
+    collaborator: {
+      findMany: jest.fn().mockResolvedValue([]),
+      findFirst: jest.fn().mockResolvedValue(null),
+    },
+    membership: { count: jest.fn(), findUnique: jest.fn() },
     appointmentOccurrence: { findMany: jest.fn(), deleteMany: jest.fn() },
     // #1008 — reschedule/cancel routes read prisma.dispute.findFirst.
     dispute: { findFirst: jest.fn().mockResolvedValue(null) },
@@ -546,6 +550,54 @@ describe("authorizeEventAccess", () => {
         "GET",
       );
       expect(result).toBeNull();
+    });
+
+    it("takes an organisation plan's named expert only while an active expert of that organisation", async () => {
+      (prisma.webinar.findUnique as jest.Mock).mockResolvedValue({
+        webinarPlan: {
+          id: "wp-1",
+          consultantProfileId: "cp-001",
+          organizationId: "org-1",
+        },
+      });
+      const membershipCount = prisma.membership.count as jest.Mock;
+      // Suspended in the organisation: no operator rights either.
+      (prisma.membership.findUnique as jest.Mock).mockResolvedValue({
+        status: "SUSPENDED",
+        role: "EXPERT",
+        organization: { status: "ACTIVE" },
+      });
+
+      membershipCount.mockResolvedValue(1);
+      for (const method of ["GET", "PUT"]) {
+        expect(
+          await authorizeEventAccess(
+            consultantSession(),
+            "webinar",
+            "web-1",
+            method,
+          ),
+        ).toBeNull();
+      }
+      expect(membershipCount).toHaveBeenCalledWith({
+        where: {
+          organizationId: "org-1",
+          consultantProfileId: "cp-001",
+          status: "ACTIVE",
+          role: "EXPERT",
+        },
+      });
+
+      membershipCount.mockResolvedValue(0);
+      for (const method of ["GET", "PUT"]) {
+        const refused = await authorizeEventAccess(
+          consultantSession(),
+          "webinar",
+          "web-1",
+          method,
+        );
+        expect(refused?.status).toBe(403);
+      }
     });
 
     it("should reject consultee (webinar has no requestedById)", async () => {

@@ -29,6 +29,7 @@ import {
   hasAnyOrgPermission,
   type OrgSurface,
 } from "@/lib/auth/org-permissions";
+import { orgPlanEditRefusal } from "@/lib/enterprise/membership-guards";
 
 const SESSION_LOOKUP_REPORT_WINDOW_MS = 60 * 60 * 1000;
 
@@ -288,9 +289,13 @@ async function authorizeGroupEvent(
   if (!row) return false;
 
   const plan = "webinarPlan" in row ? row.webinarPlan : row.classPlan;
+  // The plan's own expert, on an organisation's plan only while its active expert.
+  const managesAsNamedExpert =
+    !!consultantProfileId &&
+    consultantProfileId === plan.consultantProfileId &&
+    !(await orgPlanEditRefusal(prisma, plan, consultantProfileId));
   if (
-    (Boolean(consultantProfileId) &&
-      consultantProfileId === plan.consultantProfileId) ||
+    managesAsNamedExpert ||
     (await hasOrgEventAccess(userId, plan.organizationId))
   ) {
     return true;
