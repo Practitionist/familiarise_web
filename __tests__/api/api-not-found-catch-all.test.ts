@@ -38,7 +38,7 @@ function apiRoutes(): string[] {
 
 const routes = apiRoutes();
 const statics = new Set(routes.filter((r) => !isDynamicRoute(r)));
-const dynamics = getSortedRoutes(routes.filter(isDynamicRoute));
+const dynamics = getSortedRoutes(routes.filter((r) => isDynamicRoute(r)));
 
 /** The route Next serves for a path: an exact static match first, then dynamics in Next's order. */
 function resolve(pathname: string): string | undefined {
