@@ -35,10 +35,11 @@ const ORG_SLUG = z
   .regex(/^[a-z0-9-]+$/);
 
 /** A price bound in paise: only a safe non-negative integer counts; anything else is no bound. */
+const PRICE_PAISE_PARAM = z.coerce.number().int().nonnegative().safe();
 function pricePaiseParam(raw: string | null): number | undefined {
   if (raw === null || raw.trim() === "") return undefined;
-  const value = Number(raw);
-  return Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+  const parsed = PRICE_PAISE_PARAM.safeParse(raw);
+  return parsed.success ? parsed.data : undefined;
 }
 
 export async function GET(request: NextRequest) {

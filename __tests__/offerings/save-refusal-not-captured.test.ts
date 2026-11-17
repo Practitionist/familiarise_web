@@ -23,6 +23,7 @@ import {
 } from "@/components/offerings/editor/adapters";
 import { feasibilityRefusalOf } from "@/components/offerings/editor/feasibility-feedback";
 import { isExpectedRefusal } from "@/lib/errors/client-refusal";
+import { ApiResponseError } from "@/lib/fetch-helpers";
 
 const answer = (status: number, body: unknown) =>
   jest.spyOn(global, "fetch").mockResolvedValue(
@@ -52,9 +53,10 @@ describe.each(Object.entries(saves))("saving a %s", (_kind, save) => {
 
   it("still treats a 500 as a fault", async () => {
     answer(500, { error: "boom" });
-    expect(isExpectedRefusal(await save().catch((e: unknown) => e))).toBe(
-      false,
-    );
+    const error = await save().catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ApiResponseError);
+    expect(error).toMatchObject({ status: 500 });
+    expect(isExpectedRefusal(error)).toBe(false);
   });
 });
 

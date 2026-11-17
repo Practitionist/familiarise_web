@@ -6,11 +6,6 @@
  * The public expert profile reads only plans a buyer can purchase and never
  * returns a strike or reliability figure, at any depth.
  */
-import {
-  eventPlanDiscoverableWhere,
-  oneOnOnePlanDiscoverableWhere,
-} from "@/lib/api/plans/visibility";
-
 type Select = Record<string, unknown>;
 
 /** What Prisma would return for a `select`: only the keys it names, one row per relation. */
@@ -76,18 +71,15 @@ it("lists only plans a buyer can purchase", async () => {
     string,
     { where: unknown; include?: { classes?: { where: unknown } } }
   >;
-  expect(select.consultationPlans.where).toEqual(
-    oneOnOnePlanDiscoverableWhere(),
-  );
-  expect(select.subscriptionPlans.where).toEqual(
-    oneOnOnePlanDiscoverableWhere(),
-  );
-  expect(select.webinarPlans.where).toEqual(eventPlanDiscoverableWhere());
-  expect(select.classPlans.where).toEqual(eventPlanDiscoverableWhere());
-  expect(eventPlanDiscoverableWhere().visibility.in).toEqual([
-    "PUBLIC",
-    "ORG_AND_PUBLIC",
-  ]);
+  const publicLive = {
+    visibility: { in: ["PUBLIC", "ORG_AND_PUBLIC"] },
+    archivedAt: null,
+  };
+  const published = { ...publicLive, status: "PUBLISHED" };
+  expect(select.consultationPlans.where).toEqual(published);
+  expect(select.subscriptionPlans.where).toEqual(published);
+  expect(select.webinarPlans.where).toEqual(publicLive);
+  expect(select.classPlans.where).toEqual(publicLive);
   // Each class plan shows only its next batch still to start.
   expect(select.classPlans.include?.classes?.where).toMatchObject({
     status: "SCHEDULED",

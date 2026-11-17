@@ -16,6 +16,7 @@ jest.mock("@/lib/prisma", () => ({
 
 import { NextRequest } from "next/server";
 import { GET } from "@/app/api/user/consultants/route";
+import { filtersFromSearchParams } from "@/app/explore/experts/utils";
 
 /** The price bounds the route put on the plan filter, or null for none. */
 async function priceBound(minPrice: string) {
@@ -41,4 +42,17 @@ it.each(["Infinity", "1.5", "-1", "1e400", "abc"])(
 
 it("keeps minPrice=500 as a bound", async () => {
   expect(await priceBound("500")).toEqual({ gte: 500 });
+});
+
+it.each([
+  ["1.5", undefined],
+  ["-1", undefined],
+  ["Infinity", undefined],
+  ["500", 500],
+])("the explore page reads a price bound of %s as %s", (raw, bound) => {
+  const filters = filtersFromSearchParams(
+    new URLSearchParams({ minPrice: raw, maxPrice: raw }),
+  );
+  expect(filters.minPrice).toBe(bound);
+  expect(filters.maxPrice).toBe(bound);
 });

@@ -391,6 +391,27 @@ export async function PUT(
   }
 }
 
+/** A PATCH may omit either day, but a day it sends must be a real one. */
+function patchDayRefusal(
+  startDay: unknown,
+  endDay: unknown,
+): NextResponse | null {
+  const days: readonly unknown[] = Object.values(DayOfWeek);
+  if (startDay && !days.includes(startDay)) {
+    return NextResponse.json(
+      { error: "Invalid day of week for start time" },
+      { status: 400 },
+    );
+  }
+  if (endDay && !days.includes(endDay)) {
+    return NextResponse.json(
+      { error: "Invalid day of week for end time" },
+      { status: 400 },
+    );
+  }
+  return null;
+}
+
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -411,19 +432,8 @@ export async function PATCH(
     if (read.error) return read.error;
     const body = read.body;
 
-    if (body.startDay && !Object.values(DayOfWeek).includes(body.startDay)) {
-      return NextResponse.json(
-        { error: "Invalid day of week for start time" },
-        { status: 400 },
-      );
-    }
-
-    if (body.endDay && !Object.values(DayOfWeek).includes(body.endDay)) {
-      return NextResponse.json(
-        { error: "Invalid day of week for end time" },
-        { status: 400 },
-      );
-    }
+    const badDay = patchDayRefusal(body.startDay, body.endDay);
+    if (badDay) return badDay;
 
     const currentSlot = await prisma.availabilityWindowWeekly.findUnique({
       where: { id: id },

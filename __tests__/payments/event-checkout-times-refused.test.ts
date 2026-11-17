@@ -24,8 +24,11 @@ describe.each(["WEBINAR", "CLASS"] as const)("a %s checkout", (type) => {
         [field]: field === "startsAt" ? STARTS : ENDS,
       });
       expect(parsed.success).toBe(false);
-      expect(parsed.error?.issues.map((i) => i.path.join("."))).toContain(
-        field,
+      expect(parsed.error?.issues).toContainEqual(
+        expect.objectContaining({
+          path: [field],
+          message: expect.stringContaining(`${field} must not be sent`),
+        }),
       );
     },
   );
