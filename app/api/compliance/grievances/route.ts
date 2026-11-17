@@ -3,6 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
+import { readJsonBody } from "@/lib/api/parse";
 import { applyRateLimit, spamLimiter } from "@/lib/rate-limit";
 import { recordSystemEvent } from "@/lib/enterprise/system-events";
 
@@ -23,16 +24,9 @@ export async function POST(req: NextRequest) {
   if (limited) return limited;
 
   try {
-    let payload: unknown;
-    try {
-      payload = await req.json();
-    } catch {
-      return NextResponse.json(
-        { error: "Malformed JSON request body" },
-        { status: 400 },
-      );
-    }
-    const parsed = GrievanceSchema.safeParse(payload);
+    const read = await readJsonBody(req);
+    if (read.error) return read.error;
+    const parsed = GrievanceSchema.safeParse(read.body);
     if (!parsed.success) {
       return NextResponse.json(
         { error: parsed.error.issues[0]?.message ?? "Invalid request" },
@@ -60,7 +54,10 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ grievance }, { status: 201 });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "compliance" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "compliance" } },
+    );
     console.error("Grievance intake error:", error);
     return NextResponse.json(
       { error: "Failed to file grievance" },
