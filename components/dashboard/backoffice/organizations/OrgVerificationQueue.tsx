@@ -5,6 +5,7 @@ import { useState } from "react";
 
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
 import { TablePagination } from "@/components/dashboard/TablePagination";
+import { usePageWithinTotal } from "@/components/dashboard/shared/paged-list-filters";
 import {
   ResponsiveTable,
   type ResponsiveColumn,
@@ -65,6 +66,7 @@ export function OrgVerificationQueue() {
     },
     placeholderData: keepPreviousData,
   });
+  usePageWithinTotal(page, setPage, data?.pagination.total, PAGE_SIZE);
 
   return (
     <div className="space-y-4">

@@ -11,7 +11,7 @@ import { purgeExpertSurfaces } from "@/lib/data/public-cache";
 import { attemptTrigger } from "@/lib/novu";
 import { attemptOnboardingEmail } from "@/lib/email";
 import { reviewVerificationTx, type ReviewDecision } from "./review";
-import { documentDownloadPath } from "./documents";
+import { documentDownloadPath, REVIEW_DOCUMENT_SELECT } from "./documents";
 
 /** Replace the stored (possibly expired, signed) fileUrl with the ACL'd download route. */
 export function withDownloadUrls<T extends { id: string; fileUrl: string }>(
@@ -45,7 +45,7 @@ export const reviewVerificationDoor = withOpsAction(
       });
       const verification = await tx.consultantProfileVerification.findUnique({
         where: { id: verificationId },
-        include: { documents: true },
+        include: { documents: { select: REVIEW_DOCUMENT_SELECT } },
       });
       const { bell, email } = decided.staged;
       return {

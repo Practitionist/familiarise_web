@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { throwSupportError } from "@/lib/support/error-copy";
-import { formatOperatorInstant } from "@/lib/time/operator-zone";
+import { OperatorTime } from "@/lib/time/operator-time";
 import { humanizeEnum } from "@/lib/ui/tone";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { sessionShareOf } from "@/lib/booking/entitlement";
@@ -69,7 +69,7 @@ type RefundPreview = z.infer<typeof Preview>["data"] & {
   recommendationId: string;
 };
 
-const when = (iso: string) => formatOperatorInstant(iso);
+const when = (iso: string) => <OperatorTime value={iso} />;
 const inr = (paise: number) => formatCurrencyAmount(paise, "INR");
 
 /** An approved remedy with no live refund: it failed, was cancelled, or never started. */
@@ -119,8 +119,8 @@ function heldEarningsLabel(count: number) {
     : `${count} unpaid earnings held`;
 }
 
-function recommendationStatus(rec: Recommendation) {
-  if (rec.voidedAt) return `Voided ${when(rec.voidedAt)}`;
+function recommendationStatus(rec: Recommendation): React.ReactNode {
+  if (rec.voidedAt) return <>Voided {when(rec.voidedAt)}</>;
   if (!rec.decidedAt) return "Awaiting review";
   if (!rec.approved) return "Declined";
   return rec.refund
@@ -587,9 +587,11 @@ export function FinancialPanel({
           >
             <p>
               {hold.reason} ·{" "}
-              {hold.releasedAt
-                ? `Released ${when(hold.releasedAt)}`
-                : `Payout held since ${when(hold.createdAt)}`}
+              {hold.releasedAt ? (
+                <>Released {when(hold.releasedAt)}</>
+              ) : (
+                <>Payout held since {when(hold.createdAt)}</>
+              )}
             </p>
             {!hold.releasedAt && (
               <p className="text-muted-foreground">

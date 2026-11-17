@@ -69,6 +69,7 @@ import { moderationReportStatus } from "@/lib/labels/backoffice-labels";
 import { formatOperatorInstant } from "@/lib/time/operator-zone";
 import { PersonCell } from "@/components/dashboard/backoffice/PersonCell";
 import { TablePagination } from "@/components/dashboard/TablePagination";
+import { usePageWithinTotal } from "@/components/dashboard/shared/paged-list-filters";
 import {
   OpenReportCaseDialog,
   ReportCaseLink,
@@ -612,6 +613,18 @@ export function ModerationPage() {
     placeholderData: keepPreviousData,
   });
   const reviews = reviewsData?.reviews ?? [];
+  usePageWithinTotal(
+    reportsPage,
+    setReportsPage,
+    reportsData?.pagination.total,
+    PAGE_SIZE,
+  );
+  usePageWithinTotal(
+    reviewsPage,
+    setReviewsPage,
+    reviewsData?.pagination.total,
+    PAGE_SIZE,
+  );
 
   const {
     data: selectedReportDetail,
@@ -1156,13 +1169,16 @@ export function ModerationPage() {
                   </Card>
                 );
               })}
-              <TablePagination
-                page={reportsData?.pagination.page ?? reportsPage}
-                pageSize={reportsData?.pagination.limit ?? PAGE_SIZE}
-                total={reportsData?.pagination.total ?? 0}
-                onPageChange={setReportsPage}
-              />
             </div>
+          )}
+          {/* Kept mounted on an empty page, so the queue can always page back. */}
+          {reportsData && reportsData.pagination.total > 0 && (
+            <TablePagination
+              page={reportsData.pagination.page}
+              pageSize={reportsData.pagination.limit}
+              total={reportsData.pagination.total}
+              onPageChange={setReportsPage}
+            />
           )}
         </TabsContent>
 
@@ -1203,8 +1219,8 @@ export function ModerationPage() {
                 return (
                   <Card key={review.id}>
                     <CardContent className="p-4">
-                      <div className="flex items-start justify-between">
-                        <div className="flex items-start gap-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex min-w-0 items-start gap-3">
                           <Avatar>
                             <AvatarImage src={review.reviewer.image || ""} />
                             <AvatarFallback>
@@ -1214,8 +1230,8 @@ export function ModerationPage() {
                                 .join("")}
                             </AvatarFallback>
                           </Avatar>
-                          <div>
-                            <div className="flex items-center gap-2">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex min-w-0 flex-wrap items-center gap-2">
                               <PersonCell
                                 person={{
                                   id: review.reviewer.profileId,
@@ -1230,7 +1246,7 @@ export function ModerationPage() {
                               <span className="text-muted-foreground/70">
                                 →
                               </span>
-                              <p className="text-muted-foreground">
+                              <p className="min-w-0 break-words text-muted-foreground">
                                 {consultantName}
                               </p>
                             </div>
@@ -1247,7 +1263,7 @@ export function ModerationPage() {
                               ))}
                             </div>
                             {review.reviewDescription && (
-                              <p className="text-sm text-muted-foreground mt-2">
+                              <p className="text-sm text-muted-foreground mt-2 break-words">
                                 {review.reviewDescription}
                               </p>
                             )}
@@ -1276,7 +1292,7 @@ export function ModerationPage() {
                             )}
                           </div>
                         </div>
-                        <span className="text-xs text-muted-foreground/70">
+                        <span className="shrink-0 text-right text-xs text-muted-foreground/70">
                           {formatDate(review.createdAt)}
                         </span>
                       </div>
@@ -1309,13 +1325,16 @@ export function ModerationPage() {
                   </Card>
                 );
               })}
-              <TablePagination
-                page={reviewsData?.pagination.page ?? reviewsPage}
-                pageSize={reviewsData?.pagination.limit ?? PAGE_SIZE}
-                total={reviewsData?.pagination.total ?? 0}
-                onPageChange={setReviewsPage}
-              />
             </div>
+          )}
+          {/* Kept mounted on an empty page, so the queue can always page back. */}
+          {reviewsData && reviewsData.pagination.total > 0 && (
+            <TablePagination
+              page={reviewsData.pagination.page}
+              pageSize={reviewsData.pagination.limit}
+              total={reviewsData.pagination.total}
+              onPageChange={setReviewsPage}
+            />
           )}
         </TabsContent>
       </Tabs>

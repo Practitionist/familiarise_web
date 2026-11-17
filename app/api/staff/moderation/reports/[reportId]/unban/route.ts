@@ -136,8 +136,11 @@ export const POST = withOpsAction(
             userId: report.targetUserId,
             kind: "REINSTATED",
             dashboardUrl,
-          }).catch((err) => {
-            console.error("[moderation.unban] email stage failed:", err);
+          }).catch((err: unknown) => {
+            // The error's name only: a Prisma error carries query text and values.
+            console.error("[moderation.unban] email stage failed", {
+              error: err instanceof Error ? err.name : "unknown",
+            });
             return [];
           })
         : [];

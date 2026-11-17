@@ -11,7 +11,11 @@ import {
   formatDateTimeLabel,
   type DisplayOpts,
 } from "./display";
-import { formatOperatorInstant, OPERATOR_ZONE } from "./operator-zone";
+import {
+  formatOperatorInstant,
+  formatUtcInstant,
+  OPERATOR_ZONE,
+} from "./operator-zone";
 import { canonicalZone, UTC_ZONE } from "./viewer-zone";
 
 export type ClockInstant = Date | string | number;
@@ -28,6 +32,8 @@ export interface ZoneClock {
   dayMonth: (at: ClockInstant) => string;
   /** The calendar day of an instant in this zone, "2026-09-24", for same-day tests. */
   dayKey: (at: ClockInstant) => string;
+  /** The exact UTC reading for a hover, on the operator clock only (D3); null elsewhere. */
+  exactTitle: (at: ClockInstant) => string | null;
 }
 
 const EMPTY = "—";
@@ -69,6 +75,7 @@ export function zoneClock(zone: string): ZoneClock {
       time: (at) => formatOperatorInstant(at, "time"),
       dayMonth,
       dayKey,
+      exactTitle: (at) => formatUtcInstant(at),
     };
   }
   const suffix = canonical === UTC_ZONE ? " UTC" : "";
@@ -79,5 +86,6 @@ export function zoneClock(zone: string): ZoneClock {
     time: guard((d) => `${formatClockTime(d, opts)}${suffix}`),
     dayMonth,
     dayKey,
+    exactTitle: () => null,
   };
 }

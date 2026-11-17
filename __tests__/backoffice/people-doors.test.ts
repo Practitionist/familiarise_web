@@ -83,7 +83,7 @@ jest.mock("../../lib/email", () => ({
   attemptOnboardingEmail: jest.fn(),
 }));
 jest.mock("../../lib/email/senders/people", () => ({
-  stageAccountModerationEmail: async () => [],
+  stageAccountModerationEmail: (...args: unknown[]) => mockStageEmail(...args),
 }));
 jest.mock("../../lib/data/public-cache", () => ({
   purgeExpertSurfaces: jest.fn(),
@@ -96,6 +96,7 @@ jest.mock("../../lib/novu/stage-then-attempt", () => ({
   flushNotificationsAfter: jest.fn(),
 }));
 const mockRestore = jest.fn();
+const mockStageEmail = jest.fn(async (..._args: unknown[]) => [] as unknown[]);
 jest.mock("../../lib/moderation/side-effects", () => ({
   prepareModerationNotices: async () => ({}),
   applyTransactionalEffects: async () => ({}),
@@ -404,5 +405,67 @@ describe("what the controls send is what the doors accept", () => {
     );
     expect(res.status).toBe(200);
     expect(auditRow()).toMatchObject({ after: { status: "NEEDS_INFO" } });
+  });
+});
+
+describe("review round 1", () => {
+  it("records the report status the resolving transaction saw, not the earlier read", async () => {
+    // Read before the drafts render: PENDING. Read inside the transaction: UNDER_REVIEW.
+    mockDb.moderationReport.findUnique
+      .mockReset()
+      .mockResolvedValueOnce({
+        id: "row-1",
+        type: "USER",
+        reason: "SPAM",
+        status: "PENDING",
+        reportedById: "u-2",
+        targetUserId: "u-3",
+        reviewId: null,
+        streamMessageId: null,
+        review: null,
+      })
+      .mockResolvedValueOnce({ status: "UNDER_REVIEW" });
+    const res = await reportAction(
+      req("POST", { actionType: "WARNING_ISSUED", reason: REASON }),
+      params("reportId"),
+    );
+    expect(res.status).toBe(200);
+    expect(auditRow()).toMatchObject({
+      before: { reportStatus: "UNDER_REVIEW" },
+    });
+  });
+
+  it("records the status and assignee the compare-and-set matched as the PATCH's before", async () => {
+    // Read: unassigned. The CAS on the operator's expected assignee still matches.
+    mockDb.user.findUnique.mockResolvedValue({ role: "STAFF" });
+    const res = await reportPatch(
+      req("PATCH", {
+        assignedToId: "op-3",
+        expectedStatus: "PENDING",
+        expectedAssignedToId: "op-2",
+        reason: REASON,
+      }),
+      params("reportId"),
+    );
+    expect(res.status).toBe(200);
+    expect(auditRow()).toMatchObject({
+      before: { status: "PENDING", assignedToId: "op-2" },
+    });
+  });
+
+  it("logs a failed unban email stage without the raw error", async () => {
+    const secret = new Error("db password=hunter2 at host");
+    mockStageEmail.mockRejectedValueOnce(secret);
+    mockRestore.mockResolvedValue(undefined);
+    const log = jest.spyOn(console, "error").mockImplementation(() => {});
+    const res = await reportUnban(
+      req("POST", { reason: REASON }),
+      params("reportId"),
+    );
+    expect(res.status).toBe(200);
+    const logged = log.mock.calls.flat();
+    expect(logged).not.toContain(secret);
+    expect(logged.join(" ")).not.toContain("hunter2");
+    log.mockRestore();
   });
 });

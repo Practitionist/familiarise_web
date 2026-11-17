@@ -9,10 +9,8 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
-import {
-  reviewVerificationDoor,
-  withDownloadUrls,
-} from "@/lib/verification/review-route";
+import { REVIEW_DOCUMENT_SELECT } from "@/lib/verification/documents";
+import { withDownloadUrls } from "@/lib/verification/review-route";
 
 interface RouteParams {
   params: Promise<{ verificationId: string }>;
@@ -52,7 +50,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
             subDomains: { select: { id: true, name: true } },
           },
         },
-        documents: true,
+        documents: { select: REVIEW_DOCUMENT_SELECT },
       },
     });
 
@@ -86,4 +84,4 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
  * PATCH /api/admin/verification/[verificationId]
  * Decide a request (approve, reject or ask for more): an audited door with a reason.
  */
-export const PATCH = reviewVerificationDoor;
+export { reviewVerificationDoor as PATCH } from "@/lib/verification/review-route";

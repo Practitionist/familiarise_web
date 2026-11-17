@@ -3,11 +3,11 @@
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { Button } from "@/components/ui/button";
 import type { Tone } from "@/lib/ui/tone";
-import { formatOperatorInstant } from "@/lib/time/operator-zone";
+import { OperatorTime } from "@/lib/time/operator-time";
 import type { TranscriptMessage } from "@/schemas/support-chat";
 import { errorText, useTranscript } from "./case-chat-data";
 
-const when = (iso: string) => formatOperatorInstant(iso);
+const when = (iso: string) => <OperatorTime value={iso} />;
 
 const ROLE_KEY: Record<
   TranscriptMessage["role"],
@@ -42,9 +42,10 @@ function Message({ message }: Readonly<{ message: TranscriptMessage }>) {
         {message.deletedBySender && (
           <StatusBadge label="Deleted by sender" tone="critical" size="sm" />
         )}
-        <time dateTime={message.createdAt} className="text-muted-foreground">
-          {when(message.createdAt)}
-        </time>
+        <OperatorTime
+          value={message.createdAt}
+          className="text-muted-foreground"
+        />
       </div>
       {message.text && (
         <p className="whitespace-pre-wrap break-words text-sm">

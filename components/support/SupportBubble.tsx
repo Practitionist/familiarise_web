@@ -129,7 +129,14 @@ export function SupportBubble({
               <Icon className="h-3 w-3" aria-hidden />
             )}
             <span>{senderName}</span>
-            {time && <span aria-hidden>· {time}</span>}
+            {time && at && (
+              <span aria-hidden>
+                ·{" "}
+                <time dateTime={at} title={clock.exactTitle(at) ?? undefined}>
+                  {time}
+                </time>
+              </span>
+            )}
           </p>
         )}
         <div

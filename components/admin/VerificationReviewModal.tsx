@@ -94,6 +94,13 @@ export function VerificationReviewModal({
     setShowDetailedFeedback(false);
   };
 
+  // A new applicant starts from an empty form, however the last one was dismissed.
+  const [formFor, setFormFor] = useState(verification?.id ?? null);
+  if ((verification?.id ?? null) !== formFor) {
+    setFormFor(verification?.id ?? null);
+    resetForm();
+  }
+
   const handleDocumentValidityChange = (docId: string, isValid: boolean) => {
     setDocumentFeedback((prev) => ({
       ...prev,
@@ -592,8 +599,8 @@ export function VerificationReviewModal({
 
             <div>
               <Label htmlFor="auditReason">
-                Reason for the audit log
-                <span className="ml-1 text-xs text-zinc-400">
+                Reason for the audit log{" "}
+                <span className="text-xs text-zinc-400">
                   (required, at least 5 characters; the applicant does not see
                   it)
                 </span>

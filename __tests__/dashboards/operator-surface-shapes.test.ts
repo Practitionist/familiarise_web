@@ -1,4 +1,8 @@
 /**
+ * @jest-environment node
+ */
+
+/**
  * The moderation stat cards read 0 permanently — shape drift that `tsc` could
  * not see while the client type was hand-written. The route now builds its
  * body as `ModerationStatsBody` and the page parses it with the same schema
@@ -16,6 +20,27 @@
 
 import { readFileSync } from "fs";
 import { join } from "path";
+import { NextRequest } from "next/server";
+
+const mockCount = jest.fn(async (_args: unknown) => 0);
+jest.mock("@/lib/auth-helpers", () => ({
+  requireBackofficeSurface: async () => ({
+    session: { user: { id: "op-1", role: "STAFF" } },
+  }),
+}));
+jest.mock("@/lib/prisma", () => ({
+  __esModule: true,
+  default: {
+    moderationReport: {
+      count: (args: unknown) => mockCount(args),
+      groupBy: async () => [],
+    },
+    consultantProfileVerification: { count: async () => 0 },
+    moderationAction: { groupBy: async () => [] },
+  },
+}));
+
+import { GET as statsGet } from "@/app/api/staff/moderation/stats/route";
 
 const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
 
@@ -77,5 +102,26 @@ describe("moderation stats reach the cards", () => {
     // review can be in is a PENDING report against it.
     expect(ROUTE).not.toContain("consultantReview.count()");
     expect(ROUTE).toContain('status: "PENDING", type: "REVIEW"');
+  });
+});
+
+describe('"Resolved Today" by the clock', () => {
+  afterEach(() => jest.useRealTimers());
+
+  it.each([
+    // 00:30 IST on 1 Dec is 19:00 UTC on 30 Nov: today began at 18:30 UTC on 30 Nov.
+    ["2026-11-30T19:00:00.000Z", "2026-11-30T18:30:00.000Z"],
+    // 23:59 IST on 30 Nov is 18:29 UTC: today began at 18:30 UTC on 29 Nov.
+    ["2026-11-30T18:29:00.000Z", "2026-11-29T18:30:00.000Z"],
+  ])("at %s counts resolutions from %s", async (now, start) => {
+    jest.useFakeTimers({ now: new Date(now), doNotFake: ["nextTick"] });
+    const res = await statsGet(
+      new NextRequest("http://test/api/staff/moderation/stats"),
+    );
+    expect(res.status).toBe(200);
+    const resolvedFilter = mockCount.mock.calls
+      .map(([args]) => args as { where: { resolvedAt?: { gte: Date } } })
+      .find((a) => a.where.resolvedAt);
+    expect(resolvedFilter?.where.resolvedAt?.gte.toISOString()).toBe(start);
   });
 });

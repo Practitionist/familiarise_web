@@ -46,6 +46,16 @@ const QUERY_KEY = "admin-fee-schedules";
 
 const pct = (bps: number) => `${(bps / 100).toFixed(2)}%`;
 
+const MAX_PROPOSED_BPS = 5000;
+
+/** A fee typed in basis points: a whole number from 0 to 5000, else null ("1e3" and "12.5" are refused). */
+export function parseWholeBps(raw: string): number | null {
+  const text = raw.trim();
+  if (!/^\d+$/.test(text)) return null;
+  const bps = Number(text);
+  return bps <= MAX_PROPOSED_BPS ? bps : null;
+}
+
 async function fetchSchedules(page: number) {
   const params = new URLSearchParams({
     page: String(page),
@@ -132,14 +142,18 @@ export function PlatformFeesPageClient() {
 
   const handlePropose = () => {
     setProposeError(null);
-    const mkt = Number.parseInt(marketplaceBps, 10);
-    const own = Number.parseInt(ownLinkBps, 10);
-    if (!Number.isInteger(mkt) || mkt < 0 || mkt > 5000) {
-      setProposeError("Marketplace BPS must be between 0 and 5000 (0–50%).");
+    const mkt = parseWholeBps(marketplaceBps);
+    const own = parseWholeBps(ownLinkBps);
+    if (mkt === null) {
+      setProposeError(
+        "Marketplace BPS must be a whole number from 0 to 5000 (0–50%).",
+      );
       return;
     }
-    if (!Number.isInteger(own) || own < 0 || own > 5000) {
-      setProposeError("Own-link BPS must be between 0 and 5000 (0–50%).");
+    if (own === null) {
+      setProposeError(
+        "Own-link BPS must be a whole number from 0 to 5000 (0–50%).",
+      );
       return;
     }
     // The operator types India time, like every other back-office time.

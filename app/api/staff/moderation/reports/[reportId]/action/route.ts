@@ -121,6 +121,11 @@ function applyModerationTransaction(
   return withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
+        // The audit row's before-state is what this transaction resolves from.
+        const before = await tx.moderationReport.findUnique({
+          where: { id: reportId },
+          select: { status: true },
+        });
         const moved = await tx.moderationReport.updateMany({
           where: {
             id: reportId,
@@ -166,7 +171,12 @@ function applyModerationTransaction(
           where: { id: reportId },
         });
 
-        return { action, updatedReport, transactional };
+        return {
+          action,
+          updatedReport,
+          transactional,
+          previousStatus: before?.status ?? null,
+        };
       },
       {
         isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
@@ -177,10 +187,10 @@ function applyModerationTransaction(
   );
 }
 
-const ACCOUNT_DESTRUCTIVE: ModerationActionType[] = [
+const ACCOUNT_DESTRUCTIVE = new Set<ModerationActionType>([
   "USER_BANNED",
   "USER_SUSPENDED",
-];
+]);
 
 /** POST /api/staff/moderation/reports/[reportId]/action — resolve the report. */
 export const POST = withOpsAction(
@@ -201,7 +211,7 @@ export const POST = withOpsAction(
       const role = UserRoleEnum.safeParse(actor.role);
       const canModerateUsers =
         role.success && hasBackofficePermission(role.data, "users.moderate");
-      if (ACCOUNT_DESTRUCTIVE.includes(actionType) && !canModerateUsers) {
+      if (ACCOUNT_DESTRUCTIVE.has(actionType) && !canModerateUsers) {
         throw new OpsRefusal(
           "FORBIDDEN",
           "Forbidden — banning or suspending an account requires an admin",
@@ -262,7 +272,7 @@ export const POST = withOpsAction(
 
       // Rendered before the decision's transaction, which only stages them.
       const drafts = await prepareModerationNotices(input);
-      const { action, updatedReport, transactional } =
+      const { action, updatedReport, transactional, previousStatus } =
         await applyModerationTransaction(
           reportId,
           actionType,
@@ -304,7 +314,7 @@ export const POST = withOpsAction(
       return {
         target: { kind: "ModerationReport", id: reportId },
         // `status` is the gateway door's own SUCCEEDED or FAILED.
-        before: { reportStatus: report.status },
+        before: { reportStatus: previousStatus ?? report.status },
         after: {
           reportStatus: updatedReport.status,
           actionType,

@@ -201,9 +201,10 @@ export const PATCH = withOpsAction(
       });
       return {
         target: { kind: "ModerationReport", id: reportId },
+        // The compare-and-set matched exactly these, so they are the row's state before the write.
         before: {
-          status: existing.status,
-          assignedToId: existing.assignedToId,
+          status: body.expectedStatus,
+          assignedToId: body.expectedAssignedToId,
         },
         after: {
           status: report?.status ?? existing.status,

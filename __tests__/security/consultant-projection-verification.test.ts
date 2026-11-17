@@ -101,6 +101,15 @@ describe("GET /api/admin/verification/[verificationId]", () => {
     ).toEqual([]);
   });
 
+  it("keeps each document's storage key on the server", async () => {
+    await GET(new NextRequest("http://localhost/api/admin/verification/v-1"), {
+      params: Promise.resolve({ verificationId: "v-1" }),
+    });
+    const args = verificationDb.findUnique.mock.calls[0][0];
+    expect(args.include.documents.select).toMatchObject({ fileUrl: true });
+    expect(args.include.documents.select).not.toHaveProperty("storagePath");
+  });
+
   it("returns a verification object", async () => {
     const res = await GET(
       new NextRequest("http://localhost/api/admin/verification/v-1"),

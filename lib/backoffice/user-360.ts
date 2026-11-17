@@ -159,7 +159,7 @@ export async function readUser360(userId: string) {
     }),
   );
   const consultantProfileId = profile.consultantProfile?.id;
-  const verifications = await section("verifications", async () =>
+  const verifications = await section("verifications", () =>
     consultantProfileId
       ? prisma.consultantProfileVerification.findMany({
           where: { consultantProfileId },
@@ -173,7 +173,7 @@ export async function readUser360(userId: string) {
             _count: { select: { documents: true } },
           },
         })
-      : [],
+      : Promise.resolve([]),
   );
   const panRead = await section("pan", async () =>
     consultantProfileId

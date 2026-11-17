@@ -30,7 +30,10 @@ import { Plus, Trash2, Pencil, Megaphone, Loader2 } from "lucide-react";
 import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { TablePagination } from "@/components/dashboard/TablePagination";
-import { keepPreviousPageOnly } from "@/components/dashboard/shared/paged-list-filters";
+import {
+  keepPreviousPageOnly,
+  usePageWithinTotal,
+} from "@/components/dashboard/shared/paged-list-filters";
 import { readListBody } from "@/lib/backoffice/money-list-schemas";
 import {
   announcementPageSchema,
@@ -91,6 +94,7 @@ export function AnnouncementsPage({
     placeholderData: keepPreviousPageOnly(listKey, 1),
   });
   const announcements = list.data?.data ?? [];
+  usePageWithinTotal(page, setPage, list.data?.total, PAGE_SIZE);
   const isLoading = list.isLoading;
 
   // Counted only when an inbox post is being considered. The hook stays mounted,
@@ -391,117 +395,36 @@ export function AnnouncementsPage({
         </Dialog>
       </div>
 
-      {isLoading ? (
-        <div className="flex items-center justify-center py-8">
-          <Loader2 className="h-6 w-6 animate-spin" />
-        </div>
-      ) : list.isError ? (
-        <Card>
-          <CardContent className="flex flex-col items-center gap-3 py-12">
-            <p role="alert" className="text-sm text-destructive">
-              Announcements could not load.
-            </p>
-            <Button variant="outline" size="sm" onClick={() => list.refetch()}>
-              Retry
-            </Button>
-          </CardContent>
-        </Card>
-      ) : announcements.length === 0 ? (
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12">
-            <Megaphone className="h-12 w-12 text-muted-foreground mb-4" />
-            <p className="text-muted-foreground">No announcements yet</p>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="space-y-4">
-          {announcements.map((announcement) => (
-            <Card key={announcement.id}>
-              <CardHeader className="pb-2">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <CardTitle className="text-lg">
-                      {announcement.title}
-                    </CardTitle>
-                    <CardDescription>
-                      Created{" "}
-                      <OperatorTime
-                        value={announcement.createdAt}
-                        kind="date"
-                      />
-                    </CardDescription>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <StatusBadge
-                      label={announcement.isActive ? "Active" : "Inactive"}
-                      tone={announcement.isActive ? "success" : "neutral"}
-                    />
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div
-                  className="p-3 rounded-lg mb-4 text-sm"
-                  style={{
-                    backgroundColor: announcement.backgroundColor ?? undefined,
-                    color: announcement.textColor ?? undefined,
-                  }}
-                >
-                  {announcement.content}
-                  {announcement.linkUrl && (
-                    <span className="ml-2 underline">
-                      {announcement.linkText || "Learn more"}
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setEditingAnnouncement(announcement)}
-                  >
-                    <Pencil className="h-4 w-4 mr-1" />
-                    Edit
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() =>
-                      updateMutation.mutate({
-                        id: announcement.id,
-                        data: { isActive: !announcement.isActive },
-                      })
-                    }
-                  >
-                    {announcement.isActive ? "Deactivate" : "Activate"}
-                  </Button>
-                  {/* #1527 Q10 — a platform-wide delete is confirmed. */}
-                  <ConfirmDialog
-                    trigger={
-                      <Button variant="destructive" size="sm">
-                        <Trash2 className="h-4 w-4 mr-1" />
-                        Delete
-                      </Button>
-                    }
-                    title="Delete this announcement?"
-                    description={`"${announcement.title}" disappears for every user. This cannot be undone.`}
-                    confirmLabel="Delete"
-                    tone="destructive"
-                    onConfirm={async () => {
-                      await deleteMutation.mutateAsync(announcement.id);
-                    }}
-                  />
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-          <TablePagination
-            page={list.data?.page ?? page}
-            pageSize={list.data?.limit ?? PAGE_SIZE}
-            total={list.data?.total ?? 0}
-            onPageChange={setPage}
+      <AnnouncementList
+        isLoading={isLoading}
+        isError={list.isError}
+        onRetry={() => void list.refetch()}
+        announcements={announcements}
+        renderCard={(announcement) => (
+          <AnnouncementCard
+            key={announcement.id}
+            announcement={announcement}
+            onEdit={() => setEditingAnnouncement(announcement)}
+            onToggle={() =>
+              updateMutation.mutate({
+                id: announcement.id,
+                data: { isActive: !announcement.isActive },
+              })
+            }
+            onDelete={async () => {
+              await deleteMutation.mutateAsync(announcement.id);
+            }}
           />
-        </div>
+        )}
+      />
+      {/* Kept mounted on an empty page, so the operator can always page back. */}
+      {!list.isError && (list.data?.total ?? 0) > 0 && (
+        <TablePagination
+          page={list.data?.page ?? page}
+          pageSize={list.data?.limit ?? PAGE_SIZE}
+          total={list.data?.total ?? 0}
+          onPageChange={setPage}
+        />
       )}
 
       {/* Edit Dialog */}
@@ -606,5 +529,127 @@ export function AnnouncementsPage({
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+/** The list's one state at a time: loading, failed, empty or the cards. */
+function AnnouncementList({
+  isLoading,
+  isError,
+  onRetry,
+  announcements,
+  renderCard,
+}: Readonly<{
+  isLoading: boolean;
+  isError: boolean;
+  onRetry: () => void;
+  announcements: Announcement[];
+  renderCard: (announcement: Announcement) => React.ReactNode;
+}>) {
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-8">
+        <Loader2 className="h-6 w-6 animate-spin" />
+      </div>
+    );
+  }
+  if (isError) {
+    return (
+      <Card>
+        <CardContent className="flex flex-col items-center gap-3 py-12">
+          <p role="alert" className="text-sm text-destructive">
+            Announcements could not load.
+          </p>
+          <Button variant="outline" size="sm" onClick={onRetry}>
+            Retry
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+  if (announcements.length === 0) {
+    return (
+      <Card>
+        <CardContent className="flex flex-col items-center justify-center py-12">
+          <Megaphone className="h-12 w-12 text-muted-foreground mb-4" />
+          <p className="text-muted-foreground">No announcements yet</p>
+        </CardContent>
+      </Card>
+    );
+  }
+  return <div className="space-y-4">{announcements.map(renderCard)}</div>;
+}
+
+/** One announcement, with its edit, activate and confirmed delete. */
+function AnnouncementCard({
+  announcement,
+  onEdit,
+  onToggle,
+  onDelete,
+}: Readonly<{
+  announcement: Announcement;
+  onEdit: () => void;
+  onToggle: () => void;
+  onDelete: () => Promise<void>;
+}>) {
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <div className="flex items-start justify-between">
+          <div>
+            <CardTitle className="text-lg">{announcement.title}</CardTitle>
+            <CardDescription>
+              Created{" "}
+              <OperatorTime value={announcement.createdAt} kind="date" />
+            </CardDescription>
+          </div>
+          <div className="flex items-center gap-2">
+            <StatusBadge
+              label={announcement.isActive ? "Active" : "Inactive"}
+              tone={announcement.isActive ? "success" : "neutral"}
+            />
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <div
+          className="p-3 rounded-lg mb-4 text-sm"
+          style={{
+            backgroundColor: announcement.backgroundColor ?? undefined,
+            color: announcement.textColor ?? undefined,
+          }}
+        >
+          {announcement.content}
+          {announcement.linkUrl && (
+            <span className="ml-2 underline">
+              {announcement.linkText || "Learn more"}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={onEdit}>
+            <Pencil className="h-4 w-4 mr-1" />
+            Edit
+          </Button>
+          <Button variant="outline" size="sm" onClick={onToggle}>
+            {announcement.isActive ? "Deactivate" : "Activate"}
+          </Button>
+          {/* A platform-wide delete is confirmed. */}
+          <ConfirmDialog
+            trigger={
+              <Button variant="destructive" size="sm">
+                <Trash2 className="h-4 w-4 mr-1" />
+                Delete
+              </Button>
+            }
+            title="Delete this announcement?"
+            description={`"${announcement.title}" disappears for every user. This cannot be undone.`}
+            confirmLabel="Delete"
+            tone="destructive"
+            onConfirm={onDelete}
+          />
+        </div>
+      </CardContent>
+    </Card>
   );
 }

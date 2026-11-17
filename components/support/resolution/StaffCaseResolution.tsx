@@ -12,7 +12,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { formatOperatorInstant } from "@/lib/time/operator-zone";
+import { OperatorTime } from "@/lib/time/operator-time";
 import { CaseAttachments } from "../CaseAttachments";
 import { FinancialPanel } from "./FinancialPanel";
 import { ReasonAction } from "./ReasonAction";
@@ -31,7 +31,7 @@ import {
 } from "./resolution-data";
 
 type Run = RunCaseAction;
-const when = (iso: string) => formatOperatorInstant(iso);
+const when = (iso: string) => <OperatorTime value={iso} />;
 
 /**
  * Records the case's decision. Once one exists only an admin may supersede it,
@@ -134,7 +134,7 @@ function DecisionDialog({
               <dt className="text-xs text-muted-foreground">Appeal window</dt>
               <dd>
                 The customer can appeal until {current ? "" : "about "}
-                {formatOperatorInstant(appealUntil)}.
+                <OperatorTime value={appealUntil} />.
               </dd>
             </div>
           </dl>
@@ -178,9 +178,14 @@ function LegalHoldToggle({
   return (
     <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
       <p className="text-muted-foreground">
-        {legalHoldAt
-          ? `Legal hold since ${when(legalHoldAt)}: evidence is kept past the retention period.`
-          : "No legal hold: evidence is deleted 180 days after the case closes."}
+        {legalHoldAt ? (
+          <>
+            Legal hold since {when(legalHoldAt)}: evidence is kept past the
+            retention period.
+          </>
+        ) : (
+          "No legal hold: evidence is deleted 180 days after the case closes."
+        )}
       </p>
       <Button
         size="sm"
@@ -357,9 +362,9 @@ export function StaffCaseResolution({
           )}
           <p className="text-xs text-muted-foreground">
             Decided {when(decision.createdAt)}
-            {decision.appealUntil
-              ? ` · Appealable until ${when(decision.appealUntil)}`
-              : ""}
+            {decision.appealUntil && (
+              <> · Appealable until {when(decision.appealUntil)}</>
+            )}
           </p>
         </div>
       ))}

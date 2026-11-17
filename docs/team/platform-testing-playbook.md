@@ -1083,7 +1083,7 @@ There are no revenue trends, user growth, booking conversion or cancellation cha
 
 **Where:** `/dashboard/<tree>/referral-credits` and `/dashboard/<tree>/platform-fees`
 
-- Referral credits: credits, fee waivers, referrals held for review and the program economics (`referrals.read`, writes ADMIN)
+- Referral credits: credits, fee waivers and the program economics (`referrals.read`, writes ADMIN); referrals held for review are ADMIN only (`referrals.manage`)
 - Platform fees: the take-rate schedules, who proposed and who approved each, and the propose and approve doors (`payments.read`, writes ADMIN); the effective-from time is typed in IST
 
 ---
