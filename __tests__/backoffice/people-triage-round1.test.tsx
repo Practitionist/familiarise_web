@@ -7,12 +7,7 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import {
-  fireEvent,
-  render,
-  renderHook,
-  screen,
-} from "@testing-library/react";
+import { fireEvent, render, renderHook, screen } from "@testing-library/react";
 
 jest.mock("@/hooks/use-toast", () => ({
   useToast: () => ({ toast: jest.fn() }),

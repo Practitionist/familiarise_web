@@ -81,25 +81,28 @@ const PENDING_SSO_WHERE = {
   organizationId: { not: null },
 } satisfies Prisma.SsoProviderWhereInput;
 
-/** One page of providers waiting for staff approval, oldest first, across every org. */
-export async function readPendingSsoApprovals(page = 1) {
-  const [rows, total] = await Promise.all([
-    prisma.ssoProvider.findMany({
-      relationLoadStrategy: "join",
-      where: PENDING_SSO_WHERE,
-      select: {
-        providerId: true,
-        issuer: true,
-        domain: true,
-        createdAt: true,
-        organization: { select: { id: true, name: true } },
-      },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-      skip: (page - 1) * SSO_APPROVALS_PAGE_SIZE,
-      take: SSO_APPROVALS_PAGE_SIZE,
-    }),
-    prisma.ssoProvider.count({ where: PENDING_SSO_WHERE }),
-  ]);
+/**
+ * One page of providers waiting for staff approval, oldest first, across every
+ * org. Counted first, so a page that emptied reads as the last page with rows.
+ */
+export async function readPendingSsoApprovals(requested = 1) {
+  const total = await prisma.ssoProvider.count({ where: PENDING_SSO_WHERE });
+  const lastPage = Math.max(1, Math.ceil(total / SSO_APPROVALS_PAGE_SIZE));
+  const page = Math.min(Math.max(1, requested), lastPage);
+  const rows = await prisma.ssoProvider.findMany({
+    relationLoadStrategy: "join",
+    where: PENDING_SSO_WHERE,
+    select: {
+      providerId: true,
+      issuer: true,
+      domain: true,
+      createdAt: true,
+      organization: { select: { id: true, name: true } },
+    },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    skip: (page - 1) * SSO_APPROVALS_PAGE_SIZE,
+    take: SSO_APPROVALS_PAGE_SIZE,
+  });
   return {
     page,
     pageSize: SSO_APPROVALS_PAGE_SIZE,

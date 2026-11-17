@@ -11,7 +11,10 @@ import { FileText, RefreshCw, User, CheckCircle2 } from "lucide-react";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { TablePagination } from "@/components/dashboard/TablePagination";
 import { PersonCell } from "@/components/dashboard/backoffice/PersonCell";
-import { keepPreviousPageOnly } from "@/components/dashboard/shared/paged-list-filters";
+import {
+  keepPreviousPageOnly,
+  usePageWithinTotal,
+} from "@/components/dashboard/shared/paged-list-filters";
 import { readListBody } from "@/lib/backoffice/money-list-schemas";
 import {
   verificationQueuePageSchema,
@@ -52,11 +55,19 @@ export function VerificationQueue() {
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<VerificationItem | null>(null);
   const queryKey = ["verification-queue", "PENDING", page] as const;
-  const { data, isLoading, isFetching, error, refetch } = useQuery({
-    queryKey,
-    queryFn: () => fetchQueue(page),
-    placeholderData: keepPreviousPageOnly<VerificationQueuePage>(queryKey, 2),
-  });
+  const { data, isLoading, isFetching, isPlaceholderData, error, refetch } =
+    useQuery({
+      queryKey,
+      queryFn: () => fetchQueue(page),
+      placeholderData: keepPreviousPageOnly<VerificationQueuePage>(queryKey, 2),
+    });
+  // Deciding the last applicant on a page moves back a page; only this page's own answer counts.
+  usePageWithinTotal(
+    page,
+    setPage,
+    isPlaceholderData ? undefined : data?.pagination.total,
+    PAGE_SIZE,
+  );
 
   if (isLoading) {
     return (

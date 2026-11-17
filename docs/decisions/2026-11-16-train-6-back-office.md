@@ -1,6 +1,6 @@
 # ADR: The back office gets one permission matrix, one operator time zone and one totals page
 
-- **Status**: Accepted (owner decisions, 2026-11-16 and 2026-11-17). Shipped in four back-office pull requests: access and foundations, the decision queue, the money pages, and people, support and comms (D11 to D17).
+- **Status**: Accepted (owner decisions, 2026-11-16 and 2026-11-17). Shipped in four back-office pull requests: access and foundations, the decision queue, the money pages, and people, support and comms (D11 to D18).
 - **Date**: 2026-11-16
 - **Author**: Platform engineering
 - **Related**: [Authorization matrices](../authorization/01-authorization-matrices.md), [Maintenance architecture](../maintenance/01-architecture.md), [Trial sessions](../booking/09-trials.md), [Access rules after the bug hunt](2026-11-13-access-rules-after-the-bug-hunt.md)
@@ -173,6 +173,8 @@ The fourth pull request moves the people screens (Users, User 360, Verification,
     - Options not chosen: the viewer's zone for staff (the issue's suggestion; two operators would read one deadline at different clock times, D3).
 
 17. **D17: Organizations dates are IST.** The organization list, its verification queue and the SSO approvals print dates through `OperatorTime` (they used the US format, `9/14/2026`).
+
+18. **D18: every viewer-zone time is read through Intl (closes #2842 "[time][ux][P3] Viewer-zone times print an hour late inside the browser's spring-forward hour (date-fns-tz formatInTimeZone)").** `formatInViewerZone` in `lib/time/viewer-zone.ts` renders the repo's date-fns tokens from `Intl.DateTimeFormat(...).formatToParts`, so `useZonedFormat`, `formatForViewer` and the customer layouts' `ViewerZone` no longer print a time inside the browser's spring-forward hour an hour late, and an unsupported token throws.
 
 What a page load costs, in Postgres statements (a relation read without a join is its own statement; `PG_POOL_MAX=1` runs them one at a time):
 
