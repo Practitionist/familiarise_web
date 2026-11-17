@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarDays, Check, ChevronDown, X } from "lucide-react";
+import { CalendarDays, Check, ChevronDown } from "lucide-react";
 import { addDays, endOfMonth, startOfMonth, subMonths } from "date-fns";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -16,6 +16,7 @@ import {
   dayStartInstant,
 } from "@/lib/time/grid-zone";
 import { cn } from "@/utils/tailwind";
+import { FilterPill, filterTriggerClass } from "./FilterPill";
 
 /** Inclusive calendar days as `YYYY-MM-DD`; an empty side is open-ended. */
 export interface DateRange {
@@ -122,9 +123,6 @@ export function dateRangeLabel(range: DateRange, presets: Preset[]): string {
     : `Until ${shortDay(range.to)}`;
 }
 
-const TRIGGER =
-  "inline-flex h-9 items-center gap-1.5 whitespace-nowrap border text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
-
 interface DateRangeMenuProps {
   value: DateRange;
   /** The viewer's IANA zone; presets and bounds count its calendar days. */
@@ -157,7 +155,11 @@ export function DateRangeMenu({
   };
 
   return (
-    <div className="inline-flex">
+    <FilterPill
+      active={active}
+      clearLabel="Clear date filter"
+      onClear={() => onChange(EMPTY)}
+    >
       <Popover
         open={open}
         onOpenChange={(next) => {
@@ -172,15 +174,10 @@ export function DateRangeMenu({
           <button
             type="button"
             aria-label={`Date: ${label}`}
-            className={cn(
-              TRIGGER,
-              active
-                ? "rounded-l-lg border-foreground bg-foreground pl-3 pr-2 text-background"
-                : "rounded-lg border-border bg-card px-3 text-foreground hover:border-foreground/30",
-            )}
+            className={filterTriggerClass(active)}
           >
             <CalendarDays
-              className={cn("h-4 w-4", !active && "text-muted-foreground")}
+              className="h-4 w-4 text-muted-foreground"
               aria-hidden
             />
             <span className={cn(active && "font-semibold")}>{label}</span>
@@ -276,19 +273,6 @@ export function DateRangeMenu({
           )}
         </PopoverContent>
       </Popover>
-      {active && (
-        <button
-          type="button"
-          aria-label="Clear date filter"
-          onClick={() => onChange(EMPTY)}
-          className={cn(
-            TRIGGER,
-            "rounded-r-lg border-l-0 border-foreground bg-foreground pl-1 pr-2.5 text-background/70 hover:text-background",
-          )}
-        >
-          <X className="h-3.5 w-3.5" aria-hidden />
-        </button>
-      )}
-    </div>
+    </FilterPill>
   );
 }
