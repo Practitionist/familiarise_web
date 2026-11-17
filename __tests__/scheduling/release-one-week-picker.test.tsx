@@ -78,3 +78,23 @@ it("offers no 'Every session' while the sessions span plan weeks", () => {
   renderPicker("multiple", ["w1-b"]);
   expect(screen.getByRole("radio", { name: /Every session/ })).toBeDisabled();
 });
+
+it("counts a lead-window session too, since 'Every session' releases it", () => {
+  const begun = new Date(Date.now() - DAY);
+  render(
+    <SessionReleasePicker
+      zone="UTC"
+      sessions={[
+        session("soon", Date.now() + 2 * 3_600_000),
+        session("later", begun.getTime() + 8 * DAY),
+      ]}
+      minLeadHours={24}
+      mode="multiple"
+      onModeChange={jest.fn()}
+      selectedSlotIds={[]}
+      onSelectionChange={jest.fn()}
+      planWeek={{ ...plan, schedulingPeriodStartsAt: begun }}
+    />,
+  );
+  expect(screen.getByRole("radio", { name: /Every session/ })).toBeDisabled();
+});

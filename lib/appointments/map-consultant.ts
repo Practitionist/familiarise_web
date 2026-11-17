@@ -201,7 +201,12 @@ export function getAppointmentLifecycleStatus(
 }
 
 /** The consultant Home's status for a bare appointment, an open move included. */
-export function consultantHomeStatus(appointment: TAppointment): BookingStatus {
+export function consultantHomeStatus(
+  stored: TAppointment,
+  now: Date = new Date(),
+): BookingStatus {
+  // A lapsed move reads as the original, as the list shows it.
+  const appointment = withLapsedMoveRestored(stored, now);
   return bookingStatus(
     {
       kind: appointment.appointmentType,

@@ -5,6 +5,8 @@
 
 import { mapConsultantAppointments } from "@/lib/appointments/map-consultant";
 import { mapConsulteeEvents } from "@/lib/appointments/map-consultee";
+import { deriveBucket, listedAt } from "@/lib/appointments/bucket";
+import type { OccurrenceVM } from "@/lib/appointments/view-model";
 import type { TConsulteeEventsResponse } from "@/types/consultee-events";
 
 const NOW = new Date();
@@ -126,5 +128,65 @@ describe("a pending move is filed by who answers next", () => {
       needsActionReason: "ANSWER_MOVE",
     });
     expect(expertRow("CONSULTANT")).toMatchObject({ bucket: "waiting" });
+  });
+});
+
+describe("a per-session move on a subscription", () => {
+  const occ = (i: number, completionStatus: string, isTentative = false) =>
+    ({
+      occurrenceId: `occ-${i}`,
+      appointmentId: `appt-${i}`,
+      startsAt: new Date(NOW.getTime() + (i + 1) * DAY),
+      endsAt: new Date(NOW.getTime() + (i + 1) * DAY + 3_600_000),
+      isTentative,
+      completionStatus,
+      meetingEndedAt: null,
+      meetingEndedReason: null,
+    }) satisfies OccurrenceVM;
+  // A 24-session plan: one session released for a move, the other 23 confirmed.
+  const occurrences = [
+    occ(0, "RESCHEDULED", true),
+    ...Array.from({ length: 23 }, (_, i) => occ(i + 1, "SCHEDULED")),
+  ];
+
+  it.each([
+    ["consultant", true],
+    ["consultant", false],
+    ["consultee", true],
+    ["consultee", false],
+  ] as const)(
+    "stays in Upcoming for the %s whoever proposed it (mine=%s)",
+    (viewer, moveMine) => {
+      expect(
+        deriveBucket(
+          {
+            status: "APPROVED",
+            kind: "SUBSCRIPTION",
+            occurrences,
+            moving: true,
+            moveMine,
+            paid: true,
+            now: NOW,
+          },
+          viewer,
+        ).bucket,
+      ).toBe("upcoming");
+    },
+  );
+});
+
+describe("a booking with an open move keeps its time on the row", () => {
+  it("lists the kept time, not 'Not scheduled'", () => {
+    const row = expertRow("CONSULTANT", EXPERT);
+    expect(row.nextAt).toBeNull();
+    expect(listedAt(row)?.getTime()).toBe(released.startsAt.getTime());
+  });
+
+  it("a row with a live session lists that session", () => {
+    const at = new Date(NOW.getTime() + DAY);
+    expect(listedAt({ nextAt: at, reschedule: null })?.getTime()).toBe(
+      at.getTime(),
+    );
+    expect(listedAt({ nextAt: null, reschedule: null })).toBeNull();
   });
 });

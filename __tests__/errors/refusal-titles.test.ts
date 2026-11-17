@@ -16,7 +16,10 @@ import {
   getErrorToast,
 } from "@/lib/errors/mapping/payment-error-toast-map";
 import { ErrorTypes } from "@/lib/errors/classification/payment-error-classification";
-import { expertRescheduleCapMessage } from "@/lib/booking/reschedule-caps";
+import {
+  expertProposalRefusedMessage,
+  expertRescheduleCapMessage,
+} from "@/lib/booking/reschedule-caps";
 
 const ROOT = process.cwd();
 // Built from parts so this file is not itself a match.
@@ -84,10 +87,20 @@ describe("refusal titles", () => {
 
   it("EXPERT_RESCHEDULE_CAP says the recommended cancel is recorded on the reliability record", () => {
     expect(expertRescheduleCapMessage("booking")).toBe(
-      "You've already rescheduled this booking 2 times. If the time no longer works, cancel it: the client gets a full refund. Cancelling a confirmed booking, free or paid, is recorded on your reliability record. Only you and our team see it.",
+      "You've already rescheduled this booking 2 times. If the time no longer works, cancel it: the client is refunded for every session not yet held. Cancelling a confirmed booking, free or paid, is recorded on your reliability record. Only you and our team see it.",
     );
     expect(expertRescheduleCapMessage("trial")).toMatch(
       /^You've already moved this trial once\. .*the learner gets a full refund\. .*reliability record/,
     );
+  });
+
+  it("an expert's proposal a rule refused names that rule, not the client", () => {
+    const message = expertProposalRefusedMessage(
+      "Every session this plan includes already has a time.",
+    );
+    expect(message).toBe(
+      "Every session this plan includes already has a time. Nothing was sent to your client, and the booking keeps its original time. Pick another time.",
+    );
+    expect(message).not.toMatch(/couldn't accept/);
   });
 });

@@ -249,6 +249,14 @@ describe("bound 2: an expert-set limit on active plan clients", () => {
     expect(subscriptionCheckoutBlockedLabel(read)).toBe(
       "No free time in the first week",
     );
+    // A renewal starts at the old plan's end, which this read does not check; the server still refuses.
+    expect(subscriptionCheckoutBlocked(read, { renewal: true })).toBe(false);
+    expect(
+      subscriptionCheckoutBlocked(
+        { ...read, fullyBooked: true },
+        { renewal: true },
+      ),
+    ).toBe(true);
     expect(NOT_PLACEABLE_MESSAGE).toBe(
       "This expert has no free time in the first week of this plan right now. Pick a later start date, or ask them to open more hours.",
     );

@@ -96,3 +96,66 @@ it("a pay-first hold whose link lapsed reads Cancelled, as the lists do", async 
   ).not.toBe("Cancelled");
   expect(caseBookingStatus(booking)?.label).toBe("Cancelled");
 });
+
+describe("without payments.read", () => {
+  const lapsedHold = () =>
+    base({
+      consultation: {
+        ...(base({}).consultation as Record<string, unknown>),
+        bookingSource: "DIRECT_CHECKOUT",
+      },
+      payment: [
+        {
+          paymentStatus: "EXPIRED",
+          expiresAt: new Date(Date.now() - HOUR),
+          amount: 50_000,
+          currency: "INR",
+          deletedAt: null,
+          userId: "u-lee",
+        },
+      ],
+    });
+
+  it("the payment facts are withheld", async () => {
+    mockAppointment = lapsedHold();
+    const booking = (await readCaseBooking(
+      "appt-1",
+      { id: "u-lee", name: "Lee" },
+      { showPayment: false },
+    ))!;
+    expect(booking.facts).not.toHaveProperty("paid");
+    expect(booking.facts).not.toHaveProperty("payDeadline");
+    expect(booking.facts).not.toHaveProperty("payLapsed");
+    expect(booking.facts.source).toBe("DIRECT_CHECKOUT");
+  });
+
+  it("the status derives without them, and an open move still shows", async () => {
+    mockAppointment = {
+      ...lapsedHold(),
+      rescheduleRequests: [
+        {
+          id: "rr-1",
+          status: "PENDING_REVIEW",
+          reason: null,
+          expiresAt: new Date(Date.now() + 24 * HOUR),
+          initiatorRole: "CONSULTANT",
+          initiatedById: "u-ana",
+          proposedTimes: [],
+        },
+      ],
+    };
+    const gated = (await readCaseBooking(
+      "appt-1",
+      { id: "u-lee", name: "Lee" },
+      { showPayment: false },
+    ))!;
+    expect(caseBookingStatus(gated)?.label).toBe("Being moved");
+    mockAppointment = lapsedHold();
+    const plain = (await readCaseBooking(
+      "appt-1",
+      { id: "u-lee", name: "Lee" },
+      { showPayment: false },
+    ))!;
+    expect(caseBookingStatus(plain)?.label).not.toBe("Cancelled");
+  });
+});

@@ -35,6 +35,8 @@ it("the Users header names the failed load instead of 0 people", async () => {
     await screen.findByText(/The people on the platform couldn't be loaded/),
   ).toBeInTheDocument();
   expect(screen.queryByText(/^0 people on the platform/)).toBeNull();
+  // A pager over a read that never answered would count rows it did not read.
+  expect(screen.queryByText(/0–0 of 0/)).toBeNull();
 });
 
 it("countLabel prints a count only once the read answered", () => {

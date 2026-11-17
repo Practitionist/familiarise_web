@@ -94,6 +94,7 @@ export function deriveBucket(
     };
   }
   // A pending move is filed by who answers next: the proposer waits, the other side answers.
+  // Only a whole-booking move re-enters PENDING; a per-session move keeps its plan in Upcoming.
   if (input.moving && input.moveMine !== undefined && isPendingStatus(status)) {
     return input.moveMine
       ? { bucket: "waiting", needsActionReason: "PENDING_APPROVAL" }
@@ -144,6 +145,15 @@ export function deriveBucket(
   }
 
   return { bucket: "upcoming", needsActionReason: null };
+}
+
+/** The time a row is listed at: its next session, else the time an open move keeps until answered. */
+export function listedAt(vm: {
+  nextAt: Date | null;
+  reschedule?: { originalStartsAt: Date | string | null } | null;
+}): Date | null {
+  const kept = vm.reschedule?.originalStartsAt;
+  return vm.nextAt ?? (kept ? new Date(kept) : null);
 }
 
 /** What a row with no live session says in place of a time. */

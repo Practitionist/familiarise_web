@@ -96,6 +96,7 @@ const BOOKING_SELECT = {
 export async function readCaseBooking(
   appointmentId: string,
   requester: { id: string; name: string | null },
+  grants: { showPayment: boolean } = { showPayment: true },
 ): Promise<CaseBooking | null> {
   const requesterName = requester.name;
   const a = await prisma.appointment.findUnique({
@@ -173,31 +174,41 @@ export async function readCaseBooking(
       a.webinar?.status ??
       null,
     seatStatus: a.participants[0]?.status ?? null,
-    facts: caseStatusFacts(a),
+    facts: caseStatusFacts(a, grants.showPayment),
   };
 }
 
 /** The list-status facts the other screens read, serialised for the drawer. */
-function caseStatusFacts(a: {
-  id: string;
-  consultation: { bookingSource: string } | null;
-  subscription: { bookingSource: string } | null;
-  payment: {
-    paymentStatus: string;
-    expiresAt: Date | null;
-    amount: number;
-    currency: string;
-  }[];
-  rescheduleRequests: OpenRescheduleProposal[];
-}): CaseBookingFacts {
+function caseStatusFacts(
+  a: {
+    id: string;
+    consultation: { bookingSource: string } | null;
+    subscription: { bookingSource: string } | null;
+    payment: {
+      paymentStatus: string;
+      expiresAt: Date | null;
+      amount: number;
+      currency: string;
+    }[];
+    rescheduleRequests: OpenRescheduleProposal[];
+  },
+  showPayment: boolean,
+): CaseBookingFacts {
   const facts = listStatusFacts(a, []);
   const r = facts.reschedule;
   return {
     source:
       a.consultation?.bookingSource ?? a.subscription?.bookingSource ?? null,
-    paid: !!facts.paid,
-    payDeadline: facts.payDeadline ? iso(toDate(facts.payDeadline)) : null,
-    payLapsed: !!facts.payLapsed,
+    // Payment state is payments.read only; without it the status derives from the rest.
+    ...(showPayment
+      ? {
+          paid: !!facts.paid,
+          payDeadline: facts.payDeadline
+            ? iso(toDate(facts.payDeadline))
+            : null,
+          payLapsed: !!facts.payLapsed,
+        }
+      : {}),
     reschedule: r
       ? {
           by: r.by,
@@ -281,10 +292,11 @@ export async function readCaseWorkspace(
   const [booking, payment, pastCases, sentryIssues, duplicates] =
     await Promise.all([
       c.appointmentId
-        ? readCaseBooking(c.appointmentId, {
-            id: c.requesterUserId,
-            name: c.requester.name,
-          })
+        ? readCaseBooking(
+            c.appointmentId,
+            { id: c.requesterUserId, name: c.requester.name },
+            { showPayment: grants.showPayment },
+          )
         : null,
       grants.showPayment ? readPayment(paymentId) : null,
       prisma.supportCase.findMany({

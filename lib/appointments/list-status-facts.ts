@@ -75,6 +75,13 @@ export function listStatusFacts(
   const original = occurrences.find(
     (o) => o.isTentative && o.completionStatus === "RESCHEDULED",
   );
+  // By the proposer's id once the session is known, else the list's own side.
+  let mine: boolean | undefined;
+  if (proposal && viewer) {
+    mine = viewer.userId
+      ? proposal.initiatedById === viewer.userId
+      : proposalSide(proposal) === viewer.side;
+  }
   return {
     refunded:
       refundedPaise > 0
@@ -91,12 +98,7 @@ export function listStatusFacts(
     reschedule: proposal
       ? {
           by: proposalSide(proposal),
-          // By the proposer's id once the session is known, else the list's own side.
-          mine: viewer
-            ? viewer.userId
-              ? proposal.initiatedById === viewer.userId
-              : proposalSide(proposal) === viewer.side
-            : undefined,
+          mine,
           proposedStartsAt: proposal.proposedTimes[0]?.startsAt ?? null,
           originalStartsAt: original?.startsAt ?? null,
           expiresAt: proposal.expiresAt,

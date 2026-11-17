@@ -1238,7 +1238,13 @@ export function ModerationPage() {
                           <div className="min-w-0 flex-1">
                             <div className="flex min-w-0 flex-wrap items-center gap-2">
                               <PersonCell
-                                person={{ name: review.reviewer.name }}
+                                // An unnamed reviewer keeps an id, so staff can tell authors apart.
+                                person={{
+                                  name: review.reviewer.name,
+                                  id: review.reviewer.name?.trim()
+                                    ? null
+                                    : review.reviewer.profileId,
+                                }}
                                 anonymousLabel={
                                   review.isAnonymous
                                     ? "Anonymous to the public"

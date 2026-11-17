@@ -250,13 +250,12 @@ export function SessionReleasePicker({
   selectedSlotIds: string[];
   onSelectionChange: React.Dispatch<React.SetStateAction<string[]>>;
 }>) {
+  // "Every session" releases them all, lead-window ones included, as the server counts them.
   const spansWeeks =
     !!planWeek &&
     spansPlanWeeks(
       planWeek,
-      sessions
-        .filter((session) => !isWithinLeadTime(session, minLeadHours))
-        .map((session) => session.startTime),
+      sessions.map((session) => session.startTime),
     );
   const handleModeChange = (next: ReleaseMode) => {
     onModeChange(next);

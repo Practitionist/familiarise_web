@@ -51,6 +51,7 @@ import { CancelConfirmationDialog } from "@/components/appointments/consultee/Ca
 import {
   applyRefundRequote,
   cancelPreviewQueryKey,
+  paymentLandedUnderClick,
   readRefundQuoteChanged,
   refundChangedToast,
   type ShownCancelQuote,
@@ -609,11 +610,11 @@ export function useConsulteeAppointmentsAdapter(options?: {
   // #1846 — the quoted cancel: DELETE carries the refund the dialog showed,
   // and the server refunds only that amount. A changed quote answers 409; the
   // preview refetches so the dialog shows the new number before a retry.
-  /** Resolves false when the dialog stays open: a re-quoted refund or a refusal to read. */
+  /** Resolves false when the dialog stays open: a re-quoted refund or a refusal to read. True closes it. */
   const cancelTrial = async (
     id: string,
     title: string,
-    quote?: { estimatedRefundPaise: number },
+    quote?: ShownCancelQuote,
   ): Promise<boolean> => {
     const previewUrl = `/api/trials/${id}/cancel/preview`;
     const response = await fetch(`/api/trials/${id}`, {
@@ -627,6 +628,14 @@ export function useConsulteeAppointmentsAdapter(options?: {
     if (!response.ok) {
       const requote =
         response.status === 409 ? readRefundQuoteChanged(data) : null;
+      // Clicked on an unpaid screen and the payment has since landed: reopen on the paid quote.
+      if (requote && paymentLandedUnderClick(quote)) {
+        toast({
+          title: "Your payment just went through",
+          description: "Review the refund before you cancel.",
+        });
+        return true;
+      }
       if (requote) {
         const currency = applyRefundRequote(queryClient, previewUrl, requote);
         toast(refundChangedToast(requote, currency));

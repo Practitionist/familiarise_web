@@ -422,11 +422,12 @@ function RemindOrWithdraw({
   const canRemind =
     !!actions.reminderExpiresAt &&
     Date.parse(actions.reminderExpiresAt) > Date.now();
-  // The link has lapsed once its order or the hold deadline has passed.
+  // The live order Remind reuses names the link's deadline; else the hold's.
+  const linkDeadline = actions.reminderExpiresAt
+    ? new Date(actions.reminderExpiresAt)
+    : deadline;
   const linkExpired =
-    (!!deadline && deadline.getTime() <= Date.now()) ||
-    (!!actions.reminderExpiresAt &&
-      Date.parse(actions.reminderExpiresAt) <= Date.now());
+    !canRemind && !!linkDeadline && linkDeadline.getTime() <= Date.now();
 
   const remind = async () => {
     setReminding(true);
@@ -562,8 +563,10 @@ function RemindOrWithdraw({
       ) : (
         <>
           {names.payer} has the payment link
-          {deadline ? ` until ${format(deadline, "EEE d MMM HH:mm")}` : ""}.
-          {heldLine}
+          {linkDeadline
+            ? ` until ${format(linkDeadline, "EEE d MMM HH:mm")}`
+            : ""}
+          .{heldLine}
         </>
       )}
     </Shell>

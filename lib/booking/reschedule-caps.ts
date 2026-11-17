@@ -21,8 +21,16 @@ export function expertRescheduleCapMessage(kind: "trial" | "booking"): string {
     kind === "trial"
       ? "You've already moved this trial once."
       : `You've already rescheduled this booking ${MAX_EXPERT_RESCHEDULES} times.`;
-  const who = kind === "trial" ? "the learner" : "the client";
-  return `${used} If the time no longer works, cancel it: ${who} gets a full refund. ${EXPERT_CANCEL_RELIABILITY_LINE}`;
+  const refund =
+    kind === "trial"
+      ? "the learner gets a full refund"
+      : "the client is refunded for every session not yet held";
+  return `${used} If the time no longer works, cancel it: ${refund}. ${EXPERT_CANCEL_RELIABILITY_LINE}`;
+}
+
+/** The 409 for an expert's proposal a rule refused before the client was asked: the rule's reason, then what stands. */
+export function expertProposalRefusedMessage(reason: string): string {
+  return `${reason} Nothing was sent to your client, and the booking keeps its original time. Pick another time.`;
 }
 
 type CapTx = Pick<Tx, "rescheduleRequest">;

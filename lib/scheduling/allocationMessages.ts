@@ -413,10 +413,11 @@ export function soldEventMoveCopy(
   leadHours: number,
   liveSeats?: number,
 ): string {
+  const plural = liveSeats === 1 ? "" : "s";
   const seats =
     liveSeats === undefined
       ? "booked seats"
-      : `${liveSeats} booked seat${liveSeats === 1 ? "" : "s"}`;
+      : `${liveSeats} booked seat${plural}`;
   const control =
     eventType === "class" ? "Move upcoming sessions" : "Move to a new date";
   const inside =

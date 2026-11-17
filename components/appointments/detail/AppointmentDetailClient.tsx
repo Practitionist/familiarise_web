@@ -609,6 +609,10 @@ export function AppointmentDetailClient({
   // Names the money door: "charge" only where the money state says money was taken.
   const hasOwnCharge = viewerWasCharged(moneyState.state, payments, viewerId);
   const liveVmOccurrences = vm.occurrences.filter((s) => !isDeadOccurrence(s));
+  // An open move keeps its released session's time until the new one is accepted.
+  const keptSession = openProposal
+    ? vm.occurrences.find((s) => isReleasedForReschedule(s))
+    : undefined;
   // A single-sitting booking's one confirmed session is already the header's
   // date line; the Sessions card stays only while it carries something the
   // header cannot — a held row awaiting payment, or an open proposal.
@@ -916,6 +920,13 @@ export function AppointmentDetailClient({
           footnote={returnActions.footnote}
           cancelledNote={classCancelledNote}
         />
+      ) : keptSession ? (
+        <p className="text-sm text-muted-foreground">
+          <span className="font-medium text-foreground tabular-nums">
+            {format(keptSession.startsAt, "EEE d MMM, h:mm a")}
+          </span>
+          {" · "}Being moved: this time stands until the new one is accepted.
+        </p>
       ) : (
         <p className="text-sm text-muted-foreground">
           No sessions scheduled yet.

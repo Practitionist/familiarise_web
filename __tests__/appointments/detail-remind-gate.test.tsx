@@ -203,6 +203,14 @@ describe("NeedsYouCallout → the pay-link line", () => {
     expect(screen.getByText(/Payer has the payment link until/)).toBeTruthy();
   });
 
+  it("an older lapsed order does not override the live one Remind reuses", () => {
+    const past = new Date(Date.now() - HOUR);
+    const live = new Date(Date.now() + HOUR);
+    render(withDeadline(past, live.toISOString()));
+    expect(screen.getByText(/Payer has the payment link until/)).toBeTruthy();
+    expect(screen.queryByText(/has expired/)).toBeNull();
+  });
+
   it("says the link has expired once it has", () => {
     const past = new Date(Date.now() - HOUR);
     render(withDeadline(past, past.toISOString()));

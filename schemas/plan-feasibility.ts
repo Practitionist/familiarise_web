@@ -21,12 +21,15 @@ export const NOT_PLACEABLE_MESSAGE =
 /**
  * Checkout's pay button is off when the server's read turns this viewer away
  * (fully booked) or finds no free time in the first week (NOT_PLACEABLE).
+ * A renewal skips the first-week block: this read checks the current week, not the renewal's.
  */
 export function subscriptionCheckoutBlocked(
   feasibility: PlanFeasibility | null,
+  { renewal = false }: { renewal?: boolean } = {},
 ): boolean {
   return (
-    feasibility?.fullyBooked === true || feasibility?.firstWeekPlaceable === 0
+    feasibility?.fullyBooked === true ||
+    (!renewal && feasibility?.firstWeekPlaceable === 0)
   );
 }
 

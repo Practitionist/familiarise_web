@@ -46,15 +46,30 @@ describe("viewerWasCharged", () => {
     expect(viewerWasCharged("SPONSORED", [coPay], "member-1")).toBe(true);
   });
 
+  const selfPaidRow = {
+    paymentStatus: "SUCCEEDED",
+    paymentMethod: "RAZORPAY",
+    legs: [{ source: "CARD", amountPaise: 250_000 }],
+    childPayments: [],
+  };
+
   it.each([
     "PAID",
     "PARTIALLY_REFUNDED",
     "REFUND_PENDING",
     "REFUNDED",
     "DISPUTED",
-  ] as const)("%s is money taken", (state) => {
-    expect(viewerWasCharged(state, [], "member-1")).toBe(true);
+  ] as const)("%s on the viewer's own charge is money taken", (state) => {
+    expect(viewerWasCharged(state, [selfPaidRow], "member-1")).toBe(true);
   });
+
+  it.each(["REFUNDED", "PARTIALLY_REFUNDED", "REFUND_PENDING", "DISPUTED"])(
+    "%s on an organisation-funded charge is not the member's",
+    (state) => {
+      const orgOnly = { ...sponsoredRow, childPayments: [] };
+      expect(viewerWasCharged(state, [orgOnly], "member-1")).toBe(false);
+    },
+  );
 
   it.each(["FREE", "NOT_DUE", "DUE"] as const)("%s is not", (state) => {
     expect(viewerWasCharged(state, [], "member-1")).toBe(false);

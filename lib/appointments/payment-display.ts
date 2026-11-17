@@ -89,22 +89,30 @@ const MONEY_TAKEN_STATES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Whether the viewer was charged: the booking's money state says money was
- * taken, or the viewer paid a co-pay of their own (an organisation-paid
- * overage child is not theirs).
+ * Whether the viewer was charged: money was taken on a charge the
+ * organisation did not fund, or the viewer paid a co-pay of their own (an
+ * organisation-paid overage child is not theirs).
  */
 export function viewerWasCharged(
   moneyState: string,
-  payments: readonly {
+  payments: readonly (PaymentFundingLike & {
+    paymentStatus: string;
     childPayments: readonly (PaymentFundingLike & {
       userId: string | null;
       paymentStatus: string;
       amount: number | string;
     })[];
-  }[],
+  })[],
   viewerId: string | null | undefined,
 ): boolean {
-  if (MONEY_TAKEN_STATES.has(moneyState)) return true;
+  if (
+    MONEY_TAKEN_STATES.has(moneyState) &&
+    payments.some(
+      (p) => p.paymentStatus === "SUCCEEDED" && !isSponsoredPayment(p),
+    )
+  ) {
+    return true;
+  }
   return payments.some((p) =>
     p.childPayments.some(
       (c) =>

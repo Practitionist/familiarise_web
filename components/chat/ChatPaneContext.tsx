@@ -22,7 +22,8 @@ export interface ChatPaneState {
   backToList?: () => void;
   /** The Messages link named a conversation the viewer can no longer open. */
   unavailableLink?: "event" | "conversation" | null;
-  markLinkUnavailable?: (kind: "event" | "conversation") => void;
+  /** Null clears it once a conversation opens. */
+  markLinkUnavailable?: (kind: "event" | "conversation" | null) => void;
 }
 
 const ChatPaneContext = createContext<ChatPaneState>({

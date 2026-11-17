@@ -153,12 +153,15 @@ export function OperatorUsersPage() {
           </p>
         }
       />
-      <TablePagination
-        page={page}
-        pageSize={PAGE_SIZE}
-        total={data?.total ?? 0}
-        onPageChange={setPage}
-      />
+      {/* A failed read has no total to page through. */}
+      {!(error && !data) && (
+        <TablePagination
+          page={page}
+          pageSize={PAGE_SIZE}
+          total={data?.total ?? 0}
+          onPageChange={setPage}
+        />
+      )}
     </div>
   );
 }

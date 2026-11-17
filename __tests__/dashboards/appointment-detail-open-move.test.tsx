@@ -225,6 +225,11 @@ describe.each([
       expect(html).not.toContain("restored wherever");
       expect(html).not.toContain("Approve and set times");
       expect(html).not.toContain("Waiting for");
+      // The released session keeps its time while the move is open.
+      expect(html).not.toContain("No sessions scheduled yet");
+      expect(html).toContain(
+        "Being moved: this time stands until the new one is accepted.",
+      );
       for (const label of shown) expect(html).toContain(`>${label}<`);
       for (const label of hidden) expect(html).not.toContain(`>${label}<`);
     });

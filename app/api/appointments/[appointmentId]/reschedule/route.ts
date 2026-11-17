@@ -82,6 +82,7 @@ import { holdHoursFor } from "@/lib/payments/payouts/earnings-hold";
 import {
   MAX_CONSULTEE_RESCHEDULES,
   MAX_EXPERT_RESCHEDULES,
+  expertProposalRefusedMessage,
   expertRescheduleCapMessage,
   consulteeCapReached,
   priorReschedules as priorRescheduleCount,
@@ -1105,7 +1106,7 @@ async function requestReschedule(
               if (undone.withdrawn) {
                 return NextResponse.json(
                   {
-                    error: `${check.message} Your client couldn't accept that time, so the booking keeps its original time — pick another time.`,
+                    error: expertProposalRefusedMessage(check.message),
                     code: taken ? "TIMES_TAKEN" : "TIME_NOT_BOOKABLE",
                     reason: check.reason,
                     takenSlotStarts: check.takenSlotStarts ?? [],

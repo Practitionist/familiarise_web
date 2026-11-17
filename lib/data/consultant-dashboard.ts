@@ -357,6 +357,7 @@ const appointmentSelect = {
       expiresAt: true,
       initiatorRole: true,
       initiatedById: true,
+      originStatus: true,
       proposedTimes: {
         orderBy: { startsAt: "asc" as const },
         take: 1,

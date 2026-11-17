@@ -81,9 +81,10 @@ export interface CaseBooking {
 
 export interface CaseBookingFacts {
   source: string | null;
-  paid: boolean;
-  payDeadline: string | null;
-  payLapsed: boolean;
+  /** The payment facts are absent when the reader lacks payments.read. */
+  paid?: boolean;
+  payDeadline?: string | null;
+  payLapsed?: boolean;
   reschedule: {
     by: "CONSULTANT" | "REQUESTER";
     proposedStartsAt: string | null;
