@@ -13,7 +13,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { Prisma, type CreditSource } from "@prisma/client";
+import { CreditSource, Prisma } from "@prisma/client";
 import { z } from "zod";
 
 import prisma from "@/lib/prisma";
@@ -23,13 +23,7 @@ import { OpsRefusal } from "@/lib/backoffice/ops-refusal";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
 
-const CreditSourceSchema = z.enum([
-  "REFERRAL_BONUS",
-  "REFEREE_BONUS",
-  "PROMOTION",
-  "COMPENSATION",
-  "MANUAL",
-]);
+const CreditSourceSchema = z.nativeEnum(CreditSource);
 
 const CreditStatusFilterSchema = z.enum([
   "PENDING",
@@ -79,7 +73,7 @@ export async function GET(req: NextRequest) {
     andConditions.push({ userId });
   }
   if (source) {
-    andConditions.push({ source: source as CreditSource });
+    andConditions.push({ source });
   }
   if (q) {
     andConditions.push({
