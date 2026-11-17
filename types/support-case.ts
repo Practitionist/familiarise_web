@@ -85,6 +85,8 @@ export interface CaseBookingFacts {
   paid?: boolean;
   payDeadline?: string | null;
   payLapsed?: boolean;
+  /** Landed refunds summed, as the lists show them; absent without payments.read. */
+  refunded?: { paise: number; currency: string; at: string | null } | null;
   reschedule: {
     by: "CONSULTANT" | "REQUESTER";
     proposedStartsAt: string | null;

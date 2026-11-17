@@ -12,6 +12,7 @@ import { listStatusFacts } from "@/lib/appointments/list-status-facts";
 import type { OpenRescheduleProposal } from "@/lib/appointments/consultee-affordances";
 import { toDate } from "@/lib/appointments/view-model";
 import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
+import { withLapsedMoveRestored } from "@/lib/appointments/lapsed-move";
 import { caseKeyOf, type CaseRef } from "./case-key";
 import { isPresenterAuthoredMessage } from "./case-message-actor";
 import { PLAN_TITLE_SELECT, planTitle } from "./case-read";
@@ -85,7 +86,13 @@ const BOOKING_SELECT = {
   },
   occurrences: {
     orderBy: { startsAt: "asc" },
-    select: { startsAt: true },
+    // The release flags let a lapsed move read as the original.
+    select: {
+      startsAt: true,
+      isTentative: true,
+      completionStatus: true,
+      deletedAt: true,
+    },
   },
 } as const;
 
@@ -99,7 +106,7 @@ export async function readCaseBooking(
   grants: { showPayment: boolean } = { showPayment: true },
 ): Promise<CaseBooking | null> {
   const requesterName = requester.name;
-  const a = await prisma.appointment.findUnique({
+  const stored = await prisma.appointment.findUnique({
     where: { id: appointmentId },
     select: {
       ...BOOKING_SELECT,
@@ -123,6 +130,11 @@ export async function readCaseBooking(
           expiresAt: true,
           amount: true,
           currency: true,
+          // Landed refunds only, as the lists read them.
+          refunds: {
+            where: { status: "SUCCEEDED", deletedAt: null },
+            select: { amountPaise: true, updatedAt: true },
+          },
         },
       },
       rescheduleRequests: {
@@ -134,6 +146,7 @@ export async function readCaseBooking(
           status: true,
           reason: true,
           expiresAt: true,
+          originStatus: true,
           initiatorRole: true,
           initiatedById: true,
           proposedTimes: {
@@ -145,7 +158,9 @@ export async function readCaseBooking(
       },
     },
   });
-  if (!a) return null;
+  if (!stored) return null;
+  // A lapsed open move reads as the original, as the lists restore it.
+  const a = withLapsedMoveRestored(stored);
   const expert =
     a.consultation?.consultationPlan.consultantProfile?.user?.name ??
     a.subscription?.subscriptionPlan.consultantProfile?.user?.name ??
@@ -189,6 +204,7 @@ function caseStatusFacts(
       expiresAt: Date | null;
       amount: number;
       currency: string;
+      refunds: { amountPaise: number; updatedAt: Date }[];
     }[];
     rescheduleRequests: OpenRescheduleProposal[];
   },
@@ -207,6 +223,13 @@ function caseStatusFacts(
             ? iso(toDate(facts.payDeadline))
             : null,
           payLapsed: !!facts.payLapsed,
+          refunded: facts.refunded
+            ? {
+                paise: facts.refunded.paise,
+                currency: facts.refunded.currency,
+                at: facts.refunded.at ? iso(toDate(facts.refunded.at)) : null,
+              }
+            : null,
         }
       : {}),
     reschedule: r

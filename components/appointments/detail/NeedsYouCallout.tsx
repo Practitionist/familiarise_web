@@ -157,7 +157,7 @@ function Shell({
   );
 }
 
-/** "21h 40m left" against the pay link's clock; nothing once it has passed. */
+/** "Slot held 21h 40m": the hold's clock, which can differ from the pay link's; nothing once it has passed. */
 function TimeLeft({ deadline }: { deadline: Date }) {
   const { minutesLeft, isExpired } = useHoldCountdown(deadline);
   if (isExpired) return null;
@@ -166,13 +166,15 @@ function TimeLeft({ deadline }: { deadline: Date }) {
   return (
     <span className="inline-flex items-center gap-1 text-xs font-medium tabular-nums text-amber-800 dark:text-amber-300">
       <Timer className="h-3.5 w-3.5" />
-      {h > 0
-        ? `${h}h ${m}m left`
-        : m > 0
-          ? `${m}m left`
-          : "under a minute left"}
+      {holdLeftLabel(h, m)}
     </span>
   );
+}
+
+function holdLeftLabel(h: number, m: number): string {
+  if (h > 0) return `Slot held ${h}h ${m}m`;
+  if (m > 0) return `Slot held ${m}m`;
+  return "Slot held under a minute";
 }
 
 /** "₹6,000 + 18% GST" from the row's own split; the base alone when there is no tax. */

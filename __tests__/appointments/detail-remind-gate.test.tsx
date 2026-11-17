@@ -211,6 +211,14 @@ describe("NeedsYouCallout → the pay-link line", () => {
     expect(screen.queryByText(/has expired/)).toBeNull();
   });
 
+  it("labels the header countdown as the hold's clock, not the link's", () => {
+    const hold = new Date(Date.now() + 3 * HOUR);
+    const link = new Date(Date.now() + HOUR);
+    render(withDeadline(hold, link.toISOString()));
+    expect(screen.getByText(/^Slot held [23]h \d+m$/)).toBeTruthy();
+    expect(screen.queryByText(/left$/)).toBeNull();
+  });
+
   it("says the link has expired once it has", () => {
     const past = new Date(Date.now() - HOUR);
     render(withDeadline(past, past.toISOString()));
