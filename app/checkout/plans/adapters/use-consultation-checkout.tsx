@@ -4,12 +4,22 @@ import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { isSlotStillOffered } from "@/app/explore/experts/[consultantId]/hooks/useAvailabilityWindow";
-import { useSlotJustTaken } from "@/app/explore/experts/[consultantId]/hooks/useSlotJustTaken";
+import {
+  chooseAnotherTimeHref,
+  useChooseAnotherTime,
+} from "@/app/explore/experts/[consultantId]/hooks/useChooseAnotherTime";
 import { CancellationPolicyNote } from "@/components/booking/CancellationPolicyNote";
 import { useToast } from "@/hooks/use-toast";
 import { useSession } from "@/lib/auth-client";
 import { planLevelLabel } from "@/lib/labels/plan-labels";
-import { ErrorTypes } from "@/lib/errors/classification/payment-error-classification";
+import {
+  ErrorTypes,
+  isTerminalSlotRefusal,
+} from "@/lib/errors/classification/payment-error-classification";
+import {
+  getErrorToast,
+  SLOT_NO_LONGER_OFFERED_MESSAGE,
+} from "@/lib/errors/mapping/payment-error-toast-map";
 import { Refusal } from "@/lib/errors/refusal";
 import {
   DIRECT_CHECKOUT_HOLD_MS,
@@ -55,6 +65,11 @@ type ConsultationPlanWithConsultant = Omit<ConsultationPlan, "price"> & {
 type ConsultationResponse = {
   data: ConsultationPlanWithConsultant;
 };
+
+const SLOT_TOO_SOON_ON_LOAD =
+  "The time you picked has passed or starts too soon to book. Pick another time on the expert's calendar.";
+const SLOT_PASSED =
+  "The time you picked has passed. Pick another time on the expert's calendar.";
 
 const TIME_NOT_PICKED = () =>
   new Refusal({
@@ -148,24 +163,24 @@ export function useConsultationCheckout(
       plan: ConsultationResponse;
       slot: Record<string, unknown> | null;
       slotFailed: boolean;
+      slotTooSoon: boolean;
     }> => {
       if (!validatedSearchParams) throw TIME_NOT_PICKED();
 
-      // The selected slot must not have passed or be too soon.
-      const slotStart = new Date(validatedSearchParams.startsAt);
-      if (slotStart.getTime() < Date.now() + MINIMUM_BOOKING_LEAD_TIME_MS) {
-        throw new Error(
-          "The selected time slot is no longer available. It has either passed or starts too soon. Please go back and select a new slot.",
-        );
-      }
+      // A time that has passed or starts too soon still loads the plan, so the
+      // page can send the buyer back to that plan's grid.
+      const slotTooSoon =
+        new Date(validatedSearchParams.startsAt).getTime() <
+        Date.now() + MINIMUM_BOOKING_LEAD_TIME_MS;
 
       const { availabilityWindowWeeklyId, availabilityWindowCustomId } =
         searchParams;
-      const slotUrl = availabilityWindowWeeklyId
-        ? `/api/scheduling/availability/weekly/${availabilityWindowWeeklyId}`
-        : availabilityWindowCustomId
-          ? `/api/scheduling/availability/custom/${availabilityWindowCustomId}`
-          : null;
+      let slotUrl: string | null = null;
+      if (!slotTooSoon && availabilityWindowWeeklyId) {
+        slotUrl = `/api/scheduling/availability/weekly/${availabilityWindowWeeklyId}`;
+      } else if (!slotTooSoon && availabilityWindowCustomId) {
+        slotUrl = `/api/scheduling/availability/custom/${availabilityWindowCustomId}`;
+      }
 
       const [planRes, slotRes] = await Promise.all([
         fetch(`/api/plans/consultations/${planId}`),
@@ -196,13 +211,15 @@ export function useConsultationCheckout(
       } else if (slotUrl) {
         slotFailed = true;
       }
-      return { plan: data, slot, slotFailed };
+      return { plan: data, slot, slotFailed, slotTooSoon };
     },
   });
   const eventData = checkoutPlanQuery.data?.plan ?? null;
   const consultantDetails = eventData?.data.consultantProfile;
   const userDetails = consultantDetails?.user;
   const consultantProfileId = eventData?.data?.consultantProfile?.id;
+  // Undefined until the plan loads; the live checks below run only for a bookable time.
+  const slotTooSoon = checkoutPlanQuery.data?.slotTooSoon;
 
   useEffect(() => {
     if (checkoutPlanQuery.error) {
@@ -226,15 +243,22 @@ export function useConsultationCheckout(
     }
   }, [checkoutPlanQuery.data?.slotFailed, toast]);
 
-  const slotJustTaken = useSlotJustTaken(consultantProfileId);
-  // A taken time sends the buyer back to a refreshed grid; every other refusal toasts in place.
+  const chooseAnotherTime = useChooseAnotherTime(consultantProfileId, planId);
+  // A time that can never be bought as picked (taken, too soon, off the grid) sends the
+  // buyer back to the plan's refreshed grid; contention and payment failures toast in place.
   const onCheckoutRefusal = useCallback(
     (errorData: CheckoutApiError) => {
-      if (errorData.code !== ErrorTypes.SLOT_TAKEN) return false;
-      slotJustTaken();
+      if (!isTerminalSlotRefusal(errorData.code)) return false;
+      chooseAnotherTime(
+        getErrorToast(
+          errorData.errorType ?? ErrorTypes.AVAILABILITY,
+          errorData.error,
+          errorData.code,
+        ),
+      );
       return true;
     },
-    [slotJustTaken],
+    [chooseAnotherTime],
   );
 
   // The checkout page can be reached from a stale grid, so it re-asks the grid once before Pay.
@@ -248,7 +272,8 @@ export function useConsultationCheckout(
       validatedSearchParams?.startsAt,
       validatedSearchParams?.endsAt,
     ],
-    enabled: !!consultantProfileId && !!validatedSearchParams,
+    enabled:
+      !!consultantProfileId && !!validatedSearchParams && slotTooSoon === false,
     // Re-asked on every mount, never answered from an earlier visit's cache.
     gcTime: 0,
     refetchOnMount: "always",
@@ -267,12 +292,14 @@ export function useConsultationCheckout(
   });
   const slotNoLongerOffered = slotOfferedQuery.data === false;
   useEffect(() => {
-    if (slotNoLongerOffered) slotJustTaken();
-  }, [slotNoLongerOffered, slotJustTaken]);
+    if (slotNoLongerOffered) {
+      chooseAnotherTime({ title: SLOT_NO_LONGER_OFFERED_MESSAGE });
+    }
+  }, [slotNoLongerOffered, chooseAnotherTime]);
 
   // Periodic staleness check: warn the buyer if their slot is about to expire.
   useEffect(() => {
-    if (!validatedSearchParams) return;
+    if (!validatedSearchParams || slotTooSoon !== false) return;
     // Once per crossing, not once per minute: a repeating destructive toast
     // buried the payment form at the moment the buyer was told to hurry.
     let warned = false;
@@ -281,9 +308,7 @@ export function useConsultationCheckout(
         (new Date(validatedSearchParams.startsAt).getTime() - Date.now()) /
         (60 * 1000);
       if (minutesUntilSlot <= 0) {
-        setSlotPassedError(
-          "This time slot has passed. Please go back and select a new available slot.",
-        );
+        setSlotPassedError(SLOT_PASSED);
       } else if (
         minutesUntilSlot <= MINIMUM_BOOKING_LEAD_TIME_MINUTES &&
         !warned
@@ -299,7 +324,7 @@ export function useConsultationCheckout(
     checkStaleness();
     const intervalId = setInterval(checkStaleness, 60_000);
     return () => clearInterval(intervalId);
-  }, [validatedSearchParams, toast]);
+  }, [validatedSearchParams, slotTooSoon, toast]);
 
   const preflight = useCallback(() => {
     if (!validatedSearchParams) throw TIME_NOT_PICKED();
@@ -328,10 +353,21 @@ export function useConsultationCheckout(
     [validatedSearchParams, planId],
   );
 
+  const slotGoneMessage =
+    slotPassedError ?? (slotTooSoon ? SLOT_TOO_SOON_ON_LOAD : null);
+
   return {
     appointmentType: "CONSULTATION",
     isLoading: checkoutPlanQuery.isPending,
-    error: slotPassedError ?? loadErrorMessage(checkoutPlanQuery.error),
+    error: slotGoneMessage ?? loadErrorMessage(checkoutPlanQuery.error),
+    errorRecovery:
+      slotGoneMessage && consultantProfileId
+        ? {
+            title: "This time can't be booked",
+            label: "Choose another time",
+            href: chooseAnotherTimeHref(consultantProfileId, planId),
+          }
+        : null,
     missingMessage: null,
     consultantProfileId,
     header: {
