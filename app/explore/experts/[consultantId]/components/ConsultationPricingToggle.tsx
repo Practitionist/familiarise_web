@@ -199,7 +199,14 @@ export default function ConsultationPricingToggle({
   }, [userId, choosingAgain, consultantDetails.id, consultationOptions, toast]);
 
   const sendToSignIn = () => {
-    const callbackUrl = `${window.location.pathname}${window.location.search}`;
+    // The return drops the choose-again link, which would discard the pick stashed for it.
+    const query = new URLSearchParams(window.location.search);
+    if (choosingAgain) {
+      query.delete("conflict");
+      query.delete("plan");
+    }
+    const search = query.toString();
+    const callbackUrl = `${window.location.pathname}${search ? `?${search}` : ""}`;
     router.push(`/auth/signin?callbackUrl=${encodeURIComponent(callbackUrl)}`);
   };
 

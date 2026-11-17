@@ -38,8 +38,9 @@ jest.mock("@/lib/auth-client", () => ({
   useSession: () => ({ data: mockSession }),
 }));
 let mockSearch = new URLSearchParams();
+const mockPush = jest.fn();
 jest.mock("next/navigation", () => ({
-  useRouter: () => ({ push: jest.fn() }),
+  useRouter: () => ({ push: mockPush }),
   useSearchParams: () => mockSearch,
 }));
 jest.mock("@/components/pricing/BuyerPriceProvider", () => ({
@@ -51,13 +52,23 @@ jest.mock("@/components/pricing/BuyerPriceProvider", () => ({
 }));
 jest.mock("@/components/booking/NotifyWhenFreeButton", () => ({
   HELD_BY_SOMEONE_ELSE: new Set(["SLOT_TAKEN", "LOCK_CONTENTION"]),
-  NotifyWhenFreeButton: () => <span>Notify me</span>,
+  NotifyWhenFreeButton: ({ onSignIn }: { onSignIn?: () => void }) => (
+    <button type="button" onClick={onSignIn}>
+      Notify me
+    </button>
+  ),
 }));
-const mockConsumeIntent = jest.fn<unknown, [string]>(() => null);
+// One session-storage slot: a stash overwrites it, a consume reads and clears it.
+let mockStoredIntent: unknown = null;
 jest.mock("@/utils/purchase-intent", () => ({
-  consumePurchaseIntent: (consultantId: string) =>
-    mockConsumeIntent(consultantId),
-  stashPurchaseIntent: jest.fn(),
+  consumePurchaseIntent: () => {
+    const intent = mockStoredIntent;
+    mockStoredIntent = null;
+    return intent;
+  },
+  stashPurchaseIntent: (intent: unknown) => {
+    mockStoredIntent = intent;
+  },
 }));
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 
@@ -122,7 +133,9 @@ beforeEach(() => {
   mockReadAt = 0;
   mockSearch = new URLSearchParams();
   mockSession = { user: { id: "buyer-1", role: "consultee" } };
-  mockConsumeIntent.mockReset().mockReturnValue(null);
+  mockStoredIntent = null;
+  mockPush.mockReset();
+  window.history.replaceState(null, "", "/");
   mockBook.mockReset();
   jest.useFakeTimers();
   jest.setSystemTime(new Date("2026-11-02T09:00:00.000Z"));
@@ -220,7 +233,7 @@ it.each([
 ])(
   "the choose-another-time link outranks a saved purchase intent (%s)",
   (_label, sessionArrivesLate) => {
-    mockConsumeIntent.mockReturnValue(savedIntentForPlanA());
+    mockStoredIntent = savedIntentForPlanA();
     mockSearch = new URL(
       chooseAnotherTimeHref("cp-1", "plan-b"),
       "https://x.test",
@@ -240,6 +253,66 @@ it.each([
     expect(mockBook).not.toHaveBeenCalled();
   },
 );
+
+/** A signed-out buyer on the recovery link is sent to sign in, then lands on the callback. */
+function returnFromSignIn(unmount: () => void, mode: BookingMode) {
+  const signIn = new URL(
+    String(mockPush.mock.calls.at(-1)?.[0]),
+    "https://x.test",
+  );
+  const callback = new URL(
+    signIn.searchParams.get("callbackUrl") ?? "",
+    "https://x.test",
+  );
+  unmount();
+  window.history.replaceState(null, "", callback.pathname + callback.search);
+  mockSearch = callback.searchParams;
+  mockSession = { user: { id: "buyer-1", role: "consultee" } };
+  render(<Dialog mode={mode} />);
+}
+
+function openRecoveryLinkSignedOut() {
+  mockStoredIntent = savedIntentForPlanA();
+  const href = chooseAnotherTimeHref("cp-1", "plan-b");
+  window.history.replaceState(null, "", href);
+  mockSearch = new URL(href, "https://x.test").searchParams;
+  mockSession = null;
+}
+
+it("a time requested from the recovery link survives the sign-in round trip", () => {
+  openRecoveryLinkSignedOut();
+  const { unmount } = render(<Dialog mode="REQUEST" />);
+  fireEvent.click(time(/^10:00 am to 10:30 am, free/));
+  fireEvent.click(screen.getByRole("button", { name: "Request this time" }));
+  returnFromSignIn(unmount, "REQUEST");
+  expect(
+    screen.getByRole("heading", { name: /Book B Consultation/ }),
+  ).toBeVisible();
+  expect(time(/^10:00 am to 10:30 am, free/)).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+});
+
+it("a Notify me pressed on the recovery link survives the sign-in round trip", () => {
+  mockMonth = { "2026-11-04": atoms([11]) };
+  openRecoveryLinkSignedOut();
+  const { unmount } = render(<Dialog />);
+  fireEvent.click(screen.getByRole("button", { name: /taken time/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Notify me" }));
+  returnFromSignIn(unmount, "INSTANT");
+  expect(
+    screen.getByRole("heading", { name: /Book B Consultation/ }),
+  ).toBeVisible();
+  expect(mockToast).toHaveBeenCalledWith(
+    expect.objectContaining({
+      description: "Press Notify me on the time you wanted.",
+    }),
+  );
+  expect(
+    screen.getByRole("button", { name: "Hide taken times" }),
+  ).toHaveAttribute("aria-expanded", "true");
+});
 
 it("a link naming another expert's plan opens no dialog", () => {
   mockSearch = new URL(
