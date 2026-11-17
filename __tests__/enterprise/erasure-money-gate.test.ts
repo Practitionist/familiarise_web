@@ -25,7 +25,7 @@ jest.mock("../../lib/documents/document-erasure", () => ({
   eraseUserSessionDocuments: jest.fn(async () => []),
 }));
 jest.mock("../../lib/auth-helpers", () => ({
-  requireAdminAuth: jest.fn(async () => ({
+  requireBackofficeSurface: jest.fn(async () => ({
     session: { user: { id: "admin_1" } },
   })),
 }));

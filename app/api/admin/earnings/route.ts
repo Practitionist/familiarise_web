@@ -8,7 +8,10 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import { EarningStatus } from "@prisma/client";
+import { z } from "zod";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
+import { readOffsetParams } from "@/lib/backoffice/list-paging";
+import { BOOKING_TITLE_SELECT, bookingRefOf } from "@/lib/data/booking-title";
 
 /**
  * GET /api/admin/earnings
@@ -21,14 +24,19 @@ export async function GET(req: NextRequest) {
 
     // Parse query parameters
     const { searchParams } = new URL(req.url);
-    const statusParam = searchParams.get("status");
-    const validStatuses = Object.values(EarningStatus);
-    const status =
-      statusParam && validStatuses.includes(statusParam as EarningStatus)
-        ? (statusParam as EarningStatus)
-        : null;
-    const limit = parseInt(searchParams.get("limit") || "20");
-    const offset = parseInt(searchParams.get("offset") || "0");
+    // An unknown status is a 400, as on the other money lists.
+    const statusParam = z
+      .nativeEnum(EarningStatus)
+      .optional()
+      .safeParse(searchParams.get("status") || undefined);
+    if (!statusParam.success) {
+      return NextResponse.json(
+        { error: "Invalid query parameters", code: "INVALID_QUERY" },
+        { status: 400 },
+      );
+    }
+    const status = statusParam.data ?? null;
+    const { limit, offset } = readOffsetParams(searchParams);
 
     // #1771 K-3 — the Earnings tab filters by consultant and payment too.
     const consultantProfileId = searchParams.get("consultantProfileId");
@@ -40,13 +48,13 @@ export async function GET(req: NextRequest) {
     };
 
     // Get earnings
-    const [earnings, total] = await Promise.all([
+    const [rows, total] = await Promise.all([
       prisma.consultantEarnings.findMany({
+        relationLoadStrategy: "join",
         where,
         include: {
-          // #946 allowlist — this route is requirePrivilegedAuth, so STAFF read
-          // it. A bare `include:` handed every support agent the consultant's
-          // panNumber and ibanOrAccount.
+          // An allowlist: STAFF hold `payouts.read`, so a bare `include:` would
+          // hand them the consultant's panNumber and ibanOrAccount.
           consultantProfile: {
             select: {
               ...consultantPublicScalars,
@@ -58,6 +66,8 @@ export async function GET(req: NextRequest) {
               id: true,
               amount: true,
               currency: true,
+              user: { select: { id: true, name: true, email: true } },
+              appointment: { select: BOOKING_TITLE_SELECT },
             },
           },
           payout: {
@@ -67,12 +77,37 @@ export async function GET(req: NextRequest) {
             },
           },
         },
-        orderBy: { createdAt: "desc" },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
         take: limit,
         skip: offset,
       }),
       prisma.consultantEarnings.count({ where }),
     ]);
+    // Field by field, so the body is what the Earnings tab reads whatever the row carries.
+    const earnings = rows.map((r) => ({
+      id: r.id,
+      paymentId: r.paymentId,
+      consultantProfileId: r.consultantProfileId,
+      consultantSharePaise: r.consultantSharePaise,
+      status: r.status,
+      holdUntil: r.holdUntil,
+      consultantProfile: {
+        userId: r.consultantProfile.userId,
+        user: {
+          name: r.consultantProfile.user.name,
+          email: r.consultantProfile.user.email,
+        },
+      },
+      payment: {
+        id: r.payment.id,
+        buyer: {
+          id: r.payment.user.id,
+          name: r.payment.user.name,
+          email: r.payment.user.email,
+        },
+        booking: bookingRefOf(r.payment.appointment),
+      },
+    }));
 
     return NextResponse.json(
       {
@@ -87,7 +122,10 @@ export async function GET(req: NextRequest) {
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "admin" } },
+    );
     console.error("Error fetching earnings:", error);
     return NextResponse.json(
       { error: "Failed to fetch earnings" },

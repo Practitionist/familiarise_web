@@ -51,21 +51,53 @@ function cadence(everyMinutes: number): string {
   return `Every ${everyMinutes} minutes`;
 }
 
-/** A human label for a ticker schedule, read from the schedule catalog rather than copied. */
-export function scheduleLabel(schedule: JobSchedule | undefined): string {
+// India keeps one offset all year, so the IST label is the UTC window shifted by it.
+const IST_OFFSET_MINUTES = 330;
+
+/** "10:00 IST to 12:00 IST", with "the next day" when the window crosses midnight. */
+function windowSpan(start: number, end: number, zone: "IST" | "UTC"): string {
+  const crossesMidnight = Math.floor(end / 1440) > Math.floor(start / 1440);
+  const nextDay = crossesMidnight ? " the next day" : "";
+  return `${clock(start)} ${zone} to ${clock(end)} ${zone}${nextDay}`;
+}
+
+function describeSchedule(
+  schedule: JobSchedule | undefined,
+  shiftMinutes: number,
+  zone: "IST" | "UTC",
+): string {
   if (!schedule) return "GitHub Actions (currently budget-blocked)";
   const every = cadence(schedule.everyMinutes);
   const w = schedule.window;
   if (!w) return every;
-  const span = `${clock(w.startMinuteUtc)}–${clock(w.startMinuteUtc + w.windowMinutes)} UTC`;
+  const start = w.startMinuteUtc + shiftMinutes;
+  const end = start + w.windowMinutes;
+  // A window opening after 18:30 UTC opens on the next calendar day in IST.
+  const startsNextDay = start >= 1440;
+  const span =
+    w.windowMinutes >= 1440 ? "all day" : windowSpan(start, end, zone);
   let days = "daily";
-  if (w.weekdayUtc !== undefined) days = `on ${WEEKDAYS[w.weekdayUtc]}`;
-  else if (w.dayOfMonthUtc !== undefined) {
+  if (w.weekdayUtc !== undefined) {
+    days = `on ${WEEKDAYS[(w.weekdayUtc + (startsNextDay ? 1 : 0)) % 7]}`;
+  } else if (w.dayOfMonthUtc !== undefined) {
+    const day = startsNextDay
+      ? `the day after day ${w.dayOfMonthUtc}`
+      : `day ${w.dayOfMonthUtc}`;
     days = w.monthsUtc
-      ? `on day ${w.dayOfMonthUtc} of months ${w.monthsUtc.join(", ")}`
-      : `on day ${w.dayOfMonthUtc} of each month`;
+      ? `on ${day} of months ${w.monthsUtc.join(", ")}`
+      : `on ${day} of each month`;
   }
-  return `${every}, ${span} ${days}`;
+  return `${every}, ${span}, ${days}`;
+}
+
+/** A human label for a ticker schedule in IST, read from the schedule catalog rather than copied. */
+export function scheduleLabel(schedule: JobSchedule | undefined): string {
+  return describeSchedule(schedule, IST_OFFSET_MINUTES, "IST");
+}
+
+/** The same schedule as the catalog defines it, in UTC. */
+export function scheduleLabelUtc(schedule: JobSchedule | undefined): string {
+  return describeSchedule(schedule, 0, "UTC");
 }
 
 /** A windowed job repeats its latest due window by hand, so it cannot run before its first window. */
@@ -83,6 +115,7 @@ export function systemJobCards(now = new Date()): SystemJobCard[] {
     description: meta.description,
     category: meta.category,
     schedule: scheduleLabel(scheduleFor(id)),
+    scheduleUtc: scheduleLabelUtc(scheduleFor(id)),
     confirmPhrase: runConfirmPhrase({
       id,
       jobName: getCleanupJobHandlers(id)?.job ?? id,

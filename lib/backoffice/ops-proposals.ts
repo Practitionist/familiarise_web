@@ -7,7 +7,9 @@
 import type { OpsActionProposalStatus, Prisma } from "@prisma/client";
 
 import prisma, { type Tx } from "@/lib/prisma";
+import type { ProposalPage } from "./money-list-schemas";
 import { OpsRefusal } from "./ops-refusal-error";
+import { resolveTargets, targetKey } from "./target-refs";
 
 export const SECOND_APPROVAL_THRESHOLD_PAISE = 2_500_000;
 export const PROPOSAL_TTL_MS = 24 * 60 * 60 * 1000;
@@ -211,54 +213,56 @@ export function proposalStatusWhere(
   return { status };
 }
 
-export type ProposalListItem = {
-  id: string;
-  action: string;
-  surface: string;
-  targetKind: string;
-  targetId: string;
-  amountPaise: number | null;
-  reason: string;
-  status: OpsActionProposalStatus;
-  proposedBy: { id: string; name: string } | null;
-  decidedBy: { id: string; name: string } | null;
-  decidedAt: string | null;
-  decisionReason: string | null;
-  expiresAt: string;
-  createdAt: string;
-};
+export const PROPOSAL_PAGE_SIZE = 20;
 
-/** The newest 100 proposals in one effective status. */
+/** One page of proposals in one effective status, newest first, each naming its target. */
 export async function listProposals(
   status: OpsActionProposalStatus,
   now: Date,
-): Promise<ProposalListItem[]> {
-  const rows = await prisma.opsActionProposal.findMany({
-    where: proposalStatusWhere(status, now),
-    orderBy: { createdAt: "desc" },
-    take: 100,
-    select: {
-      id: true,
-      action: true,
-      surface: true,
-      targetKind: true,
-      targetId: true,
-      amountPaise: true,
-      reason: true,
-      status: true,
-      decidedAt: true,
-      decisionReason: true,
-      expiresAt: true,
-      createdAt: true,
-      proposedBy: { select: { id: true, name: true } },
-      decidedBy: { select: { id: true, name: true } },
-    },
-  });
-  return rows.map((r) => ({
-    ...r,
-    status: effectiveProposalStatus(r, now),
-    decidedAt: r.decidedAt?.toISOString() ?? null,
-    expiresAt: r.expiresAt.toISOString(),
-    createdAt: r.createdAt.toISOString(),
-  }));
+  page = 1,
+): Promise<ProposalPage> {
+  const where = proposalStatusWhere(status, now);
+  const [rows, total] = await Promise.all([
+    prisma.opsActionProposal.findMany({
+      relationLoadStrategy: "join",
+      where,
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      skip: (page - 1) * PROPOSAL_PAGE_SIZE,
+      take: PROPOSAL_PAGE_SIZE,
+      select: {
+        id: true,
+        action: true,
+        surface: true,
+        targetKind: true,
+        targetId: true,
+        amountPaise: true,
+        reason: true,
+        status: true,
+        decidedAt: true,
+        decisionReason: true,
+        expiresAt: true,
+        createdAt: true,
+        proposedBy: { select: { id: true, name: true } },
+        decidedBy: { select: { id: true, name: true } },
+      },
+    }),
+    prisma.opsActionProposal.count({ where }),
+  ]);
+  const targets = await resolveTargets(
+    rows.map((r) => ({ kind: r.targetKind, id: r.targetId })),
+  );
+  return {
+    proposals: rows.map((r) => ({
+      ...r,
+      amountPaise: r.amountPaise === null ? null : Number(r.amountPaise),
+      target: targets.get(targetKey(r.targetKind, r.targetId)) ?? null,
+      status: effectiveProposalStatus(r, now),
+      decidedAt: r.decidedAt?.toISOString() ?? null,
+      expiresAt: r.expiresAt.toISOString(),
+      createdAt: r.createdAt.toISOString(),
+    })),
+    total,
+    page,
+    pageSize: PROPOSAL_PAGE_SIZE,
+  };
 }

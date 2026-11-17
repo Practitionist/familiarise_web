@@ -12,8 +12,8 @@
  * their own session, not an operator's, so there is no PATCH here — the
  * back-office observes the review, it does not perform it.
  *
- * `requirePrivilegedAuth` (ADMIN or STAFF): documents are support context,
- * which is squarely staff's remit. Mirrors the money-surface reads.
+ * `users.verify` (ADMIN or STAFF): the list is a tab of the Verification page,
+ * and documents are support context.
  */
 
 import { fileApiError } from "@/lib/documents/api-error";
@@ -21,7 +21,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import * as Sentry from "@sentry/nextjs";
 import { z } from "zod";
 
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { listDocumentsScoped } from "@/lib/api/scope/list-documents";
 import { parsePagination } from "@/lib/enterprise/validators";
 
@@ -32,7 +32,7 @@ const QuerySchema = z.object({
 });
 
 export async function GET(req: NextRequest) {
-  const auth = await requirePrivilegedAuth();
+  const auth = await requireBackofficeSurface("users.verify");
   if (auth.error) return auth.error;
 
   const url = new URL(req.url);
@@ -44,8 +44,7 @@ export async function GET(req: NextRequest) {
   const pagination = parsePagination(url);
 
   try {
-    // `all` scope applies no ownership filter — the whole point of a
-    // platform-wide view. Guarded by requirePrivilegedAuth above.
+    // `all` scope applies no ownership filter: the platform-wide view the gate above admits.
     const result = await listDocumentsScoped({
       scope: { kind: "all" },
       userId: auth.session.user.id,

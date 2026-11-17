@@ -55,6 +55,37 @@ export function istFinancialYearStart(now: Date = new Date()): Date {
   return new Date(Date.UTC(year, 3, 1) - IST_OFFSET_MS);
 }
 
+/** The IST calendar date holding `now`, as `YYYY-MM-DD`. */
+export function istDateKey(now: Date = new Date()): string {
+  return new Date(now.getTime() + IST_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+/** The Indian financial year holding `now`, labelled `2026-27`. */
+export function istFinancialYearLabel(now: Date = new Date()): string {
+  const start = new Date(istFinancialYearStart(now).getTime() + IST_OFFSET_MS);
+  const year = start.getUTCFullYear();
+  return `${year}-${String(year + 1).slice(2)}`;
+}
+
+const DATE_KEY = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/**
+ * A filing date typed as `YYYY-MM-DD`, read as 00:00 IST that day; null when
+ * it is not a real date or falls after today in IST.
+ */
+export function istFilingDate(
+  value: string,
+  now: Date = new Date(),
+): Date | null {
+  const match = DATE_KEY.exec(value.trim());
+  if (!match) return null;
+  const [year, month, day] = match.slice(1).map(Number);
+  const start = new Date(Date.UTC(year, month - 1, day) - IST_OFFSET_MS);
+  // A day past the month's end rolls over; refuse it rather than move it.
+  if (istDateKey(start) !== value.trim()) return null;
+  return value.trim() <= istDateKey(now) ? start : null;
+}
+
 /** The instant that begins the IST calendar month named by `YYYY-MM`. */
 export function istMonthStart(period: string): Date {
   const [year, month] = period.split("-").map(Number);

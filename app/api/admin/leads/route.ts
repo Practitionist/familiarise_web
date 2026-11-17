@@ -1,42 +1,39 @@
 /**
  * GET /api/admin/leads
  *
- * Enterprise sales-pipeline list (#1230 wave-4c). Status filter + newest-
- * first cursor pagination, mirroring the admin route conventions
- * (requirePrivilegedAuth; nav surface `leads.manage` gates visibility).
+ * Enterprise sales-pipeline list, gated on `leads.manage`: an optional status
+ * filter and newest-first cursor pagination.
  */
 
 import { NextResponse, type NextRequest } from "next/server";
 import { LeadStatus } from "@prisma/client";
 import prisma from "@/lib/prisma";
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { z } from "zod";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 
 const PAGE_SIZE = 50;
+const statusFilter = z.nativeEnum(LeadStatus).nullable();
 
 export async function GET(request: NextRequest): Promise<Response> {
   try {
-    const auth = await requirePrivilegedAuth();
+    const auth = await requireBackofficeSurface("leads.manage");
     if (auth.error) return auth.error;
 
     const { searchParams } = new URL(request.url);
-    const status = searchParams.get("status");
+    const rawStatus = searchParams.get("status");
     const cursor = searchParams.get("cursor");
 
-    // `in` accepts constructor/toString — validate against actual values.
-    if (
-      status &&
-      !Object.values(LeadStatus).includes(status as LeadStatus)
-    ) {
+    const parsedStatus = statusFilter.safeParse(rawStatus || null);
+    if (!parsedStatus.success) {
       return NextResponse.json(
-        { error: `Unknown lead status "${status}"` },
+        { error: `Unknown lead status "${rawStatus}"` },
         { status: 400 },
       );
     }
+    const status = parsedStatus.data;
 
     const leads = await prisma.lead.findMany({
-      where: {
-        ...(status ? { status: status as LeadStatus } : {}),
-      },
+      where: status ? { status } : {},
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       take: PAGE_SIZE,
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),

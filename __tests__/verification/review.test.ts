@@ -2,8 +2,9 @@
  * @jest-environment node
  */
 /**
- * The one review writer: reason codes on flagged documents, a CAS on the open
- * row, the NEEDS_INFO round cap, and the profile flip.
+ * The one review writer, on the audited door's transaction: reason codes on
+ * flagged documents, a CAS on the open row, the NEEDS_INFO round cap, and the
+ * profile flip. Every refusal is an OpsRefusal with its own status.
  */
 
 const tx = {
@@ -49,8 +50,23 @@ jest.mock("../../lib/email", () => ({
 import {
   findFeedbackWithoutIssue,
   MAX_NEEDS_INFO_ROUNDS,
-  reviewVerification,
+  reviewVerificationTx,
 } from "../../lib/verification/review";
+import type { Tx } from "../../lib/prisma";
+
+/** The decision on the mocked tx, or the refusal's code; a refusal is an OpsRefusal. */
+const reviewVerification = (
+  input: Parameters<typeof reviewVerificationTx>[1],
+) =>
+  reviewVerificationTx(tx as unknown as Tx, input).then(
+    (decided) => ({ ok: true as const, ...decided }),
+    (err: { code: string; httpStatus: number; name: string }) => ({
+      ok: false as const,
+      code: err.code,
+      httpStatus: err.httpStatus,
+      name: err.name,
+    }),
+  );
 
 const base = {
   verificationId: "v1",
@@ -123,7 +139,12 @@ describe("reviewVerification", () => {
     });
     tx.consultantProfileVerification.updateMany.mockResolvedValue({ count: 0 });
     const outcome = await reviewVerification({ ...base, status: "REJECTED" });
-    expect(outcome).toMatchObject({ ok: false, code: "ALREADY_DECIDED" });
+    expect(outcome).toMatchObject({
+      ok: false,
+      code: "ALREADY_DECIDED",
+      httpStatus: 409,
+      name: "OpsRefusal",
+    });
     expect(tx.consultantProfile.update).not.toHaveBeenCalled();
   });
 

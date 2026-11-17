@@ -82,3 +82,25 @@ describe("useDashboardBreadcrumbs record ids", () => {
     },
   );
 });
+
+describe("useDashboardBreadcrumbs list homes", () => {
+  it("points a list crumb at the page that holds the list", () => {
+    const OPS = "/dashboard/admin";
+    mockParams.tree = "admin";
+    mockParams.paymentId = "26014b76-1d2a-4f3b-9c4d-5e6f7a8b9c0d";
+    const { result } = renderHook(
+      () =>
+        useDashboardBreadcrumbs({
+          pathname: `${OPS}/payments/26014b76-1d2a-4f3b-9c4d-5e6f7a8b9c0d`,
+          basePath: OPS,
+          pageLabels: { payments: "Payments" },
+          listHrefs: { payments: "money/payments" },
+        }),
+      { wrapper },
+    );
+    expect(result.current[0]).toEqual({
+      label: "Payments",
+      href: `${OPS}/money/payments`,
+    });
+  });
+});

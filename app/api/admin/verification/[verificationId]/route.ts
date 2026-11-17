@@ -7,12 +7,10 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
-import {
-  handleReviewPatch,
-  withDownloadUrls,
-} from "@/lib/verification/review-route";
+import { REVIEW_DOCUMENT_SELECT } from "@/lib/verification/documents";
+import { withDownloadUrls } from "@/lib/verification/review-route";
 
 interface RouteParams {
   params: Promise<{ verificationId: string }>;
@@ -20,11 +18,11 @@ interface RouteParams {
 
 /**
  * GET /api/admin/verification/[verificationId]
- * Get verification request details (Admin only)
+ * A request's details, with each document's ACL'd download path.
  */
 export async function GET(_req: NextRequest, { params }: RouteParams) {
   try {
-    const auth = await requirePrivilegedAuth();
+    const auth = await requireBackofficeSurface("users.verify");
     if (auth.error) return auth.error;
 
     const { verificationId } = await params;
@@ -52,7 +50,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
             subDomains: { select: { id: true, name: true } },
           },
         },
-        documents: true,
+        documents: { select: REVIEW_DOCUMENT_SELECT },
       },
     });
 
@@ -84,25 +82,6 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
 
 /**
  * PATCH /api/admin/verification/[verificationId]
- * Review profile verification (approve/reject) with structured feedback (Admin only)
+ * Decide a request (approve, reject or ask for more): an audited door with a reason.
  */
-export async function PATCH(req: NextRequest, { params }: RouteParams) {
-  try {
-    const auth = await requirePrivilegedAuth();
-    if (auth.error) return auth.error;
-    const session = auth.session;
-
-    const { verificationId } = await params;
-    return await handleReviewPatch(req, verificationId, session.user.id);
-  } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "admin" } },
-    );
-    console.error("Error reviewing verification:", error);
-    return NextResponse.json(
-      { error: "Failed to review verification" },
-      { status: 500 },
-    );
-  }
-}
+export { reviewVerificationDoor as PATCH } from "@/lib/verification/review-route";

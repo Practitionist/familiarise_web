@@ -1,28 +1,22 @@
 /**
- * Platform-wide trial pricing controls (single-row config, #880 pattern).
- * The floor sits UNDER every plan's trialPriceInPaise: consultants price
- * their own trials, admin/staff raise the floor when free/underpriced
- * trials need to be squeezed out platform-wide. 0 = free trials allowed.
+ * Platform-wide trial pricing controls (single-row config). The floor sits
+ * UNDER every plan's trialPriceInPaise: consultants price their own trials,
+ * and admin raises the floor platform-wide. 0 = free trials allowed.
  */
 
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 
-export async function getMinTrialPriceInPaise(): Promise<number> {
-  const config = await prisma.platformPricingConfig.upsert({
-    where: { id: "singleton" },
-    create: { id: "singleton" },
-    update: {},
-  });
-  return config.minTrialPriceInPaise;
-}
+export const PRICING_CONFIG_ID = "singleton";
 
-export async function setMinTrialPriceInPaise(
-  minTrialPriceInPaise: number,
+/** The floor in paise, creating the singleton row on first read. */
+export async function getMinTrialPriceInPaise(
+  db: Pick<Tx, "platformPricingConfig"> = prisma,
 ): Promise<number> {
-  const config = await prisma.platformPricingConfig.upsert({
-    where: { id: "singleton" },
-    create: { id: "singleton", minTrialPriceInPaise },
-    update: { minTrialPriceInPaise },
+  const config = await db.platformPricingConfig.upsert({
+    where: { id: PRICING_CONFIG_ID },
+    create: { id: PRICING_CONFIG_ID },
+    update: {},
+    select: { minTrialPriceInPaise: true },
   });
   return config.minTrialPriceInPaise;
 }

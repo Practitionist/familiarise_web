@@ -1,15 +1,24 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { PageHeader } from "@/components/dashboard/PageScaffold";
-import type { ProposalListItem } from "@/lib/backoffice/ops-proposals";
-import { useZonedFormat } from "@/lib/time/zoned-format";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { TablePagination } from "@/components/dashboard/TablePagination";
+import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
+import {
+  proposalPageSchema,
+  readListBody,
+  type ProposalListItem,
+} from "@/lib/backoffice/money-list-schemas";
+import { proposalStatus } from "@/lib/labels/backoffice-labels";
+import { OperatorTime } from "@/lib/time/operator-time";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { ReasonDialog } from "./ReasonDialog";
+import { TargetCell } from "./TargetCell";
 import { useOpsDoor } from "./ops-door";
 
 const STATUSES = [
@@ -20,27 +29,101 @@ const STATUSES = [
   "EXPIRED",
 ] as const;
 type Status = (typeof STATUSES)[number];
-const WHEN = "d MMM yyyy, hh:mm a";
 const queryKey = (status: Status) => ["money-approvals", status] as const;
 
-async function fetchProposals(status: Status): Promise<ProposalListItem[]> {
-  const res = await fetch(`/api/admin/ops-proposals?status=${status}`);
-  if (!res.ok) throw new Error("Failed to load");
-  const json = (await res.json()) as { proposals: ProposalListItem[] };
-  return json.proposals;
+async function fetchProposals(status: Status, page: number) {
+  const params = new URLSearchParams({ status, page: String(page) });
+  const res = await fetch(`/api/admin/ops-proposals?${params}`);
+  return readListBody(res, proposalPageSchema, "Failed to load");
+}
+
+/** One proposal: what it does, what it points at, who asked, and the doors while it waits. */
+function ProposalRow({
+  p,
+  viewerId,
+  basePath,
+  onDecide,
+}: Readonly<{
+  p: ProposalListItem;
+  viewerId: string;
+  basePath: string;
+  onDecide: (decision: "approve" | "reject") => void;
+}>) {
+  const own = p.proposedBy?.id === viewerId;
+  return (
+    <li className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm">
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="font-medium">
+            {p.action} ·{" "}
+            {p.amountPaise === null
+              ? "Unlimited"
+              : formatCurrencyAmount(p.amountPaise, "INR")}
+          </p>
+          <StatusBadge {...proposalStatus(p.status)} size="sm" />
+        </div>
+        <div className="my-2">
+          <TargetCell
+            kind={p.targetKind}
+            id={p.targetId}
+            target={p.target}
+            basePath={basePath}
+          />
+        </div>
+        <p className="text-muted-foreground">{p.reason}</p>
+        <p className="text-muted-foreground">
+          Proposed by {p.proposedBy?.name ?? "a removed user"} on{" "}
+          <OperatorTime value={p.createdAt} />
+          {p.status === "PROPOSED" && (
+            <>
+              {" "}
+              · expires <OperatorTime value={p.expiresAt} />
+            </>
+          )}
+          {p.decidedBy ? ` · decided by ${p.decidedBy.name}` : ""}
+        </p>
+        {p.decisionReason && (
+          <p className="text-muted-foreground">{p.decisionReason}</p>
+        )}
+      </div>
+      {p.status === "PROPOSED" && (
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            disabled={own}
+            title={
+              own ? "A different admin must approve your proposal" : undefined
+            }
+            onClick={() => onDecide("approve")}
+          >
+            Approve
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => onDecide("reject")}
+          >
+            Reject
+          </Button>
+        </div>
+      )}
+    </li>
+  );
 }
 
 /** Money actions above ₹25,000 held for a second admin; the proposer cannot approve their own. */
 export function ApprovalsTab({ viewerId }: Readonly<{ viewerId: string }>) {
-  const zoned = useZonedFormat();
+  const { basePath } = useBackofficeCapability();
   const [status, setStatus] = useState<Status>("PROPOSED");
+  const [page, setPage] = useState(1);
   const [deciding, setDeciding] = useState<{
     proposal: ProposalListItem;
     decision: "approve" | "reject";
   } | null>(null);
-  const { data, isLoading } = useQuery({
-    queryKey: queryKey(status),
-    queryFn: () => fetchProposals(status),
+  const { data, isLoading, error } = useQuery({
+    queryKey: [...queryKey(status), page],
+    queryFn: () => fetchProposals(status, page),
+    placeholderData: keepPreviousData,
     staleTime: 10_000,
   });
   const decide = useOpsDoor({
@@ -49,7 +132,18 @@ export function ApprovalsTab({ viewerId }: Readonly<{ viewerId: string }>) {
     onDone: () => setDeciding(null),
     onFailed: () => setDeciding(null),
   });
-  const proposals = data ?? [];
+  const proposals = data?.proposals ?? [];
+  // A failed load says so; an empty queue says it is empty.
+  let listEmpty: ReactNode = null;
+  if (proposals.length === 0) {
+    listEmpty = error ? (
+      <p className="text-sm text-destructive">Approvals could not load.</p>
+    ) : (
+      <p className="text-sm text-muted-foreground">
+        {isLoading ? "Loading…" : "Nothing here."}
+      </p>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -63,81 +157,39 @@ export function ApprovalsTab({ viewerId }: Readonly<{ viewerId: string }>) {
             key={s}
             size="sm"
             variant={s === status ? "default" : "outline"}
-            onClick={() => setStatus(s)}
+            onClick={() => {
+              setStatus(s);
+              setPage(1);
+            }}
           >
-            {s.charAt(0) + s.slice(1).toLowerCase()}
+            {proposalStatus(s).label}
           </Button>
         ))}
       </div>
       <Card>
         <CardContent className="pt-6">
-          {proposals.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              {isLoading ? "Loading…" : "Nothing here."}
-            </p>
-          ) : (
+          {listEmpty ?? (
             <ul className="divide-y divide-border">
               {proposals.map((p) => (
-                <li
+                <ProposalRow
                   key={p.id}
-                  className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm"
-                >
-                  <div className="min-w-0 flex-1">
-                    <p className="font-medium">
-                      {p.action} ·{" "}
-                      {p.amountPaise === null
-                        ? "Unlimited"
-                        : formatCurrencyAmount(p.amountPaise, "INR")}
-                    </p>
-                    <p className="text-muted-foreground">
-                      {p.targetKind} {p.targetId}
-                    </p>
-                    <p className="text-muted-foreground">{p.reason}</p>
-                    <p className="text-muted-foreground">
-                      Proposed by {p.proposedBy?.name ?? "a removed user"} on{" "}
-                      {zoned(p.createdAt, WHEN)}
-                      {p.status === "PROPOSED"
-                        ? ` · expires ${zoned(p.expiresAt, WHEN)}`
-                        : ""}
-                      {p.decidedBy ? ` · decided by ${p.decidedBy.name}` : ""}
-                    </p>
-                    {p.decisionReason && (
-                      <p className="text-muted-foreground">
-                        {p.decisionReason}
-                      </p>
-                    )}
-                  </div>
-                  {p.status === "PROPOSED" && (
-                    <div className="flex gap-2">
-                      <Button
-                        size="sm"
-                        disabled={p.proposedBy?.id === viewerId}
-                        title={
-                          p.proposedBy?.id === viewerId
-                            ? "A different admin must approve your proposal"
-                            : undefined
-                        }
-                        onClick={() =>
-                          setDeciding({ proposal: p, decision: "approve" })
-                        }
-                      >
-                        Approve
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() =>
-                          setDeciding({ proposal: p, decision: "reject" })
-                        }
-                      >
-                        Reject
-                      </Button>
-                    </div>
-                  )}
-                </li>
+                  p={p}
+                  viewerId={viewerId}
+                  basePath={basePath}
+                  onDecide={(decision) =>
+                    setDeciding({ proposal: p, decision })
+                  }
+                />
               ))}
             </ul>
           )}
+          <TablePagination
+            className="pt-4"
+            page={page}
+            pageSize={data?.pageSize ?? 20}
+            total={data?.total ?? 0}
+            onPageChange={setPage}
+          />
         </CardContent>
       </Card>
       <ReasonDialog

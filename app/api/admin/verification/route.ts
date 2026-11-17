@@ -1,29 +1,39 @@
 /**
- * Admin Verification API
- * GET /api/admin/verification - List profile verifications.
- *
- * Thin shell — query/formatting lives in
- * `lib/api/operators/verification.ts` (the staff twin was deleted, #1527).
+ * GET /api/admin/verification — one page of profile verifications in one
+ * status (PENDING by default), oldest submission first.
  */
 
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { ProfileVerificationStatus } from "@prisma/client";
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { z } from "zod";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { getVerificationQueue } from "@/lib/api/operators";
+import { readPageParams } from "@/lib/backoffice/list-paging";
+
+const statusSchema = z
+  .nativeEnum(ProfileVerificationStatus)
+  .default(ProfileVerificationStatus.PENDING);
 
 export async function GET(req: NextRequest) {
   try {
-    const auth = await requirePrivilegedAuth();
+    const auth = await requireBackofficeSurface("users.verify");
     if (auth.error) return auth.error;
 
     const { searchParams } = new URL(req.url);
-    const statusParam = searchParams.get("status") || "PENDING";
+    const status = statusSchema.safeParse(
+      searchParams.get("status") ?? undefined,
+    );
+    if (!status.success) {
+      return NextResponse.json(
+        { error: "Unknown verification status", code: "INVALID_STATUS" },
+        { status: 400 },
+      );
+    }
 
     const result = await getVerificationQueue({
-      status: statusParam as ProfileVerificationStatus,
-      page: parseInt(searchParams.get("page") || "1"),
-      limit: parseInt(searchParams.get("limit") || "20"),
+      status: status.data,
+      paging: readPageParams(searchParams, 20),
     });
 
     return NextResponse.json(result);

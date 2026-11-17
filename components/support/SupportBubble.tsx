@@ -3,6 +3,7 @@
 import { Bot, Headset, Lock, Presentation, UserRound } from "lucide-react";
 import type { ReactNode } from "react";
 
+import { useZoneClock } from "@/lib/time/use-zone-clock";
 import { toneClass } from "@/lib/ui/tone";
 import { cn } from "@/utils/tailwind";
 
@@ -46,16 +47,6 @@ function bubbleToneClass(
   if (own) return "bg-primary text-primary-foreground";
   if (author === "USER") return "border border-border bg-card text-foreground";
   return "bg-muted text-foreground";
-}
-
-function formatMessageTime(at?: string) {
-  if (!at) return null;
-  return new Date(at).toLocaleString(undefined, {
-    day: "numeric",
-    month: "short",
-    hour: "numeric",
-    minute: "2-digit",
-  });
 }
 
 function isOwnMessage(
@@ -107,6 +98,8 @@ export function SupportBubble({
   pending?: boolean;
   footer?: ReactNode;
 }>) {
+  // IST in the back office, the viewer's zone on a customer page (the nearest DisplayZoneProvider).
+  const clock = useZoneClock();
   if (author === "SYSTEM") {
     return (
       <p className="py-1 text-center text-xs text-muted-foreground">
@@ -118,7 +111,7 @@ export function SupportBubble({
   const presenter = actorKind === "PRESENTER";
   const own = isOwnMessage(author, perspective, presenter);
   const Icon = presenter ? Presentation : ICON[author];
-  const time = formatMessageTime(at);
+  const time = at ? clock.dateTime(at) : null;
   const senderName = senderNameFor(author, authorName, internal, presenter);
   return (
     <div className={cn("flex", own ? "justify-end" : "justify-start")}>
@@ -136,7 +129,14 @@ export function SupportBubble({
               <Icon className="h-3 w-3" aria-hidden />
             )}
             <span>{senderName}</span>
-            {time && <span aria-hidden>· {time}</span>}
+            {time && at && (
+              <span aria-hidden>
+                ·{" "}
+                <time dateTime={at} title={clock.exactTitle(at) ?? undefined}>
+                  {time}
+                </time>
+              </span>
+            )}
           </p>
         )}
         <div

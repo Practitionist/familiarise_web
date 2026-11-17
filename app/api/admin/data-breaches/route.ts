@@ -17,6 +17,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
+import { readPageParams } from "@/lib/backoffice/list-paging";
 import { UNREPORTED_BREACH_WHERE } from "@/lib/backoffice/queue-predicates";
 
 const BodySchema = z.object({
@@ -27,11 +28,16 @@ const BodySchema = z.object({
 export async function GET(req: NextRequest) {
   const auth = await requireBackofficeSurface("compliance.manage");
   if (auth.error) return auth.error;
-  const unreported = new URL(req.url).searchParams.get("unreported") === "1";
+  const searchParams = new URL(req.url).searchParams;
+  const unreported = searchParams.get("unreported") === "1";
+  const { page, limit, skip } = readPageParams(searchParams);
+  const where = unreported ? UNREPORTED_BREACH_WHERE : undefined;
+  const total = await prisma.dataBreach.count({ where });
   const breaches = await prisma.dataBreach.findMany({
-    where: unreported ? UNREPORTED_BREACH_WHERE : undefined,
-    orderBy: { detectedAt: "desc" },
-    take: 100,
+    where,
+    orderBy: [{ detectedAt: "desc" }, { id: "asc" }],
+    skip,
+    take: limit,
     select: {
       id: true,
       detectedAt: true,
@@ -49,6 +55,9 @@ export async function GET(req: NextRequest) {
         ...b,
         affectedCount: affectedUserIds.length,
       })),
+      total,
+      page,
+      pageSize: limit,
     },
     { headers: { "Cache-Control": "private, no-store" } },
   );

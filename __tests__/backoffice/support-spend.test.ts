@@ -60,7 +60,10 @@ jest.mock("../../lib/prisma", () => ({
     user: {
       findMany: async (args: {
         where: { id?: string; role?: string | { in: string[] } };
+        select?: { Payment?: unknown };
       }) => {
+        // The target read (payments by buyer) finds none in these fixtures.
+        if (args.select?.Payment) return [];
         mockUserFindMany(args);
         const { id, role } = args.where;
         return mockUsers.filter(
@@ -72,6 +75,7 @@ jest.mock("../../lib/prisma", () => ({
                 : role.in.includes(u.role))),
         );
       },
+      count: async () => mockUsers.length,
     },
     opsActionLog: {
       findMany: async ({ where }: { where: OpsWhere }) =>
@@ -80,6 +84,7 @@ jest.mock("../../lib/prisma", () => ({
           .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()),
     },
     refund: { findMany: async () => [] },
+    payment: { findMany: async () => [] },
     supportFinancialRecommendation: {
       findMany: async (args: {
         where: {
@@ -320,6 +325,7 @@ describe("readSupportSpend", () => {
       expect(staff.payments).toEqual([
         {
           paymentId: "pay-1",
+          target: null,
           supportCommittedPaise: 350_000,
           platformCancelPaise: 0,
           remainingPerPaymentPaise: STAFF_REFUND_PER_PAYMENT_PAISE - 350_000,
@@ -470,6 +476,7 @@ describe("readSupportSpend", () => {
     );
     expect(byId["pay-1"]).toEqual({
       paymentId: "pay-1",
+      target: null,
       supportCommittedPaise: 450_000,
       platformCancelPaise: 400_000,
       remainingPerPaymentPaise: STAFF_REFUND_PER_PAYMENT_PAISE - 450_000,

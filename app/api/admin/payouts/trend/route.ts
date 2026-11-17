@@ -16,22 +16,29 @@ import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
+import { istDateKey, istDayStart } from "@/lib/compliance/ist-period";
 
 const TREND_DAYS = 7;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const MONTHS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
 
-function dayKey(d: Date): string {
-  const year = d.getUTCFullYear();
-  const month = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const day = String(d.getUTCDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function dayLabel(d: Date): string {
-  return d.toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    timeZone: "UTC",
-  });
+/** "17 Nov" for an IST date key "2026-11-17". */
+function dayLabel(key: string): string {
+  const [, month, day] = key.split("-").map(Number);
+  return `${day} ${MONTHS[month - 1]}`;
 }
 
 export async function GET() {
@@ -39,12 +46,10 @@ export async function GET() {
     const auth = await requireBackofficeSurface("payouts.read");
     if (auth.error) return auth.error;
 
-    const now = new Date();
-    const todayUtc = new Date(
-      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+    // The seven IST calendar days ending today; India keeps one offset, so each is 24 h.
+    const since = new Date(
+      istDayStart(new Date()).getTime() - (TREND_DAYS - 1) * DAY_MS,
     );
-    const since = new Date(todayUtc);
-    since.setUTCDate(since.getUTCDate() - (TREND_DAYS - 1));
 
     const rows = await prisma.consultantPayout.findMany({
       where: { createdAt: { gte: since } },
@@ -53,13 +58,12 @@ export async function GET() {
 
     const buckets = new Map<string, { label: string; totalPaise: number }>();
     for (let i = 0; i < TREND_DAYS; i++) {
-      const d = new Date(since);
-      d.setUTCDate(d.getUTCDate() + i);
-      buckets.set(dayKey(d), { label: dayLabel(d), totalPaise: 0 });
+      const key = istDateKey(new Date(since.getTime() + i * DAY_MS));
+      buckets.set(key, { label: dayLabel(key), totalPaise: 0 });
     }
 
     for (const row of rows) {
-      const bucket = buckets.get(dayKey(row.createdAt));
+      const bucket = buckets.get(istDateKey(row.createdAt));
       if (bucket) bucket.totalPaise += row.amount;
     }
 

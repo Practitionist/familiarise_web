@@ -1,18 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { requireAdminAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { supportError } from "@/lib/api/support-http";
 import { supportMonthlyComplianceReport } from "@/lib/support/case-service";
-
-const IST_OFFSET_MS = 330 * 60_000;
-
-function defaultIstYearMonth(): { year: number; month: number } {
-  const istNow = new Date(Date.now() + IST_OFFSET_MS);
-  return {
-    year: istNow.getUTCFullYear(),
-    month: istNow.getUTCMonth() + 1,
-  };
-}
+import { operatorYearMonth } from "@/lib/time/operator-zone";
 
 const QuerySchema = z.object({
   year: z.coerce.number().int().min(2020).max(2100),
@@ -21,10 +12,10 @@ const QuerySchema = z.object({
 
 export async function GET(req: NextRequest) {
   try {
-    const auth = await requireAdminAuth();
+    const auth = await requireBackofficeSurface("compliance.manage");
     if (auth.error) return auth.error;
 
-    const defaults = defaultIstYearMonth();
+    const defaults = operatorYearMonth(new Date());
     const parsed = QuerySchema.safeParse({
       year: req.nextUrl.searchParams.get("year") ?? defaults.year,
       month: req.nextUrl.searchParams.get("month") ?? defaults.month,

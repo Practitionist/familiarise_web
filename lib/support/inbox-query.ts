@@ -10,6 +10,7 @@ import {
   type CaseTopic,
 } from "./case-topic";
 import { slaStateOf, type SlaClock } from "./sla";
+import { fromOperatorWallTime } from "@/lib/time/operator-zone";
 
 /**
  * Back-office Support inbox filters over the canonical SupportCase table.
@@ -98,10 +99,12 @@ const oneOf = <T extends string>(list: readonly T[], v: string | null) =>
   v && (list as readonly string[]).includes(v) ? (v as T) : null;
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+/** A `YYYY-MM-DD` filter day cut at 00:00 IST, the day the operator picked; `endOfDay` is the next IST midnight. */
 function day(v: string | null, endOfDay: boolean): Date | null {
   if (!v || !DAY_RE.test(v)) return null;
-  const d = new Date(`${v}T00:00:00.000Z`);
-  if (Number.isNaN(d.getTime())) return null;
+  const d = fromOperatorWallTime(`${v}T00:00`);
+  if (!d) return null;
+  // India keeps +05:30 all year, so its days are exactly 24 hours long.
   return endOfDay ? new Date(d.getTime() + 86_400_000) : d;
 }
 

@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { isWalletFrozen } from "@/lib/payments/wallet-freeze";
 import { providerDomains } from "@/lib/sso/domains";
@@ -73,10 +74,24 @@ export async function readOrgDetail(orgId: string) {
 
 export type OrgDetail = NonNullable<Awaited<ReturnType<typeof readOrgDetail>>>;
 
-/** Providers waiting for staff approval, oldest first, across every org. */
-export async function readPendingSsoApprovals() {
+export const SSO_APPROVALS_PAGE_SIZE = 20;
+
+const PENDING_SSO_WHERE = {
+  domainVerified: false,
+  organizationId: { not: null },
+} satisfies Prisma.SsoProviderWhereInput;
+
+/**
+ * One page of providers waiting for staff approval, oldest first, across every
+ * org. Counted first, so a page that emptied reads as the last page with rows.
+ */
+export async function readPendingSsoApprovals(requested = 1) {
+  const total = await prisma.ssoProvider.count({ where: PENDING_SSO_WHERE });
+  const lastPage = Math.max(1, Math.ceil(total / SSO_APPROVALS_PAGE_SIZE));
+  const page = Math.min(Math.max(1, requested), lastPage);
   const rows = await prisma.ssoProvider.findMany({
-    where: { domainVerified: false, organizationId: { not: null } },
+    relationLoadStrategy: "join",
+    where: PENDING_SSO_WHERE,
     select: {
       providerId: true,
       issuer: true,
@@ -84,25 +99,33 @@ export async function readPendingSsoApprovals() {
       createdAt: true,
       organization: { select: { id: true, name: true } },
     },
-    orderBy: { createdAt: "asc" },
-    take: 50,
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    skip: (page - 1) * SSO_APPROVALS_PAGE_SIZE,
+    take: SSO_APPROVALS_PAGE_SIZE,
   });
-  return rows.flatMap((r) =>
-    r.organization
-      ? [
-          {
-            providerId: r.providerId,
-            issuer: r.issuer,
-            domains: providerDomains(r.domain),
-            submittedAt: r.createdAt.toISOString(),
-            orgId: r.organization.id,
-            orgName: r.organization.name,
-          },
-        ]
-      : [],
-  );
+  return {
+    page,
+    pageSize: SSO_APPROVALS_PAGE_SIZE,
+    total,
+    rows: rows.flatMap((r) =>
+      r.organization
+        ? [
+            {
+              providerId: r.providerId,
+              issuer: r.issuer,
+              domains: providerDomains(r.domain),
+              submittedAt: r.createdAt.toISOString(),
+              orgId: r.organization.id,
+              orgName: r.organization.name,
+            },
+          ]
+        : [],
+    ),
+  };
 }
 
-export type PendingSsoApproval = Awaited<
+export type PendingSsoPage = Awaited<
   ReturnType<typeof readPendingSsoApprovals>
->[number];
+>;
+
+export type PendingSsoApproval = PendingSsoPage["rows"][number];

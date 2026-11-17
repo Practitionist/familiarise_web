@@ -7,6 +7,7 @@
  * abandoned. See docs/onboarding/04-verification-lifecycle.md.
  */
 
+import type { Prisma } from "@prisma/client";
 import type { Tx } from "@/lib/prisma";
 
 /** Lifetime bytes one user may hold in verification storage (≈ 4 full-size documents). */
@@ -19,9 +20,7 @@ export const MAX_DOCS_PER_VERIFICATION = 10;
 export const UNLINKED_UPLOAD_TTL_DAYS = 7;
 
 export type UploadRefusalCode =
-  | "QUOTA_EXCEEDED"
-  | "TOO_MANY_OUTSTANDING"
-  | "TOO_MANY_PER_REQUEST";
+  "QUOTA_EXCEEDED" | "TOO_MANY_OUTSTANDING" | "TOO_MANY_PER_REQUEST";
 
 export interface UploadRefusal {
   code: UploadRefusalCode;
@@ -100,3 +99,17 @@ export async function loadUploadCounters(
 export function documentDownloadPath(documentId: string): string {
   return `/api/verification/documents/${documentId}/download`;
 }
+
+/** A document as the review reads it; the storage key stays on the server. */
+export const REVIEW_DOCUMENT_SELECT = {
+  id: true,
+  fileName: true,
+  originalName: true,
+  fileSize: true,
+  mimeType: true,
+  fileUrl: true,
+  description: true,
+  isValid: true,
+  staffFeedback: true,
+  issue: true,
+} satisfies Prisma.ProfileVerificationDocumentSelect;

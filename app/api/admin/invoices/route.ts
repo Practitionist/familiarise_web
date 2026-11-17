@@ -1,13 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { OrgInvoiceStatus, type Prisma } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
+import { BOOKING_TITLE_SELECT, bookingRefOf } from "@/lib/data/booking-title";
 import { outstandingPaiseByInvoice } from "@/lib/payments/billing/org-invoice-settlement";
 
-const VALID_B2B_STATUSES: ReadonlySet<string> = new Set<string>(
-  Object.values(OrgInvoiceStatus),
-);
+/** A tab's status filter: one of its own statuses, or none (empty or `ALL`). */
+const noFilter = z
+  .union([z.literal(""), z.literal("ALL")])
+  .transform(() => undefined);
+const B2C_STATUS = z.union([noFilter, z.enum(["ISSUED", "CREDIT_NOTED"])]);
+const B2B_STATUS = z.union([noFilter, z.nativeEnum(OrgInvoiceStatus)]);
 
 function parsePagination(sp: URLSearchParams) {
   const rawPage = Number.parseInt(sp.get("page") ?? "1", 10);
@@ -26,7 +31,16 @@ export async function GET(request: NextRequest) {
     const sp = request.nextUrl.searchParams;
     const scope = sp.get("scope") ?? sp.get("tab") ?? "b2b";
     const q = sp.get("q")?.trim() ?? sp.get("search")?.trim() ?? "";
-    const statusParam = sp.get("status")?.trim() ?? "";
+    const rawStatus = sp.get("status")?.trim() ?? "";
+    // An unknown status is a 400, as on the other money lists.
+    const b2cStatus = B2C_STATUS.safeParse(rawStatus);
+    const b2bStatus = B2B_STATUS.safeParse(rawStatus);
+    if (!(scope === "b2c" ? b2cStatus.success : b2bStatus.success)) {
+      return NextResponse.json(
+        { error: "Invalid query parameters", code: "INVALID_QUERY" },
+        { status: 400 },
+      );
+    }
     const showPii = auth.session.user.role === "ADMIN";
     const { page, limit, skip } = parsePagination(sp);
 
@@ -45,9 +59,10 @@ export async function GET(request: NextRequest) {
         });
       }
 
-      if (statusParam === "CREDIT_NOTED") {
+      const status = b2cStatus.data;
+      if (status === "CREDIT_NOTED") {
         andConditions.push({ creditNotes: { some: {} } });
-      } else if (statusParam === "ISSUED") {
+      } else if (status === "ISSUED") {
         andConditions.push({ creditNotes: { none: {} } });
       }
 
@@ -56,6 +71,7 @@ export async function GET(request: NextRequest) {
 
       const [rows, total, agg, creditNotedCount] = await Promise.all([
         prisma.consumerInvoice.findMany({
+          relationLoadStrategy: "join",
           where,
           include: {
             creditNotes: {
@@ -65,8 +81,12 @@ export async function GET(request: NextRequest) {
                 totalPaise: true,
               },
             },
+            // The booking the invoice bills, named in the same read.
+            payment: {
+              select: { appointment: { select: BOOKING_TITLE_SELECT } },
+            },
           },
-          orderBy: { issuedAt: "desc" },
+          orderBy: [{ issuedAt: "desc" }, { id: "desc" }],
           skip,
           take: limit,
         }),
@@ -103,6 +123,7 @@ export async function GET(request: NextRequest) {
         issuedAt: inv.issuedAt,
         status: inv.creditNotes.length > 0 ? "CREDIT_NOTED" : "ISSUED",
         creditNoteNumber: inv.creditNotes[0]?.creditNoteNumber ?? null,
+        booking: bookingRefOf(inv.payment.appointment),
         pdfUrl: `/api/payments/${inv.paymentId}/invoice/pdf`,
       }));
 
@@ -142,13 +163,8 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    if (
-      statusParam &&
-      statusParam !== "ALL" &&
-      VALID_B2B_STATUSES.has(statusParam)
-    ) {
-      andConditions.push({ status: statusParam as OrgInvoiceStatus });
-    }
+    const status = b2bStatus.data;
+    if (status) andConditions.push({ status });
 
     const where: Prisma.OrganizationInvoiceWhereInput =
       andConditions.length > 0 ? { AND: andConditions } : {};
@@ -178,7 +194,7 @@ export async function GET(request: NextRequest) {
             },
           },
         },
-        orderBy: { createdAt: "desc" },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
         skip,
         take: limit,
       }),

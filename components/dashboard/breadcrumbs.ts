@@ -33,6 +33,8 @@ export interface DashboardBreadcrumbsInput {
   pathlessSegments?: ReadonlySet<string>;
   /** Consultant only: where an editor's `offerings/<type>` crumbs point. */
   offeringsConfig?: OfferingsCrumbConfig;
+  /** A list segment whose page lives elsewhere, by its path under `basePath` ("payments" → "money/payments"). */
+  listHrefs?: Readonly<Record<string, string>>;
 }
 
 // Opaque record IDs are replaced by the page’s human label or omitted.
@@ -103,20 +105,45 @@ function resolveSegmentCrumb(ctx: Readonly<SegmentCrumbCtx>): Crumb | null {
   return navigable ? { label, href: acc } : { label };
 }
 
+/** Every value the route's dynamic params hold, flattened. */
+function routeParamValues(
+  routeParams: Readonly<Record<string, string | string[] | undefined>> | null,
+): Set<string> {
+  const values = new Set<string>();
+  for (const value of Object.values(routeParams ?? {})) {
+    for (const part of Array.isArray(value) ? value : [value]) {
+      if (part) values.add(part);
+    }
+  }
+  return values;
+}
+
+/** A linked crumb whose list lives elsewhere points at that list. */
+function withListHome(
+  crumb: Crumb,
+  acc: string,
+  basePath: string,
+  listHrefs: Readonly<Record<string, string>> | undefined,
+): Crumb {
+  const home = listHrefs?.[acc.slice(basePath.length + 1)];
+  return home && crumb.href ? { ...crumb, href: `${basePath}/${home}` } : crumb;
+}
+
 export function useDashboardBreadcrumbs(
   input: Readonly<DashboardBreadcrumbsInput>,
 ): Crumb[] {
-  const { pathname, basePath, pageLabels, pathlessSegments, offeringsConfig } =
-    input;
+  const {
+    pathname,
+    basePath,
+    pageLabels,
+    pathlessSegments,
+    offeringsConfig,
+    listHrefs,
+  } = input;
   const { overrideLabel } = useBreadcrumbOverride();
   const routeParams = useParams();
   return useMemo(() => {
-    const paramValues = new Set<string>();
-    for (const value of Object.values(routeParams ?? {})) {
-      for (const part of Array.isArray(value) ? value : [value]) {
-        if (part) paramValues.add(part);
-      }
-    }
+    const paramValues = routeParamValues(routeParams);
     const parts = pathname.startsWith(basePath)
       ? pathname.slice(basePath.length).split("/").filter(Boolean)
       : [];
@@ -141,7 +168,7 @@ export function useDashboardBreadcrumbs(
         pathlessSegments,
         paramValues,
       });
-      if (crumb) crumbs.push(crumb);
+      if (crumb) crumbs.push(withListHome(crumb, acc, basePath, listHrefs));
     }
     // The current page is plain text; a trailing link survives only when the
     // last visible crumb is a parent (its record-id child was stripped).
@@ -157,6 +184,7 @@ export function useDashboardBreadcrumbs(
     pageLabels,
     pathlessSegments,
     offeringsConfig,
+    listHrefs,
     routeParams,
   ]);
 }

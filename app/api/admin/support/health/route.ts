@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { requireAdminAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { supportError } from "@/lib/api/support-http";
 import { supportHealthMetrics } from "@/lib/support/deflection";
 
@@ -10,7 +10,7 @@ const QuerySchema = z.object({
 
 export async function GET(req: NextRequest) {
   try {
-    const auth = await requireAdminAuth();
+    const auth = await requireBackofficeSurface("systemJobs.manage");
     if (auth.error) return auth.error;
 
     const parsed = QuerySchema.safeParse({

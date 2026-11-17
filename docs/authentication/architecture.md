@@ -250,17 +250,17 @@ are in the
 
 ## 4. Guards
 
-| Guard                                                                   | Where       | Refuses with                                                                                                                        |
-| ----------------------------------------------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `requireApiAuth({ expectUser? })`                                       | API routes  | 503 lookup failed, 401 no session, 403 suspended, **428 `TWO_FACTOR_REQUIRED`** for an operator without 2FA, 409 `IDENTITY_CHANGED` |
-| `requireApiSession`                                                     | API routes  | Same minus the 2FA check. Only for `/api/user/sessions/current`                                                                     |
-| `requireAdminAuth`, `requirePrivilegedAuth`, `requireBackofficeSurface` | API routes  | `requireApiAuth`, then 403 by role or back-office surface                                                                           |
-| `requireOrgAccess(orgId, { expectUser? })`                              | API routes  | Org membership and `MemberRole` permission, see [authorization](../authorization/01-authorization-matrices.md)                      |
-| `requireFreshSession`                                                   | API routes  | 403 `REAUTH_REQUIRED` when the session is older than 15 minutes since its last proof (§5.5)                                         |
-| `requireAuth`, `requireOnboarded`                                       | Pages       | Redirect to sign-in, to `/form/onboarding`, or to `/onboarding/gate` for a user with an active org membership                       |
-| `requireOperator`                                                       | Pages       | Redirect to `/auth/two-factor/setup` until 2FA is enrolled                                                                          |
-| `requireOperatorAwaitingTwoFactor`                                      | Setup page  | Redirect enrolled operators to `/dashboard`. The only exemption, keyed on the page, not on a request header                         |
-| `requireBackofficePage`                                                 | Back office | `requireOperator`, then the capability matrix                                                                                       |
+| Guard                                      | Where       | Refuses with                                                                                                                        |
+| ------------------------------------------ | ----------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `requireApiAuth({ expectUser? })`          | API routes  | 503 lookup failed, 401 no session, 403 suspended, **428 `TWO_FACTOR_REQUIRED`** for an operator without 2FA, 409 `IDENTITY_CHANGED` |
+| `requireApiSession`                        | API routes  | Same minus the 2FA check. Only for `/api/user/sessions/current`                                                                     |
+| `requireBackofficeSurface`                 | API routes  | `requireApiAuth`, then 403 `FORBIDDEN` when the role does not hold the back-office surface                                          |
+| `requireOrgAccess(orgId, { expectUser? })` | API routes  | Org membership and `MemberRole` permission, see [authorization](../authorization/01-authorization-matrices.md)                      |
+| `requireFreshSession`                      | API routes  | 403 `REAUTH_REQUIRED` when the session is older than 15 minutes since its last proof (§5.5)                                         |
+| `requireAuth`, `requireOnboarded`          | Pages       | Redirect to sign-in, to `/form/onboarding`, or to `/onboarding/gate` for a user with an active org membership                       |
+| `requireOperator`                          | Pages       | Redirect to `/auth/two-factor/setup` until 2FA is enrolled                                                                          |
+| `requireOperatorAwaitingTwoFactor`         | Setup page  | Redirect enrolled operators to `/dashboard`. The only exemption, keyed on the page, not on a request header                         |
+| `requireBackofficePage`                    | Back office | `requireOperator`, then the capability matrix                                                                                       |
 
 The 428 carries `X-Auth-Action: enroll-2fa` so the client knows the next step.
 `withOpsAction` doors in `lib/backoffice/ops-action-log.ts` take

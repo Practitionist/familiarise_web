@@ -18,7 +18,7 @@ jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 
 jest.mock("../../lib/auth-helpers", () => ({
   __esModule: true,
-  requirePrivilegedAuth: jest.fn(),
+  requireBackofficeSurface: jest.fn(),
 }));
 
 jest.mock("../../lib/prisma", () => ({
@@ -33,10 +33,10 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 import { GET } from "../../app/api/staff/moderation/reports/route";
-import { requirePrivilegedAuth } from "../../lib/auth-helpers";
+import { requireBackofficeSurface } from "../../lib/auth-helpers";
 import prisma from "../../lib/prisma";
 
-const mockedAuth = requirePrivilegedAuth as jest.Mock;
+const mockedAuth = requireBackofficeSurface as jest.Mock;
 const findMany = prisma.moderationReport.findMany as jest.Mock;
 
 const req = () =>
