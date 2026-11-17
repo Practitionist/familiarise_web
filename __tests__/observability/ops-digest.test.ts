@@ -121,6 +121,10 @@ const mockDb = {
   streamRevocationRetry: {
     count: jest.fn(async (_args?: unknown) => 0),
     findMany: jest.fn(async (_args?: unknown) => [] as { id: string }[]),
+    aggregate: jest.fn(async (_args?: unknown) => ({
+      _count: { _all: 0 },
+      _min: { createdAt: null as Date | null },
+    })),
   },
 };
 jest.mock("@/lib/prisma", () => ({
@@ -260,6 +264,23 @@ describe("daily ops digest", () => {
       "3 Stream access revocations still owed past the retry cap (1 new)",
     );
     expect(sentEmail().text).toContain("rev-1");
+  });
+
+  it("counts the collaborator revocations still owed and gives the age of the oldest", async () => {
+    mockDb.streamRevocationRetry.aggregate.mockResolvedValueOnce({
+      _count: { _all: 2 },
+      _min: { createdAt: new Date(now.getTime() - 3 * 86_400_000) },
+    });
+    const result = await run();
+    expect(mockDb.streamRevocationRetry.aggregate).toHaveBeenCalledWith({
+      where: { kind: "COLLAB_REVOKE", status: { in: ["PENDING", "FAILED"] } },
+      _count: { _all: true },
+      _min: { createdAt: true },
+    });
+    expect(result.headline).toBe("0 new, 1 standing");
+    expect(sentEmail().text).toContain(
+      "2 collaborator access revocations still owed (oldest 3 days)",
+    );
   });
 
   it("records an unset heartbeat URL instead of throwing, and never calls Sentry", async () => {

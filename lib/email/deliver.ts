@@ -28,6 +28,7 @@ import {
   findSuppressed,
   findSuppression,
   normaliseEmail,
+  type SuppressionReader,
 } from "./suppression";
 import {
   EmailHeldError,
@@ -309,6 +310,7 @@ function stagedEmailOf(
 export async function screenForStaging(
   messages: RenderedEmail[],
   emailType: string,
+  db?: SuppressionReader,
 ): Promise<ScreenedEmail[]> {
   const payloads = messages.map(withReplyTo);
   const heldDomains = payloads.map((payload) =>
@@ -316,6 +318,7 @@ export async function screenForStaging(
   );
   const suppressed = await findSuppressed(
     payloads.filter((_, i) => !heldDomains[i]).map((payload) => payload.to),
+    db,
   );
   return payloads.map((payload, i) => ({
     message: messages[i],
