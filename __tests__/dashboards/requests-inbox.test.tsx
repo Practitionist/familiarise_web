@@ -111,7 +111,10 @@ describe("Requests inbox anatomy (A-4)", () => {
       const row = rows.find((r) => r.id === id)!;
       return rowActions(
         row,
-        deriveBookingPresentation(row.presentation, "CONSULTANT", { now: NOW }),
+        deriveBookingPresentation(row.presentation, "CONSULTANT", {
+          viewerZone: "UTC",
+          now: NOW,
+        }),
         NOW,
       );
     };

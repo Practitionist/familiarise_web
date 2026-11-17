@@ -220,6 +220,7 @@ describe("bound 2: an expert-set limit on active plan clients", () => {
       firstWeekPlaceable: 3,
       sessionsPerWeek: 3,
       notice: null,
+      zone: "Asia/Kolkata",
     };
     expect(subscriptionCheckoutBlocked({ ...read, fullyBooked: true })).toBe(
       true,

@@ -17,8 +17,7 @@ import {
   Globe,
   GraduationCap,
 } from "lucide-react";
-import { formatInTimeZone } from "date-fns-tz";
-import { zoneLabel } from "@/lib/time/viewer-zone";
+import { formatInViewerZone, zoneLabel } from "@/lib/time/viewer-zone";
 import { ClientWebinarRegistration } from "./ClientWebinarRegistration";
 import { generateProgramImageUrl } from "@/lib/explore/programs";
 import { BuyerPrice } from "@/components/pricing/BuyerPriceProvider";
@@ -41,7 +40,7 @@ interface WebinarDetailsProps {
 /** A time in the page's zone, labelled the way the rest of the product names it ("IST"). */
 function zonedIn(timeZone: string) {
   return (date: Date, pattern: string) =>
-    `${formatInTimeZone(date, timeZone, pattern)} ${zoneLabel(date, timeZone)}`;
+    `${formatInViewerZone(date, timeZone, pattern)} ${zoneLabel(date, timeZone)}`;
 }
 
 export function WebinarDetails({

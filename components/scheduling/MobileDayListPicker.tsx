@@ -216,8 +216,12 @@ export function MobileDayListPicker({
   const status = `${value.length} of ${timesWord(timesNeeded)} picked`;
   const firstLoad = query.data === undefined;
 
+  // Its own scroll area: the host's fixed-height column puts the footer below it.
   return (
-    <div className={cn("space-y-4", className)} data-testid="mobile-day-list">
+    <div
+      className={cn("min-h-0 space-y-4 overflow-y-auto", className)}
+      data-testid="mobile-day-list"
+    >
       <p aria-live="polite" className="text-sm text-muted-foreground">
         {status}
         {announcement && (

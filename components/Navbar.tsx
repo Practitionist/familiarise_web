@@ -10,7 +10,7 @@ import { useDashboardFacets } from "@/hooks/useDashboardFacets";
 import { signOutEverywhere } from "@/lib/auth/sign-out";
 import { Skeleton } from "@/components/ui/skeleton";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { useChromePathname } from "@/lib/navigation/use-chrome-pathname";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -274,7 +274,7 @@ function DesktopNavItem({
 // ─── Main Navbar ─────────────────────────────────────────────────────────────
 
 const Navbar = () => {
-  const pathname = usePathname();
+  const pathname = useChromePathname();
   // The root layout is static (#932), so the session hydrates client-side here,
   // which makes the whole gap between FCP and this bar settling the /api/auth
   // round trip itself. `useRememberedAuth` fills that gap with the last resolved

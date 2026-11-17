@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { formatInTimeZone } from "date-fns-tz";
+import { formatInViewerZone } from "@/lib/time/viewer-zone";
 import { payoutMethodLabel } from "@/lib/labels/money-labels";
 
 import { PageHeader } from "@/components/dashboard/PageScaffold";
@@ -19,7 +19,7 @@ type PageProps = {
 };
 
 const when = (d: Date) =>
-  formatInTimeZone(d, PAYOUT_ZONE, "d MMM yyyy, h:mm a");
+  formatInViewerZone(d, PAYOUT_ZONE, "d MMM yyyy, h:mm a");
 const pct = (bps: number) => `${Number((bps / 100).toFixed(2))}%`;
 
 function tdsLabel(rateBps: number | null, financialYear: string | null) {
@@ -130,7 +130,11 @@ export default async function PayoutDetailPage({
                   <p className="truncate text-foreground">{e.offering}</p>
                   <p className="text-xs text-muted-foreground">
                     Paid by client{" "}
-                    {formatInTimeZone(e.paymentDate, PAYOUT_ZONE, "d MMM yyyy")}
+                    {formatInViewerZone(
+                      e.paymentDate,
+                      PAYOUT_ZONE,
+                      "d MMM yyyy",
+                    )}
                   </p>
                 </div>
                 <div className="shrink-0 text-right">

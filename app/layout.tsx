@@ -8,6 +8,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { AnnouncementBarProvider } from "@/providers/AnnouncementBarProvider";
 import AuthSyncProvider from "@/providers/AuthSyncProvider";
 import ReauthProvider from "@/components/auth/ReauthDialog";
+import { ChromePathMarker } from "@/lib/navigation/use-chrome-pathname";
 import { MaintenanceProvider } from "@/providers/MaintenanceProvider";
 import ReactQueryProvider from "@/providers/ReactQueryProvider";
 import type { Metadata, Viewport } from "next";
@@ -76,6 +77,7 @@ export default function RootLayout({
   return (
     <html lang="en" className={sora.variable}>
       <body className={`${sora.className} flex flex-col min-h-svh antialiased`}>
+        <ChromePathMarker />
         <ReactQueryProvider>
           <AuthSyncProvider />
           <ReauthProvider />

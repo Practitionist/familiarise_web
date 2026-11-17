@@ -15,7 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { CheckCircle } from "lucide-react";
 import { useBuyerPrice } from "@/components/pricing/BuyerPriceProvider";
-import { formatInTimeZone } from "date-fns-tz";
+import { formatInViewerZone } from "@/lib/time/viewer-zone";
 import { eventCapacityFromCount } from "@/lib/events/capacity";
 import type { TSessionStatus } from "../types";
 import { FreeCancellationLine } from "@/components/events/FreeCancellationLine";
@@ -134,7 +134,7 @@ export function ClientWebinarRegistration({
 
   let sessionInfoText: string;
   if (nextSessionDate) {
-    const formattedDate = formatInTimeZone(
+    const formattedDate = formatInViewerZone(
       new Date(nextSessionDate),
       userTimeZone,
       "MMMM d, yyyy 'at' h:mm a zzz",
