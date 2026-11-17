@@ -88,7 +88,7 @@ The owner was not asked about these; each is small and can change without a rede
 
 ## Limits that remain
 
-- The capture time is the application clock, and `acceptedAt` and `endedAt` are the database clock at the start of their transaction. A removal and a capture within the same moment can fall either side of each other. Both outcomes are defensible, and a first attempt and its retry read the same stored times.
+- The capture time is the application clock, and `acceptedAt` and `endedAt` are the database clock at the start of their transaction. A removal and a capture within the same moment can fall either side of each other, and a first attempt that ran before the removal committed can include a collaborator whom a retry of the same capture, reading the committed end time, leaves out.
 - A collaborator whose profile is erased between a capture and its retry takes no slice in the retry; the plan's owner keeps the remainder.
 - A capture recovered by staff that carries no capture time is split as of the payment's creation.
 - The in-call meeting extension changes a session's end outside any transaction and does not take the plan lock.
