@@ -48,7 +48,11 @@ export function AvailabilityForm({
             />
           </CardContent>
         </Card>
-        <SettingsFormActions isSaving={form.isSaving} onReset={form.reset} />
+        <SettingsFormActions
+          isSaving={form.isSaving}
+          onReset={form.reset}
+          saveBlockedReason={form.saveBlockedReason}
+        />
       </form>
       {/* Outside the form: the dialog's own submit must not resubmit it. */}
       <AvailabilitySaveConfirm

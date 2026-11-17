@@ -67,36 +67,38 @@ const calculateSlotDuration = (
 };
 
 /**
- * Validates that a time range meets basic requirements:
- * non-empty, distinct start/end, and duration within 30 min – 12 hour bounds.
- * Overnight slots (end < start) are allowed; duration is calculated across midnight.
+ * What is wrong with a time range, as one sentence, or null when it is usable:
+ * both ends set, distinct, and 30 minutes to 12 hours long. Overnight ranges
+ * (end < start) are measured across midnight.
  */
-export const isValidTimeRange = (
+export const timeRangeProblem = (
   startTime: string,
   endTime: string,
-): boolean => {
-  if (!startTime || !endTime) return false;
+): string | null => {
+  if (!startTime || !endTime) return "Please select both start and end time";
 
   const startMinutes = getMinutes(startTime);
   const endMinutes = getMinutes(endTime);
-
   if (startMinutes === null || endMinutes === null) {
-    return false;
+    return "Invalid time format";
   }
-
-  // Check if same start and end time are invalid
   if (startMinutes === endMinutes) {
-    return false;
+    return "Start and end time cannot be the same";
   }
 
   const duration = calculateSlotDuration(startMinutes, endMinutes);
-
-  // Validate duration constraints
-  return (
-    duration >= VALIDATION_CONFIG.MIN_DURATION_MINUTES &&
-    duration <= VALIDATION_CONFIG.MAX_DURATION_MINUTES
-  );
+  if (duration < VALIDATION_CONFIG.MIN_DURATION_MINUTES) {
+    return `A slot must be at least ${VALIDATION_CONFIG.MIN_DURATION_MINUTES} minutes`;
+  }
+  if (duration > VALIDATION_CONFIG.MAX_DURATION_MINUTES) {
+    return `A slot can be at most ${VALIDATION_CONFIG.MAX_DURATION_MINUTES / 60} hours`;
+  }
+  return null;
 };
+
+/** True when `timeRangeProblem` finds nothing wrong with the range. */
+export const isValidTimeRange = (startTime: string, endTime: string): boolean =>
+  timeRangeProblem(startTime, endTime) === null;
 
 /**
  * Whether a typed value is shaped like something a consultant may pick, and
@@ -125,24 +127,6 @@ const validateTimeIncrements = (
   const duration = calculateSlotDuration(startMinutes, endMinutes);
   if (duration % VALIDATION_CONFIG.SESSION_INCREMENT_MINUTES !== 0) {
     return `Session duration must be in multiples of ${VALIDATION_CONFIG.SESSION_INCREMENT_MINUTES} minutes`;
-  }
-
-  return null;
-};
-
-// Check if duration meets requirements
-const validateDuration = (
-  startMinutes: number,
-  endMinutes: number,
-): string | null => {
-  const duration = calculateSlotDuration(startMinutes, endMinutes);
-
-  if (duration < VALIDATION_CONFIG.MIN_DURATION_MINUTES) {
-    return `Session must be at least ${VALIDATION_CONFIG.MIN_DURATION_MINUTES} minutes long`;
-  }
-
-  if (duration > VALIDATION_CONFIG.MAX_DURATION_MINUTES) {
-    return `Session cannot exceed ${VALIDATION_CONFIG.MAX_DURATION_MINUTES / 60} hours`;
   }
 
   return null;
@@ -208,46 +192,21 @@ export const validateTimeSlot = (
   slot: SlotType,
   otherSlots: SlotType[],
 ): SlotType => {
-  // Early return for empty slots
-  if (!slot.startTime || !slot.endTime) {
-    return {
-      ...slot,
-      isValid: false,
-      errorMessage: "Please select both start and end time",
-    };
-  }
-
+  const rangeError = timeRangeProblem(slot.startTime, slot.endTime);
   const startMinutes = getMinutes(slot.startTime);
   const endMinutes = getMinutes(slot.endTime);
-
-  if (startMinutes === null || endMinutes === null) {
-    return { ...slot, isValid: false, errorMessage: "Invalid time format" };
-  }
-
-  // Start and end cannot be the same
-  if (startMinutes === endMinutes) {
+  if (rangeError || startMinutes === null || endMinutes === null) {
     return {
       ...slot,
       isValid: false,
-      errorMessage: "Start and end time cannot be the same",
+      errorMessage: rangeError ?? "Invalid time format",
     };
-  }
-
-  // Validate basic time range (duration constraints etc.)
-  if (!isValidTimeRange(slot.startTime, slot.endTime)) {
-    return { ...slot, isValid: false, errorMessage: "Invalid time range" };
   }
 
   // Validate time increments
   const incrementError = validateTimeIncrements(startMinutes, endMinutes);
   if (incrementError) {
     return { ...slot, isValid: false, errorMessage: incrementError };
-  }
-
-  // Validate duration
-  const durationError = validateDuration(startMinutes, endMinutes);
-  if (durationError) {
-    return { ...slot, isValid: false, errorMessage: durationError };
   }
 
   // Check for overlaps
@@ -269,12 +228,21 @@ const WEEKDAY_KEYS = [
   "saturday",
 ];
 
+/** "monday" reads "Monday" in a message; a date key reads as written. */
+function dayKeyLabel(dayKey: string): string {
+  return WEEKDAY_KEYS.includes(dayKey.toLowerCase())
+    ? dayKey.charAt(0).toUpperCase() + dayKey.slice(1).toLowerCase()
+    : dayKey;
+}
+
 function getNextScheduleKey(dayKey: string): string | null {
   const lower = dayKey.toLowerCase();
   const idx = WEEKDAY_KEYS.indexOf(lower);
   if (idx !== -1) {
     const nextLower = WEEKDAY_KEYS[(idx + 1) % 7];
-    return dayKey === dayKey.toUpperCase() ? nextLower.toUpperCase() : nextLower;
+    return dayKey === dayKey.toUpperCase()
+      ? nextLower.toUpperCase()
+      : nextLower;
   }
   if (/^\d{4}-\d{2}-\d{2}$/.test(dayKey)) {
     const [y, m, d] = dayKey.split("-").map(Number);
@@ -319,7 +287,7 @@ function findOvernightTailOverlapError(
     }
     const nextStart = getMinutes(nextSlot.startTime);
     if (nextStart !== null && nextStart < endMinutes) {
-      return `${day} slot ${index + 1}: Overnight tail overlaps with ${nextKey} slot starting at ${nextSlot.startTime}`;
+      return `${dayKeyLabel(day)}, slot ${index + 1}: Overnight tail overlaps with ${dayKeyLabel(nextKey ?? "")} slot starting at ${nextSlot.startTime}`;
     }
   }
   return null;
@@ -336,7 +304,7 @@ export const validateAllSlotsDetailed = (
       if (!slot.isValid) {
         const errorMsg =
           slot.errorMessage ?? "Please complete both start and end time";
-        errors.push(`${day} slot ${index + 1}: ${errorMsg}`);
+        errors.push(`${dayKeyLabel(day)}, slot ${index + 1}: ${errorMsg}`);
         isValid = false;
         return;
       }
@@ -355,6 +323,24 @@ export const validateAllSlotsDetailed = (
   });
 
   return { isValid, errors };
+};
+
+/**
+ * Why the availability editor cannot save yet, or null when it can: the week
+ * needs at least one row, and every row must be valid.
+ */
+export const availabilitySaveBlocker = (
+  slots: Record<string, SlotType[]>,
+): string | null => {
+  const rows = Object.values(slots).flat();
+  if (rows.length === 0) {
+    return "Add at least one available time before saving.";
+  }
+  const invalid = rows.filter((slot) => !slot.isValid).length;
+  if (invalid === 0) return null;
+  return invalid === 1
+    ? "Fix the time marked in red before saving."
+    : `Fix the ${invalid} times marked in red before saving.`;
 };
 
 /**

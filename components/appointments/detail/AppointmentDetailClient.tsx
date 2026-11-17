@@ -1332,7 +1332,8 @@ export function AppointmentDetailClient({
                   {format(vm.nextAt, "MMM")}
                 </span>
               </div>
-              <div className="min-w-0 flex-1">
+              {/* A base width: on a phone the countdown and Join wrap below, not beside it. */}
+              <div className="min-w-0 flex-1 basis-44">
                 <p className="text-xs font-medium text-muted-foreground">
                   {heroCaption}
                 </p>

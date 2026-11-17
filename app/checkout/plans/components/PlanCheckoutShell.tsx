@@ -312,7 +312,7 @@ function PaymentGatewayCards({
                   <div className="font-semibold text-foreground">
                     Credit/Debit Card
                   </div>
-                  <div className="text-sm text-muted-foreground/70">
+                  <div className="text-sm text-muted-foreground">
                     {gateway.description}
                   </div>
                 </div>

@@ -248,7 +248,7 @@ export const RECORDING_STATUS_BADGE: Record<RecordingStatus, StatusBadgeStyle> =
     },
     EXPIRED: {
       label: "Expired",
-      className: "bg-zinc-100 text-zinc-500 border-zinc-200",
+      className: "bg-zinc-100 text-zinc-600 border-zinc-200",
     },
   };
 
@@ -284,7 +284,7 @@ export const PAYMENT_STATUS_BADGE: Record<
   },
   EXPIRED: {
     label: "Expired",
-    className: "bg-zinc-100 text-zinc-500 border-zinc-200",
+    className: "bg-zinc-100 text-zinc-600 border-zinc-200",
   },
   REFUNDED: {
     label: "Refunded",
@@ -470,7 +470,7 @@ export const REFERRAL_STATUS_BADGE: Record<ReferralStatus, StatusBadgeStyle> = {
   },
   EXPIRED: {
     label: "Expired",
-    className: "bg-zinc-100 text-zinc-500 border-zinc-200",
+    className: "bg-zinc-100 text-zinc-600 border-zinc-200",
   },
   FRAUDULENT: {
     label: "Flagged",
@@ -486,7 +486,7 @@ export const REFERRAL_STATUS_BADGE: Record<ReferralStatus, StatusBadgeStyle> = {
   },
   VOID: {
     label: "Didn't qualify",
-    className: "bg-zinc-100 text-zinc-500 border-zinc-200",
+    className: "bg-zinc-100 text-zinc-600 border-zinc-200",
   },
   HELD: {
     label: "Held for review",

@@ -151,6 +151,20 @@ export function normaliseSlotToSchedulingGrid<
   return { ...slot, startTime, endTime };
 }
 
+/** The line the editor shows when the grid moved a typed slot; undefined when it did not. */
+export function gridSnapNotice(
+  typed: { startTime: string; endTime: string },
+  snapped: { startTime: string; endTime: string },
+): string | undefined {
+  if (
+    typed.startTime === snapped.startTime &&
+    typed.endTime === snapped.endTime
+  ) {
+    return undefined;
+  }
+  return `Moved to ${snapped.startTime}–${snapped.endTime} so it starts on the half-hour booking grid.`;
+}
+
 /**
  * API format for weekly slots (dashboard → PUT /api/user/consultants/[id])
  */

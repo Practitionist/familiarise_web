@@ -1,4 +1,7 @@
-import { splitIntoSessions } from "@/lib/scheduling/calendarUtils";
+import {
+  atomsOfConflictedSessions,
+  splitIntoSessions,
+} from "@/lib/scheduling/calendarUtils";
 import {
   expandToSession,
   fitLabel,
@@ -149,6 +152,34 @@ describe("ownHoldStarts: a request's own hold stays pickable", () => {
     ]);
     expect([...starts]).toEqual(
       Array.from({ length: minutes / 30 }, (_, i) => Date.parse(plus(i * 30))),
+    );
+  });
+});
+
+describe("atomsOfConflictedSessions", () => {
+  const atom = (offset: number) => ({
+    startTime: new Date(T0 + offset * ATOM),
+    endTime: new Date(T0 + (offset + 1) * ATOM),
+    isAvailable: true,
+    isBooked: false,
+  });
+
+  it("drops only the conflicting session from a back-to-back run", () => {
+    // Two one-hour sessions picked back to back: 10:00–11:00 and 11:00–12:00.
+    const picks = [atom(0), atom(1), atom(2), atom(3)];
+    const conflicts = new Set([T0 + 3 * ATOM]);
+    expect(
+      offsets(
+        atomsOfConflictedSessions(picks, 2, conflicts).map((slot) =>
+          slot.startTime.getTime(),
+        ),
+      ),
+    ).toEqual([2, 3]);
+  });
+
+  it("drops nothing when no pick conflicts", () => {
+    expect(atomsOfConflictedSessions([atom(0), atom(1)], 2, new Set())).toEqual(
+      [],
     );
   });
 });
