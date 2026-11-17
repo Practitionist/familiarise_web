@@ -8,7 +8,6 @@ import { EmptyState } from "@/components/dashboard/EmptyState";
 import { Button } from "@/components/ui/button";
 import { CreateTicketDialog } from "@/components/dashboard/shared/support/CreateTicketDialog";
 import { OrgSupportRequests } from "./OrgSupportRequests";
-import { ViewerZone } from "@/app/support/_components/ViewerZone";
 
 export default async function OrganizationSupportPage({
   params,
@@ -28,7 +27,7 @@ export default async function OrganizationSupportPage({
     ? "ORG_OPERATIONS"
     : "ORG_BILLING";
   return (
-    <ViewerZone>
+    <>
       <PageHeader
         headingLevel={2}
         title="Support cases"
@@ -57,6 +56,6 @@ export default async function OrganizationSupportPage({
           }
         />
       )}
-    </ViewerZone>
+    </>
   );
 }

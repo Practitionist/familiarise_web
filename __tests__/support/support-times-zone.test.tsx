@@ -111,9 +111,17 @@ describe("one bubble, two readers", () => {
     expect(screen.queryByText(/IST/)).toBeNull();
   });
 
-  it("without a provider prints UTC, labelled, never the browser's zone", () => {
+  it("without any provider reads the browser zone through Intl, not a silent UTC", () => {
+    const real = Intl.DateTimeFormat.prototype.resolvedOptions;
+    const spy = jest
+      .spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions")
+      .mockImplementation(function (this: Intl.DateTimeFormat) {
+        return { ...real.call(this), timeZone: LA };
+      });
     render(bubble);
-    expect(screen.getByText(/12:45\s?pm UTC/i)).toBeTruthy();
+    spy.mockRestore();
+    expect(screen.getByText(/4:45\s?am/i)).toBeTruthy();
+    expect(screen.queryByText(/UTC/)).toBeNull();
   });
 });
 

@@ -6,7 +6,6 @@ import {
 } from "@/lib/data/org-receivables";
 
 import { BillingPageClient } from "./BillingPageClient";
-import { ViewerZone } from "@/app/support/_components/ViewerZone";
 
 export default async function OrgBillingPage({
   params,
@@ -26,9 +25,5 @@ export default async function OrgBillingPage({
   const receivables: OrgReceivablesPayload | null =
     await getOrgReceivables(orgId);
 
-  return (
-    <ViewerZone>
-      <BillingPageClient orgId={orgId} receivables={receivables} />
-    </ViewerZone>
-  );
+  return <BillingPageClient orgId={orgId} receivables={receivables} />;
 }

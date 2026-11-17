@@ -8,6 +8,7 @@ import OrgDashboardShell from "./OrgDashboardShell";
 import { getOrgDetailsForSeed } from "@/lib/data/org-details-server";
 import { orgDetailsQueryKey } from "@/lib/api/organizations/org-details";
 import { toPlain } from "@/lib/data/serialize";
+import { ViewerZone } from "@/app/support/_components/ViewerZone";
 
 /**
  * Server shell that seeds the organization details query. A missing org or a
@@ -34,7 +35,9 @@ export default async function OrgDashboardLayout({
 
   return (
     <HydrationBoundary state={dehydrate(queryClient)}>
-      <OrgDashboardShell params={params}>{children}</OrgDashboardShell>
+      <ViewerZone>
+        <OrgDashboardShell params={params}>{children}</OrgDashboardShell>
+      </ViewerZone>
     </HydrationBoundary>
   );
 }

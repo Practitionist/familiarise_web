@@ -3,6 +3,7 @@ import { requireOnboarded } from "@/lib/auth-guard";
 import prisma from "@/lib/prisma";
 import { accountSettingsHref } from "@/lib/dashboard/account-href";
 import { OrgWorkspaceShell } from "./OrgWorkspaceShell";
+import { ViewerZone } from "@/app/support/_components/ViewerZone";
 
 /**
  * Server-side guard + chrome lift for the operator (cross-org) dashboard.
@@ -49,14 +50,16 @@ export default async function OrgWorkspaceLayout({
   });
 
   return (
-    <OrgWorkspaceShell
-      orgWorkspaceId={orgWorkspaceId}
-      ownedOrgCount={ownedOrgCount}
-      userName={session.user.name ?? null}
-      userImage={session.user.image ?? null}
-      accountHref={accountSettingsHref(session.user)}
-    >
-      {children}
-    </OrgWorkspaceShell>
+    <ViewerZone>
+      <OrgWorkspaceShell
+        orgWorkspaceId={orgWorkspaceId}
+        ownedOrgCount={ownedOrgCount}
+        userName={session.user.name ?? null}
+        userImage={session.user.image ?? null}
+        accountHref={accountSettingsHref(session.user)}
+      >
+        {children}
+      </OrgWorkspaceShell>
+    </ViewerZone>
   );
 }

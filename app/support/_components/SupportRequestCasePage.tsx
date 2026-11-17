@@ -11,7 +11,6 @@ import { parseCaseKey } from "@/lib/support/case-key";
 import { readOwnSupportCase } from "@/lib/support/own-case-read";
 import { supportKeys } from "@/lib/support/support-keys";
 import { articleLinksByTopic } from "../_data/support-content";
-import { ViewerZone } from "./ViewerZone";
 
 /**
  * One support request's page, shared by every dashboard. A case must be the
@@ -43,7 +42,7 @@ export async function SupportRequestCasePage({
       articles={articleLinksByTopic()}
     />
   );
-  if (ref.kind === "booking") return <ViewerZone>{view}</ViewerZone>;
+  if (ref.kind === "booking") return view;
   const { user } = await requireOnboarded();
   const own = await readOwnSupportCase(ref.id, user.id);
   if (!own) notFound();
@@ -51,9 +50,7 @@ export async function SupportRequestCasePage({
   const queryClient = new QueryClient();
   queryClient.setQueryData(supportKeys.ownCase(ref.id), own);
   return (
-    <HydrationBoundary state={dehydrate(queryClient)}>
-      <ViewerZone>{view}</ViewerZone>
-    </HydrationBoundary>
+    <HydrationBoundary state={dehydrate(queryClient)}>{view}</HydrationBoundary>
   );
 }
 
