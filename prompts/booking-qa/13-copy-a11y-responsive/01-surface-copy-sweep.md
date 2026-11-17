@@ -93,7 +93,7 @@ Quote every finding verbatim with its route and the element.
 
 **Expect:** errors name the window by day and time, in the consultant's words.
 
-**Probe further:** writer report bug 3: messages call a window a "Session" ("Session must be at least 30 minutes long", "Session cannot exceed 12 hours") and prefix lowercase day keys ("monday slot 2: …"). The server contract's messages read "Window 1: times must be whole minutes from 0 to 1439" (UX-73). "Times are in Asia/Kolkata and follow daylight saving automatically." for a zone without DST (writer report bug 9). Re-confirm and quote.
+**Probe further:** the range messages read "A slot must be at least 30 minutes" and "A slot can be at most 12 hours", and a Save error names the day with a capital ("Monday, slot 2: …"); the increment message still says "Session duration must be in multiples of 30 minutes". The server contract's messages read "Window 1: times must be whole minutes from 0 to 1439" (UX-73). "Times are in Asia/Kolkata and follow daylight saving automatically." for a zone without DST (writer report bug 9). Re-confirm and quote.
 
 ## UX-09 — Plan editors
 

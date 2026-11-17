@@ -5,6 +5,7 @@
  */
 
 import {
+  availabilitySaveBlocker,
   isValidTimeRange,
   validateTimeSlot,
   validateAllSlotsDetailed,
@@ -375,13 +376,96 @@ describe("Schedule Validation", () => {
 
       const result = validateAllSlotsDetailed(slots);
       expect(result.isValid).toBe(false);
-      expect(result.errors.length).toBeGreaterThan(0);
+      expect(result.errors).toEqual(["Monday, slot 2: Slots cannot overlap"]);
+    });
+
+    it("names the overnight tail's days with capitals", () => {
+      const result = validateAllSlotsDetailed({
+        friday: [{ startTime: "22:00", endTime: "02:00", isValid: true }],
+        saturday: [{ startTime: "01:00", endTime: "03:00", isValid: true }],
+      });
+      expect(result.errors).toEqual([
+        "Friday, slot 1: Overnight tail overlaps with Saturday slot starting at 01:00",
+      ]);
     });
 
     it("should handle empty slots object", () => {
       const result = validateAllSlotsDetailed({});
       expect(result.isValid).toBe(true);
       expect(result.errors).toHaveLength(0);
+    });
+  });
+
+  // ============================================
+  // One sentence per range rule
+  // ============================================
+  describe("range rules", () => {
+    it("says a slot is too short", () => {
+      expect(
+        validateTimeSlot(
+          { startTime: "09:00", endTime: "09:15", isValid: false },
+          [],
+        ).errorMessage,
+      ).toBe("A slot must be at least 30 minutes");
+    });
+
+    it("says a slot is too long", () => {
+      expect(
+        validateTimeSlot(
+          { startTime: "06:00", endTime: "19:00", isValid: false },
+          [],
+        ).errorMessage,
+      ).toBe("A slot can be at most 12 hours");
+    });
+  });
+
+  // ============================================
+  // Save is blocked, with a reason
+  // ============================================
+  describe("availabilitySaveBlocker", () => {
+    it("blocks an empty week", () => {
+      expect(availabilitySaveBlocker({})).toBe(
+        "Add at least one available time before saving.",
+      );
+      expect(availabilitySaveBlocker({ monday: [] })).toBe(
+        "Add at least one available time before saving.",
+      );
+    });
+
+    it("blocks a week with an invalid row and counts them", () => {
+      expect(
+        availabilitySaveBlocker({
+          monday: [
+            { startTime: "09:00", endTime: "10:00", isValid: true },
+            { startTime: "", endTime: "", isValid: false },
+          ],
+        }),
+      ).toBe("Fix the time marked in red before saving.");
+      expect(
+        availabilitySaveBlocker({
+          monday: [{ startTime: "", endTime: "", isValid: false }],
+          tuesday: [{ startTime: "09:00", endTime: "09:15", isValid: false }],
+        }),
+      ).toBe("Fix the 2 times marked in red before saving.");
+    });
+
+    it("blocks an overnight tail that overlaps the next day, as submit does", () => {
+      expect(
+        availabilitySaveBlocker({
+          monday: [{ startTime: "23:00", endTime: "01:00", isValid: true }],
+          tuesday: [{ startTime: "00:30", endTime: "02:00", isValid: true }],
+        }),
+      ).toBe(
+        "Fix this before saving: Monday, slot 1: Overnight tail overlaps with Tuesday slot starting at 00:30",
+      );
+    });
+
+    it("lets a valid week save", () => {
+      expect(
+        availabilitySaveBlocker({
+          monday: [{ startTime: "09:00", endTime: "10:00", isValid: true }],
+        }),
+      ).toBeNull();
     });
   });
 

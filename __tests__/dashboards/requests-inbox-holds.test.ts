@@ -155,7 +155,7 @@ describe("direct checkout holds", () => {
     const presentation = deriveBookingPresentation(
       row.presentation,
       "CONSULTANT",
-      { now: NOW },
+      { viewerZone: "UTC", now: NOW },
     );
     expect(rowActions(row, presentation)).toEqual({
       primary: null,
@@ -221,7 +221,7 @@ describe("approving a request's own times", () => {
       const presentation = deriveBookingPresentation(
         row.presentation,
         "CONSULTANT",
-        { now: NOW },
+        { viewerZone: "UTC", now: NOW },
       );
       expect(rowActions(row, presentation).primary).toEqual({
         kind: "approve",

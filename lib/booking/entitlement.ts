@@ -9,10 +9,11 @@
  *
  * Prisma-free on purpose — client components import it.
  */
-import { formatInTimeZone, fromZonedTime, toZonedTime } from "date-fns-tz";
+import { fromZonedTime, toZonedTime } from "date-fns-tz";
 
 import { formatDateLabel, formatDateRangeLabel } from "@/lib/time/display";
 import { dayStartInstant } from "@/lib/time/grid-zone";
+import { formatInViewerZone } from "@/lib/time/viewer-zone";
 
 /** Plans are paced in plan weeks; `sessionsPerWeek` is a whole number ≥ 1 at every door. */
 export type CycleUnit = "week";
@@ -144,7 +145,7 @@ function shiftWallDate(
 ): Date {
   // An unreadable start has no end; callers treat an invalid Date as "open".
   if (!Number.isFinite(start.getTime())) return new Date(Number.NaN);
-  const wall = formatInTimeZone(start, tz, "yyyy-MM-dd'T'HH:mm:ss.SSS");
+  const wall = formatInViewerZone(start, tz, "yyyy-MM-dd'T'HH:mm:ss.SSS");
   const [y, m, d] = wall.slice(0, 10).split("-").map(Number);
   const to = shift({ y, m, d });
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -153,7 +154,7 @@ function shiftWallDate(
   if (!Number.isFinite(end.getTime())) return end;
   // A wall time inside a spring-forward gap resolves before the gap; move it
   // past the gap instead so the plan is never shortened.
-  const landed = formatInTimeZone(end, tz, "yyyy-MM-dd'T'HH:mm:ss.SSS");
+  const landed = formatInViewerZone(end, tz, "yyyy-MM-dd'T'HH:mm:ss.SSS");
   const gapMs = Date.parse(`${target}Z`) - Date.parse(`${landed}Z`);
   return gapMs > 0 ? new Date(end.getTime() + gapMs) : end;
 }
@@ -179,7 +180,7 @@ export function planEndOf(start: Date, months: number, tz: string): Date {
  */
 export function weeksPlanEndOf(start: Date, weeks: number, tz: string): Date {
   if (!Number.isFinite(start.getTime())) return new Date(Number.NaN);
-  const [y, m, d] = formatInTimeZone(start, tz, "yyyy-MM-dd")
+  const [y, m, d] = formatInViewerZone(start, tz, "yyyy-MM-dd")
     .split("-")
     .map(Number);
   // A local-noon date names the calendar day; dayStartInstant reads its fields.

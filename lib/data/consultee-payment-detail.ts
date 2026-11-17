@@ -85,8 +85,10 @@ export async function readConsulteePaymentDetail(args: {
   consulteeId: string;
   /** The profile owner's user id — the payer the row must belong to. */
   userId: string;
+  /** The reader's profile zone; the money line's hold time reads in it. */
+  viewerZone: string;
 }): Promise<ConsulteePaymentDetail | null> {
-  const { paymentId, consulteeId, userId } = args;
+  const { paymentId, consulteeId, userId, viewerZone } = args;
   const payment = await prisma.payment.findFirst({
     where: {
       id: paymentId,
@@ -119,6 +121,7 @@ export async function readConsulteePaymentDetail(args: {
   const presentation = deriveBookingPresentation(
     { ...row.presentation, refunds, occurrences: [] },
     "CONSULTEE",
+    { viewerZone },
   );
   // A CHARGE_ORG overage child is the organisation's charge, never the member's share.
   const coPays = payment.childPayments

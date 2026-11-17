@@ -126,7 +126,7 @@ export function SessionTray({
         {picked < needed && (
           <li className="rounded-md border border-dashed border-border px-2.5 py-1.5 text-xs text-muted-foreground">
             <span className="font-semibold">Session {picks.length + 1}</span>
-            {" · point at a free time to preview it, then click to place it"}
+            {" · choose a free time on the grid"}
           </li>
         )}
       </ol>

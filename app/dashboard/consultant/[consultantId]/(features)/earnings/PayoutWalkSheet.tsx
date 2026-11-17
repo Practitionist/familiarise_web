@@ -1,6 +1,6 @@
 "use client";
 
-import { formatInTimeZone } from "date-fns-tz";
+import { formatInViewerZone } from "@/lib/time/viewer-zone";
 
 import {
   Sheet,
@@ -72,7 +72,7 @@ export function PayoutWalkBody({ payout }: Readonly<{ payout: WalkPayout }>) {
       <div className="flex items-center justify-between">
         <dt className="text-muted-foreground">Date</dt>
         <dd className="text-foreground">
-          {formatInTimeZone(at, PAYOUT_ZONE, "d MMM yyyy")}
+          {formatInViewerZone(at, PAYOUT_ZONE, "d MMM yyyy")}
         </dd>
       </div>
     </dl>

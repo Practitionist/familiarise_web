@@ -72,9 +72,12 @@ export async function GET(
     const startsAtMs = query.data.startsAt
       ? Date.parse(query.data.startsAt)
       : now;
+    const zone = resolveSchedulingTimezone(
+      plan.consultantProfile?.user?.timezone,
+    );
     const report = await assessExpertFeasibility(prisma, {
       consultantProfileId: plan.consultantProfileId,
-      zone: resolveSchedulingTimezone(plan.consultantProfile?.user?.timezone),
+      zone,
       sessionMinutes: Math.round(plan.sessionDurationInHours * 60),
       sessionsPerWeek: plan.sessionsPerWeek,
       perDayCap: MAX_SUBSCRIPTION_SESSIONS_PER_DAY,
@@ -100,6 +103,8 @@ export async function GET(
           plan.consultantProfileId,
           session.user.id,
         ),
+        // The zone checkout cuts the first cycle in, so the buyer sees the same dates.
+        zone,
       },
       { headers: { "Cache-Control": "private, no-store" } },
     );

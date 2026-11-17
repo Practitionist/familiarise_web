@@ -393,7 +393,7 @@ describe("UnifiedCalendar session tray", () => {
     expect(picks.map((item) => item.textContent)).toEqual([
       expect.stringMatching(/^Session 1 · Wed,? 12 Jun · 1:00 pm–2:00 pm/),
       expect.stringMatching(/^Session 2 · Wed,? 12 Jun · 2:00 pm–3:00 pm/),
-      expect.stringMatching(/^Session 3 · point at a free time/),
+      expect.stringMatching(/^Session 3 · choose a free time on the grid$/),
     ]);
 
     fireEvent.click(

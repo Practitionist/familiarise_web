@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import { PageHeader } from "@/components/dashboard/PageScaffold";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/utils/tailwind";
@@ -154,6 +154,8 @@ export interface SettingsSaveBarProps {
   isDirty?: boolean;
   saveLabel?: string;
   resetLabel?: string;
+  /** Why the form cannot save yet; disables Save and is shown beside it. */
+  saveBlockedReason?: string | null;
 }
 
 /** Reset + Save for a settings form; place it inside the `<form>`. */
@@ -163,7 +165,9 @@ export function SettingsSaveBar({
   isDirty,
   saveLabel = "Save changes",
   resetLabel = "Reset",
+  saveBlockedReason,
 }: Readonly<SettingsSaveBarProps>) {
+  const blockedId = useId();
   if (isDirty === false) return null;
   const tracked = isDirty === true;
   return (
@@ -174,12 +178,21 @@ export function SettingsSaveBar({
           "sticky bottom-0 z-10 rounded-lg border border-border bg-background/95 p-3 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/80",
       )}
     >
-      {tracked && (
+      {tracked && !saveBlockedReason && (
         <p
           className="text-sm text-muted-foreground sm:mr-auto"
           aria-live="polite"
         >
           You have unsaved changes
+        </p>
+      )}
+      {saveBlockedReason && (
+        <p
+          id={blockedId}
+          className="text-sm text-muted-foreground sm:mr-auto"
+          aria-live="polite"
+        >
+          {saveBlockedReason}
         </p>
       )}
       <Button
@@ -194,7 +207,8 @@ export function SettingsSaveBar({
       <Button
         type="submit"
         className="w-full sm:w-auto sm:min-w-[160px]"
-        disabled={isSaving}
+        disabled={isSaving || Boolean(saveBlockedReason)}
+        aria-describedby={saveBlockedReason ? blockedId : undefined}
       >
         {isSaving && (
           <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />

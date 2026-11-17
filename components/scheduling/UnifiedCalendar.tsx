@@ -29,7 +29,7 @@ import {
   getDaysInMonth,
   type Day,
 } from "date-fns";
-import { formatInTimeZone } from "date-fns-tz";
+import { formatInViewerZone } from "@/lib/time/viewer-zone";
 import {
   ChevronLeft,
   ChevronRight,
@@ -46,7 +46,7 @@ import {
   calculateRequiredSlots,
   calculateCallProgress,
   countSundayWeeksInclusive,
-  groupSelectedIntoSessions,
+  atomsOfConflictedSessions,
   splitIntoSessions,
 } from "@/lib/scheduling/calendarUtils";
 import { CalendarGridSkeleton } from "@/components/scheduling/CalendarSkeletons";
@@ -925,23 +925,12 @@ export function UnifiedCalendar({
 
   useEffect(() => {
     if (conflicts.size === 0) return;
-    const doomed = groupSelectedIntoSessions(selectedSlots).flatMap(
-      (session) => {
-        const atoms = selectedSlots.filter(
-          (slot) =>
-            slot.startTime >= session.start && slot.endTime <= session.end,
-        );
-        return atoms.some((slot) => conflicts.has(slot.startTime.getTime()))
-          ? atoms
-          : [];
-      },
-    );
     removeSlots(
-      doomed.length > 0
-        ? doomed
-        : selectedSlots.filter((slot) =>
-            conflicts.has(slot.startTime.getTime()),
-          ),
+      atomsOfConflictedSessions(
+        selectedSlots,
+        slotLimits.slotsPerSession,
+        conflicts,
+      ),
     );
     const anyTaken = [...conflicts.values()].includes("taken");
     toast({
@@ -953,7 +942,13 @@ export function UnifiedCalendar({
         ? "That time is no longer free, so it has been removed — pick another time."
         : "It is now too close to its start or past this plan's limit. It has been removed — pick another time.",
     });
-  }, [conflicts, selectedSlots, removeSlots, toast]);
+  }, [
+    conflicts,
+    selectedSlots,
+    slotLimits.slotsPerSession,
+    removeSlots,
+    toast,
+  ]);
 
   // Report the selection when it changes, not when the parent re-renders.
   const onSlotsSelectedRef = useLatest(onSlotsSelected);
@@ -1416,7 +1411,7 @@ export function UnifiedCalendar({
       ) {
         return;
       }
-      const key = formatInTimeZone(cell.startMs, gridZone, "yyyy-MM-dd");
+      const key = formatInViewerZone(cell.startMs, gridZone, "yyyy-MM-dd");
       const starts = byDay.get(key) ?? [];
       starts.push(cell.startMs);
       byDay.set(key, starts);

@@ -8,6 +8,8 @@ export const planFeasibilitySchema = z.object({
   notice: z.string().nullable(),
   /** The expert's plan-client limit turns this buyer away; never the limit itself. */
   fullyBooked: z.boolean(),
+  /** The expert's scheduling zone, which the server cuts the first cycle in. */
+  zone: z.string().min(1),
 });
 
 export type PlanFeasibility = z.infer<typeof planFeasibilitySchema>;

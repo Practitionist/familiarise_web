@@ -183,9 +183,11 @@ describe("deriveBookingPresentation — the eight booking states", () => {
     (state, over, moneyKind, consultantNext, consulteeNext, row, label) => {
       const input = base(over);
       const asConsultant = deriveBookingPresentation(input, "CONSULTANT", {
+        viewerZone: "UTC",
         now: NOW,
       });
       const asConsultee = deriveBookingPresentation(input, "CONSULTEE", {
+        viewerZone: "UTC",
         now: NOW,
       });
       expect(asConsultant.bookingState.state).toBe(state);
@@ -209,7 +211,10 @@ describe("deriveBookingPresentation — the money line and the timeline", () => 
     const input = base({
       plan: { pricePaise: 600_000, currency: "INR", sessions: 6 },
     });
-    const c = deriveBookingPresentation(input, "CONSULTANT", { now: NOW });
+    const c = deriveBookingPresentation(input, "CONSULTANT", {
+      viewerZone: "UTC",
+      now: NOW,
+    });
     expect(c.moneyState.line).toBe(
       "Not due yet — Rachel is asked to pay after you approve.",
     );
@@ -225,7 +230,10 @@ describe("deriveBookingPresentation — the money line and the timeline", () => 
       "○ Sessions confirmed",
       "○ Completed",
     ]);
-    const u = deriveBookingPresentation(input, "CONSULTEE", { now: NOW });
+    const u = deriveBookingPresentation(input, "CONSULTEE", {
+      viewerZone: "UTC",
+      now: NOW,
+    });
     expect(u.moneyState.line).toBe(
       "Not due yet — you are asked to pay after Ethan approves.",
     );
@@ -233,7 +241,10 @@ describe("deriveBookingPresentation — the money line and the timeline", () => 
 
   it("consultant AWAITING_PAYMENT: REMIND_OR_WITHDRAW carries the pay order's deadline (#1775)", () => {
     const input = base(TABLE[1][1]);
-    const c = deriveBookingPresentation(input, "CONSULTANT", { now: NOW });
+    const c = deriveBookingPresentation(input, "CONSULTANT", {
+      viewerZone: "UTC",
+      now: NOW,
+    });
     expect(c.nextAction).toEqual({
       kind: "REMIND_OR_WITHDRAW",
       label: "Remind",
@@ -252,7 +263,10 @@ describe("deriveBookingPresentation — the money line and the timeline", () => 
         },
       ],
     });
-    const u = deriveBookingPresentation(input, "CONSULTEE", { now: NOW });
+    const u = deriveBookingPresentation(input, "CONSULTEE", {
+      viewerZone: "UTC",
+      now: NOW,
+    });
     expect(u.nextAction).toEqual({
       kind: "PAY",
       label: "Pay ₹7,080.00",
@@ -279,9 +293,10 @@ describe("deriveBookingPresentation — the money line and the timeline", () => 
       input: BookingPresentationInput,
       viewer: "CONSULTEE" | "CONSULTANT",
     ) =>
-      deriveBookingPresentation(input, viewer, { now: NOW }).timeline.map(
-        (e) => e.label,
-      );
+      deriveBookingPresentation(input, viewer, {
+        viewerZone: "UTC",
+        now: NOW,
+      }).timeline.map((e) => e.label);
     const awaiting = trial("AWAITING_PAYMENT", [
       pay("PENDING", 10_600, { expiresAt: IN_4D }),
     ]);
@@ -312,7 +327,10 @@ describe("deriveBookingPresentation — the money line and the timeline", () => 
       sponsorOrgName: "Wipro Limited",
       holdExpiresAt: null,
     });
-    const u = deriveBookingPresentation(input, "CONSULTEE", { now: NOW });
+    const u = deriveBookingPresentation(input, "CONSULTEE", {
+      viewerZone: "UTC",
+      now: NOW,
+    });
     expect(u.moneyState.state).toBe("SPONSORED");
     expect(u.moneyState.line).toBe(
       "Sponsored by Wipro Limited + ₹500.00 co-pay",
@@ -325,7 +343,10 @@ describe("deriveBookingPresentation — the money line and the timeline", () => 
       request: { status: "APPROVED", kind: "CONSULTATION" },
       payments: [pay("SUCCEEDED", 500_000)],
     });
-    const u = deriveBookingPresentation(input, "CONSULTEE", { now: NOW });
+    const u = deriveBookingPresentation(input, "CONSULTEE", {
+      viewerZone: "UTC",
+      now: NOW,
+    });
     expect(u.settled).toBe(false);
     expect(u.bookingState.state).toBe("CONFIRMED");
   });
@@ -335,7 +356,10 @@ describe("deriveBookingPresentation — the money line and the timeline", () => 
       occurrences: [],
       plan: { pricePaise: 14_400, currency: "INR", sessions: 12 },
     });
-    const u = deriveBookingPresentation(input, "CONSULTEE", { now: NOW });
+    const u = deriveBookingPresentation(input, "CONSULTEE", {
+      viewerZone: "UTC",
+      now: NOW,
+    });
     expect(u.sessionProgress).toBe("0 of 12 sessions scheduled");
   });
 
@@ -346,7 +370,10 @@ describe("deriveBookingPresentation — the money line and the timeline", () => 
       ),
       plan: { pricePaise: 14_400, currency: "INR", sessions: 12 },
     });
-    const u = deriveBookingPresentation(input, "CONSULTEE", { now: NOW });
+    const u = deriveBookingPresentation(input, "CONSULTEE", {
+      viewerZone: "UTC",
+      now: NOW,
+    });
     expect(u.moneyState.detail).toBe(
       "₹144.00 for the plan · 12 sessions · ₹12.00 each",
     );
@@ -418,11 +445,14 @@ describe("derivePaymentPresentation — a list row's money is the detail page's"
 
   it.each(ROWS)("%s", (kind, over) => {
     const { occurrences: _dropped, ...row } = base(over);
-    const asRow = derivePaymentPresentation(row, "CONSULTEE", { now: NOW });
+    const asRow = derivePaymentPresentation(row, "CONSULTEE", {
+      viewerZone: "UTC",
+      now: NOW,
+    });
     const asDetail = deriveBookingPresentation(
       { ...row, occurrences: [] },
       "CONSULTEE",
-      { now: NOW },
+      { viewerZone: "UTC", now: NOW },
     );
     expect(asRow.moneyState.state).toBe(kind);
     expect(asRow.moneyState).toEqual(asDetail.moneyState);
@@ -443,6 +473,7 @@ describe("ALLOCATE (#1775 C-5)", () => {
 
   it("asks the consultant to schedule cycle 1 by capture + 48 h; the consultee waits", () => {
     const consultant = deriveBookingPresentation(paidPending, "CONSULTANT", {
+      viewerZone: "UTC",
       now: NOW,
     });
     expect(consultant.bookingState.state).toBe("AWAITING_ALLOCATION");
@@ -452,8 +483,10 @@ describe("ALLOCATE (#1775 C-5)", () => {
       deadline: new Date("2026-09-21T12:00:00Z"),
     });
     expect(
-      deriveBookingPresentation(paidPending, "CONSULTEE", { now: NOW })
-        .nextAction.kind,
+      deriveBookingPresentation(paidPending, "CONSULTEE", {
+        viewerZone: "UTC",
+        now: NOW,
+      }).nextAction.kind,
     ).toBe("NONE");
   });
 
@@ -467,7 +500,7 @@ describe("ALLOCATE (#1775 C-5)", () => {
         entitlement: { remaining: 4, nextBatch: 4 },
       }),
       "CONSULTANT",
-      { now: NOW },
+      { viewerZone: "UTC", now: NOW },
     );
     expect(presentation.nextAction).toEqual({
       kind: "ALLOCATE",
@@ -484,7 +517,8 @@ describe("ALLOCATE (#1775 C-5)", () => {
       entitlement: { remaining: 4, nextBatch: 4 },
     });
     const why = (role: "CONSULTANT" | "CONSULTEE") =>
-      deriveBookingPresentation(input, role, { now: NOW }).bookingState.why;
+      deriveBookingPresentation(input, role, { viewerZone: "UTC", now: NOW })
+        .bookingState.why;
     expect(why("CONSULTANT")).toBe("Week done. Schedule the next 4.");
     expect(why("CONSULTEE")).toBe("Week done. Ethan is placing the next 4.");
   });
@@ -514,8 +548,10 @@ describe("EXIT_SERIES (#1780 E-5)", () => {
     [15, 100, "EXIT_SERIES"],
   ])("%i misses of %i → %s", (misses, N, kind) => {
     expect(
-      deriveBookingPresentation(classSeat(misses, N), "CONSULTEE", { now: NOW })
-        .nextAction.kind,
+      deriveBookingPresentation(classSeat(misses, N), "CONSULTEE", {
+        viewerZone: "UTC",
+        now: NOW,
+      }).nextAction.kind,
     ).toBe(kind);
   });
 });
@@ -531,7 +567,7 @@ describe("the refund timeline (#1780)", () => {
     deriveBookingPresentation(
       base({ request: req("APPROVED"), payments: paid, refunds: [r] }),
       "CONSULTEE",
-      { now: NOW },
+      { viewerZone: "UTC", now: NOW },
     ).timeline.filter((e) => e.kind);
 
   it("dates processing completion from the refund update rather than its request or bank receipt", () => {
@@ -582,7 +618,8 @@ describe("a plan that ended with sessions not held", () => {
   const whyFor = (input: BookingPresentationInput) =>
     (["CONSULTANT", "CONSULTEE"] as const).map(
       (role) =>
-        deriveBookingPresentation(input, role, { now: NOW }).bookingState,
+        deriveBookingPresentation(input, role, { viewerZone: "UTC", now: NOW })
+          .bookingState,
     );
 
   it("says so before the plan-end sweep, for both sides", () => {

@@ -94,7 +94,7 @@ describe("the refund step on a ₹0 booking", () => {
         names: { payer: "Rachel", consultant: "Ethan" },
       } as BookingPresentationInput,
       "CONSULTEE",
-      { now: NOW },
+      { viewerZone: "UTC", now: NOW },
     ).timeline.filter((e) => e.kind === "refund-completed");
 
   it("shows no Refunded step for a free booking", () => {

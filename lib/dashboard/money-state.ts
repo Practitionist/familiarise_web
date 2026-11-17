@@ -187,8 +187,6 @@ export interface BookingPresentationInput {
   sponsorOrgName: string | null;
   /** When the held slots or the pay link release; null when nothing is held. */
   holdExpiresAt: Date | string | null;
-  /** Optional explicit IANA timezone when derived outside browser runtime. */
-  viewerZone?: string | null;
   /**
    * #1760 — the EXPIRED history edge tells a lapsed pay link apart from a
    * request nobody answered. Optional: a read without history falls back to
@@ -259,8 +257,8 @@ export interface DeriveOptions {
   now?: Date;
   /** How early before `startsAt` a session counts as joinable. */
   joinWindowMs?: number;
-  /** Explicit IANA timezone when rendered server-side outside browser runtime. */
-  viewerZone?: string | null;
+  /** The viewer's profile zone (`ViewerZone.zone`); every printed time reads in it. */
+  viewerZone: string;
   /** Sessions the server says this viewer attended (the rating gate). */
   heldOccurrenceIds?: ReadonlySet<string>;
 }
@@ -976,11 +974,11 @@ function refundTimeline(input: BookingPresentationInput): TimelineEvent[] {
 export function deriveBookingPresentation(
   input: BookingPresentationInput,
   viewer: Viewer,
-  options: DeriveOptions = {},
+  options: DeriveOptions,
 ): BookingPresentation {
   const now = options.now ?? new Date();
   const joinWindowMs = options.joinWindowMs ?? CONSULTEE_JOIN_WINDOW_MS;
-  const zone = options.viewerZone ?? input.viewerZone ?? null;
+  const zone = options.viewerZone;
   const live = input.occurrences.filter((o) => !isDeadOccurrence(o));
   const paidRow =
     input.payments.find((x) => x.paymentStatus === "SUCCEEDED") ?? null;
@@ -1065,7 +1063,7 @@ export type PaymentRowInput = Omit<BookingPresentationInput, "occurrences">;
 export function derivePaymentPresentation(
   input: PaymentRowInput,
   viewer: Viewer,
-  options?: DeriveOptions,
+  options: DeriveOptions,
 ): Pick<BookingPresentation, "moneyState" | "nextAction" | "settled"> {
   const { moneyState, nextAction, settled } = deriveBookingPresentation(
     { ...input, occurrences: [] },

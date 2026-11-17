@@ -6,7 +6,13 @@
  * paise, and Razorpay is offered.
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import type { ReactElement } from "react";
 import { Suspense } from "react";
 
@@ -77,6 +83,7 @@ import WebinarCheckoutPage from "@/app/checkout/plans/webinar/[planId]/page";
 import ClassCheckoutPage from "@/app/checkout/plans/class/[planId]/page";
 import ConsultationCheckoutPage from "@/app/checkout/plans/consultation/[planId]/page";
 import SubscriptionCheckoutPage from "@/app/checkout/plans/subscription/[planId]/page";
+import { firstCycleLines } from "@/app/checkout/plans/adapters/first-cycle-lines";
 
 const future = (hours: number) =>
   new Date(Date.now() + hours * 3_600_000).toISOString();
@@ -183,6 +190,9 @@ describe("shared plan checkout", () => {
     expect(heading).toBeTruthy();
     expect(total).toBeTruthy();
     expect(screen.getByText("Pay with Razorpay")).toBeTruthy();
+    // A viewer outside their own zone reads the label once per time.
+    expect(document.body.textContent).toMatch(/\d:\d\d [AP]M UTC/);
+    expect(document.body.textContent).not.toMatch(/UTC UTC/);
   });
 
   it("renders the class checkout", async () => {
@@ -287,6 +297,7 @@ describe("shared plan checkout", () => {
               sessionsPerWeek: 2,
               notice: null,
               fullyBooked: true,
+              zone: "Asia/Kolkata",
             }),
           }
         : routed(input),
@@ -316,5 +327,118 @@ describe("shared plan checkout", () => {
     expect(total).toBeTruthy();
     expect(screen.getByText("Pay with Razorpay")).toBeTruthy();
     expect(await screen.findByText(/You pay/)).toBeTruthy();
+  });
+
+  it("an elapsed-start warning from the viewer zone clears once the expert's zone says the cycle is still open", async () => {
+    // UTC cycle ends 17 Jan 00:00Z; the expert's (UTC-11) ends 17 Jan 11:00Z.
+    const now = jest
+      .spyOn(Date, "now")
+      .mockReturnValue(Date.parse("2026-01-17T05:00:00.000Z"));
+    let answerFeasibility: (zone: string) => void = () => {};
+    const feasibility = new Promise<string>((resolve) => {
+      answerFeasibility = resolve;
+    });
+    const answer = global.fetch as jest.Mock;
+    const routed = answer.getMockImplementation()!;
+    answer.mockImplementation(async (input: RequestInfo | URL) =>
+      String(input).startsWith("/api/plans/subscriptions/plan1/feasibility")
+        ? feasibility.then((zone) => ({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              verdict: "ok",
+              firstWeekPlaceable: 2,
+              sessionsPerWeek: 2,
+              notice: null,
+              fullyBooked: false,
+              zone,
+            }),
+          }))
+        : routed(input),
+    );
+    try {
+      renderPage(
+        <SubscriptionCheckoutPage
+          params={params}
+          searchParams={search({
+            schedulingPeriodStartsAt: "2026-01-10T12:00:00.000Z",
+          })}
+        />,
+      );
+      const warning =
+        "The start date has passed. Please go back and pick a new one.";
+      expect(
+        await screen.findByText(warning, {}, { timeout: 4000 }),
+      ).toBeTruthy();
+      await act(async () => answerFeasibility("Pacific/Pago_Pago"));
+      await waitFor(() => expect(screen.queryByText(warning)).toBeNull());
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("an elapsed start still says so when the feasibility read fails", async () => {
+    const answer = global.fetch as jest.Mock;
+    const routed = answer.getMockImplementation()!;
+    answer.mockImplementation(async (input: RequestInfo | URL) =>
+      String(input).startsWith("/api/plans/subscriptions/plan1/feasibility")
+        ? { ok: false, status: 500, json: async () => ({}) }
+        : routed(input),
+    );
+    renderPage(
+      <SubscriptionCheckoutPage
+        params={params}
+        searchParams={search({
+          schedulingPeriodStartsAt: new Date(
+            Date.now() - 60 * 86_400_000,
+          ).toISOString(),
+        })}
+      />,
+    );
+    expect(
+      await screen.findByText(
+        "The start date has passed. Please go back and pick a new one.",
+        {},
+        { timeout: 4000 },
+      ),
+    ).toBeTruthy();
+  });
+
+  it("prints the first cycle in the zone the server cuts it in, with its label", async () => {
+    // 20:00 UTC, ten days out: the next calendar day in India.
+    const day = new Date(Date.now() + 10 * 86_400_000);
+    day.setUTCHours(20, 0, 0, 0);
+    const start = day.toISOString();
+    const answer = global.fetch as jest.Mock;
+    const routed = answer.getMockImplementation()!;
+    answer.mockImplementation(async (input: RequestInfo | URL) =>
+      String(input).startsWith("/api/plans/subscriptions/plan1/feasibility")
+        ? {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              verdict: "ok",
+              firstWeekPlaceable: 2,
+              sessionsPerWeek: 2,
+              notice: null,
+              fullyBooked: false,
+              zone: "Asia/Kolkata",
+            }),
+          }
+        : routed(input),
+    );
+    renderPage(
+      <SubscriptionCheckoutPage
+        params={params}
+        searchParams={search({ schedulingPeriodStartsAt: start })}
+      />,
+    );
+    const lines = firstCycleLines(start, basePlan, "Asia/Kolkata");
+    expect(
+      await screen.findByText(lines.starts, {}, { timeout: 4000 }),
+    ).toBeTruthy();
+    expect(
+      await screen.findByText((text) => text.startsWith(lines.cycle)),
+    ).toBeTruthy();
   });
 });
