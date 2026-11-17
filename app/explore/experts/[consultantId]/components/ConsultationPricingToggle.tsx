@@ -155,11 +155,21 @@ export default function ConsultationPricingToggle({
     null,
   );
   const userId = session?.user?.id;
+  const searchParams = useSearchParams();
+  // Checkout's "choose another time" link discards any saved pick: the buyer is choosing again.
+  const choosingAgain = useMemo(
+    () =>
+      !!searchParams &&
+      chooseAgainLinkSchema.safeParse(
+        Object.fromEntries(searchParams.entries()),
+      ).success,
+    [searchParams],
+  );
   useEffect(() => {
     if (purchaseIntentConsumedRef.current || !userId) return;
     purchaseIntentConsumedRef.current = true;
     const intent = consumePurchaseIntent(consultantDetails.id);
-    if (!intent) return;
+    if (!intent || choosingAgain) return;
     const intentPlan = consultationOptions.find(
       (opt) => opt.id === intent.consultationPlanId,
     );
@@ -186,7 +196,7 @@ export default function ConsultationPricingToggle({
       title: "Welcome back",
       description: "The time you picked before signing in is selected.",
     });
-  }, [userId, consultantDetails.id, consultationOptions, toast]);
+  }, [userId, choosingAgain, consultantDetails.id, consultationOptions, toast]);
 
   const sendToSignIn = () => {
     const callbackUrl = `${window.location.pathname}${window.location.search}`;
@@ -210,7 +220,6 @@ export default function ConsultationPricingToggle({
   // A notice link opens its plan's dialog once, with the time picked; the
   // picker then reads whether it is still free and which row it comes from.
   // Checkout's "choose another time" opens the same dialog with nothing picked.
-  const searchParams = useSearchParams();
   const bookLinkConsumedRef = useRef(false);
   useEffect(() => {
     if (bookLinkConsumedRef.current || !searchParams) return;
@@ -226,9 +235,11 @@ export default function ConsultationPricingToggle({
     bookLinkConsumedRef.current = true;
     setActiveConsultationOption(planId);
     setDialogPlanId(planId);
-    if (link.success) {
-      setPick({ startsAt: link.data.startsAt, endsAt: link.data.endsAt });
-    }
+    setPick(
+      link.success
+        ? { startsAt: link.data.startsAt, endsAt: link.data.endsAt }
+        : null,
+    );
   }, [searchParams, consultationOptions]);
 
   const handleRequestForApproval = async (planId: string) => {

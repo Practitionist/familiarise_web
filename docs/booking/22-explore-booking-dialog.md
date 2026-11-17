@@ -49,7 +49,7 @@ Waiters hear when the time frees: the cancel route stages notices for a cancelle
 
 ## Back from checkout when the time is gone
 
-A time can stop being buyable between the pick and the payment. Checkout sends the buyer back to this dialog, on the same plan with nothing picked, whenever the refusal means the time can never be bought as picked. The return address is `chooseAnotherTimeHref` in `app/explore/experts/[consultantId]/hooks/useChooseAnotherTime.ts`: `/explore/experts/<id>?conflict=1&plan=<planId>`. `conflict=1` makes the grid's next read skip the browser cache, and `plan` opens that plan's dialog (`chooseAgainLinkSchema` in `ConsultationPricingToggle`); a plan the expert does not offer opens nothing.
+A time can stop being buyable between the pick and the payment. Checkout sends the buyer back to this dialog, on the same plan with nothing picked, whenever the refusal means the time can never be bought as picked. The return address is `chooseAnotherTimeHref` in `app/explore/experts/[consultantId]/hooks/useChooseAnotherTime.ts`: `/explore/experts/<id>?conflict=1&plan=<planId>`. `conflict=1` makes the grid's next read skip the browser cache, and `plan` opens that plan's dialog (`chooseAgainLinkSchema` in `ConsultationPricingToggle`); a plan the expert does not offer opens nothing. The link outranks a purchase intent saved before sign-in: the saved pick is discarded, whether the session is ready on arrival or arrives later, so the dialog never opens on, or switches to, an older time.
 
 - **Refused at Pay.** `isTerminalSlotRefusal` in `lib/errors/classification/payment-error-classification.ts` lists the codes: `SLOT_TAKEN` (409, another buyer was first), `SLOT_TOO_SOON` and `SLOT_NOT_ON_GRID` (400, from the Zod edge). The consultation checkout's `onCheckoutRefusal` toasts the refusal's own title and the server's sentence (for example "That Time Is Now Too Close" with "This time slot starts too soon (in 9 minutes)…") and returns the buyer to the dialog. The refusal may arrive from the route or through the Razorpay button's error callback; both reach the same handler.
 - **Not refused for good.** Lock contention, a busy or serialization conflict and payment failures keep the buyer on the checkout page with a toast, because the same time may still succeed.
@@ -57,17 +57,17 @@ A time can stop being buyable between the pick and the payment. Checkout sends t
 
 ## Pins
 
-| Pin                                                                        | File                                                           |
-| -------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| The option states, the taken list, the month summary and midnight          | `__tests__/scheduling/single-session-options.test.ts`          |
-| The keyboard grid, the taken-times disclosure, the host switch, just taken | `__tests__/scheduling/single-time-picker.test.tsx`             |
-| A poll that takes the pick, a held refusal, "Book Now" on the second card  | `__tests__/explore/selection-just-taken.test.tsx`              |
-| Checkout's return link opens the refused plan's dialog with nothing picked | `__tests__/explore/selection-just-taken.test.tsx`              |
-| Every terminal refusal at Pay returns to the grid; contention stays        | `__tests__/payments/checkout-choose-another-time.test.tsx`     |
-| "Notify me", "Waiting" with a withdraw, the inline refusal, sign-in        | `__tests__/growth/notify-toggle-wrappers.test.tsx`             |
-| A pick's checkout URL, request body and trial body parse at their doors    | `__tests__/booking/picked-time-contract.test.ts`               |
-| The request door's refusal for an instant-booking expert                   | `__tests__/booking-algorithm/consultant-request-gate.test.ts`  |
-| The route's 32-day window cap                                              | `__tests__/schedule/availability-grid-conditional-get.test.ts` |
+| Pin                                                                                             | File                                                           |
+| ----------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| The option states, the taken list, the month summary and midnight                               | `__tests__/scheduling/single-session-options.test.ts`          |
+| The keyboard grid, the taken-times disclosure, the host switch, just taken                      | `__tests__/scheduling/single-time-picker.test.tsx`             |
+| A poll that takes the pick, a held refusal, "Book Now" on the second card                       | `__tests__/explore/selection-just-taken.test.tsx`              |
+| Checkout's return link opens the refused plan's dialog with nothing picked, over a saved intent | `__tests__/explore/selection-just-taken.test.tsx`              |
+| Every terminal refusal at Pay returns to the grid; contention stays                             | `__tests__/payments/checkout-choose-another-time.test.tsx`     |
+| "Notify me", "Waiting" with a withdraw, the inline refusal, sign-in                             | `__tests__/growth/notify-toggle-wrappers.test.tsx`             |
+| A pick's checkout URL, request body and trial body parse at their doors                         | `__tests__/booking/picked-time-contract.test.ts`               |
+| The request door's refusal for an instant-booking expert                                        | `__tests__/booking-algorithm/consultant-request-gate.test.ts`  |
+| The route's 32-day window cap                                                                   | `__tests__/schedule/availability-grid-conditional-get.test.ts` |
 
 ## Deprecated & Superseded Approaches
 

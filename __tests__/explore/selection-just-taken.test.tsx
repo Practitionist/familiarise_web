@@ -3,7 +3,8 @@
  * pick and disables the button; "Book Now" on a second plan card books that
  * card's plan; a time the request door says is held clears the pick, says so
  * inline and opens the taken list with "Notify me"; checkout's "choose another
- * time" link opens the refused plan's dialog.
+ * time" link opens the refused plan's dialog with nothing picked, even over a
+ * saved purchase intent.
  */
 import * as React from "react";
 import {
@@ -30,8 +31,11 @@ const mockToast = jest.fn();
 jest.mock("@/hooks/use-toast", () => ({
   useToast: () => ({ toast: mockToast }),
 }));
+let mockSession: { user: { id: string; role: string } } | null = {
+  user: { id: "buyer-1", role: "consultee" },
+};
 jest.mock("@/lib/auth-client", () => ({
-  useSession: () => ({ data: { user: { id: "buyer-1", role: "consultee" } } }),
+  useSession: () => ({ data: mockSession }),
 }));
 let mockSearch = new URLSearchParams();
 jest.mock("next/navigation", () => ({
@@ -49,8 +53,10 @@ jest.mock("@/components/booking/NotifyWhenFreeButton", () => ({
   HELD_BY_SOMEONE_ELSE: new Set(["SLOT_TAKEN", "LOCK_CONTENTION"]),
   NotifyWhenFreeButton: () => <span>Notify me</span>,
 }));
+const mockConsumeIntent = jest.fn<unknown, [string]>(() => null);
 jest.mock("@/utils/purchase-intent", () => ({
-  consumePurchaseIntent: () => null,
+  consumePurchaseIntent: (consultantId: string) =>
+    mockConsumeIntent(consultantId),
   stashPurchaseIntent: jest.fn(),
 }));
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
@@ -115,6 +121,8 @@ beforeAll(() => {
 beforeEach(() => {
   mockReadAt = 0;
   mockSearch = new URLSearchParams();
+  mockSession = { user: { id: "buyer-1", role: "consultee" } };
+  mockConsumeIntent.mockReset().mockReturnValue(null);
   mockBook.mockReset();
   jest.useFakeTimers();
   jest.setSystemTime(new Date("2026-11-02T09:00:00.000Z"));
@@ -196,6 +204,42 @@ it("checkout's choose-another-time link opens that plan's dialog with nothing pi
     screen.getByRole("button", { name: "Continue to Checkout" }),
   ).toBeDisabled();
 });
+
+const savedIntentForPlanA = () => ({
+  consultantId: "cp-1",
+  consultationPlanId: "plan-a",
+  slot: {
+    startsAt: new Date(DAY + 11 * HOUR).toISOString(),
+    endsAt: new Date(DAY + 11.5 * HOUR).toISOString(),
+  },
+});
+
+it.each([
+  ["signed in on arrival", false],
+  ["signed in after the link opened", true],
+])(
+  "the choose-another-time link outranks a saved purchase intent (%s)",
+  (_label, sessionArrivesLate) => {
+    mockConsumeIntent.mockReturnValue(savedIntentForPlanA());
+    mockSearch = new URL(
+      chooseAnotherTimeHref("cp-1", "plan-b"),
+      "https://x.test",
+    ).searchParams;
+    if (sessionArrivesLate) mockSession = null;
+    const { rerender } = render(<Dialog />);
+    if (sessionArrivesLate) {
+      mockSession = { user: { id: "buyer-1", role: "consultee" } };
+      act(() => rerender(<Dialog />));
+    }
+    expect(
+      screen.getByRole("heading", { name: /Book B Consultation/ }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Continue to Checkout" }),
+    ).toBeDisabled();
+    expect(mockBook).not.toHaveBeenCalled();
+  },
+);
 
 it("a link naming another expert's plan opens no dialog", () => {
   mockSearch = new URL(
