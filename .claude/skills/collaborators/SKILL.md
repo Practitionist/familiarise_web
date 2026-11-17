@@ -9,18 +9,19 @@ Design, diagrams and worked examples: `docs/collaborators/00-overview.md` onward
 
 ## Where things live
 
-| Module (`lib/collaborators/`) | Holds                                                                                                          | Must not import                                                                |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `rules.ts`                    | The numbers (`MAX_COLLABORATORS_PER_PLAN`, `MAX_TEAM_SHARE_BPS`, invite window, cooldown) and their date maths | Anything. Client components import it.                                         |
-| `roles.ts`                    | `PRESENTER_ROLES`, `SPEAKING_CREW_ROLES`, `tierForRole`, `ROLE_INFO` (the one label and ability table)         | Anything but Prisma types. Client-imported.                                    |
-| `team.ts`                     | `PlanRef`, `planWhere`, `lockPlanRow`, `currentTeam`, `teamAsOf`                                               | Stream, Novu, the service                                                      |
-| `viewer.ts`                   | `resolveCollaborationViewer`, `seesAttendees`, `seesAttendeePayments`, the projections                         | The service, Stream, Novu                                                      |
-| `queries.ts`                  | Every read for the screens, already projected                                                                  | The service                                                                    |
-| `service.ts`                  | The writes: invite, change pending terms, respond, remove, leave; `CollaborationError`                         | A Stream client (it calls `lib/stream/collaborator-access.ts`)                 |
-| `ending.ts`                   | `endCollaboration`, `endCollaborationsForUser`, `afterCollaborationEnded`                                      | The service; Stream at module load (it loads `access-revocation` on first use) |
-| `cleanup.ts`                  | `expireStaleCollaboratorInvites`                                                                               | The service                                                                    |
-| `revenue-split.ts`            | `calculateRevenueSplit`                                                                                        | Anything but `team.ts`                                                         |
-| `recipients.ts`               | `collaboratorUserIds`, `collaboratorUserIdsForEvent` for recipient lists                                       | The service, Stream, Novu                                                      |
+| Module (`lib/collaborators/`) | Holds                                                                                                            | Must not import                                                                |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `rules.ts`                    | The numbers (`MAX_COLLABORATORS_PER_PLAN`, `MAX_TEAM_SHARE_BPS`, invite window, cooldown) and their date maths   | Anything. Client components import it.                                         |
+| `roles.ts`                    | `PRESENTER_ROLES`, `SPEAKING_CREW_ROLES`, `tierForRole`, `ROLE_INFO` (the one label and ability table)           | Anything but Prisma types. Client-imported.                                    |
+| `team.ts`                     | `PlanRef`, `planWhere`, `lockPlanRow`, `currentTeam`, `teamAsOf`                                                 | Stream, Novu, the service                                                      |
+| `viewer.ts`                   | `resolveCollaborationViewer`, `seesAttendees`, `seesAttendeePayments`, the projections                           | The service, Stream, Novu                                                      |
+| `queries.ts`                  | Every read for the screens, already projected                                                                    | The service                                                                    |
+| `service.ts`                  | The writes: invite, change pending terms, respond, remove, leave; `CollaborationError`                           | A Stream client (it calls `lib/stream/collaborator-access.ts`)                 |
+| `ending.ts`                   | `endCollaboration`, `endCollaborationsForUser`, `afterCollaborationEnded`                                        | The service; Stream at module load (it loads `access-revocation` on first use) |
+| `cleanup.ts`                  | `expireStaleCollaboratorInvites`                                                                                 | The service                                                                    |
+| `revenue-split.ts`            | `calculateRevenueSplit`                                                                                          | Anything but `team.ts`                                                         |
+| `notifications.ts`            | `stageCollaboratorNotifications`: who hears each change, the host side, the learners' notice, the reminder claim | The service, Stream                                                            |
+| `recipients.ts`               | `collaboratorUserIds`, `collaboratorUserIdsForEvent` for recipient lists                                         | The service, Stream, Novu                                                      |
 
 Stream work: `lib/stream/collaborator-access.ts` (`grantCollaboratorAccess`, `driveCollaboratorRevocation`) and the collaborator helpers in `lib/stream/access-revocation.ts` (`persistCollaboratorRevocationInTx`, `revokeCollaboratorAccess`, `fenceCollaboratorGrant`). Routes: `app/api/collaborations/**` over `lib/api/collaborations/{http,plan-route,member-handlers}.ts`. Bodies and params: `schemas/collaborators.ts`.
 
@@ -40,6 +41,7 @@ Stream work: `lib/stream/collaborator-access.ts` (`grantCollaboratorAccess`, `dr
 12. **Names of roles come from `ROLE_INFO`.** Do not add another label map, and do not print an enum value on a screen or in an email.
 13. **Report once, with one tag.** `reportSentryError(error, { subsystem: "collaborators", op })`; inside a loop collect failures and report after it.
 14. **Parse every body and param with Zod** from `schemas/collaborators.ts`. A share is `sharePercent`, a whole number from 1 to 90; convert with `percentToBps`.
+15. **Stage notices in the transaction of the change** with `stageCollaboratorNotifications(tx, event, row)` (`notifications.ts`) and flush after the commit. Lifecycle notices are required (`COLLABORATION_CHANGED`); only `EXPIRING_SOON` is optional. A presenter joining or leaving the team also tells paid seat holders (`COHOST_CHANGED`); do not add a second sender for it. No notice may claim an access, earnings or refund fact.
 
 ## Banned patterns
 

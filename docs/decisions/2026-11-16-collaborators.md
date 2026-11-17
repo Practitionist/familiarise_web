@@ -55,9 +55,18 @@ The vocabulary used below: a **presenter** is the one co-presenter a plan may ca
 
 12. **Shares are whole percents from 1 to 90, and a team shares at most 90% between them.** Zod (`sharePercentSchema` in `schemas/collaborators.ts`) and `assertTerms` hold the first rule; the caps trigger holds the second.
 
-13. **Invitations are rate limited, cool down and lapse.** An inviting user may send ten invitations an hour (`collaboratorInviteLimiter`). After a `DECLINED` or `WITHDRAWN` row, the same plan cannot invite that expert for seven days (`REINVITE_COOLDOWN_DAYS`); an `EXPIRED` or `REMOVED` row carries no cooldown. An invitation lapses fourteen days after it was sent or its terms last changed and is recorded as `EXPIRED` (`expireStaleCollaboratorInvites` in `lib/collaborators/cleanup.ts`).
+13. **Invitations are rate limited, cool down and lapse.** An inviting user may send ten invitations an hour (`collaboratorInviteLimiter`). After a `DECLINED` or `WITHDRAWN` row, the same plan cannot invite that expert for seven days (`REINVITE_COOLDOWN_DAYS`); an `EXPIRED` or `REMOVED` row carries no cooldown. An invitation lapses fourteen days after it was sent or its terms last changed and is recorded as `EXPIRED` (`expireStaleCollaboratorInvites` in `lib/collaborators/cleanup.ts`). The same daily job reminds the invitee once, three days before the lapse; the reminder is claimed with an `IdempotencyRecord` keyed on the row and its `updatedAt`, so a change of terms earns a fresh one and a second run sends nothing.
 
 14. **A sponsored seat pays the stamped fee rate.** When an organisation pays for a seat, each party still pays the platform fee stamped on the order on their own slice. Case 4 of `__tests__/payments/multi-party-split.test.ts` pins it with the real fee module: on a ₹10,000 seat with a 20% collaborator and a 20% stamped fee, the host nets ₹6,400 and the collaborator ₹1,600.
+
+15. **Each change is told to the other party, and those notices are required.** `stageCollaboratorNotifications` (`lib/collaborators/notifications.ts`) stages the bell and emails in the transaction of the change. The invitee hears of an invitation, a change of its terms and a removal; the host side hears of an accept, a decline and a departure; both hear of an expiry. Every one of them carries the required kind `COLLABORATION_CHANGED` (`lib/notifications/required-notices.ts`) and is sent whatever the recipient's switches say. The reminder before a lapse is the one optional notice. The host side is the plan's owning expert, or on a plan with none the organisation's active members who hold `catalog.manage` (`hostSideUserIds`); whoever made the change is left off it.
+    - Options not chosen: making every notice optional (a collaborator could miss their own removal); telling whoever sent the invitation in place of the plan's host side.
+
+16. **Learners are told when a plan's named co-presenter changes.** When a presenter is accepted, or one who was on the team leaves or is removed, every user holding a paid seat on one of the plan's live events gets a required notice of kind `COHOST_CHANGED` (`stageCohostChange`). It states the fact and nothing else. Crew changes are not announced.
+    - Option not chosen: offering a refund with the notice. That is deferred work, below.
+
+17. **Operators get one digest line and one read-only list.** The ops digest counts the `COLLAB_REVOKE` rows still owed and gives the age of the oldest (`revocationSection` in `lib/observability/ops-digest.ts`). Staff with `payouts.read` have a read-only Collaborations page in the back office (`readCollaborations` in `lib/backoffice/collaborations-read.ts`): plan, expert, role, share, status, the period and who ended it. Every report from the subsystem carries the one Sentry tag `collaborators`.
+    - Option not chosen: staff actions on a collaboration. Staff act on the people and the money through the screens that already exist.
 
 ## Defaults the build chose
 
@@ -72,6 +81,10 @@ The owner was not asked about these; each is small and can change without a rede
 - `Collaborator.respondedAt` stays as a column the database maintains. Web code neither reads nor writes it; the mobile backend reads `respondedAt`.
 - The participant role value `COLLABORATOR` stays in the enum, and rows that carry it stay as inert history.
 - `endedByUserId` records who ended a collaboration.
+- On an accept, the collaborator is emailed their own copy of the terms beside the host side's notice.
+- A manager who ends their own row is told to the host side as having left or declined, never as removed.
+- When an account loses its standing, the host side hears that a collaborator left, without a name.
+- Going live stays with the host; a presenter can record and end a session.
 
 ## Limits that remain
 
@@ -80,6 +93,11 @@ The owner was not asked about these; each is small and can change without a rede
 - A capture recovered by staff that carries no capture time is split as of the payment's creation.
 - The in-call meeting extension changes a session's end outside any transaction and does not take the plan lock.
 - Freedom from deadlock between schedule writers and the accept rests on the lock order (calendar hold, then the plan row, then the collaborator row); it is argued, and no test with two real sessions exercises it.
+- Lifecycle emails, including one per seat holder for the learners' notice, are rendered inside the transaction that stages them, so a plan with many seat holders lengthens the accept or the removal of its presenter.
+- Notices staged by a ban or an erasure are delivered by the notification outbox on its schedule, not attempted at once.
+- The accept email shows the share on a fixed example seat of ₹1,000, not on the plan's price. The screens' rupee example is each party's slice of the listed price before the platform fee, with a sentence that the fee then comes off each share.
+- On the screens: a plan with no collaborator does not appear on the Collaborations page, so its first invitation starts from the plan editor; the hosted cards always show the manage controls, so an operator of an organisation that is not active learns from the refusal; the host can find themself in the expert search and the server refuses the invitation; there is no sidebar badge for pending invitations and no list of ended collaborations.
+- Browser code imports `schemas/collaborators`, `lib/collaborators/roles.ts`, `lib/collaborators/rules.ts` and the money formatting helper; only a production build proves none of them pulls server code into the bundle.
 
 ## Open questions
 
@@ -101,6 +119,7 @@ For counsel:
 1. The collaborator agreement: removal without cause, payment for delivered sessions, notice, and whether the platform decides disputes.
 2. What a learner is owed when a named co-instructor is removed mid-series.
 3. How long the platform may hold a payee's earnings before their payout account is verified.
+4. The wording of the learners' notice when a named co-presenter changes, before launch.
 
 ## Deferred work
 
