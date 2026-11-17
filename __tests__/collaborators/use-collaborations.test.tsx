@@ -275,6 +275,23 @@ it("a team that fails to load is an error with the server's sentence, never an e
   });
 });
 
+it("a refusal whose detail has an unexpected shape keeps the server's sentence and drops the detail", async () => {
+  globalThis.fetch = jest.fn(async () =>
+    answer(409, {
+      error: "This expert recently declined or left this plan.",
+      code: "COOLDOWN",
+      retryAt: "next week",
+    }),
+  ) as unknown as typeof fetch;
+  const { result } = renderHook(() => usePlanTeam(PLAN), { wrapper });
+  await waitFor(() => expect(result.current.isError).toBe(true));
+  expect(result.current.error).toMatchObject({
+    code: "COOLDOWN",
+    message: "This expert recently declined or left this plan.",
+  });
+  expect(result.current.error?.detail.retryAt).toBeUndefined();
+});
+
 it("an answer of the wrong shape is a failed load too", async () => {
   globalThis.fetch = jest.fn(async () =>
     answer(200, { data: [{ id: "x" }] }),

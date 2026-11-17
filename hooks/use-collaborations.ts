@@ -29,10 +29,11 @@ export const collaborationKeys = {
 const refusalBodySchema = z.object({
   error: z.string().min(1),
   code: z.string().optional(),
-  terms: seenTermsSchema.optional(),
-  retryAt: z.string().datetime().optional(),
-  availablePercent: z.number().optional(),
-  retryAfterSeconds: z.number().optional(),
+  // A detail of an unexpected shape is dropped; the server's sentence still shows.
+  terms: seenTermsSchema.optional().catch(undefined),
+  retryAt: z.string().datetime().optional().catch(undefined),
+  availablePercent: z.number().optional().catch(undefined),
+  retryAfterSeconds: z.number().optional().catch(undefined),
 });
 
 type RefusalDetail = Omit<z.infer<typeof refusalBodySchema>, "error" | "code">;
