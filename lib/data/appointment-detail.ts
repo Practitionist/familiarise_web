@@ -400,18 +400,6 @@ export function canAccessAppointment(
   return [...consulteeUserIds, ...consultantUserIds].includes(userId);
 }
 
-/** The plan's own expert of this booking. */
-function isPlanExpert(userId: string, detail: TAppointmentDetail): boolean {
-  const { appointment } = detail;
-  return [
-    appointment.consultation?.consultationPlan?.consultantProfile?.userId,
-    appointment.subscription?.subscriptionPlan?.consultantProfile?.userId,
-    appointment.webinar?.webinarPlan?.consultantProfile?.userId,
-    appointment.class?.classPlan?.consultantProfile?.userId,
-    appointment.trial?.subscriptionPlan?.consultantProfile?.userId,
-  ].includes(userId);
-}
-
 /** An accepted presenter on the webinar or class plan. */
 function isPresenter(userId: string, detail: TAppointmentDetail): boolean {
   const { appointment } = detail;
@@ -423,12 +411,25 @@ function isPresenter(userId: string, detail: TAppointmentDetail): boolean {
   );
 }
 
+/** Who is reading a booking's detail. */
+export type DetailViewer = {
+  userId: string;
+  /** Platform staff: every row, receipts included. */
+  privileged?: boolean;
+  /**
+   * The viewer manages the webinar or class plan as its named expert
+   * (`managesGroupPlanAsNamedExpert`): on an organisation's plan, only while
+   * an active expert of that organisation.
+   */
+  managesGroupPlan: boolean;
+};
+
 /**
  * What a given viewer may see of a booking's seats and money. A webinar's ten
  * attendees each have a Payment on the same appointment, and the read above
- * returns all of them. The plan's own expert and platform staff see every
- * seat and every payment; a presenter sees every seat and no attendee's
- * payment; crew and attendees see only their own rows.
+ * returns all of them. The expert who manages the plan and platform staff see
+ * every seat and every payment; a presenter sees every seat and no attendee's
+ * payment; everyone else sees only their own rows.
  *
  * Only group kinds are scoped. A 1:1 booking has one payment that belongs to
  * the booking whoever made it (a sponsoring organisation's admin, say), and
@@ -436,27 +437,26 @@ function isPresenter(userId: string, detail: TAppointmentDetail): boolean {
  */
 export function scopeAppointmentDetail<T extends TAppointmentDetail>(
   detail: T,
-  viewerUserId: string,
-  privileged = false,
+  viewer: DetailViewer,
 ): T {
   const { webinarId, classId, payment, participants } = detail.appointment;
+  const privileged = viewer.privileged === true;
   const isGroup = !!webinarId || !!classId;
-  const everyPayment =
-    !isGroup || privileged || isPlanExpert(viewerUserId, detail);
-  const everySeat = everyPayment || isPresenter(viewerUserId, detail);
+  const everyPayment = !isGroup || privileged || viewer.managesGroupPlan;
+  const everySeat = everyPayment || isPresenter(viewer.userId, detail);
   const rows = everyPayment
     ? payment
-    : payment.filter((p) => p.userId === viewerUserId);
+    : payment.filter((p) => p.userId === viewer.userId);
   const scopedParticipants = everySeat
     ? participants
-    : participants.filter((p) => p.userId === viewerUserId);
+    : participants.filter((p) => p.userId === viewer.userId);
   return {
     ...detail,
     appointment: {
       ...detail.appointment,
       participants: scopedParticipants,
       payment: rows.map((p) =>
-        privileged || p.userId === viewerUserId ? p : withoutReceipt(p),
+        privileged || p.userId === viewer.userId ? p : withoutReceipt(p),
       ),
     },
   };
