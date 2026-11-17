@@ -31,7 +31,7 @@ import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { userRoleLabel } from "@/lib/labels/personal-dashboard";
 import { reportReasonLabel } from "@/lib/labels/report-reasons";
 import { formatReportReference } from "@/lib/moderation/report-reference";
-import { humanizeEnum, type Tone } from "@/lib/ui/tone";
+import { humanizeEnum } from "@/lib/ui/tone";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Flag,
@@ -52,58 +52,51 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
-import type {
-  ModerationCapabilities,
-  ModerationLatestAction,
-  ModerationReport,
-  ModerationReportDetail,
-  ModerationReview,
-  ModerationSideEffects,
-  ModerationStats,
-} from "@/types/moderation";
-import type { LinkedReportCase } from "@/schemas/moderation";
+import { z } from "zod";
+import {
+  moderationReportDetailSchema,
+  moderationReportsPageSchema,
+  moderationReviewsPageSchema,
+  moderationSideEffectsSchema,
+  moderationStatsBodySchema,
+  type ModerationLatestAction,
+  type ModerationReport as ModerationReportItem,
+  type ModerationReportDetail as ModerationReportDetailWithContext,
+  type ModerationSideEffects,
+} from "@/lib/backoffice/moderation-schemas";
+import { readListBody } from "@/lib/backoffice/money-list-schemas";
+import { moderationReportStatus } from "@/lib/labels/backoffice-labels";
+import { formatOperatorInstant } from "@/lib/time/operator-zone";
+import { PersonCell } from "@/components/dashboard/backoffice/PersonCell";
+import { TablePagination } from "@/components/dashboard/TablePagination";
+import { usePageWithinTotal } from "@/components/dashboard/shared/paged-list-filters";
 import {
   OpenReportCaseDialog,
   ReportCaseLink,
 } from "@/components/dashboard/shared/ReportSupportCase";
+import {
+  moderationActionBody,
+  reviewRemovalBody,
+  unbanBody,
+} from "@/lib/backoffice/people-door-bodies";
 
-interface ReportContextSignals {
-  hasRefund: boolean;
-  hasOpenTicket: boolean;
-  hasDispute: boolean;
+type ModerationReport = ModerationReportItem;
+
+/** A door's answer: the side effects it reports, or the route's own refusal copy. */
+const doorResultSchema = z.object({
+  sideEffects: moderationSideEffectsSchema.optional(),
+});
+async function readDoorResult(res: Response, failure: string) {
+  const json: unknown = await res.json().catch(() => null);
+  if (!res.ok) {
+    const refusal = z.object({ error: z.string() }).safeParse(json);
+    throw new Error(refusal.success ? refusal.data.error : failure);
+  }
+  const parsed = doorResultSchema.safeParse(json);
+  return parsed.success ? parsed.data : {};
 }
 
-interface ReportBookingContext {
-  appointmentId: string;
-  appointmentStatus: string;
-  refundCount: number;
-  latestRefundStatus: string | null;
-  hasDispute: boolean;
-  openSupportCount: number;
-  signals: string[];
-}
-
-type ModerationReportItem = ModerationReport & {
-  contextSignals?: ReportContextSignals | null;
-  /** The support case staff opened from this report, if any. */
-  supportCase?: LinkedReportCase | null;
-};
-
-type ModerationReportDetailWithContext = ModerationReportDetail & {
-  supportCase?: LinkedReportCase | null;
-  bookingContext?: ReportBookingContext | null;
-  /** Excluding the reported review would take the expert's score below the publication gate. */
-  exclusionDropsBelowGate?: boolean;
-};
-
-// #1527 — one tone map for report statuses (was a local colour switch).
-const REPORT_STATUS_TONE: Record<string, Tone> = {
-  PENDING: "warning",
-  UNDER_REVIEW: "caution",
-  ESCALATED: "critical",
-  ACTION_TAKEN: "success",
-  DISMISSED: "neutral",
-};
+const PAGE_SIZE = 20;
 
 const getTypeIcon = (type: string) => {
   switch (type.toLowerCase()) {
@@ -119,15 +112,7 @@ const getTypeIcon = (type: string) => {
   }
 };
 
-const formatDate = (dateString: string) => {
-  const date = new Date(dateString);
-  return date.toLocaleDateString("en-IN", {
-    day: "numeric",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-};
+const formatDate = (dateString: string) => formatOperatorInstant(dateString);
 
 /**
  * #1300 — every `ModerationActionType` value, in plain words. The queue used
@@ -148,6 +133,77 @@ const ACTION_TYPE_LABELS: Record<string, string> = {
   FEEDBACK_EXCLUDED_FROM_AGGREGATE: "Feedback excluded from rating",
 };
 
+type ConfirmKey =
+  | "DISMISS"
+  | "WARN"
+  | "REMOVE_CONTENT"
+  | "EXCLUDE_REVIEW_AGGREGATE"
+  | "SUSPEND"
+  | "BAN"
+  | "UNBAN";
+
+const CONFIRM_COPY: Record<
+  ConfirmKey,
+  {
+    title: string;
+    description: string;
+    confirmLabel: string;
+    tone: "default" | "destructive";
+  }
+> = {
+  DISMISS: {
+    title: "Dismiss this report?",
+    description: "The report closes with no action against the account.",
+    confirmLabel: "Dismiss",
+    tone: "default",
+  },
+  WARN: {
+    title: "Warn {name}?",
+    description: "The account gets a warning notice; nothing else changes.",
+    confirmLabel: "Send warning",
+    tone: "default",
+  },
+  REMOVE_CONTENT: {
+    title: "Remove the reported content?",
+    description: "The message or review is taken down and the author is told.",
+    confirmLabel: "Remove content",
+    tone: "destructive",
+  },
+  EXCLUDE_REVIEW_AGGREGATE: {
+    title: "Exclude this review from the rating?",
+    description:
+      "The review stays visible but no longer counts in the expert's score.",
+    confirmLabel: "Exclude",
+    tone: "default",
+  },
+  SUSPEND: {
+    title: "Suspend {name} for {days} days?",
+    description:
+      "The account loses access until the suspension ends, and its upcoming appointments are cancelled.",
+    confirmLabel: "Suspend account",
+    tone: "destructive",
+  },
+  BAN: {
+    title: "Ban {name}?",
+    description:
+      "Permanent until an admin lifts it: the account loses access and chat, and its upcoming appointments are cancelled.",
+    confirmLabel: "Ban account",
+    tone: "destructive",
+  },
+  UNBAN: {
+    title: "Lift the ban on {name}?",
+    description:
+      "The account can sign in again and its chat access is restored.",
+    confirmLabel: "Lift ban",
+    tone: "default",
+  },
+};
+
+const confirmTitle = (key: ConfirmKey, name: string, days: number) =>
+  CONFIRM_COPY[key].title
+    .replace("{name}", name)
+    .replace("{days}", String(days));
+
 const humaniseActionType = (actionType: string): string =>
   ACTION_TYPE_LABELS[actionType] ?? "Moderation action";
 
@@ -166,8 +222,6 @@ function reportTitle(report: ModerationReport): {
   switch (report.type) {
     case "PROFILE":
       return { primary: `Profile · ${report.targetUser.name ?? "Unknown"}` };
-    case "USER":
-      return { primary: `Account · ${report.targetUser.name ?? "Unknown"}` };
     case "REVIEW": {
       const consultantName =
         report.review?.consultantProfile.user.name ?? "Unknown expert";
@@ -378,7 +432,7 @@ function ActionAuditTrail({
   status,
   onRetry,
 }: Readonly<{
-  actions: ModerationReportDetail["actions"];
+  actions: ModerationReportDetailWithContext["actions"];
   status: "pending" | "error" | "success";
   onRetry: () => void;
 }>) {
@@ -430,7 +484,7 @@ function ReportSupportCaseSection({
   canOpen,
   onOpen,
 }: Readonly<{
-  linkedCase: LinkedReportCase | null;
+  linkedCase: ModerationReport["supportCase"];
   basePath: string;
   canOpen: boolean;
   onOpen: () => void;
@@ -474,6 +528,8 @@ export function ModerationPage() {
   // moment it is actioned, so without a way to look at resolved reports the
   // persisted failure was unreachable from this page.
   const [statusFilter, setStatusFilter] = useState("PENDING");
+  const [reportsPage, setReportsPage] = useState(1);
+  const [reviewsPage, setReviewsPage] = useState(1);
 
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -486,15 +542,14 @@ export function ModerationPage() {
     refetch: refetchStats,
   } = useQuery({
     queryKey: ["staff-moderation-stats"],
-    queryFn: async (): Promise<ModerationStats> => {
+    queryFn: async () => {
       const response = await fetch("/api/staff/moderation/stats");
-      if (!response.ok) throw new Error("Failed to fetch stats");
-      // The route wraps the counters in a `stats` envelope, alongside
-      // reportsByType / actionsByType / period. Returning the envelope and
-      // annotating it `ModerationStats` typechecked fine and left every card
-      // reading `undefined`, so all four rendered their `?? 0` fallback
-      // permanently — a moderation queue that always looked empty.
-      const body = (await response.json()) as { stats: ModerationStats };
+      // The counters sit inside the route's `stats` envelope; the schema is the route's own.
+      const body = await readListBody(
+        response,
+        moderationStatsBodySchema,
+        "Failed to fetch stats",
+      );
       return body.stats;
     },
   });
@@ -502,21 +557,31 @@ export function ModerationPage() {
   // Fetch moderation reports
   const {
     data: reportsData,
+    isPlaceholderData: reportsPlaceholder,
     isPending: loadingReports,
     isFetching: fetchingReports,
     isError: reportsError,
     refetch: refetchReports,
   } = useQuery({
-    queryKey: ["staff-moderation-reports", statusFilter, searchQuery],
-    queryFn: async (): Promise<{
-      reports: ModerationReportItem[];
-      capabilities?: ModerationCapabilities;
-    }> => {
-      const params = new URLSearchParams({ status: statusFilter });
+    queryKey: [
+      "staff-moderation-reports",
+      statusFilter,
+      searchQuery,
+      reportsPage,
+    ],
+    queryFn: async () => {
+      const params = new URLSearchParams({
+        status: statusFilter,
+        page: String(reportsPage),
+        limit: String(PAGE_SIZE),
+      });
       if (searchQuery) params.set("search", searchQuery);
       const response = await fetch(`/api/staff/moderation/reports?${params}`);
-      if (!response.ok) throw new Error("Failed to fetch reports");
-      return response.json();
+      return readListBody(
+        response,
+        moderationReportsPageSchema,
+        "Failed to fetch reports",
+      );
     },
     placeholderData: keepPreviousData,
   });
@@ -528,20 +593,41 @@ export function ModerationPage() {
   // Fetch reviews
   const {
     data: reviewsData,
+    isPlaceholderData: reviewsPlaceholder,
     isPending: loadingReviews,
     isFetching: fetchingReviews,
     isError: reviewsError,
     refetch: refetchReviews,
   } = useQuery({
-    queryKey: ["staff-moderation-reviews", 10],
-    queryFn: async (): Promise<{ reviews: ModerationReview[] }> => {
-      const response = await fetch("/api/staff/moderation/reviews?limit=10");
-      if (!response.ok) throw new Error("Failed to fetch reviews");
-      return response.json();
+    queryKey: ["staff-moderation-reviews", reviewsPage],
+    queryFn: async () => {
+      const params = new URLSearchParams({
+        page: String(reviewsPage),
+        limit: String(PAGE_SIZE),
+      });
+      const response = await fetch(`/api/staff/moderation/reviews?${params}`);
+      return readListBody(
+        response,
+        moderationReviewsPageSchema,
+        "Failed to fetch reviews",
+      );
     },
     placeholderData: keepPreviousData,
   });
   const reviews = reviewsData?.reviews ?? [];
+  // Only a page's own answer may clamp it, not the previous page's placeholder.
+  usePageWithinTotal(
+    reportsPage,
+    setReportsPage,
+    reportsPlaceholder ? undefined : reportsData?.pagination.total,
+    PAGE_SIZE,
+  );
+  usePageWithinTotal(
+    reviewsPage,
+    setReviewsPage,
+    reviewsPlaceholder ? undefined : reviewsData?.pagination.total,
+    PAGE_SIZE,
+  );
 
   const {
     data: selectedReportDetail,
@@ -553,10 +639,11 @@ export function ModerationPage() {
       const response = await fetch(
         `/api/staff/moderation/reports/${selectedReport?.id}`,
       );
-      if (!response.ok) throw new Error("Failed to fetch report detail");
-      const body = (await response.json()) as {
-        report: ModerationReportDetailWithContext;
-      };
+      const body = await readListBody(
+        response,
+        moderationReportDetailSchema,
+        "Failed to fetch report detail",
+      );
       return body.report;
     },
     enabled: !!selectedReport,
@@ -586,37 +673,30 @@ export function ModerationPage() {
     mutationFn: async ({
       reportId,
       action,
-      notes = moderationNote,
+      reason,
     }: {
       reportId: string;
       action: ReportActionKey;
-      /** The confirm dialog's reason, for Suspend and Ban. */
-      notes?: string;
+      /** The confirm dialog's reason: the audit row's, and the action's note with the moderator's. */
+      reason: string;
     }) => {
       const response = await fetch(
         `/api/staff/moderation/reports/${reportId}/action`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            actionType: REPORT_ACTION_TYPE[action],
-            notes,
-            ...(action === "SUSPEND" ? { suspensionDays } : {}),
-          }),
+          body: JSON.stringify(
+            moderationActionBody({
+              actionType: REPORT_ACTION_TYPE[action],
+              reason,
+              note: moderationNote,
+              suspensionDays,
+            }),
+          ),
         },
       );
-
-      if (!response.ok) {
-        // surface the server's actionable message (400 validation, 409 resolved)
-        const body = await response.json().catch(() => null);
-        throw new Error(body?.error ?? "Failed to process action");
-      }
-      // The route has always returned `stream` and `errors`; this type omitted
-      // them, so the toast below congratulated the moderator on a ban that
-      // never reached chat (#1270).
-      return response.json() as Promise<{
-        sideEffects?: ModerationSideEffects;
-      }>;
+      // `stream` and `errors` say whether enforcement reached chat.
+      return readDoorResult(response, "Failed to process action");
     },
     onSuccess: (data, { action }) => {
       const sideEffects = data?.sideEffects;
@@ -661,16 +741,12 @@ export function ModerationPage() {
     },
   });
 
-  // #1527 Q10 — Suspend and Ban close an account; they go through a confirm
-  // with a written reason instead of firing on one click.
-  const [confirmAction, setConfirmAction] = useState<ReportActionKey | null>(
-    null,
-  );
-  const ACCOUNT_ACTIONS = new Set<ReportActionKey>(["SUSPEND", "BAN"]);
-  const handleReportAction = (reportId: string, action: ReportActionKey) => {
-    if (ACCOUNT_ACTIONS.has(action)) setConfirmAction(action);
-    else reportActionMutation.mutate({ reportId, action });
-  };
+  // Every decision is an audited door: it goes through a confirm with a written reason.
+  const [confirmAction, setConfirmAction] = useState<
+    ReportActionKey | "UNBAN" | null
+  >(null);
+  const handleReportAction = (action: ReportActionKey) =>
+    setConfirmAction(action);
 
   /**
    * #1270 — lifting a ban. USER_BANNED deactivates the target on Stream, which
@@ -678,22 +754,22 @@ export function ModerationPage() {
    * could sign in but never chat again.
    */
   const unbanMutation = useMutation({
-    mutationFn: async (reportId: string) => {
+    mutationFn: async ({
+      reportId,
+      reason,
+    }: {
+      reportId: string;
+      reason: string;
+    }) => {
       const response = await fetch(
         `/api/staff/moderation/reports/${reportId}/unban`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ notes: moderationNote }),
+          body: JSON.stringify(unbanBody({ reason, note: moderationNote })),
         },
       );
-      if (!response.ok) {
-        const body = await response.json().catch(() => null);
-        throw new Error(body?.error ?? "Failed to lift the ban");
-      }
-      return response.json() as Promise<{
-        sideEffects?: ModerationSideEffects;
-      }>;
+      return readDoorResult(response, "Failed to lift the ban");
     },
     onSuccess: (data) => {
       if (enforcementIncomplete(data?.sideEffects)) {
@@ -791,15 +867,22 @@ export function ModerationPage() {
 
   // Handle review deletion
   const deleteReviewMutation = useMutation({
-    mutationFn: async (reviewId: string) => {
+    mutationFn: async ({
+      reviewId,
+      reason,
+    }: {
+      reviewId: string;
+      reason: string;
+    }) => {
       const response = await fetch(
         `/api/staff/moderation/reviews/${reviewId}`,
         {
           method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(reviewRemovalBody(reason)),
         },
       );
-
-      if (!response.ok) throw new Error("Failed to delete review");
+      await readDoorResult(response, "Failed to delete review");
     },
     onSuccess: () => {
       toast({
@@ -812,10 +895,11 @@ export function ModerationPage() {
       });
       queryClient.invalidateQueries({ queryKey: ["staff-moderation-stats"] });
     },
-    onError: () => {
+    onError: (error) => {
       toast({
         title: "Error",
-        description: "Failed to delete review",
+        description:
+          error instanceof Error ? error.message : "Failed to delete review",
         variant: "destructive",
       });
     },
@@ -912,7 +996,7 @@ export function ModerationPage() {
             <Star className="h-4 w-4" />
             Reviews
             <Badge variant="secondary" className="ml-1">
-              {reviews.length}
+              {reviewsData?.pagination.total ?? 0}
             </Badge>
           </TabsTrigger>
         </TabsList>
@@ -926,7 +1010,10 @@ export function ModerationPage() {
                   label: "Search reports",
                   placeholder: "Search reports...",
                   value: searchQuery,
-                  onChange: setSearchQuery,
+                  onChange: (value) => {
+                    setSearchQuery(value);
+                    setReportsPage(1);
+                  },
                 }}
                 selects={[
                   {
@@ -934,13 +1021,17 @@ export function ModerationPage() {
                     label: "Status",
                     value: statusFilter,
                     options: [...REPORT_STATUS_FILTERS],
-                    onChange: setStatusFilter,
+                    onChange: (value) => {
+                      setStatusFilter(value);
+                      setReportsPage(1);
+                    },
                   },
                 ]}
                 canClear={Boolean(searchQuery) || statusFilter !== "PENDING"}
                 onClear={() => {
                   setSearchQuery("");
                   setStatusFilter("PENDING");
+                  setReportsPage(1);
                 }}
               />
             </CardContent>
@@ -968,7 +1059,7 @@ export function ModerationPage() {
             </div>
           ) : reports.length === 0 ? (
             <p className="text-center text-muted-foreground py-8">
-              No pending reports
+              No reports in this view
             </p>
           ) : (
             <div className="space-y-3">
@@ -993,10 +1084,7 @@ export function ModerationPage() {
                                 {humanizeEnum(report.type)}
                               </Badge>
                               <StatusBadge
-                                label={humanizeEnum(report.status)}
-                                tone={
-                                  REPORT_STATUS_TONE[report.status] ?? "neutral"
-                                }
+                                {...moderationReportStatus(report.status)}
                               />
                               {report.contextSignals?.hasRefund && (
                                 <Badge variant="secondary">Refund</Badge>
@@ -1078,12 +1166,6 @@ export function ModerationPage() {
                         </div>
                         <span className="text-xs text-muted-foreground/70">
                           {formatDate(report.createdAt)}
-                          {report.resolutionDueAt &&
-                            OPEN_REPORT_STATUSES.has(report.status) && (
-                              <span className="block text-xs text-muted-foreground">
-                                Review by {formatDate(report.resolutionDueAt)}
-                              </span>
-                            )}
                         </span>
                       </div>
                     </CardContent>
@@ -1091,6 +1173,15 @@ export function ModerationPage() {
                 );
               })}
             </div>
+          )}
+          {/* Kept mounted on an empty page, so the queue can always page back. */}
+          {reportsData && reportsData.pagination.total > 0 && (
+            <TablePagination
+              page={reportsData.pagination.page}
+              pageSize={reportsData.pagination.limit}
+              total={reportsData.pagination.total}
+              onPageChange={setReportsPage}
+            />
           )}
         </TabsContent>
 
@@ -1123,17 +1214,16 @@ export function ModerationPage() {
           ) : (
             <div className="space-y-3">
               {reviews.map((review) => {
-                const reviewerName = review.isAnonymous
-                  ? "Anonymous"
-                  : review.reviewer.name || "Anonymous";
+                // Staff see who wrote an anonymous review; the public does not.
+                const reviewerName = review.reviewer.name || "Removed user";
                 const consultantName = review.consultant.name || "Expert";
                 const latestModerationAction = review.moderationActions[0];
 
                 return (
                   <Card key={review.id}>
                     <CardContent className="p-4">
-                      <div className="flex items-start justify-between">
-                        <div className="flex items-start gap-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex min-w-0 items-start gap-3">
                           <Avatar>
                             <AvatarImage src={review.reviewer.image || ""} />
                             <AvatarFallback>
@@ -1143,13 +1233,23 @@ export function ModerationPage() {
                                 .join("")}
                             </AvatarFallback>
                           </Avatar>
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <p className="font-medium">{reviewerName}</p>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex min-w-0 flex-wrap items-center gap-2">
+                              <PersonCell
+                                person={{
+                                  id: review.reviewer.profileId,
+                                  name: review.reviewer.name,
+                                }}
+                                anonymousLabel={
+                                  review.isAnonymous
+                                    ? "Anonymous to the public"
+                                    : undefined
+                                }
+                              />
                               <span className="text-muted-foreground/70">
                                 →
                               </span>
-                              <p className="text-muted-foreground">
+                              <p className="min-w-0 break-words text-muted-foreground">
                                 {consultantName}
                               </p>
                             </div>
@@ -1166,7 +1266,7 @@ export function ModerationPage() {
                               ))}
                             </div>
                             {review.reviewDescription && (
-                              <p className="text-sm text-muted-foreground mt-2">
+                              <p className="text-sm text-muted-foreground mt-2 break-words">
                                 {review.reviewDescription}
                               </p>
                             )}
@@ -1195,7 +1295,7 @@ export function ModerationPage() {
                             )}
                           </div>
                         </div>
-                        <span className="text-xs text-muted-foreground/70">
+                        <span className="shrink-0 text-right text-xs text-muted-foreground/70">
                           {formatDate(review.createdAt)}
                         </span>
                       </div>
@@ -1215,8 +1315,12 @@ export function ModerationPage() {
                           description={`${reviewerName}'s review of ${consultantName} is taken off the public profile.`}
                           confirmLabel="Remove review"
                           tone="destructive"
-                          onConfirm={async () => {
-                            await deleteReviewMutation.mutateAsync(review.id);
+                          requireReason={{ label: "Reason" }}
+                          onConfirm={async ({ reason = "" }) => {
+                            await deleteReviewMutation.mutateAsync({
+                              reviewId: review.id,
+                              reason,
+                            });
                           }}
                         />
                       </div>
@@ -1225,6 +1329,15 @@ export function ModerationPage() {
                 );
               })}
             </div>
+          )}
+          {/* Kept mounted on an empty page, so the queue can always page back. */}
+          {reviewsData && reviewsData.pagination.total > 0 && (
+            <TablePagination
+              page={reviewsData.pagination.page}
+              pageSize={reviewsData.pagination.limit}
+              total={reviewsData.pagination.total}
+              onPageChange={setReviewsPage}
+            />
           )}
         </TabsContent>
       </Tabs>
@@ -1489,9 +1602,7 @@ export function ModerationPage() {
                       key={action.key}
                       variant={action.variant}
                       className={action.className}
-                      onClick={() =>
-                        handleReportAction(selectedReport.id, action.key)
-                      }
+                      onClick={() => handleReportAction(action.key)}
                       disabled={busy || action.disabled}
                     >
                       {/* #1270 review — the CLICKED button only. `isPending`
@@ -1511,7 +1622,7 @@ export function ModerationPage() {
                 {canModerateUsers && selectedReport.targetUser.banned && (
                   <Button
                     variant="outline"
-                    onClick={() => unbanMutation.mutate(selectedReport.id)}
+                    onClick={() => setConfirmAction("UNBAN")}
                     disabled={busy}
                   >
                     {unbanMutation.isPending ? (
@@ -1541,32 +1652,28 @@ export function ModerationPage() {
         <ConfirmDialog
           open
           onOpenChange={(open) => !open && setConfirmAction(null)}
-          title={
-            confirmAction === "BAN"
-              ? `Ban ${selectedReport.targetUser.name ?? "this account"}?`
-              : `Suspend ${selectedReport.targetUser.name ?? "this account"} for ${suspensionDays} days?`
-          }
-          description={
-            confirmAction === "BAN"
-              ? "Permanent until an admin lifts it: the account loses access and chat, and its upcoming appointments are cancelled."
-              : "The account loses access until the suspension ends, and its upcoming appointments are cancelled."
-          }
-          confirmLabel={
-            confirmAction === "BAN" ? "Ban account" : "Suspend account"
-          }
-          tone="destructive"
+          title={confirmTitle(
+            confirmAction,
+            selectedReport.targetUser.name ?? "this account",
+            suspensionDays,
+          )}
+          description={CONFIRM_COPY[confirmAction].description}
+          confirmLabel={CONFIRM_COPY[confirmAction].confirmLabel}
+          tone={CONFIRM_COPY[confirmAction].tone}
           requireReason={{ label: "Reason (kept on the report)" }}
-          onConfirm={async ({ reason }) => {
-            // #1527 review — the moderator's free-text note (moderationNote)
-            // was dropped here; combine it with the typed confirm reason.
-            const notes = [reason, moderationNote.trim()]
-              .filter(Boolean)
-              .join("\n\n");
-            await reportActionMutation.mutateAsync({
-              reportId: selectedReport.id,
-              action: confirmAction,
-              notes,
-            });
+          onConfirm={async ({ reason = "" }) => {
+            if (confirmAction === "UNBAN") {
+              await unbanMutation.mutateAsync({
+                reportId: selectedReport.id,
+                reason,
+              });
+            } else {
+              await reportActionMutation.mutateAsync({
+                reportId: selectedReport.id,
+                action: confirmAction,
+                reason,
+              });
+            }
             setConfirmAction(null);
           }}
         />

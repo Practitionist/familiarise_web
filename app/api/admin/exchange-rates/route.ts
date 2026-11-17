@@ -18,23 +18,16 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
-import { requireAdminAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import {
   invalidateExchangeRateCache,
   getExchangeRateCacheInfo,
   getExchangeRates,
 } from "@/lib/currency";
 
-// Local wrapper for the existing "in auth" call sites
-async function requireAdmin() {
-  const result = await requireAdminAuth();
-  if (result.error) return { error: result.error };
-  return { userId: result.session.user.id };
-}
-
 export async function GET() {
-  const auth = await requireAdmin();
-  if ("error" in auth) return auth.error;
+  const auth = await requireBackofficeSurface("systemJobs.manage");
+  if (auth.error) return auth.error;
 
   const info = getExchangeRateCacheInfo();
   return NextResponse.json({
@@ -46,8 +39,8 @@ export async function GET() {
 }
 
 export async function POST() {
-  const auth = await requireAdmin();
-  if ("error" in auth) return auth.error;
+  const auth = await requireBackofficeSurface("systemJobs.manage");
+  if (auth.error) return auth.error;
 
   try {
     invalidateExchangeRateCache();
@@ -63,7 +56,10 @@ export async function POST() {
       refreshedAt: new Date().toISOString(),
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "admin" } },
+    );
     console.error("Error refreshing exchange rate cache:", error);
     return NextResponse.json(
       { success: false, message: "Failed to refresh exchange rate cache" },

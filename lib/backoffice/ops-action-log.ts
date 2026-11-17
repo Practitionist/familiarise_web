@@ -9,7 +9,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -24,6 +24,7 @@ import {
 import { reportSentryError } from "@/lib/observability/report";
 import { scheduleAfter } from "@/lib/api/after-safe";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { UserRoleEnum } from "@/schemas/user";
 import { OpsRefusal, refusalCode, refusalResponse } from "./ops-refusal";
 import { opsReasonSchema } from "./ops-reason";
@@ -141,7 +142,15 @@ interface OpsActionOptions<B> {
   /** IAM and money doors also need a session re-authenticated within 15 minutes. */
   stepUp?: boolean;
   secondApprover?: SecondApprover<B>;
+  /** A tx door whose reads decide its write runs Serializable, retried on a conflict. */
+  serializable?: boolean;
 }
+
+const SERIALIZABLE_TX = {
+  isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+  maxWait: 10_000,
+  timeout: 15_000,
+} as const;
 
 /** A proposal another ADMIN approved, replayed through its own door. */
 export interface ApprovedProposal {
@@ -226,7 +235,7 @@ export function withOpsAction<S extends z.ZodRawShape>(
     };
     let result: OpsDoorResult;
     if (door.mode === "tx") {
-      result = await prisma.$transaction(async (tx) => {
+      const work = async (tx: Tx) => {
         const r = await door.run(tx, ctx);
         await recordOpsAction(tx, row(r));
         if (
@@ -239,7 +248,12 @@ export function withOpsAction<S extends z.ZodRawShape>(
           );
         }
         return r;
-      });
+      };
+      result = options.serializable
+        ? await withSerializableRetry(() =>
+            prisma.$transaction(work, SERIALIZABLE_TX),
+          )
+        : await prisma.$transaction(work);
     } else {
       result = await runGatewayDoor(door, ctx, row);
       // The money already moved; a lost EXECUTED mark pages rather than failing the answer.

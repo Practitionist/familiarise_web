@@ -1016,10 +1016,11 @@ graph TD
 
 **Sub-features:**
 
-- **Profile Verification:** Review consultant profiles for legitimacy. Approve/reject with notes.
-- **Report Management:** Handle user reports (review, profile, message, document issues).
-- **Review Moderation:** Check reviews for spam/abuse. Remove if needed.
-- **Stats:** See moderation trends and action history.
+- **Profile Verification** (its own page, `users.verify`): review consultant profiles and approve, reject or ask for more, with a reason for the audit log that the applicant does not see.
+- **Report Management:** handle user reports. Every decision, including Dismiss, opens a confirm that asks for a reason, and each writes an audit row. Suspend, Ban, Lift ban and removing a public review are ADMIN only.
+- **Review Moderation:** check reviews for spam or abuse and remove one with a reason (ADMIN). An anonymous review shows its author to staff, labelled "Anonymous to the public".
+- **Stats:** the four cards; "Resolved Today" counts from 00:00 IST.
+- Reports and reviews page 20 at a time with "1–20 of N".
 
 ### Support Tickets
 
@@ -1058,27 +1059,32 @@ The platform runs 25+ automated jobs. Staff can monitor them and trigger manual 
 - Sessions: total, completed and upcoming bookings, plus cancelled consultation requests (a different population: it counts `Consultation` rows, not the bookings in the total)
 - Revenue: total revenue (succeeded payments, all time), revenue this month (IST) and refunds (succeeded refunds, all time), shown in rupees and stored in paise
 - "This month (IST)" starts at 00:00 IST on the 1st, not at the start of the UTC month; the support-queue periods (today, this week, this month) are also cut in IST
-- IST with the UTC instant in a tooltip is the pass condition only on the screens Train 6a moved: Leads ("Received"), Users ("Joined"), Team ("Last active"), Maintenance (the ETA, the preflight check time, the window history and booking remediation), System jobs (run times, run requests and the schedule windows), job run metrics, the entity trace, and the digital-product download evidence in the refund door. Appointments and the money tabs (Approvals, Incidents, Disputes and the rest) already read in IST through the shared display zone but do not yet print the zone label or the UTC tooltip; they, and the remaining back-office screens, move in later Train 6 PRs
+- IST with the UTC instant in a tooltip is the pass condition on every back-office screen, the support inbox and case workspace included. The same support components on a customer's own Support pages print that customer's profile zone instead
 
 There are no revenue trends, user growth, booking conversion or cancellation charts; the page never had them.
 
 ### Announcements & Newsletters
 
-**Where:** `/dashboard/staff/[id]/announcements`
+**Where:** `/dashboard/admin/announcements` and `/dashboard/<tree>/newsletter`
 
-- Create platform-wide announcements
-- Send newsletters to users
-- Schedule announcements
-- Track engagement
+- Create platform-wide announcements (ADMIN); the list pages 20 at a time
+- Triage the newsletter list (ADMIN or STAFF); every send, the test send included, asks for a reason and writes an audit row (ADMIN)
 
 ### User Management
 
-**Where:** `/dashboard/staff/[id]/users`
+**Where:** `/dashboard/<tree>/users`
 
-- View all users by role
+- View all users by role, 20 a page, newest first
 - Search by name/email
-- View user details
-- Suspend or ban users
+- Open User 360: each section loads on its own, so one that fails shows its own error with a retry
+- Suspend or ban users from User 360 (ADMIN, with a reason)
+
+### Referral credits and Platform fees
+
+**Where:** `/dashboard/<tree>/referral-credits` and `/dashboard/<tree>/platform-fees`
+
+- Referral credits: credits, fee waivers and the program economics (`referrals.read`, writes ADMIN); referrals held for review are ADMIN only (`referrals.manage`)
+- Platform fees: the take-rate schedules, who proposed and who approved each, and the propose and approve doors (`payments.read`, writes ADMIN); the effective-from time is typed in IST
 
 ---
 
@@ -1307,6 +1313,13 @@ Use these checklists to systematically test every feature. Check off each item a
 - [ ] Check that Audit and Support spend name the person and the booking a row points at, and fall back to the kind and id for anything else
 - [ ] On Payouts, page "Awaiting approval", export a page as CSV and check the file is named with today's IST date; check the trend's last bar is today in IST
 - [ ] On Trace, open a booking trace and check that the form shows "Booking id" and the id, the summary lists Booking once and names the customer, and the timeline fits its card
+- [ ] On Moderation, page the reports and the reviews past their first page, and check "1–N of total" matches a count in the database
+- [ ] Dismiss a report with a reason and find its `OpsActionLog` row (`moderation.action.NO_ACTION`) with your name, the reason and the status before and after
+- [ ] As STAFF, check that Suspend, Ban and Lift ban are not offered, and that an anonymous review names its author under "Anonymous to the public"
+- [ ] On Verification, page the expert queue, decide a request with a reason, and check the network panel shows no document `fileUrl` in the list
+- [ ] On Feedback and Announcements, page past the first page; on Leads, check that a failed load says so instead of "No leads in this view"
+- [ ] Open a support case and check that every message time reads IST with UTC on hover; sign in as a seed learner whose profile zone is not IST and check the same case reads in their zone with no IST label
+- [ ] Filter the support inbox by one day and check the cases created between 00:00 and 23:59 IST that day are the ones listed
 
 ## Admin Testing Checklist
 
@@ -1321,6 +1334,9 @@ Use these checklists to systematically test every feature. Check off each item a
 - [ ] View TDS records
 - [ ] On TDS, check that the financial year selected on load is the one open in India, record a filing dated today and check that it is stored as 00:00 IST that day
 - [ ] Check that Approvals pages, badges each proposal's status and names the person and the booking it points at
+- [ ] On Organizations, check that dates read as IST dates (not `9/14/2026`) and that the SSO approvals and the verification queue page past their first page
+- [ ] On Platform fees, propose a schedule with an IST effective-from time and approve it with a second admin; check that Referral credits no longer shows fee schedules
+- [ ] Send a newsletter test with a reason and find its audit row (`newsletter.broadcast`)
 - [ ] Manage platform configuration
 
 ## Cross-Role Scenarios

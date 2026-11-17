@@ -53,9 +53,8 @@ export async function GET(req: NextRequest) {
         relationLoadStrategy: "join",
         where,
         include: {
-          // #946 allowlist — this route is requirePrivilegedAuth, so STAFF read
-          // it. A bare `include:` handed every support agent the consultant's
-          // panNumber and ibanOrAccount.
+          // An allowlist: STAFF hold `payouts.read`, so a bare `include:` would
+          // hand them the consultant's panNumber and ibanOrAccount.
           consultantProfile: {
             select: {
               ...consultantPublicScalars,

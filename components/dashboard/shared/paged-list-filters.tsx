@@ -1,9 +1,12 @@
+"use client";
+
 import {
   FilterBar,
   type FilterBarProps,
   type FilterOption,
 } from "@/components/dashboard/FilterBar";
 import { Card, CardContent } from "@/components/ui/card";
+import { useEffect } from "react";
 
 export const GATEWAY_FILTER_OPTIONS: FilterOption[] = [
   { value: "all", label: "All Gateways" },
@@ -120,4 +123,23 @@ export function keepPreviousPageOnly<T>(
     )
       ? previous
       : undefined;
+}
+
+/**
+ * Moves a pager back to the list's last page when the list shrank under it
+ * (the last row of a page was resolved or deleted), so the page never reads
+ * as empty while rows remain. Pass `total` only from this page's own answer:
+ * undefined while it loads or while a placeholder shows the previous page's.
+ */
+export function usePageWithinTotal(
+  page: number,
+  setPage: (page: number) => void,
+  total: number | undefined,
+  pageSize: number,
+): void {
+  useEffect(() => {
+    if (total === undefined) return;
+    const last = Math.max(1, Math.ceil(total / pageSize));
+    if (page > last) setPage(last);
+  }, [page, setPage, total, pageSize]);
 }

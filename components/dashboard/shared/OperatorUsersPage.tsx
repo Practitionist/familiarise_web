@@ -16,7 +16,11 @@ import {
 } from "@/components/ui/responsive-table";
 import { userRoleLabel } from "@/lib/labels/personal-dashboard";
 import { OperatorTime } from "@/lib/time/operator-time";
-import type { UserListItem, UserListResponse } from "@/types/admin-users";
+import { readListBody } from "@/lib/backoffice/money-list-schemas";
+import {
+  userListPageSchema,
+  type UserListItem,
+} from "@/lib/backoffice/people-list-schemas";
 
 const PAGE_SIZE = 20; // the route's fixed page size
 
@@ -84,13 +88,16 @@ export function OperatorUsersPage() {
 
   const { data, isPending, error, refetch } = useQuery({
     queryKey: ["operator-users", page, search, role],
-    queryFn: async (): Promise<UserListResponse> => {
+    queryFn: async () => {
       const params = new URLSearchParams({ page: String(page) });
       if (search) params.set("search", search);
       if (role) params.set("role", role);
       const response = await fetch(`/api/admin/users?${params}`);
-      if (!response.ok) throw new Error("Failed to fetch users");
-      return response.json();
+      return readListBody(
+        response,
+        userListPageSchema,
+        "Failed to fetch users",
+      );
     },
     // Keep the current page on screen while the next one loads.
     placeholderData: keepPreviousData,

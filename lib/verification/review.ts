@@ -1,21 +1,19 @@
 /**
- * The one writer for a staff / admin verification decision. The staff and
- * admin routes carried two copies of the same PATCH and neither guarded the
- * transition: an APPROVED or REJECTED row could be decided again, flipping
- * `isVerified` at will. This CASes the row from an open state, bounds the
- * NEEDS_INFO loop, requires a reason code on every flagged document,
- * recomputes the completion score, and stages the consultant's bell and
- * email in the same transaction. The vendor attempts are the caller's job,
+ * The one writer for a staff / admin verification decision, run on the
+ * audited door's Serializable transaction. It CASes the row from an open
+ * state, bounds the NEEDS_INFO loop, requires a reason code on every flagged
+ * document, recomputes the completion score, and stages the consultant's bell
+ * and email in the same transaction. The vendor attempts are the caller's job,
  * after commit. See docs/onboarding/04-verification-lifecycle.md.
  */
 
-import {
-  Prisma,
-  type ConsultantVerificationStatus,
-  type VerificationDocumentIssue,
+import type {
+  ConsultantVerificationStatus,
+  ProfileVerificationStatus,
+  VerificationDocumentIssue,
 } from "@prisma/client";
-import prisma, { type Tx } from "@/lib/prisma";
-import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import type { Tx } from "@/lib/prisma";
+import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { recomputeProfileCompletion } from "@/lib/profiles/profile-completion";
 import {
   notifyVerificationStatusChanged,
@@ -56,20 +54,19 @@ export type ReviewRefusalCode =
   | "ISSUE_REQUIRED"
   | "DOCUMENT_NOT_ON_REQUEST";
 
-export type ReviewVerificationOutcome =
-  | {
-      ok: true;
-      consultantProfileId: string;
-      consultantUserId: string | null;
-      profileStatus: ConsultantVerificationStatus;
-      round: number;
-      /** The consultant's bell + email, staged in the transaction; attempt after commit. */
-      staged: {
-        bell: TriggerResult | null;
-        email: StagedOnboardingEmail | null;
-      };
-    }
-  | { ok: false; code: ReviewRefusalCode; message: string };
+export interface ReviewVerificationDecided {
+  consultantProfileId: string;
+  consultantUserId: string | null;
+  /** The request's status before the decision, for the audit row. */
+  previousStatus: ProfileVerificationStatus;
+  profileStatus: ConsultantVerificationStatus;
+  round: number;
+  /** The consultant's bell + email, staged in the transaction; attempt after commit. */
+  staged: {
+    bell: TriggerResult | null;
+    email: StagedOnboardingEmail | null;
+  };
+}
 
 export const REVIEW_REFUSAL_STATUS: Record<ReviewRefusalCode, number> = {
   NOT_FOUND: 404,
@@ -89,14 +86,8 @@ export const PROFILE_STATUS_FOR_DECISION: Record<
   NEEDS_INFO: "PENDING_VERIFICATION",
 };
 
-class ReviewRefused extends Error {
-  constructor(
-    readonly code: ReviewRefusalCode,
-    message: string,
-  ) {
-    super(message);
-  }
-}
+const refuse = (code: ReviewRefusalCode, message: string) =>
+  new OpsRefusal(code, message, REVIEW_REFUSAL_STATUS[code]);
 
 /** Pure: every flagged document must carry a reason code. */
 export function findFeedbackWithoutIssue(
@@ -134,7 +125,7 @@ async function applyDocumentFeedback(
       },
     });
     if (updated.count === 0) {
-      throw new ReviewRefused(
+      throw refuse(
         "DOCUMENT_NOT_ON_REQUEST",
         "A document in the feedback does not belong to this request",
       );
@@ -189,128 +180,90 @@ async function stageDecisionNotices(
   return { bell, email };
 }
 
-export async function reviewVerification(
+/** Decides one request on the caller's transaction; a refusal throws an `OpsRefusal`. */
+export async function reviewVerificationTx(
+  tx: Tx,
   input: ReviewVerificationInput,
-): Promise<ReviewVerificationOutcome> {
-  const missingIssue = findFeedbackWithoutIssue(input.documentFeedback);
-  if (missingIssue) {
-    return {
-      ok: false,
-      code: "ISSUE_REQUIRED",
-      message:
-        "Pick a reason for every document you mark invalid so the applicant knows what to fix",
-    };
-  }
-  try {
-    return await withSerializableRetry(() =>
-      prisma.$transaction(
-        async (tx) => {
-          const verification =
-            await tx.consultantProfileVerification.findUnique({
-              where: { id: input.verificationId },
-              select: {
-                status: true,
-                consultantProfileId: true,
-                consultantProfile: { select: { userId: true } },
-              },
-            });
-          if (!verification) {
-            throw new ReviewRefused("NOT_FOUND", "Verification not found");
-          }
-
-          const round = await countAnsweredRounds(
-            tx,
-            verification.consultantProfileId,
-          );
-          if (input.status === "NEEDS_INFO" && round >= MAX_NEEDS_INFO_ROUNDS) {
-            throw new ReviewRefused(
-              "ROUND_CAP",
-              `This applicant has already answered ${MAX_NEEDS_INFO_ROUNDS} requests for more information; approve or reject.`,
-            );
-          }
-
-          // Only an open row can be decided; NEEDS_INFO may be closed with a
-          // final decision but not asked again.
-          const allowedFrom =
-            input.status === "NEEDS_INFO"
-              ? ["PENDING"]
-              : ["PENDING", "NEEDS_INFO"];
-          const decided = await tx.consultantProfileVerification.updateMany({
-            where: {
-              id: input.verificationId,
-              status: { in: allowedFrom as ("PENDING" | "NEEDS_INFO")[] },
-            },
-            data: {
-              status: input.status,
-              reviewedAt: new Date(),
-              reviewedById: input.reviewerId,
-              reviewNotes: input.reviewNotes ?? null,
-              rejectionReason:
-                input.status === "APPROVED"
-                  ? null
-                  : (input.rejectionReason ?? null),
-              feedbackDetails:
-                input.status === "APPROVED"
-                  ? null
-                  : (input.feedbackDetails ?? null),
-            },
-          });
-          if (decided.count === 0) {
-            throw new ReviewRefused(
-              "ALREADY_DECIDED",
-              `This request is ${verification.status.toLowerCase()} and cannot be decided again`,
-            );
-          }
-
-          await applyDocumentFeedback(
-            tx,
-            input.verificationId,
-            input.documentFeedback ?? [],
-          );
-
-          const profileStatus = PROFILE_STATUS_FOR_DECISION[input.status];
-          await tx.consultantProfile.update({
-            where: { id: verification.consultantProfileId },
-            data: {
-              verificationStatus: profileStatus,
-              ...IS_VERIFIED_FOR_DECISION[input.status],
-            },
-          });
-          await recomputeProfileCompletion(
-            tx,
-            verification.consultantProfileId,
-          );
-
-          const consultantUserId =
-            verification.consultantProfile.userId ?? null;
-          const staged = await stageDecisionNotices(tx, {
-            consultantUserId,
-            consultantProfileId: verification.consultantProfileId,
-            verificationId: input.verificationId,
-            profileStatus,
-            reason: input.rejectionReason || input.feedbackDetails || undefined,
-          });
-
-          return {
-            ok: true as const,
-            consultantProfileId: verification.consultantProfileId,
-            consultantUserId,
-            profileStatus,
-            round,
-            staged,
-          };
-        },
-        {
-          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-          maxWait: 10_000,
-          timeout: 15_000,
-        },
-      ),
+): Promise<ReviewVerificationDecided> {
+  if (findFeedbackWithoutIssue(input.documentFeedback)) {
+    throw refuse(
+      "ISSUE_REQUIRED",
+      "Pick a reason for every document you mark invalid so the applicant knows what to fix",
     );
-  } catch (error) {
-    if (error instanceof ReviewRefused) {
-      return { ok: false, code: error.code, message: error.message };
-    }
-    throw error;
   }
+  const verification = await tx.consultantProfileVerification.findUnique({
+    where: { id: input.verificationId },
+    select: {
+      status: true,
+      consultantProfileId: true,
+      consultantProfile: { select: { userId: true } },
+    },
+  });
+  if (!verification) throw refuse("NOT_FOUND", "Verification not found");
+
+  const round = await countAnsweredRounds(tx, verification.consultantProfileId);
+  if (input.status === "NEEDS_INFO" && round >= MAX_NEEDS_INFO_ROUNDS) {
+    throw refuse(
+      "ROUND_CAP",
+      `This applicant has already answered ${MAX_NEEDS_INFO_ROUNDS} requests for more information; approve or reject.`,
+    );
+  }
+
+  // Only an open row can be decided; NEEDS_INFO may be closed with a final
+  // decision but not asked again.
+  const allowedFrom: ("PENDING" | "NEEDS_INFO")[] =
+    input.status === "NEEDS_INFO" ? ["PENDING"] : ["PENDING", "NEEDS_INFO"];
+  const decided = await tx.consultantProfileVerification.updateMany({
+    where: { id: input.verificationId, status: { in: allowedFrom } },
+    data: {
+      status: input.status,
+      reviewedAt: new Date(),
+      reviewedById: input.reviewerId,
+      reviewNotes: input.reviewNotes ?? null,
+      rejectionReason:
+        input.status === "APPROVED" ? null : (input.rejectionReason ?? null),
+      feedbackDetails:
+        input.status === "APPROVED" ? null : (input.feedbackDetails ?? null),
+    },
+  });
+  if (decided.count === 0) {
+    throw refuse(
+      "ALREADY_DECIDED",
+      `This request is ${verification.status.toLowerCase()} and cannot be decided again`,
+    );
+  }
+
+  await applyDocumentFeedback(
+    tx,
+    input.verificationId,
+    input.documentFeedback ?? [],
+  );
+
+  const profileStatus = PROFILE_STATUS_FOR_DECISION[input.status];
+  await tx.consultantProfile.update({
+    where: { id: verification.consultantProfileId },
+    data: {
+      verificationStatus: profileStatus,
+      ...IS_VERIFIED_FOR_DECISION[input.status],
+    },
+  });
+  await recomputeProfileCompletion(tx, verification.consultantProfileId);
+
+  const consultantUserId = verification.consultantProfile.userId ?? null;
+  const staged = await stageDecisionNotices(tx, {
+    consultantUserId,
+    consultantProfileId: verification.consultantProfileId,
+    verificationId: input.verificationId,
+    profileStatus,
+    reason: input.rejectionReason || input.feedbackDetails || undefined,
+  });
+
+  return {
+    consultantProfileId: verification.consultantProfileId,
+    consultantUserId,
+    previousStatus: verification.status,
+    profileStatus,
+    round,
+    staged,
+  };
 }

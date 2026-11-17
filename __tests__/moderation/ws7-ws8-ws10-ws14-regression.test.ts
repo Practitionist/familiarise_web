@@ -44,7 +44,7 @@ const mockTransaction = jest.fn();
 
 const mockGetSession = jest.fn();
 const mockRequireApiAuth = jest.fn();
-const mockRequirePrivilegedAuth = jest.fn();
+const mockRequireBackofficeSurface = jest.fn();
 const mockApplyRateLimit = jest.fn().mockResolvedValue(null);
 const mockPurgeReviewSurfaces = jest.fn();
 const mockAllocateTicketReference = jest.fn();
@@ -90,10 +90,8 @@ jest.mock("../../lib/auth-helpers", () => {
   return {
     ...actual,
     requireApiAuth: (...args: unknown[]) => mockRequireApiAuth(...args),
-    requirePrivilegedAuth: (...args: unknown[]) =>
-      mockRequirePrivilegedAuth(...args),
-    // The admin dispute routes ask the matrix; the same mock answers for an operator.
-    requireBackofficeSurface: () => mockRequirePrivilegedAuth(),
+    requireBackofficeSurface: (...args: unknown[]) =>
+      mockRequireBackofficeSurface(...args),
   };
 });
 
@@ -210,7 +208,7 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
   });
 
   test("PATCH /api/staff/moderation/reports/[reportId] rejects terminal status writes", async () => {
-    mockRequirePrivilegedAuth.mockResolvedValue({
+    mockRequireBackofficeSurface.mockResolvedValue({
       session: { user: { id: "staff-1", role: "STAFF" } },
     });
 
@@ -317,8 +315,8 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
     expect(mockModerationReport.create).toHaveBeenCalledTimes(1);
   });
 
-  test("DELETE /api/staff/moderation/reviews/[reviewId] returns alreadyRemoved without re-purging cache", async () => {
-    mockRequirePrivilegedAuth.mockResolvedValue({
+  test("DELETE /api/staff/moderation/reviews/[reviewId] answers 409 on an already-removed review without re-purging cache", async () => {
+    mockRequireBackofficeSurface.mockResolvedValue({
       session: { user: { id: "admin-1", role: "ADMIN" } },
     });
     mockConsultantReview.findUnique.mockResolvedValue({
@@ -338,8 +336,8 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
       params: Promise.resolve({ reviewId: "rev-1" }),
     });
     const body = await res.json();
-    expect(res.status).toBe(200);
-    expect(body.alreadyRemoved).toBe(true);
+    expect(res.status).toBe(409);
+    expect(body.code).toBe("REVIEW_ALREADY_REMOVED");
     expect(mockPurgeReviewSurfaces).not.toHaveBeenCalled();
   });
 
@@ -357,7 +355,7 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
   });
 
   test("GET /api/admin/disputes/[disputeId] builds structured read-only evidencePack and sanitizes raw attendance userIds", async () => {
-    mockRequirePrivilegedAuth.mockResolvedValue({
+    mockRequireBackofficeSurface.mockResolvedValue({
       session: { user: { id: "admin-1", role: "ADMIN" } },
     });
 
@@ -434,7 +432,7 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
   });
 
   test("counts urgentDisputes strictly across ACTIONABLE_OPEN_STATUSES (SFR-05-20)", async () => {
-    mockRequirePrivilegedAuth.mockResolvedValue({
+    mockRequireBackofficeSurface.mockResolvedValue({
       session: { user: { id: "admin-1", role: "ADMIN" } },
     });
 

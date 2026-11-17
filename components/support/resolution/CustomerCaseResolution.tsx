@@ -1,6 +1,6 @@
 "use client";
 
-import { formatDateLabel, formatDateTimeLabel } from "@/lib/time/display";
+import { useZoneClock } from "@/lib/time/use-zone-clock";
 import { AppealAction } from "./AppealAction";
 import { removalOutcomeCopy } from "./removal-outcome";
 import {
@@ -22,6 +22,7 @@ function DecisionCard({
   inForce: boolean;
   resolution: { reviewsRemoval?: boolean; isAppeal: boolean };
 }>) {
+  const clock = useZoneClock();
   const copy = removalOutcomeCopy(resolution, decision.outcome);
   const appealOpen =
     inForce &&
@@ -39,9 +40,9 @@ function DecisionCard({
         <p className="text-muted-foreground">{copy.note}</p>
       )}
       <p className="text-xs text-muted-foreground">
-        Decided {formatDateLabel(new Date(decision.createdAt))}
+        Decided {clock.date(decision.createdAt)}
         {appealOpen && decision.appealUntil
-          ? ` · You can appeal until ${formatDateTimeLabel(new Date(decision.appealUntil))}`
+          ? ` · You can appeal until ${clock.dateTime(decision.appealUntil)}`
           : ""}
       </p>
       {appealOpen && (

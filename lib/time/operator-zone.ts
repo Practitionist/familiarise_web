@@ -136,6 +136,12 @@ export function fromOperatorWallTime(wall: string): Date | null {
   return exact ? date : null;
 }
 
+/** The India-time year and month (1–12) that hold `now`. */
+export function operatorYearMonth(now: Date): { year: number; month: number } {
+  const { year, month } = istParts(now);
+  return { year, month };
+}
+
 /** 00:00 India time on the first of the India-time month that holds `now`. */
 export function operatorMonthStart(now: Date): Date {
   const p = istParts(now);

@@ -1,45 +1,39 @@
 import * as Sentry from "@sentry/nextjs";
-import { NextResponse } from "next/server";
-import type { UserRole } from "@prisma/client";
+import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
-import { getSession } from "@/lib/auth-server";
-import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
-
-const MANAGE_LIST_LIMIT = 100;
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
+import { readPageParams } from "@/lib/backoffice/list-paging";
+import type { AnnouncementPageInput } from "@/lib/backoffice/people-list-schemas";
 
 /**
  * GET /api/announcements/manage
- * Every announcement, newest first, for the admin page; the public GET returns
- * only live ones, so an inactive or expired row could never be edited there.
+ * One page of every announcement, newest first, for the admin page; the public
+ * GET returns only live ones, so an inactive or expired row could never be edited there.
  */
-export async function GET() {
-  const session = await getSession();
-  if (!session?.user?.id) {
-    return NextResponse.json(
-      { success: false, error: "Unauthorized" },
-      { status: 401 },
-    );
-  }
-  if (
-    !hasBackofficePermission(
-      session.user.role as UserRole,
-      "announcements.manage",
-    )
-  ) {
-    return NextResponse.json(
-      { success: false, error: "Forbidden" },
-      { status: 403 },
-    );
-  }
+export async function GET(req: NextRequest) {
+  const auth = await requireBackofficeSurface("announcements.manage");
+  if (auth.error) return auth.error;
+  const { page, limit, skip } = readPageParams(req.nextUrl.searchParams, 20);
   try {
-    const announcements = await prisma.announcement.findMany({
-      orderBy: { createdAt: "desc" },
-      take: MANAGE_LIST_LIMIT,
+    const [announcements, total] = await Promise.all([
+      prisma.announcement.findMany({
+        // The id breaks a tie so a page never repeats a row.
+        orderBy: [{ createdAt: "desc" }, { id: "asc" }],
+        skip,
+        take: limit,
+      }),
+      prisma.announcement.count(),
+    ]);
+    const body: AnnouncementPageInput = {
+      success: true,
+      data: announcements,
+      total,
+      page,
+      limit,
+    };
+    return NextResponse.json(body, {
+      headers: { "Cache-Control": "no-store" },
     });
-    return NextResponse.json(
-      { success: true, data: announcements },
-      { headers: { "Cache-Control": "no-store" } },
-    );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),

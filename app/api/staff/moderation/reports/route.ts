@@ -6,9 +6,11 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
 import { readReviewReportSignals } from "@/lib/moderation/review-context";
+import { readPageParams } from "@/lib/backoffice/list-paging";
+import type { ModerationReportsPageInput } from "@/lib/backoffice/moderation-schemas";
 import {
   ModerationReportType,
   ModerationReportStatus,
@@ -36,12 +38,6 @@ const moderationReportsQuerySchema = z.object({
       "ESCALATED",
     ] as const satisfies readonly ModerationReportStatus[])
     .optional(),
-  page: z.coerce.number().int().min(1).default(1),
-  limit: z.coerce
-    .number()
-    .int()
-    .transform((n) => Math.min(100, Math.max(1, n)))
-    .default(20),
 });
 
 const REPORT_INCLUDE = {
@@ -94,10 +90,12 @@ const REPORT_INCLUDE = {
   },
 } satisfies Prisma.ModerationReportInclude;
 
+// The id breaks a tie, so a page never repeats or skips a report.
 const REPORT_ORDER_BY: Prisma.ModerationReportOrderByWithRelationInput[] = [
   { status: "asc" },
   { reportCount: "desc" },
   { createdAt: "desc" },
+  { id: "asc" },
 ];
 
 function buildModerationFilterWhere(
@@ -137,15 +135,13 @@ function buildModerationFilterWhere(
  */
 export async function GET(req: NextRequest) {
   try {
-    const auth = await requirePrivilegedAuth();
+    const auth = await requireBackofficeSurface("moderation.manage");
     if (auth.error) return auth.error;
 
     const { searchParams } = new URL(req.url);
     const parsedQuery = moderationReportsQuerySchema.safeParse({
       type: searchParams.get("type") ?? undefined,
       status: searchParams.get("status") ?? undefined,
-      page: searchParams.get("page") ?? undefined,
-      limit: searchParams.get("limit") ?? undefined,
     });
     if (!parsedQuery.success) {
       return NextResponse.json(
@@ -156,8 +152,8 @@ export async function GET(req: NextRequest) {
         { status: 400 },
       );
     }
-    const { type, status, page, limit } = parsedQuery.data;
-    const offset = (page - 1) * limit;
+    const { type, status } = parsedQuery.data;
+    const { page, limit, skip: offset } = readPageParams(searchParams, 20);
     const filterWhere = buildModerationFilterWhere(searchParams, type);
 
     const where: Prisma.ModerationReportWhereInput = status
@@ -192,6 +188,7 @@ export async function GET(req: NextRequest) {
     const [coercionReports, nonCoercionReports] = await Promise.all([
       coercionTake > 0
         ? prisma.moderationReport.findMany({
+            relationLoadStrategy: "join",
             where: coercionWhere,
             include: REPORT_INCLUDE,
             orderBy: REPORT_ORDER_BY,
@@ -201,6 +198,7 @@ export async function GET(req: NextRequest) {
         : Promise.resolve([]),
       nonCoercionTake > 0
         ? prisma.moderationReport.findMany({
+            relationLoadStrategy: "join",
             where: nonCoercionWhere,
             include: REPORT_INCLUDE,
             orderBy: REPORT_ORDER_BY,
@@ -259,7 +257,7 @@ export async function GET(req: NextRequest) {
 
     const parsedRole = z.nativeEnum(UserRole).safeParse(auth.session.user.role);
 
-    return NextResponse.json({
+    const body: ModerationReportsPageInput = {
       reports: formattedReports,
       counts,
       capabilities: {
@@ -274,7 +272,8 @@ export async function GET(req: NextRequest) {
         totalPages: Math.ceil(total / limit),
         hasMore: offset + limit < total,
       },
-    });
+    };
+    return NextResponse.json(body);
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),

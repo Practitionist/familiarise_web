@@ -7,7 +7,7 @@ import {
 import { removalOutcomeCopy } from "@/components/support/resolution/removal-outcome";
 import { Button } from "@/components/ui/button";
 import { REOPEN_WINDOW_MS } from "@/lib/support/deadline-policy";
-import { formatDateLabel } from "@/lib/time/display";
+import { useZoneClock } from "@/lib/time/use-zone-clock";
 
 /** What a "This didn't fix it" press sends when the customer typed nothing. */
 export const REOPEN_MESSAGE = "This didn't fix my problem.";
@@ -32,6 +32,7 @@ export function ResolvedFollowUp({
   onReopen: () => void;
 }>) {
   const resolution = useCaseResolution(caseId);
+  const clock = useZoneClock();
   const decision = decisionInForce(resolution.data?.decisions ?? []);
   const appealUntil = decision?.appealUntil
     ? new Date(decision.appealUntil)
@@ -53,7 +54,7 @@ export function ResolvedFollowUp({
     action = (
       <Button variant="outline" size="sm" asChild>
         <a href={`#${CASE_RESOLUTION_ANCHOR}`}>
-          Appeal by {formatDateLabel(appealUntil)}
+          Appeal by {clock.date(appealUntil)}
         </a>
       </Button>
     );
