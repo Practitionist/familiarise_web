@@ -74,6 +74,7 @@ import {
   paymentFundingBreakdown,
   paymentRailLabel,
   receiptHref,
+  viewerWasCharged,
   type PaymentDisplayLike,
 } from "@/lib/appointments/payment-display";
 import {
@@ -605,14 +606,8 @@ export function AppointmentDetailClient({
   // member paid their own card. A group event keeps the tag as its label.
   const sponsoredBy =
     orgName && (isGroup || payments.some(isSponsoredPayment)) ? orgName : null;
-  // Was the viewer actually charged (a succeeded charge above zero)? Names the money door.
-  const charged = (p: { paymentStatus: string; amount: number | string }) =>
-    p.paymentStatus === "SUCCEEDED" && Number(p.amount) > 0;
-  const hasOwnCharge = payments.some(
-    (p) =>
-      (charged(p) && !isSponsoredPayment(p)) ||
-      p.childPayments.some((c) => c.userId === viewerId && charged(c)),
-  );
+  // Names the money door: "charge" only where the money state says money was taken.
+  const hasOwnCharge = viewerWasCharged(moneyState.state, payments, viewerId);
   const liveVmOccurrences = vm.occurrences.filter((s) => !isDeadOccurrence(s));
   // A single-sitting booking's one confirmed session is already the header's
   // date line; the Sessions card stays only while it carries something the

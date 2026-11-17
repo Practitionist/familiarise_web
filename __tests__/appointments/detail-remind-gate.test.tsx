@@ -171,3 +171,44 @@ describe("NeedsYouCallout → Remind", () => {
     expect(withdrawButton()).not.toBeNull();
   });
 });
+
+describe("NeedsYouCallout → the pay-link line", () => {
+  const withDeadline = (deadline: Date, reminderExpiresAt: string | null) => {
+    const actions: AwaitingPaymentActions = {
+      reminderExpiresAt,
+      remind: jest.fn(),
+      withdraw: jest.fn(),
+      onChanged: jest.fn(),
+    };
+    return (
+      <NeedsYouCallout
+        presentation={
+          {
+            nextAction: { kind: "REMIND_OR_WITHDRAW", deadline },
+            bookingState: { state: "AWAITING_PAYMENT" },
+          } as unknown as BookingPresentation
+        }
+        names={{ payer: "Payer", consultant: "Expert" }}
+        heldCount={1}
+        awaitingPayment={actions}
+        pending={null}
+        onHelp={() => undefined}
+      />
+    );
+  };
+
+  it("names the deadline while the link is live", () => {
+    const live = new Date(Date.now() + HOUR);
+    render(withDeadline(live, live.toISOString()));
+    expect(screen.getByText(/Payer has the payment link until/)).toBeTruthy();
+  });
+
+  it("says the link has expired once it has", () => {
+    const past = new Date(Date.now() - HOUR);
+    render(withDeadline(past, past.toISOString()));
+    expect(screen.queryByText(/has the payment link until/)).toBeNull();
+    expect(
+      screen.getByText(/The payment link sent to Payer has expired\./),
+    ).toBeTruthy();
+  });
+});

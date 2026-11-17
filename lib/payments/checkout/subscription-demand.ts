@@ -3,6 +3,7 @@
 
 import type { Tx } from "@/lib/prisma";
 import type { CheckoutInput } from "@/schemas/checkout";
+import { NOT_PLACEABLE_MESSAGE } from "@/schemas/plan-feasibility";
 import {
   firstCycleWindow,
   purchaseTermsOf,
@@ -125,9 +126,7 @@ export async function assertSubscriptionDemandRoom(
   });
   if (firstWeekPlaceable(firstWeek) === 0) {
     throw Object.assign(
-      new Error(
-        "This expert has no free time in the first week of this plan right now. Pick a later start date, or ask them to open more hours.",
-      ),
+      new Error(NOT_PLACEABLE_MESSAGE),
       { httpStatus: 409, code: "NOT_PLACEABLE", reasons: firstWeek.reasons },
     );
   }

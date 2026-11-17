@@ -418,9 +418,15 @@ function RemindOrWithdraw({
   const [withdrawing, setWithdrawing] = useState(false);
   const cooling = !!nextAllowedAt && Date.parse(nextAllowedAt) > Date.now();
   useRerenderAfter(actions.reminderExpiresAt);
+  useRerenderAfter(deadline ?? null);
   const canRemind =
     !!actions.reminderExpiresAt &&
     Date.parse(actions.reminderExpiresAt) > Date.now();
+  // The link has lapsed once its order or the hold deadline has passed.
+  const linkExpired =
+    (!!deadline && deadline.getTime() <= Date.now()) ||
+    (!!actions.reminderExpiresAt &&
+      Date.parse(actions.reminderExpiresAt) <= Date.now());
 
   const remind = async () => {
     setReminding(true);
@@ -551,9 +557,15 @@ function RemindOrWithdraw({
         </>
       }
     >
-      {names.payer} has the payment link
-      {deadline ? ` until ${format(deadline, "EEE d MMM HH:mm")}` : ""}.
-      {heldLine}
+      {linkExpired ? (
+        <>The payment link sent to {names.payer} has expired.</>
+      ) : (
+        <>
+          {names.payer} has the payment link
+          {deadline ? ` until ${format(deadline, "EEE d MMM HH:mm")}` : ""}.
+          {heldLine}
+        </>
+      )}
     </Shell>
   );
 }

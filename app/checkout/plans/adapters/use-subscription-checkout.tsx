@@ -17,7 +17,9 @@ import { useViewerZone } from "@/lib/time/use-viewer-zone";
 import { formatInViewerZone } from "@/lib/time/viewer-zone";
 import {
   planFeasibilitySchema,
+  NOT_PLACEABLE_MESSAGE,
   subscriptionCheckoutBlocked,
+  subscriptionCheckoutBlockedLabel,
 } from "@/schemas/plan-feasibility";
 import { PLAN_CLIENTS_FULL_MESSAGE } from "@/schemas/plan-clients";
 import {
@@ -280,8 +282,7 @@ export function useSubscriptionCheckout(
               role="alert"
               className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-foreground"
             >
-              This expert has no free time in the first week of this plan right
-              now. Pick a later start date, or ask them to open more hours.
+              {NOT_PLACEABLE_MESSAGE}
             </div>
           ) : (
             feasibility?.notice && (
@@ -388,9 +389,9 @@ export function useSubscriptionCheckout(
       </>
     ),
     checkoutPlanFields,
-    // The server's per-viewer answer: an existing client of the expert is never blocked.
+    // The server's per-viewer answer: an existing client is never fully booked.
     soldOut: subscriptionCheckoutBlocked(feasibility),
-    soldOutLabel: "Fully booked",
+    soldOutLabel: subscriptionCheckoutBlockedLabel(feasibility),
     mockFlow: {
       kind: "direct",
       successTitle: "✅ Subscription Activated Successfully!",
