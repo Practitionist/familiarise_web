@@ -267,7 +267,7 @@ Confirm:
 
 Send:
   Admin calls POST /api/admin/newsletter/broadcast
-      {mode: preview | test | warmup | all, audience?, limit?, subject, htmlBody, textBody?}
+      {mode: preview | test | warmup | all, audience?, limit?, subject, htmlBody, textBody?, reason}
     → Auth check (newsletter.send, ADMIN only; a send needs a reason and writes an OpsActionLog row)
     → test: the admin's own address; otherwise listSendableSubscribers(audience)
       from lib/newsletter/service.ts, most recently confirmed first

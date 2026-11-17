@@ -59,8 +59,8 @@ const ROWS: Record<string, unknown[]> = {
         headline: "Career coach",
         user: {
           id: "u-2",
-          name: "Rahul Mehta",
-          email: "rahul@example.test",
+          name: "Aarav Anderson",
+          email: "aarav@example.test",
           image: null,
           linkedinUrl: null,
           bio: null,
@@ -112,8 +112,8 @@ const ROWS: Record<string, unknown[]> = {
       reportedBy: { ...person, image: null, role: "CONSULTEE" },
       targetUser: {
         id: "u-2",
-        name: "Rahul Mehta",
-        email: "rahul@example.test",
+        name: "Aarav Anderson",
+        email: "aarav@example.test",
         image: null,
         role: "CONSULTANT",
         banned: false,
@@ -125,7 +125,7 @@ const ROWS: Record<string, unknown[]> = {
         rating: 2,
         reviewDescription: "Late",
         appointmentId: null,
-        consultantProfile: { user: { name: "Rahul Mehta" } },
+        consultantProfile: { user: { name: "Aarav Anderson" } },
       },
       organizationId: null,
       assignedToId: null,
@@ -153,7 +153,11 @@ const ROWS: Record<string, unknown[]> = {
       moderationActions: [],
       consultantProfile: {
         id: "cp-1",
-        user: { name: "Rahul Mehta", email: "rahul@example.test", image: null },
+        user: {
+          name: "Aarav Anderson",
+          email: "aarav@example.test",
+          image: null,
+        },
       },
       consulteeProfile: {
         id: "ce-1",

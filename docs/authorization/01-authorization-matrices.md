@@ -172,13 +172,17 @@ A route is on the matrix when its first line is `requireBackofficeSurface(key)`,
 
 `POST /api/user/consent` is an operator recording their own consent, not a back-office surface, so it asks `requireApiAuth()` and then `isPrivileged()` (ADMIN or STAFF), and answers 403 `FORBIDDEN` to anyone else. `GET /api/admin/users/[userId]` (no caller; it returned phone, bio and city) and `GET /api/staff/stats` (no caller) were deleted rather than moved.
 
+**Anonymous reviews.** STAFF and ADMIN see who wrote an anonymous review: the moderation reviews list (`moderation.manage`) sends the reviewer's name with `isAnonymous: true`, and the card shows the name with the label "Anonymous to the public". Only the public profile hides the author. Moderating an abusive review needs to know who wrote it. The decision is D13 in the back-office record.
+
+**Audited people doors.** A verification decision, a report status change, a moderation action, an unban, a review removal and a newsletter send each need a reason and write an `OpsActionLog` row (D12 in the back-office record). Holding the key is not enough to act without a reason.
+
 **Emails on the money rows.** STAFF see the emails a money row names: the creator and approvers on Org payouts, the buyer on Payments, Refunds, Earnings and the refunds waiting for a human, and the person behind an Audit or Support spend target. This matches the payment detail. Three gates still withhold an email from STAFF: the disputes list and detail (`disputes.manage`), and Invoices and TDS (`showPii`, ADMIN only). The decision is D10 in the back-office record.
 
 `__tests__/backoffice/route-surface-gates.test.ts` pins each moved route's key and its 403 for a refused role, and `__tests__/backoffice/raw-role-guards-removed.test.ts` fails if a role-named guard comes back. The decision record is [the 2026-11-16 back-office record](../decisions/2026-11-16-train-6-back-office.md).
 
 ### What an operator sees: time and totals
 
-Every back-office screen prints times in India Standard Time (`Asia/Kolkata`), whatever the operator's profile zone or browser zone, and the tooltip on a time shows the exact UTC instant. The helper is `lib/time/operator-zone.ts` (`OperatorTime` is in `lib/time/operator-time.tsx`), and the back-office layout (`app/dashboard/(backoffice)/[tree]/layout.tsx`) pins the zone once for the whole tree, so the server render and the browser print the same text. A screen that has not yet moved onto the helper may still print in another zone **(planned)**; read its tooltip or the stored UTC instant before acting on a deadline.
+Every back-office screen prints times in India Standard Time (`Asia/Kolkata`), whatever the operator's profile zone or browser zone, and the tooltip on a time shows the exact UTC instant. The helper is `lib/time/operator-zone.ts` (`OperatorTime` is in `lib/time/operator-time.tsx`), and the back-office layout (`app/dashboard/(backoffice)/[tree]/layout.tsx`) pins the zone once for the whole tree, so the server render and the browser print the same text. Support times follow the same rule in the back office; the same support components on a customer's own pages print in that customer's profile zone instead (D16 in the back-office record).
 
 Metrics (`/dashboard/admin/metrics` and `/dashboard/staff/metrics`) is the one Insights page in both trees and needs `analytics.read`. Both ADMIN and STAFF see its revenue and refund cards, because STAFF already read every payment row through `payments.read`. Its "this month (IST)" cards start at 00:00 IST on the 1st, and its support-queue periods (today, this week, this month) are also cut in IST: a payment of ₹1,000 (100,000 paise) at 03:00 IST on 1 December, which is 21:30 UTC on 30 November, counts in December.
 

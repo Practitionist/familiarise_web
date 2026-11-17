@@ -1,6 +1,6 @@
 # ADR: The back office gets one permission matrix, one operator time zone and one totals page
 
-- **Status**: Accepted (owner decisions, 2026-11-16). Ships in the first of four back-office pull requests (access and foundations). The other three move their own screens and are labelled **(planned)** below.
+- **Status**: Accepted (owner decisions, 2026-11-16 and 2026-11-17). Shipped in four back-office pull requests: access and foundations, the decision queue, the money pages, and people, support and comms (D11 to D17).
 - **Date**: 2026-11-16
 - **Author**: Platform engineering
 - **Related**: [Authorization matrices](../authorization/01-authorization-matrices.md), [Maintenance architecture](../maintenance/01-architecture.md), [Trial sessions](../booking/09-trials.md), [Access rules after the bug hunt](2026-11-13-access-rules-after-the-bug-hunt.md)
@@ -34,7 +34,7 @@ The staff and admin consoles were audited before launch. Four things were wrong 
    - `lib/time/operator-time.tsx` holds `OperatorTime`, a `<time>` element that prints the IST text and carries the UTC reading in its `title`.
 
    Both go through `lib/time/display.ts` with the zone and the `en-IN` locale pinned, so a server render and the hydrating browser print identical text. The back-office layout (`app/dashboard/(backoffice)/[tree]/layout.tsx`) mounts one `DisplayZoneProvider` with that zone, so every screen that already reads the provided zone moves with no edit. A person is shown the same way everywhere through `formatPerson` (`lib/backoffice/person.ts`) and `PersonCell` (`components/dashboard/backoffice/PersonCell.tsx`): the name, the email under it, a muted id, and "Removed user" when nothing is known.
-   - Rollout is split. The first pull request ships the helper, the layout provider and the screens that were wrong or that it already touches (Leads, job-run metrics, the entity trace, the evidence download, the audit-date label in `lib/labels/org-labels.ts`, the maintenance panels, System Jobs, run requests and the team page). The money, people-and-support and remaining screens move with their own pull requests **(planned)**, so until the last one merges some screens still print in the old zone.
+   - Rollout was split across the four pull requests: the helper, the layout provider and the first screens in the first, the money screens in the third, and the people and support screens in the fourth (D16).
    - Options not chosen: the viewer's profile zone (two operators would read the same incident at different clock times); the browser zone (the hydration mismatch the display helpers were written to prevent).
 
 4. **D4: there is no staff door to end a paid trial now.** The trial routes refuse an operator who is not a party to the trial with 403 `PLATFORM_CANCEL_DOOR_REQUIRED` (`platformCancelDoorRefusal` in `lib/booking/platform-cancel.ts`), and no back-office door exists for a trial ([Trial sessions](../booking/09-trials.md)). Whether to build one is tracked as the issue "[backoffice][trials][P3] Decide a staff door to end a paid trial (deferred at Train 6; revisit with F8)" (#2836).
@@ -139,9 +139,63 @@ What a page load costs, in Postgres statements (each relation read without a joi
 | TDS consultants view        | 7                                      | 4 (6 with a search)                             |
 | Erasure, breaches, emails   | 2, 1, 1                                | 2, 2, 2 (each adds its total)                   |
 
+## The fourth pull request: people, support and comms
+
+The fourth pull request moves the people screens (Users, User 360, Verification, Moderation, Feedback, Leads, Organizations, Team, Announcements and Newsletter), splits the referral page from the platform fees, fixes support times (#2828 "[support][ux][P3] Support pages show times in the browser's zone instead of the viewer's profile zone"), and finishes D8. It changes no money rule, amount or schema.
+
+11. **D11: every back-office route asks the permission matrix, and the raw role guards are deleted (owner decision, 2026-11-17).** The last 26 call sites in 23 route files moved onto a key with the same people, and the ADMIN-only and ADMIN-or-STAFF helpers were removed from `lib/auth-helpers.ts`. `requireRoleGate` stays as the body of `requireBackofficeSurface`, and `isPrivileged` stays for branches inside a handler. `__tests__/backoffice/raw-role-guards-removed.test.ts` fails if a role-named guard comes back.
+    - Same people on each move: Users (`users.read`), Verification and its Documents tab (`users.verify`), Organizations (`organizations.manage`), Feedback (`feedback.manage`), the moderation queue, report detail, action and stats (`moderation.manage`), the newsletter list (`newsletter.manage`) and send (`newsletter.send`). Unban and review removal were ADMIN-or-STAFF guards with an inline ADMIN check, so they ask `users.moderate`, which is ADMIN only.
+    - Routes with no screen key of their own: the support compliance report asks `compliance.manage`; support health, system events and the exchange-rate cache ask `systemJobs.manage`. All four keys are ADMIN only, as the routes were.
+    - `POST /api/user/consent` is an operator recording their own consent, not a back-office surface, so it asks `requireApiAuth()` and then `isPrivileged()`, the pattern the trial routes use, and answers 403 `FORBIDDEN` to anyone else.
+    - Deleted, each with no caller found by a search of `app/`, `components/`, `lib/` and `hooks/`: `GET /api/admin/users/[userId]` (it returned phone, bio and city), `GET /api/staff/stats` with `lib/data/staff-stats.ts` and `getStaffDashboardStats`, and `AppointmentContextCard`.
+    - Options not chosen: a new matrix key for operator consent (a self-service action has no surface to grant); new keys for the four screenless routes (the existing ADMIN-only keys already name the same people).
+
+12. **D12: people and comms writes are audited doors (owner decision, 2026-11-17).** A verification decision, a report status or assignee change, a moderation action (warn, dismiss, remove content, exclude from the rating, suspend, ban), an unban, a review removal and a newsletter send each run through `withOpsAction`. Each requires a reason of at least 5 characters (`opsReasonSchema`) and writes one `OpsActionLog` row with the actor, the role, the target, the before and the after. Each status change keeps its compare-and-set in the `WHERE`, and a lost one answers 409 with a code (`ALREADY_DECIDED`, `REPORT_CHANGED`, `REPORT_RESOLVED`, `REVIEW_ALREADY_REMOVED`).
+    - A verification decision and a review removal are transactional doors: the decision and the audit row commit together on a Serializable transaction with retry, through the new `serializable` option of `withOpsAction`. The public-surface purge and the notice attempts run after commit.
+    - A moderation action, an unban and a newsletter send end in vendor calls (Stream, Resend), so they are gateway doors: the row is written once the action has run, with `after.status` `SUCCEEDED`, or `FAILED` and the refusal code.
+    - An unban of an account that is no longer banned still re-applies Stream access (the repair the route exists for) and answers 200; its row says `lifted: false`.
+    - A review removal of a review moderation already removed now answers 409 instead of 200 with `alreadyRemoved`, and writes no row.
+    - The newsletter `preview` only counts the audience and writes no row.
+    - The dialogs gained a reason field: the verification review modal, every moderation decision (each now goes through a confirm with a reason), the review removal, the unban on Moderation and on User 360, and the three newsletter sends (the test send now has a dialog too). The request bodies come from `lib/backoffice/people-door-bodies.ts`, and `__tests__/backoffice/people-doors.test.ts` posts exactly those bodies to the routes.
+    - Worked example: Maria Brown (STAFF) dismisses a spam report against Aarav Anderson (seed expert) at 14:05 IST with the reason "Duplicate of an earlier report". The door reads the report, the compare-and-set moves it from `PENDING` to `DISMISSED`, and one row records Maria, `STAFF`, `moderation.manage`, `moderation.action.NO_ACTION`, the report, the reason, before `{ reportStatus: "PENDING" }` and after `{ status: "SUCCEEDED", reportStatus: "DISMISSED" }`. If Olivia Brown (ADMIN) dismissed it a second earlier, Maria gets 409 `REPORT_RESOLVED` and the row says `FAILED`.
+    - Options not chosen: keeping these writes role-gated with no reason (the state they change is the account's or the public's); one transaction around the vendor calls (a Stream call cannot roll back).
+
+13. **D13: staff see the author of an anonymous review (owner decision, 2026-11-17).** The moderation reviews list keeps sending the reviewer's name for an anonymous review, and the card shows the name with the label "Anonymous to the public" (`PersonCell`'s `anonymousLabel`). Only the public profile hides the author. The record is in the [authorization matrices](../authorization/01-authorization-matrices.md).
+    - Options not chosen: hiding the author from staff too (moderation of an abusive review needs to know who wrote it).
+
+14. **D14: fee waivers stay on Referral credits; Platform fees holds only the fee schedules (owner decision, 2026-11-17).** Referral credits keeps credits, fee waivers, referrals held for review and the program economics on `referrals.read` (writes on `referrals.manage`). The new Platform fees page (`/dashboard/<tree>/platform-fees`, `components/dashboard/backoffice/fees/PlatformFeesPageClient.tsx`) holds the take-rate schedules on `payments.read`, with propose and approve on `payments.manage`, the keys the fee API already used, so nobody gains or loses access. The schedule list names who proposed and who approved each row, and the effective-from time an admin types is read as IST (`fromOperatorWallTime`).
+    - Options not chosen: moving fee waivers to Platform fees (a waiver is a referral reward, granted with the referral program).
+
+15. **D15: every people list pages on the server.** `?page` and `?limit` go through `readPageParams` or `pageNumberSchema` (`lib/backoffice/list-paging.ts`): a value that is not a positive whole number reads as the default, and a page holds at most 100 rows. Every paged order ends on `id`. The moderation reports and reviews (the client never sent `page`, so only the first 20 and 10 were reachable), the expert verification queue (once "Load more" over offset pages), the organization verification queue (once 100 rows), the SSO approvals (once 50, now `?ssoPage`), announcements (once 100) and fee schedules (once 50) have real pagers. Each screen parses its body with the schema the route builds it against (`lib/backoffice/people-list-schemas.ts`, `lib/backoffice/moderation-schemas.ts`), and a failed load shows an error, never an empty list. An unknown verification or organization status answers 400 `INVALID_STATUS`. The verification list sends no stored `fileUrl`; a document opens through its ACL'd download route. User 360 reads each section on its own, so one failed section shows its own error and the rest of the page still loads; the failures are reported once per page.
+
+16. **D16: support times are IST for staff and the viewer's profile zone for customers.** Both use `lib/time/zone-clock.ts`, which prints India time through `formatOperatorInstant` (labelled IST) and any other zone through `lib/time/display.ts` (Intl only, never date-fns-tz, so no daylight-saving error), labelling UTC. `useZoneClock` reads the nearest `DisplayZoneProvider`: the back-office layout pins IST, and every customer support page mounts `ViewerZone` (`app/support/_components/ViewerZone.tsx`), which reads `getViewerZone()` on the server. A shared component such as the chat bubble therefore prints IST to staff and the customer's zone to the customer. `describeWait` takes the zone. The inbox date filter cuts each day at 00:00 IST (`lib/support/inbox-query.ts`), and the Moderation "Resolved Today" card counts from 00:00 IST.
+    - Worked example: a reply at 12:45 UTC on 16 Nov 2026 reads "6:15 pm IST" to Maria Brown in the inbox and "4:45 am" to a learner whose profile zone is America/Los_Angeles. A reply-by of 03:00 UTC on 17 Nov reads "by 7:00 pm today" to that learner and "8:30 am IST on 17 Nov" in the back office.
+    - Options not chosen: the viewer's zone for staff (the issue's suggestion; two operators would read one deadline at different clock times, D3).
+
+17. **D17: Organizations dates are IST.** The organization list, its verification queue and the SSO approvals print dates through `OperatorTime` (they used the US format, `9/14/2026`).
+
+What a page load costs, in Postgres statements (a relation read without a join is its own statement; `PG_POOL_MAX=1` runs them one at a time):
+
+| List                      | Before                        | After                                     |
+| ------------------------- | ----------------------------- | ----------------------------------------- |
+| Users                     | 2                             | 2                                         |
+| User 360                  | about 14                      | 8 (each section on its own)               |
+| Expert verification queue | 11                            | 3                                         |
+| Organizations, org queue  | 3                             | 2                                         |
+| SSO approvals             | 2                             | 2 (one is the new total)                  |
+| Moderation reports        | 15 (24 with both report arms) | 7 (8)                                     |
+| Moderation reviews        | 9                             | 3                                         |
+| Moderation stats          | 6                             | 6                                         |
+| Feedback                  | 3                             | 2                                         |
+| Leads                     | 1                             | 1                                         |
+| Newsletter subscribers    | 3                             | 3                                         |
+| Announcements             | 1                             | 2 (adds the total)                        |
+| Platform fee schedules    | 2                             | 4 (the total and one batched people read) |
+
 ## Limits that remain
 
-- Until the last pull request merges, some screens still print times in the browser or server zone, and about forty routes still ask a raw role question **(planned)**.
+- Leads still page by cursor with "Load more"; its order (newest first, by id) cannot repeat a row.
+- The compliance report, support health, system events and exchange-rate routes reuse ADMIN-only keys of other screens; a key of their own would only matter if staff were ever granted one of them.
 - Support spend still reads every ops row of the 30-day window for the operators on its page. Bounding that read would cut the sums it shows, so it waits for an owner decision on how to summarise the window.
 - Platform totals are counts and sums read on request, with no cache. The scaling roadmap ([Production scaling roadmap](../infrastructure/00-production-scaling-roadmap.md)) records the plan if they slow down.
 
@@ -153,3 +207,6 @@ What a page load costs, in Postgres statements (each relation read without a joi
 - **Reading `new Date(year, month, 1)` for a back-office "this month"**: it uses the server's zone. Use the IST month cut in `lib/backoffice/platform-totals.ts`.
 - **Hand-written list interfaces for the payments, refunds, disputes and payouts lists** (once in `types/payments.ts`, `types/disputes.ts` and a deleted payouts types file): replaced by the Zod list schemas in `lib/backoffice/money-list-schemas.ts`. Do not add a hand-written interface for a list body.
 - **`new Date("YYYY-MM-DD")` for a filing or report date**: it reads 00:00 UTC. Use `istFilingDate` or `fromOperatorWallTime`.
+- **Support times through `toLocaleString`, `toLocaleDateString` or `display.ts` with no zone**: they printed the browser's or the server's zone. Use `useZoneClock` or `zoneClock(zone)`.
+- **Hand-written moderation, verification, feedback and user list types** (`types/moderation.ts`, `types/feedback.ts`, `types/admin-users.ts`): replaced by the Zod schemas in `lib/backoffice/moderation-schemas.ts` and `lib/backoffice/people-list-schemas.ts`.
+- **`reviewVerification` with its own transaction**: replaced by `reviewVerificationTx`, which runs on the audited door's transaction.
