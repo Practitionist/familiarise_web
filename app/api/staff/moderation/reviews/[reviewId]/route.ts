@@ -5,7 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { recomputeConsultantRating } from "@/lib/reviews";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { purgeReviewSurfaces } from "@/lib/data/public-cache";
@@ -20,14 +20,9 @@ interface RouteParams {
  */
 export async function DELETE(req: NextRequest, { params }: RouteParams) {
   try {
-    const auth = await requirePrivilegedAuth();
+    const auth = await requireBackofficeSurface("users.moderate");
     if (auth.error) return auth.error;
     const session = auth.session;
-
-    // Only admins can delete reviews
-    if (session.user.role !== "ADMIN") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
 
     const { reviewId } = await params;
 

@@ -9,12 +9,12 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { ProfileVerificationStatus } from "@prisma/client";
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { getVerificationQueue } from "@/lib/api/operators";
 
 export async function GET(req: NextRequest) {
   try {
-    const auth = await requirePrivilegedAuth();
+    const auth = await requireBackofficeSurface("users.verify");
     if (auth.error) return auth.error;
 
     const { searchParams } = new URL(req.url);

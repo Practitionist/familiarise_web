@@ -10,7 +10,7 @@
 import { allKeys, readSource as read } from "../fixtures/consultant-projection";
 import { NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { GET } from "../../app/api/admin/verification/[verificationId]/route";
 import { getVerificationQueue } from "../../lib/api/operators/verification";
 import {
@@ -21,7 +21,7 @@ import {
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 jest.mock("../../lib/auth-helpers", () => ({
   __esModule: true,
-  requirePrivilegedAuth: jest.fn(),
+  requireBackofficeSurface: jest.fn(),
 }));
 jest.mock("../../lib/verification/review-route", () => ({
   __esModule: true,
@@ -50,7 +50,7 @@ const verificationDb = (
     };
   }
 ).consultantProfileVerification;
-const mockedAuth = requirePrivilegedAuth as unknown as jest.Mock;
+const mockedAuth = requireBackofficeSurface as unknown as jest.Mock;
 
 const user = {
   id: "u-1",

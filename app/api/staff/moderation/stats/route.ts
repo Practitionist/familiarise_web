@@ -10,14 +10,14 @@ import {
   PENDING_REPORT_WHERE,
 } from "@/lib/backoffice/queue-predicates";
 
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 /**
  * GET /api/staff/moderation/stats
  * Get moderation statistics
  */
 export async function GET(req: NextRequest) {
   try {
-    const auth = await requirePrivilegedAuth();
+    const auth = await requireBackofficeSurface("moderation.manage");
     if (auth.error) return auth.error;
 
     const { searchParams } = new URL(req.url);

@@ -12,7 +12,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
 import { z } from "zod";
-import { requireAdminAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { getResendClient, SENDERS } from "@/lib/email";
 import { createHash, randomUUID } from "node:crypto";
 import { resendErrorText } from "@/lib/email/classify";
@@ -104,7 +104,7 @@ async function resolveRecipients(
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
-    const auth = await requireAdminAuth();
+    const auth = await requireBackofficeSurface("newsletter.send");
     if (auth.error) return auth.error;
 
     const body = await request.json().catch(() => null);

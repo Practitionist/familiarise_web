@@ -14,10 +14,8 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import * as Sentry from "@sentry/nextjs";
-import type { UserRole } from "@prisma/client";
 import prisma from "@/lib/prisma";
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
-import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import {
   persistActionSideEffects,
   restoreStreamAccess,
@@ -38,20 +36,10 @@ interface RouteParams {
  */
 export async function POST(req: NextRequest, { params }: RouteParams) {
   try {
-    const auth = await requirePrivilegedAuth();
+    // Same key as banning: reversing an enforcement decision is as consequential as taking one.
+    const auth = await requireBackofficeSurface("users.moderate");
     if (auth.error) return auth.error;
     const session = auth.session;
-
-    // Same gate as banning: `users.moderate` is ADMIN-only, and reversing an
-    // enforcement decision is as consequential as taking one.
-    if (
-      !hasBackofficePermission(session.user.role as UserRole, "users.moderate")
-    ) {
-      return NextResponse.json(
-        { error: "Forbidden — lifting a ban requires an admin" },
-        { status: 403 },
-      );
-    }
 
     const { reportId } = await params;
     const body = await req.json().catch(() => ({}));

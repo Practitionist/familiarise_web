@@ -16,7 +16,7 @@ jest.mock("@sentry/nextjs", () => ({
 
 jest.mock("../../lib/auth-helpers", () => ({
   __esModule: true,
-  requirePrivilegedAuth: jest.fn(),
+  requireBackofficeSurface: jest.fn(),
 }));
 
 jest.mock("../../lib/prisma", () => ({
@@ -31,11 +31,11 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 import { NextRequest } from "next/server";
-import { requirePrivilegedAuth } from "../../lib/auth-helpers";
+import { requireBackofficeSurface } from "../../lib/auth-helpers";
 import prisma from "../../lib/prisma";
 import { GET } from "../../app/api/staff/moderation/reviews/route";
 
-const mockedAuth = requirePrivilegedAuth as jest.Mock;
+const mockedAuth = requireBackofficeSurface as jest.Mock;
 const mockedFindMany = prisma.consultantReview.findMany as jest.Mock;
 const mockedCount = prisma.consultantReview.count as jest.Mock;
 const mockedGroupBy = prisma.consultantReview.groupBy as jest.Mock;

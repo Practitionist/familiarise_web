@@ -13,7 +13,7 @@ import {
 } from "@prisma/client";
 import { z } from "zod";
 
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { parseJsonRequest } from "@/lib/api/parse";
 import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
@@ -222,7 +222,7 @@ function moderationActionErrorResponse(error: unknown): NextResponse {
 
 export async function POST(req: NextRequest, { params }: RouteParams) {
   try {
-    const auth = await requirePrivilegedAuth();
+    const auth = await requireBackofficeSurface("moderation.manage");
     if (auth.error) return auth.error;
     const session = auth.session;
 

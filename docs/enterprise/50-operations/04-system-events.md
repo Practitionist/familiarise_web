@@ -406,7 +406,7 @@ DB write (see `monitoring` for the sink wiring).
 GET /api/admin/system-events
 ```
 
-Admin-only (`requireAdminAuth`). Query params:
+ADMIN only (`requireBackofficeSurface("systemJobs.manage")`). Query params:
 
 - `severity` — `INFO` | `WARN` | `ERROR`
 - `category` — exact match

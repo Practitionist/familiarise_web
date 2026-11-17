@@ -7,7 +7,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import {
   handleReviewPatch,
@@ -24,7 +24,7 @@ interface RouteParams {
  */
 export async function GET(_req: NextRequest, { params }: RouteParams) {
   try {
-    const auth = await requirePrivilegedAuth();
+    const auth = await requireBackofficeSurface("users.verify");
     if (auth.error) return auth.error;
 
     const { verificationId } = await params;
@@ -88,7 +88,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
  */
 export async function PATCH(req: NextRequest, { params }: RouteParams) {
   try {
-    const auth = await requirePrivilegedAuth();
+    const auth = await requireBackofficeSurface("users.verify");
     if (auth.error) return auth.error;
     const session = auth.session;
 

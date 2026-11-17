@@ -33,7 +33,7 @@ describe("refund execution is admin-only", () => {
     const doorBody = src.slice(src.indexOf("const refundDoor"));
     expect(doorBody).toMatch(/withOpsAction\(\s*"refunds\.manage"/);
     expect(doorBody).toContain("stepUp: true");
-    expect(doorBody).not.toContain("requirePrivilegedAuth()");
+    expect(doorBody).not.toMatch(/require\w*Auth\(\)/);
 
     // GET keeps the wider grant — staff read every money surface.
     const getBody = src.slice(

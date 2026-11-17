@@ -8,7 +8,7 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 
 // `parseInt("abc")` is NaN, which Prisma rejects as `skip` — a 500 for a typo.
 const querySchema = z.object({
@@ -25,7 +25,7 @@ const querySchema = z.object({
  */
 export async function GET(req: NextRequest) {
   try {
-    const auth = await requirePrivilegedAuth();
+    const auth = await requireBackofficeSurface("moderation.manage");
     if (auth.error) return auth.error;
 
     const parsed = querySchema.safeParse(

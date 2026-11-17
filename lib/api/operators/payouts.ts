@@ -75,8 +75,7 @@ export type OperatorPayoutResult = {
 /**
  * Fetch the operator payout list for admin/staff dashboards.
  *
- * Single source of truth — call from any privileged-role route after running
- * `requirePrivilegedAuth()`. Search-by-consultant filter is supported on
+ * Single source of truth — call after the route's surface gate. Search-by-consultant filter is supported on
  * both surfaces (admin always exposed it; staff did not but the query is
  * harmless when `search` is empty).
  */

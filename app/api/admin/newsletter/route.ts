@@ -8,7 +8,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { NewsletterSource, NewsletterStatus } from "@prisma/client";
 import { z } from "zod";
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import {
   exportSubscribersCsv,
   listSubscribers,
@@ -25,7 +25,7 @@ const querySchema = z.object({
 
 export async function GET(request: NextRequest): Promise<Response> {
   try {
-    const auth = await requirePrivilegedAuth();
+    const auth = await requireBackofficeSurface("newsletter.manage");
     if (auth.error) return auth.error;
 
     const { searchParams } = new URL(request.url);

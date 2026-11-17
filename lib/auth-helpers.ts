@@ -150,22 +150,6 @@ async function requireRoleGate(
   return { session: auth.session };
 }
 
-/** Strict ADMIN-only auth. */
-export async function requireAdminAuth(): Promise<ApiAuthResult> {
-  return requireRoleGate(
-    (role) => role === "ADMIN",
-    "Forbidden — admin access required",
-  );
-}
-
-/** Privileged operator auth — ADMIN or STAFF. */
-export async function requirePrivilegedAuth(): Promise<ApiAuthResult> {
-  return requireRoleGate(
-    (role) => isPrivileged(role),
-    "Forbidden — admin or staff access required",
-  );
-}
-
 /** Surface-scoped back-office auth. */
 export async function requireBackofficeSurface(
   surface: BackofficeSurface,

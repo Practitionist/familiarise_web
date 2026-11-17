@@ -31,7 +31,7 @@ jest.mock("@/lib/prisma", () => ({
   },
 }));
 jest.mock("@/lib/auth-helpers", () => ({
-  requireAdminAuth: async () => ({
+  requireBackofficeSurface: async () => ({
     session: { user: { id: "admin_1", email: "Admin@Familiarise.test" } },
   }),
 }));

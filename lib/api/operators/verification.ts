@@ -41,8 +41,7 @@ export type OperatorVerificationResult = {
 /**
  * Fetch the profile verification queue for admin/staff dashboards.
  *
- * Single source of truth — call from any privileged-role route after running
- * `requirePrivilegedAuth()`.
+ * Single source of truth — call after the route's `users.verify` gate.
  */
 export async function getVerificationQueue(
   filters: OperatorVerificationFilters = {},

@@ -6,7 +6,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
 import { readReviewReportSignals } from "@/lib/moderation/review-context";
 import {
@@ -137,7 +137,7 @@ function buildModerationFilterWhere(
  */
 export async function GET(req: NextRequest) {
   try {
-    const auth = await requirePrivilegedAuth();
+    const auth = await requireBackofficeSurface("moderation.manage");
     if (auth.error) return auth.error;
 
     const { searchParams } = new URL(req.url);

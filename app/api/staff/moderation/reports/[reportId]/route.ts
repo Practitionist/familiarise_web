@@ -7,7 +7,7 @@ import prisma from "@/lib/prisma";
 import { ModerationReportStatus } from "@prisma/client";
 import { z } from "zod";
 
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import {
   readExclusionDropsBelowGate,
   readReviewReportContext,
@@ -38,7 +38,7 @@ interface RouteParams {
  */
 export async function GET(req: NextRequest, { params }: RouteParams) {
   try {
-    const auth = await requirePrivilegedAuth();
+    const auth = await requireBackofficeSurface("moderation.manage");
     if (auth.error) return auth.error;
 
     const { reportId } = await params;
@@ -154,7 +154,7 @@ function buildReportPatchData(
  */
 export async function PATCH(req: NextRequest, { params }: RouteParams) {
   try {
-    const auth = await requirePrivilegedAuth();
+    const auth = await requireBackofficeSurface("moderation.manage");
     if (auth.error) return auth.error;
 
     const { reportId } = await params;

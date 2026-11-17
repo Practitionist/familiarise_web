@@ -4,7 +4,7 @@ import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { PlatformFeedbackStatusSchema } from "@/schemas/enums";
 
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import * as Sentry from "@sentry/nextjs";
 
 const staffFeedbacksQuerySchema = z.object({
@@ -19,7 +19,7 @@ const staffFeedbacksQuerySchema = z.object({
 
 export async function GET(req: NextRequest) {
   try {
-    const auth = await requirePrivilegedAuth();
+    const auth = await requireBackofficeSurface("feedback.manage");
     if (auth.error) return auth.error;
 
     const { searchParams } = new URL(req.url);

@@ -11,12 +11,12 @@
  */
 
 import { GET } from "../../app/api/staff/moderation/reports/route";
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import prisma from "@/lib/prisma";
 
 jest.mock("../../lib/auth-helpers", () => ({
   __esModule: true,
-  requirePrivilegedAuth: jest.fn(),
+  requireBackofficeSurface: jest.fn(),
 }));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
@@ -29,7 +29,7 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
-const mockedAuth = requirePrivilegedAuth as jest.Mock;
+const mockedAuth = requireBackofficeSurface as jest.Mock;
 const mockedFindMany = prisma.moderationReport.findMany as jest.Mock;
 const mockedCount = prisma.moderationReport.count as jest.Mock;
 const mockedGroupBy = prisma.moderationReport.groupBy as jest.Mock;

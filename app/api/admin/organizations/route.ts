@@ -11,7 +11,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
-import { requireAdminAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { ORG_AWAITING_VERIFICATION_WHERE } from "@/lib/backoffice/queue-predicates";
 
 const OrgStatusSchema = z.enum([
@@ -22,7 +22,7 @@ const OrgStatusSchema = z.enum([
 ]);
 
 export async function GET(req: NextRequest) {
-  const auth = await requireAdminAuth();
+  const auth = await requireBackofficeSurface("organizations.manage");
   if (auth.error) return auth.error;
 
   const url = new URL(req.url);
