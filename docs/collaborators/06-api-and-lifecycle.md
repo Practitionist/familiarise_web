@@ -240,7 +240,7 @@ A collaborator also receives the booking notices of the plan's events (session r
 `expireStaleCollaboratorInvites` (`lib/collaborators/cleanup.ts`) is the job `expire-stale-collaborator-invites` in `lib/cron/cleanup-registry.ts`. It is due once a day and runs under a job lock.
 
 1. **Expire.** It reads up to 50 `PENDING` rows whose `updatedAt` is more than fourteen days old (`INVITE_TTL_DAYS`), oldest first, and ends each as `EXPIRED` through `endCollaboration` in a transaction of its own, conditional on the row still being that old. A row answered or edited since the read is left alone. Both sides are told.
-2. **Remind.** If time remains, it reads the pending rows that lapse within three days (`INVITE_REMINDER_DAYS_BEFORE`), drops those already claimed, and stages the reminder for each in its own transaction.
+2. **Remind.** If time remains, it reads the pending rows that lapse within three days (`INVITE_REMINDER_DAYS_BEFORE`) a page of 200 at a time, in `(updatedAt, id)` order, dropping those already claimed, until it holds a run's worth of unreminded rows or the window or the time budget ends. It stages the reminder for each in its own transaction.
 3. **Time budget.** No row is started after half of the job's start budget (about eight seconds). What is left is reported as `hasMore` and taken by the next run.
 4. **One report.** Failures are collected and reported once per run with the `collaborators` tag, and the rest of the run carries on. The job's summary is `{ expired, reminded, scanned, failed, hasMore }`.
 

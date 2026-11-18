@@ -30,8 +30,8 @@ export interface ExpireStaleCollaboratorInvitesResult {
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** The ticker aborts this job at 15 s, so no row starts after half the shared start budget (8 s). */
 const START_BUDGET_SHARE = 0.5;
-/** Invitations inside the reminder window that one run reads to find those not yet reminded. */
-const REMINDER_SCAN = 500;
+/** Invitations inside the reminder window that one read returns. */
+const REMINDER_PAGE = 200;
 
 /**
  * Ends invitations nobody answered within the invitation window as EXPIRED,
@@ -80,7 +80,11 @@ export async function expireStaleCollaboratorInvites(
         }
       }
 
-      const due = hasMore ? [] : await invitationsToRemind(cutoff);
+      const scan = hasMore
+        ? { due: [], hasMore: true }
+        : await invitationsToRemind(cutoff, effectiveLimit, outOfTime);
+      const { due } = scan;
+      hasMore ||= scan.hasMore;
       const reminders: StagedNotificationBundle[] = [];
       for (const { id, updatedAt } of due.slice(0, effectiveLimit)) {
         if (outOfTime()) {
@@ -140,31 +144,50 @@ export async function expireStaleCollaboratorInvites(
 
 /**
  * Pending invitations that lapse within the reminder window and have not been
- * reminded on their current terms, soonest to lapse first.
+ * reminded on their current terms, soonest to lapse first. Reads the window a
+ * page at a time by `(updatedAt, id)` until it holds `wanted` of them or the
+ * window or the time budget ends.
  */
 async function invitationsToRemind(
   cutoff: Date,
-): Promise<{ id: string; updatedAt: Date }[]> {
-  const inWindow = await prisma.collaborator.findMany({
-    where: {
-      status: "PENDING",
-      updatedAt: {
-        gte: cutoff,
-        lt: new Date(cutoff.getTime() + INVITE_REMINDER_DAYS_BEFORE * DAY_MS),
+  wanted: number,
+  outOfTime: () => boolean,
+): Promise<{ due: { id: string; updatedAt: Date }[]; hasMore: boolean }> {
+  const windowEnd = new Date(
+    cutoff.getTime() + INVITE_REMINDER_DAYS_BEFORE * DAY_MS,
+  );
+  const due: { id: string; updatedAt: Date }[] = [];
+  let after: { id: string; updatedAt: Date } | undefined;
+  for (;;) {
+    if (outOfTime()) return { due, hasMore: true };
+    const page = await prisma.collaborator.findMany({
+      where: {
+        status: "PENDING",
+        updatedAt: { gte: cutoff, lt: windowEnd },
+        ...(after && {
+          OR: [
+            { updatedAt: { gt: after.updatedAt } },
+            { updatedAt: after.updatedAt, id: { gt: after.id } },
+          ],
+        }),
       },
-    },
-    take: REMINDER_SCAN,
-    orderBy: { updatedAt: "asc" },
-    select: { id: true, updatedAt: true },
-  });
-  if (inWindow.length === 0) return [];
-  const claimed = await prisma.idempotencyRecord.findMany({
-    where: {
-      scope: INVITE_REMINDER_SCOPE,
-      key: { in: inWindow.map(inviteReminderKey) },
-    },
-    select: { key: true },
-  });
-  const reminded = new Set(claimed.map((c) => c.key));
-  return inWindow.filter((row) => !reminded.has(inviteReminderKey(row)));
+      take: REMINDER_PAGE,
+      orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
+      select: { id: true, updatedAt: true },
+    });
+    if (page.length > 0) {
+      const claimed = await prisma.idempotencyRecord.findMany({
+        where: {
+          scope: INVITE_REMINDER_SCOPE,
+          key: { in: page.map(inviteReminderKey) },
+        },
+        select: { key: true },
+      });
+      const reminded = new Set(claimed.map((c) => c.key));
+      due.push(...page.filter((row) => !reminded.has(inviteReminderKey(row))));
+    }
+    if (page.length < REMINDER_PAGE) return { due, hasMore: false };
+    if (due.length >= wanted) return { due, hasMore: true };
+    after = page[page.length - 1];
+  }
 }
