@@ -173,17 +173,29 @@ it("a queue row opens its booking without narrowing the list underneath", async 
   expect(window.location.search).toBe("?tab=completed&type=webinar&q=asha");
 });
 
-it("a 200 whose body is not an appointments page shows the error, not an empty list", async () => {
+it("a failed read shows the error panel, never No appointments found, and Try again reads again", async () => {
+  const goodImpl = fetchMock.getMockImplementation();
   fetchMock.mockImplementation(async () => ({
     ok: true,
     json: async () => ({ appointments: [{ id: 1 }] }),
   }));
   jest.spyOn(console, "error").mockImplementation(() => undefined);
   renderPage("/backoffice/appointments");
-  await waitFor(() => expect(mockToast).toHaveBeenCalled());
+  expect(
+    await screen.findByText("Couldn't load appointments"),
+  ).toBeInTheDocument();
+  expect(screen.queryByText("No appointments found")).not.toBeInTheDocument();
+  expect(screen.queryByText("0")).not.toBeInTheDocument();
   expect(mockToast.mock.calls[0][0]).toMatchObject({
     description: "Failed to load appointments",
   });
+
+  fetchMock.mockImplementation(goodImpl);
+  fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+  expect(await screen.findByText("No appointments found")).toBeInTheDocument();
+  expect(
+    screen.queryByText("Couldn't load appointments"),
+  ).not.toBeInTheDocument();
 });
 
 it("a failed linked read shows its error, and Try again or a second click retries", async () => {
