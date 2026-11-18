@@ -10,7 +10,7 @@ last-reviewed: 2026-11-18
 
 Two questions about GST are open with the chartered accountant (CA). This page states them in neutral terms, says what the code does today so that nobody has to rediscover it, and says plainly that the code does not change until the CA has answered. It takes no position on either question. The full brief, with the worked examples and the sources, is kept in Notion under Familiarise / Tax & CA Working Notes / Tax, Legal & Regulatory Register; this repository holds only the mechanism. The wider list of questions for the CA, such as whether the principal-supplier model holds, is in [the GST principal-supplier decision](../../enterprise/70-design-decisions/26-gst-principal-model.md).
 
-Both questions arise only once the platform is registered for GST. While `PLATFORM_GSTIN` is unset the platform charges no GST, issues no tax invoice and no credit note, and refuses the organisation-funded rails ([GST registration and the tax regime](05-gst-registration-and-tax-regime.md)). The code described below therefore does not run on live money until registration.
+Both questions arise only once the platform is registered for GST. While `PLATFORM_GSTIN` is unset the platform charges no GST, issues no tax invoice and no credit note, and refuses the organisation-funded rails ([GST registration and the tax regime](05-gst-registration-and-tax-regime.md)). Referral credits are not part of that switch: while `PLATFORM_GSTIN` is unset, `deriveCheckoutAmount` still applies a learner's eligible credits to paid orders and `reverseCreditsForPayment` still restores them after a refund. Only the GST and the tax documents described below stay inactive until registration.
 
 ## TP-1: referral credits on the invoice and on a refund
 
@@ -21,7 +21,7 @@ Both questions arise only once the platform is registered for GST. While `PLATFO
 - `deriveCheckoutAmount` (`lib/payments/pricing/derive-checkout-amount.ts`) applies credits after GST, against the tax-inclusive total.
 - `mintConsumerInvoice` (`lib/payments/billing/consumer-invoice.ts`) bills the cash paid plus the credits applied. In the example in [the money system explainer](../../start-here/02-money-system-hld.md), the invoice total is ₹2,124 and the card payment is ₹2,007.55.
 - `applyRefundCascade` (`lib/payments/operations/refund.ts`) asks `mintConsumerCreditNote` for a note sized on the cash refunded, and `deriveConsumerCreditNoteAmounts` spreads it over the invoice's total.
-- `reverseCreditsForPayment` (`lib/referrals/service.ts`) restores the credits after a refund and issues no tax document.
+- `reverseCreditsForPayment` (`lib/referrals/service.ts`) restores the credits after a refund and issues no tax document. A partial refund restores the same share of the credits as of the cash, and a credit that has lapsed is restored only when the expert or the platform caused the refund, so a buyer's own cancellation leaves it spent.
 - The one path that sizes a credit note on the credits is the booking paid entirely with credits: `reverseFreeCreditSettlement` in `lib/payments/operations/booking-refund.ts`.
 - The registration turnover alarm in `lib/compliance/gst-turnover.ts` adds credits still spent to the cash charged.
 
@@ -34,7 +34,7 @@ The credit-note cap is enforced by `mintConsumerCreditNote`, which sums earlier 
 **What the code does today.**
 
 - `carveParentBaseForMemberOverage` (`lib/payments/billing/overage-settlement.ts`) takes the over-cap base off the parent booking's `INVOICE_ACCRUAL` leg and its `Payment.amount`. It leaves the booking's recorded `taxAmount` whole.
-- `accruedTaxPaise` (`lib/payments/billing/invoice-rollup.ts`) keeps the booking's whole tax on the organisation's rollup line.
+- `accruedTaxPaise` (`lib/payments/billing/invoice-rollup.ts`) keeps the booking's whole tax on the organisation's rollup line, because the carve lowers the accrual leg in place rather than adding a reversal leg. Only a refund's reversal legs scale that tax down, in proportion to the net accrual over the gross.
 - The member's side payment carries GST on the surcharge only (`surchargeTaxPaise` in `lib/payments/billing/overage.ts`), and its own consumer invoice is minted from the member's payment by `handleOverageMemberSuccess`.
 - The numbers for a worked overage are in [worked examples](../50-b2b/05-worked-examples.md), "Example 2: Wipro's learner goes past the cap", and the rules are in [rate cards and overage](../50-b2b/03-rate-cards-and-overage.md).
 
