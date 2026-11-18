@@ -6,7 +6,7 @@ import {
   removeCollaborator,
   updatePendingTerms,
 } from "@/lib/collaborators/service";
-import type { PlanType } from "@/lib/collaborators/team";
+import { planWhere, type PlanType } from "@/lib/collaborators/team";
 import { resolveCollaborationViewer } from "@/lib/collaborators/viewer";
 import prisma from "@/lib/prisma";
 import {
@@ -45,7 +45,7 @@ export async function patchCollaborator(
   }
 }
 
-/** A manager removes any row on the plan; a collaborator ends only their own. */
+/** A manager removes any row on the plan; a collaborator ends only their own, and hears when it has already ended. */
 export async function deleteCollaborator(
   planType: PlanType,
   _req: NextRequest,
@@ -76,6 +76,24 @@ export async function deleteCollaborator(
       access.viewer.kind === "none" ||
       access.viewer.collaboratorId !== id
     ) {
+      // Only the caller's own ended row says so; any other id gets the refusal below.
+      const ownEnded =
+        access.callerProfileId &&
+        (await prisma.collaborator.findFirst({
+          where: {
+            ...planWhere(ref),
+            id,
+            consultantProfileId: access.callerProfileId,
+            status: { notIn: ["PENDING", "ACCEPTED"] },
+          },
+          select: { id: true },
+        }));
+      if (ownEnded) {
+        throw new CollaborationError(
+          "NOT_FOUND",
+          "This collaboration has already ended.",
+        );
+      }
       throw new CollaborationError(
         "FORBIDDEN",
         "Only the plan's host or the collaborator can end this collaboration.",

@@ -24,7 +24,7 @@ Every route needs a signed-in session (401 `UNAUTHORIZED` otherwise). Bodies and
 
 `data` on a write is a `CollaborationSummary`: the row's id, expert, role, tier, status and share, with the plan type and id. Nothing else about the row leaves a write.
 
-The handlers are thin. `lib/api/collaborations/plan-route.ts` and `lib/api/collaborations/member-handlers.ts` resolve the caller with `resolveCollaborationViewer`, require a manager where one is needed (`requireManager`), parse, and call one function of `lib/collaborators/service.ts`. The plan type on the respond route comes from the row, never from the request. A `DELETE` by a manager is a removal (`removeCollaborator`); by anyone else it must be the caller's own row and is a departure (`leaveCollaboration`).
+The handlers are thin. `lib/api/collaborations/plan-route.ts` and `lib/api/collaborations/member-handlers.ts` resolve the caller with `resolveCollaborationViewer`, require a manager where one is needed (`requireManager`), parse, and call one function of `lib/collaborators/service.ts`. The plan type on the respond route comes from the row, never from the request. A `DELETE` by a manager is a removal (`removeCollaborator`); by anyone else it must be the caller's own row and is a departure (`leaveCollaboration`). A caller whose own row on that plan has already ended gets `404 NOT_FOUND` "This collaboration has already ended."; every other id, whether or not it names a row, gets the same `403 FORBIDDEN`.
 
 ## Refusals
 
