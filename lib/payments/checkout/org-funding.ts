@@ -22,6 +22,7 @@ import {
 } from "@/lib/payments/tax/gst-regime";
 import { isRefusal, type RefusalShape } from "@/lib/errors/refusal";
 import type { CoveredPlanType } from "@prisma/client";
+import { COVERED_PLAN_TYPE_LABEL } from "@/lib/labels/org-labels";
 
 /**
  * #1744 row 4 — the one credit-limit predicate both gates share: the booking
@@ -102,7 +103,8 @@ export const PROGRAM_ASSIGNMENT_INACTIVE = "PROGRAM_ASSIGNMENT_INACTIVE";
 
 /** The refusal sentence when no active programme assignment covers `planType`. */
 export function noCoveringAssignmentMessage(planType: CoveredPlanType): string {
-  return `No active program assignment covers this booking. Ask your organization admin to assign you to a Program that covers ${planType}.`;
+  const bookings = `${COVERED_PLAN_TYPE_LABEL[planType].toLowerCase()} bookings`;
+  return `No active program assignment covers this booking. Ask your organisation admin to assign you to a Program that covers ${bookings}.`;
 }
 
 /**

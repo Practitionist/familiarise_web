@@ -100,7 +100,9 @@ describe("checkout preview fundingRefusal", () => {
       message: fundingRefusal?.message,
     });
     expect(fundingRefusal?.code).toBe("PROGRAM_ASSIGNMENT_INACTIVE");
-    expect(fundingRefusal?.message).toContain("covers WEBINAR");
+    expect(fundingRefusal?.message).toBe(
+      "No active program assignment covers this booking. Ask your organisation admin to assign you to a Program that covers webinar bookings.",
+    );
   });
 
   it("names the GST refusal when the programme covers the plan but org billing is unavailable", async () => {

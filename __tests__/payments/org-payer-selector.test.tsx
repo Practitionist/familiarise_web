@@ -11,7 +11,7 @@ import { OrgPayerSelector } from "@/app/checkout/components/OrgPayerSelector";
 import { CheckoutPreviewQuerySchema } from "@/schemas/organizations";
 
 const REFUSAL =
-  "No active program assignment covers this booking. Ask your organization admin to assign you to a Program that covers WEBINAR.";
+  "No active program assignment covers this booking. Ask your organisation admin to assign you to a Program that covers webinar bookings.";
 
 // The membership fields lib/auth.ts customSession puts on the session.
 const membership = (organizationId: string, organizationName: string) => ({
