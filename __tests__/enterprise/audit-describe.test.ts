@@ -16,6 +16,9 @@ const PROGRAM = "90dbcbd0-553a-43d6-a225-2800cc5c7cdb";
 const SEAT = "4b2b90f1-d5c7-4ddd-b83a-bfc192f11668";
 const INVOICE_PAID = "02c5e4ca-5f1c-429a-b90e-30f30949de4a";
 const INVOICE_VOID = "42515ad7-7a00-4406-abaf-efc3944dfec6";
+const MEMBER_GONE = "23cf0e23-76ed-4576-8150-2aacc4788e7c";
+const USER_KAREN = "cmu15kint0048c7yoh84ez6nn";
+const USER_ERASED = "cmu15kint0048c7yoh84ezzzz";
 
 const at = new Date("2026-11-01T10:00:00Z");
 const row = (
@@ -102,6 +105,30 @@ const AUDIT_ROWS = [
     from: { role: "MANAGER" },
     to: { role: "BILLING_ADMIN" },
   }),
+  row(
+    "r9",
+    "MEMBER",
+    "MEMBER_REMOVED",
+    `Removed member ${MEMBER_GONE} (soft delete)`,
+    { role: "LEARNER", previousStatus: "ACTIVE" },
+    MEMBER_GONE,
+  ),
+  row(
+    "r10",
+    "MEMBER",
+    "MEMBER_ADDED",
+    `Added ${USER_KAREN} as LEARNER`,
+    { role: "LEARNER", departmentLabel: null },
+    MEMBER_GONE,
+  ),
+  row(
+    "r11",
+    "MEMBER",
+    "MEMBER_ADDED",
+    `Added ${USER_ERASED} as LEARNER`,
+    { role: "LEARNER", departmentLabel: null },
+    MEMBER_GONE,
+  ),
 ];
 
 const EXPECTED = [
@@ -113,10 +140,14 @@ const EXPECTED = [
   "Billing settings changed: credit limit ₹1,03,00,000.00 → ₹1,00,00,000.00",
   "Organisation settings changed: recording retention",
   "Role: Manager → Billing admin",
+  "A member (Learner) was removed from the organisation",
+  "Added Karen Anderson as Learner",
+  "Added a removed member as Learner",
 ];
 
 const RAW = [
   /[0-9a-f]{8}-[0-9a-f]{4}-/,
+  /\bc[a-z0-9]{24}\b/,
   /\d{4}-\d{2}-\d{2}T/,
   /\bpaise\b/,
   /\b[A-Z]{2,}_[A-Z]+\b/,
@@ -137,6 +168,9 @@ const PEOPLE = new Map([
   [MEMBER_A, "Aarav Anderson"],
   [MEMBER_B, "Ravi Kumar"],
 ]);
+
+/** Users still in the organisation; an erased user is not returned. */
+const USERS = new Map([[USER_KAREN, "Karen Anderson"]]);
 
 const mockAuditFindMany = jest.fn(async (_args: unknown) => AUDIT_ROWS);
 
@@ -162,6 +196,12 @@ jest.mock("../../lib/prisma", () => ({
             user: { name: PEOPLE.get(id), email: `${id}@x.test` },
           }));
       },
+    },
+    user: {
+      findMany: async (args: Where) =>
+        idsIn(args)
+          .filter((id) => USERS.has(id))
+          .map((id) => ({ id, name: USERS.get(id), email: `${id}@x.test` })),
     },
     contract: {
       findMany: async (args: Where) =>

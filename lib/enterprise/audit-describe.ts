@@ -36,6 +36,7 @@ export interface AuditDescribable {
 /** The entities a page of rows names, resolved in one batch per kind. */
 export interface AuditNameBook {
   members: ReadonlyMap<string, string>;
+  users: ReadonlyMap<string, string>;
   contracts: ReadonlyMap<string, { effectiveFrom: Date }>;
   programs: ReadonlyMap<string, { name: string; type: string }>;
   invoices: ReadonlyMap<string, { number: string; totalPaise: number }>;
@@ -138,6 +139,15 @@ const CONTRACT_STATUS_ACTIONS = new Set([
   "CONTRACT_TERMINATED",
 ]);
 
+/** Actions whose stored text names a person by id; an unknown id there is a removed member. */
+const PERSON_ACTIONS = new Set([
+  "MEMBER_ADDED",
+  "MEMBER_REMOVED",
+  "ROLE_CHANGE",
+  "STATUS_CHANGE",
+  "INVITE_ACCEPTED",
+]);
+
 const MATERIAL_VERB: Readonly<Record<string, string>> = {
   PLAN_MATERIAL_ADDED: "added",
   PLAN_MATERIAL_UPDATED: "updated",
@@ -173,6 +183,7 @@ export function auditReferenceIds(rows: readonly AuditDescribable[]) {
   const contracts = new Set<string>();
   const programs = new Set<string>();
   const invoices = new Set<string>();
+  const named = new Set<string>();
   for (const row of rows) {
     const d = DetailsSchema.parse(row.details);
     if (row.targetMembershipId) members.add(row.targetMembershipId);
@@ -181,9 +192,15 @@ export function auditReferenceIds(rows: readonly AuditDescribable[]) {
     if (d.successorContractId) contracts.add(d.successorContractId);
     if (d.programId) programs.add(d.programId);
     if (d.invoiceId) invoices.add(d.invoiceId);
+    if (PERSON_ACTIONS.has(row.action)) {
+      for (const id of row.description.match(ID_PATTERN) ?? []) named.add(id);
+    }
   }
+  // Older person rows name a user id in their text; membership ids resolve above.
+  const users = [...named].filter((id) => !members.has(id));
   return {
     members: [...members],
+    users,
     contracts: [...contracts],
     programs: [...programs],
     invoices: [...invoices],
@@ -197,11 +214,21 @@ export async function loadAuditNameBook(
   const ids = auditReferenceIds(rows);
   const orgIds = [...new Set(rows.map((r) => r.organizationId))];
   const inOrgs = { in: orgIds };
-  const [members, contracts, programs, invoices] = await Promise.all([
+  const [members, users, contracts, programs, invoices] = await Promise.all([
     ids.members.length
       ? prisma.membership.findMany({
           where: { id: { in: ids.members }, organizationId: inOrgs },
           select: { id: true, user: { select: { name: true, email: true } } },
+        })
+      : [],
+    ids.users.length
+      ? prisma.user.findMany({
+          where: {
+            id: { in: ids.users },
+            erasedAt: null,
+            memberships: { some: { organizationId: inOrgs } },
+          },
+          select: { id: true, name: true, email: true },
         })
       : [],
     ids.contracts.length
@@ -230,6 +257,7 @@ export async function loadAuditNameBook(
     members: new Map(
       members.map((m) => [m.id, m.user.name || m.user.email || "A member"]),
     ),
+    users: new Map(users.map((u) => [u.id, u.name || u.email || "A member"])),
     contracts: new Map(
       contracts.map((c) => [c.id, { effectiveFrom: c.effectiveFrom }]),
     ),
@@ -264,7 +292,12 @@ export function describeAuditEntry(
   const d = DetailsSchema.parse(row.details);
   return (
     composeFromDetails(row, d, book, zone) ??
-    scrubStoredDescription(row.description, book, zone)
+    scrubStoredDescription(
+      row.description,
+      book,
+      zone,
+      PERSON_ACTIONS.has(row.action),
+    )
   );
 }
 
@@ -301,11 +334,17 @@ function composeFromDetails(
         : null;
     case "MEMBER_ADDED":
       return subject && role ? `${subject} added as ${role}` : null;
-    case "MEMBER_REMOVED":
-      if (!subject) return null;
+    case "MEMBER_REMOVED": {
+      if (subject) {
+        return d.selfLeave
+          ? `${subject} left the organisation`
+          : `${subject} removed from the organisation`;
+      }
+      const who = `A member${role ? ` (${role})` : ""}`;
       return d.selfLeave
-        ? `${subject} left the organisation`
-        : `${subject} removed from the organisation`;
+        ? `${who} left the organisation`
+        : `${who} was removed from the organisation`;
+    }
     case "CONTRACT_CREATED": {
       const c = d.contractId ? book.contracts.get(d.contractId) : undefined;
       const from = c ? dateIn(c.effectiveFrom, zone) : null;
@@ -466,17 +505,19 @@ function scrubStoredDescription(
   description: string,
   book: AuditNameBook,
   zone: string,
+  namesPerson: boolean,
 ): string {
   return sanitizeAuditDescription(description)
     .replace(ISO_PATTERN, (iso) => dateIn(iso, zone) ?? iso)
     .replace(PAISE_PATTERN, (_m, paise: string) => inr(Number(paise)))
     .replace(ID_PATTERN, (id) => {
-      const name = book.members.get(id);
+      const name = book.members.get(id) ?? book.users.get(id);
       if (name) return name;
       const p = book.programs.get(id);
       if (p) return `"${p.name}"`;
       const inv = book.invoices.get(id);
-      return inv ? inv.number : id;
+      if (inv) return inv.number;
+      return namesPerson ? "a removed member" : id;
     })
     .replace(SNAKE_ENUM_PATTERN, (code) => humanizeEnum(code).toLowerCase())
     .replace(
