@@ -256,6 +256,7 @@ export async function POST(
       callType: STREAM_CALL_TYPE,
       callId: resolvedCallId,
       role: access.role,
+      ...(access.coPresenter ? { coPresenter: true } : {}),
     });
   } catch (error) {
     if (error instanceof StreamUnavailableError) {
