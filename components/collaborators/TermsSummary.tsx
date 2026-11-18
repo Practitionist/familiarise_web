@@ -28,6 +28,8 @@ interface TermsSummaryProps {
   planPricePaise: number;
   /** Manager only: the whole percents the plan's other invited and accepted collaborators hold. */
   otherSharePercents?: readonly number[];
+  /** Manager only: true when any of those others is an invitation not yet accepted. */
+  othersPending?: boolean;
   /** When the invitation lapses. Omit for someone already on the team. */
   expiresAt?: Date | string | null;
 }
@@ -39,6 +41,7 @@ function seatExample({
   audience,
   planPricePaise,
   otherSharePercents = [],
+  othersPending = false,
 }: TermsSummaryProps): string {
   if (planPricePaise <= 0) {
     return "This plan is free, so there is nothing to divide unless its price changes.";
@@ -52,7 +55,12 @@ function seatExample({
     slices.others > 0
       ? `, ${inr(slices.others)} goes to your other collaborators`
       : "";
-  return `At the listed price of ${price}, ${inr(slices.collaborator)} of each seat is their share${others} and ${inr(slices.host)} stays with you, before the platform fee. The fee is then taken from each share at that person's own rate.`;
+  // A pending invitation earns nothing until it is accepted, so the example says it counts them.
+  const assumption =
+    othersPending && slices.others > 0
+      ? " These figures assume every pending invitation is accepted."
+      : "";
+  return `At the listed price of ${price}, ${inr(slices.collaborator)} of each seat is their share${others} and ${inr(slices.host)} stays with you, before the platform fee. The fee is then taken from each share at that person's own rate.${assumption}`;
 }
 
 export function TermsSummary(props: Readonly<TermsSummaryProps>) {
