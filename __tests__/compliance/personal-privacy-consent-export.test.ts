@@ -364,6 +364,18 @@ describe("Personal DPDP Consent & §11 Data Export Routes", () => {
           webinarPlan: { title: "Design reviews" },
           classPlan: null,
         },
+        // One row more than the export lists: the read's probe for a longer history.
+        ...Array.from({ length: 200 }, (_, i) => ({
+          id: `collab_older_${i}`,
+          role: "MODERATOR",
+          status: "EXPIRED",
+          revenueShareBps: 1000,
+          createdAt: new Date("2026-09-01T00:00:00Z"),
+          acceptedAt: null,
+          endedAt: new Date("2026-09-15T00:00:00Z"),
+          webinarPlan: null,
+          classPlan: { title: "Older class" },
+        })),
       ]);
 
       const res = await getExport();
@@ -398,10 +410,13 @@ describe("Personal DPDP Consent & §11 Data Export Routes", () => {
       expect(
         payload.personalDataSummary.activitySummary.sessionAccessLogTruncated,
       ).toBe(false);
-      // The user's own collaborations, ended ones included, and nobody else's.
-      expect(
-        payload.personalDataSummary.activitySummary.collaborations,
-      ).toEqual([
+      // The user's own collaborations, ended ones included, and nobody else's:
+      // the newest 200, with a flag when the history is longer.
+      const { collaborations, collaborationsTruncated } =
+        payload.personalDataSummary.activitySummary;
+      expect(collaborations).toHaveLength(200);
+      expect(collaborationsTruncated).toBe(true);
+      expect(collaborations.slice(0, 1)).toEqual([
         {
           id: "collab_1",
           planType: "WEBINAR",
@@ -419,6 +434,7 @@ describe("Personal DPDP Consent & §11 Data Export Routes", () => {
       expect(collaborationRead.where).toEqual({
         consultantProfile: { userId: "user_dpdp_1" },
       });
+      expect(collaborationRead.take).toBe(201);
       expect(collaborationRead.select).not.toHaveProperty("invitedById");
       expect(collaborationRead.select.webinarPlan.select).toEqual({
         title: true,

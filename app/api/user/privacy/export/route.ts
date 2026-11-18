@@ -56,6 +56,9 @@ const RETENTION_LEGAL_BASIS = {
     "DPDP Rules 2025, Rule 14(3); DPDP Act 2023, sections 13(3) and 27",
 } as const;
 
+/** The newest collaborations the file lists; `collaborationsTruncated` says when there are more. */
+const COLLABORATIONS_LISTED = 200;
+
 export async function GET() {
   const session = await getSession();
   if (!session?.user?.id) {
@@ -264,7 +267,8 @@ export async function GET() {
       prisma.collaborator.findMany({
         where: { consultantProfile: { userId } },
         orderBy: { createdAt: "desc" },
-        take: 200,
+        // One row past the listed limit tells a longer history apart.
+        take: COLLABORATIONS_LISTED + 1,
         select: {
           id: true,
           role: true,
@@ -283,17 +287,19 @@ export async function GET() {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
-    const collaborations = collaborationRows.map((c) => ({
-      id: c.id,
-      planType: c.webinarPlan ? "WEBINAR" : "CLASS",
-      planTitle: c.webinarPlan?.title ?? c.classPlan?.title ?? null,
-      role: c.role,
-      status: c.status,
-      revenueSharePercent: bpsToPercent(c.revenueShareBps),
-      invitedAt: c.createdAt,
-      acceptedAt: c.acceptedAt,
-      endedAt: c.endedAt,
-    }));
+    const collaborations = collaborationRows
+      .slice(0, COLLABORATIONS_LISTED)
+      .map((c) => ({
+        id: c.id,
+        planType: c.webinarPlan ? "WEBINAR" : "CLASS",
+        planTitle: c.webinarPlan?.title ?? c.classPlan?.title ?? null,
+        role: c.role,
+        status: c.status,
+        revenueSharePercent: bpsToPercent(c.revenueShareBps),
+        invitedAt: c.createdAt,
+        acceptedAt: c.acceptedAt,
+        endedAt: c.endedAt,
+      }));
 
     const consumerInvoices = rawConsumerInvoices.map((inv) => ({
       ...inv,
@@ -454,6 +460,8 @@ export async function GET() {
         activitySummary: {
           appointmentParticipations: participations,
           collaborations,
+          collaborationsTruncated:
+            collaborationRows.length > COLLABORATIONS_LISTED,
           payments,
           consumerInvoices,
           ...support,
