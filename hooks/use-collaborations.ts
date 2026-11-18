@@ -315,7 +315,7 @@ function exactRecovery(refusal: CollaborationRefusal): string | null {
     return `This plan's session on ${day}, ${hours} overlaps another session on your calendar.`;
   }
   if (refusal.code === "COOLDOWN" && retryAt) {
-    return `This expert recently declined or left this plan, and can be invited again from ${formatDay(retryAt, refusal.zone)}.`;
+    return `This expert recently declined or left this plan, and can be invited again from ${formatDay(retryAt, refusal.zone ?? undefined)}.`;
   }
   if (refusal.code === "RATE_LIMITED" && retryAfterSeconds !== undefined) {
     const minutes = Math.max(1, Math.ceil(retryAfterSeconds / 60));
