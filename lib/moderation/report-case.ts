@@ -7,7 +7,10 @@
 import type { Prisma, ModerationReportType } from "@prisma/client";
 
 import prisma, { type Tx } from "@/lib/prisma";
-import { liveParticipant } from "@/lib/booking/participants";
+import {
+  liveParticipant,
+  NOT_COLLABORATOR_ROW,
+} from "@/lib/booking/participants";
 import { resolveCanonicalMeetingChannel } from "@/lib/meetings/mirror-room-chat";
 import { reportReasonLabel } from "@/lib/labels/report-reasons";
 import { formatReportReference } from "@/lib/moderation/report-reference";
@@ -54,7 +57,11 @@ export function bookingPartyWhere(
   };
   return {
     OR: [
-      { participants: { some: liveParticipant(userId) } },
+      {
+        participants: {
+          some: { ...liveParticipant(userId), ...NOT_COLLABORATOR_ROW },
+        },
+      },
       {
         payment: {
           some: { userId, ...CAPTURED_PAYMENT_WHERE },

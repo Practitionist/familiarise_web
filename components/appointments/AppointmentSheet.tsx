@@ -34,6 +34,7 @@ import { isExternalPayHref } from "@/lib/payments/pay-link-href";
 import { useZonedFormat } from "@/lib/time/zoned-format";
 import { SUPPORT_PATH } from "@/lib/appointments/new-time-door";
 import { CountdownBadge } from "./CountdownBadge";
+import { formatRole } from "@/components/collaborators/format";
 import { KIND_LABEL } from "./AppointmentRow";
 import { RowPrimaryAction } from "./RowPrimaryAction";
 import { SessionTimeline } from "./SessionTimeline";
@@ -173,7 +174,7 @@ export function AppointmentSheet({
             )}
             {vm.collaboratorRole && (
               <span className="rounded bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300 px-1.5 py-px text-[10px] font-medium">
-                Your role: {vm.collaboratorRole}
+                Your role: {formatRole(vm.collaboratorRole)}
               </span>
             )}
             {vm.kind === "TRIAL" && (

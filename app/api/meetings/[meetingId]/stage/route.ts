@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
-import { liveParticipant } from "@/lib/booking/participants";
+import {
+  liveParticipant,
+  NOT_COLLABORATOR_ROW,
+} from "@/lib/booking/participants";
+import { currentTeam, type PlanRef } from "@/lib/collaborators/team";
 import { guardMeetingRoute } from "@/lib/meetings/route-guard";
 import { meetingStageLimiter } from "@/lib/rate-limit";
 import { isOneToManyAppointmentType } from "@/lib/meetings/room-ready";
@@ -98,10 +102,28 @@ export async function POST(
     const appointmentId = access.appointment?.id;
     if (appointmentId) {
       const targetSeat = await prisma.appointmentParticipant.findFirst({
-        where: { appointmentId, ...liveParticipant(targetUserId) },
+        where: {
+          appointmentId,
+          ...liveParticipant(targetUserId),
+          ...NOT_COLLABORATOR_ROW,
+        },
         select: { id: true },
       });
-      if (!targetSeat) {
+      // Crew hold no seat: they are in the room because they are on the plan's team.
+      const webinarPlanId = access.appointment?.webinar?.webinarPlan?.id;
+      const classPlanId = access.appointment?.class?.classPlan?.id;
+      const plan: PlanRef | null = webinarPlanId
+        ? { planType: "webinar", planId: webinarPlanId }
+        : classPlanId
+          ? { planType: "class", planId: classPlanId }
+          : null;
+      const onTeam =
+        !targetSeat && plan
+          ? (await currentTeam(prisma, plan)).some(
+              (member) => member.userId === targetUserId,
+            )
+          : false;
+      if (!targetSeat && !onTeam) {
         return NextResponse.json(
           {
             error: "Target user is not an active participant of this session.",

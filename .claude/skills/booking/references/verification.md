@@ -25,9 +25,13 @@ race, the no-show refund front door and the slot/session fix pins.
 `__tests__/maintenance/` holds eight — freeze, the cron-lock registry, the
 `assertNotInMaintenance` guard, the `cleanupRoute()` factory, the DEGRADED
 write block, the abandoned-payments reversal, the `SystemJobExecution` prune and
-workflow import-env. `__tests__/collaborators/` holds only `availability.test.ts`
-— the wave-5 co-host work landed under `__tests__/booking-algorithm/` instead,
-so grep both. Run everything with `npm run test`. Races between real
+workflow import-env. `__tests__/collaborators/` holds the collaborator
+subsystem's own suites (invite and terms, accept, the one ending function and
+the expiry sweep, the viewer, the routes, the notices, the screens and
+`availability.test.ts`); the co-host calendar work is under
+`__tests__/booking-algorithm/`, the plan lock and the former collaborator's
+seat under `__tests__/booking/`, and the database rules under
+`__tests__/db/collaborators/`, so grep all four. Run everything with `npm run test`. Races between real
 transactions live in a sixth folder, `__tests__/db/booking/`, which the unit run
 never executes; see §11.
 

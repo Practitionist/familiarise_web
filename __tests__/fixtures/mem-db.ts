@@ -206,5 +206,31 @@ export function memTable(
         return { count };
       },
     ),
+    createManyAndReturn: jest.fn(
+      async (args: { data: Row[]; skipDuplicates?: boolean; select?: Row }) => {
+        const inserted: Row[] = [];
+        for (const d of args.data) {
+          if (clashes(d)) {
+            if (args.skipDuplicates) continue;
+            throw new Error("Unique constraint failed");
+          }
+          const row: Row = { id: `${idPrefix}-${rows.length + 1}`, ...d };
+          rows.push(row);
+          inserted.push(pick(row, args.select));
+        }
+        return inserted;
+      },
+    ),
+    updateManyAndReturn: jest.fn(
+      async (args: { where?: Where; data: Row; select?: Row }) => {
+        const moved: Row[] = [];
+        for (const r of rows) {
+          if (!matchesWhere(r, args.where)) continue;
+          applyData(r, args.data);
+          moved.push(pick(r, args.select));
+        }
+        return moved;
+      },
+    ),
   };
 }

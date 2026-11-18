@@ -10,12 +10,16 @@
 const mockGuardMeetingRoute = jest.fn();
 const mockUpdateUserPermissions = jest.fn();
 const mockAppointmentParticipantFindFirst = jest.fn();
+const mockCollaboratorFindMany = jest.fn();
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     appointmentParticipant: {
       findFirst: (...a: unknown[]) => mockAppointmentParticipantFindFirst(...a),
+    },
+    collaborator: {
+      findMany: (...a: unknown[]) => mockCollaboratorFindMany(...a),
     },
   },
 }));
@@ -32,8 +36,9 @@ jest.mock("../../lib/stream-client", () => ({
     video: {
       call: () => ({
         updateUserPermissions: (payload: unknown) => {
-          const contracts =
-            require("../../lib/stream/video-contracts") as typeof import("../../lib/stream/video-contracts");
+          const contracts = jest.requireActual<
+            typeof import("../../lib/stream/video-contracts")
+          >("../../lib/stream/video-contracts");
           contracts.assertValidUpdateUserPermissions(payload);
           return mockUpdateUserPermissions(payload);
         },
@@ -225,6 +230,7 @@ describe("Issue #1999 — Stream Video SDK Enum Contract Validation", () => {
 async function callStageEndpoint(
   callerRole: "host" | "participant",
   payload: Record<string, unknown>,
+  appointment: Record<string, unknown> = {},
 ) {
   mockGuardMeetingRoute.mockResolvedValue({
     ok: true,
@@ -234,7 +240,11 @@ async function callStageEndpoint(
       hasAccess: true,
       role: callerRole,
       streamCallId: "occurrence-webinar-1",
-      appointment: { id: "appt_w1", appointmentType: "WEBINAR" },
+      appointment: {
+        id: "appt_w1",
+        appointmentType: "WEBINAR",
+        ...appointment,
+      },
     },
   });
   const req = new NextRequest("http://localhost/api/meetings/m1/stage", {
@@ -265,6 +275,7 @@ describe("Issue #1999 — POST /api/meetings/[meetingId]/stage (Host & Co-Presen
           appointmentId: "appt_w1",
           userId: "attendee_42",
           status: { in: ["HELD", "CONFIRMED", "ATTENDED"] },
+          role: { not: "COLLABORATOR" },
         },
       }),
     );
@@ -284,6 +295,50 @@ describe("Issue #1999 — POST /api/meetings/[meetingId]/stage (Host & Co-Presen
 
     expect(res.status).toBe(403);
     expect(mockUpdateUserPermissions).not.toHaveBeenCalled();
+  });
+
+  const onPlan = { webinar: { webinarPlan: { id: "plan-1" } } };
+  const crewTarget = { targetUserId: "crew_7", action: "grant" };
+
+  it("refuses a target whose only row is their own from a collaboration that has ended", async () => {
+    // The old row is still live; Postgres returns it unless the route leaves staff rows out.
+    mockAppointmentParticipantFindFirst.mockImplementation(
+      async (args: { where: { role?: { not?: string } } }) =>
+        args.where.role?.not === "COLLABORATOR" ? null : { id: "staff-row" },
+    );
+    mockCollaboratorFindMany.mockResolvedValue([]);
+
+    const res = await callStageEndpoint("host", crewTarget, onPlan);
+
+    expect(res.status).toBe(403);
+    expect(mockUpdateUserPermissions).not.toHaveBeenCalled();
+  });
+
+  it("brings a crew member to the stage on the strength of the team, not of a seat", async () => {
+    mockAppointmentParticipantFindFirst.mockResolvedValue(null);
+    mockCollaboratorFindMany.mockResolvedValue([
+      {
+        id: "collab-1",
+        consultantProfileId: "cp-crew",
+        role: "MODERATOR",
+        tier: "CREW",
+        revenueShareBps: 500,
+        consultantProfile: { userId: "crew_7" },
+      },
+    ]);
+    mockUpdateUserPermissions.mockResolvedValue({});
+
+    const res = await callStageEndpoint("host", crewTarget, onPlan);
+
+    expect(res.status).toBe(200);
+    expect(mockCollaboratorFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          webinarPlanId: "plan-1",
+          status: "ACCEPTED",
+        }),
+      }),
+    );
   });
 
   it("allows a host or co-presenter to revoke stage publish permissions when declining/removing from stage", async () => {

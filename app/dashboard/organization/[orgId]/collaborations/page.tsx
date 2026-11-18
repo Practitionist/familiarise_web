@@ -37,8 +37,8 @@ export default async function OrgCollaborationsPage({
         title="Collaborations"
         description={
           orgView
-            ? `Invitations and active collaborations on every webinar and class plan ${access.org.name} hosts.`
-            : `Invitations and active collaborations on your webinar and class plans at ${access.org.name}.`
+            ? `The team on every webinar and class ${access.org.name} hosts: invite, change a pending invitation, or remove a collaborator.`
+            : `Invitations to answer, the plans you help deliver, and the teams on your own webinars and classes at ${access.org.name}.`
         }
       />
       <DashboardContent>

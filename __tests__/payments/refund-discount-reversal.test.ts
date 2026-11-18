@@ -23,7 +23,7 @@ jest.mock("../../lib/api/organizations/wallet", () => ({
     ownerOrgId: "org-iitm",
   })),
 }));
-jest.mock("../../lib/collaborators/service", () => ({
+jest.mock("../../lib/collaborators/revenue-split", () => ({
   calculateRevenueSplit: jest.fn(async () => []),
 }));
 jest.mock("../../lib/api/organizations/program-helpers", () => ({
@@ -189,6 +189,7 @@ function makeWorld(rail: "CARD" | "WALLET") {
         typeof createEarningsFromPayment
       >[0]["payment"],
       appointmentType: "CONSULTATION",
+      teamAt: new Date("2026-10-09T10:00:00Z"),
       tx: txDouble(tx),
     });
   // A member overage carved after the booking journal: Dr DISCOUNT / Cr WALLET.

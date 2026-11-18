@@ -12,6 +12,8 @@
 import { buildWhere } from "@/lib/api/scope/list-appointments";
 
 const live = { in: ["HELD", "CONFIRMED", "ATTENDED"] };
+// A collaborator's own participant row is never an attended seat.
+const learnerOrHost = { role: { not: "COLLABORATOR" } };
 
 describe("buildWhere — personal and org scopes", () => {
   const where = buildWhere({
@@ -29,7 +31,11 @@ describe("buildWhere — personal and org scopes", () => {
       OR: [
         { consultation: { requestedBy: { userId: "u1" } } },
         { subscription: { requestedBy: { userId: "u1" } } },
-        { participants: { some: { userId: "u1", status: live } } },
+        {
+          participants: {
+            some: { userId: "u1", status: live, ...learnerOrHost },
+          },
+        },
       ],
     });
   });
@@ -112,7 +118,11 @@ describe("buildWhere — personal and org scopes", () => {
       OR: [
         { consultation: { requestedBy: { userId: "u1" } } },
         { subscription: { requestedBy: { userId: "u1" } } },
-        { participants: { some: { userId: "u1", status: live } } },
+        {
+          participants: {
+            some: { userId: "u1", status: live, ...learnerOrHost },
+          },
+        },
       ],
     });
     expect(w.OR).toContainEqual({

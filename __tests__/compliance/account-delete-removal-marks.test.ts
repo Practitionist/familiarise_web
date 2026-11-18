@@ -36,11 +36,9 @@ jest.mock("../../lib/auth/session-access-log", () => ({
 jest.mock("../../lib/novu/subscriber", () => ({
   deleteSubscriber: jest.fn(async () => true),
 }));
-jest.mock("../../lib/collaborators/standing", () => ({
-  removeCollaboratorStanding: jest.fn(async () => []),
-}));
-jest.mock("../../lib/collaborators/service", () => ({
-  revokeCollaboratorAccess: jest.fn(async () => undefined),
+jest.mock("../../lib/collaborators/ending", () => ({
+  endCollaborationsForUser: jest.fn(async () => []),
+  afterCollaborationEnded: jest.fn(async () => undefined),
 }));
 jest.mock("../../lib/support/erasure", () => ({
   supportRetainedHistoryCount: jest.fn(async () => 0),

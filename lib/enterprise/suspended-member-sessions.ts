@@ -2,7 +2,10 @@ import type { Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 
 import prisma from "@/lib/prisma";
-import { liveParticipant } from "@/lib/booking/participants";
+import {
+  liveParticipant,
+  NOT_COLLABORATOR_ROW,
+} from "@/lib/booking/participants";
 
 /**
  * #1527 decision 6 — a suspended member keeps the sessions already booked, so
@@ -20,7 +23,15 @@ export function suspendedMemberAttendeeWhere(
     OR: [
       { consultation: { requestedBy: { user: suspendedHere } } },
       { subscription: { requestedBy: { user: suspendedHere } } },
-      { participants: { some: { ...liveParticipant(), user: suspendedHere } } },
+      {
+        participants: {
+          some: {
+            ...liveParticipant(),
+            ...NOT_COLLABORATOR_ROW,
+            user: suspendedHere,
+          },
+        },
+      },
     ],
   };
 }

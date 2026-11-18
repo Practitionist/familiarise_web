@@ -1,34 +1,41 @@
 /** @jest-environment node */
 
-// Each collaborator transition stages one bell and its emails inside its own
-// transaction, to the right party, and an org member removal stages only the
-// host's WITHDRAWN notice per row.
+// Each collaborator transition stages its bells and emails inside its own
+// transaction, to the party that did not make it; a co-presenter joining or
+// leaving rings the plan's seat holders there and mails them once it has
+// committed; and an org member removal stages only the host's WITHDRAWN notice
+// per row.
 
 const mockStageNotices = jest.fn();
 const mockFlush = jest.fn(async (..._args: unknown[]) => undefined);
-const mockRevoke = jest.fn(async (..._args: unknown[]) => ({ success: true }));
+const mockRevoke = jest.fn(async (..._args: unknown[]) => undefined);
+const mockReport = jest.fn();
 jest.mock("@/lib/collaborators/notifications", () => {
   const actual = jest.requireActual("@/lib/collaborators/notifications");
   return {
     stageCollaboratorNotifications: (...args: unknown[]) =>
       mockStageNotices(...args) ??
       actual.stageCollaboratorNotifications(...args),
+    sendOwedCohostEmails: actual.sendOwedCohostEmails,
   };
 });
+jest.mock("@/lib/observability/report", () => ({
+  ...jest.requireActual("@/lib/observability/report"),
+  reportSentryError: (...args: unknown[]) => mockReport(...args),
+}));
 jest.mock("@/lib/email/render", () => ({
   renderEmail: jest.fn(async () => ({ html: "<p>hi</p>", text: "hi" })),
 }));
 jest.mock("@/lib/novu/stage-then-attempt", () => ({
   flushNotificationsAfter: (...args: unknown[]) => mockFlush(...args),
 }));
-jest.mock("@/lib/collaborators/service", () => ({
-  revokeCollaboratorAccess: (...args: unknown[]) => mockRevoke(...args),
-}));
 jest.mock("@/lib/stream/org-access-revocation", () => ({
   revokeMemberStreamAccess: jest.fn(async () => ({ complete: true })),
 }));
+const GENERATION = new Date("2026-11-08T00:00:00Z");
 jest.mock("@/lib/stream/access-revocation", () => ({
-  enqueueCollaboratorRevocationRetry: jest.fn(),
+  persistCollaboratorRevocationInTx: jest.fn(async () => GENERATION),
+  revokeCollaboratorAccess: (...args: unknown[]) => mockRevoke(...args),
   enqueueOrgMemberRevocationRetry: jest.fn(),
 }));
 jest.mock("@/lib/enterprise/membership-guards", () => ({
@@ -50,6 +57,7 @@ jest.mock("@/lib/enterprise/outbound-webhooks/dispatch", () => ({
   dispatchWebhookEvent: jest.fn(),
 }));
 jest.mock("@/lib/booking/participants", () => ({
+  ...jest.requireActual("@/lib/booking/participants"),
   transitionParticipant: jest.fn(),
 }));
 jest.mock("@/lib/db/serializable-retry", () => ({
@@ -64,37 +72,60 @@ const row = {
   invitedById: "cp-host",
   role: "CO_HOST" as const,
   revenueShareBps: 2500,
+  acceptedAt: new Date("2026-11-01T00:00:00Z") as Date | null,
+  endedByUserId: null as string | null,
   updatedAt: new Date("2026-11-07T00:00:00Z"),
 };
-const users: Record<string, Record<string, unknown>> = {
-  "u-guest": { id: "u-guest", email: "guest@example.com", name: "Guest" },
-  "u-host": {
-    id: "u-host",
-    email: "host@example.com",
-    name: "Host",
-    notificationPreferences: { inAppEnabled: false },
-  },
+const person = (id: string, extra: Record<string, unknown> = {}) => ({
+  id,
+  email: `${id}@example.com`,
+  name: id,
+  ...extra,
+});
+const MUTED = { notificationPreferences: { inAppEnabled: false } };
+let users: Record<string, Record<string, unknown>>;
+const hostProfile = {
+  userId: "u-host",
+  user: { name: "Host", erasedAt: null },
 };
+let plan: {
+  title: string;
+  organizationId: string | null;
+  organization: { name: string } | null;
+  consultantProfile: typeof hostProfile | null;
+};
+let seatHolders: string[];
+let claims: Set<string>;
+type Claim = { scope: string; key: string; userId: string };
+const claimOf = (c: Claim) => `${c.scope}|${c.key}|${c.userId}`;
+
+type Created = { recipients: string[]; payload: Record<string, unknown> };
 const tx: Record<string, Record<string, jest.Mock> | jest.Mock> & {
-  notificationOutbox: { upsert: jest.Mock };
-  failedEmail: { create: jest.Mock };
+  $transaction: jest.Mock;
+  idempotencyRecord: {
+    createMany: jest.Mock;
+    findMany: jest.Mock;
+    createManyAndReturn: jest.Mock;
+  };
+  notificationOutbox: { upsert: jest.Mock; createManyAndReturn: jest.Mock };
+  failedEmail: { create: jest.Mock; createManyAndReturn: jest.Mock };
+  membership: { findFirst: jest.Mock; findMany: jest.Mock };
+  appointmentParticipant: { findMany: jest.Mock };
+  collaborator: { findMany: jest.Mock; updateManyAndReturn: jest.Mock };
 } = {
   $transaction: jest.fn(async (run: (db: unknown) => unknown) => run(tx)),
-  webinarPlan: {
-    findUnique: jest.fn(async () => ({
-      title: "Systems",
-      consultantProfile: { userId: "u-host", user: { name: "Host" } },
-    })),
-  },
+  webinarPlan: { findUnique: jest.fn(async () => plan) },
   consultantProfile: {
     findUnique: jest.fn(async ({ where }: { where: { id: string } }) =>
       where.id === "cp-guest"
         ? { userId: "u-guest", user: { name: "Guest", erasedAt: null } }
-        : { userId: "u-host", user: { name: "Host", erasedAt: null } },
+        : hostProfile,
     ),
   },
   user: {
-    findUnique: jest.fn(async () => null),
+    findUnique: jest.fn(async ({ where }: { where: { id: string } }) =>
+      users[where.id] ? { name: users[where.id].name, erasedAt: null } : null,
+    ),
     findMany: jest.fn(async (q: { where: { id: { in: string[] } } }) =>
       q.where.id.in.map((id) => users[id]).filter(Boolean),
     ),
@@ -104,9 +135,40 @@ const tx: Record<string, Record<string, jest.Mock> | jest.Mock> & {
       id: "bell",
       ...q.create,
     })),
+    createManyAndReturn: jest.fn(async (q: { data: Created[] }) =>
+      q.data.map((d, i) => ({ id: `page-${i}`, ...d })),
+    ),
   },
-  failedEmail: { create: jest.fn(async () => ({ id: "fe" })) },
-  emailSuppression: { findUnique: jest.fn(async () => null) },
+  failedEmail: {
+    create: jest.fn(async () => ({ id: "fe" })),
+    createManyAndReturn: jest.fn(async (q: { data: { recipient: string }[] }) =>
+      q.data.map((d, i) => ({ id: `fe-${i}`, recipient: d.recipient })),
+    ),
+  },
+  emailSuppression: {
+    findUnique: jest.fn(async () => null),
+    findMany: jest.fn(async () => []),
+  },
+  idempotencyRecord: {
+    createMany: jest.fn(async (q: { data: { key: string }[] }) => {
+      const fresh = q.data.filter((d) => !claims.has(d.key));
+      for (const d of fresh) claims.add(d.key);
+      return { count: fresh.length };
+    }),
+    findMany: jest.fn(
+      async (q: {
+        where: Omit<Claim, "userId"> & { userId: { in: string[] } };
+      }) =>
+        q.where.userId.in
+          .filter((userId) => claims.has(claimOf({ ...q.where, userId })))
+          .map((userId) => ({ userId })),
+    ),
+    createManyAndReturn: jest.fn(async (q: { data: Claim[] }) => {
+      const fresh = q.data.filter((d) => !claims.has(claimOf(d)));
+      for (const d of fresh) claims.add(claimOf(d));
+      return fresh.map(({ userId }) => ({ userId }));
+    }),
+  },
   membership: {
     findFirst: jest.fn(async () => ({
       id: "m-1",
@@ -115,8 +177,15 @@ const tx: Record<string, Record<string, jest.Mock> | jest.Mock> & {
       role: "LEARNER",
       status: "ACTIVE",
     })),
+    findMany: jest.fn(async () => [{ userId: "u-op1" }, { userId: "u-op2" }]),
   },
-  collaborator: { updateManyAndReturn: jest.fn(async () => [row]) },
+  appointmentParticipant: {
+    findMany: jest.fn(async () => seatHolders.map((userId) => ({ userId }))),
+  },
+  collaborator: {
+    findMany: jest.fn(async () => [{ id: row.id }]),
+    updateManyAndReturn: jest.fn(async () => [row]),
+  },
   programAssignment: { updateMany: jest.fn(async () => ({ count: 0 })) },
   orgAuditLog: { create: jest.fn() },
   organization: { findUnique: jest.fn(async () => null) },
@@ -128,36 +197,279 @@ jest.mock("@/lib/prisma", () => ({
   },
 }));
 
-import { stageCollaboratorNotifications } from "@/lib/collaborators/notifications";
+import { rolesWithOrgPermission } from "@/lib/auth/org-permissions";
+import {
+  sendOwedCohostEmails,
+  stageCollaboratorNotifications,
+} from "@/lib/collaborators/notifications";
+import { renderEmail } from "@/lib/email/render";
 import { removeMember } from "@/lib/enterprise/member-removal";
+import { requiredNoticeOf } from "@/lib/notifications/required-notices";
 
-const bellsTo = () =>
+const bells = (): Created[] =>
   tx.notificationOutbox.upsert.mock.calls.map(
-    ([q]) => (q as { create: { recipients: string[] } }).create.recipients,
+    ([q]) => (q as { create: Created }).create,
   );
+const bellsTo = () => bells().map((b) => b.recipients);
 const emailsTo = () =>
   tx.failedEmail.create.mock.calls.map(
     ([q]) => (q as { data: { recipient: string } }).data.recipient,
   );
+const learnerBells = (): Created[] =>
+  tx.notificationOutbox.createManyAndReturn.mock.calls.flatMap(
+    ([q]) => (q as { data: Created[] }).data,
+  );
+const learnerEmailsTo = () =>
+  tx.failedEmail.createManyAndReturn.mock.calls.flatMap(([q]) =>
+    (q as { data: { recipient: string }[] }).data.map((d) => d.recipient),
+  );
+const stage = (
+  event: Parameters<typeof stageCollaboratorNotifications>[1],
+  over: Partial<typeof row> = {},
+) => stageCollaboratorNotifications(tx as never, event, { ...row, ...over });
 
 beforeEach(() => {
   jest.clearAllMocks();
   mockStageNotices.mockReturnValue(undefined);
   process.env.EMAIL_DELIVERY_MODE = "live";
+  users = {
+    "u-guest": person("u-guest"),
+    "u-host": person("u-host", MUTED),
+    "u-op": person("u-op"),
+    "u-op1": person("u-op1"),
+    "u-op2": person("u-op2"),
+    "u-l1": person("u-l1", MUTED),
+    "u-l2": person("u-l2"),
+  };
+  plan = {
+    title: "Systems",
+    organizationId: null,
+    organization: null,
+    consultantProfile: hostProfile,
+  };
+  seatHolders = [];
+  claims = new Set();
 });
 
+const GUEST = "u-guest@example.com";
+const HOST = "u-host@example.com";
+
 it.each([
-  ["INVITED", [["u-guest"]], ["guest@example.com"]],
-  ["ACCEPTED", [], ["host@example.com"]],
-  ["EXPIRED", [["u-guest"]], ["guest@example.com", "host@example.com"]],
+  ["INVITED", [["u-guest"]], [GUEST]],
+  ["TERMS_CHANGED", [["u-guest"]], [GUEST]],
+  ["ACCEPTED", [["u-host"]], [GUEST, HOST]],
+  ["DECLINED", [["u-host"]], [HOST]],
+  ["WITHDRAWN", [["u-host"]], [HOST]],
+  ["REMOVED", [["u-guest"]], [GUEST]],
+  ["EXPIRED", [["u-guest"], ["u-host"]], [GUEST, HOST]],
 ] as const)(
-  "%s reaches the right party inside the transaction; the host's bell switch drops only the bell",
-  async (event, bells, emails) => {
-    await stageCollaboratorNotifications(tx as never, event, row);
-    expect(bellsTo()).toEqual(bells);
-    expect(emailsTo()).toEqual(emails);
+  "%s is a required notice to the party that did not act, whatever their switches say",
+  async (event, toBells, toEmails) => {
+    await stage(event);
+    expect(bellsTo()).toEqual(toBells);
+    expect(emailsTo()).toEqual(toEmails);
+    for (const bell of bells()) {
+      expect(requiredNoticeOf(bell.payload)).toBe("COLLABORATION_CHANGED");
+    }
   },
 );
+
+describe("the reminder before an invitation lapses", () => {
+  it("is optional: the invitee's bell switch drops the bell", async () => {
+    users["u-guest"] = person("u-guest", MUTED);
+    await stage("EXPIRING_SOON", { acceptedAt: null });
+    expect(bellsTo()).toEqual([]);
+  });
+
+  it("is sent once for an invitation's terms, and again only after they change", async () => {
+    const first = await stage("EXPIRING_SOON", { acceptedAt: null });
+    expect(first.bells).toHaveLength(1);
+    expect(requiredNoticeOf(bells()[0].payload)).toBeNull();
+    expect(emailsTo()).toEqual([GUEST]);
+
+    expect(await stage("EXPIRING_SOON", { acceptedAt: null })).toEqual({});
+    expect(bellsTo()).toHaveLength(1);
+    expect(emailsTo()).toHaveLength(1);
+
+    await stage("EXPIRING_SOON", {
+      acceptedAt: null,
+      updatedAt: new Date("2026-11-09T00:00:00Z"),
+    });
+    expect(bellsTo()).toHaveLength(2);
+    expect(emailsTo()).toHaveLength(2);
+  });
+});
+
+describe("the host side", () => {
+  it("on a plan with no owning expert is the organisation's catalogue managers, not whoever invited", async () => {
+    plan = {
+      title: "Systems",
+      organizationId: "org",
+      organization: { name: "Academy" },
+      consultantProfile: null,
+    };
+    await stage("ACCEPTED");
+    expect(tx.membership.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          organizationId: "org",
+          status: "ACTIVE",
+          role: { in: rolesWithOrgPermission("catalog.manage") },
+        },
+      }),
+    );
+    expect(bellsTo()).toEqual([["u-op1", "u-op2"]]);
+    expect(bells()[0].payload).toMatchObject({
+      organizationId: "org",
+      scope: "org",
+      dashboardUrl: expect.stringContaining(
+        "/dashboard/organization/org/collaborations",
+      ),
+    });
+    expect(emailsTo()).toEqual([
+      GUEST,
+      "u-op1@example.com",
+      "u-op2@example.com",
+    ]);
+  });
+
+  it("never includes the operator who ended the row", async () => {
+    plan = { ...plan, organizationId: "org", consultantProfile: null };
+    await stage("WITHDRAWN", { endedByUserId: "u-op1" });
+    expect(bellsTo()).toEqual([["u-op2"]]);
+  });
+});
+
+describe("who a removal names", () => {
+  it("a withdrawn invitation reads as one, and names the operator who withdrew it", async () => {
+    await stage("REMOVED", { acceptedAt: null, endedByUserId: "u-op" });
+    expect(bells()[0].payload).toMatchObject({
+      pendingInvite: true,
+      ownerName: "u-op",
+    });
+  });
+
+  it("a manager ending their own place is told to the host as someone leaving, not to themself as a removal", async () => {
+    await stage("REMOVED", { endedByUserId: "u-guest" });
+    expect(bellsTo()).toEqual([["u-host"]]);
+    expect(emailsTo()).toEqual([HOST]);
+    expect(bells()[0].payload).not.toHaveProperty("pendingInvite");
+  });
+});
+
+describe("seat holders", () => {
+  it.each([
+    ["ACCEPTED", "Guest is now co-hosting Systems."],
+    ["WITHDRAWN", "Guest is no longer co-hosting Systems."],
+    ["REMOVED", "Guest is no longer co-hosting Systems."],
+  ] as const)(
+    "hear, as a required notice, that the co-presenter changed on %s",
+    async (event, sentence) => {
+      seatHolders = ["u-l1", "u-l2"];
+      const notices = await stage(event);
+      expect(learnerBells()).toHaveLength(1);
+      expect(learnerBells()[0].recipients).toEqual(["u-l1", "u-l2"]);
+      expect(learnerBells()[0].payload).toMatchObject({ sentence });
+      expect(requiredNoticeOf(learnerBells()[0].payload)).toBe(
+        "COHOST_CHANGED",
+      );
+      // The transaction renders and stages the lifecycle emails only.
+      expect(renderEmail).toHaveBeenCalledTimes(emailsTo().length);
+      expect(learnerEmailsTo()).toEqual([]);
+      expect(notices.learnerEmails).toEqual({
+        event: event === "ACCEPTED" ? "COHOST_JOINED" : "COHOST_LEFT",
+        userIds: ["u-l1", "u-l2"],
+        cohostName: "Guest",
+        planTitle: "Systems",
+        planType: "webinar",
+        collaboratorId: "c-1",
+      });
+    },
+  );
+
+  it.each([
+    ["a plan nobody has booked", "ACCEPTED", {}, []],
+    ["a crew role", "ACCEPTED", { role: "MODERATOR" as const }, ["u-l1"]],
+    [
+      "an invitation that never joined",
+      "REMOVED",
+      { acceptedAt: null },
+      ["u-l1"],
+    ],
+    ["a declined invitation", "DECLINED", { acceptedAt: null }, ["u-l1"]],
+  ] as const)("hear nothing about %s", async (_what, event, over, seats) => {
+    seatHolders = [...seats];
+    const notices = await stage(event, over as Partial<typeof row>);
+    expect(learnerBells()).toEqual([]);
+    expect(notices.learnerEmails).toBeUndefined();
+  });
+});
+
+describe("the seat holders' emails, once the change has committed", () => {
+  const owedTo = (userIds: string[]) => ({
+    event: "COHOST_JOINED" as const,
+    userIds,
+    cohostName: "Guest",
+    planTitle: "Systems",
+    planType: "webinar" as const,
+    collaboratorId: "c-1",
+  });
+  const learners = (count: number) => {
+    const ids = Array.from({ length: count }, (_, i) => `u-s${i}`);
+    for (const id of ids) users[id] = person(id);
+    return ids;
+  };
+  const addressOf = (id: string) => `${id}@example.com`;
+  const rowsPerInsert = () =>
+    tx.failedEmail.createManyAndReturn.mock.calls.map(
+      ([q]) => (q as { data: unknown[] }).data.length,
+    );
+
+  it("are staged one per seat holder, fifty to a transaction, then handed over to be attempted", async () => {
+    const ids = learners(120);
+    await sendOwedCohostEmails([owedTo(ids)], "test.op");
+    expect(tx.$transaction).toHaveBeenCalledTimes(3);
+    expect(rowsPerInsert()).toEqual([50, 50, 20]);
+    expect(learnerEmailsTo()).toEqual(ids.map(addressOf));
+    expect(mockFlush).toHaveBeenCalledTimes(1);
+    const [bundle, op] = mockFlush.mock.calls[0] as [
+      { emails: { list: unknown[]; emailType: string }[] },
+      string,
+    ];
+    expect(op).toBe("test.op");
+    expect(bundle.emails).toHaveLength(1);
+    expect(bundle.emails[0].emailType).toBe("plan_cohost_joined");
+    expect(bundle.emails[0].list).toHaveLength(120);
+  });
+
+  it("are not staged again by a repeat of the same change, nor by one racing it", async () => {
+    const owed = owedTo(["u-l1", "u-l2"]);
+    await sendOwedCohostEmails([owed], "test.op");
+    expect(learnerEmailsTo()).toEqual(["u-l1", "u-l2"].map(addressOf));
+
+    await sendOwedCohostEmails([owed], "test.op");
+    // A racing repeat reads no claim, and loses every claim in its transaction.
+    tx.idempotencyRecord.findMany.mockResolvedValueOnce([]);
+    await sendOwedCohostEmails([owed], "test.op");
+    expect(learnerEmailsTo()).toHaveLength(2);
+    expect(mockFlush).toHaveBeenCalledTimes(1);
+  });
+
+  it("lose only the batch that failed, which is reported once for the call", async () => {
+    const ids = learners(120);
+    tx.$transaction.mockRejectedValueOnce(new Error("db"));
+    await expect(
+      sendOwedCohostEmails([owedTo(ids)], "test.op"),
+    ).resolves.toBeUndefined();
+    expect(learnerEmailsTo()).toEqual(ids.slice(50).map(addressOf));
+    expect(mockReport).toHaveBeenCalledTimes(1);
+    expect(mockReport).toHaveBeenCalledWith(expect.any(Error), {
+      subsystem: "collaborators",
+      op: "test.op.cohostEmails",
+      extra: { failed: 1, batches: 3, collaboratorIds: ["c-1"] },
+    });
+  });
+});
 
 it("an org member removal stages one WITHDRAWN notice per row for the host and nothing for the member", async () => {
   mockStageNotices.mockResolvedValue({ bells: [], emails: [] });
@@ -169,7 +481,15 @@ it("an org member removal stages one WITHDRAWN notice per row for the host and n
     force: false,
   });
   expect(mockStageNotices).toHaveBeenCalledTimes(1);
-  expect(mockStageNotices).toHaveBeenCalledWith(tx, "WITHDRAWN", row);
-  expect(mockRevoke).toHaveBeenCalledWith("webinar", "wp-1", "u-guest");
+  expect(mockStageNotices).toHaveBeenCalledWith(tx, "WITHDRAWN", row, {});
+  expect(tx.collaborator.updateManyAndReturn).toHaveBeenCalledWith({
+    where: { id: "c-1", status: { in: ["PENDING", "ACCEPTED"] } },
+    data: { status: "REMOVED", endedByUserId: "u-admin" },
+  });
+  expect(mockRevoke).toHaveBeenCalledWith(
+    { planType: "webinar", planId: "wp-1" },
+    "u-guest",
+    GENERATION,
+  );
   expect(mockFlush).toHaveBeenCalledTimes(1);
 });

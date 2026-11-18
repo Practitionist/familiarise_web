@@ -42,9 +42,9 @@ import {
   getTodayAppointments,
   getUpcomingAppointments,
   getCollaboratorRole,
-  formatCollaboratorRole,
   getRoleBadgeStyle,
 } from "../../utils/appointmentHelpers";
+import { formatRole } from "@/components/collaborators/format";
 
 import { ActionRequiredPanel } from "@/components/dashboard/ActionRequiredPanel";
 import { DemandBanner } from "../requests/DemandBanner";
@@ -352,7 +352,7 @@ export function HomeTab({
                                   <Badge
                                     className={`text-[10px] px-1.5 py-0 h-5 flex-shrink-0 ${getRoleBadgeStyle(role)}`}
                                   >
-                                    {formatCollaboratorRole(role)}
+                                    {formatRole(role)}
                                   </Badge>
                                 ) : null;
                               })()}
@@ -560,7 +560,7 @@ export function HomeTab({
                                   <Badge
                                     className={`text-[10px] px-1.5 py-0 h-5 flex-shrink-0 ${getRoleBadgeStyle(role)}`}
                                   >
-                                    {formatCollaboratorRole(role)}
+                                    {formatRole(role)}
                                   </Badge>
                                 ) : null;
                               })()}

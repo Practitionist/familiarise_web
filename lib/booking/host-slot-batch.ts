@@ -2,9 +2,10 @@
 // allocator (event create/publish/re-time, make-up, co-host accept, meeting
 // extension) take the same slot atoms as checkout and the allocator.
 
-import prisma from "@/lib/prisma";
+import prisma, { type PrismaLike, type Tx } from "@/lib/prisma";
 import { CollaboratorStatus } from "@prisma/client";
 import { ConsultantScheduleConflictError } from "@/lib/collaborators/availability";
+import { lockPlanRow } from "@/lib/collaborators/team";
 import {
   extendSlotInterval,
   tryLockSlotBatch,
@@ -29,8 +30,9 @@ export class HostTimeHeldError extends ConsultantScheduleConflictError {
 export async function acceptedCohostProfileIds(
   planType: "WEBINAR" | "CLASS",
   planId: string,
+  db: PrismaLike = prisma,
 ): Promise<string[]> {
-  const rows = await prisma.collaborator.findMany({
+  const rows = await db.collaborator.findMany({
     where: {
       ...(planType === "WEBINAR"
         ? { webinarPlanId: planId }
@@ -40,6 +42,39 @@ export async function acceptedCohostProfileIds(
     select: { consultantProfileId: true },
   });
   return rows.map((r) => r.consultantProfileId);
+}
+
+/**
+ * The first row lock of a transaction that changes a webinar or class plan's
+ * session times, taken before it reads the team: it queues behind a team
+ * change on the plan, then reads the team it now sees. False when that team
+ * holds a profile whose calendar the writer's slot batch never took.
+ */
+export async function lockPlanAndCheckBatch(
+  tx: Tx,
+  planType: "WEBINAR" | "CLASS",
+  planId: string,
+  heldProfileIds: readonly string[],
+): Promise<boolean> {
+  await lockPlanRow(tx, {
+    planType: planType === "WEBINAR" ? "webinar" : "class",
+    planId,
+  });
+  const held = new Set(heldProfileIds);
+  const team = await acceptedCohostProfileIds(planType, planId, tx);
+  return team.every((profileId) => held.has(profileId));
+}
+
+/** `lockPlanAndCheckBatch` for a host-time writer: a team the batch missed is a transient conflict. */
+export async function lockPlanForMove(
+  tx: Tx,
+  planType: "WEBINAR" | "CLASS",
+  planId: string,
+  heldProfileIds: readonly string[],
+): Promise<void> {
+  if (!(await lockPlanAndCheckBatch(tx, planType, planId, heldProfileIds))) {
+    throw new HostTimeHeldError();
+  }
 }
 
 /** Every window × every profile, as batch entries. */

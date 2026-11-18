@@ -67,12 +67,17 @@ import MeetingSetup from "../../app/meetings/[id]/components/MeetingSetup";
 
 const SFU_PARTICIPANT_LIMIT_REACHED = 301;
 
-function setup(role: "host" | "participant", onCallEnded = jest.fn()) {
+function setup(
+  role: "host" | "participant",
+  onCallEnded = jest.fn(),
+  coPresenter = false,
+) {
   const view = render(
     <MeetingSetup
       setIsSetupComplete={jest.fn()}
       meetingId="c1"
       role={role}
+      coPresenter={coPresenter}
       onCallEnded={onCallEnded}
     />,
   );
@@ -187,6 +192,14 @@ describe("the host-is-live ping", () => {
     call.join.mockResolvedValueOnce(undefined);
     setup("participant");
     await clickJoin();
+    expect(pingHostLive).not.toHaveBeenCalled();
+  });
+
+  it("stays silent for a co-presenter: only the plan's host announces the session", async () => {
+    call.join.mockResolvedValueOnce(undefined);
+    setup("host", jest.fn(), true);
+    await clickJoin();
+    expect(call.join).toHaveBeenCalledTimes(1);
     expect(pingHostLive).not.toHaveBeenCalled();
   });
 });

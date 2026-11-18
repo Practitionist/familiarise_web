@@ -1,8 +1,12 @@
 import { PROFILE_OWNER_SELECT } from "@/lib/booking/list-selects";
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
+import { managedAsNamedExpertWhere } from "@/lib/enterprise/membership-guards";
 import prisma from "@/lib/prisma";
-import { liveParticipant } from "@/lib/booking/participants";
+import {
+  liveParticipant,
+  NOT_COLLABORATOR_ROW,
+} from "@/lib/booking/participants";
 import { Prisma } from "@prisma/client";
 import { transformNestedPlanTopics } from "@/lib/topics";
 import {
@@ -26,10 +30,9 @@ const webinarInclude = {
   },
   appointment: {
     include: {
-      // #1554 — the seat count is the live roster; ids only, so the planner
-      // payload never carries a User row per attendee.
+      // Read for the seat count only: the ids are dropped before the answer.
       participants: {
-        where: liveParticipant(),
+        where: { ...liveParticipant(), ...NOT_COLLABORATOR_ROW },
         select: { userId: true },
       },
       occurrences: {
@@ -220,7 +223,7 @@ async function getClassParticipantCounts(
         appointment: {
           select: {
             participants: {
-              where: liveParticipant(),
+              where: { ...liveParticipant(), ...NOT_COLLABORATOR_ROW },
               select: { userId: true },
             },
           },
@@ -318,6 +321,8 @@ export async function GET(
     // rows to the same instant and a session cannot straddle the two.
     const classSlotsAround = classInclude(new Date());
 
+    const managedPlans = managedAsNamedExpertWhere(consultantId);
+
     // Fetch owned plans, collaborated plans, and collaborator roles in parallel
     const [
       ownedWebinarsRaw,
@@ -326,17 +331,14 @@ export async function GET(
       collabClassesRaw,
       collabRoles,
     ] = await Promise.all([
-      // Owned plans
+      // The plans this expert manages: an organisation's plan only while its
+      // active expert.
       prisma.webinar.findMany({
-        where: {
-          webinarPlan: { consultantProfileId: consultantId, ...planHost },
-        },
+        where: { webinarPlan: { ...managedPlans, ...planHost } },
         include: webinarInclude,
       }),
       prisma.class.findMany({
-        where: {
-          classPlan: { consultantProfileId: consultantId, ...planHost },
-        },
+        where: { classPlan: { ...managedPlans, ...planHost } },
         include: classSlotsAround,
       }),
       // Collaborated plans (only ACCEPTED)
@@ -480,6 +482,11 @@ export async function GET(
       if (event.appointment) {
         event.waitingCount = waitingCounts.get(event.appointment.id) ?? 0;
       }
+    }
+
+    // Counted above; who holds the seats is not the planner's to send.
+    for (const webinar of webinars) {
+      if (webinar.appointment) webinar.appointment.participants = [];
     }
 
     const plannerData: PlannerData = {

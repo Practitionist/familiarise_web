@@ -13,6 +13,7 @@ import { SupportSpendTab } from "./SupportSpendTab";
 import { readOpsLog } from "@/lib/backoffice/ops-log-read";
 import { readSupportSpend } from "@/lib/backoffice/support-spend";
 import { can, type BackofficeCapability } from "@/lib/backoffice/capability";
+import { earningsExpertParam } from "@/lib/backoffice/money-list-schemas";
 import { opsLogFiltersFromSearchParams } from "@/schemas/ops-log";
 
 /**
@@ -55,7 +56,13 @@ export async function MoneyTabBody({
     case "org-payouts":
       return <OrgPayoutsTab />;
     case "earnings":
-      return <EarningsTab />;
+      return (
+        <EarningsTab
+          initialConsultantProfileId={earningsExpertParam.parse(
+            searchParams.consultantProfileId,
+          )}
+        />
+      );
     case "disputes":
       return (
         <DisputesPage

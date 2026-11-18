@@ -30,7 +30,7 @@ jest.mock("../../lib/api/organizations/wallet", () => ({
     .fn()
     .mockResolvedValue({ balanceAfter: 0, ownerOrgId: "org-iitm" }),
 }));
-jest.mock("../../lib/collaborators/service", () => ({
+jest.mock("../../lib/collaborators/revenue-split", () => ({
   calculateRevenueSplit: jest.fn().mockResolvedValue([]),
 }));
 
@@ -168,6 +168,7 @@ function makeWorld(legPaise: number) {
         typeof createEarningsFromPayment
       >[0]["payment"],
       appointmentType: "CONSULTATION",
+      teamAt: new Date("2026-10-09T10:00:00Z"),
       tx: txDouble(tx),
     });
   const carve = () =>

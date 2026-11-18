@@ -92,7 +92,7 @@ Five properties of this contract are load-bearing:
 2. **It always does the work.** The server-side `initialSyncCompletedUsers` set, the browser `stream_sync_<id>` session flag and the `force` parameter no longer exist, so no earlier sync can suppress a later one. `providers/StreamProviderImpl.tsx` keeps only an in-memory "kicked in this page load" marker that stops duplicate calls in one load and is cleared when a sync fails or the chat reconnects.
 3. **It revokes rather than adds, paging at Stream's 30-channel ceiling.** Channels are provisioned eagerly at booking confirmation and on-demand via `POST /api/stream/channels/open`. `syncUserEventChannels` walks every channel the user belongs to via `queryChannelsPaged` (`lib/stream/batch.ts`, 30 channels per page sorted by `created_at` ascending) and removes memberships with a managed prefix (`MANAGED_CHANNEL_PREFIXES`: `webinar-`, `class-`, `collab-`, `dm-`, `dmo-`, `dmh-`) that are absent from the Postgres expected-set.
 4. **It is session-gated.** `actions/stream/chat/event-channel.action.ts` reads the session fresh from the database (`getSession()`), rejects banned accounts, and allows only self or privileged (`ADMIN`/`STAFF`) callers before touching the sync cache.
-5. **Its expected-set includes `ACCEPTED` collaborators and excludes events past retention.** `getWebinarIdsForUser` and `getClassIdsForUser` include webinars and classes where the user is the host, a live `AppointmentParticipant`, or an `ACCEPTED` `PlanCollaborator` (`consultantProfile.deletedAt: null`), so co-hosts are never evicted during reconciliation. Events whose latest slot `endsAt` has passed the owning organization's retention window (`isPastRetention` in `lib/stream/channel-lifecycle.ts`) are excluded so the sync never resurrects channels hard-deleted by the retention cron.
+5. **Its expected-set includes `ACCEPTED` collaborators and excludes events past retention.** `getWebinarIdsForUser` and `getClassIdsForUser` include webinars and classes where the user is the host, a live `AppointmentParticipant`, or an `ACCEPTED` `Collaborator` (`consultantProfile.deletedAt: null`), so co-hosts are never evicted during reconciliation. Events whose latest slot `endsAt` has passed the owning organization's retention window (`isPastRetention` in `lib/stream/channel-lifecycle.ts`) are excluded so the sync never resurrects channels hard-deleted by the retention cron.
 
 ---
 
@@ -112,7 +112,7 @@ Familiarise enforces a deterministic 4-part communication policy across all book
    - Unpaid or unconfirmed bookings (`PENDING`, `APPROVED_PENDING_PAYMENT`, `CANCELLED`, `REJECTED`, `EXPIRED`) are **excluded** — direct messaging opens only after payment settles or an appointment is confirmed without pending payment, and remains open through `COMPLETED` for post-session follow-up until the retention window expires.
 3. **Webinars & Classes Provision Both Group Event Channels and 1:1 Host DMs**:
    - Enrolling in a confirmed `WEBINAR` or `CLASS` (`OPENABLE_EVENT_STATUSES = ["SCHEDULED", "COMPLETED"]`) provisions **both**:
-     1. The shared `team` channel (`webinar-${webinarId}` or `class-${classId}`), whose roster includes the plan owner, all `ACCEPTED` `PlanCollaborator` co-hosts, and all live `AppointmentParticipant` enrollees.
+     1. The shared `team` channel (`webinar-${webinarId}` or `class-${classId}`), whose roster includes the plan owner, all `ACCEPTED` `Collaborator` co-hosts, and all live `AppointmentParticipant` enrollees.
      2. The 1:1 personal DM (`dm-` or `dmo-`) between the hosting consultant and each confirmed enrollee (`hasWebinarLink` and `hasClassLink` in `lib/stream/dm-eligibility.ts`).
 4. **A Free Trial (`TRIAL`) Never Grants Chat**:
    - **No provisioning:** `ensureChannelsForAppointment` (`lib/payments/webhooks/ensure-channels.ts`) creates nothing for a trial appointment and returns `skipped: "trial_chat_blocked"`.
@@ -207,7 +207,7 @@ A **managed** channel is one whose roster Postgres derives (`MANAGED_CHANNEL_PRE
 2. **A durable retry.** A Stream failure enqueues a `StreamRevocationRetry` row (`enqueueStreamRevocationRetries`). Its `kind` is `ERASURE_REVOKE` (default), `COLLAB_REVOKE`, `EVENT_CHANNEL_REMOVE`, `DM_REMOVE`, `ORG_REVOKE`, `SEAT_ACCESS_REVOKE` (appointment) or `REFUND_ACCESS_REVOKE` (refund), and `planId` holds the kind's target. Postgres guards the shape (`stream_revocation_retry_owner` CHECK) and allows one open row per target (`stream_revocation_retry_open_key` partial unique index), both in `prisma/sql/check-constraints.sql`. The `retry-moderation-enforcement` sweep (every 30 minutes on the ticker) drains due rows through `redriveAccessRevocation` (seat, refund and erasure rows retry daily past the attempt cap instead of giving up; without Stream's keys nothing is attempted and the rows stay owed), stops starting rows after `SWEEP_START_DEADLINE_MS` (`lib/cron/run-deadline.ts`), and treats a target Postgres has re-granted (a re-accepted collaborator, a re-enrolled seat, a re-eligible DM, a rejoined organization) as settled.
 3. **A daily audit.** `reconcile-stream-memberships` (`lib/stream/membership-reconciler.ts`) removes members the open path's own access predicate no longer admits from event and collaborator channels, in resumable slices, and never touches DMs. See [17. Channel Lifecycle](./17-channel-lifecycle.md#the-daily-membership-reconciler).
 
-Collaborator removal queues `COLLAB_REVOKE` when `revokeCollaboratorAccess` reports incomplete. Organization member removal (`revokeMemberStreamAccess`, `lib/enterprise/member-removal.ts`) revokes the member's Stream tokens issued before the removal, removes them from the organization's live and upcoming calls, and queues `ORG_REVOKE` when incomplete; the client re-mints through `sdkTokenProvider` in `providers/StreamProviderImpl.tsx`, which skips the token cache on every SDK re-request after the first.
+Every ending of an accepted collaborator writes its `COLLAB_REVOKE` row inside the ending transaction (`endCollaboration` in `lib/collaborators/ending.ts`) and drives it after the commit; see [the collaborators' Stream chat page](../collaborators/04-stream-chat-integration.md#revocation). Organization member removal (`revokeMemberStreamAccess`, `lib/enterprise/member-removal.ts`) revokes the member's Stream tokens issued before the removal, removes them from the organization's live and upcoming calls, and queues `ORG_REVOKE` when incomplete; the client re-mints through `sdkTokenProvider` in `providers/StreamProviderImpl.tsx`, which skips the token cache on every SDK re-request after the first.
 
 **Collaborator channels never unfreeze on open.** `createCollaboratorChannel` is get-or-create only and returns `frozen`. `POST /api/stream/channels/open` refuses a frozen channel with `423 CHANNEL_FROZEN` and a `DEACTIVATED` organization with `403 ORG_DEACTIVATED` (checked before the host and collaborator checks; `ADMIN`/`STAFF` are exempt). Both answer `{ error, code }`, which the chat UI shows as a toast.
 
@@ -385,41 +385,27 @@ flowchart TB
 
 ### Checking Channel Existence
 
+`checkEventChannelExists(eventType, eventId)` (`lib/stream/event-channel-service.ts`) answers from the existence cache when it can. On a miss it reads Stream by channel id and never opens a channel handle, so Stream is not asked to create anything: a chat that is not there is an empty result, not an error.
+
 ```typescript
-export const checkEventChannelExists = async (
-  eventType: "webinar" | "class",
-  eventId: string,
-) => {
-  const channelId = `${eventType}-${eventId}`;
-
-  try {
-    if (!apiKey || !apiSecret) {
-      throw new Error("Stream API keys not configured");
-    }
-
-    const client = StreamChat.getInstance(apiKey, apiSecret);
-    const channel = client.channel("team", channelId, {
-      created_by_id: "system",
-    });
-
-    // Query the channel
-    const response = await channel.query();
-
-    // Channel exists if it has an ID
-    const exists = !!(response.channel && response.channel.id);
-    console.log(`Channel ${channelId} exists: ${exists}`);
-    return exists;
-  } catch (error) {
-    // Error code 16 = channel not found
-    if (error.code === 16 || error.response?.data?.code === 16) {
-      console.log(`Channel ${channelId} not found via query`);
-      return false;
-    }
-    console.error(`Error checking channel ${channelId}:`, error.message);
-    return false;
-  }
-};
+const [found] = await withStreamCircuitBreaker(
+  () =>
+    client.queryChannels({ cid: { $eq: `${channelType}:${channelId}` } }, [], {
+      limit: 1,
+      state: false,
+      watch: false,
+      presence: false,
+    }),
+  () => {
+    throw new StreamUnavailableError();
+  },
+);
+if (!found) return false;
+markChannelExists(channelType, channelId);
+return true;
 ```
+
+Only a found chat is cached. A read that fails is reported once by the circuit breaker and answers `false`, so the caller treats the chat as not there for this request.
 
 ### Adding User to Event Channel
 

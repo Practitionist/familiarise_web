@@ -36,7 +36,10 @@ import {
   termsFromPolicyRow,
 } from "./cancellation-policy-store";
 import { findLiveEventSlot } from "@/lib/appointments/live-event-slot";
-import { liveParticipant } from "@/lib/booking/participants";
+import {
+  liveParticipant,
+  NOT_COLLABORATOR_ROW,
+} from "@/lib/booking/participants";
 import {
   seatLedgerFrom,
   seatSessionsByAppointment,
@@ -320,6 +323,7 @@ async function liveSeatPayments(
     where: {
       appointment: eventFilter,
       ...liveParticipant(),
+      ...NOT_COLLABORATOR_ROW,
       OR: [
         { paymentId: { in: payments.map((p) => p.id) } },
         { paymentId: null, userId: { in: payments.map((p) => p.userId) } },

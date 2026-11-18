@@ -395,6 +395,16 @@ describe("co-host accept × allocator on the co-host's calendar", () => {
     return { webinar, inviteId: invite.id };
   }
 
+  /** The co-host accepts the invitation with the terms it was seeded with. */
+  const acceptInvite = (inviteId: string, cohost: SeededHost) =>
+    respondToInvitation({
+      collaboratorId: inviteId,
+      consultantProfileId: cohost.consultantProfileId,
+      userId: cohost.userId,
+      response: "ACCEPTED",
+      seenTerms: { role: "CO_HOST", sharePercent: 10 },
+    });
+
   it("the allocator holding the co-host's time first: the accept is refused 409", async () => {
     const cohost = await seedHost();
     await publishEveryHour(cohost);
@@ -411,12 +421,7 @@ describe("co-host accept × allocator on the co-host's calendar", () => {
       slots: halfHourStarts(startsAt),
     });
     await parked(paused, allocating);
-    const accepted = await respondToInvitation(
-      "webinar",
-      inviteId,
-      cohost.consultantProfileId,
-      "ACCEPTED",
-    ).then(
+    const accepted = await acceptInvite(inviteId, cohost).then(
       () => "accepted" as const,
       (error: unknown) => error,
     );
@@ -439,12 +444,7 @@ describe("co-host accept × allocator on the co-host's calendar", () => {
     const { inviteId } = await seedInvite(cohost, startsAt);
     const request = await seedRequest(cohost, await seedConsultee());
 
-    await respondToInvitation(
-      "webinar",
-      inviteId,
-      cohost.consultantProfileId,
-      "ACCEPTED",
-    );
+    await acceptInvite(inviteId, cohost);
     const allocation = await allocate({
       eventType: "consultation",
       eventId: request.consultationId,

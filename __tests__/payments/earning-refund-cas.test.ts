@@ -40,25 +40,13 @@ jest.mock("../../lib/db/serializable-retry", () => ({
   withSerializableRetry: (fn: () => unknown) => fn(),
 }));
 
-// `earnings-service` reaches `lib/prisma` and `lib/collaborators/service`, and
-// the latter transitively loads `better-auth`, which ships ESM-only
-// (`dist/index.mjs`). Jest's default transformIgnorePatterns skips node_modules,
-// so the suite died at import time with "Cannot use import statement outside a
-// module". Every test here drives an explicit `tx`, so the real client is never
-// touched — stubbing it is both correct and the sibling suites' convention.
+// Every test here drives an explicit `tx`, so the real client is never touched.
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     $transaction: (fn: (tx: unknown) => unknown) => fn({}),
   },
   Prisma: { TransactionIsolationLevel: { Serializable: "Serializable" } },
-}));
-jest.mock("../../lib/collaborators/service", () => ({
-  calculateRevenueSplit: jest.fn(() => ({
-    consultantSharePaise: 0,
-    platformFeePaise: 0,
-    collaboratorSharePaise: 0,
-  })),
 }));
 
 import { applyCappedEarningReversal } from "../../lib/payments/payouts/earning-reversal-cas";
@@ -88,16 +76,25 @@ const row = (over: Partial<Row> = {}): Row => ({
   ...over,
 });
 
+type UpdateManyArgs = {
+  where: {
+    id?: string;
+    status?: EarningStatus | { in: EarningStatus[] };
+    refundedShareAmount?: number;
+  };
+  data: Partial<Row>;
+};
+
 /** A prisma-ish earnings delegate whose updateMany really evaluates `where`. */
 function store(rows: Row[]) {
   const byId = new Map(rows.map((r) => [r.id, r]));
-  const updateMany = jest.fn(async (args: any) => {
-    const { where, data } = args;
+  const updateMany = jest.fn(async ({ where, data }: UpdateManyArgs) => {
     let count = 0;
     for (const r of byId.values()) {
       if (where.id !== undefined && where.id !== r.id) continue;
       if (where.status !== undefined) {
-        const allowed = where.status.in ?? [where.status];
+        const allowed =
+          typeof where.status === "object" ? where.status.in : [where.status];
         if (!allowed.includes(r.status)) continue;
       }
       if (
@@ -111,7 +108,7 @@ function store(rows: Row[]) {
     }
     return { count };
   });
-  const findUnique = jest.fn(async ({ where }: any) => {
+  const findUnique = jest.fn(async ({ where }: { where: { id: string } }) => {
     const r = byId.get(where.id);
     if (!r) return null;
     return { status: r.status, refundedShareAmount: r.refundedShareAmount };
@@ -368,11 +365,13 @@ describe("capped earning reversal — the status guard is unconditional", () => 
 describe("refundEarnings — PAID branch is guarded, not unguarded", () => {
   function harness(earnings: Row[]) {
     const s = store(earnings);
+    const findMany = jest.fn(async () => earnings.map((r) => ({ ...r })));
     return {
       ...s,
+      findMany,
       refundEarningsTx: {
         consultantEarnings: {
-          findMany: jest.fn(async () => earnings.map((r) => ({ ...r }))),
+          findMany,
           updateMany: s.updateMany,
           findUnique: s.findUnique,
         },
@@ -413,11 +412,11 @@ describe("refundEarnings — PAID branch is guarded, not unguarded", () => {
 
   it("without forceRefund, a row that turned PAID after the read is never reversed", async () => {
     const r = row({ status: EarningStatus.PAID, payoutId: "po-1" });
-    const { updateMany, refundEarningsTx } = harness([r]);
+    const { updateMany, findMany, refundEarningsTx } = harness([r]);
     // The pre-read still saw BATCHED; the payout completed before the write.
-    (refundEarningsTx as any).consultantEarnings.findMany.mockImplementation(
-      async () => [{ ...r, status: EarningStatus.BATCHED }],
-    );
+    findMany.mockImplementation(async () => [
+      { ...r, status: EarningStatus.BATCHED },
+    ]);
 
     await refundEarnings("pay-1", { tx: refundEarningsTx });
 
@@ -444,14 +443,12 @@ describe("refundEarnings — PAID branch is guarded, not unguarded", () => {
 
   it("a second cascade over the same READY row cannot re-reverse it", async () => {
     const r = row();
-    const { updateMany, refundEarningsTx } = harness([r]);
+    const { updateMany, findMany, refundEarningsTx } = harness([r]);
 
     await refundEarnings("pay-1", { tx: refundEarningsTx });
     expect(r.refundedShareAmount).toBe(8_000);
     // The webhook redelivers, but findMany now hands back the terminal row.
-    (refundEarningsTx as any).consultantEarnings.findMany.mockImplementation(
-      async () => [{ ...r }],
-    );
+    findMany.mockImplementation(async () => [{ ...r }]);
     await refundEarnings("pay-1", { tx: refundEarningsTx });
 
     expect(updateMany).toHaveBeenCalledTimes(1);

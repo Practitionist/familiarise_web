@@ -298,11 +298,13 @@ export const POST = withOpsAction(
           { tags: { subsystem: "moderation" } },
         );
       }
-      // Session ends carry IPs and phase 2 has stamped them; never persist them.
+      // Session ends carry IPs and phase 2 has stamped them; never persist
+      // them, nor the seat holders phase 2 mails.
       const {
         stagedBells,
         stagedEmails,
         stagedSessionEnds,
+        owedCohostEmails,
         ...persistedSideEffects
       } = sideEffects;
       await persistActionSideEffects(action.id, persistedSideEffects);

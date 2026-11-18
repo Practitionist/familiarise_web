@@ -27,6 +27,10 @@ const mockCache = {
   markChannelExists: jest.fn(),
 };
 const calls: string[] = [];
+const mockFence = jest.fn(async (..._args: unknown[]) => ({
+  verified: true,
+  lost: false,
+}));
 
 const mockWebinarPlanFindUnique = jest.fn(async () => ({
   title: "Intro Webinar",
@@ -61,6 +65,10 @@ jest.mock("../../lib/stream-client", () => ({
   withStreamCircuitBreaker: jest.fn((op: () => unknown) => op()),
   StreamUnavailableError: class StreamUnavailableError extends Error {},
   isExpectedStreamError: jest.fn(() => false),
+}));
+jest.mock("../../lib/stream/access-revocation", () => ({
+  fenceCollaboratorGrant: (...args: unknown[]) => mockFence(...args),
+  fenceSeatGrants: jest.fn(),
 }));
 jest.mock("../../lib/stream-logger", () => ({ streamLogger: mockLogger }));
 jest.mock("../../lib/stream-cache", () => mockCache);
@@ -105,6 +113,22 @@ describe("createCollaboratorChannel", () => {
       unknown
     >;
     expect(createPayload.organization_id).toBeUndefined();
+  });
+
+  it("re-checks every collaborator it wrote into the roster, and never the host", async () => {
+    const { createCollaboratorChannel } =
+      await import("../../actions/stream/chat/channel.action");
+    mockChannel.create.mockResolvedValue({});
+    mockChannel.query.mockResolvedValue({
+      members: [{ user_id: "host-user" }],
+    });
+
+    await createCollaboratorChannel("webinar", "plan-1");
+
+    expect(mockChannel.addMembers).toHaveBeenCalledWith(["collab-user"]);
+    expect(mockFence.mock.calls).toEqual([
+      [{ planType: "webinar", planId: "plan-1" }, "collab-user"],
+    ]);
   });
 
   it("never lifts a wind-down freeze and reports it to the opener", async () => {

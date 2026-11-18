@@ -57,6 +57,14 @@ export interface GuardedMembership {
   consultantProfileId: string | null;
 }
 
+/** The membership that makes a consultant an active expert of an organisation. */
+const activeExpertMembership = (consultantProfileId: string) =>
+  ({
+    consultantProfileId,
+    status: "ACTIVE",
+    role: "EXPERT",
+  }) satisfies Prisma.MembershipWhereInput;
+
 /**
  * A consultant delivers, or edits, an organisation's plan only while an ACTIVE
  * EXPERT member of that organisation.
@@ -65,12 +73,25 @@ export function activeOrgExpertWhere(
   organizationId: string,
   consultantProfileId: string,
 ): Prisma.MembershipWhereInput {
+  return { organizationId, ...activeExpertMembership(consultantProfileId) };
+}
+
+/**
+ * The webinar or class plans a consultant manages as their named expert: a
+ * personal plan, or an organisation's plan while an active expert member of it.
+ */
+export function managedAsNamedExpertWhere(consultantProfileId: string) {
   return {
-    organizationId,
     consultantProfileId,
-    status: "ACTIVE",
-    role: "EXPERT",
-  };
+    OR: [
+      { organizationId: null },
+      {
+        organization: {
+          memberships: { some: activeExpertMembership(consultantProfileId) },
+        },
+      },
+    ],
+  } satisfies Prisma.WebinarPlanWhereInput & Prisma.ClassPlanWhereInput;
 }
 
 export const NOT_ACTIVE_ORG_EXPERT_REFUSAL = {
@@ -89,6 +110,34 @@ export async function orgPlanEditRefusal(
   return (await isActiveOrgExpert(db, plan.organizationId, consultantProfileId))
     ? null
     : NOT_ACTIVE_ORG_EXPERT_REFUSAL;
+}
+
+/** A webinar or class plan as a booking read carries it. */
+type NamedExpertPlan = {
+  organizationId: string | null;
+  consultantProfile: { id: string; userId: string } | null;
+};
+
+/**
+ * Whether `userId` manages the webinar or class plan behind a booking as its
+ * named expert: always on a personal plan, and on an organisation's plan only
+ * while an active expert member. The membership is read for that expert alone.
+ */
+export async function managesGroupPlanAsNamedExpert(
+  db: PrismaLike,
+  booking: {
+    webinar?: { webinarPlan: NamedExpertPlan } | null;
+    class?: { classPlan: NamedExpertPlan } | null;
+  },
+  userId: string,
+): Promise<boolean> {
+  const plan = booking.webinar?.webinarPlan ?? booking.class?.classPlan;
+  const expert = plan?.consultantProfile;
+  if (!plan || !expert || expert.userId !== userId) return false;
+  return (
+    !plan.organizationId ||
+    isActiveOrgExpert(db, plan.organizationId, expert.id)
+  );
 }
 
 export async function isActiveOrgExpert(

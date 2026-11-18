@@ -53,7 +53,10 @@ import {
 import type { AppointmentVM } from "@/lib/appointments/view-model";
 import { bookingPayHref } from "@/lib/appointments/trial-checkout-href";
 import { isExternalPayHref } from "@/lib/payments/pay-link-href";
-import type { TAppointmentDetail } from "@/lib/data/appointment-detail";
+import type {
+  TAppointmentDetail,
+  TScopedAppointmentDetail,
+} from "@/lib/data/appointment-detail";
 import {
   paymentStatusBadge,
   paymentStatusDot,
@@ -330,7 +333,7 @@ export function AppointmentDetailClient({
     refetch,
   } = useQuery({
     queryKey: ["appointment-detail", appointmentId] as const,
-    queryFn: async (): Promise<TAppointmentDetail> => {
+    queryFn: async (): Promise<TScopedAppointmentDetail> => {
       const res = await fetch(`/api/appointments/${appointmentId}`);
       if (!res.ok) await throwSupportError(res, "appointment detail load");
       const { data } = await res.json();
@@ -560,7 +563,12 @@ export function AppointmentDetailClient({
     0,
     participants.length - PARTICIPANTS_PREVIEW,
   );
-  const manageHref = participantsHref?.(detail) ?? null;
+  // The roster and the seat payments are drawn only when the detail carries
+  // them whole; a list withheld from this viewer is not an empty list.
+  const { rosterVisible, paymentsVisible } = detail;
+  const manageHref = rosterVisible
+    ? (participantsHref?.(detail) ?? null)
+    : null;
   // A group event's money is one row per attendee. The host reads it as a
   // status on each seat plus a total; an attendee's `payments` is already
   // just their own (scopeAppointmentDetail).
@@ -663,7 +671,7 @@ export function AppointmentDetailClient({
   // Each overflow action is placed where it belongs on the page; items the
   // page already covers (Resources, Participants, the Set schedule button) drop.
   const coveredKeys = new Set<string>(["documents"]);
-  if (manageHref) coveredKeys.add("participants");
+  if (manageHref || !rosterVisible) coveredKeys.add("participants");
   if (action.kind === "schedule") coveredKeys.add("timings");
   const placed = overflow.filter((item) => !coveredKeys.has(item.key));
   const chatItems = placed.filter((item) => item.chat && !item.destructive);
@@ -936,7 +944,7 @@ export function AppointmentDetailClient({
     </Section>
   );
 
-  const participantsCard = role === "consultant" && (
+  const participantsCard = role === "consultant" && rosterVisible && (
     <Section
       title={
         participants.length > 0
@@ -1036,129 +1044,131 @@ export function AppointmentDetailClient({
     showBreakdown || creditNotes.length > 0 || ownCoPays.length > 0;
   const paidReceipt = paidRow ? receiptHref(paidRow) : null;
 
-  const paymentCard = (
-    <Section title={showSeatSummary ? "Payments" : "Payment"}>
-      {showSeatSummary ? (
-        payments.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            No seat has been paid for yet.
-          </p>
-        ) : (
-          <dl className="space-y-1.5 text-sm">
-            <div className="flex items-baseline justify-between gap-3">
-              <dt className="text-muted-foreground">Seats paid</dt>
-              <dd className="font-medium text-foreground tabular-nums">
-                {paidSeats} of {participants.length} seat
-                {participants.length === 1 ? "" : "s"} paid
-              </dd>
-            </div>
-            <div className="flex items-baseline justify-between gap-3">
-              <dt className="text-muted-foreground">Collected</dt>
-              <dd className="font-medium text-foreground tabular-nums">
-                {seatSummary.collectedPaise === 0 &&
-                freeSeats > 0 &&
-                paidSeats === 0
-                  ? "Nothing — every paid seat was free"
-                  : `${formatCurrencyAmount(
-                      seatSummary.collectedPaise,
-                      seatSummary.currency,
-                    )} collected`}
-              </dd>
-            </div>
-            {seatRows
-              .filter(([, count]) => count > 0)
-              .map(([label, count]) => (
-                <div
-                  key={label}
-                  className="flex items-baseline justify-between gap-3"
-                >
-                  <dt className="text-muted-foreground">{label}</dt>
-                  <dd className="text-foreground tabular-nums">{count}</dd>
-                </div>
-              ))}
-          </dl>
-        )
-      ) : (
-        <div className="space-y-3">
-          <div className="space-y-1">
-            <p className="text-sm font-medium text-foreground">
-              {moneyState.line}
+  // A group event's seat money is drawn only for a viewer who is sent it.
+  const paymentCard =
+    showSeatSummary && !paymentsVisible ? null : (
+      <Section title={showSeatSummary ? "Payments" : "Payment"}>
+        {showSeatSummary ? (
+          payments.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No seat has been paid for yet.
             </p>
-            {moneyState.detail && (
-              <p className="text-xs text-muted-foreground tabular-nums">
-                {moneyState.detail}
+          ) : (
+            <dl className="space-y-1.5 text-sm">
+              <div className="flex items-baseline justify-between gap-3">
+                <dt className="text-muted-foreground">Seats paid</dt>
+                <dd className="font-medium text-foreground tabular-nums">
+                  {paidSeats} of {participants.length} seat
+                  {participants.length === 1 ? "" : "s"} paid
+                </dd>
+              </div>
+              <div className="flex items-baseline justify-between gap-3">
+                <dt className="text-muted-foreground">Collected</dt>
+                <dd className="font-medium text-foreground tabular-nums">
+                  {seatSummary.collectedPaise === 0 &&
+                  freeSeats > 0 &&
+                  paidSeats === 0
+                    ? "Nothing — every paid seat was free"
+                    : `${formatCurrencyAmount(
+                        seatSummary.collectedPaise,
+                        seatSummary.currency,
+                      )} collected`}
+                </dd>
+              </div>
+              {seatRows
+                .filter(([, count]) => count > 0)
+                .map(([label, count]) => (
+                  <div
+                    key={label}
+                    className="flex items-baseline justify-between gap-3"
+                  >
+                    <dt className="text-muted-foreground">{label}</dt>
+                    <dd className="text-foreground tabular-nums">{count}</dd>
+                  </div>
+                ))}
+            </dl>
+          )
+        ) : (
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-foreground">
+                {moneyState.line}
               </p>
+              {moneyState.detail && (
+                <p className="text-xs text-muted-foreground tabular-nums">
+                  {moneyState.detail}
+                </p>
+              )}
+            </div>
+            {role === "consultee" && isGroup && (
+              <SeatTrailNote appointmentId={appointmentId} />
+            )}
+            {(paidReceipt || role === "consultee") && (
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs">
+                {paidReceipt && (
+                  <a
+                    href={paidReceipt}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 font-medium text-foreground underline underline-offset-4"
+                  >
+                    <Receipt className="h-3.5 w-3.5" />
+                    View receipt
+                  </a>
+                )}
+                {role === "consultee" && (
+                  <button
+                    type="button"
+                    className="font-medium text-muted-foreground underline underline-offset-4 hover:text-foreground"
+                    onClick={() => openHelp("PAYMENT_STATUS")}
+                  >
+                    {hasOwnCharge
+                      ? "Problem with this charge"
+                      : "Problem with this booking"}
+                  </button>
+                )}
+              </div>
+            )}
+            {hasPaymentDetails && (
+              <details className="group border-t border-border pt-3">
+                <summary className="flex cursor-pointer list-none items-center justify-between text-xs font-medium text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
+                  Payment details
+                  <ChevronDown className="h-3.5 w-3.5 transition-transform group-open:rotate-180" />
+                </summary>
+                <div className="mt-2 space-y-2">
+                  {showBreakdown && paidRow && (
+                    <p className="text-xs text-muted-foreground tabular-nums">
+                      Paid with{" "}
+                      {formatFundingBreakdown(
+                        paidBreakdown,
+                        paidRow.currency ?? "INR",
+                      )}
+                    </p>
+                  )}
+                  {/* A refund's credit note sits beside the charge it reverses. */}
+                  {paidRow &&
+                    creditNotes.map((note) => (
+                      <a
+                        key={note.id}
+                        href={`/api/payments/${paidRow.id}/credit-note/${note.id}/pdf`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="block text-xs font-medium text-foreground underline underline-offset-4"
+                      >
+                        Credit note {note.creditNoteNumber}
+                      </a>
+                    ))}
+                  {/* A co-pay the viewer paid themselves keeps its own receipt. */}
+                  {ownCoPays.map((c) => (
+                    <MoneyLine key={c.id} payment={c} />
+                  ))}
+                </div>
+              </details>
             )}
           </div>
-          {role === "consultee" && isGroup && (
-            <SeatTrailNote appointmentId={appointmentId} />
-          )}
-          {(paidReceipt || role === "consultee") && (
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs">
-              {paidReceipt && (
-                <a
-                  href={paidReceipt}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 font-medium text-foreground underline underline-offset-4"
-                >
-                  <Receipt className="h-3.5 w-3.5" />
-                  View receipt
-                </a>
-              )}
-              {role === "consultee" && (
-                <button
-                  type="button"
-                  className="font-medium text-muted-foreground underline underline-offset-4 hover:text-foreground"
-                  onClick={() => openHelp("PAYMENT_STATUS")}
-                >
-                  {hasOwnCharge
-                    ? "Problem with this charge"
-                    : "Problem with this booking"}
-                </button>
-              )}
-            </div>
-          )}
-          {hasPaymentDetails && (
-            <details className="group border-t border-border pt-3">
-              <summary className="flex cursor-pointer list-none items-center justify-between text-xs font-medium text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
-                Payment details
-                <ChevronDown className="h-3.5 w-3.5 transition-transform group-open:rotate-180" />
-              </summary>
-              <div className="mt-2 space-y-2">
-                {showBreakdown && paidRow && (
-                  <p className="text-xs text-muted-foreground tabular-nums">
-                    Paid with{" "}
-                    {formatFundingBreakdown(
-                      paidBreakdown,
-                      paidRow.currency ?? "INR",
-                    )}
-                  </p>
-                )}
-                {/* A refund's credit note sits beside the charge it reverses. */}
-                {paidRow &&
-                  creditNotes.map((note) => (
-                    <a
-                      key={note.id}
-                      href={`/api/payments/${paidRow.id}/credit-note/${note.id}/pdf`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="block text-xs font-medium text-foreground underline underline-offset-4"
-                    >
-                      Credit note {note.creditNoteNumber}
-                    </a>
-                  ))}
-                {/* A co-pay the viewer paid themselves keeps its own receipt. */}
-                {ownCoPays.map((c) => (
-                  <MoneyLine key={c.id} payment={c} />
-                ))}
-              </div>
-            </details>
-          )}
-        </div>
-      )}
-    </Section>
-  );
+        )}
+      </Section>
+    );
 
   const detailsCard = hasDetails && (
     <Section title="Details">

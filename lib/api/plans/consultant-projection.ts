@@ -39,3 +39,13 @@ export const planCollaboratorConsultantSelect = {
   ...consultantPublicScalars,
   user: planConsultantUserSelect,
 } satisfies Prisma.ConsultantProfileSelect;
+
+/**
+ * The collaborator row a plan payload may carry: its key and its role. The
+ * share, the inviter and the response time are between the experts, so the
+ * relation is always a `select` built on this, never an `include`.
+ */
+export const planCollaboratorScalars = {
+  id: true,
+  role: true,
+} satisfies Prisma.CollaboratorSelect;

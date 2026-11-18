@@ -24,7 +24,11 @@
 
 import { isStaffNonParty, publicRequester } from "@/lib/booking/list-selects";
 import prisma from "@/lib/prisma";
-import { liveParticipant } from "@/lib/booking/participants";
+import {
+  liveParticipant,
+  NOT_COLLABORATOR_ROW,
+} from "@/lib/booking/participants";
+import { planCollaboratorScalars } from "@/lib/api/plans/consultant-projection";
 import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
 import { AppointmentsType, AppointmentStatus, Prisma } from "@prisma/client";
 import { toPlain } from "@/lib/data/serialize";
@@ -300,7 +304,11 @@ export async function readConsultantAppointmentsPage(
         },
         {
           participants: {
-            some: { ...liveParticipant(), user: { consulteeProfileId } },
+            some: {
+              ...liveParticipant(),
+              ...NOT_COLLABORATOR_ROW,
+              user: { consulteeProfileId },
+            },
           },
         },
       ],
@@ -309,7 +317,9 @@ export async function readConsultantAppointmentsPage(
 
   if (userId) {
     userFilterClauses.push({
-      participants: { some: liveParticipant(userId) },
+      participants: {
+        some: { ...liveParticipant(userId), ...NOT_COLLABORATOR_ROW },
+      },
     });
   }
 
@@ -380,6 +390,28 @@ export async function readConsultantAppointmentsPage(
   // Host and co-host rows render name and image only, so no email is selected.
   const hostUserSelect = { id: true, name: true, image: true } as const;
 
+  // A co-host as a list row shows them: who and in what role. The share and
+  // the invitation stay between the experts.
+  const collaborators = {
+    where: { status: "ACCEPTED" as const },
+    select: {
+      ...planCollaboratorScalars,
+      consultantProfileId: true,
+      consultantProfile: {
+        select: { id: true, userId: true, user: { select: hostUserSelect } },
+      },
+    },
+  };
+
+  // A webinar or class has one payment per buyer: such a row carries only the
+  // payments of the buyer this read is filtered to, never another attendee's.
+  const groupEventPayer: Prisma.PaymentWhereInput[] = [
+    ...(userId ? [{ userId }] : []),
+    ...(consulteeProfileId
+      ? [{ user: { consulteeProfile: { id: consulteeProfileId } } }]
+      : []),
+  ];
+
   const include = {
     // Live buyer seats gate the host's Timings action on a webinar or class.
     _count: {
@@ -416,10 +448,15 @@ export async function readConsultantAppointmentsPage(
         },
       },
     },
-    // The newest payment rows, so a pay-first hold reads its own pay window
-    // (a 1:1 or plan has one buyer; a host's event view does not read them).
+    // The newest payment rows, so a pay-first hold reads its own pay window.
     payment: {
-      where: { deletedAt: null },
+      where: {
+        deletedAt: null,
+        OR: [
+          { appointment: { appointmentType: { notIn: ["WEBINAR", "CLASS"] } } },
+          ...groupEventPayer,
+        ],
+      },
       orderBy: { createdAt: "desc" },
       take: 3,
       select: {
@@ -493,24 +530,7 @@ export async function readConsultantAppointmentsPage(
                 user: { select: hostUserSelect },
               },
             },
-            collaborators: {
-              where: { status: "ACCEPTED" },
-              include: {
-                consultantProfile: {
-                  select: {
-                    id: true,
-                    userId: true,
-                    user: {
-                      select: {
-                        id: true,
-                        name: true,
-                        image: true,
-                      },
-                    },
-                  },
-                },
-              },
-            },
+            collaborators,
           },
         },
       },
@@ -526,24 +546,7 @@ export async function readConsultantAppointmentsPage(
                 user: { select: hostUserSelect },
               },
             },
-            collaborators: {
-              where: { status: "ACCEPTED" },
-              include: {
-                consultantProfile: {
-                  select: {
-                    id: true,
-                    userId: true,
-                    user: {
-                      select: {
-                        id: true,
-                        name: true,
-                        image: true,
-                      },
-                    },
-                  },
-                },
-              },
-            },
+            collaborators,
           },
         },
       },

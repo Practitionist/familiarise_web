@@ -9,6 +9,7 @@ import {
   readAppointmentDetail,
   scopeAppointmentDetail,
 } from "@/lib/data/appointment-detail";
+import { managesGroupPlanAsNamedExpert } from "@/lib/enterprise/membership-guards";
 import DetailPageClient from "./DetailPageClient";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -66,7 +67,14 @@ export default async function AppointmentDetailPage({
   // other attendee's money before the refetch replaced it.
   queryClient.setQueryData(
     ["appointment-detail", appointmentId],
-    scopeAppointmentDetail(detail, profile.userId),
+    scopeAppointmentDetail(detail, {
+      userId: profile.userId,
+      managesGroupPlan: await managesGroupPlanAsNamedExpert(
+        prisma,
+        appointment,
+        profile.userId,
+      ),
+    }),
   );
 
   return (

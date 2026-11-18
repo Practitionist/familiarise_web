@@ -11,6 +11,8 @@ import { bookingOrgId, getDmChannelId } from "@/lib/stream-utils";
 import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
 import { liveParticipant, paidParticipant } from "@/lib/booking/participants";
 import { captureThrottled } from "@/lib/observability/throttled-capture";
+import { planWhere, type PlanRef } from "@/lib/collaborators/team";
+import { driveCollaboratorRevocation } from "@/lib/stream/collaborator-access";
 import {
   isDmChannelIdEligible,
   isDmContextEligible,
@@ -1177,23 +1179,148 @@ export async function revokeRefundedSeatAccess(
   }
 }
 
-/** Queues a collaborator revocation that `revokeCollaboratorAccess` reported as incomplete. */
-export async function enqueueCollaboratorRevocationRetry(
-  planType: "webinar" | "class",
-  planId: string,
+/** The request's own slice of a collaborator revocation; the sweep finishes whatever it leaves. */
+const SYNC_COLLABORATOR_REVOCATION_BUDGET_MS = 8_000;
+
+const collaboratorTarget = (ref: PlanRef, userId: string) => ({
+  kind: "COLLAB_REVOKE" as const,
+  userId,
+  planId: ref.planId,
+  planType:
+    ref.planType === "webinar" ? ("WEBINAR" as const) : ("CLASS" as const),
+});
+
+/** True while the user is on the plan's team, which is all a collaborator's Stream access rests on. */
+async function isAcceptedCollaborator(
+  ref: PlanRef,
   userId: string,
-): Promise<void> {
-  await enqueueOrReport(
-    [
-      {
-        kind: "COLLAB_REVOKE",
-        userId,
-        planId,
-        planType: planType === "webinar" ? "WEBINAR" : "CLASS",
-      },
-    ],
-    "collaborator.revokeAccess",
+): Promise<boolean> {
+  const row = await prisma.collaborator.findFirst({
+    where: {
+      ...planWhere(ref),
+      status: "ACCEPTED",
+      consultantProfile: { userId, deletedAt: null },
+    },
+    select: { id: true },
+  });
+  return row !== null;
+}
+
+/**
+ * Drives a collaborator revocation unless Postgres has the user on the team
+ * again, waiting no longer than `deadlineMs`. Returns the error to record, or null.
+ */
+async function driveCollaboratorIntent(
+  ref: PlanRef,
+  userId: string,
+  deadlineMs: number,
+): Promise<string | null> {
+  const drive = async () =>
+    (await isAcceptedCollaborator(ref, userId))
+      ? null
+      : driveCollaboratorRevocation(ref, userId, deadlineMs);
+  try {
+    return await withinBudget(drive(), deadlineMs);
+  } catch (error) {
+    if (error instanceof RevocationBudgetSpent) return "time budget spent";
+    throw error;
+  }
+}
+
+/**
+ * Persists the revocation an ended collaboration owes, reading nothing first.
+ * Returns the row's generation, or null when it was not written. Never throws.
+ */
+function persistCollaboratorRevocation(
+  ref: PlanRef,
+  userId: string,
+): Promise<Date | null> {
+  return enqueueOrReport(
+    [collaboratorTarget(ref, userId)],
+    "collaborator.persistRevocation",
+    { nextRetryAt: intentNotBefore() },
   );
+}
+
+/**
+ * Writes the collaborator's revocation intent through the transaction that ends
+ * the collaboration, so both commit or roll back together. Returns the row's generation.
+ */
+export async function persistCollaboratorRevocationInTx(
+  tx: Tx,
+  ref: PlanRef,
+  userId: string,
+): Promise<Date> {
+  return enqueueInTx(tx, [collaboratorTarget(ref, userId)]);
+}
+
+/**
+ * Ends the Stream access an ended collaboration no longer justifies. Without the
+ * `generation` the ending transaction wrote, the obligation is persisted before
+ * any lookup or vendor call. It is driven inside the request's budget and settles
+ * only that generation; `retry-moderation-enforcement` owns the rest. Never throws.
+ */
+export async function revokeCollaboratorAccess(
+  ref: PlanRef,
+  userId: string,
+  generation?: Date | null,
+): Promise<void> {
+  const owned =
+    generation ?? (await persistCollaboratorRevocation(ref, userId));
+  if (!isStreamConfigured()) {
+    // No vendor call happened, so the intent stays owed until the keys are back.
+    reportStreamUnconfigured();
+    return;
+  }
+  let error: string | null;
+  try {
+    error = await driveCollaboratorIntent(
+      ref,
+      userId,
+      Date.now() + SYNC_COLLABORATOR_REVOCATION_BUDGET_MS,
+    );
+  } catch (caught) {
+    error = caught instanceof Error ? caught.message : String(caught);
+    error ||= "collaborator revocation interrupted";
+  }
+  if (error) {
+    // The intent stays owed; the sweep re-drives it.
+    streamLogger.warn("Collaborator revocation left owed", { ...ref, error });
+    return;
+  }
+  await settleIntents("COLLAB_REVOKE", ref.planId, [userId], owned);
+}
+
+/** A fence that could not read the collaboration says so; the caller must not treat the user as on the team. */
+export type CollaboratorGrantFence =
+  { verified: true; lost: boolean } | { verified: false };
+
+/**
+ * Re-checks a user who was just granted Stream access as a collaborator, and
+ * takes it back when the collaboration ended meanwhile: a revoker that ran
+ * between the grant's check and its write saw nothing to remove. When the
+ * re-check cannot be read, the grant stays owed to the sweep, which spares
+ * anyone still on the team.
+ */
+export async function fenceCollaboratorGrant(
+  ref: PlanRef,
+  userId: string,
+): Promise<CollaboratorGrantFence> {
+  let accepted: boolean;
+  try {
+    accepted = await isAcceptedCollaborator(ref, userId);
+  } catch (error) {
+    await persistCollaboratorRevocation(ref, userId);
+    captureThrottled("stream.collaborator.fenceGrant", error, {
+      subsystem: "collaborators",
+      op: "collaborator.fenceGrant",
+      extra: { ...ref },
+    });
+    return { verified: false };
+  }
+  if (accepted) return { verified: true, lost: false };
+  await revokeCollaboratorAccess(ref, userId);
+  return { verified: true, lost: true };
 }
 
 /** Queues an org-member revocation that did not fully land. */
@@ -1219,9 +1346,9 @@ export interface AccessRevocationRow {
 /**
  * Re-drives one queued revocation. Returns the error to record, or null when
  * the access is gone or Postgres has since re-granted it; without Stream's keys
- * nothing is done and `STREAM_UNCONFIGURED` comes back. A seat, refund or
- * conduct block row stops starting Stream work at its slice or at `deadlineMs`,
- * whichever is sooner.
+ * nothing is done and `STREAM_UNCONFIGURED` comes back. A seat, refund,
+ * conduct block or collaborator row stops starting Stream work at its slice or
+ * at `deadlineMs`, whichever is sooner.
  */
 export async function redriveAccessRevocation(
   row: AccessRevocationRow,
@@ -1234,7 +1361,7 @@ export async function redriveAccessRevocation(
   if (!isStreamConfigured()) return STREAM_UNCONFIGURED;
   switch (row.kind) {
     case "COLLAB_REVOKE":
-      return redriveCollaboratorRevocation(row);
+      return redriveCollaboratorRevocation(row, deadlineMs);
     case "EVENT_CHANNEL_REMOVE":
       return redriveEventChannelRemoval(row);
     case "DM_REMOVE":
@@ -1260,28 +1387,15 @@ export async function redriveAccessRevocation(
 
 async function redriveCollaboratorRevocation(
   row: AccessRevocationRow,
+  deadlineMs: number,
 ): Promise<string | null> {
   if (!row.planType) return "COLLAB_REVOKE row has no plan type";
   const planType = row.planType === "WEBINAR" ? "webinar" : "class";
-  const regranted = await prisma.collaborator.findFirst({
-    where: {
-      status: "ACCEPTED",
-      consultantProfile: { userId: row.userId, deletedAt: null },
-      ...(planType === "webinar"
-        ? { webinarPlanId: row.planId }
-        : { classPlanId: row.planId }),
-    },
-    select: { id: true },
-  });
-  if (regranted) return null;
-  const { revokeCollaboratorAccess } =
-    await import("@/lib/collaborators/service");
-  const { success } = await revokeCollaboratorAccess(
-    planType,
-    row.planId,
+  return driveCollaboratorIntent(
+    { planType, planId: row.planId },
     row.userId,
+    deadlineMs,
   );
-  return success ? null : "Collaborator Stream access not fully revoked";
 }
 
 async function redriveEventChannelRemoval(

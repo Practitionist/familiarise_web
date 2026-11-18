@@ -8,13 +8,13 @@
 
 Every in-app notification (subject, body and the payload field that holds the tap destination) is written in `lib/novu/templates/`:
 
-| File          | What it holds                                                                                                  |
-| ------------- | -------------------------------------------------------------------------------------------------------------- |
-| `b2c.ts`      | In-app templates for the consultant, consultee, staff and admin events                                         |
-| `org.ts`      | In-app templates for the `ORG_*` events                                                                        |
-| `families.ts` | The 16 workflow families, their opt-out category and `EVENT_FAMILY`, the map from each of the 97 events to one |
-| `types.ts`    | `WorkflowTemplate`, `InAppTemplate` and `PreferenceCategory`                                                   |
-| `index.ts`    | `toWire` (event to family), the family document the sync writes, and `FAMILY_PREFERENCES`                      |
+| File          | What it holds                                                                                                   |
+| ------------- | --------------------------------------------------------------------------------------------------------------- |
+| `b2c.ts`      | In-app templates for the consultant, consultee, staff and admin events                                          |
+| `org.ts`      | In-app templates for the `ORG_*` events                                                                         |
+| `families.ts` | The 16 workflow families, their opt-out category and `EVENT_FAMILY`, the map from each of the 101 events to one |
+| `types.ts`    | `WorkflowTemplate`, `InAppTemplate` and `PreferenceCategory`                                                    |
+| `index.ts`    | `toWire` (event to family), the family document the sync writes, and `FAMILY_PREFERENCES`                       |
 
 The Novu environment holds one workflow per family, not one per event. Each family's body is one Liquid `case` over `payload.event`, built from the member templates at sync time. The complete list of families and their events is in [02-workflows-and-api.md](./02-workflows-and-api.md#workflow-families), and the reasoning is in [ADR 30](../enterprise/70-design-decisions/30-novu-templates-as-code-and-workflow-families.md). Email is not a Novu concern: no family has an email step, and email copy lives in `emails/` (see [../email/README.md](../email/README.md)).
 

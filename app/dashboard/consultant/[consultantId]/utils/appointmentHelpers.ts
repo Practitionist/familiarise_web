@@ -93,22 +93,6 @@ export function getCollaboratorRole(
   return null;
 }
 
-/** Format a collaborator role enum value to a human-readable label */
-export function formatCollaboratorRole(role: string): string {
-  const labels: Record<string, string> = {
-    HOST: "Host",
-    CO_HOST: "Co-Host",
-    MODERATOR: "Moderator",
-    GUEST_SPEAKER: "Guest Speaker",
-    TECHNICAL_SUPPORT: "Tech Support",
-    CO_INSTRUCTOR: "Co-Instructor",
-    TEACHING_ASSISTANT: "TA",
-    GUEST_LECTURER: "Guest Lecturer",
-    CONTENT_CREATOR: "Content Creator",
-  };
-  return labels[role] || role;
-}
-
 /** Get the CSS class for a collaborator role badge */
 export function getRoleBadgeStyle(role: string): string {
   if (role === "HOST") return "bg-gray-900 text-white";

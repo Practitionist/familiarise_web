@@ -9,7 +9,10 @@
 import prisma from "@/lib/prisma";
 import type { AppointmentsType, Prisma, RecordingStatus } from "@prisma/client";
 import { isFullyRefundedPurchase } from "@/lib/payments/utils/refund-balance";
-import { liveParticipant } from "@/lib/booking/participants";
+import {
+  liveParticipant,
+  NOT_COLLABORATOR_ROW,
+} from "@/lib/booking/participants";
 import type { Scope } from "./parse";
 import { assertNeverScope, ORG_SCOPE_READABLE_STATUSES } from "./parse";
 
@@ -116,7 +119,9 @@ function recordingAppointmentAccessOr(
             some: {
               appointment: {
                 // Same seat predicate as playback: a released (CANCELLED/REFUNDED) seat sees nothing.
-                participants: { some: liveParticipant(userId) },
+                participants: {
+                  some: { ...liveParticipant(userId), ...NOT_COLLABORATOR_ROW },
+                },
               },
             },
           },

@@ -5,7 +5,8 @@
  * time, attendees busy then are flagged but never block it, and every seat
  * bought before the move may leave with a full refund until `retimeBy`.
  *
- * Lock order: event checkout → appointment → host + co-host slot batch.
+ * Lock order: event checkout → appointment → host + co-host slot batch, then
+ * the plan row as the transaction's first row lock.
  */
 import prisma from "@/lib/prisma";
 import { isExclusionViolation } from "@/lib/db/pg-errors";
@@ -25,9 +26,11 @@ import { SCHEDULING_INTERVAL_MS } from "@/lib/appointments/occurrences";
 import { seatHoldingParticipant } from "@/utils/scheduling-engine/occupancyPolicy";
 import { BookingRuleError } from "./booking-rule-error";
 import { isTooSoonFor, RESCHEDULE_MIN_LEAD_HOURS } from "./lead-time";
+import { collaboratorUserIds } from "@/lib/collaborators/recipients";
 import {
   acceptedCohostProfileIds,
   hostBatchEntries,
+  lockPlanForMove,
   withHostSlotBatch,
 } from "./host-slot-batch";
 import {
@@ -145,6 +148,7 @@ export async function retimeWebinar(args: {
           hostBatchEntries(profiles, [{ startsAt, endsAt }]),
           () =>
             prisma.$transaction(async (tx) => {
+              await lockPlanForMove(tx, "WEBINAR", plan.id, profiles);
               await verifyCohostsFreeForMove(
                 tx,
                 "WEBINAR",
@@ -216,23 +220,26 @@ export async function retimeWebinar(args: {
                 seatUserIds.filter((id) => id !== args.actorUserId),
                 clashing,
               );
+              const movedNotice = {
+                ...notificationScope(pre.organizationId),
+                outcome: "MOVED" as const,
+                oldDateTime: session.startsAt.toISOString(),
+                newDateTime: startsAt.toISOString(),
+                appointmentType: "webinar" as const,
+                consultantName:
+                  plan.consultantProfile?.user.name ?? "Your host",
+                consulteeName: "Participant",
+                planTitle: planTitleOrSessionLabel(plan.title, "webinar"),
+                dashboardUrl,
+              };
               const bells: Array<StagedTrigger | undefined> = [];
               for (const group of groups) {
                 const staged = await notifyAppointmentRescheduled(
                   group.userIds,
                   {
-                    ...notificationScope(pre.organizationId),
-                    outcome: "MOVED",
-                    oldDateTime: session.startsAt.toISOString(),
-                    newDateTime: startsAt.toISOString(),
+                    ...movedNotice,
                     leaveBy: retimeBy.toISOString(),
                     clash: group.clash,
-                    appointmentType: "webinar",
-                    consultantName:
-                      plan.consultantProfile?.user.name ?? "Your host",
-                    consulteeName: "Participant",
-                    planTitle: planTitleOrSessionLabel(plan.title, "webinar"),
-                    dashboardUrl,
                   },
                   {
                     tx,
@@ -241,6 +248,23 @@ export async function retimeWebinar(args: {
                       kind: "EVENT_MOVED",
                       recipients: group.userIds,
                     },
+                  },
+                );
+                bells.push(...staged.map((r) => r.staged));
+              }
+              // The plan's team hears of a move someone else made, with no leave offer.
+              const team = (
+                await collaboratorUserIds("webinar", plan.id, tx)
+              ).filter(
+                (id) => id !== args.actorUserId && !seatUserIds.includes(id),
+              );
+              if (team.length > 0) {
+                const staged = await notifyAppointmentRescheduled(
+                  team,
+                  movedNotice,
+                  {
+                    tx,
+                    deferAttempt: true,
                   },
                 );
                 bells.push(...staged.map((r) => r.staged));

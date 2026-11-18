@@ -7,7 +7,11 @@
 import { ParticipantStatus } from "@prisma/client";
 import { listDocumentsScoped } from "@/lib/api/scope/list-documents";
 import { listRecordingsScoped } from "@/lib/api/scope/list-recordings";
-import { liveParticipant, paidParticipant } from "@/lib/booking/participants";
+import {
+  liveParticipant,
+  NOT_COLLABORATOR_ROW,
+  paidParticipant,
+} from "@/lib/booking/participants";
 import { matchesWhere } from "../fixtures/mem-db";
 
 const mockFindMany = jest.fn();
@@ -30,23 +34,26 @@ const USER = "user-1";
 
 beforeEach(() => mockFindMany.mockReset().mockResolvedValue([]));
 
+/** A live seat that is not a collaborator's own old row. */
+const LIVE_SEAT = { ...liveParticipant(USER), ...NOT_COLLABORATOR_ROW };
+
 function participantArm(appointmentWhere: { OR?: object[] }) {
   return appointmentWhere.OR?.find((arm) => "participants" in arm);
 }
 
 describe("released seats lose document and recording listings", () => {
-  it("documents: the participant arm is liveParticipant(userId)", async () => {
+  it("documents: the participant arm is a live seat of the user", async () => {
     await listDocumentsScoped({ scope: { kind: "personal" }, userId: USER });
     const arm = participantArm(mockFindMany.mock.calls[0][0].where.appointment);
-    expect(arm).toEqual({ participants: { some: liveParticipant(USER) } });
+    expect(arm).toEqual({ participants: { some: LIVE_SEAT } });
   });
 
-  it("recordings: the participant arm is liveParticipant(userId)", async () => {
+  it("recordings: the participant arm is a live seat of the user", async () => {
     await listRecordingsScoped({ scope: { kind: "personal" }, userId: USER });
     const arm = participantArm(
       mockFindMany.mock.calls[0][0].where.meeting.occurrence.appointment,
     );
-    expect(arm).toEqual({ participants: { some: liveParticipant(USER) } });
+    expect(arm).toEqual({ participants: { some: LIVE_SEAT } });
   });
 
   it("a seat that left and rejoined lists them again; while left it does not", () => {

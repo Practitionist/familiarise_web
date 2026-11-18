@@ -469,12 +469,30 @@ export function OfferingEditorContainer({
                 itemNoun="sessions"
               />
             ),
-            // Group events only, and only once saved — collaborators attach to a
-            // plan id, so there is nothing to attach to while creating.
-            ...((type === "webinar" || type === "class") && planId
+            // Group events only. Collaborators attach to a plan id, so an
+            // unsaved plan has nothing to invite onto yet.
+            ...(type === "webinar" || type === "class"
               ? {
-                  collaborators: (
-                    <CollaboratorsTab planType={type} planId={planId} isOwner />
+                  collaborators: planId ? (
+                    <CollaboratorsTab
+                      planType={type}
+                      planId={planId}
+                      planTitle={
+                        typeof existingPlan?.title === "string"
+                          ? existingPlan.title
+                          : "this plan"
+                      }
+                      // The form holds rupees; the split works in paise.
+                      planPricePaise={
+                        typeof existingPlan?.price === "number"
+                          ? Math.round(existingPlan.price * 100)
+                          : 0
+                      }
+                    />
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      Save this plan first, then invite collaborators here.
+                    </p>
                   ),
                 }
               : {}),

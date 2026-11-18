@@ -173,6 +173,7 @@ model User {
   digitalProductReports          DigitalProductReport[]           @relation("DigitalProductReporter")
   // #1499 — cancellation-policy versions this OWNER published, for the audit trail.
   publishedCancellationPolicies  CancellationPolicy[]             @relation("CancellationPolicyPublisher")
+  collaborationsEnded            Collaborator[]                   @relation("CollaboratorEndedBy")
   // Verification documents this user uploaded (owner column, #1224).
   verificationDocumentsUploaded  ProfileVerificationDocument[]    @relation("VerificationDocumentUploader")
   // #1778 — the held windows this user asked to hear about when they free.
@@ -7404,14 +7405,21 @@ model Collaborator {
   webinarPlanId       String?
   classPlanId         String?
   role                CollaboratorRole
-  // #1580 — what the role grants: PRESENTER (CO_HOST / CO_INSTRUCTOR) sees the
-  // roster and holds host controls; CREW does not. Derived from `role` on write.
+  // What the role grants: PRESENTER (CO_HOST / CO_INSTRUCTOR) sees the roster
+  // and holds host controls; CREW does not. Derived from `role` on write.
   tier                CollaboratorTier
-  // #772 B5 — basis points (e.g. 3000 = 30%) for integer money math.
+  // Basis points (3000 = 30%) for integer money math.
   revenueShareBps     Int
   status              CollaboratorStatus @default(PENDING)
-  // #1580 — SetNull: the inviting profile's departure must not delete the seat.
+  // SetNull: the inviting profile's departure must not delete the row.
   invitedById         String?
+  // One row is one period on the plan's team: on it from `acceptedAt` until
+  // `endedAt`. Both are stamped by the collaborator_transition_guard trigger.
+  acceptedAt          DateTime?          @db.Timestamptz
+  endedAt             DateTime?          @db.Timestamptz
+  // Who ended the row; null when the platform did (expiry, lost standing).
+  endedByUserId       String?
+  // When the invitee accepted or declined; kept for the mobile backend's reader.
   respondedAt         DateTime?
 
   createdAt DateTime @default(now())
@@ -7421,16 +7429,18 @@ model Collaborator {
   webinarPlan       WebinarPlan?       @relation(fields: [webinarPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   classPlan         ClassPlan?         @relation(fields: [classPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   invitedBy         ConsultantProfile? @relation("CollaboratorInvitedBy", fields: [invitedById], references: [id], onUpdate: Cascade, onDelete: SetNull)
+  endedBy           User?              @relation("CollaboratorEndedBy", fields: [endedByUserId], references: [id], onDelete: SetNull)
 
-  // Postgres treats NULLs as distinct, so each unique only bites for its own plan type.
-  @@unique([consultantProfileId, webinarPlanId])
-  @@unique([consultantProfileId, classPlanId])
-  // One live PRESENTER per plan: the partial uniques collaborator_one_presenter_
-  // {webinar,class} in prisma/sql (#1580).
+  // An expert may hold many ended rows on a plan and one live one: the partial
+  // uniques collaborator_one_active_{webinar,class} in prisma/sql.
+  // One live PRESENTER per plan: collaborator_one_presenter_{webinar,class}.
+  @@index([consultantProfileId, webinarPlanId])
+  @@index([consultantProfileId, classPlanId])
   @@index([webinarPlanId])
   @@index([classPlanId])
   @@index([status])
   @@index([invitedById])
+  @@index([endedByUserId])
 }
 
 // #1580 — declared after the model that uses it.
@@ -7447,9 +7457,10 @@ enum CollaboratorType {
 enum CollaboratorStatus {
   PENDING
   ACCEPTED
-  DECLINED
-  REMOVED // the host took the seat away
-  WITHDRAWN // #1580 — the collaborator left of their own accord
+  DECLINED // the invitee said no
+  REMOVED // the host or the platform ended it
+  WITHDRAWN // the collaborator left of their own accord
+  EXPIRED // nobody answered within the invite window
 }
 
 // #784 — union of the old WebinarCollaboratorRole + ClassCollaboratorRole values.

@@ -30,6 +30,8 @@ type CollaboratorRow = {
 const mockPlan = {
   consultantProfileId: "profile-host",
   organizationId: null as string | null,
+  /** How many active expert memberships the host holds in the owning organisation. */
+  activeExpertMemberships: 0,
   collaborators: [
     {
       consultantProfileId: "profile-cohost",
@@ -83,7 +85,10 @@ jest.mock("@/lib/prisma", () => ({
         },
       ),
     },
-    membership: { findFirst: jest.fn(async () => null) },
+    membership: {
+      findFirst: jest.fn(async () => null),
+      count: jest.fn(async () => mockPlan.activeExpertMemberships),
+    },
   },
 }));
 
@@ -142,6 +147,37 @@ it.each([
   const response = await post();
   expect(response.status).toBe(403);
   expect(mockRemove).not.toHaveBeenCalled();
+});
+
+it("on an organisation's plan the host may remove only while an active expert of that organisation", async () => {
+  mockSession.current = {
+    id: "caller",
+    role: "CONSULTANT",
+    consultantProfileId: "profile-host",
+  };
+  mockPlan.organizationId = "org-1";
+  try {
+    mockPlan.activeExpertMemberships = 1;
+    expect((await post()).status).toBe(200);
+    const { membership } = jest.requireMock("@/lib/prisma").default as {
+      membership: { count: jest.Mock };
+    };
+    expect(membership.count).toHaveBeenCalledWith({
+      where: {
+        organizationId: "org-1",
+        consultantProfileId: "profile-host",
+        status: "ACTIVE",
+        role: "EXPERT",
+      },
+    });
+
+    mockRemove.mockClear();
+    mockPlan.activeExpertMemberships = 0;
+    expect((await post()).status).toBe(403);
+    expect(mockRemove).not.toHaveBeenCalled();
+  } finally {
+    mockPlan.organizationId = null;
+  }
 });
 
 it.each([["%20"], ["x".repeat(65)]])(
