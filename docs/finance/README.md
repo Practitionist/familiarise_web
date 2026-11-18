@@ -88,6 +88,7 @@ Pricing levers (list price, discount codes, the welcome discount, credits, GST d
 - [03-tds-rules-and-returns.md](60-tax/03-tds-rules-and-returns.md)
 - [04-msme-statutory-exports-and-calendar.md](60-tax/04-msme-statutory-exports-and-calendar.md)
 - [05-gst-registration-and-tax-regime.md](60-tax/05-gst-registration-and-tax-regime.md)
+- [06-open-gst-questions-for-the-accountant.md](60-tax/06-open-gst-questions-for-the-accountant.md)
 
 ### 70-operations
 
