@@ -595,11 +595,15 @@ describe("the invitation expiry sweep", () => {
     expect(mockReport).toHaveBeenCalledTimes(1);
     expect(mockReport).toHaveBeenCalledWith(
       expect.objectContaining({ message: "first failure" }),
-      {
+      expect.objectContaining({
         subsystem: "collaborators",
         op: "expireStaleCollaboratorInvites",
-        extra: { failed: 2, scanned: 3, collaboratorIds: ["a", "b"] },
-      },
+        fingerprint: ["collaborators", "expireStaleCollaboratorInvites"],
+        extra: {
+          count: 2,
+          sample: [{ collaboratorId: "a" }, { collaboratorId: "b" }],
+        },
+      }),
     );
   });
   it("reminds an invitee once, three days before the invitation lapses, and a second run does nothing", async () => {

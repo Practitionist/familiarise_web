@@ -5,7 +5,10 @@ import {
   flushNotificationsAfter,
   type StagedNotificationBundle,
 } from "@/lib/novu/stage-then-attempt";
-import { reportSentryError } from "@/lib/observability/report";
+import {
+  createRunFailureReporter,
+  type RunFailureReporter,
+} from "@/lib/observability/run-failures";
 import {
   afterCollaborationEnded,
   endCollaboration,
@@ -30,6 +33,8 @@ export interface ExpireStaleCollaboratorInvitesResult {
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** The ticker aborts this job at 15 s, so no row starts after half the shared start budget (8 s). */
 const START_BUDGET_SHARE = 0.5;
+/** The one op every failed row of a run is reported under. */
+const SWEEP_OP = "expireStaleCollaboratorInvites";
 /** Invitations inside the reminder window that one read returns. */
 const REMINDER_PAGE = 200;
 
@@ -48,98 +53,104 @@ export async function expireStaleCollaboratorInvites(
     "expire-stale-collaborator-invites",
     { failMode: "open" },
     async () => {
-      const outOfTime = startDeadlineShare(START_BUDGET_SHARE);
-      const cutoff = inviteLapsedBefore(new Date());
-      const failures: { id: string; error: unknown }[] = [];
-      let hasMore = false;
-
-      const lapsed = await prisma.collaborator.findMany({
-        where: { status: "PENDING", updatedAt: { lt: cutoff } },
-        take: effectiveLimit,
-        orderBy: { updatedAt: "asc" },
-        select: { id: true },
-      });
-      const ended: EndedCollaboration[] = [];
-      for (const { id } of lapsed) {
-        if (outOfTime()) {
-          hasMore = true;
-          break;
-        }
-        try {
-          const one = await prisma.$transaction((tx) =>
-            endCollaboration(tx, {
-              collaboratorId: id,
-              to: "EXPIRED",
-              endedByUserId: null,
-              where: { updatedAt: { lt: cutoff } },
-            }),
-          );
-          if (one) ended.push(one);
-        } catch (error) {
-          failures.push({ id, error });
-        }
+      const failures = createRunFailureReporter("collaborators");
+      try {
+        return await runExpirySweep(effectiveLimit, failures);
+      } finally {
+        failures.flush();
       }
-
-      const scan = hasMore
-        ? { due: [], hasMore: true }
-        : await invitationsToRemind(cutoff, effectiveLimit, outOfTime);
-      const { due } = scan;
-      hasMore ||= scan.hasMore;
-      const reminders: StagedNotificationBundle[] = [];
-      for (const { id, updatedAt } of due.slice(0, effectiveLimit)) {
-        if (outOfTime()) {
-          hasMore = true;
-          break;
-        }
-        try {
-          const notices = await prisma.$transaction(async (tx) => {
-            const current = await tx.collaborator.findFirst({
-              where: { id, status: "PENDING", updatedAt },
-            });
-            return current
-              ? stageCollaboratorNotifications(tx, "EXPIRING_SOON", current)
-              : null;
-          });
-          if (notices?.bells?.length || notices?.emails?.length) {
-            reminders.push(notices);
-          }
-        } catch (error) {
-          failures.push({ id, error });
-        }
-      }
-      hasMore ||= due.length > effectiveLimit;
-
-      const scanned = lapsed.length + due.length;
-      if (failures.length > 0) {
-        reportSentryError(failures[0].error, {
-          subsystem: "collaborators",
-          op: "expireStaleCollaboratorInvites",
-          extra: {
-            failed: failures.length,
-            scanned,
-            collaboratorIds: failures.map((f) => f.id),
-          },
-        });
-      }
-      await afterCollaborationEnded(ended, "collaborator.expired");
-      if (reminders.length > 0) {
-        await flushNotificationsAfter(
-          {
-            bells: reminders.flatMap((r) => r.bells ?? []),
-            emails: reminders.flatMap((r) => r.emails ?? []),
-          },
-          "collaborator.expiringSoon",
-        );
-      }
-      return {
-        expired: ended.length,
-        reminded: reminders.length,
-        scanned,
-        failed: failures.length,
-        hasMore,
-      };
     },
   );
+}
+
+/** One run of the sweep; the caller flushes `failures` once when it ends. */
+async function runExpirySweep(
+  effectiveLimit: number,
+  failures: RunFailureReporter,
+): Promise<ExpireStaleCollaboratorInvitesResult> {
+  const outOfTime = startDeadlineShare(START_BUDGET_SHARE);
+  const cutoff = inviteLapsedBefore(new Date());
+  let failed = 0;
+  const fail = (id: string, error: unknown) => {
+    failed += 1;
+    failures.add(SWEEP_OP, error, { collaboratorId: id });
+  };
+  let hasMore = false;
+
+  const lapsed = await prisma.collaborator.findMany({
+    where: { status: "PENDING", updatedAt: { lt: cutoff } },
+    take: effectiveLimit,
+    orderBy: { updatedAt: "asc" },
+    select: { id: true },
+  });
+  const ended: EndedCollaboration[] = [];
+  for (const { id } of lapsed) {
+    if (outOfTime()) {
+      hasMore = true;
+      break;
+    }
+    try {
+      const one = await prisma.$transaction((tx) =>
+        endCollaboration(tx, {
+          collaboratorId: id,
+          to: "EXPIRED",
+          endedByUserId: null,
+          where: { updatedAt: { lt: cutoff } },
+        }),
+      );
+      if (one) ended.push(one);
+    } catch (error) {
+      fail(id, error);
+    }
+  }
+
+  const scan = hasMore
+    ? { due: [], hasMore: true }
+    : await invitationsToRemind(cutoff, effectiveLimit, outOfTime);
+  const { due } = scan;
+  hasMore ||= scan.hasMore;
+  const reminders: StagedNotificationBundle[] = [];
+  for (const { id, updatedAt } of due.slice(0, effectiveLimit)) {
+    if (outOfTime()) {
+      hasMore = true;
+      break;
+    }
+    try {
+      const notices = await prisma.$transaction(async (tx) => {
+        const current = await tx.collaborator.findFirst({
+          where: { id, status: "PENDING", updatedAt },
+        });
+        return current
+          ? stageCollaboratorNotifications(tx, "EXPIRING_SOON", current)
+          : null;
+      });
+      if (notices?.bells?.length || notices?.emails?.length) {
+        reminders.push(notices);
+      }
+    } catch (error) {
+      fail(id, error);
+    }
+  }
+  hasMore ||= due.length > effectiveLimit;
+
+  const scanned = lapsed.length + due.length;
+  await afterCollaborationEnded(ended, "collaborator.expired");
+  if (reminders.length > 0) {
+    await flushNotificationsAfter(
+      {
+        bells: reminders.flatMap((r) => r.bells ?? []),
+        emails: reminders.flatMap((r) => r.emails ?? []),
+      },
+      "collaborator.expiringSoon",
+    );
+  }
+  return {
+    expired: ended.length,
+    reminded: reminders.length,
+    scanned,
+    failed,
+    hasMore,
+  };
 }
 
 /**
