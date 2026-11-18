@@ -424,6 +424,17 @@ export type DetailViewer = {
   managesGroupPlan: boolean;
 };
 
+/** Which of a booking's lists the scoped detail carries whole. */
+export type DetailVisibility = {
+  /** Every attendee's seat is in `participants`. */
+  rosterVisible: boolean;
+  /** Every attendee's payment is in `payment`. */
+  paymentsVisible: boolean;
+};
+
+/** A booking's detail as one viewer receives it. */
+export type TScopedAppointmentDetail = TAppointmentDetail & DetailVisibility;
+
 /**
  * What a given viewer may see of a booking's seats and money. A webinar's ten
  * attendees each have a Payment on the same appointment, and the read above
@@ -434,11 +445,14 @@ export type DetailViewer = {
  * Only group kinds are scoped. A 1:1 booking has one payment that belongs to
  * the booking whoever made it (a sponsoring organisation's admin, say), and
  * the attending consultee must still see it.
+ *
+ * The answer names what it carries, so a screen tells a list it was not sent
+ * from a list that is empty.
  */
 export function scopeAppointmentDetail<T extends TAppointmentDetail>(
   detail: T,
   viewer: DetailViewer,
-): T {
+): T & DetailVisibility {
   const { webinarId, classId, payment, participants } = detail.appointment;
   const privileged = viewer.privileged === true;
   const isGroup = !!webinarId || !!classId;
@@ -452,6 +466,8 @@ export function scopeAppointmentDetail<T extends TAppointmentDetail>(
     : participants.filter((p) => p.userId === viewer.userId);
   return {
     ...detail,
+    rosterVisible: everySeat,
+    paymentsVisible: everyPayment,
     appointment: {
       ...detail.appointment,
       participants: scopedParticipants,
