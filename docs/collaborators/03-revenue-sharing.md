@@ -13,13 +13,14 @@ When a seat on a webinar or class is sold, the money is divided between the plan
 
 **A sale is split among the team as of one stored time.** The team at time T is every row with `acceptedAt <= T` whose `endedAt` is null or later than T (`teamAsOf` in `lib/collaborators/team.ts`). Because the rows' own timestamps answer the question, the answer does not depend on when it is asked.
 
-| Money path                                            | The time it passes                                                                         | Where                                                                 |
-| ----------------------------------------------------- | ------------------------------------------------------------------------------------------ | --------------------------------------------------------------------- |
-| A seat's capture                                      | The capture time, the same value the capturing transaction writes to `Payment.capturedAt`. | The capture handler in `lib/payments/webhooks/handlers.ts`.           |
-| A checkout commit that settles in its own transaction | The capture time that commit stamped, else the payment row's creation in that commit.      | `lib/payments/checkout/commit/ledger.ts`.                             |
-| A retry of earnings that failed in the first attempt  | The payment's stored `capturedAt`, else its creation time. Never the current time.         | The retry in `lib/payments/webhooks/handlers.ts`.                     |
-| The earnings sweep (`sync-payment-earnings`)          | The same stored time.                                                                      | `syncPaymentEarnings` in `scripts/earnings/sync-payment-earnings.ts`. |
-| A replay (recording) purchase                         | The start of the recorded session.                                                         | `lib/payments/webhooks/recording-purchase.ts`.                        |
+| Money path                                            | The time it passes                                                                         | Where                                                                            |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------- |
+| A seat's capture                                      | The capture time, the same value the capturing transaction writes to `Payment.capturedAt`. | The capture handler in `lib/payments/webhooks/handlers.ts`.                      |
+| A checkout commit that settles in its own transaction | The capture time that commit stamped, else the payment row's creation in that commit.      | `lib/payments/checkout/commit/ledger.ts`.                                        |
+| A retry of earnings that failed in the first attempt  | The payment's stored `capturedAt`, else its creation time. Never the current time.         | The retry in `lib/payments/webhooks/handlers.ts`.                                |
+| A capture parked for staff recovery, recovered later  | The capture time the parking update wrote to `Payment.capturedAt`.                         | The recovery path of the capture handler in `lib/payments/webhooks/handlers.ts`. |
+| The earnings sweep (`sync-payment-earnings`)          | The same stored time.                                                                      | `syncPaymentEarnings` in `scripts/earnings/sync-payment-earnings.ts`.            |
+| A replay (recording) purchase                         | The start of the recorded session.                                                         | `lib/payments/webhooks/recording-purchase.ts`.                                   |
 
 What enforces it: `calculateRevenueSplit(ref, totalAmount, db, { at, excludeBuyerUserId })` in `lib/collaborators/revenue-split.ts` has no default for `at`, and `teamAt` is a required field of `CreateEarningsParams` in `lib/payments/payouts/earnings-service.ts`. A new money path cannot compile without choosing a time.
 
