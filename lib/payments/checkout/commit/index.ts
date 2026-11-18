@@ -20,6 +20,7 @@ import { recordSynchronousEarnings } from "@/lib/payments/checkout/commit/ledger
 import { settleCheckoutLegs } from "@/lib/payments/checkout/commit/payment-legs";
 import { writeCheckoutPayment } from "@/lib/payments/checkout/commit/payment-row";
 import type { CheckoutCommitInput } from "@/lib/payments/checkout/commit/types";
+import type { PriorSeatPayment } from "@/lib/payments/checkout/seats";
 import { stageCreditsApplied } from "@/lib/referrals/referral-notify";
 
 /**
@@ -90,6 +91,7 @@ export async function commitCheckout(input: CheckoutCommitInput) {
           consultantProfileId?: string | null;
           organizationId?: string | null;
         } | null = null;
+        let priorSeat: PriorSeatPayment | null = null;
 
         const skipPayment =
           isMockPayment || isZeroAmountPayment || isOrgSponsoredPayment;
@@ -192,6 +194,7 @@ export async function commitCheckout(input: CheckoutCommitInput) {
             }
             createdAppointment = webinarResult.appointment;
             bookedPlan = webinarResult.plan;
+            priorSeat = webinarResult.priorSeat;
             engagementsForCap = 1;
             break;
           }
@@ -224,6 +227,7 @@ export async function commitCheckout(input: CheckoutCommitInput) {
             }
             createdAppointment = classResult.appointment || null;
             bookedPlan = classResult.plan;
+            priorSeat = classResult.priorSeat;
             engagementsForCap = classResult.engagementsConsumed;
             classEngagementIds = classResult.engagementIds;
             break;
@@ -239,7 +243,20 @@ export async function commitCheckout(input: CheckoutCommitInput) {
           createdAppointment,
           bookedPlan,
           skipPayment,
+          priorSeat,
         });
+        // A rejoined free seat revived on its earlier payment, whose legs and earnings already exist.
+        if (payment.rejoined) {
+          return {
+            appointmentId: createdAppointment?.id,
+            paymentId: payment.id,
+            holdExpiresAt: payment.expiresAt,
+            creditsApplied: 0,
+            creditNotices: {},
+            capNearBell: null,
+            overageBell: null,
+          };
+        }
         const { capNearBell, overageBell } = await recordCheckoutUtilization(
           tx,
           input,

@@ -174,6 +174,7 @@ it("a free 1:1 marks the booker's overlapping wait BOOKED and leaves another lea
       createdAppointment: { id: "appt-1" },
       bookedPlan: null,
       skipPayment: true,
+      priorSeat: null,
     },
   );
   expect(rows.map((r) => r.status)).toEqual(["BOOKED", "WAITING"]);

@@ -14,11 +14,20 @@ import { markAppointmentWindowsBooked } from "@/lib/booking/backup-interest";
 import { tombstonePriorIntent } from "@/lib/payments/operations/prior-intent-tombstone";
 import {
   assertSeatRemintable,
-  findPriorSeatPayment,
+  priorSeatStanding,
   SEAT_CHECKOUT_OPEN_MESSAGE,
+  type PriorSeatPayment,
 } from "@/lib/payments/checkout/seats";
 import type { CheckoutCommitInput } from "@/lib/payments/checkout/commit/types";
 import { checkoutRequestFingerprint } from "@/lib/payments/operations/checkout-replay";
+
+/** The checkout's payment; `rejoined` when a left free seat revived on its earlier payment. */
+export interface CheckoutPaymentRow {
+  id: string;
+  amount: number;
+  expiresAt: Date | null;
+  rejoined: boolean;
+}
 
 export async function writeCheckoutPayment(
   tx: Tx,
@@ -30,8 +39,10 @@ export async function writeCheckoutPayment(
       organizationId?: string | null;
     } | null;
     skipPayment: boolean;
+    /** The buyer's earlier payment on this event, read by the handler before its revive; null otherwise. */
+    priorSeat: PriorSeatPayment | null;
   },
-) {
+): Promise<CheckoutPaymentRow> {
   const {
     validatedData,
     userId,
@@ -63,7 +74,7 @@ export async function writeCheckoutPayment(
     welcomeDiscountPaise,
     gstRegime,
   } = input.priced;
-  const { createdAppointment, bookedPlan, skipPayment } = carried;
+  const { createdAppointment, bookedPlan, skipPayment, priorSeat } = carried;
 
   let hostOrganizationId: string | null = null;
   if (ENABLE_HOST_ORGS) {
@@ -150,16 +161,29 @@ export async function writeCheckoutPayment(
   const isEventSeat =
     validatedData.appointmentType === "WEBINAR" ||
     validatedData.appointmentType === "CLASS";
-  const priorSeatPayment =
-    isEventSeat && createdAppointment
-      ? await findPriorSeatPayment(tx, userId, createdAppointment.id)
-      : null;
-  let payment: { id: string; amount: number; expiresAt: Date | null };
-  if (priorSeatPayment) {
-    assertSeatRemintable(
-      priorSeatPayment,
-      validatedData.appointmentType === "CLASS" ? "CLASS" : "WEBINAR",
-    );
+  const priorSeatPayment = isEventSeat ? priorSeat : null;
+  const eventKind =
+    validatedData.appointmentType === "CLASS" ? "CLASS" : "WEBINAR";
+  let payment: CheckoutPaymentRow;
+  if (
+    priorSeatPayment &&
+    priorSeatStanding(priorSeatPayment) === "REJOINABLE"
+  ) {
+    // A left price-free seat keeps its SUCCEEDED ₹0 payment; only a free order may revive it.
+    if (!isZeroAmountPayment || isOrgSponsoredPayment) {
+      throw new BookingRuleError(
+        "SEAT_REBUY_UNSUPPORTED",
+        "You left this event earlier, and a seat you've left can't be bought again yet. Contact support if you'd like to rejoin.",
+      );
+    }
+    payment = {
+      id: priorSeatPayment.id,
+      amount: priorSeatPayment.amount,
+      expiresAt: null,
+      rejoined: true,
+    };
+  } else if (priorSeatPayment) {
+    assertSeatRemintable(priorSeatPayment, eventKind);
     // The old order's identity, kept apart from the row the CAS is about to rewrite.
     const retiringIntent = { ...priorSeatPayment };
     const reminted = await tx.payment.updateMany({
@@ -209,9 +233,10 @@ export async function writeCheckoutPayment(
       id: priorSeatPayment.id,
       amount,
       expiresAt: paymentData.expiresAt,
+      rejoined: false,
     };
   } else {
-    payment = await tx.payment.create({
+    const created = await tx.payment.create({
       data: {
         ...paymentData,
         userId: userId,
@@ -219,6 +244,7 @@ export async function writeCheckoutPayment(
       },
       select: { id: true, amount: true, expiresAt: true },
     });
+    payment = { ...created, rejoined: false };
   }
 
   if (

@@ -8,7 +8,12 @@ import type { CheckoutInput } from "@/schemas/checkout";
 import { AppointmentsType } from "@prisma/client";
 import { isUserRegisteredForWebinar } from "@/lib/payments/utils/participants";
 import { getWebinarCapacity } from "@/lib/events/capacity";
-import { alreadyHeldSeatError } from "@/lib/payments/checkout/seats";
+import {
+  alreadyHeldSeatError,
+  findPriorSeatPayment,
+  seatRegistrationFor,
+  type PriorSeatPayment,
+} from "@/lib/payments/checkout/seats";
 
 export async function handleWebinarCheckout(
   tx: Tx,
@@ -99,6 +104,8 @@ export async function handleWebinarCheckout(
 
   // Create or reuse appointment
   let appointment = webinar.appointment;
+  // Read before the revive below, which would make a left seat look held again.
+  let priorSeat: PriorSeatPayment | null = null;
   if (!appointment) {
     // Webinar appointments are SHARED across registrants — multiple
     // attendees from different orgs can join the same webinar. So we
@@ -134,6 +141,7 @@ export async function handleWebinarCheckout(
     // #1852 — the seat carries its OWN payer org, not the host's: one
     // webinar can seat B2C attendees and members of several orgs, and each
     // org sees, pays for and reports on only its own seats.
+    priorSeat = await findPriorSeatPayment(tx, userId, appointment.id);
     await recordParticipants(
       tx,
       appointment.id,
@@ -141,6 +149,7 @@ export async function handleWebinarCheckout(
       {
         status: _skipPayment ? "CONFIRMED" : "HELD",
         organizationId: payerOrganizationId,
+        seatRegistration: seatRegistrationFor(priorSeat, userId, "WEBINAR"),
       },
     );
     // #1780 row 2 — the seat keeps the refund window it was sold under.
@@ -150,5 +159,5 @@ export async function handleWebinarCheckout(
     });
   }
 
-  return { appointment, plan, amount: plan.price };
+  return { appointment, plan, amount: plan.price, priorSeat };
 }

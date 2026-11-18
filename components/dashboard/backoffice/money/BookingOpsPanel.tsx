@@ -19,6 +19,7 @@ import { BookingDocumentsOps } from "./BookingDocumentsOps";
 import { ClassSeriesDoors } from "./ClassSeriesDoors";
 import { DoorDialog, type Door } from "./DoorDialog";
 import { PlatformCancelDoor } from "./PlatformCancelDoor";
+import { seatLiftDoor } from "./seat-lift-door";
 import { SetOutcomeDialog } from "./SetOutcomeDialog";
 
 type Session = BookingOpsView["sessions"][number];
@@ -157,6 +158,37 @@ export function BookingOpsPanel({
           )}
         </div>
       </div>
+
+      {v.removedSeats.length > 0 && (
+        <div className="space-y-1 text-sm">
+          <p className="font-medium">Removed attendees</p>
+          <ul className="divide-y divide-border rounded-md border">
+            {v.removedSeats.map((seat) => (
+              <li
+                key={seat.userId}
+                className="flex flex-wrap items-center justify-between gap-2 p-2"
+              >
+                <span className="min-w-0 flex-1">
+                  {seat.name || "Attendee"} ·{" "}
+                  {seat.removal === "CONDUCT"
+                    ? "removed for conduct"
+                    : "removed by the organiser"}
+                  {seat.paidSeat && " · paid seat: support rejoins them"}
+                </span>
+                {can("appointments.liftSeatRemoval") && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setDoor(seatLiftDoor(appointmentId, seat))}
+                  >
+                    Allow back
+                  </Button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="space-y-1 text-sm">
         <p className="font-medium">Money</p>

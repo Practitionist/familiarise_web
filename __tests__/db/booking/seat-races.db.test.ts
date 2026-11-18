@@ -93,7 +93,14 @@ jest.mock("../../../lib/payments/operations/event-refunds", () => {
   };
 });
 
+// The free seat's booked notice is outside the races under test.
+jest.mock("../../../lib/payments/checkout/free-seat-notice", () => ({
+  notifyFreeSeatRegistered: jest.fn(async () => undefined),
+}));
+
 import { handleCheckout } from "../../../lib/payments/checkout";
+import { leaveEventSeat } from "../../../lib/booking/seat-leave";
+import { transitionParticipant } from "../../../lib/booking/participants";
 import { isPoolExhaustion } from "../../../lib/db/pg-errors";
 import {
   classifyError as classifyCheckoutError,
@@ -378,5 +385,125 @@ describe("a seat whose order fill throws", () => {
         where: { userId: buyer.userId, paymentStatus: "PENDING" },
       }),
     ).toBe(0);
+  });
+});
+
+describe("rejoining a free seat", () => {
+  /** A ₹0 webinar seat bought through checkout, then left by its holder. */
+  async function leftFreeSeat(webinar: SeededWebinar) {
+    const buyer = await seedSeatBuyer();
+    await handleCheckout(
+      seatCheckoutInput(webinar, `free-${randomUUID()}`),
+      buyer.userId,
+    );
+    await leaveEventSeat({
+      kind: "webinar",
+      eventId: webinar.webinarId,
+      userId: buyer.userId,
+      actorUserId: buyer.userId,
+      isSelfLeave: true,
+    });
+    return buyer;
+  }
+  const seatOf = (appointmentId: string, userId: string) =>
+    prisma.appointmentParticipant.findUniqueOrThrow({
+      where: { appointmentId_userId: { appointmentId, userId } },
+      select: { id: true, status: true, paymentId: true },
+    });
+  const seatReasons = async (participantId: string) =>
+    (
+      await prisma.bookingStatusHistory.findMany({
+        where: { entity: "SEAT", entityId: participantId },
+        orderBy: { createdAt: "asc" },
+        select: { reason: true },
+      })
+    ).map((row) => row.reason);
+
+  it("revives the left seat on its earlier ₹0 payment and records registered, left, rejoined", async () => {
+    const webinar = await seedWebinar({ capacity: 3, price: 0 });
+    const buyer = await leftFreeSeat(webinar);
+    const before = await seatOf(webinar.appointmentId, buyer.userId);
+    expect(before.status).toBe("CANCELLED");
+
+    const res = await handleCheckout(
+      seatCheckoutInput(webinar, `rejoin-${randomUUID()}`),
+      buyer.userId,
+    );
+
+    expect(res).toMatchObject({ success: true, paymentId: before.paymentId });
+    const after = await seatOf(webinar.appointmentId, buyer.userId);
+    expect(after).toEqual({ ...before, status: "CONFIRMED" });
+    expect(
+      await prisma.payment.count({
+        where: { userId: buyer.userId, appointmentId: webinar.appointmentId },
+      }),
+    ).toBe(1);
+    expect(await seatReasons(after.id)).toEqual([
+      "registered",
+      "self_leave",
+      "rejoined",
+    ]);
+  });
+
+  it("two learners rejoining for the last seat: one is seated, the other hears the event is full", async () => {
+    const webinar = await seedWebinar({ capacity: 2, price: 0 });
+    const [a, b] = [await leftFreeSeat(webinar), await leftFreeSeat(webinar)];
+    const taker = await seedSeatBuyer();
+    await handleCheckout(
+      seatCheckoutInput(webinar, `taker-${randomUUID()}`),
+      taker.userId,
+    );
+    const deadline = Date.now() + 60_000;
+
+    const outcomes = await Promise.all([
+      buyAsClient(webinar, a.userId, deadline),
+      buyAsClient(webinar, b.userId, deadline),
+    ]);
+
+    expect(outcomes.map((o) => o.kind).sort()).toEqual(["refused", "sold"]);
+    expect(outcomes.find((o) => o.kind === "refused")).toMatchObject({
+      code: expect.stringMatching(/EVENT_FULL|EVENT_SOLD_OUT/),
+    });
+    expect(await liveSeatCount(webinar.appointmentId)).toBe(2);
+  }, 90_000);
+
+  it("a rejoin racing a new buyer for the last seat seats exactly one of them", async () => {
+    const webinar = await seedWebinar({ capacity: 1, price: 0 });
+    const left = await leftFreeSeat(webinar);
+    const newcomer = await seedSeatBuyer();
+    const deadline = Date.now() + 60_000;
+
+    const outcomes = await Promise.all([
+      buyAsClient(webinar, left.userId, deadline),
+      buyAsClient(webinar, newcomer.userId, deadline),
+    ]);
+
+    expect(outcomes.map((o) => o.kind).sort()).toEqual(["refused", "sold"]);
+    expect(await liveSeatCount(webinar.appointmentId)).toBe(1);
+  }, 90_000);
+
+  it("writes a seat's history in the transaction that moves it: a rollback leaves neither", async () => {
+    const webinar = await seedWebinar({ capacity: 3, price: 0 });
+    const buyer = await seedSeatBuyer();
+    await handleCheckout(
+      seatCheckoutInput(webinar, `free-${randomUUID()}`),
+      buyer.userId,
+    );
+    const seat = await seatOf(webinar.appointmentId, buyer.userId);
+
+    await expect(
+      prisma.$transaction(async (tx) => {
+        await transitionParticipant(tx, { id: seat.id }, "CANCELLED", {
+          fromIn: ["CONFIRMED"],
+          history: { reason: "self_leave", actorUserId: buyer.userId },
+        });
+        throw new Error("the leave failed after the release");
+      }),
+    ).rejects.toThrow(/failed after the release/);
+
+    expect((await seatOf(webinar.appointmentId, buyer.userId)).status).toBe(
+      "CONFIRMED",
+    );
+    expect(await seatReasons(seat.id)).toEqual(["registered"]);
   });
 });

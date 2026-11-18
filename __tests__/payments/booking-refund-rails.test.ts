@@ -834,10 +834,12 @@ describe("restampRefundedSeats", () => {
       await expect(restampRefundedSeats("refund-row-1")).resolves.toBe(
         "stamped",
       );
+      // An event learner seat it ends gets a `refunded` SEAT row; the helper skips 1:1 seats.
       expect(mockTransitionParticipant).toHaveBeenCalledWith(
         expect.anything(),
         { paymentId: PAYMENT_ID },
         "REFUNDED",
+        { history: { reason: "refunded", actorUserId: null } },
       );
     },
   );

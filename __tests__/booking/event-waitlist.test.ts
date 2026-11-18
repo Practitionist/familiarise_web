@@ -80,6 +80,7 @@ import { canViewPlanDetail } from "@/lib/data/plan-viewable";
 import { stageEventSeatOpenedEmails } from "@/lib/email/senders/booking";
 import {
   assertSeatRemintable,
+  canBuySeat,
   seatRebuyRefusal,
   type PriorSeatPayment,
 } from "@/lib/payments/checkout/seats";
@@ -393,6 +394,18 @@ describe("joinEventWaitlist", () => {
       { appointmentParticipants: [{ status: "CANCELLED" }] },
       "SEAT_REBUY_UNSUPPORTED",
     ],
+    [
+      "removed",
+      {
+        amount: 0,
+        originalAmount: 0,
+        paymentIntent: "free_1",
+        appointmentParticipants: [
+          { status: "CANCELLED", removedByUserId: "host-1" },
+        ],
+      },
+      "SEAT_REBUY_UNSUPPORTED",
+    ],
   ])(
     "refuses a %s earlier seat with checkout's own answer",
     async (_l, prior, code) => {
@@ -410,6 +423,25 @@ describe("joinEventWaitlist", () => {
       await expect(join()).rejects.toMatchObject({ code });
     },
   );
+
+  it("lets a learner who left a price-free seat wait for the next one", async () => {
+    soldOut();
+    paymentFindMany.mockResolvedValueOnce([
+      {
+        userId: "u-1",
+        paymentStatus: "SUCCEEDED",
+        paymentIntent: "free_1",
+        amount: 0,
+        originalAmount: 0,
+        refunds: [],
+        appointmentParticipants: [
+          { status: "CANCELLED", removedByUserId: null },
+        ],
+      },
+    ]);
+    await join();
+    expect(waitlistUpsert).toHaveBeenCalled();
+  });
 
   it("returns an open row as it is and reopens an expired one", async () => {
     soldOut();
@@ -445,11 +477,50 @@ describe("the shared seat rule", () => {
     [{ paymentStatus: "PENDING" }, "CHECKOUT_OPEN"],
     [{ refunds: [{ amountPaise: 500 }] }, "REFUNDED"],
     [{ appointmentParticipants: [{ status: "CANCELLED" }] }, "LEFT"],
+    [
+      {
+        amount: 0,
+        originalAmount: 0,
+        paymentIntent: "free_1",
+        appointmentParticipants: [
+          { status: "CANCELLED", removedByUserId: "host-1" },
+        ],
+      },
+      "REMOVED",
+    ],
     [{}, "ALREADY_REGISTERED"],
   ] as const)("classifies %j as %s", (over, refusal) => {
     expect(seatRebuyRefusal(prior(over as Partial<PriorSeatPayment>))).toBe(
       refusal,
     );
+  });
+
+  it("offers a seat to a learner who left a price-free seat, never to a removed one", () => {
+    const free = {
+      amount: 0,
+      originalAmount: 0,
+      paymentIntent: "free_1",
+    };
+    expect(
+      canBuySeat(
+        prior({
+          ...free,
+          appointmentParticipants: [
+            { status: "CANCELLED", removedByUserId: null },
+          ],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      canBuySeat(
+        prior({
+          ...free,
+          appointmentParticipants: [
+            { status: "CANCELLED", removedByUserId: "host-1" },
+          ],
+        }),
+      ),
+    ).toBe(false);
   });
 
   it("keeps checkout's refusal sentences unchanged", () => {

@@ -294,8 +294,13 @@ export async function stagePaymentSuccessEmail(
   return staged ? { staged, message } : null;
 }
 
+/** Who booked: the paying user, or a free seat's holder. */
+type Booker = Pick<PaymentWithUser, "userId"> & {
+  user: Pick<PaymentWithUser["user"], "name">;
+};
+
 function bookedEmailArgs(
-  payment: PaymentWithUser,
+  payment: Booker,
   appointment: AppointmentForEmails,
   appointmentType: string,
 ): AppointmentBookedEmailArgs | null {
@@ -341,7 +346,7 @@ export async function prepareBookedEmails(
 /** Stages `pre` when the in-transaction booking still matches it, else renders here. */
 export async function stageBookedEmails(
   tx: Tx,
-  payment: PaymentWithUser,
+  payment: Booker,
   appointment: AppointmentForEmails,
   appointmentType: string,
   pre?: PreparedSpecEmails | null,
@@ -460,7 +465,6 @@ export async function stagePaymentSuccessBells(
 ): Promise<StagedTrigger[]> {
   const plan = planForEmails(appointment);
   const consultantName = plan?.consultantProfile?.user?.name || "Consultant";
-  const consultantUserId = plan?.consultantProfile?.user?.id;
   const resolvedPlanTitle =
     appointmentType === AppointmentsType.TRIAL
       ? "Trial session"
@@ -486,6 +490,34 @@ export async function stagePaymentSuccessBells(
     { tx, dedupeKey: payment.id },
   );
   if (paymentTrigger?.staged) staged.push(paymentTrigger.staged);
+  staged.push(
+    ...(await stageBookedBells(tx, payment, appointment, appointmentType)),
+  );
+  return staged;
+}
+
+/**
+ * The "you're booked" bell to the booker, the host and the presenters. A free
+ * seat passes its own key, so a rejoin is not taken for the first registration.
+ */
+export async function stageBookedBells(
+  tx: Tx,
+  payment: Booker,
+  appointment: AppointmentForEmails,
+  appointmentType: string,
+  dedupeKey?: string,
+): Promise<StagedTrigger[]> {
+  const plan = planForEmails(appointment);
+  const consultantName = plan?.consultantProfile?.user?.name || "Consultant";
+  const consultantUserId = plan?.consultantProfile?.user?.id;
+  const resolvedPlanTitle =
+    appointmentType === AppointmentsType.TRIAL
+      ? "Trial session"
+      : planTitleOrSessionLabel(plan?.title ?? null, appointmentType);
+  const orgId = appointment.organizationId ?? null;
+  const scope = notificationScope(orgId, appointment.organization?.name);
+  const dashboardUrl = notificationHref(orgId, "appointments");
+  const staged: StagedTrigger[] = [];
 
   const notifUserIds = [payment.userId];
   if (consultantUserId && consultantUserId !== payment.userId) {
@@ -508,7 +540,7 @@ export async function stagePaymentSuccessBells(
       JSON.stringify({
         event: "appointment_booked_notification_skipped_no_slots",
         appointmentId: appointment.id,
-        paymentId: payment.id,
+        bookerUserId: payment.userId,
         timestamp: new Date().toISOString(),
       }),
     );
@@ -525,6 +557,7 @@ export async function stagePaymentSuccessBells(
         planTitle: resolvedPlanTitle,
         dashboardUrl,
       },
+      dedupeKey,
       { tx },
     );
     for (const item of bookedTriggers ?? []) {

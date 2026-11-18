@@ -28,4 +28,12 @@ export interface BookingOpsView {
     refundedPaise: number;
     pendingRefundPaise: number;
   }[];
+  /** Event attendees whose removal still blocks a rejoin, for the lift door. */
+  removedSeats: {
+    userId: string;
+    name: string | null;
+    removal: "ORGANISER" | "CONDUCT";
+    /** Paid or credit-funded: lifting lets support rejoin them, not a self-serve rebuy. */
+    paidSeat: boolean;
+  }[];
 }

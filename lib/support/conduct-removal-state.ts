@@ -61,13 +61,18 @@ async function removalOverturned(
 
 /**
  * Whether the user's latest conduct removal from the appointment still stands.
- * False when there is none or support overturned it.
+ * False when there is none, support overturned it, or its block on the seat was lifted.
  */
 export async function conductRemovalStands(
   appointmentId: string,
   userId: string,
   db: PrismaLike = prisma,
 ): Promise<boolean> {
+  const seat = await db.appointmentParticipant.findUnique({
+    where: { appointmentId_userId: { appointmentId, userId } },
+    select: { id: true, removedByUserId: true },
+  });
+  if (!seat?.removedByUserId) return false;
   const removal = await db.supportCase.findFirst({
     where: {
       appointmentId,
@@ -76,20 +81,41 @@ export async function conductRemovalStands(
       deletedAt: null,
     },
     orderBy: { createdAt: "desc" },
+    select: { id: true, createdAt: true },
+  });
+  if (!removal || (await removalOverturned(db, removal.id))) return false;
+  // A lift after the removal ends it for good; a later plain removal marks the seat anew.
+  const lifted = await db.bookingStatusHistory.findFirst({
+    where: {
+      entity: "SEAT",
+      entityId: seat.id,
+      reason: "block_lifted",
+      createdAt: { gte: removal.createdAt },
+    },
     select: { id: true },
   });
-  return removal ? !(await removalOverturned(db, removal.id)) : false;
+  return lifted === null;
 }
 
-/** The required bell the removed learner gets when support decides their removal. */
-export function removalDecisionNotice(outcome: "OVERTURNED" | "UPHELD"): {
+/**
+ * The required bell the removed learner gets when support decides their removal.
+ * An overturn lifts the block: a price-free seat registers again, any other asks support.
+ */
+export function removalDecisionNotice(
+  outcome: "OVERTURNED" | "UPHELD",
+  rejoin: "REGISTER" | "SUPPORT" = "SUPPORT",
+): {
   message: string;
   required: RequiredNoticeKind;
 } {
+  const overturned =
+    rejoin === "REGISTER"
+      ? "Support overturned your removal. Your seat is not given back, but you can register for this event again."
+      : "Support overturned your removal. Your seat is not given back and any refund was sent first; support will help you rejoin this event.";
   return {
     message:
       outcome === "OVERTURNED"
-        ? "Support overturned your removal. Your seat is not given back; any refund was sent first."
+        ? overturned
         : "Support upheld your removal. You can appeal within 7 days.",
     required: "SEAT_RELEASED",
   };

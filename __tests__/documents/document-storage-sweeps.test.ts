@@ -200,7 +200,7 @@ describe("purge-deleted-documents", () => {
     expect(result.tombstoned).toBe(2);
   });
 
-  it("matches retention history only on entities every deployed client knows", async () => {
+  it("matches retention history only on booking entities, never a seat row", async () => {
     (prisma.appointmentDocument.findMany as jest.Mock).mockResolvedValue([]);
     (prisma.appointment.findMany as jest.Mock).mockResolvedValue([]);
 

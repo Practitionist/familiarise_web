@@ -142,11 +142,12 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     workflowId: W.EVENT_SEAT_OPENED,
     name: "Event seat opened",
     description:
-      "Learners waiting on a sold-out webinar or class, when a seat frees.",
+      "Learners waiting on a sold-out webinar or class, when a seat frees; with `rejoinText`, a removed learner whose block was lifted.",
     category: "appointments",
     inApp: {
-      subject: "A seat just opened",
-      body: "A seat opened in {{payload.planTitle}}. It may already be gone; first come, first served.",
+      subject:
+        "{% if payload.rejoinText %}You can come back{% else %}A seat just opened{% endif %}",
+      body: "{% if payload.rejoinText %}{{payload.rejoinText}}{% else %}A seat opened in {{payload.planTitle}}. It may already be gone; first come, first served.{% endif %}",
       redirect: "checkoutUrl",
     },
   },

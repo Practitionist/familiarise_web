@@ -1879,7 +1879,11 @@ async function confirmSeatAfterCapture(
   ) {
     await transitionParticipant(tx, args.casWhere, "CANCELLED");
   }
-  if ((await transitionParticipant(tx, args.casWhere, "CONFIRMED")) > 0) {
+  if (
+    (await transitionParticipant(tx, args.casWhere, "CONFIRMED", {
+      history: { reason: "registered", actorUserId: args.userId },
+    })) > 0
+  ) {
     await markEventWaitlistBooked(
       tx,
       args.appointmentId,

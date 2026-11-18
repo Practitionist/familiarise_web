@@ -5,6 +5,10 @@
  */
 
 import prisma from "@/lib/prisma";
+import { RELEASED_PARTICIPANT_STATUSES } from "@/lib/booking/participants";
+import { readSeatTrails } from "@/lib/booking/seat-history";
+import { lastRemovalKind } from "@/lib/booking/seat-trail-copy";
+import { isPriceFreePayment } from "@/lib/payments/funding-rail";
 import type { BookingOpsView } from "./booking-ops-types";
 
 export type { BookingOpsView };
@@ -48,9 +52,27 @@ export async function readBookingOps(
           },
         },
       },
+      participants: {
+        where: {
+          role: "CONSULTEE",
+          removedByUserId: { not: null },
+          status: { in: RELEASED_PARTICIPANT_STATUSES },
+        },
+        select: {
+          id: true,
+          user: { select: { id: true, name: true } },
+          payment: {
+            select: { paymentIntent: true, amount: true, originalAmount: true },
+          },
+        },
+      },
     },
   });
   if (!appt) return null;
+  const trails = await readSeatTrails(
+    prisma,
+    appt.participants.map((seat) => seat.id),
+  );
   return {
     appointmentId: appt.id,
     type: appt.appointmentType,
@@ -72,6 +94,19 @@ export async function readBookingOps(
       // Only settled refunds read as refunded; PENDING is still in flight.
       refundedPaise: sumRefunds(p.refunds, "SUCCEEDED"),
       pendingRefundPaise: sumRefunds(p.refunds, "PENDING"),
+    })),
+    removedSeats: appt.participants.map((seat) => ({
+      userId: seat.user.id,
+      name: seat.user.name,
+      removal: lastRemovalKind(trails.get(seat.id) ?? []),
+      paidSeat: !(
+        seat.payment &&
+        isPriceFreePayment({
+          paymentIntent: seat.payment.paymentIntent,
+          amountPaise: Number(seat.payment.amount),
+          listPricePaise: Number(seat.payment.originalAmount),
+        })
+      ),
     })),
   };
 }

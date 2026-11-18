@@ -35,6 +35,7 @@ import {
   hasBilledSupply,
   isZeroAmountOrder,
 } from "@/lib/payments/checkout/zero-amount";
+import { notifyFreeSeatRegistered } from "@/lib/payments/checkout/free-seat-notice";
 import {
   DIRECT_CHECKOUT_HOLD_MS,
   SEAT_CHECKOUT_HOLD_MS,
@@ -755,6 +756,20 @@ export async function handleCheckout(
         if (hasBilledSupply(amount, creditsApplied)) {
           await mintConsumerInvoiceBestEffort({
             paymentIntent: mintedOrder.id,
+          });
+        }
+
+        // No capture follows a free seat, so its booked notice is staged here, first join and rejoin alike.
+        if (
+          isZeroAmountPayment &&
+          result.appointmentId &&
+          (validatedData.appointmentType === "WEBINAR" ||
+            validatedData.appointmentType === "CLASS")
+        ) {
+          await notifyFreeSeatRegistered({
+            appointmentId: result.appointmentId,
+            userId,
+            appointmentType: validatedData.appointmentType,
           });
         }
 

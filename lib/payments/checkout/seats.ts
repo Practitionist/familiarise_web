@@ -10,6 +10,8 @@ import {
   type OpenClassEnrolment,
 } from "@/lib/booking/class-enrolment";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
+import { isPriceFreePayment } from "@/lib/payments/funding-rail";
+import type { SeatRegistration } from "@/lib/booking/participants";
 
 /** A confirmed seat for this buyer; a HELD one belongs to an open order the reuse step may resume. */
 export function holdsSettledSeat(
@@ -68,8 +70,8 @@ const PRIOR_SEAT_PAYMENT_SELECT = {
     where: { status: "SUCCEEDED" },
     select: { amountPaise: true },
   },
-  // The seat this payment funded; a released one means the buyer left.
-  appointmentParticipants: { select: { status: true } },
+  // The seat this payment funded; a released one means the buyer left, a marked one that they were removed.
+  appointmentParticipants: { select: { status: true, removedByUserId: true } },
 } satisfies Prisma.PaymentSelect;
 
 /** The buyer's earlier Payment on a shared webinar/class appointment, if any. */
@@ -103,12 +105,13 @@ export async function findPriorSeatPayments(
 }
 
 export type SeatRebuyRefusal =
-  "CHECKOUT_OPEN" | "REFUNDED" | "LEFT" | "ALREADY_REGISTERED";
+  "CHECKOUT_OPEN" | "REFUNDED" | "REMOVED" | "LEFT" | "ALREADY_REGISTERED";
 
-/** Why a prior seat payment blocks a new one; null only for an EXPIRED or FAILED row. */
-export function seatRebuyRefusal(
-  prior: PriorSeatPayment,
-): SeatRebuyRefusal | null {
+/** How a prior seat payment stands: a refusal, a free seat the buyer may rejoin, or null to re-mint. */
+export type PriorSeatStanding = SeatRebuyRefusal | "REJOINABLE" | null;
+
+/** The one classifier pricing, the payment write and the waitlist share. */
+export function priorSeatStanding(prior: PriorSeatPayment): PriorSeatStanding {
   if (
     prior.paymentStatus === PaymentStatus.EXPIRED ||
     prior.paymentStatus === PaymentStatus.FAILED
@@ -116,23 +119,42 @@ export function seatRebuyRefusal(
     return null;
   }
   if (prior.paymentStatus === PaymentStatus.PENDING) return "CHECKOUT_OPEN";
+  const seats = prior.appointmentParticipants ?? [];
+  // Every seat released (CANCELLED or REFUNDED, free or paid): the buyer left, not still held.
+  const released =
+    seats.length > 0 &&
+    seats.every(
+      (seat) => seat.status === "CANCELLED" || seat.status === "REFUNDED",
+    );
+  if (released && seats.some((seat) => Boolean(seat.removedByUserId))) {
+    return "REMOVED";
+  }
   const refundedPaise = (prior.refunds ?? []).reduce(
     (total, refund) => total + sumPaise(refund.amountPaise),
     0,
   );
   // A zero-amount seat has no refund rows, so only a priced seat can read as refunded.
   if (prior.amount > 0 && refundedPaise >= prior.amount) return "REFUNDED";
-  // Every seat released (CANCELLED or REFUNDED, free or paid): the buyer left, not still held.
-  const seats = prior.appointmentParticipants ?? [];
-  if (
-    seats.length > 0 &&
-    seats.every(
-      (seat) => seat.status === "CANCELLED" || seat.status === "REFUNDED",
-    )
-  ) {
-    return "LEFT";
-  }
-  return "ALREADY_REGISTERED";
+  if (!released) return "ALREADY_REGISTERED";
+  // Only a price-free seat left by its holder revives in place; its payment stays as it was.
+  const priceFree =
+    prior.amount === 0 &&
+    isPriceFreePayment({
+      paymentIntent: prior.paymentIntent,
+      amountPaise: prior.amount,
+      listPricePaise: prior.originalAmount,
+    });
+  return priceFree && seats.every((seat) => seat.status === "CANCELLED")
+    ? "REJOINABLE"
+    : "LEFT";
+}
+
+/** Why a prior seat payment blocks a new one; null for an EXPIRED or FAILED row and a rejoinable free seat. */
+export function seatRebuyRefusal(
+  prior: PriorSeatPayment,
+): SeatRebuyRefusal | null {
+  const standing = priorSeatStanding(prior);
+  return standing === "REJOINABLE" ? null : standing;
 }
 
 /** The buyer may start a seat checkout on this appointment. */
@@ -140,7 +162,7 @@ export function canBuySeat(prior: PriorSeatPayment | null): boolean {
   return prior === null || seatRebuyRefusal(prior) === null;
 }
 
-/** Only an EXPIRED or FAILED seat payment is re-minted in place; every other prior row refuses. */
+/** An EXPIRED or FAILED seat payment is re-minted and a left free seat rejoins; every other prior row refuses. */
 export function assertSeatRemintable(
   prior: PriorSeatPayment,
   kind: "WEBINAR" | "CLASS",
@@ -151,6 +173,12 @@ export function assertSeatRemintable(
     throw new BookingRuleError(
       "PAYMENT_ALREADY_EXISTS",
       SEAT_CHECKOUT_OPEN_MESSAGE,
+    );
+  }
+  if (refusal === "REMOVED") {
+    throw new BookingRuleError(
+      "SEAT_REBUY_UNSUPPORTED",
+      "The organiser removed you from this event. Contact support if you think this was a mistake.",
     );
   }
   if (refusal === "REFUNDED") {
@@ -166,6 +194,28 @@ export function assertSeatRemintable(
     );
   }
   throw alreadyHeldSeatError(kind);
+}
+
+/**
+ * How an event checkout records its seat, refusing first when the prior payment
+ * may not be bought again. A rejoin revives only the CANCELLED seat it classified.
+ */
+export function seatRegistrationFor(
+  prior: PriorSeatPayment | null,
+  userId: string,
+  kind: "WEBINAR" | "CLASS",
+): SeatRegistration {
+  const standing = prior ? priorSeatStanding(prior) : null;
+  if (prior && standing !== null && standing !== "REJOINABLE") {
+    assertSeatRemintable(prior, kind);
+  }
+  return standing === "REJOINABLE"
+    ? {
+        actorUserId: userId,
+        reviveReason: "rejoined",
+        reviveFromIn: ["CANCELLED"],
+      }
+    : { actorUserId: userId, reviveReason: "registered" };
 }
 
 /** #1819 — a batch past its host's cutoff refuses with ENROLMENT_CLOSED (409). */

@@ -275,7 +275,7 @@ describe("getBookingTimeline", () => {
     expect(timeline!.truncated).toBe(false);
   });
 
-  it("reads only history entities every deployed client knows", async () => {
+  it("reads the booking's own entities and its attendees' seat rows", async () => {
     historyFindMany.mockResolvedValue(historyRows());
 
     await getBookingTimeline("appt-1", PRIVILEGED);
@@ -290,6 +290,7 @@ describe("getBookingTimeline", () => {
           "TRIAL",
           "RESCHEDULE_REQUEST",
           "OCCURRENCE",
+          "SEAT",
         ],
       },
     });

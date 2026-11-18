@@ -137,6 +137,8 @@ function txWith(
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
       findMany: jest.fn().mockResolvedValue([]),
     },
+    // The buyer's earlier payment on the class, read before the seat write: none.
+    payment: { findFirst: jest.fn().mockResolvedValue(null) },
   };
   return tx as unknown as Tx;
 }

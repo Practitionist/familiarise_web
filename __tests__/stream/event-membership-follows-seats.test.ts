@@ -284,6 +284,29 @@ describe("event chat and call membership follows seats holding access", () => {
     },
   );
 
+  it.each(["WEBINAR", "CLASS"] as const)(
+    "a %s learner who left a free seat and rejoined is granted again on the same payment",
+    async (kind) => {
+      const freePayment = pay({ amountPaise: 0, isMockPayment: true });
+      // The rejoin revived the left row in place: CONFIRMED again, unmarked, same ₹0 payment.
+      const seats = [
+        ...seatsWith(pay()),
+        {
+          ...seat("rejoined", "CONFIRMED", freePayment),
+          removedByUserId: null,
+        },
+      ];
+      arrange(kind, seats);
+
+      await ensureChannelsForAppointment("appt-1");
+
+      expect(mockState.adds).toContain("rejoined");
+      expect(mockChat).toContain("rejoined");
+      expect(mockCall).toContain("rejoined");
+      expect(mockIntentCreateMany).not.toHaveBeenCalled();
+    },
+  );
+
   it.each([
     ["no open call", false],
     ["an open call", true],

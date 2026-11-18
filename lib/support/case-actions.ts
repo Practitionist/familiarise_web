@@ -68,6 +68,7 @@ import {
 } from "./case-holds";
 import {
   conductRemovalDecidedTx,
+  removalRejoinPathTx,
   removalRefundOutstandingTx,
   settleDecidedRemoval,
 } from "./conduct-removal-case";
@@ -812,7 +813,12 @@ async function stageDecisionNotificationsTx(
     const removal =
       (decision.outcome === "OVERTURNED" || decision.outcome === "UPHELD") &&
       (await reviewedRemovalCaseId(tx, supportCase))
-        ? removalDecisionNotice(decision.outcome)
+        ? removalDecisionNotice(
+            decision.outcome,
+            decision.outcome === "OVERTURNED"
+              ? await removalRejoinPathTx(tx, supportCase)
+              : undefined,
+          )
         : null;
     await stageCaseNotice(
       tx,
@@ -1048,7 +1054,7 @@ async function recordCaseDecisionTx(
     input.outcome,
   );
   await stageDecisionNotificationsTx(tx, supportCase, decision);
-  await conductRemovalDecidedTx(tx, supportCase, input.outcome);
+  await conductRemovalDecidedTx(tx, supportCase, input.outcome, actor.userId);
   return { ...decision, restoredConsultantProfileId };
 }
 
@@ -1169,7 +1175,7 @@ async function supersedeDecisionTx(
   });
   await stageDecisionNotificationsTx(tx, supportCase, decision);
   if (latest.outcome !== "OVERTURNED")
-    await conductRemovalDecidedTx(tx, supportCase, input.outcome);
+    await conductRemovalDecidedTx(tx, supportCase, input.outcome, actor.userId);
   return { ...decision, restoredConsultantProfileId };
 }
 

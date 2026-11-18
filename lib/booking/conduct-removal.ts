@@ -109,7 +109,13 @@ export async function removeAttendeeForConduct(
             ...liveParticipant(input.targetUserId),
             role: "CONSULTEE" as const,
           };
-          const released = await releaseParticipant(tx, seatWhere);
+          const released = await releaseParticipant(tx, seatWhere, {
+            data: { removedByUserId: input.actorUserId },
+            history: {
+              reason: "conduct_removal",
+              actorUserId: input.actorUserId,
+            },
+          });
           if (released === 0) return null;
           const seatRevocation = await persistSeatRevocationInTx(
             tx,

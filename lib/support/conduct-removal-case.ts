@@ -31,6 +31,7 @@ import {
   persistConductBlockInTx,
   syncConductCallBlock,
 } from "@/lib/stream/access-revocation";
+import { clearRemovalMarkTx } from "@/lib/booking/seat-removal-lift";
 import { holdPaymentForCase } from "./case-holds";
 import { stageSupportCaseIntakeTx } from "./case-service";
 import { supportDeadline } from "./deadline-policy";
@@ -340,12 +341,46 @@ export async function conductRemovalDecidedTx(
     appealOfDecisionId: string | null;
   },
   outcome: string,
+  actorUserId: string,
 ): Promise<void> {
   if (outcome !== "OVERTURNED") return;
   const caseId = await reviewedRemovalCaseId(tx, supportCase);
   const target = caseId ? await removalTargetTx(tx, caseId) : null;
   if (!target) return;
   await persistConductBlockInTx(tx, target.appointmentId, target.userId);
+  // The same lift the staff door makes; a block already lifted stays lifted.
+  await clearRemovalMarkTx(tx, { ...target, actorUserId });
+}
+
+/** How the learner of a reviewed removal may come back once it is overturned. */
+export async function removalRejoinPathTx(
+  tx: Tx,
+  supportCase: {
+    id: string;
+    category: string | null;
+    appealOfDecisionId: string | null;
+  },
+): Promise<"REGISTER" | "SUPPORT"> {
+  const caseId = await reviewedRemovalCaseId(tx, supportCase);
+  const target = caseId ? await removalTargetTx(tx, caseId) : null;
+  if (!target) return "SUPPORT";
+  const seat = await tx.appointmentParticipant.findUnique({
+    where: { appointmentId_userId: target },
+    select: {
+      payment: {
+        select: { paymentIntent: true, amount: true, originalAmount: true },
+      },
+    },
+  });
+  const p = seat?.payment;
+  return p &&
+    isPriceFreePayment({
+      paymentIntent: p.paymentIntent,
+      amountPaise: Number(p.amount),
+      listPricePaise: Number(p.originalAmount),
+    })
+    ? "REGISTER"
+    : "SUPPORT";
 }
 
 /** After an OVERTURNED decision commits: drives whatever marker and block intent are still owed. Never throws. */

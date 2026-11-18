@@ -72,7 +72,27 @@ jest.mock("../../../lib/stream/event-channel-service", () => ({
   removeUsersFromEventChannel: jest.fn(async () => ({ failedUserIds: [] })),
 }));
 
+// A rejoin goes through the real checkout; its edges are not under test here.
+jest.mock("../../../lib/payments/index", () => ({
+  __esModule: true,
+  createPaymentIntent: jest.fn(async () => ({
+    id: `order_${randomUUID()}`,
+    client_secret: null,
+  })),
+  cancelPaymentIntent: jest.fn(async () => undefined),
+}));
+jest.mock("../../../lib/compliance/dpdp", () => ({
+  __esModule: true,
+  checkConsent: jest.fn(async () => true),
+}));
+jest.mock("../../../lib/payments/checkout/free-seat-notice", () => ({
+  notifyFreeSeatRegistered: jest.fn(async () => undefined),
+}));
+
 import { removeAttendeeForConduct } from "../../../lib/booking/conduct-removal";
+import { handleCheckout } from "../../../lib/payments/checkout";
+import { liftSeatRemovalTx } from "../../../lib/booking/seat-removal-lift";
+import { conductRemovalStands } from "../../../lib/support/conduct-removal-state";
 import { performCaseAction } from "../../../lib/support/case-actions";
 import { sweepConductRemovalDeadlines } from "../../../lib/support/conduct-removal-case";
 import { redriveAccessRevocation } from "../../../lib/stream/access-revocation";
@@ -340,6 +360,25 @@ describe("removal", () => {
       select: { status: true },
     });
     expect(seat.status).toBe("CONFIRMED");
+    // The mark and its SEAT row roll back with the seat.
+    expect(
+      await prisma.appointmentParticipant.count({
+        where: {
+          appointmentId: webinar.appointmentId,
+          userId,
+          removedByUserId: { not: null },
+        },
+      }),
+    ).toBe(0);
+    expect(
+      await prisma.bookingStatusHistory.count({
+        where: {
+          entity: "SEAT",
+          appointmentId: webinar.appointmentId,
+          reason: "conduct_removal",
+        },
+      }),
+    ).toBe(0);
     expect(
       await prisma.supportCase.count({
         where: {
@@ -504,6 +543,125 @@ describe("overturn: refund first, through the bounded door", () => {
     });
     expect(notice.recipients).toContain(free.userId);
     expect(notice.payload).toMatchObject({ requiredNotice: "SEAT_RELEASED" });
+  });
+});
+
+describe("rejoining after a conduct removal", () => {
+  /** A free webinar seat removed for conduct, with the checkout body its learner would send. */
+  async function removedFreeSeat() {
+    const webinar = await seedWebinar({ capacity: 10, price: 0 });
+    const free = await seatBuyer(webinar, {
+      amount: 0,
+      intent: `free_${randomUUID()}`,
+      listPaise: 0,
+    });
+    const { caseId } = (await remove(webinar, free.userId))!;
+    const rejoin = () =>
+      handleCheckout(
+        {
+          appointmentType: "WEBINAR",
+          planId: webinar.planId,
+          eventId: webinar.webinarId,
+          paymentGateway: "RAZORPAY",
+          clientIdempotencyKey: `rejoin-${randomUUID()}`,
+          consumerStateCode: "29",
+        },
+        free.userId,
+      );
+    return { webinar, userId: free.userId, caseId, rejoin };
+  }
+  const liftAsStaff = async (webinar: SeededWebinar, userId: string) => {
+    const staff = await actor("STAFF");
+    return prisma.$transaction((tx) =>
+      liftSeatRemovalTx(tx, {
+        appointmentId: webinar.appointmentId,
+        userId,
+        actorUserId: staff.userId,
+        door: "staff",
+      }),
+    );
+  };
+
+  it("marks the seat with its remover and refuses the rejoin while the removal stands, even upheld", async () => {
+    const { webinar, userId, caseId, rejoin } = await removedFreeSeat();
+    const seat = await prisma.appointmentParticipant.findFirstOrThrow({
+      where: { appointmentId: webinar.appointmentId, userId },
+      select: { id: true, removedByUserId: true },
+    });
+    expect(seat.removedByUserId).toBe(webinar.host.userId);
+    expect(
+      await prisma.bookingStatusHistory.findFirst({
+        where: { entity: "SEAT", entityId: seat.id },
+        select: { reason: true, actorUserId: true, toStatus: true },
+      }),
+    ).toEqual({
+      reason: "conduct_removal",
+      actorUserId: webinar.host.userId,
+      toStatus: "CANCELLED",
+    });
+    await expect(rejoin()).rejects.toMatchObject({
+      code: "SEAT_REBUY_UNSUPPORTED",
+      message: expect.stringMatching(/organiser removed you/),
+    });
+    await decide(caseId, await actor("STAFF"), "UPHELD");
+    await expect(rejoin()).rejects.toMatchObject({
+      code: "SEAT_REBUY_UNSUPPORTED",
+    });
+  });
+
+  it("a staff lift of an upheld removal leaves the verdict, re-arms the call block to unblock, and the rejoin succeeds", async () => {
+    const { webinar, userId, caseId, rejoin } = await removedFreeSeat();
+    const upheld = await decide(caseId, await actor("STAFF"), "UPHELD");
+
+    const lifted = await liftAsStaff(webinar, userId);
+    expect(lifted).toMatchObject({ conduct: true, rejoinPath: "REGISTER" });
+    expect(await conductRemovalStands(webinar.appointmentId, userId)).toBe(
+      false,
+    );
+    // The upheld finding stays in force: lifting is not a decision.
+    expect(
+      await prisma.supportCaseDecision.findMany({
+        where: { caseId },
+        select: {
+          id: true,
+          outcome: true,
+          supersededBy: { select: { id: true } },
+        },
+      }),
+    ).toEqual([{ id: rowId(upheld), outcome: "UPHELD", supersededBy: null }]);
+    expect(
+      (await intents(webinar.appointmentId, userId)).filter(
+        (r) => r.kind === "CONDUCT_CALL_BLOCK",
+      ),
+    ).toHaveLength(1);
+
+    await expect(rejoin()).resolves.toMatchObject({ success: true });
+    expect(
+      await prisma.appointmentParticipant.findFirstOrThrow({
+        where: { appointmentId: webinar.appointmentId, userId },
+        select: { status: true, removedByUserId: true },
+      }),
+    ).toEqual({ status: "CONFIRMED", removedByUserId: null });
+  });
+
+  it("an overturn from the case panel lifts the mark too, so the rejoin succeeds", async () => {
+    const { webinar, userId, caseId, rejoin } = await removedFreeSeat();
+    await decide(caseId, await actor("STAFF"), "OVERTURNED");
+
+    expect(
+      await prisma.bookingStatusHistory.count({
+        where: {
+          entity: "SEAT",
+          appointmentId: webinar.appointmentId,
+          reason: "block_lifted",
+        },
+      }),
+    ).toBe(1);
+    await expect(rejoin()).resolves.toMatchObject({ success: true });
+    // A second lift finds nothing to lift.
+    await expect(liftAsStaff(webinar, userId)).rejects.toMatchObject({
+      code: "REMOVAL_ALREADY_LIFTED",
+    });
   });
 });
 

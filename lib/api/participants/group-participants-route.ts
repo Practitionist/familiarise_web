@@ -3,7 +3,12 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import type { Session } from "@/lib/auth";
 import prisma, { type PrismaLike } from "@/lib/prisma";
-import { liveParticipant } from "@/lib/booking/participants";
+import {
+  liveParticipant,
+  RELEASED_PARTICIPANT_STATUSES,
+} from "@/lib/booking/participants";
+import { readSeatTrails, type SeatTrailStep } from "@/lib/booking/seat-history";
+import { lastRemovalKind } from "@/lib/booking/seat-trail-copy";
 import { readSeatPayments } from "@/lib/data/seat-payments";
 import {
   requireApiAuth,
@@ -12,6 +17,11 @@ import {
 } from "@/lib/auth-helpers";
 import { leaveEventSeat } from "@/lib/booking/seat-leave";
 import { removeAttendeeForConduct } from "@/lib/booking/conduct-removal";
+import { liftSeatRemovalAsOrganiser } from "@/lib/booking/seat-removal-lift";
+import {
+  SeatLiftBodySchema,
+  SeatLiftResponseSchema,
+} from "@/schemas/seat-removal-lift";
 import { ConductRemovalBodySchema } from "@/schemas/conduct-removal";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
@@ -68,6 +78,7 @@ const APPOINTMENT_PARTICIPANTS_SELECT = {
     participants: {
       where: { ...liveParticipant(), role: "CONSULTEE" as const },
       select: {
+        id: true,
         status: true,
         role: true,
         user: { select: PARTICIPANT_USER_SELECT },
@@ -127,6 +138,7 @@ function deduplicateParticipants(
     | {
         id: string;
         participants: {
+          id: string;
           status: string;
           role: string;
           user: {
@@ -146,6 +158,7 @@ function deduplicateParticipants(
         participant.user.id,
         {
           ...participant.user,
+          participantId: participant.id,
           participantStatus: participant.status,
           participantRole: participant.role,
         },
@@ -206,6 +219,28 @@ async function queryGroupEventForRead(
   };
 }
 
+/** Seats an organiser or a conduct removal ended that still block a rejoin. */
+function readRemovedSeats(appointmentId: string) {
+  return prisma.appointmentParticipant.findMany({
+    where: {
+      appointmentId,
+      role: "CONSULTEE",
+      removedByUserId: { not: null },
+      status: { in: RELEASED_PARTICIPANT_STATUSES },
+    },
+    select: { id: true, user: { select: PARTICIPANT_USER_SELECT } },
+    orderBy: { updatedAt: "desc" },
+  });
+}
+
+/** A removed attendee row: who, how they were last removed, and their trail. */
+function removedAttendee(
+  seat: Awaited<ReturnType<typeof readRemovedSeats>>[number],
+  seatTrail: SeatTrailStep[],
+) {
+  return { ...seat.user, removal: lastRemovalKind(seatTrail), seatTrail };
+}
+
 export async function handleGroupParticipantsGet(
   _request: Request,
   kind: GroupEventKind,
@@ -228,7 +263,7 @@ export async function handleGroupParticipantsGet(
 
     const participants = deduplicateParticipants(loaded.appointment);
     const appointmentId = loaded.appointment?.id;
-    const [seatPayments, waitingCount] = await Promise.all([
+    const [seatPayments, waitingCount, removedSeats] = await Promise.all([
       readSeatPayments(
         appointmentId ? [appointmentId] : [],
         participants.map((u) => u.id),
@@ -239,11 +274,22 @@ export async function handleGroupParticipantsGet(
             where: { appointmentId, status: { in: ["WAITING", "NOTIFIED"] } },
           })
         : Promise.resolve(0),
+      appointmentId ? readRemovedSeats(appointmentId) : Promise.resolve([]),
+    ]);
+    const trails = await readSeatTrails(prisma, [
+      ...participants.map((p) => p.participantId),
+      ...removedSeats.map((seat) => seat.id),
     ]);
 
     return NextResponse.json({
       [loaded.key]: loaded.event,
-      participants,
+      participants: participants.map(({ participantId, ...p }) => ({
+        ...p,
+        seatTrail: trails.get(participantId) ?? [],
+      })),
+      removedAttendees: removedSeats.map((seat) =>
+        removedAttendee(seat, trails.get(seat.id) ?? []),
+      ),
       collaborators: loaded.collaborators,
       seatPayments,
       waitingCount,
@@ -626,6 +672,82 @@ export async function handleGroupParticipantDelete(
         ? "[WEBINAR_PARTICIPANT_DELETE]"
         : "[CLASS_PARTICIPANT_DELETE]";
     console.error(logLabel, error);
+    return new NextResponse("Internal error", { status: 500 });
+  }
+}
+
+/**
+ * POST /api/participants/{webinar|class}/[eventId]/allow-back — the roster's
+ * "Allow back" for an attendee the organiser removed. A conduct removal that
+ * stands is refused here; support lifts it.
+ */
+export async function handleGroupSeatLift(
+  request: Request,
+  kind: GroupEventKind,
+  eventId: string,
+): Promise<NextResponse> {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+  const rl = await applyRateLimit(eventMutationLimiter, session.user.id);
+  if (rl) return rl;
+  try {
+    const parsedEventId = EVENT_ID.safeParse(eventId);
+    const body = SeatLiftBodySchema.safeParse(
+      await request.json().catch(() => null),
+    );
+    if (!parsedEventId.success || !body.success) {
+      return NextResponse.json(
+        { error: "Choose the attendee to allow back.", code: "INVALID_BODY" },
+        { status: 400 },
+      );
+    }
+    if (!(await canOrganiserRemoveParticipant(session))) {
+      return forbiddenResponse("Only the organiser can allow attendees back");
+    }
+    const exists = await verifyGroupEventExistsForDelete(
+      kind,
+      parsedEventId.data,
+      session,
+      false,
+    );
+    const appointment = exists
+      ? await prisma.appointment.findFirst({
+          where:
+            kind === "webinar"
+              ? { webinarId: parsedEventId.data }
+              : { classId: parsedEventId.data },
+          select: { id: true },
+        })
+      : null;
+    if (!appointment) {
+      return new NextResponse(
+        kind === "webinar" ? "Webinar not found" : "Class not found",
+        { status: 404 },
+      );
+    }
+    const lifted = await liftSeatRemovalAsOrganiser({
+      appointmentId: appointment.id,
+      userId: body.data.userId,
+      actorUserId: session.user.id,
+    }).catch((error: unknown) => {
+      if (error instanceof BookingRuleError) return error;
+      throw error;
+    });
+    if (lifted instanceof BookingRuleError) return bookingRuleResponse(lifted);
+    return NextResponse.json(
+      SeatLiftResponseSchema.parse({
+        lifted: true,
+        rejoinPath: lifted.rejoinPath,
+        conduct: lifted.conduct,
+      }),
+    );
+  } catch (error) {
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
+    console.error("[SEAT_LIFT]", errorClass(error));
     return new NextResponse("Internal error", { status: 500 });
   }
 }

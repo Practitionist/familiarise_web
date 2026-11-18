@@ -27,7 +27,7 @@ import type {
 
 /**
  * `BookingHistoryEntity` values read as SQL enums; these are the operator's
- * words for the same seven lifecycles. An unknown key reads "Booking" rather
+ * words for the same lifecycles, and for one attendee's seat. An unknown key reads "Booking" rather
  * than printing the raw enum.
  */
 const ENTITY_LABEL: Record<string, string> = {
@@ -38,6 +38,7 @@ const ENTITY_LABEL: Record<string, string> = {
   TRIAL: "Trial",
   RESCHEDULE_REQUEST: "Reschedule",
   OCCURRENCE: "Session",
+  SEAT: "Seat",
 };
 
 function entityLabel(entity: string): string {
@@ -77,6 +78,7 @@ function TimelineRow({ entry }: { entry: BookingTimelineEntry }) {
       <div className="flex flex-wrap items-center gap-2">
         <Badge variant="secondary" className="bg-muted text-muted-foreground">
           {entityLabel(entry.entity)}
+          {entry.seatHolder?.name ? ` · ${entry.seatHolder.name}` : ""}
         </Badge>
         <span className="text-xs text-foreground">
           {timelineStepLabel(entry)}

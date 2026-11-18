@@ -1,5 +1,14 @@
 import type { Tx } from "@/lib/prisma";
 import { notSettledElsewhereWhere } from "@/lib/payments/webhooks/auto-refund-marker";
+import {
+  HISTORY_FROM_CREATED,
+  HISTORY_FROM_UNKNOWN,
+} from "@/lib/booking/transitions";
+import {
+  appendSeatHistory,
+  type SeatHistoryNote,
+  type SeatHistoryReason,
+} from "@/lib/booking/seat-history";
 import type {
   ParticipantRole,
   ParticipantStatus,
@@ -29,12 +38,28 @@ export interface ParticipantEntry {
 }
 
 type ParticipantTx = Pick<Tx, "appointmentParticipant">;
+/** A seat write that may append SEAT history on the same transaction. */
+type SeatTx = Pick<Tx, "appointmentParticipant" | "bookingStatusHistory">;
+
+/** An event checkout's seat history: who acted, and how a revive of a released seat reads. */
+export interface SeatRegistration {
+  actorUserId: string;
+  /** `rejoined` when the earlier seat was registered and left; `registered` after a lapsed hold. */
+  reviveReason: SeatHistoryReason;
+  /** The released status the revive expects; a classification that read the seat narrows it. */
+  reviveFromIn?: ParticipantStatus[];
+}
 
 export async function recordParticipants(
-  tx: ParticipantTx,
+  tx: SeatTx,
   appointmentId: string,
   entries: ParticipantEntry[],
-  opts: { organizationId?: string | null; status?: ParticipantStatus } = {},
+  opts: {
+    organizationId?: string | null;
+    status?: ParticipantStatus;
+    /** Set by the event checkouts only: a 1:1 booking writes no seat history. */
+    seatRegistration?: SeatRegistration;
+  } = {},
 ): Promise<void> {
   if (entries.length === 0) return;
   // Dedupe on userId: a consultant booking their own slot as consultee is
@@ -50,24 +75,60 @@ export async function recordParticipants(
       paymentId: e.paymentId ?? null,
       organizationId: opts.organizationId ?? null,
     }));
-  await tx.appointmentParticipant.createMany({ data, skipDuplicates: true });
+  // A HELD seat is a checkout, not a registration: its capture records it.
+  const registration = data.some((row) => row.status !== "HELD")
+    ? opts.seatRegistration
+    : undefined;
+  let inserted: Set<string> | null = null;
+  if (registration) {
+    const rows = await tx.appointmentParticipant.createManyAndReturn({
+      data,
+      skipDuplicates: true,
+      select: { id: true, userId: true, role: true, status: true },
+    });
+    inserted = new Set(rows.map((row) => row.userId));
+    await appendSeatHistory(
+      tx,
+      rows
+        .filter((row) => row.role === "CONSULTEE" && row.status !== "HELD")
+        .map((row) => ({
+          participantId: row.id,
+          appointmentId,
+          fromStatus: HISTORY_FROM_CREATED,
+          toStatus: row.status,
+        })),
+      { reason: "registered", actorUserId: registration.actorUserId },
+    );
+  } else {
+    await tx.appointmentParticipant.createMany({ data, skipDuplicates: true });
+  }
   // A seat released earlier (CANCELLED/REFUNDED) and bought again is the same
   // (appointmentId, userId) row, so skipDuplicates alone would leave it dead.
   // The revive is the one edge out of a released status, so it widens the
   // from-set explicitly rather than living in the map (#1846 SM-B9). #1852 —
-  // the revived seat takes the new purchase's payer org.
+  // the revived seat takes the new purchase's payer org. A removed seat never
+  // revives: its block is lifted first.
   for (const row of data) {
+    if (inserted?.has(row.userId)) continue;
     await transitionParticipant(
       tx,
-      { appointmentId, userId: row.userId },
+      { appointmentId, userId: row.userId, removedByUserId: null },
       row.status,
       {
-        fromIn: RELEASED_PARTICIPANT_STATUSES,
+        fromIn: registration?.reviveFromIn ?? RELEASED_PARTICIPANT_STATUSES,
         data: {
           role: row.role,
           paymentId: row.paymentId,
           organizationId: row.organizationId,
         },
+        ...(registration && row.status !== "HELD"
+          ? {
+              history: {
+                reason: registration.reviveReason,
+                actorUserId: registration.actorUserId,
+              },
+            }
+          : {}),
       },
     );
   }
@@ -142,10 +203,11 @@ export function liveParticipant(
 
 /** Release one user's seat on the appointments `where` selects (#1554). */
 export async function releaseParticipant(
-  tx: ParticipantTx,
+  tx: SeatTx,
   where: Prisma.AppointmentParticipantWhereInput,
+  opts: Pick<TransitionOptions, "fromIn" | "data" | "history"> = {},
 ): Promise<number> {
-  return transitionParticipant(tx, where, "CANCELLED");
+  return transitionParticipant(tx, where, "CANCELLED", opts);
 }
 
 /**
@@ -172,6 +234,18 @@ export const PARTICIPANT_ALLOWED_FROM: Record<
   REFUNDED: [...LIVE_PARTICIPANT_STATUSES, "CANCELLED"],
 };
 
+interface TransitionOptions {
+  /** Narrow or widen the from-set for a flow-specific edge. */
+  fromIn?: ParticipantStatus[];
+  data?: Omit<Prisma.AppointmentParticipantUncheckedUpdateManyInput, "status">;
+  /**
+   * A SEAT history row per moved learner seat on a webinar or class, in the same
+   * transaction. With one from-status the caller must pass it for event seats only;
+   * with several, the pre-read keeps only event learner seats.
+   */
+  history?: SeatHistoryNote;
+}
+
 /**
  * Move every participant row `where` selects to `to`, but only rows whose
  * status is in the allowed-from set. The set is ANDed with the caller's WHERE,
@@ -181,28 +255,87 @@ export const PARTICIPANT_ALLOWED_FROM: Record<
  *
  * Sweep semantics: matching zero rows is a normal answer (nothing live left,
  * or the row already moved), so this returns the count and never throws.
- * Participant moves write no BookingStatusHistory row; that enum has no
- * participant entity.
  */
 export async function transitionParticipant(
-  tx: ParticipantTx,
+  tx: SeatTx,
   where: Prisma.AppointmentParticipantWhereInput,
   to: ParticipantStatus,
-  opts: {
-    /** Narrow or widen the from-set for a flow-specific edge. */
-    fromIn?: ParticipantStatus[];
-    data?: Omit<
-      Prisma.AppointmentParticipantUncheckedUpdateManyInput,
-      "status"
-    >;
-  } = {},
+  opts: TransitionOptions = {},
 ): Promise<number> {
   const fromIn = opts.fromIn ?? PARTICIPANT_ALLOWED_FROM[to];
-  const res = await tx.appointmentParticipant.updateMany({
-    where: { AND: [where, { status: { in: fromIn } }] },
-    data: { status: to, ...opts.data },
+  const casWhere = { AND: [where, { status: { in: fromIn } }] };
+  if (!opts.history) {
+    const res = await tx.appointmentParticipant.updateMany({
+      where: casWhere,
+      data: { status: to, ...opts.data },
+    });
+    return res.count;
+  }
+  return moveSeatsWithHistory(
+    tx,
+    casWhere,
+    to,
+    fromIn,
+    opts.data,
+    opts.history,
+  );
+}
+
+const EVENT_LEARNER_SEAT = {
+  role: "CONSULTEE",
+  appointment: { appointmentType: { in: ["WEBINAR", "CLASS"] } },
+} satisfies Prisma.AppointmentParticipantWhereInput;
+
+/**
+ * The CAS plus its SEAT rows. The from-status is read first only when the
+ * from-set has several values; a pre-read that finds no event learner seat (a
+ * 1:1 booking) moves the rows with the plain CAS and writes nothing.
+ */
+async function moveSeatsWithHistory(
+  tx: SeatTx,
+  casWhere: Prisma.AppointmentParticipantWhereInput,
+  to: ParticipantStatus,
+  fromIn: ParticipantStatus[],
+  data: TransitionOptions["data"],
+  note: SeatHistoryNote,
+): Promise<number> {
+  const pinnedFrom = fromIn.length === 1 ? fromIn[0] : null;
+  const before = pinnedFrom
+    ? null
+    : new Map(
+        (
+          await tx.appointmentParticipant.findMany({
+            where: { AND: [casWhere, EVENT_LEARNER_SEAT] },
+            select: { id: true, status: true },
+          })
+        ).map((row) => [row.id, row.status as string]),
+      );
+  if (before?.size === 0) {
+    const res = await tx.appointmentParticipant.updateMany({
+      where: casWhere,
+      data: { status: to, ...data },
+    });
+    return res.count;
+  }
+  const moved = await tx.appointmentParticipant.updateManyAndReturn({
+    where: casWhere,
+    data: { status: to, ...data },
+    select: { id: true, appointmentId: true, userId: true, role: true },
   });
-  return res.count;
+  await appendSeatHistory(
+    tx,
+    moved
+      .filter((row) => (before ? before.has(row.id) : row.role === "CONSULTEE"))
+      .map((row) => ({
+        participantId: row.id,
+        appointmentId: row.appointmentId,
+        // A row that entered the from-set after the pre-read keeps its move, marked unknown.
+        fromStatus: pinnedFrom ?? before?.get(row.id) ?? HISTORY_FROM_UNKNOWN,
+        toStatus: to,
+      })),
+    note,
+  );
+  return moved.length;
 }
 
 /** `transitionParticipant` that returns the client seats it moved, for a caller that acts on exactly those. */
