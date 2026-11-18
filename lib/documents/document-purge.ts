@@ -11,6 +11,7 @@ import { withCronLock } from "@/lib/cron/with-cron-lock";
 // The marker-free leaf module, so this job can run from a bare Node process.
 import { deleteAppointmentDocument } from "@/lib/supabase-storage-core";
 import { reportSentryMessage } from "@/lib/observability/report";
+import { KNOWN_HISTORY_ENTITIES } from "@/lib/booking/history-entities";
 import {
   DOCUMENT_DELETE_GRACE_DAYS,
   DOCUMENT_RETENTION_DAYS,
@@ -52,6 +53,7 @@ function retentionCandidateWhere(cutoff: Date): Prisma.AppointmentWhereInput {
       {
         statusHistory: {
           some: {
+            entity: { in: [...KNOWN_HISTORY_ENTITIES] },
             toStatus: { in: TERMINAL_STATUSES },
             createdAt: { lt: cutoff },
           },

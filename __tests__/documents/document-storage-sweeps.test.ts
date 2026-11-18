@@ -200,6 +200,27 @@ describe("purge-deleted-documents", () => {
     expect(result.tombstoned).toBe(2);
   });
 
+  it("matches retention history only on entities every deployed client knows", async () => {
+    (prisma.appointmentDocument.findMany as jest.Mock).mockResolvedValue([]);
+    (prisma.appointment.findMany as jest.Mock).mockResolvedValue([]);
+
+    await purgeDeletedDocuments(now);
+
+    const where = (prisma.appointment.findMany as jest.Mock).mock.calls[0][0]
+      .where;
+    expect(where.OR[0].statusHistory.some.entity).toEqual({
+      in: [
+        "CONSULTATION",
+        "SUBSCRIPTION",
+        "WEBINAR",
+        "CLASS",
+        "TRIAL",
+        "RESCHEDULE_REQUEST",
+        "OCCURRENCE",
+      ],
+    });
+  });
+
   it("continues with the remaining bookings when one tombstone transaction fails", async () => {
     (prisma.appointmentDocument.findMany as jest.Mock).mockResolvedValue([]);
     (prisma.appointment.findMany as jest.Mock)
