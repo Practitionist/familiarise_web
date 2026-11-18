@@ -85,19 +85,35 @@ export async function checkEventChannelExists(
   const client = getStreamChatClient();
 
   try {
-    const channel = client.channel(channelType, channelId);
-    await withStreamCircuitBreaker(
-      () => channel.query({ state: false, messages: { limit: 0 } }),
+    // A read by channel id: a chat that is not there is an empty answer, and
+    // Stream is never asked to make it.
+    const [found] = await withStreamCircuitBreaker(
+      () =>
+        client.queryChannels(
+          { cid: { $eq: `${channelType}:${channelId}` } },
+          [],
+          {
+            limit: 1,
+            state: false,
+            watch: false,
+            presence: false,
+          },
+        ),
       () => {
         throw new StreamUnavailableError();
       },
     );
+    if (!found) {
+      streamLogger.debug("Channel does not exist", { channelId });
+      return false;
+    }
 
     markChannelExists(channelType, channelId);
     streamLogger.debug("Channel exists", { channelId });
     return true;
   } catch {
-    streamLogger.debug("Channel does not exist", { channelId });
+    // The breaker has reported a failed read; the caller gets "not there".
+    streamLogger.debug("Channel existence could not be read", { channelId });
     return false;
   }
 }

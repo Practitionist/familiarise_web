@@ -385,41 +385,27 @@ flowchart TB
 
 ### Checking Channel Existence
 
+`checkEventChannelExists(eventType, eventId)` (`lib/stream/event-channel-service.ts`) answers from the existence cache when it can. On a miss it reads Stream by channel id and never opens a channel handle, so Stream is not asked to create anything: a chat that is not there is an empty result, not an error.
+
 ```typescript
-export const checkEventChannelExists = async (
-  eventType: "webinar" | "class",
-  eventId: string,
-) => {
-  const channelId = `${eventType}-${eventId}`;
-
-  try {
-    if (!apiKey || !apiSecret) {
-      throw new Error("Stream API keys not configured");
-    }
-
-    const client = StreamChat.getInstance(apiKey, apiSecret);
-    const channel = client.channel("team", channelId, {
-      created_by_id: "system",
-    });
-
-    // Query the channel
-    const response = await channel.query();
-
-    // Channel exists if it has an ID
-    const exists = !!(response.channel && response.channel.id);
-    console.log(`Channel ${channelId} exists: ${exists}`);
-    return exists;
-  } catch (error) {
-    // Error code 16 = channel not found
-    if (error.code === 16 || error.response?.data?.code === 16) {
-      console.log(`Channel ${channelId} not found via query`);
-      return false;
-    }
-    console.error(`Error checking channel ${channelId}:`, error.message);
-    return false;
-  }
-};
+const [found] = await withStreamCircuitBreaker(
+  () =>
+    client.queryChannels({ cid: { $eq: `${channelType}:${channelId}` } }, [], {
+      limit: 1,
+      state: false,
+      watch: false,
+      presence: false,
+    }),
+  () => {
+    throw new StreamUnavailableError();
+  },
+);
+if (!found) return false;
+markChannelExists(channelType, channelId);
+return true;
 ```
+
+Only a found chat is cached. A read that fails is reported once by the circuit breaker and answers `false`, so the caller treats the chat as not there for this request.
 
 ### Adding User to Event Channel
 

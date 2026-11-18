@@ -28,8 +28,9 @@ jest.mock("@/lib/stream-client", () => {
   return {
     StreamUnavailableError,
     getStreamChatClient: () => ({
+      // Every event chat exists.
+      queryChannels: async () => [{}],
       channel: (_type: string, id: string) => ({
-        query: async () => ({}),
         addMembers: async () => mockAddMembers(id),
       }),
     }),
