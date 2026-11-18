@@ -123,7 +123,9 @@ function seedWebinar(organisationExpert?: ExpertStanding) {
     {
       userId: "buyer-a",
       paymentStatus: "SUCCEEDED",
+      paymentIntent: "order_roster_a",
       amount: BigInt(50000),
+      originalAmount: BigInt(50000),
       currency: "INR",
       createdAt: new Date("2026-11-01T00:00:00Z"),
       refunds: [],
