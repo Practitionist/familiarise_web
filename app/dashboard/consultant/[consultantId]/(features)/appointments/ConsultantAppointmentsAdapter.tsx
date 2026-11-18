@@ -29,6 +29,7 @@ import { useNowTick } from "@/hooks/use-now-tick";
 import { useSession } from "@/lib/auth-client";
 import { operatorOpsHref } from "@/lib/backoffice/booking-href";
 import { getParticipantManagementUrl } from "./utils/participantHelpers";
+import { PRESENTER_ROLES } from "@/lib/collaborators/roles";
 import { useConsultantEventActions } from "./components/useConsultantEventActions";
 import { CancelConfirmationDialog } from "@/components/appointments/consultee/CancelConfirmationDialog";
 import {
@@ -64,6 +65,17 @@ function canManageBookingLifecycle(
     );
   }
   return true;
+}
+
+const PRESENTER_ROLE_NAMES: readonly string[] = PRESENTER_ROLES;
+
+/**
+ * The roster opens for the plan's host and a co-presenter; support crew are
+ * not sent it. A row with no collaborator role is the host's own.
+ */
+function canOpenRoster(vm: AppointmentVM): boolean {
+  const role = vm.collaboratorRole;
+  return !role || role === "HOST" || PRESENTER_ROLE_NAMES.includes(role);
 }
 
 function actionableRawSlots(vm: AppointmentVM) {
@@ -388,9 +400,10 @@ export function useConsultantAppointmentsAdapter(
         onClick: () => openTimings(vm),
       });
     }
-    const participantsUrl = appointment
-      ? getParticipantManagementUrl(appointment, consultantId)
-      : null;
+    const participantsUrl =
+      appointment && canOpenRoster(vm)
+        ? getParticipantManagementUrl(appointment, consultantId)
+        : null;
     if (participantsUrl) {
       items.push({
         key: "participants",

@@ -17,6 +17,7 @@ import {
 import { ROLE_INFO } from "@/lib/collaborators/roles";
 import { MAX_TEAM_SHARE_BPS, bpsToPercent } from "@/lib/collaborators/rules";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { useZoneClock } from "@/lib/time/use-zone-clock";
 import { formatDay, seatSlices } from "./format";
 
 interface TermsSummaryProps {
@@ -65,6 +66,7 @@ function seatExample({
 
 export function TermsSummary(props: Readonly<TermsSummaryProps>) {
   const { role, sharePercent, audience, otherSharePercents, expiresAt } = props;
+  const { zone } = useZoneClock();
   const info = ROLE_INFO[role];
   const manager = audience === "manager";
   const pending = expiresAt !== undefined && expiresAt !== null;
@@ -130,8 +132,8 @@ export function TermsSummary(props: Readonly<TermsSummaryProps>) {
           </dt>
           <dd className="mt-1">
             {manager
-              ? `The invitation lapses on ${formatDay(expiresAt)} if it has not been answered.`
-              : `${formatDay(expiresAt)}. After that the invitation lapses.`}
+              ? `The invitation lapses on ${formatDay(expiresAt, zone)} if it has not been answered.`
+              : `${formatDay(expiresAt, zone)}. After that the invitation lapses.`}
           </dd>
         </div>
       )}

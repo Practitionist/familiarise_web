@@ -5,6 +5,7 @@
 /**
  * A collaboration card prints its sessions in the viewer's profile zone, the
  * zone the dashboard layout provides, and names that zone beside the hours.
+ * The day an invitation lapses is that zone's calendar day too.
  */
 import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -15,6 +16,8 @@ import {
   WebinarEventList,
   WebinarScheduleSummary,
 } from "@/components/collaborators/ScheduleSummaries";
+import { TermsSummary } from "@/components/collaborators/TermsSummary";
+import { formatDay } from "@/components/collaborators/format";
 import type {
   ClassPlanSchedule,
   WebinarPlanSchedule,
@@ -106,5 +109,36 @@ describe("the schedule on a collaboration card", () => {
 
     const list = inZone(NEW_YORK, <ClassEventList plan={classPlan} />);
     expect(list).toContain("Wed, 15 Jan 2031 – Wed, 15 Jan 2031");
+  });
+});
+
+describe("the day an invitation lapses", () => {
+  // 20:30 UTC on 1 December is already the 2nd in Kathmandu.
+  const expiresAt = "2026-12-01T20:30:00.000Z";
+  const terms = (audience: "manager" | "collaborator") => (
+    <TermsSummary
+      role="CO_HOST"
+      sharePercent={20}
+      audience={audience}
+      planPricePaise={30_000}
+      expiresAt={expiresAt}
+    />
+  );
+
+  it("is the calendar day in the viewer's zone, for the invitee and the host alike", () => {
+    expect(inZone(KATHMANDU, terms("collaborator"))).toContain(
+      "2 December 2026. After that the invitation lapses.",
+    );
+    expect(inZone(NEW_YORK, terms("collaborator"))).toContain(
+      "1 December 2026. After that the invitation lapses.",
+    );
+    expect(inZone(KATHMANDU, terms("manager"))).toContain(
+      "The invitation lapses on 2 December 2026",
+    );
+  });
+
+  it("is formatted in the zone it is given", () => {
+    expect(formatDay(expiresAt, KATHMANDU)).toBe("2 December 2026");
+    expect(formatDay(new Date(expiresAt), NEW_YORK)).toBe("1 December 2026");
   });
 });

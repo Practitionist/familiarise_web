@@ -27,6 +27,7 @@ import {
   type PlanRef,
 } from "@/hooks/use-collaborations";
 import { INVITE_TTL_DAYS } from "@/lib/collaborators/rules";
+import { useZoneClock } from "@/lib/time/use-zone-clock";
 import { EndCollaborationDialog } from "./EndCollaborationDialog";
 import { TermsFields, maxShareBeside, parseShare } from "./InviteDialog";
 import { RefusalNotice } from "./TermsSummary";
@@ -183,6 +184,7 @@ export function CollaboratorRow({
   canManage: boolean;
 }>) {
   const ref = useFocusFallback<HTMLLIElement>();
+  const { zone } = useZoneClock();
   const share = sharePercentOf(member);
   const pending = member.status === "PENDING";
   const name = nameOf(member);
@@ -210,8 +212,8 @@ export function CollaboratorRow({
       {pending && member.expiresAt && (
         <p className="mt-2 text-xs text-muted-foreground">
           Not answered yet. The invitation lapses on{" "}
-          {formatDay(member.expiresAt)}, and they earn only on seats sold after
-          they accept.
+          {formatDay(member.expiresAt, zone)}, and they earn only on seats sold
+          after they accept.
         </p>
       )}
 
