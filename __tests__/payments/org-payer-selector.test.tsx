@@ -5,7 +5,13 @@
  * accept it for this plan; a refused one is disabled with checkout's sentence.
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 
 import { OrgPayerSelector } from "@/app/checkout/components/OrgPayerSelector";
 import { CheckoutPreviewQuerySchema } from "@/schemas/organizations";
@@ -75,7 +81,7 @@ function renderSelector(selectedOrganizationId: string | null) {
       />
     </QueryClientProvider>,
   );
-  return onSelect;
+  return { onSelect, client };
 }
 
 beforeEach(() => {
@@ -84,7 +90,7 @@ beforeEach(() => {
 });
 
 it("disables an organisation checkout would refuse, with the refusal, and keeps one it accepts", async () => {
-  const onSelect = renderSelector(null);
+  const { onSelect } = renderSelector(null);
 
   await screen.findByText(REFUSAL);
   const refused = screen.getByRole("button", { name: /Bill to Acme/ });
@@ -109,7 +115,7 @@ it("disables an organisation checkout would refuse, with the refusal, and keeps 
 });
 
 it("a refused row takes keyboard focus and announces why, at full contrast", async () => {
-  const onSelect = renderSelector(null);
+  const { onSelect } = renderSelector(null);
 
   await screen.findByText(REFUSAL);
   const refused = screen.getByRole("button", { name: "Bill to Acme" });
@@ -123,7 +129,29 @@ it("a refused row takes keyboard focus and announces why, at full contrast", asy
 });
 
 it("clears a selected organisation once checkout's refusal for it arrives", async () => {
-  const onSelect = renderSelector("org_refused");
+  const { onSelect } = renderSelector("org_refused");
 
   await waitFor(() => expect(onSelect).toHaveBeenCalledWith(null));
+});
+
+it("a refresh that fails drops the cached refusal, so Pay decides as it does for any failed preview", async () => {
+  const { onSelect, client } = renderSelector(null);
+  await screen.findByText(REFUSAL);
+
+  // The picker throws on !ok before it reads the body.
+  fetchMock.mockImplementationOnce(async () => ({
+    ok: false,
+    json: async () => previewBody(null),
+  }));
+  await act(() =>
+    client.refetchQueries({
+      queryKey: ["overage-preview", "org_refused"],
+    }),
+  );
+
+  const acme = screen.getByRole("button", { name: /Bill to Acme/ });
+  await waitFor(() => expect(acme).not.toHaveAttribute("aria-disabled"));
+  expect(screen.queryByText(REFUSAL)).toBeNull();
+  fireEvent.click(acme);
+  expect(onSelect).toHaveBeenCalledWith("org_refused");
 });

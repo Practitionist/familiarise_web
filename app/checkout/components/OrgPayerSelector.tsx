@@ -206,12 +206,16 @@ export function OrgPayerSelector({
       checkoutPreviewQuery(m.organizationId, planType, planId),
     ),
   });
-  const refusalFor = (organizationId: string) =>
-    previews[
-      sponsoringMemberships.findIndex(
-        (m) => m.organizationId === organizationId,
-      )
-    ]?.data?.fundingRefusal ?? null;
+  // A failed refresh keeps its last data; only a preview that answered now refuses.
+  const refusalFor = (organizationId: string) => {
+    const preview =
+      previews[
+        sponsoringMemberships.findIndex(
+          (m) => m.organizationId === organizationId,
+        )
+      ];
+    return preview?.isError ? null : (preview?.data?.fundingRefusal ?? null);
+  };
   const selectedIsRefused =
     selectedOrganizationId !== null &&
     refusalFor(selectedOrganizationId) !== null;
@@ -258,6 +262,10 @@ export function OrgPayerSelector({
         const refusal = refusalFor(m.organizationId);
         const titleId = `${reasonIdPrefix}-${m.organizationId}-title`;
         const reasonId = `${reasonIdPrefix}-${m.organizationId}-reason`;
+        let rowState = "border-border hover:border-muted-foreground/40";
+        if (refusal) rowState = "border-border cursor-not-allowed";
+        else if (isSelected)
+          rowState = "border-foreground bg-muted ring-1 ring-foreground";
         // A refused row stays focusable so its reason is announced; it never selects.
         return (
           <button
@@ -269,13 +277,7 @@ export function OrgPayerSelector({
             onClick={() => {
               if (!refusal) onSelect(m.organizationId);
             }}
-            className={`w-full flex items-center gap-3 p-3 rounded-lg border text-left transition-colors ${
-              refusal
-                ? "border-border cursor-not-allowed"
-                : isSelected
-                  ? "border-foreground bg-muted ring-1 ring-foreground"
-                  : "border-border hover:border-muted-foreground/40"
-            }`}
+            className={`w-full flex items-center gap-3 p-3 rounded-lg border text-left transition-colors ${rowState}`}
           >
             <div className="w-8 h-8 rounded-md bg-muted flex items-center justify-center overflow-hidden shrink-0">
               {m.organizationLogo ? (
