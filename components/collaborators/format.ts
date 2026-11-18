@@ -32,15 +32,21 @@ export const formatSessionHours = (
 ): string =>
   `${clockTime(startsAt, zone)} – ${clockTime(endsAt, zone)} ${zoneLabel(startsAt, zone)}`;
 
-const DAY = new Intl.DateTimeFormat("en-IN", {
+const RUNTIME_DAY = new Intl.DateTimeFormat("en-IN", {
   day: "numeric",
   month: "long",
   year: "numeric",
 });
 
-/** A day as these screens print it: "30 November 2026". */
-export const formatDay = (date: Date | string): string =>
-  DAY.format(new Date(date));
+/**
+ * A day as these screens print it, "30 November 2026": the calendar day in
+ * `zone`, the viewer's profile zone. A caller with no zone to give gets the
+ * runtime's.
+ */
+export const formatDay = (date: Date | string, zone?: string): string =>
+  zone
+    ? formatInViewerZone(date, zone, "d MMMM yyyy")
+    : RUNTIME_DAY.format(new Date(date));
 
 const ROLES: Record<string, CollaboratorRoleInfo | undefined> = ROLE_INFO;
 
