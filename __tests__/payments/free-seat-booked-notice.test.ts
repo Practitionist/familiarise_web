@@ -21,9 +21,22 @@ jest.mock("../../lib/email/senders/booking", () => ({
   prepareAppointmentBookedEmail: jest.fn(),
 }));
 const mockFlush = jest.fn();
+const mockStageFails = { next: false };
 jest.mock("../../lib/novu/stage-then-attempt", () => ({
-  stageNowAttemptAfter: async (_label: string, stage: () => Promise<unknown>) =>
-    mockFlush(await stage()),
+  stageNowAttemptAfter: async (
+    _label: string,
+    stage: () => Promise<unknown>,
+  ) => {
+    if (mockStageFails.next) {
+      mockStageFails.next = false;
+      throw new Error("outbox unavailable");
+    }
+    mockFlush(await stage());
+  },
+}));
+const mockReport = jest.fn();
+jest.mock("../../lib/observability/report", () => ({
+  reportSentryError: (...args: unknown[]) => mockReport(...args),
 }));
 
 const mockSeat = {
@@ -113,4 +126,13 @@ it("sends nothing when the seat is not confirmed", async () => {
   await notify();
   expect(mockBooked).not.toHaveBeenCalled();
   expect(mockStageEmails).not.toHaveBeenCalled();
+});
+
+it("never fails the committed checkout: a staging fault is reported, not thrown", async () => {
+  mockStageFails.next = true;
+  await expect(notify()).resolves.toBeUndefined();
+  expect(mockReport).toHaveBeenCalledWith(
+    expect.objectContaining({ message: "outbox unavailable" }),
+    expect.objectContaining({ op: "checkout.free-seat-booked" }),
+  );
 });

@@ -74,6 +74,15 @@ it("a free webinar seat is confirmed on the no-gateway rail with no invoice", as
   expect(
     await prisma.consumerInvoice.count({ where: { paymentId: payment.id } }),
   ).toBe(0);
+  // No capture follows a free seat, so checkout stages its booked bell itself.
+  const booked = await prisma.notificationOutbox.findMany({
+    where: {
+      workflowId: "appointment-booked",
+      recipients: { has: buyer.userId },
+    },
+    select: { id: true },
+  });
+  expect(booked).toHaveLength(1);
 
   // The joined earnings read returns what the per-relation read does, Decimal included.
   await prisma.payment.update({

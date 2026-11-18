@@ -1,6 +1,7 @@
 // The booked notice for a free event seat, which no capture confirms.
 
 import prisma from "@/lib/prisma";
+import { reportSentryError } from "@/lib/observability/report";
 import { stageNowAttemptAfter } from "@/lib/novu/stage-then-attempt";
 import {
   loadAppointmentForEmails,
@@ -12,8 +13,27 @@ import {
 export const freeSeatRegisteredKey = (participantId: string, joinedAt: Date) =>
   `seat-registered:${participantId}:${joinedAt.getTime()}`;
 
-/** Stages the "you're registered" bell and emails after a zero-amount event seat commits. */
+/**
+ * Stages the "you're registered" bell and emails after a zero-amount event seat
+ * commits. The seat is already sold, so a failure here is reported, never thrown.
+ */
 export async function notifyFreeSeatRegistered(args: {
+  appointmentId: string;
+  userId: string;
+  appointmentType: "WEBINAR" | "CLASS";
+}): Promise<void> {
+  try {
+    await stageFreeSeatNotice(args);
+  } catch (error) {
+    reportSentryError(error, {
+      subsystem: "payments",
+      op: "checkout.free-seat-booked",
+      expected: false,
+    });
+  }
+}
+
+async function stageFreeSeatNotice(args: {
   appointmentId: string;
   userId: string;
   appointmentType: "WEBINAR" | "CLASS";
