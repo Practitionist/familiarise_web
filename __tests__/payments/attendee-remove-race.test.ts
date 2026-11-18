@@ -28,6 +28,7 @@ const mockRequireApiAuth = jest.fn();
 const mockWebinarFindFirst = jest.fn();
 const mockClassFindFirst = jest.fn();
 const mockParticipantUpdateMany = jest.fn();
+const mockSeatHistory = jest.fn();
 const mockTransaction = jest.fn();
 
 // The notify-me hooks are pinned by their own suites; here they stage nothing.
@@ -100,11 +101,25 @@ function runInteractiveTransaction(fn: unknown) {
       // #1780 — the seat is read on the tx first (its id keys the refund).
       findFirst: async () => ({
         id: "part-1",
+        status: "CONFIRMED",
         appointmentId: "apt-1",
         createdAt: new Date(0),
         refundWindowHours: null,
       }),
-      updateMany: (...a: unknown[]) => mockParticipantUpdateMany(...a),
+      // The release's CAS returns the seat it moved, for its SEAT history row.
+      updateManyAndReturn: async (args: { select?: unknown }) => {
+        const { select: _select, ...cas } = args;
+        const res = (await mockParticipantUpdateMany(cas)) as { count: number };
+        return Array.from({ length: res.count }, () => ({
+          id: "part-1",
+          appointmentId: "apt-1",
+          userId: ATTENDEE_ID,
+          role: "CONSULTEE",
+        }));
+      },
+    },
+    bookingStatusHistory: {
+      createMany: (...a: unknown[]) => mockSeatHistory(...a),
     },
     // An unpaid seat owes no refund, so no marker is stamped.
     payment: { findFirst: async () => null },
@@ -134,7 +149,6 @@ const CASES = [
     label: "webinar",
     handler: deleteWebinarParticipant as unknown as ParticipantDelete,
     eventId: "webinar-1",
-    participantScope: { webinarId: "webinar-1" },
     params: (): Promise<Record<string, string>> =>
       Promise.resolve({ webinarId: "webinar-1" }),
     findFirst: mockWebinarFindFirst,
@@ -143,7 +157,6 @@ const CASES = [
     label: "class",
     handler: deleteClassParticipant as unknown as ParticipantDelete,
     eventId: "class-1",
-    participantScope: { classId: "class-1" },
     params: (): Promise<Record<string, string>> =>
       Promise.resolve({ classId: "class-1" }),
     findFirst: mockClassFindFirst,
@@ -173,7 +186,7 @@ beforeEach(() => {
 
 describe.each(CASES)(
   "$label participant removal is single-writer (defect 8)",
-  ({ handler, eventId, participantScope, params, findFirst }) => {
+  ({ handler, eventId, params, findFirst }) => {
     function request() {
       return new Request(
         `http://localhost/api/participants?userId=${ATTENDEE_ID}`,
@@ -228,19 +241,24 @@ describe.each(CASES)(
       // #1554 — one CAS statement: only a live seat flips, so the seat and
       // its history commit together or not at all.
       expect(mockParticipantUpdateMany).toHaveBeenCalledTimes(1);
-      // #1846 SM-B9 — the map's live from-set is ANDed with the scope.
+      // The CAS pins the status the transaction read, and the removal marks the seat.
       expect(mockParticipantUpdateMany).toHaveBeenCalledWith({
         where: {
           AND: [
-            {
-              appointment: participantScope,
-              userId: ATTENDEE_ID,
-              role: "CONSULTEE",
-            },
-            { status: { in: ["HELD", "CONFIRMED", "ATTENDED"] } },
+            { id: "part-1", role: "CONSULTEE" },
+            { status: { in: ["CONFIRMED"] } },
           ],
         },
-        data: { status: "CANCELLED" },
+        data: { status: "CANCELLED", removedByUserId: ORGANISER.id },
+      });
+      expect(mockSeatHistory).toHaveBeenCalledWith({
+        data: [
+          expect.objectContaining({
+            entityId: "part-1",
+            reason: "organiser_removal",
+            actorUserId: ORGANISER.id,
+          }),
+        ],
       });
       expect(mockRefundRemovedAttendeeSeat).toHaveBeenCalledTimes(1);
       expect(mockRefundRemovedAttendeeSeat).toHaveBeenCalledWith(

@@ -300,16 +300,17 @@ async function moveSeatsWithHistory(
   note: SeatHistoryNote,
 ): Promise<number> {
   const pinnedFrom = fromIn.length === 1 ? fromIn[0] : null;
-  const before = pinnedFrom
-    ? null
-    : new Map(
-        (
-          await tx.appointmentParticipant.findMany({
-            where: { AND: [casWhere, EVENT_LEARNER_SEAT] },
-            select: { id: true, status: true },
-          })
-        ).map((row) => [row.id, row.status as string]),
-      );
+  const before =
+    fromIn.length === 1
+      ? null
+      : new Map(
+          (
+            await tx.appointmentParticipant.findMany({
+              where: { AND: [casWhere, EVENT_LEARNER_SEAT] },
+              select: { id: true, status: true },
+            })
+          ).map((row) => [row.id, row.status as string]),
+        );
   if (before?.size === 0) {
     const res = await tx.appointmentParticipant.updateMany({
       where: casWhere,
