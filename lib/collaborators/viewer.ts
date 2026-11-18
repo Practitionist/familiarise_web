@@ -1,4 +1,4 @@
-import type { Prisma } from "@prisma/client";
+import type { MemberRole, Prisma } from "@prisma/client";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { isActiveOrgExpert } from "@/lib/enterprise/membership-guards";
 import type { PrismaLike } from "@/lib/prisma";
@@ -46,6 +46,20 @@ function findPlan(db: PrismaLike, ref: PlanRef) {
       });
 }
 
+/** The caller's role in an organisation while their membership is active; null otherwise and for a personal plan. */
+export async function activeOrgRole(
+  db: PrismaLike,
+  organizationId: string | null,
+  userId: string,
+): Promise<MemberRole | null> {
+  if (!organizationId) return null;
+  const membership = await db.membership.findUnique({
+    where: { userId_organizationId: { userId, organizationId } },
+    select: { status: true, role: true },
+  });
+  return membership?.status === "ACTIVE" ? membership.role : null;
+}
+
 /** The one place that decides what a signed-in user may see and do on a plan's team. */
 export async function resolveCollaborationViewer(
   db: PrismaLike,
@@ -85,19 +99,8 @@ export async function resolveCollaborationViewer(
       };
     }
     if (row.organizationId) {
-      const membership = await db.membership.findUnique({
-        where: {
-          userId_organizationId: {
-            userId,
-            organizationId: row.organizationId,
-          },
-        },
-        select: { status: true, role: true },
-      });
-      if (
-        membership?.status === "ACTIVE" &&
-        hasOrgPermission(membership.role, "catalog.manage")
-      ) {
+      const orgRole = await activeOrgRole(db, row.organizationId, userId);
+      if (orgRole && hasOrgPermission(orgRole, "catalog.manage")) {
         return {
           plan,
           viewer: { kind: "manager", via: "org", canWrite },
@@ -137,9 +140,16 @@ export async function resolveCollaborationViewer(
 export const seesAttendees = (viewer: CollaborationViewer): boolean =>
   viewer.kind === "manager" || viewer.kind === "presenter";
 
-/** What an attendee paid: a manager only. */
-export const seesAttendeePayments = (viewer: CollaborationViewer): boolean =>
-  viewer.kind === "manager";
+/**
+ * What an attendee paid: a manager, and a member of the plan's organisation
+ * whose role reads money. No other viewer does, whichever gate admitted them.
+ */
+export const seesAttendeePayments = (
+  viewer: CollaborationViewer,
+  orgRole: MemberRole | null = null,
+): boolean =>
+  viewer.kind === "manager" ||
+  (orgRole !== null && hasOrgPermission(orgRole, "audit.read.money"));
 
 /** The plan behind a webinar or class booking; null for any other booking. */
 export async function appointmentPlanRef(

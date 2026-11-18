@@ -5,7 +5,11 @@ import type { Session } from "@/lib/auth";
 import prisma, { type PrismaLike } from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import type { PlanRef } from "@/lib/collaborators/team";
-import { resolveCollaborationViewer } from "@/lib/collaborators/viewer";
+import {
+  activeOrgRole,
+  resolveCollaborationViewer,
+  seesAttendeePayments,
+} from "@/lib/collaborators/viewer";
 import { readSeatPayments } from "@/lib/data/seat-payments";
 import {
   requireApiAuth,
@@ -221,6 +225,22 @@ async function queryGroupEventForRead(
   };
 }
 
+async function readsAttendeePayments(
+  planRef: PlanRef,
+  userId: string,
+): Promise<boolean> {
+  const { viewer, plan } = await resolveCollaborationViewer(
+    prisma,
+    planRef,
+    userId,
+  );
+  if (seesAttendeePayments(viewer)) return true;
+  return seesAttendeePayments(
+    viewer,
+    await activeOrgRole(prisma, plan?.organizationId ?? null, userId),
+  );
+}
+
 export async function handleGroupParticipantsGet(
   _request: Request,
   kind: GroupEventKind,
@@ -243,17 +263,11 @@ export async function handleGroupParticipantsGet(
 
     const participants = deduplicateParticipants(loaded.appointment);
     const appointmentId = loaded.appointment?.id;
-    // A presenter reads the roster, never what an attendee paid. A viewer the
-    // team rule does not know is an organisation member the gate above admitted.
-    const { viewer } = isPrivileged(session.user.role)
-      ? { viewer: null }
-      : await resolveCollaborationViewer(
-          prisma,
-          loaded.planRef,
-          session.user.id,
-        );
+    // Everyone the gate above admitted reads the roster; what an attendee
+    // paid goes to platform staff and to whoever `seesAttendeePayments` names.
     const sendsPayments =
-      !viewer || viewer.kind === "manager" || viewer.kind === "none";
+      isPrivileged(session.user.role) ||
+      (await readsAttendeePayments(loaded.planRef, session.user.id));
     const [seatPayments, waitingCount] = await Promise.all([
       sendsPayments
         ? readSeatPayments(

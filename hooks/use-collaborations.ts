@@ -9,11 +9,16 @@
 import { CollaboratorRole } from "@prisma/client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
-import { formatDay } from "@/components/collaborators/format";
+import {
+  formatDay,
+  formatSessionDay,
+  formatSessionHours,
+} from "@/components/collaborators/format";
 import type {
   CollaborationsData,
   TeamMember,
 } from "@/components/collaborators/types";
+import { useZoneClock } from "@/lib/time/use-zone-clock";
 import { seenTermsSchema, type SeenTerms } from "@/schemas/collaborators";
 
 export type PlanRef = { planType: "webinar" | "class"; planId: string };
@@ -34,6 +39,11 @@ const refusalBodySchema = z.object({
   retryAt: z.string().datetime().optional().catch(undefined),
   availablePercent: z.number().optional().catch(undefined),
   retryAfterSeconds: z.number().optional().catch(undefined),
+  // The plan's session an accept clashed on.
+  clash: z
+    .object({ startsAt: z.string().datetime(), endsAt: z.string().datetime() })
+    .optional()
+    .catch(undefined),
 });
 
 type RefusalDetail = Omit<z.infer<typeof refusalBodySchema>, "error" | "code">;
@@ -45,9 +55,22 @@ export class CollaborationRefusal extends Error {
     message: string,
     readonly status: number,
     readonly detail: RefusalDetail = {},
+    /** The zone the screen that made the call prints times in; null when no screen did. */
+    readonly zone: string | null = null,
   ) {
     super(message);
     this.name = "CollaborationRefusal";
+  }
+
+  /** The same refusal, for a screen that prints times in `zone`. */
+  inZone(zone: string): CollaborationRefusal {
+    return new CollaborationRefusal(
+      this.code,
+      this.message,
+      this.status,
+      this.detail,
+      zone,
+    );
   }
 }
 
@@ -191,8 +214,18 @@ function useCollaborationWrite<TArgs>(
   mutationFn: (args: TArgs) => Promise<unknown>,
 ) {
   const reload = useReloadCollaborations();
+  const { zone } = useZoneClock();
   return useMutation<unknown, CollaborationRefusal, TArgs>({
-    mutationFn,
+    // A refusal carries the screen's zone, so its sentence can name a time.
+    mutationFn: async (args) => {
+      try {
+        return await mutationFn(args);
+      } catch (error) {
+        throw error instanceof CollaborationRefusal
+          ? error.inZone(zone)
+          : error;
+      }
+    },
     // Not awaited: the answer reaches the screen first, the fresh lists follow.
     onSettled: reload,
   });
@@ -262,16 +295,25 @@ const RELOAD_CODES = new Set([
 type RefusalAdvice = {
   /**
    * The refusal and how to recover, said once: the screen's own sentence when
-   * it holds the exact date or wait, the server's sentence otherwise.
+   * it holds the exact date, wait or session, the server's sentence otherwise.
    */
   sentence: string;
   /** Offer a reload: the lists on screen are out of date. */
   reload: boolean;
 };
 
-/** The whole sentence for a refusal whose recovery the screen can state exactly. */
+/** The whole sentence for a refusal whose facts the screen can state exactly. */
 function exactRecovery(refusal: CollaborationRefusal): string | null {
-  const { retryAt, retryAfterSeconds } = refusal.detail;
+  const { retryAt, retryAfterSeconds, clash } = refusal.detail;
+  if (refusal.code === "CALENDAR_CLASH" && clash && refusal.zone) {
+    const day = formatSessionDay(clash.startsAt, refusal.zone);
+    const hours = formatSessionHours(
+      clash.startsAt,
+      clash.endsAt,
+      refusal.zone,
+    );
+    return `This plan's session on ${day}, ${hours} overlaps another session on your calendar.`;
+  }
   if (refusal.code === "COOLDOWN" && retryAt) {
     return `This expert recently declined or left this plan, and can be invited again from ${formatDay(retryAt)}.`;
   }

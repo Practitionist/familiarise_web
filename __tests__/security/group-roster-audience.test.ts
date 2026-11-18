@@ -6,7 +6,9 @@
  * GET /api/participants/webinar/[webinarId]: the plan's own expert reads the
  * roster with what each seat paid, a presenter reads the roster alone, and
  * crew get the 404 of a missing event. On an organisation's plan the named
- * expert is its own expert only while an active expert member.
+ * expert is its own expert only while an active expert member, and a member
+ * the organisation admits reads what each seat paid only in a role that
+ * manages the plan or reads money.
  */
 
 import type { CollaboratorTier } from "@prisma/client";
@@ -68,8 +70,11 @@ const TEAM: Record<
 
 type ExpertStanding = "ACTIVE" | "SUSPENDED";
 
-/** The stored plan the route's own plan gate is answered against. */
-const storedPlan = (organisationExpert?: ExpertStanding) => ({
+/** The stored plan the route's own plan gate is answered against; `roles` adds active members by user id. */
+const storedPlan = (
+  organisationExpert?: ExpertStanding,
+  roles: Record<string, string> = {},
+) => ({
   consultantProfileId: "host-profile",
   organizationId: organisationExpert ? "org-1" : null,
   organization: organisationExpert
@@ -82,6 +87,12 @@ const storedPlan = (organisationExpert?: ExpertStanding) => ({
             status: organisationExpert,
             role: "EXPERT",
           },
+          ...Object.entries(roles).map(([userId, role]) => ({
+            userId,
+            consultantProfileId: PROFILES[userId] ?? null,
+            status: "ACTIVE",
+            role,
+          })),
         ],
       }
     : null,
@@ -92,8 +103,11 @@ const storedPlan = (organisationExpert?: ExpertStanding) => ({
   })),
 });
 
-function seedWebinar(organisationExpert?: ExpertStanding) {
-  const plan = storedPlan(organisationExpert);
+function seedWebinar(
+  organisationExpert?: ExpertStanding,
+  roles?: Record<string, string>,
+) {
+  const plan = storedPlan(organisationExpert, roles);
   mockRosterDb.webinar.findFirst.mockImplementation(
     async (args: { where: { webinarPlan: Where } }) =>
       matchesWhere(plan, args.where.webinarPlan)
@@ -142,6 +156,12 @@ function seedWebinar(organisationExpert?: ExpertStanding) {
       (plan.organization?.memberships ?? []).filter((m) =>
         matchesWhere({ ...m, organizationId: plan.organizationId }, args.where),
       ).length,
+  );
+  mockRosterDb.membership.findUnique.mockImplementation(
+    async (args: { where: { userId_organizationId: { userId: string } } }) =>
+      plan.organization?.memberships.find(
+        (m) => m.userId === args.where.userId_organizationId.userId,
+      ) ?? null,
   );
   mockRosterDb.consultantProfile.findFirst.mockImplementation(
     async (args: { where: { userId: string } }) =>
@@ -208,4 +228,25 @@ describe("group roster audience", () => {
     // A presenter's place on the plan does not depend on the named expert's standing.
     expect((await readAs("cohost-user")).status).toBe(200);
   });
+
+  it.each([
+    ["a support member", "support-user", "SUPPORT", false],
+    ["an owner", "owner-user", "OWNER", true],
+    [
+      "a presenter who is the billing admin",
+      "cohost-user",
+      "BILLING_ADMIN",
+      true,
+    ],
+  ])(
+    "%s of the plan's organisation reads the roster, and what each seat paid only in a role that manages the plan or reads money",
+    async (_name, userId, role, paid) => {
+      seedWebinar("ACTIVE", { [userId]: role });
+      const { status, body } = await readAs(userId);
+      expect(status).toBe(200);
+      expect(body).toHaveProperty("participants.0.id", "buyer-a");
+      expect(body !== null && "seatPayments" in body).toBe(paid);
+      expect(mockRosterDb.payment.findMany).toHaveBeenCalledTimes(paid ? 1 : 0);
+    },
+  );
 });
