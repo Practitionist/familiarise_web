@@ -151,6 +151,27 @@ describe("scopeAppointmentDetail", () => {
     expect(crew.payment).toEqual([]);
   });
 
+  it("says which of the roster and the payments each viewer is shown", () => {
+    const shown = (viewer: Parameters<typeof scopeAppointmentDetail>[1]) => {
+      const { rosterVisible, paymentsVisible } = scopeAppointmentDetail(
+        detail,
+        viewer,
+      );
+      return { rosterVisible, paymentsVisible };
+    };
+    const both = { rosterVisible: true, paymentsVisible: true };
+    expect(shown(MANAGING_EXPERT)).toEqual(both);
+    expect(shown(STAFF)).toEqual(both);
+    expect(shown(attendee(PRESENTER))).toEqual({
+      rosterVisible: true,
+      paymentsVisible: false,
+    });
+    expect(shown(attendee(CREW))).toEqual({
+      rosterVisible: false,
+      paymentsVisible: false,
+    });
+  });
+
   it("gives the named expert who no longer manages the plan no attendee's seat or payment", () => {
     const lapsed = scopeAppointmentDetail(detail, attendee(HOST)).appointment;
     expect(lapsed.participants).toEqual([]);

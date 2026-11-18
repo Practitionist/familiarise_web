@@ -201,6 +201,7 @@ const MeetingPage = () => {
               setIsSetupComplete={setIsSetupComplete}
               meetingId={call.id}
               role={access?.role ?? null}
+              coPresenter={access?.coPresenter === true}
               onCallEnded={retryJoin}
             />
           ) : (

@@ -1,6 +1,7 @@
 /**
- * A public plan page names every accepted co-host, and links the name to the
- * expert page only when that page exists for the public: a verified profile.
+ * A public plan page lists every accepted collaborator under "Team", each
+ * with their role, and links the name to the expert page only when that page
+ * exists for the public: a verified profile.
  */
 import { render, screen } from "@testing-library/react";
 
@@ -9,9 +10,14 @@ import {
   hasPublicExpertPage,
 } from "@/app/explore/programs/plans/components/CoHostList";
 
-const coHost = (id: string, name: string, verificationStatus: string) => ({
+const coHost = (
+  id: string,
+  name: string,
+  verificationStatus: string,
+  role = "CO_HOST",
+) => ({
   id: `collab-${id}`,
-  role: "CO_HOST",
+  role,
   consultantProfile: {
     id,
     verificationStatus,
@@ -23,8 +29,6 @@ describe("co-hosts on a public plan page", () => {
   it("links a verified co-host and shows an unverified one by name alone", () => {
     render(
       <CoHostList
-        title="Co-Hosts"
-        unnamed="Co-host"
         collaborators={[
           coHost("cp-public", "Priya Sharma", "VERIFIED"),
           coHost("cp-hidden", "Rohan Mehta", "PENDING"),
@@ -39,10 +43,25 @@ describe("co-hosts on a public plan page", () => {
     expect(screen.getAllByRole("link")).toHaveLength(1);
   });
 
-  it("renders nothing for a plan with no co-host", () => {
-    const { container } = render(
-      <CoHostList title="Co-Hosts" unnamed="Co-host" collaborators={[]} />,
+  it("titles the list for everyone it holds, a support role included", () => {
+    render(
+      <CoHostList
+        collaborators={[
+          coHost("cp-host", "Priya Sharma", "VERIFIED"),
+          coHost("cp-support", "Ethan Lee", "VERIFIED", "TECHNICAL_SUPPORT"),
+        ]}
+      />,
     );
+    expect(screen.getByText("Team")).toBeTruthy();
+    // "Co-host" is one person's role here, never the name of the list.
+    expect(screen.getAllByText(/co-host/i).map((el) => el.textContent)).toEqual(
+      ["Co-host"],
+    );
+    expect(screen.getByText("Technical support")).toBeTruthy();
+  });
+
+  it("renders nothing for a plan with no co-host", () => {
+    const { container } = render(<CoHostList collaborators={[]} />);
     expect(container.innerHTML).toBe("");
   });
 });

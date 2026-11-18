@@ -92,8 +92,7 @@ function EditTermsDialog({
     <ResponsiveModal open={open} onOpenChange={onOpenChange}>
       <ResponsiveModalTrigger asChild>
         <Button type="button" variant="outline" size="sm" className="min-h-9">
-          Change terms
-          <span className="sr-only"> for {nameOf(member)}</span>
+          Change terms <span className="sr-only">for {nameOf(member)}</span>
         </Button>
       </ResponsiveModalTrigger>
       <ResponsiveModalContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg">

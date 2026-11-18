@@ -59,6 +59,8 @@ interface MeetingSetupProps {
   /** Stream call id, so the lobby can fetch this session's recording notice. */
   meetingId: string;
   role?: "host" | "participant" | null;
+  /** A host-side presenter who is not the plan's host: the session is not theirs to announce. */
+  coPresenter?: boolean;
   /** Re-runs the join flow; the server's end-reason policy decides what an ended room offers. */
   onCallEnded: () => void;
 }
@@ -176,9 +178,12 @@ const MeetingSetup = ({
   setIsSetupComplete,
   meetingId,
   role,
+  coPresenter = false,
   onCallEnded,
 }: MeetingSetupProps) => {
   const call = useCall();
+  // Only the plan's host announces the session; a co-presenter joins without it.
+  const announcesLive = role === "host" && !coPresenter;
   const { useMicrophoneState, useCameraState, useCallEndedAt } =
     useCallStateHooks();
   const callEndedAt = useCallEndedAt();
@@ -283,13 +288,13 @@ const MeetingSetup = ({
 
           case CallingState.IDLE:
             await call.join();
-            if (role === "host") pingHostLive(meetingId);
+            if (announcesLive) pingHostLive(meetingId);
             setIsSetupComplete(true);
             return;
 
           default:
             await call.join();
-            if (role === "host") pingHostLive(meetingId);
+            if (announcesLive) pingHostLive(meetingId);
             setIsSetupComplete(true);
             return;
         }

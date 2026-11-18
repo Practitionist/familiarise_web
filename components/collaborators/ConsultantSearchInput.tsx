@@ -164,8 +164,7 @@ export function ConsultantSearchInput({
               onSelect(null);
             }}
           >
-            Change
-            <span className="sr-only"> expert</span>
+            Change <span className="sr-only">expert</span>
           </Button>
         </div>
       </div>

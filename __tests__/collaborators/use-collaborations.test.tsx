@@ -305,25 +305,34 @@ describe("describeRefusal", () => {
   const refusal = (code: string, detail = {}) =>
     new CollaborationRefusal(code, "The server's sentence.", 409, detail);
 
-  it("adds the recovery each code allows to the server's sentence", () => {
+  it("says a refusal and its recovery once: its own sentence when it holds the date or the wait, the server's otherwise", () => {
     expect(
       describeRefusal(
         refusal("COOLDOWN", { retryAt: "2026-11-23T10:00:00.000Z" }),
       ).sentence,
     ).toBe(
-      "The server's sentence. You can invite them again from 23 November 2026.",
+      "This expert recently declined or left this plan, and can be invited again from 23 November 2026.",
     );
+    expect(
+      describeRefusal(refusal("RATE_LIMITED", { retryAfterSeconds: 125 }))
+        .sentence,
+    ).toBe("You have made too many requests; try again in about 3 minutes.");
+    expect(
+      describeRefusal(refusal("RATE_LIMITED", { retryAfterSeconds: 20 }))
+        .sentence,
+    ).toBe("You have made too many requests; try again in about 1 minute.");
+    for (const code of ["COOLDOWN", "RATE_LIMITED", "HOLDS_A_SEAT"]) {
+      expect(describeRefusal(refusal(code)).sentence).toBe(
+        "The server's sentence.",
+      );
+    }
+  });
+
+  it("adds what is left to give to the server's sentence about shares", () => {
     expect(
       describeRefusal(refusal("SHARES_EXCEEDED", { availablePercent: 15 }))
         .sentence,
     ).toBe("The server's sentence. 15% is still free on this plan.");
-    expect(
-      describeRefusal(refusal("RATE_LIMITED", { retryAfterSeconds: 125 }))
-        .sentence,
-    ).toBe("The server's sentence. Try again in about 3 minutes.");
-    expect(describeRefusal(refusal("HOLDS_A_SEAT")).sentence).toBe(
-      "The server's sentence.",
-    );
   });
 
   it("offers a reload only when the screen is out of date", () => {

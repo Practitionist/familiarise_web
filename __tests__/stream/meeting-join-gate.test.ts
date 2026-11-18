@@ -233,6 +233,27 @@ describe("POST /api/meetings/[meetingId]/join", () => {
     });
   });
 
+  it("tells a co-presenter's room that it joined as one, and says nothing of it to the plan's host", async () => {
+    const granted = {
+      hasAccess: true,
+      role: "host",
+      reason: "granted",
+      streamCallId: "slot-abc",
+      appointment: { appointmentType: "WEBINAR" },
+    };
+    mockResolveMeetingAccess.mockResolvedValue({
+      ...granted,
+      coPresenter: true,
+    });
+    const coPresenter = await (await POST(req, { params })).json();
+    expect(coPresenter).toMatchObject({ role: "host", coPresenter: true });
+
+    mockResolveMeetingAccess.mockResolvedValue(granted);
+    const host = await (await POST(req, { params })).json();
+    expect(host.role).toBe("host");
+    expect(host).not.toHaveProperty("coPresenter");
+  });
+
   it("refuses a Meeting row whose Stream call is missing with a typed 409, without spending an error event", async () => {
     mockUpdateCallMembers.mockRejectedValue(
       Object.assign(new Error("Can't find call"), { status: 404, code: 16 }),
