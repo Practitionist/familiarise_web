@@ -289,7 +289,7 @@ scripts/dev/db-tier-local.sh /tmp/collab-db.log __tests__/db/collaborators
 | The digest line and the back-office read                                                                                           | `__tests__/observability/ops-digest.test.ts`, `__tests__/backoffice/collaborations-read.test.ts`                                                                                                                      |
 | The screens and the one hook module                                                                                                | `__tests__/collaborators/collaboration-screens.test.tsx`, `__tests__/collaborators/use-collaborations.test.tsx`                                                                                                       |
 
-What the database tier covers and the mocked tier cannot: the triggers and partial unique indexes themselves, the period stamped by the database clock, and two real sessions racing on one plan. The two "simultaneous" cases in `state-machine.db.test.ts` need two connections, so they are meaningful only against a real Postgres server. How the tier is set up and guarded: `.claude/skills/booking/references/verification.md`.
+What the database tier covers and the mocked tier cannot: the triggers and partial unique indexes themselves, the period stamped by the database clock, and two real sessions racing on one plan. The "simultaneous" cases in `state-machine.db.test.ts` (two invitations racing, and a removal queued behind an accept ending the row no earlier than the accept) need two connections, so they are meaningful only against a real Postgres server. How the tier is set up and guarded: `.claude/skills/booking/references/verification.md`.
 
 ## Where in code
 
