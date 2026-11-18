@@ -60,7 +60,17 @@ function applicant(id: string, name: string): VerificationItem {
       education: [],
       certifications: [],
     },
-    documents: [],
+    // A submitted request always carries a document; submission refuses none.
+    documents: [
+      {
+        id: `doc-${id}`,
+        fileName: "degree.pdf",
+        originalName: "degree.pdf",
+        fileSize: 1000,
+        mimeType: "application/pdf",
+        description: "Degree",
+      },
+    ],
     reviewedAt: null,
     reviewedById: null,
     reviewNotes: null,
