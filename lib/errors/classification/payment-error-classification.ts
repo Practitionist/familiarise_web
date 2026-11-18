@@ -144,6 +144,21 @@ export const ErrorTypes = {
 
 export type ErrorType = (typeof ErrorTypes)[keyof typeof ErrorTypes];
 
+/**
+ * Refusals that mean the chosen 1:1 time can never be bought as picked, so the
+ * buyer is sent back to the plan's grid. Lock contention, busy retries and
+ * payment failures are not here: the same time may still succeed.
+ */
+const TERMINAL_SLOT_REFUSAL_CODES: ReadonlySet<string> = new Set([
+  ErrorTypes.SLOT_TAKEN,
+  ErrorTypes.SLOT_TOO_SOON,
+  ErrorTypes.SLOT_NOT_ON_GRID,
+]);
+
+export function isTerminalSlotRefusal(code: string | undefined): boolean {
+  return code !== undefined && TERMINAL_SLOT_REFUSAL_CODES.has(code);
+}
+
 // ============================================================================
 // Business-logic error patterns
 // ============================================================================
@@ -280,6 +295,10 @@ interface BusinessErrorEntry {
   /** Replaces the thrown message when that message names ids or internals. */
   userMessage?: string;
 }
+
+/** A webinar or class seat runs at its event's time, so checkout never takes one. */
+export const EVENT_SEAT_TIMES_SENT_MESSAGE =
+  "This seat runs at the event's own time. Refresh the page and try again.";
 
 const BUSINESS_ERROR_ENTRIES = [
   {
@@ -631,6 +650,13 @@ const BUSINESS_ERROR_ENTRIES = [
     code: "WINDOW_DURATION_MISMATCH",
     errorType: ErrorTypes.BOOKING_RULE,
     httpStatus: 400,
+  },
+  // A seat checkout that sent its own start or end time; the event sets the time.
+  {
+    code: "EVENT_SEAT_TIMES_SENT",
+    errorType: ErrorTypes.BOOKING_RULE,
+    httpStatus: 400,
+    userMessage: EVENT_SEAT_TIMES_SENT_MESSAGE,
   },
   // A seat checkout whose event is not on the plan it names.
   {

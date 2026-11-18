@@ -62,7 +62,10 @@ async function rowFor(...args: Parameters<typeof movingConsultation>) {
 const actionsOf = (row: Awaited<ReturnType<typeof rowFor>>) =>
   rowActions(
     row,
-    deriveBookingPresentation(row.presentation, "CONSULTANT", { now: NOW }),
+    deriveBookingPresentation(row.presentation, "CONSULTANT", {
+      viewerZone: "UTC",
+      now: NOW,
+    }),
   );
 
 beforeEach(() => jest.clearAllMocks());
@@ -160,8 +163,10 @@ describe("a move past its deadline, before the sweep ends it", () => {
     expect(kinds).not.toContain("keep-original");
     expect(row.proposal).toBeNull();
     expect(
-      deriveBookingPresentation(row.presentation, "CONSULTANT", { now: NOW })
-        .bookingState.state,
+      deriveBookingPresentation(row.presentation, "CONSULTANT", {
+        viewerZone: "UTC",
+        now: NOW,
+      }).bookingState.state,
     ).not.toBe("BEING_MOVED");
   });
 });

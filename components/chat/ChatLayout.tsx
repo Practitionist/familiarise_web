@@ -19,6 +19,9 @@ import { ChatPaneProvider } from "./ChatPaneContext";
  */
 export const ChatLayout = () => {
   const [conversationOpen, setConversationOpen] = useState(false);
+  const [unavailableLink, setUnavailableLink] = useState<
+    "event" | "conversation" | null
+  >(null);
   const contextAppointmentId =
     useSearchParams()?.get("contextAppointmentId")?.trim() || null;
 
@@ -26,8 +29,14 @@ export const ChatLayout = () => {
   const backToList = useCallback(() => setConversationOpen(false), []);
 
   const pane = useMemo(
-    () => ({ conversationOpen, openConversation, backToList }),
-    [conversationOpen, openConversation, backToList],
+    () => ({
+      conversationOpen,
+      openConversation,
+      backToList,
+      unavailableLink,
+      markLinkUnavailable: setUnavailableLink,
+    }),
+    [conversationOpen, openConversation, backToList, unavailableLink],
   );
 
   return (

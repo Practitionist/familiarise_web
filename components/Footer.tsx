@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { useChromePathname } from "@/lib/navigation/use-chrome-pathname";
 import { MessageSquare } from "lucide-react";
 
 import { BrandWordmark } from "@/components/brand/BrandWordmark";
@@ -90,7 +90,7 @@ const EXPERTISE_LINKS: FooterLink[] = EXPLORE_FIELDS.map((name) => ({
 }));
 
 const Footer: React.FC = () => {
-  const pathname = usePathname();
+  const pathname = useChromePathname();
   const [email, setEmail] = useState("");
   const [newsletterStatus, setNewsletterStatus] = useState<
     "idle" | "loading" | "success" | "error"

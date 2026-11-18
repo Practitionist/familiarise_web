@@ -15,7 +15,10 @@ import type { PrismaPromise } from "@prisma/client";
 import { NextResponse, type NextRequest } from "next/server";
 
 import prisma from "@/lib/prisma";
-import { requireApiAuth } from "@/lib/auth-helpers";
+import {
+  BACKOFFICE_FORBIDDEN_MESSAGE,
+  requireApiAuth,
+} from "@/lib/auth-helpers";
 import { payoutListWhere } from "@/lib/api/operators/payouts";
 import {
   can,
@@ -46,7 +49,7 @@ export async function GET(req: NextRequest) {
     : null;
   if (!cap) {
     return NextResponse.json(
-      { error: "Forbidden — insufficient back-office permissions" },
+      { error: BACKOFFICE_FORBIDDEN_MESSAGE, code: "FORBIDDEN" },
       { status: 403 },
     );
   }

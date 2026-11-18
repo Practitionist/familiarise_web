@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { formatCurrencyAmount } from "@/utils/formatting";
@@ -108,6 +109,12 @@ export type MockFlow =
       }) => string;
     };
 
+export interface CheckoutErrorRecovery {
+  title: string;
+  label: string;
+  href: string;
+}
+
 /**
  * Everything that differs between the four plan checkouts. Each plan type
  * supplies one adapter hook; the shell owns discount, credits, payer, billing
@@ -118,6 +125,8 @@ export interface CheckoutPlanAdapter {
   isLoading: boolean;
   /** A load or staleness error shown in place of the page. */
   error: string | null;
+  /** Replaces the error view's "Go back" with one action, e.g. back to the plan's grid. */
+  errorRecovery?: CheckoutErrorRecovery | null;
   /** Set when the loaded plan is incomplete; shown in place of the page. */
   missingMessage: string | null;
   consultantProfileId: string | undefined;
@@ -169,7 +178,13 @@ export function CheckoutDetailRow({
   );
 }
 
-function LoadError({ message }: Readonly<{ message: string }>) {
+const LOAD_ERROR_BUTTON =
+  "mt-5 inline-flex min-h-11 items-center rounded-lg bg-background px-4 py-2 text-sm font-medium text-foreground hover:bg-muted transition-colors";
+
+function LoadError({
+  message,
+  recovery,
+}: Readonly<{ message: string; recovery: CheckoutErrorRecovery | null }>) {
   return (
     <div className="col-span-full flex items-center justify-center min-h-screen bg-muted">
       <div
@@ -191,14 +206,23 @@ function LoadError({ message }: Readonly<{ message: string }>) {
             />
           </svg>
         </div>
-        <p className="font-semibold text-lg mb-2">Unable to load checkout</p>
+        <p className="font-semibold text-lg mb-2">
+          {recovery?.title ?? "Unable to load checkout"}
+        </p>
         <p className="text-background/70 text-sm">{message}</p>
-        <button
-          onClick={() => window.history.back()}
-          className="mt-5 inline-flex items-center rounded-lg bg-background px-4 py-2 text-sm font-medium text-foreground hover:bg-muted transition-colors"
-        >
-          Go back
-        </button>
+        {recovery ? (
+          <Link href={recovery.href} className={LOAD_ERROR_BUTTON}>
+            {recovery.label}
+          </Link>
+        ) : (
+          <button
+            type="button"
+            onClick={() => window.history.back()}
+            className={LOAD_ERROR_BUTTON}
+          >
+            Go back
+          </button>
+        )}
       </div>
     </div>
   );
@@ -288,7 +312,7 @@ function PaymentGatewayCards({
                   <div className="font-semibold text-foreground">
                     Credit/Debit Card
                   </div>
-                  <div className="text-sm text-muted-foreground/70">
+                  <div className="text-sm text-muted-foreground">
                     {gateway.description}
                   </div>
                 </div>
@@ -662,7 +686,14 @@ export function PlanCheckoutShell({
   }, [isFree, validateBillingState, beforePay]);
 
   if (adapter.isLoading) return <CheckoutPlanSkeleton />;
-  if (adapter.error) return <LoadError message={adapter.error} />;
+  if (adapter.error) {
+    return (
+      <LoadError
+        message={adapter.error}
+        recovery={adapter.errorRecovery ?? null}
+      />
+    );
+  }
   if (adapter.missingMessage) {
     return (
       <div className="flex items-center justify-center h-screen">

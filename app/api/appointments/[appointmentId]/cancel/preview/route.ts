@@ -272,7 +272,7 @@ export async function GET(
 
     if (!appointment) {
       return NextResponse.json(
-        { error: "Appointment not found" },
+        { error: "Appointment not found", code: "NOT_FOUND" },
         { status: 404 },
       );
     }
@@ -296,7 +296,10 @@ export async function GET(
     const actor = await resolveCancelActor(appointment, session.user);
     if (!actor.authorized) {
       return NextResponse.json(
-        { error: "You are not authorized to cancel this appointment" },
+        {
+          error: "You are not authorized to cancel this appointment",
+          code: "FORBIDDEN",
+        },
         { status: 403 },
       );
     }

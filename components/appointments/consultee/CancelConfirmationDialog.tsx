@@ -1,8 +1,8 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import {
   AlertDialog,
-  AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
@@ -10,6 +10,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2, AlertTriangle } from "lucide-react";
 import { formatCurrencyAmount } from "@/utils/formatting";
@@ -28,6 +29,7 @@ import {
   cancelPreviewUrl,
   cancelRefusalFrom,
   CancelRefusedError,
+  refundNowSentence,
   type ShownCancelQuote,
   UNPAID_CANCEL_QUOTE,
 } from "@/lib/appointments/cancel-requote";
@@ -161,6 +163,20 @@ export function CancelConfirmationDialog({
       gcTime: 0,
       retry: false,
     });
+  // The first figure shown this opening, so a server re-quote is named in the dialog.
+  const [firstQuotedPaise, setFirstQuotedPaise] = useState<number | null>(null);
+  const quotedPaise =
+    preview && preview.paid !== false ? preview.estimatedRefundPaise : null;
+  useEffect(() => {
+    if (!isOpen) setFirstQuotedPaise(null);
+    else if (quotedPaise !== null)
+      setFirstQuotedPaise((first) => first ?? quotedPaise);
+  }, [isOpen, quotedPaise]);
+  const requoted =
+    preview && preview.paid !== false && firstQuotedPaise !== null
+      ? preview.estimatedRefundPaise !== firstQuotedPaise
+      : false;
+
   const seatRefused = !!seatPreview?.seated && seatPreview.refused;
   const cancelRefusal =
     previewError instanceof CancelRefusedError ? previewError.message : null;
@@ -413,6 +429,21 @@ export function CancelConfirmationDialog({
                   <p className="text-red-600 font-medium">
                     This action cannot be undone.
                   </p>
+                  {requoted && preview && preview.paid !== false && (
+                    <p
+                      className="text-sm font-medium text-amber-700"
+                      role="status"
+                    >
+                      The refund changed while this was open.{" "}
+                      {refundNowSentence(
+                        {
+                          refundPaise: preview.estimatedRefundPaise,
+                          creditRestoresInFull: !!preview.creditRestoresInFull,
+                        },
+                        preview.currency,
+                      )}
+                    </p>
+                  )}
                   {previewEnabled ||
                   appointmentType === "Consultation" ||
                   appointmentType === "Subscription" ||
@@ -433,7 +464,9 @@ export function CancelConfirmationDialog({
           <AlertDialogCancel onClick={onCancel} disabled={isLoading}>
             {isLeave ? "Stay enrolled" : "Keep booking"}
           </AlertDialogCancel>
-          <AlertDialogAction
+          {/* A plain button: the dialog stays open until the caller's answer, so a re-quote shows here. */}
+          <Button
+            type="button"
             onClick={() => onConfirm(shownQuote())}
             disabled={
               isLoading ||
@@ -456,7 +489,7 @@ export function CancelConfirmationDialog({
             ) : (
               `Cancel ${wholeEvent ? "event" : appointmentType === "Trial" ? "trial" : "booking"}`
             )}
-          </AlertDialogAction>
+          </Button>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

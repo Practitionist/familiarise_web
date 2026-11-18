@@ -1,3 +1,4 @@
+import { getViewerZone } from "@/lib/time/viewer-zone-server";
 import { notFound } from "next/navigation";
 import prisma from "@/lib/prisma";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
@@ -30,6 +31,7 @@ export default async function PaymentDetailPage({
     paymentId,
     consulteeId,
     userId: profile.userId,
+    viewerZone: (await getViewerZone()).zone,
   });
   if (!detail) notFound();
 

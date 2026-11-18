@@ -122,9 +122,14 @@ export function seatRebuyRefusal(
   );
   // A zero-amount seat has no refund rows, so only a priced seat can read as refunded.
   if (prior.amount > 0 && refundedPaise >= prior.amount) return "REFUNDED";
-  // Left with a partial or no refund: the seat is gone, not still held.
+  // Every seat released (CANCELLED or REFUNDED, free or paid): the buyer left, not still held.
   const seats = prior.appointmentParticipants ?? [];
-  if (seats.length > 0 && seats.every((seat) => seat.status === "CANCELLED")) {
+  if (
+    seats.length > 0 &&
+    seats.every(
+      (seat) => seat.status === "CANCELLED" || seat.status === "REFUNDED",
+    )
+  ) {
     return "LEFT";
   }
   return "ALREADY_REGISTERED";

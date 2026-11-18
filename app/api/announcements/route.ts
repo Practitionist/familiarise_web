@@ -14,6 +14,7 @@ import { isTransientDbError, reportTransient } from "@/lib/data/fail-open";
 
 import { getSession } from "@/lib/auth-server";
 import { assertBodySize } from "@/lib/validation/limits";
+import { readJsonBody } from "@/lib/api/parse";
 
 /** Pages attempted right after the response; the relay sends the rest. */
 const INLINE_INBOX_PAGES = 5;
@@ -130,7 +131,9 @@ export async function POST(request: NextRequest) {
     const tooLarge = assertBodySize(request);
     if (tooLarge) return tooLarge;
 
-    const body = await request.json();
+    const read = await readJsonBody(request);
+    if (read.error) return read.error;
+    const body = read.body;
     const result = CreateAnnouncementSchema.safeParse(body);
     if (!result.success) {
       return NextResponse.json(

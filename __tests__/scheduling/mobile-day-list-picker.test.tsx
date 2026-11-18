@@ -164,6 +164,12 @@ const times = () =>
     .map((button) => button.textContent);
 
 describe("MobileDayListPicker", () => {
+  it("is its own scroll area, so the host's footer sits below the list instead of over it", async () => {
+    await mount();
+    const root = screen.getByTestId("mobile-day-list");
+    expect(root).toHaveClass("min-h-0", "overflow-y-auto");
+  });
+
   it("reads the grid for the consultee in the display zone and lists 14 days", async () => {
     await mount();
     const url = String(fetchMock.mock.calls[0][0]);

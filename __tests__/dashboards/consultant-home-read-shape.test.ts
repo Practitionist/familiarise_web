@@ -11,6 +11,7 @@
 
 import prisma from "@/lib/prisma";
 import { getConsultantDashboard } from "@/lib/data/consultant-dashboard";
+import { consultantHomeStatus } from "@/lib/appointments/map-consultant";
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
@@ -128,6 +129,60 @@ describe("consultant Home read shape", () => {
     const [display] = apptFindMany.mock.calls[0];
     expect(display.where.id.in).toEqual(["appt-1"]);
     expect(display.relationLoadStrategy).toBe("join");
+  });
+
+  it("carries the open move, so a booking being moved reads Being moved on Home", async () => {
+    slotFindMany.mockImplementation((args: { select: { id?: boolean } }) =>
+      Promise.resolve(args.select.id ? [] : [{ appointmentId: "appt-1" }]),
+    );
+    const move = {
+      id: "rr-1",
+      status: "PENDING_REVIEW",
+      reason: null,
+      // Live against the real clock: a lapsed move is no longer open.
+      expiresAt: new Date(Date.now() + 2 * 86_400_000),
+      initiatorRole: "CONSULTEE",
+      initiatedById: "u-learner",
+      proposedTimes: [
+        {
+          startsAt: new Date("2026-11-03T10:00:00Z"),
+          endsAt: new Date("2026-11-03T11:00:00Z"),
+        },
+      ],
+    };
+    apptFindMany.mockResolvedValue([
+      {
+        id: "appt-1",
+        appointmentType: "CONSULTATION",
+        organizationId: null,
+        occurrences: [],
+        consultation: {
+          id: "c-1",
+          status: "PENDING",
+          consultationPlan: {
+            id: "p-1",
+            title: "Call",
+            consultantProfile: null,
+          },
+          requestedBy: { id: "ce-1", user: { name: "Lee", image: null } },
+        },
+        subscription: null,
+        webinar: null,
+        class: null,
+        trial: null,
+        rescheduleRequests: [move],
+      },
+    ]);
+
+    const { appointments } = await getConsultantDashboard("cp-1", NOW);
+
+    const [display] = apptFindMany.mock.calls[0];
+    expect(display.select.rescheduleRequests.select).toMatchObject({
+      initiatorRole: true,
+      initiatedById: true,
+      expiresAt: true,
+    });
+    expect(consultantHomeStatus(appointments[0]).label).toBe("Being moved");
   });
 
   it("derives Available from one grouped earnings read of READY and BATCHED", async () => {

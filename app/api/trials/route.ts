@@ -317,7 +317,11 @@ export async function POST(request: NextRequest) {
     const result = CreateTrialSchema.safeParse(body);
     if (!result.success) {
       return NextResponse.json(
-        { error: "Validation failed", details: result.error.issues },
+        {
+          error: "Validation failed",
+          code: "VALIDATION_FAILED",
+          details: result.error.issues,
+        },
         { status: 400 },
       );
     }

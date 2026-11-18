@@ -169,6 +169,14 @@ On success, the page updates to reflect the pending state. The consultee sees:
 
 The consultee cannot select new times themselves. The consultant must re-allocate slots using the allocation system. This is by design: the consultant controls their own calendar.
 
+### Where an open move is listed
+
+A pending move is filed by who must answer it next, not by the booking's status. While a move is open the booking is `PENDING`, so before this rule every move landed where a request does: under "Waiting on expert" for the learner and in Requests for the expert, whoever had proposed it. `deriveBucket` (`lib/appointments/bucket.ts`) now reads the open move first. The side that proposed it files the row under Waiting (the learner's "Waiting on expert" tab, the expert's "Waiting on client" tab), and the other side files it under Needs you with the reason `ANSWER_MOVE`, which the row reads as "Answer the new time". The rule covers only a move that puts the whole booking back to `PENDING`, which is a consultation move or a whole-plan subscription release. A per-session move on a subscription leaves the plan `APPROVED` or `SCHEDULED`, because only the released sessions change, so a 24-session plan with one session moving stays under Upcoming for both sides, and the open move shows on the row's status chip instead.
+
+Whose move it is comes from `listStatusFacts` (`lib/appointments/list-status-facts.ts`), which both list mappers call with their side and the signed-in user. It compares the proposal's `initiatedById` with the user, the rule the detail page's `openReschedule` (`lib/appointments/presentation-input.ts`) and the learner's Home "Needs you" strip already use. Until the session has loaded it falls back to the list's own side. The expert's Home badge reads the same open move through `consultantHomeStatus` (`lib/appointments/map-consultant.ts`), so it says "Being moved" too.
+
+A worked example: Hannah, an expert, proposes moving Charlotte's Thursday call to Friday at 10:00. Hannah's Appointments list shows the call under "Waiting on client". Charlotte's shows it under "Needs you" with "Answer the new time", and her Home strip lists it under the proposals waiting on her. Had Charlotte proposed the move instead, the two lists would swap.
+
 ### Consultee Journey: Sequence of Events
 
 ```mermaid
@@ -1187,3 +1195,4 @@ The consultee limit of two reschedules per booking (`MAX_CONSULTEE_RESCHEDULES` 
 3. **Leaving released slots released when a proposal expires.** Expiry now normally restores the booking as it was. The exception is an original time that was booked while the proposal was open: the restore then fails on the overlap constraint, and the slots stay released.
 4. **Re-planning a sold webinar or class with Manage timings.** It replaced live sessions with no notice and no free leave. The allocator now refuses it with 409 `USE_RETIME`; a webinar is re-timed and a class moves as a series.
 5. **A webinar or class row in the reschedule table that marked slots tentative.** Group events never went through the reschedule route in practice; the table now names the re-time and series-move doors.
+6. **Filing every pending move by status.** Every open move read as a request: "Waiting on expert" for the learner and Requests for the expert, whichever side had proposed it, so an expert's proposal sat in the learner's waiting tab. The list now files it by who answers next.

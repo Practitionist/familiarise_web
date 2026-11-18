@@ -721,14 +721,16 @@ export async function PATCH(
         refund: rejectionRefund,
       });
     } catch (error) {
-      console.error(
-        "Transaction error:",
-        error instanceof Error ? error.message : "Unknown error",
-      );
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "bookings" } },
-      );
+      if (!isTypedRefusal(error)) {
+        console.error(
+          "Transaction error:",
+          error instanceof Error ? error.message : "Unknown error",
+        );
+        Sentry.captureException(
+          error instanceof Error ? error : new Error(String(error)),
+          { tags: { subsystem: "bookings" } },
+        );
+      }
       throw error;
     } finally {
       // LAYER 1: Always release lock
@@ -773,6 +775,17 @@ export async function PATCH(
       { status: 500 },
     );
   }
+}
+
+/** The refusals the PATCH catch answers as 409s; they are outcomes, not faults to capture. */
+function isTypedRefusal(error: unknown): boolean {
+  return (
+    error instanceof ApprovalLockLostError ||
+    error instanceof IllegalTransitionError ||
+    error instanceof PaidWithoutAppointmentError ||
+    error instanceof BookingRuleError ||
+    isExclusionViolation(error)
+  );
 }
 
 // #1169 PR 2 — thrown inside the approval transaction so the APPROVED

@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { formatInTimeZone } from "date-fns-tz";
 import { Badge } from "@/components/ui/badge";
 import {
   buildScheduleModel,
@@ -12,6 +11,7 @@ import {
 } from "@/lib/appointments/session-schedule";
 import {
   canonicalZone,
+  formatInViewerZone,
   zoneDisplayLabel,
   zoneLabel,
 } from "@/lib/time/viewer-zone";
@@ -87,10 +87,10 @@ function SessionRow({
       </span>
       <div className="min-w-0 flex-1">
         <p className="text-sm font-medium text-foreground">
-          {formatInTimeZone(session.startsAt, zone, "EEE d MMM")}
+          {formatInViewerZone(session.startsAt, zone, "EEE d MMM")}
           <span className="ml-2 font-normal text-muted-foreground tabular-nums">
             {timeRangeLabel(
-              (d, pattern) => formatInTimeZone(d, zone, pattern),
+              (d, pattern) => formatInViewerZone(d, zone, pattern),
               session.startsAt,
               session.endsAt,
             )}
@@ -238,7 +238,7 @@ function BatchPanel({
             {enrolmentLine(
               card,
               formatBuyerPriceLabel,
-              (d) => formatInTimeZone(d, zone, "EEE d MMM"),
+              (d) => formatInViewerZone(d, zone, "EEE d MMM"),
               buildSessionsFromAppointment(batch.appointment).length,
             )}
           </p>
@@ -248,7 +248,7 @@ function BatchPanel({
           {card.freeCancellationUntil && (card.canEnrol || enrolled) && (
             <p className="text-sm text-muted-foreground">
               Free cancellation until{" "}
-              {formatInTimeZone(
+              {formatInViewerZone(
                 card.freeCancellationUntil,
                 zone,
                 "EEE d MMM, h:mm a",

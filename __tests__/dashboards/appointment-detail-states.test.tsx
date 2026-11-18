@@ -66,8 +66,10 @@ const user = (id: string, name: string) => ({ id, name, image: null });
 function subscriptionDetail(over: {
   status: string;
   payment?: TAppointmentDetail["appointment"]["payment"];
+  /** Sessions placed so far; six held rows when omitted. */
+  sessions?: number;
 }): TAppointmentDetail {
-  const occurrences = Array.from({ length: 6 }, (_, i) => ({
+  const occurrences = Array.from({ length: over.sessions ?? 6 }, (_, i) => ({
     id: `occ-${i}`,
     appointmentId: "appt-1",
     startsAt: new Date(NOW + (4 + i) * DAY),
@@ -212,7 +214,9 @@ describe("consultee · AWAITING_PAYMENT subscription", () => {
     expect(html).toContain("Pay ₹7,080.00 (₹6,000.00 + 18% GST) by ");
     expect(html).toContain("to keep your 6 held slots.");
     expect(html).toContain("Pay ₹7,080.00");
-    expect(html).toMatch(/21h 5\dm left/);
+    // The countdown is the hold's clock, labelled as the hold.
+    expect(html).toMatch(/Slot held 21h 5\dm/);
+    expect(html).not.toMatch(/\dm left/);
     expect(html).toContain("Held · link sent");
     expect(html).toContain("₹7,080.00 due · Razorpay · link valid until ");
     // Nothing has been charged yet, so the money door names the booking.
@@ -259,23 +263,91 @@ describe("consultee · COMPLETED subscription", () => {
   });
 });
 
+function confirmedOneOfFour(): TAppointmentDetail {
+  const paid = subscriptionDetail({
+    status: "APPROVED",
+    payment: [
+      {
+        id: "pay-1",
+        userId: "u-rachel",
+        amount: 708_000,
+        taxAmount: 108_000,
+        currency: "INR",
+        paymentStatus: "SUCCEEDED",
+        paymentMethod: "CARD",
+        paymentGateway: "RAZORPAY",
+        receiptUrl: null,
+        createdAt: new Date(NOW - 3_600_000),
+        expiresAt: null,
+        organizationId: null,
+        consumerInvoice: null,
+        legs: [],
+        refunds: [],
+        disputes: [],
+        childPayments: [],
+      },
+    ] as unknown as TAppointmentDetail["appointment"]["payment"],
+  });
+  const sub = paid.appointment.subscription as unknown as Record<
+    string,
+    unknown
+  >;
+  sub.sessionsTotal = 4;
+  sub.sessionsRefunded = 0;
+  sub.schedulingPeriodStartsAt = new Date(NOW);
+  sub.schedulingTimezone = "UTC";
+  (sub.subscriptionPlan as Record<string, unknown>).totalSessions = 4;
+  (sub.subscriptionPlan as Record<string, unknown>).sessionsPerWeek = 2;
+  (sub.subscriptionPlan as Record<string, unknown>).durationInMonths = 1;
+  paid.appointment.occurrences = [
+    { ...paid.appointment.occurrences[0], isTentative: false },
+  ];
+  return paid;
+}
+
 describe("consultee · CONFIRMED subscription, one of four allocated (#1766)", () => {
   it("shows the entitlement count once in the header and no second bar", () => {
     viewerId = "u-rachel";
-    const paid = subscriptionDetail({
-      status: "APPROVED",
+    currentDetail = confirmedOneOfFour();
+
+    const html = render("consultee");
+
+    expect(html).not.toContain("0 of 1");
+    expect(html.split("1 of 4 sessions scheduled")).toHaveLength(2);
+    expect(html).not.toContain("Program progress");
+  });
+});
+
+describe("the next-session card at 390 px", () => {
+  it("gives the time column a base width, so the countdown and Join wrap below it instead of squeezing it", () => {
+    viewerId = "u-rachel";
+    currentDetail = confirmedOneOfFour();
+    const html = render("consultee");
+    const card = html.match(
+      /<div class="mt-5 flex flex-wrap items-center gap-4 rounded-xl[^"]*">.*?<div class="([^"]*)"><p class="text-xs font-medium text-muted-foreground">/,
+    );
+    expect(card?.[1]).toContain("basis-44");
+  });
+});
+
+describe("consultant · paid subscription with no session scheduled yet", () => {
+  it("counts down the time to schedule, never a held slot", () => {
+    viewerId = "u-ethan";
+    currentDetail = subscriptionDetail({
+      status: "PENDING",
+      sessions: 0,
       payment: [
         {
           id: "pay-1",
-          userId: "u-rachel",
+          paymentStatus: "SUCCEEDED",
           amount: 708_000,
           taxAmount: 108_000,
           currency: "INR",
-          paymentStatus: "SUCCEEDED",
-          paymentMethod: "CARD",
+          paymentMethod: "RAZORPAY",
           paymentGateway: "RAZORPAY",
           receiptUrl: null,
           createdAt: new Date(NOW - 3_600_000),
+          capturedAt: new Date(NOW - 3_600_000),
           expiresAt: null,
           organizationId: null,
           consumerInvoice: null,
@@ -286,26 +358,8 @@ describe("consultee · CONFIRMED subscription, one of four allocated (#1766)", (
         },
       ] as unknown as TAppointmentDetail["appointment"]["payment"],
     });
-    const sub = paid.appointment.subscription as unknown as Record<
-      string,
-      unknown
-    >;
-    sub.sessionsTotal = 4;
-    sub.sessionsRefunded = 0;
-    sub.schedulingPeriodStartsAt = new Date(NOW);
-    sub.schedulingTimezone = "UTC";
-    (sub.subscriptionPlan as Record<string, unknown>).totalSessions = 4;
-    (sub.subscriptionPlan as Record<string, unknown>).sessionsPerWeek = 2;
-    (sub.subscriptionPlan as Record<string, unknown>).durationInMonths = 1;
-    paid.appointment.occurrences = [
-      { ...paid.appointment.occurrences[0], isTentative: false },
-    ];
-    currentDetail = paid;
-
-    const html = render("consultee");
-
-    expect(html).not.toContain("0 of 1");
-    expect(html.split("1 of 4 sessions scheduled")).toHaveLength(2);
-    expect(html).not.toContain("Program progress");
+    const html = render("consultant").replace(/<!-- -->/g, "");
+    expect(html).toMatch(/\d+h \d+m to schedule/);
+    expect(html).not.toContain("Slot held");
   });
 });

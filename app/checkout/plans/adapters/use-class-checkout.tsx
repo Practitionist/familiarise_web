@@ -262,7 +262,7 @@ export function useClassCheckout(
             <CheckoutDetailRow label="Time">
               {formatForViewer(nextClassSession.startsAt, viewer, "h:mm a")}
               {" - "}
-              {formatForViewer(nextClassSession.endsAt, viewer, "h:mm a zzz")}
+              {formatForViewer(nextClassSession.endsAt, viewer, "h:mm a")}
             </CheckoutDetailRow>
           </>
         )}

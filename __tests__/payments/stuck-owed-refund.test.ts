@@ -336,10 +336,19 @@ describe("needs-human lists stuck markers from the payments that hold them", () 
         id: "pay-1",
         createdAt: at,
         refundOwedKey: "plan-end:sub-1:pay:pay-1",
-        refundOwedPaise: 30_000,
+        refundOwedPaise: 15_000_000,
         refundOwedAt: at,
         refundOwedAttempts: MAX_REFUND_OWED_ATTEMPTS,
         disputes: [],
+        user: { name: "Priya Shah" },
+        appointment: {
+          appointmentType: "SUBSCRIPTION",
+          consultation: null,
+          subscription: { subscriptionPlan: { title: "Weekly coaching" } },
+          webinar: null,
+          class: null,
+          trial: null,
+        },
       },
       {
         id: "pay-2",
@@ -349,6 +358,8 @@ describe("needs-human lists stuck markers from the payments that hold them", () 
         refundOwedAt: at,
         refundOwedAttempts: 0,
         disputes: [{ id: "dsp-1" }],
+        user: { name: null },
+        appointment: null,
       },
     ]);
     const items = await readStuckOwedRefunds();
@@ -356,10 +367,13 @@ describe("needs-human lists stuck markers from the payments that hold them", () 
       ["pay-1", "stuck-owed-refund"],
       ["pay-2", "stuck-owed-refund"],
     ]);
-    expect(items[0].message).toContain("₹300.00");
-    expect(items[0].message).toContain("plan-end:sub-1:pay:pay-1");
+    expect(items[0].message).toMatch(
+      /^Priya Shah is owed a refund of ₹1,50,000\.00 on Weekly coaching/,
+    );
+    expect(items[0].message).not.toContain("pay-1");
+    expect(items[0].message).not.toContain("plan-end:");
     expect(items[1].message).toContain("live dispute");
-    expect(items[1].message).toContain("its full balance");
+    expect(items[1].message).toContain("the full balance");
     for (const item of items) {
       expect(item.message).toMatch(
         / Its earnings stay held until this is settled\.$/,

@@ -164,6 +164,17 @@ describe("POST …/remind (B-3)", () => {
     expect(limit).not.toHaveBeenCalled();
     expect(deliver).not.toHaveBeenCalled();
   });
+
+  it("reads only a live PENDING order and the booking's tombstone", async () => {
+    findUnique.mockResolvedValue(awaiting());
+    await post();
+    const { appointment } = findUnique.mock.calls[0][0].select;
+    expect(appointment.select.payment.where).toEqual({
+      paymentStatus: "PENDING",
+      deletedAt: null,
+    });
+    expect(appointment.select.deletedAt).toBe(true);
+  });
 });
 
 describe("consultation reminder preconditions", () => {
@@ -191,6 +202,10 @@ describe("consultation reminder preconditions", () => {
           payment: [{ ...payment, expiresAt: new Date(0) }],
         },
       },
+    ],
+    [
+      "soft-deleted booking",
+      { appointment: { ...row.appointment, deletedAt: new Date() } },
     ],
   ])("refuses %s before attempting delivery", async (_label, override) => {
     findUnique.mockResolvedValue({ ...row, ...override });

@@ -101,7 +101,7 @@ function CardError({
         <Button
           size="sm"
           variant="ghost"
-          className="h-7 px-2"
+          className="h-7 px-2 min-h-9 sm:min-h-0"
           onClick={onRetry}
         >
           Retry
@@ -248,7 +248,12 @@ function MaterialsCard({ appointmentId }: Readonly<{ appointmentId: string }>) {
               </span>
             </span>
             <span className="flex shrink-0 items-center">
-              <Button asChild size="sm" variant="ghost" className="h-7 px-2">
+              <Button
+                asChild
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2 min-h-9 sm:min-h-0"
+              >
                 <a
                   href={getMaterialViewerUrl(m.id)}
                   target="_blank"
@@ -263,7 +268,7 @@ function MaterialsCard({ appointmentId }: Readonly<{ appointmentId: string }>) {
                 type="button"
                 size="sm"
                 variant="ghost"
-                className="h-7 px-2"
+                className="h-7 px-2 min-h-9 sm:min-h-0"
                 aria-label={`Download ${m.name}`}
                 onClick={() => void downloadMaterial(m.id)}
               >
@@ -278,7 +283,7 @@ function MaterialsCard({ appointmentId }: Readonly<{ appointmentId: string }>) {
           type="button"
           size="sm"
           variant="ghost"
-          className="h-7 px-2 text-xs"
+          className="h-7 px-2 text-xs min-h-9 sm:min-h-0"
           aria-expanded={expanded}
           onClick={() => setExpanded((v) => !v)}
         >
@@ -346,7 +351,12 @@ function RecordingsCard({
       )}
       <div className="flex flex-wrap items-center gap-2">
         {latest && latestPart && (
-          <Button asChild size="sm" variant="outline" className="h-7">
+          <Button
+            asChild
+            size="sm"
+            variant="outline"
+            className="h-7 min-h-9 sm:min-h-0"
+          >
             <Link
               href={`${href}?slot=${latest.ordinal}&r=${encodeURIComponent(latestPart.recordingId)}`}
             >

@@ -41,7 +41,11 @@ import {
   parsePlanClientLimitInput,
   shownPlanClientLimit,
 } from "@/schemas/plan-clients";
-import { subscriptionCheckoutBlocked } from "@/schemas/plan-feasibility";
+import {
+  NOT_PLACEABLE_MESSAGE,
+  subscriptionCheckoutBlocked,
+  subscriptionCheckoutBlockedLabel,
+} from "@/schemas/plan-feasibility";
 import { planClientsLine } from "@/app/dashboard/consultant/[consultantId]/(features)/settings/sections/BookingRequestsSection";
 
 const HOUR = 3_600_000;
@@ -220,6 +224,7 @@ describe("bound 2: an expert-set limit on active plan clients", () => {
       firstWeekPlaceable: 3,
       sessionsPerWeek: 3,
       notice: null,
+      zone: "Asia/Kolkata",
     };
     expect(subscriptionCheckoutBlocked({ ...read, fullyBooked: true })).toBe(
       true,
@@ -229,6 +234,35 @@ describe("bound 2: an expert-set limit on active plan clients", () => {
       false,
     );
     expect(subscriptionCheckoutBlocked(null)).toBe(false);
+  });
+
+  it("checkout's pay button is off when nothing fits the first week, with the server's sentence", () => {
+    const read = {
+      verdict: "impossible" as const,
+      firstWeekPlaceable: 0,
+      sessionsPerWeek: 3,
+      notice: null,
+      fullyBooked: false,
+      zone: "Asia/Kolkata",
+    };
+    expect(subscriptionCheckoutBlocked(read)).toBe(true);
+    expect(subscriptionCheckoutBlockedLabel(read)).toBe(
+      "No free time in the first week",
+    );
+    // A renewal starts at the old plan's end, which this read does not check; the server still refuses.
+    expect(subscriptionCheckoutBlocked(read, { renewal: true })).toBe(false);
+    expect(
+      subscriptionCheckoutBlocked(
+        { ...read, fullyBooked: true },
+        { renewal: true },
+      ),
+    ).toBe(true);
+    expect(NOT_PLACEABLE_MESSAGE).toBe(
+      "This expert has no free time in the first week of this plan right now. Pick a later start date, or ask them to open more hours.",
+    );
+    expect(
+      subscriptionCheckoutBlockedLabel({ ...read, fullyBooked: true }),
+    ).toBe("Fully booked");
   });
 
   it("validates the setting: a whole number of at least 1, or blank for none", () => {

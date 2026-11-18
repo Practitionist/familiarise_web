@@ -181,7 +181,11 @@ export async function PUT(
     const validationResult = SubscriptionPlanSchema.partial().safeParse(body);
     if (!validationResult.success) {
       return NextResponse.json(
-        { error: "Validation failed", details: validationResult.error.issues },
+        {
+          error: "Validation failed",
+          code: "VALIDATION_FAILED",
+          details: validationResult.error.issues,
+        },
         { status: 400 },
       );
     }

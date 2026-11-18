@@ -8,13 +8,36 @@ export const planFeasibilitySchema = z.object({
   notice: z.string().nullable(),
   /** The expert's plan-client limit turns this buyer away; never the limit itself. */
   fullyBooked: z.boolean(),
+  /** The expert's scheduling zone, which the server cuts the first cycle in. */
+  zone: z.string().min(1),
 });
 
 export type PlanFeasibility = z.infer<typeof planFeasibilitySchema>;
 
-/** Checkout's pay button is off only when the server says this viewer is turned away. */
+/** The NOT_PLACEABLE sentence: the checkout banner and the server refusal share it. */
+export const NOT_PLACEABLE_MESSAGE =
+  "This expert has no free time in the first week of this plan right now. Pick a later start date, or ask them to open more hours.";
+
+/**
+ * Checkout's pay button is off when the server's read turns this viewer away
+ * (fully booked) or finds no free time in the first week (NOT_PLACEABLE).
+ * A renewal skips the first-week block: this read checks the current week, not the renewal's.
+ */
 export function subscriptionCheckoutBlocked(
   feasibility: PlanFeasibility | null,
+  { renewal = false }: { renewal?: boolean } = {},
 ): boolean {
-  return feasibility?.fullyBooked === true;
+  return (
+    feasibility?.fullyBooked === true ||
+    (!renewal && feasibility?.firstWeekPlaceable === 0)
+  );
+}
+
+/** The disabled pay button's label, naming which of the two blocks applies. */
+export function subscriptionCheckoutBlockedLabel(
+  feasibility: PlanFeasibility | null,
+): string {
+  return feasibility?.fullyBooked === true
+    ? "Fully booked"
+    : "No free time in the first week";
 }

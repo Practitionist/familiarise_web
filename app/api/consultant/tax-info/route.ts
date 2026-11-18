@@ -11,6 +11,7 @@ import { requireOwnConsultantProfile } from "@/lib/api/consultant-profile";
 import { z } from "zod";
 import { encryptPAN } from "@/lib/payments/tax/pan-crypto";
 import { isValidUdyamNumber } from "@/lib/compliance/msme";
+import { readJsonBody } from "@/lib/api/parse";
 
 const updateTaxInfoSchema = z.object({
   panNumber: z.string().length(10).optional(),
@@ -132,7 +133,9 @@ export async function PUT(req: NextRequest) {
       await requireOwnConsultantProfile();
     if (authError) return authError;
 
-    const body = await req.json();
+    const read = await readJsonBody(req);
+    if (read.error) return read.error;
+    const body = read.body;
     const validated = updateTaxInfoSchema.parse(body);
 
     // Udyam format gate — reject malformed numbers rather than storing junk

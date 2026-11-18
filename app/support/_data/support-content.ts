@@ -1882,6 +1882,11 @@ const TOPIC_ARTICLES: Record<CaseTopic, readonly string[]> = {
     "organizations/wallet-invoice-billing",
     "organizations/members-roles",
   ],
+  general: [
+    "help/tickets-and-contact",
+    "getting-started/how-to-sign-up",
+    "help/report-a-problem",
+  ],
   other: [
     "help/report-a-problem",
     "help/tickets-and-contact",

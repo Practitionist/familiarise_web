@@ -19,6 +19,8 @@ import prisma from "@/lib/prisma";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { readPageParams } from "@/lib/backoffice/list-paging";
 import { UNREPORTED_BREACH_WHERE } from "@/lib/backoffice/queue-predicates";
+import { reportSentryError } from "@/lib/observability/report";
+import { readJsonBody } from "@/lib/api/parse";
 
 const BodySchema = z.object({
   affectedUserIds: z.array(z.string().min(1)).min(1),
@@ -68,7 +70,9 @@ export async function POST(req: NextRequest) {
     const auth = await requireBackofficeSurface("compliance.manage");
     if (auth.error) return auth.error;
 
-    const parsed = BodySchema.safeParse(await req.json().catch(() => null));
+    const read = await readJsonBody(req);
+    if (read.error) return read.error;
+    const parsed = BodySchema.safeParse(read.body);
     if (!parsed.success) {
       return NextResponse.json(
         { error: "Invalid body", detail: parsed.error.flatten() },
@@ -98,7 +102,11 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ breach }, { status: 201 });
   } catch (error) {
-    console.error("[data-breach] create failed:", error);
+    reportSentryError(error, {
+      subsystem: "compliance",
+      op: "data-breach.create",
+      expected: false,
+    });
     return NextResponse.json({ error: "Internal error" }, { status: 500 });
   }
 }

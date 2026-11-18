@@ -393,6 +393,8 @@ export function SubscriptionsPage({
     },
     placeholderData: keepPreviousData,
   });
+  // A failed first read has no counts to show; never print its empty fallback as zero.
+  const shown = (count: number) => (isError && !data ? "—" : count);
 
   const subscriptions = data?.subscriptions ?? [];
   const stats = data?.stats ?? EMPTY_STATS;
@@ -424,7 +426,7 @@ export function SubscriptionsPage({
               <CheckCircle className="h-5 w-5 text-green-600" />
             </div>
             <div>
-              <p className="text-2xl font-bold">{stats.activeCount}</p>
+              <p className="text-2xl font-bold">{shown(stats.activeCount)}</p>
               <p className="text-sm text-muted-foreground">Active</p>
             </div>
           </CardContent>
@@ -442,7 +444,7 @@ export function SubscriptionsPage({
             </div>
             <div>
               <p className="text-2xl font-bold text-yellow-600">
-                {stats.expiringCount}
+                {shown(stats.expiringCount)}
               </p>
               <p className="text-sm text-muted-foreground">Expiring Soon</p>
             </div>
@@ -454,7 +456,7 @@ export function SubscriptionsPage({
               <XCircle className="h-5 w-5 text-red-600" />
             </div>
             <div>
-              <p className="text-2xl font-bold">{stats.expiredCount}</p>
+              <p className="text-2xl font-bold">{shown(stats.expiredCount)}</p>
               <p className="text-sm text-muted-foreground">Expired</p>
             </div>
           </CardContent>
@@ -465,7 +467,9 @@ export function SubscriptionsPage({
               <Users className="h-5 w-5 text-foreground" />
             </div>
             <div>
-              <p className="text-2xl font-bold text-foreground">{total}</p>
+              <p className="text-2xl font-bold text-foreground">
+                {shown(total)}
+              </p>
               <p className="text-sm text-muted-foreground">
                 Total Subscriptions
               </p>

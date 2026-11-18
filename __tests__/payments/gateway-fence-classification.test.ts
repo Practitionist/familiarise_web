@@ -25,7 +25,7 @@ describe("gateway fence classification", () => {
   it("gives the buyer a payment-method toast", () => {
     const toast = getErrorToast(ErrorTypes.GATEWAY_UNAVAILABLE);
 
-    expect(toast.title).toBe("This payment method is not available");
+    expect(toast.title).toBe("This payment method isn't available");
   });
 
   // #1426 — WALLET_FROZEN, CONSENT_REQUIRED and CONSENT_WITHDRAWN are the
@@ -60,7 +60,7 @@ describe("gateway fence classification", () => {
       expect(classified.httpStatus).not.toBe(500);
 
       const toast = getErrorToast(classified.errorType);
-      expect(toast.title).not.toBe("Something Went Wrong");
+      expect(toast.title).not.toBe("Something went wrong");
       expect(toast.description).toBeTruthy();
     },
   );
@@ -78,7 +78,7 @@ describe("gateway fence classification", () => {
     expect(classified.httpStatus).toBe(403);
 
     const toast = getErrorToast(classified.errorType);
-    expect(toast.title).toBe("Domain Verification Required");
+    expect(toast.title).toBe("Domain verification required");
     expect(toast.description).toBeTruthy();
   });
 
@@ -98,7 +98,7 @@ describe("gateway fence classification", () => {
     expect(classified.httpStatus).toBe(402);
 
     const toast = getErrorToast(classified.errorType);
-    expect(toast.title).not.toBe("Something Went Wrong");
+    expect(toast.title).not.toBe("Something went wrong");
     expect(toast.description).toContain("programme budget");
   });
 
@@ -141,12 +141,12 @@ describe("gateway fence classification", () => {
     expect(classified.httpStatus).toBe(status);
 
     const toast = getErrorToast(classified.errorType);
-    expect(toast.title).not.toBe("Something Went Wrong");
+    expect(toast.title).not.toBe("Something went wrong");
     expect(toast.description).toContain("admin");
   });
 
   // #1477 — `WalletInsufficientFundsError` carried no code at all, so an org
-  // that had simply spent its wallet down got 500 "Something Went Wrong" and a
+  // that had simply spent its wallet down got 500 "Something went wrong" and a
   // Sentry incident for a refusal only a top-up can clear.
   it("classifies an overdrawn org wallet as a 402 pointing at the billing admin", () => {
     const classified = classifyError(
@@ -158,7 +158,7 @@ describe("gateway fence classification", () => {
     expect(classified.httpStatus).toBe(402);
 
     const toast = getErrorToast(classified.errorType);
-    expect(toast.title).not.toBe("Something Went Wrong");
+    expect(toast.title).not.toBe("Something went wrong");
     expect(toast.description).toContain("billing admin");
   });
 
@@ -167,10 +167,10 @@ describe("gateway fence classification", () => {
   // or a busy answer without retryAfter, told the buyer "Something Went
   // Wrong" with no mention that no money moved.
   it.each([
-    ["EVENT_CHECKOUT_BUSY", "Someone Just Beat You To It"],
-    ["CONSULTEE_BOOKING_BUSY", "Booking Already In Progress"],
-    ["CHECKOUT_IN_PROGRESS", "Still Preparing Your Checkout"],
-    ["SEAT_HOLD_LAPSED", "Your Reserved Seat Expired"],
+    ["EVENT_CHECKOUT_BUSY", "Someone just beat you to it"],
+    ["CONSULTEE_BOOKING_BUSY", "A booking is already in progress"],
+    ["CHECKOUT_IN_PROGRESS", "Still preparing your checkout"],
+    ["SEAT_HOLD_LAPSED", "Your reserved seat expired"],
   ])("gives %s a not-charged toast (%s)", (code, title) => {
     const toast = getErrorToast(code);
     expect(toast.title).toBe(title);

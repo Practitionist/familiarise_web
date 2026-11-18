@@ -2,6 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
+import { describeViewerZone } from "@/lib/time/viewer-zone";
 import {
   getRazorpayClient,
   withRazorpaySdkTimeout,
@@ -55,6 +56,7 @@ type VerifyPayment = NonNullable<Awaited<ReturnType<typeof loadVerifyPayment>>>;
 /** Null = the pipeline has not landed yet; the page keeps its "confirming" copy. */
 async function deriveBookingState(
   payment: VerifyPayment,
+  viewerZone: string,
 ): Promise<{ bookingState: BookingState; moneyState: MoneyState } | null> {
   const appointment = payment.appointment;
   if (!appointment) return null;
@@ -99,6 +101,7 @@ async function deriveBookingState(
       names: { payer: "you", consultant: "the consultant" },
     },
     "CONSULTEE",
+    { viewerZone },
   );
   // #1763 — a terminal outcome (refund underway/done, or the booking itself
   // died) must answer even while unsettled, or the success page polls forever.
@@ -301,7 +304,10 @@ export async function GET(req: NextRequest) {
       appointmentType = payment.appointment.appointmentType;
     }
 
-    const derived = await deriveBookingState(payment);
+    const derived = await deriveBookingState(
+      payment,
+      describeViewerZone({ userTimezone: session.user.timezone }).zone,
+    );
     const calendar = await buyerCalendarLinks(
       payment,
       derived,

@@ -302,7 +302,7 @@ export function SessionTimeline({
             <span className="font-medium text-foreground">
               {format(group.startTime, "MMM d")}
             </span>
-            <span className="text-muted-foreground/70 ml-2">
+            <span className="text-muted-foreground ml-2">
               {format(group.startTime, "h:mm a")}
               {" - "}
               {format(group.endTime, "h:mm a")}
@@ -323,13 +323,13 @@ export function SessionTimeline({
                   e.stopPropagation();
                   onCompletePayment();
                 }}
-                className="flex items-center gap-1 px-2 py-0.5 rounded bg-amber-600 text-white text-[10px] font-semibold hover:bg-amber-700 dark:bg-amber-600 dark:hover:bg-amber-500"
+                className="flex items-center gap-1 px-2 py-0.5 rounded bg-amber-700 text-white text-[10px] font-semibold hover:bg-amber-800 dark:bg-amber-700 dark:hover:bg-amber-600"
               >
                 <CreditCard className="h-3 w-3" />
                 Complete payment
               </button>
             ) : (
-              <span className="text-[10px] font-medium uppercase text-muted-foreground/70">
+              <span className="text-[10px] font-medium uppercase text-muted-foreground">
                 {
                   bookingStatus(
                     { kind: "TRIAL", status: "AWAITING_PAYMENT" },
@@ -343,7 +343,7 @@ export function SessionTimeline({
       ))}
 
       {showExpand && !expanded && (
-        <p className="px-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+        <p className="px-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
           {collapsedCaption}
         </p>
       )}
@@ -400,7 +400,7 @@ export function SessionTimeline({
               <span className="font-medium text-foreground">
                 {format(group.startTime, "MMM d")}
               </span>
-              <span className="text-muted-foreground/70 ml-2">
+              <span className="text-muted-foreground ml-2">
                 {format(group.startTime, "h:mm a")}
                 {" - "}
                 {format(group.endTime, "h:mm a")}
@@ -428,7 +428,7 @@ export function SessionTimeline({
                   onJoinSession?.(joinable);
                 }}
                 disabled={isJoining}
-                className="flex items-center gap-1 px-2 py-0.5 rounded bg-green-600 text-white text-[10px] font-semibold hover:bg-green-700 disabled:opacity-50 dark:bg-green-600 dark:hover:bg-green-500"
+                className="flex items-center gap-1 px-2 py-0.5 rounded bg-green-700 text-white text-[10px] font-semibold hover:bg-green-800 disabled:opacity-50 dark:bg-green-700 dark:hover:bg-green-600"
               >
                 {isJoining ? (
                   <Loader2 className="h-3 w-3 animate-spin" />
@@ -445,11 +445,11 @@ export function SessionTimeline({
             ) : (
               <span
                 className={cn(
-                  "text-[10px] font-medium uppercase text-muted-foreground/70",
+                  "text-[10px] font-medium uppercase text-muted-foreground",
                   (status === "noRecord" ||
                     status === "cutShort" ||
                     status === "noShow") &&
-                    "text-amber-500 dark:text-amber-400",
+                    "text-amber-700 dark:text-amber-400",
                   status === "inconclusive" && "text-sky-600 dark:text-sky-400",
                 )}
                 title={INERT_STATUS_TITLES[status]}

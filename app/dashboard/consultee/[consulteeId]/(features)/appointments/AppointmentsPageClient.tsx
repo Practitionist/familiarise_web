@@ -14,6 +14,7 @@ import { createConsulteeQueries } from "@/lib/dashboard-queries";
 import { useConsulteeAppointmentsAdapter } from "@/components/appointments/consultee/ConsulteeAppointmentsAdapter";
 import { IncidentRemedyBanner } from "@/components/appointments/consultee/IncidentRemedyBanner";
 import { MyAlerts } from "@/components/appointments/consultee/MyAlerts";
+import { useSession } from "@/lib/auth-client";
 
 export default function AppointmentsPageClient({
   consulteeId,
@@ -33,9 +34,10 @@ export default function AppointmentsPageClient({
   const adapter = useConsulteeAppointmentsAdapter();
 
   const zone = viewerZone.zone;
+  const viewerId = useSession().data?.user?.id ?? null;
   const vms = useMemo(
-    () => mapConsulteeEvents(eventsData, new Date(), zone),
-    [eventsData, zone],
+    () => mapConsulteeEvents(eventsData, new Date(), zone, viewerId),
+    [eventsData, zone, viewerId],
   );
 
   return (

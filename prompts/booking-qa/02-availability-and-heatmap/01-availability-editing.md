@@ -49,7 +49,7 @@ Rules for this file:
 
 **Expect:**
 
-- Step 2: Save shows "Validation Error" with "Please fix the following issues:" and a line like "friday slot 2: Overnight tail overlaps with saturday slot starting at 01:00". Nothing saved (R-02 unchanged). Quote the exact line; the lowercase day keys are a COPY finding (P3).
+- Step 2: Save shows "Validation Error" with "Please fix the following issues:" and a line like "Friday, slot 2: Overnight tail overlaps with Saturday slot starting at 01:00". Nothing saved (R-02 unchanged). Quote the exact line.
 - Step 3: saves. Saturday 02:00–03:00 is exactly adjacent to the tail but on the next local day after a midnight-crossing row: it must **not** coalesce (merge never touches a row that crosses midnight). R-02: two rows.
 
 **Probe further:** salvaged clauses from old 005 (per-row API). From `evaluate_script` as H3, POST to `/api/scheduling/availability/weekly` with UTC minutes: (a) an overnight row whose `endDay` is two days later → 400 (`ORDER`, "Invalid …"); (b) `startDay ≠ endDay` with `startTimeUtc <= endTimeUtc` → 400; (c) a same-day row overlapping the overnight tail → 409 "This slot (…) overlaps with an existing slot". Record each status and message. Restore F-AV3.
@@ -70,10 +70,11 @@ Rules for this file:
 
 **Expect:**
 
-- Inline messages: 1 "Slots cannot overlap"; 2 "Start and end time cannot be the same"; 3 "Session cannot exceed 12 hours"; 4 "Session duration must be in multiples of 30 minutes" (08:15 is a 15-min step the picker allows).
-- Save on each: "Validation Error" toast; no PUT, or a PUT refused with 400 and code `OVERLAP` / `DURATION` / `GRID`. DB unchanged.
+- Inline messages: 1 "Slots cannot overlap"; 2 "Start and end time cannot be the same"; 3 "A slot can be at most 12 hours"; 4 "A slot must be at least 30 minutes" (the 15-minute row fails the length rule before the 30-minute step rule). Each red row's inputs carry `aria-invalid="true"` and are described by the message (inputs are named like "Monday start, slot 2").
+- Save on each: disabled, with "Fix the time marked in red before saving." beside it; no PUT. A week with no rows disables Save with "Add at least one available time before saving.". DB unchanged.
+- A time off the half-hour grid in the consultant's zone moves on entry, with one line under the row: "Moved to 09:30–10:30 so it starts on the half-hour booking grid.".
 
-**Probe further:** the editor calls a window a "Session" in two messages. Report as COPY. Try exactly 12:00 h (06:00–18:00): it must save (the bound is inclusive), then restore.
+**Probe further:** the increment message still calls a window a "Session". Report as COPY. Try exactly 12:00 h (06:00–18:00): it must save (the bound is inclusive), then restore.
 
 ## HM-04 — Exactly adjacent weekly rows coalesce (and change id)
 

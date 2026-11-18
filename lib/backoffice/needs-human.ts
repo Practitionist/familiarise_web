@@ -16,6 +16,8 @@ import {
   MAX_REFUND_OWED_ATTEMPTS,
 } from "@/lib/payments/operations/refund-owed";
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
+import { PLAN_TITLE_SELECT, planTitle } from "@/lib/support/case-read";
+import { formatCurrencyAmount } from "@/utils/formatting";
 import { PARTIAL_CREDIT_CLOSED_PREFIX } from "@/lib/payments/operations/credit-plan-return";
 
 /** #1834 — the settle sweep's key for a paid seat still HELD at settle time. */
@@ -110,6 +112,9 @@ export async function dropAnsweredHeldSeats<
   });
 }
 
+/** Rupees with Indian digit grouping: ₹1,50,000.00. */
+const inr = (paise: number) => formatCurrencyAmount(paise, "INR");
+
 const LIVE_DISPUTE = {
   status: { notIn: DISPUTE_INACTIVE_FOR_GATING },
 } as const;
@@ -139,17 +144,21 @@ export async function readStuckOwedRefunds() {
       refundOwedAt: true,
       refundOwedAttempts: true,
       disputes: { where: LIVE_DISPUTE, select: { id: true }, take: 1 },
+      user: { select: { name: true } },
+      appointment: { select: PLAN_TITLE_SELECT },
     },
   });
   return rows.map((row) => {
     const owed =
       row.refundOwedPaise === null
-        ? "its full balance"
-        : `₹${(Number(row.refundOwedPaise) / 100).toFixed(2)}`;
+        ? "the full balance"
+        : inr(Number(row.refundOwedPaise));
+    const who = row.user?.name ?? "A buyer";
+    const booking = row.appointment ? planTitle(row.appointment) : "a booking";
     const message = `${
       row.disputes.length > 0
-        ? `Payment ${row.id} owes a refund of ${owed} (${row.refundOwedKey}) that a live dispute holds. Settle the dispute, then refund it by hand.`
-        : `Payment ${row.id} owes a refund of ${owed} (${row.refundOwedKey}) that failed ${row.refundOwedAttempts} times. Refund it by hand.`
+        ? `${who} is owed a refund of ${owed} on ${booking} that a live dispute holds. Settle the dispute, then refund it by hand.`
+        : `${who} is owed a refund of ${owed} on ${booking} that failed ${row.refundOwedAttempts} times. Refund it by hand.`
     } Its earnings stay held until this is settled.`;
     return {
       id: `stuck-owed:${row.id}`,
@@ -298,7 +307,7 @@ export async function readUnsentSupportRefunds(now = new Date()) {
   });
   return rows.map((row) => ({
     id: row.id,
-    message: `Support case ${row.supportCase.referenceNumber}: an approved refund of ₹${(Number(row.amountPaise) / 100).toFixed(2)} ${row.refund ? "failed" : "was never sent"}. Retry or void it on the case.${planNote(row.sessionsRemoved, row.payment.appointment?.subscription ?? null, now)}`,
+    message: `Support case ${row.supportCase.referenceNumber}: an approved refund of ${inr(Number(row.amountPaise))} ${row.refund ? "failed" : "was never sent"}. Retry or void it on the case.${planNote(row.sessionsRemoved, row.payment.appointment?.subscription ?? null, now)}`,
     details: planRefs(
       row.sessionsRemoved,
       row.payment.appointment?.subscription ?? null,
@@ -386,8 +395,6 @@ function stillOwedFifo(
   }
   return still;
 }
-
-const inr = (paise: number) => `₹${(paise / 100).toFixed(2)}`;
 
 /** One held top-up as it stands: what it still owes and what its hold allows. */
 export type TopUpStatus = {

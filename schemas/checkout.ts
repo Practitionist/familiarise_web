@@ -220,6 +220,16 @@ export const checkoutSchema = z
           path: ["eventId"],
         });
       }
+      // A seat takes its event's own time; a client-sent window is refused here.
+      for (const field of ["startsAt", "endsAt"] as const) {
+        if (data[field]) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `A ${data.appointmentType.toLowerCase()} seat takes its event's own time, so ${field} must not be sent`,
+            path: [field],
+          });
+        }
+      }
     }
 
     // === Cross-field validation ===

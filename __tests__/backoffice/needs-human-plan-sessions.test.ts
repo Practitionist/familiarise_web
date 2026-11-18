@@ -93,16 +93,16 @@ it("says how many sessions a void puts back on the plan", async () => {
   for (const message of Object.values(byId))
     expect(message).not.toMatch(/sub-\d|rec-/);
   expect(byId["rec-plan"]).toBe(
-    "Support case FAM-2026-000009: an approved refund of ₹1800.00 failed. Retry or void it on the case. 9 sessions go back to the plan if you void this refund.",
+    "Support case FAM-2026-000009: an approved refund of ₹1,800.00 failed. Retry or void it on the case. 9 sessions go back to the plan if you void this refund.",
   );
   expect(byId["rec-one"]).toMatch(
     /was never sent\. Retry or void it on the case\. 1 session goes back to the plan if you void this refund\.$/,
   );
   expect(byId["rec-waiting"]).toBe(
-    "Support case FAM-2026-000013: an approved refund of ₹1800.00 failed. Retry or void it on the case. 9 sessions go back to the plan if you void this refund. The plan end is waiting for this refund: retry it or void it.",
+    "Support case FAM-2026-000013: an approved refund of ₹1,800.00 failed. Retry or void it on the case. 9 sessions go back to the plan if you void this refund. The plan end is waiting for this refund: retry it or void it.",
   );
   expect(byId["rec-settled"]).toBe(
-    "Support case FAM-2026-000012: an approved refund of ₹1800.00 failed. Retry or void it on the case. The plan settled without these sessions, so this refund is still owed: retry it.",
+    "Support case FAM-2026-000012: an approved refund of ₹1,800.00 failed. Retry or void it on the case. The plan settled without these sessions, so this refund is still owed: retry it.",
   );
   expect(byId["rec-money"]).toBe(
     "Support case FAM-2026-000011: an approved refund of ₹500.00 failed. Retry or void it on the case.",

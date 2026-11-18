@@ -148,3 +148,14 @@ export function seatPaymentBadge(
   }
   return paymentStatusBadge(status);
 }
+
+/**
+ * Whether removing a seat refunds nothing: its own payment was free, or, with
+ * no payment row, the plan is free.
+ */
+export function removingFreeSeat(
+  seat: { priceFree: boolean } | undefined,
+  planPricePaise: number,
+): boolean {
+  return seat ? seat.priceFree : planPricePaise === 0;
+}

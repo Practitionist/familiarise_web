@@ -1,5 +1,6 @@
 import { getDomainsWithChildren } from "@/lib/data/taxonomy";
 import { NextResponse } from "next/server";
+import { reportSentryError } from "@/lib/observability/report";
 
 export async function GET() {
   try {
@@ -7,7 +8,11 @@ export async function GET() {
 
     return NextResponse.json(domains);
   } catch (error) {
-    console.error("Error fetching domains:", error);
+    reportSentryError(error, {
+      subsystem: "content",
+      op: "domains.list",
+      expected: false,
+    });
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500 },

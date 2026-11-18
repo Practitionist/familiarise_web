@@ -8,9 +8,10 @@
  * allocator re-checks every resulting time when the host saves.
  */
 
-import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
+import { fromZonedTime } from "date-fns-tz";
 
 import { atomPhaseMinutes } from "@/lib/time/grid-zone";
+import { formatInViewerZone } from "@/lib/time/viewer-zone";
 
 const ATOM_MS = 30 * 60_000;
 /** One pattern never needs more than a year and a half to place a long class. */
@@ -154,13 +155,13 @@ export function seriesStartsFrom(
 ): Date[] {
   const perWeek = Math.min(7, Math.max(1, Math.trunc(sessionsPerWeek)));
   const gap = Math.floor(7 / perWeek);
-  const weekday = Number(formatInTimeZone(first, zone, "i")) % 7;
-  const [hours, minutes] = formatInTimeZone(first, zone, "HH:mm")
+  const weekday = Number(formatInViewerZone(first, zone, "i")) % 7;
+  const [hours, minutes] = formatInViewerZone(first, zone, "HH:mm")
     .split(":")
     .map(Number);
   return projectPattern(
     {
-      startDate: formatInTimeZone(first, zone, "yyyy-MM-dd"),
+      startDate: formatInViewerZone(first, zone, "yyyy-MM-dd"),
       rows: Array.from({ length: perWeek }, (_, i) => ({
         weekday: (weekday + i * gap) % 7,
         startMinutes: hours * 60 + minutes,

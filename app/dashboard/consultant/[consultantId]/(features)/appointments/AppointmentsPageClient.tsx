@@ -22,6 +22,7 @@ import {
   CONSULTANT_APPOINTMENTS_RECENT_PAST,
 } from "@/lib/appointments/window";
 import { useConsultantAppointmentsAdapter } from "./ConsultantAppointmentsAdapter";
+import { useSession } from "@/lib/auth-client";
 
 /** The trials side list shows the newest page; older trials live in history. */
 const TRIALS_PAGE = 100;
@@ -192,6 +193,7 @@ export default function AppointmentsPageClient({
 
   const adapter = useConsultantAppointmentsAdapter(consultantId);
 
+  const viewerUserId = useSession().data?.user?.id ?? null;
   const vms = useMemo(
     () =>
       mapConsultantAppointments({
@@ -200,6 +202,7 @@ export default function AppointmentsPageClient({
         unscheduledClasses: classEventsData ?? [],
         unscheduledWebinars: webinarEventsData ?? [],
         consultantId,
+        viewerUserId,
       }),
     [
       appointments,
@@ -207,6 +210,7 @@ export default function AppointmentsPageClient({
       classEventsData,
       webinarEventsData,
       consultantId,
+      viewerUserId,
     ],
   );
 

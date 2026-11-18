@@ -23,8 +23,10 @@ import {
   validateWeeklyWindow,
   weeklyZoneRefusal,
   AVAILABILITY_REFUSAL_STATUS,
+  parsePatchDays,
 } from "@/lib/scheduling/availability-contract";
 import { settleAvailabilityWrite } from "@/lib/scheduling/uncovered-upcoming";
+import { readJsonBody } from "@/lib/api/parse";
 
 /**
  * The tail every weekly-slot edit shares: reject an overlap, stamp the
@@ -284,7 +286,9 @@ export async function PUT(
       );
     }
 
-    const body = await req.json();
+    const read = await readJsonBody(req);
+    if (read.error) return read.error;
+    const body = read.body;
 
     if (
       !body.startDay ||
@@ -404,20 +408,14 @@ export async function PATCH(
       );
     }
 
-    const body = await req.json();
+    const read = await readJsonBody(req);
+    if (read.error) return read.error;
+    const body = read.body;
 
-    if (body.startDay && !Object.values(DayOfWeek).includes(body.startDay)) {
-      return NextResponse.json(
-        { error: "Invalid day of week for start time" },
-        { status: 400 },
-      );
-    }
-
-    if (body.endDay && !Object.values(DayOfWeek).includes(body.endDay)) {
-      return NextResponse.json(
-        { error: "Invalid day of week for end time" },
-        { status: 400 },
-      );
+    // A PATCH may omit either day, but a day it sends must be a real one.
+    const days = parsePatchDays(body.startDay, body.endDay);
+    if (!days.ok) {
+      return NextResponse.json({ error: days.error }, { status: 400 });
     }
 
     const currentSlot = await prisma.availabilityWindowWeekly.findUnique({
@@ -479,8 +477,8 @@ export async function PATCH(
       );
     }
 
-    const effectiveStartDay = body.startDay || currentSlot.startDay;
-    const effectiveEndDay = body.endDay || currentSlot.endDay;
+    const effectiveStartDay = days.startDay ?? currentSlot.startDay;
+    const effectiveEndDay = days.endDay ?? currentSlot.endDay;
 
     // Day-aware time order validation (supports overnight slots)
     const timeError = validateWeeklySlotTimeOrder(

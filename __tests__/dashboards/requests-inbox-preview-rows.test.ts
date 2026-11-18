@@ -8,7 +8,10 @@ jest.mock("../../lib/auth-client", () => ({
   useSession: () => ({ data: null }),
 }));
 
-import { homePreviewRows } from "../../components/dashboard/shared/requests/RequestsInboxPreview";
+import {
+  homePreviewRows,
+  ownMoveWaitingLine,
+} from "../../components/dashboard/shared/requests/RequestsInboxPreview";
 
 describe("homePreviewRows", () => {
   it("keeps a row without the checkoutHold key and drops a held checkout", () => {
@@ -29,5 +32,23 @@ describe("homePreviewRows", () => {
       checkoutHold: null,
     }));
     expect(homePreviewRows(rows)).toHaveLength(5);
+  });
+});
+
+describe("the expert's own open move", () => {
+  const row = (initiatorRole: string, status = "PENDING_REVIEW") => ({
+    requester: { name: "Charlotte" },
+    proposal: { status, initiatorRole },
+  });
+
+  it("reads as waiting on the client, not as a request", () => {
+    expect(ownMoveWaitingLine(row("CONSULTANT"))).toBe(
+      "You proposed a new time · waiting on Charlotte",
+    );
+  });
+
+  it("a learner's move or a closed proposal is not one", () => {
+    expect(ownMoveWaitingLine(row("CONSULTEE"))).toBeNull();
+    expect(ownMoveWaitingLine(row("CONSULTANT", "WITHDRAWN"))).toBeNull();
   });
 });

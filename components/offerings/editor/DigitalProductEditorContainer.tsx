@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { errorMessageFromBody } from "@/lib/fetch-helpers";
+import { isExpectedRefusal } from "@/lib/errors/client-refusal";
 import { toast } from "@/components/ui/use-toast";
 import {
   commitPlanImage,
@@ -177,10 +178,13 @@ export function DigitalProductEditorContainer({
       }
       router.push(listHref);
     } catch (error) {
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "digital-products" } },
-      );
+      // A 4xx is the server's answer, not a fault.
+      if (!isExpectedRefusal(error)) {
+        Sentry.captureException(
+          error instanceof Error ? error : new Error(String(error)),
+          { tags: { subsystem: "digital-products" } },
+        );
+      }
       toast({
         title: publish ? "Couldn't publish" : "Couldn't save",
         description:

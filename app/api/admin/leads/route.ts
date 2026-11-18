@@ -10,6 +10,7 @@ import { LeadStatus } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { z } from "zod";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
+import { reportSentryError } from "@/lib/observability/report";
 
 const PAGE_SIZE = 50;
 const statusFilter = z.nativeEnum(LeadStatus).nullable();
@@ -56,12 +57,11 @@ export async function GET(request: NextRequest): Promise<Response> {
 
     return NextResponse.json({ leads, nextCursor });
   } catch (error) {
-    console.error(
-      JSON.stringify({
-        event: "admin_leads_list_failed",
-        message: error instanceof Error ? error.message : String(error),
-      }),
-    );
+    reportSentryError(error, {
+      subsystem: "admin",
+      op: "admin.leads.list",
+      expected: false,
+    });
     return NextResponse.json(
       { error: "Failed to load leads" },
       { status: 500 },

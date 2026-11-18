@@ -7,6 +7,8 @@ export interface SlotType {
   /** True when the slot was overnight in UTC (startDay !== endDay) but appears
    *  same-day after local-time conversion. Preserves overnight semantics on save. */
   isOvernightUTC?: boolean;
+  /** One line saying the half-hour grid moved the typed time; editor display only. */
+  snapNotice?: string;
 }
 
 /** Map of day/date keys to arrays of time slots (e.g., { "monday": [...], "2024-01-15": [...] }). */

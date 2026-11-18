@@ -7,6 +7,7 @@ import {
   type CancellationPolicyTerms,
 } from "@/lib/payments/operations/cancellation-policy";
 import { formatInViewerZone, type ViewerZone } from "@/lib/time/viewer-zone";
+import { CANCEL_FREEZE_BEFORE_START_MS } from "@/lib/booking/session-window";
 
 /**
  * #1863 — the cancellation ladder, in the buyer's own terms, at the moment they
@@ -43,6 +44,9 @@ import { formatInViewerZone, type ViewerZone } from "@/lib/time/viewer-zone";
  * days) so the promise made here and the one made in the cancel dialog are
  * the same promise in the same words.
  */
+
+/** Cancelling closes shortly before the start (`CANCEL_FREEZE_BEFORE_START_MS`). */
+export const CANCEL_FREEZE_LINE = `Cancelling closes ${CANCEL_FREEZE_BEFORE_START_MS / 60_000} minutes before a session starts.`;
 
 /** Which refund rail the buyer's own choices on this page put the money on. */
 export type PurchaseFunding =
@@ -88,10 +92,14 @@ export function ladderSentence(terms: CancellationPolicyTerms): string {
   const topPct = computeRefundPct(terms, Number.POSITIVE_INFINITY, false);
   return descending
     .map((tier, index) => {
-      // `validateTierLadder` requires the last rung to sit at 0 hours precisely
-      // so that "nothing" is stated out loud rather than implied by the table
-      // running out; say it that way.
-      if (tier.hoursBefore === 0) return "nothing once the session starts";
+      // `validateTierLadder` requires the last rung to sit at 0 hours, so the
+      // zero tier is named by the rung above it ("under 2 hours before").
+      if (tier.hoursBefore === 0) {
+        const above = descending[index - 1];
+        return above
+          ? `${pctPhrase(tier.refundPct)} back with less than ${noticePhrase(above.hoursBefore)} notice`
+          : `${pctPhrase(tier.refundPct)} back at any notice`;
+      }
       if (index === 0) {
         const clause = `${noticePhrase(tier.hoursBefore)} or more notice`;
         return tier.refundPct === topPct
@@ -192,7 +200,10 @@ export function purchaseCancellationCopy(props: {
   const now = props.now ?? Date.now();
 
   if (props.eventKind === "individual") {
-    const lines = [`After a time is agreed: ${ladderSentence(terms)}.`];
+    const lines = [
+      `After a time is agreed: ${ladderSentence(terms)}.`,
+      CANCEL_FREEZE_LINE,
+    ];
     // A 1:1 checkout CAN already carry a chosen slot (`?startsAt=`), and when it
     // does the ladder stops being a table and becomes a number: which rung this
     // booking is on right now, and how much more notice would move it up. That

@@ -244,7 +244,7 @@ describe("Meeting lifecycle & timezone P&C unification (#2080)", () => {
           holdExpiresAt: null,
         },
         "CONSULTEE",
-        { now },
+        { viewerZone: "UTC", now },
       );
       expect(activePresentation.bookingState.state).toBe("CONFIRMED");
       expect(activePresentation.nextAction.kind).toBe("JOIN");
@@ -272,7 +272,7 @@ describe("Meeting lifecycle & timezone P&C unification (#2080)", () => {
           holdExpiresAt: null,
         },
         "CONSULTEE",
-        { now },
+        { viewerZone: "UTC", now },
       );
       expect(endedPresentation.bookingState.state).toBe("COMPLETED");
       expect(endedPresentation.nextAction.kind).toBe("RATE");

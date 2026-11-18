@@ -4,6 +4,7 @@ import { getSession } from "@/lib/auth-server";
 import { getStreamChatClient } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
 import prisma from "@/lib/prisma";
+import { readJsonBody } from "@/lib/api/parse";
 
 export async function POST(req: NextRequest) {
   try {
@@ -12,7 +13,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const body = await req.json();
+    const read = await readJsonBody(req);
+    if (read.error) return read.error;
+    const body = read.body;
     const { targetUserId } = body;
 
     if (!targetUserId || typeof targetUserId !== "string") {

@@ -75,7 +75,7 @@ it.each([
     const zoned = await tree.type(tree.props);
     render(zoned);
     expect(screen.getByText(/4:45\s?am/i)).toBeTruthy();
-    expect(screen.getByText(/reply by 7:00\s?pm today/i)).toBeTruthy();
+    expect(screen.getByText(/reply by 7:00\s?pm PST today/i)).toBeTruthy();
     expect(screen.queryByText(/UTC|IST/)).toBeNull();
   },
 );

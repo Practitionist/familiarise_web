@@ -116,6 +116,27 @@ it("returns the last page of SSO approvals when the asked page emptied, in two s
   expect(mockSso.findMany).toHaveBeenCalledTimes(1);
 });
 
+it("re-reads the clamped page once when an approval empties the asked page between count and read", async () => {
+  const row = {
+    providerId: "sso-1",
+    issuer: "https://idp.example",
+    domain: "example.test",
+    createdAt: new Date("2026-11-16T09:00:00Z"),
+    organization: { id: "org-1", name: "Acme" },
+  };
+  // 21 pending when counted, then one is approved before the page-2 read.
+  mockSso.count.mockResolvedValueOnce(21).mockResolvedValueOnce(20);
+  mockSso.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([row]);
+  const result = await readPendingSsoApprovals(2);
+  expect(result).toMatchObject({ page: 1, total: 20 });
+  expect(result.rows).toHaveLength(1);
+  expect(mockSso.findMany).toHaveBeenLastCalledWith(
+    expect.objectContaining({ skip: 0 }),
+  );
+  expect(mockSso.count).toHaveBeenCalledTimes(2);
+  expect(mockSso.findMany).toHaveBeenCalledTimes(2);
+});
+
 it("reads page 1 of an empty SSO queue", async () => {
   mockSso.count.mockResolvedValue(0);
   mockSso.findMany.mockResolvedValue([]);

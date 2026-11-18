@@ -32,6 +32,7 @@ import { OUTCOME_UNKNOWN_MESSAGE } from "@/lib/fetch-helpers";
 import type { LapsedPayLink } from "@/lib/dashboard/lapsed-pay-links";
 import type { ConsulteeFailedRefund } from "@/lib/data/consultee-payments";
 import { deriveBookingPresentation } from "@/lib/dashboard/money-state";
+import { useZoneClock } from "@/lib/time/use-zone-clock";
 import { LapsedPayLinkRow } from "./LapsedPayLinkRow";
 import {
   isExternalPayHref,
@@ -91,7 +92,7 @@ export async function fetchPendingPayments(
  * #1675 — the row's words come from the one derivation the detail page uses:
  * an approved, unpaid request is AWAITING_PAYMENT and its action is "Pay ₹X".
  */
-function rowPresentation(payment: PendingPayment) {
+function rowPresentation(payment: PendingPayment, viewerZone: string) {
   return deriveBookingPresentation(
     {
       appointmentType: payment.type.toUpperCase(),
@@ -123,6 +124,7 @@ function rowPresentation(payment: PendingPayment) {
       names: { payer: "you", consultant: payment.consultantName },
     },
     "CONSULTEE",
+    { viewerZone },
   );
 }
 
@@ -209,6 +211,7 @@ export function PendingPaymentsWidget({
   consulteeId,
 }: PendingPaymentsWidgetProps) {
   const { formatPrice } = useCurrency();
+  const { zone: viewerZone } = useZoneClock();
   const queryClient = useQueryClient();
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [cancelNotice, setCancelNotice] = useState<string | null>(null);
@@ -433,7 +436,10 @@ export function PendingPaymentsWidget({
         {pendingPayments.map((payment) => {
           const isGatewayPending = payment.source === "gateway_pending";
           const detailsHref = pendingDetailsHref(payment);
-          const { bookingState, nextAction } = rowPresentation(payment);
+          const { bookingState, nextAction } = rowPresentation(
+            payment,
+            viewerZone,
+          );
           // #1763 — `nextAction.label` runs its own `money()` helper, so an
           // INR row diverged from the row's own `formatPrice` amount above.
           const isNonInr =

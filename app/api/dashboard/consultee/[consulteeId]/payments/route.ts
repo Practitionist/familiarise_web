@@ -8,11 +8,17 @@ import {
 } from "@/lib/auth-helpers";
 import { resolveOrgScope } from "@/lib/api/scope/parse";
 import {
+  PAYMENT_HISTORY_FILTERS,
+  PAYMENT_HISTORY_RANGES,
   readConsulteeMoneySummary,
   readConsulteePayments,
-  type PaymentHistoryFilter,
-  type PaymentHistoryRange,
 } from "@/lib/data/consultee-payments";
+import { z } from "zod";
+
+const HistoryFiltersSchema = z.object({
+  status: z.enum(PAYMENT_HISTORY_FILTERS).optional(),
+  range: z.enum(PAYMENT_HISTORY_RANGES).optional(),
+});
 
 /**
  * The consultee's own payment history. Auth and `?orgScope=` resolution live
@@ -95,16 +101,27 @@ export async function GET(
       );
     }
 
+    const filters = HistoryFiltersSchema.safeParse({
+      status: searchParams.get("status") ?? undefined,
+      range: searchParams.get("range") ?? undefined,
+    });
+    if (!filters.success) {
+      return NextResponse.json(
+        { error: "Unknown payment filter", code: "INVALID_QUERY" },
+        { status: 400 },
+      );
+    }
+
     const data = await readConsulteePayments({
       consulteeId,
       userId: consulteeProfile.userId,
       orgScope: scopeResolution.scope,
-      // Validated inside the read; unknown values fall back to the defaults.
+      // Paging is clamped inside the read; the filters were parsed above.
       query: {
         page: Number(searchParams.get("page") ?? 1),
         pageSize: Number(searchParams.get("pageSize") ?? Number.NaN),
-        status: searchParams.get("status") as PaymentHistoryFilter | null,
-        range: searchParams.get("range") as PaymentHistoryRange | null,
+        status: filters.data.status ?? null,
+        range: filters.data.range ?? null,
       },
     });
 

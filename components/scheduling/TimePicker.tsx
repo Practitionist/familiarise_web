@@ -541,6 +541,7 @@ export function TimePicker({
             selectedSlotIds={selectedSlotIds}
             onSelectionChange={setSelectedSlotIds}
             zone={listZone}
+            planWeek={subject.rescheduleEntitlement ?? undefined}
           />
         </div>
       )}

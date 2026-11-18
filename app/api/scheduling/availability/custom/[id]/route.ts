@@ -11,6 +11,7 @@ import {
   AVAILABILITY_REFUSAL_STATUS,
 } from "@/lib/scheduling/availability-contract";
 import { settleAvailabilityWrite } from "@/lib/scheduling/uncovered-upcoming";
+import { readJsonBody } from "@/lib/api/parse";
 
 /**
  * The tail both custom-slot edits share: reject an overlap with any other row,
@@ -167,7 +168,9 @@ export async function PUT(
       );
     }
 
-    const body = await req.json();
+    const read = await readJsonBody(req);
+    if (read.error) return read.error;
+    const body = read.body;
 
     if (!body.startsAt || !body.endsAt) {
       return NextResponse.json(
@@ -259,7 +262,9 @@ export async function PATCH(
       );
     }
 
-    const body = await req.json();
+    const read = await readJsonBody(req);
+    if (read.error) return read.error;
+    const body = read.body;
 
     const currentSlot = await prisma.availabilityWindowCustom.findUnique({
       where: { id: id },

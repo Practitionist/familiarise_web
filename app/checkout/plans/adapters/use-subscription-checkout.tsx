@@ -9,7 +9,6 @@ import {
   PLAN_EMAIL_SUPPORT_LABEL,
   planLevelLabel,
 } from "@/lib/labels/plan-labels";
-import { firstCycleWindow, lastInstantBefore } from "@/lib/booking/entitlement";
 import {
   planDurationText,
   planPriceLabel,
@@ -18,7 +17,9 @@ import { useViewerZone } from "@/lib/time/use-viewer-zone";
 import { formatInViewerZone } from "@/lib/time/viewer-zone";
 import {
   planFeasibilitySchema,
+  NOT_PLACEABLE_MESSAGE,
   subscriptionCheckoutBlocked,
+  subscriptionCheckoutBlockedLabel,
 } from "@/schemas/plan-feasibility";
 import { PLAN_CLIENTS_FULL_MESSAGE } from "@/schemas/plan-clients";
 import {
@@ -33,8 +34,10 @@ import {
   type CheckoutPlanAdapter,
   type CheckoutSearchParams,
 } from "../components/PlanCheckoutShell";
+import { firstCycleWindow } from "@/lib/booking/entitlement";
 import { CheckoutTotalNotes } from "../components/CheckoutTotals";
 import { reportPaymentsError } from "../utils";
+import { firstCycleLines } from "./first-cycle-lines";
 import { loadErrorMessage, planIncludes, searchParamsKey } from "./shared";
 
 // price arrives as number: extended client + JSON serialization
@@ -134,25 +137,6 @@ export function useSubscriptionCheckout(
     };
   }, [validatedSearchParams]);
 
-  // The first cycle as the buyer will see it, in their profile zone (display
-  // only; the persisted window is the server's).
-  const firstCycle = useMemo(() => {
-    const start = effectiveSearchParams?.schedulingPeriodStartsAt;
-    if (!planData?.data || !start) return null;
-    return firstCycleWindow(
-      {
-        sessionsPerWeek: planData.data.sessionsPerWeek ?? 1,
-        durationInMonths: planData.data.durationInMonths ?? 1,
-      },
-      new Date(start),
-      viewer.zone,
-    );
-  }, [
-    planData?.data,
-    effectiveSearchParams?.schedulingPeriodStartsAt,
-    viewer.zone,
-  ]);
-
   // The expert's room for this cadence over the first weeks, counting today's
   // bookings. Advisory: checkout itself refuses only an empty first week.
   const feasibilityQuery = useQuery({
@@ -175,13 +159,56 @@ export function useSubscriptionCheckout(
     },
   });
   const feasibility = feasibilityQuery.data ?? null;
+  const isRenewal = !!effectiveSearchParams?.renewsSubscriptionId;
+  // A renewal's first week starts at the old plan's end, which this read does not check.
+  const firstWeekBlocked = !isRenewal && feasibility?.firstWeekPlaceable === 0;
 
-  // Periodic staleness check: warn once the first cycle has elapsed.
-  const cycleEnd = firstCycle?.end;
+  // The first cycle in the zone the server cuts it in (the expert's scheduling
+  // zone, from the feasibility read), so the buyer reads the dates it stores.
+  const cycleZone = feasibility?.zone ?? null;
+  const startIso = effectiveSearchParams?.schedulingPeriodStartsAt;
+  const sessionsPerWeekTerm = plan?.sessionsPerWeek ?? 1;
+  const durationInMonthsTerm = plan?.durationInMonths ?? 1;
+  const firstCycle = useMemo(
+    () =>
+      cycleZone && plan && startIso
+        ? firstCycleLines(
+            startIso,
+            {
+              sessionsPerWeek: sessionsPerWeekTerm,
+              durationInMonths: durationInMonthsTerm,
+            },
+            cycleZone,
+          )
+        : null,
+    [cycleZone, plan, startIso, sessionsPerWeekTerm, durationInMonthsTerm],
+  );
+
+  // The elapsed-start check must not wait on feasibility, so it falls back to
+  // the viewer zone until the expert's zone arrives.
+  const stalenessZone = cycleZone ?? viewer.zone;
+  const cycleEnd = useMemo(
+    () =>
+      plan && startIso
+        ? firstCycleWindow(
+            {
+              sessionsPerWeek: sessionsPerWeekTerm,
+              durationInMonths: durationInMonthsTerm,
+            },
+            new Date(startIso),
+            stalenessZone,
+          ).end
+        : null,
+    [plan, startIso, sessionsPerWeekTerm, durationInMonthsTerm, stalenessZone],
+  );
+
+  // Periodic staleness check: warn once the first cycle has elapsed, and drop
+  // that warning (only that one) when a later zone moves the end ahead again.
   useEffect(() => {
     if (!cycleEnd) return;
     const checkStaleness = () => {
       if (cycleEnd.getTime() < Date.now()) setStaleError(START_PASSED);
+      else setStaleError((error) => (error === START_PASSED ? null : error));
     };
     checkStaleness();
     const intervalId = setInterval(checkStaleness, 60_000);
@@ -197,10 +224,10 @@ export function useSubscriptionCheckout(
       throw new Error("A start date is required for subscriptions");
     }
     // The first cycle the buyer was shown must not have fully elapsed.
-    if (firstCycle && firstCycle.end.getTime() < Date.now()) {
+    if (cycleEnd && cycleEnd.getTime() < Date.now()) {
       throw new Error(START_PASSED);
     }
-  }, [effectiveSearchParams, planData, firstCycle]);
+  }, [effectiveSearchParams, planData, cycleEnd]);
 
   const checkoutPlanFields = useMemo(
     () =>
@@ -235,10 +262,10 @@ export function useSubscriptionCheckout(
     },
     detailsTitle: "Subscription Details",
     detailsBanner:
-      effectiveSearchParams?.renewsSubscriptionId ||
+      isRenewal ||
       feasibility?.notice ||
       feasibility?.fullyBooked ||
-      feasibility?.firstWeekPlaceable === 0 ? (
+      firstWeekBlocked ? (
         <div className="space-y-2">
           {effectiveSearchParams?.renewsSubscriptionId && (
             <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-foreground">
@@ -253,13 +280,12 @@ export function useSubscriptionCheckout(
             >
               {PLAN_CLIENTS_FULL_MESSAGE}
             </div>
-          ) : feasibility?.firstWeekPlaceable === 0 ? (
+          ) : firstWeekBlocked ? (
             <div
               role="alert"
               className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-foreground"
             >
-              This expert has no free time in the first week of this plan right
-              now. Pick a later start date, or ask them to open more hours.
+              {NOT_PLACEABLE_MESSAGE}
             </div>
           ) : (
             feasibility?.notice && (
@@ -278,30 +304,21 @@ export function useSubscriptionCheckout(
           "string" && (
           <>
             <CheckoutDetailRow label="Starts" className="text-right text-sm">
-              {formatInViewerZone(
-                effectiveSearchParams.schedulingPeriodStartsAt,
-                viewer.zone,
-                DATE_PATTERN,
-              )}
+              {firstCycle?.starts ??
+                formatInViewerZone(
+                  effectiveSearchParams.schedulingPeriodStartsAt,
+                  viewer.zone,
+                  DATE_PATTERN,
+                )}
             </CheckoutDetailRow>
             {firstCycle && (
               <CheckoutDetailRow
                 label="First cycle"
                 className="text-right text-sm"
               >
-                {formatInViewerZone(
-                  firstCycle.start,
-                  viewer.zone,
-                  DATE_PATTERN,
-                )}{" "}
-                →{" "}
-                {formatInViewerZone(
-                  lastInstantBefore(firstCycle.end),
-                  viewer.zone,
-                  DATE_PATTERN,
-                )}{" "}
-                · {sessionsPerWeek} session{sessionsPerWeek === 1 ? "" : "s"}{" "}
-                per cycle · {plan?.totalSessions ?? "—"} in the plan
+                {firstCycle.cycle} · {sessionsPerWeek} session
+                {sessionsPerWeek === 1 ? "" : "s"} per cycle ·{" "}
+                {plan?.totalSessions ?? "—"} in the plan
               </CheckoutDetailRow>
             )}
             <Separator className="bg-border" />
@@ -375,9 +392,9 @@ export function useSubscriptionCheckout(
       </>
     ),
     checkoutPlanFields,
-    // The server's per-viewer answer: an existing client of the expert is never blocked.
-    soldOut: subscriptionCheckoutBlocked(feasibility),
-    soldOutLabel: "Fully booked",
+    // The server's per-viewer answer: an existing client is never fully booked.
+    soldOut: subscriptionCheckoutBlocked(feasibility, { renewal: isRenewal }),
+    soldOutLabel: subscriptionCheckoutBlockedLabel(feasibility),
     mockFlow: {
       kind: "direct",
       successTitle: "✅ Subscription Activated Successfully!",

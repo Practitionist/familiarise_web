@@ -78,8 +78,10 @@ describe("readRequestsInbox (A-1)", () => {
     // The fixture payment was created 2 h before NOW and has no capturedAt.
     expect(row?.deadline).toEqual(hoursAhead(46));
     expect(
-      deriveBookingPresentation(row!.presentation, "CONSULTANT", { now: NOW })
-        .nextAction,
+      deriveBookingPresentation(row!.presentation, "CONSULTANT", {
+        viewerZone: "UTC",
+        now: NOW,
+      }).nextAction,
     ).toMatchObject({ kind: "ALLOCATE", label: "Schedule cycle 1" });
   });
 
@@ -124,7 +126,7 @@ describe("readRequestsInbox (A-1)", () => {
     const { bookingState, moneyState } = deriveBookingPresentation(
       byId["c-awaiting"].presentation,
       "CONSULTANT",
-      { now: NOW },
+      { viewerZone: "UTC", now: NOW },
     );
     expect(bookingState.state).toBe("AWAITING_PAYMENT");
     expect(moneyState.state).toBe("DUE");

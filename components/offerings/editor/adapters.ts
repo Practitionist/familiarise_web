@@ -17,7 +17,7 @@ import {
 } from "@/schemas/plans";
 import { DigitalProductCategory, PlanLevel } from "@prisma/client";
 import { SCHEDULING_INTERVAL_MS } from "@/lib/appointments/occurrences";
-import { errorMessageFromBody } from "@/lib/fetch-helpers";
+import { requireJsonResponse } from "@/lib/fetch-helpers";
 import { DIGITAL_PRODUCT_MIN_PAID_PRICE_PAISE } from "@/lib/digital-products/constants";
 import { DIGITAL_PRODUCT_PRICE_RULE } from "@/schemas/digital-products";
 import { defaultPriceForSession } from "@/lib/payments/pricing/price-bounds";
@@ -437,9 +437,7 @@ async function productRequest(
     ...init,
     headers: { "Content-Type": "application/json" },
   });
-  const body: unknown = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(errorMessageFromBody(body, fallback));
-  return body;
+  return requireJsonResponse(res, fallback);
 }
 
 const savedProductSchema = z.object({ data: z.object({ id: z.string() }) });

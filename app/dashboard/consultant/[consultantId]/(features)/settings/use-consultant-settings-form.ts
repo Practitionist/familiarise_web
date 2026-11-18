@@ -8,11 +8,13 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import type { TConsultantProfile } from "types/consultant";
 import { useTimezone } from "@/hooks/useTimezone";
 import {
+  availabilitySaveBlocker,
   validateTimeSlot,
   validateAllSlotsDetailed,
 } from "@/utils/scheduling-engine/interval-validation";
 import {
   formatSlotsForApi,
+  gridSnapNotice,
   normaliseSlotToSchedulingGrid,
 } from "@/utils/schedule/formatting";
 import { reportSentryError } from "@/lib/observability/report";
@@ -206,7 +208,7 @@ export function useConsultantSettingsForm(
       } catch (error) {
         console.error("Error fetching domain content:", error);
         toast({
-          title: "Error",
+          title: "Couldn't load your subject areas",
           description: "Failed to load domain content. Please try again.",
           variant: "destructive",
         });
@@ -314,16 +316,21 @@ export function useConsultantSettingsForm(
         // picked, instead of the consultant watching it change under a refetch.
         // Both boundaries move by the same delta, so the duration they typed is
         // preserved exactly.
-        const editedSlot = normaliseSlotToSchedulingGrid(
-          {
-            ...currentSlots[day][index],
-            [field]: value,
-            isOvernightUTC: undefined,
-          },
+        const typedSlot = {
+          ...currentSlots[day][index],
+          [field]: value,
+          isOvernightUTC: undefined,
+        };
+        const snappedSlot = normaliseSlotToSchedulingGrid(
+          typedSlot,
           scheduleType === ScheduleType.WEEKLY
             ? weeklyTimezone
             : timezone || "UTC",
         );
+        const editedSlot = {
+          ...snappedSlot,
+          snapNotice: gridSnapNotice(typedSlot, snappedSlot),
+        };
         const validationResult = validateTimeSlot(
           editedSlot,
           currentSlots[day]?.filter((_, i) => i !== index) || [],
@@ -575,11 +582,20 @@ export function useConsultantSettingsForm(
     const description = isExpectedRefusal(error)
       ? userMessageFrom(error)
       : "Failed to update settings. Please try again.";
-    toast({ title: "Error", description, variant: "destructive" });
+    toast({
+      title: "Couldn't save your settings",
+      description,
+      variant: "destructive",
+    });
     return description;
   };
 
+  const saveBlockedReason = availabilitySaveBlocker(
+    scheduleType === ScheduleType.WEEKLY ? weeklySlots : customSlots,
+  );
+
   return {
+    saveBlockedReason,
     pendingSave,
     confirmPendingSave,
     cancelPendingSave: () => setPendingSave(null),

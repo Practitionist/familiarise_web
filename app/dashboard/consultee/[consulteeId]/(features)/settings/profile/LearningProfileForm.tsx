@@ -227,7 +227,7 @@ export default function LearningProfileForm({
         { tags: { subsystem: "client" } },
       );
       toast({
-        title: "Error",
+        title: "Couldn't save your learning profile",
         description: "Failed to save settings. Please try again.",
         variant: "destructive",
       });

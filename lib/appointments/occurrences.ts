@@ -27,6 +27,7 @@ import { normalizeOccurrences, type AnomalySink } from "./normalize";
 import { bookingStatus, bookingStatusBadge } from "./booking-status";
 import { isCompletedOccurrence } from "@/lib/booking/entitlement";
 import type { StatusBadgeStyle } from "@/lib/labels/session-labels";
+import { formatInViewerZone } from "@/lib/time/viewer-zone";
 
 /** The engine's unit of arithmetic: every interval and duration is a multiple. */
 export const SCHEDULING_INTERVAL_MS = 30 * 60 * 1000;
@@ -551,11 +552,13 @@ export function getAnchorTime(
 
 /**
  * Short human proximity label for an upcoming anchor ("in 45 min", "Today",
- * "Tomorrow", "in 5 days"). Returns null for past/absent anchors — rows show
- * the absolute time regardless; this is the urgency accent next to it.
+ * "Tomorrow", "in 5 days"), with days counted in the viewer's `zone`. Returns
+ * null for past/absent anchors — rows show the absolute time regardless; this
+ * is the urgency accent next to it.
  */
 export function getProximityLabel(
   anchor: Date | null,
+  zone: string,
   now = new Date(),
 ): string | null {
   if (!anchor) return null;
@@ -565,18 +568,11 @@ export function getProximityLabel(
   const diffMinutes = Math.floor(diffMs / 60_000);
   if (diffMinutes < 60) return `in ${Math.max(diffMinutes, 1)} min`;
 
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  // Math.round, not floor: across a DST boundary a "day" between local
-  // midnights is 23/25h and floor would undercount it.
-  const dayDiff = Math.round(
-    (new Date(
-      anchor.getFullYear(),
-      anchor.getMonth(),
-      anchor.getDate(),
-    ).getTime() -
-      todayStart.getTime()) /
-      86_400_000,
-  );
+  // Calendar days between the two zone-local dates, read as UTC dates so no DST hour skews them.
+  const dayIndex = (at: Date) =>
+    Date.parse(`${formatInViewerZone(at, zone, "yyyy-MM-dd")}T00:00:00Z`) /
+    86_400_000;
+  const dayDiff = dayIndex(anchor) - dayIndex(now);
   if (dayDiff === 0) return "Today";
   if (dayDiff === 1) return "Tomorrow";
   if (dayDiff < 7) return `in ${dayDiff} days`;

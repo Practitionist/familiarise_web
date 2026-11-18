@@ -20,6 +20,7 @@
  * `consultantProfileId`, the page runs `requirePersonalProfileAccess`.
  */
 
+import { UTC_ZONE } from "@/lib/time/viewer-zone";
 import { withLapsedRequestRestored } from "@/lib/appointments/lapsed-move";
 import prisma from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
@@ -117,7 +118,8 @@ const INBOX_APPOINTMENT_SELECT = {
         deletedAt: true,
       },
     },
-    payment: { select: BUYER_PAYMENT_DISPLAY_SELECT },
+    deletedAt: true,
+    payment: { select: { ...BUYER_PAYMENT_DISPLAY_SELECT, deletedAt: true } },
     organization: { select: { name: true } },
     // #1760 — the EXPIRED edge tells a lapsed pay link from an unanswered
     // request. #1846 added the second arm: a consultant's withdraw-approval now
@@ -250,6 +252,31 @@ async function keysetWhere(
       { id: { in: band.ids } },
     ],
   };
+}
+
+type ReminderRequest = Omit<
+  Parameters<typeof liveReminderPayment>[0],
+  "appointment"
+> & {
+  appointment: {
+    deletedAt: Date | null;
+    payment: readonly {
+      paymentStatus: string;
+      createdAt: Date;
+      expiresAt: Date | null;
+      deletedAt: Date | null;
+    }[];
+  } | null;
+};
+
+/** The Remind rule on live rows only, as the detail page and the remind route read it. */
+function liveInboxReminderExpiry(r: ReminderRequest, now: Date): Date | null {
+  if (!r.appointment || r.appointment.deletedAt) return null;
+  const payment = r.appointment.payment.filter((p) => !p.deletedAt);
+  return (
+    liveReminderPayment({ ...r, appointment: { payment } }, now)?.expiresAt ??
+    null
+  );
 }
 
 // Typed off the calls, not GetPayload: the read-path `$extends` hands money
@@ -430,10 +457,11 @@ function hrefsFor(
 
 /** The last step every row takes: derive once, so bucket and words agree. */
 function finish(row: Omit<InboxRowInput, "bucket">, now: Date): InboxRowInput {
+  // Only the state and deadline are kept; InboxRow re-derives the words in the viewer's zone.
   const { bookingState, nextAction } = deriveBookingPresentation(
     row.presentation,
     "CONSULTANT",
-    { now },
+    { now, viewerZone: UTC_ZONE },
   );
   // A paid plan's clock is capture + 48 h, not the request hold; an open
   // proposal's clock is its own expiry, after which the original time stays.
@@ -494,7 +522,7 @@ function consultationRow(
       id: c.id,
       kind: "consultation",
       appointmentId: c.appointment?.id ?? null,
-      reminderExpiresAt: liveReminderPayment(c, now)?.expiresAt ?? null,
+      reminderExpiresAt: liveInboxReminderExpiry(c, now),
       planTitle: c.consultationPlan.title,
       requester: {
         name: c.requestedBy.user.name ?? "Learner",
@@ -644,7 +672,7 @@ function subscriptionRow(
       id: s.id,
       kind,
       appointmentId: s.appointment?.id ?? null,
-      reminderExpiresAt: liveReminderPayment(s, now)?.expiresAt ?? null,
+      reminderExpiresAt: liveInboxReminderExpiry(s, now),
       planTitle: s.subscriptionPlan.title,
       requester: {
         name: s.requestedBy.user.name ?? "Learner",

@@ -1,8 +1,8 @@
 /**
  * One instant printed in one named zone, for surfaces that both operators and
  * customers see (support). India time goes through the operator helper, which
- * names it IST; any other zone goes through `display.ts` (Intl only), and UTC
- * is named so a fallback zone is never read as the viewer's own. Pure.
+ * names it IST; any other zone goes through `display.ts` (Intl only) and is
+ * named too, so a time is never read in the wrong zone. Pure.
  */
 
 import {
@@ -16,7 +16,7 @@ import {
   formatUtcInstant,
   OPERATOR_ZONE,
 } from "./operator-zone";
-import { canonicalZone, UTC_ZONE } from "./viewer-zone";
+import { canonicalZone, UTC_ZONE, zoneLabel } from "./viewer-zone";
 
 export type ClockInstant = Date | string | number;
 
@@ -50,7 +50,7 @@ const guard =
     return date ? format(date) : EMPTY;
   };
 
-/** The clock for `zone`; India time is IST, UTC is labelled, any other zone prints bare. */
+/** The clock for `zone`; every time names its zone (IST, UTC, PST…). */
 export function zoneClock(zone: string): ZoneClock {
   const canonical = canonicalZone(zone);
   const opts: DisplayOpts = { zone: canonical };
@@ -78,12 +78,14 @@ export function zoneClock(zone: string): ZoneClock {
       exactTitle: (at) => formatUtcInstant(at),
     };
   }
-  const suffix = canonical === UTC_ZONE ? " UTC" : "";
+  // Every customer time names its zone, as of that instant (PST and PDT differ).
+  const suffix = (d: Date) =>
+    canonical === UTC_ZONE ? " UTC" : ` ${zoneLabel(d, canonical)}`;
   return {
     zone: canonical,
-    dateTime: guard((d) => `${formatDateTimeLabel(d, opts)}${suffix}`),
+    dateTime: guard((d) => `${formatDateTimeLabel(d, opts)}${suffix(d)}`),
     date: guard((d) => formatDateLabel(d, opts)),
-    time: guard((d) => `${formatClockTime(d, opts)}${suffix}`),
+    time: guard((d) => `${formatClockTime(d, opts)}${suffix(d)}`),
     dayMonth,
     dayKey,
     exactTitle: () => null,
