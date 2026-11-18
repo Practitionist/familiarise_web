@@ -486,3 +486,28 @@ export const UpdateProgramSchema = z
   });
 export const UpdateProgramPayloadSchema = UpdateProgramSchema;
 export type UpdateProgramPayload = z.infer<typeof UpdateProgramSchema>;
+
+// ─────────────────────────── Checkout preview ───────────────────────────
+
+/** What the checkout payer picker sends to `.../checkout/overage-preview`. */
+export const CheckoutPreviewQuerySchema = z.object({
+  planType: CoveredPlanTypeSchema,
+  planId: z.string().min(1),
+  sessions: z.coerce.number().int().min(1).max(1000).default(1),
+});
+
+/** The preview fields the payer picker reads; `fundingRefusal` is checkout's own refusal for this payer. */
+export const CheckoutPreviewResponseSchema = z.object({
+  applicable: z.boolean(),
+  programName: z.string().nullable(),
+  marginalPaise: z.number(),
+  willExceedCap: z.boolean(),
+  willBlock: z.boolean(),
+  chargeTo: z.enum(["MEMBER", "ORG"]).nullable(),
+  fundingRefusal: z
+    .object({ code: z.string(), message: z.string() })
+    .nullable(),
+});
+export type CheckoutPreviewResponse = z.infer<
+  typeof CheckoutPreviewResponseSchema
+>;

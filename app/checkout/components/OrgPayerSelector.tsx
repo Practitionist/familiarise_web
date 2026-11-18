@@ -1,22 +1,15 @@
 "use client";
 
+import { useEffect } from "react";
 import { useSession } from "@/lib/auth-client";
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import Image from "next/image";
 import Link from "next/link";
 import { Building2, CreditCard, AlertTriangle, Ban, Info } from "lucide-react";
 import type { CoveredPlanType } from "@prisma/client";
 import { dataConsentHref } from "@/lib/dashboard/account-href";
 import { payerSentence } from "@/lib/appointments/payment-display";
-
-interface OveragePreview {
-  applicable: boolean;
-  programName: string | null;
-  marginalPaise: number;
-  willExceedCap: boolean;
-  willBlock: boolean;
-  chargeTo: "MEMBER" | "ORG" | null;
-}
+import { CheckoutPreviewResponseSchema } from "@/schemas/organizations";
 
 interface OrgPayerSelectorProps {
   selectedOrganizationId: string | null;
@@ -32,6 +25,31 @@ interface OrgPayerSelectorProps {
 
 const inr = (paise: number) => `₹${(paise / 100).toLocaleString("en-IN")}`;
 
+/** One preview per organisation and plan, shared by the payer rows and the overage warning. */
+function checkoutPreviewQuery(
+  organizationId: string,
+  planType: CoveredPlanType | undefined,
+  planId: string | undefined,
+) {
+  return {
+    queryKey: ["overage-preview", organizationId, planType, planId],
+    queryFn: async () => {
+      const query = new URLSearchParams({
+        planType: planType ?? "",
+        planId: planId ?? "",
+      });
+      const res = await fetch(
+        `/api/organizations/${organizationId}/checkout/overage-preview?${query}`,
+      );
+      if (!res.ok) throw new Error("preview failed");
+      return CheckoutPreviewResponseSchema.parse(await res.json());
+    },
+    enabled: Boolean(planType && planId),
+    staleTime: 30_000,
+    retry: false,
+  };
+}
+
 /** #777 §C — pre-checkout overage warning for the selected sponsoring org. */
 function OverageWarning({
   organizationId,
@@ -44,18 +62,9 @@ function OverageWarning({
   planType: CoveredPlanType;
   planId: string;
 }) {
-  const { data } = useQuery<OveragePreview>({
-    queryKey: ["overage-preview", organizationId, planType, planId],
-    queryFn: async () => {
-      const res = await fetch(
-        `/api/organizations/${organizationId}/checkout/overage-preview?planType=${planType}&planId=${planId}`,
-      );
-      if (!res.ok) throw new Error("preview failed");
-      return res.json();
-    },
-    staleTime: 30_000,
-    retry: false,
-  });
+  const { data } = useQuery(
+    checkoutPreviewQuery(organizationId, planType, planId),
+  );
 
   if (!data?.applicable) return null;
 
@@ -168,6 +177,9 @@ function ConsentPreflightNotice({
  *   - INVOICE  → "Added to the org's monthly invoice"
  *   - LICENSE  → "Free — covered by the org's enterprise license"
  *
+ * An org that checkout would refuse for this plan (no covering programme, or
+ * org billing unavailable) is shown disabled with checkout's own sentence.
+ *
  * The membership shape comes straight from lib/auth.ts customSession;
  * there are no `as` casts here — the Session type already carries the
  * narrowed FundingSource via z.infer on the Prisma enum.
@@ -186,6 +198,26 @@ export function OrgPayerSelector({
   // let the learner book through the org anyway, so showing it here
   // would be misleading.
   const sponsoringMemberships = memberships.filter((m) => m.canSponsor);
+
+  // Checkout's own refusal for each organisation; one it would refuse is never selectable.
+  const previews = useQueries({
+    queries: sponsoringMemberships.map((m) =>
+      checkoutPreviewQuery(m.organizationId, planType, planId),
+    ),
+  });
+  const refusalFor = (organizationId: string) =>
+    previews[
+      sponsoringMemberships.findIndex(
+        (m) => m.organizationId === organizationId,
+      )
+    ]?.data?.fundingRefusal ?? null;
+  const selectedIsRefused =
+    selectedOrganizationId !== null &&
+    refusalFor(selectedOrganizationId) !== null;
+  useEffect(() => {
+    if (selectedIsRefused) onSelect(null);
+  }, [selectedIsRefused, onSelect]);
+
   if (sponsoringMemberships.length === 0) return null;
 
   const selectedMembership = sponsoringMemberships.find(
@@ -222,16 +254,19 @@ export function OrgPayerSelector({
       {/* Org payment options */}
       {sponsoringMemberships.map((m) => {
         const isSelected = selectedOrganizationId === m.organizationId;
-        const subtitle = renderSubtitle(m);
+        const refusal = refusalFor(m.organizationId);
         return (
           <button
             key={m.organizationId}
             type="button"
+            disabled={refusal !== null}
             onClick={() => onSelect(m.organizationId)}
             className={`w-full flex items-center gap-3 p-3 rounded-lg border text-left transition-colors ${
-              isSelected
-                ? "border-foreground bg-muted ring-1 ring-foreground"
-                : "border-border hover:border-muted-foreground/40"
+              refusal
+                ? "border-border cursor-not-allowed opacity-70"
+                : isSelected
+                  ? "border-foreground bg-muted ring-1 ring-foreground"
+                  : "border-border hover:border-muted-foreground/40"
             }`}
           >
             <div className="w-8 h-8 rounded-md bg-muted flex items-center justify-center overflow-hidden shrink-0">
@@ -251,7 +286,13 @@ export function OrgPayerSelector({
               <p className="text-sm font-medium text-foreground truncate">
                 Bill to {m.organizationName}
               </p>
-              <p className="text-xs mt-0.5 truncate">{subtitle}</p>
+              {refusal ? (
+                <p className="text-xs mt-0.5 text-muted-foreground">
+                  {refusal.message}
+                </p>
+              ) : (
+                <p className="text-xs mt-0.5 truncate">{renderSubtitle(m)}</p>
+              )}
             </div>
           </button>
         );
