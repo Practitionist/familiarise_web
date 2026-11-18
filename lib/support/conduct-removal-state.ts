@@ -60,19 +60,15 @@ async function removalOverturned(
 }
 
 /**
- * Whether the user's latest conduct removal from the appointment still stands.
- * False when there is none, support overturned it, or its block on the seat was lifted.
+ * Whether the user's latest conduct removal from the appointment still stands:
+ * support has not overturned it and no lift has followed it. The seat's mark is
+ * not required, so a removal from before the mark existed still stands.
  */
 export async function conductRemovalStands(
   appointmentId: string,
   userId: string,
   db: PrismaLike = prisma,
 ): Promise<boolean> {
-  const seat = await db.appointmentParticipant.findUnique({
-    where: { appointmentId_userId: { appointmentId, userId } },
-    select: { id: true, removedByUserId: true },
-  });
-  if (!seat?.removedByUserId) return false;
   const removal = await db.supportCase.findFirst({
     where: {
       appointmentId,
@@ -84,6 +80,11 @@ export async function conductRemovalStands(
     select: { id: true, createdAt: true },
   });
   if (!removal || (await removalOverturned(db, removal.id))) return false;
+  const seat = await db.appointmentParticipant.findUnique({
+    where: { appointmentId_userId: { appointmentId, userId } },
+    select: { id: true },
+  });
+  if (!seat) return true;
   // A lift after the removal ends it for good; a later plain removal marks the seat anew.
   const lifted = await db.bookingStatusHistory.findFirst({
     where: {

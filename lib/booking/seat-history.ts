@@ -83,3 +83,29 @@ export async function readSeatTrails(
   }
   return trails;
 }
+
+/** The reasons after which a released seat is free to come back: its holder left, or a block was lifted. */
+export const REJOIN_OPENING_REASONS: readonly SeatHistoryReason[] = [
+  "self_leave",
+  "block_lifted",
+];
+
+/** Each seat's latest SEAT reason, by participant id; a seat with no SEAT row is absent. */
+export async function latestSeatReasons(
+  db: Pick<Tx, "bookingStatusHistory">,
+  participantIds: readonly string[],
+): Promise<Map<string, string>> {
+  const latest = new Map<string, string>();
+  if (participantIds.length === 0) return latest;
+  const rows = await db.bookingStatusHistory.findMany({
+    where: { entity: "SEAT", entityId: { in: [...participantIds] } },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    select: { entityId: true, reason: true },
+  });
+  for (const row of rows) {
+    if (!latest.has(row.entityId) && row.reason) {
+      latest.set(row.entityId, row.reason);
+    }
+  }
+  return latest;
+}

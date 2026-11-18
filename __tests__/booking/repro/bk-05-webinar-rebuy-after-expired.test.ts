@@ -263,9 +263,13 @@ describe("rejoining a free webinar seat its holder left", () => {
         originalAmount: 0,
         refunds: [],
         appointmentParticipants: [
-          { status: "CANCELLED", removedByUserId: null },
+          { id: "part-1", status: "CANCELLED", removedByUserId: null },
         ],
       },
+    ];
+    // Its holder's own leave is the seat's latest SEAT row.
+    overrides["bookingStatusHistory.findMany"] = () => [
+      { entityId: "part-1", reason: "self_leave" },
     ];
 
     const { value, error } = await run();

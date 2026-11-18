@@ -101,6 +101,8 @@ jest.mock("../../../lib/payments/checkout/free-seat-notice", () => ({
 import { handleCheckout } from "../../../lib/payments/checkout";
 import { leaveEventSeat } from "../../../lib/booking/seat-leave";
 import { transitionParticipant } from "../../../lib/booking/participants";
+import { liftSeatRemovalTx } from "../../../lib/booking/seat-removal-lift";
+import { seedUser } from "../seed";
 import { isPoolExhaustion } from "../../../lib/db/pg-errors";
 import {
   classifyError as classifyCheckoutError,
@@ -481,6 +483,63 @@ describe("rejoining a free seat", () => {
     expect(outcomes.map((o) => o.kind).sort()).toEqual(["refused", "sold"]);
     expect(await liveSeatCount(webinar.appointmentId)).toBe(1);
   }, 90_000);
+
+  it("a free seat left before seat history was kept is refused until staff lift it, then rejoins", async () => {
+    const webinar = await seedWebinar({ capacity: 3, price: 0 });
+    const buyer = await seedSeatBuyer();
+    // Seeded as the pre-history rows are: a ₹0 payment and a CANCELLED seat, no SEAT row.
+    const payment = await prisma.payment.create({
+      data: {
+        amount: BigInt(0),
+        originalAmount: BigInt(0),
+        paymentMethod: "CREDITS",
+        paymentIntent: `free_${randomUUID()}`,
+        paymentGateway: "RAZORPAY",
+        paymentStatus: "SUCCEEDED",
+        userId: buyer.userId,
+        appointmentId: webinar.appointmentId,
+        isMockPayment: true,
+      },
+    });
+    await prisma.appointmentParticipant.create({
+      data: {
+        appointmentId: webinar.appointmentId,
+        userId: buyer.userId,
+        role: "CONSULTEE",
+        status: "CANCELLED",
+        paymentId: payment.id,
+      },
+    });
+    const rejoin = () =>
+      handleCheckout(
+        seatCheckoutInput(webinar, `legacy-${randomUUID()}`),
+        buyer.userId,
+      );
+
+    await expect(rejoin()).rejects.toMatchObject({
+      code: "SEAT_REBUY_UNSUPPORTED",
+      message: expect.stringMatching(/left this event/),
+    });
+
+    const staff = await seedUser("STAFF");
+    const lifted = await prisma.$transaction((tx) =>
+      liftSeatRemovalTx(tx, {
+        appointmentId: webinar.appointmentId,
+        userId: buyer.userId,
+        actorUserId: staff.userId,
+        door: "staff",
+      }),
+    );
+    expect(lifted).toMatchObject({ kind: "LEGACY", removedByUserId: null });
+
+    await expect(rejoin()).resolves.toMatchObject({
+      success: true,
+      paymentId: payment.id,
+    });
+    const seat = await seatOf(webinar.appointmentId, buyer.userId);
+    expect(seat.status).toBe("CONFIRMED");
+    expect(await seatReasons(seat.id)).toEqual(["block_lifted", "rejoined"]);
+  });
 
   it("writes a seat's history in the transaction that moves it: a rollback leaves neither", async () => {
     const webinar = await seedWebinar({ capacity: 3, price: 0 });

@@ -31,6 +31,7 @@ import { recordOpsAction } from "@/lib/backoffice/ops-action-log";
 import { supportRetainedHistoryCount } from "@/lib/support/erasure";
 import { purgeExpertSurfaces } from "@/lib/data/public-cache";
 import { readJsonBody } from "@/lib/api/parse";
+import { isForeignKeyViolation } from "@/lib/db/pg-errors";
 /**
  * Convert empty strings to undefined so Prisma skips the field update.
  * For enum fields, also validates against the allowed values.
@@ -347,6 +348,7 @@ async function evaluateUserDeletionEligibility(id: string): Promise<{
     paymentCount,
     referralCreditCount,
     seatCount,
+    removedSeatCount,
     programAssignmentCount,
     erasureRequestCount,
     profile,
@@ -358,6 +360,8 @@ async function evaluateUserDeletionEligibility(id: string): Promise<{
     prisma.payment.count({ where: { userId: id } }),
     prisma.referralCredit.count({ where: { userId: id } }),
     prisma.appointmentParticipant.count({ where: { userId: id } }),
+    // Seats this user removed keep their block through a Restrict foreign key.
+    prisma.appointmentParticipant.count({ where: { removedByUserId: id } }),
     typeof prisma.programAssignment?.count === "function"
       ? prisma.programAssignment.count({
           where: { membership: { userId: id } },
@@ -455,6 +459,7 @@ async function evaluateUserDeletionEligibility(id: string): Promise<{
       paymentCount +
         referralCreditCount +
         seatCount +
+        removedSeatCount +
         programAssignmentCount +
         erasureRequestCount +
         consultantMoneyCount +
@@ -520,23 +525,39 @@ async function executeUserHardDeleteOrFallbackScrub(
   const auditRetainedUntil = new Date(now);
   auditRetainedUntil.setUTCFullYear(auditRetainedUntil.getUTCFullYear() + 7);
   let endedSessions: EndedSessions[] = [];
-  const removedCollaborations = await prisma.$transaction(async (tx) => {
-    const removed = await removeCollaboratorStanding(tx, id);
-    await tx.consentArtifact.updateMany({
-      where: { userId: id },
-      data: {
-        userId: null,
-        subjectPseudonymousId,
-        withdrawnAt: now,
-        auditRetainedUntil,
-      },
+  const removedCollaborations = await prisma
+    .$transaction(async (tx) => {
+      const removed = await removeCollaboratorStanding(tx, id);
+      await tx.consentArtifact.updateMany({
+        where: { userId: id },
+        data: {
+          userId: null,
+          subjectPseudonymousId,
+          withdrawnAt: now,
+          auditRetainedUntil,
+        },
+      });
+      endedSessions = (await revokeAllUserSessions(tx, id)).ended;
+      // The user row goes first: a concurrent end stamp then waits on it and links nothing.
+      await tx.user.delete({ where: { id } });
+      await detachSessionAccessLogs(tx, id);
+      return removed;
+    })
+    .catch((error: unknown) => {
+      // A record that must outlive the account was written since the check; nothing was deleted.
+      if (isForeignKeyViolation(error)) return null;
+      throw error;
     });
-    endedSessions = (await revokeAllUserSessions(tx, id)).ended;
-    // The user row goes first: a concurrent end stamp then waits on it and links nothing.
-    await tx.user.delete({ where: { id } });
-    await detachSessionAccessLogs(tx, id);
-    return removed;
-  });
+  if (removedCollaborations === null) {
+    return NextResponse.json(
+      {
+        error:
+          "Your account is linked to records we have to keep, so it could not be deleted just now. Try again, and it will be erased in place instead.",
+        code: "ERASURE_BLOCKED_RETAINED_RECORDS",
+      },
+      { status: 409 },
+    );
+  }
   // After commit, so a failed access-log write never fails the deletion.
   await stampSessionEnds(endedSessions, { forgetUser: true });
 

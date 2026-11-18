@@ -5010,8 +5010,8 @@ model AppointmentParticipant {
   sessionsPurchased Int?
 
   /// Who removed this seat (an organiser removal or a conduct removal); a set value blocks a rejoin.
-  /// Cleared by compare-and-set when staff, the organiser or an overturn lifts the block.
-  removedBy       User?   @relation("AppointmentParticipantRemovedBy", fields: [removedByUserId], references: [id], onDelete: SetNull)
+  /// Cleared by compare-and-set when staff, the organiser or an overturn lifts it; Restrict keeps a remover's account from erasing it.
+  removedBy       User?   @relation("AppointmentParticipantRemovedBy", fields: [removedByUserId], references: [id], onDelete: Restrict)
   removedByUserId String?
 
   createdAt DateTime @default(now()) @db.Timestamptz

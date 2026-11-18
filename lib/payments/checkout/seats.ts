@@ -12,6 +12,10 @@ import {
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import { isPriceFreePayment } from "@/lib/payments/funding-rail";
 import type { SeatRegistration } from "@/lib/booking/participants";
+import {
+  latestSeatReasons,
+  REJOIN_OPENING_REASONS,
+} from "@/lib/booking/seat-history";
 
 /** A confirmed seat for this buyer; a HELD one belongs to an open order the reuse step may resume. */
 export function holdsSettledSeat(
@@ -71,12 +75,15 @@ const PRIOR_SEAT_PAYMENT_SELECT = {
     select: { amountPaise: true },
   },
   // The seat this payment funded; a released one means the buyer left, a marked one that they were removed.
-  appointmentParticipants: { select: { status: true, removedByUserId: true } },
+  appointmentParticipants: {
+    select: { id: true, status: true, removedByUserId: true },
+  },
 } satisfies Prisma.PaymentSelect;
 
-/** The buyer's earlier Payment on a shared webinar/class appointment, if any. */
-export function findPriorSeatPayment(
-  tx: Tx,
+type PriorSeatTx = Pick<Tx, "payment" | "bookingStatusHistory">;
+
+function queryPriorSeat(
+  tx: PriorSeatTx,
   userId: string,
   appointmentId: string,
 ) {
@@ -86,22 +93,69 @@ export function findPriorSeatPayment(
   });
 }
 
-export type PriorSeatPayment = NonNullable<
-  Awaited<ReturnType<typeof findPriorSeatPayment>>
->;
+type PriorSeatRow = NonNullable<Awaited<ReturnType<typeof queryPriorSeat>>>;
+
+/** A prior seat payment and, for a left price-free seat, the latest SEAT reason that decides a rejoin. */
+export type PriorSeatPayment = PriorSeatRow & {
+  lastSeatReason: string | null;
+};
+
+/** Whether the row is a left price-free seat, the only kind whose history decides the answer. */
+function mayRejoin(row: PriorSeatRow): boolean {
+  const seats = row.appointmentParticipants;
+  return (
+    row.paymentStatus === PaymentStatus.SUCCEEDED &&
+    row.amount === 0 &&
+    isPriceFreePayment({
+      paymentIntent: row.paymentIntent,
+      amountPaise: row.amount,
+      listPricePaise: row.originalAmount,
+    }) &&
+    seats.length > 0 &&
+    seats.every((seat) => seat.status === "CANCELLED" && !seat.removedByUserId)
+  );
+}
+
+/** Attaches the latest SEAT reason, reading history only for rows a rejoin could apply to. */
+async function withLastSeatReason(
+  tx: PriorSeatTx,
+  rows: PriorSeatRow[],
+): Promise<PriorSeatPayment[]> {
+  const seatIds = rows
+    .filter(mayRejoin)
+    .flatMap((row) => row.appointmentParticipants.map((seat) => seat.id));
+  const latest = await latestSeatReasons(tx, seatIds);
+  return rows.map((row) => ({
+    ...row,
+    lastSeatReason: mayRejoin(row)
+      ? (latest.get(row.appointmentParticipants[0].id) ?? null)
+      : null,
+  }));
+}
+
+/** The buyer's earlier Payment on a shared webinar/class appointment, if any. */
+export async function findPriorSeatPayment(
+  tx: PriorSeatTx,
+  userId: string,
+  appointmentId: string,
+): Promise<PriorSeatPayment | null> {
+  const row = await queryPriorSeat(tx, userId, appointmentId);
+  return row ? ((await withLastSeatReason(tx, [row]))[0] ?? null) : null;
+}
 
 /** Each user's prior Payment on the appointment, in one query; Payment is unique per (userId, appointmentId). */
 export async function findPriorSeatPayments(
-  tx: Pick<Tx, "payment">,
+  tx: PriorSeatTx,
   appointmentId: string,
   userIds: readonly string[],
 ): Promise<Map<string, PriorSeatPayment>> {
   if (userIds.length === 0) return new Map();
-  const rows: PriorSeatPayment[] = await tx.payment.findMany({
+  const rows = await tx.payment.findMany({
     where: { appointmentId, userId: { in: [...userIds] } },
     select: PRIOR_SEAT_PAYMENT_SELECT,
   });
-  return new Map(rows.map((row) => [row.userId, row]));
+  const priors = await withLastSeatReason(tx, rows);
+  return new Map(priors.map((row) => [row.userId, row]));
 }
 
 export type SeatRebuyRefusal =
@@ -144,7 +198,15 @@ export function priorSeatStanding(prior: PriorSeatPayment): PriorSeatStanding {
       amountPaise: prior.amount,
       listPricePaise: prior.originalAmount,
     });
-  return priceFree && seats.every((seat) => seat.status === "CANCELLED")
+  // A seat with no SEAT history left before history was kept, so it waits for a staff lift.
+  const opened =
+    prior.lastSeatReason !== null &&
+    (REJOIN_OPENING_REASONS as readonly string[]).includes(
+      prior.lastSeatReason,
+    );
+  return priceFree &&
+    opened &&
+    seats.every((seat) => seat.status === "CANCELLED")
     ? "REJOINABLE"
     : "LEFT";
 }

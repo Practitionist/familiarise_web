@@ -58,11 +58,15 @@ jest.mock("../../lib/novu/stage-then-attempt", () => ({
   flushNotificationsAfter: jest.fn(async () => undefined),
 }));
 
-/** One removed seat, in the shape `clearRemovalMarkTx` selects. */
+/**
+ * One released learner seat, in the shape the lift selects: marked by a removal,
+ * or unmarked with whatever SEAT history `history` holds (newest first).
+ */
 const mockDb = {
   marked: true,
   conductCase: false,
   priceFree: true,
+  history: [] as { entityId: string; reason: string }[],
 };
 const mockCas = jest.fn();
 const mockHistory = jest.fn();
@@ -70,29 +74,26 @@ const mockOpsRows: unknown[] = [];
 function mockTx() {
   return {
     appointmentParticipant: {
-      findFirst: async () =>
-        mockDb.marked
-          ? {
-              id: "part-1",
-              status: "CANCELLED",
-              appointmentId: APPT,
-              removedByUserId: "host-1",
-              payment: mockDb.priceFree
-                ? { paymentIntent: "free_1", amount: 0, originalAmount: 0 }
-                : {
-                    paymentIntent: "order_1",
-                    amount: 50_000,
-                    originalAmount: 50_000,
-                  },
-              appointment: {
-                webinar: {
-                  id: "web-1",
-                  webinarPlan: { id: "plan-1", title: "Intro to Python" },
-                },
-                class: null,
-              },
-            }
-          : null,
+      findFirst: async () => ({
+        id: "part-1",
+        status: "CANCELLED",
+        appointmentId: APPT,
+        removedByUserId: mockDb.marked ? "host-1" : null,
+        payment: mockDb.priceFree
+          ? { paymentIntent: "free_1", amount: 0, originalAmount: 0 }
+          : {
+              paymentIntent: "order_1",
+              amount: 50_000,
+              originalAmount: 50_000,
+            },
+        appointment: {
+          webinar: {
+            id: "web-1",
+            webinarPlan: { id: "plan-1", title: "Intro to Python" },
+          },
+          class: null,
+        },
+      }),
       findUnique: async () => ({
         id: "part-1",
         removedByUserId: mockDb.marked ? "host-1" : null,
@@ -112,8 +113,18 @@ function mockTx() {
     },
     supportCaseDecision: { findFirst: async () => null },
     bookingStatusHistory: {
-      findFirst: async () => null,
-      createMany: async (args: unknown) => mockHistory(args),
+      // Every lift in these cases follows the conduct case.
+      findFirst: async () =>
+        mockDb.history.some((row) => row.reason === "block_lifted")
+          ? { id: "lift" }
+          : null,
+      findMany: async () => mockDb.history,
+      createMany: async (args: { data: { reason: string }[] }) => {
+        for (const row of args.data) {
+          mockDb.history.unshift({ entityId: "part-1", reason: row.reason });
+        }
+        return mockHistory(args);
+      },
     },
     opsActionLog: {
       create: async ({ data }: { data: unknown }) => {
@@ -161,7 +172,12 @@ const REASON = "Learner apologised; host agreed to let them back";
 
 beforeEach(() => {
   jest.clearAllMocks();
-  Object.assign(mockDb, { marked: true, conductCase: false, priceFree: true });
+  Object.assign(mockDb, {
+    marked: true,
+    conductCase: false,
+    priceFree: true,
+    history: [],
+  });
   mockStale.value = false;
   mockViewer.role = "STAFF";
   mockOpsRows.length = 0;
@@ -253,6 +269,52 @@ describe("the staff lift door", () => {
     expect(rejoinNoticeText("REGISTER", "Intro to Python")).toBe(
       "You can register for Intro to Python again.",
     );
+  });
+});
+
+describe("a free seat released before seat history was kept", () => {
+  beforeEach(() => {
+    mockDb.marked = false;
+  });
+
+  it("is lifted by staff with a block_lifted row, and the audit names it LEGACY", async () => {
+    const res = await post({ userId: "u-1", reason: REASON });
+    expect(res.status).toBe(200);
+    expect(mockCas).not.toHaveBeenCalled();
+    expect(mockHistory).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          reason: "block_lifted",
+          actorUserId: "staff-1",
+        }),
+      ],
+    });
+    expect(mockOpsRows).toEqual([
+      expect.objectContaining({
+        before: { removedByUserId: null, removal: "LEGACY" },
+      }),
+    ]);
+    // Lifted once: the latest SEAT row now opens the seat, so a second lift finds nothing.
+    const again = await post({ userId: "u-1", reason: REASON });
+    expect(again.status).toBe(409);
+  });
+
+  it("is not the organiser's to lift", async () => {
+    await expect(
+      liftSeatRemovalAsOrganiser({
+        appointmentId: APPT,
+        userId: "u-1",
+        actorUserId: "host-1",
+      }),
+    ).rejects.toMatchObject({ code: "LIFT_NOT_ALLOWED" });
+    expect(mockHistory).not.toHaveBeenCalled();
+  });
+
+  it("is not blocked when its latest SEAT row is the holder's own leave", async () => {
+    mockDb.history = [{ entityId: "part-1", reason: "self_leave" }];
+    const res = await post({ userId: "u-1", reason: REASON });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ code: "REMOVAL_ALREADY_LIFTED" });
   });
 });
 

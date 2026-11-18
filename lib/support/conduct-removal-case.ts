@@ -31,7 +31,7 @@ import {
   persistConductBlockInTx,
   syncConductCallBlock,
 } from "@/lib/stream/access-revocation";
-import { clearRemovalMarkTx } from "@/lib/booking/seat-removal-lift";
+import { liftBlockTx } from "@/lib/booking/seat-removal-lift";
 import { holdPaymentForCase } from "./case-holds";
 import { stageSupportCaseIntakeTx } from "./case-service";
 import { supportDeadline } from "./deadline-policy";
@@ -378,7 +378,7 @@ export async function conductRemovalDecidedTx(
   await persistConductBlockInTx(tx, target.appointmentId, target.userId);
   // A lift after the removal already cleared its mark; a mark the seat carries now is a later removal's.
   if (await liftedSinceRemoval(tx, target)) return;
-  await clearRemovalMarkTx(tx, {
+  await liftBlockTx(tx, {
     appointmentId: target.appointmentId,
     userId: target.userId,
     actorUserId,
@@ -398,7 +398,12 @@ export async function removalRejoinPathTx(
   const target = caseId ? await removalTargetTx(tx, caseId) : null;
   if (!target) return "SUPPORT";
   const seat = await tx.appointmentParticipant.findUnique({
-    where: { appointmentId_userId: target },
+    where: {
+      appointmentId_userId: {
+        appointmentId: target.appointmentId,
+        userId: target.userId,
+      },
+    },
     select: {
       payment: {
         select: { paymentIntent: true, amount: true, originalAmount: true },

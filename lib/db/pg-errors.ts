@@ -45,6 +45,13 @@ export function isUniqueViolation(error: unknown): boolean {
   return sqlState(error) === "23505";
 }
 
+/** Postgres 23503 / Prisma P2003 — a foreign key refused the write or the delete. */
+export function isForeignKeyViolation(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  if ((error as MaybePgError).code === "P2003") return true;
+  return sqlState(error) === "23503";
+}
+
 /** Postgres 23P01 — exclusion-constraint violation (e.g. `occurrence_no_confirmed_overlap`). */
 export function isExclusionViolation(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;

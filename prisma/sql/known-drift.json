@@ -142,26 +142,14 @@
       "expires": "2026-12-31"
     },
     {
-      "statement": "ALTER TYPE \"BookingHistoryEntity\" ADD VALUE 'SEAT'",
-      "reason": "A removed event seat's remover, which blocks a rejoin until lifted, and the per-seat history entity. Additive, so only the drift check reads it; it goes with this PR's own push, after the history-entity guard is live on prod.",
+      "statement": "ALTER TABLE \"AppointmentParticipant\" DROP CONSTRAINT \"AppointmentParticipant_removedByUserId_fkey\"",
+      "reason": "The removal mark's foreign key moves from SET NULL to RESTRICT, so deleting a remover's account cannot erase a block. The owner applies temp/2849-fk-restrict.sql.",
       "trackedBy": "#2849",
       "expires": "2026-12-31"
     },
     {
-      "statement": "ALTER TABLE \"AppointmentParticipant\" ADD COLUMN \"removedByUserId\" TEXT",
-      "reason": "A removed event seat's remover, which blocks a rejoin until lifted, and the per-seat history entity. Additive, so only the drift check reads it; it goes with this PR's own push, after the history-entity guard is live on prod.",
-      "trackedBy": "#2849",
-      "expires": "2026-12-31"
-    },
-    {
-      "statement": "CREATE INDEX \"AppointmentParticipant_removedByUserId_idx\" ON \"AppointmentParticipant\"(\"removedByUserId\")",
-      "reason": "A removed event seat's remover, which blocks a rejoin until lifted, and the per-seat history entity. Additive, so only the drift check reads it; it goes with this PR's own push, after the history-entity guard is live on prod.",
-      "trackedBy": "#2849",
-      "expires": "2026-12-31"
-    },
-    {
-      "statement": "ALTER TABLE \"AppointmentParticipant\" ADD CONSTRAINT \"AppointmentParticipant_removedByUserId_fkey\" FOREIGN KEY (\"removedByUserId\") REFERENCES \"users\"(\"id\") ON DELETE SET NULL ON UPDATE CASCADE",
-      "reason": "A removed event seat's remover, which blocks a rejoin until lifted, and the per-seat history entity. Additive, so only the drift check reads it; it goes with this PR's own push, after the history-entity guard is live on prod.",
+      "statement": "ALTER TABLE \"AppointmentParticipant\" ADD CONSTRAINT \"AppointmentParticipant_removedByUserId_fkey\" FOREIGN KEY (\"removedByUserId\") REFERENCES \"users\"(\"id\") ON DELETE RESTRICT ON UPDATE CASCADE",
+      "reason": "The removal mark's foreign key moves from SET NULL to RESTRICT, so deleting a remover's account cannot erase a block. The owner applies temp/2849-fk-restrict.sql.",
       "trackedBy": "#2849",
       "expires": "2026-12-31"
     }

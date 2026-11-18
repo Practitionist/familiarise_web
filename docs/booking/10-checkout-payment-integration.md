@@ -138,15 +138,15 @@ Each type has a dedicated handler in `lib/payments/checkout/handlers/` (`consult
 
 A buyer has one `Payment` per shared webinar or class appointment, so a second purchase finds the first one and `priorSeatStanding` (`lib/payments/checkout/seats.ts`) decides what happens. Pricing, the payment write and the waitlist share it. The webinar and class handlers read the prior payment before `recordParticipants` revives the seat row, so the answer is made on what the buyer left, and `writeCheckoutPayment` acts on that same reading:
 
-| Prior payment and its seat                                                          | Answer                                  |
-| ----------------------------------------------------------------------------------- | --------------------------------------- |
-| `EXPIRED` or `FAILED`                                                               | Re-minted in place                      |
-| `PENDING`                                                                           | 409 `PAYMENT_ALREADY_EXISTS`            |
-| Every seat released, and one carries a removal mark (`removedByUserId`)             | 409 `SEAT_REBUY_UNSUPPORTED` (removed)  |
-| A priced seat refunded in full                                                      | 409 `SEAT_REBUY_UNSUPPORTED` (refunded) |
-| A price-free seat (`isPriceFreePayment`), `SUCCEEDED`, every seat `CANCELLED`       | Rejoined on the same payment            |
-| Every seat `CANCELLED` or `REFUNDED`, otherwise (a credit-funded ₹0 or a paid seat) | 409 `SEAT_REBUY_UNSUPPORTED` (left)     |
-| Anything else (a live `HELD`, `CONFIRMED` or `ATTENDED` seat)                       | 409 `ALREADY_REGISTERED`                |
+| Prior payment and its seat                                                                                                    | Answer                                  |
+| ----------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| `EXPIRED` or `FAILED`                                                                                                         | Re-minted in place                      |
+| `PENDING`                                                                                                                     | 409 `PAYMENT_ALREADY_EXISTS`            |
+| Every seat released, and one carries a removal mark (`removedByUserId`)                                                       | 409 `SEAT_REBUY_UNSUPPORTED` (removed)  |
+| A priced seat refunded in full                                                                                                | 409 `SEAT_REBUY_UNSUPPORTED` (refunded) |
+| A price-free seat (`isPriceFreePayment`), `SUCCEEDED`, every seat `CANCELLED`, latest SEAT row `self_leave` or `block_lifted` | Rejoined on the same payment            |
+| Every seat `CANCELLED` or `REFUNDED`, otherwise (a credit-funded ₹0 or a paid seat)                                           | 409 `SEAT_REBUY_UNSUPPORTED` (left)     |
+| Anything else (a live `HELD`, `CONFIRMED` or `ATTENDED` seat)                                                                 | 409 `ALREADY_REGISTERED`                |
 
 A rejoin revives only the `CANCELLED` seat row it classified, back to `CONFIRMED`, and keeps the earlier `SUCCEEDED` ₹0 payment: it inserts no payment, re-mints nothing and skips the legs, the utilisation meter and the synchronous earnings, which the first registration already wrote. The capacity recount inside the Serializable commit is the authority, so a full event still answers `EVENT_FULL`. A removed seat is refused until staff or the organiser lifts the block (`lib/booking/seat-removal-lift.ts`).
 

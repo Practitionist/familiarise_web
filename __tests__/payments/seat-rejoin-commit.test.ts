@@ -28,7 +28,10 @@ const leftFreeSeat: PriorSeatPayment = {
   paymentGateway: "RAZORPAY",
   paymentStatus: "SUCCEEDED",
   refunds: [],
-  appointmentParticipants: [{ status: "CANCELLED", removedByUserId: null }],
+  appointmentParticipants: [
+    { id: "part-1", status: "CANCELLED", removedByUserId: null },
+  ],
+  lastSeatReason: "self_leave",
 };
 
 const linkSeat = jest.fn(async () => ({ count: 1 }));

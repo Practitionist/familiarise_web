@@ -21,7 +21,12 @@ import {
 } from "@/lib/stream/access-revocation";
 import { BookingRuleError } from "./booking-rule-error";
 import { eventCheckoutHref } from "./event-waitlist";
-import { appendSeatHistory } from "./seat-history";
+import {
+  appendSeatHistory,
+  latestSeatReasons,
+  REJOIN_OPENING_REASONS,
+} from "./seat-history";
+import { RELEASED_PARTICIPANT_STATUSES } from "./participants";
 
 /** What the learner may do once the block is lifted: register themselves, or ask support. */
 export type RejoinPath = "REGISTER" | "SUPPORT";
@@ -59,8 +64,8 @@ const SEAT_SELECT = {
   },
 } satisfies Prisma.AppointmentParticipantSelect;
 
-/** The removed learner seat on this appointment, or null when it carries no mark. */
-function findRemovedSeat(
+/** The learner's seat on this appointment, with what a lift needs. */
+function findLearnerSeat(
   tx: Pick<Tx, "appointmentParticipant">,
   args: { appointmentId: string; userId: string },
 ) {
@@ -69,13 +74,12 @@ function findRemovedSeat(
       appointmentId: args.appointmentId,
       userId: args.userId,
       role: "CONSULTEE",
-      removedByUserId: { not: null },
     },
     select: SEAT_SELECT,
   });
 }
 
-type RemovedSeat = NonNullable<Awaited<ReturnType<typeof findRemovedSeat>>>;
+type RemovedSeat = NonNullable<Awaited<ReturnType<typeof findLearnerSeat>>>;
 
 /** A price-free seat rejoins through checkout; a paid or credit-funded one needs support. */
 function rejoinPathOf(seat: RemovedSeat): RejoinPath {
@@ -90,21 +94,49 @@ function rejoinPathOf(seat: RemovedSeat): RejoinPath {
     : "SUPPORT";
 }
 
-/**
- * Clears the removal mark by compare-and-set and writes its SEAT row. Null when
- * the seat carries no mark, so a second lift or an overturn after a lift changes nothing.
- */
-export async function clearRemovalMarkTx(
-  tx: Pick<Tx, "appointmentParticipant" | "bookingStatusHistory">,
-  args: { appointmentId: string; userId: string; actorUserId: string },
-): Promise<RemovedSeat | null> {
-  const seat = await findRemovedSeat(tx, args);
+type SeatTx = Pick<Tx, "appointmentParticipant" | "bookingStatusHistory">;
+
+/** A blocked seat: marked by a removal, or released with no leave or lift as its latest SEAT row. */
+interface BlockedSeat {
+  seat: RemovedSeat;
+  /** False for a seat released before seat history was kept (or by a door that writes none). */
+  marked: boolean;
+}
+
+/** The learner's seat when something blocks its rejoin, or null when nothing does. */
+export async function readBlockedSeat(
+  tx: SeatTx,
+  args: { appointmentId: string; userId: string },
+): Promise<BlockedSeat | null> {
+  const seat = await findLearnerSeat(tx, args);
   if (!seat) return null;
-  const cleared = await tx.appointmentParticipant.updateMany({
-    where: { id: seat.id, removedByUserId: { not: null } },
-    data: { removedByUserId: null },
-  });
-  if (cleared.count === 0) return null;
+  if (seat.removedByUserId) return { seat, marked: true };
+  if (!RELEASED_PARTICIPANT_STATUSES.includes(seat.status)) return null;
+  const latest = (await latestSeatReasons(tx, [seat.id])).get(seat.id);
+  if (latest && (REJOIN_OPENING_REASONS as readonly string[]).includes(latest))
+    return null;
+  return { seat, marked: false };
+}
+
+/**
+ * Lifts the seat's block: clears its mark by compare-and-set, or for an unmarked
+ * blocked seat records the lift alone, and writes the SEAT `block_lifted` row.
+ * Null when nothing blocks the seat, so a second lift changes nothing.
+ */
+export async function liftBlockTx(
+  tx: SeatTx,
+  args: { appointmentId: string; userId: string; actorUserId: string },
+): Promise<BlockedSeat | null> {
+  const blocked = await readBlockedSeat(tx, args);
+  if (!blocked) return null;
+  const { seat } = blocked;
+  if (blocked.marked) {
+    const cleared = await tx.appointmentParticipant.updateMany({
+      where: { id: seat.id, removedByUserId: { not: null } },
+      data: { removedByUserId: null },
+    });
+    if (cleared.count === 0) return null;
+  }
   await appendSeatHistory(
     tx,
     [
@@ -117,7 +149,7 @@ export async function clearRemovalMarkTx(
     ],
     { reason: "block_lifted", actorUserId: args.actorUserId },
   );
-  return seat;
+  return blocked;
 }
 
 /** The webinar or class the seat belongs to, with its plan. */
@@ -163,10 +195,14 @@ async function stageRejoinBell(
   });
 }
 
+/** How the seat was blocked: a plain removal, a conduct removal, or a release from before seat history. */
+export type BlockKind = "ORGANISER" | "CONDUCT" | "LEGACY";
+
 export interface SeatLiftResult {
   participantId: string;
-  /** Who removed the seat, as the cleared mark recorded it. */
+  /** Who removed the seat, as the cleared mark recorded it; null for an unmarked seat. */
   removedByUserId: string | null;
+  kind: BlockKind;
   rejoinPath: RejoinPath;
   conduct: boolean;
   /** The conduct block intent this lift wrote, which the drive turns into an unblock. */
@@ -176,7 +212,8 @@ export interface SeatLiftResult {
 
 /**
  * The lift on the caller's transaction. An organiser may lift only a plain
- * removal on their own event; a conduct removal that stands is support's to lift.
+ * removal on their own event; a conduct removal that stands, and a seat
+ * released before seat history was kept, are support's to lift.
  */
 export async function liftSeatRemovalTx(
   tx: Tx,
@@ -200,13 +237,26 @@ export async function liftSeatRemovalTx(
       403,
     );
   }
-  const seat = await clearRemovalMarkTx(tx, args);
-  if (!seat) {
+  if (args.door === "organiser") {
+    const pending = await readBlockedSeat(tx, args);
+    if (pending && !pending.marked) {
+      throw new BookingRuleError(
+        "LIFT_NOT_ALLOWED",
+        "This attendee left before seat history was kept, so support decides whether they may come back.",
+        403,
+      );
+    }
+  }
+  const blocked = await liftBlockTx(tx, args);
+  if (!blocked) {
     throw new BookingRuleError(
       "REMOVAL_ALREADY_LIFTED",
       "This attendee is not blocked from this event, so there is nothing to lift.",
     );
   }
+  const { seat } = blocked;
+  let kind: BlockKind = blocked.marked ? "ORGANISER" : "LEGACY";
+  if (conduct) kind = "CONDUCT";
   // A lifted conduct removal no longer stands, so the drive unblocks the calls.
   const unblockGeneration = conduct
     ? await persistConductBlockInTx(tx, args.appointmentId, args.userId)
@@ -222,6 +272,7 @@ export async function liftSeatRemovalTx(
   return {
     participantId: seat.id,
     removedByUserId: seat.removedByUserId,
+    kind,
     rejoinPath,
     conduct,
     unblockGeneration,

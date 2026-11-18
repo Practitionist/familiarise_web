@@ -6,7 +6,10 @@
 
 import prisma from "@/lib/prisma";
 import { RELEASED_PARTICIPANT_STATUSES } from "@/lib/booking/participants";
-import { readSeatTrails } from "@/lib/booking/seat-history";
+import {
+  readSeatTrails,
+  REJOIN_OPENING_REASONS,
+} from "@/lib/booking/seat-history";
 import { lastRemovalKind } from "@/lib/booking/seat-trail-copy";
 import { isPriceFreePayment } from "@/lib/payments/funding-rail";
 import type { BookingOpsView } from "./booking-ops-types";
@@ -55,12 +58,12 @@ export async function readBookingOps(
       participants: {
         where: {
           role: "CONSULTEE",
-          removedByUserId: { not: null },
           status: { in: RELEASED_PARTICIPANT_STATUSES },
         },
         select: {
           id: true,
           user: { select: { id: true, name: true } },
+          removedByUserId: true,
           payment: {
             select: { paymentIntent: true, amount: true, originalAmount: true },
           },
@@ -95,19 +98,31 @@ export async function readBookingOps(
       refundedPaise: sumRefunds(p.refunds, "SUCCEEDED"),
       pendingRefundPaise: sumRefunds(p.refunds, "PENDING"),
     })),
-    removedSeats: appt.participants.map((seat) => ({
-      userId: seat.user.id,
-      name: seat.user.name,
-      removal: lastRemovalKind(trails.get(seat.id) ?? []),
-      paidSeat: !(
-        seat.payment &&
+    removedSeats: appt.participants.flatMap((seat) => {
+      const trail = trails.get(seat.id) ?? [];
+      const priceFree =
+        !!seat.payment &&
         isPriceFreePayment({
           paymentIntent: seat.payment.paymentIntent,
           amountPaise: Number(seat.payment.amount),
           listPricePaise: Number(seat.payment.originalAmount),
-        })
-      ),
-    })),
+        });
+      if (!seat.removedByUserId) {
+        // An unmarked free seat with no recorded leave or lift waits for a staff lift.
+        const latest = trail.at(-1)?.reason;
+        const opened =
+          latest !== undefined && REJOIN_OPENING_REASONS.includes(latest);
+        if (opened || !priceFree) return [];
+      }
+      return [
+        {
+          userId: seat.user.id,
+          name: seat.user.name,
+          removal: seat.removedByUserId ? lastRemovalKind(trail) : "LEGACY",
+          paidSeat: !priceFree,
+        },
+      ];
+    }),
   };
 }
 

@@ -29,6 +29,12 @@ const DECIDED = new Set(["COMPLETED", "UNVERIFIED", "VOIDED"]);
 // The reschedule door releases only a session that still holds a future time.
 const RESCHEDULABLE = new Set(["SCHEDULED", "RESCHEDULED"]);
 
+const REMOVAL_WORDS = {
+  ORGANISER: "removed by the organiser",
+  CONDUCT: "removed for conduct",
+  LEGACY: "left with no recorded leave",
+} as const;
+
 const RESCHEDULE_COPY =
   "This only releases the time: the customer picks the new times, and both parties are notified. Nothing is refunded now, and a session within 24 hours cannot be moved.";
 
@@ -169,10 +175,7 @@ export function BookingOpsPanel({
                 className="flex flex-wrap items-center justify-between gap-2 p-2"
               >
                 <span className="min-w-0 flex-1">
-                  {seat.name || "Attendee"} ·{" "}
-                  {seat.removal === "CONDUCT"
-                    ? "removed for conduct"
-                    : "removed by the organiser"}
+                  {seat.name || "Attendee"} · {REMOVAL_WORDS[seat.removal]}
                   {seat.paidSeat && " · paid seat: support rejoins them"}
                 </span>
                 {can("appointments.liftSeatRemoval") && (

@@ -14,6 +14,7 @@ const waitlistUpdateMany = jest.fn(async () => ({ count: 0 }));
 const updateManyAndReturn = jest.fn();
 const membershipFindMany = jest.fn(async () => [] as { userId: string }[]);
 const paymentFindMany = jest.fn(async () => [] as unknown[]);
+const seatHistoryFindMany = jest.fn(async () => [] as unknown[]);
 const participantFindMany = jest.fn(
   async (_args: { where: Record<string, unknown> }) =>
     [] as { userId: string }[],
@@ -38,6 +39,8 @@ const tx = {
   },
   membership: { findMany: membershipFindMany },
   payment: { findMany: paymentFindMany },
+  // A left free seat's latest SEAT row decides whether it may come back.
+  bookingStatusHistory: { findMany: seatHistoryFindMany },
   appointmentParticipant: { findMany: participantFindMany },
   notificationOutbox: { createManyAndReturn },
 };
@@ -426,6 +429,9 @@ describe("joinEventWaitlist", () => {
 
   it("lets a learner who left a price-free seat wait for the next one", async () => {
     soldOut();
+    seatHistoryFindMany.mockResolvedValueOnce([
+      { entityId: "part-1", reason: "self_leave" },
+    ]);
     paymentFindMany.mockResolvedValueOnce([
       {
         userId: "u-1",
@@ -435,7 +441,7 @@ describe("joinEventWaitlist", () => {
         originalAmount: 0,
         refunds: [],
         appointmentParticipants: [
-          { status: "CANCELLED", removedByUserId: null },
+          { id: "part-1", status: "CANCELLED", removedByUserId: null },
         ],
       },
     ]);
@@ -500,6 +506,7 @@ describe("the shared seat rule", () => {
       amount: 0,
       originalAmount: 0,
       paymentIntent: "free_1",
+      lastSeatReason: "self_leave",
     };
     expect(
       canBuySeat(

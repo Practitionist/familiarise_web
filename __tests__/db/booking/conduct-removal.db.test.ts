@@ -93,6 +93,7 @@ import { removeAttendeeForConduct } from "../../../lib/booking/conduct-removal";
 import { handleCheckout } from "../../../lib/payments/checkout";
 import { liftSeatRemovalTx } from "../../../lib/booking/seat-removal-lift";
 import { conductRemovalStands } from "../../../lib/support/conduct-removal-state";
+import { isForeignKeyViolation } from "../../../lib/db/pg-errors";
 import { performCaseAction } from "../../../lib/support/case-actions";
 import { sweepConductRemovalDeadlines } from "../../../lib/support/conduct-removal-case";
 import { redriveAccessRevocation } from "../../../lib/stream/access-revocation";
@@ -581,6 +582,65 @@ describe("rejoining after a conduct removal", () => {
       }),
     );
   };
+
+  it("an unmarked standing removal still stands, refuses the rejoin, and staff lift it to let the learner back", async () => {
+    const { webinar, userId, rejoin } = await removedFreeSeat();
+    // A removal from before the mark existed: the case stands, the seat carries no mark.
+    await prisma.appointmentParticipant.updateMany({
+      where: { appointmentId: webinar.appointmentId, userId },
+      data: { removedByUserId: null },
+    });
+    expect(await conductRemovalStands(webinar.appointmentId, userId)).toBe(
+      true,
+    );
+    await expect(rejoin()).rejects.toMatchObject({
+      code: "SEAT_REBUY_UNSUPPORTED",
+      message: expect.stringMatching(/left this event/),
+    });
+
+    const lifted = await liftAsStaff(webinar, userId);
+    expect(lifted).toMatchObject({ conduct: true, kind: "CONDUCT" });
+    expect(await conductRemovalStands(webinar.appointmentId, userId)).toBe(
+      false,
+    );
+    await expect(rejoin()).resolves.toMatchObject({ success: true });
+  });
+
+  it("a remover's account cannot be deleted while their mark stands, and can once it is lifted", async () => {
+    const webinar = await seedWebinar({ capacity: 10, price: 0 });
+    const free = await seatBuyer(webinar, {
+      amount: 0,
+      intent: `free_${randomUUID()}`,
+      listPaise: 0,
+    });
+    // A remover with no other rows, so the only thing holding the account is the mark.
+    const remover = await seedUser("STAFF");
+    await removeAttendeeForConduct({
+      appointmentId: webinar.appointmentId,
+      targetUserId: free.userId,
+      actorUserId: remover.userId,
+      reason: "HARASSMENT",
+      authorizeTx: async () => true,
+      note: null,
+    });
+    // History and case-event actors are SET NULL; only the seat's mark holds the account.
+    const deleteRemover = () =>
+      prisma.user
+        .delete({ where: { id: remover.userId } })
+        .then(() => undefined);
+
+    const refused = await deleteRemover().catch((error: unknown) => error);
+    expect(isForeignKeyViolation(refused)).toBe(true);
+    expect(
+      await prisma.appointmentParticipant.findFirstOrThrow({
+        where: { appointmentId: webinar.appointmentId, userId: free.userId },
+        select: { removedByUserId: true },
+      }),
+    ).toEqual({ removedByUserId: remover.userId });
+
+    await liftAsStaff(webinar, free.userId);
+    await expect(deleteRemover()).resolves.toBeUndefined();
+  });
 
   it("marks the seat with its remover and refuses the rejoin while the removal stands, even upheld", async () => {
     const { webinar, userId, caseId, rejoin } = await removedFreeSeat();

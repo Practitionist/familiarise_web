@@ -32,7 +32,8 @@ export interface BookingOpsView {
   removedSeats: {
     userId: string;
     name: string | null;
-    removal: "ORGANISER" | "CONDUCT";
+    /** LEGACY: a free seat released with no recorded leave, which only staff can open again. */
+    removal: "ORGANISER" | "CONDUCT" | "LEGACY";
     /** Paid or credit-funded: lifting lets support rejoin them, not a self-serve rebuy. */
     paidSeat: boolean;
   }[];

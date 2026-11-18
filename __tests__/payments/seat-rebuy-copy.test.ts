@@ -33,16 +33,28 @@ const prior = (
   paymentGateway: "RAZORPAY",
   paymentStatus: "SUCCEEDED",
   refunds: [],
+  // The latest SEAT row of a left price-free seat; the finder reads it only for such a seat.
+  lastSeatReason: "self_leave",
   ...over,
 });
 
-const left = { status: "CANCELLED" as const, removedByUserId: null };
-const removed = { status: "CANCELLED" as const, removedByUserId: "host-1" };
+const left = {
+  id: "part-1",
+  status: "CANCELLED" as const,
+  removedByUserId: null,
+};
+const removed = {
+  id: "part-1",
+  status: "CANCELLED" as const,
+  removedByUserId: "host-1",
+};
 
 const priceFreeLeft = prior({ amount: 0, appointmentParticipants: [left] });
 const priceFreeRefundedRow = prior({
   amount: 0,
-  appointmentParticipants: [{ status: "REFUNDED", removedByUserId: null }],
+  appointmentParticipants: [
+    { id: "part-1", status: "REFUNDED", removedByUserId: null },
+  ],
 });
 // ₹0 at checkout because referral credit covered a ₹500 list price.
 const creditFundedLeft = prior({
@@ -67,7 +79,9 @@ const paidRemovedRefunded = prior({
 });
 const held = prior({
   amount: 0,
-  appointmentParticipants: [{ status: "CONFIRMED", removedByUserId: null }],
+  appointmentParticipants: [
+    { id: "part-1", status: "CONFIRMED", removedByUserId: null },
+  ],
 });
 
 it("lets a price-free seat its holder left rejoin, on every caller", () => {
@@ -109,9 +123,34 @@ it.each([
   );
 });
 
+it.each([
+  ["no SEAT history (it left before history was kept)", null],
+  ["a whole-event cancel or lapse that wrote no leave", "registered"],
+  ["a rejoin then a release that wrote no leave", "rejoined"],
+])(
+  "keeps a left free seat with %s waiting for a staff lift, with the neutral copy",
+  (_label, lastSeatReason) => {
+    const row = { ...priceFreeLeft, lastSeatReason };
+    expect(priorSeatStanding(row)).toBe("LEFT");
+    expect(() => assertSeatRemintable(row, "WEBINAR")).toThrow(
+      expect.objectContaining({
+        code: "SEAT_REBUY_UNSUPPORTED",
+        message: expect.stringMatching(/left this event/),
+      }),
+    );
+  },
+);
+
+it("lets a left free seat rejoin once a staff lift is its latest SEAT row", () => {
+  expect(
+    priorSeatStanding({ ...priceFreeLeft, lastSeatReason: "block_lifted" }),
+  ).toBe("REJOINABLE");
+});
+
 it("lets a lifted price-free seat rejoin and keeps a lifted paid seat refused", () => {
   const lifted = (row: PriorSeatPayment) => ({
     ...row,
+    lastSeatReason: "block_lifted",
     appointmentParticipants: row.appointmentParticipants.map((seat) => ({
       ...seat,
       removedByUserId: null,
