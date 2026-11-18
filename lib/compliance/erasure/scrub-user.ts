@@ -875,7 +875,10 @@ export async function scrubUser(
       Boolean(a.razorpayContactId || a.razorpayFundAccId),
     );
 
+  // The plans whose revocation the erasure request's outbox owns.
   let collaborationsRemoved: PlanRef[] = [];
+  // The collaborator intents written when no request owns an outbox.
+  let collaboratorIntents: { ref: PlanRef; generation: Date }[] = [];
   let owedCohostEmails: OwedCohostEmails[] = [];
   let archivedProducts: { consultantProfileId: string; slug: string }[] = [];
   let supportAttachmentPathsToRemove: string[] = [];
@@ -983,30 +986,41 @@ export async function scrubUser(
       data: NULLED_REFERRAL_SIGNALS,
     });
 
-    // #1580 — an erased consultant otherwise stays an ACCEPTED collaborator in
-    // every split and roster; the same flip the moderation ban runs.
-    // The erasure's own outbox rows below record the access to take back.
-    const endedCollaborations = await endCollaborationsForUser(tx, userId, {
-      endedByUserId: null,
-      ownRevocationQueue: true,
-    });
-    collaborationsRemoved = endedCollaborations.map((ended) => ended.ref);
-    owedCohostEmails = endedCollaborations.flatMap(
-      (ended) => ended.notices.learnerEmails ?? [],
-    );
-
-    // #1593 — the OUTBOX: every Stream revocation this scrub owes is a durable
-    // row before the side effect is attempted, in the same transaction as the
-    // rows it follows from, so a crash between commit and Stream leaves a
-    // sweep-visible debt rather than a silent one. The post-commit attempt
-    // below completes the row; the retry sweep drains whatever it could not.
+    // The request being processed owns an outbox: every Stream revocation the
+    // scrub owes is a durable row in this transaction, before the side effect
+    // is attempted. The post-commit attempt completes the row and the retry
+    // sweep drains whatever it could not.
     const request = await tx.erasureRequest.findFirst({
       where: { userId, status: { in: ["PENDING", "IN_PROGRESS"] } },
       orderBy: { requestedAt: "desc" },
       select: { id: true },
     });
     erasureRequestId = request?.id ?? null;
-    if (erasureRequestId && tx.streamRevocationRetry?.createMany) {
+    const ownsRevocationOutbox = Boolean(
+      erasureRequestId && tx.streamRevocationRetry?.createMany,
+    );
+
+    // An erased consultant leaves every team, as a banned one does. Their
+    // access is recorded in the outbox when the scrub has one; otherwise each
+    // ending writes the collaborator intent.
+    const endedCollaborations = await endCollaborationsForUser(tx, userId, {
+      endedByUserId: null,
+      ownRevocationQueue: ownsRevocationOutbox,
+    });
+    owedCohostEmails = endedCollaborations.flatMap(
+      (ended) => ended.notices.learnerEmails ?? [],
+    );
+    if (ownsRevocationOutbox) {
+      collaborationsRemoved = endedCollaborations.map((ended) => ended.ref);
+    } else {
+      collaboratorIntents = endedCollaborations.flatMap((ended) =>
+        ended.revocationGeneration
+          ? [{ ref: ended.ref, generation: ended.revocationGeneration }]
+          : [],
+      );
+    }
+
+    if (erasureRequestId && ownsRevocationOutbox) {
       await tx.streamRevocationRetry.createMany({
         data: [
           ...collaborationsRemoved.map(({ planType, planId }) => ({
@@ -1196,6 +1210,23 @@ export async function scrubUser(
           extra: { planType, planId },
         }),
       );
+  }
+
+  // Without an outbox of its own the scrub drives each collaborator intent
+  // once; an attempt that fails leaves the intent owed to the retry sweep.
+  if (collaboratorIntents.length > 0) {
+    try {
+      const { revokeCollaboratorAccess } =
+        await import("@/lib/stream/access-revocation");
+      for (const { ref, generation } of collaboratorIntents) {
+        await revokeCollaboratorAccess(ref, userId, generation);
+      }
+    } catch (caught) {
+      reportSentryError(caught, {
+        subsystem: "compliance",
+        op: "scrubUser.revokeCollaboratorAccess",
+      });
+    }
   }
 
   // The seat holders' bell committed with the scrub; their email is its copy.

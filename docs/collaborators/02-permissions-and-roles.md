@@ -96,7 +96,7 @@ A collaborator who loses the standing above after joining is taken off every tea
 
 A suspension with an end date is not on the list. The account cannot sign in while it runs and keeps its place on every team, so the terms it agreed survive a sanction that expires.
 
-Erasure records the Stream access to take back in its own outbox, which covers everything the erased user held, so it tells the ending function not to write a second order (`ownRevocationQueue`).
+An erasure that is processing a request records the Stream access to take back in that request's outbox, which covers everything the erased user held, so it tells the ending function not to write a second order (`ownRevocationQueue`). A scrub with no request to process has no outbox, so each ending writes the ordinary `COLLAB_REVOKE` order and the scrub drives it once after the commit.
 
 ## Deprecated & Superseded Approaches
 
