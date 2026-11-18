@@ -257,12 +257,13 @@ This route returns what cancelling the trial right now would pay back, and it ne
 
 **Method**: `DELETE /api/trials/[trialId]`
 
-The optional JSON body carries `confirmedRefundPaise`, which is the `estimatedRefundPaise` the caller saw in the preview. The route re-quotes the refund under the appointment lock, cancels the trial and tombstones its session in one transaction, and then refunds exactly the confirmed quote. A free or unpaid trial needs no body. The refusals specific to a paid trial are listed in the following table, and both carry the current `quote` so the dialog can show it and ask again.
+The optional JSON body carries `confirmedRefundPaise`, which is the `estimatedRefundPaise` the caller saw in the preview, and `expectedPaid`, which is `false` when the dialog showed an unpaid trial and `true` when it showed the preview's paid quote. Both fields are parsed by `TrialCancelBodySchema` in `schemas/trials.ts`, and the clients build the body with `trialCancelRequest`. The route re-quotes the refund under the appointment lock, cancels the trial and tombstones its session in one transaction, and then refunds exactly the confirmed quote. A free or unpaid trial needs no body. The refusals specific to a paid trial are listed in the following table, and both carry the current `quote` so the dialog can show it and ask again.
 
-| Status | Code                    | Meaning                                                                  |
-| ------ | ----------------------- | ------------------------------------------------------------------------ |
-| 409    | `REFUND_QUOTE_REQUIRED` | The trial is paid and the body carried no valid `confirmedRefundPaise`.  |
-| 409    | `REFUND_QUOTE_CHANGED`  | The confirmed amount no longer matches the refund quoted under the lock. |
+| Status | Code                    | Meaning                                                                                                            |
+| ------ | ----------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| 409    | `REFUND_QUOTE_REQUIRED` | The trial is paid and the body carried no valid `confirmedRefundPaise`.                                            |
+| 409    | `REFUND_QUOTE_CHANGED`  | The confirmed amount no longer matches the refund quoted under the lock.                                           |
+| 409    | `REFUND_QUOTE_CHANGED`  | The body said `expectedPaid: false` but the trial is now paid; the message reads "Your payment just went through". |
 
 The compare-and-swap narrows to the status the caller read, so a trial accepted or paid since that read answers 409 `ILLEGAL_TRANSITION` instead of being cancelled on a stale view.
 

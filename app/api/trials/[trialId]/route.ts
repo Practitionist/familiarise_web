@@ -56,7 +56,11 @@ import {
   stageTrialCancelNotice,
   type TrialCancelNotice,
 } from "@/lib/trials/cancel-notice";
-import { TrialCancelBodySchema, UpdateTrialSchema } from "@/schemas/trials";
+import {
+  TrialCancelBodySchema,
+  UpdateTrialSchema,
+  type TrialCancelBody,
+} from "@/schemas/trials";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 import { platformCancelDoorRefusal } from "@/lib/booking/platform-cancel";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
@@ -872,7 +876,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
       isConsultantInitiated &&
       session.user.consultantProfileId === existingTrial.consultantProfileId &&
       existingTrial.status === TrialStatus.SCHEDULED;
-    const confirmedRefundPaise = await readConfirmedRefund(request);
+    const click = await readCancelClick(request);
     const noticeUserIds = [
       existingTrial.consultantProfile.user.id,
       existingTrial.consulteeProfile.user.id,
@@ -963,7 +967,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
         paymentId: existingTrial.paymentId,
         isConsultantInitiated,
       });
-      assertTrialQuoteConfirmed(quote, confirmedRefundPaise);
+      assertTrialQuoteConfirmed(quote, click);
       const owed = trialRefundOwed({ trialId, quote, side: cancelSide });
       return { quote, owed, cancelled: await cancelTrial(owed) };
     };
@@ -1066,14 +1070,9 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
   }
 }
 
-/**
- * #1846 — the refund amount the caller confirmed from the cancel preview, in
- * paise, from an optional JSON body. Absent or malformed means unconfirmed.
- */
-async function readConfirmedRefund(
-  request: NextRequest,
-): Promise<number | undefined> {
+/** What the click confirmed from the cancel dialog; an absent or malformed body confirms nothing. */
+async function readCancelClick(request: NextRequest): Promise<TrialCancelBody> {
   const body: unknown = await request.json().catch(() => null);
   const parsed = TrialCancelBodySchema.safeParse(body);
-  return parsed.success ? parsed.data.confirmedRefundPaise : undefined;
+  return parsed.success ? parsed.data : {};
 }

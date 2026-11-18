@@ -57,6 +57,7 @@ import {
   type ShownCancelQuote,
 } from "@/lib/appointments/cancel-requote";
 import { errorMessageFromBody } from "@/lib/fetch-helpers";
+import { trialCancelRequest } from "@/schemas/trials";
 import { bookingPayHref } from "@/lib/appointments/trial-checkout-href";
 import { operatorOpsHref } from "@/lib/backoffice/booking-href";
 import { OPS_HINT_LABEL } from "@/components/appointments/OperatorOpsHint";
@@ -617,12 +618,11 @@ export function useConsulteeAppointmentsAdapter(options?: {
     quote?: ShownCancelQuote,
   ): Promise<boolean> => {
     const previewUrl = `/api/trials/${id}/cancel/preview`;
-    const response = await fetch(`/api/trials/${id}`, {
+    const { url, body } = trialCancelRequest(id, quote);
+    const response = await fetch(url, {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(
-        quote ? { confirmedRefundPaise: quote.estimatedRefundPaise } : {},
-      ),
+      body: JSON.stringify(body),
     });
     const data: unknown = await response.json().catch(() => ({}));
     if (!response.ok) {

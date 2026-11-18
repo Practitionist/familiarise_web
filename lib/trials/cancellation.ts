@@ -26,6 +26,7 @@ import {
   resolveBookingRefundContext,
 } from "@/lib/booking/cancellation-scope";
 import { cancelWindowRefusal } from "@/lib/booking/session-window";
+import type { TrialCancelBody } from "@/schemas/trials";
 import type { Refusal } from "@/lib/errors/refusal";
 import { PaymentStatus, OccurrenceCompletionStatus } from "@prisma/client";
 
@@ -326,26 +327,40 @@ export class TrialRefundQuoteError extends Error {
   constructor(
     readonly code: "REFUND_QUOTE_REQUIRED" | "REFUND_QUOTE_CHANGED",
     readonly quote: TrialRefundQuote,
+    paymentLanded = false,
   ) {
     super(
       code === "REFUND_QUOTE_REQUIRED"
         ? "Confirm the refund quote before cancelling this paid trial."
-        : "The refund for this trial has changed since you saw it. Check the new amount and confirm again.",
+        : paymentLanded
+          ? "Your payment just went through. Review the refund before you cancel."
+          : "The refund for this trial has changed since you saw it. Check the new amount and confirm again.",
     );
     this.name = "TrialRefundQuoteError";
   }
 }
 
-/** Throws unless `confirmedRefundPaise` matches the quote a paid trial has. */
+/**
+ * Throws unless the click confirmed the quote a paid trial has. A click made on
+ * an unpaid screen never cancels a paid trial, even when both quotes are ₹0.
+ */
 export function assertTrialQuoteConfirmed(
   quote: TrialRefundQuote | null,
-  confirmedRefundPaise: number | undefined,
+  click: TrialCancelBody,
 ): void {
   if (!quote) return;
-  if (confirmedRefundPaise === undefined) {
+  if (click.expectedPaid === false) {
+    throw new TrialRefundQuoteError("REFUND_QUOTE_CHANGED", quote, true);
+  }
+  if (click.confirmedRefundPaise === undefined) {
     throw new TrialRefundQuoteError("REFUND_QUOTE_REQUIRED", quote);
   }
-  if (confirmedRefundPaise !== quote.estimatedRefundPaise) {
+  if (click.expectedPaid === undefined) {
+    console.info(
+      "[trial-cancel] no expectedPaid on the click; paid state unbound",
+    );
+  }
+  if (click.confirmedRefundPaise !== quote.estimatedRefundPaise) {
     throw new TrialRefundQuoteError("REFUND_QUOTE_CHANGED", quote);
   }
 }
