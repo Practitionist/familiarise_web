@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/responsive-table";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { formatCurrencyTotals } from "../currency-totals";
+import { NotActiveGroup } from "../NotActiveGroup";
 import {
   FUNDING_SOURCE_LABEL,
   FUNDING_SOURCE_BADGE_CLASS,
@@ -207,22 +208,13 @@ export function BillingPageClient({
             </section>
 
             {inactiveRows.length > 0 && (
-              <details className="mt-6 rounded-lg border">
-                <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
-                  Not active ({inactiveRows.length})
-                  <span className="ml-2 font-normal text-muted-foreground">
-                    Deactivated, suspended or awaiting verification; left out of
-                    the totals above.
-                  </span>
-                </summary>
-                <div className="px-4 pb-4">
-                  <ResponsiveTable
-                    columns={columns}
-                    rows={inactiveRows}
-                    getRowId={(r) => r.organizationId}
-                  />
-                </div>
-              </details>
+              <NotActiveGroup count={inactiveRows.length}>
+                <ResponsiveTable
+                  columns={columns}
+                  rows={inactiveRows}
+                  getRowId={(r) => r.organizationId}
+                />
+              </NotActiveGroup>
             )}
           </>
         )}

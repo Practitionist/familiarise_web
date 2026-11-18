@@ -146,7 +146,7 @@ A few additional surfaces are not in the org-scoped tree:
   `Settings`: both collided head-on with the per-org dashboard's entries of the
   same name, and an operator moving between the two layers had no way to tell
   which one they were looking at.
-  - `/home` — "Overview". Cross-org stats row + grid of orgs you OWN (showing live `walletBalance`, low-wallet warning, dunning suspension, or pending verification badges) + "+ New organization" CTA.
+  - `/home` — "Overview". Cross-org stats row + grid of orgs you OWN (showing live `walletBalance`, low-wallet warning, dunning suspension, or pending verification badges) + "+ New organization" CTA. Organisations that are not active sit in the same collapsed "Not active" group as on Spend.
   - `/activity` — cross-org audit feed aggregating `OrgAuditLog` rows
     across all owned orgs with `<FilterBar>` organization and category filters (including `WEBHOOK`). Cursor-paginated. Distinct from per-org
     `/audit` which scopes to one org and supports rich filters.

@@ -1,9 +1,10 @@
 /**
- * Workspace Spend: the headline totals cover active organisations only; a
- * deactivated organisation's wallet and invoices sit in a collapsed group.
+ * Workspace Spend and Overview: the headline totals cover active organisations
+ * only; a deactivated organisation sits in a collapsed group on both pages.
  */
 
 import { render, screen, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 const ACTIVE = "org-wipro";
 const GONE = "org-qa-pool";
@@ -14,30 +15,44 @@ jest.mock("@/lib/prisma", () => ({
     membership: {
       findMany: async () => [
         {
+          id: "m-wipro",
+          role: "OWNER",
+          status: "ACTIVE",
           organizationId: ACTIVE,
           organization: {
             id: ACTIVE,
+            canSponsor: true,
+            canHost: false,
+            brandingProfile: null,
             name: "Wipro Limited",
             slug: "wipro",
             status: "ACTIVE",
             billingAccount: {
               id: "ba-wipro",
               walletBalance: 0,
+              minBalancePaise: null,
               currency: "INR",
               fundingSource: "INVOICE",
             },
           },
         },
         {
+          id: "m-pool",
+          role: "OWNER",
+          status: "ACTIVE",
           organizationId: GONE,
           organization: {
             id: GONE,
+            canSponsor: true,
+            canHost: false,
+            brandingProfile: null,
             name: "qa2205 Pool Org",
             slug: "qa2205-pool",
             status: "DEACTIVATED",
             billingAccount: {
               id: "ba-pool",
               walletBalance: 4_000_000,
+              minBalancePaise: null,
               currency: "INR",
               fundingSource: "WALLET",
             },
@@ -79,7 +94,11 @@ jest.mock(
   }),
 );
 
-import { getWorkspaceBillingRollup } from "@/lib/data/org-workspace";
+import {
+  getOperatorOrganizations,
+  getWorkspaceBillingRollup,
+} from "@/lib/data/org-workspace";
+import { HomePageClient } from "@/app/dashboard/org-workspace/[orgWorkspaceId]/home/HomePageClient";
 import { BillingPageClient } from "@/app/dashboard/org-workspace/[orgWorkspaceId]/billing/BillingPageClient";
 import { formatCurrencyTotals } from "@/app/dashboard/org-workspace/[orgWorkspaceId]/currency-totals";
 
@@ -118,5 +137,27 @@ describe("workspace Spend", () => {
     for (const name of screen.getAllByText("qa2205 Pool Org")) {
       expect(group).toContainElement(name);
     }
+  });
+
+  it("Overview puts a deactivated organisation in the same collapsed group", async () => {
+    mockRollup = await getWorkspaceBillingRollup("u-owner");
+    const client = new QueryClient();
+    client.setQueryData(
+      ["org-workspace-orgs"],
+      await getOperatorOrganizations("u-owner"),
+    );
+    render(
+      <QueryClientProvider client={client}>
+        <HomePageClient orgWorkspaceId="ws-1" />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByText("₹0.00")).toBeInTheDocument();
+    const group = screen.getByText(/Not active \(1\)/).closest("details");
+    expect(group).not.toBeNull();
+    expect(group).not.toHaveAttribute("open");
+    expect(group).toContainElement(screen.getByText("qa2205 Pool Org"));
+    expect(group).not.toContainElement(screen.getByText("Wipro Limited"));
+    expect(screen.getByText("Owner (1)")).toBeInTheDocument();
   });
 });
