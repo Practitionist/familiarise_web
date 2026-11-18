@@ -353,6 +353,16 @@ describe("describeRefusal", () => {
     ).toBe(
       "This expert recently declined or left this plan, and can be invited again from 23 November 2026.",
     );
+    // The date is the viewer's: 20:00 UTC on the 23rd is already the 24th in Kathmandu.
+    expect(
+      describeRefusal(
+        refusal("COOLDOWN", { retryAt: "2026-11-23T20:00:00.000Z" }).inZone(
+          "Asia/Kathmandu",
+        ),
+      ).sentence,
+    ).toBe(
+      "This expert recently declined or left this plan, and can be invited again from 24 November 2026.",
+    );
     expect(
       describeRefusal(refusal("RATE_LIMITED", { retryAfterSeconds: 125 }))
         .sentence,
