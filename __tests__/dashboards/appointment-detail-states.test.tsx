@@ -397,18 +397,27 @@ function hostedWebinarDetail(): TAppointmentDetail {
   } as unknown as TAppointmentDetail;
 }
 
+/** The page header's text, tags stripped. */
+function headerText(html: string) {
+  const header = /<header\b[^>]*>([\s\S]*?)<\/header>/.exec(html)?.[1] ?? "";
+  return header
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 describe("consultant · hosted webinar header", () => {
   it("never reads 'with Registered attendees'; a 1:1 keeps the learner's name", () => {
     viewerId = "u-ethan";
     currentDetail = hostedWebinarDetail();
-    const html = render("consultant").replace(/<!-- -->/g, "");
-    expect(html).toContain("Expert Workshop Webinar");
-    expect(html).not.toContain("Registered attendees");
-    expect(html).not.toMatch(/>with </);
+    const webinar = headerText(render("consultant"));
+    expect(webinar).toContain("Expert Workshop Webinar");
+    expect(webinar).not.toContain("Registered attendees");
+    expect(webinar).not.toMatch(/\bwith\b/);
 
     currentDetail = subscriptionDetail({ status: "PENDING" });
-    expect(render("consultant").replace(/<!-- -->/g, "")).toMatch(
-      /with <span class="font-medium text-foreground">Rachel Anderson<\/span>/,
+    expect(headerText(render("consultant"))).toMatch(
+      /\bwith Rachel Anderson\b/,
     );
   });
 });
