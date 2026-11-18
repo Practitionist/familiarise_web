@@ -32,6 +32,7 @@ import { requireFreshSession } from "@/lib/auth/step-up";
 import { recordOpsAction } from "@/lib/backoffice/ops-action-log";
 import { supportRetainedHistoryCount } from "@/lib/support/erasure";
 import { purgeExpertSurfaces } from "@/lib/data/public-cache";
+import { readJsonBody } from "@/lib/api/parse";
 /**
  * Convert empty strings to undefined so Prisma skips the field update.
  * For enum fields, also validates against the allowed values.
@@ -144,7 +145,9 @@ export async function PUT(
     // role made any consultee an ADMIN, and an email rewrite skips
     // verification (an account-takeover primitive). Operator roles change on
     // the Team page; onboarding sets the role in its completion transaction.
-    const body = await req.json();
+    const read = await readJsonBody(req);
+    if (read.error) return read.error;
+    const body = read.body;
     const {
       name,
       image,
@@ -260,7 +263,9 @@ export async function PATCH(
     if (auth.error) return auth.error;
     const { session, adminEdit } = auth;
 
-    const body = await req.json();
+    const read = await readJsonBody(req);
+    if (read.error) return read.error;
+    const body = read.body;
 
     await prisma.$transaction(async (tx) => {
       if (adminEdit) {

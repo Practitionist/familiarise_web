@@ -65,7 +65,10 @@ export async function POST(
     }
     if (host !== "consultant" && host !== "host-org") {
       return NextResponse.json(
-        { error: "Only the webinar's host can re-time it." },
+        {
+          error: "Only the webinar's host can re-time it.",
+          code: "RETIME_HOST_ONLY",
+        },
         { status: 404 },
       );
     }

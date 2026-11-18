@@ -55,6 +55,7 @@ import {
   isKnownTimeZone,
   partitionWeeklyRows,
 } from "@/utils/schedule/weekly-projection";
+import { readJsonBody } from "@/lib/api/parse";
 // Zod schema for UUID validation
 const uuidSchema = z.string().uuid();
 
@@ -355,7 +356,9 @@ export async function PUT(
     const ownerCheck = await authorizeOwner(id);
     if (ownerCheck instanceof NextResponse) return ownerCheck;
 
-    const requestData = await request.json();
+    const read = await readJsonBody(request);
+    if (read.error) return read.error;
+    const requestData = read.body;
 
     // Validate request body using zod schema
     const validationResult = updateConsultantSchema.safeParse(requestData);
@@ -660,7 +663,9 @@ export async function PATCH(
     const owner = await authorizeOwner(id);
     if (owner instanceof NextResponse) return owner;
 
-    const parsed = bookingRequestSettingsSchema.safeParse(await request.json());
+    const read = await readJsonBody(request);
+    if (read.error) return read.error;
+    const parsed = bookingRequestSettingsSchema.safeParse(read.body);
     if (!parsed.success) {
       // The plan-client limit's own sentence; anything else is a stale or hand-built body.
       const limitIssue = parsed.error.issues.find((issue) =>

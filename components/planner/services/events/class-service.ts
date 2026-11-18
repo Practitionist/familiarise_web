@@ -3,6 +3,7 @@
  */
 
 import { toast } from "@/hooks/use-toast";
+import { requireJsonResponse } from "@/lib/fetch-helpers";
 import { ClassEvent } from "@/types/planner-events";
 import {
   eventStatusPayload,
@@ -34,9 +35,9 @@ export class ClassService {
         `/api/bookings/classes/check-duplicate-title?${params}`,
       );
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(
-          errorData.error || "Failed to check for duplicate class titles",
+        await requireJsonResponse(
+          response,
+          "Failed to check for duplicate class titles",
         );
       }
 
@@ -69,7 +70,7 @@ export class ClassService {
 
       const response = await fetch(`/api/bookings/classes?${params}`);
       if (!response.ok) {
-        throw new Error("Failed to fetch classes");
+        await requireJsonResponse(response, "Failed to fetch classes");
       }
 
       const { data } = await response.json();
@@ -134,10 +135,9 @@ export class ClassService {
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(
-          errorData.error ||
-            `Failed to ${isUpdate ? "update" : "create"} class`,
+        await requireJsonResponse(
+          response,
+          `Failed to ${isUpdate ? "update" : "create"} class`,
         );
       }
 
@@ -160,8 +160,7 @@ export class ClassService {
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to delete class");
+        await requireJsonResponse(response, "Failed to delete class");
       }
 
       return true;

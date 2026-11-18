@@ -34,11 +34,21 @@ import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import { allocate } from "@/lib/booking/allocation";
 
+const OVERRIDE_REASON_MESSAGE =
+  "Give a reason of at least 5 characters for placing this booking.";
+
 const AllocateOrgBookingBodySchema = z
   .object({
     isAuto: z.boolean().optional().default(true),
     slots: z.array(z.string().datetime()).min(1).optional(),
-    overrideReason: z.string().trim().min(5).max(500),
+    overrideReason: z
+      .string({
+        required_error: OVERRIDE_REASON_MESSAGE,
+        invalid_type_error: OVERRIDE_REASON_MESSAGE,
+      })
+      .trim()
+      .min(5, OVERRIDE_REASON_MESSAGE)
+      .max(500),
   })
   .superRefine((val, ctx) => {
     if (!val.isAuto && (!val.slots || val.slots.length === 0)) {

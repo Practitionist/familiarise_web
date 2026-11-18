@@ -1,5 +1,6 @@
 import { getSubDomains } from "@/lib/data/taxonomy";
 import { NextRequest, NextResponse } from "next/server";
+import { reportSentryError } from "@/lib/observability/report";
 
 export async function GET(request: NextRequest) {
   try {
@@ -10,7 +11,11 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(subDomains);
   } catch (error) {
-    console.error("Error fetching subdomains:", error);
+    reportSentryError(error, {
+      subsystem: "content",
+      op: "subdomains.list",
+      expected: false,
+    });
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500 },

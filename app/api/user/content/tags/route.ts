@@ -4,6 +4,7 @@ import { apiError } from "@/lib/errors";
 import { validateTagName } from "@/utils/contentValidation";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { readJsonBody } from "@/lib/api/parse";
 
 // ---------------------------------------------------------------------------
 // GET /api/user/content/tags?domainId={id}
@@ -59,7 +60,9 @@ const CreateTagSchema = z.object({
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
+    const read = await readJsonBody(request);
+    if (read.error) return read.error;
+    const body = read.body;
     const parsed = CreateTagSchema.safeParse(body);
 
     if (!parsed.success) {

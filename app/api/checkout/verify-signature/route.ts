@@ -42,6 +42,7 @@ import { checkoutLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { recordSystemEventSafe } from "@/lib/enterprise/system-events";
 import { z } from "zod";
 import { razorpayFetchedPaymentSchema } from "@/schemas/webhooks/razorpay";
+import { readJsonBody } from "@/lib/api/parse";
 
 const verifySignatureSchema = z.object({
   razorpay_order_id: z.string().startsWith("order_"),
@@ -68,7 +69,9 @@ export async function POST(req: NextRequest) {
     const rl = await applyRateLimit(checkoutLimiter, session.user.id);
     if (rl) return rl;
 
-    const body = await req.json();
+    const read = await readJsonBody(req);
+    if (read.error) return read.error;
+    const body = read.body;
     const { razorpay_order_id, razorpay_payment_id, razorpay_signature } =
       verifySignatureSchema.parse(body);
 

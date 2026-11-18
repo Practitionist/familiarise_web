@@ -8,6 +8,7 @@ import { z } from "zod";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { getStaffAppointments } from "@/lib/data/staff-appointments";
 import type { Scope } from "@/lib/api/scope/parse";
+import { reportSentryError } from "@/lib/observability/report";
 
 /** A positive whole number, else `fallback`; never above `max`. */
 const positiveInt = (fallback: number, max: number) =>
@@ -53,7 +54,11 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json(result);
   } catch (error) {
-    console.error("Error fetching appointments:", error);
+    reportSentryError(error, {
+      subsystem: "staff",
+      op: "staff.appointments.list",
+      expected: false,
+    });
     return NextResponse.json(
       { error: "Failed to fetch appointments" },
       { status: 500 },

@@ -253,7 +253,7 @@ function safeJsonStringify(payload: Record<string, unknown>): string {
 // it never reaches Sentry, so a later caller that judges it a fault still reports.
 const reportedFaults = new WeakMap<object, string>();
 
-/** The event id an error, or an error it wraps as `cause`, was already reported under. */
+/** The event id an error, or one it wraps as `cause` or `originalError`, was already reported under. */
 function reportedFaultId(error: unknown): string | undefined {
   let current: unknown = error;
   for (
@@ -263,7 +263,8 @@ function reportedFaultId(error: unknown): string | undefined {
   ) {
     const id = reportedFaults.get(current);
     if (id) return id;
-    current = (current as { cause?: unknown }).cause;
+    const link = current as { cause?: unknown; originalError?: unknown };
+    current = link.cause ?? link.originalError;
   }
   return undefined;
 }

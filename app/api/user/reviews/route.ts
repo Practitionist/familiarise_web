@@ -25,6 +25,7 @@ import {
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { publicCacheHeaders } from "@/lib/api/cdn-cache";
 import { z } from "zod";
+import { readJsonBody } from "@/lib/api/parse";
 
 /** The CDN keys on exactly the query keys GET reads; bounded so junk values cannot mint cache entries. */
 const LIST_CACHE_HEADERS = publicCacheHeaders({
@@ -167,7 +168,9 @@ export async function POST(req: NextRequest) {
     );
     if (rl) return rl;
 
-    const body = await req.json();
+    const read = await readJsonBody(req);
+    if (read.error) return read.error;
+    const body = read.body;
     const result = CreateReviewSchema.safeParse(body);
     if (!result.success) {
       return NextResponse.json(

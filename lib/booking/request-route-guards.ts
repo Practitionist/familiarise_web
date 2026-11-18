@@ -114,7 +114,7 @@ export function validateListRequestStatusPatch(
     return NextResponse.json(
       {
         error:
-          "Cancelling bookings via status PATCH is not supported. Use POST /api/appointments/{appointmentId}/cancel instead.",
+          "Cancel this booking from its cancel dialog, which shows the refund first.",
         code: "USE_CANCEL_ENDPOINT",
       },
       { status: 400 },
@@ -179,7 +179,7 @@ export function validateDetailRequestStatusPatch(
     return NextResponse.json(
       {
         error:
-          "Cancelling bookings via status PATCH is not supported. Use POST /api/appointments/{appointmentId}/cancel instead.",
+          "Cancel this booking from its cancel dialog, which shows the refund first.",
         code: "USE_CANCEL_ENDPOINT",
       },
       { status: 400 },

@@ -11,6 +11,7 @@ import { Prisma } from "@prisma/client";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { readPageParams } from "@/lib/backoffice/list-paging";
 import type { ModerationReviewsPageInput } from "@/lib/backoffice/moderation-schemas";
+import { reportSentryError } from "@/lib/observability/report";
 
 const querySchema = z.object({
   consultantProfileId: z.string().min(1).optional(),
@@ -172,7 +173,11 @@ export async function GET(req: NextRequest) {
     };
     return NextResponse.json(body);
   } catch (error) {
-    console.error("Error fetching reviews:", error);
+    reportSentryError(error, {
+      subsystem: "moderation",
+      op: "moderation.reviews",
+      expected: false,
+    });
     return NextResponse.json(
       { error: "Failed to fetch reviews" },
       { status: 500 },

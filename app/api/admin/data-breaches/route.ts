@@ -19,6 +19,7 @@ import prisma from "@/lib/prisma";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { readPageParams } from "@/lib/backoffice/list-paging";
 import { UNREPORTED_BREACH_WHERE } from "@/lib/backoffice/queue-predicates";
+import { reportSentryError } from "@/lib/observability/report";
 
 const BodySchema = z.object({
   affectedUserIds: z.array(z.string().min(1)).min(1),
@@ -98,7 +99,11 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ breach }, { status: 201 });
   } catch (error) {
-    console.error("[data-breach] create failed:", error);
+    reportSentryError(error, {
+      subsystem: "compliance",
+      op: "data-breach.create",
+      expected: false,
+    });
     return NextResponse.json({ error: "Internal error" }, { status: 500 });
   }
 }

@@ -1,5 +1,11 @@
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
+import { reportSentryError } from "@/lib/observability/report";
+import { readJsonBody } from "@/lib/api/parse";
+import { z } from "zod";
+
+const CreateTopicsBody = z.object({ names: z.array(z.unknown()).min(1) });
+const DeleteTopicsBody = z.object({ ids: z.array(z.string()).min(1) });
 
 export async function GET(req: NextRequest) {
   try {
@@ -24,7 +30,11 @@ export async function GET(req: NextRequest) {
       { status: 200 },
     );
   } catch (error) {
-    console.error("Error fetching topics:", error);
+    reportSentryError(error, {
+      subsystem: "content",
+      op: "topics.list",
+      expected: false,
+    });
     return NextResponse.json(
       { error: "An error occurred while fetching topics" },
       { status: 500 },
@@ -34,17 +44,17 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const { names } = body;
-    console.log("Received topic creation request:", { names });
-
-    // Validate request
-    if (!Array.isArray(names) || names.length === 0) {
+    const read = await readJsonBody(req);
+    if (read.error) return read.error;
+    const parsed = CreateTopicsBody.safeParse(read.body);
+    if (!parsed.success) {
       return NextResponse.json(
         { error: "Topics array is required" },
         { status: 400 },
       );
     }
+    const { names } = parsed.data;
+    console.log("Received topic creation request:", { names });
 
     // Process each name to ensure it's a string and not empty
     const validNames = names.filter(
@@ -105,7 +115,11 @@ export async function POST(req: NextRequest) {
       { status: 201 },
     );
   } catch (error) {
-    console.error("Error creating topics:", error);
+    reportSentryError(error, {
+      subsystem: "content",
+      op: "topics.create",
+      expected: false,
+    });
     return NextResponse.json(
       { error: "An error occurred while creating the topics" },
       { status: 500 },
@@ -116,15 +130,16 @@ export async function POST(req: NextRequest) {
 // Add DELETE endpoint for rolling back newly created topics
 export async function DELETE(req: NextRequest) {
   try {
-    const body = await req.json();
-    const { ids } = body;
-
-    if (!Array.isArray(ids) || ids.length === 0) {
+    const read = await readJsonBody(req);
+    if (read.error) return read.error;
+    const parsed = DeleteTopicsBody.safeParse(read.body);
+    if (!parsed.success) {
       return NextResponse.json(
         { error: "Topic IDs array is required" },
         { status: 400 },
       );
     }
+    const { ids } = parsed.data;
 
     console.log("Request to delete topics with IDs:", ids);
 
@@ -173,7 +188,11 @@ export async function DELETE(req: NextRequest) {
       { status: 200 },
     );
   } catch (error) {
-    console.error("Error deleting topics:", error);
+    reportSentryError(error, {
+      subsystem: "content",
+      op: "topics.delete",
+      expected: false,
+    });
     return NextResponse.json(
       { error: "An error occurred while deleting topics" },
       { status: 500 },

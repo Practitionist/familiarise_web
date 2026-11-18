@@ -8,6 +8,14 @@ The finance doctrine says that a refusal the code anticipated must never surface
 
 Sweeps and reconcilers report findings as messages, not exceptions. A reconciler that finds a `LEDGER_DUAL_WRITE_GAP` sends one `reportSentryMessage` per run with the count and the ids in `extra`, tagged expected, and the HTTP twin answers 207. A reconciler that crashes sends an exception. The difference matters because the ticker and the Actions notifier read only the status, so a finding reported as a failure buys retries and noise instead of visibility.
 
+### Every 500 reaches Sentry; a typed refusal never does
+
+A route whose catch answers 500 reports the error with `reportSentryError(error, { subsystem, expected: false })` before it returns, and keeps its response exactly as it was. A `console.error` alone reaches the function log and no pager, so the fault is invisible until a customer writes in. `reportSentryError` already writes one structured `observability.fault` console line, so the capture replaces the old `console.error` rather than sitting beside it. One exception is a helper that already captured: `setEmailEnabled` (`lib/email/unsubscribe.ts`) reports its own failure, so the unsubscribe and resubscribe routes that turn its `false` into a 500 do not capture again.
+
+The opposite rule holds for refusals. A catch that rethrows to an outer catch skips its own capture for the typed refusals the outer catch maps to a 4xx (`IllegalTransitionError`, `BookingRuleError`, `ApprovalLockLostError` and the exclusion-constraint conflict in the consultation PATCH, `app/api/bookings/consultations/[consultationId]/route.ts`), and still captures everything else. In the browser, a failed call to our own API is thrown as an `ApiResponseError` through `requireJsonResponse` (`lib/fetch-helpers.ts`), never as a plain `Error`, so `isExpectedRefusal` (`lib/errors/client-refusal.ts`) can tell a 4xx answer from a fault and the editor captures only the fault. Malformed JSON in a request body is the caller's mistake: `readJsonBody` or `parseJsonRequest` (`lib/api/parse.ts`) answers 400 `MALFORMED_JSON` before the route's catch can turn a `SyntaxError` into a 500.
+
+A fix to what a money path captures changes only the capture and its `expected` tag, never the status code or the buyer's sentence ([Train 7 decisions](../../decisions/2026-11-17-train-7.md), D2). `ILLEGAL_TRANSITION` is therefore not a `BUSINESS_ERROR_CODES` entry: each route that expects an illegal transition maps it itself.
+
 ## A repetition is throttled; a set is aggregated
 
 These are two different shapes of mass event and they take two different mechanisms. Getting them backwards is how a reporting mechanism becomes the outage, so the rule is stated rather than left to be re-derived.
