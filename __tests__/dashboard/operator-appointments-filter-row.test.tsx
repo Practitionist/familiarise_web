@@ -186,6 +186,7 @@ it("a failed read shows the error panel, never No appointments found, and Try ag
   ).toBeInTheDocument();
   expect(screen.queryByText("No appointments found")).not.toBeInTheDocument();
   expect(screen.queryByText("0")).not.toBeInTheDocument();
+  expect(screen.getAllByText("—")).toHaveLength(4);
   expect(mockToast.mock.calls[0][0]).toMatchObject({
     description: "Failed to load appointments",
   });

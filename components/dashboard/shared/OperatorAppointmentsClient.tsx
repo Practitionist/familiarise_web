@@ -197,17 +197,24 @@ export function OperatorAppointmentsClient({
     status: activeTab,
     search,
   };
-  const { data, isLoading, isFetching, isError, refetch, error } =
-    useQuery<StaffAppointmentsPayload>({
-      queryKey: appointmentsKey(listArgs),
-      // Tab, type, page and search all live in the key, so each combination is
-      // its own query.
-      placeholderData: keepPreviousData,
-      queryFn: () => fetchAppointments(listArgs),
-      refetchOnWindowFocus: false,
-      // The Awaiting payment tab reads its own source (approval payments).
-      enabled: activeTab !== "awaiting-payment",
-    });
+  const {
+    data,
+    isLoading,
+    isFetching,
+    isError,
+    isPlaceholderData,
+    refetch,
+    error,
+  } = useQuery<StaffAppointmentsPayload>({
+    queryKey: appointmentsKey(listArgs),
+    // Tab, type, page and search all live in the key, so each combination is
+    // its own query.
+    placeholderData: keepPreviousData,
+    queryFn: () => fetchAppointments(listArgs),
+    refetchOnWindowFocus: false,
+    // The Awaiting payment tab reads its own source (approval payments).
+    enabled: activeTab !== "awaiting-payment",
+  });
   // Opening a booking from the queue or Awaiting payment leaves the list's
   // q/tab/type alone: the booking is read by id beside it.
   const linkedArgs: ListArgs = {
@@ -261,14 +268,18 @@ export function OperatorAppointmentsClient({
     completed: 0,
   };
   const totalPages = data?.pagination.totalPages ?? 1;
-  // Without a successful read there is no count to show, not a zero.
-  const countOf = (n: number) => (data ? n : "—");
+  // Counts come only from this filter's own successful read, never a zero or the last filter's.
+  const countsShown = data !== undefined && !isPlaceholderData;
+  const countOf = (n: number) => (countsShown ? n : "—");
 
   // Sonar S3358 — an if/else chain instead of a nested ternary for which
   // tab panel renders.
   let tabPanelKind: "awaiting-payment" | "loading" | "error" | "empty" | "list";
   if (activeTab === "awaiting-payment") tabPanelKind = "awaiting-payment";
   else if (showLoadingPanel) tabPanelKind = "loading";
+  // The last filter's empty list says nothing about this one.
+  else if (isPlaceholderData && appointments.length === 0)
+    tabPanelKind = "loading";
   // "No appointments found" is only ever the answer of a read that succeeded.
   else if (isError && appointments.length === 0) tabPanelKind = "error";
   else if (appointments.length === 0) tabPanelKind = "empty";
@@ -331,7 +342,7 @@ export function OperatorAppointmentsClient({
           label="Issues"
           value={countOf(counts.issues)}
           icon={AlertTriangle}
-          tone={counts.issues > 0 ? "warning" : "neutral"}
+          tone={countsShown && counts.issues > 0 ? "warning" : "neutral"}
         />
         <Stat
           label="Scheduled"
@@ -353,7 +364,7 @@ export function OperatorAppointmentsClient({
               <TabsTrigger value="all">All</TabsTrigger>
               <TabsTrigger value="issue" className="gap-1">
                 Issues
-                {counts.issues > 0 && (
+                {countsShown && counts.issues > 0 && (
                   <Badge variant="destructive" className="ml-1 h-5 px-1.5">
                     {counts.issues}
                   </Badge>
