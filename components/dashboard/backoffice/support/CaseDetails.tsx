@@ -11,7 +11,7 @@ import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { Badge } from "@/components/ui/badge";
 import { caseStatus } from "@/lib/labels/backoffice-labels";
 import { paymentStatusBadge } from "@/lib/labels/session-labels";
-import { bookingStatus } from "@/lib/appointments/booking-status";
+import { caseBookingStatus } from "@/lib/support/case-booking-status";
 import { buildEngineeringEscalationHref } from "@/lib/support/callback-info";
 import { OperatorTime } from "@/lib/time/operator-time";
 import { humanizeEnum } from "@/lib/ui/tone";
@@ -39,15 +39,7 @@ function Facts({ items }: Readonly<{ items: [string, ReactNode][] }>) {
 }
 
 function bookingStatusLabel(booking: CaseBooking): string {
-  if (!booking.status) return "—";
-  return bookingStatus(
-    {
-      kind: booking.kind,
-      status: booking.status,
-      seatStatus: booking.seatStatus,
-    },
-    "STAFF",
-  ).label;
+  return caseBookingStatus(booking)?.label ?? "—";
 }
 
 function SentryIssuesSection({

@@ -66,8 +66,10 @@ const user = (id: string, name: string) => ({ id, name, image: null });
 function subscriptionDetail(over: {
   status: string;
   payment?: TAppointmentDetail["appointment"]["payment"];
+  /** Sessions placed so far; six held rows when omitted. */
+  sessions?: number;
 }): TAppointmentDetail {
-  const occurrences = Array.from({ length: 6 }, (_, i) => ({
+  const occurrences = Array.from({ length: over.sessions ?? 6 }, (_, i) => ({
     id: `occ-${i}`,
     appointmentId: "appt-1",
     startsAt: new Date(NOW + (4 + i) * DAY),
@@ -212,7 +214,9 @@ describe("consultee · AWAITING_PAYMENT subscription", () => {
     expect(html).toContain("Pay ₹7,080.00 (₹6,000.00 + 18% GST) by ");
     expect(html).toContain("to keep your 6 held slots.");
     expect(html).toContain("Pay ₹7,080.00");
-    expect(html).toMatch(/21h 5\dm left/);
+    // The countdown is the hold's clock, labelled as the hold.
+    expect(html).toMatch(/Slot held 21h 5\dm/);
+    expect(html).not.toMatch(/\dm left/);
     expect(html).toContain("Held · link sent");
     expect(html).toContain("₹7,080.00 due · Razorpay · link valid until ");
     // Nothing has been charged yet, so the money door names the booking.
@@ -323,5 +327,39 @@ describe("the next-session card at 390 px", () => {
       /<div class="mt-5 flex flex-wrap items-center gap-4 rounded-xl[^"]*">.*?<div class="([^"]*)"><p class="text-xs font-medium text-muted-foreground">/,
     );
     expect(card?.[1]).toContain("basis-44");
+  });
+});
+
+describe("consultant · paid subscription with no session scheduled yet", () => {
+  it("counts down the time to schedule, never a held slot", () => {
+    viewerId = "u-ethan";
+    currentDetail = subscriptionDetail({
+      status: "PENDING",
+      sessions: 0,
+      payment: [
+        {
+          id: "pay-1",
+          paymentStatus: "SUCCEEDED",
+          amount: 708_000,
+          taxAmount: 108_000,
+          currency: "INR",
+          paymentMethod: "RAZORPAY",
+          paymentGateway: "RAZORPAY",
+          receiptUrl: null,
+          createdAt: new Date(NOW - 3_600_000),
+          capturedAt: new Date(NOW - 3_600_000),
+          expiresAt: null,
+          organizationId: null,
+          consumerInvoice: null,
+          legs: [],
+          refunds: [],
+          disputes: [],
+          childPayments: [],
+        },
+      ] as unknown as TAppointmentDetail["appointment"]["payment"],
+    });
+    const html = render("consultant").replace(/<!-- -->/g, "");
+    expect(html).toMatch(/\d+h \d+m to schedule/);
+    expect(html).not.toContain("Slot held");
   });
 });

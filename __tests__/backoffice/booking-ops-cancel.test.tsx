@@ -192,7 +192,10 @@ describe("BookingOpsPanel platform cancel", () => {
       fireEvent.click(confirmButton());
       await waitFor(() =>
         expect(mockToast).toHaveBeenCalledWith(
-          expect.objectContaining({ title: "Not done", description: copy }),
+          expect.objectContaining({
+            title: "Couldn't cancel booking",
+            description: copy,
+          }),
         ),
       );
     },

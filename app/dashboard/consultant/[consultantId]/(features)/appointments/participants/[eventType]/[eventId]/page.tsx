@@ -34,7 +34,10 @@ import { effectiveMaxParticipants } from "@/lib/events/capacity";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { participantStatusBadge } from "@/lib/labels/session-labels";
-import { seatPaymentBadge } from "@/lib/appointments/seat-payments";
+import {
+  removingFreeSeat,
+  seatPaymentBadge,
+} from "@/lib/appointments/seat-payments";
 
 import type { ClassEvent, WebinarEvent } from "@/types/planner-events";
 
@@ -57,6 +60,7 @@ type SeatPayment = {
   paymentStatus: string;
   amount: string;
   currency: string;
+  priceFree: boolean;
 };
 
 // Registered-participant rows are the route's roster (#1554): every live seat
@@ -420,12 +424,11 @@ export default function EventParticipantsPage() {
     },
   ];
 
-  // A seat on a free event with nothing paid owes nothing; the dialog says so before the click.
+  // The seat's own payment decides "free"; the dialog says so before the click.
   const pendingSeat = pendingRemoval
     ? seatPayments.get(pendingRemoval.id)
     : undefined;
-  const removingFreeSeat =
-    plan.price === 0 && (!pendingSeat || Number(pendingSeat.amount) === 0);
+  const removingFree = removingFreeSeat(pendingSeat, Number(plan.price));
 
   const renderRegisteredActions = (participant: RegisteredParticipant) => (
     <Button
@@ -484,7 +487,7 @@ export default function EventParticipantsPage() {
         attendeeName={pendingRemoval?.name ?? null}
         eventTitle={plan.title}
         allowNoFault
-        freeSeat={removingFreeSeat}
+        freeSeat={removingFree}
         onSubmit={handleRemoval}
       />
     </>

@@ -178,7 +178,7 @@ export function FeedbackPage({
     },
     onError: () => {
       toast({
-        title: "Error",
+        title: "Couldn't update the status",
         description: "Failed to update status",
         variant: "destructive",
       });

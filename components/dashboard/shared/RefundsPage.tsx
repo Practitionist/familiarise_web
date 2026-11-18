@@ -111,7 +111,7 @@ export function RefundsPage({
     if (refundsError) {
       console.error("Error fetching refunds:", refundsError);
       toast({
-        title: "Error",
+        title: "Couldn't load refunds",
         description: "Failed to load refunds",
         variant: "destructive",
       });

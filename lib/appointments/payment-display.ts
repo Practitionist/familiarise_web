@@ -79,6 +79,51 @@ export function paymentFunding(p: PaymentFundingLike): PaymentFunding {
 export const isSponsoredPayment = (p: PaymentFundingLike): boolean =>
   paymentFunding(p) === "ORG";
 
+/** The money states in which the viewer's money was actually taken. */
+const MONEY_TAKEN_STATES: ReadonlySet<string> = new Set([
+  "PAID",
+  "PARTIALLY_REFUNDED",
+  "REFUND_PENDING",
+  "REFUNDED",
+  "DISPUTED",
+]);
+
+/**
+ * Whether the viewer was charged: money was taken on a charge the
+ * organisation did not fund, or the viewer paid a co-pay of their own (an
+ * organisation-paid overage child is not theirs).
+ */
+export function viewerWasCharged(
+  moneyState: string,
+  payments: readonly (PaymentFundingLike & {
+    paymentStatus: string;
+    childPayments: readonly (PaymentFundingLike & {
+      userId: string | null;
+      paymentStatus: string;
+      amount: number | string;
+    })[];
+  })[],
+  viewerId: string | null | undefined,
+): boolean {
+  if (
+    MONEY_TAKEN_STATES.has(moneyState) &&
+    payments.some(
+      (p) => p.paymentStatus === "SUCCEEDED" && !isSponsoredPayment(p),
+    )
+  ) {
+    return true;
+  }
+  return payments.some((p) =>
+    p.childPayments.some(
+      (c) =>
+        c.userId === viewerId &&
+        c.paymentStatus === "SUCCEEDED" &&
+        Number(c.amount) > 0 &&
+        !isSponsoredPayment(c),
+    ),
+  );
+}
+
 /** Who paid, in plain words: the sponsoring organisation, or the attendee. */
 export function payerSentence(
   funding: PaymentFunding,

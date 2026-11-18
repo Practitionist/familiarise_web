@@ -4,9 +4,15 @@ import prisma from "@/lib/prisma";
 import { findUserIssues } from "@/lib/observability/sentry-issues";
 import type {
   CaseBooking,
+  CaseBookingFacts,
   CasePayment,
   CaseWorkspace,
 } from "@/types/support-case";
+import { listStatusFacts } from "@/lib/appointments/list-status-facts";
+import type { OpenRescheduleProposal } from "@/lib/appointments/consultee-affordances";
+import { toDate } from "@/lib/appointments/view-model";
+import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
+import { withLapsedMoveRestored } from "@/lib/appointments/lapsed-move";
 import { caseKeyOf, type CaseRef } from "./case-key";
 import { isPresenterAuthoredMessage } from "./case-message-actor";
 import { PLAN_TITLE_SELECT, planTitle } from "./case-read";
@@ -21,6 +27,7 @@ const BOOKING_SELECT = {
   consultation: {
     select: {
       status: true,
+      bookingSource: true,
       requestedBy: { select: { user: { select: { name: true } } } },
       consultationPlan: {
         select: {
@@ -33,6 +40,7 @@ const BOOKING_SELECT = {
   subscription: {
     select: {
       status: true,
+      bookingSource: true,
       requestedBy: { select: { user: { select: { name: true } } } },
       subscriptionPlan: {
         select: {
@@ -78,7 +86,13 @@ const BOOKING_SELECT = {
   },
   occurrences: {
     orderBy: { startsAt: "asc" },
-    select: { startsAt: true },
+    // The release flags let a lapsed move read as the original.
+    select: {
+      startsAt: true,
+      isTentative: true,
+      completionStatus: true,
+      deletedAt: true,
+    },
   },
 } as const;
 
@@ -89,9 +103,10 @@ const BOOKING_SELECT = {
 export async function readCaseBooking(
   appointmentId: string,
   requester: { id: string; name: string | null },
+  grants: { showPayment: boolean } = { showPayment: true },
 ): Promise<CaseBooking | null> {
   const requesterName = requester.name;
-  const a = await prisma.appointment.findUnique({
+  const stored = await prisma.appointment.findUnique({
     where: { id: appointmentId },
     select: {
       ...BOOKING_SELECT,
@@ -101,9 +116,51 @@ export async function readCaseBooking(
         select: { status: true },
         take: 1,
       },
+      // The requester's own payment on a class or webinar; any payment on a 1:1.
+      payment: {
+        where: {
+          deletedAt: null,
+          OR: [
+            { userId: requester.id },
+            { appointment: { webinarId: null, classId: null } },
+          ],
+        },
+        select: {
+          paymentStatus: true,
+          expiresAt: true,
+          amount: true,
+          currency: true,
+          // Landed refunds only, as the lists read them.
+          refunds: {
+            where: { status: "SUCCEEDED", deletedAt: null },
+            select: { amountPaise: true, updatedAt: true },
+          },
+        },
+      },
+      rescheduleRequests: {
+        where: { status: { in: RESCHEDULE_OPEN_STATUSES } },
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: {
+          id: true,
+          status: true,
+          reason: true,
+          expiresAt: true,
+          originStatus: true,
+          initiatorRole: true,
+          initiatedById: true,
+          proposedTimes: {
+            orderBy: { startsAt: "asc" },
+            take: 1,
+            select: { startsAt: true, endsAt: true },
+          },
+        },
+      },
     },
   });
-  if (!a) return null;
+  if (!stored) return null;
+  // A lapsed open move reads as the original, as the lists restore it.
+  const a = withLapsedMoveRestored(stored);
   const expert =
     a.consultation?.consultationPlan.consultantProfile?.user?.name ??
     a.subscription?.subscriptionPlan.consultantProfile?.user?.name ??
@@ -132,6 +189,59 @@ export async function readCaseBooking(
       a.webinar?.status ??
       null,
     seatStatus: a.participants[0]?.status ?? null,
+    facts: caseStatusFacts(a, grants.showPayment),
+  };
+}
+
+/** The list-status facts the other screens read, serialised for the drawer. */
+function caseStatusFacts(
+  a: {
+    id: string;
+    consultation: { bookingSource: string } | null;
+    subscription: { bookingSource: string } | null;
+    payment: {
+      paymentStatus: string;
+      expiresAt: Date | null;
+      amount: number;
+      currency: string;
+      refunds: { amountPaise: number; updatedAt: Date }[];
+    }[];
+    rescheduleRequests: OpenRescheduleProposal[];
+  },
+  showPayment: boolean,
+): CaseBookingFacts {
+  const facts = listStatusFacts(a, []);
+  const r = facts.reschedule;
+  return {
+    source:
+      a.consultation?.bookingSource ?? a.subscription?.bookingSource ?? null,
+    // Payment state is payments.read only; without it the status derives from the rest.
+    ...(showPayment
+      ? {
+          paid: !!facts.paid,
+          payDeadline: facts.payDeadline
+            ? iso(toDate(facts.payDeadline))
+            : null,
+          payLapsed: !!facts.payLapsed,
+          refunded: facts.refunded
+            ? {
+                paise: facts.refunded.paise,
+                currency: facts.refunded.currency,
+                at: facts.refunded.at ? iso(toDate(facts.refunded.at)) : null,
+              }
+            : null,
+        }
+      : {}),
+    reschedule: r
+      ? {
+          by: r.by,
+          proposedStartsAt: r.proposedStartsAt
+            ? iso(toDate(r.proposedStartsAt))
+            : null,
+          originalStartsAt: null,
+          expiresAt: r.expiresAt ? iso(toDate(r.expiresAt)) : null,
+        }
+      : null,
   };
 }
 
@@ -205,10 +315,11 @@ export async function readCaseWorkspace(
   const [booking, payment, pastCases, sentryIssues, duplicates] =
     await Promise.all([
       c.appointmentId
-        ? readCaseBooking(c.appointmentId, {
-            id: c.requesterUserId,
-            name: c.requester.name,
-          })
+        ? readCaseBooking(
+            c.appointmentId,
+            { id: c.requesterUserId, name: c.requester.name },
+            { showPayment: grants.showPayment },
+          )
         : null,
       grants.showPayment ? readPayment(paymentId) : null,
       prisma.supportCase.findMany({

@@ -235,6 +235,8 @@ export function DisputesPage({
     },
     placeholderData: keepPreviousData,
   });
+  // A failed first read has no counts to show; never print its empty fallback as zero.
+  const shown = (count: number) => (isError && !data ? "—" : count);
 
   const columns = useMemo(() => disputeColumns(basePath), [basePath]);
   const disputes = data?.disputes ?? [];
@@ -302,7 +304,7 @@ export function DisputesPage({
               <AlertTriangle className="h-5 w-5 text-foreground" />
             </div>
             <div>
-              <p className="text-2xl font-bold">{total}</p>
+              <p className="text-2xl font-bold">{shown(total)}</p>
               <p className="text-sm text-muted-foreground">Total Disputes</p>
             </div>
           </CardContent>
@@ -317,7 +319,9 @@ export function DisputesPage({
               <AlertCircle className="h-5 w-5 text-red-600" />
             </div>
             <div>
-              <p className="text-2xl font-bold text-red-600">{urgentCount}</p>
+              <p className="text-2xl font-bold text-red-600">
+                {shown(urgentCount)}
+              </p>
               <p className="text-sm text-muted-foreground">
                 Urgent / Overdue (Actionable)
               </p>
@@ -330,7 +334,7 @@ export function DisputesPage({
               <Clock className="h-5 w-5 text-yellow-600" />
             </div>
             <div>
-              <p className="text-2xl font-bold">{underReviewCount}</p>
+              <p className="text-2xl font-bold">{shown(underReviewCount)}</p>
               <p className="text-sm text-muted-foreground">Under Review</p>
             </div>
           </CardContent>
@@ -341,7 +345,7 @@ export function DisputesPage({
               <CheckCircle className="h-5 w-5 text-green-600" />
             </div>
             <div>
-              <p className="text-2xl font-bold">{wonCount}</p>
+              <p className="text-2xl font-bold">{shown(wonCount)}</p>
               <p className="text-sm text-muted-foreground">Won</p>
             </div>
           </CardContent>

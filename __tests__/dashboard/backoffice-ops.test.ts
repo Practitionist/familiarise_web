@@ -167,45 +167,45 @@ describe("deriveCreditState", () => {
     ...overrides,
   });
 
-  it("derives PENDING, VESTED, EXPIRED, and VOID states accurately", () => {
+  it("derives PENDING, VESTED, EXPIRED, and VOID states, labelled in words", () => {
     expect(deriveCreditState(makeCredit({ state: "PENDING" }))).toEqual({
-      label: "PENDING",
+      label: "Pending",
       status: "PENDING",
       tone: "warning",
     });
     expect(deriveCreditState(makeCredit({ state: "VESTED" }))).toEqual({
-      label: "VESTED",
+      label: "Available",
       status: "VESTED",
       tone: "success",
     });
     expect(deriveCreditState(makeCredit({ state: "EXPIRED" }))).toEqual({
-      label: "EXPIRED",
+      label: "Expired",
       status: "EXPIRED",
       tone: "warning",
     });
     expect(deriveCreditState(makeCredit({ state: "VOID" }))).toEqual({
-      label: "VOID",
+      label: "Void",
       status: "VOID",
       tone: "critical",
     });
     expect(
       deriveCreditState(makeCredit({ reversedAt: "2026-02-01T00:00:00.000Z" })),
     ).toEqual({
-      label: "VOID",
+      label: "Void",
       status: "VOID",
       tone: "critical",
     });
     expect(
       deriveCreditState(makeCredit({ state: "VESTED", remainingAmount: 0 })),
     ).toEqual({
-      label: "EXHAUSTED",
+      label: "Used up",
       status: "EXHAUSTED",
       tone: "neutral",
     });
     expect(
       deriveCreditState(makeCredit({ state: "VESTED", remainingAmount: -100 })),
     ).toEqual({
-      label: "EXHAUSTED",
+      label: "Used up",
       status: "EXHAUSTED",
       tone: "neutral",
     });
@@ -218,7 +218,7 @@ describe("deriveCreditState", () => {
         }),
       ),
     ).toEqual({
-      label: "EXPIRED",
+      label: "Expired",
       status: "EXPIRED",
       tone: "warning",
     });

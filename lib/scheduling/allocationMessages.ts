@@ -294,9 +294,13 @@ export const partiallyScheduled = (
   };
 };
 
-export const allocationFailed = (reason: string): AllocationToast => ({
+/** `title` names the action that failed; the Timings page's is the default. */
+export const allocationFailed = (
+  reason: string,
+  title = "Couldn't save timings",
+): AllocationToast => ({
   variant: "destructive",
-  title: "Couldn't save timings",
+  title,
   description: reason,
 });
 
@@ -388,6 +392,7 @@ export const rateLimited = (retryAfterSecs?: number): AllocationToast => ({
 export const allocationFailedWithCode = (
   reason: string,
   errorCode?: string,
+  title?: string,
 ): AllocationToast => {
   if (errorCode && ALLOCATION_ERROR_TOASTS[errorCode]) {
     return {
@@ -395,17 +400,35 @@ export const allocationFailedWithCode = (
       description: reason,
     } as AllocationToast;
   }
-  return allocationFailed(reason);
+  return allocationFailed(reason, title);
 };
 
-/** Client-side gate when the event PK is not UUID/CUID (mock/hand-crafted rows).
- * Friendly copy only — the offending id is Sentry-logged at the call site,
- * never rendered. (Dead today: no callers. Kept for the fail-closed path.) */
-export const invalidEventId = (): AllocationToast => ({
-  variant: "destructive",
-  title: "Couldn't save timings",
-  description: "This booking can't be scheduled as shown. Please reload.",
-});
+/**
+ * Why a sold webinar or class is not re-planned on Timings, and what moves it:
+ * the event page's move control, which is not offered inside the reschedule lead.
+ */
+export function soldEventMoveCopy(
+  eventType: "webinar" | "class",
+  /** `RESCHEDULE_MIN_LEAD_HOURS`, passed in to keep this module free of the payments imports. */
+  leadHours: number,
+  liveSeats?: number,
+): string {
+  const plural = liveSeats === 1 ? "" : "s";
+  const seats =
+    liveSeats === undefined
+      ? "booked seats"
+      : `${liveSeats} booked seat${plural}`;
+  const control =
+    eventType === "class" ? "Move upcoming sessions" : "Move to a new date";
+  const inside =
+    eventType === "class"
+      ? `A session that starts within ${leadHours} hours can't be moved: cancel that session and schedule a make-up instead.`
+      : `Inside ${leadHours} hours of the start it can't be moved at all: cancel it instead, and everyone is refunded in full.`;
+  return (
+    `This ${eventType} already has ${seats}, so its times can't be re-planned here. ` +
+    `Use "${control}" on the event page: attendees are told and may leave with a full refund. ${inside}`
+  );
+}
 
 /** A consultation with a confirmed time moves only through Reschedule. */
 export const ALREADY_SCHEDULED_COPY =

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { countLabel } from "@/lib/ui/count-label";
 import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -210,16 +211,29 @@ function parseNonNegativeInrToPaise(raw: string): number | null {
   return parseInrToPaise(raw, true);
 }
 
+/** A credit's state in words, for the badge and the page's subtitle. */
+const CREDIT_STATE_LABEL = {
+  PENDING: "Pending",
+  VESTED: "Available",
+  EXPIRED: "Expired",
+  VOID: "Void",
+  EXHAUSTED: "Used up",
+} as const;
+
 export function deriveCreditState(c: ReferralCreditItem): {
   label: string;
   status: string;
   tone: "success" | "warning" | "critical" | "neutral";
 } {
   if (c.reversedAt || c.state === "VOID") {
-    return { label: "VOID", status: "VOID", tone: "critical" };
+    return { label: CREDIT_STATE_LABEL.VOID, status: "VOID", tone: "critical" };
   }
   if (c.state === "PENDING") {
-    return { label: "PENDING", status: "PENDING", tone: "warning" };
+    return {
+      label: CREDIT_STATE_LABEL.PENDING,
+      status: "PENDING",
+      tone: "warning",
+    };
   }
   if (
     c.state === "EXPIRED" ||
@@ -227,13 +241,21 @@ export function deriveCreditState(c: ReferralCreditItem): {
       new Date(c.expiresAt) <= new Date() &&
       c.remainingAmount > 0)
   ) {
-    return { label: "EXPIRED", status: "EXPIRED", tone: "warning" };
+    return {
+      label: CREDIT_STATE_LABEL.EXPIRED,
+      status: "EXPIRED",
+      tone: "warning",
+    };
   }
   if (c.remainingAmount <= 0) {
-    return { label: "EXHAUSTED", status: "EXHAUSTED", tone: "neutral" };
+    return {
+      label: CREDIT_STATE_LABEL.EXHAUSTED,
+      status: "EXHAUSTED",
+      tone: "neutral",
+    };
   }
   const st = c.state ?? "VESTED";
-  return { label: st, status: st, tone: "success" };
+  return { label: CREDIT_STATE_LABEL[st], status: st, tone: "success" };
 }
 
 function deriveWaiverState(w: FeeWaiverItem): {
@@ -1403,9 +1425,12 @@ function CreditsTabPanel({
   const totalPages = creditsQuery.data?.totalPages ?? 1;
 
   const creditSuffix = total === 1 ? "" : "s";
-  const creditCountLabel = creditsQuery.isLoading
-    ? "Loading…"
-    : `${total} credit${creditSuffix}`;
+  const creditCountLabel = countLabel(
+    { loading: creditsQuery.isLoading, failed: creditsQuery.isError },
+    total,
+    () => `${total} credit${creditSuffix}`,
+    "Credits couldn't be loaded",
+  );
 
   const renderRowActions = (c: ReferralCreditItem) => {
     const canReverse =
@@ -1438,7 +1463,12 @@ function CreditsTabPanel({
     <>
       <ReferralsListCard<ReferralCreditItem>
         title={creditCountLabel}
-        description="Inspect referral credit states (PENDING, VESTED, EXPIRED, VOID), balances, and payment redemptions."
+        description={`Inspect referral credit states (${[
+          CREDIT_STATE_LABEL.PENDING,
+          CREDIT_STATE_LABEL.VESTED,
+          CREDIT_STATE_LABEL.EXPIRED,
+          CREDIT_STATE_LABEL.VOID,
+        ].join(", ")}), balances, and payment redemptions.`}
         filters={pagedListFilters({
           search: {
             label: "Search by email, name, or referral code",
@@ -1551,9 +1581,12 @@ function FeeWaiversTabPanel({
   const total = waiversQuery.data?.total ?? 0;
   const totalPages = waiversQuery.data?.totalPages ?? 1;
   const waiverSuffix = total === 1 ? "" : "s";
-  const waiverCountLabel = waiversQuery.isLoading
-    ? "Loading…"
-    : `${total} fee waiver${waiverSuffix}`;
+  const waiverCountLabel = countLabel(
+    { loading: waiversQuery.isLoading, failed: waiversQuery.isError },
+    total,
+    () => `${total} fee waiver${waiverSuffix}`,
+    "Fee waivers couldn't be loaded",
+  );
 
   const renderRowActions = (w: FeeWaiverItem) => {
     const canRevoke = canManage && w.sessionsRemaining > 0;

@@ -6,6 +6,7 @@ import {
   type CancelRefundPreview,
   type RefundQuoteChanged,
 } from "@/schemas/appointments";
+import { formatCurrencyAmount } from "@/utils/formatting";
 
 /** The quote a cancel click carries back, so the server charges what was shown. */
 export type ShownCancelQuote = {
@@ -48,21 +49,43 @@ export function shownQuoteBody(quote: ShownCancelQuote | undefined) {
 export const paymentLandedUnderClick = (quote: ShownCancelQuote | undefined) =>
   quote?.expectedPaid === false;
 
-/** The server's new figure from a 409 `REFUND_QUOTE_CHANGED` body, or null for any other answer. */
+/** The trial door's 409 body, which nests the current quote under `quote`. */
+const TrialQuoteChangedSchema = z
+  .object({
+    code: z.literal("REFUND_QUOTE_CHANGED"),
+    quote: z.object({
+      estimatedRefundPaise: z.number(),
+      refundPct: z.number(),
+      creditRestoresInFull: z.boolean(),
+    }),
+  })
+  .transform(({ code, quote }): RefundQuoteChanged => ({
+    code,
+    refundPaise: quote.estimatedRefundPaise,
+    refundPct: quote.refundPct,
+    creditRestoresInFull: quote.creditRestoresInFull,
+  }));
+
+/** The server's new figure from a 409 `REFUND_QUOTE_CHANGED` body (appointment or trial door), or null for any other answer. */
 export function readRefundQuoteChanged(
   body: unknown,
 ): RefundQuoteChanged | null {
   const parsed = RefundQuoteChangedSchema.safeParse(body);
-  return parsed.success ? parsed.data : null;
+  if (parsed.success) return parsed.data;
+  const trial = TrialQuoteChangedSchema.safeParse(body);
+  return trial.success ? trial.data : null;
 }
 
-/** Re-renders an open dialog's quote with the server's new figure, so the next click confirms it. */
+/**
+ * Re-renders an open dialog's quote with the server's new figure, so the next
+ * click confirms it. Returns the quote's currency for the toast.
+ */
 export function applyRefundRequote(
   queryClient: QueryClient,
   previewUrl: string,
   requote: RefundQuoteChanged,
-): void {
-  queryClient.setQueryData<CancelRefundPreview>(
+): string {
+  const updated = queryClient.setQueryData<CancelRefundPreview>(
     cancelPreviewQueryKey(previewUrl),
     (prior) =>
       prior && prior.paid !== false
@@ -76,6 +99,28 @@ export function applyRefundRequote(
           }
         : prior,
   );
+  return updated && updated.paid !== false ? updated.currency : "INR";
+}
+
+/** The sentence naming a re-quoted refund, shared by the dialog and the toast. */
+export function refundNowSentence(
+  requote: Pick<RefundQuoteChanged, "refundPaise" | "creditRestoresInFull">,
+  currency: string,
+): string {
+  return requote.creditRestoresInFull
+    ? "It now returns your credits in full."
+    : `It is now ${formatCurrencyAmount(requote.refundPaise, currency)}.`;
+}
+
+/** The toast for a cancel the server re-quoted: it names the new amount. */
+export function refundChangedToast(
+  requote: RefundQuoteChanged,
+  currency: string,
+): { title: string; description: string } {
+  return {
+    title: "The refund has changed",
+    description: `${refundNowSentence(requote, currency)} Check it in the dialog and confirm again.`,
+  };
 }
 
 /**

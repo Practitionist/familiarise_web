@@ -34,6 +34,7 @@ import {
   cancelRefusalFrom,
   CancelRefusedError,
   readRefundQuoteChanged,
+  refundNowSentence,
   shownQuoteBody,
 } from "@/lib/appointments/cancel-requote";
 import { OperatorOpsHint } from "@/components/appointments/OperatorOpsHint";
@@ -218,9 +219,9 @@ export function OrgActorDetail({
     if (!res.ok) {
       const requote = res.status === 409 ? readRefundQuoteChanged(json) : null;
       if (requote) {
-        applyRefundRequote(queryClient, previewUrl, requote);
+        const currency = applyRefundRequote(queryClient, previewUrl, requote);
         throw new Error(
-          "The refund has changed. Check the new amount and confirm again.",
+          `The refund has changed. ${refundNowSentence(requote, currency)} Check it and confirm again.`,
         );
       }
       throw new Error(errorMessageFromBody(json, "That didn't go through."));

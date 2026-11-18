@@ -208,7 +208,7 @@ export function useConsultantSettingsForm(
       } catch (error) {
         console.error("Error fetching domain content:", error);
         toast({
-          title: "Error",
+          title: "Couldn't load your subject areas",
           description: "Failed to load domain content. Please try again.",
           variant: "destructive",
         });
@@ -582,7 +582,11 @@ export function useConsultantSettingsForm(
     const description = isExpectedRefusal(error)
       ? userMessageFrom(error)
       : "Failed to update settings. Please try again.";
-    toast({ title: "Error", description, variant: "destructive" });
+    toast({
+      title: "Couldn't save your settings",
+      description,
+      variant: "destructive",
+    });
     return description;
   };
 

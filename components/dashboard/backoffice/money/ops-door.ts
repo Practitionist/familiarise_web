@@ -50,6 +50,8 @@ export function useOpsDoor(opts: {
   onFailed?: () => void;
   /** A door's own copy for a refusal code, in place of the route's message. */
   refusalCopy?: Readonly<Record<string, string>>;
+  /** The refusal toast's title; names the action that did not go through. */
+  failure?: string;
 }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -67,7 +69,7 @@ export function useOpsDoor(opts: {
     },
     onError: (err: Error) => {
       toast({
-        title: "Not done",
+        title: opts.failure ?? "That action didn't go through",
         description:
           (err instanceof OpsDoorError && opts.refusalCopy?.[err.code]) ||
           err.message,

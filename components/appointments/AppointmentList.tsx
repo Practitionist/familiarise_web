@@ -10,6 +10,7 @@ import type {
   AppointmentVM,
 } from "@/lib/appointments/view-model";
 import { formatInViewerZone, type ViewerZone } from "@/lib/time/viewer-zone";
+import { listedAt } from "@/lib/appointments/bucket";
 import { AppointmentRow } from "./AppointmentRow";
 import { DayGroupHeader } from "./DayGroupHeader";
 
@@ -40,7 +41,7 @@ function orderVms(
   bucket: AppointmentBucket | "all",
   now: Date,
 ): AppointmentVM[] {
-  const time = (vm: AppointmentVM) => vm.nextAt?.getTime() ?? null;
+  const time = (vm: AppointmentVM) => listedAt(vm)?.getTime() ?? null;
   const sorted = [...vms];
 
   if (bucket === "past" || bucket === "cancelled") {
@@ -74,9 +75,10 @@ function groupByDay(vms: AppointmentVM[], zone: string): DayGroup[] {
   const groups: DayGroup[] = [];
   let current: DayGroup | null = null;
   for (const vm of vms) {
-    const key = dayKey(vm.nextAt, zone);
+    const at = listedAt(vm);
+    const key = dayKey(at, zone);
     if (!current || current.key !== key) {
-      current = { key, date: vm.nextAt, vms: [] };
+      current = { key, date: at, vms: [] };
       groups.push(current);
     }
     current.vms.push(vm);

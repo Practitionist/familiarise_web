@@ -204,7 +204,7 @@ export function EventManagementDashboard({
       }) ?? getCurrentOrNextOccurrence(slots);
     if (!slot || !webinar.appointment) {
       toast({
-        title: "Error",
+        title: "No session to join yet",
         description: "Meeting slot information is not available.",
         variant: "destructive",
       });
@@ -298,7 +298,7 @@ export function EventManagementDashboard({
 
     if (!targetAppt || !targetSlot) {
       toast({
-        title: "Error",
+        title: "No session to join yet",
         description: "No joinable session found for this class.",
         variant: "destructive",
       });

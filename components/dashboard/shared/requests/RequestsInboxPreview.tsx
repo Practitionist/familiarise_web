@@ -40,8 +40,21 @@ export function homePreviewRows<
   return rows.filter((row) => !row.checkoutHold).slice(0, PREVIEW_ROWS);
 }
 
+/** The expert's own open proposal waits on the client; null for any other row. */
+export function ownMoveWaitingLine(row: {
+  requester: { name: string };
+  proposal: { status: string; initiatorRole: string } | null;
+}): string | null {
+  return row.proposal?.status === "PENDING_REVIEW" &&
+    row.proposal.initiatorRole === "CONSULTANT"
+    ? `You proposed a new time · waiting on ${row.requester.name}`
+    : null;
+}
+
 /** The one line under the name: the cycle words for a subscription, else when it was asked. */
 function previewLine(row: InboxRowInput, zone: string): string {
+  const ownMove = ownMoveWaitingLine(row);
+  if (ownMove) return ownMove;
   if (row.kind === "next-cycle" && row.entitlement) {
     return nextCycleLine(row.entitlement);
   }
@@ -149,10 +162,11 @@ export function RequestsInboxPreview({
           "CONSULTANT",
           { viewerZone: viewer.zone },
         );
-        const badge =
-          row.kind === "next-cycle"
-            ? NEXT_CYCLE_BADGE
-            : toneBadge(bookingState.tone, bookingState.label);
+        let badge = toneBadge(bookingState.tone, bookingState.label);
+        if (row.kind === "next-cycle") badge = NEXT_CYCLE_BADGE;
+        else if (ownMoveWaitingLine(row)) {
+          badge = toneBadge("info", "Waiting on client");
+        }
         return (
           <li
             key={row.id}

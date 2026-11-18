@@ -49,8 +49,8 @@ type Viewer = "consultant" | "consultee";
 type View = "list" | "calendar";
 
 /**
- * Per-viewer tabs (#1527 §13b). The consultee's pending requests wait on the
- * expert, so they get their own tab instead of "Needs you"; the consultant's
+ * Per-viewer tabs. A row waiting on the other side (a request, or
+ * a move the viewer proposed) has its own Waiting tab; the consultant's other
  * pre-confirmation work lives in Requests and only appears under All.
  * "All" leads where it exists, matching the filter bar's "All types" chip.
  */
@@ -66,6 +66,7 @@ const TABS: Record<Viewer, Array<{ value: TabValue; label: string }>> = {
     { value: "all", label: "All" },
     { value: "upcoming", label: "Upcoming" },
     { value: "needsAction", label: "Needs action" },
+    { value: "waiting", label: "Waiting on client" },
     { value: "past", label: "Past" },
     { value: "cancelled", label: "Cancelled" },
   ],
@@ -102,8 +103,9 @@ const EMPTY_COPY: Record<TabValue, Record<Viewer, EmptyCopy>> = {
       description: "Requests you send stay here until the expert answers.",
     },
     consultant: {
-      title: "Nothing waiting",
-      description: "Requests waiting on you live in Requests.",
+      title: "Nothing waiting on a client",
+      description:
+        "A new time you propose waits here until the client answers.",
     },
   },
   inRequests: {

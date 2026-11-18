@@ -23,6 +23,7 @@ import {
   validateWeeklyWindow,
   weeklyZoneRefusal,
   AVAILABILITY_REFUSAL_STATUS,
+  parsePatchDays,
 } from "@/lib/scheduling/availability-contract";
 import { settleAvailabilityWrite } from "@/lib/scheduling/uncovered-upcoming";
 import { readJsonBody } from "@/lib/api/parse";
@@ -391,27 +392,6 @@ export async function PUT(
   }
 }
 
-/** A PATCH may omit either day, but a day it sends must be a real one. */
-function patchDayRefusal(
-  startDay: unknown,
-  endDay: unknown,
-): NextResponse | null {
-  const days: readonly unknown[] = Object.values(DayOfWeek);
-  if (startDay && !days.includes(startDay)) {
-    return NextResponse.json(
-      { error: "Invalid day of week for start time" },
-      { status: 400 },
-    );
-  }
-  if (endDay && !days.includes(endDay)) {
-    return NextResponse.json(
-      { error: "Invalid day of week for end time" },
-      { status: 400 },
-    );
-  }
-  return null;
-}
-
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -432,8 +412,11 @@ export async function PATCH(
     if (read.error) return read.error;
     const body = read.body;
 
-    const badDay = patchDayRefusal(body.startDay, body.endDay);
-    if (badDay) return badDay;
+    // A PATCH may omit either day, but a day it sends must be a real one.
+    const days = parsePatchDays(body.startDay, body.endDay);
+    if (!days.ok) {
+      return NextResponse.json({ error: days.error }, { status: 400 });
+    }
 
     const currentSlot = await prisma.availabilityWindowWeekly.findUnique({
       where: { id: id },
@@ -494,8 +477,8 @@ export async function PATCH(
       );
     }
 
-    const effectiveStartDay = body.startDay || currentSlot.startDay;
-    const effectiveEndDay = body.endDay || currentSlot.endDay;
+    const effectiveStartDay = days.startDay ?? currentSlot.startDay;
+    const effectiveEndDay = days.endDay ?? currentSlot.endDay;
 
     // Day-aware time order validation (supports overnight slots)
     const timeError = validateWeeklySlotTimeOrder(

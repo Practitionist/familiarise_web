@@ -176,7 +176,7 @@ export const ChannelInfoAndManageDialog = ({
     } catch (error) {
       console.error("Error loading members:", error);
       toast({
-        title: "Error",
+        title: "Couldn't load the members",
         description: "Failed to load channel members",
         variant: "destructive",
       });
@@ -317,7 +317,7 @@ export const ChannelInfoAndManageDialog = ({
     } catch (error) {
       console.error("Error leaving channel:", error);
       toast({
-        title: "Error",
+        title: "Couldn't leave the channel",
         description: "Failed to leave the channel",
         variant: "destructive",
       });
@@ -341,7 +341,7 @@ export const ChannelInfoAndManageDialog = ({
     } catch (error) {
       console.error("Error clearing chat:", error);
       toast({
-        title: "Error",
+        title: "Couldn't clear the chat",
         description: "Failed to clear chat",
         variant: "destructive",
       });
@@ -392,7 +392,7 @@ export const ChannelInfoAndManageDialog = ({
     } catch (error) {
       console.error("Error reporting user:", error);
       toast({
-        title: "Error",
+        title: "Couldn't send the report",
         description: "Failed to report user",
         variant: "destructive",
       });
@@ -428,7 +428,7 @@ export const ChannelInfoAndManageDialog = ({
       // "failed" would hide that half of it succeeded, and telling them it
       // worked would be worse.
       toast({
-        title: "Error",
+        title: "Couldn't block this person",
         description:
           error instanceof Error ? error.message : "Failed to block user",
         variant: "destructive",
@@ -458,7 +458,7 @@ export const ChannelInfoAndManageDialog = ({
     } catch (error) {
       console.error("Error toggling mute:", error);
       toast({
-        title: "Error",
+        title: "Couldn't change notifications",
         description: "Failed to update notification settings",
         variant: "destructive",
       });

@@ -173,7 +173,7 @@ describe("a refused time sends the buyer back to the plan's grid", () => {
         code: ErrorTypes.SLOT_TOO_SOON,
         field: "startsAt",
       },
-      title: "That Time Is Now Too Close",
+      title: "That time is now too close",
     },
     {
       name: "off the grid",
@@ -184,7 +184,7 @@ describe("a refused time sends the buyer back to the plan's grid", () => {
         code: ErrorTypes.SLOT_NOT_ON_GRID,
         field: "startsAt",
       },
-      title: "That Time Isn't Bookable",
+      title: "That time isn't bookable",
     },
   ])("$name", async ({ status, body, title }) => {
     checkoutAnswer = { status, body };

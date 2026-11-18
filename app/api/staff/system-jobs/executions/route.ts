@@ -11,6 +11,17 @@ import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { TICK_CLAIM_JOB } from "@/lib/cron/schedule";
 import { metricsEnvironmentSchema } from "@/lib/backoffice/job-run-metrics";
 import * as Sentry from "@sentry/nextjs";
+import { z } from "zod";
+const ExecutionsQuerySchema = z.object({
+  jobId: z.string().min(1).optional(),
+  status: z
+    .nativeEnum(SystemJobStatus, { message: "Unknown status" })
+    .optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  environment: metricsEnvironmentSchema.optional(),
+});
+
 /**
  * GET /api/staff/system-jobs/executions
  * List job execution history with filters
@@ -21,10 +32,19 @@ export async function GET(req: NextRequest) {
     if (auth.error) return auth.error;
 
     const { searchParams } = new URL(req.url);
-    const jobId = searchParams.get("jobId");
-    const status = searchParams.get("status") as SystemJobStatus | null;
-    const page = parseInt(searchParams.get("page") || "1");
-    const limit = parseInt(searchParams.get("limit") || "20");
+    const query = ExecutionsQuerySchema.safeParse(
+      Object.fromEntries(searchParams),
+    );
+    if (!query.success) {
+      return NextResponse.json(
+        {
+          error: query.error.issues[0]?.message ?? "Invalid query",
+          code: "INVALID_QUERY",
+        },
+        { status: 400 },
+      );
+    }
+    const { jobId, status, page, limit } = query.data;
     const offset = (page - 1) * limit;
 
     const where: Prisma.SystemJobExecutionWhereInput = {};
@@ -38,17 +58,8 @@ export async function GET(req: NextRequest) {
     if (status) {
       where.status = status;
     }
-    const environment = metricsEnvironmentSchema
-      .optional()
-      .safeParse(searchParams.get("environment") ?? undefined);
-    if (!environment.success) {
-      return NextResponse.json(
-        { error: "Unknown environment" },
-        { status: 400 },
-      );
-    }
-    if (environment.data) {
-      where.result = { path: ["environment"], equals: environment.data };
+    if (query.data.environment) {
+      where.result = { path: ["environment"], equals: query.data.environment };
     }
 
     const [executions, total] = await Promise.all([

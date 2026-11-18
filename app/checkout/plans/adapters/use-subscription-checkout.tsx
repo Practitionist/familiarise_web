@@ -17,7 +17,9 @@ import { useViewerZone } from "@/lib/time/use-viewer-zone";
 import { formatInViewerZone } from "@/lib/time/viewer-zone";
 import {
   planFeasibilitySchema,
+  NOT_PLACEABLE_MESSAGE,
   subscriptionCheckoutBlocked,
+  subscriptionCheckoutBlockedLabel,
 } from "@/schemas/plan-feasibility";
 import { PLAN_CLIENTS_FULL_MESSAGE } from "@/schemas/plan-clients";
 import {
@@ -157,6 +159,9 @@ export function useSubscriptionCheckout(
     },
   });
   const feasibility = feasibilityQuery.data ?? null;
+  const isRenewal = !!effectiveSearchParams?.renewsSubscriptionId;
+  // A renewal's first week starts at the old plan's end, which this read does not check.
+  const firstWeekBlocked = !isRenewal && feasibility?.firstWeekPlaceable === 0;
 
   // The first cycle in the zone the server cuts it in (the expert's scheduling
   // zone, from the feasibility read), so the buyer reads the dates it stores.
@@ -257,10 +262,10 @@ export function useSubscriptionCheckout(
     },
     detailsTitle: "Subscription Details",
     detailsBanner:
-      effectiveSearchParams?.renewsSubscriptionId ||
+      isRenewal ||
       feasibility?.notice ||
       feasibility?.fullyBooked ||
-      feasibility?.firstWeekPlaceable === 0 ? (
+      firstWeekBlocked ? (
         <div className="space-y-2">
           {effectiveSearchParams?.renewsSubscriptionId && (
             <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-foreground">
@@ -275,13 +280,12 @@ export function useSubscriptionCheckout(
             >
               {PLAN_CLIENTS_FULL_MESSAGE}
             </div>
-          ) : feasibility?.firstWeekPlaceable === 0 ? (
+          ) : firstWeekBlocked ? (
             <div
               role="alert"
               className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-foreground"
             >
-              This expert has no free time in the first week of this plan right
-              now. Pick a later start date, or ask them to open more hours.
+              {NOT_PLACEABLE_MESSAGE}
             </div>
           ) : (
             feasibility?.notice && (
@@ -388,9 +392,9 @@ export function useSubscriptionCheckout(
       </>
     ),
     checkoutPlanFields,
-    // The server's per-viewer answer: an existing client of the expert is never blocked.
-    soldOut: subscriptionCheckoutBlocked(feasibility),
-    soldOutLabel: "Fully booked",
+    // The server's per-viewer answer: an existing client is never fully booked.
+    soldOut: subscriptionCheckoutBlocked(feasibility, { renewal: isRenewal }),
+    soldOutLabel: subscriptionCheckoutBlockedLabel(feasibility),
     mockFlow: {
       kind: "direct",
       successTitle: "✅ Subscription Activated Successfully!",

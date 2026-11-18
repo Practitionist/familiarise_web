@@ -11,7 +11,7 @@ import {
 } from "react";
 import type { Channel, ChannelSort, Event } from "stream-chat";
 import { useChatContext } from "stream-chat-react";
-import { getChannelTypeFromId } from "@/lib/stream-channel-ids";
+import { getChannelTypeFromId, isEventChannel } from "@/lib/stream-channel-ids";
 import { ChannelItem } from "./ChannelItem";
 import { ChannelSearch } from "./ChannelSearch";
 import { NewMessageDialog } from "./NewMessageDialog";
@@ -195,7 +195,7 @@ function sortUpdatedChannels(
 
 export const ChatSidebar = () => {
   const { client, setActiveChannel } = useChatContext();
-  const { openConversation } = useChatPane();
+  const { openConversation, markLinkUnavailable } = useChatPane();
   const { toast } = useToast();
   // The app role, NOT `client.user.role` — mapRoleToStream collapses every
   // non-staff account to Stream's `"user"`, so the old `=== "consultant"`
@@ -916,6 +916,7 @@ export const ChatSidebar = () => {
 
       // Below `md` the conversation replaces this list (#1134). No-op above it.
       openConversation();
+      markLinkUnavailable?.(null);
 
       // Mark channel as read asynchronously (only if channel is properly initialized)
       if (channel.initialized && channel.cid) {
@@ -924,7 +925,7 @@ export const ChatSidebar = () => {
         });
       }
     },
-    [setActiveChannel, openConversation],
+    [setActiveChannel, openConversation, markLinkUnavailable],
   );
 
   const handleTogglePin = useCallback(
@@ -1006,10 +1007,24 @@ export const ChatSidebar = () => {
     let cancelled = false;
     let completed = false;
 
-    const failDeepLink = (description: string) => {
+    // `accessLost` only when the answer says the viewer may not open it; a network or server failure is neither.
+    const failDeepLink = (description: string, accessLost = false) => {
       if (cancelled) return;
       completed = true;
       initialSelectionDoneRef.current = false;
+      if (accessLost) {
+        markLinkUnavailable?.(
+          deepLinkEventType ||
+            (deepLinkChannelId &&
+              isEventChannel(
+                parseDeepLinkChannelTarget(deepLinkChannelId).channelId,
+              ))
+            ? "event"
+            : "conversation",
+        );
+        // Below `md` the explanation sits in the conversation pane.
+        openConversation();
+      }
       toast({
         title: "Unable to open conversation",
         description,
@@ -1048,7 +1063,10 @@ export const ChatSidebar = () => {
           typeof errBody?.error === "string"
             ? errBody.error
             : "Could not open the requested conversation.";
-        failDeepLink(message);
+        failDeepLink(
+          message,
+          response.status === 403 || response.status === 404,
+        );
         return;
       }
       const { channelType, channelId } = (await response.json()) as {
@@ -1076,7 +1094,7 @@ export const ChatSidebar = () => {
       );
       if (cancelled) return;
       if (found.length === 0) {
-        failDeepLink("The requested conversation was not found.");
+        failDeepLink("The requested conversation was not found.", true);
         return;
       }
       prependAndSelectChannel(
@@ -1142,6 +1160,8 @@ export const ChatSidebar = () => {
     scope,
     handleChannelSelect,
     toast,
+    markLinkUnavailable,
+    openConversation,
   ]);
 
   // Debug Stream tools: local hostname only — never on deployed/preview hosts

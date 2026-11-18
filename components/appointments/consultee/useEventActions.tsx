@@ -26,10 +26,12 @@ import {
   cancelPreviewUrl,
   cancelRefusalFrom,
   readRefundQuoteChanged,
+  refundChangedToast,
   shownQuoteBody,
   type ShownCancelQuote,
 } from "@/lib/appointments/cancel-requote";
 import { FREE_BOOKING_REFUND_LINE } from "@/lib/appointments/payment-display";
+import { codedRefusalToast } from "@/lib/errors/mapping/payment-error-toast-map";
 import { fetchWithIdentity } from "@/lib/auth/identity-header";
 import {
   rescheduleTimesTaken,
@@ -241,7 +243,7 @@ export function useEventActions({
   ): Promise<boolean> => {
     if (!appointmentId) {
       toast({
-        title: "Error",
+        title: "Couldn't open this booking",
         description: "Appointment ID is missing",
         variant: "destructive",
       });
@@ -321,15 +323,18 @@ export function useEventActions({
       // answer. Toasting a bare "already open" left the user with no way to
       // reach it from the reschedule page they were standing on.
       const alreadyOpen = code === "RESCHEDULE_ALREADY_OPEN";
+      const refused = codedRefusalToast(
+        code,
+        error instanceof Error ? error.message : "Failed to request reschedule",
+        "Couldn't request a reschedule",
+      );
       toast({
         title: alreadyOpen
           ? "You already have a reschedule open"
-          : "Couldn't request reschedule",
+          : refused.title,
         description: alreadyOpen
           ? "Your first request went through — open it to withdraw it or see the new times."
-          : error instanceof Error
-            ? error.message
-            : "Failed to request reschedule",
+          : refused.description,
         // NOT destructive when one is already open: nothing failed. Their first
         // click is sitting there waiting for an answer, and a red toast saying
         // "couldn't" is the wrong story about their own booking.
@@ -363,7 +368,7 @@ export function useEventActions({
   const handleCancelClick = () => {
     if (!appointmentId) {
       toast({
-        title: "Error",
+        title: "Couldn't open this booking",
         description: "Appointment ID is missing",
         variant: "destructive",
       });
@@ -424,15 +429,12 @@ export function useEventActions({
         return true;
       }
       if (requote && appointmentId) {
-        applyRefundRequote(
+        const currency = applyRefundRequote(
           queryClient,
           cancelPreviewUrl(appointmentId),
           requote,
         );
-        toast({
-          title: "The refund has changed",
-          description: "Check the new amount in the dialog and confirm again.",
-        });
+        toast(refundChangedToast(requote, currency));
         return false;
       }
       // A refusal (the session froze, another refund must finish first) is

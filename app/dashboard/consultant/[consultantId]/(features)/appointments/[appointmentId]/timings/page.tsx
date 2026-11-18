@@ -21,6 +21,8 @@ import { buildManageTimingsSubject } from "@/lib/scheduling/manage-timings-subje
 import { isEventIdFormat } from "@/schemas/slotAllocation/validationSchemas";
 
 import { planTypeLabel } from "@/lib/labels/plan-labels";
+import { soldEventMoveCopy } from "@/lib/scheduling/allocationMessages";
+import { RESCHEDULE_MIN_LEAD_HOURS } from "@/lib/booking/lead-time";
 import { ManageTimingsClient } from "./ManageTimingsClient";
 
 /**
@@ -133,11 +135,12 @@ export default async function ManageTimingsPage({
           <AlertTitle>This event already has booked seats</AlertTitle>
           <AlertDescription className="space-y-3">
             <p>
-              Its times can&apos;t be re-planned here, because that would move
-              people who already paid without notice. Use &ldquo;Move to a new
-              date&rdquo; (a webinar) or &ldquo;Move upcoming sessions&rdquo; (a
-              class) on the event page instead: attendees are told, and anyone
-              who can&apos;t make the new time may leave with a full refund.
+              {soldEventMoveCopy(
+                target.appointment.appointmentType === "CLASS"
+                  ? "class"
+                  : "webinar",
+                RESCHEDULE_MIN_LEAD_HOURS,
+              )}
             </p>
             <Button asChild size="sm">
               <Link href={detailHref}>Open the event</Link>

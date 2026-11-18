@@ -5,6 +5,7 @@
  */
 
 import prisma from "@/lib/prisma";
+import { isPriceFreePayment } from "@/lib/payments/funding-rail";
 import {
   paymentDisplayStatus,
   seatPaymentsByUser,
@@ -17,6 +18,8 @@ export type SeatPaymentWire = {
   /** Paise as a string — the row holds a BigInt. */
   amount: string;
   currency: string;
+  /** Nothing was charged and nothing was owed (`isPriceFreePayment`). */
+  priceFree: boolean;
 };
 
 /** The best Payment per seat across an event's appointments, serialised. */
@@ -34,7 +37,9 @@ export async function readSeatPayments(
     select: {
       userId: true,
       paymentStatus: true,
+      paymentIntent: true,
       amount: true,
+      originalAmount: true,
       currency: true,
       createdAt: true,
       refunds: {
@@ -48,5 +53,10 @@ export async function readSeatPayments(
     paymentStatus: paymentDisplayStatus(p),
     amount: p.amount.toString(),
     currency: p.currency,
+    priceFree: isPriceFreePayment({
+      paymentIntent: p.paymentIntent,
+      amountPaise: Number(p.amount),
+      listPricePaise: Number(p.originalAmount),
+    }),
   }));
 }
