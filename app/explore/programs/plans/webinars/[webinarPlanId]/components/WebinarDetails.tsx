@@ -259,11 +259,7 @@ export function WebinarDetails({
                 </CardContent>
               </Card>
 
-              <CoHostList
-                title="Co-Hosts"
-                unnamed="Co-host"
-                collaborators={plan.collaborators}
-              />
+              <CoHostList collaborators={plan.collaborators} />
 
               {/* Registration Card */}
               <ClientWebinarRegistration

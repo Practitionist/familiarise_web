@@ -203,8 +203,6 @@ export function ClassDetails({
               </Card>
 
               <CoHostList
-                title="Co-Instructors"
-                unnamed="Co-instructor"
                 collaborators={plan.collaborators}
                 className="border-border shadow-sm"
               />

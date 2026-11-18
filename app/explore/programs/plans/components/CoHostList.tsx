@@ -5,13 +5,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatRole } from "@/components/collaborators/format";
 import type { ICollaboratorInfo } from "../types";
 
-type CoHostListProps = {
-  title: string;
-  /** Image alt text for a co-host with no name. */
-  unnamed: string;
+type CoHostListProps = Readonly<{
   collaborators: ICollaboratorInfo[] | undefined;
   className?: string;
-};
+}>;
 
 /** Only a verified profile has an expert page the public can open. */
 export function hasPublicExpertPage(
@@ -21,22 +18,18 @@ export function hasPublicExpertPage(
 }
 
 /**
- * A plan's accepted co-hosts: name, face and role. The name links to the
- * expert page only when that page is public, which is a verified profile.
+ * A plan's team, every accepted collaborator whatever their role: name, face
+ * and role. The name links to the expert page only when that page is public,
+ * which is a verified profile.
  */
-export function CoHostList({
-  title,
-  unnamed,
-  collaborators,
-  className,
-}: CoHostListProps) {
+export function CoHostList({ collaborators, className }: CoHostListProps) {
   if (!collaborators || collaborators.length === 0) return null;
   return (
     <Card className={className}>
       <CardHeader className="pb-2">
         <CardTitle className="text-lg flex items-center gap-2">
           <Users className="w-4 h-4" />
-          {title}
+          Team
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -47,7 +40,7 @@ export function CoHostList({
               <div className="relative h-10 w-10 rounded-full overflow-hidden ring-2 ring-border flex-shrink-0">
                 <Image
                   src={profile.user.image ?? "/placeholder-user.jpg"}
-                  alt={profile.user.name ?? unnamed}
+                  alt={profile.user.name ?? "Team member"}
                   fill
                   className="object-cover"
                 />
