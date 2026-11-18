@@ -1,0 +1,64 @@
+# ADR: A learner can rejoin a free event seat, removals block it until lifted, and every seat change is recorded
+
+- **Status**: Accepted (owner decisions, 2026-11-18, two rounds). Built on the branch `feat/free-seat-rejoin-2849`.
+- **Date**: 2026-11-18
+- **Author**: Platform engineering
+- **Related**: [Train 7 decisions](2026-11-17-train-7.md) (D1), [Conduct removal](2026-11-15-conduct-removal.md), [Event seat waitlist](2026-11-07-event-seat-waitlist.md), [Checkout and payment integration](../booking/10-checkout-payment-integration.md), [Cancellation flow](../booking/08-cancellation-flow.md), [Train 6 back office](2026-11-16-train-6-back-office.md)
+
+## Context
+
+Train 7 made a learner who left an event seat hear the honest refusal, `SEAT_REBUY_UNSUPPORTED` ("You left this event earlier…"), instead of being told they were still registered. That closed the door on everyone who left, including people who left a free webinar by mistake. Three gaps sat beside it:
+
+- **Nothing recorded who removed a seat.** An organiser removal and a self-leave both ended `CANCELLED`, so a removed learner could not be told apart from one who left, and nothing could block a rejoin after a removal.
+- **A participant move wrote no history.** `transitionParticipant` (`lib/booking/participants.ts`) changed the status and nothing else, so neither staff nor the organiser could see that a learner left on Monday and came back on Tuesday.
+- **A free registration sent no booked notice.** The "you're registered" bell and email are staged by the capture path (`handlePaymentSuccess`), and a free seat has no capture.
+
+A price-free leave leaves the `Payment` `SUCCEEDED` at 0 paise with no refund, no consumer invoice and no `booking:` journal, and the participant row `CANCELLED` (`lib/booking/seat-leave.ts`; `refundRemovedAttendeeSeat` answers `freeBooking`). So a rejoin needs no money change at all: the same payment can stand behind the revived seat.
+
+## Decisions
+
+1. **D1: only a price-free seat its holder left can be rejoined.** `priorSeatStanding` (`lib/payments/checkout/seats.ts`) answers `REJOINABLE` when the prior payment is `SUCCEEDED`, `isPriceFreePayment` (a `free_` intent with an amount and a list price of 0), every seat it funded is `CANCELLED`, and none carries a removal mark. Pricing, the payment write and the waitlist share it, so a rejoinable learner may also wait for a seat and take an offer. A credit-funded ₹0 seat and a paid seat keep "You left this event…"; their rebuy is #2867.
+   - The commit revives the seat on its earlier payment. The webinar and class handlers read the prior payment before `recordParticipants` revives the row, so the classification is made on what the learner left, then passed to `writeCheckoutPayment`. A rejoin inserts no payment, re-mints nothing and writes no tombstone, and the commit skips the legs, the utilisation meter and the synchronous earnings, which the first registration already wrote.
+   - Capacity stays the commit's own recount (`getWebinarCapacity` and `getClassCapacity` over `seatHoldingParticipant`, under `lockEventCheckout` and Serializable), so a full event answers `EVENT_FULL`, a rejoin and a new buyer race for the last seat like any two buyers, and only `CANCELLED` is revived (`reviveFromIn: ["CANCELLED"]`).
+   - Worked example: Riya registers for Arjun's free "Intro to Python" webinar on 12 November and leaves the same afternoon. Her `Payment` stays `SUCCEEDED` at 0 paise and her seat is `CANCELLED`. On 13 November she registers again: the same participant row goes back to `CONFIRMED` on the same payment, she gets the booked notice again, and Arjun's roster shows "Left 12 Nov · rejoined 13 Nov" under her name.
+   - Options not chosen: re-minting a fresh payment for the rejoin (a second ₹0 money row for one seat); rejoining credit or paid seats now (#2867).
+
+2. **D2: a removal blocks a rejoin, and staff or the organiser can lift it.** `AppointmentParticipant.removedByUserId` records who removed the seat. `leaveEventSeat` sets it on an organiser removal (`isSelfLeave: false`) and `removeAttendeeForConduct` sets it, each inside its own transaction, on the same compare-and-set that releases the seat. A marked seat answers `REMOVED`, refused with `SEAT_REBUY_UNSUPPORTED` and "The organiser removed you from this event. Contact support if you think this was a mistake." That sentence covers both kinds; the refusal copy never told a conduct removal apart.
+   - **Staff** lift either kind through `POST /api/staff/appointments/[appointmentId]/seats/lift`, a `withOpsAction` door on the new surface `appointments.liftSeatRemoval` (ADMIN and STAFF, like `appointments.cancelForPlatform`), with step-up and a reason, run Serializable. The Ops actions panel lists removed attendees with **Allow back**.
+   - **The organiser** lifts their own event's plain removals through `POST /api/participants/{webinar|class}/[eventId]/allow-back`, with the same authority as the roster's Remove. A conduct removal that still stands is refused with 403 `LIFT_NOT_ALLOWED`; support decides those.
+   - Both doors clear the mark by compare-and-set (`where: { id, removedByUserId: { not: null } }`), so a second lift answers 409 `REMOVAL_ALREADY_LIFTED` and writes nothing.
+
+3. **D3 and E4: lifting only lifts the block, and it is not a verdict.** A lift clears the mark, writes a SEAT `block_lifted` row with its actor, and tells the learner. It never seats anyone, so a full event still says sold out. It never writes or supersedes a `SupportCaseDecision`: an `UPHELD` finding stays true in the record, and staff may lift at any time, with no appeal window.
+   - "The removal stands" now also needs the seat to carry its mark. `conductRemovalStands` (`lib/support/conduct-removal-state.ts`) is false once the mark is gone, or once a `block_lifted` row follows the removal case, so a later plain removal never revives an old conduct block. The call block follows: a staff lift of a conduct removal writes a fresh `CONDUCT_CALL_BLOCK` intent in its transaction, and the drive, which reads the direction from Postgres, unblocks the learner.
+   - An `OVERTURNED` decision from the case panel lifts the mark too, in `conductRemovalDecidedTx`, through the same `clearRemovalMarkTx`, so both doors agree. `removalDecisionNotice` now says the learner can register for the event again (price-free) or that support will help them rejoin (otherwise).
+   - Worked example: Arjun removes Riya for conduct on 14 November and support upholds it on 15 November. On 20 November a support agent lifts the block after Riya apologises. The `UPHELD` decision stays in force, the call block is lifted, and Riya registers again while seats are left.
+
+4. **E5: a paid or credit-funded seat can be lifted, with an honest notice.** The learner's bell, staged in the lift's transaction through the existing `event-seat-opened` event (no new Novu workflow), says "You can register for <event> again." for a price-free seat and "Support will help you rejoin <event>." for any other. The staff door's dialog says a paid seat cannot be bought again on its own yet. The checkout refusal for a lifted paid seat stays `SEAT_REBUY_UNSUPPORTED`.
+   - Worked example: Arjun removes Dev from his ₹500 class and the seat is refunded in full. Support lifts the block; Dev is told support will help him rejoin, and a checkout still answers "Your earlier seat here was refunded…".
+
+5. **D4: every free registration sends the booked notice, once per join.** After a zero-amount webinar or class seat commits, `notifyFreeSeatRegistered` (`lib/payments/checkout/free-seat-notice.ts`) stages the existing booked bell and email (`stageBookedBells`, `stageBookedEmails`) for the learner, the host and the presenters, keyed `seat-registered:<participantId>:<joinedAt>`, so a rejoin is not swallowed by the first registration's key. Paid seats keep the capture path's notice and get no second one.
+
+6. **D5 and E3: every event seat change writes a SEAT history row.** `BookingHistoryEntity` gains `SEAT`. A SEAT row has `entityId` = the participant id, the `appointmentId`, the participant statuses as `fromStatus` and `toStatus`, the `actorUserId`, and one reason from the closed list `SeatHistoryReasonSchema` (`lib/booking/seat-history.ts`): `registered`, `self_leave`, `organiser_removal`, `conduct_removal`, `block_lifted`, `rejoined`, `refunded`.
+   - Only learner seats on webinars and classes are recorded. The reason is passed only by event callers, so a 1:1 path writes nothing and pays nothing. When a caller's compare-and-set pins one from-status, the helper skips the pre-read; with several, its pre-read keeps only event learner seats, so a refund that ends a 1:1 seat still writes none.
+   - A `HELD` seat is a checkout, not a registration, so it writes nothing until its capture (`registered`) or its free confirmation.
+   - Staff read it in the booking timeline (`getBookingTimeline`, `AppointmentTimeline`) with the seat holder and the actor. The organiser reads a short trail on each attendee row and on the Removed attendees list. The learner reads their own trail on their booking page (`GET /api/appointments/[appointmentId]/seat-trail`). Customers read days in their own zone; staff read India time.
+   - Statement cost on the three hot paths: a free first registration adds none (the insert's `createManyAndReturn` replaces `createMany`, its history insert replaces the revive's update, which is skipped for a fresh row); a self-leave and an organiser removal add one (the history insert; the seat's status is already read, so it pins the from-status). A rejoin adds one beside the revive and skips the payment insert.
+
+7. **E1: one database serves every deployment, so seat rows stay out of booking-level reads.** `lib/booking/history-entities.ts` splits by meaning: `BOOKING_HISTORY_ENTITIES` (the seven booking-level entities) serves the document retention match and the document date rule, so one attendee leaving never reads as the booking ending; `TIMELINE_HISTORY_ENTITIES` adds `SEAT` for the staff timeline. The guard release that names the seven entities in every deployed reader ships to prod before the owner pushes `SEAT`, because Prisma throws on an enum value its client lacks.
+
+## Schema
+
+- `AppointmentParticipant.removedByUserId String?`, a relation to `User` (`AppointmentParticipantRemovedBy`, `onDelete: SetNull`) with an index.
+- `enum BookingHistoryEntity` gains `SEAT`, placed last.
+- No sidecar changes: no `CHECK`, partial unique index or trigger reads either column, and `booking_status_history_immutable` already covers SEAT rows.
+
+## Limits that remain
+
+- A rejoin does not reuse the first registration's checkout idempotency key, so a double-submitted rejoin answers `ALREADY_REGISTERED` the second time instead of replaying the first answer.
+- Event seat moves outside the seven reasons (a whole-event cancel, a lapsed hold, attendance) write no SEAT row.
+- A removal recorded before this change carries no mark, so it does not block a rejoin.
+
+## Deprecated & Superseded Approaches
+
+- **Every left seat refused alike** (Train 7 D1): superseded for price-free seats by D1 here; paid and credit seats keep it until #2867.
+- **"The removal stands" read only from the support decision**: superseded by E4, which also needs the seat's mark, so a lift ends the block without a verdict.

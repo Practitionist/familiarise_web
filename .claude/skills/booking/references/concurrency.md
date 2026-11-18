@@ -344,6 +344,18 @@ calendar at once, before any sweep releases it. A seat leave or removal stamps
 its refund owed in the commit that releases the seat, so the
 `retry-auto-refunds` sweep re-drives a crash.
 
+A free seat rejoin is a seat checkout like any other: it takes the same key and
+the same Serializable recount, so two rejoins, or a rejoin and a new buyer, for
+the last seat seat exactly one and refuse the other `EVENT_FULL`. The handler
+reads the buyer's prior payment before `recordParticipants` revives the row and
+revives only `CANCELLED`; a removed seat never revives
+(`removedByUserId: null` in the revive's WHERE). Lifting a removal clears the
+mark by compare-and-set (`where: { id, removedByUserId: { not: null } }`), so a
+second lift and an overturn that lands after a lift change nothing. Every event
+seat move writes its SEAT history row on the same `tx` as the move
+(`lib/booking/seat-history.ts`); a caller whose CAS pins one from-status skips
+the pre-read.
+
 ## Deprecated & Superseded Approaches
 
 - **Per-atom sequential slot locks.** `lockSlotInterval` used to take atoms one

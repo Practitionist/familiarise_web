@@ -134,19 +134,25 @@ Each type has a dedicated handler in `lib/payments/checkout/handlers/` (`consult
 | WEBINAR      | `handleWebinarCheckout()`      | Seats the buyer with a `HELD` `AppointmentParticipant` on the existing shared appointment (no new occurrences). Validates: not full, not ended, user not already registered.             |
 | CLASS        | `handleClassCheckout()`        | Seats the buyer with a `HELD` `AppointmentParticipant` on the class wrapper, which covers every session (no new occurrences). Validates: not full, not ended, user not already enrolled. |
 
-### Seat re-buy
+### Seat re-buy and rejoin
 
-A buyer has one `Payment` per shared webinar or class appointment, so a second purchase finds the first one and `seatRebuyRefusal` (`lib/payments/checkout/seats.ts`) decides what to say. Only an `EXPIRED` or `FAILED` payment is re-minted in place. Every other prior payment refuses, with the same answer from pricing, the payment write and the waitlist:
+A buyer has one `Payment` per shared webinar or class appointment, so a second purchase finds the first one and `priorSeatStanding` (`lib/payments/checkout/seats.ts`) decides what happens. Pricing, the payment write and the waitlist share it. The webinar and class handlers read the prior payment before `recordParticipants` revives the seat row, so the answer is made on what the buyer left, and `writeCheckoutPayment` acts on that same reading:
 
-| Prior payment and its seat                                      | Answer                                  |
-| --------------------------------------------------------------- | --------------------------------------- |
-| `EXPIRED` or `FAILED`                                           | Re-minted in place                      |
-| `PENDING`                                                       | 409 `PAYMENT_ALREADY_EXISTS`            |
-| A priced seat refunded in full                                  | 409 `SEAT_REBUY_UNSUPPORTED` (refunded) |
-| Every seat it funded is `CANCELLED` or `REFUNDED`, free or paid | 409 `SEAT_REBUY_UNSUPPORTED` (left)     |
-| Anything else (a live `HELD`, `CONFIRMED` or `ATTENDED` seat)   | 409 `ALREADY_REGISTERED`                |
+| Prior payment and its seat                                                          | Answer                                  |
+| ----------------------------------------------------------------------------------- | --------------------------------------- |
+| `EXPIRED` or `FAILED`                                                               | Re-minted in place                      |
+| `PENDING`                                                                           | 409 `PAYMENT_ALREADY_EXISTS`            |
+| Every seat released, and one carries a removal mark (`removedByUserId`)             | 409 `SEAT_REBUY_UNSUPPORTED` (removed)  |
+| A priced seat refunded in full                                                      | 409 `SEAT_REBUY_UNSUPPORTED` (refunded) |
+| A price-free seat (`isPriceFreePayment`), `SUCCEEDED`, every seat `CANCELLED`       | Rejoined on the same payment            |
+| Every seat `CANCELLED` or `REFUNDED`, otherwise (a credit-funded ₹0 or a paid seat) | 409 `SEAT_REBUY_UNSUPPORTED` (left)     |
+| Anything else (a live `HELD`, `CONFIRMED` or `ATTENDED` seat)                       | 409 `ALREADY_REGISTERED`                |
 
-A free seat has no refund rows, so the participant status is the only sign that its holder left. For example, Priya Anderson (seed learner) takes a free seat on a webinar and later leaves it. Her `Payment` stays `SUCCEEDED` at 0 paise with no refund row, and her participant row ends `CANCELLED` or `REFUNDED` depending on the door that released it. When she tries to join again she is told she left the event and to contact support, not that she is already registered. Buying a left seat again is not supported yet; nothing is re-minted for it ([Train 7 decisions](../decisions/2026-11-17-train-7.md), D1).
+A rejoin revives only the `CANCELLED` seat row it classified, back to `CONFIRMED`, and keeps the earlier `SUCCEEDED` ₹0 payment: it inserts no payment, re-mints nothing and skips the legs, the utilisation meter and the synchronous earnings, which the first registration already wrote. The capacity recount inside the Serializable commit is the authority, so a full event still answers `EVENT_FULL`. A removed seat is refused until staff or the organiser lifts the block (`lib/booking/seat-removal-lift.ts`).
+
+For example, Priya Anderson (seed learner) takes a free seat on a webinar and later leaves it. Her `Payment` stays `SUCCEEDED` at 0 paise with no refund row, and her participant row ends `CANCELLED`. When she registers again the same row goes back to `CONFIRMED` on the same payment and she gets the booked notice again. Had she paid ₹500, she would be told she left and to contact support ([Free seat rejoin](../decisions/2026-11-18-free-seat-rejoin.md)).
+
+A zero-amount webinar or class seat has no capture, so after its commit `notifyFreeSeatRegistered` (`lib/payments/checkout/free-seat-notice.ts`) stages the booked bell and email that the capture path sends for a paid seat, keyed per seat and join instant, so a rejoin gets its own notice.
 
 ### Gateway order cleanup
 

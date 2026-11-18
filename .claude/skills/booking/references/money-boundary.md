@@ -367,9 +367,14 @@ placeholder, at the order's exact amount and currency, and moves the CARD leg's
 `@@unique([userId, appointmentId])`, so `findPriorSeatPayment` and
 `assertSeatRemintable` (`lib/payments/checkout/seats.ts`) re-mint an EXPIRED or FAILED row in place
 and tombstone its old intent in the same transaction. A PENDING row answers
-`PAYMENT_ALREADY_EXISTS`; a fully refunded seat answers `SEAT_REBUY_UNSUPPORTED`
-until the schema batch makes the unique re-buyable **(planned)**. Both are typed
-refusals, never a 500.
+`PAYMENT_ALREADY_EXISTS`; a removed seat, a fully refunded seat and a left
+credit-funded or paid seat answer `SEAT_REBUY_UNSUPPORTED` (paid rebuy is
+**planned**). All are typed refusals, never a 500. A price-free seat its holder
+left (`priorSeatStanding` answers `REJOINABLE`) revives on its earlier
+`SUCCEEDED` ₹0 payment: no payment insert, no re-mint, no tombstone, and the
+commit skips the legs, the utilisation meter and the synchronous earnings, so a
+rejoin moves no money and writes no money row. Its booked notice is staged after
+the commit (`notifyFreeSeatRegistered`), keyed per seat and join instant.
 
 ## 10. A refund owed is never lost, and the quote is bound to the click
 
