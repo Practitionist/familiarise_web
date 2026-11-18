@@ -18,7 +18,10 @@ jest.mock("../../lib/stream/access-revocation", () => ({
 jest.mock("../../lib/prisma", () => ({ __esModule: true, default: {} }));
 
 import type { Tx } from "@/lib/prisma";
-import { conductRemovalDecidedTx } from "@/lib/support/conduct-removal-case";
+import {
+  conductRemovalDecidedTx,
+  removalRejoinPathTx,
+} from "@/lib/support/conduct-removal-case";
 
 const CASE_AT = new Date("2026-11-14T10:00:00Z");
 const removalCase = {
@@ -75,4 +78,47 @@ it("leaves a later plain removal's mark alone when a lift already followed the c
   expect(history).not.toHaveBeenCalled();
   // The unblock intent is still written: the drive reads the direction from Postgres.
   expect(mockPersistBlock).toHaveBeenCalled();
+});
+
+describe("what the overturn notice promises", () => {
+  /** A free seat; `markedNow` is the seat's current mark, `liftedSinceCase` a lift after the case. */
+  function noticeTx(opts: { liftedSinceCase: boolean; markedNow: boolean }) {
+    return {
+      supportCase: {
+        findUniqueOrThrow: async () => ({
+          appointmentId: "appt-1",
+          requesterUserId: "u-1",
+          createdAt: CASE_AT,
+        }),
+      },
+      appointmentParticipant: {
+        findUnique: async () => ({
+          id: "part-1",
+          removedByUserId: opts.markedNow ? "host-1" : null,
+          payment: { paymentIntent: "free_1", amount: 0, originalAmount: 0 },
+        }),
+      },
+      bookingStatusHistory: {
+        findFirst: async () => (opts.liftedSinceCase ? { id: "lift-1" } : null),
+      },
+    } as unknown as Tx;
+  }
+
+  it("says a free seat can register again when the overturn lifts its only block", async () => {
+    await expect(
+      removalRejoinPathTx(
+        noticeTx({ liftedSinceCase: false, markedNow: true }),
+        removalCase,
+      ),
+    ).resolves.toBe("REGISTER");
+  });
+
+  it("points to support when a later removal still blocks the seat", async () => {
+    await expect(
+      removalRejoinPathTx(
+        noticeTx({ liftedSinceCase: true, markedNow: true }),
+        removalCase,
+      ),
+    ).resolves.toBe("SUPPORT");
+  });
 });

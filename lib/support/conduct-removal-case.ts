@@ -405,11 +405,16 @@ export async function removalRejoinPathTx(
       },
     },
     select: {
+      removedByUserId: true,
       payment: {
         select: { paymentIntent: true, amount: true, originalAmount: true },
       },
     },
   });
+  // A lift already followed this removal, so a mark the seat carries now is a later removal's and stays.
+  if (seat?.removedByUserId && (await liftedSinceRemoval(tx, target))) {
+    return "SUPPORT";
+  }
   const p = seat?.payment;
   return p &&
     isPriceFreePayment({
