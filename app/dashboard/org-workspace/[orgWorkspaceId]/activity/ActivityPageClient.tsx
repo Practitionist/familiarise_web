@@ -32,7 +32,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/dashboard/DataCard";
-import { formatDistanceToNow } from "date-fns";
+import { timeAgo } from "@/lib/time/time-ago";
 import type { OrgAuditCategory } from "@prisma/client";
 import { ORG_AUDIT_CATEGORY_LABEL } from "@/lib/labels/org-labels";
 
@@ -86,24 +86,6 @@ async function fetchActivity(
   }
   if (!res.ok) throw new Error("Failed to load activity");
   return res.json();
-}
-
-function timeAgo(iso: string): string {
-  const date = new Date(iso);
-  // Guard a malformed timestamp — formatDistanceToNow throws a RangeError on an
-  // Invalid Date instead of degrading gracefully.
-  if (Number.isNaN(date.getTime())) return "—";
-  // Beyond 30 days a relative label ("2 months ago") loses the precision an
-  // audit feed wants — fall back to an absolute date there.
-  const days = (Date.now() - date.getTime()) / 86_400_000;
-  if (days > 30) {
-    return date.toLocaleDateString("en-IN", {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-    });
-  }
-  return formatDistanceToNow(date, { addSuffix: true });
 }
 
 export function ActivityPageClient({
