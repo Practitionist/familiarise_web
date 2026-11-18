@@ -46,7 +46,7 @@ const STATUS_CLASS: Record<string, string> = {
 
 interface DocumentRow {
   id: string;
-  originalName: string;
+  versionNo: number;
   reviewStatus: string;
   reviewNotes: string | null;
   reviewedAt: string | null;
@@ -74,7 +74,10 @@ const COLUMNS: Column<DocumentRow>[] = [
     header: "Document",
     accessor: (r) => (
       <div className="min-w-0">
-        <p className="truncate font-medium text-foreground">{r.originalName}</p>
+        {/* The operator list carries no uploader file name (it can hold personal data). */}
+        <p className="truncate font-medium text-foreground">
+          Version {r.versionNo}
+        </p>
         {/* A revision reads as an unrelated row otherwise — the reviewer sees
             two files and no indication one supersedes the other. */}
         {r.responseToDocumentId && (

@@ -202,7 +202,7 @@ export function DisputesPage({
   title = "Disputes",
   description = "View and track payment disputes",
 }: DisputesPageProps) {
-  const { basePath } = useBackofficeCapability();
+  const { basePath, can } = useBackofficeCapability();
   const router = useRouter();
 
   const [searchQuery, setSearchQuery] = useState("");
@@ -291,7 +291,10 @@ export function DisputesPage({
           <AlertDescription>
             {urgentCount} dispute{urgentCount > 1 ? "s are" : " is"} overdue or
             require{urgentCount === 1 ? "s" : ""} an imminent response (&lt;= 3
-            days). Please escalate to admin for evidence submission.
+            days).{" "}
+            {can("disputes.manage")
+              ? "Submit evidence before the deadline."
+              : "Please escalate to an admin for evidence submission."}
           </AlertDescription>
         </Alert>
       )}

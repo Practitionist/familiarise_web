@@ -179,15 +179,21 @@ export function BookingOpsPanel({
                   ? ` · ${formatCurrencyAmount(p.pendingRefundPaise, p.currency)} refund pending`
                   : ""}
               </span>
-              {can("refunds.manage") && (
-                <Button size="sm" variant="outline" asChild>
-                  <Link
-                    href={`${basePath}/money/refunds?door=issue&paymentId=${encodeURIComponent(p.id)}`}
-                  >
-                    Issue refund
-                  </Link>
-                </Button>
-              )}
+              {/* The door takes a succeeded payment with money left; a ₹0 one is a
+                  credits booking, whose refund restores the credits. */}
+              {can("refunds.manage") &&
+                p.status === "SUCCEEDED" &&
+                (p.amountPaise === 0 ||
+                  p.amountPaise - p.refundedPaise - p.pendingRefundPaise >
+                    0) && (
+                  <Button size="sm" variant="outline" asChild>
+                    <Link
+                      href={`${basePath}/money/refunds?door=issue&paymentId=${encodeURIComponent(p.id)}`}
+                    >
+                      Issue refund
+                    </Link>
+                  </Button>
+                )}
             </li>
           ))}
         </ul>
