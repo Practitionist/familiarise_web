@@ -101,15 +101,22 @@ function StatCard({
   );
 }
 
-interface QuarterSummary {
-  financialYear: string;
-  quarter: number;
-  totalConsultants: number;
-  totalAmountCredited: number;
-  totalTDSDeducted: number;
-  totalRecords: number;
-  unfiledRecords: number;
-}
+const quarterSummarySchema = z.object({
+  financialYear: z.string(),
+  quarter: z.number().int(),
+  totalConsultants: z.number().int().nonnegative(),
+  /** Paise. */
+  totalAmountCredited: z.number(),
+  /** Paise. */
+  totalTDSDeducted: z.number(),
+  totalRecords: z.number().int().nonnegative(),
+  unfiledRecords: z.number().int().nonnegative(),
+});
+
+const quarterlySummarySchema = z.object({
+  financialYear: z.string(),
+  quarters: z.array(quarterSummarySchema),
+});
 
 const consultantBreakdownSchema = z.object({
   deducteeKey: z.string(),
@@ -399,26 +406,26 @@ export default function AdminTDSPage() {
   const [filingQuarter, setFilingQuarter] = useState<number | null>(null);
   const recentFYs = getRecentFYs();
 
+  // Pending, not loading: a retry paused offline has no data and must not read as zero.
   const {
     data: quarterlyData,
-    isLoading: loadingQuarters,
+    isPending: loadingQuarters,
     isError: quartersFailed,
     refetch: refetchQuarters,
-  } = useQuery<{
-    financialYear: string;
-    quarters: QuarterSummary[];
-  }>({
+  } = useQuery({
     queryKey: ["admin-tds", selectedFY],
-    queryFn: async () => {
-      const res = await fetch(`/api/admin/tds?fy=${selectedFY}`);
-      if (!res.ok) throw new Error("Failed to fetch TDS summary");
-      return res.json();
-    },
+    queryFn: async () =>
+      readListBody(
+        await fetch(`/api/admin/tds?fy=${selectedFY}`),
+        quarterlySummarySchema,
+        "Failed to fetch TDS summary",
+      ),
   });
 
   const {
     data: consultantData,
-    isLoading: loadingConsultants,
+    isLoading: consultantsFirstLoad,
+    isPlaceholderData: consultantsPlaceholder,
     isError: errorConsultants,
     refetch: refetchConsultants,
   } = useQuery({
@@ -440,6 +447,10 @@ export default function AdminTDSPage() {
     placeholderData: keepPreviousData,
   });
 
+  // Another year's rows kept while this year loads would sit under this year's heading.
+  const loadingConsultants =
+    consultantsFirstLoad ||
+    (consultantsPlaceholder && consultantData?.financialYear !== selectedFY);
   // A failed read has no quarters; the cards say unavailable instead of zero.
   const quarters = quartersFailed ? [] : (quarterlyData?.quarters ?? []);
   const totalTDS = quarters.reduce((s, q) => s + q.totalTDSDeducted, 0);
@@ -595,7 +606,7 @@ export default function AdminTDSPage() {
           <ErrorState
             title="Couldn't load the quarterly TDS summary"
             description="The totals and filing status for each quarter are not shown until it loads."
-            onRetry={() => void refetchQuarters()}
+            onRetry={() => void refetchQuarters({ cancelRefetch: false })}
           />
         )}
 

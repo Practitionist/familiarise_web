@@ -190,7 +190,20 @@ it("TDS says the quarterly summary failed, never ₹0.00 or All filed", async ()
     if (!quartersOk) return { ok: false, json: async () => ({}) };
     return {
       ok: true,
-      json: async () => ({ financialYear: "2026-27", quarters: [] }),
+      json: async () => ({
+        financialYear: "2026-27",
+        quarters: [
+          {
+            financialYear: "2026-27",
+            quarter: 1,
+            totalConsultants: 1,
+            totalAmountCredited: 5_000_000,
+            totalTDSDeducted: 50_000,
+            totalRecords: 3,
+            unfiledRecords: 3,
+          },
+        ],
+      }),
     };
   }) as unknown as typeof fetch;
   renderWithQuery(<AdminTDSPage />);
@@ -208,10 +221,19 @@ it("TDS says the quarterly summary failed, never ₹0.00 or All filed", async ()
       { name: /Try again/ },
     ),
   );
-  expect(await screen.findByText("All filed")).toBeTruthy();
+  expect(await screen.findByText("3 unfiled")).toBeTruthy();
+  expect(screen.getByText("Q1 (Apr–Jun)")).toBeTruthy();
+  expect(screen.getByText("Action needed")).toBeTruthy();
   expect(
     screen.queryByText("Couldn't load the quarterly TDS summary"),
   ).toBeNull();
+  // The consultant read is still failing, so only its card stays unavailable.
+  expect(screen.getAllByText("Unavailable")).toHaveLength(1);
+  const consultantsCard = screen.getByRole("heading", {
+    name: "Consultants with TDS",
+  }).parentElement?.parentElement;
+  if (!consultantsCard) throw new Error("no Consultants with TDS card");
+  expect(within(consultantsCard).getByText("Unavailable")).toBeTruthy();
 });
 
 it("TDS consultant breakdown failure offers Try again, which reads it again", async () => {
