@@ -3,18 +3,19 @@
  */
 
 /**
- * Collaboration readers: a collaborator's profile is the id, userId and a
- * name/avatar user select, and the plan routes read the plan owner through
- * PROFILE_OWNER_SELECT; neither can carry the sensitive profile columns.
+ * Collaboration readers: a collaborator's profile is read as an id, at most a
+ * userId, and a name/avatar user select, so no reader can carry the sensitive
+ * profile columns or the response time.
  */
 
 import {
+  expectNoBareProfile,
   hasKey,
   readSource,
   valuesAtKey,
 } from "../fixtures/consultant-projection";
-import { PROFILE_OWNER_SELECT } from "../../lib/booking/list-selects";
 import { CONSULTANT_PII_FIELDS } from "../../lib/data/consultant-public";
+import { matchesWhere, type Where } from "../fixtures/mem-db";
 
 const mockCollaboratorFindMany = jest.fn();
 const mockWebinarPlanFindMany = jest.fn();
@@ -30,21 +31,17 @@ jest.mock("../../lib/prisma", () => ({
       findMany: (...a: unknown[]) => mockWebinarPlanFindMany(...a),
     },
     classPlan: { findMany: (...a: unknown[]) => mockClassPlanFindMany(...a) },
+    payoutAccount: { findFirst: jest.fn(async () => null) },
   },
 }));
-jest.mock("../../lib/db/serializable-retry", () => ({
-  withSerializableRetry: jest.fn(),
-}));
-jest.mock("../../lib/stream/event-channel-service", () => ({}));
-jest.mock("../../lib/stream-client", () => ({}));
-jest.mock("../../lib/novu/service", () => ({}));
-jest.mock("../../lib/api/after-safe", () => ({ scheduleAfter: jest.fn() }));
-jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 
+import prisma from "../../lib/prisma";
 import {
-  getCollaborators,
   getHostedCollaborations,
-} from "../../lib/collaborators/service";
+  getMyCollaborations,
+  getOrgHostedCollaborations,
+  livePlanCollaborators,
+} from "../../lib/collaborators/queries";
 
 const COLLABORATOR_PROFILE = {
   select: {
@@ -54,58 +51,118 @@ const COLLABORATOR_PROFILE = {
   },
 };
 
-/** The `include` block of a collaborator read: the one that joins the profile. */
-function includedProfiles(args: unknown): unknown[] {
-  return valuesAtKey(valuesAtKey(args, "include"), "consultantProfile");
+/** The Prisma args of every read the four collaboration readers make. */
+async function readerArgs() {
+  await livePlanCollaborators(prisma, { planType: "webinar", planId: "p-1" });
+  const teamRead = mockCollaboratorFindMany.mock.calls.map(([args]) => args);
+  mockCollaboratorFindMany.mockClear();
+  await getMyCollaborations("cp-1");
+  const ownReads = mockCollaboratorFindMany.mock.calls.map(([args]) => args);
+  await getHostedCollaborations("cp-1");
+  await getOrgHostedCollaborations("org-1");
+  const hostedReads = [
+    ...mockWebinarPlanFindMany.mock.calls,
+    ...mockClassPlanFindMany.mock.calls,
+  ].map(([args]) => args);
+  return { teamRead, ownReads, hostedReads };
 }
 
 beforeEach(() => {
-  jest.clearAllMocks();
   mockCollaboratorFindMany.mockResolvedValue([]);
   mockWebinarPlanFindMany.mockResolvedValue([]);
   mockClassPlanFindMany.mockResolvedValue([]);
 });
 
-describe("collaborations consultant projection (behavioural)", () => {
-  it("getCollaborators joins the profile as id, userId and name/image", async () => {
-    await getCollaborators("webinar", "plan-1");
-    const profiles = includedProfiles(
-      mockCollaboratorFindMany.mock.calls[0][0],
+describe("the plans an expert hosts with collaborators", () => {
+  const stored = (standing: string) => [
+    {
+      id: "wp-personal",
+      consultantProfileId: "cp-1",
+      organizationId: null,
+      organization: null,
+      archivedAt: null,
+      collaborators: [{ status: "ACCEPTED" }],
+    },
+    {
+      id: "wp-org",
+      consultantProfileId: "cp-1",
+      organizationId: "org-1",
+      organization: {
+        memberships: [
+          { consultantProfileId: "cp-1", status: standing, role: "EXPERT" },
+        ],
+      },
+      archivedAt: null,
+      collaborators: [{ status: "ACCEPTED" }],
+    },
+  ];
+  const listedAs = async (standing: string) => {
+    mockWebinarPlanFindMany.mockImplementation(async (args: { where: Where }) =>
+      stored(standing).filter((row) => matchesWhere(row, args.where)),
     );
-    expect(profiles).toEqual([COLLABORATOR_PROFILE]);
+    const hosted = await getHostedCollaborations("cp-1", { kind: "all" });
+    return hosted.webinarPlans.map((plan) => plan.id);
+  };
+
+  it("list an organisation's plan for its named expert only while an active expert of that organisation", async () => {
+    expect(await listedAs("ACTIVE")).toEqual(["wp-personal", "wp-org"]);
+    expect(await listedAs("SUSPENDED")).toEqual(["wp-personal"]);
+  });
+});
+
+describe("collaborations consultant projection (behavioural)", () => {
+  it("the plan team and the hosted lists join each collaborator's profile as id, userId and name/image", async () => {
+    const { teamRead, hostedReads } = await readerArgs();
+    expect(teamRead).toHaveLength(1);
+    expect(hostedReads).toHaveLength(4);
+    for (const args of [...teamRead, ...hostedReads]) {
+      const collaboratorProfiles = valuesAtKey(
+        args,
+        "consultantProfile",
+      ).filter((profile) => hasKey(profile, "userId"));
+      expect(collaboratorProfiles).toEqual([COLLABORATOR_PROFILE]);
+    }
   });
 
-  it("hosted collaborations join every collaborator profile the same way", async () => {
-    await getHostedCollaborations("cp-1");
-    const planArgs = [
-      mockWebinarPlanFindMany.mock.calls[0][0],
-      mockClassPlanFindMany.mock.calls[0][0],
-    ];
-    for (const args of planArgs) {
-      const profiles = valuesAtKey(
-        valuesAtKey(args, "include"),
-        "consultantProfile",
+  it("no reader fetches a whole profile, a sensitive column, or more of a user than a name and an avatar", async () => {
+    const { teamRead, ownReads, hostedReads } = await readerArgs();
+    expect(ownReads).toHaveLength(2);
+    for (const args of [...teamRead, ...ownReads, ...hostedReads]) {
+      const profiles = expectNoBareProfile(args);
+      expect(CONSULTANT_PII_FIELDS.filter((f) => hasKey(profiles, f))).toEqual(
+        [],
       );
-      expect(profiles).toEqual([COLLABORATOR_PROFILE]);
-      expect(valuesAtKey(args, "consultantProfile")).not.toContain(true);
+      const userColumns = valuesAtKey(args, "user").flatMap((user) =>
+        Object.keys((user as { select: object }).select),
+      );
+      expect(userColumns.length).toBeGreaterThan(0);
+      expect(userColumns.filter((c) => c !== "name" && c !== "image")).toEqual(
+        [],
+      );
+    }
+  });
+
+  it("an expert's own list leaves out the response time and the actor columns", async () => {
+    const { ownReads } = await readerArgs();
+    for (const args of ownReads) {
+      expect(args.omit).toEqual({
+        respondedAt: true,
+        invitedById: true,
+        endedByUserId: true,
+      });
     }
   });
 });
 
 describe("collaborations consultant projection (source)", () => {
-  const service = () => readSource("lib/collaborators/service.ts");
-
-  it("collaboratorProfileSelect is id, userId and a name/image user", () => {
-    expect(service()).toMatch(
-      /const collaboratorProfileSelect = \{\s*select: \{\s*id: true,\s*userId: true,\s*user: \{ select: \{ name: true, image: true \} \},\s*\},\s*\} as const;/,
-    );
-  });
-
-  it("the collaborator readers use it and nothing fetches the whole profile", () => {
-    const src = service();
-    expect(
-      src.match(/consultantProfile: collaboratorProfileSelect/g),
-    ).toHaveLength(3);
+  it.each([
+    "lib/collaborators/queries.ts",
+    "lib/collaborators/viewer.ts",
+    "lib/api/collaborations/plan-route.ts",
+    "lib/api/collaborations/member-handlers.ts",
+    "app/api/collaborations/route.ts",
+  ])("%s holds no whole-profile read of a collaborator", (rel) => {
+    const src = readSource(rel);
     expect(src).not.toMatch(/consultantProfile: true/);
     expect(src).not.toMatch(/consultantProfile: \{\s*include:/);
     expect(src).not.toMatch(
@@ -113,28 +170,9 @@ describe("collaborations consultant projection (source)", () => {
     );
   });
 
-  it.each([
-    "app/api/collaborations/class/[planId]/route.ts",
-    "app/api/collaborations/webinar/[planId]/route.ts",
-  ])("%s reads the plan owner as PROFILE_OWNER_SELECT", (rel) => {
-    const src = readSource(rel);
-    expect(src).toContain("consultantProfile: PROFILE_OWNER_SELECT");
-    expect(src).not.toMatch(/consultantProfile: true/);
-    expect(src).not.toMatch(/consultantProfile: \{\s*include:/);
-  });
-
-  it("GET /api/collaborations holds no consultantProfile include", () => {
-    const src = readSource("app/api/collaborations/route.ts");
-    expect(src).not.toMatch(/consultantProfile: true/);
-    expect(src).not.toMatch(/consultantProfile: \{\s*include:/);
-  });
-
-  it.each([
-    ["collaborator profile select", COLLABORATOR_PROFILE],
-    ["PROFILE_OWNER_SELECT", PROFILE_OWNER_SELECT],
-  ])("%s carries no sensitive profile column", (_name, projection) => {
-    expect(CONSULTANT_PII_FIELDS.filter((f) => hasKey(projection, f))).toEqual(
-      [],
-    );
+  it("the collaborator profile select carries no sensitive profile column", () => {
+    expect(
+      CONSULTANT_PII_FIELDS.filter((f) => hasKey(COLLABORATOR_PROFILE, f)),
+    ).toEqual([]);
   });
 });

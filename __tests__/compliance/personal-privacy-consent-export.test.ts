@@ -74,6 +74,9 @@ jest.mock("../../lib/prisma", () => ({
     appointmentParticipant: {
       findMany: jest.fn(),
     },
+    collaborator: {
+      findMany: jest.fn(async () => []),
+    },
     sessionAccessLog: {
       findMany: jest.fn(async () => [
         {
@@ -127,6 +130,7 @@ const mockPrisma = prisma as unknown as {
   dpdpGrievance: { findMany: jest.Mock };
   consumerInvoice: { findMany: jest.Mock };
   appointmentParticipant: { findMany: jest.Mock };
+  collaborator: { findMany: jest.Mock };
   $transaction: jest.Mock;
 };
 
@@ -348,6 +352,31 @@ describe("Personal DPDP Consent & §11 Data Export Routes", () => {
       mockPrisma.supportCase.findMany.mockResolvedValueOnce([]);
       mockPrisma.membership.findMany.mockResolvedValueOnce([]);
       mockPrisma.appointmentParticipant.findMany.mockResolvedValueOnce([]);
+      mockPrisma.collaborator.findMany.mockResolvedValueOnce([
+        {
+          id: "collab_1",
+          role: "CO_HOST",
+          status: "REMOVED",
+          revenueShareBps: 2500,
+          createdAt: new Date("2026-10-01T00:00:00Z"),
+          acceptedAt: new Date("2026-10-02T00:00:00Z"),
+          endedAt: new Date("2026-10-20T00:00:00Z"),
+          webinarPlan: { title: "Design reviews" },
+          classPlan: null,
+        },
+        // One row more than the export lists: the read's probe for a longer history.
+        ...Array.from({ length: 200 }, (_, i) => ({
+          id: `collab_older_${i}`,
+          role: "MODERATOR",
+          status: "EXPIRED",
+          revenueShareBps: 1000,
+          createdAt: new Date("2026-09-01T00:00:00Z"),
+          acceptedAt: null,
+          endedAt: new Date("2026-09-15T00:00:00Z"),
+          webinarPlan: null,
+          classPlan: { title: "Older class" },
+        })),
+      ]);
 
       const res = await getExport();
       expect(res.status).toBe(200);
@@ -381,6 +410,35 @@ describe("Personal DPDP Consent & §11 Data Export Routes", () => {
       expect(
         payload.personalDataSummary.activitySummary.sessionAccessLogTruncated,
       ).toBe(false);
+      // The user's own collaborations, ended ones included, and nobody else's:
+      // the newest 200, with a flag when the history is longer.
+      const { collaborations, collaborationsTruncated } =
+        payload.personalDataSummary.activitySummary;
+      expect(collaborations).toHaveLength(200);
+      expect(collaborationsTruncated).toBe(true);
+      expect(collaborations.slice(0, 1)).toEqual([
+        {
+          id: "collab_1",
+          planType: "WEBINAR",
+          planTitle: "Design reviews",
+          role: "CO_HOST",
+          status: "REMOVED",
+          revenueSharePercent: 25,
+          invitedAt: "2026-10-01T00:00:00.000Z",
+          acceptedAt: "2026-10-02T00:00:00.000Z",
+          endedAt: "2026-10-20T00:00:00.000Z",
+        },
+      ]);
+      const collaborationRead =
+        mockPrisma.collaborator.findMany.mock.calls[0][0];
+      expect(collaborationRead.where).toEqual({
+        consultantProfile: { userId: "user_dpdp_1" },
+      });
+      expect(collaborationRead.take).toBe(201);
+      expect(collaborationRead.select).not.toHaveProperty("invitedById");
+      expect(collaborationRead.select.webinarPlan.select).toEqual({
+        title: true,
+      });
       expect(payload.sharedWithDataProcessors).toEqual(
         expect.arrayContaining([
           expect.objectContaining({

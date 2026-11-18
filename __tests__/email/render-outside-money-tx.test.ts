@@ -42,6 +42,8 @@ jest.mock("@/lib/prisma", () => ({
     return mockDb;
   },
 }));
+// No case here ends a collaboration; the Stream graph behind it stays unloaded.
+jest.mock("@/lib/stream/access-revocation", () => ({}));
 jest.mock("@/lib/email/render", () => ({
   renderEmail: (...args: unknown[]) => {
     mockEvents.push("render");

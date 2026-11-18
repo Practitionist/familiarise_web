@@ -4,6 +4,12 @@ import { z } from "zod";
 import type { Session } from "@/lib/auth";
 import prisma, { type PrismaLike } from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
+import type { PlanRef } from "@/lib/collaborators/team";
+import {
+  activeOrgRole,
+  resolveCollaborationViewer,
+  seesAttendeePayments,
+} from "@/lib/collaborators/viewer";
 import { readSeatPayments } from "@/lib/data/seat-payments";
 import {
   requireApiAuth,
@@ -28,6 +34,10 @@ import {
   hasOrgPermission,
   rolesWithOrgPermission,
 } from "@/lib/auth/org-permissions";
+import {
+  managedAsNamedExpertWhere,
+  orgPlanEditRefusal,
+} from "@/lib/enterprise/membership-guards";
 
 export type GroupEventKind = "webinar" | "class";
 
@@ -88,8 +98,9 @@ function buildPlanAccessClauses(
   );
   return {
     OR: [
+      // The plan's own expert, on an organisation's plan only while its active expert.
       ...(session.user.consultantProfileId
-        ? [{ consultantProfileId: session.user.consultantProfileId }]
+        ? [managedAsNamedExpertWhere(session.user.consultantProfileId)]
         : []),
       {
         organization: {
@@ -184,6 +195,10 @@ async function queryGroupEventForRead(
       event: webinarEvent,
       appointment: webinarEvent.appointment,
       collaborators: webinarEvent.webinarPlan.collaborators,
+      planRef: {
+        planType: "webinar",
+        planId: webinarEvent.webinarPlanId,
+      } satisfies PlanRef,
     };
   }
 
@@ -203,7 +218,27 @@ async function queryGroupEventForRead(
     event: classEvent,
     appointment: classEvent.appointment,
     collaborators: classEvent.classPlan.collaborators,
+    planRef: {
+      planType: "class",
+      planId: classEvent.classPlanId,
+    } satisfies PlanRef,
   };
+}
+
+async function readsAttendeePayments(
+  planRef: PlanRef,
+  userId: string,
+): Promise<boolean> {
+  const { viewer, plan } = await resolveCollaborationViewer(
+    prisma,
+    planRef,
+    userId,
+  );
+  if (seesAttendeePayments(viewer)) return true;
+  return seesAttendeePayments(
+    viewer,
+    await activeOrgRole(prisma, plan?.organizationId ?? null, userId),
+  );
 }
 
 export async function handleGroupParticipantsGet(
@@ -228,11 +263,18 @@ export async function handleGroupParticipantsGet(
 
     const participants = deduplicateParticipants(loaded.appointment);
     const appointmentId = loaded.appointment?.id;
+    // Everyone the gate above admitted reads the roster; what an attendee
+    // paid goes to platform staff and to whoever `seesAttendeePayments` names.
+    const sendsPayments =
+      isPrivileged(session.user.role) ||
+      (await readsAttendeePayments(loaded.planRef, session.user.id));
     const [seatPayments, waitingCount] = await Promise.all([
-      readSeatPayments(
-        appointmentId ? [appointmentId] : [],
-        participants.map((u) => u.id),
-      ),
+      sendsPayments
+        ? readSeatPayments(
+            appointmentId ? [appointmentId] : [],
+            participants.map((u) => u.id),
+          )
+        : null,
       // A count only: the host never sees who is waiting.
       appointmentId
         ? prisma.appointmentWaitlist.count({
@@ -245,7 +287,7 @@ export async function handleGroupParticipantsGet(
       [loaded.key]: loaded.event,
       participants,
       collaborators: loaded.collaborators,
-      seatPayments,
+      ...(seatPayments && { seatPayments }),
       waitingCount,
     });
   } catch (error) {
@@ -411,7 +453,13 @@ async function canRemoveForConduct(
     appointment?.webinar?.webinarPlan ?? appointment?.class?.classPlan;
   if (!plan) return false;
   if (isPrivileged(session.user.role)) return true;
-  if (profileId && plan.consultantProfileId === profileId) return true;
+  if (
+    profileId &&
+    plan.consultantProfileId === profileId &&
+    !(await orgPlanEditRefusal(db, plan, profileId))
+  ) {
+    return true;
+  }
   if (plan.collaborators.length > 0) return true;
   if (!plan.organizationId) return false;
   const membership = await db.membership.findFirst({

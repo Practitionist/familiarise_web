@@ -20,7 +20,10 @@
 
 import { z } from "zod";
 import prisma from "@/lib/prisma";
-import { paidParticipant } from "@/lib/booking/participants";
+import {
+  NOT_COLLABORATOR_ROW,
+  paidParticipant,
+} from "@/lib/booking/participants";
 import { getStreamChatClient } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
 import { markChannelExists } from "@/lib/stream-cache";
@@ -41,7 +44,11 @@ import {
   forEachChunk,
 } from "@/lib/stream/batch";
 import { collabChannelId } from "@/lib/stream-channel-ids";
-import { fenceSeatGrants } from "@/lib/stream/access-revocation";
+import type { PlanRef } from "@/lib/collaborators/team";
+import {
+  fenceCollaboratorGrant,
+  fenceSeatGrants,
+} from "@/lib/stream/access-revocation";
 
 // Input validation schemas
 const channelTypeSchema = z.enum(["messaging", "team"]);
@@ -321,7 +328,7 @@ async function loadEventChannelData(
           appointment: {
             include: {
               participants: {
-                where: paidParticipant(),
+                where: { ...paidParticipant(), ...NOT_COLLABORATOR_ROW },
                 select: { userId: true },
               },
             },
@@ -346,8 +353,15 @@ async function loadEventChannelData(
       }
 
       const collaborators = webinar.webinarPlan.collaborators ?? [];
+      const collaboratorIds = collaborators.map(
+        (c) => c.consultantProfile.userId,
+      );
+      const planRef: PlanRef = {
+        planType: "webinar",
+        planId: webinar.webinarPlan.id,
+      };
       const members = [
-        ...collaborators.map((c) => c.consultantProfile.userId),
+        ...collaboratorIds,
         ...(webinar.appointment?.participants.map((p) => p.userId) || []),
       ];
       const moderatorIds = collaborators
@@ -358,6 +372,8 @@ async function loadEventChannelData(
         consultantId,
         members,
         moderatorIds,
+        planRef,
+        collaboratorIds,
         appointmentId: webinar.appointment?.id ?? null,
         seatHolderIds:
           webinar.appointment?.participants.map((p) => p.userId) ?? [],
@@ -384,7 +400,7 @@ async function loadEventChannelData(
           appointment: {
             include: {
               participants: {
-                where: paidParticipant(),
+                where: { ...paidParticipant(), ...NOT_COLLABORATOR_ROW },
                 select: { userId: true },
               },
             },
@@ -409,8 +425,15 @@ async function loadEventChannelData(
       }
 
       const collaborators = classData.classPlan.collaborators ?? [];
+      const collaboratorIds = collaborators.map(
+        (c) => c.consultantProfile.userId,
+      );
+      const planRef: PlanRef = {
+        planType: "class",
+        planId: classData.classPlan.id,
+      };
       const members = [
-        ...collaborators.map((c) => c.consultantProfile.userId),
+        ...collaboratorIds,
         ...(classData.appointment?.participants.map((p) => p.userId) || []),
       ];
       const moderatorIds = collaborators
@@ -421,6 +444,8 @@ async function loadEventChannelData(
         consultantId,
         members,
         moderatorIds,
+        planRef,
+        collaboratorIds,
         appointmentId: classData.appointment?.id ?? null,
         seatHolderIds:
           classData.appointment?.participants.map((p) => p.userId) ?? [],
@@ -542,13 +567,24 @@ export async function getEventChannelData(
   }
 }
 
-/** Takes back a seat that ended between the roster read and the channel write. */
-async function fenceRosterSeats(data: {
+/** Takes back a team place or a seat that ended between the roster read and the channel write. */
+async function fenceRoster(data: {
+  planRef?: PlanRef;
+  collaboratorIds?: string[];
   appointmentId?: string | null;
   seatHolderIds?: string[];
 }): Promise<void> {
-  if (data.appointmentId && data.seatHolderIds) {
-    await fenceSeatGrants(data.appointmentId, data.seatHolderIds);
+  const { planRef, collaboratorIds = [] } = data;
+  try {
+    if (planRef) {
+      await Promise.all(
+        collaboratorIds.map((id) => fenceCollaboratorGrant(planRef, id)),
+      );
+    }
+  } finally {
+    if (data.appointmentId && data.seatHolderIds) {
+      await fenceSeatGrants(data.appointmentId, data.seatHolderIds);
+    }
   }
 }
 
@@ -584,7 +620,7 @@ export async function createWebinarChannel(
       organizationId: resolvedOrgId,
     });
   } finally {
-    await fenceRosterSeats(data);
+    await fenceRoster(data);
   }
 }
 
@@ -620,7 +656,7 @@ export async function createClassChannel(
       organizationId: resolvedOrgId,
     });
   } finally {
-    await fenceRosterSeats(data);
+    await fenceRoster(data);
   }
 }
 
@@ -812,56 +848,64 @@ export async function createCollaboratorChannel(
     ...(organizationId ? { organization_id: organizationId } : {}),
   } as Record<string, unknown>);
 
-  // Get-or-create only: an existing channel keeps its data, including a wind-down or moderation freeze.
-  await channel.create();
-  await addRemainingMembers(channel, roster);
-  markChannelExists("messaging", channelId);
+  const granted = collaboratorUserIds.filter((id) => roster.includes(id));
+  try {
+    // Get-or-create only: an existing channel keeps its data, including a wind-down or moderation freeze.
+    await channel.create();
+    await addRemainingMembers(channel, roster);
+    markChannelExists("messaging", channelId);
 
-  await grantChannelModerator(channel, creatorUserId, channelId);
+    await grantChannelModerator(channel, creatorUserId, channelId);
 
-  // Query current channel membership for diffing
-  const channelData = await channel.query();
-  const currentMemberIds = (channelData.members ?? [])
-    .map((m) => m.user_id)
-    .filter((id): id is string => !!id);
+    // Query current channel membership for diffing
+    const channelData = await channel.query();
+    const currentMemberIds = (channelData.members ?? [])
+      .map((m) => m.user_id)
+      .filter((id): id is string => !!id);
 
-  // Add members present in DB but missing from channel
-  const toAdd = roster.filter((id) => !currentMemberIds.includes(id));
-  if (toAdd.length > 0) {
-    await forEachChunk(toAdd, async (chunk) => {
-      await channel.addMembers(chunk);
-    });
-    streamLogger.debug("Collaborator channel: added missing members", {
+    // Add members present in DB but missing from channel
+    const toAdd = roster.filter((id) => !currentMemberIds.includes(id));
+    if (toAdd.length > 0) {
+      await forEachChunk(toAdd, async (chunk) => {
+        await channel.addMembers(chunk);
+      });
+      streamLogger.debug("Collaborator channel: added missing members", {
+        channelId,
+        added: toAdd,
+      });
+    }
+
+    // Remove channel members no longer in the DB set
+    const toRemove = currentMemberIds.filter((id) => !roster.includes(id));
+    if (toRemove.length > 0) {
+      await forEachChunk(toRemove, async (chunk) => {
+        await channel.removeMembers(chunk);
+      });
+      streamLogger.debug("Collaborator channel: removed departed members", {
+        channelId,
+        removed: toRemove,
+      });
+    }
+
+    streamLogger.debug("Collaborator channel reconciled", {
       channelId,
-      added: toAdd,
+      planType,
+      planId,
+      memberCount: roster.length,
+      added: toAdd.length,
+      removed: toRemove.length,
     });
-  }
 
-  // Remove channel members no longer in the DB set
-  const toRemove = currentMemberIds.filter((id) => !roster.includes(id));
-  if (toRemove.length > 0) {
-    await forEachChunk(toRemove, async (chunk) => {
-      await channel.removeMembers(chunk);
-    });
-    streamLogger.debug("Collaborator channel: removed departed members", {
+    return {
       channelId,
-      removed: toRemove,
-    });
+      members: roster,
+      channelData,
+      frozen: channelData.channel?.frozen === true,
+    };
+  } finally {
+    // A collaborator removed while this roster was being written is taken back out.
+    await Promise.all(
+      granted.map((id) => fenceCollaboratorGrant({ planType, planId }, id)),
+    );
   }
-
-  streamLogger.debug("Collaborator channel reconciled", {
-    channelId,
-    planType,
-    planId,
-    memberCount: roster.length,
-    added: toAdd.length,
-    removed: toRemove.length,
-  });
-
-  return {
-    channelId,
-    members: roster,
-    channelData,
-    frozen: channelData.channel?.frozen === true,
-  };
 }

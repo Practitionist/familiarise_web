@@ -38,7 +38,7 @@ export const createMockPrisma = () => ({
   appointment: { findUnique: jest.fn(async () => null) },
   // Collaboration reads run on every event-channel sync; default to "no co-hosts".
   collaborator: {
-    findFirst: jest.fn(async () => null),
+    findFirst: jest.fn(async (): Promise<{ id: string } | null> => null),
     findMany: jest.fn(async () => []),
   },
   webinarPlan: { findMany: jest.fn(async () => []) },

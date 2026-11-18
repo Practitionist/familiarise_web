@@ -1,8 +1,7 @@
 import { z } from "zod";
 import { CollaboratorRole } from "@prisma/client";
 
-// #784 — one DB enum, but each plan type still only accepts its own role
-// subset (the old per-type enums enforced this at the DB layer).
+/** Each plan type accepts its own subset of the one role enum. */
 export const WEBINAR_COLLABORATOR_ROLES = [
   CollaboratorRole.CO_HOST,
   CollaboratorRole.MODERATOR,
@@ -17,33 +16,100 @@ export const CLASS_COLLABORATOR_ROLES = [
   CollaboratorRole.CONTENT_CREATOR,
 ] as const;
 
-export const WebinarCollaboratorRoleEnum = z.enum(WEBINAR_COLLABORATOR_ROLES);
-export const ClassCollaboratorRoleEnum = z.enum(CLASS_COLLABORATOR_ROLES);
+export const COLLABORATOR_ROLES_BY_PLAN_TYPE = {
+  webinar: WEBINAR_COLLABORATOR_ROLES,
+  class: CLASS_COLLABORATOR_ROLES,
+} as const satisfies Record<"webinar" | "class", readonly CollaboratorRole[]>;
 
-// #1580 — what a seat grants is its `tier`, derived from the role on the
-// server; the invite carries no per-capability booleans any more.
-export const inviteCollaboratorSchema = z.object({
-  consultantProfileId: z.string().min(1, "Consultant profile ID is required"),
-  revenueSharePercentage: z
-    .number({ required_error: "Revenue share percentage is required" })
-    .gt(0, "Revenue share percentage must be greater than 0")
-    .lte(90, "Revenue share percentage cannot exceed 90"),
-});
+/** A collaborator's share is a whole percent; the host keeps at least a tenth. */
+export const MIN_SHARE_PERCENT = 1;
+export const MAX_SHARE_PERCENT = 90;
 
-export const inviteWebinarCollaboratorSchema = inviteCollaboratorSchema.extend({
-  role: WebinarCollaboratorRoleEnum,
-});
+export const sharePercentSchema = z
+  .number({ required_error: "Enter a revenue share" })
+  .int("The revenue share must be a whole percent")
+  .min(
+    MIN_SHARE_PERCENT,
+    `The revenue share must be at least ${MIN_SHARE_PERCENT}%`,
+  )
+  .max(
+    MAX_SHARE_PERCENT,
+    `The revenue share cannot exceed ${MAX_SHARE_PERCENT}%`,
+  );
 
-export const inviteClassCollaboratorSchema = inviteCollaboratorSchema.extend({
-  role: ClassCollaboratorRoleEnum,
-});
+const idSchema = z.string().trim().min(1).max(64);
 
-// #1580 C-P0-3 — the PATCH body was forwarded unvalidated. `updateCollaborator`
-// changes only the share and the role.
-export const updateWebinarCollaboratorSchema = inviteWebinarCollaboratorSchema
-  .omit({ consultantProfileId: true })
-  .partial();
+export const planTypeSchema = z.enum(["webinar", "class"]);
 
-export const updateClassCollaboratorSchema = inviteClassCollaboratorSchema
-  .omit({ consultantProfileId: true })
-  .partial();
+export const planParamsSchema = z.object({ planId: idSchema });
+export const memberParamsSchema = z.object({ planId: idSchema, id: idSchema });
+export const collaborationParamsSchema = z.object({ id: idSchema });
+
+type PlanKind = "webinar" | "class";
+
+export type InviteCollaboratorBody = {
+  consultantProfileId: string;
+  role: CollaboratorRole;
+  sharePercent: number;
+};
+
+export type UpdatePendingTermsBody = {
+  role?: CollaboratorRole;
+  sharePercent?: number;
+};
+
+const inviteBody = {
+  consultantProfileId: idSchema,
+  sharePercent: sharePercentSchema,
+};
+
+export const inviteCollaboratorSchemas: Record<
+  PlanKind,
+  z.ZodType<InviteCollaboratorBody, z.ZodTypeDef, unknown>
+> = {
+  webinar: z
+    .object({ ...inviteBody, role: z.enum(WEBINAR_COLLABORATOR_ROLES) })
+    .strict(),
+  class: z
+    .object({ ...inviteBody, role: z.enum(CLASS_COLLABORATOR_ROLES) })
+    .strict(),
+};
+
+const atLeastOneTerm = (body: UpdatePendingTermsBody) =>
+  body.role !== undefined || body.sharePercent !== undefined;
+
+/** A pending invitation's terms: the role, the share, or both. */
+export const updatePendingTermsSchemas: Record<
+  PlanKind,
+  z.ZodType<UpdatePendingTermsBody, z.ZodTypeDef, unknown>
+> = {
+  webinar: z
+    .object({
+      role: z.enum(WEBINAR_COLLABORATOR_ROLES).optional(),
+      sharePercent: sharePercentSchema.optional(),
+    })
+    .strict()
+    .refine(atLeastOneTerm, "Change the role, the share, or both"),
+  class: z
+    .object({
+      role: z.enum(CLASS_COLLABORATOR_ROLES).optional(),
+      sharePercent: sharePercentSchema.optional(),
+    })
+    .strict()
+    .refine(atLeastOneTerm, "Change the role, the share, or both"),
+};
+
+/** The terms the invitee was looking at when they pressed Accept. */
+export const seenTermsSchema = z
+  .object({
+    role: z.nativeEnum(CollaboratorRole),
+    sharePercent: sharePercentSchema,
+  })
+  .strict();
+
+export const respondToInvitationSchema = z.discriminatedUnion("response", [
+  z.object({ response: z.literal("ACCEPTED"), seenTerms: seenTermsSchema }),
+  z.object({ response: z.literal("DECLINED") }),
+]);
+
+export type SeenTerms = z.infer<typeof seenTermsSchema>;

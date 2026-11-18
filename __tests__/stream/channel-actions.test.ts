@@ -647,6 +647,8 @@ describe("Entity Channel Creation", () => {
           participants: [{ userId: "attendee-1" }],
         },
       });
+      // The collaborator is still on the team when the roster is re-checked.
+      mockPrisma.collaborator.findFirst.mockResolvedValueOnce({ id: "c-1" });
 
       const { createWebinarChannel } =
         await import("../../actions/stream/chat/channel.action");

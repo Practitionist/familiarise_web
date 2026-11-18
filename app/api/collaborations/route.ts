@@ -1,12 +1,12 @@
-import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
+import { reportSentryError } from "@/lib/observability/report";
 import prisma from "@/lib/prisma";
 import {
   getMyCollaborations,
   getHostedCollaborations,
   getOrgHostedCollaborations,
-} from "@/lib/collaborators/service";
+} from "@/lib/collaborators/queries";
 import {
   ORG_SCOPE_READABLE_STATUSES,
   resolveOrgScope,
@@ -119,11 +119,10 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "collaborations" } },
-    );
-    console.error("Error fetching collaborations:", error);
+    reportSentryError(error, {
+      subsystem: "collaborators",
+      op: "collaborations.list",
+    });
     return NextResponse.json(
       { error: "Failed to fetch collaborations" },
       { status: 500 },

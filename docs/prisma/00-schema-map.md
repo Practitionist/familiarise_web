@@ -89,8 +89,7 @@ flowchart TD
         ConsultantProfileVerification
     end
     subgraph Collab["Collaboration"]
-        WebinarCollaborator
-        ClassCollaborator
+        Collaborator
     end
     subgraph Pay["Payments"]
         Payment
@@ -963,46 +962,46 @@ erDiagram
 
 ## 14. Collaboration System
 
-Co-hosts, TAs, and guest speakers with revenue-share splits on Webinar and Class plans.
+Co-presenters and crew with revenue shares on webinar and class plans. One `Collaborator` row is one period of one expert on one plan's team: exactly one of `webinarPlanId` and `classPlanId` is set, and an expert may hold many ended rows on a plan and one live one. The rules Prisma cannot express (the partial unique indexes, the transition and caps triggers) are listed in [the collaborators schema page](../collaborators/01-database-schema.md).
 
 ```mermaid
 erDiagram
     ConsultantProfile {
         string id
     }
+    User {
+        string id
+    }
     WebinarPlan {
         string id
         string consultantProfileId
-    }
-    WebinarCollaborator {
-        string id
-        string consultantProfileId
-        string webinarPlanId
-        string invitedById
-        WebinarCollaboratorRole role
-        float revenueSharePercentage
-        CollaboratorStatus status
-        datetime respondedAt
     }
     ClassPlan {
         string id
         string consultantProfileId
     }
-    ClassCollaborator {
+    Collaborator {
         string id
         string consultantProfileId
+        CollaboratorType collaboratorType
+        string webinarPlanId
         string classPlanId
-        string invitedById
-        ClassCollaboratorRole role
-        float revenueSharePercentage
+        CollaboratorRole role
+        CollaboratorTier tier
+        int revenueShareBps
         CollaboratorStatus status
+        string invitedById
+        datetime acceptedAt
+        datetime endedAt
+        string endedByUserId
         datetime respondedAt
     }
 
-    WebinarPlan ||--o{ WebinarCollaborator : "has collaborators"
-    ConsultantProfile ||--o{ WebinarCollaborator : "collaborates on"
-    ClassPlan ||--o{ ClassCollaborator : "has collaborators"
-    ConsultantProfile ||--o{ ClassCollaborator : "collaborates on"
+    WebinarPlan ||--o{ Collaborator : "has collaborators"
+    ClassPlan ||--o{ Collaborator : "has collaborators"
+    ConsultantProfile ||--o{ Collaborator : "collaborates on"
+    ConsultantProfile ||--o{ Collaborator : "invited"
+    User ||--o{ Collaborator : "ended"
 ```
 
 ---
@@ -1924,9 +1923,10 @@ Every enum in the schema and its values.
 | `PayoutStatus`                 | PENDING, APPROVED, PROCESSING, COMPLETED, FAILED, CANCELLED                                                                                                                |
 | `PayoutMethod`                 | BANK_TRANSFER, UPI, STRIPE_TRANSFER                                                                                                                                        |
 | `PayoutAccountType`            | BANK_ACCOUNT, UPI, STRIPE_CONNECT                                                                                                                                          |
-| `CollaboratorStatus`           | PENDING, ACCEPTED, DECLINED, REMOVED                                                                                                                                       |
-| `WebinarCollaboratorRole`      | CO_HOST, MODERATOR, GUEST_SPEAKER, TECHNICAL_SUPPORT                                                                                                                       |
-| `ClassCollaboratorRole`        | CO_INSTRUCTOR, TEACHING_ASSISTANT, GUEST_LECTURER, CONTENT_CREATOR                                                                                                         |
+| `CollaboratorStatus`           | PENDING, ACCEPTED, DECLINED, EXPIRED, REMOVED, WITHDRAWN                                                                                                                   |
+| `CollaboratorRole`             | CO_HOST, MODERATOR, GUEST_SPEAKER, TECHNICAL_SUPPORT (webinar); CO_INSTRUCTOR, TEACHING_ASSISTANT, GUEST_LECTURER, CONTENT_CREATOR (class)                                 |
+| `CollaboratorTier`             | PRESENTER, CREW                                                                                                                                                            |
+| `CollaboratorType`             | WEBINAR, CLASS                                                                                                                                                             |
 | `ConsultantVerificationStatus` | PENDING_VERIFICATION, UNDER_REVIEW, VERIFIED, REJECTED                                                                                                                     |
 | `ProfileVerificationStatus`    | PENDING, APPROVED, REJECTED, NEEDS_INFO, SUPERSEDED                                                                                                                        |
 | `DocumentReviewStatus`         | PENDING, IN_REVIEW, APPROVED, REJECTED, NEEDS_REVISION                                                                                                                     |

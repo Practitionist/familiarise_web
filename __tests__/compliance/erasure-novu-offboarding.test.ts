@@ -93,7 +93,7 @@ function makeDb(
 ) {
   const tx = models({
     ...supportModels(attachments),
-    collaborator: { updateManyAndReturn: jest.fn(async () => []) },
+    collaborator: { findMany: jest.fn(async () => []) },
     erasureRequest: { findFirst: jest.fn(async () => null) },
   });
   return models({

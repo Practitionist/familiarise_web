@@ -6,6 +6,7 @@ import {
   CallStatsButton,
   CallingState,
   PaginatedGridLayout,
+  SfuModels,
   SpeakerLayout,
   SpeakingWhileMutedNotification,
   useCall,
@@ -183,6 +184,16 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
     call?.setDisconnectionTimeout(DISCONNECTION_TIMEOUT_SECONDS);
   }, [call]);
 
+  // The media server closes a removed participant's connection with the
+  // reason "kicked"; a call that ended for everyone carries another reason.
+  const [removed, setRemoved] = useState(false);
+  useEffect(() => {
+    if (!call) return;
+    return call.on("callEnded", (event) => {
+      if (event.reason === SfuModels.CallEndedReason.KICKED) setRemoved(true);
+    });
+  }, [call]);
+
   const info = useSessionInfo(role);
   const isHost = info.isHost;
   const inCallChatAllowed = isInCallChatAllowed(info.appointmentType);
@@ -268,6 +279,15 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
   const handleReturnHome = async () => {
     await cleanupAndNavigate(getDashboardUrl());
   };
+
+  if (removed && !exit) {
+    return (
+      <CallEnded
+        message="You were removed from this session."
+        onReturnHome={handleReturnHome}
+      />
+    );
+  }
 
   if (callEndedAt && !exit) {
     return (

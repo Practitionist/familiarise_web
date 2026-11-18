@@ -16,7 +16,8 @@ import type {
  * pre-MVP reset starts from clean data, so the table is never backfilled.
  *
  * All writes are idempotent by construction (createMany skipDuplicates on the
- * (appointmentId, userId) unique, then a revive of terminal rows; guarded
+ * (appointmentId, userId) unique, a takeover of a staff row, which is never a
+ * seat, then a revive of terminal rows; guarded
  * updateMany for status through `transitionParticipant`), so a checkout retry
  * or a webhook redelivery cannot 409 here.
  */
@@ -51,6 +52,31 @@ export async function recordParticipants(
       organizationId: opts.organizationId ?? null,
     }));
   await tx.appointmentParticipant.createMany({ data, skipDuplicates: true });
+  // A staff row is not a seat. A seat or host entry written for its user takes
+  // the row over in any status and starts it again as a new row would be.
+  const takenOverAt = new Date();
+  for (const row of data) {
+    if (row.role === "COLLABORATOR") continue;
+    await transitionParticipant(
+      tx,
+      { appointmentId, userId: row.userId, role: "COLLABORATOR" },
+      row.status,
+      {
+        fromIn: [
+          ...LIVE_PARTICIPANT_STATUSES,
+          ...RELEASED_PARTICIPANT_STATUSES,
+        ],
+        data: {
+          role: row.role,
+          paymentId: row.paymentId,
+          organizationId: row.organizationId,
+          refundWindowHours: null,
+          sessionsPurchased: null,
+          createdAt: takenOverAt,
+        },
+      },
+    );
+  }
   // A seat released earlier (CANCELLED/REFUNDED) and bought again is the same
   // (appointmentId, userId) row, so skipDuplicates alone would leave it dead.
   // The revive is the one edge out of a released status, so it widens the
@@ -139,6 +165,19 @@ export function liveParticipant(
     status: { in: LIVE_PARTICIPANT_STATUSES },
   };
 }
+
+/** A live learner seat. The host's row and a staff row are never one. */
+export function liveLearnerSeat(): Prisma.AppointmentParticipantWhereInput {
+  return { ...liveParticipant(), role: "CONSULTEE" };
+}
+
+/**
+ * A collaborator's own participant row is history: it opens no room or chat
+ * and counts as nobody. Gates and counts spread this into their seat filter.
+ */
+export const NOT_COLLABORATOR_ROW = {
+  role: { not: "COLLABORATOR" },
+} satisfies Prisma.AppointmentParticipantWhereInput;
 
 /** Release one user's seat on the appointments `where` selects (#1554). */
 export async function releaseParticipant(

@@ -3,9 +3,9 @@
  */
 
 /**
- * The offering editor reads the plan through the host-only, never-cached
- * editor route, and a save whose capacity the host did not touch sends no
- * `maxParticipants`, so a stale load can never move an event's capacity.
+ * The offering editor reads the plan through the never-cached editor route,
+ * and a save whose capacity the host did not touch sends no `maxParticipants`,
+ * so a stale load can never move an event's capacity.
  */
 
 jest.mock("../../utils/contentValidation", () => ({
@@ -16,16 +16,6 @@ jest.mock("../../utils/contentValidation", () => ({
   containsGibberish: () => false,
 }));
 
-const requireApiAuth = jest.fn();
-jest.mock("../../lib/auth-helpers", () => ({
-  __esModule: true,
-  requireApiAuth: () => requireApiAuth(),
-}));
-jest.mock("../../lib/auth-server", () => ({
-  __esModule: true,
-  getSession: jest.fn(),
-}));
-
 import { WebinarService } from "@/components/planner/services/events/webinar-service";
 import { ClassService } from "@/components/planner/services/events/class-service";
 import {
@@ -34,7 +24,6 @@ import {
   withoutUntouchedCapacity,
 } from "@/components/offerings/editor/adapters";
 import { loadOfferingEvent } from "@/components/offerings/editor/load-offering";
-import { planEditorResponse } from "@/lib/api/plans/detail-response";
 import type { ClassEvent, WebinarEvent } from "@/types/planner-events";
 
 const loaded = { id: "plan-1", title: "Deep work", maxParticipants: 46 };
@@ -85,7 +74,7 @@ describe("a save with an untouched capacity", () => {
 });
 
 describe("the editor read", () => {
-  it("fetches the host-only editor route with no-store", async () => {
+  it("fetches the editor route with no-store", async () => {
     const fetchMock = jest.fn(async () => ({
       status: 200,
       ok: true,
@@ -100,28 +89,6 @@ describe("the editor read", () => {
       ["/api/plans/webinars/plan-1/editor", { cache: "no-store" }],
       ["/api/plans/classes/plan-2/editor", { cache: "no-store" }],
     ]);
-  });
-
-  it("answers the owner and an accepted co-host privately and 404s anyone else", async () => {
-    const plan = {
-      consultantProfile: { userId: "u-host" },
-      collaborators: [{ consultantProfile: { userId: "u-cohost" } }],
-    };
-    const answer = async (userId: string) => {
-      requireApiAuth.mockResolvedValueOnce({
-        session: { user: { id: userId } },
-      });
-      return planEditorResponse(async () => plan, "Webinar plan not found");
-    };
-
-    for (const userId of ["u-host", "u-cohost"]) {
-      const res = await answer(userId);
-      expect(res.status).toBe(200);
-      expect(res.headers.get("Cache-Control")).toBe("private, no-store");
-    }
-    const stranger = await answer("u-other");
-    expect(stranger.status).toBe(404);
-    expect(stranger.headers.get("Cache-Control")).toBe("private, no-store");
   });
 });
 

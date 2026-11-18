@@ -60,8 +60,8 @@ jest.mock("../../lib/moderation/cancel-user-engagements", () => ({
     remaining: [],
   })),
 }));
-jest.mock("../../lib/collaborators/service", () => ({
-  revokeCollaboratorAccess: jest.fn(async () => ({ success: true })),
+jest.mock("../../lib/stream/collaborator-access", () => ({
+  driveCollaboratorRevocation: jest.fn(async () => null),
 }));
 
 import { EarningStatus, EarningsHoldReason } from "@prisma/client";
@@ -123,7 +123,7 @@ function storeWith(rows: Row[]) {
       findUnique: jest.fn(async () => ({ consultantProfileId: "cp-1" })),
     },
     session: { deleteMany: jest.fn(async () => ({ count: 1 })) },
-    collaborator: { updateManyAndReturn: jest.fn(async () => []) },
+    collaborator: { findMany: jest.fn(async () => []) },
   };
   return { store, tx: tx as never };
 }

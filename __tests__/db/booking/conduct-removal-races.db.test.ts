@@ -347,7 +347,8 @@ it("refuses a co-host whose seat was revoked while the removal waited for its lo
       scheduleType: "WEEKLY",
     },
   });
-  const collaborator = await prisma.collaborator.create({
+  // A collaboration is born an invitation; the accept is its own write.
+  const invitation = await prisma.collaborator.create({
     data: {
       consultantProfileId: profile.id,
       collaboratorType: "WEBINAR",
@@ -355,8 +356,11 @@ it("refuses a co-host whose seat was revoked while the removal waited for its lo
       role: "CO_HOST",
       tier: "PRESENTER",
       revenueShareBps: 1000,
-      status: "ACCEPTED",
     },
+  });
+  const collaborator = await prisma.collaborator.update({
+    where: { id: invitation.id },
+    data: { status: "ACCEPTED" },
   });
   sessionUser.current = {
     id: cohost.userId,

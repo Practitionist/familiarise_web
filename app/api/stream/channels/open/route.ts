@@ -68,6 +68,7 @@ import { getDmChannelId } from "@/lib/stream-utils";
 import { readDmChannel } from "@/lib/stream/dm-channel-read";
 import { streamLogger } from "@/lib/stream-logger";
 import { collabChannelAccess } from "@/lib/stream/channel-access";
+import { fenceCollaboratorGrant } from "@/lib/stream/access-revocation";
 import { Refusal } from "@/lib/errors/refusal";
 
 const bodySchema = z.discriminatedUnion("kind", [
@@ -131,12 +132,12 @@ async function handleCollabChannelOpen(
   if (access === "org_deactivated") {
     return refusalJson(collabChannelRefusals.orgDeactivated);
   }
-  if (access === "forbidden") {
-    return NextResponse.json(
+  const forbidden = () =>
+    NextResponse.json(
       { error: "You do not have access to this collaborator channel." },
       { status: 403 },
     );
-  }
+  if (access === "forbidden") return forbidden();
 
   const reconciled = await createCollaboratorChannel(planType, planId);
   if (!reconciled) {
@@ -156,6 +157,20 @@ async function handleCollabChannelOpen(
     .channel("messaging", channelId)
     .addMembers([userId])
     .catch(() => {});
+  // A collaboration that ended while this open was in flight takes the grant back.
+  if (access === "collaborator") {
+    const fence = await fenceCollaboratorGrant({ planType, planId }, userId);
+    if (!fence.verified) {
+      return NextResponse.json(
+        {
+          error: "We could not confirm your access. Please try again.",
+          code: "COLLABORATION_UNVERIFIED",
+        },
+        { status: 503 },
+      );
+    }
+    if (fence.lost) return forbidden();
+  }
   return NextResponse.json({ channelType: "messaging", channelId });
 }
 

@@ -110,6 +110,11 @@ jest.mock("../../lib/payments/payouts", () => ({
   resolvePaymentForEarnings: jest.fn(async () => null),
   reverseEarningsForPayment: jest.fn(),
 }));
+jest.mock("../../lib/payments/ledger/unapplied-receipts", () => ({
+  __esModule: true,
+  postUnappliedReceipt: jest.fn(async () => undefined),
+  releaseUnappliedReceipt: jest.fn(async () => undefined),
+}));
 jest.mock("../../lib/email", () => ({
   __esModule: true,
   sendPaymentSuccessEmail: jest.fn(),
@@ -185,6 +190,10 @@ jest.mock("../../lib/referrals/referral-notify", () => ({
 }));
 
 import { handlePaymentSuccess } from "../../lib/payments/webhooks/handlers";
+import {
+  createEarningsFromPayment,
+  resolvePaymentForEarnings,
+} from "../../lib/payments/payouts";
 import { validateWebhookMetadata } from "../../schemas/webhooks/metadata";
 
 const PLAN_TITLE = "Career Strategy Deep Dive";
@@ -408,5 +417,107 @@ describe("credits-applied bell on capture", () => {
     );
 
     expect(stageCreditsApplied).not.toHaveBeenCalled();
+  });
+});
+
+describe("the split time a capture hands to earnings", () => {
+  const createEarnings = createEarningsFromPayment as jest.Mock;
+  const resolvePayment = resolvePaymentForEarnings as jest.Mock;
+  const RESOLVED = {
+    paymentForEarnings: {
+      id: "pay1",
+      createdAt: new Date("2026-09-30T07:00:00.000Z"),
+      capturedAt: new Date("2026-09-30T08:00:00.000Z"),
+    },
+    earningsAppointmentType: "CONSULTATION",
+    consultantProfileId: "consultant-profile-1",
+  };
+
+  beforeEach(() => {
+    resolvePayment.mockResolvedValue(RESOLVED);
+  });
+
+  afterEach(() => {
+    resolvePayment.mockResolvedValue(null);
+    createEarnings.mockReset();
+  });
+
+  it("splits inside the transaction, as of the capture time it stamps on the payment", async () => {
+    await handlePaymentSuccess(
+      "order1",
+      METADATA as unknown as Record<string, string>,
+      10000,
+    );
+
+    const stamped = webhookTx.payment.updateMany.mock.calls
+      .map(([args]) => args.data.capturedAt)
+      .find((value) => value instanceof Date);
+    expect(stamped).toBeInstanceOf(Date);
+    expect(createEarnings).toHaveBeenCalledTimes(1);
+    expect(createEarnings).toHaveBeenCalledWith(
+      expect.objectContaining({ tx: webhookTx, teamAt: stamped }),
+    );
+  });
+
+  it("parks a capture whose notes fail validation with its capture time, and its recovery splits as of that time", async () => {
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    (validateWebhookMetadata as jest.Mock).mockImplementationOnce(() => {
+      throw new Error("planId: Required");
+    });
+    await handlePaymentSuccess(
+      "order1",
+      METADATA as unknown as Record<string, string>,
+      10000,
+    );
+    errorSpy.mockRestore();
+
+    const parked = webhookTx.payment.updateMany.mock.calls
+      .map(([args]) => args.data)
+      .find((data) =>
+        String(data.description).startsWith("REQUIRES_MANUAL_RECOVERY"),
+      );
+    expect(parked).toMatchObject({
+      paymentStatus: "SUCCEEDED",
+      capturedAt: expect.any(Date),
+    });
+    expect(createEarnings).not.toHaveBeenCalled();
+
+    // Staff recover the parked row later: the seat is split by the team at the capture.
+    const capturedAt: Date = parked.capturedAt;
+    const createdAt = new Date(capturedAt.getTime() - 3_600_000);
+    const pending = await webhookTx.payment.findUnique();
+    webhookTx.payment.findUnique.mockResolvedValue({
+      ...pending,
+      paymentStatus: "SUCCEEDED",
+      createdAt,
+      capturedAt,
+    });
+    await handlePaymentSuccess(
+      "order1",
+      METADATA as unknown as Record<string, string>,
+      undefined,
+      undefined,
+      { recover: true },
+    );
+
+    expect(createEarnings).toHaveBeenCalledTimes(1);
+    expect(createEarnings).toHaveBeenCalledWith(
+      expect.objectContaining({ tx: webhookTx, teamAt: capturedAt }),
+    );
+  });
+
+  it("retries a failed first attempt as of the capture time on the row, not the time of the retry", async () => {
+    createEarnings.mockRejectedValueOnce(new Error("ledger posting failed"));
+
+    await handlePaymentSuccess(
+      "order1",
+      METADATA as unknown as Record<string, string>,
+      10000,
+    );
+
+    expect(createEarnings).toHaveBeenCalledTimes(2);
+    const retry = createEarnings.mock.calls[1][0];
+    expect(retry.tx).toBeUndefined();
+    expect(retry.teamAt).toEqual(RESOLVED.paymentForEarnings.capturedAt);
   });
 });

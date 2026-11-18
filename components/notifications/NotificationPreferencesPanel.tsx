@@ -69,7 +69,7 @@ const CATEGORY_FIELDS: ToggleField<EmailCategoryColumn>[] = [
     key: "appointmentReminders",
     label: "Bookings & sessions",
     description:
-      "Bookings, reminders, unread chat, recordings, documents and collaborator updates, except the changes someone else makes to your booking",
+      "Bookings, reminders, unread chat, recordings, documents, schedule changes on plans you co-host and the reminder before a co-hosting invitation lapses. Changes someone else makes to your booking or your co-hosting are always sent",
   },
   {
     key: "paymentNotifications",

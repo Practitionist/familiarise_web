@@ -155,8 +155,10 @@ describe("the cohort has no age window", () => {
       // Synchronous rails settle earnings in their own checkout tx.
       isMockPayment: false,
       appointmentId: { not: null },
+      // Either kind of earnings row means the payment is settled.
       earnings: { none: {} },
-      // #1583 C-P0-05 — money that already left is not owed to anyone.
+      organizationEarnings: { none: {} },
+      // Money that already left is not owed to anyone.
       refunds: { none: { status: { in: ["PENDING", "SUCCEEDED"] } } },
       disputes: { none: { status: { in: ["LOST", "CHARGE_REFUNDED"] } } },
       // A parked capture's cash is already in UNAPPLIED_RECEIPTS.
@@ -415,9 +417,18 @@ describe("a payment nobody can ever be paid for gets escalated", () => {
 
 describe("the healed case still accrues", () => {
   it("creates earnings and reports them", async () => {
-    servePayments([healablePayment("pay-1", 2), healablePayment("pay-2", 40)]);
+    const captured = new Date(Date.now() - 39 * DAY);
+    const stamped = { ...healablePayment("pay-2", 40), capturedAt: captured };
+    const unstamped = healablePayment("pay-1", 2);
+    servePayments([unstamped, stamped]);
 
     const result = await syncPaymentEarnings();
+
+    // Each retry splits by the capture it retries: the stamped capture time,
+    // or the row's creation when none was stamped. Never the time of the run.
+    expect(
+      mockCreateEarningsFromPayment.mock.calls.map(([params]) => params.teamAt),
+    ).toEqual([unstamped.createdAt, captured]);
 
     expect(result.createdCount).toBe(2);
     expect(result.errorCount).toBe(0);
