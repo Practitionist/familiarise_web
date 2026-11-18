@@ -211,12 +211,20 @@ type VideoCall = ReturnType<
   ReturnType<typeof getStreamVideoClient>["video"]["call"]
 >;
 
-/** A seat holder stays in the room as a plain, muted member; anyone else is removed, muted and dropped. */
+/** `unfinished`: a write was not started because the deadline had passed. */
+type RoomOutcome = "left" | "failed" | "unfinished";
+
+/**
+ * A seat holder stays in the room as a plain, muted member; anyone else is
+ * removed, muted and dropped. Starts no write after `deadlineMs`; a write
+ * already sent that failed makes the room `failed`.
+ */
 async function removeFromRoom(
   call: VideoCall,
   userId: string,
   seated: boolean,
-): Promise<boolean> {
+  deadlineMs: number,
+): Promise<RoomOutcome> {
   const mute = () =>
     call.updateUserPermissions({
       user_id: userId,
@@ -235,15 +243,18 @@ async function removeFromRoom(
         mute,
         () => call.kickUser({ user_id: userId }),
       ];
-  let done = true;
+  let outcome: RoomOutcome = "left";
   for (const write of writes) {
+    if (Date.now() >= deadlineMs) {
+      return outcome === "failed" ? outcome : "unfinished";
+    }
     try {
       await write();
     } catch (error) {
-      if (!isExpectedStreamError(error)) done = false;
+      if (!isExpectedStreamError(error)) outcome = "failed";
     }
   }
-  return done;
+  return outcome;
 }
 
 /** Takes the user out of every open room of the plan; returns what is still owed. */
@@ -260,21 +271,26 @@ async function removeFromOpenRooms(
     return ["call lookup failed"];
   }
   if (rooms.length === 0) return [];
-  let failed = 0;
+  const count = { left: 0, failed: 0, unfinished: 0 };
   try {
     const { video } = getStreamVideoClient();
-    for (const [index, room] of rooms.entries()) {
-      if (Date.now() >= deadlineMs) {
-        failed += rooms.length - index;
-        break;
-      }
+    for (const room of rooms) {
       const call = video.call(STREAM_CALL_TYPE, room.streamCallId);
-      if (!(await removeFromRoom(call, userId, room.seated))) failed++;
+      count[await removeFromRoom(call, userId, room.seated, deadlineMs)]++;
     }
   } catch {
     return ["video client unavailable"];
   }
-  return failed > 0 ? [`${failed} of ${rooms.length} calls not left`] : [];
+  const owed: string[] = [];
+  if (count.failed > 0) {
+    owed.push(`${count.failed} of ${rooms.length} calls not left`);
+  }
+  if (count.unfinished > 0) {
+    owed.push(
+      `${count.unfinished} of ${rooms.length} calls not finished within the time budget`,
+    );
+  }
+  return owed;
 }
 
 /**

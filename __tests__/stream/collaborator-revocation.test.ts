@@ -7,6 +7,7 @@ const mockChatQuery = jest.fn();
 const mockEventRemove = jest.fn();
 const mockCallUpdate = jest.fn();
 const mockCallMute = jest.fn();
+const mockCallKick = jest.fn();
 const mockReport = jest.fn();
 
 type Intent = { nextRetryAt: Date; status: string };
@@ -55,7 +56,7 @@ jest.mock("../../lib/stream-client", () => ({
       call: (_type: string, id: string) => ({
         updateCallMembers: (payload: unknown) => mockCallUpdate(id, payload),
         updateUserPermissions: (payload: unknown) => mockCallMute(id, payload),
-        kickUser: jest.fn(async () => ({})),
+        kickUser: (payload: unknown) => mockCallKick(id, payload),
       }),
     },
   }),
@@ -108,6 +109,8 @@ beforeEach(() => {
   );
   mockEventRemove.mockResolvedValue({ failedUserIds: [] });
   mockCallUpdate.mockResolvedValue({});
+  mockCallMute.mockResolvedValue({});
+  mockCallKick.mockResolvedValue({});
 });
 
 describe("a collaborator's revocation intent", () => {
@@ -300,6 +303,72 @@ describe("the drive's event chats", () => {
 
     expect(mockEventRemove).not.toHaveBeenCalled();
     expect(intent?.status).toBe("PENDING");
+  });
+});
+
+describe("the drive's time budget", () => {
+  const drive = async (deadlineMs: number) =>
+    (
+      await import("../../lib/stream/collaborator-access")
+    ).driveCollaboratorRevocation(ref, "u-1", deadlineMs);
+  let now: number;
+  let clock: jest.SpiedFunction<typeof Date.now>;
+
+  beforeEach(() => {
+    now = 1_000;
+    clock = jest.spyOn(Date, "now").mockImplementation(() => now);
+    mockDb.appointmentOccurrence.findMany.mockResolvedValue([
+      { appointmentId: "a-1", meeting: { streamCallId: "occurrence-1" } },
+      { appointmentId: "a-2", meeting: { streamCallId: "occurrence-2" } },
+    ]);
+  });
+  afterEach(() => clock.mockRestore());
+
+  it("starts no room write after the deadline and returns the unfinished rooms as owed", async () => {
+    mockDb.webinar.findMany.mockResolvedValue([]);
+    mockCallUpdate.mockImplementationOnce(async () => {
+      now = 5_000;
+      return {};
+    });
+
+    await expect(drive(2_000)).resolves.toBe(
+      "2 of 2 calls not finished within the time budget",
+    );
+
+    expect(mockCallUpdate.mock.calls).toEqual([
+      ["occurrence-1", { remove_members: ["u-1"] }],
+    ]);
+    expect(mockCallMute).not.toHaveBeenCalled();
+    expect(mockCallKick).not.toHaveBeenCalled();
+  });
+
+  it("keeps a room write that failed before the deadline counted as failed", async () => {
+    mockDb.webinar.findMany.mockResolvedValue([]);
+    mockCallUpdate.mockImplementationOnce(async () => {
+      now = 5_000;
+      throw new Error("stream down");
+    });
+
+    await expect(drive(2_000)).resolves.toBe(
+      "1 of 2 calls not left; 1 of 2 calls not finished within the time budget",
+    );
+  });
+
+  it("asks Stream nothing about event chats after the deadline", async () => {
+    mockDb.appointmentOccurrence.findMany.mockResolvedValue([]);
+    mockChatRemove.mockImplementationOnce(async () => {
+      // The room leg has started by the time this request returns.
+      await Promise.resolve();
+      now = 5_000;
+      return {};
+    });
+
+    await expect(drive(2_000)).resolves.toBe(
+      "2 of 2 event channels not checked",
+    );
+
+    expect(mockChatQuery).not.toHaveBeenCalled();
+    expect(mockEventRemove).not.toHaveBeenCalled();
   });
 });
 

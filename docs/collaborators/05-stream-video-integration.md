@@ -51,6 +51,7 @@ When a collaboration ends, the revocation described in [04 — Stream chat](04-s
 2. **Someone with no seat on that session** is removed from the call's members, has the publishing permissions revoked, and is kicked from the room (`removeFromRoom`). Their camera, microphone and screen share stop and their client is disconnected.
 3. **Someone who also holds a seat on that session** stays in the room as a plain `call_member` with the publishing permissions revoked. They paid for the session and keep watching it as a learner.
 4. **Failures are counted, not thrown.** A room that could not be cleared is reported back as "N of M calls not left", the intent stays owed, and the `retry-moderation-enforcement` job tries again.
+5. **No write starts after the deadline.** The deadline is checked before each of a room's writes. A room with a write that was not started is reported back as "N of M calls not finished within the time budget"; a write already sent that failed keeps its room under "not left".
 
 From the moment the ending commits, a rejoin is refused by `resolveMeetingAccess`, whatever Stream still holds: the accepted row is gone, and a booking participant row with the `COLLABORATOR` role admits nobody.
 
