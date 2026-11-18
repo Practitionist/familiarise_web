@@ -22,10 +22,9 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { auditRowScope } from "@/lib/enterprise/audit-visibility";
-import {
-  sanitizeAuditDescription,
-  sanitizeAuditDetails,
-} from "@/lib/enterprise/audit-sanitize";
+import { sanitizeAuditDetails } from "@/lib/enterprise/audit-sanitize";
+import { describeAuditRows } from "@/lib/enterprise/audit-describe";
+import { resolveViewerZone } from "@/lib/time/viewer-zone";
 
 const CategorySchema = z.enum([
   "MEMBER",
@@ -105,11 +104,15 @@ export async function GET(
   const page = hasMore ? rows.slice(0, q.limit) : rows;
   const nextCursor = hasMore ? (page[page.length - 1]?.id ?? null) : null;
 
-  // The same read-side scrub as the Audit page: no engineering detail leaves the org surface.
+  // The same words as the Audit page: no id, raw code or engineering detail leaves the org surface.
+  const descriptions = await describeAuditRows(
+    page,
+    resolveViewerZone({ userTimezone: access.session.user.timezone }),
+  );
   return NextResponse.json({
-    data: page.map((r) => ({
+    data: page.map((r, i) => ({
       ...r,
-      description: sanitizeAuditDescription(r.description),
+      description: descriptions[i] ?? r.description,
       details: sanitizeAuditDetails(r.details),
     })),
     pagination: { hasMore, nextCursor, limit: q.limit },

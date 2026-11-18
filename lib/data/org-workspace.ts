@@ -24,6 +24,7 @@ import type {
 } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { sumPaise } from "@/lib/payments/utils/money";
+import { describeAuditRows } from "@/lib/enterprise/audit-describe";
 
 /* ------------------------------------------------------------------ *
  * GET /api/organizations                                              *
@@ -301,10 +302,12 @@ export interface WorkspaceActivityPage {
  * One page of the cross-org audit feed (latest-first, cursor on id).
  * Mirrors GET /api/org-workspace/[id]/activity. `createdAt` is
  * pre-stringified to ISO so the hydrated cache matches the client's
- * `ActivityResponse` (which types it as a string).
+ * `ActivityResponse` (which types it as a string). Descriptions are in
+ * words, with dates in `zone`.
  */
 export async function getWorkspaceActivity(
   userId: string,
+  zone: string,
   cursor: string | null,
   limit: number = WORKSPACE_ACTIVITY_DEFAULT_LIMIT,
   filters?: WorkspaceActivityFilters,
@@ -364,9 +367,11 @@ export async function getWorkspaceActivity(
       id: true,
       organizationId: true,
       actorMembershipId: true,
+      targetMembershipId: true,
       category: true,
       action: true,
       description: true,
+      details: true,
       createdAt: true,
     },
   });
@@ -390,8 +395,9 @@ export async function getWorkspaceActivity(
       })
     : [];
   const actorById = new Map(actors.map((a) => [a.id, a]));
+  const descriptions = await describeAuditRows(slice, zone);
 
-  const data = slice.map((r) => {
+  const data = slice.map((r, i) => {
     const org = orgById.get(r.organizationId);
     const actor = r.actorMembershipId
       ? actorById.get(r.actorMembershipId)
@@ -403,7 +409,7 @@ export async function getWorkspaceActivity(
       organizationSlug: org?.slug ?? null,
       category: r.category,
       action: r.action,
-      description: r.description,
+      description: descriptions[i] ?? r.description,
       createdAt: r.createdAt.toISOString(),
       actorName: actor?.user?.name ?? actor?.user?.email ?? null,
     };
