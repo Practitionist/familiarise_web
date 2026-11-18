@@ -46,7 +46,7 @@ Every refusal a write gives is a `CollaborationError`, and `collaborationErrorRe
 | `SHARES_EXCEEDED`    | 409  | The share would take the team above 90%.                                                                                                                      | `availablePercent`                       |
 | `COOLDOWN`           | 409  | The expert declined or left this plan within the last seven days.                                                                                             | `retryAt` (ISO time)                     |
 | `TERMS_LOCKED`       | 409  | A change of terms on an accepted row.                                                                                                                         |                                          |
-| `NOT_PENDING`        | 409  | The invitation is no longer open.                                                                                                                             |                                          |
+| `NOT_PENDING`        | 409  | The invitation is no longer open, or has lapsed.                                                                                                              |                                          |
 | `TERMS_CHANGED`      | 409  | The accept named terms the row no longer carries.                                                                                                             | `terms: { role, sharePercent }`, current |
 | `SCHEDULE_CHANGED`   | 409  | The plan's sessions changed while the accept was in flight.                                                                                                   |                                          |
 | `CALENDAR_CLASH`     | 409  | A session of the plan overlaps another session on the invitee's calendar. Not retryable as it stands.                                                         |                                          |
@@ -116,8 +116,10 @@ sequenceDiagram
     alt one overlaps
         S-->>I: 409 CALENDAR_CLASH
     end
-    S->>DB: update to ACCEPTED where the row is PENDING with the seen role and share
-    alt no row matched and the row is still PENDING
+    S->>DB: update to ACCEPTED where the row is PENDING with the seen role and share, inside its fourteen days
+    alt no row matched and the PENDING row's fourteen days have passed
+        S-->>I: 409 NOT_PENDING, the invitation has lapsed
+    else no row matched and the row is still PENDING
         S-->>I: 409 TERMS_CHANGED with the current terms
     else no row matched
         S-->>I: 409 NOT_PENDING
@@ -238,9 +240,9 @@ A collaborator also receives the booking notices of the plan's events (session r
 `expireStaleCollaboratorInvites` (`lib/collaborators/cleanup.ts`) is the job `expire-stale-collaborator-invites` in `lib/cron/cleanup-registry.ts`. It is due once a day and runs under a job lock.
 
 1. **Expire.** It reads up to 50 `PENDING` rows whose `updatedAt` is more than fourteen days old (`INVITE_TTL_DAYS`), oldest first, and ends each as `EXPIRED` through `endCollaboration` in a transaction of its own, conditional on the row still being that old. A row answered or edited since the read is left alone. Both sides are told.
-2. **Remind.** If time remains, it reads the pending rows that lapse within three days (`INVITE_REMINDER_DAYS_BEFORE`), drops those already claimed, and stages the reminder for each in its own transaction.
+2. **Remind.** If time remains, it reads the pending rows that lapse within three days (`INVITE_REMINDER_DAYS_BEFORE`) a page of 200 at a time, in `(updatedAt, id)` order, dropping those already claimed, until it holds a run's worth of unreminded rows or the window or the time budget ends. It stages the reminder for each in its own transaction.
 3. **Time budget.** No row is started after half of the job's start budget (about eight seconds). What is left is reported as `hasMore` and taken by the next run.
-4. **One report.** Failures are collected and reported once per run with the `collaborators` tag, and the rest of the run carries on. The job's summary is `{ expired, reminded, scanned, failed, hasMore }`.
+4. **One report.** Failures are collected in the run failure reporter (`createRunFailureReporter` in `lib/observability/run-failures.ts`) and flushed once when the run ends, as one event with the `collaborators` tag, a stable fingerprint, the count and a sample of up to ten ids; the rest of the run carries on. The job's summary is `{ expired, reminded, scanned, failed, hasMore }`.
 
 Worked example: an invitation is sent on 1 March at 10:00 IST and never answered. It lapses on 15 March at 10:00, so the first run after 12 March 10:00 finds it inside the reminder window and reminds the invitee once. The first run after 15 March 10:00 ends it as `EXPIRED` and tells the invitee and the host side. Had the host changed the share on 10 March, the window would start again from that day: the reminder would be due from 21 March and the lapse on 24 March.
 
@@ -287,7 +289,7 @@ scripts/dev/db-tier-local.sh /tmp/collab-db.log __tests__/db/collaborators
 | The digest line and the back-office read                                                                                           | `__tests__/observability/ops-digest.test.ts`, `__tests__/backoffice/collaborations-read.test.ts`                                                                                                                      |
 | The screens and the one hook module                                                                                                | `__tests__/collaborators/collaboration-screens.test.tsx`, `__tests__/collaborators/use-collaborations.test.tsx`                                                                                                       |
 
-What the database tier covers and the mocked tier cannot: the triggers and partial unique indexes themselves, the period stamped by the database clock, and two real sessions racing on one plan. The two "simultaneous" cases in `state-machine.db.test.ts` need two connections, so they are meaningful only against a real Postgres server. How the tier is set up and guarded: `.claude/skills/booking/references/verification.md`.
+What the database tier covers and the mocked tier cannot: the triggers and partial unique indexes themselves, the period stamped by the database clock, and two real sessions racing on one plan. The "simultaneous" cases in `state-machine.db.test.ts` (two invitations racing, and a removal queued behind an accept ending the row no earlier than the accept) need two connections, so they are meaningful only against a real Postgres server. How the tier is set up and guarded: `.claude/skills/booking/references/verification.md`.
 
 ## Where in code
 

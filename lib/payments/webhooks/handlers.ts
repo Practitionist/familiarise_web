@@ -696,11 +696,13 @@ export async function handlePaymentSuccess(
               errorMessage,
             );
 
+            // The parked row keeps its capture time: its recovery splits the seat by the team at this instant.
             const recoveryStamped = await tx.payment.updateMany({
               where: { id: payment.id, paymentStatus: PaymentStatus.PENDING },
               data: {
                 paymentStatus: PaymentStatus.SUCCEEDED,
                 ...capturedGatewayId,
+                capturedAt: new Date(),
                 description: `REQUIRES_MANUAL_RECOVERY: Metadata validation failed: ${errorMessage}. Customer charged but appointment NOT created.`,
               },
             });

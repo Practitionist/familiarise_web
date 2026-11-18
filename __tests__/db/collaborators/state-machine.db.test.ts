@@ -123,6 +123,32 @@ describe("the state machine", () => {
     expect((await read(row.id)).acceptedAt).toEqual(accepted.acceptedAt);
   });
 
+  it("stamps each change with the time it happens, later than the start of its transaction", async () => {
+    const { planId, invitees } = await seedPlanAndExperts(1);
+    const row = await invite(planId, invitees[0].consultantProfileId);
+    const pause = () => new Promise((resolve) => setTimeout(resolve, 20));
+
+    const opened = await prisma.$transaction(async (tx) => {
+      const [{ at }] = await tx.$queryRaw<{ at: Date }[]>`SELECT now() AS at`;
+      await pause();
+      await tx.collaborator.update({
+        where: { id: row.id },
+        data: { status: "ACCEPTED" },
+      });
+      await pause();
+      await tx.collaborator.update({
+        where: { id: row.id },
+        data: { status: "REMOVED" },
+      });
+      return at;
+    });
+
+    const ended = await read(row.id);
+    const acceptedAt = ended.acceptedAt?.getTime() ?? NaN;
+    expect(acceptedAt).toBeGreaterThan(opened.getTime());
+    expect(ended.endedAt?.getTime()).toBeGreaterThan(acceptedAt);
+  });
+
   it("ends a row once, records who ended it, and never reopens it", async () => {
     const { planId, host, invitees } = await seedPlanAndExperts(1);
     const row = await invite(planId, invitees[0].consultantProfileId);
@@ -241,6 +267,53 @@ describe("one live row per expert per plan, with history kept", () => {
         where: { webinarPlanId: planId, consultantProfileId: expert },
       }),
     ).toBe(1);
+  });
+
+  it("ends a row no earlier than its accept when the removal's transaction opened before a simultaneous accept committed", async () => {
+    const { planId, invitees } = await seedPlanAndExperts(1);
+    const row = await invite(planId, invitees[0].consultantProfileId);
+
+    let reachTheRow = () => {};
+    const acceptHoldsTheRow = new Promise<void>((resolve) => {
+      reachTheRow = resolve;
+    });
+    let opened = (_at: Date) => {};
+    const removalOpened = new Promise<Date>((resolve) => {
+      opened = resolve;
+    });
+    const removal = prisma.$transaction(
+      async (tx) => {
+        const [{ at }] = await tx.$queryRaw<{ at: Date }[]>`SELECT now() AS at`;
+        opened(at);
+        await acceptHoldsTheRow;
+        return tx.collaborator.updateMany({
+          where: { id: row.id, status: { in: ["PENDING", "ACCEPTED"] } },
+          data: { status: "REMOVED" },
+        });
+      },
+      { timeout: 20_000 },
+    );
+    const removalOpenedAt = await removalOpened;
+    // The accept is stamped a clear interval after the removal's transaction opened.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    // The accept holds the row; the removal queues behind it and writes once it commits.
+    const accept = Prisma.sql`UPDATE "Collaborator" SET "status" = 'ACCEPTED' WHERE "id" = ${row.id} RETURNING "id"`;
+    const { fulfilled } = settledValues(
+      await raceBehindLock(accept, [
+        () => {
+          reachTheRow();
+          return removal;
+        },
+      ]),
+    );
+
+    expect(fulfilled).toEqual([{ count: 1 }]);
+    const ended = await read(row.id);
+    expect(ended.status).toBe("REMOVED");
+    const acceptedAt = ended.acceptedAt?.getTime() ?? NaN;
+    expect(removalOpenedAt.getTime()).toBeLessThan(acceptedAt);
+    expect(ended.endedAt?.getTime()).toBeGreaterThanOrEqual(acceptedAt);
   });
 });
 

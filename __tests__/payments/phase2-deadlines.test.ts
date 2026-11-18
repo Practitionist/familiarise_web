@@ -110,6 +110,11 @@ jest.mock("../../lib/payments/payouts", () => ({
   resolvePaymentForEarnings: jest.fn(async () => null),
   reverseEarningsForPayment: jest.fn(),
 }));
+jest.mock("../../lib/payments/ledger/unapplied-receipts", () => ({
+  __esModule: true,
+  postUnappliedReceipt: jest.fn(async () => undefined),
+  releaseUnappliedReceipt: jest.fn(async () => undefined),
+}));
 jest.mock("../../lib/email", () => ({
   __esModule: true,
   sendPaymentSuccessEmail: jest.fn(),
@@ -451,6 +456,53 @@ describe("the split time a capture hands to earnings", () => {
     expect(createEarnings).toHaveBeenCalledTimes(1);
     expect(createEarnings).toHaveBeenCalledWith(
       expect.objectContaining({ tx: webhookTx, teamAt: stamped }),
+    );
+  });
+
+  it("parks a capture whose notes fail validation with its capture time, and its recovery splits as of that time", async () => {
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    (validateWebhookMetadata as jest.Mock).mockImplementationOnce(() => {
+      throw new Error("planId: Required");
+    });
+    await handlePaymentSuccess(
+      "order1",
+      METADATA as unknown as Record<string, string>,
+      10000,
+    );
+    errorSpy.mockRestore();
+
+    const parked = webhookTx.payment.updateMany.mock.calls
+      .map(([args]) => args.data)
+      .find((data) =>
+        String(data.description).startsWith("REQUIRES_MANUAL_RECOVERY"),
+      );
+    expect(parked).toMatchObject({
+      paymentStatus: "SUCCEEDED",
+      capturedAt: expect.any(Date),
+    });
+    expect(createEarnings).not.toHaveBeenCalled();
+
+    // Staff recover the parked row later: the seat is split by the team at the capture.
+    const capturedAt: Date = parked.capturedAt;
+    const createdAt = new Date(capturedAt.getTime() - 3_600_000);
+    const pending = await webhookTx.payment.findUnique();
+    webhookTx.payment.findUnique.mockResolvedValue({
+      ...pending,
+      paymentStatus: "SUCCEEDED",
+      createdAt,
+      capturedAt,
+    });
+    await handlePaymentSuccess(
+      "order1",
+      METADATA as unknown as Record<string, string>,
+      undefined,
+      undefined,
+      { recover: true },
+    );
+
+    expect(createEarnings).toHaveBeenCalledTimes(1);
+    expect(createEarnings).toHaveBeenCalledWith(
+      expect.objectContaining({ tx: webhookTx, teamAt: capturedAt }),
     );
   });
 

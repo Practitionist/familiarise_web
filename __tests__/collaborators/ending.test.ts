@@ -63,7 +63,10 @@ type Where = {
   status?: string | { in: string[] };
   updatedAt?: Date | { lt: Date; gte?: Date };
   consultantProfile?: { userId: string };
+  /** The keyset cursor of a paged read: rows after `(updatedAt, id)`. */
+  OR?: [{ updatedAt: { gt: Date } }, { updatedAt: Date; id: { gt: string } }];
 };
+type Read = { where: Where; take?: number };
 type Write = { where: Where; data: Partial<Row> };
 
 const DAY_MS = 86_400_000;
@@ -107,6 +110,13 @@ function matches(r: Row, where: Where): boolean {
   ) {
     return false;
   }
+  if (where.OR) {
+    const [{ updatedAt: later }, { id: sameTime }] = where.OR;
+    const after =
+      r.updatedAt > later.gt ||
+      (r.updatedAt.getTime() === later.gt.getTime() && r.id > sameTime.gt);
+    if (!after) return false;
+  }
   return (
     (where.id === undefined || r.id === where.id) &&
     (where.consultantProfileId === undefined ||
@@ -118,9 +128,15 @@ function matches(r: Row, where: Where): boolean {
 
 const mockTx = {
   collaborator: {
-    findMany: jest.fn(async ({ where }: { where: Where }) =>
+    findMany: jest.fn(async ({ where, take }: Read) =>
       rows
         .filter((r) => matches(r, where))
+        .sort(
+          (a, b) =>
+            a.updatedAt.getTime() - b.updatedAt.getTime() ||
+            a.id.localeCompare(b.id),
+        )
+        .slice(0, take)
         .map(({ id, updatedAt }) => ({ id, updatedAt })),
     ),
     findFirst: jest.fn(
@@ -579,11 +595,15 @@ describe("the invitation expiry sweep", () => {
     expect(mockReport).toHaveBeenCalledTimes(1);
     expect(mockReport).toHaveBeenCalledWith(
       expect.objectContaining({ message: "first failure" }),
-      {
+      expect.objectContaining({
         subsystem: "collaborators",
         op: "expireStaleCollaboratorInvites",
-        extra: { failed: 2, scanned: 3, collaboratorIds: ["a", "b"] },
-      },
+        fingerprint: ["collaborators", "expireStaleCollaboratorInvites"],
+        extra: {
+          count: 2,
+          sample: [{ collaboratorId: "a" }, { collaboratorId: "b" }],
+        },
+      }),
     );
   });
   it("reminds an invitee once, three days before the invitation lapses, and a second run does nothing", async () => {
@@ -616,6 +636,53 @@ describe("the invitation expiry sweep", () => {
     rows[0].updatedAt = daysAgo(11.5);
     await expect(expireStaleCollaboratorInvites()).resolves.toMatchObject({
       reminded: 1,
+    });
+  });
+
+  describe("with more reminded invitations in the window than one read returns", () => {
+    // Ties in `updatedAt` straddle the page boundaries, so the cursor needs the id.
+    const windowOf = (count: number) =>
+      Array.from({ length: count }, (_, i) =>
+        row({
+          id: `r-${String(i).padStart(4, "0")}`,
+          updatedAt: new Date(daysAgo(12).getTime() + Math.floor(i / 3)),
+        }),
+      );
+    const windowReads = () =>
+      mockTx.collaborator.findMany.mock.calls
+        .map(([read]) => read)
+        .filter(
+          ({ where }) =>
+            typeof where.updatedAt === "object" && "gte" in where.updatedAt,
+        );
+
+    it("pages past the ones already reminded, in bounded reads, to the invitation behind them", async () => {
+      rows = windowOf(501);
+      rows.slice(0, 500).forEach((r) => reminded.add(reminderKey(r)));
+
+      await expect(expireStaleCollaboratorInvites()).resolves.toMatchObject({
+        reminded: 1,
+        hasMore: false,
+      });
+      expect(mockStageNotices.mock.calls.map(([, , r]) => r.id)).toEqual([
+        "r-0500",
+      ]);
+      const reads = windowReads();
+      expect(reads.length).toBeGreaterThan(1);
+      expect(reads.every(({ take }) => (take ?? Infinity) <= 200)).toBe(true);
+    });
+
+    it("stops paging at the time budget and leaves the rest of the window to the next run", async () => {
+      rows = windowOf(501);
+      rows.slice(0, 500).forEach((r) => reminded.add(reminderKey(r)));
+      mockOutOfTime.mockReturnValueOnce(false).mockReturnValue(true);
+
+      await expect(expireStaleCollaboratorInvites()).resolves.toMatchObject({
+        reminded: 0,
+        hasMore: true,
+      });
+      expect(windowReads()).toHaveLength(1);
+      expect(mockStageNotices).not.toHaveBeenCalled();
     });
   });
 

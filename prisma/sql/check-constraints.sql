@@ -750,6 +750,9 @@ END $$;
 -- WITHDRAWN. An ended row never changes again. The trigger stamps the period:
 -- writers cannot set acceptedAt or endedAt themselves.
 CREATE OR REPLACE FUNCTION assert_collaborator_transition() RETURNS trigger AS $$
+DECLARE
+  -- One reading of the wall clock per call: the time of this transition, on every stamp it writes.
+  stamp timestamptz := clock_timestamp();
 BEGIN
   IF TG_OP = 'INSERT' THEN
     IF NEW."status" <> 'PENDING' THEN
@@ -784,15 +787,15 @@ BEGIN
   END IF;
 
   IF OLD."status" = 'PENDING' AND NEW."status" = 'ACCEPTED' THEN
-    NEW."acceptedAt" := now();
-    NEW."respondedAt" := now() AT TIME ZONE 'UTC';
+    NEW."acceptedAt" := stamp;
+    NEW."respondedAt" := stamp AT TIME ZONE 'UTC';
   ELSIF OLD."status" = 'PENDING' AND NEW."status" IN ('DECLINED', 'EXPIRED', 'REMOVED') THEN
-    NEW."endedAt" := now();
+    NEW."endedAt" := stamp;
     IF NEW."status" = 'DECLINED' THEN
-      NEW."respondedAt" := now() AT TIME ZONE 'UTC';
+      NEW."respondedAt" := stamp AT TIME ZONE 'UTC';
     END IF;
   ELSIF OLD."status" = 'ACCEPTED' AND NEW."status" IN ('REMOVED', 'WITHDRAWN') THEN
-    NEW."endedAt" := now();
+    NEW."endedAt" := stamp;
   ELSE
     RAISE EXCEPTION 'collaboration % cannot go from % to %', OLD."id", OLD."status", NEW."status"
       USING ERRCODE = 'check_violation', CONSTRAINT = 'collaborator_transition_guard';

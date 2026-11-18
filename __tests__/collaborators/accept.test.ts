@@ -41,12 +41,14 @@ type Invitation = {
   tier: string;
   revenueShareBps: number;
   acceptedAt: Date | null;
+  updatedAt: Date;
 };
 type Where = Partial<
   Pick<Invitation, "id" | "consultantProfileId" | "role">
 > & {
   status?: string | { in: string[] };
   revenueShareBps?: number;
+  updatedAt?: { gte: Date };
 };
 type Query = { where: Where };
 type Window = { appointmentId: string; startsAt: Date; endsAt: Date };
@@ -58,6 +60,7 @@ const session = (appointmentId: string, hour: number): Window => ({
   endsAt: at(hour + 1),
 });
 const DAY_MS = 86_400_000;
+const sentDaysAgo = (days: number) => new Date(Date.now() - days * DAY_MS);
 
 const eligible = () => ({
   userId: "u-guest",
@@ -82,6 +85,7 @@ const pending = (): Invitation => ({
   tier: "PRESENTER",
   revenueShareBps: 2500,
   acceptedAt: null,
+  updatedAt: sentDaysAgo(2),
 });
 
 const world = {
@@ -96,8 +100,9 @@ const world = {
 };
 
 function matches(where: Where): boolean {
-  const { status, ...scalars } = where;
+  const { status, updatedAt, ...scalars } = where;
   const row: Record<string, unknown> = world.invitation;
+  if (updatedAt && world.invitation.updatedAt < updatedAt.gte) return false;
   if (typeof status === "string" && row.status !== status) return false;
   if (
     typeof status === "object" &&
@@ -168,6 +173,7 @@ import {
   hostBatchEntries,
   HostTimeHeldError,
 } from "@/lib/booking/host-slot-batch";
+import { INVITE_TTL_DAYS, inviteLapsedBefore } from "@/lib/collaborators/rules";
 import { respondToInvitation } from "@/lib/collaborators/service";
 
 const seen = { role: "CO_HOST", sharePercent: 25 } as const;
@@ -241,6 +247,7 @@ describe("accepting an invitation", () => {
         status: "PENDING",
         role: "CO_HOST",
         revenueShareBps: 2500,
+        updatedAt: { gte: expect.any(Date) },
       },
       data: { status: "ACCEPTED" },
     });
@@ -313,6 +320,41 @@ describe("accepting an invitation", () => {
       expect(mockGrant).not.toHaveBeenCalled();
     },
   );
+
+  it("refuses an invitation that lapsed fourteen days after it was last sent or changed, in the write that accepts", async () => {
+    world.invitation.updatedAt = sentDaysAgo(INVITE_TTL_DAYS + 1);
+    const before = Date.now();
+    await expect(accept()).rejects.toMatchObject({
+      code: "NOT_PENDING",
+      httpStatus: 409,
+      message: "This invitation has lapsed. Ask the host to invite you again.",
+    });
+    const [{ where }] = mockTx.collaborator.updateMany.mock.calls[0];
+    const lapsedBefore = where.updatedAt?.gte.getTime() ?? NaN;
+    expect(lapsedBefore).toBeGreaterThanOrEqual(
+      inviteLapsedBefore(new Date(before)).getTime(),
+    );
+    expect(lapsedBefore).toBeLessThanOrEqual(
+      inviteLapsedBefore(new Date()).getTime(),
+    );
+    expect(world.invitation.status).toBe("PENDING");
+    expect(mockGrant).not.toHaveBeenCalled();
+  });
+
+  it("answers lapsed, not TERMS_CHANGED, for a lapsed invitation whose terms also differ", async () => {
+    world.invitation.updatedAt = sentDaysAgo(INVITE_TTL_DAYS + 1);
+    await expect(
+      accept({ role: "MODERATOR", sharePercent: 25 }),
+    ).rejects.toMatchObject({
+      code: "NOT_PENDING",
+      message: expect.stringMatching(/lapsed/),
+    });
+  });
+
+  it("accepts an invitation on the last day of its window", async () => {
+    world.invitation.updatedAt = sentDaysAgo(INVITE_TTL_DAYS - 1);
+    await expect(accept()).resolves.toMatchObject({ status: "ACCEPTED" });
+  });
 
   it("answers NOT_FOUND for an invitation addressed to another expert", async () => {
     world.invitation.consultantProfileId = "cp-other";
@@ -476,6 +518,11 @@ describe("declining an invitation", () => {
     );
     expect(mockWithHostSlotBatch).not.toHaveBeenCalled();
     expect(mockGrant).not.toHaveBeenCalled();
+  });
+
+  it("declines an invitation that has lapsed and not yet been recorded as expired", async () => {
+    world.invitation.updatedAt = sentDaysAgo(INVITE_TTL_DAYS + 1);
+    await expect(decline()).resolves.toMatchObject({ status: "DECLINED" });
   });
 
   it("answers NOT_PENDING once the invitation is no longer open", async () => {
