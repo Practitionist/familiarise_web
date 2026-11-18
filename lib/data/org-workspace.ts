@@ -253,7 +253,7 @@ export async function getWorkspaceBillingRollup(
   return { summary, perOrg };
 }
 
-/** Sum per currency, largest first; zero totals are dropped. */
+/** Sum per currency, largest first; zero totals are dropped unless every one is zero. */
 function totalsByCurrency<T extends { currency: string }>(
   rows: T[],
   pick: (row: T) => number,
@@ -265,10 +265,15 @@ function totalsByCurrency<T extends { currency: string }>(
       (byCurrency.get(row.currency) ?? 0) + pick(row),
     );
   }
-  return [...byCurrency.entries()]
-    .filter(([, paise]) => paise !== 0)
-    .map(([currency, paise]) => ({ currency, paise }))
-    .sort((a, b) => b.paise - a.paise);
+  const totals = [...byCurrency.entries()].map(([currency, paise]) => ({
+    currency,
+    paise,
+  }));
+  const nonZero = totals.filter((t) => t.paise !== 0);
+  // All zero: one zero per billing currency, so the headline still names it.
+  return (nonZero.length > 0 ? nonZero : totals).sort(
+    (a, b) => b.paise - a.paise,
+  );
 }
 
 /* ------------------------------------------------------------------ *

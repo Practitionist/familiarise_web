@@ -81,6 +81,7 @@ jest.mock(
 
 import { getWorkspaceBillingRollup } from "@/lib/data/org-workspace";
 import { BillingPageClient } from "@/app/dashboard/org-workspace/[orgWorkspaceId]/billing/BillingPageClient";
+import { formatCurrencyTotals } from "@/app/dashboard/org-workspace/[orgWorkspaceId]/currency-totals";
 
 describe("workspace Spend", () => {
   it("totals only active organisations", async () => {
@@ -90,9 +91,10 @@ describe("workspace Spend", () => {
       inactiveOrgs: 1,
       totalActiveMembers: 25,
       outstandingByCurrency: [{ currency: "INR", paise: 118_000 }],
-      walletByCurrency: [],
+      walletByCurrency: [{ currency: "INR", paise: 0 }],
     });
     expect(rollup.perOrg.map((o) => o.organizationId)).toEqual([ACTIVE, GONE]);
+    expect(formatCurrencyTotals([])).toBe("—");
   });
 
   it("lists a deactivated organisation in a collapsed group, outside the headline", async () => {
@@ -102,7 +104,7 @@ describe("workspace Spend", () => {
     const tile = (label: string) =>
       screen.getAllByText(label)[0]?.parentElement?.parentElement;
     expect(tile("Funded orgs")).toHaveTextContent(/^Funded orgs1active/);
-    expect(tile("Wallet balance")).toHaveTextContent(/^Wallet balance0\.00/);
+    expect(tile("Wallet balance")).toHaveTextContent(/^Wallet balance₹0\.00/);
     expect(tile("Outstanding")).toHaveTextContent(/₹1,180\.00across 1 active/);
 
     const group = screen.getByText(/Not active \(1\)/).closest("details");

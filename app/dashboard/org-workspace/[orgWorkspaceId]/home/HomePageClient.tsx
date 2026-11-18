@@ -197,7 +197,9 @@ export function HomePageClient({ orgWorkspaceId }: { orgWorkspaceId: string }) {
           label="Outstanding"
           value={formatCurrencyTotals(summary.outstandingByCurrency)}
           tone={
-            summary.outstandingByCurrency.length > 0 ? "warning" : "neutral"
+            summary.outstandingByCurrency.some((t) => t.paise > 0)
+              ? "warning"
+              : "neutral"
           }
         />
         <Stat

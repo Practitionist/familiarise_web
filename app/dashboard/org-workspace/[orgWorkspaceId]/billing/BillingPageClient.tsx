@@ -155,7 +155,7 @@ export function BillingPageClient({
                     hint={`across ${summary.activeOrgs} active organisation${summary.activeOrgs === 1 ? "" : "s"}`}
                     value={formatCurrencyTotals(summary.outstandingByCurrency)}
                     tone={
-                      summary.outstandingByCurrency.length > 0
+                      summary.outstandingByCurrency.some((t) => t.paise > 0)
                         ? "warning"
                         : "neutral"
                     }
