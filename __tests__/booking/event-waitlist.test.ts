@@ -513,7 +513,7 @@ describe("the shared seat rule", () => {
         prior({
           ...free,
           appointmentParticipants: [
-            { status: "CANCELLED", removedByUserId: null },
+            { id: "seat-1", status: "CANCELLED", removedByUserId: null },
           ],
         }),
       ),
@@ -523,7 +523,7 @@ describe("the shared seat rule", () => {
         prior({
           ...free,
           appointmentParticipants: [
-            { status: "CANCELLED", removedByUserId: "host-1" },
+            { id: "seat-1", status: "CANCELLED", removedByUserId: "host-1" },
           ],
         }),
       ),
