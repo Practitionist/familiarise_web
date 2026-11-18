@@ -25,3 +25,5 @@ export const SeatTrailResponseSchema = z.object({
     }),
   ),
 });
+
+export type SeatTrailResponse = z.infer<typeof SeatTrailResponseSchema>;

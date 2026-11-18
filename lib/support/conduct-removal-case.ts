@@ -276,12 +276,13 @@ async function stampRemovalRefundTx(
 async function removalTargetTx(db: PrismaLike, removalCaseId: string) {
   const removal = await db.supportCase.findUniqueOrThrow({
     where: { id: removalCaseId },
-    select: { appointmentId: true, requesterUserId: true },
+    select: { appointmentId: true, requesterUserId: true, createdAt: true },
   });
   if (!removal.appointmentId) return null;
   return {
     appointmentId: removal.appointmentId,
     userId: removal.requesterUserId,
+    removedAt: removal.createdAt,
   };
 }
 
@@ -332,6 +333,33 @@ export async function removalRefundOutstandingTx(
   return balance > 0 ? { paymentId: payment.id, owed: balance } : null;
 }
 
+/** Whether a lift has followed the removal on the learner's seat, so its mark is gone. */
+async function liftedSinceRemoval(
+  tx: Pick<Tx, "appointmentParticipant" | "bookingStatusHistory">,
+  target: { appointmentId: string; userId: string; removedAt: Date },
+): Promise<boolean> {
+  const seat = await tx.appointmentParticipant.findUnique({
+    where: {
+      appointmentId_userId: {
+        appointmentId: target.appointmentId,
+        userId: target.userId,
+      },
+    },
+    select: { id: true },
+  });
+  if (!seat) return false;
+  const lift = await tx.bookingStatusHistory.findFirst({
+    where: {
+      entity: "SEAT",
+      entityId: seat.id,
+      reason: "block_lifted",
+      createdAt: { gte: target.removedAt },
+    },
+    select: { id: true },
+  });
+  return lift !== null;
+}
+
 /** On the decision's tx, once its refund is settled: an OVERTURNED removal (or appeal of one) owes an unblock. */
 export async function conductRemovalDecidedTx(
   tx: Tx,
@@ -348,8 +376,13 @@ export async function conductRemovalDecidedTx(
   const target = caseId ? await removalTargetTx(tx, caseId) : null;
   if (!target) return;
   await persistConductBlockInTx(tx, target.appointmentId, target.userId);
-  // The same lift the staff door makes; a block already lifted stays lifted.
-  await clearRemovalMarkTx(tx, { ...target, actorUserId });
+  // A lift after the removal already cleared its mark; a mark the seat carries now is a later removal's.
+  if (await liftedSinceRemoval(tx, target)) return;
+  await clearRemovalMarkTx(tx, {
+    appointmentId: target.appointmentId,
+    userId: target.userId,
+    actorUserId,
+  });
 }
 
 /** How the learner of a reviewed removal may come back once it is overturned. */

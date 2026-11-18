@@ -250,6 +250,7 @@ export async function commitCheckout(input: CheckoutCommitInput) {
           return {
             appointmentId: createdAppointment?.id,
             paymentId: payment.id,
+            reusedPaymentIntent: payment.reusedPaymentIntent,
             holdExpiresAt: payment.expiresAt,
             creditsApplied: 0,
             creditNotices: {},
@@ -287,6 +288,7 @@ export async function commitCheckout(input: CheckoutCommitInput) {
         return {
           appointmentId: createdAppointment?.id,
           paymentId: payment.id,
+          reusedPaymentIntent: null as string | null,
           holdExpiresAt: payment.expiresAt,
           creditsApplied: actualCreditsApplied,
           creditNotices,

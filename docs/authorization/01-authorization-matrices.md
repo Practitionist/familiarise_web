@@ -93,7 +93,7 @@ it is an ordering question: picking the most operator-like org to land on
 
 ## 5. Matrix 3 — `BackofficeSurface`: the internal axis
 
-49 surfaces, and a policy stated once at the top of the file:
+50 surfaces, and a policy stated once at the top of the file:
 
 - **STAFF own support end-to-end** — tickets, feedback, moderation,
   appointments, user verification. This is the job.

@@ -87,17 +87,31 @@ const refundedSeat = (actorUserId: string | null | undefined) => ({
   history: { reason: "refunded" as const, actorUserId: actorUserId ?? null },
 });
 
+/** The REFUNDED stamp and its SEAT row commit together, read and written on one transaction. */
+function stampSeatsRefunded(
+  paymentId: string,
+  actorUserId: string | null | undefined,
+): Promise<number> {
+  return withSerializableRetry(() =>
+    prisma.$transaction(
+      (tx) =>
+        transitionParticipant(
+          tx,
+          { paymentId },
+          "REFUNDED",
+          refundedSeat(actorUserId),
+        ),
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    ),
+  );
+}
+
 async function markParticipantsRefunded(
   paymentId: string,
   actorUserId?: string | null,
 ): Promise<void> {
   try {
-    await transitionParticipant(
-      prisma,
-      { paymentId },
-      "REFUNDED",
-      refundedSeat(actorUserId),
-    );
+    await stampSeatsRefunded(paymentId, actorUserId);
   } catch (error) {
     // Shadow table: never let it fail a refund that already went through.
     console.warn(
@@ -302,12 +316,7 @@ export async function restampRefundedSeats(
   ) {
     return "skipped";
   }
-  await transitionParticipant(
-    prisma,
-    { paymentId: refund.paymentId },
-    "REFUNDED",
-    refundedSeat(null),
-  );
+  await stampSeatsRefunded(refund.paymentId, null);
   return "stamped";
 }
 

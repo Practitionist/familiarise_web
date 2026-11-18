@@ -76,6 +76,7 @@ function mockTx() {
               id: "part-1",
               status: "CANCELLED",
               appointmentId: APPT,
+              removedByUserId: "host-1",
               payment: mockDb.priceFree
                 ? { paymentIntent: "free_1", amount: 0, originalAmount: 0 }
                 : {
@@ -217,10 +218,12 @@ describe("the staff lift door", () => {
     });
     expect(mockPersistBlock).toHaveBeenCalledTimes(1);
     expect(mockSyncBlock).toHaveBeenCalledTimes(1);
+    // The audit row keeps who removed the seat and how, since the lift clears it.
     expect(mockOpsRows).toEqual([
       expect.objectContaining({
         surface: "appointments.liftSeatRemoval",
         reason: REASON,
+        before: { removedByUserId: "host-1", removal: "CONDUCT" },
       }),
     ]);
   });

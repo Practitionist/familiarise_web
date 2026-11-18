@@ -22,12 +22,15 @@ import type { CheckoutCommitInput } from "@/lib/payments/checkout/commit/types";
 import { checkoutRequestFingerprint } from "@/lib/payments/operations/checkout-replay";
 
 /** The checkout's payment; `rejoined` when a left free seat revived on its earlier payment. */
-export interface CheckoutPaymentRow {
+export type CheckoutPaymentRow = {
   id: string;
   amount: number;
   expiresAt: Date | null;
-  rejoined: boolean;
-}
+} & (
+  | { rejoined: false }
+  /** The reused payment's own stored intent, which the checkout answers with. */
+  | { rejoined: true; reusedPaymentIntent: string }
+);
 
 export async function writeCheckoutPayment(
   tx: Tx,
@@ -169,8 +172,13 @@ export async function writeCheckoutPayment(
     priorSeatPayment &&
     priorSeatStanding(priorSeatPayment) === "REJOINABLE"
   ) {
-    // A left price-free seat keeps its SUCCEEDED ₹0 payment; only a free order may revive it.
-    if (!isZeroAmountPayment || isOrgSponsoredPayment) {
+    // A left price-free seat keeps its SUCCEEDED ₹0 payment; only an order still price-free
+    // (no list price, so no credit or discount to settle) may revive it.
+    if (
+      !isZeroAmountPayment ||
+      isOrgSponsoredPayment ||
+      input.priced.originalAmount > 0
+    ) {
       throw new BookingRuleError(
         "SEAT_REBUY_UNSUPPORTED",
         "You left this event earlier, and a seat you've left can't be bought again yet. Contact support if you'd like to rejoin.",
@@ -181,6 +189,7 @@ export async function writeCheckoutPayment(
       amount: priorSeatPayment.amount,
       expiresAt: null,
       rejoined: true,
+      reusedPaymentIntent: priorSeatPayment.paymentIntent,
     };
   } else if (priorSeatPayment) {
     assertSeatRemintable(priorSeatPayment, eventKind);

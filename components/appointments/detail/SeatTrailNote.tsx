@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { seatTrailLine } from "@/lib/booking/seat-trail-copy";
 import { useViewerZone } from "@/lib/time/use-viewer-zone";
 import { formatInViewerZone } from "@/lib/time/viewer-zone";
-import { SeatTrailResponseSchema } from "@/schemas/seat-removal-lift";
+import { fetchSeatTrail } from "@/lib/booking/seat-trail-fetch";
 
 const TRAIL_DAY = "d MMM";
 
@@ -16,11 +16,7 @@ export function SeatTrailNote({
   const viewerZone = useViewerZone();
   const trail = useQuery({
     queryKey: ["seat-trail", appointmentId],
-    queryFn: async () => {
-      const res = await fetch(`/api/appointments/${appointmentId}/seat-trail`);
-      if (!res.ok) return { steps: [] };
-      return SeatTrailResponseSchema.parse(await res.json());
-    },
+    queryFn: () => fetchSeatTrail(appointmentId),
     staleTime: 60_000,
   });
   const line = seatTrailLine(trail.data?.steps ?? [], (iso) =>

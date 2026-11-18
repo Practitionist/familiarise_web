@@ -708,6 +708,13 @@ describe("the access revocation a seat-ending refund owes", () => {
     expect(order(mockTransitionParticipant)).toBeLessThan(
       order(mockRevokeRefundedSeatAccess),
     );
+    // The gateway rail's stamp and its SEAT row share one transaction.
+    expect(mockTransitionParticipant).toHaveBeenCalledWith(
+      expect.objectContaining({ appointmentParticipant: expect.anything() }),
+      { paymentId: PAYMENT_ID },
+      "REFUNDED",
+      { history: { reason: "refunded", actorUserId: null } },
+    );
   });
 
   it("gateway rail: a failed seat stamp still leaves the intent owed and driven", async () => {
@@ -834,9 +841,10 @@ describe("restampRefundedSeats", () => {
       await expect(restampRefundedSeats("refund-row-1")).resolves.toBe(
         "stamped",
       );
-      // An event learner seat it ends gets a `refunded` SEAT row; the helper skips 1:1 seats.
+      // An event learner seat it ends gets a `refunded` SEAT row, on the stamp's own
+      // transaction so the status and its history commit together; 1:1 seats get none.
       expect(mockTransitionParticipant).toHaveBeenCalledWith(
-        expect.anything(),
+        expect.objectContaining({ appointmentParticipant: expect.anything() }),
         { paymentId: PAYMENT_ID },
         "REFUNDED",
         { history: { reason: "refunded", actorUserId: null } },

@@ -690,6 +690,14 @@ export async function handleCheckout(
         throw err;
       });
 
+      // A rejoined free seat stands on its earlier payment, so the answer names that payment's intent.
+      if (result.reusedPaymentIntent) {
+        paymentResponse = {
+          id: result.reusedPaymentIntent,
+          client_secret: null,
+        };
+      }
+
       if (preMintSeat) {
         // The seat is committed: free the event and buyer keys for the next
         // checkout before the gateway round trip, then fill in the order.

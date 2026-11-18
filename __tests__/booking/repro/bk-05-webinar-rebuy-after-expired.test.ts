@@ -244,3 +244,39 @@ describe("the other prior-row shapes on the same seat", () => {
     });
   });
 });
+
+describe("rejoining a free webinar seat its holder left", () => {
+  it("answers with the earlier payment and its own stored intent, writing no new payment", async () => {
+    const freeWebinar = {
+      ...webinar,
+      webinarPlan: { ...webinar.webinarPlan, price: 0 },
+    };
+    overrides["webinar.findUnique"] = () => freeWebinar;
+    payments = [
+      {
+        id: "pay-free",
+        userId: BUYER,
+        appointmentId: APPT,
+        paymentIntent: "free_first_registration",
+        paymentStatus: "SUCCEEDED",
+        amount: 0,
+        originalAmount: 0,
+        refunds: [],
+        appointmentParticipants: [
+          { status: "CANCELLED", removedByUserId: null },
+        ],
+      },
+    ];
+
+    const { value, error } = await run();
+
+    expect(error).toBeNull();
+    expect(value).toMatchObject({
+      paymentId: "pay-free",
+      paymentIntent: { id: "free_first_registration", client_secret: null },
+      isZeroAmountPayment: true,
+    });
+    expect(payments).toHaveLength(1);
+    expect(createPaymentIntent).not.toHaveBeenCalled();
+  });
+});

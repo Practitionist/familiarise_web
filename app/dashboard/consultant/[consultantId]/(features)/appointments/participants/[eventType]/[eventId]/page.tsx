@@ -230,6 +230,19 @@ const allowBack = async ({
   return SeatLiftResponseSchema.parse(await response.json());
 };
 
+/** An attendee's name with their seat's trail ("Left 12 Nov · rejoined 13 Nov") under it. */
+function NameWithTrail({
+  name,
+  trail,
+}: Readonly<{ name?: string; trail: string }>) {
+  return (
+    <span className="flex flex-col">
+      <span>{name}</span>
+      {trail && <span className="text-xs text-muted-foreground">{trail}</span>}
+    </span>
+  );
+}
+
 /** The day each step happened, in the reader's own zone. */
 const TRAIL_DAY = "d MMM";
 
@@ -457,17 +470,7 @@ export default function EventParticipantsPage() {
       key: "name",
       header: "Name",
       primary: true,
-      cell: (p) => {
-        const trail = trailOf(p.seatTrail);
-        return (
-          <span className="flex flex-col">
-            <span>{p.name}</span>
-            {trail && (
-              <span className="text-xs text-muted-foreground">{trail}</span>
-            )}
-          </span>
-        );
-      },
+      cell: (p) => <NameWithTrail name={p.name} trail={trailOf(p.seatTrail)} />,
     },
     { key: "email", header: "Email", cell: (p) => p.email },
     {
@@ -544,17 +547,7 @@ export default function EventParticipantsPage() {
       key: "name",
       header: "Name",
       primary: true,
-      cell: (p) => {
-        const trail = trailOf(p.seatTrail);
-        return (
-          <span className="flex flex-col">
-            <span>{p.name}</span>
-            {trail && (
-              <span className="text-xs text-muted-foreground">{trail}</span>
-            )}
-          </span>
-        );
-      },
+      cell: (p) => <NameWithTrail name={p.name} trail={trailOf(p.seatTrail)} />,
     },
     { key: "email", header: "Email", cell: (p) => p.email },
   ];

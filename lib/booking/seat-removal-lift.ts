@@ -37,6 +37,7 @@ const SEAT_SELECT = {
   id: true,
   status: true,
   appointmentId: true,
+  removedByUserId: true,
   payment: {
     select: { paymentIntent: true, amount: true, originalAmount: true },
   },
@@ -119,6 +120,22 @@ export async function clearRemovalMarkTx(
   return seat;
 }
 
+/** The webinar or class the seat belongs to, with its plan. */
+function eventOf(seat: RemovedSeat) {
+  const { webinar, class: cls } = seat.appointment;
+  if (webinar) {
+    return {
+      kind: "WEBINAR" as const,
+      id: webinar.id,
+      plan: webinar.webinarPlan,
+    };
+  }
+  if (cls) {
+    return { kind: "CLASS" as const, id: cls.id, plan: cls.classPlan };
+  }
+  return null;
+}
+
 /** Stages the learner's bell on the lift's transaction, through the seat-opened event. */
 async function stageRejoinBell(
   tx: Tx,
@@ -127,19 +144,7 @@ async function stageRejoinBell(
   path: RejoinPath,
   at: Date,
 ): Promise<StagedTrigger | null> {
-  const event = seat.appointment.webinar
-    ? {
-        kind: "WEBINAR" as const,
-        id: seat.appointment.webinar.id,
-        plan: seat.appointment.webinar.webinarPlan,
-      }
-    : seat.appointment.class
-      ? {
-          kind: "CLASS" as const,
-          id: seat.appointment.class.id,
-          plan: seat.appointment.class.classPlan,
-        }
-      : null;
+  const event = eventOf(seat);
   if (!event) return null;
   return stageBell(tx, {
     workflowId: NOVU_WORKFLOWS.EVENT_SEAT_OPENED,
@@ -160,6 +165,8 @@ async function stageRejoinBell(
 
 export interface SeatLiftResult {
   participantId: string;
+  /** Who removed the seat, as the cleared mark recorded it. */
+  removedByUserId: string | null;
   rejoinPath: RejoinPath;
   conduct: boolean;
   /** The conduct block intent this lift wrote, which the drive turns into an unblock. */
@@ -214,6 +221,7 @@ export async function liftSeatRemovalTx(
   );
   return {
     participantId: seat.id,
+    removedByUserId: seat.removedByUserId,
     rejoinPath,
     conduct,
     unblockGeneration,

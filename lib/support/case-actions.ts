@@ -789,6 +789,21 @@ async function replayCaseActionTx(
   return decision;
 }
 
+/** A removed learner hears of the decision on their removal whatever their switches say; null for any other case. */
+async function removalNoticeFor(
+  tx: Tx,
+  supportCase: SupportCase,
+  outcome: SupportCaseDecision["outcome"],
+) {
+  if (outcome !== "OVERTURNED" && outcome !== "UPHELD") return null;
+  if (!(await reviewedRemovalCaseId(tx, supportCase))) return null;
+  if (outcome === "UPHELD") return removalDecisionNotice(outcome);
+  return removalDecisionNotice(
+    outcome,
+    await removalRejoinPathTx(tx, supportCase),
+  );
+}
+
 async function stageDecisionNotificationsTx(
   tx: Tx,
   supportCase: SupportCase,
@@ -809,17 +824,7 @@ async function stageDecisionNotificationsTx(
       tx,
     );
   } else {
-    // A removed learner hears of the decision on their removal whatever their switches say.
-    const removal =
-      (decision.outcome === "OVERTURNED" || decision.outcome === "UPHELD") &&
-      (await reviewedRemovalCaseId(tx, supportCase))
-        ? removalDecisionNotice(
-            decision.outcome,
-            decision.outcome === "OVERTURNED"
-              ? await removalRejoinPathTx(tx, supportCase)
-              : undefined,
-          )
-        : null;
+    const removal = await removalNoticeFor(tx, supportCase, decision.outcome);
     await stageCaseNotice(
       tx,
       supportCase,

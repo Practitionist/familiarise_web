@@ -40,6 +40,11 @@ export const POST = withOpsAction(
       });
       return {
         target: { kind: "AppointmentParticipant", id: lifted.participantId },
+        // The lift clears the mark, so the audit row keeps who removed the seat and how.
+        before: {
+          removedByUserId: lifted.removedByUserId,
+          removal: lifted.conduct ? "CONDUCT" : "ORGANISER",
+        },
         after: {
           userId: body.userId,
           conduct: lifted.conduct,
