@@ -103,6 +103,8 @@ export interface OccurrenceVM {
 export interface PersonVM {
   name: string;
   image: string | null;
+  /** A host's webinar or class audience: a label, never a person to address. */
+  audience?: boolean;
 }
 
 export interface AppointmentVMRaw {

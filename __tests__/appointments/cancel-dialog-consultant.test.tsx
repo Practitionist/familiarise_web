@@ -93,3 +93,27 @@ it("reads a free trial's answer as nothing to refund", async () => {
   expect(await screen.findByText(FREE_BOOKING_REFUND_LINE)).toBeTruthy();
   expect(screen.queryByText(/couldn't load the refund estimate/)).toBeNull();
 });
+
+it("names the plan, not a placeholder audience, when a host cancels a group session", async () => {
+  respond(500, {});
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <CancelConfirmationDialog
+        isOpen
+        onConfirm={jest.fn()}
+        onCancel={jest.fn()}
+        title="System Design Cohort"
+        consultant={null}
+        appointmentType="Class"
+        appointmentId="apt-1"
+        viewerRole="consultant"
+      />
+    </QueryClientProvider>,
+  );
+  await screen.findByText(/Everyone who paid gets a full refund/);
+  const question = screen.getByText(/Are you sure you want to cancel/);
+  expect(question).toHaveTextContent(
+    'Are you sure you want to cancel "System Design Cohort"?',
+  );
+  expect(screen.queryByText(/Enrolled learners/)).toBeNull();
+});

@@ -363,3 +363,52 @@ describe("consultant · paid subscription with no session scheduled yet", () => 
     expect(html).not.toContain("Slot held");
   });
 });
+
+/** A scheduled webinar Ethan hosts, with nobody registered. */
+function hostedWebinarDetail(): TAppointmentDetail {
+  const base = subscriptionDetail({ status: "PENDING", sessions: 1 });
+  return {
+    appointment: {
+      ...base.appointment,
+      appointmentType: "WEBINAR",
+      subscription: null,
+      webinar: {
+        id: "web-1",
+        status: "SCHEDULED",
+        webinarPlan: {
+          id: "wp-1",
+          title: "Expert Workshop Webinar",
+          price: 0,
+          priceCurrency: "INR",
+          consultantProfileId: "cp-1",
+          consultantProfile: {
+            id: "cp-1",
+            userId: "u-ethan",
+            user: user("u-ethan", "Ethan"),
+          },
+          collaborators: [],
+        },
+      },
+      occurrences: base.appointment.occurrences.map((o) => ({
+        ...o,
+        isTentative: false,
+      })),
+    },
+  } as unknown as TAppointmentDetail;
+}
+
+describe("consultant · hosted webinar header", () => {
+  it("never reads 'with Registered attendees'; a 1:1 keeps the learner's name", () => {
+    viewerId = "u-ethan";
+    currentDetail = hostedWebinarDetail();
+    const html = render("consultant").replace(/<!-- -->/g, "");
+    expect(html).toContain("Expert Workshop Webinar");
+    expect(html).not.toContain("Registered attendees");
+    expect(html).not.toMatch(/>with </);
+
+    currentDetail = subscriptionDetail({ status: "PENDING" });
+    expect(render("consultant").replace(/<!-- -->/g, "")).toMatch(
+      /with <span class="font-medium text-foreground">Rachel Anderson<\/span>/,
+    );
+  });
+});

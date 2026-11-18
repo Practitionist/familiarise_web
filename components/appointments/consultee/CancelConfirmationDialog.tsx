@@ -56,7 +56,8 @@ interface CancelConfirmationDialogProps {
   onConfirm: (quote?: ShownCancelQuote) => void;
   onCancel: () => void;
   title: string;
-  consultant: string;
+  /** The other side, by name; null for a host's webinar or class audience. */
+  consultant: string | null;
   appointmentType: string;
   isLoading?: boolean;
   /**
@@ -241,13 +242,17 @@ export function CancelConfirmationDialog({
     <p className="text-muted-foreground text-sm">
       {quoted ? (
         <>
-          {consultant} gets a full refund of{" "}
+          {consultant ?? "Whoever paid"} gets a full refund of{" "}
           <strong className="text-foreground">
             {formatCurrencyAmount(quoted.paise, quoted.currency)}
           </strong>
         </>
       ) : (
-        <>If they paid, {consultant} gets a full refund</>
+        <>
+          {consultant
+            ? `If they paid, ${consultant} gets a full refund`
+            : "Everyone who paid gets a full refund"}
+        </>
       )}
       .
     </p>
@@ -413,8 +418,14 @@ export function CancelConfirmationDialog({
             <div className="space-y-2">
               <p>
                 Are you sure you want to {isLeave ? "leave" : "cancel"}{" "}
-                <strong>&quot;{title}&quot;</strong> with{" "}
-                <strong>{consultant}</strong>?
+                <strong>&quot;{title}&quot;</strong>
+                {consultant && (
+                  <>
+                    {" "}
+                    with <strong>{consultant}</strong>
+                  </>
+                )}
+                ?
               </p>
               {isLeave ? (
                 renderLeaveLine()

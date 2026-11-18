@@ -516,6 +516,10 @@ export function AppointmentDetailClient({
   const groupCountLine = usesSessionProgress
     ? presentation.sessionProgress
     : `${vm.group?.total ?? 0} session${vm.group?.total === 1 ? "" : "s"}`;
+  const headerFacts = [
+    vm.meta,
+    vm.group && vm.group.total > 0 ? groupCountLine : null,
+  ].filter((fact): fact is string => Boolean(fact));
   // The consultant's answer to a request, through the Requests page's own
   // mutations (request-decision.ts); no times → the allocator sets them.
   const request =
@@ -1317,27 +1321,35 @@ export function AppointmentDetailClient({
           <h1 className="mt-2 text-xl font-semibold leading-tight tracking-tight text-foreground sm:text-2xl">
             {vm.title}
           </h1>
-          <div className="mt-3 flex items-center gap-2.5 text-sm text-muted-foreground">
-            <Avatar className="h-7 w-7 shrink-0 border border-border">
-              <AvatarImage
-                src={vm.counterpart.image ?? undefined}
-                alt={vm.counterpart.name}
-              />
-              <AvatarFallback className="text-[11px] font-medium">
-                {initials(vm.counterpart.name) || "?"}
-              </AvatarFallback>
-            </Avatar>
-            {/* The kind is a fact about the booking, so it reads in the
+          {vm.counterpart.audience ? (
+            // A host's webinar or class has no one person to be "with".
+            headerFacts.length > 0 && (
+              <p className="mt-3 text-sm text-muted-foreground">
+                {headerFacts.join(" · ")}
+              </p>
+            )
+          ) : (
+            <div className="mt-3 flex items-center gap-2.5 text-sm text-muted-foreground">
+              <Avatar className="h-7 w-7 shrink-0 border border-border">
+                <AvatarImage
+                  src={vm.counterpart.image ?? undefined}
+                  alt={vm.counterpart.name}
+                />
+                <AvatarFallback className="text-[11px] font-medium">
+                  {initials(vm.counterpart.name) || "?"}
+                </AvatarFallback>
+              </Avatar>
+              {/* The kind is a fact about the booking, so it reads in the
                 eyebrow rather than as a second chip beside the status. */}
-            <p className="min-w-0">
-              with{" "}
-              <span className="font-medium text-foreground">
-                {vm.counterpart.name}
-              </span>
-              {vm.meta ? ` · ${vm.meta}` : ""}
-              {vm.group && vm.group.total > 0 ? ` · ${groupCountLine}` : ""}
-            </p>
-          </div>
+              <p className="min-w-0">
+                with{" "}
+                <span className="font-medium text-foreground">
+                  {vm.counterpart.name}
+                </span>
+                {headerFacts.map((fact) => ` · ${fact}`).join("")}
+              </p>
+            </div>
+          )}
 
           {vm.nextAt && (
             <div className="mt-5 flex flex-wrap items-center gap-4 rounded-xl border border-border/80 bg-muted/40 p-4">
