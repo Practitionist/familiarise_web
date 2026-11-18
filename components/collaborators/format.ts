@@ -10,26 +10,27 @@ import {
 } from "@/lib/collaborators/roles";
 import { bpsToPercent, percentToBps } from "@/lib/collaborators/rules";
 import { prorate } from "@/lib/payments/utils/money";
+import { formatInViewerZone, zoneLabel } from "@/lib/time/viewer-zone";
 import type { TeamMember } from "./types";
 
-export function formatDateTime(dateStr: string) {
-  const d = new Date(dateStr);
-  return d.toLocaleDateString("en-IN", {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
-}
+const clockTime = (at: string, zone: string): string =>
+  formatInViewerZone(at, zone, "h:mm a");
 
-export function formatTime(dateStr: string) {
-  const d = new Date(dateStr);
-  return d.toLocaleTimeString("en-IN", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: true,
-  });
-}
+/** A session's calendar day in `zone`: "Wed, 18 Nov 2026". */
+export const formatSessionDay = (at: string, zone: string): string =>
+  formatInViewerZone(at, zone, "EEE, d MMM yyyy");
+
+/** A session's start in `zone`, with the zone named: "6:15 PM IST". */
+export const formatSessionStart = (at: string, zone: string): string =>
+  `${clockTime(at, zone)} ${zoneLabel(at, zone)}`;
+
+/** A session's hours in `zone`, the zone named once: "6:15 PM – 7:45 PM IST". */
+export const formatSessionHours = (
+  startsAt: string,
+  endsAt: string,
+  zone: string,
+): string =>
+  `${clockTime(startsAt, zone)} – ${clockTime(endsAt, zone)} ${zoneLabel(startsAt, zone)}`;
 
 const DAY = new Intl.DateTimeFormat("en-IN", {
   day: "numeric",

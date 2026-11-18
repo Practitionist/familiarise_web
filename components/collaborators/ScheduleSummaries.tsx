@@ -17,14 +17,22 @@ import type {
   ClassPlanSchedule,
   WebinarPlanSchedule,
 } from "./types";
-import { formatDateTime, formatTime } from "./format";
+import {
+  formatSessionDay,
+  formatSessionHours,
+  formatSessionStart,
+} from "./format";
 import { deriveBatchCards, type BatchCard } from "@/lib/booking/batch-cards";
+import { useZoneClock } from "@/lib/time/use-zone-clock";
 
-/** #1819 — the host's batches in the same order and words the explore page uses. */
-function batchCardsOf(plan: ClassPlanSchedule): BatchCard[] {
-  return deriveBatchCards(plan, plan.classes, new Date(), {
-    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-  });
+/** The host's batches in the order and words the explore page uses, dated in `zone`. */
+function batchCardsOf(plan: ClassPlanSchedule, zone: string): BatchCard[] {
+  return deriveBatchCards(plan, plan.classes, new Date(), { timeZone: zone });
+}
+
+/** The zone every time on these cards is printed in: the viewer's profile zone. */
+function useScheduleZone(): string {
+  return useZoneClock().zone;
 }
 
 export function WebinarScheduleSummary({
@@ -32,6 +40,7 @@ export function WebinarScheduleSummary({
 }: {
   plan: WebinarPlanSchedule;
 }) {
+  const zone = useScheduleZone();
   const webinar = plan.webinars[0];
   const slot = webinar?.appointment?.occurrences[0];
 
@@ -61,13 +70,11 @@ export function WebinarScheduleSummary({
         <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-zinc-600">
           <div className="flex items-center gap-1.5">
             <Calendar className="w-3 h-3 text-zinc-400" />
-            <span>{formatDateTime(slot.startsAt)}</span>
+            <span>{formatSessionDay(slot.startsAt, zone)}</span>
           </div>
           <div className="flex items-center gap-1.5">
             <Clock className="w-3 h-3 text-zinc-400" />
-            <span>
-              {formatTime(slot.startsAt)} &ndash; {formatTime(slot.endsAt)}
-            </span>
+            <span>{formatSessionHours(slot.startsAt, slot.endsAt, zone)}</span>
           </div>
           <div className="flex items-center gap-1.5">
             <Clock className="w-3 h-3 text-zinc-400" />
@@ -91,6 +98,7 @@ export function WebinarScheduleSummary({
 }
 
 export function WebinarEventList({ plan }: { plan: WebinarPlanSchedule }) {
+  const zone = useScheduleZone();
   return (
     <div className="space-y-2">
       {plan.webinars.map((webinar) => {
@@ -124,12 +132,12 @@ export function WebinarEventList({ plan }: { plan: WebinarPlanSchedule }) {
             <div className="flex items-center gap-3 mt-1.5 text-xs text-zinc-600">
               <div className="flex items-center gap-1.5">
                 <Calendar className="w-3 h-3 text-zinc-400" />
-                <span>{formatDateTime(slot.startsAt)}</span>
+                <span>{formatSessionDay(slot.startsAt, zone)}</span>
               </div>
               <div className="flex items-center gap-1.5">
                 <Clock className="w-3 h-3 text-zinc-400" />
                 <span>
-                  {formatTime(slot.startsAt)} &ndash; {formatTime(slot.endsAt)}
+                  {formatSessionHours(slot.startsAt, slot.endsAt, zone)}
                 </span>
               </div>
             </div>
@@ -141,6 +149,7 @@ export function WebinarEventList({ plan }: { plan: WebinarPlanSchedule }) {
 }
 
 export function ClassScheduleSummary({ plan }: { plan: ClassPlanSchedule }) {
+  const zone = useScheduleZone();
   if (plan.classes.length === 0) {
     return (
       <p className="text-xs text-zinc-400 italic">
@@ -149,7 +158,7 @@ export function ClassScheduleSummary({ plan }: { plan: ClassPlanSchedule }) {
     );
   }
 
-  const lead = batchCardsOf(plan)[0];
+  const lead = batchCardsOf(plan, zone)[0];
   const activeClass =
     plan.classes.find((c) => c.id === lead?.classId) ?? plan.classes[0];
   const allSlots = activeClass.appointment?.occurrences ?? [];
@@ -180,8 +189,9 @@ export function ClassScheduleSummary({ plan }: { plan: ClassPlanSchedule }) {
             <div className="flex items-center gap-1.5 col-span-2">
               <Calendar className="w-3 h-3 text-zinc-400" />
               <span>
-                {formatDateTime(activeClass.schedulingPeriodStartsAt)} &ndash;{" "}
-                {formatDateTime(activeClass.schedulingPeriodEndsAt)}
+                {formatSessionDay(activeClass.schedulingPeriodStartsAt, zone)}{" "}
+                &ndash;{" "}
+                {formatSessionDay(activeClass.schedulingPeriodEndsAt, zone)}
               </span>
             </div>
           )}
@@ -208,8 +218,8 @@ export function ClassScheduleSummary({ plan }: { plan: ClassPlanSchedule }) {
           <div className="flex items-center gap-1.5">
             <Calendar className="w-3 h-3 text-zinc-400" />
             <span>
-              Next: {formatDateTime(nextSlot.startsAt)}{" "}
-              {formatTime(nextSlot.startsAt)}
+              Next: {formatSessionDay(nextSlot.startsAt, zone)},{" "}
+              {formatSessionStart(nextSlot.startsAt, zone)}
             </span>
           </div>
         )}
@@ -225,6 +235,7 @@ export function ClassScheduleSummary({ plan }: { plan: ClassPlanSchedule }) {
 }
 
 function ClassSessionList({ cls }: { cls: ClassEventSchedule }) {
+  const zone = useScheduleZone();
   const enrolled = cls.appointment?._count.participants ?? 0;
   const allSlots = (cls.appointment?.occurrences ?? []).map((slot) => ({
     ...slot,
@@ -255,9 +266,9 @@ function ClassSessionList({ cls }: { cls: ClassEventSchedule }) {
               <span className="w-5 text-center text-[10px] text-zinc-400">
                 {i + 1}
               </span>
-              <span>{formatDateTime(slot.startsAt)}</span>
+              <span>{formatSessionDay(slot.startsAt, zone)}</span>
               <span className="text-zinc-400">
-                {formatTime(slot.startsAt)} &ndash; {formatTime(slot.endsAt)}
+                {formatSessionHours(slot.startsAt, slot.endsAt, zone)}
               </span>
               {isPast && (
                 <Badge
@@ -296,6 +307,7 @@ function ClassEventCard({
   plan: ClassPlanSchedule;
   card: BatchCard | undefined;
 }) {
+  const zone = useScheduleZone();
   const [sessionsExpanded, setSessionsExpanded] = useState(false);
   const allSlots = cls.appointment?.occurrences ?? [];
   const totalEnrolled = cls.appointment?._count.participants ?? 0;
@@ -319,8 +331,8 @@ function ClassEventCard({
           <div className="flex items-center gap-1.5">
             <Calendar className="w-3 h-3 text-zinc-400" />
             <span>
-              {formatDateTime(cls.schedulingPeriodStartsAt)} &ndash;{" "}
-              {formatDateTime(cls.schedulingPeriodEndsAt)}
+              {formatSessionDay(cls.schedulingPeriodStartsAt, zone)} &ndash;{" "}
+              {formatSessionDay(cls.schedulingPeriodEndsAt, zone)}
             </span>
           </div>
         )}
@@ -357,7 +369,8 @@ function ClassEventCard({
 }
 
 export function ClassEventList({ plan }: { plan: ClassPlanSchedule }) {
-  const cards = batchCardsOf(plan);
+  const zone = useScheduleZone();
+  const cards = batchCardsOf(plan, zone);
   const rank = new Map(cards.map((c, i) => [c.classId, i]));
   const ordered = [...plan.classes].sort(
     (a, b) =>
