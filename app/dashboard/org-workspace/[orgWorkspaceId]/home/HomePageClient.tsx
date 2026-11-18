@@ -180,7 +180,15 @@ export function HomePageClient({ orgWorkspaceId }: { orgWorkspaceId: string }) {
   } else {
     figures = (
       <StatRow columns={4}>
-        <Stat label="Organizations you own" value={summary.orgsOwned} />
+        <Stat
+          label="Organizations you own"
+          value={summary.activeOrgs}
+          hint={
+            summary.inactiveOrgs > 0
+              ? `active; ${summary.inactiveOrgs} not active`
+              : undefined
+          }
+        />
         <Stat
           label="Active members"
           value={summary.totalActiveMembers.toLocaleString("en-IN")}

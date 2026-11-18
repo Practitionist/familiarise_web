@@ -32,11 +32,11 @@ import {
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
 import { formatCurrencyAmount } from "@/utils/formatting";
-import { humanizeEnum } from "@/lib/ui/tone";
 import { formatCurrencyTotals } from "../currency-totals";
 import {
   FUNDING_SOURCE_LABEL,
   FUNDING_SOURCE_BADGE_CLASS,
+  orgStatusLabel,
 } from "@/lib/labels/org-labels";
 import {
   useWorkspaceBilling,
@@ -57,7 +57,9 @@ const columns: ResponsiveColumn<WorkspaceBillingPerOrgRow>[] = [
         <div className="text-xs text-muted-foreground">
           {r.organizationSlug}
           {r.organizationStatus !== "ACTIVE" && (
-            <span className="ml-2">· {humanizeEnum(r.organizationStatus)}</span>
+            <span className="ml-2">
+              · {orgStatusLabel(r.organizationStatus)}
+            </span>
           )}
         </div>
       </Link>
@@ -121,6 +123,8 @@ export function BillingPageClient({
 
   const summary = data?.summary;
   const rows = data?.perOrg ?? [];
+  const activeRows = rows.filter((r) => r.organizationStatus === "ACTIVE");
+  const inactiveRows = rows.filter((r) => r.organizationStatus !== "ACTIVE");
 
   return (
     <>
@@ -148,7 +152,7 @@ export function BillingPageClient({
                 <>
                   <Stat
                     label="Outstanding"
-                    hint={`across ${summary.orgsOwned} organization${summary.orgsOwned === 1 ? "" : "s"}`}
+                    hint={`across ${summary.activeOrgs} active organisation${summary.activeOrgs === 1 ? "" : "s"}`}
                     value={formatCurrencyTotals(summary.outstandingByCurrency)}
                     tone={
                       summary.outstandingByCurrency.length > 0
@@ -158,13 +162,13 @@ export function BillingPageClient({
                   />
                   <Stat
                     label="Wallet balance"
-                    hint="prepaid funds across orgs"
+                    hint="prepaid funds across active orgs"
                     value={formatCurrencyTotals(summary.walletByCurrency)}
                   />
                   <Stat
                     label="Funded orgs"
-                    hint="have a billing account"
-                    value={rows
+                    hint="active orgs with a billing account"
+                    value={activeRows
                       .filter((r) => r.fundingSource !== null)
                       .length.toString()}
                   />
@@ -185,18 +189,41 @@ export function BillingPageClient({
               ) : (
                 <ResponsiveTable
                   columns={columns}
-                  rows={rows}
+                  rows={activeRows}
                   getRowId={(r) => r.organizationId}
                   empty={
                     <EmptyState
                       icon={Building2}
-                      title="No organisations to bill yet"
+                      title={
+                        inactiveRows.length > 0
+                          ? "No active organisations"
+                          : "No organisations to bill yet"
+                      }
                       description="Create your first org from the Overview tab."
                     />
                   }
                 />
               )}
             </section>
+
+            {inactiveRows.length > 0 && (
+              <details className="mt-6 rounded-lg border">
+                <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
+                  Not active ({inactiveRows.length})
+                  <span className="ml-2 font-normal text-muted-foreground">
+                    Deactivated, suspended or awaiting verification; left out of
+                    the totals above.
+                  </span>
+                </summary>
+                <div className="px-4 pb-4">
+                  <ResponsiveTable
+                    columns={columns}
+                    rows={inactiveRows}
+                    getRowId={(r) => r.organizationId}
+                  />
+                </div>
+              </details>
+            )}
           </>
         )}
       </DashboardContent>

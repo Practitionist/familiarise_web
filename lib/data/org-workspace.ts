@@ -113,8 +113,11 @@ export interface CurrencyTotal {
   paise: number;
 }
 
+/** Headline totals over the ACTIVE organisations the caller owns. */
 export interface WorkspaceBillingSummary {
-  orgsOwned: number;
+  activeOrgs: number;
+  /** Owned organisations in any other status; listed per org, never totalled. */
+  inactiveOrgs: number;
   totalActiveMembers: number;
   /** One entry per currency (#1527) — never summed across currencies. */
   outstandingByCurrency: CurrencyTotal[];
@@ -175,7 +178,8 @@ export async function getWorkspaceBillingRollup(
   if (orgIds.length === 0) {
     return {
       summary: {
-        orgsOwned: 0,
+        activeOrgs: 0,
+        inactiveOrgs: 0,
         totalActiveMembers: 0,
         outstandingByCurrency: [],
         walletByCurrency: [],
@@ -214,7 +218,7 @@ export async function getWorkspaceBillingRollup(
     memberAgg.map((row) => [row.organizationId, row._count._all]),
   );
 
-  const perOrg = ownedMemberships.map((m) => {
+  const rows = ownedMemberships.map((m) => {
     const ba = m.organization.billingAccount;
     const inv = ba ? invoiceByBA.get(ba.id) : undefined;
     return {
@@ -231,12 +235,19 @@ export async function getWorkspaceBillingRollup(
     };
   });
 
+  // The headline totals count ACTIVE orgs only; the rest follow them in the per-org list.
+  const active = rows.filter((o) => o.organizationStatus === "ACTIVE");
+  const perOrg = [
+    ...active,
+    ...rows.filter((o) => o.organizationStatus !== "ACTIVE"),
+  ];
   // #1527 — one total per currency: a USD org's paise are not rupees.
   const summary = {
-    orgsOwned: ownedMemberships.length,
-    totalActiveMembers: perOrg.reduce((sum, o) => sum + o.activeMembers, 0),
-    outstandingByCurrency: totalsByCurrency(perOrg, (o) => o.outstandingPaise),
-    walletByCurrency: totalsByCurrency(perOrg, (o) => o.walletBalancePaise),
+    activeOrgs: active.length,
+    inactiveOrgs: rows.length - active.length,
+    totalActiveMembers: active.reduce((sum, o) => sum + o.activeMembers, 0),
+    outstandingByCurrency: totalsByCurrency(active, (o) => o.outstandingPaise),
+    walletByCurrency: totalsByCurrency(active, (o) => o.walletBalancePaise),
   };
 
   return { summary, perOrg };

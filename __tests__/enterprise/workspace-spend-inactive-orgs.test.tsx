@@ -1,0 +1,120 @@
+/**
+ * Workspace Spend: the headline totals cover active organisations only; a
+ * deactivated organisation's wallet and invoices sit in a collapsed group.
+ */
+
+import { render, screen, within } from "@testing-library/react";
+
+const ACTIVE = "org-wipro";
+const GONE = "org-qa-pool";
+
+jest.mock("@/lib/prisma", () => ({
+  __esModule: true,
+  default: {
+    membership: {
+      findMany: async () => [
+        {
+          organizationId: ACTIVE,
+          organization: {
+            id: ACTIVE,
+            name: "Wipro Limited",
+            slug: "wipro",
+            status: "ACTIVE",
+            billingAccount: {
+              id: "ba-wipro",
+              walletBalance: 0,
+              currency: "INR",
+              fundingSource: "INVOICE",
+            },
+          },
+        },
+        {
+          organizationId: GONE,
+          organization: {
+            id: GONE,
+            name: "qa2205 Pool Org",
+            slug: "qa2205-pool",
+            status: "DEACTIVATED",
+            billingAccount: {
+              id: "ba-pool",
+              walletBalance: 4_000_000,
+              currency: "INR",
+              fundingSource: "WALLET",
+            },
+          },
+        },
+      ],
+      groupBy: async () => [
+        { organizationId: ACTIVE, _count: { _all: 25 } },
+        { organizationId: GONE, _count: { _all: 3 } },
+      ],
+    },
+    organizationInvoice: {
+      groupBy: async () => [
+        {
+          billingAccountId: "ba-wipro",
+          _sum: { totalPaise: 118_000 },
+          _count: { _all: 1 },
+        },
+        {
+          billingAccountId: "ba-pool",
+          _sum: { totalPaise: 50_000 },
+          _count: { _all: 1 },
+        },
+      ],
+    },
+  },
+}));
+
+let mockRollup: unknown;
+jest.mock(
+  "@/app/dashboard/org-workspace/[orgWorkspaceId]/hooks/useWorkspaceBilling",
+  () => ({
+    useWorkspaceBilling: () => ({
+      data: mockRollup,
+      isLoading: false,
+      isError: false,
+      refetch: jest.fn(),
+    }),
+  }),
+);
+
+import { getWorkspaceBillingRollup } from "@/lib/data/org-workspace";
+import { BillingPageClient } from "@/app/dashboard/org-workspace/[orgWorkspaceId]/billing/BillingPageClient";
+
+describe("workspace Spend", () => {
+  it("totals only active organisations", async () => {
+    const rollup = await getWorkspaceBillingRollup("u-owner");
+    expect(rollup.summary).toEqual({
+      activeOrgs: 1,
+      inactiveOrgs: 1,
+      totalActiveMembers: 25,
+      outstandingByCurrency: [{ currency: "INR", paise: 118_000 }],
+      walletByCurrency: [],
+    });
+    expect(rollup.perOrg.map((o) => o.organizationId)).toEqual([ACTIVE, GONE]);
+  });
+
+  it("lists a deactivated organisation in a collapsed group, outside the headline", async () => {
+    mockRollup = await getWorkspaceBillingRollup("u-owner");
+    render(<BillingPageClient orgWorkspaceId="ws-1" />);
+
+    const tile = (label: string) =>
+      screen.getAllByText(label)[0]?.parentElement?.parentElement;
+    expect(tile("Funded orgs")).toHaveTextContent(/^Funded orgs1active/);
+    expect(tile("Wallet balance")).toHaveTextContent(/^Wallet balance0\.00/);
+    expect(tile("Outstanding")).toHaveTextContent(/₹1,180\.00across 1 active/);
+
+    const group = screen.getByText(/Not active \(1\)/).closest("details");
+    expect(group).not.toBeNull();
+    expect(group).not.toHaveAttribute("open");
+    expect(
+      within(group!).getAllByText("qa2205 Pool Org").length,
+    ).toBeGreaterThan(0);
+    expect(within(group!).getAllByText(/· Deactivated/)[0]).toBeInTheDocument();
+
+    for (const name of screen.getAllByText("qa2205 Pool Org")) {
+      expect(group).toContainElement(name);
+    }
+  });
+});
