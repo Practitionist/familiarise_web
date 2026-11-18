@@ -420,6 +420,7 @@ export default function AdminTDSPage() {
     data: consultantData,
     isLoading: loadingConsultants,
     isError: errorConsultants,
+    refetch: refetchConsultants,
   } = useQuery({
     queryKey: [
       "admin-tds-consultants",
@@ -676,6 +677,8 @@ export default function AdminTDSPage() {
           description="Experts with statutory withholding in the selected financial year."
           isLoading={loadingConsultants}
           isError={errorConsultants}
+          errorMessage="Couldn't load the consultant breakdown"
+          onRetry={() => void refetchConsultants()}
           items={consultants}
           total={matchingTotal}
           page={page}

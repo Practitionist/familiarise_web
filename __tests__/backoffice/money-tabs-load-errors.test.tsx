@@ -9,7 +9,13 @@
  */
 
 import * as React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 const mockCapability = {
@@ -54,6 +60,13 @@ function renderWithQuery(ui: React.ReactElement) {
       {ui}
     </QueryClientProvider>,
   );
+}
+
+/** The alert block that holds the given title. */
+function alertWith(title: string): HTMLElement {
+  const el = screen.getByText(title).closest('[role="alert"]');
+  if (!(el instanceof HTMLElement)) throw new Error(`no alert holds ${title}`);
+  return el;
 }
 
 const originalFetch = global.fetch;
@@ -189,10 +202,51 @@ it("TDS says the quarterly summary failed, never ₹0.00 or All filed", async ()
   expect(screen.getAllByText("Unavailable")).toHaveLength(4);
 
   quartersOk = true;
-  fireEvent.click(screen.getByRole("button", { name: /Try again/ }));
+  fireEvent.click(
+    within(alertWith("Couldn't load the quarterly TDS summary")).getByRole(
+      "button",
+      { name: /Try again/ },
+    ),
+  );
   expect(await screen.findByText("All filed")).toBeTruthy();
   expect(
     screen.queryByText("Couldn't load the quarterly TDS summary"),
+  ).toBeNull();
+});
+
+it("TDS consultant breakdown failure offers Try again, which reads it again", async () => {
+  let consultantsOk = false;
+  global.fetch = jest.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("view=consultants")) {
+      if (!consultantsOk) return { ok: false, json: async () => ({}) };
+      return {
+        ok: true,
+        json: async () => ({
+          financialYear: "2026-27",
+          consultants: [],
+          total: 0,
+          deducteeCount: 0,
+          page: 1,
+          pageSize: 25,
+        }),
+      };
+    }
+    return {
+      ok: true,
+      json: async () => ({ financialYear: "2026-27", quarters: [] }),
+    };
+  }) as unknown as typeof fetch;
+  renderWithQuery(<AdminTDSPage />);
+  await screen.findByText("Couldn't load the consultant breakdown");
+  const alert = alertWith("Couldn't load the consultant breakdown");
+  expect(screen.queryByText(/No TDS deductions recorded/)).toBeNull();
+
+  consultantsOk = true;
+  fireEvent.click(within(alert).getByRole("button", { name: /Try again/ }));
+  expect(await screen.findByText(/No TDS deductions recorded/)).toBeTruthy();
+  expect(
+    screen.queryByText("Couldn't load the consultant breakdown"),
   ).toBeNull();
 });
 
