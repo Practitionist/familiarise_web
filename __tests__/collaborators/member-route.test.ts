@@ -241,8 +241,16 @@ describe.each([
           "FORBIDDEN",
         ],
         [
-          "someone who left, of their ended row",
-          "u-left",
+          "an unrelated expert, of an ended row",
+          "u-expert",
+          "plan-1",
+          "c-left",
+          403,
+          "FORBIDDEN",
+        ],
+        [
+          "a team member, of someone else's ended row",
+          "u-crew",
           "plan-1",
           "c-left",
           403,
@@ -255,6 +263,31 @@ describe.each([
         const res = await route.DELETE(request("DELETE"), ctx(planId, id));
         expect(await refusalOf(res)).toEqual({ status, code });
         expect(writes()).toEqual([]);
+      });
+
+      it("tells someone who left that their collaboration has already ended", async () => {
+        signIn("u-left");
+        const res = await route.DELETE(
+          request("DELETE"),
+          ctx("plan-1", "c-left"),
+        );
+        expect(res.status).toBe(404);
+        expect(await res.json()).toEqual({
+          error: "This collaboration has already ended.",
+          code: "NOT_FOUND",
+        });
+        expect(writes()).toEqual([]);
+      });
+
+      it("answers a stranger the same for an ended row and an id that names nothing", async () => {
+        signIn("u-expert");
+        const answers = [];
+        for (const id of ["c-left", "c-nothing"]) {
+          const res = await route.DELETE(request("DELETE"), ctx("plan-1", id));
+          answers.push({ status: res.status, body: await res.json() });
+        }
+        expect(answers[0].status).toBe(403);
+        expect(answers[1]).toEqual(answers[0]);
       });
 
       it("refuses a plan that does not exist without a write", async () => {

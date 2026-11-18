@@ -34,8 +34,9 @@ type WorldPlan = {
 };
 
 type RowWhere = {
+  id?: string;
   consultantProfileId?: string;
-  status: { in: string[] };
+  status: { in?: string[]; notIn?: string[] };
 };
 
 export const SENT_AT = new Date("2027-01-01T00:00:00Z");
@@ -122,10 +123,12 @@ export function collaborationWorld() {
   };
   reset();
 
-  const liveRows = ({ where }: { where: RowWhere }) =>
+  const rowsWhere = ({ where }: { where: RowWhere }) =>
     world.rows.filter(
       (r) =>
-        where.status.in.includes(r.status) &&
+        (where.status.in === undefined || where.status.in.includes(r.status)) &&
+        !where.status.notIn?.includes(r.status) &&
+        (where.id === undefined || r.id === where.id) &&
         (where.consultantProfileId === undefined ||
           r.consultantProfile.id === where.consultantProfileId),
     );
@@ -164,9 +167,9 @@ export function collaborationWorld() {
     },
     collaborator: {
       findFirst: jest.fn(
-        async (query: { where: RowWhere }) => liveRows(query)[0] ?? null,
+        async (query: { where: RowWhere }) => rowsWhere(query)[0] ?? null,
       ),
-      findMany: jest.fn(async (query: { where: RowWhere }) => liveRows(query)),
+      findMany: jest.fn(async (query: { where: RowWhere }) => rowsWhere(query)),
     },
   };
   return { world, db, reset };

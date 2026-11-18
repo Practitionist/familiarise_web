@@ -24,7 +24,7 @@ Every route needs a signed-in session (401 `UNAUTHORIZED` otherwise). Bodies and
 
 `data` on a write is a `CollaborationSummary`: the row's id, expert, role, tier, status and share, with the plan type and id. Nothing else about the row leaves a write.
 
-The handlers are thin. `lib/api/collaborations/plan-route.ts` and `lib/api/collaborations/member-handlers.ts` resolve the caller with `resolveCollaborationViewer`, require a manager where one is needed (`requireManager`), parse, and call one function of `lib/collaborators/service.ts`. The plan type on the respond route comes from the row, never from the request. A `DELETE` by a manager is a removal (`removeCollaborator`); by anyone else it must be the caller's own row and is a departure (`leaveCollaboration`).
+The handlers are thin. `lib/api/collaborations/plan-route.ts` and `lib/api/collaborations/member-handlers.ts` resolve the caller with `resolveCollaborationViewer`, require a manager where one is needed (`requireManager`), parse, and call one function of `lib/collaborators/service.ts`. The plan type on the respond route comes from the row, never from the request. A `DELETE` by a manager is a removal (`removeCollaborator`); by anyone else it must be the caller's own row and is a departure (`leaveCollaboration`). A caller whose own row on that plan has already ended gets `404 NOT_FOUND` "This collaboration has already ended."; every other id, whether or not it names a row, gets the same `403 FORBIDDEN`.
 
 ## Refusals
 
@@ -175,7 +175,7 @@ sequenceDiagram
     W->>L: release or keep the hold as the writer needs
 ```
 
-`lockPlanForMove` and `lockPlanAndCheckBatch` (`lib/booking/host-slot-batch.ts`) do the middle of this: lock the plan row, read the accepted team inside the transaction, and report whether every member's calendar is in the held batch. The webinar re-time (`lib/booking/event-retime.ts`), the class re-time (`lib/booking/class-retime.ts`), the make-up session (`lib/booking/class-sessions.ts`) and the allocator (`lib/booking/allocation/collaborators.ts`) call them. An expert who accepted between the writer's first read and its transaction is found by the second read, and the writer refuses with its ordinary "being booked right now" conflict; the retry holds their calendar too.
+`lockPlanForMove` and `lockPlanAndCheckBatch` (`lib/booking/host-slot-batch.ts`) do the middle of this: lock the plan row, read the accepted team inside the transaction, and report whether every member's calendar is in the held batch. The webinar re-time (`lib/booking/event-retime.ts`), the class re-time (`lib/booking/class-retime.ts`), the make-up session (`lib/booking/class-sessions.ts`), the allocator (`lib/booking/allocation/collaborators.ts`) and the two plan editors (`PATCH` in `app/api/bookings/{webinars,classes}/crud-with-plan/route.ts`, on any edit that took a calendar batch: a new time or period, a publish, a new owner) call them. An expert who accepted between the writer's first read and its transaction is found by the second read, and the writer refuses with its ordinary "being booked right now" conflict; the retry holds their calendar too.
 
 Together with the accept's second schedule read, this closes the pair of races between "someone joins the team" and "the schedule moves": whichever takes the plan lock second sees the other's commit.
 
