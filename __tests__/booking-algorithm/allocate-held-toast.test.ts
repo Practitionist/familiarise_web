@@ -1,4 +1,6 @@
 /**
+ * @jest-environment node
+ *
  * "Save picked times" on an unpaid request holds the times: the toast follows
  * the allocate route's `awaitingPayment` and `payExpiresAt`, read through the
  * real client service, and never says "confirmed" before the learner pays.
@@ -10,17 +12,25 @@ import { AllocationAlgorithms } from "@/lib/scheduling/allocationAlgorithms";
 import { timingsSaved } from "@/lib/scheduling/allocationMessages";
 import { makeConsecutiveTimeSlots } from "../fixtures/booking.mockData";
 
-const originalFetch = global.fetch;
+// Before the fixtures' deadline and slots, so the allocator never refuses them as past.
+beforeEach(() => {
+  jest.useFakeTimers({
+    now: new Date("2030-06-10T00:00:00Z"),
+    advanceTimers: true,
+  });
+});
 afterEach(() => {
-  global.fetch = originalFetch;
+  jest.useRealTimers();
+  jest.restoreAllMocks();
 });
 
 function respondWith(body: Record<string, unknown>) {
-  global.fetch = jest.fn(async () => ({
-    ok: true,
-    status: 200,
-    json: async () => body,
-  })) as unknown as typeof fetch;
+  jest.spyOn(global, "fetch").mockResolvedValue(
+    new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
 }
 
 async function saveTwoSlots() {
