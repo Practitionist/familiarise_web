@@ -336,6 +336,7 @@ export function InviteDialog({
                   audience="manager"
                   planPricePaise={planPricePaise}
                   otherSharePercents={team.map((c) => sharePercentOf(c) ?? 0)}
+                  othersPending={team.some((c) => c.status === "PENDING")}
                   expiresAt={inviteExpiresAt(new Date())}
                 />
                 <RefusalNotice

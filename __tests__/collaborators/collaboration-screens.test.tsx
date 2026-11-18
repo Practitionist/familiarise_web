@@ -16,9 +16,11 @@ jest.mock("@/hooks/use-toast", () => ({ useToast: () => ({ toast }) }));
 
 import { ActiveCollaborationCard } from "@/components/collaborators/ActiveCollaborationCard";
 import { CollaboratorsTab } from "@/components/collaborators/CollaboratorsTab";
+import { ConsultantSearchInput } from "@/components/collaborators/ConsultantSearchInput";
 import { EndCollaborationDialog } from "@/components/collaborators/EndCollaborationDialog";
 import { InviteDialog } from "@/components/collaborators/InviteDialog";
 import { PendingInvitationCard } from "@/components/collaborators/PendingInvitationCard";
+import { TermsSummary } from "@/components/collaborators/TermsSummary";
 import type {
   CollaborationWithPlan,
   TeamMember,
@@ -343,7 +345,7 @@ it("an invite is found by keyboard, reviewed with a rupee example, then sent as 
       planRef={{ planType: "webinar", planId: "plan-1" }}
       planTitle="Intro to SIPs"
       planPricePaise={1_000_000}
-      team={[member()]}
+      team={[member({ status: "PENDING" })]}
     />,
   );
   fireEvent.click(
@@ -393,6 +395,11 @@ it("an invite is found by keyboard, reviewed with a rupee example, then sent as 
     ),
   ).toBeInTheDocument();
   expect(
+    within(dialog).getByText(
+      /These figures assume every pending invitation is accepted\./,
+    ),
+  ).toBeInTheDocument();
+  expect(
     within(dialog).getByText(/collaborators hold 40% of this plan/),
   ).toBeInTheDocument();
   expect(
@@ -413,5 +420,63 @@ it("an invite is found by keyboard, reviewed with a rupee example, then sent as 
     await within(dialog).findByText(
       "Collaborators can share at most 90% of a plan between them. 20% is still free on this plan.",
     ),
+  ).toBeInTheDocument();
+});
+
+it("the expert search opens finished results only while its field has focus", async () => {
+  answers["GET /api/consultants/search?q=pri"] = [
+    {
+      status: 200,
+      body: {
+        data: [{ id: "profile-2", user: { name: "Priya", image: null } }],
+      },
+    },
+  ];
+  const onListOpenChange = jest.fn();
+  render(
+    <ConsultantSearchInput
+      label="Expert"
+      selected={null}
+      onSelect={jest.fn()}
+      onListOpenChange={onListOpenChange}
+    />,
+  );
+  const search = screen.getByRole("combobox", { name: "Expert" });
+  fireEvent.focus(search);
+  fireEvent.change(search, { target: { value: "pri" } });
+  fireEvent.blur(search);
+
+  expect(await screen.findByText("1 expert found.")).toBeInTheDocument();
+  expect(search).toHaveAttribute("aria-expanded", "false");
+  expect(onListOpenChange).not.toHaveBeenCalledWith(true);
+
+  fireEvent.focus(search);
+  expect(search).toHaveAttribute("aria-expanded", "true");
+  expect(onListOpenChange).toHaveBeenLastCalledWith(true);
+});
+
+it("the rupee example names its assumption only when another invitation is still pending", () => {
+  const terms = (othersPending: boolean) => (
+    <TermsSummary
+      role="CO_HOST"
+      sharePercent={25}
+      audience="manager"
+      planPricePaise={1_000_000}
+      otherSharePercents={[15]}
+      othersPending={othersPending}
+    />
+  );
+  const { rerender } = render(terms(false));
+  const example =
+    /₹1,500\.00 goes to your other collaborators and ₹6,000\.00 stays with you, before the platform fee\./;
+  expect(screen.getByText(example)).toBeInTheDocument();
+  expect(screen.queryByText(/assume every pending invitation/)).toBeNull();
+
+  rerender(terms(true));
+  expect(screen.getByText(example)).toHaveTextContent(
+    "These figures assume every pending invitation is accepted.",
+  );
+  expect(
+    screen.getByText(/collaborators hold 40% of this plan/),
   ).toBeInTheDocument();
 });

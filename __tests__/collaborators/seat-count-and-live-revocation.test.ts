@@ -16,6 +16,7 @@ const mockRemoveChannelMembers = jest.fn(async () => undefined);
 jest.mock("../../lib/stream-client", () => ({
   getStreamChatClient: jest.fn(() => ({
     channel: () => ({ removeMembers: mockRemoveChannelMembers }),
+    queryChannels: jest.fn(async () => []),
   })),
   getStreamVideoClient: jest.fn(() => ({
     video: {
@@ -32,6 +33,8 @@ jest.mock("../../lib/stream-client", () => ({
 jest.mock("../../lib/stream/event-channel-service", () => ({
   addUserToEventChannel: jest.fn(async () => ({ success: true })),
   checkEventChannelExists: jest.fn(async () => false),
+  getChannelId: (type: string, id: string) => `${type}-${id}`,
+  getChannelType: () => "team",
   removeUsersFromEventChannel: jest.fn(async () => ({ failedUserIds: [] })),
 }));
 

@@ -3,9 +3,11 @@
  */
 
 const mockChatRemove = jest.fn();
+const mockChatQuery = jest.fn();
 const mockEventRemove = jest.fn();
 const mockCallUpdate = jest.fn();
 const mockCallMute = jest.fn();
+const mockCallKick = jest.fn();
 const mockReport = jest.fn();
 
 type Intent = { nextRetryAt: Date; status: string };
@@ -47,13 +49,14 @@ jest.mock("../../lib/stream-client", () => ({
     channel: (_type: string, id: string) => ({
       removeMembers: (ids: string[]) => mockChatRemove(id, ids),
     }),
+    queryChannels: (filter: unknown) => mockChatQuery(filter),
   }),
   getStreamVideoClient: () => ({
     video: {
       call: (_type: string, id: string) => ({
         updateCallMembers: (payload: unknown) => mockCallUpdate(id, payload),
         updateUserPermissions: (payload: unknown) => mockCallMute(id, payload),
-        kickUser: jest.fn(async () => ({})),
+        kickUser: (payload: unknown) => mockCallKick(id, payload),
       }),
     },
   }),
@@ -61,6 +64,8 @@ jest.mock("../../lib/stream-client", () => ({
   isExpectedStreamError: () => false,
 }));
 jest.mock("../../lib/stream/event-channel-service", () => ({
+  getChannelId: (type: string, id: string) => `${type}-${id}`,
+  getChannelType: () => "team",
   removeUsersFromEventChannel: (...args: unknown[]) => mockEventRemove(...args),
 }));
 jest.mock("../../lib/stream/dm-eligibility", () => ({}));
@@ -73,6 +78,11 @@ import { resetThrottledCaptureForTesting } from "../../lib/observability/throttl
 
 /** Loaded on first use, after the mocks above exist. */
 const revocation = () => import("../../lib/stream/access-revocation");
+
+type MemberQuery = { cid: { $in: string[] }; members: { $in: string[] } };
+/** Stream's answer when the user is still a member of each channel in `cids`. */
+const channelsOf = (cids: string[]) =>
+  cids.map((cid) => ({ id: cid.slice(cid.indexOf(":") + 1) }));
 
 const ref = { planType: "webinar", planId: "plan-1" } as const;
 const collabIntent = {
@@ -94,8 +104,13 @@ beforeEach(() => {
   mockDb.appointmentParticipant.findMany.mockResolvedValue([]);
   mockDb.appointmentOccurrence.findMany.mockResolvedValue([]);
   mockChatRemove.mockResolvedValue({});
+  mockChatQuery.mockImplementation(async (filter: MemberQuery) =>
+    channelsOf(filter.cid.$in),
+  );
   mockEventRemove.mockResolvedValue({ failedUserIds: [] });
   mockCallUpdate.mockResolvedValue({});
+  mockCallMute.mockResolvedValue({});
+  mockCallKick.mockResolvedValue({});
 });
 
 describe("a collaborator's revocation intent", () => {
@@ -233,6 +248,127 @@ describe("the drive", () => {
       ["occurrence-2", mute],
     ]);
     expect(mockDb.appointmentParticipant.updateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("the drive's event chats", () => {
+  it("asks Stream which unseated event chats still hold the user and leaves only those", async () => {
+    mockDb.webinar.findMany.mockResolvedValue([
+      { id: "w-1", appointment: { id: "a-1" } },
+      { id: "w-2", appointment: { id: "a-2" } },
+      { id: "w-3", appointment: { id: "a-3" } },
+    ]);
+    mockDb.appointmentParticipant.findMany.mockResolvedValue([
+      { appointmentId: "a-2" },
+    ]);
+    mockChatQuery.mockResolvedValue(channelsOf(["team:webinar-w-3"]));
+
+    await (await revocation()).revokeCollaboratorAccess(ref, "u-1");
+
+    expect(mockChatQuery.mock.calls).toEqual([
+      [
+        {
+          cid: { $in: ["team:webinar-w-1", "team:webinar-w-3"] },
+          members: { $in: ["u-1"] },
+        },
+      ],
+    ]);
+    expect(mockEventRemove.mock.calls).toEqual([["webinar", "w-3", ["u-1"]]]);
+    expect(intent?.status).toBe("SUCCEEDED");
+  });
+
+  it("spends one membership query per thirty events, however many the plan has", async () => {
+    mockDb.webinar.findMany.mockResolvedValue(
+      Array.from({ length: 65 }, (_, i) => ({
+        id: `w-${i}`,
+        appointment: null,
+      })),
+    );
+    mockChatQuery.mockImplementation(async (filter: MemberQuery) =>
+      channelsOf(filter.cid.$in.filter((cid) => cid.endsWith("-w-64"))),
+    );
+
+    await (await revocation()).revokeCollaboratorAccess(ref, "u-1");
+
+    expect(
+      mockChatQuery.mock.calls.map(([filter]) => filter.cid.$in.length),
+    ).toEqual([30, 30, 5]);
+    expect(mockEventRemove.mock.calls).toEqual([["webinar", "w-64", ["u-1"]]]);
+  });
+
+  it("stays owed when Stream cannot say which event chats still hold the user", async () => {
+    mockChatQuery.mockRejectedValue(new Error("stream down"));
+
+    await (await revocation()).revokeCollaboratorAccess(ref, "u-1");
+
+    expect(mockEventRemove).not.toHaveBeenCalled();
+    expect(intent?.status).toBe("PENDING");
+  });
+});
+
+describe("the drive's time budget", () => {
+  const drive = async (deadlineMs: number) =>
+    (
+      await import("../../lib/stream/collaborator-access")
+    ).driveCollaboratorRevocation(ref, "u-1", deadlineMs);
+  let now: number;
+  let clock: jest.SpiedFunction<typeof Date.now>;
+
+  beforeEach(() => {
+    now = 1_000;
+    clock = jest.spyOn(Date, "now").mockImplementation(() => now);
+    mockDb.appointmentOccurrence.findMany.mockResolvedValue([
+      { appointmentId: "a-1", meeting: { streamCallId: "occurrence-1" } },
+      { appointmentId: "a-2", meeting: { streamCallId: "occurrence-2" } },
+    ]);
+  });
+  afterEach(() => clock.mockRestore());
+
+  it("starts no room write after the deadline and returns the unfinished rooms as owed", async () => {
+    mockDb.webinar.findMany.mockResolvedValue([]);
+    mockCallUpdate.mockImplementationOnce(async () => {
+      now = 5_000;
+      return {};
+    });
+
+    await expect(drive(2_000)).resolves.toBe(
+      "2 of 2 calls not finished within the time budget",
+    );
+
+    expect(mockCallUpdate.mock.calls).toEqual([
+      ["occurrence-1", { remove_members: ["u-1"] }],
+    ]);
+    expect(mockCallMute).not.toHaveBeenCalled();
+    expect(mockCallKick).not.toHaveBeenCalled();
+  });
+
+  it("keeps a room write that failed before the deadline counted as failed", async () => {
+    mockDb.webinar.findMany.mockResolvedValue([]);
+    mockCallUpdate.mockImplementationOnce(async () => {
+      now = 5_000;
+      throw new Error("stream down");
+    });
+
+    await expect(drive(2_000)).resolves.toBe(
+      "1 of 2 calls not left; 1 of 2 calls not finished within the time budget",
+    );
+  });
+
+  it("asks Stream nothing about event chats after the deadline", async () => {
+    mockDb.appointmentOccurrence.findMany.mockResolvedValue([]);
+    mockChatRemove.mockImplementationOnce(async () => {
+      // The room leg has started by the time this request returns.
+      await Promise.resolve();
+      now = 5_000;
+      return {};
+    });
+
+    await expect(drive(2_000)).resolves.toBe(
+      "2 of 2 event channels not checked",
+    );
+
+    expect(mockChatQuery).not.toHaveBeenCalled();
+    expect(mockEventRemove).not.toHaveBeenCalled();
   });
 });
 
