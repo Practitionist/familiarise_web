@@ -123,9 +123,9 @@ export function ConsultantSearchInput({
         found = null;
       }
       if (controller.signal.aborted) return;
+      // Results never open the list themselves: focus, typing and the arrow keys do.
       setSettled({ query, results: found });
       setActiveIndex(0);
-      setOpen(true);
     }, 300);
     return () => {
       clearTimeout(timer);
@@ -213,7 +213,10 @@ export function ConsultantSearchInput({
           autoComplete="off"
           placeholder="Search by name"
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            setText(e.target.value);
+            setOpen(true);
+          }}
           onFocus={() => setOpen(true)}
           onBlur={() => setOpen(false)}
           onKeyDown={onKeyDown}

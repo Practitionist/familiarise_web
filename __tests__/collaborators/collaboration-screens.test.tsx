@@ -16,6 +16,7 @@ jest.mock("@/hooks/use-toast", () => ({ useToast: () => ({ toast }) }));
 
 import { ActiveCollaborationCard } from "@/components/collaborators/ActiveCollaborationCard";
 import { CollaboratorsTab } from "@/components/collaborators/CollaboratorsTab";
+import { ConsultantSearchInput } from "@/components/collaborators/ConsultantSearchInput";
 import { EndCollaborationDialog } from "@/components/collaborators/EndCollaborationDialog";
 import { InviteDialog } from "@/components/collaborators/InviteDialog";
 import { PendingInvitationCard } from "@/components/collaborators/PendingInvitationCard";
@@ -414,4 +415,36 @@ it("an invite is found by keyboard, reviewed with a rupee example, then sent as 
       "Collaborators can share at most 90% of a plan between them. 20% is still free on this plan.",
     ),
   ).toBeInTheDocument();
+});
+
+it("the expert search opens finished results only while its field has focus", async () => {
+  answers["GET /api/consultants/search?q=pri"] = [
+    {
+      status: 200,
+      body: {
+        data: [{ id: "profile-2", user: { name: "Priya", image: null } }],
+      },
+    },
+  ];
+  const onListOpenChange = jest.fn();
+  render(
+    <ConsultantSearchInput
+      label="Expert"
+      selected={null}
+      onSelect={jest.fn()}
+      onListOpenChange={onListOpenChange}
+    />,
+  );
+  const search = screen.getByRole("combobox", { name: "Expert" });
+  fireEvent.focus(search);
+  fireEvent.change(search, { target: { value: "pri" } });
+  fireEvent.blur(search);
+
+  expect(await screen.findByText("1 expert found.")).toBeInTheDocument();
+  expect(search).toHaveAttribute("aria-expanded", "false");
+  expect(onListOpenChange).not.toHaveBeenCalledWith(true);
+
+  fireEvent.focus(search);
+  expect(search).toHaveAttribute("aria-expanded", "true");
+  expect(onListOpenChange).toHaveBeenLastCalledWith(true);
 });
