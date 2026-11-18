@@ -876,7 +876,9 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
       isConsultantInitiated &&
       session.user.consultantProfileId === existingTrial.consultantProfileId &&
       existingTrial.status === TrialStatus.SCHEDULED;
-    const click = await readCancelClick(request);
+    const read = await readCancelClick(request);
+    if (!read.ok) return read.response;
+    const { click } = read;
     const noticeUserIds = [
       existingTrial.consultantProfile.user.id,
       existingTrial.consulteeProfile.user.id,
@@ -1070,9 +1072,31 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
   }
 }
 
-/** What the click confirmed from the cancel dialog; an absent or malformed body confirms nothing. */
-async function readCancelClick(request: NextRequest): Promise<TrialCancelBody> {
-  const body: unknown = await request.json().catch(() => null);
+/** What the click confirmed from the cancel dialog: an empty body confirms nothing, a malformed one answers 400. */
+async function readCancelClick(
+  request: NextRequest,
+): Promise<
+  { ok: true; click: TrialCancelBody } | { ok: false; response: NextResponse }
+> {
+  const text = await request.text().catch(() => "");
+  if (text.trim() === "") return { ok: true, click: {} };
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    body = undefined;
+  }
   const parsed = TrialCancelBodySchema.safeParse(body);
-  return parsed.success ? parsed.data : {};
+  if (parsed.success) return { ok: true, click: parsed.data };
+  return {
+    ok: false,
+    response: NextResponse.json(
+      {
+        error: "Validation failed",
+        code: "VALIDATION_FAILED",
+        details: parsed.error.issues,
+      },
+      { status: 400 },
+    ),
+  };
 }

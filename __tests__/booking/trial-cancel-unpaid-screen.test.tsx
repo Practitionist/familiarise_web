@@ -12,18 +12,19 @@ import { projectRow } from "../fixtures/prisma-projection";
 import { NOW, storedTrial } from "../fixtures/stored-bookings";
 
 const mockToast = jest.fn();
-jest.mock("next/navigation", () => ({
-  useRouter: () => ({ push: jest.fn(), refresh: jest.fn() }),
-  useParams: () => ({ consulteeId: "cee-1" }),
-}));
-jest.mock("@/lib/auth-client", () => ({
-  useSession: () => ({
-    data: { user: { id: "u-l", consulteeProfileId: "cee-1", role: "USER" } },
-  }),
-}));
-jest.mock("@/hooks/scheduling/useLazyJoinMeeting", () => ({
-  useLazyJoinMeeting: () => jest.fn(),
-}));
+jest.mock("next/navigation", () =>
+  jest
+    .requireActual("../fixtures/learner-adapter-mocks")
+    .learnerNavigationModule(),
+);
+jest.mock("@/lib/auth-client", () =>
+  jest
+    .requireActual("../fixtures/learner-adapter-mocks")
+    .learnerSessionModule(),
+);
+jest.mock("@/hooks/scheduling/useLazyJoinMeeting", () =>
+  jest.requireActual("../fixtures/learner-adapter-mocks").lazyJoinModule(),
+);
 jest.mock("@/hooks/use-toast", () => ({
   useToast: () => ({ toast: mockToast }),
 }));
@@ -86,7 +87,7 @@ function Harness({ vm }: { vm: AppointmentVM }) {
   );
 }
 
-it("an unpaid screen sends expectedPaid: false and a landed payment closes on 'Your payment just went through'", async () => {
+it("an unpaid screen sends expectedPaid: false and a landed payment closes the dialog on 'Your payment just went through'", async () => {
   mockRows.trial = [storedTrial(true)];
   const [vm] = mapConsulteeEvents(
     await readConsulteeEvents("cee-1", { kind: "personal" }),
@@ -117,6 +118,11 @@ it("an unpaid screen sends expectedPaid: false and a landed payment closes on 'Y
     expect(mockToast).toHaveBeenCalledWith(
       expect.objectContaining({ title: "Your payment just went through" }),
     ),
+  );
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("button", { name: "Cancel trial" }),
+    ).not.toBeInTheDocument(),
   );
   const deletes = fetchMock.mock.calls.filter(
     ([, init]) => (init as RequestInit | undefined)?.method === "DELETE",

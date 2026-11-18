@@ -528,3 +528,26 @@ describe("the learner's click binds the paid state the dialog showed", () => {
     );
   });
 });
+
+describe("the cancel body is validated", () => {
+  it("a supplied body that fails the schema answers 400 and nothing moves", async () => {
+    const res = await del({ confirmedRefundPaise: 0, expectedPaid: "false" });
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("VALIDATION_FAILED");
+    expect(transitionTrial).not.toHaveBeenCalled();
+    expect(stampRefundOwed).not.toHaveBeenCalled();
+  });
+
+  it("a bodyless DELETE still reads as an absent confirmation", async () => {
+    state.trialStatus = "AWAITING_PAYMENT";
+    state.paid = false;
+    const res = await DELETE(
+      new NextRequest("http://localhost/api/trials/trial-1", {
+        method: "DELETE",
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    expect(calls).toContain("cancel");
+  });
+});

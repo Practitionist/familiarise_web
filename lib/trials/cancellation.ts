@@ -329,20 +329,27 @@ export class TrialRefundQuoteError extends Error {
     readonly quote: TrialRefundQuote,
     paymentLanded = false,
   ) {
-    super(
-      code === "REFUND_QUOTE_REQUIRED"
-        ? "Confirm the refund quote before cancelling this paid trial."
-        : paymentLanded
-          ? "Your payment just went through. Review the refund before you cancel."
-          : "The refund for this trial has changed since you saw it. Check the new amount and confirm again.",
-    );
+    super(trialQuoteRefusalMessage(code, paymentLanded));
     this.name = "TrialRefundQuoteError";
   }
 }
 
+function trialQuoteRefusalMessage(
+  code: TrialRefundQuoteError["code"],
+  paymentLanded: boolean,
+): string {
+  if (code === "REFUND_QUOTE_REQUIRED") {
+    return "Confirm the refund quote before cancelling this paid trial.";
+  }
+  if (paymentLanded) {
+    return "Your payment just went through. Review the refund before you cancel.";
+  }
+  return "The refund for this trial has changed since you saw it. Check the new amount and confirm again.";
+}
+
 /**
- * Throws unless the click confirmed the quote a paid trial has. A click made on
- * an unpaid screen never cancels a paid trial, even when both quotes are ₹0.
+ * Throws unless the click confirmed the quote a paid trial has. A click that
+ * saw an unpaid trial (`expectedPaid: false`) never cancels a paid one, even at ₹0.
  */
 export function assertTrialQuoteConfirmed(
   quote: TrialRefundQuote | null,
