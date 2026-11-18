@@ -228,3 +228,47 @@ describe("NeedsYouCallout → the pay-link line", () => {
     ).toBeTruthy();
   });
 });
+
+describe("NeedsYouCallout → each countdown names its deadline", () => {
+  const at = () => new Date(Date.now() + 3 * HOUR);
+  const view = (
+    kind: "PAY" | "REMIND_OR_WITHDRAW",
+    heldCount: number,
+    payFirst: "trial" | "checkout" | null = null,
+  ) => (
+    <NeedsYouCallout
+      presentation={
+        {
+          nextAction: { kind, deadline: at(), label: "Pay" },
+          bookingState: { state: "AWAITING_PAYMENT" },
+        } as unknown as BookingPresentation
+      }
+      names={{ payer: "Payer", consultant: "Expert" }}
+      heldCount={heldCount}
+      payFirst={payFirst}
+      awaitingPayment={{
+        reminderExpiresAt: null,
+        remind: jest.fn(),
+        withdraw: jest.fn(),
+        onChanged: jest.fn(),
+      }}
+      pending={null}
+      onPay={jest.fn()}
+      onHelp={() => undefined}
+    />
+  );
+
+  it.each([
+    ["PAY", 2, null, /^Slot held \d+h \d+m$/],
+    ["PAY", 0, "checkout", /^Slot held \d+h \d+m$/],
+    ["PAY", 0, null, /^\d+h \d+m to pay$/],
+    ["REMIND_OR_WITHDRAW", 1, null, /^Slot held \d+h \d+m$/],
+    ["REMIND_OR_WITHDRAW", 0, null, /^\d+h \d+m to pay$/],
+  ] as const)(
+    "%s with %i held (pay-first %s)",
+    (kind, held, payFirst, label) => {
+      render(view(kind, held, payFirst));
+      expect(screen.getByText(label)).toBeTruthy();
+    },
+  );
+});

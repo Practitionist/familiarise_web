@@ -66,8 +66,10 @@ const user = (id: string, name: string) => ({ id, name, image: null });
 function subscriptionDetail(over: {
   status: string;
   payment?: TAppointmentDetail["appointment"]["payment"];
+  /** Sessions placed so far; six held rows when omitted. */
+  sessions?: number;
 }): TAppointmentDetail {
-  const occurrences = Array.from({ length: 6 }, (_, i) => ({
+  const occurrences = Array.from({ length: over.sessions ?? 6 }, (_, i) => ({
     id: `occ-${i}`,
     appointmentId: "appt-1",
     startsAt: new Date(NOW + (4 + i) * DAY),
@@ -325,5 +327,39 @@ describe("the next-session card at 390 px", () => {
       /<div class="mt-5 flex flex-wrap items-center gap-4 rounded-xl[^"]*">.*?<div class="([^"]*)"><p class="text-xs font-medium text-muted-foreground">/,
     );
     expect(card?.[1]).toContain("basis-44");
+  });
+});
+
+describe("consultant · paid subscription with no session scheduled yet", () => {
+  it("counts down the time to schedule, never a held slot", () => {
+    viewerId = "u-ethan";
+    currentDetail = subscriptionDetail({
+      status: "PENDING",
+      sessions: 0,
+      payment: [
+        {
+          id: "pay-1",
+          paymentStatus: "SUCCEEDED",
+          amount: 708_000,
+          taxAmount: 108_000,
+          currency: "INR",
+          paymentMethod: "RAZORPAY",
+          paymentGateway: "RAZORPAY",
+          receiptUrl: null,
+          createdAt: new Date(NOW - 3_600_000),
+          capturedAt: new Date(NOW - 3_600_000),
+          expiresAt: null,
+          organizationId: null,
+          consumerInvoice: null,
+          legs: [],
+          refunds: [],
+          disputes: [],
+          childPayments: [],
+        },
+      ] as unknown as TAppointmentDetail["appointment"]["payment"],
+    });
+    const html = render("consultant").replace(/<!-- -->/g, "");
+    expect(html).toMatch(/\d+h \d+m to schedule/);
+    expect(html).not.toContain("Slot held");
   });
 });

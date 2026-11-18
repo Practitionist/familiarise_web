@@ -157,24 +157,36 @@ function Shell({
   );
 }
 
-/** "Slot held 21h 40m": the hold's clock, which can differ from the pay link's; nothing once it has passed. */
-function TimeLeft({ deadline }: { deadline: Date }) {
+/** What a countdown's deadline is for: a held slot, a payment, placing sessions, or answering a move. */
+type CountdownPurpose = "held" | "pay" | "schedule" | "answer";
+
+/** The time left, worded for its deadline ("Slot held 21h 40m", "21h 40m to schedule"); nothing once it has passed. */
+function TimeLeft({
+  deadline,
+  purpose,
+}: {
+  deadline: Date;
+  purpose: CountdownPurpose;
+}) {
   const { minutesLeft, isExpired } = useHoldCountdown(deadline);
   if (isExpired) return null;
-  const h = Math.floor(minutesLeft / 60);
-  const m = minutesLeft % 60;
   return (
     <span className="inline-flex items-center gap-1 text-xs font-medium tabular-nums text-amber-800 dark:text-amber-300">
       <Timer className="h-3.5 w-3.5" />
-      {holdLeftLabel(h, m)}
+      {countdownLabel(purpose, minutesLeft)}
     </span>
   );
 }
 
-function holdLeftLabel(h: number, m: number): string {
-  if (h > 0) return `Slot held ${h}h ${m}m`;
-  if (m > 0) return `Slot held ${m}m`;
-  return "Slot held under a minute";
+function countdownLabel(purpose: CountdownPurpose, minutesLeft: number) {
+  const h = Math.floor(minutesLeft / 60);
+  const m = minutesLeft % 60;
+  let left = "under a minute";
+  if (h > 0) left = `${h}h ${m}m`;
+  else if (m > 0) left = `${m}m`;
+  if (purpose === "held") return `Slot held ${left}`;
+  const text = `${left} to ${purpose}`;
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 /** "₹6,000 + 18% GST" from the row's own split; the base alone when there is no tax. */
@@ -502,7 +514,12 @@ function RemindOrWithdraw({
       onHelp={onHelp}
       actions={
         <>
-          {deadline && <TimeLeft deadline={deadline} />}
+          {deadline && (
+            <TimeLeft
+              deadline={deadline}
+              purpose={heldCount > 0 ? "held" : "pay"}
+            />
+          )}
           {canRemind && (
             <Button
               size="sm"
@@ -706,7 +723,7 @@ function CalloutBody(props: Omit<NeedsYouCalloutProps, "embedded">) {
           onHelp={onHelp}
           actions={
             <>
-              {deadline && <TimeLeft deadline={deadline} />}
+              {deadline && <TimeLeft deadline={deadline} purpose="schedule" />}
               <Button size="sm" asChild>
                 <Link href={decision.allocateHref}>{nextAction.label}</Link>
               </Button>
@@ -737,7 +754,12 @@ function CalloutBody(props: Omit<NeedsYouCalloutProps, "embedded">) {
           onHelp={onHelp}
           actions={
             <>
-              {deadline && <TimeLeft deadline={deadline} />}
+              {deadline && (
+                <TimeLeft
+                  deadline={deadline}
+                  purpose={payFirst || heldCount > 0 ? "held" : "pay"}
+                />
+              )}
               <Button
                 size="sm"
                 className="bg-amber-500 text-white hover:bg-amber-600 dark:bg-amber-600 dark:hover:bg-amber-500"
@@ -763,7 +785,7 @@ function CalloutBody(props: Omit<NeedsYouCalloutProps, "embedded">) {
           onHelp={onHelp}
           actions={
             <>
-              {deadline && <TimeLeft deadline={deadline} />}
+              {deadline && <TimeLeft deadline={deadline} purpose="answer" />}
               {answers.includes("accept") && (
                 <Button
                   size="sm"
