@@ -42,7 +42,10 @@ describe("an ended contract", () => {
       ),
       "utf8",
     );
-    expect(page).toMatch(/contractIsEditable\(c\.status\) && \(/);
+    // The guard opens the Edit button itself, not the auto-renew note that shares it.
+    expect(page).toMatch(
+      /contractIsEditable\(c\.status\) && \(\s*<Button\b(?:(?!<\/Button>)[\s\S])*?<Pencil\b[^>]*\/> Edit\s*<\/Button>/,
+    );
     expect(page).toMatch(/contractAutoRenewLabel\(c\)/);
     expect(page).not.toMatch(/c\.autoRenew \? "Yes" : "No"/);
   });

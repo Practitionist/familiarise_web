@@ -128,6 +128,7 @@ it("reads a ₹0 booking as Free in the reader and on the row", async () => {
   expect(
     await screen.findByText("qa-S-08 free consultation"),
   ).toBeInTheDocument();
-  expect(screen.getByText("Free")).toBeInTheDocument();
-  expect(screen.queryByText(/₹0\.00/)).toBeNull();
+  // The row's meta line says Free and carries no amount at all.
+  const free = screen.getByText("Free");
+  expect(free.parentElement?.textContent).not.toMatch(/₹/);
 });
