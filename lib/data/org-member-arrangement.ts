@@ -16,7 +16,10 @@ import type { CoveredPlanType, PayoutRecipient } from "@prisma/client";
 // is the expert's own per-org view and used to hold a local 10-minute copy, so
 // the consultant saw Join appear five minutes later here than on the dashboard
 // the page links them to.
-import { CONSULTANT_JOIN_WINDOW_MS } from "@/lib/appointments/occurrences";
+import {
+  CONSULTANT_JOIN_WINDOW_MS,
+  liveOccurrenceWhere,
+} from "@/lib/appointments/occurrences";
 
 /** Where the expert's split comes from, for the Compensation copy. */
 function rateCardSource(
@@ -257,7 +260,10 @@ export async function getMyArrangementData(params: {
     ? await prisma.appointment.findMany({
         where: {
           organizationId: orgId,
-          occurrences: { some: { endsAt: { gte: now } } },
+          // A cancelled or rescheduled-away session is not upcoming.
+          occurrences: {
+            some: { endsAt: { gte: now }, ...liveOccurrenceWhere },
+          },
           OR: [
             {
               consultation: {
@@ -278,7 +284,7 @@ export async function getMyArrangementData(params: {
           id: true,
           appointmentType: true,
           occurrences: {
-            where: { endsAt: { gte: now } },
+            where: { endsAt: { gte: now }, ...liveOccurrenceWhere },
             orderBy: { startsAt: "asc" },
             take: 1,
             select: {

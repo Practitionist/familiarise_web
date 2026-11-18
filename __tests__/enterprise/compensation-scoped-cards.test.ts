@@ -173,3 +173,19 @@ it("keeps the plan scope of contract-owned cards so two of them stay distinguish
     }),
   ]);
 });
+
+it("lists only live sessions as upcoming: a cancelled or replaced session is left out", async () => {
+  await getMyArrangementData({
+    orgId: "org-1",
+    payoutRecipient: "SELF",
+    consultantProfileId: "cp-1",
+    rateCardOverrideId: null,
+  });
+  const args = m.appointment.findMany.mock.calls[0]?.[0];
+  const live = {
+    deletedAt: null,
+    completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
+  };
+  expect(args.where.occurrences.some).toMatchObject(live);
+  expect(args.select.occurrences.where).toMatchObject(live);
+});
