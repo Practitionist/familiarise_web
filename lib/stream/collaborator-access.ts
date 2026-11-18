@@ -17,10 +17,13 @@ import {
 } from "@/lib/stream-client";
 import { collabChannelId } from "@/lib/stream-channel-ids";
 import { streamLogger } from "@/lib/stream-logger";
+import { chunk, STREAM_QUERY_CHANNELS_LIMIT } from "@/lib/stream/batch";
 import { CALL_MEMBER_ROLE, STREAM_CALL_TYPE } from "@/lib/stream/call-cid";
 import {
   addUserToEventChannel,
   checkEventChannelExists,
+  getChannelId,
+  getChannelType,
   removeUsersFromEventChannel,
 } from "@/lib/stream/event-channel-service";
 import { STREAM_PUBLISH_PERMISSIONS } from "@/lib/stream/video-contracts";
@@ -67,7 +70,38 @@ async function eventsWithoutPaidSeat(
     .map((e) => e.id);
 }
 
-/** Leaves the plan's `collab-` channel and every event channel; returns what is still owed. */
+/** Of these events, the ones whose chat still has the user as a member, in one Stream query. */
+async function eventChatsStillJoined(
+  planType: PlanRef["planType"],
+  eventIds: string[],
+  userId: string,
+): Promise<string[]> {
+  const channelType = getChannelType(planType);
+  const eventByChannel = new Map(
+    eventIds.map((eventId) => [getChannelId(planType, eventId), eventId]),
+  );
+  const channels = await getStreamChatClient().queryChannels(
+    {
+      cid: {
+        $in: Array.from(eventByChannel.keys(), (id) => `${channelType}:${id}`),
+      },
+      members: { $in: [userId] },
+    },
+    [{ last_message_at: -1 }],
+    { limit: STREAM_QUERY_CHANNELS_LIMIT, state: false, watch: false },
+  );
+  return channels.flatMap((channel) => {
+    const eventId = channel.id ? eventByChannel.get(channel.id) : undefined;
+    return eventId ? [eventId] : [];
+  });
+}
+
+/**
+ * Leaves the plan's `collab-` channel and every event chat the user is still a
+ * member of; returns what is still owed. Stream is asked once per page of
+ * events which chats still hold the user, so a drive spends its removals only
+ * on those.
+ */
 async function removeFromPlanChat(
   ref: PlanRef,
   userId: string,
@@ -91,26 +125,43 @@ async function removeFromPlanChat(
   } catch {
     return [...owed, "event lookup failed"];
   }
-  let failed = 0;
-  // One event at a time: a failing channel is counted and the rest still go.
-  for (const [index, eventId] of eventIds.entries()) {
+  let unchecked = 0;
+  let notLeft = 0;
+  // A page or a channel that fails is counted and the rest still go.
+  for (const page of chunk(eventIds, STREAM_QUERY_CHANNELS_LIMIT)) {
     if (Date.now() >= deadlineMs) {
-      failed += eventIds.length - index;
-      break;
+      unchecked += page.length;
+      continue;
     }
+    let joined: string[];
     try {
-      const { failedUserIds } = await removeUsersFromEventChannel(
-        ref.planType,
-        eventId,
-        [userId],
-      );
-      if (failedUserIds.length > 0) failed++;
+      joined = await eventChatsStillJoined(ref.planType, page, userId);
     } catch {
-      failed++;
+      unchecked += page.length;
+      continue;
+    }
+    for (const eventId of joined) {
+      if (Date.now() >= deadlineMs) {
+        notLeft++;
+        continue;
+      }
+      try {
+        const { failedUserIds } = await removeUsersFromEventChannel(
+          ref.planType,
+          eventId,
+          [userId],
+        );
+        if (failedUserIds.length > 0) notLeft++;
+      } catch {
+        notLeft++;
+      }
     }
   }
-  if (failed > 0) {
-    owed.push(`${failed} of ${eventIds.length} event channels not left`);
+  if (unchecked > 0) {
+    owed.push(`${unchecked} of ${eventIds.length} event channels not checked`);
+  }
+  if (notLeft > 0) {
+    owed.push(`${notLeft} of ${eventIds.length} event channels not left`);
   }
   return owed;
 }
@@ -228,7 +279,7 @@ async function removeFromOpenRooms(
 
 /**
  * Ends what a collaboration granted on Stream: the plan's `collab-` channel,
- * every event channel and every open room. A paid learner seat keeps its own
+ * every event channel the user is still in and every open room. A paid learner seat keeps its own
  * event chat and its place in the room. Starts no Stream call after
  * `deadlineMs`. Returns the error to record, or null when nothing is left.
  */

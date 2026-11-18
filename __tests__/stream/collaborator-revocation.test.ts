@@ -3,6 +3,7 @@
  */
 
 const mockChatRemove = jest.fn();
+const mockChatQuery = jest.fn();
 const mockEventRemove = jest.fn();
 const mockCallUpdate = jest.fn();
 const mockCallMute = jest.fn();
@@ -47,6 +48,7 @@ jest.mock("../../lib/stream-client", () => ({
     channel: (_type: string, id: string) => ({
       removeMembers: (ids: string[]) => mockChatRemove(id, ids),
     }),
+    queryChannels: (filter: unknown) => mockChatQuery(filter),
   }),
   getStreamVideoClient: () => ({
     video: {
@@ -61,6 +63,8 @@ jest.mock("../../lib/stream-client", () => ({
   isExpectedStreamError: () => false,
 }));
 jest.mock("../../lib/stream/event-channel-service", () => ({
+  getChannelId: (type: string, id: string) => `${type}-${id}`,
+  getChannelType: () => "team",
   removeUsersFromEventChannel: (...args: unknown[]) => mockEventRemove(...args),
 }));
 jest.mock("../../lib/stream/dm-eligibility", () => ({}));
@@ -73,6 +77,11 @@ import { resetThrottledCaptureForTesting } from "../../lib/observability/throttl
 
 /** Loaded on first use, after the mocks above exist. */
 const revocation = () => import("../../lib/stream/access-revocation");
+
+type MemberQuery = { cid: { $in: string[] }; members: { $in: string[] } };
+/** Stream's answer when the user is still a member of each channel in `cids`. */
+const channelsOf = (cids: string[]) =>
+  cids.map((cid) => ({ id: cid.slice(cid.indexOf(":") + 1) }));
 
 const ref = { planType: "webinar", planId: "plan-1" } as const;
 const collabIntent = {
@@ -94,6 +103,9 @@ beforeEach(() => {
   mockDb.appointmentParticipant.findMany.mockResolvedValue([]);
   mockDb.appointmentOccurrence.findMany.mockResolvedValue([]);
   mockChatRemove.mockResolvedValue({});
+  mockChatQuery.mockImplementation(async (filter: MemberQuery) =>
+    channelsOf(filter.cid.$in),
+  );
   mockEventRemove.mockResolvedValue({ failedUserIds: [] });
   mockCallUpdate.mockResolvedValue({});
 });
@@ -233,6 +245,61 @@ describe("the drive", () => {
       ["occurrence-2", mute],
     ]);
     expect(mockDb.appointmentParticipant.updateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("the drive's event chats", () => {
+  it("asks Stream which unseated event chats still hold the user and leaves only those", async () => {
+    mockDb.webinar.findMany.mockResolvedValue([
+      { id: "w-1", appointment: { id: "a-1" } },
+      { id: "w-2", appointment: { id: "a-2" } },
+      { id: "w-3", appointment: { id: "a-3" } },
+    ]);
+    mockDb.appointmentParticipant.findMany.mockResolvedValue([
+      { appointmentId: "a-2" },
+    ]);
+    mockChatQuery.mockResolvedValue(channelsOf(["team:webinar-w-3"]));
+
+    await (await revocation()).revokeCollaboratorAccess(ref, "u-1");
+
+    expect(mockChatQuery.mock.calls).toEqual([
+      [
+        {
+          cid: { $in: ["team:webinar-w-1", "team:webinar-w-3"] },
+          members: { $in: ["u-1"] },
+        },
+      ],
+    ]);
+    expect(mockEventRemove.mock.calls).toEqual([["webinar", "w-3", ["u-1"]]]);
+    expect(intent?.status).toBe("SUCCEEDED");
+  });
+
+  it("spends one membership query per thirty events, however many the plan has", async () => {
+    mockDb.webinar.findMany.mockResolvedValue(
+      Array.from({ length: 65 }, (_, i) => ({
+        id: `w-${i}`,
+        appointment: null,
+      })),
+    );
+    mockChatQuery.mockImplementation(async (filter: MemberQuery) =>
+      channelsOf(filter.cid.$in.filter((cid) => cid.endsWith("-w-64"))),
+    );
+
+    await (await revocation()).revokeCollaboratorAccess(ref, "u-1");
+
+    expect(
+      mockChatQuery.mock.calls.map(([filter]) => filter.cid.$in.length),
+    ).toEqual([30, 30, 5]);
+    expect(mockEventRemove.mock.calls).toEqual([["webinar", "w-64", ["u-1"]]]);
+  });
+
+  it("stays owed when Stream cannot say which event chats still hold the user", async () => {
+    mockChatQuery.mockRejectedValue(new Error("stream down"));
+
+    await (await revocation()).revokeCollaboratorAccess(ref, "u-1");
+
+    expect(mockEventRemove).not.toHaveBeenCalled();
+    expect(intent?.status).toBe("PENDING");
   });
 });
 
