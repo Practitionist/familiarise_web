@@ -110,7 +110,13 @@ it("names the plan, not a placeholder audience, when a host cancels a group sess
       />
     </QueryClientProvider>,
   );
-  await screen.findByText(/Everyone who paid gets a full refund/);
+  const refundLine = await screen.findByText(
+    /Everyone who paid is refunded what they're owed/,
+  );
+  expect(refundLine).toHaveTextContent(
+    "Everyone who paid is refunded what they're owed. Anyone who already had sessions is settled by our team.",
+  );
+  expect(screen.queryByText(/gets a full refund/)).toBeNull();
   const question = screen.getByText(/Are you sure you want to cancel/);
   expect(question).toHaveTextContent(
     'Are you sure you want to cancel "System Design Cohort"?',

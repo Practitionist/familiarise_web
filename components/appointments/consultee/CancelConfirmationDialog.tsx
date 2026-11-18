@@ -251,7 +251,7 @@ export function CancelConfirmationDialog({
         <>
           {consultant
             ? `If they paid, ${consultant} gets a full refund`
-            : "Everyone who paid gets a full refund"}
+            : "Everyone who paid is refunded what they're owed. Anyone who already had sessions is settled by our team"}
         </>
       )}
       .
