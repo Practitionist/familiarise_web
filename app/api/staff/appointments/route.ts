@@ -25,6 +25,13 @@ const PagingSchema = z.object({
   limit: positiveInt(20, 100),
 });
 
+/** A date bound must parse; an unparseable one is a 400, not a database error. */
+const dateBound = z
+  .string()
+  .refine((s) => !Number.isNaN(new Date(s).getTime()))
+  .optional();
+const DateRangeSchema = z.object({ dateFrom: dateBound, dateTo: dateBound });
+
 /**
  * `?orgId=` drills into one tenant; its absence is the platform-wide view.
  * The `appointments.manage` gate is what earns `all`.
@@ -39,12 +46,22 @@ export async function GET(req: NextRequest) {
     if (auth.error) return auth.error;
 
     const { searchParams } = new URL(req.url);
+    const dates = DateRangeSchema.safeParse({
+      dateFrom: searchParams.get("dateFrom") || undefined,
+      dateTo: searchParams.get("dateTo") || undefined,
+    });
+    if (!dates.success) {
+      return NextResponse.json(
+        { error: "Invalid query parameters", code: "INVALID_QUERY" },
+        { status: 400 },
+      );
+    }
     const result = await getStaffAppointments({
       type: searchParams.get("type"),
       status: searchParams.get("status"),
       search: searchParams.get("search"),
-      dateFrom: searchParams.get("dateFrom"),
-      dateTo: searchParams.get("dateTo"),
+      dateFrom: dates.data.dateFrom ?? null,
+      dateTo: dates.data.dateTo ?? null,
       scope: staffScope(searchParams.get("orgId")),
       ...PagingSchema.parse({
         page: searchParams.get("page") ?? undefined,

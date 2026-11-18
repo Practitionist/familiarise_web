@@ -162,8 +162,11 @@ export async function getStaffAppointments(
   if (dateFrom || dateTo) {
     baseWhere.occurrences = {
       some: {
-        ...(dateFrom && { startsAt: { gte: new Date(dateFrom) } }),
-        ...(dateTo && { startsAt: { lte: new Date(dateTo) } }),
+        // Both bounds share one `startsAt`: a second key would replace the first.
+        startsAt: {
+          ...(dateFrom && { gte: new Date(dateFrom) }),
+          ...(dateTo && { lte: new Date(dateTo) }),
+        },
       },
     };
   }

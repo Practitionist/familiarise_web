@@ -233,7 +233,7 @@ export default function AdminHomePageClient() {
               ) : (
                 <>
                   <Stat
-                    label="Payments"
+                    label="Succeeded payments"
                     value={stats?.totalPayments || 0}
                     hint={`${formatCurrencyAmount(stats?.totalPaymentsValue ?? 0, "INR")} total value`}
                     href={`${basePath}/money/payments`}

@@ -12,7 +12,7 @@
  */
 
 import prisma from "@/lib/prisma";
-import { PaymentStatus } from "@prisma/client";
+import { PaymentStatus, RefundStatus } from "@prisma/client";
 import { sumPaise } from "@/lib/payments/utils/money";
 
 export type OperatorDashboardStats = {
@@ -85,10 +85,11 @@ export async function getOperatorDashboardStats(): Promise<OperatorDashboardStat
     refundsAggregation,
     gatewayStats,
   ] = await Promise.all([
-    prisma.payment.count(),
+    // Each card counts the same succeeded set its value sums, as Metrics does.
+    prisma.payment.count({ where: { paymentStatus: PaymentStatus.SUCCEEDED } }),
     prisma.payment.count({ where: { paymentStatus: PaymentStatus.PENDING } }),
     prisma.payment.count({ where: { paymentStatus: PaymentStatus.EXPIRED } }),
-    prisma.refund.count(),
+    prisma.refund.count({ where: { status: RefundStatus.SUCCEEDED } }),
     prisma.dispute.count({
       where: {
         status: {
@@ -107,7 +108,10 @@ export async function getOperatorDashboardStats(): Promise<OperatorDashboardStat
       _sum: { amount: true },
       where: { paymentStatus: PaymentStatus.PENDING },
     }),
-    prisma.refund.aggregate({ _sum: { amountPaise: true } }),
+    prisma.refund.aggregate({
+      _sum: { amountPaise: true },
+      where: { status: RefundStatus.SUCCEEDED },
+    }),
     prisma.payment.groupBy({
       by: ["paymentGateway"],
       _count: true,

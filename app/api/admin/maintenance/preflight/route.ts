@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { CONSULTANT_JOIN_WINDOW_MS } from "@/lib/appointments/occurrences";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import prisma from "@/lib/prisma";
 
@@ -23,7 +24,19 @@ export async function GET() {
     pendingPayouts,
     openDisputes,
   ] = await Promise.all([
-    prisma.meeting.count({ where: { endedAt: null } }),
+    // Open rooms whose join window has opened. Late joins and extensions can run
+    // a call hours past its booked end; a room open 12 h past it is abandoned.
+    prisma.meeting.count({
+      where: {
+        endedAt: null,
+        occurrence: {
+          startsAt: {
+            lte: new Date(now.getTime() + CONSULTANT_JOIN_WINDOW_MS),
+          },
+          endsAt: { gte: new Date(now.getTime() - 12 * 60 * 60 * 1000) },
+        },
+      },
+    }),
     prisma.payment.count({ where: { paymentStatus: "PENDING" } }),
     prisma.appointmentOccurrence.count({
       where: {
