@@ -50,6 +50,7 @@ import { SESSION_OUTCOME_LABEL } from "@/lib/labels/session-labels";
 
 import type { Scope } from "@/lib/api/scope/parse";
 import prisma from "@/lib/prisma";
+import { KNOWN_HISTORY_ENTITIES } from "@/lib/booking/history-entities";
 
 /**
  * The only `Scope` that may read another person's audit trail. Narrowing the
@@ -238,6 +239,7 @@ export async function getBookingTimeline(
             { actorUserId: { not: null } },
           ],
         },
+        { entity: { in: [...KNOWN_HISTORY_ENTITIES] } },
       ],
     },
     select: {

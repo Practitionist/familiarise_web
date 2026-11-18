@@ -275,6 +275,26 @@ describe("getBookingTimeline", () => {
     expect(timeline!.truncated).toBe(false);
   });
 
+  it("reads only history entities every deployed client knows", async () => {
+    historyFindMany.mockResolvedValue(historyRows());
+
+    await getBookingTimeline("appt-1", PRIVILEGED);
+
+    expect(historyFindMany.mock.calls[0][0].where.AND[2]).toEqual({
+      entity: {
+        in: [
+          "CONSULTATION",
+          "SUBSCRIPTION",
+          "WEBINAR",
+          "CLASS",
+          "TRIAL",
+          "RESCHEDULE_REQUEST",
+          "OCCURRENCE",
+        ],
+      },
+    });
+  });
+
   it("reads an outcome reason token as words", async () => {
     historyFindMany.mockResolvedValue([
       {
