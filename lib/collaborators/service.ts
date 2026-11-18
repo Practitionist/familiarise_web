@@ -25,6 +25,7 @@ import {
 import { PRESENTER_ROLES, tierForRole } from "@/lib/collaborators/roles";
 import {
   bpsToPercent,
+  inviteLapsedBefore,
   MAX_COLLABORATORS_PER_PLAN,
   MAX_TEAM_SHARE_BPS,
   percentToBps,
@@ -669,6 +670,8 @@ async function acceptInTx(
     }
   }
 
+  // One write checks the status, the terms and the invitation window together.
+  const lapsedBefore = inviteLapsedBefore(new Date());
   const moved = await tx.collaborator.updateMany({
     where: {
       id: args.collaboratorId,
@@ -676,6 +679,7 @@ async function acceptInTx(
       status: "PENDING",
       role: seenTerms.role,
       revenueShareBps: percentToBps(seenTerms.sharePercent),
+      updatedAt: { gte: lapsedBefore },
     },
     data: { status: "ACCEPTED" },
   });
@@ -683,6 +687,15 @@ async function acceptInTx(
     where: { id: args.collaboratorId },
   });
   if (moved.count === 0) {
+    if (
+      collaborator.status === "PENDING" &&
+      collaborator.updatedAt < lapsedBefore
+    ) {
+      throw new CollaborationError(
+        "NOT_PENDING",
+        "This invitation has lapsed. Ask the host to invite you again.",
+      );
+    }
     if (collaborator.status === "PENDING") {
       throw new CollaborationError(
         "TERMS_CHANGED",

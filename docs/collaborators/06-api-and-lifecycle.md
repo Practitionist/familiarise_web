@@ -46,7 +46,7 @@ Every refusal a write gives is a `CollaborationError`, and `collaborationErrorRe
 | `SHARES_EXCEEDED`    | 409  | The share would take the team above 90%.                                                                                                                      | `availablePercent`                       |
 | `COOLDOWN`           | 409  | The expert declined or left this plan within the last seven days.                                                                                             | `retryAt` (ISO time)                     |
 | `TERMS_LOCKED`       | 409  | A change of terms on an accepted row.                                                                                                                         |                                          |
-| `NOT_PENDING`        | 409  | The invitation is no longer open.                                                                                                                             |                                          |
+| `NOT_PENDING`        | 409  | The invitation is no longer open, or has lapsed.                                                                                                              |                                          |
 | `TERMS_CHANGED`      | 409  | The accept named terms the row no longer carries.                                                                                                             | `terms: { role, sharePercent }`, current |
 | `SCHEDULE_CHANGED`   | 409  | The plan's sessions changed while the accept was in flight.                                                                                                   |                                          |
 | `CALENDAR_CLASH`     | 409  | A session of the plan overlaps another session on the invitee's calendar. Not retryable as it stands.                                                         |                                          |
@@ -116,8 +116,10 @@ sequenceDiagram
     alt one overlaps
         S-->>I: 409 CALENDAR_CLASH
     end
-    S->>DB: update to ACCEPTED where the row is PENDING with the seen role and share
-    alt no row matched and the row is still PENDING
+    S->>DB: update to ACCEPTED where the row is PENDING with the seen role and share, inside its fourteen days
+    alt no row matched and the PENDING row's fourteen days have passed
+        S-->>I: 409 NOT_PENDING, the invitation has lapsed
+    else no row matched and the row is still PENDING
         S-->>I: 409 TERMS_CHANGED with the current terms
     else no row matched
         S-->>I: 409 NOT_PENDING
