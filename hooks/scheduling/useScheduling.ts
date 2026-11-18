@@ -1175,7 +1175,7 @@ export function useEventSlotAllocation(
           // Saved times are this booking's now; keeping them selected would let
           // the refetch judge them as someone else's.
           setSelectedSlots([]);
-          toast(timingsSaved(result));
+          toast(timingsSaved(result, { zone: options.displayZone }));
           onSuccess?.(result);
         } else if (
           !allocateOptions?.allowPartial &&
