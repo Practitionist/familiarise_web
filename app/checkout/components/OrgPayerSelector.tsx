@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useId } from "react";
 import { useSession } from "@/lib/auth-client";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import Image from "next/image";
@@ -192,6 +192,7 @@ export function OrgPayerSelector({
 }: OrgPayerSelectorProps) {
   const { data: session } = useSession();
   const memberships = session?.user?.organizationMemberships ?? [];
+  const reasonIdPrefix = useId();
 
   // Only render the selector when the user has at least one org that can
   // actually sponsor (canSponsor=true). A pure HOST membership wouldn't
@@ -255,15 +256,22 @@ export function OrgPayerSelector({
       {sponsoringMemberships.map((m) => {
         const isSelected = selectedOrganizationId === m.organizationId;
         const refusal = refusalFor(m.organizationId);
+        const titleId = `${reasonIdPrefix}-${m.organizationId}-title`;
+        const reasonId = `${reasonIdPrefix}-${m.organizationId}-reason`;
+        // A refused row stays focusable so its reason is announced; it never selects.
         return (
           <button
             key={m.organizationId}
             type="button"
-            disabled={refusal !== null}
-            onClick={() => onSelect(m.organizationId)}
+            aria-disabled={refusal ? true : undefined}
+            aria-labelledby={refusal ? titleId : undefined}
+            aria-describedby={refusal ? reasonId : undefined}
+            onClick={() => {
+              if (!refusal) onSelect(m.organizationId);
+            }}
             className={`w-full flex items-center gap-3 p-3 rounded-lg border text-left transition-colors ${
               refusal
-                ? "border-border cursor-not-allowed opacity-70"
+                ? "border-border cursor-not-allowed"
                 : isSelected
                   ? "border-foreground bg-muted ring-1 ring-foreground"
                   : "border-border hover:border-muted-foreground/40"
@@ -283,11 +291,17 @@ export function OrgPayerSelector({
               )}
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-foreground truncate">
+              <p
+                id={titleId}
+                className="text-sm font-medium text-foreground truncate"
+              >
                 Bill to {m.organizationName}
               </p>
               {refusal ? (
-                <p className="text-xs mt-0.5 text-muted-foreground">
+                <p
+                  id={reasonId}
+                  className="text-xs mt-0.5 text-muted-foreground"
+                >
                   {refusal.message}
                 </p>
               ) : (

@@ -89,8 +89,8 @@ it("disables an organisation checkout would refuse, with the refusal, and keeps 
   await screen.findByText(REFUSAL);
   const refused = screen.getByRole("button", { name: /Bill to Acme/ });
   const accepted = screen.getByRole("button", { name: /Bill to Globex/ });
-  expect(refused).toBeDisabled();
-  expect(accepted).toBeEnabled();
+  expect(refused).toHaveAttribute("aria-disabled", "true");
+  expect(accepted).not.toHaveAttribute("aria-disabled");
 
   fireEvent.click(refused);
   expect(onSelect).not.toHaveBeenCalled();
@@ -106,6 +106,20 @@ it("disables an organisation checkout would refuse, with the refusal, and keeps 
       sessions: 1,
     });
   }
+});
+
+it("a refused row takes keyboard focus and announces why, at full contrast", async () => {
+  const onSelect = renderSelector(null);
+
+  await screen.findByText(REFUSAL);
+  const refused = screen.getByRole("button", { name: "Bill to Acme" });
+  refused.focus();
+  expect(refused).toHaveFocus();
+  expect(refused).toHaveAccessibleDescription(REFUSAL);
+  expect(refused.className).not.toMatch(/opacity/);
+  // Enter and Space on a focused button dispatch this click.
+  fireEvent.click(refused);
+  expect(onSelect).not.toHaveBeenCalled();
 });
 
 it("clears a selected organisation once checkout's refusal for it arrives", async () => {
