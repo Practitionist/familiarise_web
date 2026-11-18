@@ -29,6 +29,7 @@ import {
 } from "@/components/dashboard/PageScaffold";
 import { FilterBar } from "@/components/dashboard/FilterBar";
 import { ScopedListTable } from "@/components/dashboard/ScopedListTable";
+import { ErrorState } from "@/components/dashboard/ErrorState";
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -61,6 +62,7 @@ function StatCard({
   value,
   subtitle,
   loading,
+  unavailable,
 }: Readonly<{
   title: string;
   value: string | number;
@@ -68,6 +70,8 @@ function StatCard({
   icon?: unknown;
   variant?: "default" | "success" | "warning" | "danger";
   loading?: boolean;
+  /** The read behind this card failed, so it has no number to show. */
+  unavailable?: boolean;
 }>) {
   return (
     <Card>
@@ -77,9 +81,14 @@ function StatCard({
         </CardTitle>
       </CardHeader>
       <CardContent>
-        {loading ? (
-          <Skeleton className="h-7 w-24" />
-        ) : (
+        {loading && <Skeleton className="h-7 w-24" />}
+        {!loading && unavailable && (
+          <>
+            <div className="text-xl font-semibold text-muted-foreground">—</div>
+            <p className="mt-0.5 text-xs text-muted-foreground">Unavailable</p>
+          </>
+        )}
+        {!loading && !unavailable && (
           <>
             <div className="text-xl font-semibold tabular-nums">{value}</div>
             {subtitle && (
@@ -390,7 +399,12 @@ export default function AdminTDSPage() {
   const [filingQuarter, setFilingQuarter] = useState<number | null>(null);
   const recentFYs = getRecentFYs();
 
-  const { data: quarterlyData, isLoading: loadingQuarters } = useQuery<{
+  const {
+    data: quarterlyData,
+    isLoading: loadingQuarters,
+    isError: quartersFailed,
+    refetch: refetchQuarters,
+  } = useQuery<{
     financialYear: string;
     quarters: QuarterSummary[];
   }>({
@@ -425,7 +439,8 @@ export default function AdminTDSPage() {
     placeholderData: keepPreviousData,
   });
 
-  const quarters = quarterlyData?.quarters || [];
+  // A failed read has no quarters; the cards say unavailable instead of zero.
+  const quarters = quartersFailed ? [] : (quarterlyData?.quarters ?? []);
   const totalTDS = quarters.reduce((s, q) => s + q.totalTDSDeducted, 0);
   const totalCredited = quarters.reduce((s, q) => s + q.totalAmountCredited, 0);
   const totalUnfiled = quarters.reduce((s, q) => s + q.unfiledRecords, 0);
@@ -546,6 +561,7 @@ export default function AdminTDSPage() {
             subtitle={`FY ${selectedFY}`}
             icon={IndianRupee}
             loading={loadingQuarters}
+            unavailable={quartersFailed}
           />
           <StatCard
             title="Total Credited to Consultants"
@@ -553,6 +569,7 @@ export default function AdminTDSPage() {
             subtitle={`FY ${selectedFY}`}
             icon={FileText}
             loading={loadingQuarters}
+            unavailable={quartersFailed}
           />
           <StatCard
             title="Consultants with TDS"
@@ -560,6 +577,7 @@ export default function AdminTDSPage() {
             subtitle="Exceeding threshold"
             icon={Users}
             loading={loadingConsultants}
+            unavailable={errorConsultants}
           />
           <StatCard
             title="Unfiled Records"
@@ -568,8 +586,17 @@ export default function AdminTDSPage() {
             icon={totalUnfiled > 0 ? AlertTriangle : CheckCircle2}
             variant={totalUnfiled > 0 ? "warning" : "success"}
             loading={loadingQuarters}
+            unavailable={quartersFailed}
           />
         </DashboardGrid>
+
+        {quartersFailed && (
+          <ErrorState
+            title="Couldn't load the quarterly TDS summary"
+            description="The totals and filing status for each quarter are not shown until it loads."
+            onRetry={() => void refetchQuarters()}
+          />
+        )}
 
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           {loadingQuarters

@@ -168,6 +168,34 @@ describe("TDS export", () => {
   });
 });
 
+it("TDS says the quarterly summary failed, never ₹0.00 or All filed", async () => {
+  let quartersOk = false;
+  global.fetch = jest.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("view=consultants"))
+      return { ok: false, json: async () => ({}) };
+    if (!quartersOk) return { ok: false, json: async () => ({}) };
+    return {
+      ok: true,
+      json: async () => ({ financialYear: "2026-27", quarters: [] }),
+    };
+  }) as unknown as typeof fetch;
+  renderWithQuery(<AdminTDSPage />);
+  expect(
+    await screen.findByText("Couldn't load the quarterly TDS summary"),
+  ).toBeTruthy();
+  expect(screen.queryByText("All filed")).toBeNull();
+  expect(screen.queryByText("₹0.00")).toBeNull();
+  expect(screen.getAllByText("Unavailable")).toHaveLength(4);
+
+  quartersOk = true;
+  fireEvent.click(screen.getByRole("button", { name: /Try again/ }));
+  expect(await screen.findByText("All filed")).toBeTruthy();
+  expect(
+    screen.queryByText("Couldn't load the quarterly TDS summary"),
+  ).toBeNull();
+});
+
 describe("keepPreviousPageOnly", () => {
   const prev = { rows: ["old"] };
   it("keeps the previous rows while only the page changes", () => {
