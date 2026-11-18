@@ -73,6 +73,10 @@ const DetailsSchema = z
 
 type Details = z.infer<typeof DetailsSchema>;
 
+const RoleSnapshotSchema = z.object({
+  role: z.string().optional().catch(undefined),
+});
+
 const BillingSnapshotSchema = z.object({
   fundingSource: z.string().optional().catch(undefined),
   currency: z.string().optional().catch(undefined),
@@ -344,6 +348,18 @@ function composeFromDetails(
       return d.selfLeave
         ? `${who} left the organisation`
         : `${who} was removed from the organisation`;
+    }
+    case "ROLE_CHANGE": {
+      const from = labelOf(
+        MEMBER_ROLE_LABEL,
+        RoleSnapshotSchema.safeParse(d.from).data?.role,
+      );
+      const to = labelOf(
+        MEMBER_ROLE_LABEL,
+        RoleSnapshotSchema.safeParse(d.to).data?.role,
+      );
+      if (!from || !to) return null;
+      return `${subject ?? "A member"}'s role changed: ${from} → ${to}`;
     }
     case "CONTRACT_CREATED": {
       const c = d.contractId ? book.contracts.get(d.contractId) : undefined;

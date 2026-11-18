@@ -101,10 +101,14 @@ const AUDIT_ROWS = [
   row("r7", "SETTINGS", "SETTINGS_CHANGED", "Organization record updated", {
     patch: { expectedVersion: 9, streamRecordingRetentionDays: null },
   }),
-  row("r8", "MEMBER", "ROLE_CHANGE", "Role: Manager → Billing admin", {
-    from: { role: "MANAGER" },
-    to: { role: "BILLING_ADMIN" },
-  }),
+  row(
+    "r8",
+    "MEMBER",
+    "ROLE_CHANGE",
+    "Role: Manager → Billing admin",
+    { from: { role: "MANAGER" }, to: { role: "BILLING_ADMIN" } },
+    MEMBER_A,
+  ),
   row(
     "r9",
     "MEMBER",
@@ -139,7 +143,7 @@ const EXPECTED = [
   "Invoice WIPRO-2026-0007 for ₹1,180.00 voided and written off",
   "Billing settings changed: credit limit ₹1,03,00,000.00 → ₹1,00,00,000.00",
   "Organisation settings changed: recording retention",
-  "Role: Manager → Billing admin",
+  "Aarav Anderson's role changed: Manager → Billing admin",
   "A member (Learner) was removed from the organisation",
   "Added Karen Anderson as Learner",
   "Added a removed member as Learner",
