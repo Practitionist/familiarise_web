@@ -260,38 +260,45 @@ const RELOAD_CODES = new Set([
 ]);
 
 type RefusalAdvice = {
-  /** The server's sentence, followed by how to recover where the code allows it. */
+  /**
+   * The refusal and how to recover, said once: the screen's own sentence when
+   * it holds the exact date or wait, the server's sentence otherwise.
+   */
   sentence: string;
   /** Offer a reload: the lists on screen are out of date. */
   reload: boolean;
 };
 
+/** The whole sentence for a refusal whose recovery the screen can state exactly. */
+function exactRecovery(refusal: CollaborationRefusal): string | null {
+  const { retryAt, retryAfterSeconds } = refusal.detail;
+  if (refusal.code === "COOLDOWN" && retryAt) {
+    return `This expert recently declined or left this plan, and can be invited again from ${formatDay(retryAt)}.`;
+  }
+  if (refusal.code === "RATE_LIMITED" && retryAfterSeconds !== undefined) {
+    const minutes = Math.max(1, Math.ceil(retryAfterSeconds / 60));
+    const unit = minutes === 1 ? "minute" : "minutes";
+    return `You have made too many requests; try again in about ${minutes} ${unit}.`;
+  }
+  return null;
+}
+
+/** What a plan still has to give, after a refusal that counted its shares. */
+function sharesLeft(refusal: CollaborationRefusal): string | null {
+  const { availablePercent } = refusal.detail;
+  if (refusal.code !== "SHARES_EXCEEDED" || availablePercent === undefined) {
+    return null;
+  }
+  return availablePercent >= 1
+    ? `${availablePercent}% is still free on this plan.`
+    : "No share is left to give on this plan.";
+}
+
 /** What to tell the person about a refusal. The branch is the code, never the wording. */
 export function describeRefusal(refusal: CollaborationRefusal): RefusalAdvice {
-  const { retryAt, availablePercent, retryAfterSeconds } = refusal.detail;
-  let recovery: string | null = null;
-  if (refusal.code === "COOLDOWN" && retryAt) {
-    recovery = `You can invite them again from ${formatDay(retryAt)}.`;
-  } else if (
-    refusal.code === "SHARES_EXCEEDED" &&
-    availablePercent !== undefined
-  ) {
-    recovery =
-      availablePercent >= 1
-        ? `${availablePercent}% is still free on this plan.`
-        : "No share is left to give on this plan.";
-  } else if (refusal.code === "RATE_LIMITED") {
-    const minutes =
-      retryAfterSeconds === undefined
-        ? null
-        : Math.max(1, Math.ceil(retryAfterSeconds / 60));
-    recovery =
-      minutes === null
-        ? null
-        : `Try again in about ${minutes} ${minutes === 1 ? "minute" : "minutes"}.`;
-  }
-  return {
-    sentence: recovery ? `${refusal.message} ${recovery}` : refusal.message,
-    reload: RELOAD_CODES.has(refusal.code),
-  };
+  const left = sharesLeft(refusal);
+  const sentence =
+    exactRecovery(refusal) ??
+    (left ? `${refusal.message} ${left}` : refusal.message);
+  return { sentence, reload: RELOAD_CODES.has(refusal.code) };
 }
