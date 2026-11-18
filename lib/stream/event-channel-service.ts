@@ -224,17 +224,29 @@ async function eventAppointmentId(
   return row?.id ?? null;
 }
 
+/** `quiet` leaves a thrown failure unreported, for a caller that collects and reports once for its run. */
+export interface EventChannelWriteOptions {
+  quiet?: boolean;
+}
+
 /** Adds the user to the event channel, then fences every seat the join wrote, even when a write throws. */
 export async function addUserToEventChannel(
   eventType: EventType,
   eventId: string,
   userId: string,
+  options: EventChannelWriteOptions = {},
 ): Promise<EventChannelJoin> {
   // Loaded before any write, and lazily: access-revocation imports this module.
   const { fenceSeatGrants } = await import("@/lib/stream/access-revocation");
   const granted: EventChannelGrants = { appointmentId: null, userIds: [] };
   try {
-    return await grantEventChannelMember(eventType, eventId, userId, granted);
+    return await grantEventChannelMember(
+      eventType,
+      eventId,
+      userId,
+      granted,
+      options,
+    );
   } finally {
     if (granted.appointmentId && granted.userIds.length > 0) {
       await fenceSeatGrants(
@@ -260,6 +272,7 @@ export async function grantEventChannelMember(
   eventId: string,
   userId: string,
   granted: EventChannelGrants,
+  options: EventChannelWriteOptions = {},
 ): Promise<EventChannelJoin> {
   const collaborators: CollaboratorGrants = { ref: null, userIds: new Set() };
   try {
@@ -269,6 +282,7 @@ export async function grantEventChannelMember(
       userId,
       granted,
       collaborators,
+      options,
     );
   } finally {
     const { ref } = collaborators;
@@ -291,6 +305,7 @@ async function writeEventChannelMember(
   userId: string,
   granted: EventChannelGrants,
   collaborators: CollaboratorGrants,
+  { quiet = false }: EventChannelWriteOptions,
 ): Promise<EventChannelJoin> {
   eventTypeSchema.parse(eventType);
   eventIdSchema.parse(eventId);
@@ -465,15 +480,17 @@ async function writeEventChannelMember(
 
     return { success: true, channelId, created: true };
   } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "stream" } },
-    );
-    streamLogger.error("Failed to add user to event channel", error, {
-      eventType,
-      eventId,
-      userId,
-    });
+    if (!quiet) {
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "stream" } },
+      );
+      streamLogger.error("Failed to add user to event channel", error, {
+        eventType,
+        eventId,
+        userId,
+      });
+    }
     throw error;
   }
 }

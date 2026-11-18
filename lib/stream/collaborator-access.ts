@@ -359,21 +359,36 @@ function activePlanEvents(ref: PlanRef): Promise<{ id: string }[]> {
       });
 }
 
-/** Adds the user to each event channel that exists; returns how many adds failed. */
+type FailedEventAdds = { eventIds: string[]; errors: unknown[] };
+
+/** How many failed events one report names. */
+const FAILED_EVENT_SAMPLE = 5;
+
+/**
+ * Adds the user to each event channel that exists, without reporting: every
+ * event gets its attempt and the caller reports the failed ones once.
+ */
 async function joinEventChannels(
   ref: PlanRef,
   userId: string,
-): Promise<number> {
+): Promise<FailedEventAdds> {
   const events = await activePlanEvents(ref);
-  let failed = 0;
+  const failed: FailedEventAdds = { eventIds: [], errors: [] };
   for (const event of events) {
     try {
-      if (await checkEventChannelExists(ref.planType, event.id)) {
-        await addUserToEventChannel(ref.planType, event.id, userId);
+      if (!(await checkEventChannelExists(ref.planType, event.id))) continue;
+      const joined = await addUserToEventChannel(
+        ref.planType,
+        event.id,
+        userId,
+        { quiet: true },
+      );
+      if (joined.reason === "member_not_added") {
+        throw new Error("Collaborator not added to the event channel");
       }
-    } catch {
-      // The add reports its own failure; the remaining events still go.
-      failed++;
+    } catch (error) {
+      failed.eventIds.push(event.id);
+      failed.errors.push(error);
     }
   }
   return failed;
@@ -395,23 +410,26 @@ export async function grantCollaboratorAccess(
   } catch (error) {
     if (!isExpectedStreamError(error)) failures.push(error);
   }
-  let eventAddsFailed = 0;
+  let failedEventIds: string[] = [];
   try {
-    eventAddsFailed = await joinEventChannels(ref, userId);
+    const failedAdds = await joinEventChannels(ref, userId);
+    failedEventIds = failedAdds.eventIds;
+    failures.push(...failedAdds.errors);
   } catch (error) {
     failures.push(error);
   }
   if (failures.length > 0) {
+    // One report for the whole grant, however many writes failed.
     reportSentryError(failures[0], {
       subsystem: "collaborators",
       op: "grantCollaboratorAccess",
       level: "warning",
-      extra: { ...ref, failed: failures.length, eventAddsFailed },
-    });
-  } else if (eventAddsFailed > 0) {
-    streamLogger.warn("Collaborator not added to every event channel", {
-      ...ref,
-      eventAddsFailed,
+      extra: {
+        ...ref,
+        failed: failures.length,
+        eventAddsFailed: failedEventIds.length,
+        eventIds: failedEventIds.slice(0, FAILED_EVENT_SAMPLE),
+      },
     });
   }
   try {
