@@ -85,12 +85,12 @@ const BillingSnapshotSchema = z.object({
 });
 
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
-const ID_PATTERN = new RegExp(`\\b(?:${UUID}|c[a-z0-9]{24})\\b`, "g");
+const ID_PATTERN = new RegExp(String.raw`\b(?:${UUID}|c[a-z0-9]{24})\b`, "g");
 const ISO_PATTERN = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\b/g;
 const PAISE_PATTERN = /\b(\d+) paise\b/g;
 const SNAKE_ENUM_PATTERN = /\b[A-Z]{2,}(?:_[A-Z]+)+\b/g;
 const ROLE_WORD_PATTERN = new RegExp(
-  `\\b(?:${Object.keys(MEMBER_ROLE_LABEL).join("|")})\\b`,
+  String.raw`\b(?:${Object.keys(MEMBER_ROLE_LABEL).join("|")})\b`,
   "g",
 );
 
@@ -197,7 +197,7 @@ export function auditReferenceIds(rows: readonly AuditDescribable[]) {
     if (d.programId) programs.add(d.programId);
     if (d.invoiceId) invoices.add(d.invoiceId);
     if (PERSON_ACTIONS.has(row.action)) {
-      for (const id of row.description.match(ID_PATTERN) ?? []) named.add(id);
+      for (const [id] of row.description.matchAll(ID_PATTERN)) named.add(id);
     }
   }
   // Older person rows name a user id in their text; membership ids resolve above.
@@ -294,15 +294,16 @@ export function describeAuditEntry(
   zone: string,
 ): string {
   const d = DetailsSchema.parse(row.details);
-  return (
-    composeFromDetails(row, d, book, zone) ??
-    scrubStoredDescription(
-      row.description,
-      book,
-      zone,
-      PERSON_ACTIONS.has(row.action),
-    )
-  );
+  const composed = composeFromDetails(row, d, book, zone);
+  // Composed sentences carry typed names (file, programme, UTR), so both paths take the scrub.
+  return composed === null
+    ? scrubStoredDescription(
+        row.description,
+        book,
+        zone,
+        PERSON_ACTIONS.has(row.action),
+      )
+    : sanitizeAuditDescription(composed);
 }
 
 function composeFromDetails(
