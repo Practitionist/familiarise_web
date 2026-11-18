@@ -661,9 +661,18 @@ async function acceptInTx(
       });
     } catch (error) {
       if (error instanceof ConsultantScheduleConflictError) {
+        // The detail names the plan's session; the invitee's other commitment is never described.
         throw new CollaborationError(
           "CALENDAR_CLASH",
           "One of this plan's sessions overlaps another session on your calendar.",
+          error.window
+            ? {
+                clash: {
+                  startsAt: error.window.startsAt.toISOString(),
+                  endsAt: error.window.endsAt.toISOString(),
+                },
+              }
+            : undefined,
         );
       }
       throw error;

@@ -95,7 +95,7 @@ const world = {
   seat: null as { id: string } | null,
   heldWindows: [] as Window[],
   windowsInTx: [] as Window[],
-  clash: null as { id: string } | null,
+  clash: null as { id: string; startsAt?: Date; endsAt?: Date } | null,
   batchRefusal: null as Error | null,
 };
 
@@ -399,6 +399,28 @@ describe("accepting an invitation", () => {
       }),
     );
     expect(mockTx.collaborator.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("names the plan's session that clashed, and nothing of the commitment it met", async () => {
+    // The invitee's other commitment overlaps the second session only.
+    world.clash = {
+      id: "occ-elsewhere",
+      startsAt: new Date(at(14).getTime() + 30 * 60_000),
+      endsAt: new Date(at(15).getTime() + 30 * 60_000),
+    };
+    const refusal: unknown = await accept().catch((error: unknown) => error);
+    expect(refusal).toMatchObject({
+      code: "CALENDAR_CLASH",
+      detail: {
+        clash: {
+          startsAt: at(14).toISOString(),
+          endsAt: at(15).toISOString(),
+        },
+      },
+    });
+    expect(Object.keys((refusal as { detail: object }).detail)).toEqual([
+      "clash",
+    ]);
   });
 
   it("answers CALENDAR_BUSY when another writer holds the invitee's time", async () => {

@@ -5,6 +5,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 
+import { DisplayZoneProvider } from "@/lib/time/zoned-format";
+
 import {
   CollaborationRefusal,
   collaborationKeys,
@@ -259,6 +261,44 @@ it("a refused accept surfaces the terms the host changed to, and still reloads t
   await waitFor(() => expect(reads(MINE_URL)).toBe(2));
 });
 
+it("a refused accept names the plan's session that clashed, in the zone its screen prints in", async () => {
+  const { result } = renderHook(useRespondToInvitation, {
+    wrapper: ({ children }: { children: ReactNode }) => (
+      <DisplayZoneProvider zone="Asia/Kolkata">
+        {wrapper({ children })}
+      </DisplayZoneProvider>
+    ),
+  });
+  writeAnswer = {
+    status: 409,
+    body: {
+      error:
+        "One of this plan's sessions overlaps another session on your calendar.",
+      code: "CALENDAR_CLASH",
+      clash: {
+        startsAt: "2026-11-18T12:45:00.000Z",
+        endsAt: "2026-11-18T14:15:00.000Z",
+      },
+    },
+  };
+  let refusal: unknown;
+  await act(async () => {
+    refusal = await result.current
+      .mutateAsync({
+        collaboratorId: "collab-1",
+        response: "ACCEPTED",
+        seenTerms: { role: "CO_HOST", sharePercent: 25 },
+      })
+      .catch((error: unknown) => error);
+  });
+  if (!(refusal instanceof CollaborationRefusal)) {
+    throw new Error("the accept was not refused");
+  }
+  expect(describeRefusal(refusal).sentence).toBe(
+    "This plan's session on Wed, 18 Nov 2026, 6:15 PM – 7:45 PM IST overlaps another session on your calendar.",
+  );
+});
+
 it("a team that fails to load is an error with the server's sentence, never an empty team", async () => {
   globalThis.fetch = jest.fn(async () =>
     answer(403, {
@@ -333,6 +373,20 @@ describe("describeRefusal", () => {
       describeRefusal(refusal("SHARES_EXCEEDED", { availablePercent: 15 }))
         .sentence,
     ).toBe("The server's sentence. 15% is still free on this plan.");
+  });
+
+  it("keeps the server's sentence about a calendar clash when it holds no session or no zone", () => {
+    const clash = {
+      startsAt: "2026-11-18T12:45:00.000Z",
+      endsAt: "2026-11-18T14:15:00.000Z",
+    };
+    expect(describeRefusal(refusal("CALENDAR_CLASH", { clash })).sentence).toBe(
+      "The server's sentence.",
+    );
+    expect(
+      describeRefusal(refusal("CALENDAR_CLASH").inZone("Asia/Kolkata"))
+        .sentence,
+    ).toBe("The server's sentence.");
   });
 
   it("offers a reload only when the screen is out of date", () => {
