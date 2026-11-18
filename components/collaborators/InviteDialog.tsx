@@ -163,7 +163,7 @@ export function TermsFields({
           id={shareHintId}
           className={
             invalid
-              ? "mt-1.5 text-xs text-destructive"
+              ? "mt-1.5 text-xs text-red-600"
               : "mt-1.5 text-xs text-muted-foreground"
           }
         >

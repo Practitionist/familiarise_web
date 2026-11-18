@@ -18,7 +18,10 @@ import { ActiveCollaborationCard } from "@/components/collaborators/ActiveCollab
 import { CollaboratorsTab } from "@/components/collaborators/CollaboratorsTab";
 import { ConsultantSearchInput } from "@/components/collaborators/ConsultantSearchInput";
 import { EndCollaborationDialog } from "@/components/collaborators/EndCollaborationDialog";
-import { InviteDialog } from "@/components/collaborators/InviteDialog";
+import {
+  InviteDialog,
+  TermsFields,
+} from "@/components/collaborators/InviteDialog";
 import { PendingInvitationCard } from "@/components/collaborators/PendingInvitationCard";
 import { TermsSummary } from "@/components/collaborators/TermsSummary";
 import type {
@@ -479,4 +482,19 @@ it("the rupee example names its assumption only when another invitation is still
   expect(
     screen.getByText(/collaborators hold 40% of this plan/),
   ).toBeInTheDocument();
+});
+
+it("a share outside the range is flagged in error text that meets body-text contrast on white", () => {
+  show(
+    <TermsFields
+      planType="webinar"
+      role={null}
+      onRoleChange={() => undefined}
+      share="95"
+      onShareChange={() => undefined}
+      others={[]}
+    />,
+  );
+  // red-600 on white is 4.8:1; body text needs 4.5:1.
+  expect(screen.getByText(/Enter a whole number/)).toHaveClass("text-red-600");
 });
