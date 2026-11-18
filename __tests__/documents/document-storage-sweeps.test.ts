@@ -206,9 +206,7 @@ describe("purge-deleted-documents", () => {
 
     await purgeDeletedDocuments(now);
 
-    const where = (prisma.appointment.findMany as jest.Mock).mock.calls[0][0]
-      .where;
-    expect(where.OR[0].statusHistory.some.entity).toEqual({
+    const booking = {
       in: [
         "CONSULTATION",
         "SUBSCRIPTION",
@@ -218,7 +216,12 @@ describe("purge-deleted-documents", () => {
         "RESCHEDULE_REQUEST",
         "OCCURRENCE",
       ],
-    });
+    };
+    const { where, select } = (prisma.appointment.findMany as jest.Mock).mock
+      .calls[0][0];
+    expect(where.OR[0].statusHistory.some.entity).toEqual(booking);
+    // The date rule reads the terminal date through the same select.
+    expect(select.statusHistory.where.entity).toEqual(booking);
   });
 
   it("continues with the remaining bookings when one tombstone transaction fails", async () => {
