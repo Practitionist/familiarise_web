@@ -21,8 +21,10 @@ import { can } from "@/lib/backoffice/capability";
 import {
   COLLABORATIONS_PAGE_SIZE,
   readCollaborations,
+  type BackofficeCollaboration,
 } from "@/lib/backoffice/collaborations-read";
 import { pageNumberSchema } from "@/lib/backoffice/list-paging";
+import type { PersonLike } from "@/lib/backoffice/person";
 import { OperatorTimeStack } from "@/lib/time/operator-time";
 import type { Tone } from "@/lib/ui/tone";
 
@@ -36,6 +38,38 @@ const STATUS: Record<CollaboratorStatus, { label: string; tone: Tone }> = {
   WITHDRAWN: { label: "Left", tone: "neutral" },
   REMOVED: { label: "Removed", tone: "caution" },
 };
+
+/**
+ * A person by name and email, linked to their back-office page. Someone with
+ * neither keeps a muted id, so two such rows can be told apart.
+ */
+function PersonLink({
+  person,
+  basePath,
+}: Readonly<{ person: PersonLike; basePath: string }>) {
+  const named = Boolean(person.name?.trim() || person.email?.trim());
+  const cell = <PersonCell person={named ? { ...person, id: null } : person} />;
+  if (!person.id) return cell;
+  return (
+    <Link
+      href={`${basePath}/users/${person.id}`}
+      className="block rounded hover:underline"
+    >
+      {cell}
+    </Link>
+  );
+}
+
+/** Who ended a collaboration: a person, the platform, or nobody yet. */
+function EndedBy({
+  row,
+  basePath,
+}: Readonly<{ row: BackofficeCollaboration; basePath: string }>) {
+  if (row.endedBy) {
+    return <PersonLink person={row.endedBy} basePath={basePath} />;
+  }
+  return <>{row.endedAt ? "The platform" : "—"}</>;
+}
 
 /** Read-only list of every collaboration, for the operators who read payouts. */
 export default async function BackofficeCollaborationsPage({
@@ -100,7 +134,7 @@ export default async function BackofficeCollaborationsPage({
                   </div>
                 </TableCell>
                 <TableCell>
-                  <PersonCell person={row.expert} />
+                  <PersonLink person={row.expert} basePath={cap.basePath} />
                 </TableCell>
                 <TableCell>{row.roleLabel}</TableCell>
                 <TableCell>{row.sharePercent}%</TableCell>
@@ -114,22 +148,16 @@ export default async function BackofficeCollaborationsPage({
                   <OperatorTimeStack value={row.endedAt} />
                 </TableCell>
                 <TableCell>
-                  {row.endedBy ? (
-                    <PersonCell person={row.endedBy} />
-                  ) : row.endedAt ? (
-                    "The platform"
-                  ) : (
-                    "—"
-                  )}
+                  <EndedBy row={row} basePath={cap.basePath} />
                 </TableCell>
                 {holdsHref ? (
                   <TableCell>
-                    <Link href={holdsHref} className="underline">
+                    <Link
+                      href={`${holdsHref}?consultantProfileId=${encodeURIComponent(row.consultantProfileId)}`}
+                      className="underline"
+                    >
                       Earnings holds
                     </Link>
-                    <div className="text-xs text-muted-foreground">
-                      {row.consultantProfileId}
-                    </div>
                   </TableCell>
                 ) : null}
               </TableRow>
