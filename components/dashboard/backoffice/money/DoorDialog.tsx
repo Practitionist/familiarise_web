@@ -43,6 +43,9 @@ export function DoorDialog({
     invalidate,
     onDone: onClose,
     refusalCopy,
+    failure: door
+      ? `Couldn't ${door.confirm.charAt(0).toLowerCase()}${door.confirm.slice(1)}`
+      : undefined,
   });
   if (!door) return null;
   const isMakeUp = door.extra === "make-up";

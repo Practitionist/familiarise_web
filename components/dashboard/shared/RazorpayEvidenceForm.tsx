@@ -159,9 +159,12 @@ export function RazorpayEvidenceForm({
       });
       void queryClient.invalidateQueries({ queryKey: [...queryKey] });
     },
-    onError: (err: Error) =>
+    onError: (err: Error, action) =>
       toast({
-        title: "Not done",
+        title:
+          action === "submit"
+            ? "Couldn't submit the evidence"
+            : "Couldn't save the draft on Razorpay",
         description: err.message,
         variant: "destructive",
       }),

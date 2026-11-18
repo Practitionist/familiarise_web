@@ -11,6 +11,7 @@ import { z } from "zod";
 
 import { createIncident, resolveIncident } from "@/lib/betterstack";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
+import { readJsonBody } from "@/lib/api/parse";
 import {
   opsActorOf,
   recordOpsAction,
@@ -186,15 +187,9 @@ async function startMaintenance(request: NextRequest) {
   const auth = await requireOperator();
   if (auth.error) return auth.error;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json(
-      { error: "Request body must be valid JSON" },
-      { status: 400 },
-    );
-  }
+  const read = await readJsonBody(request);
+  if (read.error) return read.error;
+  const body: unknown = read.body;
 
   const parsed = postSchema.safeParse(body);
   if (!parsed.success) {
@@ -309,15 +304,9 @@ async function updateMaintenance(request: NextRequest) {
   const auth = await requireOperator();
   if (auth.error) return auth.error;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json(
-      { error: "Request body must be valid JSON" },
-      { status: 400 },
-    );
-  }
+  const read = await readJsonBody(request);
+  if (read.error) return read.error;
+  const body: unknown = read.body;
 
   const parsed = patchSchema.safeParse(body);
   if (!parsed.success) {

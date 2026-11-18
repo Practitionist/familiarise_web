@@ -55,6 +55,7 @@ import { SessionHostProvider } from "./session-time-field";
 import {
   feasibilityRefusalOf,
   feasibilityWarningsOf,
+  saveFailedTitle,
 } from "./feasibility-feedback";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { isExpectedRefusal } from "@/lib/errors/client-refusal";
@@ -381,12 +382,14 @@ export function OfferingEditorContainer({
           { tags: { subsystem: "offerings" } },
         );
       }
-      setPublishRefusal(feasibilityRefusalOf(error));
+      const refusal = feasibilityRefusalOf(error);
+      setPublishRefusal(refusal);
       toast({
-        title:
-          publish && !wasPublishedBeforeSave
-            ? "Couldn't publish"
-            : "Couldn't save",
+        title: saveFailedTitle({
+          publish,
+          wasPublished: wasPublishedBeforeSave,
+          notFeasible: refusal !== null,
+        }),
         description:
           error instanceof Error ? error.message : "Please try again.",
         variant: "destructive",

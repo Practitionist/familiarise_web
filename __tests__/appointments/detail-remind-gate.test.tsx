@@ -171,3 +171,104 @@ describe("NeedsYouCallout → Remind", () => {
     expect(withdrawButton()).not.toBeNull();
   });
 });
+
+describe("NeedsYouCallout → the pay-link line", () => {
+  const withDeadline = (deadline: Date, reminderExpiresAt: string | null) => {
+    const actions: AwaitingPaymentActions = {
+      reminderExpiresAt,
+      remind: jest.fn(),
+      withdraw: jest.fn(),
+      onChanged: jest.fn(),
+    };
+    return (
+      <NeedsYouCallout
+        presentation={
+          {
+            nextAction: { kind: "REMIND_OR_WITHDRAW", deadline },
+            bookingState: { state: "AWAITING_PAYMENT" },
+          } as unknown as BookingPresentation
+        }
+        names={{ payer: "Payer", consultant: "Expert" }}
+        heldCount={1}
+        awaitingPayment={actions}
+        pending={null}
+        onHelp={() => undefined}
+      />
+    );
+  };
+
+  it("names the deadline while the link is live", () => {
+    const live = new Date(Date.now() + HOUR);
+    render(withDeadline(live, live.toISOString()));
+    expect(screen.getByText(/Payer has the payment link until/)).toBeTruthy();
+  });
+
+  it("an older lapsed order does not override the live one Remind reuses", () => {
+    const past = new Date(Date.now() - HOUR);
+    const live = new Date(Date.now() + HOUR);
+    render(withDeadline(past, live.toISOString()));
+    expect(screen.getByText(/Payer has the payment link until/)).toBeTruthy();
+    expect(screen.queryByText(/has expired/)).toBeNull();
+  });
+
+  it("labels the header countdown as the hold's clock, not the link's", () => {
+    const hold = new Date(Date.now() + 3 * HOUR);
+    const link = new Date(Date.now() + HOUR);
+    render(withDeadline(hold, link.toISOString()));
+    expect(screen.getByText(/^Slot held [23]h \d+m$/)).toBeTruthy();
+    expect(screen.queryByText(/left$/)).toBeNull();
+  });
+
+  it("says the link has expired once it has", () => {
+    const past = new Date(Date.now() - HOUR);
+    render(withDeadline(past, past.toISOString()));
+    expect(screen.queryByText(/has the payment link until/)).toBeNull();
+    expect(
+      screen.getByText(/The payment link sent to Payer has expired\./),
+    ).toBeTruthy();
+  });
+});
+
+describe("NeedsYouCallout → each countdown names its deadline", () => {
+  const at = () => new Date(Date.now() + 3 * HOUR);
+  const view = (
+    kind: "PAY" | "REMIND_OR_WITHDRAW",
+    heldCount: number,
+    payFirst: "trial" | "checkout" | null = null,
+  ) => (
+    <NeedsYouCallout
+      presentation={
+        {
+          nextAction: { kind, deadline: at(), label: "Pay" },
+          bookingState: { state: "AWAITING_PAYMENT" },
+        } as unknown as BookingPresentation
+      }
+      names={{ payer: "Payer", consultant: "Expert" }}
+      heldCount={heldCount}
+      payFirst={payFirst}
+      awaitingPayment={{
+        reminderExpiresAt: null,
+        remind: jest.fn(),
+        withdraw: jest.fn(),
+        onChanged: jest.fn(),
+      }}
+      pending={null}
+      onPay={jest.fn()}
+      onHelp={() => undefined}
+    />
+  );
+
+  it.each([
+    ["PAY", 2, null, /^Slot held \d+h \d+m$/],
+    ["PAY", 0, "checkout", /^Slot held \d+h \d+m$/],
+    ["PAY", 0, null, /^\d+h \d+m to pay$/],
+    ["REMIND_OR_WITHDRAW", 1, null, /^Slot held \d+h \d+m$/],
+    ["REMIND_OR_WITHDRAW", 0, null, /^\d+h \d+m to pay$/],
+  ] as const)(
+    "%s with %i held (pay-first %s)",
+    (kind, held, payFirst, label) => {
+      render(view(kind, held, payFirst));
+      expect(screen.getByText(label)).toBeTruthy();
+    },
+  );
+});

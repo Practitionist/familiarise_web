@@ -78,6 +78,12 @@ type PlanResponse = {
   data: CheckoutWebinarPlanData;
 };
 
+/** Seats left moves as others buy: a short stale window, and a re-read on focus. */
+export const WEBINAR_SEATS_FRESHNESS = {
+  staleTime: 15_000,
+  refetchOnWindowFocus: true,
+} as const;
+
 function webinarSeats(
   webinar: CheckoutWebinarPlanData["webinars"][number],
   maxParticipants: number,
@@ -126,7 +132,7 @@ export function useWebinarCheckout(
   // ONE cached read for the mount fetch.
   const checkoutPlanQuery = useQuery({
     queryKey: checkoutPlanKey,
-    staleTime: 60_000,
+    ...WEBINAR_SEATS_FRESHNESS,
     retry: false,
     queryFn: async (): Promise<PlanResponse> => {
       const response = await fetch(`/api/plans/webinars/${planId}`);

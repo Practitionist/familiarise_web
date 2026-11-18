@@ -157,22 +157,36 @@ function Shell({
   );
 }
 
-/** "21h 40m left" against the pay link's clock; nothing once it has passed. */
-function TimeLeft({ deadline }: { deadline: Date }) {
+/** What a countdown's deadline is for: a held slot, a payment, placing sessions, or answering a move. */
+type CountdownPurpose = "held" | "pay" | "schedule" | "answer";
+
+/** The time left, worded for its deadline ("Slot held 21h 40m", "21h 40m to schedule"); nothing once it has passed. */
+function TimeLeft({
+  deadline,
+  purpose,
+}: {
+  deadline: Date;
+  purpose: CountdownPurpose;
+}) {
   const { minutesLeft, isExpired } = useHoldCountdown(deadline);
   if (isExpired) return null;
-  const h = Math.floor(minutesLeft / 60);
-  const m = minutesLeft % 60;
   return (
     <span className="inline-flex items-center gap-1 text-xs font-medium tabular-nums text-amber-800 dark:text-amber-300">
       <Timer className="h-3.5 w-3.5" />
-      {h > 0
-        ? `${h}h ${m}m left`
-        : m > 0
-          ? `${m}m left`
-          : "under a minute left"}
+      {countdownLabel(purpose, minutesLeft)}
     </span>
   );
+}
+
+function countdownLabel(purpose: CountdownPurpose, minutesLeft: number) {
+  const h = Math.floor(minutesLeft / 60);
+  const m = minutesLeft % 60;
+  let left = "under a minute";
+  if (h > 0) left = `${h}h ${m}m`;
+  else if (m > 0) left = `${m}m`;
+  if (purpose === "held") return `Slot held ${left}`;
+  const text = `${left} to ${purpose}`;
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 /** "₹6,000 + 18% GST" from the row's own split; the base alone when there is no tax. */
@@ -185,6 +199,8 @@ function gstSplit(
   const pct = Math.round((tax / base) * 100);
   return ` (${formatCurrencyAmount(base, pending.currency)} + ${pct}% GST)`;
 }
+
+const APPROVE_FAILED_TITLE = "Couldn't approve this request";
 
 function ApproveOrDecline({
   decision,
@@ -235,6 +251,7 @@ function ApproveOrDecline({
           allocationFailedWithCode(
             result.error ?? "Failed to allocate slots",
             result.errorCode,
+            APPROVE_FAILED_TITLE,
           ),
         );
         return;
@@ -264,6 +281,7 @@ function ApproveOrDecline({
       toast(
         allocationFailed(
           error instanceof Error ? error.message : "Failed to allocate slots",
+          APPROVE_FAILED_TITLE,
         ),
       );
     } finally {
@@ -414,9 +432,16 @@ function RemindOrWithdraw({
   const [withdrawing, setWithdrawing] = useState(false);
   const cooling = !!nextAllowedAt && Date.parse(nextAllowedAt) > Date.now();
   useRerenderAfter(actions.reminderExpiresAt);
+  useRerenderAfter(deadline ?? null);
   const canRemind =
     !!actions.reminderExpiresAt &&
     Date.parse(actions.reminderExpiresAt) > Date.now();
+  // The live order Remind reuses names the link's deadline; else the hold's.
+  const linkDeadline = actions.reminderExpiresAt
+    ? new Date(actions.reminderExpiresAt)
+    : deadline;
+  const linkExpired =
+    !canRemind && !!linkDeadline && linkDeadline.getTime() <= Date.now();
 
   const remind = async () => {
     setReminding(true);
@@ -489,7 +514,12 @@ function RemindOrWithdraw({
       onHelp={onHelp}
       actions={
         <>
-          {deadline && <TimeLeft deadline={deadline} />}
+          {deadline && (
+            <TimeLeft
+              deadline={deadline}
+              purpose={heldCount > 0 ? "held" : "pay"}
+            />
+          )}
           {canRemind && (
             <Button
               size="sm"
@@ -547,9 +577,17 @@ function RemindOrWithdraw({
         </>
       }
     >
-      {names.payer} has the payment link
-      {deadline ? ` until ${format(deadline, "EEE d MMM HH:mm")}` : ""}.
-      {heldLine}
+      {linkExpired ? (
+        <>The payment link sent to {names.payer} has expired.</>
+      ) : (
+        <>
+          {names.payer} has the payment link
+          {linkDeadline
+            ? ` until ${format(linkDeadline, "EEE d MMM HH:mm")}`
+            : ""}
+          .{heldLine}
+        </>
+      )}
     </Shell>
   );
 }
@@ -685,7 +723,7 @@ function CalloutBody(props: Omit<NeedsYouCalloutProps, "embedded">) {
           onHelp={onHelp}
           actions={
             <>
-              {deadline && <TimeLeft deadline={deadline} />}
+              {deadline && <TimeLeft deadline={deadline} purpose="schedule" />}
               <Button size="sm" asChild>
                 <Link href={decision.allocateHref}>{nextAction.label}</Link>
               </Button>
@@ -716,7 +754,12 @@ function CalloutBody(props: Omit<NeedsYouCalloutProps, "embedded">) {
           onHelp={onHelp}
           actions={
             <>
-              {deadline && <TimeLeft deadline={deadline} />}
+              {deadline && (
+                <TimeLeft
+                  deadline={deadline}
+                  purpose={payFirst || heldCount > 0 ? "held" : "pay"}
+                />
+              )}
               <Button
                 size="sm"
                 className="bg-amber-500 text-white hover:bg-amber-600 dark:bg-amber-600 dark:hover:bg-amber-500"
@@ -742,7 +785,7 @@ function CalloutBody(props: Omit<NeedsYouCalloutProps, "embedded">) {
           onHelp={onHelp}
           actions={
             <>
-              {deadline && <TimeLeft deadline={deadline} />}
+              {deadline && <TimeLeft deadline={deadline} purpose="answer" />}
               {answers.includes("accept") && (
                 <Button
                   size="sm"

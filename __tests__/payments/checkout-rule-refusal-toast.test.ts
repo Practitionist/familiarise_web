@@ -25,28 +25,28 @@ it("a full expert gets its own fully-booked copy, with no raw code", () => {
     errorType: "PLAN_CLIENTS_FULL_ERROR",
   });
   const [toast] = toasts;
-  expect(toast.title).toBe("This Expert Is Fully Booked");
+  expect(toast.title).toBe("This expert is fully booked");
   // The same sentence the checkout banner and the server refusal use.
   expect(toast.description).toBe(PLAN_CLIENTS_FULL_MESSAGE);
   expect(JSON.stringify(toast)).not.toMatch(/contact your bank|PLAN_CLIENTS/);
 });
 
 it.each([
-  ["NOT_PLACEABLE_ERROR", undefined, "No Free Time In The First Week"],
+  ["NOT_PLACEABLE_ERROR", undefined, "No free time in the first week"],
   [
     "BOOKING_RULE_ERROR",
     "NOT_ACCEPTING_BOOKINGS",
-    "Not Available For This Booking",
+    "Not available for this booking",
   ],
   [
     "REQUEST_APPROVAL_REQUIRED_ERROR",
     "REQUEST_APPROVAL_REQUIRED",
-    "This Expert Reviews Requests First",
+    "This expert reviews requests first",
   ],
   [
     "SUBSCRIPTION_ALREADY_ACTIVE_ERROR",
     undefined,
-    "You Already Have This Plan",
+    "You already have this plan",
   ],
 ])("the %s refusal keeps its typed title", (errorType, code, title) => {
   onPaymentError({

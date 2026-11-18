@@ -9,7 +9,7 @@ import {
   appointmentStatusLine,
   getProximityLabel,
 } from "@/lib/appointments/occurrences";
-import { noSessionLabel } from "@/lib/appointments/bucket";
+import { listedAt, noSessionLabel } from "@/lib/appointments/bucket";
 import type { AppointmentActionAdapter } from "@/lib/appointments/adapter";
 import type { AppointmentVM } from "@/lib/appointments/view-model";
 import {
@@ -74,19 +74,19 @@ export function AppointmentRow({
       ? null
       : getProximityLabel(vm.nextAt, viewerZone.zone);
 
-  const timeLabel = vm.nextAt
-    ? formatInViewerZone(vm.nextAt, viewerZone.zone, "h:mm a")
+  // An open move keeps its session's time until answered; the chip says "Being moved".
+  const shownAt = listedAt(vm);
+  const timeLabel = shownAt
+    ? formatInViewerZone(shownAt, viewerZone.zone, "h:mm a")
     : noSessionLabel(vm.needsActionReason);
-  const endOfAnchor = vm.nextAt
+  const endOfAnchor = shownAt
     ? vm.occurrences.find(
-        (s) => s.startsAt.getTime() === vm.nextAt?.getTime() && s.endsAt,
+        (s) => s.startsAt.getTime() === shownAt.getTime() && s.endsAt,
       )?.endsAt
     : null;
   // Labelled only when the zone is not the viewer's own (a fallback zone).
   const zoneSuffix =
-    vm.nextAt && !viewerZone.own
-      ? ` ${zoneLabel(vm.nextAt, viewerZone.zone)}`
-      : "";
+    shownAt && !viewerZone.own ? ` ${zoneLabel(shownAt, viewerZone.zone)}` : "";
 
   const open = onOpen ? () => onOpen(vm) : undefined;
 

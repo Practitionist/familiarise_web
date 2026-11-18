@@ -39,10 +39,10 @@ describe.each(RUNTIME_ZONES)("with the runtime in %s", (runtime) => {
     expect(ist.dateTime(AT)).toContain("16 Nov");
   });
 
-  it("a customer in Los Angeles reads their own wall clock", () => {
+  it("a customer in Los Angeles reads their own wall clock, labelled with its zone", () => {
     const la = zoneClock(LA);
-    expect(la.time(AT)).toMatch(/^4:45\s?am$/i);
-    expect(la.dateTime(AT)).toMatch(/16 Nov/);
+    expect(la.time(AT)).toMatch(/^4:45\s?am PST$/i);
+    expect(la.dateTime(AT)).toMatch(/16 Nov.*4:45\s?am PST$/i);
     expect(la.dateTime(AT)).not.toMatch(/6:15|IST/);
   });
 
@@ -55,7 +55,7 @@ describe.each(RUNTIME_ZONES)("with the runtime in %s", (runtime) => {
     const due = "2026-11-17T03:00:00.000Z";
     const now = new Date("2026-11-16T16:00:00.000Z");
     expect(describeWait(due, LA, now)).toMatch(
-      /^Our team will reply by 7:00\s?pm today\.$/i,
+      /^Our team will reply by 7:00\s?pm PST today\.$/i,
     );
     expect(describeWait(due, OPERATOR_ZONE, now)).toMatch(
       /^Our team will reply by 8:30\s?am IST on 17 Nov\.$/i,

@@ -15,7 +15,11 @@ import type { AppointmentWithSlots } from "@/lib/booking/allocation/types";
 import { tentativeSlotCountOf } from "@/lib/booking/allocation/counts";
 import { findIdempotentAllocation } from "@/lib/booking/allocation/idempotency";
 import { liveParticipant } from "@/lib/booking/participants";
-import { ALREADY_SCHEDULED_COPY } from "@/lib/scheduling/allocationMessages";
+import {
+  ALREADY_SCHEDULED_COPY,
+  soldEventMoveCopy,
+} from "@/lib/scheduling/allocationMessages";
+import { RESCHEDULE_MIN_LEAD_HOURS } from "@/lib/booking/lead-time";
 
 /**
  * The allocation transaction's first statement: an advisory xact lock per
@@ -123,8 +127,7 @@ export async function assertGroupEventUnsoldInTx(
   });
   if (liveSeats > 0) {
     throw new AllocationConflictError(
-      `This ${eventType} already has ${liveSeats} booked seat${liveSeats === 1 ? "" : "s"}, ` +
-        `so its times can't be re-planned. Use "${eventType === "class" ? "Move upcoming sessions" : "Move to a new date"}" to move it: attendees are told and may leave with a full refund.`,
+      soldEventMoveCopy(eventType, RESCHEDULE_MIN_LEAD_HOURS, liveSeats),
       "USE_RETIME",
       { liveSeats },
     );

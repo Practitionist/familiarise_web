@@ -104,12 +104,12 @@ erDiagram
     SubscriptionPlan ||--o{ Subscription : "has many"
     SubscriptionPlan ||--o{ Trial : "has many"
     WebinarPlan ||--|| Webinar : "has one"
-    ClassPlan ||--|| Class : "has one"
+    ClassPlan ||--o{ ClassBatch : "has many"
 
     Consultation ||--o| Appointment : "has one"
     Subscription ||--o{ Appointment : "has many (1 placeholder + M sessions)"
     Webinar ||--o| Appointment : "has one (shared)"
-    Class ||--o{ Appointment : "has many (1 per session)"
+    ClassBatch ||--o| Appointment : "has one (shared)"
     Trial ||--o| Appointment : "has one"
 
     Appointment ||--o{ AppointmentOccurrence : "has many"
@@ -252,7 +252,7 @@ sequenceDiagram
         WH->>DB: confirmExistingAppointment (L924)
         Note over WH,DB: For CONSULTATION: updateMany AppointmentOccurrence SET isTentative=false WHERE appointmentId
         WH->>DB: confirmApprovalStatus (L855)
-        Note over WH,DB: Consultation: PENDING or APPROVED_PENDING_PAYMENT -> APPROVED; any other status matches zero rows and is surfaced for refund
+        Note over WH,DB: Consultation: PENDING or APPROVED_PENDING_PAYMENT -> APPROVED. A zero-row match on an APPROVED or COMPLETED booking is already confirmed, and any other status is surfaced for refund
     end
 
     rect rgb(230, 230, 255)

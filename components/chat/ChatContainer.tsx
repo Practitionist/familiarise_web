@@ -27,6 +27,7 @@ import { SystemMessage } from "./SystemMessage";
 import { StreamChatErrorBoundary } from "@/components/stream/StreamErrorBoundary";
 import { useMaintenanceState } from "@/providers/MaintenanceProvider";
 import { isEventChannel, parseEventChannelId } from "@/lib/stream-channel-ids";
+import { useChatPane } from "./ChatPaneContext";
 import { EmptyState } from "@/components/dashboard/DataCard";
 import { withoutLegacyBookingCards } from "@/lib/stream/system-users";
 import { useMediaQuery } from "@/hooks/use-media-query";
@@ -34,15 +35,34 @@ import { useMediaQuery } from "@/hooks/use-media-query";
 // Was a hand-rolled near-copy of EmptyState with different dimensions, on a
 // `bg-zinc-50` slab pressed against the sidebar's blue. ChatUnavailable already
 // used the shared one; this matches it.
-const EmptyChannelState = () => (
-  <div className="flex h-full w-full items-center justify-center bg-card p-8">
-    <EmptyState
-      icon={MessageSquareIcon}
-      title="No conversation selected"
-      description="Pick a conversation from the list to start chatting."
-    />
-  </div>
-);
+const EMPTY_COPY = {
+  none: {
+    title: "No conversation selected",
+    description: "Pick a conversation from the list to start chatting.",
+  },
+  event: {
+    title: "This event chat is no longer available to you",
+    description:
+      "You are no longer on this event, so its chat is closed to you. Pick another conversation from the list.",
+  },
+  conversation: {
+    title: "This conversation is no longer available to you",
+    description: "Pick another conversation from the list.",
+  },
+} as const;
+
+const EmptyChannelState = () => {
+  const copy = EMPTY_COPY[useChatPane().unavailableLink ?? "none"];
+  return (
+    <div className="flex h-full w-full items-center justify-center bg-card p-8">
+      <EmptyState
+        icon={MessageSquareIcon}
+        title={copy.title}
+        description={copy.description}
+      />
+    </div>
+  );
+};
 
 // An empty class or webinar channel invites the first message; DMs keep the SDK default.
 const ChannelEmptyState = (props: EmptyStateIndicatorProps) => {

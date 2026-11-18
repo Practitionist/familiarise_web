@@ -17,6 +17,24 @@ describe("flow commitments, handoff choices and organization triage", () => {
     },
     "PAYMENTS_BILLING",
   )!;
+  test("escalationBrief writes the topic and the reason as labels, never raw enums", () => {
+    const brief = escalationBrief({
+      topic: "CANCEL_REFUND",
+      reason: "payment_deducted_unconfirmed",
+    });
+    expect(brief).toBe(
+      "Topic: Cancellation\nEscalation reason: Payment deducted unconfirmed",
+    );
+    expect(
+      escalationBrief({ topic: "Payments & billing", reason: "keyword" }),
+    ).toBe(
+      "Topic: Payments & billing\nEscalation reason: The customer asked for a person",
+    );
+    expect(escalationBrief({ reason: "gst_invoice_wrong" })).toBe(
+      "Escalation reason: GST invoice wrong",
+    );
+  });
+
   test("escalationBrief + extractBotPromises preserves structured commitments without splitting on semicolons", () => {
     const deductedNode = paymentsFlow.nodes.deducted;
     const basePromises =
@@ -35,7 +53,7 @@ describe("flow commitments, handoff choices and organization triage", () => {
       promises,
     });
 
-    expect(brief).toContain("Escalation reason: node_escalated");
+    expect(brief).toContain("Escalation reason: The help flow handed off");
     expect(brief).toContain(
       "Flow path: Payments & billing → Money deducted but booking not confirmed",
     );

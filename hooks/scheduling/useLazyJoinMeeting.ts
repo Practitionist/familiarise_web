@@ -78,7 +78,7 @@ export function useLazyJoinMeeting() {
       const relevantSlot = joinableSlot ?? appointment.occurrences?.[0];
       if (!relevantSlot) {
         toast({
-          title: "Error",
+          title: "No session to join yet",
           description: "Slot information missing for this appointment.",
           variant: "destructive",
         });

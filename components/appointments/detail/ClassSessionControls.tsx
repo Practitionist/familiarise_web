@@ -133,28 +133,24 @@ export function useClassSessionActions({
     toast({ title });
     onChanged();
   };
-  const failed = (error: Error) =>
-    toast({
-      title: "Not done",
-      description: error.message,
-      variant: "destructive",
-    });
+  const failed = (title: string) => (error: Error) =>
+    toast({ title, description: error.message, variant: "destructive" });
 
   const cancel = useMutation({
     mutationFn: (id: string) => post(`${base}/${id}/cancel`),
     onSuccess: done("Session cancelled"),
-    onError: failed,
+    onError: failed("Couldn't cancel this session"),
   });
   const makeUp = useMutation({
     mutationFn: (args: { id: string; startsAt: string }) =>
       post(`${base}/${args.id}/make-up`, { startsAt: args.startsAt }),
     onSuccess: done("Make-up scheduled"),
-    onError: failed,
+    onError: failed("Couldn't book the make-up"),
   });
   const skip = useMutation({
     mutationFn: (id: string) => post(`${base}/${id}/skip-make-up`),
     onSuccess: done("Session refunded"),
-    onError: failed,
+    onError: failed("Couldn't refund this session"),
   });
 
   const now = Date.now();

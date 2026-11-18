@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/utils/tailwind";
 import type { TPlanImageType } from "@/lib/supabase";
-import { errorMessageFromBody } from "@/lib/fetch-helpers";
+import { ApiResponseError, errorMessageFromBody } from "@/lib/fetch-helpers";
 
 /** A cover-image change held in the editor until the offering is saved. */
 export type StagedPlanImage =
@@ -47,11 +47,11 @@ export async function commitPlanImage(
     });
   }
   if (!response.ok) {
-    throw new Error(
-      errorMessageFromBody(
-        await response.json().catch(() => null),
-        "Couldn't update the cover image",
-      ),
+    const body: unknown = await response.json().catch(() => null);
+    // The status rides along so a 4xx reads as the server's answer, not a fault.
+    throw new ApiResponseError(
+      errorMessageFromBody(body, "Couldn't update the cover image"),
+      { status: response.status, body },
     );
   }
 }

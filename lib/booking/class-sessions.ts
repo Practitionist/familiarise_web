@@ -75,6 +75,11 @@ import {
   splitByClash,
 } from "./retime-leave";
 import { MAKEUP_WINDOW_DAYS, MISS_WHERE, missedAt } from "./misses";
+import {
+  formatForViewer,
+  UTC_ZONE,
+  type ViewerZone,
+} from "@/lib/time/viewer-zone";
 import { eventTimeRefusal } from "./event-time-rules";
 import {
   reliabilityThresholdMet,
@@ -691,13 +696,58 @@ export async function createMakeUpOccurrence(
   }
 }
 
+const MAKEUP_SOURCE_MISSING = "That session isn't part of this class.";
+const UTC_VIEWER: ViewerZone = { zone: UTC_ZONE, own: false };
+
+/**
+ * Why a make-up cannot go at `startsAt`, one sentence per condition, or null.
+ * The window closes 14 days after the session was cancelled or voided.
+ */
+export function makeUpWindowRefusal(args: {
+  source: {
+    completionStatus: OccurrenceCompletionStatus;
+    hostCancelledAt: Date | null;
+    voidedAt: Date | null;
+    seatsSettledAt: Date | null;
+  } | null;
+  startsAt: Date;
+  now: Date;
+  bypass: boolean;
+  viewer: ViewerZone;
+}): string | null {
+  const { source, startsAt, now, bypass, viewer } = args;
+  if (!source) return MAKEUP_SOURCE_MISSING;
+  if (!isMiss(source)) {
+    return "Only a session that was cancelled or voided can have a make-up.";
+  }
+  if (source.seatsSettledAt) {
+    return "This session was already refunded, so it can no longer have a make-up.";
+  }
+  const lostAt = missedAt(source);
+  const deadline = new Date(
+    (lostAt ?? now).getTime() + MAKEUP_WINDOW_DAYS * DAY_MS,
+  );
+  if (!bypass && startsAt.getTime() > deadline.getTime()) {
+    const by = formatForViewer(deadline, viewer, "EEE d MMM, h:mm a");
+    return deadline <= now
+      ? `The make-up window closed on ${by}, ${MAKEUP_WINDOW_DAYS} days after the session was cancelled.`
+      : `A make-up must start by ${by}, ${MAKEUP_WINDOW_DAYS} days after the session was cancelled. Pick an earlier time.`;
+  }
+  if (startsAt <= now) return "Pick a make-up time in the future.";
+  return null;
+}
+
 /** E-3 — schedule the make-up: same ordinal, held within 14 days. */
 export async function scheduleClassMakeUp(
   hosted: HostedClass,
   sourceOccurrenceId: string,
   startsAt: Date,
   /** #1771 K-6 — an operator may hold it past day 14, never without a reason. */
-  opts: { bypassWindow?: { opsActorUserId: string; reason: string } } = {},
+  opts: {
+    bypassWindow?: { opsActorUserId: string; reason: string };
+    /** The zone a refusal names its deadline in. */
+    viewer?: ViewerZone;
+  } = {},
 ) {
   const bypass = opts.bypassWindow;
   if (bypass && bypass.reason.trim().length < 5) {
@@ -759,21 +809,17 @@ export async function scheduleClassMakeUp(
                 consultantProfileId: true,
               },
             });
-            // #1569 — a voided source is in the past; only the make-up must be ahead.
-            const lostAt = source ? missedAt(source) : null;
-            const deadline = lostAt
-              ? lostAt.getTime() + MAKEUP_WINDOW_DAYS * DAY_MS
-              : 0;
-            if (
-              !source ||
-              !isMiss(source) ||
-              source.seatsSettledAt ||
-              (!bypass && startsAt.getTime() > deadline) ||
-              startsAt <= now
-            ) {
+            const refusal = makeUpWindowRefusal({
+              source,
+              startsAt,
+              now,
+              bypass: !!bypass,
+              viewer: opts.viewer ?? UTC_VIEWER,
+            });
+            if (refusal || !source) {
               throw new BookingRuleError(
                 "MAKEUP_WINDOW_LAPSED",
-                `A make-up must be held within ${MAKEUP_WINDOW_DAYS} days of the missed session, and in the future.`,
+                refusal ?? MAKEUP_SOURCE_MISSING,
               );
             }
             const endsAt = new Date(

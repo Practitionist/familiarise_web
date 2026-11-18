@@ -4,6 +4,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { UserRole } from "@prisma/client";
 
 import { getSession } from "@/lib/auth-server";
+import { z } from "zod";
+
+const UsersQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(10),
+  role: z.nativeEnum(UserRole, { message: "Unknown role" }).optional(),
+});
+
 export async function GET(req: NextRequest) {
   try {
     const session = await getSession();
@@ -12,9 +20,17 @@ export async function GET(req: NextRequest) {
     }
 
     const { searchParams } = new URL(req.url);
-    const page = parseInt(searchParams.get("page") || "1");
-    const limit = parseInt(searchParams.get("limit") || "10");
-    const role = searchParams.get("role") as UserRole | null;
+    const query = UsersQuerySchema.safeParse(Object.fromEntries(searchParams));
+    if (!query.success) {
+      return NextResponse.json(
+        {
+          error: query.error.issues[0]?.message ?? "Invalid query",
+          code: "INVALID_QUERY",
+        },
+        { status: 400 },
+      );
+    }
+    const { page, limit, role } = query.data;
 
     const skip = (page - 1) * limit;
 

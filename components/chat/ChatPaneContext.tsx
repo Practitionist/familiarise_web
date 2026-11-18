@@ -20,6 +20,10 @@ export interface ChatPaneState {
   openConversation: () => void;
   /** Absent where there is no list to return to, such as the appointment chat sheet. */
   backToList?: () => void;
+  /** The Messages link named a conversation the viewer can no longer open. */
+  unavailableLink?: "event" | "conversation" | null;
+  /** Null clears it once a conversation opens. */
+  markLinkUnavailable?: (kind: "event" | "conversation" | null) => void;
 }
 
 const ChatPaneContext = createContext<ChatPaneState>({

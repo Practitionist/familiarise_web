@@ -23,6 +23,7 @@ export const CASE_TOPICS = [
   "documents",
   "account",
   "organisation",
+  "general",
   "other",
 ] as const;
 export type CaseTopic = (typeof CASE_TOPICS)[number];
@@ -38,6 +39,7 @@ export const CASE_TOPIC_LABEL: Record<CaseTopic, string> = {
   documents: "Documents",
   account: "Account",
   organisation: "Organisation",
+  general: "General inquiry",
   other: "Other",
 };
 
@@ -85,7 +87,7 @@ const ISSUE_TOPIC: Record<SupportIssueType, CaseTopic> = {
   WANT_TO_CANCEL: "cancellation",
   CANCELLATION_ISSUE: "cancellation",
   ACCOUNT_ISSUE: "account",
-  GENERAL_INQUIRY: "other",
+  GENERAL_INQUIRY: "general",
   OTHER: "other",
 };
 

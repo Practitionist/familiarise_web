@@ -82,6 +82,8 @@ import { holdHoursFor } from "@/lib/payments/payouts/earnings-hold";
 import {
   MAX_CONSULTEE_RESCHEDULES,
   MAX_EXPERT_RESCHEDULES,
+  expertProposalRefusedMessage,
+  expertRescheduleCapMessage,
   consulteeCapReached,
   priorReschedules as priorRescheduleCount,
   trialCapReached,
@@ -691,9 +693,7 @@ async function requestReschedule(
             if (trialCapReached(prior)) {
               throw initiatorRole === "CONSULTANT"
                 ? Object.assign(
-                    new Error(
-                      "You've already moved this trial once. If the time no longer works, cancel it — the learner gets a full refund.",
-                    ),
+                    new Error(expertRescheduleCapMessage("trial")),
                     { httpStatus: 409, code: "EXPERT_RESCHEDULE_CAP" },
                   )
                 : Object.assign(
@@ -713,10 +713,7 @@ async function requestReschedule(
               prior.total >= MAX_EXPERT_RESCHEDULES
             ) {
               throw Object.assign(
-                new Error(
-                  `You've already rescheduled this booking ${MAX_EXPERT_RESCHEDULES} times. ` +
-                    "If the time no longer works, cancel instead — the client gets a full refund.",
-                ),
+                new Error(expertRescheduleCapMessage("booking")),
                 { httpStatus: 409, code: "EXPERT_RESCHEDULE_CAP" },
               );
             }
@@ -1109,7 +1106,7 @@ async function requestReschedule(
               if (undone.withdrawn) {
                 return NextResponse.json(
                   {
-                    error: `${check.message} Your client couldn't accept that time, so the booking keeps its original time — pick another time.`,
+                    error: expertProposalRefusedMessage(check.message),
                     code: taken ? "TIMES_TAKEN" : "TIME_NOT_BOOKABLE",
                     reason: check.reason,
                     takenSlotStarts: check.takenSlotStarts ?? [],

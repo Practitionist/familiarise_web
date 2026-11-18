@@ -89,7 +89,7 @@ const COLUMNS: ResponsiveColumn<FeeSchedule>[] = [
   {
     key: "maker",
     header: "Proposed by",
-    cell: (s) => <PersonCell person={s.maker} />,
+    cell: (s) => <PersonCell person={makerOrSystem(s.maker)} />,
   },
   {
     key: "checker",
@@ -108,6 +108,13 @@ const COLUMNS: ResponsiveColumn<FeeSchedule>[] = [
     ),
   },
 ];
+
+/** A maker with no user row is the seed or a job, never a removed person. */
+export function makerOrSystem<
+  P extends { name: string | null; email: string | null },
+>(person: P): P {
+  return person.name || person.email ? person : { ...person, name: "System" };
+}
 
 /** The platform take-rate schedules: history, the rates in force, and the maker-checker doors. */
 export function PlatformFeesPageClient() {

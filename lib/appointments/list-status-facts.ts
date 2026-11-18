@@ -28,6 +28,11 @@ export function paymentsLapsed(
   );
 }
 
+const proposalSide = (p: { initiatorRole: string }) =>
+  p.initiatorRole === "CONSULTANT"
+    ? ("CONSULTANT" as const)
+    : ("REQUESTER" as const);
+
 /** What a list row knows about payment and an open reschedule, for its status chip. */
 export function listStatusFacts(
   appointment:
@@ -47,6 +52,8 @@ export function listStatusFacts(
     | null
     | undefined,
   occurrences: OccurrenceVM[],
+  /** The list's side and the signed-in user, so an open move knows whose it is. */
+  viewer?: { side: "CONSULTANT" | "REQUESTER"; userId?: string | null },
 ): Pick<
   AppointmentVM,
   "paid" | "payDeadline" | "payLapsed" | "reschedule" | "refunded"
@@ -68,6 +75,13 @@ export function listStatusFacts(
   const original = occurrences.find(
     (o) => o.isTentative && o.completionStatus === "RESCHEDULED",
   );
+  // By the proposer's id once the session is known, else the list's own side.
+  let mine: boolean | undefined;
+  if (proposal && viewer) {
+    mine = viewer.userId
+      ? proposal.initiatedById === viewer.userId
+      : proposalSide(proposal) === viewer.side;
+  }
   return {
     refunded:
       refundedPaise > 0
@@ -83,10 +97,8 @@ export function listStatusFacts(
     payLapsed: paymentsLapsed(payments),
     reschedule: proposal
       ? {
-          by:
-            proposal.initiatorRole === "CONSULTANT"
-              ? "CONSULTANT"
-              : "REQUESTER",
+          by: proposalSide(proposal),
+          mine,
           proposedStartsAt: proposal.proposedTimes[0]?.startsAt ?? null,
           originalStartsAt: original?.startsAt ?? null,
           expiresAt: proposal.expiresAt,

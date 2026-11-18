@@ -11,6 +11,8 @@
  */
 
 import type { DayOfWeek } from "@prisma/client";
+import { z } from "zod";
+import { DAYS_OF_WEEK } from "@/utils/dateTimeUtils";
 import {
   slotsOverlap,
   validateWeeklySlotTimeOrder,
@@ -343,4 +345,29 @@ export function assertCustomWindows(
 ): void {
   const refusal = validateCustomWindows(rows, opts);
   if (refusal) throw new AvailabilityContractError(refusal);
+}
+
+/** A PATCH day: omitted when absent or blank, else one of the day keys. */
+const patchDaySchema = z.preprocess(
+  (v) => (v === "" || v === null ? undefined : v),
+  z.enum(DAYS_OF_WEEK).optional(),
+);
+type PatchDay = z.infer<typeof patchDaySchema>;
+
+/** A weekly PATCH's days, parsed, or the 400 sentence naming the bad field. */
+export function parsePatchDays(
+  startDay: unknown,
+  endDay: unknown,
+):
+  | { ok: true; startDay: PatchDay; endDay: PatchDay }
+  | { ok: false; error: string } {
+  const start = patchDaySchema.safeParse(startDay);
+  if (!start.success) {
+    return { ok: false, error: "Invalid day of week for start time" };
+  }
+  const end = patchDaySchema.safeParse(endDay);
+  if (!end.success) {
+    return { ok: false, error: "Invalid day of week for end time" };
+  }
+  return { ok: true, startDay: start.data, endDay: end.data };
 }

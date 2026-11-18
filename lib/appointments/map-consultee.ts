@@ -108,10 +108,17 @@ function groupProgress(
   };
 }
 
-function mapConsultation(c: TConsultationWithPlan, now: Date): AppointmentVM {
+function mapConsultation(
+  c: TConsultationWithPlan,
+  now: Date,
+  viewerId?: string | null,
+): AppointmentVM {
   const occurrences = occurrencesOfAppointment(c.appointment);
   const status = normalizeStatus(c.status?.toString());
-  const facts = listStatusFacts(c.appointment, occurrences);
+  const facts = listStatusFacts(c.appointment, occurrences, {
+    side: "REQUESTER",
+    userId: viewerId,
+  });
   return {
     id: `consultation-${c.id}`,
     appointmentId: c.appointment?.id ?? null,
@@ -130,6 +137,7 @@ function mapConsultation(c: TConsultationWithPlan, now: Date): AppointmentVM {
         holdOpen: holdOpenFrom(facts, now),
         paid: facts.paid,
         moving: !!facts.reschedule,
+        moveMine: facts.reschedule?.mine,
       },
       "consultee",
     ),
@@ -152,12 +160,19 @@ function mapConsultation(c: TConsultationWithPlan, now: Date): AppointmentVM {
   };
 }
 
-function mapSubscription(s: TSubscriptionWithPlan, now: Date): AppointmentVM {
+function mapSubscription(
+  s: TSubscriptionWithPlan,
+  now: Date,
+  viewerId?: string | null,
+): AppointmentVM {
   // #1554 — one wrapper per subscription, N occurrences.
   const target = s.appointment ?? undefined;
   const occurrences = occurrencesOfAppointment(target);
   const status = normalizeStatus(s.status?.toString());
-  const facts = listStatusFacts(target, occurrences);
+  const facts = listStatusFacts(target, occurrences, {
+    side: "REQUESTER",
+    userId: viewerId,
+  });
   return {
     id: `subscription-${s.id}`,
     appointmentId: target?.id ?? null,
@@ -175,6 +190,7 @@ function mapSubscription(s: TSubscriptionWithPlan, now: Date): AppointmentVM {
         holdOpen: holdOpenFrom(facts, now),
         paid: facts.paid,
         moving: !!facts.reschedule,
+        moveMine: facts.reschedule?.mine,
       },
       "consultee",
     ),
@@ -393,14 +409,16 @@ export function mapConsulteeEvents(
   now: Date = new Date(),
   /** The viewer's profile zone, for the dates in a released seat's reason line. */
   zone?: string,
+  /** The signed-in user, so an open move is filed by who answers it. */
+  viewerId?: string | null,
 ): AppointmentVM[] {
   if (!data) return [];
   return [
     ...(data.consultations ?? []).map((c) =>
-      mapConsultation(withLapsedRequestRestored(c, now), now),
+      mapConsultation(withLapsedRequestRestored(c, now), now, viewerId),
     ),
     ...(data.subscriptions ?? []).map((s) =>
-      mapSubscription(withLapsedRequestRestored(s, now), now),
+      mapSubscription(withLapsedRequestRestored(s, now), now, viewerId),
     ),
     ...(data.webinars ?? []).map((w) => mapWebinar(w, now, zone)),
     ...(data.classes ?? []).map((c) => mapClass(c, now, zone)),

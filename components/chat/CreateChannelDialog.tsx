@@ -196,7 +196,7 @@ export const CreateChannelDialog = ({
 
     if (!currentUserId) {
       toast({
-        title: "Error",
+        title: "Chat isn't connected yet",
         description: "Chat client or user not initialized",
         variant: "destructive",
       });
@@ -205,7 +205,7 @@ export const CreateChannelDialog = ({
 
     if (!channelName.trim()) {
       toast({
-        title: "Error",
+        title: "Name the channel",
         description: "Please enter a channel name",
         variant: "destructive",
       });
@@ -218,7 +218,7 @@ export const CreateChannelDialog = ({
     try {
       if (!selectedEvent) {
         toast({
-          title: "Error",
+          title: "Choose what the channel is for",
           description: "Please choose what this channel is for",
           variant: "destructive",
         });
@@ -255,7 +255,7 @@ export const CreateChannelDialog = ({
     } catch (error) {
       console.error("Error creating channel:", error);
       toast({
-        title: "Error",
+        title: "Couldn't create the channel",
         description: `Failed to create channel: ${(error as Error).message}. Please try again.`,
         variant: "destructive",
       });

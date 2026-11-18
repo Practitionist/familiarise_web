@@ -86,6 +86,13 @@ const PENDING_SSO_WHERE = {
  * org. Counted first, so a page that emptied reads as the last page with rows.
  */
 export async function readPendingSsoApprovals(requested = 1) {
+  const first = await readSsoPage(requested);
+  // An approval between the count and the read can empty a later page; re-read once.
+  if (first.rows.length > 0 || first.page === 1) return first;
+  return readSsoPage(first.page);
+}
+
+async function readSsoPage(requested: number) {
   const total = await prisma.ssoProvider.count({ where: PENDING_SSO_WHERE });
   const lastPage = Math.max(1, Math.ceil(total / SSO_APPROVALS_PAGE_SIZE));
   const page = Math.min(Math.max(1, requested), lastPage);

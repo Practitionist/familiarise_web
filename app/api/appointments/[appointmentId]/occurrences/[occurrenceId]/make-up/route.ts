@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { scheduleClassMakeUp } from "@/lib/booking/class-sessions";
 import { classSessionRoute } from "@/lib/booking/class-session-route";
+import { getViewerZone } from "@/lib/time/viewer-zone-server";
 
 const MakeUpBodySchema = z.object({ startsAt: z.string().datetime() });
 
@@ -34,6 +35,7 @@ export async function POST(
           hosted,
           occurrenceId,
           new Date(body.data.startsAt),
+          { viewer: await getViewerZone() },
         ),
       );
     },

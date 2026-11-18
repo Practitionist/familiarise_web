@@ -733,7 +733,7 @@ export function ModerationPage() {
     },
     onError: (error) => {
       toast({
-        title: "Error",
+        title: "Couldn't apply the action",
         description:
           error instanceof Error ? error.message : "Failed to process action",
         variant: "destructive",
@@ -792,7 +792,7 @@ export function ModerationPage() {
     },
     onError: (error) => {
       toast({
-        title: "Error",
+        title: "Couldn't lift the ban",
         description:
           error instanceof Error ? error.message : "Failed to lift the ban",
         variant: "destructive",
@@ -897,7 +897,7 @@ export function ModerationPage() {
     },
     onError: (error) => {
       toast({
-        title: "Error",
+        title: "Couldn't delete the review",
         description:
           error instanceof Error ? error.message : "Failed to delete review",
         variant: "destructive",
@@ -996,7 +996,9 @@ export function ModerationPage() {
             <Star className="h-4 w-4" />
             Reviews
             <Badge variant="secondary" className="ml-1">
-              {reviewsData?.pagination.total ?? 0}
+              {reviewsError && !reviewsData
+                ? "—"
+                : (reviewsData?.pagination.total ?? 0)}
             </Badge>
           </TabsTrigger>
         </TabsList>
@@ -1236,9 +1238,12 @@ export function ModerationPage() {
                           <div className="min-w-0 flex-1">
                             <div className="flex min-w-0 flex-wrap items-center gap-2">
                               <PersonCell
+                                // An unnamed reviewer keeps an id, so staff can tell authors apart.
                                 person={{
-                                  id: review.reviewer.profileId,
                                   name: review.reviewer.name,
+                                  id: review.reviewer.name?.trim()
+                                    ? null
+                                    : review.reviewer.profileId,
                                 }}
                                 anonymousLabel={
                                   review.isAnonymous
@@ -1295,7 +1300,7 @@ export function ModerationPage() {
                             )}
                           </div>
                         </div>
-                        <span className="shrink-0 text-right text-xs text-muted-foreground/70">
+                        <span className="shrink-0 whitespace-nowrap text-right text-xs text-muted-foreground/70">
                           {formatDate(review.createdAt)}
                         </span>
                       </div>
