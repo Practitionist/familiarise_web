@@ -1,7 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { REJOIN_GRACE_MS } from "@/lib/appointments/occurrences";
+import {
+  REJOIN_GRACE_MS,
+  calendarDaysUntil,
+} from "@/lib/appointments/occurrences";
+import { useZoneClock } from "@/lib/time/use-zone-clock";
 import { cn } from "@/utils/tailwind";
 
 interface CountdownBadgeProps {
@@ -24,14 +28,16 @@ function getTier(diffMs: number, isOngoing: boolean): Tier {
   return "far";
 }
 
-function formatCountdown(diffMs: number): string {
+/** Days are calendar days in `zone`, as the list row's "in 8 days" counts them. */
+function formatCountdown(target: number, now: number, zone: string): string {
+  const diffMs = target - now;
   if (diffMs <= 0) return "NOW";
   const minutes = Math.floor(diffMs / 60000);
   if (minutes < 60) return `${minutes}m`;
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h`;
-  const days = Math.floor(hours / 24);
-  return `${days}d`;
+  const days = calendarDaysUntil(new Date(target), zone, new Date(now));
+  return `${Math.max(days, 1)}d`;
 }
 
 const tierStyles: Record<Tier, string> = {
@@ -50,6 +56,7 @@ export function CountdownBadge({
   meetingEnded = false,
 }: CountdownBadgeProps) {
   const [now, setNow] = useState(() => Date.now());
+  const { zone } = useZoneClock();
 
   const target = new Date(targetDate).getTime();
   const end = sessionEndDate ? new Date(sessionEndDate).getTime() : null;
@@ -80,7 +87,7 @@ export function CountdownBadge({
   if (isEnded) return null;
 
   const tier = getTier(diffMs, isOngoing);
-  const label = isOngoing ? "LIVE" : formatCountdown(diffMs);
+  const label = isOngoing ? "LIVE" : formatCountdown(target, now, zone);
 
   return (
     <span
