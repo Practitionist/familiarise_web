@@ -333,6 +333,10 @@ describe("a booking charge reads its invoice from the payment, as the summary do
     );
     expect(html).toContain("WIPRO-2026-0004 · Void");
     expect(html).not.toContain("Not yet invoiced");
+    // The Outstanding tile sums ISSUED and OVERDUE invoices, due date or not.
+    expect(html).toContain(
+      "Outstanding above counts only issued invoices not yet paid, including those not yet due.",
+    );
   });
 
   it.each([

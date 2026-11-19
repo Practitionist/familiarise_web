@@ -270,7 +270,7 @@ Points the table compresses:
   reads the same field: a booking charge names the invoice its payment was
   billed on ("WIPRO-2026-0004 · Void"), and says "Not yet invoiced" only under
   that predicate (`lib/data/org-receivables.ts`). "Outstanding" counts issued
-  and overdue invoices; "Unpaid balance" is the `ORG_RECEIVABLE` ledger
+  and overdue invoices, whether or not they are past due; "Unpaid balance" is the `ORG_RECEIVABLE` ledger
   balance, every charge not yet paid whether invoiced or not.
 - **Payouts.** Three tabs. A BILLING_ADMIN cannot read the member list, so the
   Expert routing section on the Rate cards & routing tab is where it decides

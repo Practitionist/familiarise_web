@@ -93,8 +93,9 @@ export function AccruedUsagePanel({
         Each sponsored booking adds to this balance and each invoice payment
         brings it down, so a charge shows here before it appears on an invoice.
         The unpaid balance counts every charge not yet paid, on an invoice or
-        not; Outstanding above counts only issued invoices that are due. Nothing
-        here can be edited; a correction shows up as a new entry later.
+        not; Outstanding above counts only issued invoices not yet paid,
+        including those not yet due. Nothing here can be edited; a correction
+        shows up as a new entry later.
       </p>
       <StatRow columns={3}>
         <Stat
