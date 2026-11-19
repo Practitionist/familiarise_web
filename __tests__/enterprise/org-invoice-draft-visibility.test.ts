@@ -4,8 +4,8 @@
 
 /**
  * Draft organisation invoices are visible only to a role that manages billing.
- * The list, the CSV export, the detail and the PDF all read through one filter,
- * so a MANAGER can neither list a draft nor open one by id.
+ * The list, the CSV export, the detail, the PDF and the purchase-order invoice
+ * links all read through one filter, so a MANAGER can neither list nor count a draft.
  */
 
 import { NextRequest } from "next/server";
@@ -61,9 +61,32 @@ jest.mock("../../lib/prisma", () => ({
       findMany: jest.fn(async (args) => select(args)),
       findFirst: jest.fn(async (args) => select(args)[0] ?? null),
     },
+    purchaseOrder: {
+      findMany: jest.fn(async (args) => [
+        {
+          id: "po-1",
+          _count: {
+            contracts: 1,
+            invoices: linkedInvoices(args.include._count.select.invoices)
+              .length,
+          },
+        },
+      ]),
+      findFirst: jest.fn(async (args) => ({
+        id: "po-1",
+        contracts: [],
+        invoices: linkedInvoices(args.include.invoices).map((r) => ({
+          id: r.id,
+        })),
+      })),
+    },
     orgAuditLog: { create: jest.fn(async () => ({})) },
   },
 }));
+/** The invoices a purchase-order relation `select`/`include` entry reads. */
+function linkedInvoices(entry: true | { where?: Record<string, unknown> }) {
+  return ROWS.filter((r) => entry === true || matches(r, entry.where ?? {}));
+}
 let mockRole: MemberRole = "MANAGER";
 jest.mock("../../lib/auth-helpers", () => ({
   requireOrgAccess: jest.fn(async () => ({
@@ -91,6 +114,8 @@ import { GET as listInvoices } from "../../app/api/organizations/[orgId]/billing
 import { GET as exportInvoices } from "../../app/api/organizations/[orgId]/billing-account/invoices/export/route";
 import { GET as invoiceDetail } from "../../app/api/organizations/[orgId]/billing-account/invoices/[invoiceId]/route";
 import { GET as invoicePdf } from "../../app/api/organizations/[orgId]/billing-account/invoices/[invoiceId]/pdf/route";
+import { GET as listPurchaseOrders } from "../../app/api/organizations/[orgId]/billing-account/purchase-orders/route";
+import { GET as purchaseOrderDetail } from "../../app/api/organizations/[orgId]/billing-account/purchase-orders/[poId]/route";
 
 const req = (path: string) => new NextRequest(`http://localhost${path}`);
 const orgParams = { params: Promise.resolve({ orgId: "org-1" }) };
@@ -135,5 +160,20 @@ describe.each<[MemberRole, boolean]>([
     expect(detail.status).toBe(seesDrafts ? 200 : 404);
     // A draft has no legal PDF yet; a manager is told so, anyone else gets 404.
     expect(pdf.status).toBe(seesDrafts ? 409 : 404);
+  });
+
+  it(`${seesDrafts ? "counts" : "does not count"} a draft among a purchase order's invoices`, async () => {
+    const list = (await (
+      await listPurchaseOrders(req("/x"), orgParams)
+    ).json()) as { data: { _count: { invoices: number } }[] };
+    const detail = (await (
+      await purchaseOrderDetail(req("/x"), {
+        params: Promise.resolve({ orgId: "org-1", poId: "po-1" }),
+      })
+    ).json()) as { purchaseOrder: { invoices: { id: string }[] } };
+    expect(list.data[0]._count.invoices).toBe(seesDrafts ? 2 : 1);
+    expect(detail.purchaseOrder.invoices.map((i) => i.id)).toEqual(
+      seesDrafts ? ["inv-draft", "inv-issued"] : ["inv-issued"],
+    );
   });
 });

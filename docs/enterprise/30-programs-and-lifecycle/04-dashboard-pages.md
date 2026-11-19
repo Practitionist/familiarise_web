@@ -263,7 +263,8 @@ Points the table compresses:
   reads "On an invoice not yet issued". A void or cancelled invoice shows no
   due date, nor does a draft (`shownDueDate`). The Purchase orders tab tells the same readers
   which role can add, edit or cancel a PO, and its Linked column counts in
-  words ("1 contract · 4 invoices").
+  words ("1 contract · 3 invoices"), drafts counted only for a role with
+  `billing.manage`.
 - **Billing figures.** "Pending charges · N bookings not yet invoiced" counts
   SUCCEEDED payments with no `billableToOrgInvoiceId`. A Usage charges row
   reads the same field: a booking charge names the invoice its payment was

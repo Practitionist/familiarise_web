@@ -20,6 +20,7 @@ import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { visibleInvoiceWhere } from "@/lib/enterprise/invoice-visibility";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
 // #1396 — the `Currency` enum stays on the column (ADR 15 keeps the type), but
@@ -63,7 +64,10 @@ export async function GET(
     orderBy: { createdAt: "desc" },
     include: {
       _count: {
-        select: { invoices: true, contracts: true },
+        select: {
+          invoices: { where: visibleInvoiceWhere(access.member.role) },
+          contracts: true,
+        },
       },
     },
   });
