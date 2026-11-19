@@ -82,6 +82,9 @@ const invoiceColumns: ResponsiveColumn<OrgInvoice>[] = [
   },
 ];
 
+const countOf = (n: number, noun: string) =>
+  `${n} ${noun}${n === 1 ? "" : "s"}`;
+
 function SummaryStats({ summary }: Readonly<{ summary: BillingSummary }>) {
   const fundingSource = summary.fundingSource;
   return (
@@ -94,14 +97,14 @@ function SummaryStats({ summary }: Readonly<{ summary: BillingSummary }>) {
       <Stat
         label="Outstanding"
         value={formatCurrencyAmount(summary.outstanding.amount, "INR")}
-        hint={`${summary.outstanding.invoiceCount} invoices`}
+        hint={countOf(summary.outstanding.invoiceCount, "issued invoice")}
         tone={summary.outstanding.invoiceCount > 0 ? "warning" : "neutral"}
       />
       {summary.pendingCharges && (
         <Stat
           label="Pending charges"
           value={formatCurrencyAmount(summary.pendingCharges.amount, "INR")}
-          hint={`${summary.pendingCharges.paymentCount} not yet invoiced`}
+          hint={`${countOf(summary.pendingCharges.paymentCount, "booking")} not yet invoiced`}
         />
       )}
       {/* #1762-8 — payment terms exist only on invoice-funded accounts. */}

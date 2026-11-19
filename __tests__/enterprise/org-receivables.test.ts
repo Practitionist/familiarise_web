@@ -52,6 +52,9 @@ import {
   ORG_RECEIVABLES_PAGE_SIZE,
 } from "@/lib/data/org-receivables";
 import { ORG_CLAWBACK_KEY_FILTER } from "@/lib/payments/payouts/clawback-recovery";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { AccruedUsagePanel } from "@/app/dashboard/organization/[orgId]/billing/AccruedUsagePanel";
 
 const ORG = "org-1";
 /** The deterministic account id `ledgerAccountId` derives for this org. */
@@ -293,6 +296,74 @@ describe("a posting says which way it moved and where it came from", () => {
     await getOrgReceivables(ORG);
 
     expect(mockPaymentFindMany).not.toHaveBeenCalled();
+    expect(mockInvoiceFindMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("a booking charge reads its invoice from the payment, as the summary does", () => {
+  // The billing summary counts a payment as "not yet invoiced" while it is
+  // SUCCEEDED with no billableToOrgInvoiceId; a booking posting never carries
+  // an invoice id of its own, so the row must read the same payment field.
+  it("names the invoice a billed booking is on, even a void one", async () => {
+    mockLedgerEntryFindMany.mockResolvedValue([entry()]);
+    mockPaymentFindMany.mockResolvedValue([
+      {
+        id: "pay-1",
+        appointmentId: "appt-1",
+        paymentStatus: "SUCCEEDED",
+        billableToOrgInvoiceId: "inv-4",
+      },
+    ]);
+    mockInvoiceFindMany.mockResolvedValue([
+      { id: "inv-4", status: "VOID", invoiceNumber: "WIPRO-2026-0004" },
+    ]);
+
+    const result = await getOrgReceivables(ORG);
+
+    expect(result.postings[0]).toEqual(
+      expect.objectContaining({
+        invoiceId: "inv-4",
+        invoiceNumber: "WIPRO-2026-0004",
+        invoiceStatus: "VOID",
+        awaitingInvoice: false,
+      }),
+    );
+    const html = renderToStaticMarkup(
+      createElement(AccruedUsagePanel, { receivables: result }),
+    );
+    expect(html).toContain("WIPRO-2026-0004 · Void");
+    expect(html).not.toContain("Not yet invoiced");
+  });
+
+  it("says not yet invoiced only for a succeeded payment on no invoice", async () => {
+    mockLedgerEntryFindMany.mockResolvedValue([
+      entry({ id: "unbilled" }),
+      entry({
+        id: "refunded",
+        transaction: { ...entry().transaction, paymentId: "pay-2" },
+      }),
+    ]);
+    mockPaymentFindMany.mockResolvedValue([
+      {
+        id: "pay-1",
+        appointmentId: null,
+        paymentStatus: "SUCCEEDED",
+        billableToOrgInvoiceId: null,
+      },
+      {
+        id: "pay-2",
+        appointmentId: null,
+        paymentStatus: "REFUNDED",
+        billableToOrgInvoiceId: null,
+      },
+    ]);
+
+    const result = await getOrgReceivables(ORG);
+
+    expect(result.postings.map((p) => p.awaitingInvoice)).toEqual([
+      true,
+      false,
+    ]);
     expect(mockInvoiceFindMany).not.toHaveBeenCalled();
   });
 });

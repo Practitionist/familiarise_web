@@ -57,10 +57,13 @@ const columns: ResponsiveColumn<OrgReceivablePosting>[] = [
     header: "Invoice",
     className: "text-xs",
     // The posting has no status (append-only ledger); what the org can act
-    // on is the invoice that would clear it.
+    // on is the invoice that bills it, read from the same field as the summary.
     cell: (p) => {
-      if (p.invoiceStatus) return ORG_INVOICE_STATUS_LABEL[p.invoiceStatus];
-      return p.movement === "ACCRUED" ? "Not yet invoiced" : "—";
+      if (p.invoiceStatus) {
+        const label = ORG_INVOICE_STATUS_LABEL[p.invoiceStatus];
+        return p.invoiceNumber ? `${p.invoiceNumber} · ${label}` : label;
+      }
+      return p.awaitingInvoice ? "Not yet invoiced" : "—";
     },
   },
 ];
@@ -86,11 +89,13 @@ export function AccruedUsagePanel({
       <p className="max-w-3xl text-sm text-muted-foreground">
         Each sponsored booking adds to this balance and each invoice payment
         brings it down, so a charge shows here before it appears on an invoice.
-        Nothing here can be edited; a correction shows up as a new entry later.
+        The unpaid balance counts every charge not yet paid, on an invoice or
+        not; Outstanding above counts only issued invoices that are due. Nothing
+        here can be edited; a correction shows up as a new entry later.
       </p>
       <StatRow columns={3}>
         <Stat
-          label="Owed now"
+          label="Unpaid balance"
           value={formatCurrencyAmount(receivables.outstandingPaise, "INR")}
           tone={receivables.outstandingPaise > 0 ? "warning" : "neutral"}
         />
