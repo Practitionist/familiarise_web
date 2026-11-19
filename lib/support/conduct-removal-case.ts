@@ -38,7 +38,11 @@ import { supportDeadline } from "./deadline-policy";
 import { priorityForReason } from "./priority";
 import { allocateTicketReference } from "./reference";
 import { slaDeadlinesFor } from "./sla";
-import { releaseSystemClosedCaseTx } from "./system-case-close";
+import {
+  endSystemClosedChatTx,
+  releaseSystemClosedCaseTx,
+  systemCloseHoldRefusalTx,
+} from "./system-case-close";
 import { caseTransitionRefusal } from "./case-transitions";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import {
@@ -211,11 +215,24 @@ async function closeDecidedRemovalCaseTx(
     data: { status: "CLOSED", closedAt: now },
   });
   if (closed.count !== 1) throw removalConflict();
-  await releaseSystemClosedCaseTx(
+  // As an auto-close: holds a pending refund review or frozen money doors still need stay, for staff to release.
+  const keep = await systemCloseHoldRefusalTx(tx, decided.id);
+  if (!keep) {
+    await releaseSystemClosedCaseTx(
+      tx,
+      decided.id,
+      now,
+      "Released when a new removal closed this decided case",
+    );
+    return;
+  }
+  await endSystemClosedChatTx(tx, decided.id, now);
+  await postCaseMessageTx(
     tx,
     decided.id,
+    `Payout holds kept when a new removal closed this case (${keep}); release them from this case once that is settled.`,
+    true,
     now,
-    "Released when a new removal closed this decided case",
   );
 }
 

@@ -17,6 +17,9 @@ jest.mock("../../lib/support/case-service", () => ({
 const mockRelease = jest.fn(async (..._args: unknown[]) => undefined);
 jest.mock("../../lib/support/system-case-close", () => ({
   releaseSystemClosedCaseTx: (...args: unknown[]) => mockRelease(...args),
+  // Nothing holds the old case's payouts in these cases.
+  systemCloseHoldRefusalTx: async () => null,
+  endSystemClosedChatTx: async () => undefined,
 }));
 
 import type { Tx } from "@/lib/prisma";

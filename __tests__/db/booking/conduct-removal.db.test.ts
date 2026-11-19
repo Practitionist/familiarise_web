@@ -899,6 +899,53 @@ describe("rejoining after a conduct removal", () => {
     });
   });
 
+  it("closing a decided case for a second removal keeps its payout holds while a refund recommendation awaits review", async () => {
+    const { webinar, userId, payment, earningId } = await paidSeat();
+    const { caseId } = (await remove(webinar, userId))!;
+    const staff = await actor("STAFF");
+    await decide(caseId, staff, "UPHELD");
+    // After the verdict support holds the payout again and recommends a refund for review.
+    await performCaseAction(caseId, staff, {
+      action: "APPLY_HOLD",
+      clientActionId: randomUUID(),
+      expectedUpdatedAt: await version(caseId),
+      paymentId: payment.id,
+      reason: "Checking the payout before the refund review",
+    });
+    const recommendationId = await recommend(caseId, staff, payment.id, 10_000);
+    // Support lets the learner back on their paid seat by hand.
+    await prisma.appointmentParticipant.updateMany({
+      where: { appointmentId: webinar.appointmentId, userId },
+      data: { status: "CONFIRMED", removedByUserId: null },
+    });
+
+    const again = (await remove(webinar, userId))!;
+
+    expect(again.caseId).not.toBe(caseId);
+    expect(
+      await prisma.supportCase.findUniqueOrThrow({
+        where: { id: caseId },
+        select: { status: true },
+      }),
+    ).toEqual({ status: "CLOSED" });
+    // The hold the open recommendation relies on is still in force on the closed case.
+    expect(
+      await prisma.earningsHold.count({
+        where: {
+          consultantEarningsId: earningId,
+          sourceRef: caseId,
+          releasedAt: null,
+        },
+      }),
+    ).toBe(1);
+    expect(
+      await prisma.supportFinancialRecommendation.findUniqueOrThrow({
+        where: { id: recommendationId },
+        select: { decidedAt: true, voidedAt: true },
+      }),
+    ).toEqual({ decidedAt: null, voidedAt: null });
+  });
+
   it("a lift started while a removal holds the event's lock waits for it, so it sees the removal it would lift", async () => {
     const webinar = await seedWebinar({ capacity: 10, price: 0 });
     const free = await seatBuyer(webinar, {
