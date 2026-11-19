@@ -32,7 +32,8 @@ function chargeFacts(detail: ConsulteePaymentDetail, money: Money) {
     ...(detail.showAmount && moneyState.state !== "SPONSORED"
       ? [
           {
-            label: "Amount",
+            // An expired order is a hold that lapsed or was cancelled: no money moved.
+            label: row.status === "EXPIRED" ? "Would have been" : "Amount",
             value: money(row.amount),
             hint:
               row.taxAmount > 0
@@ -109,7 +110,8 @@ function chargeDocuments(detail: ConsulteePaymentDetail) {
 /**
  * "What happened to this charge?": the money line and its facts,
  * the refund timeline with arrival times, every document for it, and the
- * same "Problem with this charge" door the appointment page has.
+ * same "Problem with this charge" door the appointment page has, offered only
+ * when money was taken or may have been.
  */
 export function PaymentDetailClient({
   consulteeId,
@@ -126,6 +128,8 @@ export function PaymentDetailClient({
     : `${basePath}/support?context=platform`;
 
   const facts = chargeFacts(detail, money);
+  const nothingCharged =
+    moneyState.state === "FREE" || row.status === "EXPIRED";
   const taxDocsPending =
     !detail.gstUnregistered &&
     !detail.taxDocumentsAvailable &&
@@ -139,7 +143,9 @@ export function PaymentDetailClient({
       <PageHeader
         back={{ href: `${basePath}/payments?tab=history`, label: "Billing" }}
         title={row.planTitle}
-        description={moneyState.line}
+        description={
+          moneyState.line === moneyState.label ? undefined : moneyState.line
+        }
         meta={
           <StatusBadge
             {...toneBadge(moneyState.tone, moneyState.label)}
@@ -147,12 +153,14 @@ export function PaymentDetailClient({
           />
         }
         actions={
-          <Button variant="outline" size="sm" asChild>
-            <Link href={helpHref}>
-              <LifeBuoy className="mr-1.5 h-4 w-4" />
-              Problem with this charge
-            </Link>
-          </Button>
+          nothingCharged ? undefined : (
+            <Button variant="outline" size="sm" asChild>
+              <Link href={helpHref}>
+                <LifeBuoy className="mr-1.5 h-4 w-4" />
+                Problem with this charge
+              </Link>
+            </Button>
+          )
         }
       />
 
