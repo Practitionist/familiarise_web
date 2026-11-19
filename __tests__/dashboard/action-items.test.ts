@@ -268,6 +268,16 @@ describe("deriveConsulteeActionItems", () => {
     expect(item.ctaHref).toBe(`${CONSULTEE_BASE}/payments?tab=needs-you`);
   });
 
+  it("writes the outstanding total in paise like the rows under it", () => {
+    const [item] = deriveConsulteeActionItems({
+      pendingPaymentCount: 2,
+      pendingPaymentTotalPaise: 578_090,
+      upcomingSessions: [],
+      basePath: CONSULTEE_BASE,
+    });
+    expect(item.title).toBe("2 payments are outstanding (₹5,780.90)");
+  });
+
   it("omits the amount when it isn't known", () => {
     const [item] = deriveConsulteeActionItems({
       pendingPaymentCount: 1,
