@@ -152,6 +152,26 @@ export const CONTRACT_STATUS_LABEL: Record<ContractStatus, string> = {
   TERMINATED: "Terminated",
 };
 
+const ENDED_CONTRACT_REASON: Partial<Record<ContractStatus, string>> = {
+  EXPIRED: "the contract has expired",
+  TERMINATED: "the contract was terminated",
+};
+
+/** An expired or terminated contract never renews and its terms are locked, so it has nothing left to edit. */
+export function contractIsEditable(status: ContractStatus): boolean {
+  return ENDED_CONTRACT_REASON[status] === undefined;
+}
+
+/** Auto-renew as the Contracts page states it: not applicable, with the reason, once the contract has ended. */
+export function contractAutoRenewLabel(c: {
+  status: ContractStatus;
+  autoRenew: boolean;
+}): string {
+  const ended = ENDED_CONTRACT_REASON[c.status];
+  if (ended) return `Not applicable: ${ended}`;
+  return c.autoRenew ? "Yes" : "No";
+}
+
 export const CONTRACT_SUPERSESSION_REASON_LABEL: Record<
   ContractSupersessionReason,
   string

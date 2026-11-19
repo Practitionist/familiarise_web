@@ -528,10 +528,8 @@ export function OperatorAppointmentsClient({
                                     {appointment.duration} min
                                   </span>
                                 )}
-                                {!appointment.payment && appointment.free && (
-                                  <span>Free</span>
-                                )}
-                                {appointment.payment && (
+                                {appointment.free && <span>Free</span>}
+                                {appointment.payment && !appointment.free && (
                                   <span>
                                     {formatCurrency(
                                       appointment.payment.amount,
