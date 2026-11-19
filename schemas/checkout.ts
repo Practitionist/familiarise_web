@@ -256,14 +256,21 @@ export const checkoutSchema = z
       }
     }
 
-    // Validate slot is on the 30-minute grid and not within the minimum
-    // booking lead time (#1583 E-P1-03 — shared with request-for-approval).
+    // The slot is on the 30-minute grid, past the booking lead time and, for
+    // a 1:1, inside the booking horizon (shared with request-for-approval). A
+    // plan's first session follows the plan-start rule instead.
     if (data.startsAt) {
       const slotStart = new Date(data.startsAt);
       const refusal = Number.isNaN(slotStart.getTime())
         ? null
         : slotStartRefusal(slotStart);
-      if (refusal) {
+      if (
+        refusal &&
+        !(
+          refusal.code === "SLOT_TOO_FAR" &&
+          data.appointmentType === "SUBSCRIPTION"
+        )
+      ) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: refusal.message,

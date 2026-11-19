@@ -228,3 +228,77 @@ describe("sponsor-org allocate", () => {
     );
   });
 });
+
+describe("an allocation refusal carries what the client acts on", () => {
+  const TAKEN = "2026-12-01T10:00:00.000Z";
+  const viaExpert = () => {
+    apiUser = {
+      id: "u-cp",
+      role: "CONSULTANT",
+      consultantProfileId: "cp-host",
+    };
+    return handleAllocate(
+      new NextRequest("http://localhost/x", {
+        method: "PATCH",
+        body: JSON.stringify({ isAuto: false, slots: [TAKEN] }),
+      }),
+      "consultation",
+      "clzzzzzzz000consultation1",
+    );
+  };
+  const viaSponsorOrg = () => {
+    appointmentFindFirst.mockResolvedValue({
+      id: "appt-1",
+      organizationId: "org-payer",
+      consultationId: "c1",
+      subscriptionId: null,
+      consultation: { status: "APPROVED" },
+      subscription: null,
+    });
+    return orgAllocate(
+      new NextRequest("http://localhost/x", {
+        method: "POST",
+        body: JSON.stringify({ isAuto: true, overrideReason: "ops request" }),
+      }),
+      {
+        params: Promise.resolve({
+          orgId: "org-payer",
+          appointmentId: "appt-1",
+        }),
+      },
+    );
+  };
+
+  it.each([
+    ["the expert's route", viaExpert],
+    ["the sponsor organisation's route", viaSponsorOrg],
+  ])("%s names the taken times", async (_, call) => {
+    allocate.mockResolvedValue({
+      success: false,
+      error: "One of these times was just taken.",
+      errorCode: "TIMES_TAKEN",
+      httpStatus: 409,
+      takenSlotStarts: [TAKEN],
+    });
+    const res = await call();
+    expect(res.status).toBe(409);
+    expect((await res.json()).takenSlotStarts).toEqual([TAKEN]);
+    expect(res.headers.get("Retry-After")).toBeNull();
+  });
+
+  it.each([
+    ["the expert's route", viaExpert],
+    ["the sponsor organisation's route", viaSponsorOrg],
+  ])("%s says when to retry a lost race", async (_, call) => {
+    allocate.mockResolvedValue({
+      success: false,
+      error: "Someone else is booking right now.",
+      errorCode: "ALLOCATION_RACE",
+      httpStatus: 409,
+      retryAfterSeconds: 5,
+    });
+    const res = await call();
+    expect((await res.json()).retryAfterSeconds).toBe(5);
+    expect(res.headers.get("Retry-After")).toBe("5");
+  });
+});

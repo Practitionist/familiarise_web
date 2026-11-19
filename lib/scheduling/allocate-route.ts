@@ -219,6 +219,9 @@ export async function handleAllocate(
             // dead end.
             placeableSessions: result.placeableSessions,
             requiredSessions: result.requiredSessions,
+            // Which picks another booking took, so the grid drops only those.
+            takenSlotStarts: result.takenSlotStarts,
+            retryAfterSeconds: result.retryAfterSeconds,
             details: {
               eventType,
               eventId,
@@ -227,7 +230,13 @@ export async function handleAllocate(
               duration,
             },
           },
-          { status: result.httpStatus ?? 500 },
+          {
+            status: result.httpStatus ?? 500,
+            headers:
+              result.retryAfterSeconds === undefined
+                ? undefined
+                : { "Retry-After": String(result.retryAfterSeconds) },
+          },
         );
       }
 

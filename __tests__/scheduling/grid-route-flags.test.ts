@@ -805,8 +805,16 @@ describe("the 90-day booking horizon", () => {
     expect(cells.every((c) => c.bookingStatus === "available")).toBe(true);
   });
 
-  it("does not apply to a move, a class, a webinar or a subscription's plan weeks", async () => {
-    expect(await flagged(`${HORIZON_DAY}&purpose=reschedule`)).toEqual([]);
+  it("binds a 1:1 that is being moved too", async () => {
+    expect(
+      (await flagged(`${HORIZON_DAY}&purpose=reschedule`)).length,
+    ).toBeGreaterThan(0);
+    expect(await flagged(`${HORIZON_DAY}&purpose=reschedule`)).toEqual(
+      await flagged(HORIZON_DAY),
+    );
+  });
+
+  it("does not apply to a class, a webinar or a subscription's plan weeks", async () => {
     expect(await flagged(`${HORIZON_DAY}&classId=class-1`)).toEqual([]);
     expect(
       await flagged(`${HORIZON_DAY}&classId=class-1&purpose=allocate`),

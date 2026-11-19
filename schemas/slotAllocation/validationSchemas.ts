@@ -24,6 +24,25 @@ import { z } from "zod";
  */
 export const MAX_ALLOCATION_SLOTS = 7 * 4 * 24 * (4 * 2);
 
+// The engine's 30-minute atom (SCHEDULING_INTERVAL_MS), restated: this file is
+// loaded by client code and must not pull the engine in.
+const SLOT_ATOM_MS = 30 * 60 * 1000;
+
+/** The 30-minute atoms a body picks: ISO instants on the UTC half-hour grid. */
+const slotStartsSchema = z
+  .array(
+    z
+      .string()
+      .datetime({
+        message:
+          "Each slot must be a valid ISO 8601 datetime string (e.g., '2025-01-15T10:00:00Z')",
+      })
+      .refine((iso) => Date.parse(iso) % SLOT_ATOM_MS === 0, {
+        message: "Times start on the hour or half hour",
+      }),
+  )
+  .max(MAX_ALLOCATION_SLOTS, "Too many times picked for one booking");
+
 /**
  * ALLOCATION REQUEST SCHEMA
  *
@@ -109,15 +128,7 @@ export const allocationRequestSchema = z
       .optional()
       .default(false),
 
-    slots: z
-      .array(
-        z.string().datetime({
-          message:
-            "Each slot must be a valid ISO 8601 datetime string (e.g., '2025-01-15T10:00:00Z')",
-        }),
-      )
-      .max(MAX_ALLOCATION_SLOTS, "Too many times picked for one booking")
-      .optional(),
+    slots: slotStartsSchema.optional(),
   })
   .refine(
     (data) => {
@@ -161,16 +172,9 @@ export const allocationRequestSchema = z
  * This is simpler than allocation since validation always requires slots.
  */
 export const validationRequestSchema = z.object({
-  slots: z
-    .array(
-      z.string().datetime({
-        message:
-          "Each slot must be a valid ISO 8601 datetime string (e.g., '2025-01-15T10:00:00Z')",
-      }),
-    )
-    .min(1, {
-      message: "'slots' array must contain at least one time slot to validate",
-    }),
+  slots: slotStartsSchema.min(1, {
+    message: "'slots' array must contain at least one time slot to validate",
+  }),
 });
 
 /**

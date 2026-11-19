@@ -1,11 +1,13 @@
 import { PROFILE_OWNER_SELECT } from "@/lib/booking/list-selects";
 import {
   isShortNotice,
+  isBeyondBookingHorizon,
   isTooSoonFor,
   leadLabel,
   leadMsFor,
   RESCHEDULE_MIN_LEAD_HOURS,
 } from "@/lib/booking/lead-time";
+import { SLOT_TOO_FAR_MESSAGE } from "@/lib/payments/utils/slot-validation";
 import * as Sentry from "@sentry/nextjs";
 import {
   applyRateLimit,
@@ -15,6 +17,7 @@ import {
 import {
   AppointmentBusyError,
   BookingLockUnavailableError,
+  renewAppointmentLock,
   withAppointmentLock,
 } from "@/utils/appointmentlock";
 import prisma from "@/lib/prisma";
@@ -333,7 +336,7 @@ async function requestReschedule(
       orgScope?.organizationId,
     );
 
-    const result = await withAppointmentLock(appointmentId, () =>
+    const result = await withAppointmentLock(appointmentId, (lock) =>
       bookingTransaction(
         async (tx) => {
           const appointment = await tx.appointment.findUnique({
@@ -612,6 +615,19 @@ async function requestReschedule(
               ),
               { httpStatus: 400, code: "PROPOSAL_TOO_SOON" },
             );
+          }
+          // A 1:1 or trial is moved inside the booking horizon; a plan session
+          // is bound by its plan week instead.
+          if (
+            !appointment.subscription &&
+            proposedSlots?.some((s) =>
+              isBeyondBookingHorizon(s.startsAt.getTime(), now.getTime()),
+            )
+          ) {
+            throw Object.assign(new Error(SLOT_TOO_FAR_MESSAGE), {
+              httpStatus: 400,
+              code: "SLOT_TOO_FAR",
+            });
           }
 
           // A released batch is re-placed into one plan week, so a release
@@ -1005,6 +1021,7 @@ async function requestReschedule(
         },
         {
           timeout: 60000, // 60 second timeout for complex transactions
+          beforeAttempt: () => renewAppointmentLock(lock),
         },
       ),
     );

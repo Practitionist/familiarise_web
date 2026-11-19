@@ -8,6 +8,7 @@ import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import {
   AppointmentBusyError,
   BookingLockUnavailableError,
+  renewAppointmentLock,
   withAppointmentLock,
   withEventCheckoutLock,
 } from "@/utils/appointmentlock";
@@ -904,8 +905,8 @@ export async function POST(
           }
         : null;
     const runCancel = (captureLanded: boolean) =>
-      withEventCheckoutLock(eventCheckoutKey, () =>
-        withAppointmentLock(appointmentId, () =>
+      withEventCheckoutLock(eventCheckoutKey, (renewEventLock) =>
+        withAppointmentLock(appointmentId, (lock) =>
           bookingTransaction(
             async (tx) => {
               // The CAS below is pinned to this read, so a capture committing
@@ -1258,6 +1259,10 @@ export async function POST(
             {
               maxWait: 10000, // Max time to wait for connection
               timeout: 30000, // 30 second transaction timeout (was 5s default)
+              beforeAttempt: async () => {
+                await renewEventLock();
+                await renewAppointmentLock(lock);
+              },
             },
           ),
         ),

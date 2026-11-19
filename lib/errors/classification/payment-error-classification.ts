@@ -125,6 +125,7 @@ export const ErrorTypes = {
   // exactly this reason.
   SLOT_TOO_SOON: "SLOT_TOO_SOON",
   SLOT_NOT_ON_GRID: "SLOT_NOT_ON_GRID",
+  SLOT_TOO_FAR: "SLOT_TOO_FAR",
   // Another buyer took this 1:1 time first; rides as `code` beside AVAILABILITY_ERROR.
   SLOT_TAKEN: "SLOT_TAKEN",
   // A seat checkout whose hold ended before its gateway order was filled in.
@@ -153,6 +154,7 @@ const TERMINAL_SLOT_REFUSAL_CODES: ReadonlySet<string> = new Set([
   ErrorTypes.SLOT_TAKEN,
   ErrorTypes.SLOT_TOO_SOON,
   ErrorTypes.SLOT_NOT_ON_GRID,
+  ErrorTypes.SLOT_TOO_FAR,
 ]);
 
 export function isTerminalSlotRefusal(code: string | undefined): boolean {

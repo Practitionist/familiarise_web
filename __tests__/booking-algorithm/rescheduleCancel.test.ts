@@ -117,8 +117,12 @@ jest.mock("../../utils/appointmentlock", () => ({
   withAppointmentLock: jest.fn(
     async (_id: string, fn: () => Promise<unknown>) => fn(),
   ),
+  renewAppointmentLock: jest.fn(async () => undefined),
   withEventCheckoutLock: jest.fn(
-    async (_key: unknown, fn: () => Promise<unknown>) => fn(),
+    async (
+      _key: unknown,
+      fn: (renew: () => Promise<void>) => Promise<unknown>,
+    ) => fn(async () => undefined),
   ),
   BookingLockUnavailableError: class extends Error {},
   AppointmentBusyError: class extends Error {},
@@ -767,6 +771,33 @@ describe("Reschedule Route Handler - POST", () => {
     expect(await res.json()).toMatchObject({
       code: "PROPOSAL_TOO_SOON",
       error: "New times must be at least 2 hours away.",
+    });
+    expect(mockTx.rescheduleRequest.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses to move a 1:1 to a time past the booking horizon", async () => {
+    mockTx.appointment.findUnique.mockResolvedValue(
+      makeConsultationAppointment({
+        occurrences: [makeSlot("slot-1", NEAR_DATE)],
+      }),
+    );
+    const startsAt = new Date(Date.now() + 91 * 24 * 60 * 60 * 1000);
+    startsAt.setUTCMinutes(0, 0, 0);
+    const res = await rescheduleHandler(
+      makeRescheduleRequest("apt-1", "CONSULTATION", {
+        proposedSlots: [
+          {
+            startsAt: startsAt.toISOString(),
+            endsAt: new Date(startsAt.getTime() + 30 * 60 * 1000).toISOString(),
+          },
+        ],
+      }),
+      makeParams("apt-1"),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      code: "SLOT_TOO_FAR",
+      error: "Bookings open up to 90 days ahead. Pick an earlier time.",
     });
     expect(mockTx.rescheduleRequest.create).not.toHaveBeenCalled();
   });

@@ -185,8 +185,16 @@ export async function POST(
           code: result.errorCode,
           placeableSessions: result.placeableSessions,
           requiredSessions: result.requiredSessions,
+          takenSlotStarts: result.takenSlotStarts,
+          retryAfterSeconds: result.retryAfterSeconds,
         },
-        { status: result.httpStatus ?? 409 },
+        {
+          status: result.httpStatus ?? 409,
+          headers:
+            result.retryAfterSeconds === undefined
+              ? undefined
+              : { "Retry-After": String(result.retryAfterSeconds) },
+        },
       );
     }
 

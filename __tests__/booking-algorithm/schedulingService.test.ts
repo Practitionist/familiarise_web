@@ -3673,6 +3673,94 @@ describe("#1206 partial allocation", () => {
   });
 });
 
+// ─── One class count rule for a hand-picked schedule ────────────────────────
+
+describe("class session count, picked by hand", () => {
+  // A plan of two one-hour sessions.
+  const classOfTwo = (period: boolean) =>
+    makeClassEvent({
+      classPlan: {
+        consultantProfileId: "consultant-profile-1",
+        durationInMonths: 1,
+        sessionsPerWeek: 1,
+        sessionDurationInHours: 1,
+        totalSessions: 2,
+        consultantProfile: makeConsultantProfile(),
+        classContents: [],
+      },
+      schedulingPeriodStartsAt: period
+        ? new Date("2025-01-06T00:00:00Z")
+        : null,
+      schedulingPeriodEndsAt: period ? new Date("2025-02-03T00:00:00Z") : null,
+    });
+  const session = (day: string) => [
+    `2025-01-${day}T10:00:00Z`,
+    `2025-01-${day}T10:30:00Z`,
+  ];
+  const pick = (
+    days: string[],
+    flags: { allowPartial?: boolean; topUp?: boolean } = {},
+  ) =>
+    allocate({
+      eventType: "class",
+      eventId: "class-1",
+      mode: "manual",
+      slots: days.flatMap(session),
+      checkOnly: true,
+      ...flags,
+    });
+
+  describe.each([
+    ["with a scheduling period", true],
+    ["a draft with no scheduling period", false],
+  ])("%s", (_, period) => {
+    beforeEach(() => {
+      mockTx.class.findUnique.mockResolvedValue(classOfTwo(period));
+    });
+
+    it("takes exactly the plan's sessions", async () => {
+      expect((await pick(["06", "13"])).success).toBe(true);
+    });
+
+    it("refuses more sessions than the plan when nothing is placed yet", async () => {
+      const result = await pick(["06", "13", "20"]);
+      expect(result.success).toBe(false);
+      expect(result.errorCode).toBe("VALIDATION_ERROR");
+      expect(result.error).toBe(
+        "This class takes 2 sessions. Pick no more than that.",
+      );
+    });
+
+    it("refuses fewer sessions unless the expert allows a partial schedule", async () => {
+      const refused = await pick(["06"]);
+      expect(refused.errorCode).toBe("SLOT_SHORTAGE");
+      expect(refused.placeableSessions).toBe(1);
+      expect(refused.requiredSessions).toBe(2);
+
+      expect((await pick(["06"], { allowPartial: true })).success).toBe(true);
+    });
+
+    it("adds a session beyond the plan through a top-up, and only that way", async () => {
+      const placed = (id: string, day: string) => ({
+        id,
+        startsAt: new Date(`2025-01-${day}T10:00:00Z`),
+        endsAt: new Date(`2025-01-${day}T11:00:00Z`),
+        isTentative: false,
+        completionStatus: "SCHEDULED",
+        deletedAt: null,
+      });
+      mockTx.appointment.findMany.mockResolvedValue([
+        {
+          id: "apt-class",
+          occurrences: [placed("occ-1", "06"), placed("occ-2", "13")],
+        },
+      ]);
+
+      expect((await pick(["20"], { topUp: true })).success).toBe(true);
+    });
+  });
+});
+
 // ─── Manual idempotent replay vs key reuse (B2) ─────────────────────────────
 
 describe("manual idempotent replay", () => {

@@ -14,6 +14,7 @@ const gridAnswerSchema = z.object({
           isAllocated: z.boolean().optional(),
           bookingStatus: z.string().optional(),
           tooSoon: z.boolean().optional(),
+          beyondHorizon: z.boolean().optional(),
           limitReached: z.boolean().optional(),
         }),
       ),
@@ -46,6 +47,7 @@ export async function isSlotStillOffered(
           !s.isAllocated &&
           s.bookingStatus === "available" &&
           !s.tooSoon &&
+          !s.beyondHorizon &&
           !s.limitReached,
       )
       .map((s) => new Date(s.startsAt).getTime()),

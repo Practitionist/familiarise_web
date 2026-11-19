@@ -241,13 +241,9 @@ export async function GET(
     // A host moving their own webinar or class may land on that event's own time.
     const movingEvent =
       leadQuery.data.purpose === "reschedule" && Boolean(webinarId || classId);
-    // The booking horizon binds a 1:1 session, request or trial: not a move,
-    // a webinar, a class or a subscription's plan weeks.
-    const horizonApplies =
-      leadQuery.data.purpose !== "reschedule" &&
-      !webinarId &&
-      !classId &&
-      !requestedSubscriptionId;
+    // The booking horizon binds a 1:1 session, request or trial, placed or
+    // moved: not a webinar, a class or a subscription's plan weeks.
+    const horizonApplies = !webinarId && !classId && !requestedSubscriptionId;
 
     // The gates below need the caller's identity, so resolve it once. Skipped
     // on the public path, where none of these parameters is present.
