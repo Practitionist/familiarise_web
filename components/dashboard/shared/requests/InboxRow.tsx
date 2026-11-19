@@ -285,11 +285,11 @@ export function whenLine(row: InboxRowInput, viewer: ViewerZone): string {
       zone: viewer.zone,
     });
   }
+  const move = moveLine(row, viewer);
+  if (move) return move;
   if (row.kind === "subscription" && row.entitlement) {
     return requestCountLine({ entitlement: row.entitlement });
   }
-  const move = moveLine(row, viewer);
-  if (move) return move;
   const live = row.slots.filter((s) => s.completionStatus !== "RESCHEDULED");
   if (live.length > 0) {
     const first = formatDateTime(live[0].startsAt, viewer);
