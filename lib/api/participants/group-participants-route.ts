@@ -1,5 +1,5 @@
-import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
+import { reportSentryError } from "@/lib/observability/report";
 import { z } from "zod";
 import type { Session } from "@/lib/auth";
 import prisma, { type PrismaLike } from "@/lib/prisma";
@@ -49,9 +49,6 @@ import {
 } from "@/lib/enterprise/membership-guards";
 
 export type GroupEventKind = "webinar" | "class";
-
-const errorClass = (error: unknown) =>
-  error instanceof Error ? error.name : typeof error;
 
 const EVENT_ID = z.string().trim().min(1).max(64);
 
@@ -336,15 +333,10 @@ export async function handleGroupParticipantsGet(
       waitingCount,
     });
   } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "bookings" } },
-    );
-    const logLabel =
-      kind === "webinar"
-        ? "[WEBINAR_PARTICIPANTS_GET]"
-        : "[CLASS_PARTICIPANTS_GET]";
-    console.error(logLabel, error);
+    reportSentryError(error, {
+      subsystem: "bookings",
+      op: `${kind}-participants.read`,
+    });
     return new NextResponse("Internal error", { status: 500 });
   }
 }
@@ -577,12 +569,8 @@ export async function handleConductRemoval(
       earningsHeld: removed.earningsHeld,
     });
   } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "bookings" } },
-    );
-    // Sentry carries the error through its scrubber; the console gets its class only.
-    console.error("[CONDUCT_REMOVAL]", errorClass(error));
+    // The reporter logs the fault line and flushes before the function freezes.
+    reportSentryError(error, { subsystem: "bookings", op: "conduct-removal" });
     return new NextResponse("Internal error", { status: 500 });
   }
 }
@@ -698,15 +686,10 @@ export async function handleGroupParticipantDelete(
 
     return NextResponse.json({ removed: true, refund: left.refund });
   } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "bookings" } },
-    );
-    const logLabel =
-      kind === "webinar"
-        ? "[WEBINAR_PARTICIPANT_DELETE]"
-        : "[CLASS_PARTICIPANT_DELETE]";
-    console.error(logLabel, error);
+    reportSentryError(error, {
+      subsystem: "bookings",
+      op: `${kind}-participants.remove`,
+    });
     return new NextResponse("Internal error", { status: 500 });
   }
 }
@@ -781,11 +764,7 @@ export async function handleGroupSeatLift(
       }),
     );
   } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "bookings" } },
-    );
-    console.error("[SEAT_LIFT]", errorClass(error));
+    reportSentryError(error, { subsystem: "bookings", op: "seat-lift" });
     return new NextResponse("Internal error", { status: 500 });
   }
 }
