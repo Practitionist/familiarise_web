@@ -21,6 +21,7 @@ import { settleCheckoutLegs } from "@/lib/payments/checkout/commit/payment-legs"
 import { writeCheckoutPayment } from "@/lib/payments/checkout/commit/payment-row";
 import type { CheckoutCommitInput } from "@/lib/payments/checkout/commit/types";
 import type { PriorSeatPayment } from "@/lib/payments/checkout/seats";
+import { readSeatJoin } from "@/lib/payments/checkout/free-seat-notice";
 import { stageCreditsApplied } from "@/lib/referrals/referral-notify";
 
 /**
@@ -242,6 +243,14 @@ export async function commitCheckout(input: CheckoutCommitInput) {
             );
         }
 
+        // A free seat's booked notice is keyed on the join this commit wrote.
+        const seatJoin =
+          isZeroAmountPayment &&
+          createdAppointment &&
+          (validatedData.appointmentType === "WEBINAR" ||
+            validatedData.appointmentType === "CLASS")
+            ? await readSeatJoin(tx, createdAppointment.id, userId)
+            : null;
         const payment = await writeCheckoutPayment(tx, input, {
           createdAppointment,
           bookedPlan,
@@ -255,6 +264,7 @@ export async function commitCheckout(input: CheckoutCommitInput) {
             appointmentId: createdAppointment?.id,
             paymentId: payment.id,
             reusedPaymentIntent: payment.reusedPaymentIntent,
+            seatJoin,
             holdExpiresAt: payment.expiresAt,
             creditsApplied: 0,
             creditNotices: {},
@@ -293,6 +303,7 @@ export async function commitCheckout(input: CheckoutCommitInput) {
           appointmentId: createdAppointment?.id,
           paymentId: payment.id,
           reusedPaymentIntent: null as string | null,
+          seatJoin,
           holdExpiresAt: payment.expiresAt,
           creditsApplied: actualCreditsApplied,
           creditNotices,

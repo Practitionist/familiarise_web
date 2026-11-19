@@ -771,6 +771,7 @@ export async function handleCheckout(
         if (
           isZeroAmountPayment &&
           result.appointmentId &&
+          result.seatJoin &&
           (validatedData.appointmentType === "WEBINAR" ||
             validatedData.appointmentType === "CLASS")
         ) {
@@ -778,6 +779,7 @@ export async function handleCheckout(
             appointmentId: result.appointmentId,
             userId,
             appointmentType: validatedData.appointmentType,
+            join: result.seatJoin,
           });
         }
 

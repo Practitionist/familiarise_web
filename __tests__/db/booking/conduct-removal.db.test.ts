@@ -86,6 +86,7 @@ jest.mock("../../../lib/compliance/dpdp", () => ({
   checkConsent: jest.fn(async () => true),
 }));
 jest.mock("../../../lib/payments/checkout/free-seat-notice", () => ({
+  ...jest.requireActual("../../../lib/payments/checkout/free-seat-notice"),
   notifyFreeSeatRegistered: jest.fn(async () => undefined),
 }));
 

@@ -22,6 +22,12 @@ jest.mock("../../../lib/payments/operations/cancellation-policy-store", () => ({
   resolveCheckoutCancellationPolicyId: jest.fn(async () => "policy-1"),
 }));
 
+const mockFreeSeatNotice = jest.fn(async (_args: unknown) => undefined);
+jest.mock("../../../lib/payments/checkout/free-seat-notice", () => ({
+  ...jest.requireActual("../../../lib/payments/checkout/free-seat-notice"),
+  notifyFreeSeatRegistered: (args: unknown) => mockFreeSeatNotice(args),
+}));
+
 import { handleCheckout } from "../../../lib/payments/checkout";
 import { calls, overrides, resetDouble } from "./checkout-harness/setup";
 
@@ -282,6 +288,56 @@ describe("rejoining a free webinar seat its holder left", () => {
     });
     expect(payments).toHaveLength(1);
     expect(createPaymentIntent).not.toHaveBeenCalled();
+  });
+
+  it("hands the booked notice the join this commit wrote, read in the commit", async () => {
+    overrides["webinar.findUnique"] = () => ({
+      ...webinar,
+      webinarPlan: { ...webinar.webinarPlan, price: 0 },
+    });
+    payments = [
+      {
+        id: "pay-free",
+        userId: BUYER,
+        appointmentId: APPT,
+        paymentIntent: "free_first_registration",
+        paymentStatus: "SUCCEEDED",
+        amount: 0,
+        originalAmount: 0,
+        refunds: [],
+        appointmentParticipants: [
+          { id: "part-1", status: "CANCELLED", removedByUserId: null },
+        ],
+      },
+    ];
+    overrides["bookingStatusHistory.findMany"] = () => [
+      { entityId: "part-1", reason: "self_leave" },
+    ];
+    overrides["bookingStatusHistory.findFirst"] = () => ({
+      id: "hist-rejoin",
+      entityId: "part-1",
+    });
+
+    const { error } = await run();
+
+    expect(error).toBeNull();
+    expect(
+      calls.find((c) => c.path === "bookingStatusHistory.findFirst")?.args,
+    ).toMatchObject({
+      where: {
+        entity: "SEAT",
+        appointmentId: APPT,
+        actorUserId: BUYER,
+        reason: { in: ["registered", "rejoined"] },
+      },
+    });
+    // The rejoin's own SEAT row keys the notice, not the first registration's.
+    expect(mockFreeSeatNotice).toHaveBeenCalledWith(
+      expect.objectContaining({
+        appointmentId: APPT,
+        join: { participantId: "part-1", joinId: "hist-rejoin" },
+      }),
+    );
   });
 });
 
