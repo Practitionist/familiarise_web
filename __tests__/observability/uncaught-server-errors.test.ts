@@ -22,11 +22,10 @@ jest.mock("next/server", () => ({
 
 import { onRequestError } from "../../instrumentation";
 import { initSentry, resetSentryBudgetState } from "../../sentry.shared.config";
-
-const SYNTHETIC_DSN =
-  "https://0123456789abcdef0123456789abcdef@o0123456789abcdef.ingest.us.sentry.io/0123456789abcdef";
-
-type TransportOptions = Parameters<typeof Sentry.createTransport>[0];
+import {
+  SYNTHETIC_DSN,
+  slowCollectingTransport,
+} from "../fixtures/sentry-fake-transport";
 
 const delivered: Sentry.Event[] = [];
 
@@ -39,18 +38,7 @@ function startSdk(): void {
     defaultIntegrations: false,
     sendClientReports: false,
     tracesSampleRate: 0,
-    transport: (options: TransportOptions) =>
-      Sentry.createTransport(options, async (request) => {
-        await new Promise((resolve) => setTimeout(resolve, 30));
-        const lines = String(request.body).split("\n").filter(Boolean);
-        // Envelope: header line, then an (item header, payload) line pair per item.
-        for (let i = 1; i + 1 < lines.length; i += 2) {
-          if (JSON.parse(lines[i] ?? "{}").type === "event") {
-            delivered.push(JSON.parse(lines[i + 1] ?? "{}") as Sentry.Event);
-          }
-        }
-        return { statusCode: 200 };
-      }),
+    transport: slowCollectingTransport(delivered),
   });
 }
 
