@@ -16,6 +16,7 @@ import {
 import { readLapsedPayLinks } from "@/lib/data/lapsed-pay-links";
 import { readConsulteeFailedRefunds } from "@/lib/data/consultee-payments";
 import { payLinkHref, payablePaymentId } from "@/lib/payments/pay-link-href";
+import { returnsToBalanceOnBuyerCancel } from "@/lib/referrals/service";
 
 /**
  * GET /api/dashboard/consultee/[consulteeId]/pending-payments
@@ -195,6 +196,14 @@ export async function GET(
           currency: true,
           expiresAt: true,
           createdAt: true,
+          creditUsages: {
+            select: {
+              amount: true,
+              credit: {
+                select: { state: true, expiresAt: true, reversedAt: true },
+              },
+            },
+          },
           appointment: {
             select: {
               appointmentType: true,
@@ -375,6 +384,7 @@ export async function GET(
     ];
 
     // Transform gateway-pending payments
+    const readAt = new Date();
     const gatewayPendingItems = pendingGatewayPayments.map((payment) => {
       const apt = payment.appointment;
       const planTitle =
@@ -407,6 +417,9 @@ export async function GET(
         consultantName,
         amount: payment.amount,
         currency: payment.currency,
+        referralCreditPaise: payment.creditUsages
+          .filter((u) => returnsToBalanceOnBuyerCancel(u.credit, readAt))
+          .reduce((sum, u) => sum + Number(u.amount), 0),
         paymentUrl: "",
         approvedAt: payment.createdAt.toISOString(),
         expiresAt: expiresAt.toISOString(),

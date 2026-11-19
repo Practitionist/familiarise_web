@@ -593,15 +593,30 @@ async function restoreUsageToCredit(
 }
 
 /** A lapsed credit is restored only when the expert or the platform caused the refund. */
+function lapsed(
+  credit: Pick<ReferralCredit, "state" | "expiresAt">,
+  now: Date,
+): boolean {
+  return (
+    credit.state === "EXPIRED" ||
+    (credit.expiresAt !== null && credit.expiresAt < now)
+  );
+}
+
 function restorable(
   credit: RestorableCredit,
   sellerCaused: boolean,
   now: Date,
 ): boolean {
-  const lapsed =
-    credit.state === "EXPIRED" ||
-    (credit.expiresAt !== null && credit.expiresAt < now);
-  return sellerCaused || !lapsed;
+  return sellerCaused || !lapsed(credit, now);
+}
+
+/** Whether a buyer's own cancel puts this credit back in their spendable balance. */
+export function returnsToBalanceOnBuyerCancel(
+  credit: Pick<ReferralCredit, "state" | "expiresAt" | "reversedAt">,
+  now: Date,
+): boolean {
+  return !credit.reversedAt && !lapsed(credit, now);
 }
 
 /**
