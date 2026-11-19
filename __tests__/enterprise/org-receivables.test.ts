@@ -52,6 +52,9 @@ import {
   ORG_RECEIVABLES_PAGE_SIZE,
 } from "@/lib/data/org-receivables";
 import { ORG_CLAWBACK_KEY_FILTER } from "@/lib/payments/payouts/clawback-recovery";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { AccruedUsagePanel } from "@/app/dashboard/organization/[orgId]/billing/AccruedUsagePanel";
 
 const ORG = "org-1";
 /** The deterministic account id `ledgerAccountId` derives for this org. */
@@ -87,7 +90,7 @@ describe("an org that has never accrued", () => {
   it("returns an empty payload without touching the journal", async () => {
     mockLedgerAccountFindUnique.mockResolvedValue(null);
 
-    const result = await getOrgReceivables(ORG);
+    const result = await getOrgReceivables(ORG, "OWNER");
 
     expect(result).toEqual({
       hasAccount: false,
@@ -104,7 +107,7 @@ describe("an org that has never accrued", () => {
   it("resolves the account by its deterministic id, not by scope", async () => {
     mockLedgerAccountFindUnique.mockResolvedValue(null);
 
-    await getOrgReceivables(ORG);
+    await getOrgReceivables(ORG, "OWNER");
 
     expect(mockLedgerAccountFindUnique).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: ACCOUNT_ID } }),
@@ -123,7 +126,7 @@ describe("the totals describe the account, not the page", () => {
     mockLedgerEntryCount.mockResolvedValue(412);
     mockLedgerEntryFindMany.mockResolvedValue([entry()]);
 
-    const result = await getOrgReceivables(ORG);
+    const result = await getOrgReceivables(ORG, "OWNER");
 
     expect(result.accruedPaise).toBe(900_000);
     expect(result.clearedPaise).toBe(350_000);
@@ -138,14 +141,14 @@ describe("the totals describe the account, not the page", () => {
     ]);
     mockLedgerEntryCount.mockResolvedValue(1);
 
-    const result = await getOrgReceivables(ORG);
+    const result = await getOrgReceivables(ORG, "OWNER");
 
     expect(result.clearedPaise).toBe(0);
     expect(result.outstandingPaise).toBe(120_000);
   });
 
   it("asks for the newest postings, capped at the page size", async () => {
-    await getOrgReceivables(ORG);
+    await getOrgReceivables(ORG, "OWNER");
 
     expect(mockLedgerEntryFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -160,7 +163,7 @@ describe("the totals describe the account, not the page", () => {
   });
 
   it("honours a caller-supplied limit", async () => {
-    await getOrgReceivables(ORG, 5);
+    await getOrgReceivables(ORG, "OWNER", 5);
 
     expect(mockLedgerEntryFindMany).toHaveBeenCalledWith(
       expect.objectContaining({ take: 5 }),
@@ -188,7 +191,7 @@ describe("a posting says which way it moved and where it came from", () => {
       { id: "pay-1", appointmentId: "appt-1" },
     ]);
 
-    const result = await getOrgReceivables(ORG);
+    const result = await getOrgReceivables(ORG, "OWNER");
 
     expect(result.postings[0]).toEqual(
       expect.objectContaining({
@@ -234,7 +237,7 @@ describe("a posting says which way it moved and where it came from", () => {
       { id: "pay-2", appointmentId: "appt-2" },
     ]);
 
-    const result = await getOrgReceivables(ORG);
+    const result = await getOrgReceivables(ORG, "OWNER");
 
     expect(result.postings.map((p) => p.appointmentId)).toEqual([
       "appt-1",
@@ -252,7 +255,7 @@ describe("a posting says which way it moved and where it came from", () => {
     mockLedgerEntryFindMany.mockResolvedValue([entry()]);
     mockPaymentFindMany.mockResolvedValue([]);
 
-    const result = await getOrgReceivables(ORG);
+    const result = await getOrgReceivables(ORG, "OWNER");
 
     expect(result.postings[0].paymentId).toBe("pay-1");
     expect(result.postings[0].appointmentId).toBeNull();
@@ -270,7 +273,7 @@ describe("a posting says which way it moved and where it came from", () => {
       }),
     ]);
 
-    await getOrgReceivables(ORG);
+    await getOrgReceivables(ORG, "OWNER");
 
     expect(mockInvoiceFindMany.mock.calls[0][0].where).toEqual({
       id: { in: ["inv-9"] },
@@ -290,9 +293,115 @@ describe("a posting says which way it moved and where it came from", () => {
       }),
     ]);
 
-    await getOrgReceivables(ORG);
+    await getOrgReceivables(ORG, "OWNER");
 
     expect(mockPaymentFindMany).not.toHaveBeenCalled();
+    expect(mockInvoiceFindMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("a booking charge reads its invoice from the payment, as the summary does", () => {
+  // The billing summary counts a payment as "not yet invoiced" while it is
+  // SUCCEEDED with no billableToOrgInvoiceId; a booking posting never carries
+  // an invoice id of its own, so the row must read the same payment field.
+  it("names the invoice a billed booking is on, even a void one", async () => {
+    mockLedgerEntryFindMany.mockResolvedValue([entry()]);
+    mockPaymentFindMany.mockResolvedValue([
+      {
+        id: "pay-1",
+        appointmentId: "appt-1",
+        paymentStatus: "SUCCEEDED",
+        billableToOrgInvoiceId: "inv-4",
+      },
+    ]);
+    mockInvoiceFindMany.mockResolvedValue([
+      { id: "inv-4", status: "VOID", invoiceNumber: "WIPRO-2026-0004" },
+    ]);
+
+    const result = await getOrgReceivables(ORG, "OWNER");
+
+    expect(result.postings[0]).toEqual(
+      expect.objectContaining({
+        invoiceId: "inv-4",
+        invoiceNumber: "WIPRO-2026-0004",
+        invoiceStatus: "VOID",
+        awaitingInvoice: false,
+      }),
+    );
+    const html = renderToStaticMarkup(
+      createElement(AccruedUsagePanel, { receivables: result }),
+    );
+    expect(html).toContain("WIPRO-2026-0004 · Void");
+    expect(html).not.toContain("Not yet invoiced");
+    // The Outstanding tile sums ISSUED and OVERDUE invoices, due date or not.
+    expect(html).toContain(
+      "Outstanding above counts only issued invoices not yet paid, including those not yet due.",
+    );
+  });
+
+  it.each([
+    ["OWNER", "WIPRO-2026-0001 · Draft", "inv-1"],
+    ["MANAGER", "On an invoice not yet issued", null],
+  ] as const)(
+    "shows a booking's draft invoice to a %s as %s",
+    async (role, cell, invoiceId) => {
+      mockLedgerEntryFindMany.mockResolvedValue([entry()]);
+      mockPaymentFindMany.mockResolvedValue([
+        {
+          id: "pay-1",
+          appointmentId: null,
+          paymentStatus: "SUCCEEDED",
+          billableToOrgInvoiceId: "inv-1",
+        },
+      ]);
+      mockInvoiceFindMany.mockResolvedValue([
+        { id: "inv-1", status: "DRAFT", invoiceNumber: "WIPRO-2026-0001" },
+      ]);
+
+      const result = await getOrgReceivables(ORG, role);
+      const html = renderToStaticMarkup(
+        createElement(AccruedUsagePanel, { receivables: result }),
+      );
+
+      expect(html).toContain(cell);
+      expect(result.postings[0].awaitingInvoice).toBe(false);
+      // A non-manager's page payload carries neither the draft's id nor number.
+      expect(result.postings[0].invoiceId).toBe(invoiceId);
+      expect(JSON.stringify(result).includes("WIPRO-2026-0001")).toBe(
+        invoiceId !== null,
+      );
+    },
+  );
+
+  it("says not yet invoiced only for a succeeded payment on no invoice", async () => {
+    mockLedgerEntryFindMany.mockResolvedValue([
+      entry({ id: "unbilled" }),
+      entry({
+        id: "refunded",
+        transaction: { ...entry().transaction, paymentId: "pay-2" },
+      }),
+    ]);
+    mockPaymentFindMany.mockResolvedValue([
+      {
+        id: "pay-1",
+        appointmentId: null,
+        paymentStatus: "SUCCEEDED",
+        billableToOrgInvoiceId: null,
+      },
+      {
+        id: "pay-2",
+        appointmentId: null,
+        paymentStatus: "REFUNDED",
+        billableToOrgInvoiceId: null,
+      },
+    ]);
+
+    const result = await getOrgReceivables(ORG, "OWNER");
+
+    expect(result.postings.map((p) => p.awaitingInvoice)).toEqual([
+      true,
+      false,
+    ]);
     expect(mockInvoiceFindMany).not.toHaveBeenCalled();
   });
 });
@@ -308,7 +417,7 @@ describe("the payload crosses the RSC boundary", () => {
       { id: "pay-1", appointmentId: "appt-1" },
     ]);
 
-    const result = await getOrgReceivables(ORG);
+    const result = await getOrgReceivables(ORG, "OWNER");
 
     // Would throw on a bigint and would silently stringify a Date; the
     // round-trip proves neither is in there.

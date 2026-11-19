@@ -17,6 +17,7 @@ import { HttpsUrlSchema } from "@/schemas/url";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { visibleInvoiceWhere } from "@/lib/enterprise/invoice-visibility";
 import { transitionPurchaseOrder } from "@/lib/enterprise/transitions";
 import { PURCHASE_ORDER_STATUS_LABEL } from "@/lib/labels/org-labels";
 
@@ -91,6 +92,7 @@ export async function GET(
         },
       },
       invoices: {
+        where: visibleInvoiceWhere(access.member.role),
         select: {
           id: true,
           invoiceNumber: true,
