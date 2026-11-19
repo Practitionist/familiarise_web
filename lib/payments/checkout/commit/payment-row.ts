@@ -44,6 +44,8 @@ export async function writeCheckoutPayment(
     skipPayment: boolean;
     /** The buyer's earlier payment on this event, read by the handler before its revive; null otherwise. */
     priorSeat: PriorSeatPayment | null;
+    /** The event's price as the handler read it under the checkout lock; null for a 1:1 booking. */
+    eventPricePaise: number | null;
   },
 ): Promise<CheckoutPaymentRow> {
   const {
@@ -78,6 +80,7 @@ export async function writeCheckoutPayment(
     gstRegime,
   } = input.priced;
   const { createdAppointment, bookedPlan, skipPayment, priorSeat } = carried;
+  const eventPricePaise = carried.eventPricePaise ?? 0;
 
   let hostOrganizationId: string | null = null;
   if (ENABLE_HOST_ORGS) {
@@ -172,12 +175,13 @@ export async function writeCheckoutPayment(
     priorSeatPayment &&
     priorSeatStanding(priorSeatPayment) === "REJOINABLE"
   ) {
-    // A left price-free seat keeps its SUCCEEDED ₹0 payment; only an order still price-free
-    // (no list price, so no credit or discount to settle) may revive it.
+    // A left price-free seat keeps its SUCCEEDED ₹0 payment; only an event still free under
+    // the lock (no list price, so no credit or discount to settle) may revive it.
     if (
       !isZeroAmountPayment ||
       isOrgSponsoredPayment ||
-      input.priced.originalAmount > 0
+      input.priced.originalAmount > 0 ||
+      eventPricePaise > 0
     ) {
       throw new BookingRuleError(
         "SEAT_REBUY_UNSUPPORTED",

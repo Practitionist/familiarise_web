@@ -12,6 +12,7 @@ import {
   alreadyHeldSeatError,
   findPriorSeatPayment,
   seatRegistrationFor,
+  stampRecordedSeat,
   type PriorSeatPayment,
 } from "@/lib/payments/checkout/seats";
 
@@ -153,8 +154,11 @@ export async function handleWebinarCheckout(
       },
     );
     // #1780 row 2 — the seat keeps the refund window it was sold under.
-    await tx.appointmentParticipant.updateMany({
-      where: { appointmentId: appointment.id, userId },
+    await stampRecordedSeat(tx, {
+      appointmentId: appointment.id,
+      userId,
+      status: _skipPayment ? "CONFIRMED" : "HELD",
+      kind: "WEBINAR",
       data: { refundWindowHours: plan.refundWindowHours },
     });
   }

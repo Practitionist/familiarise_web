@@ -223,6 +223,7 @@ describe("a re-minted seat whose utilization was reversed", () => {
       bookedPlan: null,
       skipPayment: false,
       priorSeat,
+      eventPricePaise: 50_000,
     });
     await recordBookingUtilization(tx, { ...CALL, appointmentIds: ["apt-1"] });
     await recordBookingUtilization(tx, { ...CALL, appointmentIds: ["apt-1"] });

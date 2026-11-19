@@ -13,6 +13,7 @@ import {
   alreadyHeldSeatError,
   findPriorSeatPayment,
   seatRegistrationFor,
+  stampRecordedSeat,
 } from "@/lib/payments/checkout/seats";
 
 /**
@@ -170,8 +171,11 @@ export async function handleClassCheckout(
   });
   // #1780 row 2 — the seat keeps the refund window it was sold under; #1819 —
   // and the sessions it paid for, which fix its refund unit.
-  await tx.appointmentParticipant.updateMany({
-    where: { appointmentId: wrapper.id, userId },
+  await stampRecordedSeat(tx, {
+    appointmentId: wrapper.id,
+    userId,
+    status: _skipPayment ? "CONFIRMED" : "HELD",
+    kind: "CLASS",
     data: {
       refundWindowHours: plan.refundWindowHours,
       sessionsPurchased: enrolment.remaining,

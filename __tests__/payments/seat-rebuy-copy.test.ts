@@ -35,6 +35,7 @@ const prior = (
   refunds: [],
   // The latest SEAT row of a left price-free seat; the finder reads it only for such a seat.
   lastSeatReason: "self_leave",
+  conductStands: false,
   ...over,
 });
 

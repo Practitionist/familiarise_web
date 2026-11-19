@@ -16,6 +16,7 @@ import {
   latestSeatReasons,
   REJOIN_OPENING_REASONS,
 } from "@/lib/booking/seat-history";
+import { conductRemovalStands } from "@/lib/support/conduct-removal-state";
 
 /** A confirmed seat for this buyer; a HELD one belongs to an open order the reuse step may resume. */
 export function holdsSettledSeat(
@@ -40,6 +41,9 @@ export function alreadyHeldSeatError(
       : "You are already registered for this webinar",
   );
 }
+
+const REMOVED_SEAT_MESSAGE =
+  "The organiser removed you from this event. Contact support if you think this was a mistake.";
 
 export const SEAT_CHECKOUT_OPEN_MESSAGE =
   "You already have a checkout open for this seat. Finish it, or wait a few minutes for it to lapse and try again. You have not been charged for this attempt.";
@@ -80,7 +84,7 @@ const PRIOR_SEAT_PAYMENT_SELECT = {
   },
 } satisfies Prisma.PaymentSelect;
 
-type PriorSeatTx = Pick<Tx, "payment" | "bookingStatusHistory">;
+type PriorSeatTx = Tx;
 
 function queryPriorSeat(
   tx: PriorSeatTx,
@@ -95,10 +99,24 @@ function queryPriorSeat(
 
 type PriorSeatRow = NonNullable<Awaited<ReturnType<typeof queryPriorSeat>>>;
 
-/** A prior seat payment and, for a left price-free seat, the latest SEAT reason that decides a rejoin. */
+/** A prior seat payment, with the SEAT reason that decides a rejoin and whether a conduct removal blocks a re-mint. */
 export type PriorSeatPayment = PriorSeatRow & {
   lastSeatReason: string | null;
+  conductStands: boolean;
 };
+
+const isReleasedSeat = (seat: { status: string }) =>
+  seat.status === "CANCELLED" || seat.status === "REFUNDED";
+
+/** An unmarked released seat on a lapsed or open order: a re-mint would revive it, so a standing conduct case must be read. */
+function mayRemintReleased(row: PriorSeatRow): boolean {
+  const seats = row.appointmentParticipants ?? [];
+  return (
+    row.paymentStatus !== PaymentStatus.SUCCEEDED &&
+    seats.length > 0 &&
+    seats.every((seat) => isReleasedSeat(seat) && !seat.removedByUserId)
+  );
+}
 
 /** Whether the row is a left price-free seat, the only kind whose history decides the answer. */
 function mayRejoin(row: PriorSeatRow): boolean {
@@ -116,21 +134,29 @@ function mayRejoin(row: PriorSeatRow): boolean {
   );
 }
 
-/** Attaches the latest SEAT reason, reading history only for rows a rejoin could apply to. */
+/** Attaches the latest SEAT reason and a standing conduct removal, read only for rows they could decide. */
 async function withLastSeatReason(
   tx: PriorSeatTx,
+  appointmentId: string,
   rows: PriorSeatRow[],
 ): Promise<PriorSeatPayment[]> {
   const seatIds = rows
     .filter(mayRejoin)
     .flatMap((row) => row.appointmentParticipants.map((seat) => seat.id));
   const latest = await latestSeatReasons(tx, seatIds);
-  return rows.map((row) => ({
-    ...row,
-    lastSeatReason: mayRejoin(row)
-      ? (latest.get(row.appointmentParticipants[0].id) ?? null)
-      : null,
-  }));
+  const priors: PriorSeatPayment[] = [];
+  for (const row of rows) {
+    priors.push({
+      ...row,
+      lastSeatReason: mayRejoin(row)
+        ? (latest.get(row.appointmentParticipants[0].id) ?? null)
+        : null,
+      conductStands: mayRemintReleased(row)
+        ? await conductRemovalStands(appointmentId, row.userId, tx)
+        : false,
+    });
+  }
+  return priors;
 }
 
 /** The buyer's earlier Payment on a shared webinar/class appointment, if any. */
@@ -140,7 +166,9 @@ export async function findPriorSeatPayment(
   appointmentId: string,
 ): Promise<PriorSeatPayment | null> {
   const row = await queryPriorSeat(tx, userId, appointmentId);
-  return row ? ((await withLastSeatReason(tx, [row]))[0] ?? null) : null;
+  return row
+    ? ((await withLastSeatReason(tx, appointmentId, [row]))[0] ?? null)
+    : null;
 }
 
 /** Each user's prior Payment on the appointment, in one query; Payment is unique per (userId, appointmentId). */
@@ -154,7 +182,7 @@ export async function findPriorSeatPayments(
     where: { appointmentId, userId: { in: [...userIds] } },
     select: PRIOR_SEAT_PAYMENT_SELECT,
   });
-  const priors = await withLastSeatReason(tx, rows);
+  const priors = await withLastSeatReason(tx, appointmentId, rows);
   return new Map(priors.map((row) => [row.userId, row]));
 }
 
@@ -166,6 +194,16 @@ export type PriorSeatStanding = SeatRebuyRefusal | "REJOINABLE" | null;
 
 /** The one classifier pricing, the payment write and the waitlist share. */
 export function priorSeatStanding(prior: PriorSeatPayment): PriorSeatStanding {
+  const seats = prior.appointmentParticipants ?? [];
+  // Every seat released (CANCELLED or REFUNDED, free or paid): the buyer left, not still held.
+  const released = seats.length > 0 && seats.every(isReleasedSeat);
+  // A removal outlasts its order: a lapsed or open checkout never re-mints a removed seat.
+  if (
+    released &&
+    (seats.some((seat) => Boolean(seat.removedByUserId)) || prior.conductStands)
+  ) {
+    return "REMOVED";
+  }
   if (
     prior.paymentStatus === PaymentStatus.EXPIRED ||
     prior.paymentStatus === PaymentStatus.FAILED
@@ -173,16 +211,6 @@ export function priorSeatStanding(prior: PriorSeatPayment): PriorSeatStanding {
     return null;
   }
   if (prior.paymentStatus === PaymentStatus.PENDING) return "CHECKOUT_OPEN";
-  const seats = prior.appointmentParticipants ?? [];
-  // Every seat released (CANCELLED or REFUNDED, free or paid): the buyer left, not still held.
-  const released =
-    seats.length > 0 &&
-    seats.every(
-      (seat) => seat.status === "CANCELLED" || seat.status === "REFUNDED",
-    );
-  if (released && seats.some((seat) => Boolean(seat.removedByUserId))) {
-    return "REMOVED";
-  }
   const refundedPaise = (prior.refunds ?? []).reduce(
     (total, refund) => total + sumPaise(refund.amountPaise),
     0,
@@ -219,6 +247,15 @@ export function seatRebuyRefusal(
   return standing === "REJOINABLE" ? null : standing;
 }
 
+/** A prior seat that refuses before order reuse: a settled seat, or a removed one whatever its order. */
+export function refusesBeforeReuse(prior: PriorSeatPayment | null): boolean {
+  return (
+    prior !== null &&
+    (prior.paymentStatus === PaymentStatus.SUCCEEDED ||
+      priorSeatStanding(prior) === "REMOVED")
+  );
+}
+
 /** The buyer may start a seat checkout on this appointment. */
 export function canBuySeat(prior: PriorSeatPayment | null): boolean {
   return prior === null || seatRebuyRefusal(prior) === null;
@@ -238,10 +275,7 @@ export function assertSeatRemintable(
     );
   }
   if (refusal === "REMOVED") {
-    throw new BookingRuleError(
-      "SEAT_REBUY_UNSUPPORTED",
-      "The organiser removed you from this event. Contact support if you think this was a mistake.",
-    );
+    throw new BookingRuleError("SEAT_REBUY_UNSUPPORTED", REMOVED_SEAT_MESSAGE);
   }
   if (refusal === "REFUNDED") {
     throw new BookingRuleError(
@@ -278,6 +312,36 @@ export function seatRegistrationFor(
         reviveFromIn: ["CANCELLED"],
       }
     : { actorUserId: userId, reviveReason: "registered" };
+}
+
+/**
+ * Stamps the seat this checkout just wrote with its terms, matching only an unmarked row in
+ * the status the checkout set; a seat the write did not reach refuses the commit.
+ */
+export async function stampRecordedSeat(
+  tx: Pick<Tx, "appointmentParticipant">,
+  args: {
+    appointmentId: string;
+    userId: string;
+    status: "HELD" | "CONFIRMED";
+    kind: "WEBINAR" | "CLASS";
+    data: Prisma.AppointmentParticipantUpdateManyMutationInput;
+  },
+): Promise<void> {
+  const seat = { appointmentId: args.appointmentId, userId: args.userId };
+  const stamped = await tx.appointmentParticipant.updateMany({
+    where: { ...seat, status: args.status, removedByUserId: null },
+    data: args.data,
+  });
+  if (stamped.count === 1) return;
+  const row = await tx.appointmentParticipant.findFirst({
+    where: seat,
+    select: { removedByUserId: true },
+  });
+  if (row?.removedByUserId) {
+    throw new BookingRuleError("SEAT_REBUY_UNSUPPORTED", REMOVED_SEAT_MESSAGE);
+  }
+  throw alreadyHeldSeatError(args.kind);
 }
 
 /** #1819 — a batch past its host's cutoff refuses with ENROLMENT_CLOSED (409). */

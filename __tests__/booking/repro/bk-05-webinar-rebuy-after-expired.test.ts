@@ -284,3 +284,117 @@ describe("rejoining a free webinar seat its holder left", () => {
     expect(createPaymentIntent).not.toHaveBeenCalled();
   });
 });
+
+describe("a removal outlasts the removed seat's lapsed checkout", () => {
+  // An organiser removed the buyer while their card seat was HELD: the seat is
+  // CANCELLED with the mark, and order reuse has since expired the order.
+  const removedSeat = {
+    id: "part-1",
+    status: "CANCELLED",
+    removedByUserId: "host-1",
+  };
+
+  it.each(["EXPIRED", "PENDING"])(
+    "refuses a %s order on a removed seat before any gateway order, and re-mints nothing",
+    async (status) => {
+      Object.assign(payments[0], {
+        paymentStatus: status,
+        amount: 100_000,
+        refunds: [],
+        appointmentParticipants: [removedSeat],
+      });
+      const { error } = await run();
+      expect(error).toMatchObject({
+        httpStatus: 409,
+        code: "SEAT_REBUY_UNSUPPORTED",
+        message: expect.stringMatching(/organiser removed you/),
+      });
+      expect(createPaymentIntent).not.toHaveBeenCalled();
+      expect(payments[0]).toMatchObject({
+        paymentIntent: OLD_INTENT,
+        paymentStatus: status,
+      });
+    },
+  );
+
+  it("refuses an EXPIRED order on an unmarked seat whose conduct removal still stands", async () => {
+    Object.assign(payments[0], {
+      amount: 100_000,
+      refunds: [],
+      appointmentParticipants: [{ ...removedSeat, removedByUserId: null }],
+    });
+    overrides["supportCase.findFirst"] = () => ({
+      id: "case-1",
+      createdAt: new Date("2026-11-10T00:00:00Z"),
+    });
+    overrides["appointmentParticipant.findUnique"] = () => ({ id: "part-1" });
+    const { error } = await run();
+    expect(error).toMatchObject({ code: "SEAT_REBUY_UNSUPPORTED" });
+    expect(payments[0]).toMatchObject({
+      paymentIntent: OLD_INTENT,
+      paymentStatus: "EXPIRED",
+    });
+  });
+
+  it("refuses the commit when the revive moved no seat (a mark landed after the prior read)", async () => {
+    // The prior read saw an unmarked lapsed seat; the row is marked by the time the commit writes.
+    Object.assign(payments[0], {
+      appointmentParticipants: [{ ...removedSeat, removedByUserId: null }],
+    });
+    overrides["appointmentParticipant.createMany"] = () => ({ count: 0 });
+    overrides["appointmentParticipant.updateMany"] = (args) =>
+      JSON.stringify((args as { where: unknown }).where).includes(
+        '"removedByUserId":null',
+      )
+        ? { count: 0 }
+        : { count: 1 };
+    overrides["appointmentParticipant.findFirst"] = () => ({
+      status: "CANCELLED",
+      removedByUserId: "host-1",
+    });
+    const { error } = await run();
+    expect(error).toMatchObject({
+      httpStatus: 409,
+      code: "SEAT_REBUY_UNSUPPORTED",
+      message: expect.stringMatching(/organiser removed you/),
+    });
+  });
+});
+
+describe("a rejoin reads the event's price under the checkout lock", () => {
+  it("refuses with the left refusal when the host priced the event after the quote", async () => {
+    // The quote reads the free plan; the host's edit commits before the commit's read.
+    let reads = 0;
+    overrides["webinar.findUnique"] = () => ({
+      ...webinar,
+      webinarPlan: {
+        ...webinar.webinarPlan,
+        price: reads++ === 0 ? 0 : 50_000,
+      },
+    });
+    payments = [
+      {
+        id: "pay-free",
+        userId: BUYER,
+        appointmentId: APPT,
+        paymentIntent: "free_first_registration",
+        paymentStatus: "SUCCEEDED",
+        amount: 0,
+        originalAmount: 0,
+        refunds: [],
+        appointmentParticipants: [
+          { id: "part-1", status: "CANCELLED", removedByUserId: null },
+        ],
+      },
+    ];
+    overrides["bookingStatusHistory.findMany"] = () => [
+      { entityId: "part-1", reason: "self_leave" },
+    ];
+    const { error } = await run();
+    expect(error).toMatchObject({
+      httpStatus: 409,
+      code: "SEAT_REBUY_UNSUPPORTED",
+      message: expect.stringMatching(/left this event/),
+    });
+  });
+});

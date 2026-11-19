@@ -92,6 +92,7 @@ export async function commitCheckout(input: CheckoutCommitInput) {
           organizationId?: string | null;
         } | null = null;
         let priorSeat: PriorSeatPayment | null = null;
+        let eventPricePaise: number | null = null;
 
         const skipPayment =
           isMockPayment || isZeroAmountPayment || isOrgSponsoredPayment;
@@ -195,6 +196,7 @@ export async function commitCheckout(input: CheckoutCommitInput) {
             createdAppointment = webinarResult.appointment;
             bookedPlan = webinarResult.plan;
             priorSeat = webinarResult.priorSeat;
+            eventPricePaise = webinarResult.amount;
             engagementsForCap = 1;
             break;
           }
@@ -228,6 +230,7 @@ export async function commitCheckout(input: CheckoutCommitInput) {
             createdAppointment = classResult.appointment || null;
             bookedPlan = classResult.plan;
             priorSeat = classResult.priorSeat;
+            eventPricePaise = classResult.amount;
             engagementsForCap = classResult.engagementsConsumed;
             classEngagementIds = classResult.engagementIds;
             break;
@@ -244,6 +247,7 @@ export async function commitCheckout(input: CheckoutCommitInput) {
           bookedPlan,
           skipPayment,
           priorSeat,
+          eventPricePaise,
         });
         // A rejoined free seat revived on its earlier payment, whose legs and earnings already exist.
         if (payment.rejoined) {

@@ -32,6 +32,7 @@ const leftFreeSeat: PriorSeatPayment = {
     { id: "part-1", status: "CANCELLED", removedByUserId: null },
   ],
   lastSeatReason: "self_leave",
+  conductStands: false,
 };
 
 const linkSeat = jest.fn(async () => ({ count: 1 }));
@@ -71,6 +72,7 @@ const write = (listPaise: number) =>
     bookedPlan: null,
     skipPayment: true,
     priorSeat: leftFreeSeat,
+    eventPricePaise: 0,
   });
 
 it("revives the left free seat on its earlier payment and names that payment's stored intent", async () => {
