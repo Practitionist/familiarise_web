@@ -356,7 +356,8 @@ compare-and-set (staff on `removedByUserId: { not: null }`, the organiser on
 `removedByUserId` equal to themselves), so a second lift and an overturn that
 lands after a lift change nothing. A leave's Stream removal is driven only by
 its durable revoker, which re-reads the seats after its vendor calls and
-re-syncs anyone a rejoin re-admitted meanwhile. Every event
+re-syncs anyone a rejoin re-admitted meanwhile, inside its budget; deferred
+work leaves the intent owed for the sweep's re-drive to re-grant. Every event
 seat move writes its SEAT history row on the same `tx` as the move
 (`lib/booking/seat-history.ts`); a caller whose CAS pins one from-status skips
 the pre-read.
