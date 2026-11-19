@@ -37,7 +37,8 @@ import { stageSupportCaseIntakeTx } from "./case-service";
 import { supportDeadline } from "./deadline-policy";
 import { priorityForReason } from "./priority";
 import { allocateTicketReference } from "./reference";
-import { reopenedClockPatch, slaDeadlinesFor } from "./sla";
+import { slaDeadlinesFor } from "./sla";
+import { releaseSystemClosedCaseTx } from "./system-case-close";
 import { caseTransitionRefusal } from "./case-transitions";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import {
@@ -148,7 +149,7 @@ export async function openConductRemovalCaseTx(
 
 /**
  * The learner's unclosed removal case on this event, if any: the open-case unique key
- * (`support_case_open_scope_key`) allows one, so a second removal joins it.
+ * (`support_case_open_scope_key`) allows one, so a second removal joins or closes it.
  */
 function unclosedRemovalCase(tx: Tx, input: OpenRemovalCaseInput) {
   return tx.supportCase.findFirst({
@@ -167,10 +168,6 @@ function unclosedRemovalCase(tx: Tx, input: OpenRemovalCaseInput) {
       referenceNumber: true,
       status: true,
       category: true,
-      priority: true,
-      resolvedAt: true,
-      acknowledgedAt: true,
-      activeChannel: true,
     },
   });
 }
@@ -187,60 +184,49 @@ const removalConflict = () =>
   );
 
 /**
- * Puts a settled removal case back to OPEN for the new removal, by compare-and-set on its
- * prior status, as the REMOVAL actor; a case still under review keeps its status. Returns the move.
+ * Closes a decided removal case by compare-and-set, as the system's RESOLVED to
+ * CLOSED move, so a fresh case can review the new removal; its history stays.
  */
-async function reopenForRemovalTx(
+async function closeDecidedRemovalCaseTx(
   tx: Tx,
-  open: UnclosedRemovalCase,
-  statutoryDueAt: Date,
+  decided: UnclosedRemovalCase,
   now: Date,
-): Promise<{ from: string; to: "OPEN" } | null> {
-  if (open.status === "OPEN" || open.status === "IN_PROGRESS") return null;
-  if (open.category !== CONDUCT_REMOVAL_CATEGORY) throw removalConflict();
-  const decision = await tx.supportCaseDecision.findFirst({
-    where: { caseId: open.id, supersededBy: { is: null } },
-    select: { id: true },
-  });
+): Promise<void> {
   if (
-    caseTransitionRefusal(open.status, "OPEN", {
-      decided: decision !== null,
-      actor: "REMOVAL",
+    decided.category !== CONDUCT_REMOVAL_CATEGORY ||
+    caseTransitionRefusal(decided.status, "CLOSED", {
+      decided: true,
+      actor: "SYSTEM",
     })
   ) {
     throw removalConflict();
   }
-  const moved = await tx.supportCase.updateMany({
+  const closed = await tx.supportCase.updateMany({
     where: {
-      id: open.id,
-      status: open.status,
+      id: decided.id,
+      status: decided.status,
       category: CONDUCT_REMOVAL_CATEGORY,
       closedAt: null,
     },
-    data: {
-      status: "OPEN",
-      resolvedAt: null,
-      ...reopenedClockPatch({ ...open, statutoryDueAt }, open.priority, now),
-    },
+    data: { status: "CLOSED", closedAt: now },
   });
-  if (moved.count !== 1) throw removalConflict();
-  return { from: open.status, to: "OPEN" };
+  if (closed.count !== 1) throw removalConflict();
+  await releaseSystemClosedCaseTx(
+    tx,
+    decided.id,
+    now,
+    "Released when a new removal closed this decided case",
+  );
 }
 
-/**
- * Opens the removal's case, or joins the learner's unclosed one: the new removal is
- * posted to the learner and logged with its remover, and the review restarts from it.
- * Decisions already on the case stay as they are.
- */
-export async function openOrJoinConductRemovalCaseTx(
+/** Adds the new removal to an undecided case: one review, and one verdict, covers both. */
+async function joinUndecidedRemovalCaseTx(
   tx: Tx,
+  open: UnclosedRemovalCase,
   input: OpenRemovalCaseInput,
   now: Date,
-): Promise<{ id: string; referenceNumber: string }> {
-  const open = await unclosedRemovalCase(tx, input);
-  if (!open) return openConductRemovalCaseTx(tx, input, now);
+): Promise<void> {
   const due = supportDeadline(CONDUCT_REMOVAL_CATEGORY, now);
-  const reopened = await reopenForRemovalTx(tx, open, due.statutoryDueAt, now);
   const { messageSeq } = await tx.supportCase.update({
     where: { id: open.id },
     data: {
@@ -265,13 +251,46 @@ export async function openOrJoinConductRemovalCaseTx(
       caseId: open.id,
       actorId: input.actorUserId,
       kind: "REOPENED",
-      fromValue: reopened?.from ?? null,
-      toValue: reopened?.to ?? null,
-      note: `The host removed the attendee for conduct again (${input.reasonLabel}); the ${CONDUCT_REMOVAL_REVIEW_HOURS}-hour review restarts from this removal.`,
+      note: `The host removed the attendee for conduct again (${input.reasonLabel}); the ${CONDUCT_REMOVAL_REVIEW_HOURS}-hour review restarts from this removal and its decision covers both.`,
       createdAt: now,
     },
   });
-  return { id: open.id, referenceNumber: open.referenceNumber };
+}
+
+/**
+ * The new removal's case. The learner's unclosed case on this event, which the open-case
+ * key (`support_case_open_scope_key`) allows one of, is joined while undecided; once decided
+ * it is closed and a fresh case opens, with its own verdict, appeal, refund and 72 hours.
+ */
+export async function openOrJoinConductRemovalCaseTx(
+  tx: Tx,
+  input: OpenRemovalCaseInput,
+  now: Date,
+): Promise<{ id: string; referenceNumber: string }> {
+  const prior = await unclosedRemovalCase(tx, input);
+  if (!prior) return openConductRemovalCaseTx(tx, input, now);
+  const decision = await tx.supportCaseDecision.findFirst({
+    where: { caseId: prior.id },
+    select: { id: true },
+  });
+  if (!decision) {
+    await joinUndecidedRemovalCaseTx(tx, prior, input, now);
+    return { id: prior.id, referenceNumber: prior.referenceNumber };
+  }
+  await closeDecidedRemovalCaseTx(tx, prior, now);
+  const fresh = await openConductRemovalCaseTx(tx, input, now);
+  await tx.supportCaseEvent.create({
+    data: {
+      caseId: prior.id,
+      actorId: null,
+      kind: "STATUS_CHANGED",
+      fromValue: prior.status,
+      toValue: "CLOSED",
+      note: `Closed when the attendee was removed for conduct again; case ${fresh.referenceNumber} reviews the new removal.`,
+      createdAt: now,
+    },
+  });
+  return fresh;
 }
 
 /** Posts a line on the case the attendee and support both read. */

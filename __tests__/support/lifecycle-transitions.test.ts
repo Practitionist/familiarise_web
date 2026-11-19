@@ -2,6 +2,7 @@
 import type { SupportCaseStatus } from "@prisma/client";
 import {
   assertCaseTransition,
+  CASE_TRANSITIONS,
   CaseConflictError,
   caseTransitionRefusal,
   type CaseTransitionActor,
@@ -14,12 +15,7 @@ const STATUSES: SupportCaseStatus[] = [
   "RESOLVED",
   "CLOSED",
 ];
-const ACTORS: CaseTransitionActor[] = [
-  "CUSTOMER",
-  "STAFF",
-  "SYSTEM",
-  "REMOVAL",
-];
+const ACTORS: CaseTransitionActor[] = ["CUSTOMER", "STAFF", "SYSTEM"];
 
 /** The status matrix the lifecycle promises, written out independently of the implementation. */
 const ALLOWED: Record<string, CaseTransitionActor[]> = {
@@ -32,20 +28,14 @@ const ALLOWED: Record<string, CaseTransitionActor[]> = {
   "IN_PROGRESS>RESOLVED": ["CUSTOMER", "STAFF", "SYSTEM"],
   "IN_PROGRESS>CLOSED": ["STAFF"],
   "ESCALATED>IN_PROGRESS": ["STAFF"],
-  // A second conduct removal joining its learner's case puts it back to review.
-  "ESCALATED>OPEN": ["REMOVAL"],
   "ESCALATED>RESOLVED": ["STAFF", "SYSTEM"],
   "ESCALATED>CLOSED": ["STAFF"],
-  "RESOLVED>OPEN": ["CUSTOMER", "STAFF", "REMOVAL"],
+  "RESOLVED>OPEN": ["CUSTOMER", "STAFF"],
   "RESOLVED>IN_PROGRESS": ["CUSTOMER", "STAFF"],
   "RESOLVED>ESCALATED": ["CUSTOMER"],
   "RESOLVED>CLOSED": ["STAFF", "SYSTEM"],
   "CLOSED>OPEN": ["STAFF"],
   "CLOSED>IN_PROGRESS": ["STAFF"],
-};
-/** Actors a recorded decision does not stop, per move: a new removal is not a reopen of the verdict. */
-const DECIDED_EXEMPT: Record<string, CaseTransitionActor[]> = {
-  "RESOLVED>OPEN": ["REMOVAL"],
 };
 /** Moves out of a settled status that a recorded decision forbids. */
 const UNDECIDED_ONLY = new Set([
@@ -72,12 +62,7 @@ function expectedCode(
 ): string | null {
   const key = `${from}>${to}`;
   if (from === to) return null;
-  if (
-    decided &&
-    UNDECIDED_ONLY.has(key) &&
-    !DECIDED_EXEMPT[key]?.includes(actor)
-  )
-    return "CASE_DECIDED";
+  if (decided && UNDECIDED_ONLY.has(key)) return "CASE_DECIDED";
   return ALLOWED[key]?.includes(actor) ? null : "INVALID_TRANSITION";
 }
 
@@ -102,7 +87,7 @@ describe("case status transition table", () => {
     },
   );
 
-  it("never lets a decided case leave RESOLVED except to close, or to review a new removal", () => {
+  it("never lets a decided case leave RESOLVED except to close", () => {
     const allowed = STATUSES.filter((s) => s !== "RESOLVED").flatMap((to) =>
       ACTORS.filter(
         (actor) =>
@@ -110,7 +95,21 @@ describe("case status transition table", () => {
           null,
       ).map((actor) => `${to}:${actor}`),
     );
-    expect(allowed).toEqual(["OPEN:REMOVAL", "CLOSED:STAFF", "CLOSED:SYSTEM"]);
+    expect(allowed).toEqual(["CLOSED:STAFF", "CLOSED:SYSTEM"]);
+  });
+
+  it("has no other actors and no decided exemption: a new removal never reopens a case", () => {
+    const actors = new Set(
+      Object.values(CASE_TRANSITIONS).flatMap((row) =>
+        Object.values(row).flatMap((rule) => [...(rule?.actors ?? [])]),
+      ),
+    );
+    expect([...actors].sort()).toEqual(["CUSTOMER", "STAFF", "SYSTEM"]);
+    expect(CASE_TRANSITIONS.ESCALATED.OPEN).toBeUndefined();
+    expect(CASE_TRANSITIONS.RESOLVED.OPEN).toEqual({
+      actors: ["CUSTOMER", "STAFF"],
+      undecidedOnly: true,
+    });
   });
 
   it("throws a conflict whose body carries no status field", () => {
