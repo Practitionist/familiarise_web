@@ -20,7 +20,7 @@ const mockState: {
   onCreate: () => void;
   failRemainder: boolean;
   collabEnded: boolean;
-  onRemove: (ids: string[]) => void;
+  onRemove: (ids: string[]) => void | Promise<void>;
 } = {
   onRemove: () => undefined,
   failRemainder: false,
@@ -91,7 +91,7 @@ jest.mock("@/lib/stream-client", () => ({
         return {};
       },
       removeMembers: async (ids: string[]) => {
-        mockState.onRemove(ids);
+        await mockState.onRemove(ids);
         ids.forEach((id) => mockChat.delete(id));
         return {};
       },
@@ -649,5 +649,87 @@ describe("event chat and call membership follows seats holding access", () => {
     ).resolves.toBeNull();
     expect(mockChat).toContain("rejoiner");
     expect(mockCall).toContain("rejoiner");
+  });
+
+  it("a chat removal that lands after its budget and the re-grant keeps the intent owed and re-arms it, so the sweep gives chat back", async () => {
+    jest.useFakeTimers({
+      doNotFake: ["nextTick", "queueMicrotask", "setImmediate"],
+    });
+    try {
+      const seats = [
+        ...seatsWith(pay()),
+        seat(
+          "rejoiner",
+          "CANCELLED",
+          pay({ amountPaise: 0, isMockPayment: true }),
+        ),
+      ];
+      arrange("WEBINAR", seats);
+      let land: () => void = () => undefined;
+      // The rejoin commits while the leave's event-channel removal hangs at Stream.
+      mockState.onRemove = (ids) => {
+        if (!ids.includes("rejoiner")) return;
+        mockState.onRemove = () => undefined;
+        const row = seats.find((s) => s.userId === "rejoiner");
+        if (row) row.status = "CONFIRMED";
+        return new Promise<void>((resolve) => {
+          land = resolve;
+        });
+      };
+      const settledRejoiner = () =>
+        mockIntentSettle.mock.calls.some(([args]) => {
+          const { where, data } = args as {
+            where: { userId?: { in?: string[] } };
+            data: { status?: string };
+          };
+          return (
+            data.status === "SUCCEEDED" &&
+            (where.userId?.in ?? []).includes("rejoiner")
+          );
+        });
+
+      const revoking = revokeEndedSeatAccess(
+        "appt-1",
+        ["rejoiner"],
+        new Date(),
+      );
+      // The chat slice is half the request's 8-second budget.
+      await jest.advanceTimersByTimeAsync(4_000);
+      await revoking;
+
+      expect(mockChat).toContain("rejoiner");
+      expect(settledRejoiner()).toBe(false);
+
+      mockIntentCreateMany.mockClear();
+      // The removal Stream was still holding lands after the re-grant.
+      land();
+      await jest.advanceTimersByTimeAsync(0);
+      expect(mockChat).not.toContain("rejoiner");
+      expect(mockIntentCreateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: [
+            expect.objectContaining({
+              kind: "SEAT_ACCESS_REVOKE",
+              userId: "rejoiner",
+              planId: "appt-1",
+            }),
+          ],
+        }),
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+
+    await expect(
+      redriveAccessRevocation({
+        kind: "SEAT_ACCESS_REVOKE",
+        userId: "rejoiner",
+        planId: "appt-1",
+        planType: null,
+        counterpartUserId: null,
+        createdAt: new Date(),
+      }),
+    ).resolves.toBeNull();
+    expect(mockChat).toContain("rejoiner");
   });
 });

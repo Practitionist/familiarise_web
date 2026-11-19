@@ -181,14 +181,31 @@ function reportStreamUnconfigured(): void {
 
 class RevocationBudgetSpent extends Error {}
 
-/** Stops waiting on a vendor call once the slice's budget is spent; the call itself may still land. */
-function withinBudget<T>(work: Promise<T>, deadlineMs: number): Promise<T> {
-  work.catch(() => undefined);
+/**
+ * Stops waiting on a vendor call once the slice's budget is spent. The call may
+ * still land at Stream, so one that settles after the deadline, either way, runs `onLate`.
+ */
+function withinBudget<T>(
+  work: Promise<T>,
+  deadlineMs: number,
+  onLate?: () => void,
+): Promise<T> {
+  let timedOut = false;
+  const late = () => {
+    if (timedOut) onLate?.();
+  };
+  work.then(late, late);
   const remainingMs = deadlineMs - Date.now();
-  if (remainingMs <= 0) return Promise.reject(new RevocationBudgetSpent());
+  if (remainingMs <= 0) {
+    timedOut = true;
+    return Promise.reject(new RevocationBudgetSpent());
+  }
   let timer: ReturnType<typeof setTimeout> | undefined;
   const expiry = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new RevocationBudgetSpent()), remainingMs);
+    timer = setTimeout(() => {
+      timedOut = true;
+      reject(new RevocationBudgetSpent());
+    }, remainingMs);
   });
   return Promise.race([work, expiry]).finally(() => clearTimeout(timer));
 }
@@ -197,13 +214,14 @@ async function removeFromDm(
   channelId: string,
   userId: string,
   deadlineMs = Number.POSITIVE_INFINITY,
+  onLate?: () => void,
 ): Promise<boolean> {
   try {
     const removal = getStreamChatClient()
       .channel("messaging", channelId)
       .removeMembers([userId]);
     await (Number.isFinite(deadlineMs)
-      ? withinBudget(removal, deadlineMs)
+      ? withinBudget(removal, deadlineMs, onLate)
       : removal);
     return true;
   } catch (error) {
@@ -387,10 +405,18 @@ async function admittedSeatHolders(
 
 class PendingRevocations {
   readonly byUser = new Map<string, string>();
+  constructor(
+    private readonly onLateRemoval: (userIds: string[]) => void = () =>
+      undefined,
+  ) {}
   add(userIds: Iterable<string>, reason: string): void {
     for (const userId of userIds) {
       if (!this.byUser.has(userId)) this.byUser.set(userId, reason);
     }
+  }
+  /** What a removal of `userIds` runs if it lands after its budget. */
+  lateFor(userIds: string[]): () => void {
+    return () => this.onLateRemoval(userIds);
   }
 }
 
@@ -410,6 +436,7 @@ async function removeFromSeatDms(
         userId,
         organizationId,
         deadlineMs,
+        pending.lateFor([userId]),
       );
       if (failure) pending.add([userId], failure);
     }
@@ -422,6 +449,7 @@ async function removeFromSeatDm(
   userId: string,
   organizationId: string | null,
   deadlineMs: number,
+  onLate: () => void,
 ): Promise<string | null> {
   if (Date.now() >= deadlineMs) return "time budget spent before DM removal";
   try {
@@ -432,7 +460,7 @@ async function removeFromSeatDm(
     return "DM eligibility check failed";
   }
   const channelId = getDmChannelId(counterpart, userId, organizationId);
-  return (await removeFromDm(channelId, userId, deadlineMs))
+  return (await removeFromDm(channelId, userId, deadlineMs, onLate))
     ? null
     : "DM removal failed";
 }
@@ -459,6 +487,7 @@ async function removeChunkFromCall(
   streamCallId: string,
   chunk: string[],
   deadlineMs: number,
+  onLate?: () => void,
 ): Promise<string[]> {
   const call = getStreamVideoClient().video.call(
     STREAM_CALL_TYPE,
@@ -468,6 +497,7 @@ async function removeChunkFromCall(
     await withinBudget(
       call.updateCallMembers({ remove_members: chunk }),
       deadlineMs,
+      onLate,
     );
     return [];
   } catch (error) {
@@ -570,10 +600,12 @@ async function removeFromRoom(
   blocked: Set<string>,
 ): Promise<void> {
   for (let i = 0; i < userIds.length; i += MEMBER_CHUNK) {
+    const chunk = userIds.slice(i, i + MEMBER_CHUNK);
     const kept = await removeChunkFromCall(
       meeting.streamCallId,
-      userIds.slice(i, i + MEMBER_CHUNK),
+      chunk,
       deadlineMs,
+      pending.lateFor(chunk),
     );
     pending.add(kept, "call removal failed");
     for (const userId of kept) blocked.add(userId);
@@ -701,6 +733,7 @@ async function removeFromEventChannel(
     const { failedUserIds } = await withinBudget(
       removeUsersFromEventChannel(event.type, event.id, userIds),
       deadlineMs,
+      pending.lateFor(userIds),
     );
     pending.add(failedUserIds, "event channel removal failed");
   } catch {
@@ -720,14 +753,16 @@ async function driveSeatRevocation(
   /** Set by the sweep: an owed user the join gate admits again may have lost a grant to an earlier drive. */
   { regrantAdmitted = false }: { regrantAdmitted?: boolean } = {},
 ): Promise<Map<string, string>> {
-  const pending = new PendingRevocations();
+  let ctx: SeatContext | null = null;
+  const pending = new PendingRevocations((late) => {
+    if (ctx) void rearmReadmittedSeats(appointmentId, ctx, late);
+  });
   if (!isStreamConfigured()) {
     // No vendor call happened, so the intents stay owed until the keys are back.
     pending.add(userIds, STREAM_UNCONFIGURED);
     reportStreamUnconfigured();
     return pending.byUser;
   }
-  let ctx: SeatContext | null;
   let revoked: string[];
   let readmitted: string[];
   try {
@@ -770,8 +805,8 @@ async function driveSeatRevocation(
 
 /**
  * Re-checks the users just removed and grants back anyone a rejoin re-admitted
- * while the removal was in flight. Work the budget cannot reach stays owed, so
- * the sweep's re-drive, which re-grants owed users the gate admits, finishes it.
+ * while the removal was in flight. A removal left unconfirmed may still land after
+ * the grant, so its user stays owed and the sweep's re-drive grants them again.
  */
 async function restoreReadmittedSeats(
   appointmentId: string,
@@ -808,14 +843,30 @@ async function restoreReadmittedSeats(
     // A channel member the vendor did not add is retried; any other refusal would refuse again.
     if (synced.reason === "event_channel_member_not_added") {
       pending.add(regrant, "rejoin re-grant incomplete");
-      return;
     }
   } catch {
     pending.add(regrant, "rejoin re-grant deferred");
-    return;
   }
-  // A re-admitted user is owed no removal, so their intent settles.
-  for (const id of regrant) pending.byUser.delete(id);
+}
+
+/**
+ * A removal that landed after its budget may have undone a re-grant, so the gate is read
+ * again and an admitted user's intent is re-armed for the sweep. Never throws.
+ */
+async function rearmReadmittedSeats(
+  appointmentId: string,
+  ctx: SeatContext,
+  userIds: string[],
+): Promise<void> {
+  let admitted: Set<string>;
+  try {
+    admitted = await admittedSeatHolders(appointmentId, ctx, userIds);
+  } catch {
+    // An unreadable gate re-arms: the sweep reads it again before any vendor call.
+    admitted = new Set(userIds);
+  }
+  const owed = userIds.filter((id) => admitted.has(id));
+  if (owed.length > 0) await persistSeatRevocation(appointmentId, owed);
 }
 
 const intentNotBefore = () => new Date(Date.now() + INTENT_SWEEP_GRACE_MS);
