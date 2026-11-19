@@ -47,13 +47,14 @@ describe("the list row and the Next card's chip", () => {
   it("count the same days for one session", () => {
     jest.spyOn(Date, "now").mockReturnValue(now.getTime());
     const chip = renderToStaticMarkup(
-      createElement(
-        DisplayZoneProvider,
-        { zone: "Asia/Kolkata" },
-        createElement(CountdownBadge, { targetDate: session }),
-      ),
+      createElement(DisplayZoneProvider, {
+        zone: "Asia/Kolkata",
+        children: createElement(CountdownBadge, { targetDate: session }),
+      }),
     );
-    expect(getProximityLabel(session, "Asia/Kolkata", now)).toBe("in 8 days");
-    expect(chip).toContain(">8d<");
+    const chipText = chip.replace(/<[^>]+>/g, "");
+    expect([getProximityLabel(session, "Asia/Kolkata", now), chipText]).toEqual(
+      ["in 8 days", "8d"],
+    );
   });
 });

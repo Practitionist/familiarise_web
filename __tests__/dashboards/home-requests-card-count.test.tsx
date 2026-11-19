@@ -5,6 +5,12 @@
 // Home's "requests to answer" count and its Requests card read one set: a paid
 // plan still waiting for times is counted, so the card lists it too.
 
+// The reads reach payout setup, whose clawback notices load the email stack (unloadable in jsdom).
+jest.mock("@/lib/payments/payouts/clawback-notifications", () =>
+  jest
+    .requireActual("../fixtures/requests-inbox-mocks")
+    .clawbackNoticesModule(),
+);
 jest.mock("../../lib/prisma", () =>
   jest.requireActual("../fixtures/requests-inbox-mocks").inboxPrismaModule(),
 );
@@ -14,7 +20,7 @@ jest.mock("../../lib/auth-client", () =>
 );
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 
 import prisma from "@/lib/prisma";
 import { countRequestsToAnswer } from "@/lib/data/needs-you";
@@ -52,7 +58,8 @@ beforeEach(() => {
       page: 1,
       now: NOW,
     });
-    return new Response(JSON.stringify(payload), { status: 200 });
+    const body = JSON.parse(JSON.stringify(payload));
+    return { ok: true, json: async () => body };
   }) as unknown as typeof fetch;
 });
 
@@ -69,6 +76,11 @@ it("lists the paid plan the Home count includes", async () => {
     </QueryClientProvider>,
   );
 
-  expect(await screen.findByText(/Weekly coaching/)).toBeTruthy();
+  // Two reads in a row: the subscription tab waits on the consultation counts.
+  await waitFor(
+    () => expect(screen.queryByText("Loading requests")).toBeNull(),
+    { timeout: 8000 },
+  );
   expect(screen.queryByText("No pending requests")).toBeNull();
-});
+  expect(screen.getByText(/Weekly coaching/)).toBeTruthy();
+}, 10_000);

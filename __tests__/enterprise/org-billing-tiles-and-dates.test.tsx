@@ -8,6 +8,12 @@
 
 import "../fixtures/text-encoding";
 
+// The reads reach payout setup, whose clawback notices load the email stack (unloadable in jsdom).
+jest.mock("@/lib/payments/payouts/clawback-notifications", () =>
+  jest
+    .requireActual("../fixtures/requests-inbox-mocks")
+    .clawbackNoticesModule(),
+);
 jest.mock("../../lib/prisma", () => {
   // One posting at 23:33 UTC on 19 Oct: 20 Oct in India.
   const posting = {
@@ -97,23 +103,25 @@ it("hydrates the Activity date a UTC server printed in an IST browser", async ()
       onRecoverableError: (error) => errors.push(error),
     });
   });
-  expect(errors).toEqual([]);
-  expect(container.textContent).toContain("20 Oct 2026");
+  const printed = container.textContent;
   container.remove();
+  expect(errors).toEqual([]);
+  expect(printed).toContain("20 Oct 2026");
 });
 
 describe("money tiles at phone width", () => {
-  const stacked = (label: string) => {
-    const grid = screen.getByText(label).closest(".grid");
-    expect(grid?.className.split(" ")).toEqual(
-      expect.arrayContaining(["grid-cols-1", "sm:grid-cols-2"]),
-    );
-    expect(grid?.className.split(" ")).not.toContain("grid-cols-2");
-  };
+  /** The tile row's column count on a phone and from sm. */
+  const phoneColumns = (label: string) =>
+    (
+      screen.getByText(label).closest(".grid")?.className.split(" ") ?? []
+    ).filter((c) => /^(sm:)?grid-cols-\d$/.test(c));
 
   it("stack one per row on the usage panel", async () => {
     render(await usagePanel());
-    stacked("Unpaid balance");
+    expect(phoneColumns("Unpaid balance")).toEqual([
+      "grid-cols-1",
+      "sm:grid-cols-2",
+    ]);
   });
 
   it("stack one per row on the invoice summary", () => {
@@ -148,6 +156,9 @@ describe("money tiles at phone width", () => {
         />
       </QueryClientProvider>,
     );
-    stacked("Outstanding");
+    expect(phoneColumns("Outstanding")).toEqual([
+      "grid-cols-1",
+      "sm:grid-cols-2",
+    ]);
   });
 });
