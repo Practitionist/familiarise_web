@@ -149,7 +149,7 @@ sequenceDiagram
 
 ## 4. The case lifecycle
 
-A case has five statuses. The allowed moves live in one table, `CASE_TRANSITIONS` in `lib/support/case-transitions.ts`. A move that is not in the table is refused with 409 `INVALID_TRANSITION`, and a reopen of a case that already has a decision is refused with 409 `CASE_DECIDED` and a pointer to the appeal. Writers still do their own compare-and-set on the row, so two staff members cannot both move the same case from the same state.
+A case has five statuses. The allowed moves live in one table, `CASE_TRANSITIONS` in `lib/support/case-transitions.ts`. A move that is not in the table is refused with 409 `INVALID_TRANSITION`, and a customer's or staff reopen of a case that already has a decision is refused with 409 `CASE_DECIDED` and a pointer to the appeal. Writers still do their own compare-and-set on the row, so two staff members cannot both move the same case from the same state. The one exception is a second conduct removal joining its learner's unclosed removal case: it moves a RESOLVED or ESCALATED case back to OPEN as the REMOVAL actor, decided or not, because the new removal needs its own review ([conduct removal](../decisions/2026-11-15-conduct-removal.md), decision 9).
 
 ```mermaid
 stateDiagram-v2
