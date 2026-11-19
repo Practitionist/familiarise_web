@@ -9,7 +9,7 @@
  */
 
 const mockAuth = jest.fn();
-const mockLift = jest.fn(async () => ({
+const mockLift = jest.fn(async (_args: unknown) => ({
   rejoinPath: "REGISTER",
   conduct: false,
 }));
