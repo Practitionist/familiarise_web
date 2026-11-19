@@ -264,7 +264,7 @@ Points the table compresses:
   due date, nor does a draft (`shownDueDate`). The Purchase orders tab tells the same readers
   which role can add, edit or cancel a PO, and its Linked column counts in
   words ("1 contract · 3 invoices"), drafts counted only for a role with
-  `billing.manage`.
+  `billing.manage`, as in the billing account's invoice count.
 - **Billing figures.** "Pending charges · N bookings not yet invoiced" counts
   SUCCEEDED payments with no `billableToOrgInvoiceId`. A Usage charges row
   reads the same field: a booking charge names the invoice its payment was
@@ -284,7 +284,10 @@ Points the table compresses:
   withdrawing are the member's own acts; the operator's button only records a
   withdrawal request the member then sees in Account settings.
 - **Audit.** The categories a role may filter by follow `audit.read.ops` and
-  `audit.read.money`; the CSV export needs `dataExports.people`.
+  `audit.read.money`; the CSV export needs `dataExports.people`. A draft
+  invoice's generation row (`INVOICE_GENERATED`, status `DRAFT`) reaches the
+  Audit page, its CSV and Home Activity only for a role with `billing.manage`
+  (`auditRowScope` in `lib/enterprise/audit-visibility.ts`).
 - **Support cases.** OWNER, MAINTAINER, BILLING_ADMIN, MANAGER and SUPPORT read
   and raise org-owned cases; the other roles see a pointer to their own
   appointment instead.
