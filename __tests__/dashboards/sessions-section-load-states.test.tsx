@@ -493,4 +493,19 @@ describe("SessionsSection load states (#1856)", () => {
     expect(text()).toContain("Device s-new");
     expect(text()).toContain("Device s-cur");
   });
+
+  it("the two sign-out controls say which one ends this device too", async () => {
+    (global.fetch as jest.Mock).mockResolvedValue(
+      okList([session("s-new", false), session("s-cur", true)]),
+    );
+
+    await mount();
+
+    const labels = Array.from(container.querySelectorAll("button")).map(
+      (b) => b.textContent,
+    );
+    expect(labels).toContain("Sign out other devices");
+    expect(labels).toContain("Sign out everywhere, this device too");
+    expect(labels).not.toContain("Log out everywhere");
+  });
 });

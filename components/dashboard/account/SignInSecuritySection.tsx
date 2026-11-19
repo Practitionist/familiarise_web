@@ -612,12 +612,12 @@ export function SessionsSection() {
           trigger={
             <Button variant="outline" size="sm">
               <LogOut className="mr-1.5 h-4 w-4" />
-              Log out everywhere
+              Sign out everywhere, this device too
             </Button>
           }
-          title="Log out of every device?"
+          title="Sign out of every device, this one too?"
           description="Every active session ends, including this one. You'll sign in again on each device."
-          confirmLabel="Log out everywhere"
+          confirmLabel="Sign out everywhere"
           tone="destructive"
           onConfirm={() => revokeOthers({ andSignOut: true })}
         />
