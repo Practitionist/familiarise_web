@@ -4,8 +4,9 @@
 
 /**
  * Draft organisation invoices are visible only to a role that manages billing.
- * The list, the CSV export, the detail, the PDF and the purchase-order invoice
- * links all read through one filter, so a MANAGER can neither list nor count a draft.
+ * The list, the CSV export, the detail, the PDF, the purchase-order invoice
+ * links and the billing account's invoice count all read through one filter,
+ * so a MANAGER can neither list nor count a draft.
  */
 
 import { NextRequest } from "next/server";
@@ -80,6 +81,18 @@ jest.mock("../../lib/prisma", () => ({
         })),
       })),
     },
+    organization: {
+      findUnique: jest.fn(async (args) => ({
+        billingAccount: {
+          id: "ba-1",
+          _count: {
+            invoices: linkedInvoices(
+              args.select.billingAccount.include._count.select.invoices,
+            ).length,
+          },
+        },
+      })),
+    },
     orgAuditLog: { create: jest.fn(async () => ({})) },
   },
 }));
@@ -110,6 +123,7 @@ jest.mock("../../lib/pdf/supplier", () => ({
 jest.mock("../../lib/pdf/storage", () => ({}));
 jest.mock("../../lib/pdf/invoice-renderer", () => ({}));
 
+import { GET as getBillingAccount } from "../../app/api/organizations/[orgId]/billing-account/route";
 import { GET as listInvoices } from "../../app/api/organizations/[orgId]/billing-account/invoices/route";
 import { GET as exportInvoices } from "../../app/api/organizations/[orgId]/billing-account/invoices/export/route";
 import { GET as invoiceDetail } from "../../app/api/organizations/[orgId]/billing-account/invoices/[invoiceId]/route";
@@ -175,5 +189,12 @@ describe.each<[MemberRole, boolean]>([
     expect(detail.purchaseOrder.invoices.map((i) => i.id)).toEqual(
       seesDrafts ? ["inv-draft", "inv-issued"] : ["inv-issued"],
     );
+  });
+
+  it(`${seesDrafts ? "counts" : "does not count"} a draft in the billing account's invoice count`, async () => {
+    const body = (await (
+      await getBillingAccount(req("/x"), orgParams)
+    ).json()) as { billingAccount: { _count: { invoices: number } } };
+    expect(body.billingAccount._count.invoices).toBe(seesDrafts ? 2 : 1);
   });
 });
