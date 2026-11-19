@@ -1,22 +1,29 @@
 /**
- * The expert list row, side sheet and Next up card never address a host's own
+ * The expert list row, side sheet, Next up card and Home never address a host's own
  * webinar or class audience as a person; a 1:1 keeps the learner's name and a
  * co-host still sees the owner's.
  */
 import * as React from "react";
 import { render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn(), refresh: jest.fn() }),
   useParams: () => ({}),
+  usePathname: () => "/dashboard/consultant/cp_aarav/home",
+  useSearchParams: () => new URLSearchParams(),
 }));
 jest.mock("../../lib/auth-client", () => ({
   useSession: () => ({ data: null }),
+}));
+jest.mock("../../hooks/scheduling/useLazyJoinMeeting", () => ({
+  useLazyJoinMeeting: () => jest.fn(),
 }));
 
 import { AppointmentRow } from "@/components/appointments/AppointmentRow";
 import { AppointmentSheet } from "@/components/appointments/AppointmentSheet";
 import { NextUpHero } from "@/components/appointments/NextUpHero";
+import { HomeTab } from "@/app/dashboard/consultant/[consultantId]/(features)/home/HomeTab";
 import type { AppointmentActionAdapter } from "@/lib/appointments/adapter";
 import { mapConsultantAppointments } from "@/lib/appointments/map-consultant";
 import type { AppointmentVM } from "@/lib/appointments/view-model";
@@ -157,5 +164,44 @@ describe.each(surfaces)("the expert %s", (_name, renderSurface) => {
     expect(vm.counterpart.audience).toBeUndefined();
     render(renderSurface(vm));
     expect(document.body.textContent).toContain("Aarav Anderson");
+  });
+});
+
+describe("the expert Home (Today and Upcoming Sessions)", () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+    jest.setSystemTime(NOW);
+  });
+  afterEach(() => jest.useRealTimers());
+
+  const renderHome = (consultantId: string, appointments: TAppointment[]) =>
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <HomeTab
+          appointments={appointments}
+          consultantId={consultantId}
+          payoutSetup={undefined}
+          viewerZone={viewerZone}
+        />
+      </QueryClientProvider>,
+    );
+
+  it("titles the host's own webinar and class by their plan, with no placeholder audience", () => {
+    renderHome(OWNER, [webinar, klass]);
+    const text = document.body.textContent ?? "";
+    expect(text).not.toMatch(PLACEHOLDER);
+    expect(text).toContain("Expert Workshop Webinar");
+    expect(text).toContain("System Design Cohort");
+    expect(screen.queryByText(/^(RA|EL|AA)$/)).toBeNull();
+  });
+
+  it("keeps the learner's name on a 1:1", () => {
+    renderHome(OWNER, [consultation]);
+    expect(screen.getAllByText("Priya Nair").length).toBeGreaterThan(0);
+  });
+
+  it("shows a co-host the owner's name", () => {
+    renderHome("cp_guest", [webinar]);
+    expect(screen.getAllByText("Aarav Anderson").length).toBeGreaterThan(0);
   });
 });
