@@ -33,7 +33,8 @@ type ConsulteeBookingsDb = Pick<
 
 /**
  * The buyer's bookings that can still end, counted as `checkActiveAppointments`
- * counts the expert's: requests, plans, trials, open reschedules, group seats ahead.
+ * counts the expert's under its removal rule: requests, plans, trials, open
+ * reschedules, group seats ahead.
  */
 export async function checkConsulteeActiveBookings(
   consulteeProfileId: string,

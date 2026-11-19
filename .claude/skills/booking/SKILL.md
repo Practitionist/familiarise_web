@@ -432,7 +432,7 @@ One per job; do not add a fourth, and do not give a new surface its own picker (
 
 Do not build against the older direction. The reasoning and the rejected options are in `docs/decisions/2026-11-12-booking-follow-up-train.md`; the tracking issue is #2720.
 
-- Removing availability under live bookings stays allowed, with a confirm dialog first; do not make it a lock. Only a Weekly/Custom switch is refused (`checkActiveAppointments`). Built: the dialog offers Reschedule and Cancel links only after the hours are saved (`AvailabilitySaveConfirm`), never before.
+- Removing availability under live bookings stays allowed, with a confirm dialog first; do not make it a lock. Only a Weekly/Custom switch is refused (`checkActiveAppointments(id, db, "scheduleSwitch")`), and only by bookings that still need the hours: a session ahead, or nothing placed yet on a paid or approved booking or a class; delivered-only bookings never block (`docs/decisions/2026-11-20-schedule-switch-blockers.md`). Built: the dialog offers Reschedule and Cancel links only after the hours are saved (`AvailabilitySaveConfirm`), never before.
 - Free bookings notify like paid ones minus the receipt; strikes stay private (no public reliability line).
 - Trial to subscription: one bell and one email on completion (the "Continue with {expert}" card is built).
 

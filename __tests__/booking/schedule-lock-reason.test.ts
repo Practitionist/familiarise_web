@@ -43,7 +43,8 @@ it("turns the switch route's counts into sentences", async () => {
     { params: Promise.resolve({ id: "cp-1" }) },
   );
   expect(scheduleLockReason(await res.json())).toBe(
-    "You have 15 pending consultations, 2 upcoming classes and 1 open reschedule request. " +
+    "You have 15 consultations with a session ahead or still to be placed, " +
+      "2 classes with a session ahead or still to be scheduled and 1 open reschedule request. " +
       "Complete or cancel them before you switch schedule types.",
   );
 });
