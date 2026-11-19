@@ -15,6 +15,7 @@ jest.mock("@/hooks/use-toast", () => ({
 }));
 
 import { PendingPaymentsWidget } from "@/app/dashboard/consultee/[consulteeId]/(features)/home/PendingPaymentsWidget";
+import { ReferralsPage } from "@/components/dashboard/shared/ReferralsPage";
 import { UnpaidRequestedBookingControls } from "@/app/dashboard/consultee/[consulteeId]/(features)/appointments/[appointmentId]/DetailPageClient";
 
 function withClient(node: React.ReactNode) {
@@ -105,5 +106,41 @@ describe("Billing: Needs you rows", () => {
     fireEvent.click(screen.getByRole("button", { name: /Cancel/ }));
     expect(screen.getByText("Cancel this pending payment?")).toBeTruthy();
     expect(screen.queryByText(/referral credit/)).toBeNull();
+  });
+});
+
+describe("Referrals: a programme taking no new referrals", () => {
+  it("says so in words true whether it is not open yet, paused or out of budget", () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+    });
+    client.setQueryData(["referral-code"], {
+      data: {
+        id: "rc-1",
+        code: "ASHA10",
+        customCode: null,
+        totalReferrals: 0,
+        successfulReferrals: 0,
+        totalEarned: 0,
+        isActive: true,
+        maxReferrals: 50,
+      },
+      terms: null,
+      feeWaivers: [],
+    });
+    client.setQueryData(["referrals"], { data: [] });
+    client.setQueryData(["referral-credits"], {
+      data: { totalAvailable: 0, history: [] },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <ReferralsPage role="CONSULTEE" />
+      </QueryClientProvider>,
+    );
+    const text = document.body.textContent ?? "";
+    expect(text).toContain(
+      "The referral programme is not taking new referrals right now.",
+    );
+    expect(text).not.toMatch(/paused|reopens|resume/);
   });
 });
