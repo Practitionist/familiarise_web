@@ -592,7 +592,6 @@ async function restoreUsageToCredit(
   }
 }
 
-/** A lapsed credit is restored only when the expert or the platform caused the refund. */
 function lapsed(
   credit: Pick<ReferralCredit, "state" | "expiresAt">,
   now: Date,
@@ -603,6 +602,7 @@ function lapsed(
   );
 }
 
+/** A lapsed credit is restored only when the expert or the platform caused the refund. */
 function restorable(
   credit: RestorableCredit,
   sellerCaused: boolean,
