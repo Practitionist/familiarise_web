@@ -8,6 +8,7 @@ import { TrendingUp, X } from "lucide-react";
 import { z } from "zod";
 
 import { Button } from "@/components/ui/button";
+import { useNowTick } from "@/hooks/use-now-tick";
 import {
   demandSignals,
   dismissalHolds,
@@ -108,9 +109,10 @@ export function DemandBanner({
   }, [consultantId]);
 
   const { data } = useExpertDemand(consultantId);
+  // Re-renders an open tab, so a deadline that passes turns into the overdue line.
+  const now = useNowTick();
 
   if (!data || dismissal === undefined) return null;
-  const now = new Date();
   const signals = demandSignals(data, now);
   if (signals.length === 0 || dismissalHolds(dismissal, signals, now)) {
     return null;

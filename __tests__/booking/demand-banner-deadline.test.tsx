@@ -3,7 +3,7 @@
  * ahead; past it, the line says the first plan is overdue.
  */
 import * as React from "react";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ExpertDemand } from "@/schemas/expert-demand";
 
@@ -75,5 +75,17 @@ describe("the demand banner's placement deadline", () => {
       "2 paid plans are waiting for times; the first was due by Fri 13 Nov, 8:47 PM. Place it now.",
     );
     expect(text).not.toContain("place the first by");
+  });
+
+  it("turns overdue in an open tab when the deadline passes", () => {
+    expect(renderAt("2026-11-13T15:16:50.000Z")).toContain(
+      "place the first by",
+    );
+    act(() => {
+      jest.advanceTimersByTime(60_000);
+    });
+    expect(
+      screen.getByRole("region", { name: "You're in demand" }).textContent,
+    ).toContain("the first was due by Fri 13 Nov, 8:47 PM. Place it now.");
   });
 });
