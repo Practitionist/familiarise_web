@@ -1,22 +1,27 @@
-import prisma, { type Tx } from "@/lib/prisma";
+import type { Prisma } from "@prisma/client";
+import type { Tx } from "@/lib/prisma";
 import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
 
 /**
- * Result of checking active appointments for a consultant
+ * Which bookings count. `scheduleSwitch`: only those that still need the
+ * expert's hours (a session ahead, or nothing placed yet on a paid or approved
+ * booking or a class). `removal`: every open booking, for profile and account deletion.
  */
+export type ActiveAppointmentsRule = "scheduleSwitch" | "removal";
+
 export interface ActiveAppointmentsResult {
   hasActive: boolean;
   total: number;
   breakdown: {
-    pendingConsultations: number;
-    activeSubscriptions: number;
-    upcomingWebinars: number;
-    upcomingClasses: number;
-    activeTrials: number;
+    consultations: number;
+    subscriptions: number;
+    webinars: number;
+    classes: number;
+    trials: number;
     openReschedules: number;
-    activeCollaborations: number;
+    collaborations: number;
   };
-  /** Human-readable details string (e.g., "2 pending consultations, 1 active subscription") */
+  /** The counts in words, comma-joined ("2 upcoming webinars, 1 active trial"). */
   details?: string;
 }
 
@@ -31,12 +36,54 @@ type ActiveAppointmentsDb = Pick<
   | "collaborator"
 >;
 
+const LIVE_OCCURRENCE = {
+  deletedAt: null,
+  completionStatus: {
+    notIn: ["CANCELLED" as const, "RESCHEDULED" as const, "VOIDED" as const],
+  },
+};
+
+/** A booking wrapper with a live session starting after `now`. */
+const sessionAhead = (now: Date) => ({
+  appointment: {
+    deletedAt: null,
+    occurrences: { some: { ...LIVE_OCCURRENCE, startsAt: { gt: now } } },
+  },
+});
+
+/** No live session placed: no booking wrapper yet, or none of its sessions is live. */
+const NOTHING_PLACED = {
+  OR: [
+    { appointment: { is: null } },
+    { appointment: { occurrences: { none: LIVE_OCCURRENCE } } },
+  ],
+};
+
+/** A request still waiting to be placed blocks only once it is approved or paid. */
+const AWAITING_PLACEMENT = {
+  OR: [
+    {
+      status: {
+        in: ["APPROVED" as const, "APPROVED_PENDING_PAYMENT" as const],
+      },
+    },
+    {
+      appointment: {
+        payment: { some: { paymentStatus: "SUCCEEDED" as const } },
+      },
+    },
+  ],
+};
+
 /**
- * Check if a consultant has any active/pending appointments or active upcoming collaborations.
+ * Count a consultant's bookings and co-hosted sessions under `rule`. The
+ * switch pre-flight and the settings save's in-transaction re-check both call
+ * it with `scheduleSwitch`, so they agree.
  */
 export async function checkActiveAppointments(
   consultantId: string,
-  db: ActiveAppointmentsDb = prisma,
+  db: ActiveAppointmentsDb,
+  rule: ActiveAppointmentsRule,
 ): Promise<ActiveAppointmentsResult> {
   const now = new Date();
   const activeStatuses = [
@@ -44,35 +91,36 @@ export async function checkActiveAppointments(
     "APPROVED",
     "APPROVED_PENDING_PAYMENT",
   ] as const;
+  const needsHours = rule === "scheduleSwitch";
 
-  const futureLiveOccurrence = {
-    deletedAt: null,
-    completionStatus: {
-      notIn: ["CANCELLED" as const, "RESCHEDULED" as const, "VOIDED" as const],
-    },
-    startsAt: { gt: now },
+  const futureLiveOccurrence = { ...LIVE_OCCURRENCE, startsAt: { gt: now } };
+  const oneToOneNeedsHours = {
+    OR: [sessionAhead(now), { AND: [NOTHING_PLACED, AWAITING_PLACEMENT] }],
   };
+  const classNeedsHours = { OR: [sessionAhead(now), NOTHING_PLACED] };
 
   const [
-    pendingConsultations,
-    activeSubscriptions,
-    upcomingWebinars,
-    upcomingClasses,
-    activeTrials,
+    consultations,
+    subscriptions,
+    webinars,
+    classes,
+    trials,
     openReschedules,
-    activeCollaborations,
+    collaborations,
   ] = await Promise.all([
     db.consultation.count({
       where: {
         consultationPlan: { consultantProfileId: consultantId },
         status: { in: [...activeStatuses] },
-      },
+        ...(needsHours ? oneToOneNeedsHours : {}),
+      } satisfies Prisma.ConsultationWhereInput,
     }),
     db.subscription.count({
       where: {
         subscriptionPlan: { consultantProfileId: consultantId },
         status: { in: [...activeStatuses] },
-      },
+        ...(needsHours ? oneToOneNeedsHours : {}),
+      } satisfies Prisma.SubscriptionWhereInput,
     }),
     db.webinar.count({
       where: {
@@ -89,7 +137,8 @@ export async function checkActiveAppointments(
       where: {
         classPlan: { consultantProfileId: consultantId },
         status: "SCHEDULED",
-      },
+        ...(needsHours ? classNeedsHours : {}),
+      } satisfies Prisma.ClassWhereInput,
     }),
     db.trial.count({
       where: {
@@ -147,52 +196,62 @@ export async function checkActiveAppointments(
   ]);
 
   const total =
-    pendingConsultations +
-    activeSubscriptions +
-    upcomingWebinars +
-    upcomingClasses +
-    activeTrials +
+    consultations +
+    subscriptions +
+    webinars +
+    classes +
+    trials +
     openReschedules +
-    activeCollaborations;
+    collaborations;
 
-  const detailParts: string[] = [];
-  const plural = (n: number, one: string, many = `${one}s`) =>
+  const plural = (n: number, one: string, many: string) =>
     `${n} ${n === 1 ? one : many}`;
-  if (pendingConsultations > 0) {
-    detailParts.push(plural(pendingConsultations, "pending consultation"));
-  }
-  if (activeSubscriptions > 0) {
-    detailParts.push(plural(activeSubscriptions, "active subscription"));
-  }
-  if (upcomingWebinars > 0) {
-    detailParts.push(plural(upcomingWebinars, "upcoming webinar"));
-  }
-  if (upcomingClasses > 0) {
-    detailParts.push(
-      plural(upcomingClasses, "upcoming class", "upcoming classes"),
-    );
-  }
-  if (activeTrials > 0) {
-    detailParts.push(plural(activeTrials, "active trial"));
-  }
-  if (openReschedules > 0) {
-    detailParts.push(plural(openReschedules, "open reschedule request"));
-  }
-  if (activeCollaborations > 0) {
-    detailParts.push(plural(activeCollaborations, "upcoming collaboration"));
-  }
+  type Words = readonly [one: string, many: string];
+  const words: Record<"consultations" | "subscriptions" | "classes", Words> =
+    needsHours
+      ? {
+          consultations: [
+            "consultation with a session ahead or still to be placed",
+            "consultations with a session ahead or still to be placed",
+          ],
+          subscriptions: [
+            "subscription with a session ahead or still to be placed",
+            "subscriptions with a session ahead or still to be placed",
+          ],
+          classes: [
+            "class with a session ahead or still to be scheduled",
+            "classes with a session ahead or still to be scheduled",
+          ],
+        }
+      : {
+          consultations: ["pending consultation", "pending consultations"],
+          subscriptions: ["active subscription", "active subscriptions"],
+          classes: ["upcoming class", "upcoming classes"],
+        };
+  const counted: [number, Words][] = [
+    [consultations, words.consultations],
+    [subscriptions, words.subscriptions],
+    [webinars, ["upcoming webinar", "upcoming webinars"]],
+    [classes, words.classes],
+    [trials, ["active trial", "active trials"]],
+    [openReschedules, ["open reschedule request", "open reschedule requests"]],
+    [collaborations, ["upcoming collaboration", "upcoming collaborations"]],
+  ];
+  const detailParts = counted
+    .filter(([n]) => n > 0)
+    .map(([n, [one, many]]) => plural(n, one, many));
 
   return {
     hasActive: total > 0,
     total,
     breakdown: {
-      pendingConsultations,
-      activeSubscriptions,
-      upcomingWebinars,
-      upcomingClasses,
-      activeTrials,
+      consultations,
+      subscriptions,
+      webinars,
+      classes,
+      trials,
       openReschedules,
-      activeCollaborations,
+      collaborations,
     },
     details: detailParts.length > 0 ? detailParts.join(", ") : undefined,
   };

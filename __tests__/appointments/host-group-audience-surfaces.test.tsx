@@ -1,7 +1,8 @@
 /**
  * The expert list row, side sheet, Next up card and Home never address a host's own
  * webinar or class audience as a person; a 1:1 keeps the learner's name and a
- * co-host still sees the owner's.
+ * co-host still sees the owner's. At phone width the list row's actions wrap
+ * under its time instead of running off the card.
  */
 import * as React from "react";
 import { render, screen } from "@testing-library/react";
@@ -165,6 +166,37 @@ describe.each(surfaces)("the expert %s", (_name, renderSurface) => {
     expect(vm.counterpart.audience).toBeUndefined();
     render(renderSurface(vm));
     expect(document.body.textContent).toContain("Aarav Anderson");
+  });
+});
+
+describe("the expert list row at phone width", () => {
+  it("wraps View and More actions onto their own line below sm, and keeps one line from sm", () => {
+    const vm = byKind(vmsFor(OWNER, [consultation]), "CONSULTATION");
+    render(
+      <AppointmentRow
+        vm={vm}
+        adapter={{
+          ...adapter,
+          overflowItems: () => [
+            { key: "cancel", label: "Cancel booking", onClick: jest.fn() },
+          ],
+        }}
+        viewerZone={viewerZone}
+      />,
+    );
+    const actions = screen.getByRole("button", { name: "More actions" })
+      .parentElement as HTMLElement;
+    expect(actions).toContainElement(
+      screen.getByRole("button", { name: /View/ }),
+    );
+    const classes = (el: HTMLElement | null) =>
+      el?.className.split(/\s+/) ?? [];
+    expect(classes(actions.parentElement)).toEqual(
+      expect.arrayContaining(["flex-wrap", "sm:flex-nowrap"]),
+    );
+    expect(classes(actions)).toEqual(
+      expect.arrayContaining(["ml-auto", "sm:ml-0"]),
+    );
   });
 });
 

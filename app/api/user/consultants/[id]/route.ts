@@ -430,7 +430,11 @@ export async function PUT(
 
     // Pre-flight so the common refusal costs no transaction; re-checked in-tx.
     if (switching) {
-      const active = await checkActiveAppointments(id);
+      const active = await checkActiveAppointments(
+        id,
+        prisma,
+        "scheduleSwitch",
+      );
       if (active.hasActive) return switchBlocked(active);
     }
 
@@ -555,14 +559,20 @@ export async function PUT(
         prisma.$transaction(
           async (tx) => {
             if (switching) {
-              const active = await checkActiveAppointments(id, tx);
+              const active = await checkActiveAppointments(
+                id,
+                tx,
+                "scheduleSwitch",
+              );
               if (active.hasActive) throw new SwitchBlockedInTx(active);
-              const flipped = await tx.consultantProfile.updateMany({
-                where: { id, scheduleType: previousScheduleType },
-                data: { scheduleType },
-              });
-              if (flipped.count === 0) throw new SwitchConflictInTx();
             }
+            // Every save, same-type too: the rows below replace the type this
+            // request read, so a type changed since then must refuse, not erase.
+            const typeHeld = await tx.consultantProfile.updateMany({
+              where: { id, scheduleType: previousScheduleType },
+              data: { scheduleType },
+            });
+            if (typeHeld.count === 0) throw new SwitchConflictInTx();
 
             await tx.consultantProfile.update({
               where: { id },
@@ -763,7 +773,7 @@ export async function DELETE(
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
-    const active = await checkActiveAppointments(id);
+    const active = await checkActiveAppointments(id, prisma, "removal");
     if (active.hasActive) {
       return NextResponse.json(
         {
