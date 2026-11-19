@@ -75,10 +75,12 @@ jest.mock("../../components/dashboard/ConfirmDialog", () => {
     // the way the real dialog does.
     ConfirmDialog: ({
       trigger,
+      title,
       onConfirm,
       confirmLabel,
     }: {
       trigger?: React.ReactNode;
+      title?: React.ReactNode;
       onConfirm: (ctx: unknown) => unknown;
       confirmLabel?: string;
     }) => {
@@ -86,6 +88,7 @@ jest.mock("../../components/dashboard/ConfirmDialog", () => {
       return (
         <div>
           {trigger}
+          <h3>{title}</h3>
           <button
             onClick={() => {
               setError(null);
@@ -197,6 +200,13 @@ describe("SessionsSection load states (#1856)", () => {
 
   function text(): string {
     return container.textContent ?? "";
+  }
+
+  /** The dialog double renders its confirm button after the trigger. */
+  function lastButton(label: string): HTMLButtonElement | undefined {
+    return Array.from(container.querySelectorAll("button"))
+      .filter((b) => b.textContent === label)
+      .at(-1);
   }
 
   it("a 401 says the session ended and offers sign-in, never Retry", async () => {
@@ -450,11 +460,8 @@ describe("SessionsSection load states (#1856)", () => {
 
     await mount();
 
-    const others = Array.from(container.querySelectorAll("button")).find(
-      (b) => b.textContent === "Sign out other devices",
-    );
     await act(async () => {
-      others?.click();
+      lastButton("Sign out other devices")?.click();
     });
     await flush();
 
@@ -466,7 +473,7 @@ describe("SessionsSection load states (#1856)", () => {
     );
   });
 
-  it("a failed sign-out-others toasts and keeps the stale list", async () => {
+  it("a failed sign-out-others shows its error in the dialog and keeps the stale list", async () => {
     (global.fetch as jest.Mock).mockResolvedValue(
       okList([session("s-new", false), session("s-cur", true)]),
     );
@@ -475,19 +482,13 @@ describe("SessionsSection load states (#1856)", () => {
     expect(text()).toContain("Device s-new");
 
     (global.fetch as jest.Mock).mockRejectedValue(new Error("down"));
-    const others = Array.from(container.querySelectorAll("button")).find(
-      (b) => b.textContent === "Sign out other devices",
-    );
-    expect(others?.hasAttribute("disabled")).toBe(false);
     await act(async () => {
-      others?.click();
+      lastButton("Sign out other devices")?.click();
     });
     await flush();
 
-    expect(toast).toHaveBeenCalledWith(
-      expect.objectContaining({
-        title: "We couldn't end your other sessions. Please try again.",
-      }),
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+      "We couldn't end your other sessions. Please try again.",
     );
     // Both rows still listed — nothing was blanked.
     expect(text()).toContain("Device s-new");
@@ -507,5 +508,42 @@ describe("SessionsSection load states (#1856)", () => {
     expect(labels).toContain("Sign out other devices");
     expect(labels).toContain("Sign out everywhere, this device too");
     expect(labels).not.toContain("Log out everywhere");
+  });
+
+  it("Sign out other devices asks first, then ends only the other sessions", async () => {
+    (global.fetch as jest.Mock).mockResolvedValue(
+      okList([session("s-new", false), session("s-cur", true)]),
+    );
+    await mount();
+    const revokeCalls = () =>
+      (global.fetch as jest.Mock).mock.calls.filter(
+        ([url]) => url === "/api/user/sessions/revoke-others",
+      );
+
+    const trigger = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent === "Sign out other devices",
+    );
+    expect(trigger?.hasAttribute("disabled")).toBe(false);
+    await act(async () => {
+      trigger?.click();
+    });
+    await flush();
+    expect(revokeCalls()).toHaveLength(0);
+    expect(text()).toContain("Sign out of your other devices?");
+
+    (global.fetch as jest.Mock).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ revoked: 1 }),
+    });
+    await act(async () => {
+      lastButton("Sign out other devices")?.click();
+    });
+    await flush();
+    expect(revokeCalls()).toHaveLength(1);
+    const { signOutEverywhere } = jest.requireMock(
+      "../../lib/auth/sign-out",
+    ) as unknown as { signOutEverywhere: jest.Mock };
+    expect(signOutEverywhere).not.toHaveBeenCalled();
   });
 });

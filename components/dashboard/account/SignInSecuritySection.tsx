@@ -589,25 +589,23 @@ export function SessionsSection() {
     >
       {sessionsBody}
       <div className="mt-4 flex flex-wrap gap-2">
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={isLoading || total < 2}
-          onClick={() => {
-            // Unlike the ConfirmDialog paths, nothing here catches a
-            // rejection — surface it as a toast instead of an unhandled
-            // rejection with no user feedback.
-            revokeOthers({ andSignOut: false }).catch(() => {
-              toast({
-                title: "We couldn't end your other sessions. Please try again.",
-                variant: "destructive",
-              });
-            });
-          }}
-        >
-          <LogOut className="mr-1.5 h-4 w-4" />
-          Sign out other devices
-        </Button>
+        <ConfirmDialog
+          trigger={
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={isLoading || total < 2}
+            >
+              <LogOut className="mr-1.5 h-4 w-4" />
+              Sign out other devices
+            </Button>
+          }
+          title="Sign out of your other devices?"
+          description="Every other session ends. This device stays signed in."
+          confirmLabel="Sign out other devices"
+          tone="destructive"
+          onConfirm={() => revokeOthers({ andSignOut: false })}
+        />
         <ConfirmDialog
           trigger={
             <Button variant="outline" size="sm">
