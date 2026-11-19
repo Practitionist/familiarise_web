@@ -263,7 +263,7 @@ export function rolesHoldingLabel(surface: OrgSurface): string {
     (role) => MEMBER_ROLE_LABEL[role],
   );
   if (labels.length < 2) return labels[0] ?? "";
-  return `${labels.slice(0, -1).join(", ")} or ${labels[labels.length - 1]}`;
+  return `${labels.slice(0, -1).join(", ")} or ${labels.at(-1)}`;
 }
 
 // Zod enum mirroring the prisma MemberRole enum; exported for callers that
