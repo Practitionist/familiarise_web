@@ -21,6 +21,7 @@ import {
   INVOICE_STATUS,
   fetchInvoiceDetail,
   invoiceDetailUrl,
+  shownDueDate,
   type OrgInvoiceDetail,
 } from "./billing-api";
 
@@ -64,7 +65,7 @@ function InvoiceBody({
       <KeyValueList
         items={[
           { label: "Issued", value: fmtDate(invoice.issuedAt) },
-          { label: "Due", value: fmtDate(invoice.dueDate) },
+          { label: "Due", value: fmtDate(shownDueDate(invoice)) },
           ...(invoice.paidAt
             ? [{ label: "Paid", value: fmtDate(invoice.paidAt) }]
             : []),

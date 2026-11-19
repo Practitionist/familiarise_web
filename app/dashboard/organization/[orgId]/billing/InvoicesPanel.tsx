@@ -31,6 +31,7 @@ import {
   invoiceDetailUrl,
   payInvoice,
   pollInvoiceUntilPaid,
+  shownDueDate,
   type BillingSummary,
   type InvoicePayResponse,
   type OrgInvoice,
@@ -77,8 +78,10 @@ const invoiceColumns: ResponsiveColumn<OrgInvoice>[] = [
     key: "due",
     header: "Due",
     className: "text-xs text-muted-foreground",
-    cell: (inv) =>
-      inv.dueDate ? new Date(inv.dueDate).toLocaleDateString() : "—",
+    cell: (inv) => {
+      const due = shownDueDate(inv);
+      return due ? new Date(due).toLocaleDateString() : "—";
+    },
   },
 ];
 

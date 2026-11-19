@@ -40,7 +40,11 @@ import type {
   ProgramType,
 } from "@prisma/client";
 import { ORG_ROLE_RANK } from "@/lib/auth/role-ranks";
-import { hasOrgPermission } from "@/lib/auth/org-permissions";
+import {
+  hasOrgPermission,
+  rolesWithOrgPermission,
+  type OrgSurface,
+} from "@/lib/auth/org-permissions";
 import type { Tone } from "@/lib/ui/tone";
 import { formatOperatorInstant } from "@/lib/time/operator-zone";
 
@@ -252,6 +256,15 @@ export const MEMBER_ROLE_LABEL: Record<MemberRole, string> = {
   LEARNER: "Learner",
   SUPPORT: "Support",
 };
+
+/** The roles holding `surface`, as words ("Owner or Billing admin"), for who-can-act copy. */
+export function rolesHoldingLabel(surface: OrgSurface): string {
+  const labels = rolesWithOrgPermission(surface).map(
+    (role) => MEMBER_ROLE_LABEL[role],
+  );
+  if (labels.length < 2) return labels[0] ?? "";
+  return `${labels.slice(0, -1).join(", ")} or ${labels[labels.length - 1]}`;
+}
 
 // Zod enum mirroring the prisma MemberRole enum; exported for callers that
 // need to narrow a string coming from the API / DB at a boundary where

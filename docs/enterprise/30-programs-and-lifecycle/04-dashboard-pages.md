@@ -253,7 +253,11 @@ Points the table compresses:
   opens with `purchaseOrders.read` and Payment disputes with `disputes.read`,
   both the same four finance readers. Member spend also needs PERSONAL funding.
   Mutations are `billing.manage` and `purchaseOrders.manage` (OWNER,
-  BILLING_ADMIN).
+  BILLING_ADMIN). A reader without `billing.manage` (MAINTAINER, MANAGER) sees
+  one line naming the role that can pay or request an invoice
+  (`rolesHoldingLabel` in `lib/labels/org-labels.ts`, read from the permission
+  matrix) and pointing at Ask us. A draft, void or cancelled invoice shows no
+  due date (`shownDueDate`).
 - **Billing figures.** "Pending charges · N bookings not yet invoiced" counts
   SUCCEEDED payments with no `billableToOrgInvoiceId`. A Usage charges row
   reads the same field: a booking charge names the invoice its payment was
