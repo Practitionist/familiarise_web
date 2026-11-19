@@ -59,6 +59,9 @@ const columns: ResponsiveColumn<OrgReceivablePosting>[] = [
     // The posting has no status (append-only ledger); what the org can act
     // on is the invoice that bills it, read from the same field as the summary.
     cell: (p) => {
+      if (p.invoiceStatus === "DRAFT" && !p.invoiceNumber) {
+        return "On an invoice not yet issued";
+      }
       if (p.invoiceStatus) {
         const label = ORG_INVOICE_STATUS_LABEL[p.invoiceStatus];
         return p.invoiceNumber ? `${p.invoiceNumber} · ${label}` : label;

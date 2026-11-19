@@ -20,13 +20,18 @@
  * RSC → client boundary verbatim. Auth stays at the call site.
  */
 
-import type { LedgerTransactionKind, OrgInvoiceStatus } from "@prisma/client";
+import type {
+  LedgerTransactionKind,
+  MemberRole,
+  OrgInvoiceStatus,
+} from "@prisma/client";
 
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { ledgerAccountId } from "@/lib/payments/ledger/post";
 import { ORG_CLAWBACK_KEY_FILTER } from "@/lib/payments/payouts/clawback-recovery";
 import { sumPaise } from "@/lib/payments/utils/money";
+import { canSeeDraftInvoices } from "@/lib/enterprise/invoice-visibility";
 
 /** How many postings the page shows before it says there are more. */
 export const ORG_RECEIVABLES_PAGE_SIZE = 50;
@@ -46,7 +51,10 @@ export interface OrgReceivablePosting {
   paymentId: string | null;
   /** The booking behind the payment, when the posting has one. */
   appointmentId: string | null;
-  /** The posting's own invoice, else the invoice its booking was billed on. */
+  /**
+   * The posting's own invoice, else the invoice its booking was billed on.
+   * Id and number are null for a draft the viewer may not see; status stays.
+   */
   invoiceId: string | null;
   invoiceNumber: string | null;
   /** Where that invoice stands, when there is one. */
@@ -81,6 +89,7 @@ const EMPTY: OrgReceivablesPayload = {
 
 export async function getOrgReceivables(
   orgId: string,
+  viewerRole: MemberRole,
   limit: number = ORG_RECEIVABLES_PAGE_SIZE,
 ): Promise<OrgReceivablesPayload> {
   // The account id is deterministic, so no lookup by scope is needed and an
@@ -185,6 +194,7 @@ export async function getOrgReceivables(
       })
     : [];
   const invoiceById = new Map(invoices.map((i) => [i.id, i]));
+  const draftsVisible = canSeeDraftInvoices(viewerRole);
 
   return {
     hasAccount: true,
@@ -198,6 +208,7 @@ export async function getOrgReceivables(
         : undefined;
       const invoiceId = invoiceIdOf(entry);
       const invoice = invoiceId ? invoiceById.get(invoiceId) : undefined;
+      const hidden = invoice?.status === "DRAFT" && !draftsVisible;
       return {
         entryId: entry.id,
         postedAt: entry.createdAt.toISOString(),
@@ -207,8 +218,8 @@ export async function getOrgReceivables(
         description: entry.transaction.description,
         paymentId: entry.transaction.paymentId,
         appointmentId: payment?.appointmentId ?? null,
-        invoiceId,
-        invoiceNumber: invoice?.invoiceNumber ?? null,
+        invoiceId: hidden ? null : invoiceId,
+        invoiceNumber: hidden ? null : (invoice?.invoiceNumber ?? null),
         invoiceStatus: invoice?.status ?? null,
         // The billing summary's pending-charges predicate, applied to this row.
         awaitingInvoice:

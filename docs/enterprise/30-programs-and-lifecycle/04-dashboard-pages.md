@@ -256,8 +256,12 @@ Points the table compresses:
   BILLING_ADMIN). A reader without `billing.manage` (MAINTAINER, MANAGER) sees
   one line naming the role that can pay or request an invoice
   (`rolesHoldingLabel` in `lib/labels/org-labels.ts`, read from the permission
-  matrix) and pointing at Ask us. A draft, void or cancelled invoice shows no
-  due date (`shownDueDate`). The Purchase orders tab tells the same readers
+  matrix) and pointing at Ask us. Draft invoices are listed, exported and
+  opened only by a role with `billing.manage`; for anyone else the server
+  leaves them out and answers 404 by id (`visibleInvoiceWhere` in
+  `lib/enterprise/invoice-visibility.ts`), and a usage row billed on a draft
+  reads "On an invoice not yet issued". A void or cancelled invoice shows no
+  due date, nor does a draft (`shownDueDate`). The Purchase orders tab tells the same readers
   which role can add, edit or cancel a PO, and its Linked column counts in
   words ("1 contract · 4 invoices").
 - **Billing figures.** "Pending charges · N bookings not yet invoiced" counts
