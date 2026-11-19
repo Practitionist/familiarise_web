@@ -1,6 +1,7 @@
 "use client";
 
 import { proposedSessionsOf } from "@/lib/booking/reschedule-proposals";
+import { isReleasedForReschedule } from "@/utils/scheduling-engine/types";
 import Image from "next/image";
 import Link from "next/link";
 import { MoreHorizontal, Timer, User } from "lucide-react";
@@ -278,7 +279,7 @@ export function moneyLine(
 }
 
 /** The "when" line: the requested time, the cycle heading, or the trial length. */
-function whenLine(row: InboxRowInput, viewer: ViewerZone): string {
+export function whenLine(row: InboxRowInput, viewer: ViewerZone): string {
   if (row.kind === "next-cycle" && row.entitlement) {
     return subscriptionCycleHeading(reviveEntitlement(row.entitlement), {
       zone: viewer.zone,
@@ -287,6 +288,8 @@ function whenLine(row: InboxRowInput, viewer: ViewerZone): string {
   if (row.kind === "subscription" && row.entitlement) {
     return requestCountLine({ entitlement: row.entitlement });
   }
+  const move = moveLine(row, viewer);
+  if (move) return move;
   const live = row.slots.filter((s) => s.completionStatus !== "RESCHEDULED");
   if (live.length > 0) {
     const first = formatDateTime(live[0].startsAt, viewer);
@@ -299,6 +302,26 @@ function whenLine(row: InboxRowInput, viewer: ViewerZone): string {
     return `${formatInViewerZone(toStampDate(row.schedulingPeriod.start), viewer.zone, "d MMM")} – ${formatInViewerZone(toStampDate(row.schedulingPeriod.end), viewer.zone, "d MMM yyyy")}`;
   }
   return "No time named";
+}
+
+/** "Move: <original> to <proposed>" while a move is open; one zone label when both share it. */
+function moveLine(row: InboxRowInput, viewer: ViewerZone): string | null {
+  const proposal = openProposal(row);
+  const released = row.slots.filter(isReleasedForReschedule);
+  if (!proposal || released.length === 0) return null;
+  const extra = (n: number) => (n > 0 ? ` +${n} more` : "");
+  const from = toStampDate(released[0].startsAt);
+  const [to, ...rest] = proposedSessionsOf(proposal.proposedTimes);
+  if (!to) {
+    return `Move from ${formatDateTime(from, viewer)}${extra(released.length - 1)}`;
+  }
+  const toDate = toStampDate(to.startsAt);
+  const fromZone = zoneLabel(from, viewer.zone);
+  const fromText =
+    fromZone === zoneLabel(toDate, viewer.zone)
+      ? formatInViewerZone(from, viewer.zone, "EEE d MMM, h:mm a")
+      : formatDateTime(from, viewer);
+  return `Move: ${fromText}${extra(released.length - 1)} to ${formatDateTime(toDate, viewer)}${extra(rest.length)}`;
 }
 
 /** Who asked to move the booking, and to what; null when nothing is open. */

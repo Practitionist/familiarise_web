@@ -27,6 +27,7 @@ import { deriveBookingPresentation } from "@/lib/dashboard/money-state";
 import {
   proposalLine,
   rowActions,
+  whenLine,
 } from "@/components/dashboard/shared/requests/InboxRow";
 import { proposalAnswerToast } from "@/components/dashboard/shared/requests/labels";
 import {
@@ -113,6 +114,18 @@ describe("Requests inbox rows for a booking being moved", () => {
       primary: null,
       secondary: [{ kind: "withdraw-proposal" }],
     });
+  });
+
+  it("headlines a move from its original time to the proposed one, in the viewer's zone", async () => {
+    expect(whenLine(await rowFor("CONSULTEE", true), viewer)).toBe(
+      "Move: Wed 23 Sep, 5:30 PM to Thu 24 Sep, 5:30 PM IST",
+    );
+    expect(whenLine(await rowFor("CONSULTEE", false), viewer)).toBe(
+      "Move from Wed 23 Sep, 5:30 PM IST",
+    );
+    expect(
+      whenLine(await rowFor("CONSULTEE", true), { zone: "UTC", own: false }),
+    ).toBe("Move: Wed 23 Sep, 12:00 PM to Thu 24 Sep, 12:00 PM UTC");
   });
 
   it("no moving row ever offers Decline", async () => {
