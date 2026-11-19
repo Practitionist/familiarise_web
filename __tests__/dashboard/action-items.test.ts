@@ -171,6 +171,9 @@ describe("deriveConsultantActionItems", () => {
       basePath: CONSULTANT_BASE,
     });
     expect(item.title).toBe("3 requests to answer");
+    expect(item.body).toBe(
+      "Answer new requests and place the sessions learners have paid for.",
+    );
     expect(item.ctaHref).toBe(`${CONSULTANT_BASE}/requests`);
   });
 

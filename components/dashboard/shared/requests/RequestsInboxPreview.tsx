@@ -14,7 +14,9 @@ import {
 import {
   inboxQueryKey,
   inboxQueryString,
+  sortInboxRows,
   type InboxRowInput,
+  type InboxType,
   type RequestsInboxPayload,
 } from "@/lib/dashboard/requests-inbox-state";
 import { useViewerZone } from "@/lib/time/use-viewer-zone";
@@ -64,11 +66,49 @@ function previewLine(row: InboxRowInput, zone: string): string {
   return `Requested ${formatInViewerZone(new Date(row.requestedAt), zone, "d MMM, h:mm a")}`;
 }
 
+function previewQueryArgs(consultantProfileId: string, type: InboxType) {
+  return {
+    consultantProfileId,
+    scope: "personal",
+    type,
+    chip: null,
+    sort: "priority" as const,
+    page: 1,
+    after: null,
+    focus: null,
+  };
+}
+
+async function fetchPreviewTab(
+  args: ReturnType<typeof previewQueryArgs>,
+  signal: AbortSignal,
+): Promise<RequestsInboxPayload> {
+  // A stalled cold instance must surface as an error with a Retry, not
+  // as skeletons that never leave.
+  const response = await fetch(
+    `/api/bookings/inbox?${inboxQueryString(args)}`,
+    {
+      signal:
+        typeof AbortSignal.any === "function"
+          ? AbortSignal.any([signal, AbortSignal.timeout(20_000)])
+          : signal,
+    },
+  );
+  const body = (await response.json().catch(() => ({}))) as {
+    error?: string;
+    code?: string;
+  };
+  if (!response.ok) {
+    throw new Error(errorSentence(body.code, body.error ?? "Could not load"));
+  }
+  return body as unknown as RequestsInboxPayload;
+}
+
 /**
- * Home's "Pending requests" card: the first five rows of the SAME read the
- * inbox pages (#1775 A-6), priority order, no actions — "View all" is the
- * action. Reads the consultation tab, which is where a new consultant's
- * first request lands.
+ * Home's "Pending requests" card: the first five rows the Requests page lists,
+ * priority order, no actions ("View all" is the action). The subscription tab
+ * is read when the inbox counts rows on it, so a paid plan waiting for times
+ * is listed here as Home's "requests" count includes it.
  */
 export function RequestsInboxPreview({
   consultantProfileId,
@@ -76,49 +116,28 @@ export function RequestsInboxPreview({
   const params = useParams<{ consultantId: string }>();
   const consultantId = consultantProfileId ?? params?.consultantId ?? "";
   const viewer = useViewerZone();
-  const queryArgs = {
-    consultantProfileId: consultantId,
-    scope: "personal",
-    type: "consultation" as const,
-    chip: null,
-    sort: "priority" as const,
-    page: 1,
-    after: null,
-    focus: null,
-  };
+  const consultationArgs = previewQueryArgs(consultantId, "consultation");
+  const subscriptionArgs = previewQueryArgs(consultantId, "subscription");
   const query = useQuery({
-    queryKey: inboxQueryKey(queryArgs),
-    queryFn: async ({ signal }): Promise<RequestsInboxPayload> => {
-      // A stalled cold instance must surface as an error with a Retry, not
-      // as skeletons that never leave (QA #1783 case 9).
-      const response = await fetch(
-        `/api/bookings/inbox?${inboxQueryString(queryArgs)}`,
-        {
-          signal:
-            typeof AbortSignal.any === "function"
-              ? AbortSignal.any([signal, AbortSignal.timeout(20_000)])
-              : signal,
-        },
-      );
-      const body = (await response.json().catch(() => ({}))) as {
-        error?: string;
-        code?: string;
-      };
-      if (!response.ok) {
-        throw new Error(
-          errorSentence(body.code, body.error ?? "Could not load"),
-        );
-      }
-      return body as unknown as RequestsInboxPayload;
-    },
+    queryKey: inboxQueryKey(consultationArgs),
+    queryFn: ({ signal }) => fetchPreviewTab(consultationArgs, signal),
     enabled: consultantId !== "",
+    staleTime: 30_000,
+    retry: 1,
+  });
+  const readsSubscriptions = (query.data?.meta.counts.subscription ?? 0) > 0;
+  const subscriptions = useQuery({
+    queryKey: inboxQueryKey(subscriptionArgs),
+    queryFn: ({ signal }) => fetchPreviewTab(subscriptionArgs, signal),
+    enabled: readsSubscriptions,
     staleTime: 30_000,
     retry: 1,
   });
 
   // A disabled query never leaves pending; nothing to show without an id.
   if (consultantId === "") return null;
-  if (query.isPending) {
+  const reads = readsSubscriptions ? [query, subscriptions] : [query];
+  if (reads.some((read) => read.isPending)) {
     return (
       <div role="status" aria-live="polite" className="space-y-2 p-2">
         <span className="sr-only">Loading requests</span>
@@ -128,25 +147,33 @@ export function RequestsInboxPreview({
       </div>
     );
   }
-  if (query.isError) {
+  const failed = reads.find((read) => read.isError);
+  if (failed) {
     return (
       <div className="space-y-2 p-4 text-sm">
         <p className="text-destructive">
-          {query.error instanceof Error && query.error.name !== "TimeoutError"
-            ? query.error.message
+          {failed.error instanceof Error && failed.error.name !== "TimeoutError"
+            ? failed.error.message
             : "Requests took too long to load."}
         </p>
         <Button
           variant="outline"
           size="sm"
-          onClick={() => void query.refetch()}
+          onClick={() => {
+            for (const read of reads) void read.refetch();
+          }}
         >
           Retry
         </Button>
       </div>
     );
   }
-  const rows = homePreviewRows(query.data.rows);
+  const rows = homePreviewRows(
+    sortInboxRows(
+      reads.flatMap((read) => read.data?.rows ?? []),
+      "priority",
+    ),
+  );
   if (rows.length === 0) {
     return (
       <p className="p-4 text-center text-sm text-muted-foreground">
