@@ -11,7 +11,12 @@ import { toPlain } from "../../../lib/data/serialize";
 import { EARNINGS_PAYMENT_INCLUDE } from "../../../lib/payments/payouts/earnings-service";
 import { futureAt, seedHost } from "./harness";
 import { publishEveryHour, seedBuyer } from "./harness-host";
-import { seatCheckoutInput, seedSeatBuyer, seedWebinar } from "./harness-seats";
+import {
+  seatCheckoutInput,
+  seedHeldSeat,
+  seedSeatBuyer,
+  seedWebinar,
+} from "./harness-seats";
 import { sessionUser } from "./harness-edges";
 
 jest.mock("../../../lib/payments/index", () => ({
@@ -100,6 +105,43 @@ it("a free webinar seat is confirmed on the no-gateway rail with no invoice", as
   expect(joined.appointment?.webinar?.webinarPlan.consultantProfile?.id).toBe(
     webinar.host.consultantProfileId,
   );
+});
+
+it("a free checkout takes over the HELD seat a lapsed card order left, and records the registration", async () => {
+  const webinar = await seedWebinar({ capacity: 20, price: 50_000 });
+  // The card attempt lapsed while the event cost ₹500; no sweep has released its seat yet.
+  const { buyer, payment } = await seedHeldSeat(webinar, {
+    status: "EXPIRED",
+    expiresAt: new Date(Date.now() - 60_000),
+  });
+  await prisma.webinarPlan.update({
+    where: { id: webinar.planId },
+    data: { price: BigInt(0) },
+  });
+
+  await handleCheckout(
+    seatCheckoutInput(webinar, `stale-hold-${randomUUID()}`),
+    buyer.userId,
+  );
+
+  const seat = await prisma.appointmentParticipant.findFirstOrThrow({
+    where: { appointmentId: webinar.appointmentId, userId: buyer.userId },
+    select: { id: true, status: true, paymentId: true },
+  });
+  expect(seat).toMatchObject({ status: "CONFIRMED", paymentId: payment.id });
+  expect(
+    await prisma.payment.findUniqueOrThrow({
+      where: { id: payment.id },
+      select: { paymentStatus: true },
+    }),
+  ).toEqual({ paymentStatus: "SUCCEEDED" });
+  const history = await prisma.bookingStatusHistory.findMany({
+    where: { entity: "SEAT", entityId: seat.id },
+    select: { reason: true, fromStatus: true, toStatus: true },
+  });
+  expect(history).toEqual([
+    { reason: "registered", fromStatus: "HELD", toStatus: "CONFIRMED" },
+  ]);
 });
 
 it("a moved webinar sells against its live session, not the replaced one", async () => {

@@ -11,7 +11,10 @@ import {
 } from "@/lib/booking/class-enrolment";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import { isPriceFreePayment } from "@/lib/payments/funding-rail";
-import type { SeatRegistration } from "@/lib/booking/participants";
+import {
+  RELEASED_PARTICIPANT_STATUSES,
+  type SeatRegistration,
+} from "@/lib/booking/participants";
 import {
   latestSeatReasons,
   REJOIN_OPENING_REASONS,
@@ -305,11 +308,22 @@ export function seatRegistrationFor(
   if (prior && standing !== null && standing !== "REJOINABLE") {
     assertSeatRemintable(prior, kind);
   }
-  return standing === "REJOINABLE"
+  if (standing === "REJOINABLE") {
+    return {
+      actorUserId: userId,
+      reviveReason: "rejoined",
+      reviveFromIn: ["CANCELLED"],
+    };
+  }
+  // A lapsed or failed order may leave its seat HELD until a sweep releases it; this checkout takes it over.
+  const lapsed =
+    prior?.paymentStatus === PaymentStatus.EXPIRED ||
+    prior?.paymentStatus === PaymentStatus.FAILED;
+  return lapsed
     ? {
         actorUserId: userId,
-        reviveReason: "rejoined",
-        reviveFromIn: ["CANCELLED"],
+        reviveReason: "registered",
+        reviveFromIn: [...RELEASED_PARTICIPANT_STATUSES, "HELD"],
       }
     : { actorUserId: userId, reviveReason: "registered" };
 }
