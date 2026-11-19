@@ -717,6 +717,8 @@ async function driveSeatRevocation(
   appointmentId: string,
   userIds: string[],
   deadlineMs: number,
+  /** Set by the sweep: an owed user the join gate admits again may have lost a grant to an earlier drive. */
+  { regrantAdmitted = false }: { regrantAdmitted?: boolean } = {},
 ): Promise<Map<string, string>> {
   const pending = new PendingRevocations();
   if (!isStreamConfigured()) {
@@ -727,6 +729,7 @@ async function driveSeatRevocation(
   }
   let ctx: SeatContext | null;
   let revoked: string[];
+  let readmitted: string[];
   try {
     ctx = await loadSeatContext(appointmentId);
     // A deleted appointment took its Meeting rows with it; nothing addressable is left.
@@ -736,67 +739,83 @@ async function driveSeatRevocation(
       seatStaffUserIds(ctx),
     ]);
     revoked = userIds.filter((id) => !admitted.has(id) && !staff.has(id));
+    readmitted = regrantAdmitted
+      ? userIds.filter((id) => admitted.has(id) && !staff.has(id))
+      : [];
   } catch {
     pending.add(userIds, "seat lookup failed");
     return pending.byUser;
   }
-  if (revoked.length === 0) return pending.byUser;
-
-  // Chat gets at most half the slice, so a stalled chat API never starves the room removals.
-  const chatDeadlineMs = Date.now() + (deadlineMs - Date.now()) / 2;
-  await removeFromEventChannel(ctx, revoked, chatDeadlineMs, pending);
-  await removeFromSeatDms(ctx, revoked, chatDeadlineMs, pending);
-  await removeFromAppointmentCalls(appointmentId, revoked, deadlineMs, pending);
-  await restoreReadmittedSeats(appointmentId, ctx, revoked, pending);
+  if (revoked.length > 0) {
+    // Chat gets at most half the slice, so a stalled chat API never starves the room removals.
+    const chatDeadlineMs = Date.now() + (deadlineMs - Date.now()) / 2;
+    await removeFromEventChannel(ctx, revoked, chatDeadlineMs, pending);
+    await removeFromSeatDms(ctx, revoked, chatDeadlineMs, pending);
+    await removeFromAppointmentCalls(
+      appointmentId,
+      revoked,
+      deadlineMs,
+      pending,
+    );
+  }
+  await restoreReadmittedSeats(
+    appointmentId,
+    ctx,
+    { removed: revoked, readmitted },
+    deadlineMs,
+    pending,
+  );
   return pending.byUser;
 }
 
 /**
  * Re-checks the users just removed and grants back anyone a rejoin re-admitted
- * while the removal was in flight, since that rejoin's grant may have landed first.
+ * while the removal was in flight. Work the budget cannot reach stays owed, so
+ * the sweep's re-drive, which re-grants owed users the gate admits, finishes it.
  */
 async function restoreReadmittedSeats(
   appointmentId: string,
   ctx: SeatContext,
-  revoked: string[],
+  users: { removed: string[]; readmitted: string[] },
+  deadlineMs: number,
   pending: PendingRevocations,
 ): Promise<void> {
-  // Null when the re-check could not be read: the sync below re-reads the seats itself.
-  let readmitted: string[] | null;
-  try {
-    const admitted = await admittedSeatHolders(appointmentId, ctx, revoked);
-    readmitted = revoked.filter((id) => admitted.has(id));
-  } catch (error) {
-    readmitted = null;
-    captureThrottled("stream.seat.readmitCheck", error, {
-      subsystem: "stream",
-      op: "seat.readmitCheck",
-      extra: { appointmentId, users: revoked.length },
-    });
+  // Only a webinar or class seat can be rejoined; a 1:1 booking's access is never re-granted here.
+  if (!ctx.webinar && !ctx.class) return;
+  const { removed } = users;
+  const regrant = [...users.readmitted];
+  if (removed.length > 0) {
+    try {
+      const admitted = await withinBudget(
+        admittedSeatHolders(appointmentId, ctx, removed),
+        deadlineMs,
+      );
+      regrant.push(...removed.filter((id) => admitted.has(id)));
+    } catch {
+      pending.add(removed, "rejoin re-check deferred");
+      return;
+    }
   }
-  if (readmitted?.length === 0) return;
+  if (regrant.length === 0) return;
   try {
     // Lazy: ensure-channels imports this module.
     const { ensureChannelsForAppointment } =
       await import("@/lib/payments/webhooks/ensure-channels");
-    const synced = await ensureChannelsForAppointment(
-      appointmentId,
-      readmitted ?? revoked,
+    const synced = await withinBudget(
+      ensureChannelsForAppointment(appointmentId, regrant),
+      deadlineMs,
     );
-    if (readmitted && !synced.ensured) {
-      throw new Error(`regrant not ensured: ${synced.reason}`);
+    // A channel member the vendor did not add is retried; any other refusal would refuse again.
+    if (synced.reason === "event_channel_member_not_added") {
+      pending.add(regrant, "rejoin re-grant incomplete");
+      return;
     }
-  } catch (error) {
-    // The learner's next chat open or call join grants again through its own gate.
-    captureThrottled("stream.seat.regrant", error, {
-      subsystem: "stream",
-      op: "seat.regrant",
-      extra: { appointmentId, users: revoked.length },
-    });
+  } catch {
+    pending.add(regrant, "rejoin re-grant deferred");
     return;
   }
   // A re-admitted user is owed no removal, so their intent settles.
-  for (const id of readmitted ?? []) pending.byUser.delete(id);
+  for (const id of regrant) pending.byUser.delete(id);
 }
 
 const intentNotBefore = () => new Date(Date.now() + INTENT_SWEEP_GRACE_MS);
@@ -1394,7 +1413,7 @@ export interface AccessRevocationRow {
 
 /**
  * Re-drives one queued revocation. Returns the error to record, or null when
- * the access is gone or Postgres has since re-granted it; without Stream's keys
+ * the access is gone or Postgres has since re-granted it (a seat's Stream access then synced back); without Stream's keys
  * nothing is done and `STREAM_UNCONFIGURED` comes back. A seat, refund,
  * conduct block or collaborator row stops starting Stream work at its slice or
  * at `deadlineMs`, whichever is sooner.
@@ -1422,6 +1441,7 @@ export async function redriveAccessRevocation(
         row.planId,
         [row.userId],
         deadlineMs,
+        { regrantAdmitted: true },
       );
       return pending.get(row.userId) ?? null;
     }

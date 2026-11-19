@@ -37,6 +37,7 @@ const mockAppointmentFindUnique = jest.fn();
 const mockEventFindUnique = jest.fn();
 const mockParticipantFindMany = jest.fn();
 const mockIntentCreateMany = jest.fn();
+const mockIntentSettle = jest.fn(async (_args: unknown) => ({ count: 0 }));
 
 const memberIds = (spec: unknown[] = []) =>
   spec.map((m) =>
@@ -68,7 +69,7 @@ jest.mock("@/lib/prisma", () => ({
     user: { findMany: async () => [] },
     meeting: { findMany: async () => mockState.meetings },
     streamRevocationRetry: {
-      updateMany: async () => ({ count: 0 }),
+      updateMany: (args: unknown) => mockIntentSettle(args),
       createMany: (args: unknown) => mockIntentCreateMany(args),
       findMany: async () => [],
     },
@@ -152,7 +153,10 @@ jest.mock("@/lib/stream/dm-eligibility", () => ({
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 
 import { ensureChannelsForAppointment } from "@/lib/payments/webhooks/ensure-channels";
-import { revokeEndedSeatAccess } from "@/lib/stream/access-revocation";
+import {
+  redriveAccessRevocation,
+  revokeEndedSeatAccess,
+} from "@/lib/stream/access-revocation";
 import { addUserToEventChannel } from "@/lib/stream/event-channel-service";
 import { DmNotPermittedError } from "@/lib/stream/dm-eligibility";
 import {
@@ -593,6 +597,56 @@ describe("event chat and call membership follows seats holding access", () => {
 
     await revokeEndedSeatAccess("appt-1", ["rejoiner"], new Date());
 
+    expect(mockChat).toContain("rejoiner");
+    expect(mockCall).toContain("rejoiner");
+  });
+
+  it("a revoker whose budget runs out before its re-check leaves the rejoiner owed, and the sweep gives access back", async () => {
+    const seats = [
+      ...seatsWith(pay()),
+      seat(
+        "rejoiner",
+        "CANCELLED",
+        pay({ amountPaise: 0, isMockPayment: true }),
+      ),
+    ];
+    arrange("WEBINAR", seats);
+    const realNow = Date.now.bind(Date);
+    let shiftMs = 0;
+    const clock = jest
+      .spyOn(Date, "now")
+      .mockImplementation(() => realNow() + shiftMs);
+    // The rejoin lands mid-removal, and the removal spends the request's whole budget.
+    mockState.onRemove = (ids) => {
+      if (!ids.includes("rejoiner")) return;
+      const row = seats.find((s) => s.userId === "rejoiner");
+      if (row) row.status = "CONFIRMED";
+      mockChat.add("rejoiner");
+      shiftMs = 60 * 60 * 1000;
+    };
+
+    await revokeEndedSeatAccess("appt-1", ["rejoiner"], new Date());
+
+    // No re-check or re-sync past the budget, and the intent is not settled.
+    expect(mockState.adds).not.toContain("rejoiner");
+    expect(mockIntentSettle).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ userId: { in: ["rejoiner"] } }),
+      }),
+    );
+
+    clock.mockRestore();
+    mockState.onRemove = () => undefined;
+    await expect(
+      redriveAccessRevocation({
+        kind: "SEAT_ACCESS_REVOKE",
+        userId: "rejoiner",
+        planId: "appt-1",
+        planType: null,
+        counterpartUserId: null,
+        createdAt: new Date(),
+      }),
+    ).resolves.toBeNull();
     expect(mockChat).toContain("rejoiner");
     expect(mockCall).toContain("rejoiner");
   });
