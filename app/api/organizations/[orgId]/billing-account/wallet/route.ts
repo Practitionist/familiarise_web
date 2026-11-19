@@ -6,9 +6,8 @@
  * INVOICE or LICENSE orgs the wallet isn't meaningful, so callers get
  * a 404 rather than a zero-balance ghost response.
  *
- * Top-ups go through the sibling /top-ups route. Refunds come from the
- * /api/payments/refunds webhook path and end up as WalletEntry rows
- * with reason=REFUND.
+ * Top-ups go through the sibling /top-ups route. Rows name the ledger kind;
+ * transaction descriptions are internal and never reach the org.
  */
 
 import { NextResponse, type NextRequest } from "next/server";
@@ -112,7 +111,7 @@ export async function GET(
             take: perPage,
             include: {
               transaction: {
-                select: { kind: true, paymentId: true, description: true },
+                select: { kind: true, paymentId: true },
               },
             },
           }),
@@ -168,7 +167,6 @@ export async function GET(
           : -Number(e.amountPaise),
       reason: e.transaction.kind,
       paymentId: e.transaction.paymentId,
-      notes: e.transaction.description,
       createdAt: e.createdAt,
     })),
     journalBalance - newerDelta,

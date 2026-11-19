@@ -57,7 +57,6 @@ const walletResponseSchema = z.object({
       deltaPaise: z.number(),
       reason: z.string(),
       balanceAfter: z.number(),
-      notes: z.string().nullable(),
       createdAt: z.string(),
     }),
   ),
@@ -466,16 +465,7 @@ export function WalletTab({
       key: "reason",
       header: "Reason",
       className: "text-sm",
-      cell: (row) => (
-        <>
-          {walletReasonLabel(row.reason)}
-          {row.notes && (
-            <span className="text-xs text-muted-foreground block">
-              {row.notes}
-            </span>
-          )}
-        </>
-      ),
+      cell: (row) => walletReasonLabel(row.reason),
     },
     {
       key: "delta",

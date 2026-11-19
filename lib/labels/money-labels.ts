@@ -6,9 +6,9 @@
 import type {
   DisputeStatus,
   LedgerAccountKind,
+  LedgerTransactionKind,
   PaymentGateway,
   PayoutMethod,
-  WalletReason,
 } from "@prisma/client";
 
 import { formatStatusLabel } from "./session-labels";
@@ -26,12 +26,27 @@ export const PAYOUT_METHOD_LABEL: Record<PayoutMethod, string> = {
   STRIPE_TRANSFER: "Stripe transfer",
 };
 
+/** The ledger kinds that post to an organisation wallet; the signed amount shows the direction. */
+export type WalletLedgerKind = Extract<
+  LedgerTransactionKind,
+  | "TOPUP"
+  | "BOOKING"
+  | "REFUND"
+  | "TOPUP_REFUND"
+  | "INVOICE_REFUND"
+  | "OVERAGE_MEMBER"
+  | "WALLET_ADJUSTMENT"
+>;
+
 /** Why an organisation wallet balance moved, in the words its admins use. */
-export const WALLET_REASON_LABEL: Record<WalletReason, string> = {
+export const WALLET_REASON_LABEL: Record<WalletLedgerKind, string> = {
   TOPUP: "Top-up",
   BOOKING: "Session booked",
-  REFUND: "Refund",
-  ADJUSTMENT: "Adjustment by our team",
+  REFUND: "Refund or chargeback",
+  TOPUP_REFUND: "Top-up refunded",
+  INVOICE_REFUND: "Invoice refunded to wallet",
+  OVERAGE_MEMBER: "Extra session charged to a member",
+  WALLET_ADJUSTMENT: "Adjustment by our team",
 };
 
 export const DISPUTE_STATUS_LABEL: Record<DisputeStatus, string> = {
