@@ -73,7 +73,7 @@ function signalLines(
         // A deadline already behind us is stated as overdue, never as a target.
         const due = d.nearestPlacementDeadline
           ? Date.parse(d.nearestPlacementDeadline)
-          : NaN;
+          : Number.NaN;
         return due <= now.getTime()
           ? `${waiting}; the first was due by ${when(d.nearestPlacementDeadline)}. Place it now.`
           : `${waiting}; place the first by ${when(d.nearestPlacementDeadline)}.`;
