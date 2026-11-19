@@ -1,7 +1,7 @@
 # ADR: The Weekly/Custom switch is blocked only by bookings that still need the expert's hours
 
-- **Status**: Accepted by the owner on 2026-11-20. Ships in the pull request that adds this record.
-- **Date**: 2026-11-20
+- **Status**: Accepted by the owner on 2026-11-19. Ships in the pull request that adds this record.
+- **Date**: 2026-11-19
 - **Author**: Platform engineering
 - **Related**: [The availability contract](../onboarding/03-availability-contract.md#switching-schedule-type), [The booking follow-up train](2026-11-12-booking-follow-up-train.md)
 
@@ -13,7 +13,7 @@ The check counted consultations and subscriptions by request status alone (PENDI
 
 ## Worked example
 
-Read from the shared database on 2026-11-20 with the same filters as the code:
+Read from the shared database on 2026-11-19 with the same filters as the code:
 
 | Expert | Kind          | Counted before | Counted now | Why the difference                                                    |
 | ------ | ------------- | -------------- | ----------- | --------------------------------------------------------------------- |
@@ -29,10 +29,10 @@ Hannah's sentence goes from "You have 16 pending consultations and 2 upcoming cl
 1. **A booking blocks the switch only while it still needs the expert's hours.** A live session is one that is not deleted and not CANCELLED, RESCHEDULED or VOIDED.
    - A consultation or subscription in PENDING, APPROVED or APPROVED_PENDING_PAYMENT blocks when it has a live session that starts after now, or when it has no live session at all and is approved (APPROVED or APPROVED_PENDING_PAYMENT) or paid (a SUCCEEDED payment). A booking whose live sessions are all in the past does not block, whatever its status.
    - A SCHEDULED class blocks when it has a live session ahead, or when it has no live session at all (it still needs hours to be scheduled). A class whose sessions are all past does not block.
-   - Webinars and co-host seats keep their existing filter: a session ahead. Trials (SCHEDULED or AWAITING_PAYMENT) and open reschedule requests are unchanged.
+   - Webinars and co-host seats keep their existing filter: a session ahead. Trials (SCHEDULED or AWAITING_PAYMENT) and open reschedule requests are unchanged: they count by status alone, whatever their session dates.
 2. **One function, one rule for both reads.** `GET /api/user/consultants/[id]/can-switch-schedule` and the settings PUT's pre-flight and in-transaction re-check all call `checkActiveAppointments(id, db, "scheduleSwitch")`; the re-check passes the transaction's `tx`. A test in the database tier (`__tests__/db/booking/schedule-switch-blockers.db.test.ts`) pins that the route and the transaction read the same answer.
 3. **The sentence names what blocks.** Its counts read "N consultations with a session ahead or still to be placed", "N subscriptions with a session ahead or still to be placed" and "N classes with a session ahead or still to be scheduled"; the other kinds keep their words. The `breakdown` object in the route's answer uses neutral keys (`consultations`, `subscriptions`, `webinars`, `classes`, `trials`, `openReschedules`, `collaborations`).
-4. **Profile and account deletion keep their rule.** The same function serves the consultant profile DELETE and account erasure. They pass `"removal"` and still count every open booking by status, because a delivered booking that has not completed can still owe settlement. Changing that gate is a separate decision.
+4. **Profile and account deletion keep their rule.** The same function serves the consultant profile DELETE and account erasure. They pass `"removal"`, which counts consultations, subscriptions, classes, trials and open reschedule requests by status alone, because a delivered booking that has not completed can still owe settlement; webinars and co-host seats count only with a session ahead, as under the switch. Changing that gate is a separate decision.
 
 ## Consequences
 
