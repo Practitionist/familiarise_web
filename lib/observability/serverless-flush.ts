@@ -8,6 +8,7 @@
  * is returned for the caller to await. A timed-out flush is logged, so an
  * empty dashboard is distinguishable from a healthy one.
  */
+import type { Client } from "@sentry/core";
 import * as Sentry from "@sentry/nextjs";
 import { after } from "next/server";
 
@@ -37,4 +38,12 @@ export function scheduleSentryFlush(
   } catch {
     return flush();
   }
+}
+
+// Every error or message event schedules a flush; `preprocessEvent` fires
+// synchronously inside the capture. Never throw: the SDK's `emit` does not catch.
+export function flushAfterEveryServerEvent(client: Pick<Client, "on">): void {
+  client.on("preprocessEvent", (event) => {
+    if (event.type === undefined) void scheduleSentryFlush();
+  });
 }
