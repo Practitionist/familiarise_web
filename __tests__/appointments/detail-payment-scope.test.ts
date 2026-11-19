@@ -48,6 +48,7 @@ const detail = {
       },
     },
     occurrences: [{}],
+    rescheduleRequests: [],
     participants: [
       { userId: A, role: "CONSULTEE", user: { id: A, name: "A", image: null } },
       { userId: B, role: "CONSULTEE", user: { id: B, name: "B", image: null } },
@@ -109,6 +110,7 @@ describe("scopeAppointmentDetail", () => {
           requestedBy: { userId: A },
         },
         occurrences: [],
+        rescheduleRequests: [],
         participants: [],
         payment: [
           {

@@ -7,12 +7,11 @@ import {
 } from "@/lib/rate-limit";
 import prisma from "@/lib/prisma";
 import { apiError } from "@/lib/errors";
-import { withdrawRescheduleRequest } from "@/lib/booking/reschedule-withdraw";
 import {
-  actsForRescheduleSide,
-  isSuspendedLearnerOf,
-  RESCHEDULE_SIDE_APPOINTMENT_SELECT,
-} from "@/lib/booking/reschedule-side";
+  rescheduleWithdrawAuthority,
+  WITHDRAW_AUTHORITY_SELECT,
+  withdrawRescheduleRequest,
+} from "@/lib/booking/reschedule-withdraw";
 import { membershipSuspendedResponse } from "@/lib/enterprise/suspended-member-sessions";
 import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
 import {
@@ -26,9 +25,11 @@ import {
  * The initiator takes back their own open reschedule. The other party has
  * Decline, which ends the same request the same way — both restore the released
  * sessions, so the booking ends up where it started either way. What differs is
- * who may do it and what a refusal means: only the initiator may withdraw, and
- * a withdrawal blocked because the original time was taken is a 409 that leaves
- * the proposal OPEN to be answered (#1846), not a settled request.
+ * who may do it and what a refusal means: the initiator may withdraw, as may
+ * anyone acting for the same side when an organisation actor opened the move
+ * (the learner for a sponsor admin's, the expert for a host-org operator's),
+ * and a withdrawal blocked because the original time was taken is a 409 that
+ * leaves the proposal OPEN to be answered, not a settled request.
  */
 export async function POST(
   _request: NextRequest,
@@ -61,40 +62,37 @@ export async function POST(
         status: { in: RESCHEDULE_OPEN_STATUSES },
       },
       orderBy: { createdAt: "desc" },
-      select: {
-        id: true,
-        initiatedById: true,
-        initiatorRole: true,
-        appointment: { select: RESCHEDULE_SIDE_APPOINTMENT_SELECT },
-      },
+      select: { id: true, ...WITHDRAW_AUTHORITY_SELECT },
     });
 
-    // Authorization is identity, not role: whoever opened it may take it back,
-    // whichever side of the booking they are on.
-    //
-    // "No open request" and "someone else's open request" answer with the SAME
-    // 404, deliberately. This route never checks that the caller can see the
-    // appointment at all, so distinguishing them would let any signed-in user
-    // walk appointment ids and learn which bookings have a live reschedule and
-    // whose it is. A 403 here is a membership oracle for other people's
-    // bookings; the initiator is the only caller with a legitimate reason to
-    // tell the two apart, and they are not the one being told.
-    if (!open || open.initiatedById !== session.user.id) {
+    const authority = open
+      ? await rescheduleWithdrawAuthority(open, session)
+      : null;
+
+    // "No open request" and "an open request this caller may not withdraw"
+    // answer with the SAME 404, deliberately. This route never checks that the
+    // caller can see the appointment at all, so distinguishing them would let
+    // any signed-in user walk appointment ids and learn which bookings have a
+    // live reschedule and whose it is. A 403 here is a membership oracle for
+    // other people's bookings.
+    if (
+      !open ||
+      !authority ||
+      (!authority.allowed && authority.refusal === "NOT_FOUND")
+    ) {
       return NextResponse.json(
         { error: "No open reschedule request for this booking." },
         { status: 404 },
       );
     }
 
-    // The initiator still has to act for the side they opened it from, as on
-    // the respond route; an expert removed from the host org has lost that.
-    if (
-      !(await actsForRescheduleSide(
-        open.initiatorRole,
-        open.appointment,
-        session,
-      ))
-    ) {
+    if (!authority.allowed) {
+      // A suspended learner on an org-funded booking moves nothing, as on open and respond.
+      if (authority.refusal === "MEMBERSHIP_SUSPENDED") {
+        return membershipSuspendedResponse();
+      }
+      // The initiator still has to act for the side they opened it from, as on
+      // the respond route; an expert removed from the host org has lost that.
       return NextResponse.json(
         {
           error:
@@ -105,14 +103,10 @@ export async function POST(
       );
     }
 
-    // A suspended learner on an org-funded booking moves nothing, as on open and respond.
-    if (await isSuspendedLearnerOf(open.appointment, session.user.id)) {
-      return membershipSuspendedResponse();
-    }
-
     const result = await withdrawRescheduleRequest({
       rescheduleRequestId: open.id,
       withdrawnById: session.user.id,
+      sameSideActor: authority.sameSideActor,
     });
 
     if (!result.withdrawn) {
@@ -136,7 +130,9 @@ export async function POST(
 
     return NextResponse.json({
       withdrawn: true,
-      message: "Your reschedule request has been withdrawn.",
+      message: authority.sameSideActor
+        ? "The request to move this booking has been withdrawn, so it keeps its original time."
+        : "Your reschedule request has been withdrawn.",
     });
   } catch (error) {
     // #1583 A-P0-04 — the withdraw now serialises on the appointment atom;
