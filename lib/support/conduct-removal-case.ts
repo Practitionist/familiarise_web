@@ -32,6 +32,7 @@ import {
   syncConductCallBlock,
 } from "@/lib/stream/access-revocation";
 import { liftBlockTx } from "@/lib/booking/seat-removal-lift";
+import type { SeatHistoryReason } from "@/lib/booking/seat-history";
 import { holdPaymentForCase } from "./case-holds";
 import { stageSupportCaseIntakeTx } from "./case-service";
 import { supportDeadline } from "./deadline-policy";
@@ -401,21 +402,92 @@ interface ConductRemovalRemedy {
   caseId: string;
   appointmentId: string;
   userId: string;
-  /** Null when nothing is owed: a free seat, no payment, or another door's refund holds it. */
+  /** Null when nothing is owed: a free seat, no payment, a later sale's order, or another door's refund holding it. */
   marker: RefundOwedMarker | null;
   /** The unblock intent's generation; null when only the money is owed. */
   unblockGeneration: Date | null;
 }
 
+interface RemovalTarget {
+  appointmentId: string;
+  userId: string;
+  removedAt: Date;
+}
+
+async function removalTargetTx(
+  db: PrismaLike,
+  removalCaseId: string,
+): Promise<RemovalTarget | null> {
+  const removal = await db.supportCase.findUniqueOrThrow({
+    where: { id: removalCaseId },
+    select: {
+      appointmentId: true,
+      requesterUserId: true,
+      createdAt: true,
+      statutoryDueAt: true,
+    },
+  });
+  if (!removal.appointmentId) return null;
+  return {
+    appointmentId: removal.appointmentId,
+    userId: removal.requesterUserId,
+    // The latest removal the case reviews, which a joined removal moved forward.
+    removedAt: removalReviewStart(removal),
+  };
+}
+
+/** Whether a SEAT row with one of `reasons` follows the removal on the learner's seat. */
+async function seatStepSinceRemoval(
+  tx: Pick<Tx, "appointmentParticipant" | "bookingStatusHistory">,
+  target: RemovalTarget,
+  reasons: readonly SeatHistoryReason[],
+): Promise<boolean> {
+  const seat = await tx.appointmentParticipant.findUnique({
+    where: {
+      appointmentId_userId: {
+        appointmentId: target.appointmentId,
+        userId: target.userId,
+      },
+    },
+    select: { id: true },
+  });
+  if (!seat) return false;
+  const step = await tx.bookingStatusHistory.findFirst({
+    where: {
+      entity: "SEAT",
+      entityId: seat.id,
+      reason: { in: [...reasons] },
+      createdAt: { gte: target.removedAt },
+    },
+    select: { id: true },
+  });
+  return step !== null;
+}
+
+/** Whether a lift has followed the removal on the learner's seat, so its mark is gone. */
+const liftedSinceRemoval = (
+  tx: Pick<Tx, "appointmentParticipant" | "bookingStatusHistory">,
+  target: RemovalTarget,
+) => seatStepSinceRemoval(tx, target, ["block_lifted"]);
+
+/**
+ * Whether the seat was registered again after the removal. That checkout re-minted the order in the
+ * same commit, so the order the removal ended is retired and the seat's current order is a later sale.
+ */
+const reboughtSinceRemoval = (
+  tx: Pick<Tx, "appointmentParticipant" | "bookingStatusHistory">,
+  target: RemovalTarget,
+) => seatStepSinceRemoval(tx, target, ["registered", "rejoined"]);
+
 /** Stamps the seat's unrefunded balance as owed, keyed on the removal case so it is refunded once. */
 async function stampRemovalRefundTx(
   tx: Tx,
   caseId: string,
-  appointmentId: string,
-  userId: string,
+  target: RemovalTarget,
   reason: string,
 ): Promise<RefundOwedMarker | null> {
-  const payment = await seatPayment(tx, appointmentId, userId);
+  if (await reboughtSinceRemoval(tx, target)) return null;
+  const payment = await seatPayment(tx, target.appointmentId, target.userId);
   if (
     !payment ||
     isPriceFreePayment({
@@ -439,25 +511,6 @@ async function stampRemovalRefundTx(
   return null;
 }
 
-async function removalTargetTx(db: PrismaLike, removalCaseId: string) {
-  const removal = await db.supportCase.findUniqueOrThrow({
-    where: { id: removalCaseId },
-    select: {
-      appointmentId: true,
-      requesterUserId: true,
-      createdAt: true,
-      statutoryDueAt: true,
-    },
-  });
-  if (!removal.appointmentId) return null;
-  return {
-    appointmentId: removal.appointmentId,
-    userId: removal.requesterUserId,
-    // The latest removal the case reviews, which a joined removal moved forward.
-    removedAt: removalReviewStart(removal),
-  };
-}
-
 /** What an overturn must refund first on which payment: unrefunded paise, unrestored credits, or null. */
 export async function removalRefundOutstandingTx(
   tx: Tx,
@@ -469,7 +522,7 @@ export async function removalRefundOutstandingTx(
 ): Promise<{ paymentId: string; owed: number | "credits" } | null> {
   const caseId = await reviewedRemovalCaseId(tx, supportCase);
   const target = caseId ? await removalTargetTx(tx, caseId) : null;
-  if (!target) return null;
+  if (!target || (await reboughtSinceRemoval(tx, target))) return null;
   const payment = await tx.payment.findFirst({
     orderBy: { createdAt: "asc" },
     where: {
@@ -503,33 +556,6 @@ export async function removalRefundOutstandingTx(
   }
   const balance = refundableBalancePaise(Number(payment.amount), payment);
   return balance > 0 ? { paymentId: payment.id, owed: balance } : null;
-}
-
-/** Whether a lift has followed the removal on the learner's seat, so its mark is gone. */
-async function liftedSinceRemoval(
-  tx: Pick<Tx, "appointmentParticipant" | "bookingStatusHistory">,
-  target: { appointmentId: string; userId: string; removedAt: Date },
-): Promise<boolean> {
-  const seat = await tx.appointmentParticipant.findUnique({
-    where: {
-      appointmentId_userId: {
-        appointmentId: target.appointmentId,
-        userId: target.userId,
-      },
-    },
-    select: { id: true },
-  });
-  if (!seat) return false;
-  const lift = await tx.bookingStatusHistory.findFirst({
-    where: {
-      entity: "SEAT",
-      entityId: seat.id,
-      reason: "block_lifted",
-      createdAt: { gte: target.removedAt },
-    },
-    select: { id: true },
-  });
-  return lift !== null;
 }
 
 /** On the decision's tx, once its refund is settled: an OVERTURNED removal (or appeal of one) owes an unblock. */
@@ -748,8 +774,7 @@ async function lapseRemovalTx(
   const marker = await stampRemovalRefundTx(
     tx,
     caseId,
-    target.appointmentId,
-    target.userId,
+    target,
     "conduct removal review lapsed",
   );
   if (marker) {
