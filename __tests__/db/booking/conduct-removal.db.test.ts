@@ -26,6 +26,7 @@ jest.mock("../../../lib/data/public-cache", () => ({
   purgeReviewSurfaces: jest.fn(),
 }));
 const mockFailHold = { next: false };
+const mockDuringRemoval = { run: null as null | (() => void) };
 const mockDieAfterCommit = { next: false };
 jest.mock("../../../lib/stream/access-revocation", () => {
   const actual = jest.requireActual("../../../lib/stream/access-revocation");
@@ -45,6 +46,9 @@ jest.mock("../../../lib/support/case-holds", () => {
   return {
     ...actual,
     holdPaymentForCase: async (...args: unknown[]) => {
+      const during = mockDuringRemoval.run;
+      mockDuringRemoval.run = null;
+      during?.();
       if (mockFailHold.next) {
         mockFailHold.next = false;
         throw new Error("database went away mid-transaction");
@@ -92,11 +96,13 @@ jest.mock("../../../lib/payments/checkout/free-seat-notice", () => ({
 
 import { removeAttendeeForConduct } from "../../../lib/booking/conduct-removal";
 import { handleCheckout } from "../../../lib/payments/checkout";
-import { liftSeatRemovalTx } from "../../../lib/booking/seat-removal-lift";
+import {
+  liftSeatRemovalAsOrganiser,
+  liftSeatRemovalTx,
+} from "../../../lib/booking/seat-removal-lift";
 import { conductRemovalStands } from "../../../lib/support/conduct-removal-state";
 import { isForeignKeyViolation } from "../../../lib/db/pg-errors";
 import { performCaseAction } from "../../../lib/support/case-actions";
-import { patchSupportCaseLifecycle } from "../../../lib/support/case-service";
 import { sweepConductRemovalDeadlines } from "../../../lib/support/conduct-removal-case";
 import { redriveAccessRevocation } from "../../../lib/stream/access-revocation";
 import { refundBookingPayment } from "../../../lib/payments/operations/booking-refund";
@@ -709,29 +715,83 @@ describe("rejoining after a conduct removal", () => {
     ).toEqual({ status: "CONFIRMED", removedByUserId: null });
   });
 
-  it("a second conduct removal while the first case is unclosed joins it, restarts its review and keeps its decisions", async () => {
+  it("a decided case is closed by the second removal and a fresh case opens, the old decision intact on the old case", async () => {
     const { webinar, userId, caseId, rejoin } = await removedFreeSeat();
     const upheld = await decide(caseId, await actor("STAFF"), "UPHELD");
+    await liftAsStaff(webinar, userId);
+    await expect(rejoin()).resolves.toMatchObject({ success: true });
+
+    const again = await remove(webinar, userId);
+
+    expect(again?.caseId).toBeDefined();
+    expect(again?.caseId).not.toBe(caseId);
+    const old = await prisma.supportCase.findUniqueOrThrow({
+      where: { id: caseId },
+      select: {
+        status: true,
+        closedAt: true,
+        decisions: {
+          select: {
+            id: true,
+            outcome: true,
+            supersededBy: { select: { id: true } },
+          },
+        },
+        events: {
+          where: { kind: "STATUS_CHANGED", toValue: "CLOSED" },
+          select: { fromValue: true, note: true },
+        },
+      },
+    });
+    expect(old.status).toBe("CLOSED");
+    expect(old.closedAt).not.toBeNull();
+    expect(old.decisions).toEqual([
+      { id: rowId(upheld), outcome: "UPHELD", supersededBy: null },
+    ]);
+    expect(old.events).toEqual([
+      {
+        fromValue: "RESOLVED",
+        note: expect.stringContaining(again!.caseReference),
+      },
+    ]);
+    const fresh = await prisma.supportCase.findUniqueOrThrow({
+      where: { id: again!.caseId },
+      select: {
+        status: true,
+        closedAt: true,
+        statutoryDueAt: true,
+        category: true,
+        decisions: { select: { id: true } },
+      },
+    });
+    expect(fresh).toMatchObject({
+      status: "OPEN",
+      closedAt: null,
+      category: "CONDUCT_REMOVAL",
+      decisions: [],
+    });
+    expect(fresh.statutoryDueAt!.getTime()).toBeGreaterThan(
+      Date.now() + 71 * HOUR_MS,
+    );
+    expect(await conductRemovalStands(webinar.appointmentId, userId)).toBe(
+      true,
+    );
+    await expect(rejoin()).rejects.toMatchObject({
+      code: "SEAT_REBUY_UNSUPPORTED",
+    });
+  });
+
+  it("an undecided case is joined by the second removal: one case, its status kept, its deadline restarted", async () => {
+    const { webinar, userId, caseId, rejoin } = await removedFreeSeat();
     await liftAsStaff(webinar, userId);
     await expect(rejoin()).resolves.toMatchObject({ success: true });
     const before = await prisma.supportCase.findUniqueOrThrow({
       where: { id: caseId },
       select: { statutoryDueAt: true, messageSeq: true, status: true },
     });
-    // The upheld removal settled the case; the open-case key still counts it.
-    expect(before.status).toBe("RESOLVED");
 
-    const again = await remove(webinar, userId);
+    await expect(remove(webinar, userId)).resolves.toMatchObject({ caseId });
 
-    expect(again).toMatchObject({ caseId });
-    const seat = await prisma.appointmentParticipant.findFirstOrThrow({
-      where: { appointmentId: webinar.appointmentId, userId },
-      select: { id: true, status: true, removedByUserId: true },
-    });
-    expect(seat).toMatchObject({
-      status: "CANCELLED",
-      removedByUserId: webinar.host.userId,
-    });
     expect(
       await prisma.supportCase.count({
         where: {
@@ -744,42 +804,26 @@ describe("rejoining after a conduct removal", () => {
       where: { id: caseId },
       select: {
         status: true,
-        resolvedAt: true,
-        reopenedAt: true,
         statutoryDueAt: true,
         messageSeq: true,
         events: {
           where: { kind: "REOPENED" },
-          select: { actorId: true, note: true, fromValue: true, toValue: true },
+          select: { actorId: true, note: true },
         },
       },
     });
-    // Reopened for review, decided as it is.
-    expect(joined).toMatchObject({ status: "OPEN", resolvedAt: null });
-    expect(joined.reopenedAt).not.toBeNull();
+    expect(joined.status).toBe(before.status);
+    expect(joined.messageSeq).toBe(before.messageSeq + 1);
     expect(joined.statutoryDueAt!.getTime()).toBeGreaterThan(
       before.statutoryDueAt!.getTime(),
     );
-    expect(joined.statutoryDueAt!.getTime()).toBeGreaterThan(
-      Date.now() + 71 * HOUR_MS,
-    );
-    expect(joined.messageSeq).toBe(before.messageSeq + 1);
     expect(joined.events).toEqual([
       {
         actorId: webinar.host.userId,
         note: expect.stringMatching(/removed .* again/i),
-        fromValue: "RESOLVED",
-        toValue: "OPEN",
       },
     ]);
-    // The upheld finding is untouched: joining records the removal, not a verdict.
-    expect(
-      await prisma.supportCaseDecision.findMany({
-        where: { caseId },
-        select: { id: true, supersededBy: { select: { id: true } } },
-      }),
-    ).toEqual([{ id: rowId(upheld), supersededBy: null }]);
-    // A lift followed the first removal, not this one, so the new removal stands.
+    // The lift followed the first removal, not this one, so the new removal stands.
     expect(await conductRemovalStands(webinar.appointmentId, userId)).toBe(
       true,
     );
@@ -788,49 +832,9 @@ describe("rejoining after a conduct removal", () => {
     });
   });
 
-  it("an escalated removal case goes back to OPEN when a second removal joins it", async () => {
+  it("a joined removal's lapse waits 72 hours from the second removal, not the first", async () => {
     const { webinar, userId, caseId, rejoin } = await removedFreeSeat();
     await liftAsStaff(webinar, userId);
-    await expect(rejoin()).resolves.toMatchObject({ success: true });
-    await prisma.supportCase.update({
-      where: { id: caseId },
-      data: { status: "ESCALATED" },
-    });
-
-    await expect(remove(webinar, userId)).resolves.toMatchObject({ caseId });
-
-    expect(
-      await prisma.supportCase.findUniqueOrThrow({
-        where: { id: caseId },
-        select: { status: true },
-      }),
-    ).toEqual({ status: "OPEN" });
-  });
-
-  it("staff cannot use the removal's edge: their reopen of a decided removal case is still refused", async () => {
-    const { caseId } = await removedFreeSeat();
-    const staff = await actor("STAFF");
-    await decide(caseId, staff, "UPHELD");
-
-    const reopen = await patchSupportCaseLifecycle({
-      caseId,
-      actorId: staff.userId,
-      expectedUpdatedAt: await version(caseId),
-      status: "OPEN",
-    });
-
-    expect(reopen).toMatchObject({ ok: false, code: "CASE_DECIDED" });
-    expect(
-      await prisma.supportCase.findUniqueOrThrow({
-        where: { id: caseId },
-        select: { status: true },
-      }),
-    ).toEqual({ status: "RESOLVED" });
-  });
-
-  it("a joined removal is reviewed from the second removal: an overturn before it does not end it, and its lapse waits 72 hours from it", async () => {
-    const { webinar, userId, caseId, rejoin } = await removedFreeSeat();
-    await decide(caseId, await actor("STAFF"), "OVERTURNED");
     await expect(rejoin()).resolves.toMatchObject({ success: true });
     // The first removal is long past its own deadline.
     await prisma.supportCase.update({
@@ -840,9 +844,6 @@ describe("rejoining after a conduct removal", () => {
 
     await remove(webinar, userId);
 
-    expect(await conductRemovalStands(webinar.appointmentId, userId)).toBe(
-      true,
-    );
     const sweep = () =>
       sweepConductRemovalDeadlines({ limit: 10, now: new Date(), errors: [] });
     expect(await sweep()).toEqual({ lapsed: 0 });
@@ -851,6 +852,83 @@ describe("rejoining after a conduct removal", () => {
       data: { statutoryDueAt: new Date(Date.now() - HOUR_MS) },
     });
     expect(await sweep()).toEqual({ lapsed: 1 });
+  });
+
+  it("an appeal of the first case's decision, overturned, does not touch the fresh case", async () => {
+    const { webinar, userId, caseId, rejoin } = await removedFreeSeat();
+    const upheld = await decide(caseId, await actor("STAFF"), "UPHELD");
+    await liftAsStaff(webinar, userId);
+    await expect(rejoin()).resolves.toMatchObject({ success: true });
+    const again = (await remove(webinar, userId))!;
+    const appeal = await prisma.supportCase.create({
+      data: {
+        referenceNumber: `AP-${randomUUID().slice(0, 12)}`,
+        title: "Appeal of a platform decision",
+        description: "I did nothing wrong the first time.",
+        category: "SERVICE_APPEAL",
+        requesterUserId: userId,
+        submitterUserId: userId,
+        ownershipScope: "PERSONAL",
+        scopeKey: `CASE_DECISION:${rowId(upheld)}`,
+        appealOfDecisionId: rowId(upheld),
+        activeChannel: "HUMAN",
+        priority: "HIGH",
+        receivedAt: new Date(),
+      },
+    });
+
+    await decide(appeal.id, await actor("ADMIN"), "OVERTURNED");
+
+    expect(
+      await prisma.supportCase.findUniqueOrThrow({
+        where: { id: again.caseId },
+        select: { status: true, decisions: { select: { id: true } } },
+      }),
+    ).toEqual({ status: "OPEN", decisions: [] });
+    expect(
+      await prisma.appointmentParticipant.findFirstOrThrow({
+        where: { appointmentId: webinar.appointmentId, userId },
+        select: { removedByUserId: true },
+      }),
+    ).toEqual({ removedByUserId: webinar.host.userId });
+    expect(await conductRemovalStands(webinar.appointmentId, userId)).toBe(
+      true,
+    );
+    await expect(rejoin()).rejects.toMatchObject({
+      code: "SEAT_REBUY_UNSUPPORTED",
+    });
+  });
+
+  it("a lift started while a removal holds the event's lock waits for it, so it sees the removal it would lift", async () => {
+    const webinar = await seedWebinar({ capacity: 10, price: 0 });
+    const free = await seatBuyer(webinar, {
+      amount: 0,
+      intent: `free_${randomUUID()}`,
+      listPaise: 0,
+    });
+    let lift: Promise<unknown> | null = null;
+    // Inside the removal's transaction: the host tries Allow back on the same seat.
+    mockDuringRemoval.run = () => {
+      lift = liftSeatRemovalAsOrganiser({
+        appointmentId: webinar.appointmentId,
+        userId: free.userId,
+        actorUserId: webinar.host.userId,
+      }).catch((error: unknown) => error);
+    };
+
+    await remove(webinar, free.userId);
+
+    // It ran after the removal committed: it found a standing conduct removal, not a live seat.
+    expect(await lift).toMatchObject({ code: "LIFT_NOT_ALLOWED" });
+    expect(
+      await prisma.bookingStatusHistory.count({
+        where: {
+          entity: "SEAT",
+          appointmentId: webinar.appointmentId,
+          reason: "block_lifted",
+        },
+      }),
+    ).toBe(0);
   });
 
   it("an overturn from the case panel lifts the mark too, so the rejoin succeeds", async () => {

@@ -25,6 +25,7 @@ import { reportSentryError } from "@/lib/observability/report";
 import { scheduleAfter } from "@/lib/api/after-safe";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import { withEventSeatLock } from "@/lib/booking/event-seat-lock";
 import { UserRoleEnum } from "@/schemas/user";
 import { OpsRefusal, refusalCode, refusalResponse } from "./ops-refusal";
 import { opsReasonSchema } from "./ops-reason";
@@ -144,6 +145,8 @@ interface OpsActionOptions<B> {
   secondApprover?: SecondApprover<B>;
   /** A tx door whose reads decide its write runs Serializable, retried on a conflict. */
   serializable?: boolean;
+  /** A tx door on an event's seats runs under that appointment's seat lock, as removals do. */
+  eventSeatLock?: (params: Record<string, string>) => string;
 }
 
 const SERIALIZABLE_TX = {
@@ -249,11 +252,17 @@ export function withOpsAction<S extends z.ZodRawShape>(
         }
         return r;
       };
-      result = options.serializable
-        ? await withSerializableRetry(() =>
-            prisma.$transaction(work, SERIALIZABLE_TX),
-          )
-        : await prisma.$transaction(work);
+      const commit = (renew: () => Promise<void>) =>
+        options.serializable
+          ? withSerializableRetry(async () => {
+              await renew();
+              return prisma.$transaction(work, SERIALIZABLE_TX);
+            })
+          : renew().then(() => prisma.$transaction(work));
+      const lockId = options.eventSeatLock?.(ctx.params);
+      result = lockId
+        ? await withEventSeatLock(lockId, commit)
+        : await commit(async () => undefined);
     } else {
       result = await runGatewayDoor(door, ctx, row);
       // The money already moved; a lost EXECUTED mark pages rather than failing the answer.

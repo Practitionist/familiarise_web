@@ -19,6 +19,7 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 jest.mock("../../utils/appointmentlock", () => ({
+  ...jest.requireActual("../../utils/appointmentlock"),
   withAppointmentLock: (_id: string, fn: (lock: unknown) => unknown) => fn({}),
   renewAppointmentLock: async () => undefined,
 }));

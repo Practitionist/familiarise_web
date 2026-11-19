@@ -19,10 +19,7 @@ import {
   revokeEndedSeatAccess,
   syncConductCallBlock,
 } from "@/lib/stream/access-revocation";
-import {
-  renewAppointmentLock,
-  withAppointmentLock,
-} from "@/utils/appointmentlock";
+import { withEventSeatLock } from "./event-seat-lock";
 import {
   CONDUCT_REMOVAL_REASON_LABELS,
   type ConductRemovalReason,
@@ -99,12 +96,13 @@ export async function removeAttendeeForConduct(
   input: ConductRemovalInput,
 ): Promise<ConductRemovalResult | null> {
   const event = await removableEvent(input.appointmentId);
-  // Outside the retry, so a retried transaction re-stages the same notice keys.
-  const now = new Date();
   const note = input.note?.trim() || null;
-  const done = await withAppointmentLock(input.appointmentId, (lock) =>
-    withSerializableRetry(async () => {
-      await renewAppointmentLock(lock);
+  const done = await withEventSeatLock(input.appointmentId, (renew) => {
+    // Under the lock, which every lift also takes, so no lift lands between this instant and
+    // the write; outside the retry, so a retried transaction re-stages the same notice keys.
+    const now = new Date();
+    return withSerializableRetry(async () => {
+      await renew();
       return prisma.$transaction(
         async (tx) => {
           if (!(await input.authorizeTx(tx))) {
@@ -174,8 +172,8 @@ export async function removeAttendeeForConduct(
           timeout: 15_000,
         },
       );
-    }),
-  ).catch((error: unknown) => {
+    });
+  }).catch((error: unknown) => {
     throw isUniqueViolation(error) ? removalConflict() : error;
   });
   if (!done) return null;

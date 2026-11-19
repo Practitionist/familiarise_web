@@ -20,6 +20,7 @@ import {
   syncConductCallBlock,
 } from "@/lib/stream/access-revocation";
 import { BookingRuleError } from "./booking-rule-error";
+import { withEventSeatLock } from "./event-seat-lock";
 import { eventCheckoutHref } from "./event-waitlist";
 import {
   appendSeatHistory,
@@ -314,17 +315,20 @@ export async function afterSeatRemovalLift(
   await flushNotificationsAfter({ bells: [lifted.bell] }, "seat-removal.lift");
 }
 
-/** The organiser's door: one Serializable transaction, then the after-commit work. */
+/** The organiser's door: one Serializable transaction under the event's seat lock, then the after-commit work. */
 export async function liftSeatRemovalAsOrganiser(args: {
   appointmentId: string;
   userId: string;
   actorUserId: string;
 }): Promise<SeatLiftResult> {
-  const lifted = await withSerializableRetry(() =>
-    prisma.$transaction(
-      (tx) => liftSeatRemovalTx(tx, { ...args, door: "organiser" }),
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-    ),
+  const lifted = await withEventSeatLock(args.appointmentId, (renew) =>
+    withSerializableRetry(async () => {
+      await renew();
+      return prisma.$transaction(
+        (tx) => liftSeatRemovalTx(tx, { ...args, door: "organiser" }),
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      );
+    }),
   );
   await afterSeatRemovalLift(args.appointmentId, args.userId, lifted);
   return lifted;

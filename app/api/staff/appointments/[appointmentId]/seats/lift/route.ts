@@ -60,5 +60,10 @@ export const POST = withOpsAction(
       };
     },
   },
-  { stepUp: true, serializable: true },
+  {
+    stepUp: true,
+    serializable: true,
+    // The removals' lock, so a lift never lands inside a removal's write.
+    eventSeatLock: (params) => Params.parse(params).appointmentId,
+  },
 );

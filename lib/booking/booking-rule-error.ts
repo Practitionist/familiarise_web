@@ -61,6 +61,7 @@ export type BookingRuleCode =
   | "REMOVAL_NOT_ALLOWED"
   | "REMOVAL_ALREADY_LIFTED"
   | "REMOVAL_CONFLICT"
+  | "EVENT_BUSY"
   | "LIFT_NOT_ALLOWED";
 
 export class BookingRuleError extends Error {
