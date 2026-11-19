@@ -1,7 +1,7 @@
 # ADR: Draft invoices are for billing managers; session IPs and the voided seed booking stay
 
-- **Status**: Accepted (owner decisions, 2026-11-20), shipped in PR #2903 "fix(org-pages): consent only for active organisations, Billing reads one fact, read-only roles told who can act, plain purchase-order copy".
-- **Date**: 2026-11-20
+- **Status**: Accepted (owner decisions, 2026-11-19), shipped in PR #2903 "fix(org-pages): consent only for active organisations, Billing reads one fact, read-only roles told who can act, plain purchase-order copy".
+- **Date**: 2026-11-19
 - **Author**: Platform engineering
 - **Related**: [Organisation dashboard pages](../enterprise/30-programs-and-lifecycle/04-dashboard-pages.md), [Roles and permissions](../enterprise/00-foundations/04-roles-and-permissions.md), [API reference](../enterprise/50-operations/01-api-reference.md), [User session visibility and revocation](../enterprise/70-design-decisions/34-user-session-visibility-and-revocation.md)
 
