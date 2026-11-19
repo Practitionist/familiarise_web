@@ -391,7 +391,7 @@ export function NotificationPreferencesPanel() {
           <SwitchRow
             id="notification-allNotifications"
             label="Optional notifications"
-            description="Turn off to pause optional emails and in-app notifications. Required notices still arrive: account, security and moderation notices in the bell and by email, plus payment receipts and invitations you must answer by email."
+            description="Turn off to pause optional emails and in-app notifications. The notices listed below still arrive."
             checked={prefs.allNotifications}
             disabled={pendingKeys.has("allNotifications")}
             onCheckedChange={(checked) => save({ allNotifications: checked })}

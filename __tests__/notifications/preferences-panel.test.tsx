@@ -138,3 +138,20 @@ it("has no marketing switch and points marketing to the consent section", async 
     "/dashboard/consultee/ce1/settings/account#data-consent",
   );
 });
+
+it("lists every notice that still arrives in one place", async () => {
+  renderPanel();
+  await screen.findByRole("switch", { name: "Optional notifications" });
+  const list = screen.getByTestId("notification-always-sent").textContent;
+  for (const notice of [
+    "account, security and moderation notices",
+    "payment receipts",
+    "changes someone else makes to your booking",
+  ]) {
+    expect(list).toContain(notice);
+  }
+  const master = document.getElementById(
+    "notification-allNotifications-description",
+  )?.textContent;
+  expect(master).not.toContain("account, security");
+});

@@ -65,7 +65,7 @@ export function requiredNoticeOf(payload: unknown): RequiredNoticeKind | null {
   return parsed.success ? parsed.data[REQUIRED_NOTICE_FIELD] : null;
 }
 
-/** The Settings line; built from the kinds so the copy cannot drift from the rule. */
-export const ALWAYS_SENT_LINE = `Always sent: changes someone else makes to your booking or your co-hosting (${[
+/** The Settings list of what arrives whatever the switches say; the booking part is built from the kinds so it cannot drift. */
+export const ALWAYS_SENT_LINE = `Always sent, whatever you choose here: account, security and moderation notices in the bell and by email; payment receipts and invitations you must answer, by email; and changes someone else makes to your booking or your co-hosting (${[
   ...new Set(REQUIRED_NOTICE_KINDS.map((kind) => REQUIRED_NOTICE_LABEL[kind])),
 ].join(", ")}).`;
