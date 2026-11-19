@@ -20,7 +20,10 @@ import {
   AvailabilitySaveConfirm,
   outsideHoursLinks,
 } from "../../app/dashboard/consultant/[consultantId]/(features)/settings/AvailabilitySaveConfirm";
-import type { AvailabilitySavePreview } from "@/schemas/availability-preview";
+import {
+  availabilitySavePreviewSchema,
+  type AvailabilitySavePreview,
+} from "@/schemas/availability-preview";
 
 const session = (id: string) => ({
   appointmentId: id,
@@ -175,6 +178,23 @@ describe("AvailabilitySaveConfirm", () => {
     const rows = screen.getAllByRole("listitem").map((li) => li.textContent);
     expect(rows[0]).toMatch(/ · Priya Nair · Career chat$/);
     expect(rows[1]).toMatch(/^[^·]+ · System Design Cohort$/);
+  });
+
+  it("parses a preview from the API before plan and learner names, and still lists the booking", () => {
+    const preview = availabilitySavePreviewSchema.parse({
+      sessions: [
+        {
+          appointmentId: "a-1",
+          startsAt: "2099-12-10T06:00:00.000Z",
+          held: true,
+        },
+      ],
+      customDatesRemoved: 0,
+    });
+    render(<Harness preview={preview} save={async () => undefined} />);
+    expect(screen.getByRole("listitem").textContent).toMatch(
+      /^[^·]+ · A booking · awaiting payment or approval$/,
+    );
   });
 
   it("links to the expert's existing reschedule and booking pages", () => {

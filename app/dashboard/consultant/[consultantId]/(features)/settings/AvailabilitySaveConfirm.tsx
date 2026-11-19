@@ -46,7 +46,7 @@ function SessionList({
               {[
                 formatDateTimeLabel(new Date(session.startsAt), { zone }),
                 session.learnerName,
-                session.planTitle,
+                session.planTitle ?? "A booking",
               ]
                 .filter(Boolean)
                 .join(" · ")}

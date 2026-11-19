@@ -7,8 +7,9 @@ export const availabilitySavePreviewSchema = z.object({
       appointmentId: z.string(),
       startsAt: z.string(),
       held: z.boolean(),
-      planTitle: z.string(),
-      learnerName: z.string().nullable(),
+      // Optional so a preview from an API version without them still parses.
+      planTitle: z.string().optional(),
+      learnerName: z.string().nullable().optional(),
     }),
   ),
   customDatesRemoved: z.number().int().nonnegative(),
