@@ -1,4 +1,5 @@
 import type { BookingOpsView } from "@/lib/backoffice/booking-ops-types";
+import { SeatLiftResponseSchema } from "@/schemas/seat-removal-lift";
 import type { Door } from "./DoorDialog";
 
 type RemovedSeat = BookingOpsView["removedSeats"][number];
@@ -22,5 +23,13 @@ export function seatLiftDoor(appointmentId: string, seat: RemovedSeat): Door {
     description: `This lifts the block on rejoining; it gives no seat back. ${next}${why}`,
     confirm: "Allow back",
     body: { userId: seat.userId },
+    success: (data) => {
+      const lifted = SeatLiftResponseSchema.safeParse(data);
+      const name = seat.name?.trim() || "The attendee";
+      if (!lifted.success) return `${name} is allowed back.`;
+      return lifted.data.rejoinPath === "REGISTER"
+        ? `${name} is allowed back and can register again while seats are left.`
+        : `${name} is allowed back. Their seat was paid for, so they've been told support will help them rejoin.`;
+    },
   };
 }

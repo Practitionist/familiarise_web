@@ -389,6 +389,29 @@ describe("a 1:1 booking's learner row", () => {
 });
 
 describe("what the lift controls send", () => {
+  it("the staff door's toast says what the attendee can do now, from what the route answered", () => {
+    const door = seatLiftDoor(APPT, {
+      userId: "u-1",
+      name: "Riya",
+      removal: "ORGANISER",
+      paidSeat: false,
+    });
+    const said = (rejoinPath: "REGISTER" | "SUPPORT") =>
+      door.success?.(
+        SeatLiftResponseSchema.parse({
+          lifted: true,
+          rejoinPath,
+          conduct: false,
+        }),
+      );
+    expect(said("REGISTER")).toBe(
+      "Riya is allowed back and can register again while seats are left.",
+    );
+    expect(said("SUPPORT")).toBe(
+      "Riya is allowed back. Their seat was paid for, so they've been told support will help them rejoin.",
+    );
+  });
+
   it("the roster's Allow back parses through the organiser route's schema", () => {
     const { url, init } = allowBackRequest("class", "cls-1", "u-1");
     expect(url).toBe("/api/participants/class/cls-1/allow-back");

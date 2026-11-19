@@ -64,9 +64,17 @@ function actorLabel(entry: BookingTimelineEntry): string {
   return entry.actor?.name?.trim() || "system";
 }
 
+/** A seat row that keeps its status (a lift) is its reason, not an edge. */
+function seatReasonOnly(entry: BookingTimelineEntry): boolean {
+  return (
+    entry.entity === "SEAT" && entry.from === entry.to && Boolean(entry.reason)
+  );
+}
+
 /** A status edge in words ("Scheduled → Unverified"); a reschedule row is the proposal, its answer is an edge. */
 export function timelineStepLabel(entry: BookingTimelineEntry): string {
   if (entry.kind === "reschedule") return "Proposed";
+  if (seatReasonOnly(entry) && entry.reason) return entry.reason;
   const to = humanizeEnum(entry.to);
   return entry.from ? `${humanizeEnum(entry.from)} → ${to}` : to;
 }
@@ -97,7 +105,7 @@ function TimelineRow({ entry }: { entry: BookingTimelineEntry }) {
           </>
         )}
       </p>
-      {entry.reason && (
+      {entry.reason && !seatReasonOnly(entry) && (
         <p className="mt-1 text-xs text-muted-foreground/80">{entry.reason}</p>
       )}
     </li>

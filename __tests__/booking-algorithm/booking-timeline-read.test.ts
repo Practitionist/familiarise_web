@@ -29,6 +29,11 @@ jest.mock("../../lib/prisma", () => ({
       findMany: (args: unknown) => historyFindMany(args),
       fields: { toStatus: "field:toStatus" },
     },
+    appointmentParticipant: {
+      findMany: async () => [
+        { id: "part-1", user: { id: "u-9", name: "Riya" } },
+      ],
+    },
   },
 }));
 
@@ -294,6 +299,25 @@ describe("getBookingTimeline", () => {
         ],
       },
     });
+  });
+
+  it("reads a seat row that keeps its status as its reason, never as a status edge", async () => {
+    historyFindMany.mockResolvedValue([
+      {
+        id: "h-lift",
+        entity: "SEAT",
+        entityId: "part-1",
+        fromStatus: "CANCELLED",
+        toStatus: "CANCELLED",
+        reason: "block_lifted",
+        createdAt: new Date("2026-11-18T10:00:00.000Z"),
+        actorUser: { id: "staff-1", name: "Grace" },
+      },
+    ]);
+    const { entries } = (await getBookingTimeline("appt-1", PRIVILEGED))!;
+    expect(
+      entries.filter((e) => e.entity === "SEAT").map(timelineStepLabel),
+    ).toEqual(["Allowed back: may register again"]);
   });
 
   it("reads an outcome reason token as words", async () => {
