@@ -32,6 +32,7 @@ import {
   PROGRAM_TYPE_LABEL,
   SESSION_TYPE_LABEL,
 } from "@/lib/labels/org-labels";
+import { JOIN_OPENS_LABEL, JOIN_WINDOW_NOTE } from "./join-window-copy";
 
 const OVERAGE_BEHAVIOR_LABEL: Record<string, string> = {
   BLOCK: "Cap is enforced — bookings stop at the limit",
@@ -225,7 +226,7 @@ export default async function MyProgramPage({
                       </td>
                       <td className="px-4 py-2 text-right whitespace-nowrap">
                         {/* The room opens from the appointments list; this link
-                          appears only inside the 10-minute window. */}
+                          appears only inside the attendee join window. */}
                         {s.joinable ? (
                           <Link
                             href={appointmentsHref}
@@ -235,7 +236,7 @@ export default async function MyProgramPage({
                           </Link>
                         ) : (
                           <span className="text-xs text-muted-foreground">
-                            Opens 10 min before
+                            {JOIN_OPENS_LABEL}
                           </span>
                         )}
                       </td>
@@ -249,7 +250,7 @@ export default async function MyProgramPage({
               <Link href={appointmentsHref} className="underline text-primary">
                 dashboard
               </Link>{" "}
-              when the room opens (within 10 minutes of the start time).
+              {JOIN_WINDOW_NOTE}
             </p>
           </section>
         )}

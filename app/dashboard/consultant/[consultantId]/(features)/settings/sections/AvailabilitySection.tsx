@@ -15,6 +15,7 @@ import {
 } from "@/utils/dateTimeUtils";
 import { DAYS_OF_WEEK, getMonthYearString } from "../settings";
 import { AvailabilityGrid } from "./AvailabilityGrid";
+import { SCHEDULE_LOCK_FALLBACK } from "../schedule-lock";
 import { sameTimeZone } from "@/utils/schedule/weekly-projection";
 
 interface AvailabilitySectionProps {
@@ -193,10 +194,7 @@ export function AvailabilitySection({
         <Alert variant="destructive" className="mb-4">
           <AlertTitle>Schedule Type Locked</AlertTitle>
           <AlertDescription>
-            {scheduleSwitchBlockedReason ||
-              "You have active appointments that prevent schedule type changes."}{" "}
-            Please complete or cancel all pending appointments before switching
-            schedule types.
+            {scheduleSwitchBlockedReason ?? SCHEDULE_LOCK_FALLBACK}
           </AlertDescription>
         </Alert>
       )}

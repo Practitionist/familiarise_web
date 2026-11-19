@@ -14,8 +14,12 @@ const USER_ID = { select: { userId: true } } as const;
 export const APPOINTMENT_HEADLINE_SELECT = {
   appointmentType: true,
   deletedAt: true,
-  // The attendee count is the live participant roster.
-  _count: { select: { participants: { where: liveParticipant() } } },
+  // The attendee count is the learners holding a live seat; the host's own row is not one.
+  _count: {
+    select: {
+      participants: { where: { ...liveParticipant(), role: "CONSULTEE" } },
+    },
+  },
   consultation: {
     select: {
       id: true,

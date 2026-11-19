@@ -167,6 +167,7 @@ export function mapAppointmentDetail(
                   ? "Registered attendees"
                   : "Enrolled learners",
               image: facts.consultant.image,
+              audience: true,
             }));
 
   const rawOccurrences: OccurrenceLike[] = all

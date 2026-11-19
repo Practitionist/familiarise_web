@@ -427,10 +427,31 @@ needs (curl + Slack incident channel). A dashboard page would live at
 ## Read-side scrub (defense in depth)
 
 `lib/enterprise/audit-sanitize.ts` catches any case where engineering
-noise still reaches `OrgAuditLog`. The sanitizer runs on:
+noise still reaches `OrgAuditLog`. The CSV exporter
+(`GET /api/organizations/[orgId]/audit/export`) runs it on the stored
+description, which the export keeps as written.
 
-- `GET /api/organizations/[orgId]/audit` (list endpoint)
-- `GET /api/organizations/[orgId]/audit/export` (CSV exporter)
+The three on-screen readers go one step further through
+`lib/enterprise/audit-describe.ts`: the operator Audit page
+(`GET /api/organizations/[orgId]/audit`), the operator Home activity
+(`GET /api/organizations/[orgId]/activity` and its server seed
+`lib/data/org-activity.ts`) and the workspace Activity page
+(`lib/data/org-workspace.ts`). For each page of rows it resolves the
+members, contracts, programs and invoices that `details` and
+`targetMembershipId` name, with one query per kind scoped to the rows'
+organisations, and builds the sentence from `action` and `details`:
+names instead of ids, `formatCurrencyAmount` from paise, dates in the
+viewer's zone and labels for status codes. A row written before its
+writer used prose therefore reads the same as a current one, with no
+backfill. For example, the stored
+`Bank transfer QA2240UTR2 of 70800 paise recorded against invoice WIPRO-2026-0005`
+reads "Bank transfer QA2240UTR2 of ₹708.00 recorded against invoice
+WIPRO-2026-0005", and `Contract af7844b6-… auto-expired (effectiveTo=2026-10-19T20:08:36.260Z)`
+reads "The contract starting 1 Oct 2026 expired on 20 Oct 2026" for a
+viewer in India. An action the describer does not know keeps its
+stored text after the sanitizer, with timestamps, paise amounts, ids it
+resolved and upper-case codes put into words. The Audit page's search
+still matches the stored description.
 
 Five patterns flag a description as "engineering goop" and trigger a
 redaction:
@@ -460,6 +481,10 @@ admin API.
 
 ## Tests
 
+`__tests__/enterprise/audit-describe.test.ts` runs stored rows from the
+shared database through each of the three on-screen readers and pins
+the words they print, including a viewer outside India.
+
 `__tests__/enterprise/audit-sanitize.test.ts` (16 tests, 100% coverage)
 covers every redaction pattern + idempotency + the prefix-preservation
 behavior. Includes a regression test for the exact
@@ -472,4 +497,5 @@ triggered the original bug report.
 - [`data-export`](../40-compliance-and-data/03-data-export.md) — DPDP §11 worker that exercises both event streams
 - `lib/enterprise/audit-actions.ts` — typed action catalogue for `OrgAuditLog`
 - `lib/enterprise/audit-sanitize.ts` — read-side scrub
+- `lib/enterprise/audit-describe.ts` — audit rows in words for the on-screen readers
 - `lib/enterprise/system-events.ts` — write helpers

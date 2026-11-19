@@ -25,6 +25,7 @@ import { OrgAuditCategory } from "@prisma/client";
 import { z } from "zod";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { getWorkspaceActivity } from "@/lib/data/org-workspace";
+import { resolveViewerZone } from "@/lib/time/viewer-zone";
 
 const QuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
@@ -64,6 +65,7 @@ export async function GET(
   // scoped to the orgs the caller OWNS (not the workspace id).
   const result = await getWorkspaceActivity(
     auth.session.user.id,
+    resolveViewerZone({ userTimezone: auth.session.user.timezone }),
     q.cursor ?? null,
     q.limit,
     {

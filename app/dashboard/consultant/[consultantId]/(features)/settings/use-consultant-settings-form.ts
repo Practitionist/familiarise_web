@@ -36,6 +36,7 @@ import {
   type Tag,
 } from "./settings";
 import type { Option } from "./sections/ProfileSection";
+import { SCHEDULE_LOCK_FALLBACK, scheduleLockReason } from "./schedule-lock";
 
 /** What a save would change under live bookings, shown before it runs. */
 const AvailabilitySavePreviewSchema = z.object({
@@ -128,9 +129,7 @@ export function useConsultantSettingsForm(
         );
         const data = await res.json();
         setCanSwitchSchedule(data.canSwitch);
-        setScheduleSwitchBlockedReason(
-          data.canSwitch ? null : data.details || data.reason,
-        );
+        setScheduleSwitchBlockedReason(scheduleLockReason(data));
       } catch (error) {
         console.error("Error checking schedule switch eligibility:", error);
         // On error, allow switching (the route validates anyway).
@@ -252,9 +251,7 @@ export function useConsultantSettingsForm(
       if (!canSwitchSchedule && scheduleTypeValue !== scheduleType) {
         toast({
           title: "Cannot Switch Schedule Type",
-          description:
-            scheduleSwitchBlockedReason ||
-            "You have active appointments. Please complete or cancel them first.",
+          description: scheduleSwitchBlockedReason ?? SCHEDULE_LOCK_FALLBACK,
           variant: "destructive",
         });
         return;

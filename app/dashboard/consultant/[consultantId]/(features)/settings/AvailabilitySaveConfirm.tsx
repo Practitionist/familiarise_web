@@ -52,7 +52,7 @@ function SessionList({
                   Reschedule
                 </Link>
                 <Link className="underline" href={links.cancel}>
-                  Cancel
+                  Cancel booking
                 </Link>
               </span>
             )}
@@ -102,6 +102,7 @@ export function AvailabilitySaveConfirm({
         }}
         title="Save these hours?"
         confirmLabel="Save anyway"
+        cancelLabel="Keep editing"
         onConfirm={async () => {
           await onConfirm();
           handedOver.current = true;
