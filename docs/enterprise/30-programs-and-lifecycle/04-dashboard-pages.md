@@ -257,7 +257,9 @@ Points the table compresses:
   one line naming the role that can pay or request an invoice
   (`rolesHoldingLabel` in `lib/labels/org-labels.ts`, read from the permission
   matrix) and pointing at Ask us. A draft, void or cancelled invoice shows no
-  due date (`shownDueDate`).
+  due date (`shownDueDate`). The Purchase orders tab tells the same readers
+  which role can add, edit or cancel a PO, and its Linked column counts in
+  words ("1 contract · 4 invoices").
 - **Billing figures.** "Pending charges · N bookings not yet invoiced" counts
   SUCCEEDED payments with no `billableToOrgInvoiceId`. A Usage charges row
   reads the same field: a booking charge names the invoice its payment was

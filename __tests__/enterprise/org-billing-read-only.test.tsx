@@ -67,6 +67,28 @@ jest.mock(
   () => ({ PurchaseOrdersPanel: () => null }),
 );
 jest.mock(
+  "../../app/dashboard/organization/[orgId]/purchase-orders/utils/api",
+  () => ({
+    fetchPurchaseOrders: jest.fn(async () => ({
+      data: [
+        {
+          id: "po-1",
+          poNumber: "WIPRO-PO-1",
+          poDate: "2026-09-01T00:00:00.000Z",
+          validUntil: null,
+          totalAmountPaise: 500_000_000,
+          remainingAmountPaise: 499_764_000,
+          currency: "INR",
+          status: "ACTIVE",
+          uploadedDocUrl: null,
+          createdAt: "2026-09-01T00:00:00.000Z",
+          _count: { contracts: 1, invoices: 4 },
+        },
+      ],
+    })),
+  }),
+);
+jest.mock(
   "../../components/dashboard/shared/support/CreateTicketDialog",
   () => ({
     CreateTicketDialog: ({ trigger }: { trigger: React.ReactNode }) => trigger,
@@ -144,5 +166,24 @@ describe("Billing for a reader without billing.manage", () => {
     expect(shownDueDate({ status: "VOID", dueDate })).toBeNull();
     expect(shownDueDate({ status: "DRAFT", dueDate })).toBeNull();
     expect(shownDueDate({ status: "ISSUED", dueDate })).toBe(dueDate);
+  });
+});
+
+describe("Purchase orders for a reader without purchaseOrders.manage", () => {
+  // The page module above is a stub; the real panel is rendered here.
+  const { PurchaseOrdersPanel } = jest.requireActual(
+    "../../app/dashboard/organization/[orgId]/purchase-orders/PurchaseOrdersPanel",
+  );
+
+  it("names who can act, in words, with no developer copy", async () => {
+    mockRole = "MAINTAINER";
+    const text = await render(<PurchaseOrdersPanel orgId="org-1" />);
+    expect(text).toContain(
+      "adding, editing or cancelling one needs the Owner or Billing admin role",
+    );
+    expect(text).toContain("1 contract · 4 invoices");
+    expect(text).not.toContain("Caller-issued");
+    expect(text).not.toContain("Cancel one to retire it");
+    expect(text).not.toContain("New PO");
   });
 });
