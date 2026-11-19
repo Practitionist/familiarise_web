@@ -268,6 +268,8 @@ describe.each(CASES)(
           initiatedBy: "organiser",
         }),
       );
+      // The leave's durable revoker owns the chat removal; a second call here could undo a rejoin's grant.
+      expect(mockRemoveUserFromEventChannel).not.toHaveBeenCalled();
     });
 
     it("a serialization abort retries, and the retry sees the empty roster", async () => {

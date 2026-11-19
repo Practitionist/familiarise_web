@@ -33,7 +33,6 @@ import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
 import { isRefusal } from "@/lib/errors/refusal";
 import { recordRefundNeedsSupport } from "@/lib/payments/operations/refund-owed";
-import { removeUserFromEventChannel } from "@/actions/stream/chat/event-channel.action";
 import { findLiveEventSlot } from "@/lib/appointments/live-event-slot";
 import {
   applyRateLimit,
@@ -622,13 +621,11 @@ export async function handleGroupConductRemoval(
   return handleConductRemoval(request, session, appointment.id);
 }
 
+/** The leave's own durable revoker ends the seat's chat and call access after its commit. */
 export async function handleGroupParticipantDelete(
   request: Request,
   kind: GroupEventKind,
   eventId: string,
-  removeFromChannel: (userId: string) => Promise<{ success: boolean }> = (
-    userId,
-  ) => removeUserFromEventChannel(kind, eventId, userId),
 ): Promise<NextResponse> {
   const authResult = await requireApiAuth();
   if (authResult.error) return authResult.error;
@@ -697,19 +694,6 @@ export async function handleGroupParticipantDelete(
 
     if (!left) {
       return NextResponse.json({ removed: false, refund: null });
-    }
-
-    const channelRemoval = await removeFromChannel(userId);
-    if (!channelRemoval.success) {
-      console.warn(
-        JSON.stringify({
-          event: "attendee_channel_removal_failed",
-          eventType: kind,
-          eventId,
-          userId,
-          timestamp: new Date().toISOString(),
-        }),
-      );
     }
 
     return NextResponse.json({ removed: true, refund: left.refund });

@@ -20,7 +20,9 @@ const mockState: {
   onCreate: () => void;
   failRemainder: boolean;
   collabEnded: boolean;
+  onRemove: (ids: string[]) => void;
 } = {
+  onRemove: () => undefined,
   failRemainder: false,
   collabEnded: false,
   channelExists: true,
@@ -88,6 +90,7 @@ jest.mock("@/lib/stream-client", () => ({
         return {};
       },
       removeMembers: async (ids: string[]) => {
+        mockState.onRemove(ids);
         ids.forEach((id) => mockChat.delete(id));
         return {};
       },
@@ -149,6 +152,7 @@ jest.mock("@/lib/stream/dm-eligibility", () => ({
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 
 import { ensureChannelsForAppointment } from "@/lib/payments/webhooks/ensure-channels";
+import { revokeEndedSeatAccess } from "@/lib/stream/access-revocation";
 import { addUserToEventChannel } from "@/lib/stream/event-channel-service";
 import { DmNotPermittedError } from "@/lib/stream/dm-eligibility";
 import {
@@ -266,6 +270,7 @@ describe("event chat and call membership follows seats holding access", () => {
     mockState.adds = [];
     mockState.onAdd = () => undefined;
     mockState.onCreate = () => undefined;
+    mockState.onRemove = () => undefined;
     mockState.failRemainder = false;
     mockState.collabEnded = false;
     mockAppointmentUpdateMany.mockResolvedValue({ count: 1 });
@@ -565,5 +570,30 @@ describe("event chat and call membership follows seats holding access", () => {
 
     expect(mockState.adds).toEqual([]);
     expect(mockChat).not.toContain("stays");
+  });
+
+  it("a leave's revoker that a rejoin overtakes mid-removal gives the rejoined learner chat and the call back", async () => {
+    const seats = [
+      ...seatsWith(pay()),
+      seat(
+        "rejoiner",
+        "CANCELLED",
+        pay({ amountPaise: 0, isMockPayment: true }),
+      ),
+    ];
+    arrange("WEBINAR", seats);
+    // The rejoin commits and its grant lands while the leave's chat removal is in flight.
+    mockState.onRemove = (ids) => {
+      if (!ids.includes("rejoiner")) return;
+      const row = seats.find((s) => s.userId === "rejoiner");
+      if (row) row.status = "CONFIRMED";
+      mockChat.add("rejoiner");
+      mockCall.add("rejoiner");
+    };
+
+    await revokeEndedSeatAccess("appt-1", ["rejoiner"], new Date());
+
+    expect(mockChat).toContain("rejoiner");
+    expect(mockCall).toContain("rejoiner");
   });
 });

@@ -747,7 +747,56 @@ async function driveSeatRevocation(
   await removeFromEventChannel(ctx, revoked, chatDeadlineMs, pending);
   await removeFromSeatDms(ctx, revoked, chatDeadlineMs, pending);
   await removeFromAppointmentCalls(appointmentId, revoked, deadlineMs, pending);
+  await restoreReadmittedSeats(appointmentId, ctx, revoked, pending);
   return pending.byUser;
+}
+
+/**
+ * Re-checks the users just removed and grants back anyone a rejoin re-admitted
+ * while the removal was in flight, since that rejoin's grant may have landed first.
+ */
+async function restoreReadmittedSeats(
+  appointmentId: string,
+  ctx: SeatContext,
+  revoked: string[],
+  pending: PendingRevocations,
+): Promise<void> {
+  // Null when the re-check could not be read: the sync below re-reads the seats itself.
+  let readmitted: string[] | null;
+  try {
+    const admitted = await admittedSeatHolders(appointmentId, ctx, revoked);
+    readmitted = revoked.filter((id) => admitted.has(id));
+  } catch (error) {
+    readmitted = null;
+    captureThrottled("stream.seat.readmitCheck", error, {
+      subsystem: "stream",
+      op: "seat.readmitCheck",
+      extra: { appointmentId, users: revoked.length },
+    });
+  }
+  if (readmitted?.length === 0) return;
+  try {
+    // Lazy: ensure-channels imports this module.
+    const { ensureChannelsForAppointment } =
+      await import("@/lib/payments/webhooks/ensure-channels");
+    const synced = await ensureChannelsForAppointment(
+      appointmentId,
+      readmitted ?? revoked,
+    );
+    if (readmitted && !synced.ensured) {
+      throw new Error(`regrant not ensured: ${synced.reason}`);
+    }
+  } catch (error) {
+    // The learner's next chat open or call join grants again through its own gate.
+    captureThrottled("stream.seat.regrant", error, {
+      subsystem: "stream",
+      op: "seat.regrant",
+      extra: { appointmentId, users: revoked.length },
+    });
+    return;
+  }
+  // A re-admitted user is owed no removal, so their intent settles.
+  for (const id of readmitted ?? []) pending.byUser.delete(id);
 }
 
 const intentNotBefore = () => new Date(Date.now() + INTENT_SWEEP_GRACE_MS);
