@@ -20,12 +20,14 @@ import {
   AvailabilitySaveConfirm,
   outsideHoursLinks,
 } from "../../app/dashboard/consultant/[consultantId]/(features)/settings/AvailabilitySaveConfirm";
-import type { AvailabilitySavePreview } from "../../app/dashboard/consultant/[consultantId]/(features)/settings/use-consultant-settings-form";
+import type { AvailabilitySavePreview } from "@/schemas/availability-preview";
 
 const session = (id: string) => ({
   appointmentId: id,
   startsAt: "2099-12-10T06:00:00.000Z",
   held: false,
+  planTitle: "Career chat",
+  learnerName: "Priya Nair" as string | null,
 });
 
 /** The settings form's half: it keeps the preview and marks it saved. */
@@ -151,6 +153,28 @@ describe("AvailabilitySaveConfirm", () => {
       "Reschedule",
       "Cancel booking",
     ]);
+  });
+
+  it("names each booking's learner and plan, and only the plan for a group event", () => {
+    render(
+      <Harness
+        preview={{
+          sessions: [
+            session("a-1"),
+            {
+              ...session("a-2"),
+              planTitle: "System Design Cohort",
+              learnerName: null,
+            },
+          ],
+          customDatesRemoved: 0,
+        }}
+        save={async () => undefined}
+      />,
+    );
+    const rows = screen.getAllByRole("listitem").map((li) => li.textContent);
+    expect(rows[0]).toMatch(/ · Priya Nair · Career chat$/);
+    expect(rows[1]).toMatch(/^[^·]+ · System Design Cohort$/);
   });
 
   it("links to the expert's existing reschedule and booking pages", () => {
