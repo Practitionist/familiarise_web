@@ -17,13 +17,13 @@ How a case is created is in [intake and flows](01-intake-and-flows.md). What the
 
 A case is OPEN, IN_PROGRESS, ESCALATED, RESOLVED or CLOSED. `CASE_TRANSITIONS` in `lib/support/case-transitions.ts` lists every move a writer may make and who may make it. A pair missing from the table is refused. A move marked "undecided only" is refused once the case has a decision in force.
 
-| From \ To   | OPEN                                      | IN_PROGRESS                      | ESCALATED                 | RESOLVED                | CLOSED        |
-| ----------- | ----------------------------------------- | -------------------------------- | ------------------------- | ----------------------- | ------------- |
-| OPEN        | —                                         | customer, staff                  | customer                  | customer, staff, system | staff         |
-| IN_PROGRESS | customer, staff                           | —                                | customer                  | customer, staff, system | staff         |
-| ESCALATED   | removal                                   | staff                            | —                         | staff, system           | staff         |
-| RESOLVED    | customer, staff (undecided only); removal | customer, staff (undecided only) | customer (undecided only) | —                       | staff, system |
-| CLOSED      | staff (undecided only)                    | staff (undecided only)           | not allowed               | not allowed             | —             |
+| From \ To   | OPEN                             | IN_PROGRESS                      | ESCALATED                 | RESOLVED                | CLOSED        |
+| ----------- | -------------------------------- | -------------------------------- | ------------------------- | ----------------------- | ------------- |
+| OPEN        | —                                | customer, staff                  | customer                  | customer, staff, system | staff         |
+| IN_PROGRESS | customer, staff                  | —                                | customer                  | customer, staff, system | staff         |
+| ESCALATED   | not allowed                      | staff                            | —                         | staff, system           | staff         |
+| RESOLVED    | customer, staff (undecided only) | customer, staff (undecided only) | customer (undecided only) | —                       | staff, system |
+| CLOSED      | staff (undecided only)           | staff (undecided only)           | not allowed               | not allowed             | —             |
 
 ```mermaid
 stateDiagram-v2
@@ -36,8 +36,7 @@ stateDiagram-v2
     OPEN --> RESOLVED
     IN_PROGRESS --> RESOLVED
     ESCALATED --> RESOLVED: staff, or DECIDE
-    RESOLVED --> OPEN: reopen (undecided only), or a new conduct removal
-    ESCALATED --> OPEN: a new conduct removal
+    RESOLVED --> OPEN: reopen (undecided only)
     RESOLVED --> IN_PROGRESS: reopen (undecided only)
     RESOLVED --> ESCALATED: customer hand-off (undecided only)
     RESOLVED --> CLOSED: staff, or sweep after 28 days
@@ -53,10 +52,9 @@ stateDiagram-v2
 Who calls the table, and as which actor:
 
 - the customer's intake hand-off (`appendOpenScopeTurn()` in `lib/support/case-service.ts`), the customer reopen check (`reopenRefusalTx()`), guided turns and the guided escalation (`lib/support/service.ts`) pass CUSTOMER;
-- a staff status change through PATCH (`patchTransitionRefusalTx()`) passes STAFF;
-- a second conduct removal joining its learner's unclosed removal case (`openOrJoinConductRemovalCaseTx()` in `lib/support/conduct-removal-case.ts`) passes REMOVAL, and nothing else does. That actor may move a RESOLVED or ESCALATED removal case back to OPEN even when it has a decision (`decidedActors` on the RESOLVED → OPEN rule), because a new removal reopens the review, not the verdict; the decision stays in force. The writer checks the case's category is `CONDUCT_REMOVAL` and moves it by compare-and-set on the prior status, the category and `closedAt IS NULL`. The customer and staff rules are unchanged: a decided case still refuses their reopen with `CASE_DECIDED`.
+- a staff status change through PATCH (`patchTransitionRefusalTx()`) passes STAFF.
 
-No caller passes SYSTEM today. The two system writers, the sweep's 28-day auto-close and the problem cascade, write their own guarded updates (see [the SLA sweep](07-sla-sweep.md)). The SYSTEM entries document what they are allowed to do.
+One caller passes SYSTEM: a second conduct removal that finds its learner's decided, unclosed removal case closes it (RESOLVED → CLOSED) by compare-and-set before a fresh case opens for the new removal (`openOrJoinConductRemovalCaseTx` in `lib/support/conduct-removal-case.ts`; [conduct removal](../decisions/2026-11-15-conduct-removal.md), decision 9). The other two system writers, the sweep's 28-day auto-close and the problem cascade, write their own guarded updates (see [the SLA sweep](07-sla-sweep.md)); the auto-close and the removal close release the case's holds and chat grants through `releaseSystemClosedCaseTx` (`lib/support/system-case-close.ts`).
 
 ## Invariants
 
