@@ -97,7 +97,7 @@ export function AccruedUsagePanel({
         including those not yet due. Nothing here can be edited; a correction
         shows up as a new entry later.
       </p>
-      <StatRow columns={3}>
+      <StatRow columns={3} stackOnPhone>
         <Stat
           label="Unpaid balance"
           value={formatCurrencyAmount(receivables.outstandingPaise, "INR")}

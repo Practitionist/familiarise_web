@@ -91,7 +91,7 @@ const countOf = (n: number, noun: string) =>
 function SummaryStats({ summary }: Readonly<{ summary: BillingSummary }>) {
   const fundingSource = summary.fundingSource;
   return (
-    <StatRow columns={4}>
+    <StatRow columns={4} stackOnPhone>
       <Stat
         label="Spent (net of refunds)"
         value={formatCurrencyAmount(summary.monthToDate.net, "INR")}
@@ -332,7 +332,7 @@ export function InvoicesPanel({
   let summaryBlock: React.ReactNode;
   if (summary.isPending) {
     summaryBlock = (
-      <StatRow columns={4}>
+      <StatRow columns={4} stackOnPhone>
         <StatSkeleton />
         <StatSkeleton />
         <StatSkeleton />
