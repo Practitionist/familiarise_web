@@ -41,10 +41,12 @@ import {
 
 import type { ClassEvent, WebinarEvent } from "@/types/planner-events";
 import type { SeatTrailStep } from "@/lib/booking/seat-history";
-import { seatTrailLine } from "@/lib/booking/seat-trail-copy";
+import {
+  seatTrailText,
+  type SeatTrailText,
+} from "@/lib/booking/seat-trail-copy";
 import { allowBackRequest } from "@/lib/events/seat-lift-request";
 import { useViewerZone } from "@/lib/time/use-viewer-zone";
-import { formatInViewerZone } from "@/lib/time/viewer-zone";
 import { SeatLiftResponseSchema } from "@/schemas/seat-removal-lift";
 
 /** URL segment → API path segment and the noun used in the count line. */
@@ -230,21 +232,22 @@ const allowBack = async ({
   return SeatLiftResponseSchema.parse(await response.json());
 };
 
-/** An attendee's name with their seat's trail ("Left 12 Nov · rejoined 13 Nov") under it. */
+/** An attendee's name with their seat's trail ("Left 12 Nov · rejoined 13 Nov (IST)") under it. */
 function NameWithTrail({
   name,
   trail,
-}: Readonly<{ name?: string; trail: string }>) {
+}: Readonly<{ name?: string; trail: SeatTrailText }>) {
   return (
     <span className="flex flex-col">
       <span>{name}</span>
-      {trail && <span className="text-xs text-muted-foreground">{trail}</span>}
+      {trail.line && (
+        <span className="text-xs text-muted-foreground" title={trail.full}>
+          {trail.line}
+        </span>
+      )}
     </span>
   );
 }
-
-/** The day each step happened, in the reader's own zone. */
-const TRAIL_DAY = "d MMM";
 
 export default function EventParticipantsPage() {
   const params = useParams();
@@ -255,10 +258,9 @@ export default function EventParticipantsPage() {
     useState<RegisteredParticipant | null>(null);
 
   const viewerZone = useViewerZone();
+  // The same words and the same compaction as the learner's own trail, in the reader's zone.
   const trailOf = (steps: SeatTrailStep[] | undefined) =>
-    seatTrailLine(steps ?? [], (iso) =>
-      formatInViewerZone(iso, viewerZone.zone, TRAIL_DAY),
-    );
+    seatTrailText(steps ?? [], viewerZone.zone);
 
   const eventType = params.eventType as string;
   const eventId = params.eventId as string;

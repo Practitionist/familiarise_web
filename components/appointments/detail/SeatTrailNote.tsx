@@ -2,14 +2,11 @@
 
 import { useQuery } from "@tanstack/react-query";
 
-import { seatTrailLine } from "@/lib/booking/seat-trail-copy";
+import { seatTrailText } from "@/lib/booking/seat-trail-copy";
 import { useViewerZone } from "@/lib/time/use-viewer-zone";
-import { formatInViewerZone } from "@/lib/time/viewer-zone";
 import { fetchSeatTrail } from "@/lib/booking/seat-trail-fetch";
 
-const TRAIL_DAY = "d MMM";
-
-/** The learner's own seat history on an event ("Left 12 Nov · rejoined 13 Nov"); nothing for a plain registration. */
+/** The learner's own seat history on an event ("Left 12 Nov · rejoined 13 Nov (IST)"); nothing for a plain registration. */
 export function SeatTrailNote({
   appointmentId,
 }: Readonly<{ appointmentId: string }>) {
@@ -19,9 +16,14 @@ export function SeatTrailNote({
     queryFn: () => fetchSeatTrail(appointmentId),
     staleTime: 60_000,
   });
-  const line = seatTrailLine(trail.data?.steps ?? [], (iso) =>
-    formatInViewerZone(iso, viewerZone.zone, TRAIL_DAY),
+  const { line, full } = seatTrailText(
+    trail.data?.steps ?? [],
+    viewerZone.zone,
   );
   if (!line) return null;
-  return <p className="text-xs text-muted-foreground">Your seat: {line}</p>;
+  return (
+    <p className="text-xs text-muted-foreground" title={full}>
+      Your seat: {line}
+    </p>
+  );
 }
