@@ -135,6 +135,24 @@ describe("AvailabilitySaveConfirm", () => {
     ).toBeTruthy();
   });
 
+  it("dismisses with Keep editing, and names the booking a row's cancel link cancels", async () => {
+    render(
+      <Harness
+        preview={{ sessions: [session("a-1")], customDatesRemoved: 0 }}
+        save={async () => undefined}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Keep editing" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save anyway" }));
+    });
+    expect(links().map((l) => l.textContent)).toEqual([
+      "Reschedule",
+      "Cancel booking",
+    ]);
+  });
+
   it("links to the expert's existing reschedule and booking pages", () => {
     const { reschedule, cancel } = outsideHoursLinks("cp-1", "a-1");
     const page = (href: string) =>
