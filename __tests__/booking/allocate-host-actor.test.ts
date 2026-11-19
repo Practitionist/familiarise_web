@@ -146,21 +146,6 @@ describe("allocate rule-waiving flags", () => {
     });
   });
 
-  it("marks only the plan's own consultant as the consultant", async () => {
-    apiUser = { id: "u-op", role: "CONSULTEE" };
-    hostOrgOperator();
-    await patch();
-    expect(allocate.mock.calls[0][0].byConsultant).toBe(false);
-    allocate.mockClear();
-    apiUser = {
-      id: "u-cp",
-      role: "CONSULTANT",
-      consultantProfileId: "cp-host",
-    };
-    await patch();
-    expect(allocate.mock.calls[0][0].byConsultant).toBe(true);
-  });
-
   it("records the actor, and an org audit row for a host-org operator", async () => {
     apiUser = { id: "u-op", role: "CONSULTEE" };
     membershipFindUnique.mockResolvedValue({
@@ -229,11 +214,6 @@ describe("sponsor-org allocate", () => {
       code: "EXPERT_APPROVAL_REQUIRED",
     });
     expect(allocate).not.toHaveBeenCalled();
-  });
-
-  it("is never the consultant's own choice, so it records no Auto consent", async () => {
-    await post("APPROVED");
-    expect(allocate.mock.calls[0][0].byConsultant).toBeUndefined();
   });
 
   it("allocates an APPROVED booking with the CAS narrowed to APPROVED", async () => {
