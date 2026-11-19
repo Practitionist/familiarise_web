@@ -10,7 +10,19 @@
 
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 
-const mockTx = { tag: "completing-tx" };
+const mockClassFindUnique = jest.fn();
+const mockOccurrenceFindMany = jest.fn();
+const mockTx = {
+  tag: "completing-tx",
+  class: { findUnique: (...a: unknown[]) => mockClassFindUnique(...a) },
+  appointmentOccurrence: {
+    findMany: (...a: unknown[]) => mockOccurrenceFindMany(...a),
+  },
+};
+const PERIOD_OVER = new Date("2020-01-01T00:00:00.000Z");
+const PERIOD_AHEAD = new Date("2999-01-01T00:00:00.000Z");
+const ordinals = (n: number) =>
+  Array.from({ length: n }, (_, i) => ({ ordinal: i + 1 }));
 const mockTransitionClassEvent = jest.fn();
 const mockStamp = jest.fn();
 const mockTransaction = jest.fn(
@@ -70,6 +82,11 @@ beforeEach(() => {
   mockTransitionClassEvent.mockReset();
   mockStamp.mockReset();
   mockTransaction.mockClear();
+  mockClassFindUnique.mockReset().mockResolvedValue({
+    schedulingPeriodEndsAt: PERIOD_OVER,
+    classPlan: { totalSessions: 96 },
+  });
+  mockOccurrenceFindMany.mockReset().mockResolvedValue(ordinals(8));
 });
 
 it("stamps the class-end refunds on the completing transaction, after the CAS", async () => {
@@ -127,4 +144,66 @@ it("leaves the class open when a seat's payment owes another door's refund", asy
   expect(result.errors).toEqual([
     expect.stringContaining("Failed to complete class cls-1"),
   ]);
+});
+
+describe("a class between batches", () => {
+  beforeEach(() => {
+    mockTransitionClassEvent.mockResolvedValue(undefined);
+    mockStamp.mockResolvedValue({ owed: 0, owedPaise: 0, escalated: 0 });
+  });
+
+  it("stays open with 8 of 96 sessions placed and its period still running", async () => {
+    mockClassFindUnique.mockResolvedValue({
+      schedulingPeriodEndsAt: PERIOD_AHEAD,
+      classPlan: { totalSessions: 96 },
+    });
+
+    const result = await autoCompleteAppointments();
+
+    expect(mockStamp).not.toHaveBeenCalled();
+    expect(result.classesCompleted).toBe(0);
+    expect(result.errors).toEqual([]);
+  });
+
+  it("completes once its period has ended, and refunds what was never placed", async () => {
+    const result = await autoCompleteAppointments();
+
+    expect(mockStamp).toHaveBeenCalledWith(mockTx, "cls-1");
+    expect(result.classesCompleted).toBe(1);
+  });
+
+  it("completes before its period ends once every sold session is placed", async () => {
+    mockClassFindUnique.mockResolvedValue({
+      schedulingPeriodEndsAt: PERIOD_AHEAD,
+      classPlan: { totalSessions: 8 },
+    });
+
+    const result = await autoCompleteAppointments();
+
+    expect(result.classesCompleted).toBe(1);
+  });
+
+  it("counts sessions by ordinal, with a host-cancelled session answered for", async () => {
+    mockClassFindUnique.mockResolvedValue({
+      schedulingPeriodEndsAt: PERIOD_AHEAD,
+      classPlan: { totalSessions: 8 },
+    });
+
+    await autoCompleteAppointments();
+
+    expect(mockOccurrenceFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        distinct: ["ordinal"],
+        where: expect.objectContaining({
+          isTentative: false,
+          deletedAt: null,
+          appointment: { classId: "cls-1", deletedAt: null },
+          OR: [
+            { completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] } },
+            { hostCancelledAt: { not: null } },
+          ],
+        }),
+      }),
+    );
+  });
 });

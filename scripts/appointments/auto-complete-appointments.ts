@@ -80,6 +80,10 @@ import { recomputeMenteesHelped } from "@/lib/profiles/mentees-helped";
 import { stampTrialEarningsHold } from "@/lib/trials/earnings-hold";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import {
+  ClassBetweenBatchesError,
+  classIsFinished,
+} from "@/lib/booking/class-completion";
+import {
   stampClassEndRefundsOwed,
   type ClassEndSettlement,
 } from "@/lib/payments/operations/event-refunds";
@@ -141,6 +145,8 @@ function completableWebinarWhere(settled: SettledAnd) {
   } satisfies Prisma.WebinarWhereInput;
 }
 
+// Every placed session has ended. A class between batches matches too; the
+// completing transaction decides whether it is finished (classIsFinished).
 function completableClassWhere(settled: SettledAnd) {
   return {
     status: ClassStatus.SCHEDULED,
@@ -455,34 +461,48 @@ async function completeClasses(
       const latestEnd: Date | null =
         cls.appointment?.occurrences[0]?.endsAt ?? null;
 
+      // CAS first, so it holds the class row while the finished check reads:
+      // a session placed meanwhile is either seen here or refused by the CAS
+      // it meets. The completing commit also stamps each seat's refund for
+      // sessions sold but never placed.
+      let betweenBatches = false;
+      const moved = await completeThroughHelper(async () => {
+        try {
+          const settlement = await prisma.$transaction(
+            async (tx) => {
+              await transitionClassEvent(tx, {
+                where: { id: cls.id },
+                to: ClassStatus.COMPLETED,
+                fromIn: EVENT_ALLOWED_FROM.COMPLETED,
+                reason: AUTO_COMPLETE_REASON,
+              });
+              if (!(await classIsFinished(tx, cls.id, new Date()))) {
+                throw new ClassBetweenBatchesError(cls.id);
+              }
+              return stampClassEndRefundsOwed(tx, cls.id);
+            },
+            { timeout: CLASS_END_TX_TIMEOUT_MS },
+          );
+          addSettlement(classEnd, settlement);
+        } catch (error) {
+          if (!(error instanceof ClassBetweenBatchesError)) throw error;
+          betweenBatches = true;
+        }
+      });
+      if (betweenBatches) continue;
+      if (!moved) {
+        console.log(
+          `\n⏭️ Class ${cls.id} skipped: status changed since the sweep read`,
+        );
+        continue;
+      }
+
       console.log(`\nCompleting class ${cls.id}`);
       console.log(`   Title: ${cls.classPlan.title}`);
       console.log(`   Previous status: ${cls.status}`);
       console.log(
         `   Last slot ended: ${latestEnd?.toISOString() || "Unknown"}`,
       );
-
-      // CAS: same reasoning as the webinar arm above. The completing
-      // commit also stamps each seat's refund for sessions sold but never placed.
-      const moved = await completeThroughHelper(async () => {
-        const settlement = await prisma.$transaction(
-          async (tx) => {
-            await transitionClassEvent(tx, {
-              where: { id: cls.id },
-              to: ClassStatus.COMPLETED,
-              fromIn: EVENT_ALLOWED_FROM.COMPLETED,
-              reason: AUTO_COMPLETE_REASON,
-            });
-            return stampClassEndRefundsOwed(tx, cls.id);
-          },
-          { timeout: CLASS_END_TX_TIMEOUT_MS },
-        );
-        addSettlement(classEnd, settlement);
-      });
-      if (!moved) {
-        console.log(`   ⏭️ Skipped — status changed since the sweep read`);
-        continue;
-      }
 
       console.log(`   ✅ Marked as COMPLETED`);
       completed++;
