@@ -357,7 +357,12 @@ compare-and-set (staff on `removedByUserId: { not: null }`, the organiser on
 lands after a lift change nothing. A leave's Stream removal is driven only by
 its durable revoker, which re-reads the seats after its vendor calls and
 re-syncs anyone a rejoin re-admitted meanwhile, inside its budget; deferred
-work leaves the intent owed for the sweep's re-drive to re-grant. Every event
+work leaves the intent owed for the sweep's re-drive to re-grant. A removal the
+drive could not confirm (it timed out or failed) may still land after that
+re-grant, so its user's intent stays owed through it, and a removal that lands
+after its budget (`withinBudget`'s `onLate`) re-reads the join gate and re-arms
+the intent of anyone it admits (`rearmReadmittedSeats`), the seat twin of the
+conduct block's `repairIfStale`. Every event
 seat move writes its SEAT history row on the same `tx` as the move
 (`lib/booking/seat-history.ts`); a caller whose CAS pins one from-status skips
 the pre-read.

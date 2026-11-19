@@ -379,6 +379,18 @@ the commit (`notifyFreeSeatRegistered`), keyed on the join's own SEAT row
 before its EXPIRED, FAILED or PENDING row is looked at, so a removal outlasts
 its lapsed checkout, and the rejoin gate reads the event price under the lock.
 
+**A conduct removal refunds only the order it ended.** The re-mint keeps the
+`Payment` id, so a removal case never trusts the seat's current order. When the
+learner's seat has a `registered` or `rejoined` SEAT row after the case's latest
+removal, the checkout behind that row re-minted the order in the same commit, and
+the order the removal ended is the tombstone, whose own late capture is
+auto-refunded. The case's 72-hour lapse (`stampRemovalRefundTx`) and its
+refund-first overturn gate (`removalRefundOutstandingTx`, both in
+`lib/support/conduct-removal-case.ts`) then owe nothing on the current order,
+which the fresh case for the next removal reviews. With no such row the current
+order is still the removed one, so an order unpaid at the removal that captures
+later is refunded by the lapse as before.
+
 ## 10. A refund owed is never lost, and the quote is bound to the click
 
 Every door that ends a booking and then refunds (the cancel route, trial
