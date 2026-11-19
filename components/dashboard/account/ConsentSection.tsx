@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { Download } from "lucide-react";
+import { z } from "zod";
 import {
   useMutation,
   useQueries,
@@ -23,10 +24,16 @@ import {
   type PurposeCode,
 } from "@/lib/compliance/purpose-codes";
 
-interface OrgMembership {
-  organizationId: string;
-  orgName: string;
-}
+const OrgMembershipsSchema = z.object({
+  data: z.array(
+    z.object({
+      organizationId: z.string(),
+      orgName: z.string(),
+      orgStatus: z.string(),
+    }),
+  ),
+});
+type OrgMembership = z.infer<typeof OrgMembershipsSchema>["data"][number];
 
 interface Artifact {
   purposeCodes: string[];
@@ -132,11 +139,15 @@ export function ConsentSection() {
     queryFn: async () => {
       const res = await fetch("/api/user/org-memberships");
       if (!res.ok) throw new Error("Couldn't load your organisations");
-      return ((await res.json()) as { data: OrgMembership[] }).data;
+      return OrgMembershipsSchema.parse(await res.json()).data;
     },
     enabled: !!userId,
   });
-  const orgs = memberships.data ?? [];
+  // Only an active organisation can be given consent; the rest get one quiet line.
+  const orgs = (memberships.data ?? []).filter((m) => m.orgStatus === "ACTIVE");
+  const inactiveOrgNames = (memberships.data ?? [])
+    .filter((m) => m.orgStatus !== "ACTIVE")
+    .map((m) => m.orgName);
 
   const consents = useQueries({
     queries: orgs.map((org) => ({
@@ -326,6 +337,13 @@ export function ConsentSection() {
         {memberships.isError && (
           <p className="text-sm text-muted-foreground">
             We couldn&apos;t load your organisations. Refresh to try again.
+          </p>
+        )}
+        {inactiveOrgNames.length > 0 && (
+          <p className="text-xs text-muted-foreground">
+            {inactiveOrgNames.join(", ")}{" "}
+            {inactiveOrgNames.length === 1 ? "is" : "are"} not active, so there
+            is no consent to give or withdraw there.
           </p>
         )}
         {orgs.map((org, i) => {
