@@ -10,8 +10,9 @@ import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { scheduleAfter } from "@/lib/api/after-safe";
 import {
   holdSeatEarningsTx,
-  openConductRemovalCaseTx,
+  openOrJoinConductRemovalCaseTx,
 } from "@/lib/support/conduct-removal-case";
+import { isUniqueViolation } from "@/lib/db/pg-errors";
 import {
   persistConductBlockInTx,
   persistSeatRevocationInTx,
@@ -45,6 +46,15 @@ export function removalNote(
 ): string {
   const why = note ? `${reasonLabel} (${note})` : reasonLabel;
   return `Reason: ${why}. Support case ${caseReference} decides within ${CONDUCT_REMOVAL_REVIEW_HOURS} hours; reply there with your side.`;
+}
+
+/** A unique key a concurrent write took first: a typed 409 the organiser can retry, never a 500. */
+function removalConflict(): BookingRuleError {
+  return new BookingRuleError(
+    "REMOVAL_CONFLICT",
+    "This attendee's removal changed while you were saving it. Reload the attendee list and try again.",
+    409,
+  );
 }
 
 interface ConductRemovalInput {
@@ -127,7 +137,7 @@ export async function removeAttendeeForConduct(
             input.appointmentId,
             input.targetUserId,
           );
-          const supportCase = await openConductRemovalCaseTx(
+          const supportCase = await openOrJoinConductRemovalCaseTx(
             tx,
             {
               appointmentId: input.appointmentId,
@@ -165,7 +175,9 @@ export async function removeAttendeeForConduct(
         },
       );
     }),
-  );
+  ).catch((error: unknown) => {
+    throw isUniqueViolation(error) ? removalConflict() : error;
+  });
   if (!done) return null;
 
   await scheduleAfter(

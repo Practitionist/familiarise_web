@@ -60,6 +60,7 @@ export type BookingRuleCode =
   | "EVENT_WAITLIST_CAP"
   | "REMOVAL_NOT_ALLOWED"
   | "REMOVAL_ALREADY_LIFTED"
+  | "REMOVAL_CONFLICT"
   | "LIFT_NOT_ALLOWED";
 
 export class BookingRuleError extends Error {

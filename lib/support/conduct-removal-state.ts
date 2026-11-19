@@ -13,6 +13,24 @@ export const conductRemovalRefundKey = (caseId: string) =>
 /** A decision no later decision supersedes. */
 const IN_FORCE = { supersededBy: { is: null } } as const;
 
+const HOUR_MS = 3_600_000;
+
+/**
+ * When the case's current review began: its latest removal. A removal that joins
+ * an unclosed case restarts its deadline, so the deadline less the review window is that removal.
+ */
+export function removalReviewStart(supportCase: {
+  createdAt: Date;
+  statutoryDueAt: Date | null;
+}): Date {
+  return supportCase.statutoryDueAt
+    ? new Date(
+        supportCase.statutoryDueAt.getTime() -
+          CONDUCT_REMOVAL_REVIEW_HOURS * HOUR_MS,
+      )
+    : supportCase.createdAt;
+}
+
 /**
  * The conduct removal case a decided case reviews: the case itself, or the
  * removal case whose decision it appeals. Null for any other case.
@@ -38,17 +56,19 @@ export async function reviewedRemovalCaseId(
 }
 
 /**
- * True once the removal is overturned: the decision in force on the removal
- * case, or on an appeal of it, is OVERTURNED.
+ * True once the latest removal is overturned: an OVERTURNED decision in force on
+ * the removal case, or on an appeal of it, made after that removal.
  */
 async function removalOverturned(
   db: PrismaLike,
   removalCaseId: string,
+  since: Date,
 ): Promise<boolean> {
   const overturned = await db.supportCaseDecision.findFirst({
     where: {
       ...IN_FORCE,
       outcome: "OVERTURNED",
+      createdAt: { gte: since },
       OR: [
         { caseId: removalCaseId },
         { supportCase: { appealOfDecision: { caseId: removalCaseId } } },
@@ -60,9 +80,8 @@ async function removalOverturned(
 }
 
 /**
- * Whether the user's latest conduct removal from the appointment still stands:
- * support has not overturned it and no lift has followed it. The seat's mark is
- * not required, so a removal from before the mark existed still stands.
+ * Whether the user's latest conduct removal from the appointment still stands: no
+ * overturn and no lift since it. The mark is not required, so a pre-mark removal still stands.
  */
 export async function conductRemovalStands(
   appointmentId: string,
@@ -77,21 +96,23 @@ export async function conductRemovalStands(
       deletedAt: null,
     },
     orderBy: { createdAt: "desc" },
-    select: { id: true, createdAt: true },
+    select: { id: true, createdAt: true, statutoryDueAt: true },
   });
-  if (!removal || (await removalOverturned(db, removal.id))) return false;
+  if (!removal) return false;
+  const removedAt = removalReviewStart(removal);
+  if (await removalOverturned(db, removal.id, removedAt)) return false;
   const seat = await db.appointmentParticipant.findUnique({
     where: { appointmentId_userId: { appointmentId, userId } },
     select: { id: true },
   });
   if (!seat) return true;
-  // A lift after the removal ends it for good; a later plain removal marks the seat anew.
+  // A lift after the latest removal ends it; a later plain removal marks the seat anew.
   const lifted = await db.bookingStatusHistory.findFirst({
     where: {
       entity: "SEAT",
       entityId: seat.id,
       reason: "block_lifted",
-      createdAt: { gte: removal.createdAt },
+      createdAt: { gt: removedAt },
     },
     select: { id: true },
   });

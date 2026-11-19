@@ -245,7 +245,10 @@ async function review(
 const pastDeadline = (caseId: string) =>
   prisma.supportCase.update({
     where: { id: caseId },
-    data: { createdAt: new Date(Date.now() - 73 * HOUR_MS) },
+    data: {
+      createdAt: new Date(Date.now() - 73 * HOUR_MS),
+      statutoryDueAt: new Date(Date.now() - HOUR_MS),
+    },
   });
 
 const intents = (appointmentId: string, userId: string) =>
@@ -705,6 +708,100 @@ describe("rejoining after a conduct removal", () => {
     ).toEqual({ status: "CONFIRMED", removedByUserId: null });
   });
 
+  it("a second conduct removal while the first case is unclosed joins it, restarts its review and keeps its decisions", async () => {
+    const { webinar, userId, caseId, rejoin } = await removedFreeSeat();
+    const upheld = await decide(caseId, await actor("STAFF"), "UPHELD");
+    await liftAsStaff(webinar, userId);
+    await expect(rejoin()).resolves.toMatchObject({ success: true });
+    const before = await prisma.supportCase.findUniqueOrThrow({
+      where: { id: caseId },
+      select: { statutoryDueAt: true, messageSeq: true },
+    });
+
+    const again = await remove(webinar, userId);
+
+    expect(again).toMatchObject({ caseId });
+    const seat = await prisma.appointmentParticipant.findFirstOrThrow({
+      where: { appointmentId: webinar.appointmentId, userId },
+      select: { id: true, status: true, removedByUserId: true },
+    });
+    expect(seat).toMatchObject({
+      status: "CANCELLED",
+      removedByUserId: webinar.host.userId,
+    });
+    expect(
+      await prisma.supportCase.count({
+        where: {
+          appointmentId: webinar.appointmentId,
+          requesterUserId: userId,
+        },
+      }),
+    ).toBe(1);
+    const joined = await prisma.supportCase.findUniqueOrThrow({
+      where: { id: caseId },
+      select: {
+        statutoryDueAt: true,
+        messageSeq: true,
+        events: {
+          where: { kind: "REOPENED" },
+          select: { actorId: true, note: true },
+        },
+      },
+    });
+    expect(joined.statutoryDueAt!.getTime()).toBeGreaterThan(
+      before.statutoryDueAt!.getTime(),
+    );
+    expect(joined.statutoryDueAt!.getTime()).toBeGreaterThan(
+      Date.now() + 71 * HOUR_MS,
+    );
+    expect(joined.messageSeq).toBe(before.messageSeq + 1);
+    expect(joined.events).toEqual([
+      {
+        actorId: webinar.host.userId,
+        note: expect.stringMatching(/removed .* again/i),
+      },
+    ]);
+    // The upheld finding is untouched: joining records the removal, not a verdict.
+    expect(
+      await prisma.supportCaseDecision.findMany({
+        where: { caseId },
+        select: { id: true, supersededBy: { select: { id: true } } },
+      }),
+    ).toEqual([{ id: rowId(upheld), supersededBy: null }]);
+    // A lift followed the first removal, not this one, so the new removal stands.
+    expect(await conductRemovalStands(webinar.appointmentId, userId)).toBe(
+      true,
+    );
+    await expect(rejoin()).rejects.toMatchObject({
+      code: "SEAT_REBUY_UNSUPPORTED",
+    });
+  });
+
+  it("a joined removal is reviewed from the second removal: an overturn before it does not end it, and its lapse waits 72 hours from it", async () => {
+    const { webinar, userId, caseId, rejoin } = await removedFreeSeat();
+    await decide(caseId, await actor("STAFF"), "OVERTURNED");
+    await expect(rejoin()).resolves.toMatchObject({ success: true });
+    // The first removal is long past its own deadline.
+    await prisma.supportCase.update({
+      where: { id: caseId },
+      data: { createdAt: new Date(Date.now() - 100 * HOUR_MS) },
+    });
+
+    await remove(webinar, userId);
+
+    expect(await conductRemovalStands(webinar.appointmentId, userId)).toBe(
+      true,
+    );
+    const sweep = () =>
+      sweepConductRemovalDeadlines({ limit: 10, now: new Date(), errors: [] });
+    expect(await sweep()).toEqual({ lapsed: 0 });
+    await prisma.supportCase.update({
+      where: { id: caseId },
+      data: { statutoryDueAt: new Date(Date.now() - HOUR_MS) },
+    });
+    expect(await sweep()).toEqual({ lapsed: 1 });
+  });
+
   it("an overturn from the case panel lifts the mark too, so the rejoin succeeds", async () => {
     const { webinar, userId, caseId, rejoin } = await removedFreeSeat();
     await decide(caseId, await actor("STAFF"), "OVERTURNED");
@@ -861,7 +958,10 @@ describe("the 72-hour deadline", () => {
     const { caseId } = (await remove(webinar, userId))!;
     await prisma.supportCase.update({
       where: { id: caseId },
-      data: { createdAt: new Date(Date.now() - 71 * HOUR_MS) },
+      data: {
+        createdAt: new Date(Date.now() - 71 * HOUR_MS),
+        statutoryDueAt: new Date(Date.now() + HOUR_MS),
+      },
     });
     await decide(caseId, await actor("STAFF"), "UPHELD");
     await sweepConductRemovalDeadlines({

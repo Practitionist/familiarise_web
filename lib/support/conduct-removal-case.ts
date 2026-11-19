@@ -41,10 +41,10 @@ import { slaDeadlinesFor } from "./sla";
 import {
   CONDUCT_REMOVAL_REVIEW_HOURS,
   conductRemovalRefundKey,
+  removalReviewStart,
   reviewedRemovalCaseId,
 } from "./conduct-removal-state";
 
-const HOUR_MS = 3_600_000;
 const REMOVAL_CASE_TITLE = "Removed from a group session";
 
 interface OpenRemovalCaseInput {
@@ -142,6 +142,70 @@ export async function openConductRemovalCaseTx(
   // AGENT, not SYSTEM: the attendee must get the bell; SYSTEM notifies staff only.
   await stageSupportCaseIntakeTx(tx, created, "AGENT");
   return { id: created.id, referenceNumber: created.referenceNumber };
+}
+
+/**
+ * The learner's unclosed removal case on this event, if any: the open-case unique key
+ * (`support_case_open_scope_key`) allows one, so a second removal joins it.
+ */
+function unclosedRemovalCase(tx: Tx, input: OpenRemovalCaseInput) {
+  return tx.supportCase.findFirst({
+    where: {
+      ownershipScope: "PERSONAL",
+      organizationId: null,
+      scopeKey: `APPOINTMENT:${input.appointmentId}`,
+      requesterUserId: input.removedUserId,
+      submitterUserId: input.removedUserId,
+      category: CONDUCT_REMOVAL_CATEGORY,
+      closedAt: null,
+      deletedAt: null,
+    },
+    select: { id: true, referenceNumber: true },
+  });
+}
+
+/**
+ * Opens the removal's case, or joins the learner's unclosed one: the new removal is
+ * posted to the learner and logged with its remover, and the review restarts from it.
+ * Decisions already on the case stay as they are.
+ */
+export async function openOrJoinConductRemovalCaseTx(
+  tx: Tx,
+  input: OpenRemovalCaseInput,
+  now: Date,
+): Promise<{ id: string; referenceNumber: string }> {
+  const open = await unclosedRemovalCase(tx, input);
+  if (!open) return openConductRemovalCaseTx(tx, input, now);
+  const due = supportDeadline(CONDUCT_REMOVAL_CATEGORY, now);
+  const { messageSeq } = await tx.supportCase.update({
+    where: { id: open.id },
+    data: {
+      statutoryDueAt: due.statutoryDueAt,
+      messageSeq: { increment: 1 },
+      lastMessageAt: now,
+    },
+    select: { messageSeq: true },
+  });
+  await tx.supportCaseMessage.create({
+    data: {
+      caseId: open.id,
+      seq: messageSeq,
+      sender: "SYSTEM",
+      isInternal: false,
+      body: removalCaseBody(input),
+      createdAt: now,
+    },
+  });
+  await tx.supportCaseEvent.create({
+    data: {
+      caseId: open.id,
+      actorId: input.actorUserId,
+      kind: "REOPENED",
+      note: `The host removed the attendee for conduct again (${input.reasonLabel}); the ${CONDUCT_REMOVAL_REVIEW_HOURS}-hour review restarts from this removal.`,
+      createdAt: now,
+    },
+  });
+  return open;
 }
 
 /** Posts a line on the case the attendee and support both read. */
@@ -276,13 +340,19 @@ async function stampRemovalRefundTx(
 async function removalTargetTx(db: PrismaLike, removalCaseId: string) {
   const removal = await db.supportCase.findUniqueOrThrow({
     where: { id: removalCaseId },
-    select: { appointmentId: true, requesterUserId: true, createdAt: true },
+    select: {
+      appointmentId: true,
+      requesterUserId: true,
+      createdAt: true,
+      statutoryDueAt: true,
+    },
   });
   if (!removal.appointmentId) return null;
   return {
     appointmentId: removal.appointmentId,
     userId: removal.requesterUserId,
-    removedAt: removal.createdAt,
+    // The latest removal the case reviews, which a joined removal moved forward.
+    removedAt: removalReviewStart(removal),
   };
 }
 
@@ -503,8 +573,8 @@ async function settleConductRemovalRemedy(
 }
 
 /**
- * Removal cases past their 72-hour deadline with no lapse recorded and no decision made in time:
- * a decision after the deadline does not cancel the refund it owes.
+ * Removal cases whose current review is past its deadline with no lapse and no decision since its
+ * latest removal: a decision after the deadline does not cancel the refund it owes.
  */
 function lapsedCaseIds(
   db: PrismaLike,
@@ -512,20 +582,25 @@ function lapsedCaseIds(
   limit: number,
   onlyCaseId?: string,
 ) {
+  const window = Prisma.sql`${CONDUCT_REMOVAL_REVIEW_HOURS}::int * interval '1 hour'`;
+  // The deadline a joined removal restarted; the review began one window before it.
+  const due = Prisma.sql`COALESCE(c."statutoryDueAt", c."createdAt" + ${window})`;
   return db.$queryRaw<{ id: string }[]>`
     SELECT c.id FROM "SupportCase" c
     WHERE c.category = ${CONDUCT_REMOVAL_CATEGORY}
       ${onlyCaseId ? Prisma.sql`AND c.id = ${onlyCaseId}` : Prisma.empty}
       AND c."deletedAt" IS NULL
       AND c."appointmentId" IS NOT NULL
-      AND c."createdAt" <= ${new Date(now.getTime() - CONDUCT_REMOVAL_REVIEW_HOURS * HOUR_MS)}
+      AND ${due} <= ${now}
       AND NOT EXISTS (
         SELECT 1 FROM "SupportCaseEvent" e
-        WHERE e."caseId" = c.id AND e.kind = 'REMOVAL_REVIEW_LAPSED')
+        WHERE e."caseId" = c.id AND e.kind = 'REMOVAL_REVIEW_LAPSED'
+          AND e."createdAt" >= ${due} - ${window})
       AND NOT EXISTS (
         SELECT 1 FROM "SupportCaseDecision" d
         WHERE d."caseId" = c.id
-          AND d."createdAt" <= c."createdAt" + ${CONDUCT_REMOVAL_REVIEW_HOURS}::int * interval '1 hour')
+          AND d."createdAt" >= ${due} - ${window}
+          AND d."createdAt" <= ${due})
     ORDER BY c."createdAt" ASC, c.id ASC
     LIMIT ${limit}`;
 }
