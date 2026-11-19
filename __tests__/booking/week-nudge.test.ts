@@ -69,14 +69,6 @@ it("runs on the first day, the next and the third, not in between", () => {
   expect(day(4)).toBeNull();
 });
 
-it("skips the first day for a plan scheduled with Auto, not the later ones", () => {
-  const day = (n: number) =>
-    weekNudgeFor(plan(delivered), at(WEEK_TWO, 24 * n + 10), TZ, true);
-  expect(day(0)).toBeNull();
-  expect(day(1)).toMatchObject({ weekNumber: 2, sessionsToPlace: 3 });
-  expect(day(3)).not.toBeNull();
-});
-
 it("starts every ladder day at 09:00, so one run batches the day's plans", () => {
   // Day +1 (Tue 10 Mar) at 08:30 and 09:00 IST.
   expect(weekNudgeFor(plan(delivered), at(WEEK_TWO, 24 + 8.5), TZ)).toBeNull();

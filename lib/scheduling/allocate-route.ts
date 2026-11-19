@@ -199,7 +199,6 @@ export async function handleAllocate(
             override: body.override === true && canOverride,
             allowPartial: body.allowPartial === true && canOverride,
             topUp: body.topUp === true && canOverride,
-            byConsultant: hostActor === "consultant",
             actorUserId: authResult.session.user.id,
             inTx: auditInTx,
           }),

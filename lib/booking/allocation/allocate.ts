@@ -243,32 +243,19 @@ async function underAppointmentLock<T>(
  * ever existed (a returned, cancelled or tombstoned one still counts, so the
  * plan's first choice is durable), and released sessions awaiting a new time.
  */
-async function placementBefore(
-  request: AllocationRequest,
-): Promise<{ placed: number; released: number }> {
+async function releasedBefore(request: AllocationRequest): Promise<number> {
   const relation = `${getEventRelationField(request.eventType)}Id`;
-  const [placed, released] = await Promise.all([
-    prisma.appointmentOccurrence.count({
-      where: {
-        appointment: {
-          [relation]: request.eventId,
-        } as Prisma.AppointmentWhereInput,
-        isTentative: false,
-      },
-    }),
-    prisma.appointmentOccurrence.count({
-      where: {
-        appointment: {
-          [relation]: request.eventId,
-          deletedAt: null,
-        } as Prisma.AppointmentWhereInput,
+  return prisma.appointmentOccurrence.count({
+    where: {
+      appointment: {
+        [relation]: request.eventId,
         deletedAt: null,
-        isTentative: true,
-        completionStatus: "RESCHEDULED",
-      },
-    }),
-  ]);
-  return { placed, released };
+      } as Prisma.AppointmentWhereInput,
+      deletedAt: null,
+      isTentative: true,
+      completionStatus: "RESCHEDULED",
+    },
+  });
 }
 
 /**
@@ -278,7 +265,7 @@ async function placementBefore(
 export async function dispatch(
   request: AllocationRequest,
 ): Promise<AllocationResult> {
-  const before = await placementBefore(request);
+  const released = await releasedBefore(request);
   const txOptions: AllocationTxOptions = {
     approvableFrom: request.approvableFrom,
     inTx: request.inTx,
@@ -289,10 +276,7 @@ export async function dispatch(
         request.mode === "auto" || request.mode === "manual"
           ? request.mode
           : "requested",
-      placedBefore: before.placed > 0,
-      releasedBefore: before.released,
-      bySweep: request.bySweep,
-      byConsultant: request.byConsultant,
+      releasedBefore: released,
       confirmsReschedule: !!request.excludeRescheduleRequestId,
     }),
   };

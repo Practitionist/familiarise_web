@@ -12,7 +12,6 @@ const mockPrisma = {
   },
   subscription: { findMany: jest.fn() },
   notificationPreference: { findMany: jest.fn() },
-  bookingStatusHistory: { findMany: jest.fn() },
   notificationOutbox: { findMany: jest.fn() },
   failedEmail: { findMany: jest.fn() },
 };
@@ -41,7 +40,6 @@ import {
   nudgeUnplacedPlanWeeks,
   rotationOffset,
 } from "../../lib/booking/week-nudge";
-import { SCHEDULE_REASON } from "../../lib/booking/allocation/schedule-choice";
 
 const HOUR = 3_600_000;
 // Mon 2 Mar 2026 00:00 IST; week 2 opens 8 Mar 18:30Z, which is 18:30 in
@@ -82,14 +80,6 @@ const sub = (id: string, consulteeName: string, startDayOffset = 0) => ({
   appointment: { occurrences: delivered },
 });
 
-/** History rows, newest first; the mock applies the query's reason filter. */
-function history(rows: { entityId: string; reason: string }[]) {
-  mockPrisma.bookingStatusHistory.findMany.mockImplementation(
-    async ({ where }: { where: { reason: { in: string[] } } }) =>
-      rows.filter((row) => where.reason.in.includes(row.reason)),
-  );
-}
-
 function runAt(iso: string) {
   jest.useFakeTimers({
     now: new Date(iso),
@@ -107,7 +97,6 @@ beforeEach(() => {
     sub("sub-b", "Ravi"),
   ]);
   mockPrisma.notificationPreference.findMany.mockResolvedValue([]);
-  history([]);
   mockPrisma.notificationOutbox.findMany.mockResolvedValue([]);
   mockPrisma.failedEmail.findMany.mockResolvedValue([]);
   mockSendEmail.mockResolvedValue({ sent: 1, failed: 0 });
@@ -225,39 +214,12 @@ describe("rotation", () => {
   });
 });
 
-describe("plans scheduled with Auto", () => {
-  it("skip the first day while the sweep places the week", async () => {
-    history(
-      ["sub-a", "sub-b"].map((entityId) => ({
-        entityId,
-        reason: SCHEDULE_REASON.planAuto,
-      })),
-    );
-    expect((await runAt("2026-03-09T10:00:00.000Z")).nudged).toBe(0);
-    expect(mockNotify).not.toHaveBeenCalled();
-  });
-
-  it("are reminded the next day when the week is still unplaced", async () => {
-    history(
-      ["sub-a", "sub-b"].map((entityId) => ({
-        entityId,
-        reason: SCHEDULE_REASON.planAuto,
-      })),
-    );
-    expect((await runAt("2026-03-10T10:00:00.000Z")).nudged).toBe(1);
-  });
-
-  it("never include a by-hand plan whose later week used the one-tap Auto", async () => {
-    history([
-      { entityId: "sub-a", reason: SCHEDULE_REASON.weekAuto },
-      { entityId: "sub-a", reason: SCHEDULE_REASON.planByHand },
-      { entityId: "sub-b", reason: SCHEDULE_REASON.planAuto },
-    ]);
-    expect((await runAt("2026-03-09T10:00:00.000Z")).nudged).toBe(1);
-    expect(mockSendEmail.mock.calls[0][0].weeks).toEqual([
-      expect.objectContaining({ consulteeName: "Priya" }),
-    ]);
-  });
+it("reminds on the week's first day, however the plan was first scheduled", async () => {
+  expect((await runAt("2026-03-09T10:00:00.000Z")).nudged).toBe(1);
+  expect(mockSendEmail.mock.calls[0][0].weeks).toEqual([
+    expect.objectContaining({ consulteeName: "Priya" }),
+    expect.objectContaining({ consulteeName: "Ravi" }),
+  ]);
 });
 
 it("never sends a reminder at 08:00 that would use up the day's batch", async () => {
