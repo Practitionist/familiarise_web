@@ -8,14 +8,14 @@
  * removal still stands, paid or free, shown as a conduct removal.
  */
 
-const mockConduct = { standing: true };
+const mockConduct = { standing: true, type: "WEBINAR" };
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     appointment: {
       findUnique: jest.fn(async () => ({
         id: "appt-1",
-        appointmentType: "WEBINAR",
+        appointmentType: mockConduct.type,
         classId: null,
         subscriptionId: null,
         occurrences: [],
@@ -74,6 +74,12 @@ it("lists an unmarked paid seat whose conduct removal still stands, as a conduct
 
 it("leaves an unmarked paid seat out once its conduct removal no longer stands", async () => {
   mockConduct.standing = false;
+  const view = await readBookingOps("appt-1");
+  expect(view?.removedSeats).toEqual([]);
+});
+
+it("lists no learner row of a 1:1 booking, whatever its case or history", async () => {
+  Object.assign(mockConduct, { standing: true, type: "CONSULTATION" });
   const view = await readBookingOps("appt-1");
   expect(view?.removedSeats).toEqual([]);
 });

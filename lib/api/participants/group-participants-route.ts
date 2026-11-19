@@ -350,11 +350,13 @@ export async function handleGroupParticipantsGet(
   }
 }
 
+/** Platform staff act through the organiser's doors unless `staffBypass` is off; the allow-back door turns it off. */
 async function canOrganiserRemoveParticipant(
   session: Session,
+  { staffBypass = true }: { staffBypass?: boolean } = {},
 ): Promise<boolean> {
   if (
-    isPrivileged(session.user.role) ||
+    (staffBypass && isPrivileged(session.user.role)) ||
     Boolean(session.user.consultantProfileId)
   ) {
     return true;
@@ -379,9 +381,10 @@ async function verifyGroupEventExistsForDelete(
   eventId: string,
   session: Session,
   isSelfLeave: boolean,
+  { staffBypass = true }: { staffBypass?: boolean } = {},
 ): Promise<boolean> {
   const planAccess =
-    isSelfLeave || isPrivileged(session.user.role)
+    isSelfLeave || (staffBypass && isPrivileged(session.user.role))
       ? undefined
       : buildPlanAccessClauses(
           session,
@@ -750,7 +753,9 @@ export async function handleGroupSeatLift(
         { status: 400 },
       );
     }
-    if (!(await canOrganiserRemoveParticipant(session))) {
+    // Staff lift through the step-up staff door, which keeps the audit row.
+    const organiserOnly = { staffBypass: false };
+    if (!(await canOrganiserRemoveParticipant(session, organiserOnly))) {
       return forbiddenResponse("Only the organiser can allow attendees back");
     }
     const exists = await verifyGroupEventExistsForDelete(
@@ -758,6 +763,7 @@ export async function handleGroupSeatLift(
       parsedEventId.data,
       session,
       false,
+      organiserOnly,
     );
     const appointment = exists
       ? await prisma.appointment.findFirst({

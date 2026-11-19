@@ -64,36 +64,53 @@ jest.mock("../../lib/novu/stage-then-attempt", () => ({
  */
 const mockDb = {
   marked: true,
+  // The learner's only CONSULTEE row is a cancelled 1:1 consultation, found only by an unscoped read.
+  oneToOne: false,
   conductCase: false,
   priceFree: true,
   history: [] as { entityId: string; reason: string }[],
 };
 const mockCas = jest.fn();
+const mockSeatLookup = jest.fn();
 const mockHistory = jest.fn();
 const mockOpsRows: unknown[] = [];
 function mockTx() {
   return {
     appointmentParticipant: {
-      findFirst: async () => ({
-        id: "part-1",
-        status: "CANCELLED",
-        appointmentId: APPT,
-        removedByUserId: mockDb.marked ? "host-1" : null,
-        payment: mockDb.priceFree
-          ? { paymentIntent: "free_1", amount: 0, originalAmount: 0 }
-          : {
-              paymentIntent: "order_1",
-              amount: 50_000,
-              originalAmount: 50_000,
+      findFirst: async (args: unknown) => {
+        mockSeatLookup(args);
+        if (mockDb.oneToOne) {
+          if (JSON.stringify(args).includes('"WEBINAR"')) return null;
+          return {
+            id: "part-1on1",
+            status: "CANCELLED",
+            appointmentId: APPT,
+            removedByUserId: null,
+            payment: null,
+            appointment: { webinar: null, class: null },
+          };
+        }
+        return {
+          id: "part-1",
+          status: "CANCELLED",
+          appointmentId: APPT,
+          removedByUserId: mockDb.marked ? "host-1" : null,
+          payment: mockDb.priceFree
+            ? { paymentIntent: "free_1", amount: 0, originalAmount: 0 }
+            : {
+                paymentIntent: "order_1",
+                amount: 50_000,
+                originalAmount: 50_000,
+              },
+          appointment: {
+            webinar: {
+              id: "web-1",
+              webinarPlan: { id: "plan-1", title: "Intro to Python" },
             },
-        appointment: {
-          webinar: {
-            id: "web-1",
-            webinarPlan: { id: "plan-1", title: "Intro to Python" },
+            class: null,
           },
-          class: null,
-        },
-      }),
+        };
+      },
       findUnique: async () => ({
         id: "part-1",
         removedByUserId: mockDb.marked ? "host-1" : null,
@@ -174,6 +191,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   Object.assign(mockDb, {
     marked: true,
+    oneToOne: false,
     conductCase: false,
     priceFree: true,
     history: [],
@@ -326,12 +344,29 @@ describe("the organiser lift door", () => {
       actorUserId: "host-1",
     });
 
-  it("lifts a plain removal", async () => {
+  it("lifts a plain removal its own actor made, binding the compare-and-set to them", async () => {
     await expect(lift()).resolves.toMatchObject({
       rejoinPath: "REGISTER",
       conduct: false,
     });
+    expect(mockCas).toHaveBeenCalledWith({
+      where: { id: "part-1", removedByUserId: "host-1" },
+      data: { removedByUserId: null },
+    });
     expect(mockPersistBlock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a plain removal another organiser made and leaves the mark", async () => {
+    await expect(
+      liftSeatRemovalAsOrganiser({
+        appointmentId: APPT,
+        userId: "u-1",
+        actorUserId: "cohost-2",
+      }),
+    ).rejects.toMatchObject({ code: "LIFT_NOT_ALLOWED", httpStatus: 403 });
+    expect(mockCas).not.toHaveBeenCalled();
+    expect(mockHistory).not.toHaveBeenCalled();
+    expect(mockDb.marked).toBe(true);
   });
 
   it("refuses a conduct removal that stands and leaves the mark", async () => {
@@ -339,6 +374,17 @@ describe("the organiser lift door", () => {
     await expect(lift()).rejects.toMatchObject({ code: "LIFT_NOT_ALLOWED" });
     expect(mockCas).not.toHaveBeenCalled();
     expect(mockDb.marked).toBe(true);
+  });
+});
+
+describe("a 1:1 booking's learner row", () => {
+  it("is never lifted by the staff door, which reads only event seats", async () => {
+    mockDb.oneToOne = true;
+    const res = await post({ userId: "u-1", reason: REASON });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ code: "REMOVAL_ALREADY_LIFTED" });
+    expect(mockHistory).not.toHaveBeenCalled();
+    expect(mockOpsRows).toEqual([]);
   });
 });
 

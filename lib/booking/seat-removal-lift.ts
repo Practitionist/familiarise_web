@@ -64,7 +64,7 @@ const SEAT_SELECT = {
   },
 } satisfies Prisma.AppointmentParticipantSelect;
 
-/** The learner's seat on this appointment, with what a lift needs. */
+/** The learner's seat on this webinar or class appointment, with what a lift needs; a 1:1 row is never a seat. */
 function findLearnerSeat(
   tx: Pick<Tx, "appointmentParticipant">,
   args: { appointmentId: string; userId: string },
@@ -74,6 +74,7 @@ function findLearnerSeat(
       appointmentId: args.appointmentId,
       userId: args.userId,
       role: "CONSULTEE",
+      appointment: { appointmentType: { in: ["WEBINAR", "CLASS"] } },
     },
     select: SEAT_SELECT,
   });
@@ -125,14 +126,23 @@ export async function readBlockedSeat(
  */
 export async function liftBlockTx(
   tx: SeatTx,
-  args: { appointmentId: string; userId: string; actorUserId: string },
+  args: {
+    appointmentId: string;
+    userId: string;
+    actorUserId: string;
+    /** Set for the organiser's door: only the mark this remover set is cleared. */
+    remover?: string;
+  },
 ): Promise<BlockedSeat | null> {
   const blocked = await readBlockedSeat(tx, args);
   if (!blocked) return null;
   const { seat } = blocked;
   if (blocked.marked) {
     const cleared = await tx.appointmentParticipant.updateMany({
-      where: { id: seat.id, removedByUserId: { not: null } },
+      where: {
+        id: seat.id,
+        removedByUserId: args.remover ?? { not: null },
+      },
       data: { removedByUserId: null },
     });
     if (cleared.count === 0) return null;
@@ -237,7 +247,8 @@ export async function liftSeatRemovalTx(
       403,
     );
   }
-  if (args.door === "organiser") {
+  const organiser = args.door === "organiser";
+  if (organiser) {
     const pending = await readBlockedSeat(tx, args);
     if (pending && !pending.marked) {
       throw new BookingRuleError(
@@ -246,8 +257,19 @@ export async function liftSeatRemovalTx(
         403,
       );
     }
+    // An organiser lifts only a removal they made; another organiser's is theirs or support's.
+    if (pending && pending.seat.removedByUserId !== args.actorUserId) {
+      throw new BookingRuleError(
+        "LIFT_NOT_ALLOWED",
+        "Another organiser removed this attendee, so only they or support can allow them back.",
+        403,
+      );
+    }
   }
-  const blocked = await liftBlockTx(tx, args);
+  const blocked = await liftBlockTx(tx, {
+    ...args,
+    ...(organiser ? { remover: args.actorUserId } : {}),
+  });
   if (!blocked) {
     throw new BookingRuleError(
       "REMOVAL_ALREADY_LIFTED",

@@ -74,15 +74,18 @@ export async function readBookingOps(
     },
   });
   if (!appt) return null;
+  // Only a webinar or class has seats a lift could open; a 1:1 learner row is the booking itself.
+  const seats =
+    appt.appointmentType === "WEBINAR" || appt.appointmentType === "CLASS"
+      ? appt.participants
+      : [];
   const trails = await readSeatTrails(
     prisma,
-    appt.participants.map((seat) => seat.id),
+    seats.map((seat) => seat.id),
   );
   const conductStanding = await unmarkedConductRemovals(
     appt.id,
-    appt.participants
-      .filter((seat) => !seat.removedByUserId)
-      .map((seat) => seat.user.id),
+    seats.filter((seat) => !seat.removedByUserId).map((seat) => seat.user.id),
   );
   return {
     appointmentId: appt.id,
@@ -106,7 +109,7 @@ export async function readBookingOps(
       refundedPaise: sumRefunds(p.refunds, "SUCCEEDED"),
       pendingRefundPaise: sumRefunds(p.refunds, "PENDING"),
     })),
-    removedSeats: appt.participants.flatMap((seat) => {
+    removedSeats: seats.flatMap((seat) => {
       const trail = trails.get(seat.id) ?? [];
       const priceFree =
         !!seat.payment &&
