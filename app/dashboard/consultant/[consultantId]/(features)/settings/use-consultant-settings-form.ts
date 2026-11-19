@@ -37,21 +37,10 @@ import {
 } from "./settings";
 import type { Option } from "./sections/ProfileSection";
 import { SCHEDULE_LOCK_FALLBACK, scheduleLockReason } from "./schedule-lock";
-
-/** What a save would change under live bookings, shown before it runs. */
-const AvailabilitySavePreviewSchema = z.object({
-  sessions: z.array(
-    z.object({
-      appointmentId: z.string(),
-      startsAt: z.string(),
-      held: z.boolean(),
-    }),
-  ),
-  customDatesRemoved: z.number().int().nonnegative(),
-});
-export type AvailabilitySavePreview = z.infer<
-  typeof AvailabilitySavePreviewSchema
->;
+import {
+  availabilitySavePreviewSchema,
+  type AvailabilitySavePreview,
+} from "@/schemas/availability-preview";
 
 /**
  * Which extra reads a section needs on top of the profile it was given.
@@ -469,7 +458,7 @@ export function useConsultantSettingsForm(
         },
       );
       const { preview } = z
-        .object({ preview: AvailabilitySavePreviewSchema })
+        .object({ preview: availabilitySavePreviewSchema })
         .parse(
           await requireJsonResponse(
             previewResponse,

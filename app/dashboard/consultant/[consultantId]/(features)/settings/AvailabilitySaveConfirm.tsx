@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/responsive-modal";
 import { formatDateTimeLabel } from "@/lib/time/display";
 import { useViewerZone } from "@/lib/time/use-viewer-zone";
-import type { AvailabilitySavePreview } from "./use-consultant-settings-form";
+import type { AvailabilitySavePreview } from "@/schemas/availability-preview";
 
 type Session = AvailabilitySavePreview["sessions"][number];
 
@@ -43,7 +43,13 @@ function SessionList({
             className="flex flex-wrap items-center justify-between gap-2"
           >
             <span>
-              {formatDateTimeLabel(new Date(session.startsAt), { zone })}
+              {[
+                formatDateTimeLabel(new Date(session.startsAt), { zone }),
+                session.learnerName,
+                session.planTitle ?? "A booking",
+              ]
+                .filter(Boolean)
+                .join(" · ")}
               {session.held ? " · awaiting payment or approval" : ""}
             </span>
             {withLinks && (

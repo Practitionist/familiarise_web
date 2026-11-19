@@ -128,6 +128,14 @@ describe("audit category split (P0-6)", () => {
     expect(auditRowScope("LEARNER")).toBeNull();
   });
 
+  it("only a billing manager reads a draft invoice's generation row", () => {
+    const hidesDraft = (role: MemberRole) =>
+      JSON.stringify(auditRowScope(role)).includes('"DRAFT"');
+    expect(hidesDraft("MAINTAINER")).toBe(true);
+    expect(hidesDraft("BILLING_ADMIN")).toBe(false);
+    expect(hidesDraft("OWNER")).toBe(false);
+  });
+
   it("accepts the WEBHOOK filter the page offers, inside the row scope (#1527 3c)", async () => {
     mockRequireOrgAccess.mockResolvedValue({
       session: { user: { id: "ba-user" } },

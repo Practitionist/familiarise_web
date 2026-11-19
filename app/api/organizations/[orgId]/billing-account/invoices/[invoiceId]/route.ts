@@ -2,7 +2,8 @@
  * GET   /api/organizations/[orgId]/billing-account/invoices/[invoiceId]
  * PATCH /api/organizations/[orgId]/billing-account/invoices/[invoiceId]
  *
- * A tenant may only cancel a DRAFT. Issuing, voiding and due-date or PDF
+ * A draft reads as not found to a role that does not manage billing. A tenant
+ * may only cancel a DRAFT. Issuing, voiding and due-date or PDF
  * edits are the platform's; PAID and OVERDUE are webhook- and cron-owned.
  */
 
@@ -10,6 +11,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+import { visibleInvoiceWhere } from "@/lib/enterprise/invoice-visibility";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { transitionOrgInvoice } from "@/lib/enterprise/transitions";
 import { ORG_INVOICE_STATUS_LABEL } from "@/lib/labels/org-labels";
@@ -34,7 +36,11 @@ export async function GET(
   if (access.error) return access.error;
 
   const invoice = await prisma.organizationInvoice.findFirst({
-    where: { id: invoiceId, organizationId: orgId },
+    where: {
+      id: invoiceId,
+      organizationId: orgId,
+      ...visibleInvoiceWhere(access.member.role),
+    },
     include: {
       purchaseOrder: true,
       contract: { select: { id: true, status: true } },

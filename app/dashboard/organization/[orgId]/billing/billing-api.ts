@@ -88,6 +88,18 @@ const orgInvoiceSchema = z.object({
 });
 export type OrgInvoice = z.infer<typeof orgInvoiceSchema>;
 
+/** A draft is not issued yet and a void or cancelled invoice is never due. */
+export function shownDueDate(inv: {
+  status: OrgInvoiceStatus;
+  dueDate: string | null;
+}): string | null {
+  const neverDue =
+    inv.status === "DRAFT" ||
+    inv.status === "VOID" ||
+    inv.status === "CANCELLED";
+  return neverDue ? null : inv.dueDate;
+}
+
 const invoicesListResponseSchema = z.object({
   data: z.array(orgInvoiceSchema).default([]),
 });

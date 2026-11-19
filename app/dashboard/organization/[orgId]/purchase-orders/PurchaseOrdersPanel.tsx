@@ -15,6 +15,7 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { AlertTriangle, Plus } from "lucide-react";
 
 import { useOrgRole } from "../useOrgRole";
+import { rolesHoldingLabel } from "@/lib/labels/org-labels";
 import { FilterBar } from "@/components/dashboard/FilterBar";
 import { Button } from "@/components/ui/button";
 import {
@@ -116,8 +117,10 @@ export function PurchaseOrdersPanel({ orgId }: Readonly<{ orgId: string }>) {
     <>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <p className="max-w-2xl text-sm text-muted-foreground">
-          Purchase orders back contracts and invoices. Cancel one to retire it
-          once it is no longer in use.
+          Purchase orders back contracts and invoices.{" "}
+          {canMutate
+            ? "Cancel one to retire it once it is no longer in use."
+            : `You can view them here; adding, editing or cancelling one needs the ${rolesHoldingLabel("purchaseOrders.manage")} role.`}
         </p>
         {canMutate && (
           <Button size="sm" onClick={() => setCreateOpen(true)}>
@@ -153,9 +156,10 @@ export function PurchaseOrdersPanel({ orgId }: Readonly<{ orgId: string }>) {
                   : `${rows.length} purchase order${rows.length === 1 ? "" : "s"}`}
               </CardTitle>
               <CardDescription>
-                Caller-issued PO numbers; uniqueness enforced per org. POs with
-                attached contracts or invoices can only be cancelled, not
-                deleted.
+                PO numbers come from your accounts payable team, and each can be
+                used once in this organization.
+                {canMutate &&
+                  " A PO linked to a contract or invoice can be cancelled, not deleted."}
               </CardDescription>
             </div>
             <FilterBar

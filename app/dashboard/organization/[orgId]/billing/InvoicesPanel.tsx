@@ -31,6 +31,7 @@ import {
   invoiceDetailUrl,
   payInvoice,
   pollInvoiceUntilPaid,
+  shownDueDate,
   type BillingSummary,
   type InvoicePayResponse,
   type OrgInvoice,
@@ -77,10 +78,15 @@ const invoiceColumns: ResponsiveColumn<OrgInvoice>[] = [
     key: "due",
     header: "Due",
     className: "text-xs text-muted-foreground",
-    cell: (inv) =>
-      inv.dueDate ? new Date(inv.dueDate).toLocaleDateString() : "—",
+    cell: (inv) => {
+      const due = shownDueDate(inv);
+      return due ? new Date(due).toLocaleDateString() : "—";
+    },
   },
 ];
+
+const countOf = (n: number, noun: string) =>
+  `${n} ${noun}${n === 1 ? "" : "s"}`;
 
 function SummaryStats({ summary }: Readonly<{ summary: BillingSummary }>) {
   const fundingSource = summary.fundingSource;
@@ -94,14 +100,14 @@ function SummaryStats({ summary }: Readonly<{ summary: BillingSummary }>) {
       <Stat
         label="Outstanding"
         value={formatCurrencyAmount(summary.outstanding.amount, "INR")}
-        hint={`${summary.outstanding.invoiceCount} invoices`}
+        hint={countOf(summary.outstanding.invoiceCount, "issued invoice")}
         tone={summary.outstanding.invoiceCount > 0 ? "warning" : "neutral"}
       />
       {summary.pendingCharges && (
         <Stat
           label="Pending charges"
           value={formatCurrencyAmount(summary.pendingCharges.amount, "INR")}
-          hint={`${summary.pendingCharges.paymentCount} not yet invoiced`}
+          hint={`${countOf(summary.pendingCharges.paymentCount, "booking")} not yet invoiced`}
         />
       )}
       {/* #1762-8 — payment terms exist only on invoice-funded accounts. */}

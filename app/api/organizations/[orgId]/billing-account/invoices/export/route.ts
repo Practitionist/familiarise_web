@@ -10,6 +10,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+import { visibleInvoiceWhere } from "@/lib/enterprise/invoice-visibility";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { keysetCsvStream, keysetWhere } from "@/lib/csv/keyset-export";
 
@@ -66,7 +67,10 @@ export async function GET(
       }),
     fetchPage: async (cursor, take) => {
       const rows = await prisma.organizationInvoice.findMany({
-        where: keysetWhere({ organizationId: orgId }, cursor),
+        where: keysetWhere(
+          { organizationId: orgId, ...visibleInvoiceWhere(access.member.role) },
+          cursor,
+        ),
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
         take,
         select: {

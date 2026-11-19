@@ -164,8 +164,8 @@ export function AppointmentRow({
         </div>
       </div>
 
-      {/* Schedule + status + actions */}
-      <div className="flex items-center justify-between sm:justify-end gap-3 sm:gap-4 pl-[52px] sm:pl-0">
+      {/* Schedule + status + actions; on a phone the actions wrap under the time. */}
+      <div className="flex flex-wrap sm:flex-nowrap items-center justify-between sm:justify-end gap-3 sm:gap-4 pl-[52px] sm:pl-0">
         <div className="text-right shrink-0">
           <p className="text-sm font-medium text-foreground tabular-nums">
             {timeLabel}
@@ -186,7 +186,7 @@ export function AppointmentRow({
           )}
         </div>
         <StatusBadge {...badge} withDot size="sm" />
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 ml-auto sm:ml-0">
           <RowPrimaryAction action={action} onView={open} />
           <RowOverflowMenu items={overflow} />
         </div>

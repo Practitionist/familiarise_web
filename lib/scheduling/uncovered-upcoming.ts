@@ -7,7 +7,9 @@
  * docs/onboarding/03-availability-contract.md.
  */
 
+import type { Prisma } from "@prisma/client";
 import type { Tx } from "@/lib/prisma";
+import { BOOKING_TITLE_SELECT, bookingTitleOf } from "@/lib/data/booking-title";
 import { recomputeProfileCompletion } from "@/lib/profiles/profile-completion";
 import {
   findUncoveredAtomIn,
@@ -31,6 +33,13 @@ export interface UncoveredSession {
   startsAt: Date;
   /** Still awaiting payment or approval: a live hold, not a confirmed session. */
   held: boolean;
+}
+
+/** A booking the proposed hours would leave outside, as the confirm dialog names it. */
+export interface PreviewSession extends UncoveredSession {
+  planTitle: string;
+  /** The 1:1 learner; null for a webinar or class, which has no one person to name. */
+  learnerName: string | null;
 }
 
 export interface UncoveredUpcoming {
@@ -112,10 +121,21 @@ export async function findUncoveredUpcoming(
   };
 }
 
+const TITLE = { select: { title: true } } as const;
+const LEARNER = { select: { user: { select: { name: true } } } } as const;
+
+/** The plan title and the 1:1 learner of a previewed booking, read in one joined statement. */
+const PREVIEW_BOOKING_SELECT = {
+  ...BOOKING_TITLE_SELECT,
+  consultation: { select: { consultationPlan: TITLE, requestedBy: LEARNER } },
+  subscription: { select: { subscriptionPlan: TITLE, requestedBy: LEARNER } },
+  trial: { select: { subscriptionPlan: TITLE, consulteeProfile: LEARNER } },
+} satisfies Prisma.AppointmentSelect;
+
 /**
  * What a proposed availability would newly leave uncovered: the bookings
- * outside the proposed hours that the stored hours still cover. Read-only;
- * the settings form shows it before the save.
+ * outside the proposed hours that the stored hours still cover, each with its
+ * plan and learner. Read-only; the settings form shows it before the save.
  */
 export async function previewNewlyUncovered(
   db: Pick<
@@ -124,6 +144,7 @@ export async function previewNewlyUncovered(
     | "availabilityWindowWeekly"
     | "availabilityWindowCustom"
     | "appointmentOccurrence"
+    | "appointment"
   >,
   consultantProfileId: string,
   proposed: {
@@ -132,7 +153,7 @@ export async function previewNewlyUncovered(
     customRows: CustomCoverageRow[];
   },
   now: Date = new Date(),
-): Promise<{ sessions: UncoveredSession[]; customDatesRemoved: number }> {
+): Promise<{ sessions: PreviewSession[]; customDatesRemoved: number }> {
   const profile = await db.consultantProfile.findUnique({
     where: { id: consultantProfileId },
     select: {
@@ -157,8 +178,30 @@ export async function previewNewlyUncovered(
     findUncoveredUpcoming(db, consultantProfileId, proposed, now),
   ]);
   const already = new Set(before.appointmentIds);
+  const newly = after.sessions.filter((s) => !already.has(s.appointmentId));
+  const bookings =
+    newly.length === 0
+      ? []
+      : await db.appointment.findMany({
+          where: { id: { in: newly.map((s) => s.appointmentId) } },
+          select: PREVIEW_BOOKING_SELECT,
+          relationLoadStrategy: "join",
+        });
+  const byId = new Map(bookings.map((b) => [b.id, b]));
   return {
-    sessions: after.sessions.filter((s) => !already.has(s.appointmentId)),
+    sessions: newly.map((s) => {
+      const booking = byId.get(s.appointmentId);
+      return {
+        ...s,
+        planTitle: booking ? bookingTitleOf(booking) : "Booking",
+        learnerName: booking
+          ? (booking.consultation?.requestedBy.user.name ??
+            booking.subscription?.requestedBy.user.name ??
+            booking.trial?.consulteeProfile.user.name ??
+            null)
+          : null,
+      };
+    }),
     // A weekly save replaces the custom dates; count the ones still ahead.
     customDatesRemoved:
       proposed.scheduleType === "WEEKLY"

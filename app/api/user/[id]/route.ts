@@ -424,7 +424,11 @@ async function evaluateUserDeletionEligibility(id: string): Promise<{
   }
 
   if (profile?.id) {
-    const activeAppointments = await checkActiveAppointments(profile.id);
+    const activeAppointments = await checkActiveAppointments(
+      profile.id,
+      prisma,
+      "removal",
+    );
     if (activeAppointments.hasActive) {
       return {
         blockerResponse: NextResponse.json(
