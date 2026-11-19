@@ -86,8 +86,11 @@ export async function GET(
       quote.fundingRail === "CREDITS" &&
       quote.grossPaise === 0 &&
       (await creditStillUsedPaise(prisma, quote.paymentId)) === 0;
+    // `expectedPaid` rides back with the click, so DELETE can tell a paid screen from an unpaid one.
     return NextResponse.json(
-      quote ? { paid: true, ...quote, freeBooking } : { paid: false },
+      quote
+        ? { paid: true, ...quote, freeBooking, expectedPaid: true }
+        : { paid: false },
       NO_STORE,
     );
   } catch (error) {

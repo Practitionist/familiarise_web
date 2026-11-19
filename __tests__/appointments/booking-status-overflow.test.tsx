@@ -16,18 +16,19 @@ import {
   storedTrial,
 } from "../fixtures/stored-bookings";
 
-jest.mock("next/navigation", () => ({
-  useRouter: () => ({ push: jest.fn(), refresh: jest.fn() }),
-  useParams: () => ({ consulteeId: "cee-1" }),
-}));
-jest.mock("@/lib/auth-client", () => ({
-  useSession: () => ({
-    data: { user: { id: "u-l", consulteeProfileId: "cee-1", role: "USER" } },
-  }),
-}));
-jest.mock("@/hooks/scheduling/useLazyJoinMeeting", () => ({
-  useLazyJoinMeeting: () => jest.fn(),
-}));
+jest.mock("next/navigation", () =>
+  jest
+    .requireActual("../fixtures/learner-adapter-mocks")
+    .learnerNavigationModule(),
+);
+jest.mock("@/lib/auth-client", () =>
+  jest
+    .requireActual("../fixtures/learner-adapter-mocks")
+    .learnerSessionModule(),
+);
+jest.mock("@/hooks/scheduling/useLazyJoinMeeting", () =>
+  jest.requireActual("../fixtures/learner-adapter-mocks").lazyJoinModule(),
+);
 jest.mock("@/hooks/use-toast", () => ({
   useToast: () => ({ toast: jest.fn() }),
 }));
