@@ -37,7 +37,9 @@ import { stageSupportCaseIntakeTx } from "./case-service";
 import { supportDeadline } from "./deadline-policy";
 import { priorityForReason } from "./priority";
 import { allocateTicketReference } from "./reference";
-import { slaDeadlinesFor } from "./sla";
+import { reopenedClockPatch, slaDeadlinesFor } from "./sla";
+import { caseTransitionRefusal } from "./case-transitions";
+import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import {
   CONDUCT_REMOVAL_REVIEW_HOURS,
   conductRemovalRefundKey,
@@ -160,8 +162,69 @@ function unclosedRemovalCase(tx: Tx, input: OpenRemovalCaseInput) {
       closedAt: null,
       deletedAt: null,
     },
-    select: { id: true, referenceNumber: true },
+    select: {
+      id: true,
+      referenceNumber: true,
+      status: true,
+      category: true,
+      priority: true,
+      resolvedAt: true,
+      acknowledgedAt: true,
+      activeChannel: true,
+    },
   });
+}
+
+type UnclosedRemovalCase = NonNullable<
+  Awaited<ReturnType<typeof unclosedRemovalCase>>
+>;
+
+const removalConflict = () =>
+  new BookingRuleError(
+    "REMOVAL_CONFLICT",
+    "This attendee's removal case changed while you were saving the removal. Reload the attendee list and try again.",
+    409,
+  );
+
+/**
+ * Puts a settled removal case back to OPEN for the new removal, by compare-and-set on its
+ * prior status, as the REMOVAL actor; a case still under review keeps its status. Returns the move.
+ */
+async function reopenForRemovalTx(
+  tx: Tx,
+  open: UnclosedRemovalCase,
+  statutoryDueAt: Date,
+  now: Date,
+): Promise<{ from: string; to: "OPEN" } | null> {
+  if (open.status === "OPEN" || open.status === "IN_PROGRESS") return null;
+  if (open.category !== CONDUCT_REMOVAL_CATEGORY) throw removalConflict();
+  const decision = await tx.supportCaseDecision.findFirst({
+    where: { caseId: open.id, supersededBy: { is: null } },
+    select: { id: true },
+  });
+  if (
+    caseTransitionRefusal(open.status, "OPEN", {
+      decided: decision !== null,
+      actor: "REMOVAL",
+    })
+  ) {
+    throw removalConflict();
+  }
+  const moved = await tx.supportCase.updateMany({
+    where: {
+      id: open.id,
+      status: open.status,
+      category: CONDUCT_REMOVAL_CATEGORY,
+      closedAt: null,
+    },
+    data: {
+      status: "OPEN",
+      resolvedAt: null,
+      ...reopenedClockPatch({ ...open, statutoryDueAt }, open.priority, now),
+    },
+  });
+  if (moved.count !== 1) throw removalConflict();
+  return { from: open.status, to: "OPEN" };
 }
 
 /**
@@ -177,6 +240,7 @@ export async function openOrJoinConductRemovalCaseTx(
   const open = await unclosedRemovalCase(tx, input);
   if (!open) return openConductRemovalCaseTx(tx, input, now);
   const due = supportDeadline(CONDUCT_REMOVAL_CATEGORY, now);
+  const reopened = await reopenForRemovalTx(tx, open, due.statutoryDueAt, now);
   const { messageSeq } = await tx.supportCase.update({
     where: { id: open.id },
     data: {
@@ -201,11 +265,13 @@ export async function openOrJoinConductRemovalCaseTx(
       caseId: open.id,
       actorId: input.actorUserId,
       kind: "REOPENED",
+      fromValue: reopened?.from ?? null,
+      toValue: reopened?.to ?? null,
       note: `The host removed the attendee for conduct again (${input.reasonLabel}); the ${CONDUCT_REMOVAL_REVIEW_HOURS}-hour review restarts from this removal.`,
       createdAt: now,
     },
   });
-  return open;
+  return { id: open.id, referenceNumber: open.referenceNumber };
 }
 
 /** Posts a line on the case the attendee and support both read. */

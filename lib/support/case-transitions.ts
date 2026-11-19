@@ -1,12 +1,17 @@
 import type { SupportCaseStatus } from "@prisma/client";
 
-/** Who asks for a move: the customer or their guided flow, an operator, or a scheduled job. */
-export type CaseTransitionActor = "CUSTOMER" | "STAFF" | "SYSTEM";
+/**
+ * Who asks for a move: the customer or their guided flow, an operator, a scheduled job,
+ * or a new conduct removal joining its learner's unclosed removal case (that door alone).
+ */
+export type CaseTransitionActor = "CUSTOMER" | "STAFF" | "SYSTEM" | "REMOVAL";
 
 interface TransitionRule {
   actors: readonly CaseTransitionActor[];
   /** Refused once the case has a recorded decision. */
   undecidedOnly?: true;
+  /** Actors a recorded decision does not stop: a new removal reopens the review, not the verdict. */
+  decidedActors?: readonly CaseTransitionActor[];
 }
 
 /**
@@ -30,12 +35,17 @@ export const CASE_TRANSITIONS: Record<
     CLOSED: { actors: ["STAFF"] },
   },
   ESCALATED: {
+    OPEN: { actors: ["REMOVAL"] },
     IN_PROGRESS: { actors: ["STAFF"] },
     RESOLVED: { actors: ["STAFF", "SYSTEM"] },
     CLOSED: { actors: ["STAFF"] },
   },
   RESOLVED: {
-    OPEN: { actors: ["CUSTOMER", "STAFF"], undecidedOnly: true },
+    OPEN: {
+      actors: ["CUSTOMER", "STAFF", "REMOVAL"],
+      undecidedOnly: true,
+      decidedActors: ["REMOVAL"],
+    },
     IN_PROGRESS: { actors: ["CUSTOMER", "STAFF"], undecidedOnly: true },
     // A guided answer that did not help may still be handed to a person.
     ESCALATED: { actors: ["CUSTOMER"], undecidedOnly: true },
@@ -63,7 +73,7 @@ export function caseTransitionRefusal(
 ): CaseTransitionRefusal | null {
   if (from === to) return null;
   const rule = CASE_TRANSITIONS[from][to];
-  if (rule?.undecidedOnly && decided)
+  if (rule?.undecidedOnly && decided && !rule.decidedActors?.includes(actor))
     return {
       status: 409,
       code: "CASE_DECIDED",
