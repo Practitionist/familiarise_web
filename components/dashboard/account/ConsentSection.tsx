@@ -143,10 +143,12 @@ export function ConsentSection() {
     },
     enabled: !!userId,
   });
-  // Only an active organisation can be given consent; the rest get one quiet line.
-  const orgs = (memberships.data ?? []).filter((m) => m.orgStatus === "ACTIVE");
-  const inactiveOrgNames = (memberships.data ?? [])
-    .filter((m) => m.orgStatus !== "ACTIVE")
+  // The consent route refuses a deactivated organisation; only an active one can be given consent.
+  const orgs = (memberships.data ?? []).filter(
+    (m) => m.orgStatus !== "DEACTIVATED",
+  );
+  const deactivatedOrgNames = (memberships.data ?? [])
+    .filter((m) => m.orgStatus === "DEACTIVATED")
     .map((m) => m.orgName);
 
   const consents = useQueries({
@@ -339,15 +341,16 @@ export function ConsentSection() {
             We couldn&apos;t load your organisations. Refresh to try again.
           </p>
         )}
-        {inactiveOrgNames.length > 0 && (
+        {deactivatedOrgNames.length > 0 && (
           <p className="text-xs text-muted-foreground">
-            {inactiveOrgNames.join(", ")}{" "}
-            {inactiveOrgNames.length === 1 ? "is" : "are"} not active, so there
-            is no consent to give or withdraw there.
+            {deactivatedOrgNames.join(", ")}{" "}
+            {deactivatedOrgNames.length === 1 ? "has" : "have"} been
+            deactivated, so there is no consent to give or withdraw there.
           </p>
         )}
         {orgs.map((org, i) => {
           const query = consents[i];
+          const canGive = org.orgStatus === "ACTIVE";
           const granted = grantedPurposes(query?.data?.data ?? []);
           const requests = new Map(
             (query?.data?.withdrawalRequests ?? []).map((r) => [
@@ -360,6 +363,12 @@ export function ConsentSection() {
               <h3 className="text-sm font-medium text-foreground">
                 {org.orgName}
               </h3>
+              {!canGive && (
+                <p className="text-xs text-muted-foreground">
+                  {org.orgName} is not active, so you can withdraw a consent
+                  here but not give one.
+                </p>
+              )}
               {query?.isError ? (
                 <p className="text-sm text-muted-foreground">
                   We couldn&apos;t load your consent for this organisation.
@@ -424,31 +433,33 @@ export function ConsentSection() {
                               }
                             />
                           ) : (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={query?.isLoading || busy}
-                              onClick={() =>
-                                change.mutate(
-                                  {
-                                    orgId: org.organizationId,
-                                    purposeCode: code,
-                                    grant: true,
-                                  },
-                                  {
-                                    // Withdraw errors show in its dialog.
-                                    onError: (error) =>
-                                      toast({
-                                        title: "Couldn't give your consent",
-                                        description: error.message,
-                                        variant: "destructive",
-                                      }),
-                                  },
-                                )
-                              }
-                            >
-                              Give consent
-                            </Button>
+                            canGive && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={query?.isLoading || busy}
+                                onClick={() =>
+                                  change.mutate(
+                                    {
+                                      orgId: org.organizationId,
+                                      purposeCode: code,
+                                      grant: true,
+                                    },
+                                    {
+                                      // Withdraw errors show in its dialog.
+                                      onError: (error) =>
+                                        toast({
+                                          title: "Couldn't give your consent",
+                                          description: error.message,
+                                          variant: "destructive",
+                                        }),
+                                    },
+                                  )
+                                }
+                              >
+                                Give consent
+                              </Button>
+                            )
                           )}
                         </div>
                       </li>

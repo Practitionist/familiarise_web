@@ -3,9 +3,9 @@
  */
 
 /**
- * Account › Data consent asks only an ACTIVE organisation for consent. The
- * consent route refuses a deactivated one with a 403, so fetching it only
- * printed a dead-end line per organisation.
+ * Account › Data consent: consent is given only to an ACTIVE organisation, a
+ * granted one stays withdrawable in a suspended or unverified organisation, and
+ * a deactivated one (the consent route answers 403) is named in one line.
  */
 
 jest.mock("../../hooks/use-toast", () => {
@@ -16,6 +16,12 @@ jest.mock("../../hooks/use-toast", () => {
 jest.mock("../../lib/auth-client", () => ({
   __esModule: true,
   useSession: () => ({ data: { user: { id: "user-1" } } }),
+}));
+
+// jsdom has no matchMedia for the real dialog; the trigger is what is asserted.
+jest.mock("../../components/dashboard/ConfirmDialog", () => ({
+  __esModule: true,
+  ConfirmDialog: ({ trigger }: { trigger: React.ReactNode }) => trigger,
 }));
 
 import { act } from "react";
@@ -36,6 +42,14 @@ const MEMBERSHIPS = {
       orgLogo: null,
       orgStatus: "ACTIVE",
       role: "OWNER",
+      status: "ACTIVE",
+    },
+    {
+      organizationId: "org-paused",
+      orgName: "Paused Co",
+      orgLogo: null,
+      orgStatus: "SUSPENDED",
+      role: "LEARNER",
       status: "ACTIVE",
     },
     {
@@ -70,6 +84,17 @@ describe("ConsentSection organisation rows", () => {
           json: async () => ({}),
         });
       }
+      if (url.startsWith("/api/organizations/org-paused/consent")) {
+        return json({
+          data: [
+            {
+              purposeCodes: ["PRIMARY_PROCESSING"],
+              withdrawnAt: null,
+              auditRetainedUntil: "2099-01-01T00:00:00.000Z",
+            },
+          ],
+        });
+      }
       return json({ data: [] });
     });
     global.fetch = fetchMock as unknown as typeof fetch;
@@ -81,7 +106,7 @@ describe("ConsentSection organisation rows", () => {
     global.fetch = realFetch;
   });
 
-  it("fetches consent for the active organisation only and names the other quietly", async () => {
+  it("gives consent only to an active organisation, still withdraws in a suspended one, and names a deactivated one", async () => {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
@@ -100,16 +125,38 @@ describe("ConsentSection organisation rows", () => {
     }
 
     const urls = fetchMock.mock.calls.map(([url]) => String(url));
-    expect(
-      urls.some((u) => u.startsWith("/api/organizations/org-live/consent")),
-    ).toBe(true);
+    for (const org of ["org-live", "org-paused"]) {
+      expect(
+        urls.some((u) => u.startsWith(`/api/organizations/${org}/consent`)),
+      ).toBe(true);
+    }
     expect(urls.some((u) => u.includes("/org-gone/"))).toBe(false);
+
+    const block = (name: string) => {
+      const heading = Array.from(container.querySelectorAll("h3")).find(
+        (h) => h.textContent === name,
+      );
+      const el = heading?.parentElement;
+      return {
+        text: el?.textContent ?? "",
+        buttons: Array.from(el?.querySelectorAll("button") ?? []).map(
+          (b) => b.textContent,
+        ),
+      };
+    };
+    expect(block("Wipro Limited").buttons).toContain("Give consent");
+    const paused = block("Paused Co");
+    expect(paused.buttons).toContain("Withdraw");
+    expect(paused.buttons).not.toContain("Give consent");
+    expect(paused.text).toContain(
+      "Paused Co is not active, so you can withdraw a consent here but not give one.",
+    );
 
     const text = container.textContent ?? "";
     expect(text).not.toContain("couldn't load your consent");
     expect(text).toContain(
-      "QA Fixture Org is not active, so there is no consent to give or withdraw there.",
+      "QA Fixture Org has been deactivated, so there is no consent to give or withdraw there.",
     );
-    expect(container.querySelectorAll("h3")).toHaveLength(2);
+    expect(container.querySelectorAll("h3")).toHaveLength(3);
   });
 });
