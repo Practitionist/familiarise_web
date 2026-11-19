@@ -28,6 +28,7 @@ import type { AppointmentActionAdapter } from "@/lib/appointments/adapter";
 import { mapConsultantAppointments } from "@/lib/appointments/map-consultant";
 import type { AppointmentVM } from "@/lib/appointments/view-model";
 import type { TAppointment } from "@/types/appointment";
+import type { TConsultantClientBooking } from "@/types/consultant-events";
 
 const NOW = new Date("2026-10-08T07:00:00Z");
 const OWNER = "cp_aarav";
@@ -203,5 +204,46 @@ describe("the expert Home (Today and Upcoming Sessions)", () => {
   it("shows a co-host the owner's name", () => {
     renderHome("cp_guest", [webinar]);
     expect(screen.getAllByText("Aarav Anderson").length).toBeGreaterThan(0);
+  });
+});
+
+describe('the expert Home "Booked as a client" list', () => {
+  const booking = (
+    id: string,
+    expertName: string,
+    startsAt: string,
+  ): TConsultantClientBooking => ({
+    occurrenceId: id,
+    appointmentId: `appt-${id}`,
+    startsAt,
+    endsAt: null,
+    expertName,
+    href: `/dashboard/consultee/ce-1/appointments/appt-${id}`,
+  });
+
+  it("names each Open button by its expert and date", () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <HomeTab
+          appointments={[]}
+          consultantId="cp-1"
+          payoutSetup={undefined}
+          viewerZone={{ zone: "Asia/Kolkata", own: true }}
+          clientBookings={[
+            booking("o1", "Meera Iyer", "2026-11-20T10:30:00.000Z"),
+            booking("o2", "Rahul Verma", "2026-11-21T04:00:00.000Z"),
+          ]}
+        />
+      </QueryClientProvider>,
+    );
+    const links = screen.getAllByRole("link", { name: /^Open session with/ });
+    expect(links.map((l) => l.getAttribute("aria-label"))).toEqual([
+      "Open session with Meera Iyer, Fri, Nov 20, 4:00 PM",
+      "Open session with Rahul Verma, Sat, Nov 21, 9:30 AM",
+    ]);
+    expect(links.map((l) => l.textContent)).toEqual(["Open", "Open"]);
+    expect(links[0].getAttribute("href")).toBe(
+      "/dashboard/consultee/ce-1/appointments/appt-o1",
+    );
   });
 });
