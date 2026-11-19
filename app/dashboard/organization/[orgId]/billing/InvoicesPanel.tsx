@@ -37,6 +37,7 @@ import {
   type OrgInvoice,
 } from "./billing-api";
 import { InvoiceDetailSheet } from "./InvoiceDetailSheet";
+import { ZonedDay } from "./ZonedDay";
 
 // Discriminated union for the post-checkout flow:
 //   - "confirmed": webhook landed within the poll budget; row is PAID.
@@ -80,7 +81,7 @@ const invoiceColumns: ResponsiveColumn<OrgInvoice>[] = [
     className: "text-xs text-muted-foreground",
     cell: (inv) => {
       const due = shownDueDate(inv);
-      return due ? new Date(due).toLocaleDateString() : "—";
+      return due ? <ZonedDay at={due} /> : "—";
     },
   },
 ];

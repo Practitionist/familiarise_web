@@ -2,7 +2,11 @@
  * @jest-environment jsdom
  */
 
-// Org Billing: money tiles never share a phone-width row, so no amount is cut off.
+// Org Billing: the Activity date reads in the profile zone the layout pins, so
+// a UTC server and an IST browser print one string; money tiles never share a
+// phone-width row, so no amount is cut off.
+
+import "../fixtures/text-encoding";
 
 jest.mock("../../lib/prisma", () => {
   // One posting at 23:33 UTC on 19 Oct: 20 Oct in India.
@@ -43,7 +47,9 @@ jest.mock("../../lib/auth-client", () =>
 );
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
+import { hydrateRoot } from "react-dom/client";
+import { renderToString } from "react-dom/server";
 
 import { getOrgReceivables } from "@/lib/data/org-receivables";
 import { DisplayZoneProvider } from "@/lib/time/zoned-format";
@@ -51,6 +57,16 @@ import { AccruedUsagePanel } from "@/app/dashboard/organization/[orgId]/billing/
 import { InvoicesPanel } from "@/app/dashboard/organization/[orgId]/billing/InvoicesPanel";
 
 const PROFILE_ZONE = "Asia/Kolkata";
+
+/** Locale date APIs print in `zone`, as they would in a runtime set to it. */
+function runtimeZone(zone: string) {
+  const original = Date.prototype.toLocaleDateString;
+  return jest
+    .spyOn(Date.prototype, "toLocaleDateString")
+    .mockImplementation(function (this: Date, locales, options) {
+      return original.call(this, locales, { timeZone: zone, ...options });
+    });
+}
 
 async function usagePanel() {
   const receivables = JSON.parse(
@@ -64,6 +80,27 @@ async function usagePanel() {
 }
 
 afterEach(() => jest.restoreAllMocks());
+
+it("hydrates the Activity date a UTC server printed in an IST browser", async () => {
+  const page = await usagePanel();
+  const container = document.createElement("div");
+  runtimeZone("UTC");
+  container.innerHTML = renderToString(page);
+  document.body.appendChild(container);
+  jest.restoreAllMocks();
+
+  runtimeZone(PROFILE_ZONE);
+  const errors: unknown[] = [];
+  jest.spyOn(console, "error").mockImplementation((e) => errors.push(e));
+  await act(async () => {
+    hydrateRoot(container, page, {
+      onRecoverableError: (error) => errors.push(error),
+    });
+  });
+  expect(errors).toEqual([]);
+  expect(container.textContent).toContain("20 Oct 2026");
+  container.remove();
+});
 
 describe("money tiles at phone width", () => {
   const stacked = (label: string) => {

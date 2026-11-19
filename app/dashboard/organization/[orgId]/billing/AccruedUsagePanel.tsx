@@ -15,6 +15,8 @@ import type {
 import { ORG_INVOICE_STATUS_LABEL } from "@/lib/labels/org-labels";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
+import { ZonedDay } from "./ZonedDay";
+
 // Stateless; module scope keeps the panel's cognitive complexity down.
 const columns: ResponsiveColumn<OrgReceivablePosting>[] = [
   {
@@ -22,7 +24,7 @@ const columns: ResponsiveColumn<OrgReceivablePosting>[] = [
     header: "Date",
     primary: true,
     className: "text-xs text-muted-foreground",
-    cell: (p) => new Date(p.postedAt).toLocaleDateString(),
+    cell: (p) => <ZonedDay at={p.postedAt} />,
   },
   {
     key: "movement",
