@@ -8,7 +8,12 @@
  * the scheduling bucket and translate its span onto the viewer's clock.
  */
 
-import { formatClockTime, formatDayLabel } from "@/lib/time/display";
+import {
+  formatClockTime,
+  formatDateTimeLabel,
+  formatDayLabel,
+  type DisplayOpts,
+} from "@/lib/time/display";
 import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
 import { REQUEST_INDETERMINATE_ERROR } from "./allocationService";
 
@@ -256,11 +261,27 @@ export const keepGoing = (
 // #1705 — one title for every "it worked" outcome. Manual, auto and
 // requested-times approvals used to answer with three different headlines
 // for the same fact; the description carries what differs.
-export const timingsSaved = (): AllocationToast => ({
-  variant: "default",
-  title: "Sessions scheduled",
-  description: "The times you picked are confirmed.",
-});
+// An unpaid request is held, not confirmed: the toast names the pay link's end
+// when this call minted one, and otherwise only that the learner must pay.
+export const timingsSaved = (
+  result: { awaitingPayment?: boolean; payExpiresAt?: Date | null } = {},
+  opts?: DisplayOpts,
+): AllocationToast => {
+  if (result.awaitingPayment !== true) {
+    return {
+      variant: "default",
+      title: "Sessions scheduled",
+      description: "The times you picked are confirmed.",
+    };
+  }
+  return {
+    variant: "default",
+    title: "Times held",
+    description: result.payExpiresAt
+      ? `The learner has until ${formatDateTimeLabel(result.payExpiresAt, opts)} to pay. The sessions are confirmed once they do.`
+      : "The learner has to pay before the sessions are confirmed.",
+  };
+};
 
 export const autoScheduled = (): AllocationToast => ({
   variant: "default",

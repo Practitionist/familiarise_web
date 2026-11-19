@@ -156,6 +156,7 @@ function eventFacts(
           : {
               name: "Registered attendees",
               image: plan?.consultantProfile?.user?.image ?? null,
+              audience: true,
             },
         status: normalizeStatus(appointment.webinar?.status?.toString()),
       };
@@ -173,6 +174,7 @@ function eventFacts(
           : {
               name: "Enrolled learners",
               image: plan?.consultantProfile?.user?.image ?? null,
+              audience: true,
             },
         status: normalizeStatus(appointment.class?.status?.toString()),
       };
@@ -477,6 +479,7 @@ function mapUnscheduledClass(
     counterpart: {
       name: "Enrolled learners",
       image: plan.consultantProfile?.user?.image ?? null,
+      audience: true,
     },
     status,
     ...deriveBucket(
@@ -511,6 +514,7 @@ function mapUnscheduledWebinar(
     counterpart: {
       name: "Registered attendees",
       image: w.webinarPlan.consultantProfile?.user?.image ?? null,
+      audience: true,
     },
     status,
     ...deriveBucket(

@@ -537,7 +537,9 @@ export function useConsultantAppointmentsAdapter(
             }}
             onCancel={closeDialog}
             title={activeVm.title}
-            consultant={activeVm.counterpart.name}
+            consultant={
+              activeVm.counterpart.audience ? null : activeVm.counterpart.name
+            }
             appointmentType={typeLabel}
             isLoading={actions.isLoading}
             appointmentId={activeVm.appointmentId}
