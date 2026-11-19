@@ -4,6 +4,8 @@
  * open-hours window, legend, click guard, keyboard) agrees on what a cell is.
  */
 import {
+  isFreeStatusKey,
+  outsideCoHostHoursLabel,
   resolveSlotStatusKey,
   SLOT_STATUS_TOKENS,
   type SlotStatusKey,
@@ -25,6 +27,12 @@ export interface ServerCell {
   tooSoon: boolean;
   limitReached: boolean;
   overlappingAppointments: OverlapDetail[];
+  /** Free for the host, but an accepted co-host has not published it. */
+  outsideCoHostHours?: boolean;
+  /** Those co-hosts' first names, when the viewer may see names. */
+  outsideCoHostHoursOf?: readonly string[];
+  /** Starts later than a 1:1 booking may be placed. */
+  beyondHorizon?: boolean;
 }
 
 export interface AtomContext {
@@ -38,6 +46,8 @@ export interface AtomContext {
   justTakenStarts: ReadonlySet<number>;
   /** The client's requested times (allocate grid), by atom start. */
   requestedStarts: ReadonlySet<number>;
+  /** This booking's sessions a reschedule in progress leaves in place, by atom start. */
+  stayingStarts?: ReadonlySet<number>;
   nowMs: number;
   allowedStartMs?: number;
   allowedEndMs?: number;
@@ -68,15 +78,22 @@ export interface AtomState {
   isBooked: boolean;
   isInPast: boolean;
   isTooSoon: boolean;
+  /** Later than a 1:1 booking may be placed; the server decides. */
+  isBeyondHorizon: boolean;
   isLimitReached: boolean;
   isOutsidePeriod: boolean;
   isThisEvent: boolean;
+  /** This booking's session that the reschedule in progress is not moving: never a pick. */
+  isStaying: boolean;
   isTentative: boolean;
   isRequested: boolean;
   overlapping: OverlapDetail[];
+  /** First names of the co-hosts who have not published this atom, when known. */
+  outsideCoHostHoursOf: readonly string[];
 }
 
 const NONE: OverlapDetail[] = [];
+const NO_NAMES: readonly string[] = [];
 
 export function isOutsideAllowedRange(
   startMs: number,
@@ -110,6 +127,7 @@ export function describeAtom(
   );
   const isTooSoon = isTooSoonAt(startMs, endMs, server, ctx);
   const isLimitReached = server?.limitReached === true;
+  const isBeyondHorizon = server?.beyondHorizon === true;
   const statusKey = resolveSlotStatusKey({
     isSelected: ctx.selectedStarts.has(startMs),
     isJustTaken: ctx.justTakenStarts.has(startMs),
@@ -120,7 +138,9 @@ export function describeAtom(
     isAvailable,
     isOutsidePeriod,
     isTooSoon,
+    isBeyondHorizon,
     isLimitReached,
+    isOutsideCoHostHours: server?.outsideCoHostHours === true,
     isInPast,
   });
   return {
@@ -132,13 +152,40 @@ export function describeAtom(
     isBooked: isFullyBooked || isPartiallyBooked,
     isInPast,
     isTooSoon,
+    isBeyondHorizon,
     isLimitReached,
     isOutsidePeriod,
     isThisEvent,
+    isStaying: isThisEvent && ctx.stayingStarts?.has(startMs) === true,
     isTentative,
     isRequested: ctx.requestedStarts.has(startMs),
     overlapping: server?.overlappingAppointments ?? NONE,
+    outsideCoHostHoursOf: server?.outsideCoHostHoursOf ?? NO_NAMES,
   };
+}
+
+/** A free atom a new session may take. */
+export function atomIsFree(atom: AtomState): boolean {
+  return (
+    atom.isAvailable &&
+    !atom.isInPast &&
+    !atom.isOutsidePeriod &&
+    !atom.isTooSoon &&
+    !atom.isBeyondHorizon &&
+    !atom.isLimitReached
+  );
+}
+
+/** A free atom, or an upcoming one of this booking's own that is being moved: a session may take either. */
+export function atomIsPlaceable(atom: AtomState): boolean {
+  return (
+    atomIsFree(atom) ||
+    (atom.isThisEvent &&
+      !atom.isStaying &&
+      !atom.isInPast &&
+      !atom.isOutsidePeriod &&
+      !atom.isTentative)
+  );
 }
 
 /** A cell ready to render: the atom plus its state's name. Busy runs are labelled by their block, not the cell. */
@@ -169,6 +216,9 @@ export interface CellPosition {
 
 function stateLabelOf(atom: AtomState): string {
   if (atom.statusKey === "thisEvent" && atom.isInPast) return "Past session";
+  if (atom.statusKey === "outsideCoHostHours") {
+    return outsideCoHostHoursLabel(atom.outsideCoHostHoursOf);
+  }
   return SLOT_STATUS_TOKENS[atom.statusKey].label;
 }
 
@@ -257,7 +307,9 @@ export function weekDayFits(
   const dayOf = new Map<number, number>();
   matrix.forEach((line) =>
     line.forEach((cell, day) => {
-      if (cell?.statusKey === "available") dayOf.set(cell.startMs, day);
+      if (cell && isFreeStatusKey(cell.statusKey)) {
+        dayOf.set(cell.startMs, day);
+      }
     }),
   );
   const per = Math.max(1, size);
@@ -328,13 +380,14 @@ export function openHoursWindow(
   };
 }
 
-export type JustTakenReason = "taken" | "expired";
+export type JustTakenReason = "taken" | "expired" | "ownSession";
 
 /**
  * Selected atoms the latest data no longer allows, inside the window the data
  * covers. "taken" when someone else now holds it or it is no longer
  * published; "expired" when it slid into the past, the notice period or a
- * used-up limit. This booking's own sessions are never conflicts.
+ * used-up limit; "ownSession" when it sits on a session of this booking that
+ * is not being moved. The sessions being moved are never conflicts.
  */
 export function selectionConflicts(
   selectedStarts: Iterable<number>,
@@ -345,7 +398,10 @@ export function selectionConflicts(
   if (!window) return conflicts;
   for (const startMs of selectedStarts) {
     if (startMs < window.startMs || startMs >= window.endMs) continue;
-    if (ctx.eventStarts.has(startMs)) continue;
+    if (ctx.eventStarts.has(startMs)) {
+      if (ctx.stayingStarts?.has(startMs)) conflicts.set(startMs, "ownSession");
+      continue;
+    }
     const server = ctx.serverCells.get(startMs);
     if (server?.bookingStatus !== "available") {
       conflicts.set(startMs, "taken");
@@ -360,32 +416,62 @@ export function selectionConflicts(
   return conflicts;
 }
 
+interface OwnOccurrence {
+  startsAt: Date | string;
+  endsAt: Date | string;
+  isTentative: boolean;
+  completionStatus: string | null;
+  deletedAt?: Date | string | null;
+}
+
+/** Adds every atom a session touches to `starts`. */
+function addAtomsOf(row: OwnOccurrence, starts: Set<number>): void {
+  const endMs = new Date(row.endsAt).getTime();
+  for (
+    let atom = Math.floor(new Date(row.startsAt).getTime() / ATOM_MS) * ATOM_MS;
+    atom < endMs;
+    atom += ATOM_MS
+  ) {
+    starts.add(atom);
+  }
+}
+
 /**
  * The atoms this booking holds as an unconfirmed request (tentative, not
  * released): the approver may pick them up to the allocate lead, not 24 hours.
  */
 export function ownHoldStarts(
-  occurrences: ReadonlyArray<{
-    startsAt: Date | string;
-    endsAt: Date | string;
-    isTentative: boolean;
-    completionStatus: string | null;
-    deletedAt?: Date | string | null;
-  }>,
+  occurrences: ReadonlyArray<OwnOccurrence>,
 ): ReadonlySet<number> {
   const starts = new Set<number>();
   for (const row of occurrences) {
     if (!row.isTentative || row.deletedAt) continue;
     if (row.completionStatus !== "SCHEDULED") continue;
-    const endMs = new Date(row.endsAt).getTime();
-    for (
-      let atom =
-        Math.floor(new Date(row.startsAt).getTime() / ATOM_MS) * ATOM_MS;
-      atom < endMs;
-      atom += ATOM_MS
+    addAtomsOf(row, starts);
+  }
+  return starts;
+}
+
+/**
+ * The atoms of this booking's live sessions that a reschedule releasing
+ * `releasingIds` leaves in place. The server keeps those sessions, so a new
+ * time may not overlap them.
+ */
+export function stayingSessionStarts(
+  occurrences: ReadonlyArray<OwnOccurrence & { id?: string }>,
+  releasingIds: readonly string[],
+): ReadonlySet<number> {
+  const releasing = new Set(releasingIds);
+  const starts = new Set<number>();
+  for (const row of occurrences) {
+    if (!row.id || releasing.has(row.id) || row.deletedAt) continue;
+    if (
+      row.completionStatus === "CANCELLED" ||
+      row.completionStatus === "RESCHEDULED"
     ) {
-      starts.add(atom);
+      continue;
     }
+    addAtomsOf(row, starts);
   }
   return starts;
 }

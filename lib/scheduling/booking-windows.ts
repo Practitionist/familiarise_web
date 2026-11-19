@@ -21,6 +21,8 @@ export type SlotWithStatus = TIntervalTiming & {
   bookingStatus: BookingStatus;
   /** Starts before now plus the checkout lead time. */
   _isPast: boolean;
+  /** Starts later than a 1:1 booking may be placed. */
+  beyondHorizon?: boolean;
 };
 
 /** The part of a grid atom the dialog's windows need; the rest is filled in. */
@@ -31,6 +33,7 @@ export interface GridAtomInput {
   bookingStatus?: BookingStatus;
   tooSoon?: boolean;
   limitReached?: boolean;
+  beyondHorizon?: boolean;
   slotId?: string;
   dateInISO?: string;
   availabilityWindowId?: string;
@@ -44,7 +47,11 @@ export interface GridAtomInput {
 function normalizeAtom(
   atom: GridAtomInput,
   index: number,
-): TIntervalTiming & { isAllocated: boolean; bookingStatus: BookingStatus } {
+): TIntervalTiming & {
+  isAllocated: boolean;
+  bookingStatus: BookingStatus;
+  beyondHorizon?: boolean;
+} {
   const startMs = new Date(atom.startsAt).getTime();
   const bookingStatus: BookingStatus = atom.bookingStatus ?? "available";
   return {
@@ -62,6 +69,7 @@ function normalizeAtom(
     bookingStatus,
     tooSoon: atom.tooSoon,
     limitReached: atom.limitReached,
+    beyondHorizon: atom.beyondHorizon,
   };
 }
 
@@ -97,6 +105,7 @@ export function windowsForDay(
       ...window,
       tooSoon: under.some((atom) => atom.tooSoon === true),
       limitReached: under.some((atom) => atom.limitReached === true),
+      beyondHorizon: under.some((atom) => atom.beyondHorizon === true),
       // The writers refuse a start at or before the cutoff.
       _isPast: start <= cutoff,
     };
@@ -105,14 +114,16 @@ export function windowsForDay(
 
 /**
  * A window the buyer can take now: wholly free (a partly booked half-hour is
- * refused by every writer), not past or too soon, not over a plan limit.
+ * refused by every writer), not past, too soon or too far ahead, not over a
+ * plan limit.
  */
 export function isBookableWindow(slot: SlotWithStatus): boolean {
   return (
     !slot._isPast &&
     slot.bookingStatus === "available" &&
     slot.tooSoon !== true &&
-    slot.limitReached !== true
+    slot.limitReached !== true &&
+    slot.beyondHorizon !== true
   );
 }
 

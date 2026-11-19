@@ -16,6 +16,20 @@ export const RESCHEDULE_MIN_LEAD_HOURS = 24;
 
 export const RESCHEDULE_LEAD_TIME_MS = RESCHEDULE_MIN_LEAD_HOURS * 60 * 60_000;
 
+/** A 1:1 session, request or trial may start at most this many days ahead. */
+export const MAX_BOOKING_HORIZON_DAYS = 90;
+
+export const MAX_BOOKING_HORIZON_MS =
+  MAX_BOOKING_HORIZON_DAYS * 24 * 60 * 60_000;
+
+/** A start later than now + the booking horizon; a start exactly on it is inside. */
+export function isBeyondBookingHorizon(
+  startMs: number,
+  nowMs: number,
+): boolean {
+  return startMs > nowMs + MAX_BOOKING_HORIZON_MS;
+}
+
 export const LEAD_PURPOSES = [
   "book",
   "request",

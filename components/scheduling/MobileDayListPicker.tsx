@@ -9,7 +9,9 @@ import {
 } from "react";
 import { X } from "lucide-react";
 
-import { useAvailabilityWindow } from "@/lib/scheduling/use-availability-window";
+import { useAvailabilityAnswer } from "@/lib/scheduling/use-availability-window";
+import type { GridLead } from "@/lib/scheduling/allocationService";
+import { quotaFooterText } from "@/lib/scheduling/grid-quota";
 import { useNowTick } from "@/hooks/use-now-tick";
 import {
   DAY_LIST_DAYS,
@@ -23,6 +25,7 @@ import {
   type DayListPick,
   type DayListRules,
 } from "@/lib/scheduling/day-list";
+import type { JustTakenReason } from "@/lib/scheduling/week-grid-model";
 import { SLOT_STATUS_TOKENS } from "@/lib/scheduling/interval-status-tokens";
 import { useJustTaken } from "@/lib/scheduling/use-just-taken";
 import { cn } from "@/utils/tailwind";
@@ -48,8 +51,10 @@ export interface MobileDayListPickerProps {
   allowedEnd?: Date;
   /** The session the picker opens on, when the surface has one. */
   focusAt?: Date;
-  /** Extra notice on top of the server's 15-min tooSoon. */
-  minLeadHours?: number;
+  /** The writer the picks go to; its lead time decides which starts are too soon. */
+  lead?: GridLead;
+  /** The sessions being moved; a new time may overlap their own. */
+  movingSessions?: readonly DayListPick[];
   /** Whole-session picks, ISO. */
   value: DayListPick[];
   onChange: (next: DayListPick[]) => void;
@@ -57,6 +62,8 @@ export interface MobileDayListPickerProps {
 }
 
 const JUST_TAKEN = SLOT_STATUS_TOKENS.justTaken;
+const LIMIT_REACHED = SLOT_STATUS_TOKENS.limitReached;
+const BEYOND_HORIZON = SLOT_STATUS_TOKENS.beyondHorizon;
 
 function timesWord(count: number): string {
   return `${count} time${count === 1 ? "" : "s"}`;
@@ -82,7 +89,8 @@ export function MobileDayListPicker({
   allowedStart,
   allowedEnd,
   focusAt,
-  minLeadHours,
+  lead,
+  movingSessions,
   value,
   onChange,
   className,
@@ -118,7 +126,7 @@ export function MobileDayListPicker({
     () => ({ start: new Date(startIso), end: new Date(endIso) }),
     [startIso, endIso],
   );
-  const query = useAvailabilityWindow({
+  const query = useAvailabilityAnswer({
     consultantId,
     startUtc: range.start,
     endUtc: range.end,
@@ -126,9 +134,13 @@ export function MobileDayListPicker({
     consulteeUserId,
     subscriptionId,
     releasingIds,
+    lead,
     // Midnight moves the window; keep the list instead of a skeleton.
     keepPrevious: true,
   });
+  const cells = query.data?.data;
+  const quota = query.data?.quota ?? null;
+  const leadMs = query.data?.leadMs ?? null;
 
   const rules = useMemo<DayListRules>(
     () => ({
@@ -139,32 +151,59 @@ export function MobileDayListPicker({
         allowedStartMs === undefined ? undefined : new Date(allowedStartMs),
       allowedEnd:
         allowedEndMs === undefined ? undefined : new Date(allowedEndMs),
-      minLeadHours,
+      leadMs,
+      movingSessions,
     }),
-    [zone, sessionMinutes, nowMs, allowedStartMs, allowedEndMs, minLeadHours],
+    [
+      zone,
+      sessionMinutes,
+      nowMs,
+      allowedStartMs,
+      allowedEndMs,
+      leadMs,
+      movingSessions,
+    ],
   );
   const days = useMemo(
-    () => (query.data ? buildDayList(query.data, rules, fromMs) : []),
-    [query.data, rules, fromMs],
+    () => (cells ? buildDayList(cells, rules, fromMs) : []),
+    [cells, rules, fromMs],
   );
 
-  // A poll that takes a pick paints it "Just taken" once, then drops it.
+  // A pick the latest answer no longer allows is dropped and announced; one
+  // someone else took paints "Just taken" for the render before it goes.
   const [announcement, setAnnouncement] = useState("");
-  const stale = query.data ? stalePicks(value, query.data, rules, fromMs) : [];
-  const dropTaken = useCallback(
+  const stale = useMemo(
+    () =>
+      cells
+        ? stalePicks(value, cells, rules, fromMs)
+        : new Map<string, JustTakenReason>(),
+    [cells, value, rules, fromMs],
+  );
+  const dropStale = useCallback(
     (keys: string[]) => {
       const gone = value.filter((pick) => keys.includes(pick.startsAt));
       if (gone.length === 0) return;
       onChange(value.filter((pick) => !keys.includes(pick.startsAt)));
-      setAnnouncement(
-        gone.length === 1
-          ? `${pickLabel(gone[0], zone)} is no longer free, so we removed it. Pick another time.`
-          : `${gone.length} of your times are no longer free, so we removed them. Pick other times.`,
-      );
+      const taken = gone.some((pick) => stale.get(pick.startsAt) === "taken");
+      const one = gone.length === 1 ? pickLabel(gone[0], zone) : null;
+      if (taken) {
+        setAnnouncement(
+          one
+            ? `${one} is no longer free, so we removed it. Pick another time.`
+            : `${gone.length} of your times are no longer free, so we removed them. Pick other times.`,
+        );
+      } else {
+        setAnnouncement(
+          one
+            ? `${one} can't be booked any more: it is now too close to its start or past this plan's limit. We removed it — pick another time.`
+            : `${gone.length} of your times can't be booked any more: they are now too close to their start or past this plan's limit. We removed them — pick other times.`,
+        );
+      }
     },
-    [value, onChange, zone],
+    [value, onChange, zone, stale],
   );
-  const justTaken = useJustTaken(stale, dropTaken);
+  const staleKeys = useMemo(() => [...stale.keys()], [stale]);
+  const justTaken = useJustTaken(staleKeys, dropStale);
 
   const [chosenKey, setChosenKey] = useState<string | null>(null);
   const activeDay =
@@ -214,7 +253,17 @@ export function MobileDayListPicker({
   };
 
   const status = `${value.length} of ${timesWord(timesNeeded)} picked`;
-  const firstLoad = query.data === undefined;
+  const firstLoad = cells === undefined;
+  const quotaLine = quota ? quotaFooterText(quota, zone, nowMs) : null;
+  // The plan's limit, not the expert's calendar, is why nothing is offered.
+  const limitIsWhy =
+    activeDay?.limitReached === true ||
+    (days.every((day) => day.starts.length === 0) &&
+      days.some((day) => day.limitReached));
+  const horizonIsWhy =
+    activeDay?.beyondHorizon === true ||
+    (days.every((day) => day.starts.length === 0) &&
+      days.some((day) => day.beyondHorizon));
 
   // Its own scroll area: the host's fixed-height column puts the footer below it.
   return (
@@ -361,6 +410,21 @@ export function MobileDayListPicker({
                 );
               })}
             </ul>
+          ) : limitIsWhy ? (
+            <div className="text-sm text-muted-foreground">
+              <p className="font-medium text-foreground">
+                {LIMIT_REACHED.label}
+              </p>
+              <p>
+                {quotaLine
+                  ? `${quotaLine}. Pick a day or week that still has room.`
+                  : LIMIT_REACHED.hint}
+              </p>
+            </div>
+          ) : horizonIsWhy ? (
+            <p className="text-sm text-muted-foreground">
+              {BEYOND_HORIZON.hint}
+            </p>
           ) : (
             <p className="text-sm text-muted-foreground">
               {days.some((day) => day.starts.length > 0)
@@ -385,7 +449,9 @@ export function MobileDayListPicker({
           <h4 className="text-sm font-medium">Your times</h4>
           <ul className="space-y-1.5">
             {value.map((pick) => {
-              const taken = justTaken.has(pick.startsAt);
+              const taken =
+                justTaken.has(pick.startsAt) &&
+                stale.get(pick.startsAt) === "taken";
               const label = pickLabel(pick, zone);
               return (
                 <li
