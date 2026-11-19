@@ -349,9 +349,14 @@ the same Serializable recount, so two rejoins, or a rejoin and a new buyer, for
 the last seat seat exactly one and refuse the other `EVENT_FULL`. The handler
 reads the buyer's prior payment before `recordParticipants` revives the row and
 revives only `CANCELLED`; a removed seat never revives
-(`removedByUserId: null` in the revive's WHERE). Lifting a removal clears the
-mark by compare-and-set (`where: { id, removedByUserId: { not: null } }`), so a
-second lift and an overturn that lands after a lift change nothing. Every event
+(`removedByUserId: null` in the revive's WHERE), and the handler's
+`stampRecordedSeat` refuses the commit when the seat write did not reach an
+unmarked row in the checkout's status. Lifting a removal clears the mark by
+compare-and-set (staff on `removedByUserId: { not: null }`, the organiser on
+`removedByUserId` equal to themselves), so a second lift and an overturn that
+lands after a lift change nothing. A leave's Stream removal is driven only by
+its durable revoker, which re-reads the seats after its vendor calls and
+re-syncs anyone a rejoin re-admitted meanwhile. Every event
 seat move writes its SEAT history row on the same `tx` as the move
 (`lib/booking/seat-history.ts`); a caller whose CAS pins one from-status skips
 the pre-read.

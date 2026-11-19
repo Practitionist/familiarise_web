@@ -374,7 +374,10 @@ left (`priorSeatStanding` answers `REJOINABLE`) revives on its earlier
 `SUCCEEDED` ₹0 payment: no payment insert, no re-mint, no tombstone, and the
 commit skips the legs, the utilisation meter and the synchronous earnings, so a
 rejoin moves no money and writes no money row. Its booked notice is staged after
-the commit (`notifyFreeSeatRegistered`), keyed per seat and join instant.
+the commit (`notifyFreeSeatRegistered`), keyed on the join's own SEAT row
+(`readSeatJoin`, read in the commit) and claimed once. A removed seat refuses
+before its EXPIRED, FAILED or PENDING row is looked at, so a removal outlasts
+its lapsed checkout, and the rejoin gate reads the event price under the lock.
 
 ## 10. A refund owed is never lost, and the quote is bound to the click
 
