@@ -565,12 +565,14 @@ export async function PUT(
                 "scheduleSwitch",
               );
               if (active.hasActive) throw new SwitchBlockedInTx(active);
-              const flipped = await tx.consultantProfile.updateMany({
-                where: { id, scheduleType: previousScheduleType },
-                data: { scheduleType },
-              });
-              if (flipped.count === 0) throw new SwitchConflictInTx();
             }
+            // Every save, same-type too: the rows below replace the type this
+            // request read, so a type changed since then must refuse, not erase.
+            const typeHeld = await tx.consultantProfile.updateMany({
+              where: { id, scheduleType: previousScheduleType },
+              data: { scheduleType },
+            });
+            if (typeHeld.count === 0) throw new SwitchConflictInTx();
 
             await tx.consultantProfile.update({
               where: { id },
