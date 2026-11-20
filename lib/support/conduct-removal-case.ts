@@ -505,8 +505,8 @@ const liftedSinceRemoval = (
 ) => seatStepSinceRemoval(tx, target, ["block_lifted"]);
 
 /**
- * Whether the seat was registered again after the removal. That checkout re-minted the order in the
- * same commit, so the order the removal ended is retired and the seat's current order is a later sale.
+ * Whether the seat was registered again after the removal: a re-bought seat's capture, or a free rejoin,
+ * writes that row, and the checkout before it re-minted the order, so the seat's current order is a later sale.
  */
 const reboughtSinceRemoval = (
   tx: Pick<Tx, "appointmentParticipant" | "bookingStatusHistory">,
