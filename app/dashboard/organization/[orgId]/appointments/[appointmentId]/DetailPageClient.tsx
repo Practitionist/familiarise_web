@@ -69,6 +69,8 @@ export default function DetailPageClient({
       backHref={`/dashboard/organization/${orgId}/appointments`}
       supportRequestsBase={`/dashboard/organization/${orgId}/support/requests`}
       joinWindowMs={CONSULTEE_JOIN_WINDOW_MS}
+      // The org page admits only the booking's own learner or expert.
+      operatorView={false}
       resourceHrefs={{
         documents: `/dashboard/organization/${orgId}/appointments/${appointmentId}/documents`,
         recordings: `/dashboard/organization/${orgId}/appointments/${appointmentId}/recordings`,

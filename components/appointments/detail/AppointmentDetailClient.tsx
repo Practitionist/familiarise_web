@@ -117,7 +117,11 @@ import { AppointmentSupportStatusCard } from "@/components/support/AppointmentSu
 import { SessionRatingRow } from "@/components/reviews/SessionRatingRow";
 import { SessionReviewCard } from "@/components/reviews/SessionReviewCard";
 import { useSessionFeedback } from "@/hooks/useSessionFeedback";
-import { ResourceSnapshot, type ResourceHrefs } from "./ResourceSnapshot";
+import {
+  ResourceSnapshot,
+  type ResourceHrefs,
+  type ResourcesWithheld,
+} from "./ResourceSnapshot";
 import { cn } from "@/utils/tailwind";
 import { SeatTrailNote } from "./SeatTrailNote";
 
@@ -299,6 +303,8 @@ interface AppointmentDetailClientProps {
   renderNotices?: (vm: AppointmentVM) => ReactNode;
   /** `<tree>/support/requests` — "Get help" opens this booking's request page (#1527). */
   supportRequestsBase: string;
+  /** Staff viewing someone else's personal dashboard: the owner-only resource reads are not sent. */
+  operatorView: boolean;
 }
 
 export function AppointmentDetailClient({
@@ -313,6 +319,7 @@ export function AppointmentDetailClient({
   renderExtraActions,
   renderNotices,
   supportRequestsBase,
+  operatorView,
 }: AppointmentDetailClientProps) {
   const format = useZonedFormat();
   const { data: session } = useSession();
@@ -1212,12 +1219,17 @@ export function AppointmentDetailClient({
     </Section>
   );
 
+  // Every resource route refuses a closed (soft-deleted) booking and a non-party.
+  let resourcesWithheld: ResourcesWithheld | null = null;
+  if (operatorView) resourcesWithheld = "operator";
+  else if (detail.appointment.deletedAt) resourcesWithheld = "closed";
   const resourcesCard = (
     <Section title="Resources">
       <ResourceSnapshot
         appointmentId={appointmentId}
         supportsDocuments={supportsDocuments(vm.kind)}
         hrefs={resourceHrefs}
+        withheld={resourcesWithheld}
       />
     </Section>
   );
