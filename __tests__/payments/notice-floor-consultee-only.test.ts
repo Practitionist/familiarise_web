@@ -293,6 +293,7 @@ const planQuoteFor = (
     sessionsRefunded: ctx.sessionsRefunded,
     sessionsCompleted: ctx.sessionsCompleted,
     scheduledStarts: ctx.scheduledStarts,
+    nowMs: ctx.quotedAtMs,
     alreadyRefundedPaise: ctx.alreadyRefundedPaise,
     isSubscription: true,
     isConsultantInitiated,
@@ -333,6 +334,22 @@ describe("reschedule notice floor on a plan cancel", () => {
       [move(1, 3)],
     );
     expect(planQuoteFor(ctx).refundPaise).toBe(87_500);
+  });
+
+  it("prices a release made exactly 24 hours ahead at the full tier, however long the reads before the quote take", async () => {
+    const ctx = await planContextOf(
+      [
+        occurrence("replacement", 1, 120, "SCHEDULED"),
+        occurrence("next", 2, 144, "SCHEDULED"),
+      ],
+      [move(1, 24)],
+    );
+    const later = jest.spyOn(Date, "now").mockReturnValue(Date.now() + 5_000);
+    try {
+      expect(planQuoteFor(ctx).refundPaise).toBe(100_000);
+    } finally {
+      later.mockRestore();
+    }
   });
 
   it("leaves a session the expert released at its own notice", async () => {

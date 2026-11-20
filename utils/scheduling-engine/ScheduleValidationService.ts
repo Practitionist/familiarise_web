@@ -130,8 +130,7 @@ export function isOccupiedByLiveAppointment(
   if (
     request?.bookingSource === BookingSource.REQUEST_SUBMITTED &&
     request.requestedAt &&
-    moves &&
-    moves.rescheduleRequests === 0 &&
+    moves?.rescheduleRequests === 0 &&
     moves.occurrences === 0
   ) {
     const kind = appointment.consultation ? "CONSULTATION" : "SUBSCRIPTION";

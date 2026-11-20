@@ -216,6 +216,30 @@ describe("sponsor-org allocate", () => {
     expect(allocate).not.toHaveBeenCalled();
   });
 
+  it("refuses a picked time off the half-hour grid, as every other allocate door does", async () => {
+    const res = await orgAllocate(
+      new NextRequest("http://localhost/x", {
+        method: "POST",
+        body: JSON.stringify({
+          isAuto: false,
+          slots: ["2026-12-01T10:15:00.000Z"],
+          overrideReason: "ops request",
+        }),
+      }),
+      {
+        params: Promise.resolve({
+          orgId: "org-payer",
+          appointmentId: "appt-1",
+        }),
+      },
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      error: "Times start on the hour or half hour",
+    });
+    expect(allocate).not.toHaveBeenCalled();
+  });
+
   it("allocates an APPROVED booking with the CAS narrowed to APPROVED", async () => {
     const res = await post("APPROVED");
     expect(res.status).toBe(200);

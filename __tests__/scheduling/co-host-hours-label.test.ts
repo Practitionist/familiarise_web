@@ -14,10 +14,12 @@ import {
   isBookableWindow,
   windowsForDay,
 } from "@/lib/scheduling/booking-windows";
+import { buildDayList } from "@/lib/scheduling/day-list";
 import {
   atomIsFree,
   atomIsPlaceable,
   describeAtom,
+  selectionConflicts,
   weekDayFits,
   type AtomContext,
   type ServerCell,
@@ -93,6 +95,37 @@ describe("outside a co-host's hours", () => {
     );
     expect(window.outsideCoHostHours).toBe(true);
     expect(isBookableWindow(window)).toBe(false);
+  });
+
+  it("is not a start the phone day list offers, alone or under a longer session", () => {
+    const atoms = [
+      { startsAt: new Date(T).toISOString() },
+      { startsAt: new Date(T + ATOM).toISOString(), outsideCoHostHours: true },
+      { startsAt: new Date(T + 2 * ATOM).toISOString() },
+    ];
+    const starts = (sessionMinutes: number) =>
+      buildDayList(
+        { "2026-11-23": atoms },
+        { zone: "UTC", sessionMinutes, nowMs: NOW },
+        T,
+      )[0].starts.map((start) => start.startsAt);
+    expect(starts(30)).toEqual([
+      new Date(T).toISOString(),
+      new Date(T + 2 * ATOM).toISOString(),
+    ]);
+    expect(starts(60)).toEqual([]);
+  });
+
+  it("drops a picked time once a co-host's hours stop covering it", () => {
+    const window = { startMs: T - ATOM, endMs: T + 2 * ATOM };
+    expect(selectionConflicts([T], context(cell()), window).size).toBe(0);
+    expect(
+      selectionConflicts(
+        [T],
+        context(cell({ outsideCoHostHours: true })),
+        window,
+      ).get(T),
+    ).toBe("taken");
   });
 
   it("yields to every reason a time cannot be picked", () => {

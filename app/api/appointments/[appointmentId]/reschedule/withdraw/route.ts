@@ -19,6 +19,24 @@ import {
   BookingLockUnavailableError,
 } from "@/utils/appointmentlock";
 
+/** The answer for a caller who once could withdraw this move and no longer can. */
+function lostAuthorityResponse(
+  refusal: "NOT_FOUND" | "NO_LONGER_A_PARTY" | "MEMBERSHIP_SUSPENDED",
+): NextResponse {
+  // A suspended learner on an org-funded booking moves nothing, as on open and respond.
+  if (refusal === "MEMBERSHIP_SUSPENDED") return membershipSuspendedResponse();
+  // The initiator still has to act for the side they opened it from, as on
+  // the respond route; an expert removed from the host org has lost that.
+  return NextResponse.json(
+    {
+      error:
+        "You no longer act for this booking, so you can't withdraw its reschedule.",
+      code: "NO_LONGER_A_PARTY",
+    },
+    { status: 403 },
+  );
+}
+
 /**
  * POST /api/appointments/[appointmentId]/reschedule/withdraw
  *
@@ -86,22 +104,7 @@ export async function POST(
       );
     }
 
-    if (!authority.allowed) {
-      // A suspended learner on an org-funded booking moves nothing, as on open and respond.
-      if (authority.refusal === "MEMBERSHIP_SUSPENDED") {
-        return membershipSuspendedResponse();
-      }
-      // The initiator still has to act for the side they opened it from, as on
-      // the respond route; an expert removed from the host org has lost that.
-      return NextResponse.json(
-        {
-          error:
-            "You no longer act for this booking, so you can't withdraw its reschedule.",
-          code: "NO_LONGER_A_PARTY",
-        },
-        { status: 403 },
-      );
-    }
+    if (!authority.allowed) return lostAuthorityResponse(authority.refusal);
 
     const result = await withdrawRescheduleRequest({
       rescheduleRequestId: open.id,

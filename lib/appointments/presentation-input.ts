@@ -42,6 +42,8 @@ function toPaymentInput(
     createdAt: p.createdAt,
     expiresAt: "expiresAt" in p ? p.expiresAt : null,
     capturedAt: "capturedAt" in p ? p.capturedAt : null,
+    gatewayOrderMinted:
+      "gatewayOrderMinted" in p ? p.gatewayOrderMinted : undefined,
   };
 }
 
@@ -85,6 +87,7 @@ type Requested = {
   status: string;
   requestedAt?: Date | string | null;
   createdAt?: Date | string | null;
+  bookingSource?: string | null;
 };
 
 /**
@@ -140,6 +143,37 @@ export function lifecycleOf(
     : null;
 }
 
+/** How a consultation or subscription began; null for a trial or an event seat. */
+export function bookingSourceOf(a: LifecycleRows): string | null {
+  return a.consultation?.bookingSource ?? a.subscription?.bookingSource ?? null;
+}
+
+/**
+ * When the unpaid hold releases: the soonest live pay link, else the trial's
+ * due time, else a submitted request's answer window. A pay-first hold has
+ * only its payment's own clock.
+ */
+export function holdDeadlineOf(args: {
+  payments: ReadonlyArray<{
+    paymentStatus: string;
+    expiresAt?: Date | string | null;
+  }>;
+  trialDueAt?: Date | string | null;
+  request: BookingPresentationInput["request"];
+  source: string | null;
+}): Date | null {
+  const pending =
+    args.payments
+      .filter((p) => p.paymentStatus === "PENDING" && p.expiresAt)
+      .map((p) => new Date(p.expiresAt!))
+      .sort((x, y) => x.getTime() - y.getTime())[0] ?? null;
+  if (pending) return pending;
+  if (args.trialDueAt) return new Date(args.trialDueAt);
+  return args.request?.status === "PENDING" && args.source !== "DIRECT_CHECKOUT"
+    ? requestHoldDeadline(args.request.kind, args.request.requestedAt)
+    : null;
+}
+
 export function planOf(a: LifecycleRows): BookingPresentationInput["plan"] {
   if (a.trial) {
     const p = a.trial.subscriptionPlan;
@@ -184,22 +218,13 @@ export function toPresentationInput(
   const a = detail.appointment;
   const request = lifecycleOf(a);
   const payments = a.payment.map(toPaymentInput);
-  // The pay link's own clock while one is live; else the request hold's.
-  const pendingDeadline =
-    a.payment
-      .filter((p) => p.paymentStatus === "PENDING" && p.expiresAt)
-      .map((p) => new Date(p.expiresAt!))
-      .sort((x, y) => x.getTime() - y.getTime())[0] ?? null;
-  const source =
-    a.consultation?.bookingSource ?? a.subscription?.bookingSource ?? null;
-  // A submitted request holds its time while the expert answers; a pay-first
-  // hold has only its payment's own clock.
-  const holdExpiresAt =
-    pendingDeadline ??
-    a.trial?.paymentDueAt ??
-    (request?.status === "PENDING" && source !== "DIRECT_CHECKOUT"
-      ? requestHoldDeadline(request.kind, request.requestedAt)
-      : null);
+  const source = bookingSourceOf(a);
+  const holdExpiresAt = holdDeadlineOf({
+    payments: a.payment,
+    trialDueAt: a.trial?.paymentDueAt,
+    request,
+    source,
+  });
   const sponsored = a.payment.some(isSponsoredPayment);
   return {
     appointmentType: a.appointmentType,

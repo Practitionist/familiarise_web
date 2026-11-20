@@ -616,12 +616,15 @@ async function requestReschedule(
               { httpStatus: 400, code: "PROPOSAL_TOO_SOON" },
             );
           }
-          // A 1:1 or trial is moved inside the booking horizon; a plan session
-          // is bound by its plan week instead.
+          // A 1:1 or trial is one session, moved inside the booking horizon by
+          // its start: its first proposed half-hour. A plan session is bound
+          // by its plan week instead.
           if (
             !appointment.subscription &&
-            proposedSlots?.some((s) =>
-              isBeyondBookingHorizon(s.startsAt.getTime(), now.getTime()),
+            proposedSlots?.length &&
+            isBeyondBookingHorizon(
+              Math.min(...proposedSlots.map((s) => s.startsAt.getTime())),
+              now.getTime(),
             )
           ) {
             throw Object.assign(new Error(SLOT_TOO_FAR_MESSAGE), {

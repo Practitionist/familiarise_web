@@ -436,7 +436,12 @@ async function completeClasses(
 
   // Find SCHEDULED classes where all slots have ended
   const classesToComplete = await prisma.class.findMany({
-    orderBy: { updatedAt: "asc" },
+    // A class whose period has ended is always finished, so those are read
+    // first and classes still between batches cannot hold them back.
+    orderBy: [
+      { schedulingPeriodEndsAt: { sort: "asc", nulls: "first" } },
+      { updatedAt: "asc" },
+    ],
     take: maxParents,
     where: {
       ...unseen(seen),

@@ -16,6 +16,11 @@ import {
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import {
+  formatInvoiceDate,
+  formatInvoiceDateWithZone,
+  invoiceDateLabel,
+} from "@/lib/time/invoice-date";
 
 import {
   INVOICE_STATUS,
@@ -56,21 +61,23 @@ function InvoiceBody({
 
       <KeyValueList
         items={[
-          { label: "Issued", value: <ZonedDay at={invoice.issuedAt} /> },
-          { label: "Due", value: <ZonedDay at={shownDueDate(invoice)} /> },
+          {
+            label: invoiceDateLabel("Issued"),
+            value: formatInvoiceDate(invoice.issuedAt),
+          },
+          {
+            label: invoiceDateLabel("Due"),
+            value: formatInvoiceDate(shownDueDate(invoice)),
+          },
+          // The payment is a moment, so it reads in the viewer's zone.
           ...(invoice.paidAt
             ? [{ label: "Paid", value: <ZonedDay at={invoice.paidAt} /> }]
             : []),
           ...(invoice.billingCycleStart
             ? [
                 {
-                  label: "Billing period",
-                  value: (
-                    <>
-                      <ZonedDay at={invoice.billingCycleStart} /> –{" "}
-                      <ZonedDay at={invoice.billingCycleEnd} />
-                    </>
-                  ),
+                  label: invoiceDateLabel("Billing period"),
+                  value: `${formatInvoiceDate(invoice.billingCycleStart)} – ${formatInvoiceDate(invoice.billingCycleEnd)}`,
                 },
               ]
             : []),
@@ -130,7 +137,8 @@ function InvoiceBody({
                   <span className="font-medium">{note.creditNoteNumber}</span>
                   <span className="text-muted-foreground">
                     {" "}
-                    · <ZonedDay at={note.issuedAt} /> · {money(note.totalPaise)}
+                    · {formatInvoiceDateWithZone(note.issuedAt)} ·{" "}
+                    {money(note.totalPaise)}
                   </span>
                   {note.reason && (
                     <span className="block text-xs text-muted-foreground">

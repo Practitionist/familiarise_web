@@ -18,8 +18,12 @@ import {
 } from "@/lib/scheduling/interval-status-tokens";
 import {
   atomIsFree,
+  atomIsPlaceable,
+  atomIsPlaceableAfterStart,
   describeAtom,
+  expandToSession,
   type AtomContext,
+  type ServerCell,
 } from "@/lib/scheduling/week-grid-model";
 
 const ATOM = 30 * 60 * 1000;
@@ -109,5 +113,69 @@ describe("the booking horizon", () => {
       T,
     );
     expect(days[0].starts).toEqual([]);
+  });
+
+  it("the phone day list offers a one-hour session that starts exactly on the horizon", () => {
+    const days = buildDayList(
+      {
+        "2026-12-06": [
+          { startsAt: new Date(T).toISOString() },
+          { startsAt: new Date(T + ATOM).toISOString(), beyondHorizon: true },
+          {
+            startsAt: new Date(T + 2 * ATOM).toISOString(),
+            beyondHorizon: true,
+          },
+        ],
+      },
+      { zone: "UTC", sessionMinutes: 60, nowMs: NOW },
+      T,
+    );
+    expect(days[0].starts.map((start) => start.startsAt)).toEqual([
+      new Date(T).toISOString(),
+    ]);
+  });
+
+  describe("on the week grid", () => {
+    const none = new Set<number>();
+    const free = (startMs: number, beyondHorizon: boolean): ServerCell => ({
+      startMs,
+      endMs: startMs + ATOM,
+      bookingStatus: "available",
+      tooSoon: false,
+      limitReached: false,
+      beyondHorizon,
+      overlappingAppointments: [],
+    });
+    const context = (
+      cells: ServerCell[],
+      eventStarts: ReadonlySet<number> = none,
+    ): AtomContext => ({
+      serverCells: new Map(cells.map((c) => [c.startMs, c])),
+      eventStarts,
+      tentativeStarts: none,
+      selectedStarts: none,
+      justTakenStarts: none,
+      requestedStarts: none,
+      nowMs: NOW,
+    });
+
+    it("a click on the last start inside the horizon takes the whole hour", () => {
+      const ctx = context([free(T, false), free(T + ATOM, true)]);
+      const after = describeAtom(T + ATOM, T + 2 * ATOM, ctx);
+      expect(atomIsPlaceable(after)).toBe(false);
+      expect(atomIsPlaceableAfterStart(after)).toBe(true);
+      expect(
+        expandToSession(T, 2, (startMs) =>
+          atomIsPlaceableAfterStart(describeAtom(startMs, startMs + ATOM, ctx)),
+        ),
+      ).toEqual([T, T + ATOM]);
+    });
+
+    it("a session being moved cannot be placed on its own time past the horizon", () => {
+      const ctx = context([free(T, true)], new Set([T]));
+      const own = describeAtom(T, T + ATOM, ctx);
+      expect(own.isThisEvent).toBe(true);
+      expect(atomIsPlaceable(own)).toBe(false);
+    });
   });
 });

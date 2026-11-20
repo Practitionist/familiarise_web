@@ -29,6 +29,7 @@ export const payment = (pay: Pay) => ({
   id: "pay-1",
   userId: "u-l",
   paymentStatus: { live: "PENDING", lapsed: "EXPIRED", paid: "SUCCEEDED" }[pay],
+  paymentIntent: "order_pay1",
   paymentMethod: "CARD",
   organizationId: null,
   expiresAt: pay === "lapsed" ? later(-60_000) : later(15 * 60_000),

@@ -29,7 +29,7 @@ export const MAX_ALLOCATION_SLOTS = 7 * 4 * 24 * (4 * 2);
 const SLOT_ATOM_MS = 30 * 60 * 1000;
 
 /** The 30-minute atoms a body picks: ISO instants on the UTC half-hour grid. */
-const slotStartsSchema = z
+export const slotStartsSchema = z
   .array(
     z
       .string()

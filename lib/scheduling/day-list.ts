@@ -38,6 +38,7 @@ export interface DayListAtom {
   tooSoon?: boolean;
   limitReached?: boolean;
   beyondHorizon?: boolean;
+  outsideCoHostHours?: boolean;
 }
 
 /** One whole-session pick, ISO instants. */
@@ -190,6 +191,7 @@ function dayListContext(
         tooSoon: atom.tooSoon === true,
         limitReached: atom.limitReached === true,
         beyondHorizon: atom.beyondHorizon === true,
+        outsideCoHostHours: atom.outsideCoHostHours === true,
         overlappingAppointments: NO_OVERLAPS,
       });
     }
@@ -233,8 +235,11 @@ function startVerdict(
   let limited = false;
   for (let k = 0; k < atomCount(sessionMinutes); k++) {
     const atomStart = startMs + k * ATOM_MS;
-    const atom = describeAtom(atomStart, atomStart + ATOM_MS, ctx);
-    if (k === 0 && atom.isTooSoon) return "no";
+    const described = describeAtom(atomStart, atomStart + ATOM_MS, ctx);
+    if (k === 0 && described.isTooSoon) return "no";
+    // The booking horizon binds the session's start; the atoms after it only
+    // have to be free, as the booking doors judge it.
+    const atom = k === 0 ? described : { ...described, isBeyondHorizon: false };
     if (atomIsPlaceable(atom)) continue;
     if (!atomIsFree({ ...atom, isLimitReached: false })) return "no";
     limited = true;

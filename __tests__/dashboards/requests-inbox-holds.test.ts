@@ -86,6 +86,7 @@ const inFlight = {
         taxAmount: 0,
         currency: "INR",
         paymentStatus: "PENDING",
+        paymentIntent: "order_checkout",
         paymentMethod: "CARD",
         paymentGateway: "RAZORPAY",
         receiptUrl: null,

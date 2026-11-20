@@ -3,9 +3,9 @@
 import { EmptyState } from "@/components/dashboard/EmptyState";
 import { KeyValueList, Section } from "@/components/dashboard/Section";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { formatInvoiceDate, invoiceDateLabel } from "@/lib/time/invoice-date";
 
 import type { BillingSummary } from "./billing-api";
-import { ZonedDay } from "./ZonedDay";
 
 const CYCLE_LABEL = {
   MONTHLY: "month",
@@ -51,18 +51,14 @@ export function LicensePanel({
                 ? "Required before renewal."
                 : undefined,
           },
+          // The cycle becomes the renewal invoice's billing period, so it reads as invoice dates do.
           {
-            label: "Current cycle",
-            value: (
-              <>
-                <ZonedDay at={sub.currentCycleStart} /> –{" "}
-                <ZonedDay at={sub.currentCycleEnd} />
-              </>
-            ),
+            label: invoiceDateLabel("Current cycle"),
+            value: `${formatInvoiceDate(sub.currentCycleStart)} – ${formatInvoiceDate(sub.currentCycleEnd)}`,
           },
           {
-            label: "Next renewal",
-            value: <ZonedDay at={sub.nextInvoiceDate} />,
+            label: invoiceDateLabel("Next renewal"),
+            value: formatInvoiceDate(sub.nextInvoiceDate),
           },
           {
             label: "Auto-renew",

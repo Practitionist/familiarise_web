@@ -802,6 +802,27 @@ describe("Reschedule Route Handler - POST", () => {
     expect(mockTx.rescheduleRequest.create).not.toHaveBeenCalled();
   });
 
+  it("judges the horizon by the session's start, so an hour starting on it may run past it", async () => {
+    const HALF_HOUR = 30 * 60 * 1000;
+    mockTx.appointment.findUnique.mockResolvedValue(
+      makeConsultationAppointment(),
+    );
+    const start =
+      Math.floor((Date.now() + 90 * 24 * 60 * 60 * 1000) / HALF_HOUR) *
+      HALF_HOUR;
+    const res = await rescheduleHandler(
+      makeRescheduleRequest("apt-1", "CONSULTATION", {
+        proposedSlots: [start, start + HALF_HOUR].map((at) => ({
+          startsAt: new Date(at).toISOString(),
+          endsAt: new Date(at + HALF_HOUR).toISOString(),
+        })),
+      }),
+      makeParams("apt-1"),
+    );
+    expect(res.status).toBe(200);
+    expect(mockTx.rescheduleRequest.create).toHaveBeenCalled();
+  });
+
   // ─── CONSULTATION Reschedule ────────────────────────────────────────────
 
   describe("CONSULTATION", () => {

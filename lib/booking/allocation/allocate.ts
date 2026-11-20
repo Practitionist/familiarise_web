@@ -236,7 +236,7 @@ async function underAppointmentLock<T>(
  * ever existed (a returned, cancelled or tombstoned one still counts, so the
  * plan's first choice is durable), and released sessions awaiting a new time.
  */
-async function releasedBefore(request: AllocationRequest): Promise<number> {
+function releasedBefore(request: AllocationRequest): Promise<number> {
   const relation = `${getEventRelationField(request.eventType)}Id`;
   return prisma.appointmentOccurrence.count({
     where: {

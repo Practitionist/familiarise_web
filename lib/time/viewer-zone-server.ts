@@ -1,6 +1,10 @@
 import { getSession } from "@/lib/auth-server";
 
-import { describeViewerZone, type ViewerZone } from "./viewer-zone";
+import {
+  describeViewerZone,
+  personalViewerZone,
+  type ViewerZone,
+} from "./viewer-zone";
 
 /**
  * The viewer's zone for an RSC page, read off the same session field the
@@ -15,4 +19,24 @@ export async function getViewerZone(
     userTimezone: session?.user?.timezone ?? null,
     fallbackZone,
   });
+}
+
+/** `getViewerZone` for a page under a personal dashboard: labelled when the viewer does not own the profile. */
+export async function getPersonalViewerZone(
+  kind: "consultee" | "consultant",
+  profileId: string,
+  fallbackZone?: string | null,
+): Promise<ViewerZone> {
+  const session = await getSession();
+  const owned =
+    kind === "consultee"
+      ? session?.user?.consulteeProfileId
+      : session?.user?.consultantProfileId;
+  return personalViewerZone(
+    describeViewerZone({
+      userTimezone: session?.user?.timezone ?? null,
+      fallbackZone,
+    }),
+    !!owned && owned === profileId,
+  );
 }
