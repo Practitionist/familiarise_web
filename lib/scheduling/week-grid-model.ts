@@ -81,6 +81,8 @@ export interface AtomState {
   /** Later than a 1:1 booking may be placed; the server decides. */
   isBeyondHorizon: boolean;
   isLimitReached: boolean;
+  /** An accepted co-host's available hours do not cover it; the server decides. */
+  isOutsideCoHostHours: boolean;
   isOutsidePeriod: boolean;
   isThisEvent: boolean;
   /** This booking's session that the reschedule in progress is not moving: never a pick. */
@@ -128,6 +130,7 @@ export function describeAtom(
   const isTooSoon = isTooSoonAt(startMs, endMs, server, ctx);
   const isLimitReached = server?.limitReached === true;
   const isBeyondHorizon = server?.beyondHorizon === true;
+  const isOutsideCoHostHours = server?.outsideCoHostHours === true;
   const statusKey = resolveSlotStatusKey({
     isSelected: ctx.selectedStarts.has(startMs),
     isJustTaken: ctx.justTakenStarts.has(startMs),
@@ -140,7 +143,7 @@ export function describeAtom(
     isTooSoon,
     isBeyondHorizon,
     isLimitReached,
-    isOutsideCoHostHours: server?.outsideCoHostHours === true,
+    isOutsideCoHostHours,
     isInPast,
   });
   return {
@@ -154,6 +157,7 @@ export function describeAtom(
     isTooSoon,
     isBeyondHorizon,
     isLimitReached,
+    isOutsideCoHostHours,
     isOutsidePeriod,
     isThisEvent,
     isStaying: isThisEvent && ctx.stayingStarts?.has(startMs) === true,
@@ -172,7 +176,9 @@ export function atomIsFree(atom: AtomState): boolean {
     !atom.isOutsidePeriod &&
     !atom.isTooSoon &&
     !atom.isBeyondHorizon &&
-    !atom.isLimitReached
+    !atom.isLimitReached &&
+    // The server refuses a webinar or class time a co-host has not published.
+    !atom.isOutsideCoHostHours
   );
 }
 

@@ -105,13 +105,12 @@ const SLOT_STATUS_PAINT: Record<SlotStatusKey, SlotStatusPaint> = {
   },
   outsideCoHostHours: {
     label: "Outside a co-host's hours",
-    hint: "Free for the host, but a co-host has not published this time. It can still be picked.",
-    fill: "bg-emerald-100",
-    border: "border-emerald-600",
-    text: "text-emerald-900",
-    hover: "hover:bg-emerald-200",
+    hint: "Free for the host, but a co-host's available hours don't cover this time.",
+    fill: "bg-slate-100",
+    border: "border-slate-500",
+    text: "text-slate-700",
     icon: "people",
-    interactive: true,
+    interactive: false,
   },
   partiallyBooked: {
     label: "Partly booked",
@@ -264,9 +263,9 @@ export const SLOT_STATUS_TOKENS = Object.fromEntries(
   }),
 ) as Record<SlotStatusKey, SlotStatusToken>;
 
-/** The free states: a click may place a session on them. */
+/** The free state: a click may place a session on it. */
 export function isFreeStatusKey(key: SlotStatusKey): boolean {
-  return key === "available" || key === "outsideCoHostHours";
+  return key === "available";
 }
 
 /** The cell's name for "outsideCoHostHours": the co-host's first name when exactly one is known. */
