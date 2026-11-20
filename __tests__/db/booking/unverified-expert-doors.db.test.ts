@@ -80,20 +80,64 @@ jest.mock("../../../utils/contentValidation", () =>
   jest.requireActual("../../fixtures/content-validation-stub"),
 );
 /** Set to a host's profile id to reject that expert between pricing and the lock. */
-const mockRejectAfterPricing = { profileId: null as string | null };
+/** Where a test rejects the expert from another connection, mid-way through a sale. */
+const mockReject = {
+  at: null as
+    null | "pricing" | "locked-read" | "request-lock" | "mint-pricing",
+  profileId: null as string | null,
+};
+async function mockRejectIfAt(point: (typeof mockReject)["at"]) {
+  if (mockReject.at !== point || !mockReject.profileId) return;
+  await prisma.consultantProfile.update({
+    where: { id: mockReject.profileId },
+    data: { verificationStatus: "REJECTED" },
+  });
+}
 jest.mock("../../../lib/payments/checkout/pricing", () => {
   const actual = jest.requireActual("../../../lib/payments/checkout/pricing");
   return {
     ...actual,
     calculateAmountAndValidate: async (...args: unknown[]) => {
       const priced = await actual.calculateAmountAndValidate(...args);
-      if (mockRejectAfterPricing.profileId) {
-        await prisma.consultantProfile.update({
-          where: { id: mockRejectAfterPricing.profileId },
-          data: { verificationStatus: "REJECTED" },
-        });
-      }
+      await mockRejectIfAt("pricing");
       return priced;
+    },
+  };
+});
+jest.mock("../../../lib/payments/checkout/revalidate", () => {
+  const actual = jest.requireActual(
+    "../../../lib/payments/checkout/revalidate",
+  );
+  return {
+    ...actual,
+    revalidateInsideLock: async (...args: unknown[]) => {
+      const read = await actual.revalidateInsideLock(...args);
+      await mockRejectIfAt("locked-read");
+      return read;
+    },
+  };
+});
+jest.mock("../../../utils/appointmentlock", () => {
+  const actual = jest.requireActual("../../../utils/appointmentlock");
+  return {
+    ...actual,
+    lockRequestCap: async (...args: unknown[]) => {
+      const lock = await actual.lockRequestCap(...args);
+      await mockRejectIfAt("request-lock");
+      return lock;
+    },
+  };
+});
+jest.mock("../../../lib/payments/pricing/derive-checkout-amount", () => {
+  const actual = jest.requireActual(
+    "../../../lib/payments/pricing/derive-checkout-amount",
+  );
+  return {
+    ...actual,
+    deriveCheckoutAmount: async (...args: unknown[]) => {
+      const derived = await actual.deriveCheckoutAmount(...args);
+      await mockRejectIfAt("mint-pricing");
+      return derived;
     },
   };
 });
@@ -103,7 +147,29 @@ import { POST as requestForApproval } from "../../../app/api/scheduling/request-
 import { mintApprovalPaymentAfterCommit } from "../../../lib/booking/approve-request";
 import { handleCheckout } from "../../../lib/payments/checkout";
 import { createApprovalPaymentIntent } from "../../../lib/payments/operations/approval-payment";
-import { applyTransactionalEffects } from "../../../lib/moderation/side-effects";
+import {
+  applyBestEffortEffects,
+  applyTransactionalEffects,
+} from "../../../lib/moderation/side-effects";
+
+/** Runs a sale while the expert is rejected at `point`; resolves to its error or "done". */
+async function rejectingAt(
+  point: NonNullable<(typeof mockReject)["at"]>,
+  host: SeededHost,
+  run: () => Promise<unknown>,
+): Promise<unknown> {
+  mockReject.at = point;
+  mockReject.profileId = host.consultantProfileId;
+  try {
+    return await run().then(
+      () => "done",
+      (error: unknown) => error,
+    );
+  } finally {
+    mockReject.at = null;
+    mockReject.profileId = null;
+  }
+}
 
 const setStatus = (host: SeededHost, status: ConsultantVerificationStatus) =>
   prisma.consultantProfile.update({
@@ -281,16 +347,13 @@ describe("an expert who is not verified takes no new booking", () => {
       },
     });
     const buyer = await seedBuyer();
-    mockRejectAfterPricing.profileId = host.consultantProfileId;
 
-    const outcome = await handleCheckout(
-      consultationCheckout(plan.id, futureAt(5, 11), `flip-${randomUUID()}`),
-      buyer.userId,
-    ).then(
-      () => "booked",
-      (error: unknown) => error,
+    const outcome = await rejectingAt("pricing", host, () =>
+      handleCheckout(
+        consultationCheckout(plan.id, futureAt(5, 11), `flip-${randomUUID()}`),
+        buyer.userId,
+      ),
     );
-    mockRejectAfterPricing.profileId = null;
 
     expect(outcome).toMatchObject({ code: "EXPERT_NOT_VERIFIED" });
     expect(
@@ -299,6 +362,179 @@ describe("an expert who is not verified takes no new booking", () => {
     expect(
       await prisma.consultation.count({
         where: { consultationPlanId: plan.id },
+      }),
+    ).toBe(0);
+  }, 30_000);
+});
+
+describe("a reject that lands mid-sale is seen by the write", () => {
+  it.each([
+    ["free", 0],
+    ["paid", 50_000],
+  ])(
+    "a %s trial whose expert is rejected while it waits for the lock writes nothing",
+    async (_kind, price) => {
+      const host = await seedHost();
+      const plan = await seedTrialPlan(host, price);
+
+      let status = 0;
+      let body: unknown = null;
+      await rejectingAt("request-lock", host, async () => {
+        const { res } = await postTrial(host, plan.id);
+        status = res.status;
+        body = await res.json();
+      });
+
+      expect(status).toBe(409);
+      expect(body).toMatchObject({ code: "EXPERT_NOT_VERIFIED" });
+      expect(
+        await prisma.trial.count({ where: { subscriptionPlanId: plan.id } }),
+      ).toBe(0);
+      expect(
+        await prisma.appointment.count({
+          where: { trial: { subscriptionPlanId: plan.id } },
+        }),
+      ).toBe(0);
+    },
+    30_000,
+  );
+
+  it("a 1:1 request whose expert is rejected while it waits for the lock writes nothing", async () => {
+    const host = await seedHost();
+    let status = 0;
+    let body: unknown = null;
+    await rejectingAt("request-lock", host, async () => {
+      const { res } = await postRequest(host, "VERIFIED");
+      status = res.status;
+      body = await res.json();
+    });
+
+    expect(status).toBe(409);
+    expect(body).toMatchObject({ code: "EXPERT_NOT_VERIFIED" });
+    expect(
+      await prisma.consultation.count({
+        where: {
+          consultationPlan: { consultantProfileId: host.consultantProfileId },
+        },
+      }),
+    ).toBe(0);
+  }, 30_000);
+
+  it.each([
+    ["card", 100_000],
+    ["zero-cash", 0],
+  ])(
+    "a %s checkout whose expert is rejected after the locked re-read commits no booking",
+    async (_kind, price) => {
+      const host = await seedHost();
+      await publishEveryHour(host);
+      const plan = await prisma.consultationPlan.create({
+        data: {
+          title: "Direct consultation",
+          price: BigInt(price),
+          consultantProfileId: host.consultantProfileId,
+          durationInHours: 1,
+        },
+      });
+      const buyer = await seedBuyer();
+
+      const outcome = await rejectingAt("locked-read", host, () =>
+        handleCheckout(
+          consultationCheckout(
+            plan.id,
+            futureAt(5, 13),
+            `flip-${randomUUID()}`,
+          ),
+          buyer.userId,
+        ),
+      );
+
+      expect(outcome).toMatchObject({ code: "EXPERT_NOT_VERIFIED" });
+      expect(
+        await prisma.consultation.count({
+          where: { consultationPlanId: plan.id },
+        }),
+      ).toBe(0);
+      // A minted order is retired as an EXPIRED tombstone; nothing payable is left.
+      expect(
+        await prisma.payment.count({
+          where: {
+            userId: buyer.userId,
+            paymentStatus: { in: ["PENDING", "SUCCEEDED"] },
+          },
+        }),
+      ).toBe(0);
+    },
+    30_000,
+  );
+
+  it("a trial mint whose expert is rejected after pricing mints no order", async () => {
+    const host = await seedHost();
+    const plan = await seedTrialPlan(host, 50_000);
+    const { res, buyer } = await postTrial(host, plan.id);
+    expect(res.status).toBe(201);
+    const trial = await prisma.trial.findFirstOrThrow({
+      where: { subscriptionPlanId: plan.id },
+      select: { id: true, appointmentId: true },
+    });
+    await prisma.payment.updateMany({
+      where: { userId: buyer.userId },
+      data: { paymentStatus: "EXPIRED" },
+    });
+    const gateway = jest.requireMock("../../../lib/payments/index") as {
+      createPaymentIntent: jest.Mock;
+    };
+    gateway.createPaymentIntent.mockClear();
+
+    const outcome = await rejectingAt("mint-pricing", host, () =>
+      createApprovalPaymentIntent({
+        userId: buyer.userId,
+        appointmentType: "TRIAL",
+        trialId: trial.id,
+        appointmentId: trial.appointmentId ?? undefined,
+        planId: plan.id,
+        paymentGateway: "RAZORPAY",
+      }),
+    );
+
+    expect(outcome).toMatchObject({ code: "EXPERT_NOT_VERIFIED" });
+    expect(gateway.createPaymentIntent).not.toHaveBeenCalled();
+    expect(
+      await prisma.payment.count({
+        where: { userId: buyer.userId, paymentStatus: "PENDING" },
+      }),
+    ).toBe(0);
+  }, 30_000);
+
+  it("a deleted expert whose status still reads VERIFIED takes no pay link", async () => {
+    const host = await seedHost();
+    const unpaid = await seedOneToOne(
+      "consultation",
+      host,
+      await seedConsultee(),
+      { startsAt: futureAt(9, 9), endsAt: futureAt(9, 10) },
+      {
+        status: "APPROVED_PENDING_PAYMENT",
+        bookingSource: "REQUEST_SUBMITTED",
+        isTentative: true,
+      },
+    );
+    await prisma.consultantProfile.update({
+      where: { id: host.consultantProfileId },
+      data: { deletedAt: new Date() },
+    });
+
+    const mint = await mintApprovalPaymentAfterCommit({
+      kind: "consultation",
+      id: unpaid.consultationId!,
+    });
+
+    expect(mint.status === "mint_failed" && mint.error).toMatchObject({
+      code: "EXPERT_NOT_VERIFIED",
+    });
+    expect(
+      await prisma.payment.count({
+        where: { appointmentId: unpaid.appointmentId },
       }),
     ).toBe(0);
   }, 30_000);
@@ -364,18 +600,21 @@ describe("a moderation reject stops new sales and honours what is booked", () =>
     );
     const staff = await seedConsultee();
 
+    // The reject as the action route runs it: the transaction, then phase 2.
+    const input = {
+      actionType: "PROFILE_UNVERIFIED" as const,
+      report: {
+        id: randomUUID(),
+        type: "PROFILE" as const,
+        targetUserId: host.userId,
+        reviewId: null,
+      },
+      staffUserId: staff.userId,
+    };
     const effects = await prisma.$transaction((tx) =>
-      applyTransactionalEffects(tx, {
-        actionType: "PROFILE_UNVERIFIED",
-        report: {
-          id: randomUUID(),
-          type: "PROFILE",
-          targetUserId: host.userId,
-          reviewId: null,
-        },
-        staffUserId: staff.userId,
-      }),
+      applyTransactionalEffects(tx, input),
     );
+    await applyBestEffortEffects(input, effects);
 
     // The reject expired the link itself, so nothing is left to mint.
     const unpaidRow = await prisma.consultation.findUniqueOrThrow({

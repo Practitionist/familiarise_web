@@ -31,6 +31,7 @@ import {
   isPublicExpertProfile,
   publicExpertProfileWhere,
 } from "@/lib/profiles/public-profile";
+import { publicCacheHeaders } from "@/lib/api/cdn-cache";
 
 /**
  * Visibility values that are safe to show on the public marketplace.
@@ -109,14 +110,24 @@ export function oneOnOnePlanListWhere(
   };
 }
 
+/** Every query key the 1:1 and subscription list GETs read. */
+const ONE_ON_ONE_LIST_QUERY = ["page", "limit", "consultantId"] as const;
+
 /**
  * #1527 Q4 — a list filtered to one consultant may be the owner's view with
- * drafts in it, so it must never be served from a shared CDN entry.
+ * drafts in it, so it is never shared. The unfiltered list is, keyed on every
+ * query it reads so no page or filter is answered with another's entry.
  */
-export function oneOnOnePlanListCacheControl(consultantId: string | null) {
+export function oneOnOnePlanListCacheHeaders(
+  consultantId: string | null,
+): Record<string, string> {
   return consultantId
-    ? "private, no-store"
-    : "public, s-maxage=60, stale-while-revalidate=300";
+    ? { "Cache-Control": "private, no-store" }
+    : publicCacheHeaders({
+        sMaxAge: 60,
+        staleWhileRevalidate: 300,
+        varyQuery: ONE_ON_ONE_LIST_QUERY,
+      });
 }
 
 /**

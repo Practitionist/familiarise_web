@@ -93,6 +93,11 @@ const liveConsultantWhere = {
   ],
 } satisfies Prisma.ClassPlanWhereInput & Prisma.WebinarPlanWhereInput;
 
+/** What the program catalog lists: discoverable plans of a verified, live owner or none. */
+export function listedProgramWhere() {
+  return { ...eventPlanDiscoverableWhere(), ...liveConsultantWhere };
+}
+
 // ---------------------------------------------------------------------------
 // Curated programs (Featured / Trending / Newest sections)
 // ---------------------------------------------------------------------------
@@ -395,4 +400,35 @@ export const getTopicsWithCount = unstable_cache(
   },
   ["topics-with-count"],
   { revalidate: 300, tags: ["programs"] },
+);
+
+/** The programs hero figures: the plans the catalog lists, and the learners who have held a seat. */
+export const getProgramCounts = unstable_cache(
+  async () => {
+    const [publishedClassCount, publishedWebinarCount, learners] =
+      await Promise.all([
+        // The same plans the catalog below lists, so the headline matches it.
+        prisma.classPlan.count({ where: listedProgramWhere() }),
+        prisma.webinarPlan.count({ where: listedProgramWhere() }),
+        prisma.appointmentParticipant.findMany({
+          where: {
+            role: "CONSULTEE",
+            status: { in: ["CONFIRMED", "ATTENDED"] },
+            appointment: {
+              appointmentType: { in: ["WEBINAR", "CLASS"] },
+              deletedAt: null,
+            },
+          },
+          select: { userId: true },
+          distinct: ["userId"],
+        }),
+      ]);
+    return {
+      publishedClassCount,
+      publishedWebinarCount,
+      enrolledLearnerCount: learners.length,
+    };
+  },
+  ["program-stats"],
+  { revalidate: 3600, tags: ["programs"] },
 );

@@ -68,6 +68,7 @@ import {
 
 import { getSession } from "@/lib/auth-server";
 import { assertNotSelfBooking } from "@/lib/booking/self-booking";
+import { assertExpertStandsInTx } from "@/lib/booking/expert-standing";
 import { apiError } from "@/lib/errors/api-error";
 import { isRefusal } from "@/lib/errors/refusal";
 import * as Sentry from "@sentry/nextjs";
@@ -557,8 +558,13 @@ export async function POST(req: NextRequest) {
         // budget sits well inside the 60 s slot lock held above.
         const consultation = await prisma.$transaction(
           async (tx) => {
-            // Mode, cap and availability are read on this transaction, after
+            // Standing, mode, cap and availability are read on this transaction, after
             // every lock, so the insert below commits against what they saw.
+            await assertExpertStandsInTx(
+              tx,
+              consultantProfileId,
+              "This consultation",
+            );
             const mode = await tx.consultantProfile.findUnique({
               where: { id: consultantProfileId },
               select: { bookingMode: true },
@@ -751,6 +757,9 @@ export async function POST(req: NextRequest) {
           return NextResponse.json(lockError.body, {
             status: lockError.httpStatus,
           });
+        }
+        if (lockError instanceof BookingRuleError) {
+          return bookingRuleResponse(lockError);
         }
         console.error(
           JSON.stringify({

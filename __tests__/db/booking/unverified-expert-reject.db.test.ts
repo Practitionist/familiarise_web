@@ -1,10 +1,11 @@
 /**
  * A moderation reject stops new sales and honours what is booked, on real
- * Postgres: in the reject's own transaction the expert's unpaid approved link
- * expires, their unanswered unpaid request is declined and their unpaid trial
- * hold is released, each open order expired and its checkout's spend returned;
- * paid bookings stay. A late capture on a closed link is refunded, and an
- * unpaid request can no longer be approved for an unverified expert.
+ * Postgres: once the reject commits, the gateway is asked about every open
+ * order, and the expert's unpaid approved link expires, their unanswered unpaid
+ * request is declined, their unpaid trial hold and group seats are released,
+ * each order expired and its checkout's spend returned; paid bookings stay. A
+ * live payment keeps its sale open, a capture after the close is refunded, and
+ * an unpaid request can no longer be approved for an unverified expert.
  */
 import { randomUUID } from "node:crypto";
 import prisma from "../../../lib/prisma";
@@ -54,13 +55,34 @@ jest.mock("../../../lib/rate-limit", () =>
   jest.requireActual("./harness-edges").rateLimitMock(),
 );
 const mockGateway = {
-  cancelRazorpayOrder: jest.fn(async (_orderId: string) => "no_live_payment"),
+  cancelRazorpayOrder: jest.fn(
+    async (_orderId: string): Promise<string> => "no_live_payment",
+  ),
+  readRazorpayOrderHolding: jest.fn(
+    async (_orderId: string): Promise<unknown> => ({
+      kind: "empty",
+      onlyFailed: false,
+    }),
+  ),
 };
 jest.mock("../../../lib/payments/core/razorpay", () => ({
   ...jest.requireActual("../../../lib/payments/core/razorpay"),
   cancelRazorpayOrder: (orderId: string) =>
     mockGateway.cancelRazorpayOrder(orderId),
+  readRazorpayOrderHolding: (orderId: string) =>
+    mockGateway.readRazorpayOrderHolding(orderId),
 }));
+const mockReport = { message: jest.fn() };
+jest.mock("../../../lib/observability/report", () => {
+  const actual = jest.requireActual("../../../lib/observability/report");
+  return {
+    ...actual,
+    reportSentryMessage: (...args: unknown[]) => {
+      mockReport.message(...args);
+      return actual.reportSentryMessage(...args);
+    },
+  };
+});
 
 import {
   applyBestEffortEffects,
@@ -71,11 +93,16 @@ import { resolvePayPage } from "../../../lib/payments/pay-page";
 import { allocate } from "../../../lib/booking/allocation";
 import { bookTrialInTx } from "../../../lib/trials/book-trial";
 import { refundDoor } from "./harness-edges";
+import { seedHeldSeat, seedWebinar } from "./harness-seats";
 
 const PRICE_PAISE = 80_000;
-/** The learner's notice: neutral, the expert named, no reason given. */
-const CLOSED_NOTICE =
+/** The learner's notice: neutral, the expert named, no reason given; no charge promised once an order existed. */
+const CLOSED_NO_ORDER =
   "Database tier consultant isn't taking bookings right now, so your request was closed. No payment was taken.";
+const CLOSED_AFTER_ORDER =
+  "Database tier consultant isn't taking bookings right now, so your request was closed. If you were charged, the money is refunded automatically.";
+const PAY_PAGE_AFTER_ORDER =
+  "This expert isn't taking bookings right now. If you were charged, the money is refunded automatically.";
 
 /** The bells staged for one learner, as their outbox rows hold them. */
 async function bellPayloads(userId: string): Promise<string> {
@@ -216,7 +243,14 @@ const statusOf = {
 
 beforeEach(() => {
   refundDoor.refundBookingPayment.mockClear();
-  mockGateway.cancelRazorpayOrder.mockClear();
+  mockGateway.cancelRazorpayOrder.mockReset();
+  mockGateway.cancelRazorpayOrder.mockResolvedValue("no_live_payment");
+  mockGateway.readRazorpayOrderHolding.mockReset();
+  mockGateway.readRazorpayOrderHolding.mockResolvedValue({
+    kind: "empty",
+    onlyFailed: false,
+  });
+  mockReport.message.mockClear();
 });
 
 describe("a moderation reject stops new sales and honours what is booked", () => {
@@ -261,16 +295,14 @@ describe("a moderation reject stops new sales and honours what is booked", () =>
       },
     );
 
-    const { transactional, summary } = await reject(host);
+    const { summary } = await reject(host);
 
-    expect({
-      payLinksClosed: transactional.payLinksClosed,
-      requestsDeclined: transactional.requestsDeclined,
-      trialHoldsReleased: transactional.trialHoldsReleased,
-    }).toEqual({
+    expect(summary).toMatchObject({
       payLinksClosed: 1,
       requestsDeclined: 1,
       trialHoldsReleased: 1,
+      salesKept: 0,
+      unpaidSales: "ok",
     });
     // The approved link: EXPIRED, its order expired, its checkout's spend returned.
     expect(await statusOf.consultation(link.request.consultationId!)).toBe(
@@ -296,7 +328,7 @@ describe("a moderation reject stops new sales and honours what is booked", () =>
     expect(trial.status).toBe("CANCELLED");
     expect(trial.appointment?.deletedAt).not.toBeNull();
     expect(await statusOf.payment(hold.payment.id)).toBe("EXPIRED");
-    // Every ending carries the reject's reason on its history row.
+    // Every ending carries a neutral reason, since learners read their history.
     const edges = await prisma.bookingStatusHistory.findMany({
       where: {
         entityId: {
@@ -306,7 +338,7 @@ describe("a moderation reject stops new sales and honours what is booked", () =>
             hold.trial.id,
           ],
         },
-        reason: "EXPERT_NOT_VERIFIED",
+        reason: "EXPERT_UNAVAILABLE",
       },
       select: { toStatus: true },
     });
@@ -321,20 +353,30 @@ describe("a moderation reject stops new sales and honours what is booked", () =>
       "PENDING",
     );
     expect(await statusOf.payment(paid.payment!.id)).toBe("SUCCEEDED");
-    // After commit: the real order is cancelled, each learner's notice is staged.
+    // The real order was asked about before the close and re-read after it.
     expect(mockGateway.cancelRazorpayOrder).toHaveBeenCalledWith(
       link.request.payment!.paymentIntent,
     );
+    expect(mockGateway.readRazorpayOrderHolding).toHaveBeenCalledWith(
+      link.request.payment!.paymentIntent,
+    );
+    expect(
+      await prisma.bookingStatusHistory.count({
+        where: { reason: "EXPERT_NOT_VERIFIED" },
+      }),
+    ).toBe(0);
     const noticed = (summary.stagedEmails ?? []).map((e) => e.emailType);
     expect(noticed.filter((t) => t === "APPOINTMENT_CANCELLED")).toHaveLength(
       2,
     );
     expect(noticed).toContain("TRIAL_CANCELLED");
-    expect(summary).not.toHaveProperty("unpaidSalesEnded");
+    expect(mockReport.message).not.toHaveBeenCalled();
+    expect(await bellPayloads(link.consultee.userId)).toContain(
+      CLOSED_AFTER_ORDER,
+    );
+    expect(await bellPayloads(requester.userId)).toContain(CLOSED_NO_ORDER);
     for (const learner of [link.consultee.userId, requester.userId]) {
-      const bells = await bellPayloads(learner);
-      expect(bells).toContain(CLOSED_NOTICE);
-      expect(bells).not.toMatch(/reject/i);
+      expect(await bellPayloads(learner)).not.toMatch(/reject|verif/i);
     }
   }, 60_000);
 
@@ -345,11 +387,7 @@ describe("a moderation reject stops new sales and honours what is booked", () =>
     // The pay page no longer opens the order.
     expect(
       await resolvePayPage(link.request.payment!.id, link.consultee.userId),
-    ).toMatchObject({
-      kind: "unpayable",
-      message:
-        "This expert isn't taking bookings right now. No payment was taken.",
-    });
+    ).toMatchObject({ kind: "unpayable", message: PAY_PAGE_AFTER_ORDER });
 
     const outcome = await handlePaymentSuccess(
       link.request.payment!.paymentIntent,
@@ -364,6 +402,100 @@ describe("a moderation reject stops new sales and honours what is booked", () =>
     expect(refundDoor.refundBookingPayment).toHaveBeenCalledWith(
       expect.objectContaining({ paymentId: link.request.payment!.id }),
     );
+    // A recorded capture on the closed booking is a refund, never a paid booking.
+    expect(
+      await resolvePayPage(link.request.payment!.id, link.consultee.userId),
+    ).toMatchObject({ kind: "unpayable", message: PAY_PAGE_AFTER_ORDER });
+  }, 60_000);
+
+  it("keeps a sale whose order already holds a live payment, and confirms it when the capture lands", async () => {
+    const host = await seedHost();
+    const link = await liveLink(host);
+    mockGateway.cancelRazorpayOrder.mockResolvedValue("has_live_payment");
+
+    const { summary } = await reject(host);
+
+    expect(summary).toMatchObject({ payLinksClosed: 0, salesKept: 1 });
+    expect(await statusOf.consultation(link.request.consultationId!)).toBe(
+      "APPROVED_PENDING_PAYMENT",
+    );
+    expect(await statusOf.payment(link.request.payment!.id)).toBe("PENDING");
+    expect(
+      await handlePaymentSuccess(
+        link.request.payment!.paymentIntent,
+        link.request.captureMetadata,
+        PRICE_PAISE,
+      ),
+    ).toBe("confirmed");
+    expect(refundDoor.refundBookingPayment).not.toHaveBeenCalled();
+  }, 60_000);
+
+  it("refunds a capture that lands after the close even if no webhook arrives", async () => {
+    const host = await seedHost();
+    const link = await liveLink(host);
+    mockGateway.readRazorpayOrderHolding.mockResolvedValue({
+      kind: "captured",
+      paymentId: `pay_${randomUUID()}`,
+      amountPaise: PRICE_PAISE,
+    });
+
+    await reject(host);
+
+    expect(await statusOf.consultation(link.request.consultationId!)).toBe(
+      "EXPIRED",
+    );
+    expect(refundDoor.refundBookingPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentId: link.request.payment!.id }),
+    );
+  }, 60_000);
+
+  it("closes nothing for an order the gateway cannot answer for, and reports it once", async () => {
+    const host = await seedHost();
+    const link = await liveLink(host);
+    mockGateway.cancelRazorpayOrder.mockRejectedValue(new Error("timeout"));
+
+    const { summary } = await reject(host);
+
+    expect(summary).toMatchObject({ payLinksClosed: 0, salesKept: 1 });
+    expect(await statusOf.payment(link.request.payment!.id)).toBe("PENDING");
+    expect(mockReport.message).toHaveBeenCalledTimes(1);
+    expect(String(mockReport.message.mock.calls[0][0])).toContain(
+      "REJECT_SALES_UNSETTLED",
+    );
+  }, 60_000);
+
+  it("releases an unpaid group seat and keeps the event and its paid seat", async () => {
+    const webinar = await seedWebinar({ capacity: 20, price: 50_000 });
+    const paidSeat = await seedHeldSeat(webinar, {
+      status: "SUCCEEDED",
+      expiresAt: null,
+    });
+    const open = await seedHeldSeat(webinar, {
+      status: "PENDING",
+      expiresAt: new Date(Date.now() + HOUR_MS),
+    });
+
+    const { summary } = await reject(webinar.host);
+
+    expect(summary).toMatchObject({ seatsReleased: 1 });
+    const seats = await prisma.appointmentParticipant.findMany({
+      where: {
+        appointmentId: webinar.appointmentId,
+        userId: { in: [paidSeat.buyer.userId, open.buyer.userId] },
+      },
+      select: { userId: true, status: true },
+    });
+    expect(Object.fromEntries(seats.map((p) => [p.userId, p.status]))).toEqual({
+      [paidSeat.buyer.userId]: "CONFIRMED",
+      [open.buyer.userId]: "CANCELLED",
+    });
+    expect(await statusOf.payment(open.payment.id)).toBe("EXPIRED");
+    expect(await statusOf.payment(paidSeat.payment.id)).toBe("SUCCEEDED");
+    expect(
+      await prisma.appointmentOccurrence.count({
+        where: { appointmentId: webinar.appointmentId, deletedAt: null },
+      }),
+    ).toBe(1);
   }, 60_000);
 
   it("refuses to approve an unpaid request for an unverified expert, and still places a paid one", async () => {
@@ -407,5 +539,29 @@ describe("a moderation reject stops new sales and honours what is booked", () =>
     });
     expect(await statusOf.consultation(unpaid.consultationId)).toBe("PENDING");
     expect(placed).toMatchObject({ success: true, outcome: "approved" });
+  }, 60_000);
+
+  it("refuses to approve an unpaid request for a deleted expert whose status still reads VERIFIED", async () => {
+    const host = await seedHost();
+    await publishEveryHour(host);
+    const unpaid = await seedRequest(host, await seedConsultee());
+    await prisma.consultantProfile.update({
+      where: { id: host.consultantProfileId },
+      data: { deletedAt: new Date() },
+    });
+
+    const refused = await allocate({
+      eventType: "consultation",
+      eventId: unpaid.consultationId,
+      mode: "manual",
+      slots: halfHourStarts(futureAt(6, 12)),
+      override: true,
+    });
+
+    expect(refused).toMatchObject({
+      success: false,
+      errorCode: "EXPERT_NOT_VERIFIED",
+    });
+    expect(await statusOf.consultation(unpaid.consultationId)).toBe("PENDING");
   }, 60_000);
 });

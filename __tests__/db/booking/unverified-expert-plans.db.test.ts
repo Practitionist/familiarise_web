@@ -7,12 +7,17 @@ import { randomUUID } from "node:crypto";
 import { NextRequest } from "next/server";
 import type { ConsultantVerificationStatus } from "@prisma/client";
 import prisma from "../../../lib/prisma";
-import { seedHost, type SeededHost } from "./harness";
+import { seedConsultee, seedHost, type SeededHost } from "./harness";
 
 const mockSession = { current: null as null | Record<string, unknown> };
 jest.mock("../../../lib/auth-server", () => ({
   getSession: async () =>
     mockSession.current ? { user: mockSession.current } : null,
+}));
+jest.mock("../../../lib/auth-helpers", () => ({
+  ...jest.requireActual("../../../lib/auth-helpers"),
+  requireApiAuth: async () => ({ session: { user: mockSession.current } }),
+  isPrivileged: () => false,
 }));
 jest.mock("../../../utils/contentValidation", () =>
   jest.requireActual("../../fixtures/content-validation-stub"),
@@ -37,7 +42,14 @@ import {
   fetchWebinarPlanDetail,
 } from "../../../lib/data/plan-details";
 import { canViewPlanDetail } from "../../../lib/data/plan-viewable";
-import { getCuratedPrograms } from "../../../lib/data/explore-programs";
+import {
+  getCuratedPrograms,
+  getProgramCounts,
+} from "../../../lib/data/explore-programs";
+import { GET as checkTrialEligibility } from "../../../app/api/trials/check-eligibility/route";
+import { listIndexableEventPlanIds } from "../../../lib/data/indexable-plans";
+import { seedHeldSeat, seedWebinar } from "./harness-seats";
+import { stageSeatOpenedNotices } from "../../../lib/booking/event-waitlist";
 import { getOrgMemberCatalog } from "../../../lib/data/org-member-catalog";
 import { getOrgMembers } from "../../../lib/data/org-members";
 import {
@@ -231,5 +243,151 @@ describe("an unverified expert's plans", () => {
     expect(
       MembersListResponseSchema.safeParse({ data: roster.members }).success,
     ).toBe(true);
+  }, 30_000);
+
+  it("are not offered by the trial eligibility check, with or without the plan", async () => {
+    const rejected = await seedExpert("REJECTED");
+    const plan = await prisma.subscriptionPlan.create({
+      data: {
+        title: "Hidden trial plan",
+        price: BigInt(400_000),
+        consultantProfileId: rejected.consultantProfileId,
+        trialEnabled: true,
+        trialDurationMinutes: 30,
+        trialPriceInPaise: BigInt(20_000),
+      },
+    });
+    const learner = await seedConsultee();
+    viewAs(null);
+    mockSession.current = {
+      id: learner.userId,
+      consulteeProfileId: learner.consulteeProfileId,
+      consultantProfileId: null,
+      role: "CONSULTEE",
+    };
+    const check = async (withPlan: boolean) => {
+      const query = new URLSearchParams({
+        consulteeProfileId: learner.consulteeProfileId,
+        consultantProfileId: rejected.consultantProfileId,
+        ...(withPlan ? { subscriptionPlanId: plan.id } : {}),
+      });
+      const res = await checkTrialEligibility(
+        new NextRequest(`https://x.test/api/trials/check-eligibility?${query}`),
+      );
+      return { status: res.status, body: JSON.stringify(await res.json()) };
+    };
+
+    const listed = await check(false);
+    const named = await check(true);
+
+    expect(listed.body).not.toContain(plan.id);
+    expect(listed.body).not.toContain("20000");
+    expect(named.status).toBe(404);
+    expect(named.body).not.toContain(plan.id);
+  }, 30_000);
+
+  it("are left out of the sitemap until the expert is verified", async () => {
+    const verified = await seedWebinar({ capacity: 20 });
+    const rejected = await seedWebinar({ capacity: 20 });
+    await prisma.consultantProfile.update({
+      where: { id: rejected.host.consultantProfileId },
+      data: { verificationStatus: "REJECTED" },
+    });
+
+    const { webinarPlanIds } = await listIndexableEventPlanIds(new Date());
+
+    expect(webinarPlanIds).toContain(verified.planId);
+    expect(webinarPlanIds).not.toContain(rejected.planId);
+  }, 30_000);
+
+  it("are left out of the /explore/programs headline counts", async () => {
+    const before = await getProgramCounts();
+    await seedPlans(await seedExpert("PENDING_VERIFICATION"), null);
+    await seedPlans(await seedExpert("VERIFIED"), null);
+    const archivedHost = await seedExpert("VERIFIED");
+    const archived = await seedPlans(archivedHost, null);
+    await prisma.webinarPlan.update({
+      where: { id: archived.webinar.id },
+      data: { archivedAt: new Date() },
+    });
+
+    const after = await getProgramCounts();
+
+    expect(after.publishedWebinarCount - before.publishedWebinarCount).toBe(1);
+  }, 30_000);
+
+  it("are listed to their owner by the webinar list too, and never from a shared cache", async () => {
+    const pending = await seedExpert("PENDING_VERIFICATION");
+    const plans = await seedPlans(pending, null);
+    const read = async () =>
+      listWebinarPlans(
+        new NextRequest(
+          `https://x.test/api/plans/webinars?consultantId=${pending.consultantProfileId}`,
+        ),
+      );
+
+    viewAs(pending);
+    const own = await read();
+    viewAs(null);
+    const stranger = await read();
+
+    expect(
+      ((await own.json()) as { data: { id: string }[] }).data.map((p) => p.id),
+    ).toEqual([plans.webinar.id]);
+    expect(((await stranger.json()) as { data: unknown[] }).data).toEqual([]);
+    expect(own.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(stranger.headers.get("Cache-Control")).toBe("private, no-store");
+  }, 30_000);
+
+  it("keys the shared 1:1 and subscription lists on every query they read", async () => {
+    viewAs(null);
+    for (const [list, path] of [
+      [listConsultationPlans, "/api/plans/consultations"],
+      [listSubscriptionPlans, "/api/plans/subscriptions"],
+    ] as const) {
+      const res = await list(new NextRequest(`https://x.test${path}?page=2`));
+      expect(res.headers.get("Cache-Control")).toMatch(/^public, s-maxage=/);
+      expect(res.headers.get("Netlify-Vary")).toBe(
+        "query=page|limit|consultantId",
+      );
+    }
+  }, 30_000);
+
+  it("invite no waitlisted learner to buy when a seat opens", async () => {
+    const waitingOn = async (rejected: boolean) => {
+      const webinar = await seedWebinar({ capacity: 2 });
+      await prisma.webinarPlan.update({
+        where: { id: webinar.planId },
+        data: { waitlistEnabled: true },
+      });
+      await seedHeldSeat(webinar, { status: "SUCCEEDED", expiresAt: null });
+      const waiter = await seedConsultee();
+      const row = await prisma.appointmentWaitlist.create({
+        data: {
+          appointmentId: webinar.appointmentId,
+          userId: waiter.userId,
+          planKind: "WEBINAR",
+          planId: webinar.planId,
+        },
+      });
+      if (rejected) {
+        await prisma.consultantProfile.update({
+          where: { id: webinar.host.consultantProfileId },
+          data: { verificationStatus: "REJECTED" },
+        });
+      }
+      await prisma.$transaction((tx) =>
+        stageSeatOpenedNotices(tx, webinar.appointmentId, new Date()),
+      );
+      return (
+        await prisma.appointmentWaitlist.findUniqueOrThrow({
+          where: { id: row.id },
+          select: { status: true },
+        })
+      ).status;
+    };
+
+    expect(await waitingOn(false)).toBe("NOTIFIED");
+    expect(await waitingOn(true)).toBe("WAITING");
   }, 30_000);
 });

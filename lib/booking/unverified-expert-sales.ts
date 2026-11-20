@@ -1,11 +1,18 @@
 /**
  * What a moderation reject ends: an expert who is not verified takes no new
- * sale. Every unpaid approved link, unanswered unpaid request and unpaid trial
- * hold of theirs ends in the reject's own transaction; anything with a
- * successful payment is honoured.
+ * sale. Right after the reject commits, every unpaid approved link, unanswered
+ * unpaid request, unpaid trial hold and unpaid group seat of theirs ends in one
+ * transaction; anything with a successful payment is honoured. An order the
+ * gateway has not cleared keeps its sale open.
  */
 
-import { AppointmentStatus, PaymentStatus, TrialStatus } from "@prisma/client";
+import {
+  AppointmentStatus,
+  PaymentStatus,
+  TrialStatus,
+  type PaymentGateway,
+  type Prisma,
+} from "@prisma/client";
 
 import type { Tx } from "@/lib/prisma";
 import { lapseApprovedRequest } from "@/lib/booking/lapse-approved-request";
@@ -17,6 +24,7 @@ import {
   NOT_BEING_MOVED,
   releaseDeclinedRequestHold,
 } from "@/lib/booking/request-route-guards";
+import { releaseParticipant } from "@/lib/booking/participants";
 import {
   transitionConsultationRequest,
   transitionSubscriptionRequest,
@@ -25,19 +33,19 @@ import {
 import type { StagedBackupInterestNotices } from "@/lib/booking/backup-interest";
 import { softCancelTrialAppointmentInTx } from "@/lib/trials/cancellation";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import {
+  PRE_MINT_INTENT_PREFIX,
+  isPreMintIntent,
+} from "@/lib/payments/pre-mint-intent";
 
-/** The history reason every ending below records. */
-export const EXPERT_NOT_VERIFIED_REASON = "EXPERT_NOT_VERIFIED";
-
-/** The learner's notice for a request or link the reject closed: neutral, never the reason. */
-export function closedRequestNotice(expertName: string): string {
-  return `${expertName} isn't taking bookings right now, so your request was closed. No payment was taken.`;
-}
+/** The history reason every ending below records; neutral, since learners read their history. */
+export const EXPERT_UNAVAILABLE_REASON = "EXPERT_UNAVAILABLE";
 
 /** One booking the reject ended: who to tell, and about what. */
 export interface EndedSale {
-  kind: "consultation" | "subscription" | "trial";
-  outcome: "LINK_CLOSED" | "REQUEST_DECLINED" | "TRIAL_RELEASED";
+  kind: "consultation" | "subscription" | "trial" | "seat";
+  /** The booking's type, as the learner's notice names it. */
+  appointmentType: "CONSULTATION" | "SUBSCRIPTION" | "WEBINAR" | "CLASS";
   id: string;
   appointmentId: string | null;
   organizationId: string | null;
@@ -46,15 +54,52 @@ export interface EndedSale {
   expertName: string;
   planTitle: string;
   startsAt: Date | null;
+  /** A gateway order existed for it, so the notice may not promise no charge. */
+  orderExisted: boolean;
 }
 
 export interface EndedUnpaidSales {
   payLinksClosed: number;
   requestsDeclined: number;
   trialHoldsReleased: number;
+  seatsReleased: number;
+  /** Sales left open because an order of theirs was not cleared by the gateway. */
+  salesKept: number;
   ended: EndedSale[];
-  gatewayCancels: GatewayCancel[];
+  /** The real gateway orders this ending expired, re-read after commit. */
+  closedOrders: GatewayCancel[];
   holdNotices: StagedBackupInterestNotices[];
+}
+
+/** One open order the gateway was asked about before anything closed. */
+export interface OpenOrder {
+  paymentId: string;
+  paymentIntent: string;
+  paymentGateway: PaymentGateway;
+  isMockPayment: boolean;
+}
+
+/** The PENDING orders on every sale of the expert's that the ending could close. */
+export function openSaleOrdersWhere(
+  consultantProfileId: string,
+): Prisma.PaymentWhereInput {
+  return {
+    paymentStatus: PaymentStatus.PENDING,
+    appointment: {
+      OR: [
+        { consultation: { consultationPlan: { consultantProfileId } } },
+        { subscription: { subscriptionPlan: { consultantProfileId } } },
+        { trial: { consultantProfileId } },
+        { webinar: { webinarPlan: { consultantProfileId } } },
+        { class: { classPlan: { consultantProfileId } } },
+      ],
+    },
+  };
+}
+
+/** Whether an order needs the gateway's answer: a mock or pre-mint order names none. */
+export function isGatewayOrder(order: OpenOrder): boolean {
+  return !order.isMockPayment && !isPreMintIntent(order.paymentIntent);
 }
 
 const FIRST_SESSION = {
@@ -85,163 +130,242 @@ const UNPAID_REQUEST = {
   OR: [{ appointment: null }, { appointment: NO_SUCCEEDED_PAYMENT }],
 };
 
-type RequestRow = {
+type Party = { user: { id: string; name: string | null } };
+type Booking = {
   id: string;
-  requestedBy: { user: { id: string; name: string | null } };
-  appointment: {
-    id: string;
-    organizationId: string | null;
-    occurrences: { startsAt: Date }[];
-  } | null;
+  organizationId: string | null;
+  occurrences: { startsAt: Date }[];
+} | null;
+type PlanNames = {
+  title: string;
+  consultantProfile: { user: { name: string | null } } | null;
 };
+
+interface EndingContext {
+  tx: Tx;
+  actorUserId: string;
+  /** Order id to the intent the gateway cleared; anything else keeps its sale open. */
+  cleared: ReadonlyMap<string, string>;
+  out: EndedUnpaidSales;
+}
+
+const NOTICE_TYPE = {
+  consultation: "CONSULTATION",
+  subscription: "SUBSCRIPTION",
+  trial: "SUBSCRIPTION",
+} as const;
 
 function saleOf(
   kind: EndedSale["kind"],
-  outcome: EndedSale["outcome"],
-  row: RequestRow,
-  plan: { title: string; consultantProfile: { user: { name: string | null } } },
+  appointmentType: EndedSale["appointmentType"],
+  id: string,
+  party: Party,
+  booking: Booking,
+  plan: PlanNames,
+  orderExisted: boolean,
 ): EndedSale {
   return {
     kind,
-    outcome,
-    id: row.id,
-    appointmentId: row.appointment?.id ?? null,
-    organizationId: row.appointment?.organizationId ?? null,
-    learnerUserId: row.requestedBy.user.id,
-    learnerName: row.requestedBy.user.name || "User",
-    expertName: plan.consultantProfile.user.name || "Consultant",
+    appointmentType,
+    id,
+    appointmentId: booking?.id ?? null,
+    organizationId: booking?.organizationId ?? null,
+    learnerUserId: party.user.id,
+    learnerName: party.user.name || "User",
+    expertName: plan.consultantProfile?.user.name || "Consultant",
     planTitle: plan.title,
-    startsAt: row.appointment?.occurrences[0]?.startsAt ?? null,
+    startsAt: booking?.occurrences[0]?.startsAt ?? null,
+    orderExisted,
   };
 }
 
 /**
- * Ends every unpaid sale of the expert on the caller's transaction: approved
- * links lapse to EXPIRED, unanswered requests are declined, unpaid trial holds
- * are cancelled; each open order is expired by CAS and gives back what its
- * checkout consumed. A row a capture already moved matches zero rows and stays.
+ * Whether every open order on the booking (one buyer's, for a seat) was cleared
+ * by the gateway under its current intent. Answers whether a gateway order existed.
  */
-export async function endUnpaidSalesInTx(
-  tx: Tx,
-  args: { consultantProfileId: string; actorUserId: string },
-): Promise<EndedUnpaidSales> {
-  const out: EndedUnpaidSales = {
-    payLinksClosed: 0,
-    requestsDeclined: 0,
-    trialHoldsReleased: 0,
-    ended: [],
-    gatewayCancels: [],
-    holdNotices: [],
-  };
-  const { consultantProfileId, actorUserId } = args;
-  const reason = EXPERT_NOT_VERIFIED_REASON;
+async function clearedOrders(
+  ctx: EndingContext,
+  appointmentId: string | null,
+  userId?: string,
+): Promise<{ closable: boolean; orderExisted: boolean }> {
+  if (!appointmentId) return { closable: true, orderExisted: false };
+  const pending = await ctx.tx.payment.findMany({
+    where: {
+      appointmentId,
+      paymentStatus: PaymentStatus.PENDING,
+      ...(userId ? { userId } : {}),
+    },
+    select: { id: true, paymentIntent: true, isMockPayment: true },
+  });
+  const closable = pending.every(
+    (p) => ctx.cleared.get(p.id) === p.paymentIntent,
+  );
+  const orderExisted = await ctx.tx.payment.count({
+    where: {
+      appointmentId,
+      ...(userId ? { userId } : {}),
+      isMockPayment: false,
+      NOT: { paymentIntent: { startsWith: PRE_MINT_INTENT_PREFIX } },
+    },
+  });
+  return { closable, orderExisted: orderExisted > 0 };
+}
 
-  const linked = {
-    status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
-  } as const;
-  const consultationsLinked = await tx.consultation.findMany({
+/** Expires the booking's cleared orders, returning what they consumed, and keeps the real ones for the re-check. */
+async function expireOrders(
+  ctx: EndingContext,
+  appointmentId: string,
+  reason: string,
+  userId?: string,
+): Promise<void> {
+  const { gatewayCancels } = await expirePendingPaymentsInTx(ctx.tx, {
+    appointmentId,
+    reason,
+    ...(userId ? { userId } : {}),
+  });
+  ctx.out.closedOrders.push(...gatewayCancels);
+}
+
+async function closeApprovedLinks(
+  ctx: EndingContext,
+  consultantProfileId: string,
+): Promise<void> {
+  const linked = { status: AppointmentStatus.APPROVED_PENDING_PAYMENT };
+  const consultations = await ctx.tx.consultation.findMany({
     where: { ...linked, consultationPlan: { consultantProfileId } },
     select: { ...PARTIES, consultationPlan: PLAN },
   });
-  const subscriptionsLinked = await tx.subscription.findMany({
+  const subscriptions = await ctx.tx.subscription.findMany({
     where: { ...linked, subscriptionPlan: { consultantProfileId } },
     select: { ...PARTIES, subscriptionPlan: PLAN },
   });
-  const lapses = [
-    ...consultationsLinked.map((r) => ({
+  const rows = [
+    ...consultations.map((r) => ({
       kind: "consultation" as const,
       row: r,
       plan: r.consultationPlan,
     })),
-    ...subscriptionsLinked.map((r) => ({
+    ...subscriptions.map((r) => ({
       kind: "subscription" as const,
       row: r,
       plan: r.subscriptionPlan,
     })),
   ];
-  for (const { kind, row, plan } of lapses) {
-    const lapsed = await lapseApprovedRequest(tx, {
+  for (const { kind, row, plan } of rows) {
+    const orders = await clearedOrders(ctx, row.appointment?.id ?? null);
+    if (!orders.closable) {
+      ctx.out.salesKept += 1;
+      continue;
+    }
+    const lapsed = await lapseApprovedRequest(ctx.tx, {
       kind,
       id: row.id,
-      reason: "EXPERT_NOT_VERIFIED",
-      actorUserId,
+      reason: EXPERT_UNAVAILABLE_REASON,
+      actorUserId: ctx.actorUserId,
     });
     if (lapsed.moved === 0) continue;
-    out.payLinksClosed += 1;
-    out.gatewayCancels.push(...(lapsed.gatewayCancels ?? []));
-    if (lapsed.holdNotices) out.holdNotices.push(lapsed.holdNotices);
-    out.ended.push(saleOf(kind, "LINK_CLOSED", row, plan));
+    ctx.out.payLinksClosed += 1;
+    ctx.out.closedOrders.push(...(lapsed.gatewayCancels ?? []));
+    if (lapsed.holdNotices) ctx.out.holdNotices.push(lapsed.holdNotices);
+    ctx.out.ended.push(
+      saleOf(
+        kind,
+        NOTICE_TYPE[kind],
+        row.id,
+        row.requestedBy,
+        row.appointment,
+        plan,
+        orders.orderExisted,
+      ),
+    );
   }
+}
 
-  const open = {
-    status: AppointmentStatus.PENDING,
-    ...UNPAID_REQUEST,
-  } as const;
-  const consultationsOpen = await tx.consultation.findMany({
+async function declineOpenRequests(
+  ctx: EndingContext,
+  consultantProfileId: string,
+): Promise<void> {
+  const open = { status: AppointmentStatus.PENDING, ...UNPAID_REQUEST };
+  const consultations = await ctx.tx.consultation.findMany({
     where: { ...open, consultationPlan: { consultantProfileId } },
     select: { ...PARTIES, consultationPlan: PLAN },
   });
-  const subscriptionsOpen = await tx.subscription.findMany({
+  const subscriptions = await ctx.tx.subscription.findMany({
     where: { ...open, subscriptionPlan: { consultantProfileId } },
     select: { ...PARTIES, subscriptionPlan: PLAN },
   });
-  const declines = [
-    ...consultationsOpen.map((r) => ({
+  const rows = [
+    ...consultations.map((r) => ({
       kind: "consultation" as const,
       row: r,
       plan: r.consultationPlan,
     })),
-    ...subscriptionsOpen.map((r) => ({
+    ...subscriptions.map((r) => ({
       kind: "subscription" as const,
       row: r,
       plan: r.subscriptionPlan,
     })),
   ];
-  for (const { kind, row, plan } of declines) {
+  for (const { kind, row, plan } of rows) {
+    const orders = await clearedOrders(ctx, row.appointment?.id ?? null);
+    if (!orders.closable) {
+      ctx.out.salesKept += 1;
+      continue;
+    }
     const cas = {
       fromIn: [AppointmentStatus.PENDING],
       to: AppointmentStatus.REJECTED,
       data: { pendingPaymentUrl: null },
-      reason,
-      actorUserId,
+      reason: EXPERT_UNAVAILABLE_REASON,
+      actorUserId: ctx.actorUserId,
     };
+    const where = { id: row.id, ...NOT_BEING_MOVED, ...UNPAID_REQUEST };
     try {
       if (kind === "consultation") {
-        await transitionConsultationRequest(tx, {
-          ...cas,
-          where: { id: row.id, ...NOT_BEING_MOVED, ...UNPAID_REQUEST },
-        });
+        await transitionConsultationRequest(ctx.tx, { ...cas, where });
       } else {
-        await transitionSubscriptionRequest(tx, {
-          ...cas,
-          where: { id: row.id, ...NOT_BEING_MOVED, ...UNPAID_REQUEST },
-        });
+        await transitionSubscriptionRequest(ctx.tx, { ...cas, where });
       }
     } catch (error) {
       if (error instanceof IllegalTransitionError) continue;
       throw error;
     }
     if (row.appointment) {
-      // Claimed here so the orders can be cancelled after commit; the release finds none left.
-      const expired = await expirePendingPaymentsInTx(tx, {
-        appointmentId: row.appointment.id,
-        reason: "Request declined: the expert is no longer verified",
-      });
-      out.gatewayCancels.push(...expired.gatewayCancels);
+      await expireOrders(
+        ctx,
+        row.appointment.id,
+        "Request closed: the expert is not taking bookings",
+      );
     }
-    const holdNotices = await releaseDeclinedRequestHold(
-      tx,
-      kind === "consultation"
-        ? { consultationId: row.id }
-        : { subscriptionId: row.id },
-      actorUserId,
+    ctx.out.holdNotices.push(
+      await releaseDeclinedRequestHold(
+        ctx.tx,
+        kind === "consultation"
+          ? { consultationId: row.id }
+          : { subscriptionId: row.id },
+        ctx.actorUserId,
+      ),
     );
-    out.holdNotices.push(holdNotices);
-    out.requestsDeclined += 1;
-    out.ended.push(saleOf(kind, "REQUEST_DECLINED", row, plan));
+    ctx.out.requestsDeclined += 1;
+    ctx.out.ended.push(
+      saleOf(
+        kind,
+        NOTICE_TYPE[kind],
+        row.id,
+        row.requestedBy,
+        row.appointment,
+        plan,
+        orders.orderExisted,
+      ),
+    );
   }
+}
 
-  const trials = await tx.trial.findMany({
+async function releaseTrialHolds(
+  ctx: EndingContext,
+  consultantProfileId: string,
+): Promise<void> {
+  const trials = await ctx.tx.trial.findMany({
     where: {
       consultantProfileId,
       status: TrialStatus.AWAITING_PAYMENT,
@@ -249,7 +373,6 @@ export async function endUnpaidSalesInTx(
     },
     select: {
       id: true,
-      appointmentId: true,
       consulteeProfile: {
         select: { user: { select: { id: true, name: true } } },
       },
@@ -260,41 +383,158 @@ export async function endUnpaidSalesInTx(
     },
   });
   for (const trial of trials) {
+    const appointmentId = trial.appointment?.id ?? null;
+    const orders = await clearedOrders(ctx, appointmentId);
+    if (!orders.closable) {
+      ctx.out.salesKept += 1;
+      continue;
+    }
     try {
-      await transitionTrial(tx, {
+      await transitionTrial(ctx.tx, {
         where: { id: trial.id },
         to: TrialStatus.CANCELLED,
         fromIn: [TrialStatus.AWAITING_PAYMENT],
-        whereAnd: { paymentId: null },
+        // The capture stamps paymentId; the appointment arm catches a late stamp.
+        whereAnd: {
+          paymentId: null,
+          NOT: {
+            appointment: {
+              is: { payment: { some: { paymentStatus: "SUCCEEDED" } } },
+            },
+          },
+        },
         data: { pendingPaymentUrl: null, paymentDueAt: null },
-        reason,
-        actorUserId,
+        reason: EXPERT_UNAVAILABLE_REASON,
+        actorUserId: ctx.actorUserId,
       });
     } catch (error) {
       if (error instanceof IllegalTransitionError) continue;
       throw error;
     }
-    if (trial.appointmentId) {
-      const expired = await expirePendingPaymentsInTx(tx, {
-        appointmentId: trial.appointmentId,
-        reason: "Trial hold released: the expert is no longer verified",
-      });
-      out.gatewayCancels.push(...expired.gatewayCancels);
-      await softCancelTrialAppointmentInTx(tx, trial.appointmentId);
+    if (appointmentId) {
+      await expireOrders(
+        ctx,
+        appointmentId,
+        "Trial hold released: the expert is not taking bookings",
+      );
+      await softCancelTrialAppointmentInTx(ctx.tx, appointmentId);
     }
-    out.trialHoldsReleased += 1;
-    out.ended.push(
+    ctx.out.trialHoldsReleased += 1;
+    ctx.out.ended.push(
       saleOf(
         "trial",
-        "TRIAL_RELEASED",
-        {
-          id: trial.id,
-          requestedBy: trial.consulteeProfile,
-          appointment: trial.appointment,
-        },
+        NOTICE_TYPE.trial,
+        trial.id,
+        trial.consulteeProfile,
+        trial.appointment,
         trial.subscriptionPlan,
+        orders.orderExisted,
       ),
     );
   }
+}
+
+/** A buyer's unpaid seat on the expert's own webinar or class; the event and its paid seats stay. */
+async function releaseUnpaidSeats(
+  ctx: EndingContext,
+  consultantProfileId: string,
+): Promise<void> {
+  const seats = await ctx.tx.appointmentParticipant.findMany({
+    where: {
+      role: "CONSULTEE",
+      status: "HELD",
+      NOT: { payment: { is: { paymentStatus: PaymentStatus.SUCCEEDED } } },
+      appointment: {
+        deletedAt: null,
+        OR: [
+          { webinar: { webinarPlan: { consultantProfileId } } },
+          { class: { classPlan: { consultantProfileId } } },
+        ],
+      },
+    },
+    select: {
+      id: true,
+      user: { select: { id: true, name: true } },
+      appointment: {
+        select: {
+          id: true,
+          organizationId: true,
+          occurrences: FIRST_SESSION,
+          webinar: { select: { webinarPlan: PLAN } },
+          class: { select: { classPlan: PLAN } },
+        },
+      },
+    },
+  });
+  for (const seat of seats) {
+    const plan =
+      seat.appointment.webinar?.webinarPlan ??
+      seat.appointment.class?.classPlan;
+    if (!plan) continue;
+    const orders = await clearedOrders(ctx, seat.appointment.id, seat.user.id);
+    if (!orders.closable) {
+      ctx.out.salesKept += 1;
+      continue;
+    }
+    const released = await releaseParticipant(ctx.tx, {
+      id: seat.id,
+      status: "HELD",
+      NOT: { payment: { is: { paymentStatus: PaymentStatus.SUCCEEDED } } },
+    });
+    if (released === 0) continue;
+    await expireOrders(
+      ctx,
+      seat.appointment.id,
+      "Seat released: the expert is not taking bookings",
+      seat.user.id,
+    );
+    ctx.out.seatsReleased += 1;
+    ctx.out.ended.push(
+      saleOf(
+        "seat",
+        seat.appointment.webinar ? "WEBINAR" : "CLASS",
+        seat.id,
+        { user: seat.user },
+        seat.appointment,
+        plan,
+        orders.orderExisted,
+      ),
+    );
+  }
+}
+
+/**
+ * Ends every unpaid sale of the expert on the caller's transaction. Each write
+ * is a CAS through the existing helpers; a row a capture already moved matches
+ * zero rows and stays, and a sale with an order the gateway did not clear stays open.
+ */
+export async function endUnpaidSalesInTx(
+  tx: Tx,
+  args: {
+    consultantProfileId: string;
+    actorUserId: string;
+    cleared: ReadonlyMap<string, string>;
+  },
+): Promise<EndedUnpaidSales> {
+  const out: EndedUnpaidSales = {
+    payLinksClosed: 0,
+    requestsDeclined: 0,
+    trialHoldsReleased: 0,
+    seatsReleased: 0,
+    salesKept: 0,
+    ended: [],
+    closedOrders: [],
+    holdNotices: [],
+  };
+  const ctx: EndingContext = {
+    tx,
+    actorUserId: args.actorUserId,
+    cleared: args.cleared,
+    out,
+  };
+  await closeApprovedLinks(ctx, args.consultantProfileId);
+  await declineOpenRequests(ctx, args.consultantProfileId);
+  await releaseTrialHolds(ctx, args.consultantProfileId);
+  await releaseUnpaidSeats(ctx, args.consultantProfileId);
   return out;
 }

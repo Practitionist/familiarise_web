@@ -124,11 +124,16 @@ export function assertExpertVerified(
   label: string,
 ): void {
   if (profile && profile.verificationStatus !== "VERIFIED") {
-    throw new BookingRuleError(
-      "EXPERT_NOT_VERIFIED",
-      `${label} isn't available to book until the expert is verified.`,
-    );
+    throw expertNotVerifiedError(label);
   }
+}
+
+/** The refusal every door answers for an expert who takes no new sale. */
+export function expertNotVerifiedError(label: string): BookingRuleError {
+  return new BookingRuleError(
+    "EXPERT_NOT_VERIFIED",
+    `${label} isn't available to book until the expert is verified.`,
+  );
 }
 
 /**

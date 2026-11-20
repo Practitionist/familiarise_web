@@ -6,6 +6,8 @@ import { MARKETPLACE_VISIBILITY } from "@/lib/api/plans/visibility";
 import { publicExpertProfileWhere } from "@/lib/profiles/public-profile";
 import { normaliseSearchTerm } from "@/lib/explore/programs";
 import { publicCacheHeaders } from "@/lib/api/cdn-cache";
+import { getSession } from "@/lib/auth-server";
+import { reportSentryError } from "@/lib/observability/report";
 
 /** Every query key the webinar and class list routes read, so the CDN caches one entry per filter set. */
 const PLAN_LIST_CACHE_HEADERS = publicCacheHeaders({
@@ -127,6 +129,8 @@ type ListedOwner = {
  */
 export function buildPlanWhereClause(
   filters: PlanFilterParams,
+  /** The expert reading their own list sees their plans while they are unverified. */
+  opts: { ownerView?: boolean } = {},
 ): PlanWhereClause {
   // #726 — public marketplace must not surface ORG_ONLY plans. The filter
   // is applied unconditionally here because every caller of this helper
@@ -140,14 +144,18 @@ export function buildPlanWhereClause(
   const where: PlanWhereClause = {
     visibility: { in: MARKETPLACE_VISIBILITY },
     archivedAt: null,
-    AND: [
-      {
-        OR: [
-          { consultantProfile: null },
-          { consultantProfile: publicExpertProfileWhere },
-        ],
-      },
-    ],
+    ...(opts.ownerView
+      ? {}
+      : {
+          AND: [
+            {
+              OR: [
+                { consultantProfile: null },
+                { consultantProfile: publicExpertProfileWhere },
+              ],
+            },
+          ],
+        }),
   };
 
   if (filters.consultantId) {
@@ -221,11 +229,38 @@ export function buildPlanOrderBy(
 /**
  * Build a standard paginated JSON response.
  */
+/** Whether the viewer is the expert the list is filtered to; a failed session read is a stranger. */
+export async function isOwnerListView(
+  filters: Pick<PlanFilterParams, "consultantId">,
+): Promise<boolean> {
+  if (!filters.consultantId) return false;
+  const session = await getSession().catch((error: unknown) => {
+    reportSentryError(error, { subsystem: "plans", expected: true });
+    return null;
+  });
+  return session?.user?.consultantProfileId === filters.consultantId;
+}
+
+/** A list filtered to one expert may be that expert's own view, so it is never shared. */
+export const PLAN_LIST_PRIVATE_HEADERS = {
+  "Cache-Control": "private, no-store",
+};
+
+/** The cache headers for a list read: shared unless it names one expert. */
+export function planListCacheHeaders(
+  filters: Pick<PlanFilterParams, "consultantId">,
+): Record<string, string> {
+  return filters.consultantId
+    ? PLAN_LIST_PRIVATE_HEADERS
+    : PLAN_LIST_CACHE_HEADERS;
+}
+
 export function paginatedResponse(
   data: unknown[],
   total: number,
   page: number,
   limit: number,
+  headers: Record<string, string> = PLAN_LIST_CACHE_HEADERS,
 ) {
   return NextResponse.json(
     {
@@ -234,7 +269,7 @@ export function paginatedResponse(
     },
     {
       status: 200,
-      headers: PLAN_LIST_CACHE_HEADERS,
+      headers,
     },
   );
 }
@@ -250,6 +285,7 @@ export async function rankAndPaginate<T extends { id: string }>(
   skip: number,
   limit: number,
   page: number,
+  headers: Record<string, string> = PLAN_LIST_CACHE_HEADERS,
 ): Promise<NextResponse> {
   const total = ranked.length;
   const paginatedIds = ranked.slice(skip, skip + limit).map((r) => r.id);
@@ -260,7 +296,7 @@ export async function rankAndPaginate<T extends { id: string }>(
   const idOrder = new Map(paginatedIds.map((id, i) => [id, i]));
   items.sort((a, b) => (idOrder.get(a.id) ?? 0) - (idOrder.get(b.id) ?? 0));
 
-  return paginatedResponse(items, total, page, limit);
+  return paginatedResponse(items, total, page, limit, headers);
 }
 
 /**

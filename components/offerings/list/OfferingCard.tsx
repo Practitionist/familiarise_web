@@ -61,7 +61,15 @@ export interface OfferingCardProps {
   join?: { canJoin: boolean; isJoining: boolean; onJoin: () => void };
   onArchiveToggle?: () => Promise<unknown>;
   onDelete?: () => Promise<unknown>;
+  /** False while the expert is unverified: learners can neither open nor book the offering. */
+  listed?: boolean;
 }
+
+/** The chip a published offering shows while learners cannot see it yet. */
+const LIVE_ONCE_VERIFIED = {
+  label: "Live once verified",
+  tone: "caution",
+} as const;
 
 function formatStart(date: Date | null): string {
   if (!date) return "Not scheduled yet";
@@ -93,16 +101,22 @@ export function OfferingCard({
   join,
   onArchiveToggle,
   onDelete,
+  listed = true,
 }: Readonly<OfferingCardProps>) {
   const { toast } = useToast();
   const [confirm, setConfirm] = useState<"archive" | "delete" | null>(null);
   const [restoring, setRestoring] = useState(false);
 
   const owned = !row.isCollaborated;
+  // A share link to a page learners cannot open yet would only 404.
   const baseShareHref =
-    row.planId && !row.isDraft && !row.isArchived
+    listed && row.planId && !row.isDraft && !row.isArchived
       ? publicOfferingHref(row.type, row.planId)
       : null;
+  const chip =
+    !listed && row.status.label === "Published"
+      ? LIVE_ONCE_VERIFIED
+      : row.status;
   let shareHref = baseShareHref;
   if (baseShareHref && owned) {
     shareHref = appendExpertShareAttribution(
@@ -178,11 +192,7 @@ export function OfferingCard({
             <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
               {OFFERING_TYPE_LABEL[row.type]}
             </span>
-            <StatusBadge
-              label={row.status.label}
-              tone={row.status.tone}
-              size="sm"
-            />
+            <StatusBadge label={chip.label} tone={chip.tone} size="sm" />
             {row.trialEnabled && (
               <StatusBadge
                 label={row.trialIsFree ? "Free trial" : "Trial available"}

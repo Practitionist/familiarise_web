@@ -70,7 +70,6 @@ import { stageBell } from "@/lib/novu/stage-bell";
 import type { StagedEmailBundleEntry } from "@/lib/novu/stage-then-attempt";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import { goHref } from "@/lib/dashboard/go";
-import type { EndedUnpaidSales } from "@/lib/booking/unverified-expert-sales";
 
 export interface ModerationReportRef {
   id: string;
@@ -106,15 +105,7 @@ export interface TransactionalEffectResult {
   reviewRemovedConsultantProfileId?: string;
   /** The rejected expert's profile, purged from the public surfaces after commit. */
   unverifiedConsultantProfileId?: string;
-  /** The rejected expert's unpaid sales the reject ended, by kind. */
-  payLinksClosed?: number;
-  requestsDeclined?: number;
-  trialHoldsReleased?: number;
-  /** What phase 2 owes those endings: order cancels and notices; never persisted. */
-  unpaidSalesEnded?: Pick<
-    EndedUnpaidSales,
-    "ended" | "gatewayCancels" | "holdNotices"
-  >;
+
   banExpires?: string | null;
   collaborationsRemoved?: PlanRef[];
   /** The seat holders' emails of a co-presenter who left; phase 2 stages them, never persisted. */
@@ -128,6 +119,14 @@ export interface TransactionalEffectResult {
 export type StepStatus = "ok" | "failed" | "skipped" | "gave_up";
 
 export interface SideEffectSummary extends TransactionalEffectResult {
+  /** A rejected expert's unpaid sales ended after commit, by kind. */
+  payLinksClosed?: number;
+  requestsDeclined?: number;
+  trialHoldsReleased?: number;
+  seatsReleased?: number;
+  /** Sales left open: a live payment holds them, or the gateway could not be asked. */
+  salesKept?: number;
+  unpaidSales?: StepStatus;
   cancellations?: BulkCancelSummary;
   stream?: StepStatus;
   streamAttempts?: number;
@@ -528,38 +527,12 @@ async function unverifyProfiles(
     select: { id: true },
   });
   const profileId = updated[0]?.id;
-  // Only a verified expert holds a place on a team.
-  const collaborations = await endCollaborationsAsModeration(
-    tx,
-    targetUserId,
-    staffUserId,
-  );
-  // Stop new, honour booked: every unpaid sale ends now; paid bookings stay.
-  // Lazy: the booking graph loads only for a reject.
-  const { endUnpaidSalesInTx } =
-    await import("@/lib/booking/unverified-expert-sales");
-  const sales = profileId
-    ? await endUnpaidSalesInTx(tx, {
-        consultantProfileId: profileId,
-        actorUserId: staffUserId,
-      })
-    : null;
+  // Only a verified expert holds a place on a team. Their unpaid sales end in
+  // phase 2, once this profile write has committed and every sale writer sees it.
   return {
     profilesUnverified: updated.length,
     ...(profileId ? { unverifiedConsultantProfileId: profileId } : {}),
-    ...collaborations,
-    ...(sales
-      ? {
-          payLinksClosed: sales.payLinksClosed,
-          requestsDeclined: sales.requestsDeclined,
-          trialHoldsReleased: sales.trialHoldsReleased,
-          unpaidSalesEnded: {
-            ended: sales.ended,
-            gatewayCancels: sales.gatewayCancels,
-            holdNotices: sales.holdNotices,
-          },
-        }
-      : {}),
+    ...(await endCollaborationsAsModeration(tx, targetUserId, staffUserId)),
   };
 }
 
@@ -689,7 +662,6 @@ export async function applyBestEffortEffects(
   const {
     stagedSessionEnds = [],
     owedCohostEmails = [],
-    unpaidSalesEnded,
     ...committed
   } = transactional;
   // The ban or suspension has committed; a failed log write cannot undo it.
@@ -721,18 +693,49 @@ export async function applyBestEffortEffects(
     );
   }
 
-  if (unpaidSalesEnded) {
-    const { settleEndedUnpaidSales } =
-      await import("@/lib/booking/unverified-expert-notices");
-    const notices = await settleEndedUnpaidSales(unpaidSalesEnded);
-    summary.stagedBells?.push(...notices.bells);
-    summary.stagedEmails?.push(...notices.emails);
+  if (transactional.unverifiedConsultantProfileId) {
+    await runUnpaidSalesEnding(
+      transactional.unverifiedConsultantProfileId,
+      input.staffUserId,
+      summary,
+      errors,
+    );
   }
 
   await runNotification(input, transactional, summary, errors);
 
   if (errors.length > 0) summary.errors = errors;
   return summary;
+}
+
+// Stop new, honour booked: the rejected expert's unpaid sales end; paid ones stay.
+async function runUnpaidSalesEnding(
+  consultantProfileId: string,
+  staffUserId: string,
+  summary: SideEffectSummary,
+  errors: string[],
+): Promise<void> {
+  try {
+    // Lazy: the booking and gateway graph loads only for a reject.
+    const { endUnverifiedExpertSales } =
+      await import("@/lib/booking/unverified-expert-notices");
+    const outcome = await endUnverifiedExpertSales({
+      consultantProfileId,
+      actorUserId: staffUserId,
+    });
+    summary.payLinksClosed = outcome.payLinksClosed;
+    summary.requestsDeclined = outcome.requestsDeclined;
+    summary.trialHoldsReleased = outcome.trialHoldsReleased;
+    summary.seatsReleased = outcome.seatsReleased;
+    summary.salesKept = outcome.salesKept;
+    summary.stagedBells?.push(...outcome.bells);
+    summary.stagedEmails?.push(...outcome.emails);
+    summary.unpaidSales = "ok";
+  } catch (error) {
+    summary.unpaidSales = "failed";
+    errors.push(`unpaidSales: ${errMsg(error)}`);
+    captureModerationError(error);
+  }
 }
 
 async function runBulkCancellations(

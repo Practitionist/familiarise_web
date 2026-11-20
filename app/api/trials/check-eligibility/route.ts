@@ -4,9 +4,11 @@ import { blockingTrialWhere } from "@/lib/trials/eligibility";
 import { NextRequest, NextResponse } from "next/server";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 import {
+  eventPlanDiscoverableWhere,
   oneOnOnePlanDiscoverableWhere,
   planSaleRefusal,
 } from "@/lib/api/plans/visibility";
+import { publicExpertProfileWhere } from "@/lib/profiles/public-profile";
 
 /**
  * GET /api/trials/check-eligibility
@@ -44,6 +46,15 @@ export async function GET(request: NextRequest) {
     }
   }
 
+  // Only the expert sees their own hidden plans; everyone else gets what the public lists show.
+  const isOwner = consultantProfileId === session.user.consultantProfileId;
+  const listed = isOwner
+    ? {}
+    : {
+        ...eventPlanDiscoverableWhere(),
+        consultantProfile: publicExpertProfileWhere,
+      };
+
   try {
     // Only the pair's live or delivered trial blocks; ended ones stay as history.
     const blockingTrial = await prisma.trial.findFirst({
@@ -65,8 +76,8 @@ export async function GET(request: NextRequest) {
     let planNotPublished = false;
 
     if (subscriptionPlanId) {
-      const plan = await prisma.subscriptionPlan.findUnique({
-        where: { id: subscriptionPlanId },
+      const plan = await prisma.subscriptionPlan.findFirst({
+        where: { id: subscriptionPlanId, consultantProfileId, ...listed },
         select: {
           trialEnabled: true,
           trialDurationMinutes: true,
@@ -95,6 +106,7 @@ export async function GET(request: NextRequest) {
         consultantProfileId,
         trialEnabled: true,
         ...oneOnOnePlanDiscoverableWhere(),
+        ...(isOwner ? {} : { consultantProfile: publicExpertProfileWhere }),
       },
       select: {
         id: true,

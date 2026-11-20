@@ -39,6 +39,7 @@ import {
   eventMockErrorCopy,
   loadErrorMessage,
   planIncludes,
+  planLoadError,
   searchParamsKey,
 } from "./shared";
 
@@ -137,7 +138,7 @@ export function useWebinarCheckout(
     queryFn: async (): Promise<PlanResponse> => {
       const response = await fetch(`/api/plans/webinars/${planId}`);
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        throw planLoadError(response.status);
       }
       const data = await response.json();
       if (!data.data?.consultantProfile?.user) {

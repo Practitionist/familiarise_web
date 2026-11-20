@@ -312,7 +312,6 @@ export const POST = withOpsAction(
         stagedEmails,
         stagedSessionEnds,
         owedCohostEmails,
-        unpaidSalesEnded,
         ...persistedSideEffects
       } = sideEffects;
       await persistActionSideEffects(action.id, persistedSideEffects);

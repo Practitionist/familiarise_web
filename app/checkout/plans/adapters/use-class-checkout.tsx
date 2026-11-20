@@ -37,6 +37,7 @@ import {
   eventMockErrorCopy,
   loadErrorMessage,
   planIncludes,
+  planLoadError,
   searchParamsKey,
 } from "./shared";
 
@@ -109,7 +110,7 @@ export function useClassCheckout(
     queryFn: async (): Promise<PlanResponse> => {
       const response = await fetch(`/api/plans/classes/${planId}`);
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        throw planLoadError(response.status);
       }
       const data = await response.json();
       if (!data.data?.consultantProfile?.user) {

@@ -1,15 +1,15 @@
 import { AppointmentStatus, PaymentStatus, type Prisma } from "@prisma/client";
 
 import type { Tx } from "@/lib/prisma";
-import { assertExpertVerified } from "@/lib/booking/booking-rule-error";
+import { assertExpertStandsInTx } from "@/lib/booking/expert-standing";
 
 /**
- * Approving a request nobody has paid for needs a verified expert: the detail
- * PATCH routes and allocation ask this before the approval write. A booking
- * already approved, or one with a captured payment, is honoured and passes.
+ * Approving a request nobody has paid for needs a verified, live expert: the
+ * detail PATCH routes and allocation ask this before the approval write. A
+ * booking already approved, or one with a captured payment, is honoured and passes.
  */
 export async function assertUnpaidApprovalVerified(
-  tx: Pick<Tx, "consultation" | "subscription">,
+  tx: Pick<Tx, "consultation" | "subscription" | "$queryRaw">,
   kind: "consultation" | "subscription",
   id: string,
 ): Promise<void> {
@@ -25,9 +25,7 @@ export async function assertUnpaidApprovalVerified(
       },
     },
   } satisfies Prisma.ConsultationSelect & Prisma.SubscriptionSelect;
-  const expert = {
-    select: { consultantProfile: { select: { verificationStatus: true } } },
-  } as const;
+  const expert = { select: { consultantProfileId: true } } as const;
   const row =
     kind === "consultation"
       ? await tx.consultation.findUnique({
@@ -42,10 +40,11 @@ export async function assertUnpaidApprovalVerified(
   if ((row.appointment?.payment?.length ?? 0) > 0) return;
   const plan =
     "consultationPlan" in row ? row.consultationPlan : row.subscriptionPlan;
-  // Refuses on the expert's recorded status; a profile-less plan has none.
-  const status = plan?.consultantProfile?.verificationStatus;
-  assertExpertVerified(
-    status ? { verificationStatus: status } : null,
+  const consultantProfileId = plan?.consultantProfileId;
+  if (!consultantProfileId) return;
+  await assertExpertStandsInTx(
+    tx,
+    consultantProfileId,
     kind === "consultation" ? "This consultation" : "This subscription",
   );
 }

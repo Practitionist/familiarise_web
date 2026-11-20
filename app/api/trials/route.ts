@@ -46,6 +46,7 @@ import { assertRequestLeadFits } from "@/lib/booking/lead-time";
 import { slotStartRefusal } from "@/lib/payments/utils/slot-validation";
 import { assertWindowMatchesPlanDuration } from "@/lib/booking/slot-validation";
 import { assertNotSelfBooking } from "@/lib/booking/self-booking";
+import { assertExpertStandsInTx } from "@/lib/booking/expert-standing";
 import { capacityRefusal } from "@/lib/booking/request-caps";
 import { apiError } from "@/lib/errors/api-error";
 import { isRefusal, Refusal } from "@/lib/errors/refusal";
@@ -578,6 +579,12 @@ export async function POST(request: NextRequest) {
         const booked = await prisma
           .$transaction(
             async (tx) => {
+              // Read under a share lock, so a reject that lands meanwhile waits for this write.
+              await assertExpertStandsInTx(
+                tx,
+                consultantProfileId,
+                "This trial",
+              );
               const atCapacity = await capacityRefusal(
                 tx,
                 subscriptionPlan.consultantProfile,
@@ -625,6 +632,7 @@ export async function POST(request: NextRequest) {
       }
     } catch (error) {
       if (isRefusal(error)) return apiError({ tag: "[trials.POST]", error });
+      if (error instanceof BookingRuleError) return bookingRuleResponse(error);
       if (error instanceof TrialDailyLimitError) {
         const retryAfter = Math.max(
           1,

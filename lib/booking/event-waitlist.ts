@@ -19,7 +19,10 @@ import {
 import prisma, { type PrismaLike, type Tx } from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { canViewPlanDetail } from "@/lib/data/plan-viewable";
-import { publicProfileFacts } from "@/lib/profiles/public-profile";
+import {
+  isPublicExpertProfile,
+  publicProfileFacts,
+} from "@/lib/profiles/public-profile";
 import { MARKETPLACE_VISIBILITY } from "@/lib/api/plans/visibility";
 import {
   MAX_GROUP_SESSION_PARTICIPANTS,
@@ -313,13 +316,14 @@ function seatsRemaining(view: EventView): number {
 
 const CLASS_SELLABLE = new Set(["SCHEDULED"]);
 
-/** The event, its plan and its host are live; nothing about timing yet. */
+/** The event, its plan and its verified, live host are live; nothing about timing yet. */
 function eventLive(view: EventView): boolean {
+  const host = view.plan.consultantProfile;
   return (
     !view.deleted &&
     !view.appointment?.deletedAt &&
     !view.plan.archivedAt &&
-    !view.plan.consultantProfile?.deletedAt &&
+    (!host || isPublicExpertProfile(host)) &&
     (view.kind === "WEBINAR"
       ? view.status === "SCHEDULED"
       : CLASS_SELLABLE.has(view.status))

@@ -55,7 +55,7 @@ export type LapseReason =
   | "WITHDRAWN_BY_CONSULTANT"
   | "TOO_CLOSE_TO_PAY"
   | typeof REQUESTED_AGAIN_REASON
-  | "EXPERT_NOT_VERIFIED";
+  | "EXPERT_UNAVAILABLE";
 
 /**
  * The terminal status each reason earns. EXPIRED is reserved for a lapsed
@@ -70,8 +70,8 @@ const LAPSED_TO: Record<LapseReason, AppointmentStatus> = {
   TOO_CLOSE_TO_PAY: AppointmentStatus.EXPIRED,
   // The learner closes a window that already ran out before requesting again.
   [REQUESTED_AGAIN_REASON]: AppointmentStatus.EXPIRED,
-  // Moderation rejected the expert: the unpaid link can no longer be paid.
-  EXPERT_NOT_VERIFIED: AppointmentStatus.EXPIRED,
+  // The expert takes no bookings (moderation rejected them): the unpaid link can no longer be paid.
+  EXPERT_UNAVAILABLE: AppointmentStatus.EXPIRED,
 };
 
 /** The engagement-reversal note each reason leaves on the organisation's usage row. */
@@ -80,7 +80,7 @@ const LAPSE_NOTE: Record<LapseReason, string> = {
   WITHDRAWN_BY_CONSULTANT: "Approval withdrawn by the expert before payment",
   TOO_CLOSE_TO_PAY: "Approval released: too close to the session to pay",
   [REQUESTED_AGAIN_REASON]: REQUEST_AGAIN_NOTE,
-  EXPERT_NOT_VERIFIED: "Approval lapsed: the expert is no longer verified",
+  EXPERT_UNAVAILABLE: "Approval lapsed: the expert is not taking bookings",
 };
 
 export interface LapseApprovedRequestArgs {

@@ -7,6 +7,7 @@ import {
   assertExpertTakesDirectCheckout,
   assertExpertVerified,
 } from "@/lib/booking/booking-rule-error";
+import { CHECKOUT_LABEL } from "@/lib/booking/expert-standing";
 import type { BookingMode, ConsultantVerificationStatus } from "@prisma/client";
 import {
   OCCUPYING_OCCURRENCE_WHERE,
@@ -341,14 +342,6 @@ export async function releaseCheckoutLock(
   );
 }
 
-/** The refusal copy pricing uses for each checkout type. */
-const IN_LOCK_LABEL: Record<string, string> = {
-  CONSULTATION: "This consultation",
-  SUBSCRIPTION: "This subscription",
-  WEBINAR: "This webinar",
-  CLASS: "This class",
-};
-
 /**
  * BUG-E: Verify plan still exists inside lock
  * Prevents race condition where plan is deleted between initial validation and checkout
@@ -427,7 +420,7 @@ export async function verifyPlanExistsInsideLock(
   assertExpertTakesDirectCheckout(appointmentType, plan.consultantProfile);
   assertExpertVerified(
     plan.consultantProfile,
-    IN_LOCK_LABEL[appointmentType] ?? "This booking",
+    CHECKOUT_LABEL[appointmentType] ?? "This booking",
   );
   // A seat is sold from the event; the plan the self-booking and related-party
   // rules read must be that event's plan, never a client-chosen one.
