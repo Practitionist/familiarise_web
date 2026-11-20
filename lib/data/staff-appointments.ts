@@ -158,17 +158,19 @@ export async function getStaffAppointments(
     baseWhere.appointmentType = type;
   }
 
-  // Filter by date at the database level using occurrences
-  if (dateFrom || dateTo) {
-    baseWhere.occurrences = {
-      some: {
-        // Both bounds share one `startsAt`: a second key would replace the first.
-        startsAt: {
-          ...(dateFrom && { gte: new Date(dateFrom) }),
-          ...(dateTo && { lte: new Date(dateTo) }),
-        },
-      },
-    };
+  // One range predicate both filters the rows and picks the occurrence each row displays.
+  // Both bounds share one `startsAt`: a second key would replace the first.
+  const occurrenceInRange: Prisma.AppointmentOccurrenceWhereInput | undefined =
+    dateFrom || dateTo
+      ? {
+          startsAt: {
+            ...(dateFrom && { gte: new Date(dateFrom) }),
+            ...(dateTo && { lte: new Date(dateTo) }),
+          },
+        }
+      : undefined;
+  if (occurrenceInRange) {
+    baseWhere.occurrences = { some: occurrenceInRange };
   }
 
   // Handle search across multiple fields
@@ -290,6 +292,7 @@ export async function getStaffAppointments(
           },
         },
         occurrences: {
+          where: occurrenceInRange,
           orderBy: { startsAt: "asc" },
           take: 1,
           select: {

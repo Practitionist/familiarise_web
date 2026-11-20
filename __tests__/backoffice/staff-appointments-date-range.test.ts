@@ -75,3 +75,16 @@ it("treats an empty bound as absent, not as an invalid date", async () => {
   expect(res.status).not.toBe(400);
   expect(mockFindMany).toHaveBeenCalled();
 });
+
+it("takes the displayed occurrence from inside the same range it filters on", async () => {
+  await getStaffAppointments({
+    scope: { kind: "all" },
+    dateFrom: "2026-11-18T00:00:00Z",
+    dateTo: "2026-11-18T23:59:59Z",
+  });
+  const args = mockFindMany.mock.calls[0][0] as {
+    select: { occurrences: { where?: { startsAt: unknown }; take: number } };
+  };
+  expect(args.select.occurrences.take).toBe(1);
+  expect(args.select.occurrences.where?.startsAt).toEqual(startsAtFilter());
+});
