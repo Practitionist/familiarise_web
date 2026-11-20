@@ -714,7 +714,8 @@ export default function HomeTab({
         removalReviews: isOwner ? openRemovalReviews(sessionCases) : [],
         now,
       }),
-      ...lowSessionSubscriptions(eventsData, now),
+      // Renewing buys a new plan as the signed-in viewer: the owner's action only.
+      ...(isOwner ? lowSessionSubscriptions(eventsData, now) : []),
     ],
     [
       pendingPayments,

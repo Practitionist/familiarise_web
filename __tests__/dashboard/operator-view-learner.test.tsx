@@ -220,4 +220,32 @@ describe("ContextSwitcher in operator view", () => {
     expect(staff).toHaveAttribute("aria-current", "page");
     mockPathname = "/dashboard/consultee/cp_learner/settings/profile";
   });
+
+  it("holds a skeleton, never a stand-in name, until the owner's name loads", () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ContextSwitcher viewing={{ ownerName: null }} />
+      </QueryClientProvider>,
+    );
+    const trigger = screen.getByRole("button", { name: /switch dashboard/ });
+    expect(trigger).not.toHaveTextContent(/viewing|this user/);
+    expect(trigger.querySelector(".animate-pulse")).not.toBeNull();
+  });
+
+  it("titles the truncated lines with their full text", () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ContextSwitcher viewing={{ ownerName: "Samantha Anderson" }} />
+      </QueryClientProvider>,
+    );
+    const trigger = screen.getByRole("button", { name: /switch dashboard/ });
+    expect(
+      screen.getByTitle("Staff · viewing Samantha Anderson"),
+    ).toBeVisible();
+    expect(screen.getByTitle("Natalie Brown")).toBeVisible();
+    // The avatar initial leads; the titles add nothing to the name.
+    expect(trigger).toHaveAccessibleName(
+      "N Natalie Brown Staff · viewing Samantha Anderson , switch dashboard",
+    );
+  });
 });

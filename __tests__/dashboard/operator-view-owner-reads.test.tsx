@@ -114,6 +114,49 @@ describe("learner Home in operator view", () => {
   });
 });
 
+// The renewal card reads only these fields; the Prisma payload type is wider.
+const lowSessionSubscription = {
+  id: "sub_1",
+  status: "COMPLETED",
+  subscriptionPlanId: "plan_1",
+  sessionsTotal: 1,
+  sessionsRefunded: 0,
+  renewal: null,
+  subscriptionPlan: {
+    id: "plan_1",
+    title: "Basic Subscription",
+    totalSessions: 1,
+    consultantProfile: { user: { name: "Michael Anderson", image: null } },
+  },
+  appointment: { id: "appt_sub", occurrences: [], payment: [] },
+} as unknown as TConsulteeEventsResponse["subscriptions"][number];
+
+describe("learner Home renewal card", () => {
+  it.each([
+    [true, 1],
+    [false, 0],
+  ])(
+    "offers Renew subscription only when the viewer owns the profile (owner: %s)",
+    (viewerOwnsProfile, shown) => {
+      render(
+        <QueryClientProvider client={new QueryClient()}>
+          <HomeTab
+            learner={{ userId: "u_learner", name: "Daniel Brown", image: null }}
+            viewerOwnsProfile={viewerOwnsProfile}
+            eventsData={{
+              ...EMPTY_EVENTS,
+              subscriptions: [lowSessionSubscription],
+            }}
+            consulteeId="cp_learner"
+            viewerZone={{ zone: "Asia/Kolkata", own: viewerOwnsProfile }}
+          />
+        </QueryClientProvider>,
+      );
+      expect(screen.queryAllByText("Renew subscription")).toHaveLength(shown);
+    },
+  );
+});
+
 describe("self-only settings in operator view", () => {
   it.each([
     [

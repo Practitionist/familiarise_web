@@ -275,7 +275,7 @@ export function ContextSwitcher({
     trigger = {
       name: userName,
       image: user?.image ?? seeded?.image ?? null,
-      label: operatorView.label,
+      label: operatorView.label ?? "",
     };
   } else if (activeFacet?.kind === "organization") {
     trigger = {
@@ -290,6 +290,8 @@ export function ContextSwitcher({
       label: activeFacet.label,
     };
   }
+  // The role line waits for the session, and in operator view for the owner's name.
+  const labelPending = !user || (operatorView !== null && !operatorView.label);
   const { createOrganizationHref, becomeExpertHref } = facets.actions;
 
   return (
@@ -326,15 +328,21 @@ export function ContextSwitcher({
             (identityKnown ? (
               <>
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium leading-tight text-zinc-900 dark:text-zinc-100">
+                  <p
+                    title={trigger.name}
+                    className="truncate text-sm font-medium leading-tight text-zinc-900 dark:text-zinc-100"
+                  >
                     {trigger.name}
                   </p>
                   {trigger.label ? (
-                    <p className="mt-0.5 truncate text-xs leading-tight text-zinc-500 dark:text-zinc-400">
+                    <p
+                      title={trigger.label}
+                      className="mt-0.5 truncate text-xs leading-tight text-zinc-500 dark:text-zinc-400"
+                    >
                       {trigger.label}
                     </p>
                   ) : (
-                    !user && <Skeleton className="mt-1 h-3 w-14" />
+                    labelPending && <Skeleton className="mt-1 h-3 w-14" />
                   )}
                   <span className="sr-only">, switch dashboard</span>
                 </div>
