@@ -140,6 +140,7 @@ beforeEach(() => {
       status: "PENDING",
       consultantProfileId: "cp-1",
       consultantProfile: { userId: "u-1" },
+      _count: { documents: 1 },
     })
     .mockResolvedValue({ id: "row-1", status: "APPROVED", documents: [] });
   mockDb.consultantProfileVerification.updateMany.mockResolvedValue({

@@ -143,7 +143,7 @@ export function VerificationReviewModal({
   // The decision doors stay off until their reasons would pass the server's checks.
   const auditReasonReady = opsReasonSchema.safeParse(auditReason).success;
   const applicantReasonReady = rejectionReason.trim().length > 0;
-  // Submission refuses a request with no documents; approval needs one to review.
+  // The review door refuses to approve a request with no documents (NO_DOCUMENTS); Approve mirrors it.
   const hasDocuments = (verification?.documents.length ?? 0) > 0;
 
   const handleVerification = async (
