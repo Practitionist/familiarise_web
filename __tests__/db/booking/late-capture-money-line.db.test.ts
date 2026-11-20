@@ -3,7 +3,6 @@
  * order still PENDING past its window confirms the booking while the time is
  * free, and an order the expiry sweep claimed is refunded.
  */
-import { randomUUID } from "node:crypto";
 import prisma from "../../../lib/prisma";
 import {
   futureAt,
@@ -13,35 +12,12 @@ import {
   seedOneToOne,
 } from "./harness";
 
-jest.mock("../../../lib/payments/index", () => ({
-  __esModule: true,
-  createPaymentIntent: jest.fn(async () => ({
-    id: `order_${randomUUID()}`,
-    client_secret: `order_${randomUUID()}`,
-  })),
-  cancelPaymentIntent: jest.fn(async () => undefined),
-}));
-jest.mock("../../../lib/novu", () => {
-  const noop = jest.fn(async () => []);
-  return new Proxy(
-    {},
-    {
-      // Not a thenable: the capture loads these modules with a dynamic import.
-      get: (_target, prop) =>
-        prop === "then" ? undefined : prop === "__esModule" ? true : noop,
-    },
-  );
-});
-jest.mock("../../../lib/email", () => {
-  const noop = jest.fn(async () => ({ success: true }));
-  return new Proxy(
-    {},
-    {
-      get: (_target, prop) =>
-        prop === "then" ? undefined : prop === "__esModule" ? true : noop,
-    },
-  );
-});
+jest.mock("../../../lib/novu", () =>
+  jest.requireActual("../../fixtures/noop-module").noopModule(),
+);
+jest.mock("../../../lib/email", () =>
+  jest.requireActual("../../fixtures/noop-module").noopModule(),
+);
 jest.mock("../../../lib/stream/access-revocation", () =>
   jest.requireActual("./harness-edges").chatRevocationMock(),
 );

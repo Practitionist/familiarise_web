@@ -35,7 +35,7 @@ Hannah's Requests row and booking page read "If Charlotte's payment still goes t
 ## Consequences
 
 - Wording and display only: no payment status, capture, refund or expiry behaviour changes. The money state kind stays `NOT_DUE`, so the checkout success page, the history filters and the "was the viewer charged" gate behave as before.
-- The expert's Requests rows keep their booking stage and actions (a paid direct checkout still needs the expert's answer); only their money line follows decisions 3 and 4.
+- The expert's Requests rows keep their booking stage and actions (a paid direct checkout still needs the expert's answer); only their money line follows decisions 3 and 4. This is why `lib/data/requests-inbox.ts` passes `gatewayOrderMinted` but not `source`, the one exception to decision 5: with the source, a paid direct checkout still `PENDING` would read as confirmed and lose Approve.
 
 ## Deprecated & Superseded Approaches
 

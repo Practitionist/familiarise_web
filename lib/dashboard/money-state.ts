@@ -546,7 +546,8 @@ function deriveMoney(
   const mayHaveCharged = unpaid.some((x) => x.gatewayOrderMinted !== false);
   const declined =
     unpaid.length > 0 && unpaid.every((x) => x.paymentStatus === "FAILED");
-  const ifCharged = `If ${you ? "you were" : `${p} was`} charged, the money is refunded automatically.`;
+  const chargedWho = you ? "you were" : `${p} was`;
+  const ifCharged = `If ${chargedWho} charged, the money is refunded automatically.`;
   // Only an EXPIRED or FAILED order, or a booking that has ended, refunds a late
   // capture; a PENDING order on an open booking confirms it instead.
   const lateCaptureMayConfirm =
