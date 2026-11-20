@@ -74,4 +74,21 @@ describe("the list row and the Next card's chip", () => {
       chip.replace(/<[^>]+>/g, ""),
     ]).toEqual(["Today", "24h"]);
   });
+
+  it("count two days for a session two dates away across the spring-forward night", () => {
+    // Sat 7 Mar 23:55 EST to Mon 9 Mar 00:05 EDT 2026 in New York: two dates, 23 h 10 min.
+    const springNow = new Date("2026-03-08T04:55:00.000Z");
+    const twoDatesOn = new Date("2026-03-09T04:05:00.000Z");
+    jest.spyOn(Date, "now").mockReturnValue(springNow.getTime());
+    const chip = renderToStaticMarkup(
+      createElement(DisplayZoneProvider, {
+        zone: "America/New_York",
+        children: createElement(CountdownBadge, { targetDate: twoDatesOn }),
+      }),
+    );
+    expect([
+      getProximityLabel(twoDatesOn, "America/New_York", springNow),
+      chip.replace(/<[^>]+>/g, ""),
+    ]).toEqual(["in 2 days", "2d"]);
+  });
 });

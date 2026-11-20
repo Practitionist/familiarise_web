@@ -35,10 +35,11 @@ function formatCountdown(target: number, now: number, zone: string): string {
   const minutes = Math.floor(diffMs / 60000);
   if (minutes < 60) return `${minutes}m`;
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h`;
   const days = calendarDaysUntil(new Date(target), zone, new Date(now));
-  // A fall-back day holds 25 h, so 24 h or more can still be today.
-  return days > 0 ? `${days}d` : `${hours}h`;
+  // Today and tomorrow keep elapsed hours (a fall-back day holds 25 h); two
+  // or more dates on read as days, even inside 24 h across a spring-forward night.
+  if (days >= 2 || (days === 1 && hours >= 24)) return `${days}d`;
+  return `${hours}h`;
 }
 
 const tierStyles: Record<Tier, string> = {
