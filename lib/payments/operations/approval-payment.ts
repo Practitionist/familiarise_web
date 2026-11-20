@@ -24,7 +24,6 @@ import { detectBuyerCountry } from "@/lib/payments/tax/buyer-country";
 import { appointmentTypeToServiceType } from "@/lib/payments/tax/tax-engine";
 import { tombstoneAbortedGatewayOrder } from "@/lib/payments/checkout/gateway-intent";
 import { tombstonePriorIntent } from "@/lib/payments/operations/prior-intent-tombstone";
-import { reverseCreditsForPayment } from "@/lib/referrals/service";
 import { reportSentryError } from "@/lib/observability/report";
 import {
   PRE_MINT_INTENT_PREFIX,
@@ -641,6 +640,8 @@ async function claimRowForRemint(
     appointmentType: CreateApprovalPaymentParams["appointmentType"];
   },
 ): Promise<MintClaim> {
+  // Loaded here, before the transaction: the referral service pulls in the notification client.
+  const { reverseCreditsForPayment } = await import("@/lib/referrals/service");
   const claimed = await prisma.$transaction(async (tx) => {
     const cas = await tx.payment.updateMany({
       where: {
