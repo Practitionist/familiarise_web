@@ -58,6 +58,16 @@ function txFor(opts: { status: string; decided: boolean; closes?: number }) {
       findFirst: async () => (opts.decided ? { id: "decision-1" } : null),
     },
     supportCaseMessage: { create: async () => ({}) },
+    // The seat's paid order the removal ends.
+    appointmentParticipant: {
+      findUnique: async () => ({
+        payment: {
+          paymentIntent: "order_B",
+          amount: 100_000,
+          originalAmount: 100_000,
+        },
+      }),
+    },
     supportCaseEvent: {
       create: async (args: { data: unknown }) => {
         events.push(args.data);
@@ -107,6 +117,21 @@ it("closes a decided case by compare-and-set and opens a fresh case for the new 
     expect.any(String),
   );
   expect(created).toHaveBeenCalledTimes(1);
+  // The fresh case records the order its removal ended on its opening event.
+  expect(created).toHaveBeenCalledWith(
+    expect.objectContaining({
+      data: expect.objectContaining({
+        events: {
+          create: [
+            expect.objectContaining({
+              kind: "CREATED",
+              fromValue: "removal-order:order_B",
+            }),
+          ],
+        },
+      }),
+    }),
+  );
   expect(events).toEqual([
     expect.objectContaining({
       caseId: "case-1",
@@ -138,7 +163,11 @@ it("joins an undecided case: its status stays and its deadline restarts", async 
     }),
   );
   expect(events).toEqual([
-    expect.objectContaining({ caseId: "case-1", actorId: "host-1" }),
+    expect.objectContaining({
+      caseId: "case-1",
+      actorId: "host-1",
+      fromValue: "removal-order:order_B",
+    }),
   ]);
 });
 

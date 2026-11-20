@@ -1206,22 +1206,26 @@ describe("a removal's refund belongs to the order it ended", () => {
       }),
     );
 
-  it("the first case's lapse never refunds the replacement order a later checkout re-minted on the same payment", async () => {
-    const webinar = await seedWebinar({ capacity: 10, price: SEAT });
+  /**
+   * Removed while the first order is unpaid, upheld after the deadline (unless `upheld` is false) and lifted; the first order
+   * lapses and the learner buys again, re-minting the same Payment with a new gateway order.
+   */
+  async function reboughtAfterRemoval(capacity = 10, upheld = true) {
+    const webinar = await seedWebinar({ capacity, price: SEAT });
     const { userId, payment } = await unpaidSeat(webinar);
     const first = (await remove(webinar, userId))!;
-    // Support upholds after the deadline, then staff lift the block.
     await pastDeadline(first.caseId);
-    await decide(first.caseId, await actor("STAFF"), "UPHELD");
-    await prisma.$transaction(async (tx) =>
+    if (upheld) await decide(first.caseId, await actor("STAFF"), "UPHELD");
+    // Seeded before the transaction: a global-client write inside it deadlocks a pool of one.
+    const lifter = await seedUser("STAFF");
+    await prisma.$transaction((tx) =>
       liftSeatRemovalTx(tx, {
         appointmentId: webinar.appointmentId,
         userId,
-        actorUserId: (await seedUser("STAFF")).userId,
+        actorUserId: lifter.userId,
         door: "staff",
       }),
     );
-    // The first order lapses unpaid; the learner buys again and the Payment row is re-minted.
     await prisma.payment.update({
       where: { id: payment.id },
       data: {
@@ -1239,17 +1243,25 @@ describe("a removal's refund belongs to the order it ended", () => {
     });
     expect(reminted.paymentIntent).not.toBe(payment.paymentIntent);
     // The replacement order captures through the gateway's confirmation path.
-    await handlePaymentSuccess(
-      reminted.paymentIntent,
-      {
-        appointmentId: "pending",
-        appointmentType: "WEBINAR",
-        userId,
-        planId: webinar.planId,
-        eventId: webinar.webinarId,
-      },
-      Number(reminted.amount),
-    );
+    const capture = () =>
+      handlePaymentSuccess(
+        reminted.paymentIntent,
+        {
+          appointmentId: "pending",
+          appointmentType: "WEBINAR",
+          userId,
+          planId: webinar.planId,
+          eventId: webinar.webinarId,
+        },
+        Number(reminted.amount),
+      );
+    return { webinar, userId, payment, first, capture };
+  }
+
+  it("the first case's lapse never refunds the replacement order a later checkout re-minted on the same payment", async () => {
+    const { webinar, userId, payment, first, capture } =
+      await reboughtAfterRemoval();
+    await capture();
     expect(
       await prisma.appointmentParticipant.findFirstOrThrow({
         where: { appointmentId: webinar.appointmentId, userId },
@@ -1297,5 +1309,68 @@ describe("a removal's refund belongs to the order it ended", () => {
     });
 
     expect(await refundedPaise(payment.id)).toBe(SEAT);
+  });
+
+  it("staff cannot recommend or approve a refund of the replacement order on the first case", async () => {
+    // Still undecided, so its recommendations can be reviewed.
+    const { payment, first, capture } = await reboughtAfterRemoval(10, false);
+    await capture();
+    const staff = await actor("STAFF");
+    const admin = await actor("ADMIN");
+
+    await expect(
+      recommend(first.caseId, staff, payment.id, SEAT),
+    ).rejects.toMatchObject({ code: "PAYMENT_AFTER_REMOVAL" });
+    // A recommendation already waiting on the payment cannot be approved against the later order either.
+    const waiting = await prisma.supportFinancialRecommendation.create({
+      data: {
+        caseId: first.caseId,
+        paymentId: payment.id,
+        proposedById: staff.userId,
+        clientActionId: randomUUID(),
+        amountPaise: BigInt(SEAT),
+        reason: "Return the seat",
+      },
+    });
+    await expect(
+      review(first.caseId, admin, waiting.id, true, SEAT),
+    ).rejects.toMatchObject({ code: "PAYMENT_AFTER_REMOVAL" });
+    expect(await refundedPaise(payment.id)).toBe(0);
+  });
+
+  it("a replacement order whose capture found no place is refunded by the capture alone, never by the first case", async () => {
+    const { webinar, payment, first, capture } = await reboughtAfterRemoval(1);
+    // The re-bought hold lapses and another buyer takes the only place before the capture lands.
+    await prisma.payment.update({
+      where: { id: payment.id },
+      data: { expiresAt: new Date(Date.now() - 60_000) },
+    });
+    const other = await seedSeatBuyer();
+    await handleCheckout(
+      seatCheckoutInput(webinar, `other-${randomUUID()}`),
+      other.userId,
+    );
+    await capture();
+    const errors: string[] = [];
+
+    await sweepConductRemovalDeadlines({ limit: 50, now: new Date(), errors });
+
+    expect(errors).toEqual([]);
+    const caseKey = `conduct-removal:${first.caseId}`;
+    expect(
+      await prisma.refund.count({
+        where: { paymentId: payment.id, dedupeKey: { startsWith: caseKey } },
+      }),
+    ).toBe(0);
+    const row = await prisma.payment.findUniqueOrThrow({
+      where: { id: payment.id },
+      select: { refundOwedKey: true },
+    });
+    expect(row.refundOwedKey ?? "").not.toMatch(new RegExp(`^${caseKey}`));
+    expect(
+      await prisma.supportCaseMessage.count({
+        where: { caseId: first.caseId, body: { contains: "being returned" } },
+      }),
+    ).toBe(0);
   });
 });

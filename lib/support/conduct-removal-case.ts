@@ -89,6 +89,61 @@ function removalCaseBody(
   return lines.join("\n");
 }
 
+/** Marks the gateway order a removal ended on its case's opening or join event (`fromValue`). */
+const REMOVAL_ORDER_PREFIX = "removal-order:";
+
+const removalOrderValue = (order: string | null) =>
+  order ? `${REMOVAL_ORDER_PREFIX}${order}` : null;
+
+/** The seat's paid order at the removal: its gateway order id, which a re-mint replaces. Null for a free seat or none. */
+async function endedOrderTx(
+  tx: Tx,
+  input: { appointmentId: string; removedUserId: string },
+): Promise<string | null> {
+  const seat = await tx.appointmentParticipant.findUnique({
+    where: {
+      appointmentId_userId: {
+        appointmentId: input.appointmentId,
+        userId: input.removedUserId,
+      },
+    },
+    select: {
+      payment: {
+        select: { paymentIntent: true, amount: true, originalAmount: true },
+      },
+    },
+  });
+  const order = seat?.payment;
+  if (
+    !order ||
+    isPriceFreePayment({
+      paymentIntent: order.paymentIntent,
+      amountPaise: Number(order.amount),
+      listPricePaise: Number(order.originalAmount),
+    })
+  ) {
+    return null;
+  }
+  return order.paymentIntent;
+}
+
+/** The order the case's latest removal ended, as its opening or join event recorded it; null when none was. */
+async function recordedRemovalOrder(
+  db: PrismaLike,
+  caseId: string,
+): Promise<string | null> {
+  const event = await db.supportCaseEvent.findFirst({
+    where: {
+      caseId,
+      kind: { in: ["CREATED", "REOPENED"] },
+      fromValue: { startsWith: REMOVAL_ORDER_PREFIX },
+    },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    select: { fromValue: true },
+  });
+  return event?.fromValue?.slice(REMOVAL_ORDER_PREFIX.length) ?? null;
+}
+
 /**
  * Opens the case on `tx` with the attendee as requester and submitter, so the
  * host never reads it. The CREATED event's actor is the remover.
@@ -97,6 +152,7 @@ export async function openConductRemovalCaseTx(
   tx: Tx,
   input: OpenRemovalCaseInput,
   now: Date,
+  endedOrder: string | null = null,
 ): Promise<{ id: string; referenceNumber: string }> {
   const body = removalCaseBody(input);
   const priority = priorityForReason(null);
@@ -146,6 +202,7 @@ export async function openConductRemovalCaseTx(
           {
             actorId: input.actorUserId,
             kind: "CREATED",
+            fromValue: removalOrderValue(endedOrder),
             toValue: "OPEN",
             note: "Opened by a host removing the attendee for conduct",
             createdAt: now,
@@ -254,6 +311,7 @@ async function joinUndecidedRemovalCaseTx(
   open: UnclosedRemovalCase,
   input: OpenRemovalCaseInput,
   now: Date,
+  endedOrder: string | null,
 ): Promise<void> {
   const due = supportDeadline(CONDUCT_REMOVAL_CATEGORY, now);
   const body = removalCaseBody(input, true);
@@ -289,6 +347,7 @@ async function joinUndecidedRemovalCaseTx(
       caseId: open.id,
       actorId: input.actorUserId,
       kind: "REOPENED",
+      fromValue: removalOrderValue(endedOrder),
       note: `The host removed the attendee for conduct again (${input.reasonLabel}); the ${CONDUCT_REMOVAL_REVIEW_HOURS}-hour review restarts from this removal and its decision covers both.`,
       createdAt: now,
     },
@@ -305,18 +364,19 @@ export async function openOrJoinConductRemovalCaseTx(
   input: OpenRemovalCaseInput,
   now: Date,
 ): Promise<{ id: string; referenceNumber: string }> {
+  const endedOrder = await endedOrderTx(tx, input);
   const prior = await unclosedRemovalCase(tx, input);
-  if (!prior) return openConductRemovalCaseTx(tx, input, now);
+  if (!prior) return openConductRemovalCaseTx(tx, input, now, endedOrder);
   const decision = await tx.supportCaseDecision.findFirst({
     where: { caseId: prior.id },
     select: { id: true },
   });
   if (!decision) {
-    await joinUndecidedRemovalCaseTx(tx, prior, input, now);
+    await joinUndecidedRemovalCaseTx(tx, prior, input, now, endedOrder);
     return { id: prior.id, referenceNumber: prior.referenceNumber };
   }
   await closeDecidedRemovalCaseTx(tx, prior, now);
-  const fresh = await openConductRemovalCaseTx(tx, input, now);
+  const fresh = await openConductRemovalCaseTx(tx, input, now, endedOrder);
   await tx.supportCaseEvent.create({
     data: {
       caseId: prior.id,
@@ -514,6 +574,56 @@ const reboughtSinceRemoval = (
   target: RemovalTarget,
 ) => seatStepSinceRemoval(tx, target, ["registered", "rejoined"]);
 
+/**
+ * Where the payment a removal case may refund is: the seat's payment while it still carries
+ * the order the removal ended. Null once a later sale's order replaced it; a case from before
+ * the order was recorded falls back to the seat's history.
+ */
+async function removalPaymentWhere(
+  db: PrismaLike,
+  caseId: string,
+  target: RemovalTarget,
+): Promise<Prisma.PaymentWhereInput | null> {
+  const seat = {
+    userId: target.userId,
+    appointmentId: target.appointmentId,
+    deletedAt: null,
+  };
+  const order = await recordedRemovalOrder(db, caseId);
+  if (order) return { ...seat, paymentIntent: order };
+  return (await reboughtSinceRemoval(db, target)) ? null : seat;
+}
+
+/**
+ * Whether a refund door of this case may refund the payment: always for any payment but the
+ * removed seat's, and for the seat's only while it carries the order the removal ended.
+ */
+export async function removalCaseRefundsPaymentTx(
+  db: PrismaLike,
+  supportCase: {
+    id: string;
+    category: string | null;
+    appealOfDecisionId: string | null;
+  },
+  paymentId: string,
+): Promise<boolean> {
+  const caseId = await reviewedRemovalCaseId(db, supportCase);
+  const target = caseId ? await removalTargetTx(db, caseId) : null;
+  if (!caseId || !target) return true;
+  const seatPayment = await db.payment.findFirst({
+    where: {
+      id: paymentId,
+      userId: target.userId,
+      appointmentId: target.appointmentId,
+    },
+    select: { id: true },
+  });
+  if (!seatPayment) return true;
+  const where = await removalPaymentWhere(db, caseId, target);
+  if (!where) return false;
+  return (await db.payment.count({ where: { ...where, id: paymentId } })) > 0;
+}
+
 /** Stamps the seat's unrefunded balance as owed, keyed on the removal case so it is refunded once. */
 async function stampRemovalRefundTx(
   tx: Tx,
@@ -521,8 +631,19 @@ async function stampRemovalRefundTx(
   target: RemovalTarget,
   reason: string,
 ): Promise<RefundOwedMarker | null> {
-  if (await reboughtSinceRemoval(tx, target)) return null;
-  const payment = await seatPayment(tx, target.appointmentId, target.userId);
+  const where = await removalPaymentWhere(tx, caseId, target);
+  if (!where) return null;
+  const payment = await tx.payment.findFirst({
+    orderBy: { createdAt: "asc" },
+    where: { ...where, paymentStatus: "SUCCEEDED" },
+    select: {
+      id: true,
+      amount: true,
+      originalAmount: true,
+      paymentIntent: true,
+      refundOwedKey: true,
+    },
+  });
   if (
     !payment ||
     isPriceFreePayment({
@@ -557,15 +678,12 @@ export async function removalRefundOutstandingTx(
 ): Promise<{ paymentId: string; owed: number | "credits" } | null> {
   const caseId = await reviewedRemovalCaseId(tx, supportCase);
   const target = caseId ? await removalTargetTx(tx, caseId) : null;
-  if (!target || (await reboughtSinceRemoval(tx, target))) return null;
+  const where =
+    caseId && target ? await removalPaymentWhere(tx, caseId, target) : null;
+  if (!where) return null;
   const payment = await tx.payment.findFirst({
     orderBy: { createdAt: "asc" },
-    where: {
-      userId: target.userId,
-      appointmentId: target.appointmentId,
-      paymentStatus: "SUCCEEDED",
-      deletedAt: null,
-    },
+    where: { ...where, paymentStatus: "SUCCEEDED" },
     select: {
       id: true,
       amount: true,

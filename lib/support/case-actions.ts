@@ -7,7 +7,7 @@ import {
   type UserRole,
 } from "@prisma/client";
 import { z } from "zod";
-import prisma, { type Tx } from "@/lib/prisma";
+import prisma, { type PrismaLike, type Tx } from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import {
   hasBackofficePermission,
@@ -68,6 +68,7 @@ import {
 import {
   conductRemovalDecidedTx,
   removalRejoinPathTx,
+  removalCaseRefundsPaymentTx,
   removalRefundOutstandingTx,
   settleDecidedRemoval,
 } from "./conduct-removal-case";
@@ -539,6 +540,38 @@ export async function readCaseResolution(caseId: string, actor: CaseActor) {
   };
 }
 
+/** A removal case never refunds the order of a sale made after its removal. */
+const AFTER_REMOVAL_BLOCK = {
+  code: "PAYMENT_AFTER_REMOVAL",
+  reason:
+    "This payment now carries an order bought after the removal this case reviews; the case for any later removal refunds it",
+};
+
+const caseScope = (db: Pick<Tx, "supportCase">, caseId: string) =>
+  db.supportCase.findUniqueOrThrow({
+    where: { id: caseId },
+    select: { id: true, category: true, appealOfDecisionId: true },
+  });
+
+/** Refuses a removal case's refund of a payment whose order was bought after its removal. */
+async function assertRemovalOrder(
+  db: PrismaLike,
+  caseId: string,
+  paymentId: string,
+) {
+  if (
+    !(await removalCaseRefundsPaymentTx(
+      db,
+      await caseScope(db, caseId),
+      paymentId,
+    ))
+  )
+    throw new CaseActionError(
+      AFTER_REMOVAL_BLOCK.code,
+      `${AFTER_REMOVAL_BLOCK.reason}.`,
+    );
+}
+
 /**
  * What a recommendation may still refund: the payment's refundable balance
  * less other approved support remedies on it that have no live refund yet,
@@ -569,7 +602,15 @@ export async function quoteCaseRefund(
     .filter((other) => !isLiveRefund(other.refund))
     .reduce((sum, other) => sum + Number(other.amountPaise), 0);
   let blocked: { code: string; reason: string } | null = null;
-  if (payment.paymentStatus !== "SUCCEEDED")
+  if (
+    !(await removalCaseRefundsPaymentTx(
+      tx,
+      await caseScope(tx, caseId),
+      payment.id,
+    ))
+  )
+    blocked = AFTER_REMOVAL_BLOCK;
+  else if (payment.paymentStatus !== "SUCCEEDED")
     blocked = {
       code: "PAYMENT_NOT_SUCCEEDED",
       reason: "Payment is not captured",
@@ -1241,6 +1282,7 @@ async function recommendRefundTx(
   input: ActionInput<"RECOMMEND_REFUND">,
 ) {
   const linked = await linkedPayment(tx, caseId, input.paymentId);
+  await assertRemovalOrder(tx, caseId, input.paymentId);
   const creditFunded = linked.paymentIntent.startsWith("free_");
   if (
     (creditFunded && input.amountPaise !== 0) ||
@@ -1823,6 +1865,9 @@ async function executeApprovedRefund(
       },
     });
   const wasLive = isLiveRefund(recommendation.refund);
+  // A live refund resumes under its key; a new one re-checks the order the approval saw.
+  if (!wasLive)
+    await assertRemovalOrder(prisma, caseId, recommendation.paymentId);
   const rail = fundingRailForIntent(recommendation.payment.paymentIntent);
   // Read before the restoration, which gives the consumed credit back.
   const movedPaise = wasLive
