@@ -9,7 +9,11 @@ import {
 } from "@prisma/client";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
-import type { DisputeListItem } from "@/lib/backoffice/money-list-schemas";
+import {
+  disputeStatusFilterSchema,
+  OPEN_DISPUTES_FILTER,
+  type DisputeListItem,
+} from "@/lib/backoffice/money-list-schemas";
 import { BOOKING_TITLE_SELECT, bookingRefOf } from "@/lib/data/booking-title";
 import {
   OPEN_DISPUTE_STATUSES,
@@ -18,19 +22,7 @@ import {
 import { z } from "zod";
 
 const adminDisputesQuerySchema = z.object({
-  status: z
-    .enum([
-      "WARNING_NEEDS_RESPONSE",
-      "WARNING_UNDER_REVIEW",
-      "WARNING_CLOSED",
-      "NEEDS_RESPONSE",
-      "UNDER_REVIEW",
-      "CHARGE_REFUNDED",
-      "WON",
-      "LOST",
-      "CLOSED",
-    ] as const satisfies readonly DisputeStatus[])
-    .optional(),
+  status: disputeStatusFilterSchema.optional(),
   gateway: z
     .enum([
       "STRIPE",
@@ -105,13 +97,12 @@ async function loadDisputePage(params: {
     });
   }
 
+  // AND, not spread: the caller's own status set must survive the split.
   const openWhere: Prisma.DisputeWhereInput = {
-    ...where,
-    status: { in: ACTIONABLE_OPEN_STATUSES },
+    AND: [where, { status: { in: ACTIONABLE_OPEN_STATUSES } }],
   };
   const closedWhere: Prisma.DisputeWhereInput = {
-    ...where,
-    status: { notIn: ACTIONABLE_OPEN_STATUSES },
+    AND: [where, { status: { notIn: ACTIONABLE_OPEN_STATUSES } }],
   };
   const openCount = await prisma.dispute.count({ where: openWhere });
   const openTake = Math.max(0, Math.min(limit, openCount - skip));
@@ -170,14 +161,17 @@ export async function GET(req: NextRequest) {
       );
     }
     const { page, limit } = parsedQuery.data;
-    const status = parsedQuery.data.status ?? null;
+    const filter = parsedQuery.data.status ?? null;
+    const status = filter === OPEN_DISPUTES_FILTER ? null : filter;
     const gateway = parsedQuery.data.gateway ?? null;
     const search = searchParams.get("search");
     const orgId = searchParams.get("orgId");
 
     const where: Prisma.DisputeWhereInput = {};
 
-    if (status) {
+    if (filter === OPEN_DISPUTES_FILTER) {
+      where.status = { in: OPEN_DISPUTE_STATUSES };
+    } else if (status) {
       where.status = status;
     }
 
