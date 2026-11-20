@@ -2,6 +2,7 @@
 import type { SupportCaseStatus } from "@prisma/client";
 import {
   assertCaseTransition,
+  CASE_TRANSITIONS,
   CaseConflictError,
   caseTransitionRefusal,
   type CaseTransitionActor,
@@ -95,6 +96,20 @@ describe("case status transition table", () => {
       ).map((actor) => `${to}:${actor}`),
     );
     expect(allowed).toEqual(["CLOSED:STAFF", "CLOSED:SYSTEM"]);
+  });
+
+  it("has no other actors and no decided exemption: a new removal never reopens a case", () => {
+    const actors = new Set(
+      Object.values(CASE_TRANSITIONS).flatMap((row) =>
+        Object.values(row).flatMap((rule) => [...(rule?.actors ?? [])]),
+      ),
+    );
+    expect([...actors].sort()).toEqual(["CUSTOMER", "STAFF", "SYSTEM"]);
+    expect(CASE_TRANSITIONS.ESCALATED.OPEN).toBeUndefined();
+    expect(CASE_TRANSITIONS.RESOLVED.OPEN).toEqual({
+      actors: ["CUSTOMER", "STAFF"],
+      undecidedOnly: true,
+    });
   });
 
   it("throws a conflict whose body carries no status field", () => {

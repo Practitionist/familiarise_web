@@ -90,6 +90,7 @@ const opsView = {
     },
   ],
   payments: [],
+  removedSeats: [],
 };
 
 beforeEach(() => {

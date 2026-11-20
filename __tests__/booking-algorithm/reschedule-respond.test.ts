@@ -1250,12 +1250,16 @@ describe("lifecycle hygiene wiring", () => {
   const read = (rel: string) =>
     fs.readFileSync(path.join(process.cwd(), rel), "utf8");
 
-  it("removed attendees lose event-channel access at refund time", () => {
+  it("removed attendees lose event-channel access through the leave's durable revoker only", () => {
+    expect(read("lib/booking/seat-leave.ts")).toContain(
+      "revokeEndedSeatAccess(",
+    );
     for (const rel of [
       "app/api/participants/webinar/[webinarId]/route.ts",
       "app/api/participants/class/[classId]/route.ts",
+      "lib/api/participants/group-participants-route.ts",
     ]) {
-      expect(read(rel)).toContain("removeUserFromEventChannel(");
+      expect(read(rel)).not.toContain("removeUserFromEventChannel(");
     }
   });
 

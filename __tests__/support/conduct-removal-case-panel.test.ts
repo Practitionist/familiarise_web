@@ -34,7 +34,10 @@ jest.mock("@/lib/prisma", () => ({
 }));
 
 import { bookingStatus } from "@/lib/appointments/booking-status";
-import { readCaseBooking } from "@/lib/support/case-workspace";
+import {
+  readCaseBooking,
+  removalReviewDueAt,
+} from "@/lib/support/case-workspace";
 
 it("reads the removed attendee's seat, so the drawer says Cancelled", async () => {
   const booking = await readCaseBooking("appt-1", {
@@ -52,4 +55,29 @@ it("reads the removed attendee's seat, so the drawer says Cancelled", async () =
   ).label;
   expect(label).not.toBe("Registered");
   expect(label).toMatch(/Cancelled/);
+});
+
+it("shows the removal decision deadline only while the case is open and undecided", () => {
+  const due = new Date("2026-11-21T16:57:00Z");
+  const removalCase = {
+    category: "CONDUCT_REMOVAL",
+    status: "OPEN" as const,
+    closedAt: null,
+    statutoryDueAt: due,
+    decisions: [] as { id: string }[],
+  };
+  expect(removalReviewDueAt(removalCase)).toBe(due.toISOString());
+  expect(
+    removalReviewDueAt({ ...removalCase, decisions: [{ id: "d-1" }] }),
+  ).toBeNull();
+  expect(
+    removalReviewDueAt({
+      ...removalCase,
+      status: "CLOSED",
+      closedAt: new Date("2026-11-20T00:00:00Z"),
+    }),
+  ).toBeNull();
+  expect(
+    removalReviewDueAt({ ...removalCase, category: "BILLING" }),
+  ).toBeNull();
 });

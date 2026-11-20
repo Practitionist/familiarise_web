@@ -107,6 +107,43 @@ describe("a former collaborator buys a seat", () => {
     expect(event.seatsCounted()).toBe(1);
   });
 
+  it("records a free registration that takes over a staff row as the seat's first SEAT row", async () => {
+    const event = eventWith("CANCELLED");
+    const history = memTable([], "history");
+    const tx = {
+      ...(event.tx as object),
+      bookingStatusHistory: history,
+    } as unknown as Tx;
+
+    await recordParticipants(
+      tx,
+      APPOINTMENT,
+      [{ userId: BUYER, role: "CONSULTEE" }],
+      {
+        status: "CONFIRMED",
+        seatRegistration: { actorUserId: BUYER, reviveReason: "registered" },
+      },
+    );
+
+    expect(event.buyerRows()).toEqual([
+      expect.objectContaining({
+        id: "staff-row",
+        role: "CONSULTEE",
+        status: "CONFIRMED",
+      }),
+    ]);
+    expect(history.rows).toEqual([
+      expect.objectContaining({
+        entity: "SEAT",
+        entityId: "staff-row",
+        fromStatus: "CREATED",
+        toStatus: "CONFIRMED",
+        reason: "registered",
+        actorUserId: BUYER,
+      }),
+    ]);
+  });
+
   it("gives the host's own row the same takeover", async () => {
     const event = eventWith("CONFIRMED");
     await recordParticipants(

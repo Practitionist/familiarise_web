@@ -9,6 +9,7 @@ const mockSession = {
   },
 };
 const mockRemove = jest.fn();
+const mockReport = jest.fn((..._args: unknown[]) => "event-1");
 
 jest.mock("@/lib/auth-helpers", () => ({
   ...jest.requireActual("@/lib/auth-helpers"),
@@ -17,6 +18,10 @@ jest.mock("@/lib/auth-helpers", () => ({
 jest.mock("@/lib/rate-limit", () => ({
   ...jest.requireActual("@/lib/rate-limit"),
   applyRateLimit: async () => null,
+}));
+jest.mock("@/lib/observability/report", () => ({
+  ...jest.requireActual("@/lib/observability/report"),
+  reportSentryError: (...args: unknown[]) => mockReport(...args),
 }));
 jest.mock("@/lib/booking/conduct-removal", () => ({
   removeAttendeeForConduct: (...args: unknown[]) => mockRemove(...args),
@@ -223,4 +228,21 @@ it("answers a bad body with a plain sentence, never the schema's internals", asy
   expect(await response.json()).toEqual({
     error: "Choose a reason, and say why when the reason is Other.",
   });
+});
+
+it("reports an unexpected failure to Sentry once, through the reporter that flushes before the function freezes", async () => {
+  mockSession.current = {
+    id: "caller",
+    role: "CONSULTANT",
+    consultantProfileId: "profile-host",
+  };
+  const fault = new Error("connection reset");
+  mockRemove.mockRejectedValue(fault);
+  const response = await post();
+  expect(response.status).toBe(500);
+  expect(mockReport).toHaveBeenCalledTimes(1);
+  expect(mockReport).toHaveBeenCalledWith(
+    fault,
+    expect.objectContaining({ subsystem: "bookings", op: "conduct-removal" }),
+  );
 });

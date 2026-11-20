@@ -20,6 +20,7 @@ jest.mock("../../lib/payments/operations/prior-intent-tombstone", () => ({
 
 import { recordBookingUtilization } from "@/lib/api/organizations/program-helpers";
 import { writeCheckoutPayment } from "@/lib/payments/checkout/commit/payment-row";
+import { findPriorSeatPayment } from "@/lib/payments/checkout/seats";
 import type { CheckoutCommitInput } from "@/lib/payments/checkout/commit/types";
 import type { Tx } from "@/lib/prisma";
 
@@ -215,10 +216,14 @@ describe("a re-minted seat whose utilization was reversed", () => {
     state.util!.reversedAt = new Date();
     state.ledger.push({ engagementsConsumed: -1 });
 
+    // The webinar handler reads the prior seat before its revive and passes it down.
+    const priorSeat = await findPriorSeatPayment(tx, "buyer-1", "apt-1");
     await writeCheckoutPayment(tx, REBUY, {
       createdAppointment: { id: "apt-1" },
       bookedPlan: null,
       skipPayment: false,
+      priorSeat,
+      eventPricePaise: 50_000,
     });
     await recordBookingUtilization(tx, { ...CALL, appointmentIds: ["apt-1"] });
     await recordBookingUtilization(tx, { ...CALL, appointmentIds: ["apt-1"] });

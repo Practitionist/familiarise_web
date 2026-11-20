@@ -57,18 +57,24 @@ jest.mock("../../lib/stream/access-revocation", () => ({
 
 const joinedAt = new Date("2026-09-01T00:00:00Z");
 const slot = { startsAt: new Date(), movedAt: null as Date | null };
-const release = jest.fn(async () => ({ count: 1 }));
+// The CAS returns the moved seat, so its SEAT history row can be written.
+const release = jest.fn(async (_args?: unknown) => [
+  { id: "part-1", appointmentId: "apt-1", userId: "u-1", role: "CONSULTEE" },
+]);
+const seatHistory = jest.fn(async (_args?: unknown) => ({ count: 1 }));
 jest.mock("../../lib/prisma", () => {
   const tx = {
     appointmentParticipant: {
       findFirst: jest.fn(async () => ({
         id: "part-1",
+        status: "CONFIRMED",
         appointmentId: "apt-1",
         createdAt: joinedAt,
         refundWindowHours: null,
       })),
-      updateMany: (...a: unknown[]) => release(...(a as [])),
+      updateManyAndReturn: (a: unknown) => release(a),
     },
+    bookingStatusHistory: { createMany: (a: unknown) => seatHistory(a) },
     webinar: {
       findUnique: jest.fn(async () => ({
         webinarPlan: { refundWindowHours: 24 },
@@ -140,6 +146,43 @@ it("releases and refunds in full 30 h before, keyed on the seat", async () => {
     expect.objectContaining({ mode: "full", dedupeKey: "seat-leave:part-1" }),
   );
 });
+
+it.each([
+  ["a self-leave", true, "self_leave", "u-1", undefined],
+  ["an organiser removal", false, "organiser_removal", "u-host", "u-host"],
+])(
+  "%s writes its SEAT row on the release's CAS, and marks only a removal",
+  async (_label, isSelfLeave, reason, actor, removedBy) => {
+    slot.startsAt = inHours(30);
+    await leave(isSelfLeave);
+    expect(release).toHaveBeenCalledWith({
+      where: {
+        AND: [
+          { id: "part-1", role: "CONSULTEE" },
+          { status: { in: ["CONFIRMED"] } },
+        ],
+      },
+      data: {
+        status: "CANCELLED",
+        ...(removedBy ? { removedByUserId: removedBy } : {}),
+      },
+      select: { id: true, appointmentId: true, userId: true, role: true },
+    });
+    expect(seatHistory).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          entity: "SEAT",
+          entityId: "part-1",
+          appointmentId: "apt-1",
+          fromStatus: "CONFIRMED",
+          toStatus: "CANCELLED",
+          reason,
+          actorUserId: actor,
+        }),
+      ],
+    });
+  },
+);
 
 it("stages the seat-opened notice in the release commit and finishes it after", async () => {
   slot.startsAt = inHours(30);
@@ -309,11 +352,12 @@ it("refuses a class exit without the exit right (#1780 E-5)", async () => {
         appointmentParticipant: {
           findFirst: async () => ({
             id: "part-1",
+            status: "CONFIRMED",
             appointmentId: "apt-1",
             createdAt: joinedAt,
             refundWindowHours: null,
           }),
-          updateMany: release,
+          updateManyAndReturn: release,
         },
         appointment: {
           findUnique: async () => ({

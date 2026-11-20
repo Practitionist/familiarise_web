@@ -16,6 +16,8 @@ jest.mock("../../lib/support/case-access", () => ({
 jest.mock("../../lib/support/case-actions", () => ({
   CaseActionError: class extends Error {},
   evidenceRecipients: jest.fn(async () => [{ id: "expert", name: "Expert" }]),
+}));
+jest.mock("../../lib/support/case-notice", () => ({
   stageCaseNotice: jest.fn(),
 }));
 jest.mock("../../lib/prisma", () => {

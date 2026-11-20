@@ -5,6 +5,15 @@
  */
 
 import prisma from "@/lib/prisma";
+import { RELEASED_PARTICIPANT_STATUSES } from "@/lib/booking/participants";
+import {
+  readSeatTrails,
+  REJOIN_OPENING_REASONS,
+} from "@/lib/booking/seat-history";
+import { lastRemovalKind } from "@/lib/booking/seat-trail-copy";
+import { isPriceFreePayment } from "@/lib/payments/funding-rail";
+import { CONDUCT_REMOVAL_CATEGORY } from "@/lib/support/case-topic";
+import { conductRemovalStands } from "@/lib/support/conduct-removal-state";
 import type { BookingOpsView } from "./booking-ops-types";
 
 export type { BookingOpsView };
@@ -21,6 +30,8 @@ export async function readBookingOps(
       appointmentType: true,
       classId: true,
       subscriptionId: true,
+      webinar: { select: { webinarPlan: { select: { price: true } } } },
+      class: { select: { classPlan: { select: { price: true } } } },
       occurrences: {
         where: { deletedAt: null, isTentative: false },
         orderBy: { startsAt: "asc" },
@@ -48,9 +59,45 @@ export async function readBookingOps(
           },
         },
       },
+      participants: {
+        where: {
+          role: "CONSULTEE",
+          status: { in: RELEASED_PARTICIPANT_STATUSES },
+        },
+        select: {
+          id: true,
+          user: { select: { id: true, name: true } },
+          removedByUserId: true,
+          payment: {
+            select: { paymentIntent: true, amount: true, originalAmount: true },
+          },
+        },
+      },
     },
   });
   if (!appt) return null;
+  // Only a webinar or class has seats a lift could open; a 1:1 learner row is the booking itself.
+  const seats =
+    appt.appointmentType === "WEBINAR" || appt.appointmentType === "CLASS"
+      ? appt.participants
+      : [];
+  const trails = await readSeatTrails(
+    prisma,
+    seats.map((seat) => seat.id),
+  );
+  const conductStanding = await unmarkedConductRemovals(
+    appt.id,
+    seats.filter((seat) => !seat.removedByUserId).map((seat) => seat.user.id),
+  );
+  // Checkout revives a free seat only on an event still free.
+  const eventPriced =
+    Number(
+      appt.webinar?.webinarPlan.price ?? appt.class?.classPlan.price ?? 0,
+    ) > 0;
+  const decidedCases = await decidedRemovalCases(
+    appt.id,
+    seats.map((seat) => seat.user.id),
+  );
   return {
     appointmentId: appt.id,
     type: appt.appointmentType,
@@ -73,7 +120,99 @@ export async function readBookingOps(
       refundedPaise: sumRefunds(p.refunds, "SUCCEEDED"),
       pendingRefundPaise: sumRefunds(p.refunds, "PENDING"),
     })),
+    removedSeats: seats.flatMap((seat) => {
+      const trail = trails.get(seat.id) ?? [];
+      const priceFree =
+        !!seat.payment &&
+        isPriceFreePayment({
+          paymentIntent: seat.payment.paymentIntent,
+          amountPaise: Number(seat.payment.amount),
+          listPricePaise: Number(seat.payment.originalAmount),
+        });
+      const conduct = conductStanding.has(seat.user.id);
+      if (!seat.removedByUserId && !conduct) {
+        // An unmarked free seat with no recorded leave or lift waits for a staff lift.
+        const latest = trail.at(-1)?.reason;
+        const opened =
+          latest !== undefined && REJOIN_OPENING_REASONS.includes(latest);
+        if (opened || !priceFree) return [];
+      }
+      let removal: "ORGANISER" | "CONDUCT" | "LEGACY" = "LEGACY";
+      if (conduct) removal = "CONDUCT";
+      else if (seat.removedByUserId) removal = lastRemovalKind(trail);
+      let conductCase: "DECIDED" | "UNDECIDED" | null = null;
+      if (removal === "CONDUCT") {
+        conductCase = decidedCases.has(seat.user.id) ? "DECIDED" : "UNDECIDED";
+      }
+      return [
+        {
+          userId: seat.user.id,
+          name: seat.user.name,
+          removal,
+          paidSeat: !priceFree || eventPriced,
+          conductCase,
+        },
+      ];
+    }),
   };
+}
+
+/** Learners whose latest conduct removal case on the appointment has a decision. */
+async function decidedRemovalCases(
+  appointmentId: string,
+  userIds: string[],
+): Promise<Set<string>> {
+  if (userIds.length === 0) return new Set();
+  const cases = await prisma.supportCase.findMany({
+    where: {
+      appointmentId,
+      category: CONDUCT_REMOVAL_CATEGORY,
+      deletedAt: null,
+      requesterUserId: { in: userIds },
+    },
+    orderBy: { createdAt: "desc" },
+    select: {
+      requesterUserId: true,
+      decisions: { select: { id: true }, take: 1 },
+    },
+  });
+  const latest = new Map<string, boolean>();
+  for (const c of cases) {
+    if (!latest.has(c.requesterUserId)) {
+      latest.set(c.requesterUserId, c.decisions.length > 0);
+    }
+  }
+  return new Set(
+    [...latest].filter(([, decided]) => decided).map(([id]) => id),
+  );
+}
+
+/**
+ * Learners on unmarked seats whose conduct removal still stands (one from before
+ * the mark existed), by the same rule the lift and the call block read.
+ */
+async function unmarkedConductRemovals(
+  appointmentId: string,
+  userIds: string[],
+): Promise<Set<string>> {
+  if (userIds.length === 0) return new Set();
+  const cases = await prisma.supportCase.findMany({
+    where: {
+      appointmentId,
+      category: CONDUCT_REMOVAL_CATEGORY,
+      deletedAt: null,
+      requesterUserId: { in: userIds },
+    },
+    select: { requesterUserId: true },
+    distinct: ["requesterUserId"],
+  });
+  const standing = new Set<string>();
+  for (const { requesterUserId } of cases) {
+    if (await conductRemovalStands(appointmentId, requesterUserId)) {
+      standing.add(requesterUserId);
+    }
+  }
+  return standing;
 }
 
 function sumRefunds(
