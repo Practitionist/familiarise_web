@@ -87,6 +87,10 @@ export async function readBookingOps(
     appt.id,
     seats.filter((seat) => !seat.removedByUserId).map((seat) => seat.user.id),
   );
+  const decidedCases = await decidedRemovalCases(
+    appt.id,
+    seats.map((seat) => seat.user.id),
+  );
   return {
     appointmentId: appt.id,
     type: appt.appointmentType,
@@ -129,16 +133,51 @@ export async function readBookingOps(
       let removal: "ORGANISER" | "CONDUCT" | "LEGACY" = "LEGACY";
       if (conduct) removal = "CONDUCT";
       else if (seat.removedByUserId) removal = lastRemovalKind(trail);
+      let conductCase: "DECIDED" | "UNDECIDED" | null = null;
+      if (removal === "CONDUCT") {
+        conductCase = decidedCases.has(seat.user.id) ? "DECIDED" : "UNDECIDED";
+      }
       return [
         {
           userId: seat.user.id,
           name: seat.user.name,
           removal,
           paidSeat: !priceFree,
+          conductCase,
         },
       ];
     }),
   };
+}
+
+/** Learners whose latest conduct removal case on the appointment has a decision. */
+async function decidedRemovalCases(
+  appointmentId: string,
+  userIds: string[],
+): Promise<Set<string>> {
+  if (userIds.length === 0) return new Set();
+  const cases = await prisma.supportCase.findMany({
+    where: {
+      appointmentId,
+      category: CONDUCT_REMOVAL_CATEGORY,
+      deletedAt: null,
+      requesterUserId: { in: userIds },
+    },
+    orderBy: { createdAt: "desc" },
+    select: {
+      requesterUserId: true,
+      decisions: { select: { id: true }, take: 1 },
+    },
+  });
+  const latest = new Map<string, boolean>();
+  for (const c of cases) {
+    if (!latest.has(c.requesterUserId)) {
+      latest.set(c.requesterUserId, c.decisions.length > 0);
+    }
+  }
+  return new Set(
+    [...latest].filter(([, decided]) => decided).map(([id]) => id),
+  );
 }
 
 /**

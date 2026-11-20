@@ -12,7 +12,9 @@ export function seatLiftDoor(appointmentId: string, seat: RemovedSeat): Door {
     : "They'll be told they can register again while seats are left.";
   const why = {
     CONDUCT:
-      " Their call block is lifted too. The decision on the removal case stays as it is.",
+      seat.conductCase === "DECIDED"
+        ? " Their call block is lifted too. The decision on the removal case stays as it is."
+        : " Their call block is lifted too. The removal case is still undecided, and lifting the block doesn't decide it.",
     LEGACY:
       " They left before seat history was kept, so nothing records why; check before you let them back.",
     ORGANISER: "",

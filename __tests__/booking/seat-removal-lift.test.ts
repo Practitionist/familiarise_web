@@ -395,6 +395,7 @@ describe("what the lift controls send", () => {
       name: "Riya",
       removal: "ORGANISER",
       paidSeat: false,
+      conductCase: null,
     });
     const said = (rejoinPath: "REGISTER" | "SUPPORT") =>
       door.success?.(
@@ -409,6 +410,24 @@ describe("what the lift controls send", () => {
     );
     expect(said("SUPPORT")).toBe(
       "Riya is allowed back. Their seat was paid for, so they've been told support will help them rejoin.",
+    );
+  });
+
+  it("the staff door names the removal case's decision only when it has one", () => {
+    const describe = (conductCase: "DECIDED" | "UNDECIDED") =>
+      seatLiftDoor(APPT, {
+        userId: "u-1",
+        name: "Arjun",
+        removal: "CONDUCT",
+        paidSeat: false,
+        conductCase,
+      }).description;
+    expect(describe("DECIDED")).toMatch(
+      /The decision on the removal case stays as it is/,
+    );
+    expect(describe("UNDECIDED")).not.toMatch(/The decision/);
+    expect(describe("UNDECIDED")).toMatch(
+      /removal case is still undecided, and lifting the block doesn't decide it/,
     );
   });
 
@@ -427,6 +446,7 @@ describe("what the lift controls send", () => {
       name: "Riya",
       removal: "CONDUCT",
       paidSeat: true,
+      conductCase: "DECIDED",
     });
     expect(door.url).toBe(`/api/staff/appointments/${APPT}/seats/lift`);
     expect(door.description).toMatch(/can't be bought again on their own yet/);

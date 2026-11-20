@@ -36,5 +36,7 @@ export interface BookingOpsView {
     removal: "ORGANISER" | "CONDUCT" | "LEGACY";
     /** Paid or credit-funded: lifting lets support rejoin them, not a self-serve rebuy. */
     paidSeat: boolean;
+    /** A conduct removal's latest case, decided or not; null for any other removal. */
+    conductCase: "DECIDED" | "UNDECIDED" | null;
   }[];
 }

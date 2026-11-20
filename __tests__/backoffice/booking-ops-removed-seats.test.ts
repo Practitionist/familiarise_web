@@ -49,7 +49,9 @@ jest.mock("../../lib/prisma", () => ({
       findFirst: jest.fn(async () => null),
     },
     supportCase: {
-      findMany: jest.fn(async () => [{ requesterUserId: "u-paid" }]),
+      findMany: jest.fn(async () => [
+        { requesterUserId: "u-paid", decisions: [] },
+      ]),
       findFirst: jest.fn(async () =>
         mockConduct.standing
           ? { id: "case-1", createdAt: new Date("2026-11-01T00:00:00Z") }
@@ -68,7 +70,13 @@ import { readBookingOps } from "@/lib/backoffice/booking-ops-read";
 it("lists an unmarked paid seat whose conduct removal still stands, as a conduct removal", async () => {
   const view = await readBookingOps("appt-1");
   expect(view?.removedSeats).toEqual([
-    { userId: "u-paid", name: "Dev", removal: "CONDUCT", paidSeat: true },
+    {
+      userId: "u-paid",
+      name: "Dev",
+      removal: "CONDUCT",
+      paidSeat: true,
+      conductCase: "UNDECIDED",
+    },
   ]);
 });
 
