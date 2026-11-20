@@ -195,6 +195,14 @@ jest.mock("../../lib/referrals/service", () => ({
     mockReverseCredits(paymentId, tx),
 }));
 
+const mockReturnDiscountUse = jest.fn(
+  async (_tx: unknown, _paymentId: string) => undefined,
+);
+jest.mock("../../lib/payments/checkout/discount-use", () => ({
+  returnDiscountUse: (tx: unknown, paymentId: string) =>
+    mockReturnDiscountUse(tx, paymentId),
+}));
+
 // Direct checkout's pricing refuses a review-first expert; the pay link must never reach it.
 jest.mock("../../lib/payments/checkout/pricing", () => ({
   __esModule: true,
@@ -1042,5 +1050,74 @@ describe("a re-mint returns the credit the replaced order used", () => {
       /already been paid/,
     );
     expect(mockReverseCredits).not.toHaveBeenCalled();
+  });
+});
+
+describe("a full-price re-mint drops the old order's discount code", () => {
+  const codedRow = (paymentStatus: PaymentStatus) => ({
+    id: "pay-coded",
+    paymentStatus,
+    paymentIntent: "order_coded",
+    amount: 450_000,
+    currency: Currency.INR,
+    discountCodeId: "code-1",
+    expiresAt:
+      paymentStatus === PaymentStatus.PENDING
+        ? new Date(Date.now() + 60_000)
+        : null,
+  });
+  const clearCall = () =>
+    mockedPaymentUpdate.mock.calls.find(
+      ([q]) => q.data && "discountCodeId" in q.data,
+    )?.[0];
+
+  it("returns a still-PENDING order's use on the CAS win and clears the code from the row", async () => {
+    state.appointmentPayments = [codedRow(PaymentStatus.PENDING)];
+
+    await createApprovalPaymentIntent(mintParams());
+
+    expect(mockedPaymentUpdate.mock.calls[0][0].where).toMatchObject({
+      id: "pay-coded",
+      paymentStatus: PaymentStatus.PENDING,
+      discountCodeId: "code-1",
+    });
+    expect(mockReturnDiscountUse).toHaveBeenCalledTimes(1);
+    expect(mockReturnDiscountUse.mock.calls[0][1]).toBe("pay-coded");
+    expect(mockReturnDiscountUse.mock.calls[0][0]).toHaveProperty("payment");
+    const clear = clearCall();
+    expect(clear).toMatchObject({
+      where: { id: "pay-coded", discountCodeId: "code-1" },
+      data: { discountCodeId: null },
+    });
+    expect(clear?.where.paymentIntent).toMatch(/^premint_/);
+    expect(mockReturnDiscountUse.mock.invocationCallOrder[0]).toBeLessThan(
+      mockTx.paymentCreate.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("clears the code from a dead row without returning the use its exit already gave back", async () => {
+    state.appointmentPayments = [codedRow(PaymentStatus.EXPIRED)];
+
+    await createApprovalPaymentIntent(mintParams());
+
+    expect(mockReturnDiscountUse).not.toHaveBeenCalled();
+    expect(clearCall()).toMatchObject({ data: { discountCodeId: null } });
+  });
+
+  it("does nothing to the code when the re-mint CAS loses", async () => {
+    state.appointmentPayments = [codedRow(PaymentStatus.PENDING)];
+    state.remintCasCount = 0;
+    state.remintFreshRow = {
+      paymentStatus: PaymentStatus.SUCCEEDED,
+      paymentIntent: "order_coded",
+      amount: 450_000,
+      currency: Currency.INR,
+    };
+
+    await expect(createApprovalPaymentIntent(mintParams())).rejects.toThrow(
+      /already been paid/,
+    );
+    expect(mockReturnDiscountUse).not.toHaveBeenCalled();
+    expect(clearCall()).toBeUndefined();
   });
 });

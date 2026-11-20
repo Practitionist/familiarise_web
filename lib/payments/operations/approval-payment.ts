@@ -23,6 +23,7 @@ import {
 import { detectBuyerCountry } from "@/lib/payments/tax/buyer-country";
 import { appointmentTypeToServiceType } from "@/lib/payments/tax/tax-engine";
 import { tombstoneAbortedGatewayOrder } from "@/lib/payments/checkout/gateway-intent";
+import { returnDiscountUse } from "@/lib/payments/checkout/discount-use";
 import { tombstonePriorIntent } from "@/lib/payments/operations/prior-intent-tombstone";
 import { reportSentryError } from "@/lib/observability/report";
 import {
@@ -648,6 +649,7 @@ async function claimRowForRemint(
         id: existing.id,
         paymentStatus: existing.paymentStatus,
         paymentIntent: existing.paymentIntent,
+        discountCodeId: existing.discountCodeId,
       },
       data: {
         paymentIntent: fields.preMintIntent,
@@ -671,6 +673,25 @@ async function claimRowForRemint(
     if (cas.count !== 1) return false;
     // The new order charges the full price, so the credit the old one used goes back now.
     await reverseCreditsForPayment(existing.id, tx);
+    if (existing.discountCodeId) {
+      // A PENDING order's use is still counted; an EXPIRED or FAILED one gave it back when it ended.
+      if (existing.paymentStatus === PaymentStatus.PENDING) {
+        await returnDiscountUse(tx, existing.id);
+      }
+      const cleared = await tx.payment.updateMany({
+        where: {
+          id: existing.id,
+          paymentIntent: fields.preMintIntent,
+          discountCodeId: existing.discountCodeId,
+        },
+        data: { discountCodeId: null },
+      });
+      if (cleared.count !== 1) {
+        throw new Error(
+          `Re-mint of payment ${existing.id} could not drop discount code ${existing.discountCodeId}`,
+        );
+      }
+    }
     if (fields.consumerStateCode) {
       // A state already on the row was declared by the buyer and is never overwritten.
       await tx.payment.updateMany({
@@ -968,6 +989,8 @@ export interface ExistingApprovalPayment {
   paymentIntent: string;
   /** Moves to the tombstone with the old order on a re-mint. */
   gatewayPaymentId: string | null;
+  /** A checkout's code; a pay link applies none, so a re-mint drops it. */
+  discountCodeId: string | null;
   paymentGateway: PaymentGateway;
   amount: number;
   /** The frozen pricing state; a live row is reused only when all of it matches. */
@@ -1024,6 +1047,7 @@ const EXISTING_PAYMENT_SELECT = {
   paymentStatus: true,
   paymentIntent: true,
   gatewayPaymentId: true,
+  discountCodeId: true,
   paymentGateway: true,
   amount: true,
   originalAmount: true,
@@ -1117,6 +1141,7 @@ export async function findExistingLivePayment(params: {
       paymentStatus: payment.paymentStatus,
       paymentIntent: payment.paymentIntent,
       gatewayPaymentId: payment.gatewayPaymentId,
+      discountCodeId: payment.discountCodeId,
       paymentGateway: payment.paymentGateway,
       amount: payment.amount,
       originalAmount: payment.originalAmount,
