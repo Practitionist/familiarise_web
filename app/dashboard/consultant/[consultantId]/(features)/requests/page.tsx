@@ -22,7 +22,7 @@ import {
 import { countRequestsToAnswerByTab } from "@/lib/data/needs-you";
 import { readRequestsInbox } from "@/lib/data/requests-inbox";
 import prisma from "@/lib/prisma";
-import { getViewerZone } from "@/lib/time/viewer-zone-server";
+import { getPersonalViewerZone } from "@/lib/time/viewer-zone-server";
 
 import { AcceptingRequestsToggle } from "./AcceptingRequestsToggle";
 import { DemandBanner } from "./DemandBanner";
@@ -54,7 +54,7 @@ export default async function RequestsPage({
 
   const queryClient = new QueryClient();
   const [viewerZone, profile] = await Promise.all([
-    getViewerZone(),
+    getPersonalViewerZone("consultant", consultantId),
     prisma.consultantProfile.findUnique({
       where: { id: consultantId },
       select: { acceptingRequests: true },

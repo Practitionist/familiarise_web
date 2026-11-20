@@ -13,7 +13,7 @@ export default function HomePageClient({
   consulteeId,
   viewerZone,
 }: Readonly<{ consulteeId: string; viewerZone: ViewerZone }>) {
-  const { userDetails } = useUser();
+  const { userDetails, learner } = useUser();
 
   // Personal pin, matching the sibling Appointments page (ADR 19). The old
   // defaultForOrgMember: "all" here papered over the missing attendee arm in
@@ -51,17 +51,9 @@ export default function HomePageClient({
         eventsData={eventsData}
         viewerZone={viewerZone}
         // Nullable by design: events paint first, the greeting fills in when
-        // the layout user fetch lands (was: full-page skeleton until both).
-        userDetails={
-          userDetails
-            ? {
-                id: userDetails.id,
-                name: userDetails.name ?? "User",
-                email: userDetails.email ?? "",
-                image: userDetails.image ?? undefined,
-              }
-            : null
-        }
+        // the layout's profile fetch lands.
+        learner={learner}
+        viewerOwnsProfile={userDetails?.consulteeProfileId === consulteeId}
         consulteeId={consulteeId}
       />
     </DashboardErrorBoundary>

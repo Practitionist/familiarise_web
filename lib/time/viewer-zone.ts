@@ -54,6 +54,14 @@ export function describeViewerZone(
   return { zone, own: isValidTimeZone(opts.userTimezone) };
 }
 
+/** On someone else's personal dashboard the viewer's zone is always named, so no time reads as the owner's. */
+export function personalViewerZone(
+  viewer: ViewerZone,
+  ownsProfile: boolean,
+): ViewerZone {
+  return ownsProfile ? viewer : { ...viewer, own: false };
+}
+
 interface WallClock {
   year: number;
   month: number;

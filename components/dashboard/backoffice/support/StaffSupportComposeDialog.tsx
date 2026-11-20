@@ -3,7 +3,15 @@
 import { useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
+import { useRouter } from "next/navigation";
 import { throwSupportError } from "@/lib/support/error-copy";
+import {
+  OutboundCaseResponse,
+  outboundCaseNotice,
+} from "@/lib/support/outbound-case";
+import { useToast } from "@/hooks/use-toast";
+import { ToastAction } from "@/components/ui/toast";
+import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
 import { supportKeys } from "@/lib/support/support-keys";
 import { Loader2, Send } from "lucide-react";
 
@@ -54,6 +62,9 @@ export function StaffSupportComposeDialog({
 }>) {
   const intakeId = useRef<string | null>(null);
   const queryClient = useQueryClient();
+  const router = useRouter();
+  const { toast } = useToast();
+  const { basePath } = useBackofficeCapability();
   const [target, setTargetState] = useState<FoundUser | null>(null);
   // A retry may reuse the intake key only for the same customer.
   const setTarget = (user: FoundUser | null) => {
@@ -100,16 +111,29 @@ export function StaffSupportComposeDialog({
         }),
       });
       if (!res.ok) await throwSupportError(res, "outbound support request");
-      return z
-        .object({ data: z.object({ id: z.string() }) })
-        .parse(await res.json()).data;
+      return OutboundCaseResponse.parse(await res.json());
     },
-    onSuccess: (created) => {
+    onSuccess: (result) => {
       void queryClient.invalidateQueries({ queryKey: supportKeys.inbox() });
       intakeId.current = null;
       reset();
       onOpenChange(false);
-      onCreated?.(created.id);
+      const notice = outboundCaseNotice(result, basePath);
+      if (notice) {
+        toast({
+          title: notice.title,
+          description: notice.description,
+          action: (
+            <ToastAction
+              altText={`Open ${result.data.referenceNumber}`}
+              onClick={() => router.push(notice.href)}
+            >
+              Open case
+            </ToastAction>
+          ),
+        });
+      }
+      onCreated?.(result.data.id);
     },
     onError: (err: Error) => setError(err.message),
   });

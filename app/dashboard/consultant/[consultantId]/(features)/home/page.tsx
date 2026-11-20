@@ -12,7 +12,7 @@ import { getSession } from "@/lib/auth-server";
 import { getConsultantDashboard } from "@/lib/data/consultant-dashboard";
 import { getNeedsYouSummary } from "@/lib/data/needs-you";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
-import { getViewerZone } from "@/lib/time/viewer-zone-server";
+import { getPersonalViewerZone } from "@/lib/time/viewer-zone-server";
 
 type PageProps = {
   params: Promise<{ consultantId: string }>;
@@ -111,7 +111,7 @@ async function DashboardSection({
   const queryClient = new QueryClient();
   // Read here and passed down exactly as the Appointments page does, so Home
   // and Appointments show one clock time for one session (#1703).
-  const viewerZone = await getViewerZone();
+  const viewerZone = await getPersonalViewerZone("consultant", consultantId);
   // Swallow, don't rethrow: a read failure should degrade to a client-side
   // fetch rather than surfacing the Suspense error boundary for the whole tab.
   await queryClient

@@ -47,23 +47,34 @@ export function consulteeSettingsHref(
   return `/dashboard/consultee/${consulteeId}/settings/${section.slug}`;
 }
 
-/** The sections in nav order, grouped under their titles. */
-export function consulteeSettingsGroups(consulteeId: string) {
+/** Sections only the owner sees: they read the signed-in viewer's own account. */
+const SELF_ONLY: ReadonlySet<ConsulteeSettingsKey> = new Set([
+  "account",
+  "notifications",
+]);
+
+/** The sections in nav order, grouped under their titles; "Your …" copy and self-only sections for the owner only. */
+export function consulteeSettingsGroups(
+  consulteeId: string,
+  viewerOwnsProfile = true,
+) {
   const groups: {
     title: string;
     sections: {
       key: string;
       label: string;
-      description: string;
+      description?: string;
       href: string;
+      show?: boolean;
     }[];
   }[] = [];
   for (const section of CONSULTEE_SETTINGS_SECTIONS) {
     const entry = {
       key: section.key,
       label: section.label,
-      description: section.description,
+      description: viewerOwnsProfile ? section.description : undefined,
       href: consulteeSettingsHref(consulteeId, section),
+      show: viewerOwnsProfile || !SELF_ONLY.has(section.key),
     };
     const last = groups.at(-1);
     if (last?.title === section.group) last.sections.push(entry);
