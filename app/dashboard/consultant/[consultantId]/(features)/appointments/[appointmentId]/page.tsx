@@ -90,6 +90,7 @@ export default async function AppointmentDetailPage({
         <DetailPageClient
           consultantId={consultantId}
           appointmentId={appointmentId}
+          operatorView={access.isInspecting}
         />
       </DisplayZoneProvider>
     </HydrationBoundary>
