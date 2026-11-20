@@ -119,6 +119,7 @@ import { SessionRatingRow } from "@/components/reviews/SessionRatingRow";
 import { useSessionFeedback } from "@/hooks/useSessionFeedback";
 import { ResourceSnapshot, type ResourceHrefs } from "./ResourceSnapshot";
 import { cn } from "@/utils/tailwind";
+import { SeatTrailNote } from "./SeatTrailNote";
 
 const PARTICIPANTS_PREVIEW = 5;
 
@@ -1103,6 +1104,9 @@ export function AppointmentDetailClient({
                 </p>
               )}
             </div>
+            {role === "consultee" && isGroup && (
+              <SeatTrailNote appointmentId={appointmentId} />
+            )}
             {(paidReceipt || role === "consultee") && (
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs">
                 {paidReceipt && (

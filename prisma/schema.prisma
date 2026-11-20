@@ -71,6 +71,7 @@ model User {
   rescheduleRequestsInitiated RescheduleRequest[]      @relation("RescheduleInitiator")
   // #1319 — A9 participant edge, A12 status-history actor, cancelledBy FKs.
   appointmentParticipations   AppointmentParticipant[]
+  removedSeats                AppointmentParticipant[] @relation("AppointmentParticipantRemovedBy")
   bookingStatusActions        BookingStatusHistory[]   @relation("BookingStatusHistoryActor")
   consultationsCancelled      Consultation[]           @relation("ConsultationCancelledBy")
   subscriptionsCancelled      Subscription[]           @relation("SubscriptionCancelledBy")
@@ -5009,6 +5010,11 @@ model AppointmentParticipant {
   // #1819 — sessions this seat paid for; the refund unit is amount / this (null → derived).
   sessionsPurchased Int?
 
+  /// Who removed this seat (an organiser removal or a conduct removal); a set value blocks a rejoin.
+  /// Cleared by compare-and-set when staff, the organiser or an overturn lifts it; Restrict keeps a remover's account from erasing it.
+  removedBy       User?   @relation("AppointmentParticipantRemovedBy", fields: [removedByUserId], references: [id], onDelete: Restrict)
+  removedByUserId String?
+
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
 
@@ -5018,6 +5024,7 @@ model AppointmentParticipant {
   // Prisma does not index FKs; without this the SetNull on Payment delete scans.
   @@index([paymentId])
   @@index([organizationId])
+  @@index([removedByUserId])
 }
 
 enum ParticipantRole {
@@ -5090,6 +5097,7 @@ enum BookingHistoryEntity {
   TRIAL
   RESCHEDULE_REQUEST
   OCCURRENCE
+  SEAT
 }
 
 enum AppointmentsType {

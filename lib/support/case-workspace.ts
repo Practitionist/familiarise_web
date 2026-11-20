@@ -1,4 +1,5 @@
 import { CONDUCT_REMOVAL_CATEGORY } from "./case-topic";
+import type { SupportCaseStatus } from "@prisma/client";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { findUserIssues } from "@/lib/observability/sentry-issues";
@@ -18,6 +19,7 @@ import { isPresenterAuthoredMessage } from "./case-message-actor";
 import { PLAN_TITLE_SELECT, planTitle } from "./case-read";
 import { ticketTopic } from "./case-topic";
 import { effectiveResolutionDueAt, slaStateOf } from "./sla";
+import { readableCaseEvent } from "./case-event-copy";
 export const TIMELINE_LIMIT = 200;
 const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);
 
@@ -270,6 +272,21 @@ export async function readPayment(
     : null;
 }
 
+/** A removal case's decision deadline, shown only while the case is open and undecided. */
+export function removalReviewDueAt(c: {
+  category: string | null;
+  status: SupportCaseStatus;
+  closedAt: Date | null;
+  statutoryDueAt: Date | null;
+  decisions: { id: string }[];
+}): string | null {
+  if (c.category !== CONDUCT_REMOVAL_CATEGORY) return null;
+  if (c.status === "CLOSED" || c.closedAt || c.decisions.length > 0) {
+    return null;
+  }
+  return iso(c.statutoryDueAt);
+}
+
 export interface WorkspaceGrants {
   showContact: boolean;
   showPayment: boolean;
@@ -307,6 +324,7 @@ export async function readCaseWorkspace(
         take: 100,
         include: { actor: { select: { name: true } } },
       },
+      decisions: { select: { id: true }, take: 1 },
     },
   });
   if (!c) return null;
@@ -387,8 +405,7 @@ export async function readCaseWorkspace(
     sla: slaStateOf(c),
     ackDueAt: iso(c.ackDueAt),
     resolutionDueAt: iso(c.resolutionDueAt),
-    reviewDueAt:
-      c.category === CONDUCT_REMOVAL_CATEGORY ? iso(c.statutoryDueAt) : null,
+    reviewDueAt: removalReviewDueAt(c),
     lastMessageAt: iso(c.lastMessageAt),
     createdAt: c.createdAt.toISOString(),
     updatedAt: c.updatedAt.toISOString(),
@@ -402,8 +419,7 @@ export async function readCaseWorkspace(
     events: c.events.reverse().map((e) => ({
       id: e.id,
       kind: e.kind,
-      fromValue: e.fromValue,
-      toValue: e.toValue,
+      ...readableCaseEvent(e),
       note: e.note,
       actorName: e.actor?.name ?? null,
       createdAt: e.createdAt.toISOString(),

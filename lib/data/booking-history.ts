@@ -47,7 +47,11 @@ import { SESSION_OUTCOME_LABEL } from "@/lib/labels/session-labels";
 
 import type { Scope } from "@/lib/api/scope/parse";
 import prisma from "@/lib/prisma";
-import { KNOWN_HISTORY_ENTITIES } from "@/lib/booking/history-entities";
+import { TIMELINE_HISTORY_ENTITIES } from "@/lib/booking/history-entities";
+import {
+  SeatHistoryReasonSchema,
+  type SeatHistoryReason,
+} from "@/lib/booking/seat-history";
 
 /**
  * The only `Scope` that may read another person's audit trail. Narrowing the
@@ -95,6 +99,8 @@ export interface BookingTimelineEntry {
   resolvedAt?: string | null;
   /** Reschedule rows only — where the proposal stands now. */
   outcome?: RescheduleRequestStatus;
+  /** Seat rows only — whose seat moved. */
+  seatHolder?: BookingTimelineActor | null;
 }
 
 /** The `to` of a reschedule row: the proposal was raised; its answer is a status edge. */
@@ -236,7 +242,7 @@ export async function getBookingTimeline(
             { actorUserId: { not: null } },
           ],
         },
-        { entity: { in: [...KNOWN_HISTORY_ENTITIES] } },
+        { entity: { in: [...TIMELINE_HISTORY_ENTITIES] } },
       ],
     },
     select: {
@@ -257,21 +263,29 @@ export async function getBookingTimeline(
     take: TIMELINE_LIMIT + 1,
   });
 
-  const statusEntries: BookingTimelineEntry[] = history
-    .slice(0, TIMELINE_LIMIT)
-    .map((row) => ({
-      id: row.id,
-      kind: "status" as const,
-      entity: row.entity,
-      entityId: row.entityId,
-      from: row.fromStatus,
-      to: row.toStatus,
-      reason: scheduleReasonCopy(row.reason),
-      actor: row.actorUser
-        ? { id: row.actorUser.id, name: row.actorUser.name }
-        : null,
-      createdAt: row.createdAt.toISOString(),
-    }));
+  const kept = history.slice(0, TIMELINE_LIMIT);
+  const holders = await seatHolders(
+    kept.filter((row) => row.entity === "SEAT").map((row) => row.entityId),
+  );
+  const statusEntries: BookingTimelineEntry[] = kept.map((row) => ({
+    id: row.id,
+    kind: "status" as const,
+    entity: row.entity,
+    entityId: row.entityId,
+    from: row.fromStatus,
+    to: row.toStatus,
+    reason:
+      row.entity === "SEAT"
+        ? seatReasonCopy(row.reason)
+        : scheduleReasonCopy(row.reason),
+    actor: row.actorUser
+      ? { id: row.actorUser.id, name: row.actorUser.name }
+      : null,
+    createdAt: row.createdAt.toISOString(),
+    ...(row.entity === "SEAT"
+      ? { seatHolder: holders.get(row.entityId) ?? null }
+      : {}),
+  }));
 
   const rescheduleEntries: BookingTimelineEntry[] =
     appointment.rescheduleRequests.map((request) => ({
@@ -308,6 +322,34 @@ export async function getBookingTimeline(
     truncated,
     occurrenceIds: appointment.occurrences.map((slot) => slot.id),
   };
+}
+
+/** The person on each seat a SEAT row names, by participant id; no read when there is none. */
+async function seatHolders(
+  participantIds: string[],
+): Promise<Map<string, BookingTimelineActor>> {
+  if (participantIds.length === 0) return new Map();
+  const seats = await prisma.appointmentParticipant.findMany({
+    where: { id: { in: [...new Set(participantIds)] } },
+    // Allow-list: a name, never an email.
+    select: { id: true, user: { select: { id: true, name: true } } },
+  });
+  return new Map(seats.map((seat) => [seat.id, seat.user]));
+}
+
+const SEAT_REASON_COPY: Record<SeatHistoryReason, string> = {
+  registered: "Registered",
+  self_leave: "Left their seat",
+  organiser_removal: "Removed by the organiser",
+  conduct_removal: "Removed for conduct",
+  block_lifted: "Allowed back: may register again",
+  rejoined: "Rejoined",
+  refunded: "Seat refunded",
+};
+
+function seatReasonCopy(reason: string | null): string | null {
+  const parsed = SeatHistoryReasonSchema.safeParse(reason);
+  return parsed.success ? SEAT_REASON_COPY[parsed.data] : reason;
 }
 
 const OUTCOME_REASONS: [prefix: string, words: string][] = [

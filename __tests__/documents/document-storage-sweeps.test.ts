@@ -200,13 +200,13 @@ describe("purge-deleted-documents", () => {
     expect(result.tombstoned).toBe(2);
   });
 
-  it("matches retention history only on entities every deployed client knows", async () => {
+  it("matches retention history only on booking entities, never a seat row", async () => {
     (prisma.appointmentDocument.findMany as jest.Mock).mockResolvedValue([]);
     (prisma.appointment.findMany as jest.Mock).mockResolvedValue([]);
 
     await purgeDeletedDocuments(now);
 
-    const known = {
+    const booking = {
       in: [
         "CONSULTATION",
         "SUBSCRIPTION",
@@ -219,9 +219,9 @@ describe("purge-deleted-documents", () => {
     };
     const { where, select } = (prisma.appointment.findMany as jest.Mock).mock
       .calls[0][0];
-    expect(where.OR[0].statusHistory.some.entity).toEqual(known);
+    expect(where.OR[0].statusHistory.some.entity).toEqual(booking);
     // The date rule reads the terminal date through the same select.
-    expect(select.statusHistory.where.entity).toEqual(known);
+    expect(select.statusHistory.where.entity).toEqual(booking);
   });
 
   it("continues with the remaining bookings when one tombstone transaction fails", async () => {

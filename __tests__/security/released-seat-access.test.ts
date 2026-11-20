@@ -10,7 +10,9 @@ import { listRecordingsScoped } from "@/lib/api/scope/list-recordings";
 import {
   liveParticipant,
   NOT_COLLABORATOR_ROW,
+  paidParticipant,
 } from "@/lib/booking/participants";
+import { matchesWhere } from "../fixtures/mem-db";
 
 const mockFindMany = jest.fn();
 jest.mock("../../lib/prisma", () => ({
@@ -52,6 +54,21 @@ describe("released seats lose document and recording listings", () => {
       mockFindMany.mock.calls[0][0].where.meeting.occurrence.appointment,
     );
     expect(arm).toEqual({ participants: { some: LIVE_SEAT } });
+  });
+
+  it("a seat that left and rejoined lists them again; while left it does not", () => {
+    const rejoined = {
+      userId: USER,
+      status: "CONFIRMED",
+      removedByUserId: null,
+      paymentId: "pay-free",
+      payment: { paymentStatus: "SUCCEEDED" },
+    };
+    expect(matchesWhere(rejoined, liveParticipant(USER))).toBe(true);
+    expect(matchesWhere(rejoined, paidParticipant(USER))).toBe(true);
+    const left = { ...rejoined, status: "CANCELLED" };
+    expect(matchesWhere(left, liveParticipant(USER))).toBe(false);
+    expect(matchesWhere(left, paidParticipant(USER))).toBe(false);
   });
 
   it("liveParticipant admits live seats and excludes released ones", () => {

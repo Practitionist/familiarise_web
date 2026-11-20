@@ -81,7 +81,9 @@ merged into it, so a caller that narrows keeps its narrower set and a caller
 that forgot cannot make an illegal move. REFUNDED is terminal, HELD is
 entry-only, and the one edge out of a released seat is `recordParticipants`'
 revive, which widens `fromIn` explicitly. Unlike the seven helpers it returns
-the count, never throws on zero rows, and writes no history row.
+the count, never throws on zero rows, and writes a SEAT history row only when an
+event caller passes `history` (a learner seat on a webinar or class; 1:1 seats
+write none).
 
 Two ending shapes are shared rather than copied, and a new ending must call
 them. `declineOpenReschedules` (`lib/booking/reschedule-decline.ts`) closes
