@@ -30,6 +30,8 @@ import {
 import { DisplayZoneProvider } from "@/lib/time/zoned-format";
 import { seatLapsedOrReleased } from "@/lib/appointments/status";
 import { IncidentRemedyBanner } from "@/components/appointments/consultee/IncidentRemedyBanner";
+import { RequestAgainButton } from "@/components/booking/RequestAgainButton";
+import { openOrderPastWindow } from "@/lib/booking/request-again-rules";
 
 /** Sessions worth putting in a calendar: booked (not held), live, not over. */
 function calendarSessions(vm: AppointmentVM) {
@@ -275,6 +277,11 @@ function deriveConsulteeActionMeta(vm: AppointmentVM) {
 
   const initialRequestNotes =
     rawConsultation?.requestNotes ?? rawSub?.requestNotes ?? "";
+  // A late capture could still confirm this booking, so rebooking closes its order first.
+  const closeOldOrderFirst = openOrderPastWindow(
+    rawAppt?.payment ?? [],
+    new Date(),
+  );
 
   return {
     canRebook,
@@ -289,6 +296,7 @@ function deriveConsulteeActionMeta(vm: AppointmentVM) {
     isCompletedOneOnOne,
     isUnpaidRequested,
     initialRequestNotes,
+    closeOldOrderFirst,
   };
 }
 
@@ -315,6 +323,7 @@ function ConsulteeExtraActions({
     canRenewSubscription,
     showLowSessionRenewalNudge,
     isCompletedOneOnOne,
+    closeOldOrderFirst,
   } = deriveConsulteeActionMeta(vm);
 
   return (
@@ -362,12 +371,14 @@ function ConsulteeExtraActions({
         </Button>
       )}
       {canRebook && (
-        <Button variant="outline" size="sm" asChild>
-          <Link href={`/explore/experts/${vm.consultantProfileId}`}>
-            <RotateCcw className="mr-1.5 h-4 w-4" />
-            Book again
-          </Link>
-        </Button>
+        <RequestAgainButton
+          appointmentId={vm.appointmentId}
+          href={`/explore/experts/${vm.consultantProfileId}`}
+          closeFirst={closeOldOrderFirst}
+        >
+          <RotateCcw className="mr-1.5 h-4 w-4" />
+          Book again
+        </RequestAgainButton>
       )}
     </>
   );

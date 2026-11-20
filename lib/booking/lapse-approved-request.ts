@@ -24,11 +24,16 @@ import {
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { expirePendingPaymentsInTx } from "@/lib/booking/pending-payment-expiry";
+import {
+  REQUEST_AGAIN_NOTE,
+  REQUESTED_AGAIN_REASON,
+} from "@/lib/booking/request-again-rules";
 
 /**
  * #1775 — one approved-but-unpaid request lapsing, whoever asks for it: the
- * 7-day sweep (`PAYMENT_LAPSED`) or the consultant's Withdraw
- * (`WITHDRAWN_BY_CONSULTANT`). The request CAS carries the money predicate in
+ * 7-day sweep (`PAYMENT_LAPSED`), the consultant's Withdraw
+ * (`WITHDRAWN_BY_CONSULTANT`) or the learner's Request again
+ * (`REQUESTED_AGAIN`). The request CAS carries the money predicate in
  * its WHERE, so a capture that already flipped the row through the single
  * writer matches zero rows and nothing below runs. The open pay order is
  * tombstoned by status — Razorpay orders cannot be voided, and a capture that
@@ -43,7 +48,10 @@ import { expirePendingPaymentsInTx } from "@/lib/booking/pending-payment-expiry"
  * *declining*, which this is not, so CANCELLED is the only honest third option.
  */
 export type LapseReason =
-  "PAYMENT_LAPSED" | "WITHDRAWN_BY_CONSULTANT" | "TOO_CLOSE_TO_PAY";
+  | "PAYMENT_LAPSED"
+  | "WITHDRAWN_BY_CONSULTANT"
+  | "TOO_CLOSE_TO_PAY"
+  | typeof REQUESTED_AGAIN_REASON;
 
 /**
  * The terminal status each reason earns. EXPIRED is reserved for a lapsed
@@ -56,6 +64,8 @@ const LAPSED_TO: Record<LapseReason, AppointmentStatus> = {
   WITHDRAWN_BY_CONSULTANT: AppointmentStatus.CANCELLED,
   // The pay window closed before it could open: a window that ran out.
   TOO_CLOSE_TO_PAY: AppointmentStatus.EXPIRED,
+  // The learner closes a window that already ran out before requesting again.
+  [REQUESTED_AGAIN_REASON]: AppointmentStatus.EXPIRED,
 };
 
 /** The engagement-reversal note each reason leaves on the organisation's usage row. */
@@ -63,6 +73,7 @@ const LAPSE_NOTE: Record<LapseReason, string> = {
   PAYMENT_LAPSED: "Approved request lapsed unpaid",
   WITHDRAWN_BY_CONSULTANT: "Approval withdrawn by the expert before payment",
   TOO_CLOSE_TO_PAY: "Approval released: too close to the session to pay",
+  [REQUESTED_AGAIN_REASON]: REQUEST_AGAIN_NOTE,
 };
 
 export interface LapseApprovedRequestArgs {

@@ -67,6 +67,7 @@ export async function readLapsedPayLinks(
       entityId: true,
       fromStatus: true,
       toStatus: true,
+      reason: true,
       createdAt: true,
     },
   });

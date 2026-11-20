@@ -9,6 +9,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { apiErrorSchema, errorMessageFromBody } from "@/lib/fetch-helpers";
 import { payPagePath } from "@/lib/payments/pay-link-href";
+import { openOrderPastWindow } from "@/lib/booking/request-again-rules";
+import { RequestAgainButton } from "@/components/booking/RequestAgainButton";
 import type { PendingCheckout } from "@/lib/data/pending-checkout";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
@@ -179,9 +181,24 @@ export function PendingCheckoutClient({
                 : `The payment window for ${pending.planTitle} has closed, so the hold on your booking was released.`}{" "}
               You can book again whenever you are ready.
             </p>
-            <Button asChild className="w-full">
-              <Link href="/explore">Book again</Link>
-            </Button>
+            <RequestAgainButton
+              appointmentId={pending.appointmentId}
+              href="/explore"
+              closeFirst={openOrderPastWindow(
+                [
+                  {
+                    paymentStatus: pending.status,
+                    expiresAt: pending.expiresAt,
+                  },
+                ],
+                new Date(),
+              )}
+              variant="default"
+              size="default"
+              className="w-full"
+            >
+              Book again
+            </RequestAgainButton>
           </CardContent>
         </Card>
       </main>
