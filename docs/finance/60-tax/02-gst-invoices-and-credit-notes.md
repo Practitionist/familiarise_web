@@ -129,7 +129,7 @@ A tax invoice and a credit note are dated in the supplier's calendar, which is I
 
 **Example.** An organisation invoice issued at 23:33 UTC on 19 Oct 2026 (05:03 IST on 20 Oct) and due 30 days later reads "Issued: 20 Oct 2026" and "Due: 19 Nov 2026" under "Dates (IST)" on its PDF, rendered on a UTC server, and "Issued (IST) 20 Oct 2026" on the Billing tab for an owner whose profile zone is Los Angeles, where it is still 19 Oct. The decision is [ADR 2026-11-20](../../decisions/2026-11-20-invoice-dates-in-india-time.md).
 
-Two dates are not printed through `formatInvoiceDate`. The IRN acknowledgement date is the IRP's own IST wall time, read back in the zone it was parsed in (`irpAckDay`). The e-invoice payload's `DocDtls.Dt` is still the UTC date (`formatDocDate` in `lib/compliance/irp-payload.ts`), a filing value outside this rule.
+The e-invoice follows the same rule. `formatDocDate` (`lib/compliance/irp-payload.ts`) files `DocDtls.Dt` and a credit note's `OrigDocDtls.Dt` as the same India date in the IRP's DD/MM/YYYY format (`invoiceDateIso`), so the invoice above is filed as 20/10/2026. ClearTax answers with `AckDt`, an India wall time such as "2026-10-20 21:15:00"; `generateIrn` (`lib/compliance/irp.ts`) reads it as Asia/Kolkata (`fromOperatorWallTime`) and stores the true instant, 15:45 UTC, which the PDF prints as "Ack date (IST)" 20 Oct 2026.
 
 ## Downloading a document
 
@@ -183,5 +183,5 @@ A B2B `OrganizationInvoice` with a buyer GSTIN is eligible for an Invoice Refere
 - **Zero-rating on browser language.** Detecting the buyer's country from `Accept-Language` zero-rated every `en-US` browser. It was removed.
 - **Independent clock reads** across credit-note minting and the ledger's GST reversal. They are one pinned `cascadeNow` now.
 - **Database writes through the global client** inside the mint error handlers. They pass the enclosing transaction (`db: tx`) so a single-connection pool cannot deadlock.
-- **Document dates in UTC or the server's zone.** The consumer documents and the organisation credit note pinned UTC and the organisation invoice used the server's zone, so a document issued before 05:30 IST printed the previous day. They print India dates now.
+- **Document dates in UTC or the server's zone.** The consumer documents and the organisation credit note pinned UTC and the organisation invoice used the server's zone, so a document issued before 05:30 IST printed the previous day. The IRP payload filed the UTC date and the acknowledgement was parsed in the server's zone. All of them use India dates now.
 - **Environment overrides for the register window and the series.** `GST_REGISTER_PERIOD_START`, `GST_REGISTER_PERIOD_END`, `PLATFORM_INVOICE_PREFIX` and `CLEARTAX_GSTIN` no longer exist. The month is the `?period=YYYY-MM` argument, the prefix is a constant in `lib/company.ts`, and the IRP uses `PLATFORM_GSTIN`.

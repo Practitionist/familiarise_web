@@ -5,7 +5,8 @@
 // An invoice's dates are India calendar dates: one issued at 23:33 UTC on
 // 19 Oct reads 20 Oct 2026, labelled IST, on its PDF, the Billing list and
 // drawer, the CSV, the emails and the bell, on a UTC server and for a viewer
-// whose profile zone is Los Angeles (where it is still 19 Oct).
+// whose profile zone is Los Angeles (where it is still 19 Oct), and is filed
+// with the IRP as 20/10/2026.
 
 type Node = unknown;
 const mockPdfDocs: Node[] = [];
@@ -22,7 +23,13 @@ jest.mock("@react-pdf/renderer", () => ({
     return new Uint8Array([37, 80, 68, 70]);
   },
 }));
-jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
+jest.mock("@sentry/nextjs", () => ({
+  captureException: jest.fn(),
+  logger: { info: jest.fn() },
+}));
+jest.mock("@/lib/cron/with-cron-lock", () => ({
+  withCronLock: (_job: string, _opts: unknown, run: () => unknown) => run(),
+}));
 jest.mock("@/lib/prisma", () => ({
   __esModule: true,
   default: {
@@ -62,16 +69,20 @@ jest.mock("@/lib/pdf/storage", () => ({
   uploadInvoicePdf: async () => undefined,
   createInvoicePdfSignedUrl: async () => "https://storage.test/signed.pdf",
 }));
-jest.mock("@/lib/pdf/supplier", () => ({
-  SUPPLIER_UNAVAILABLE_MESSAGE: "unavailable",
-  getPlatformSupplier: () => ({
+jest.mock("@/lib/pdf/supplier", () => {
+  const supplier = () => ({
     name: "Practitionist (OPC) Private Limited",
     gstin: "06ABCDE1234F1Z5",
     address: "Gurgaon, Haryana",
     email: "billing@familiarise.test",
     stateCode: "06",
-  }),
-}));
+  });
+  return {
+    SUPPLIER_UNAVAILABLE_MESSAGE: "unavailable",
+    getPlatformSupplier: supplier,
+    platformSupplierForJob: supplier,
+  };
+});
 jest.mock("@/lib/payments/billing/org-invoice-settlement", () => ({
   outstandingPaiseByInvoice: async () => new Map(),
   invoiceOutstandingPaise: async () => 118_000,
@@ -148,6 +159,8 @@ import {
   prepareOrgInvoiceOverdueEmail,
 } from "@/lib/email/senders/money";
 import { notifyOrgInvoiceIssued } from "@/lib/novu/org-workflows";
+import { runIrpUploader } from "@/jobs/compliance/irp-uploader";
+import { buildIrpPayload } from "@/lib/compliance/irp-payload";
 
 const db = jest.mocked(prisma, { shallow: false }) as unknown as {
   organizationInvoice: Record<
@@ -307,8 +320,10 @@ beforeEach(() => {
   mockBellPayloads.length = 0;
   utcServer();
   db.organizationInvoice.count.mockResolvedValue(1);
-  db.organizationInvoice.findMany.mockResolvedValue([orgInvoiceRow]);
-  db.organizationInvoice.findFirst.mockResolvedValue(orgInvoiceRow);
+  db.organizationInvoice.findMany
+    .mockReset()
+    .mockResolvedValue([orgInvoiceRow]);
+  db.organizationInvoice.findFirst.mockReset().mockResolvedValue(orgInvoiceRow);
   db.creditNote.findFirst.mockResolvedValue({
     id: "cn-1",
     creditNoteNumber: "WIPRO-CN-2026-0001",
@@ -465,9 +480,6 @@ describe("an invoice issued at 23:33 UTC on 19 Oct reads 20 Oct 2026 (IST)", () 
   });
 
   it("in the CSV export", async () => {
-    db.organizationInvoice.findMany
-      .mockResolvedValueOnce([orgInvoiceRow])
-      .mockResolvedValueOnce([]);
     const res = await exportInvoices(req(), {
       params: Promise.resolve({ orgId: "org-1" }),
     });
@@ -529,5 +541,161 @@ describe("an invoice issued at 23:33 UTC on 19 Oct reads 20 Oct 2026 (IST)", () 
     expect(mockBellPayloads).toEqual([
       expect.objectContaining({ dueDate: "19 Nov 2026 (IST)" }),
     ]);
+  });
+
+  describe("with the IRP", () => {
+    /** `new Date("YYYY-MM-DD HH:mm:ss")` reads the wall time as UTC, as on Netlify. */
+    function utcHostParse() {
+      const RealDate = Date;
+      const WALL = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
+      class UtcHostDate extends RealDate {
+        constructor(...args: unknown[]) {
+          if (typeof args[0] === "string" && WALL.test(args[0])) {
+            super(`${args[0].replace(" ", "T")}Z`);
+          } else {
+            super(...(args as []));
+          }
+        }
+      }
+      global.Date = UtcHostDate as DateConstructor;
+      return () => {
+        global.Date = RealDate;
+      };
+    }
+
+    /** One uploader run whose IRP answers `ackDt`: what was filed, and what was stored. */
+    async function fileWithIrp(ackDt: string) {
+      db.organizationInvoice.findMany.mockResolvedValueOnce([
+        {
+          ...orgInvoiceRow,
+          lutNumber: null,
+          irpRetryCount: 0,
+          organization: {
+            name: "Wipro Limited",
+            taxInfo: {
+              gstin: "29AAACW0387R1Z0",
+              gstStateCode: "29",
+              hsnDefault: "999293",
+            },
+          },
+          lineItems: [
+            {
+              position: 0,
+              description: "Career session",
+              quantity: 1,
+              unitPricePaise: 100_000,
+              hsnCode: "998311",
+            },
+          ],
+        },
+      ]);
+      db.organizationInvoice.update.mockClear();
+      let filed: { DocDtls: { Dt: string } } | undefined;
+      jest.spyOn(global, "fetch").mockImplementation(async (_url, init) => {
+        filed = JSON.parse(String(init?.body));
+        return new Response(
+          JSON.stringify({
+            data: { Irn: "irn-1", AckNo: 1, AckDt: ackDt, SignedQRCode: "qr" },
+          }),
+        );
+      });
+      const restore = utcHostParse();
+      try {
+        await expect(runIrpUploader({})).resolves.toMatchObject({
+          processed: 1,
+        });
+      } finally {
+        restore();
+      }
+      const stored = db.organizationInvoice.update.mock.calls[0][0].data;
+      return { filed, ackDate: stored.ackDate as Date };
+    }
+
+    beforeEach(() => {
+      process.env.PLATFORM_GSTIN = "06ABCDE1234F1Z5";
+      process.env.CLEARTAX_API_KEY = "key";
+      process.env.CLEARTAX_GSP_TOKEN = "token";
+    });
+    afterEach(() => {
+      delete process.env.PLATFORM_GSTIN;
+      delete process.env.CLEARTAX_API_KEY;
+      delete process.env.CLEARTAX_GSP_TOKEN;
+    });
+
+    it("files the India issue date and stores the evening acknowledgement's true instant", async () => {
+      // 21:15 IST on 20 Oct is 15:45 UTC.
+      const { filed, ackDate } = await fileWithIrp("2026-10-20 21:15:00");
+
+      expect(filed?.DocDtls.Dt).toBe("20/10/2026");
+      expect(ackDate.toISOString()).toBe("2026-10-20T15:45:00.000Z");
+    });
+
+    it("prints an early-morning acknowledgement on its India date", async () => {
+      // 03:00 IST on 20 Oct is 21:30 UTC on 19 Oct.
+      const { ackDate } = await fileWithIrp("2026-10-20 03:00:00");
+      db.organizationInvoice.findFirst.mockResolvedValueOnce({
+        ...orgInvoiceRow,
+        irn: "irn-1",
+        ackNumber: "1",
+        ackDate,
+        irpStatus: "GENERATED",
+      });
+      await orgInvoicePdf(req(), {
+        params: Promise.resolve({ orgId: "org-1", invoiceId: "inv-1" }),
+      });
+
+      const lines = pdfLines(mockPdfDocs[0]);
+      expect(lines[lines.indexOf("Ack date (IST)") + 1]).toBe("20 Oct 2026");
+    });
+
+    it("names the original invoice's India date on a credit note payload", () => {
+      const built = buildIrpPayload({
+        invoice: {
+          invoiceNumber: "WIP-CN-2026-0001",
+          issuedAt: ISSUED,
+          reverseCharge: false,
+          lutNumber: null,
+          subtotalPaise: 10_000,
+          cgstPaise: 0,
+          sgstPaise: 0,
+          igstPaise: 1_800,
+          totalPaise: 11_800,
+          hsnCode: "998311",
+          placeOfSupply: "29",
+        },
+        lineItems: [
+          {
+            position: 0,
+            description: "Refund",
+            quantity: 1,
+            unitPricePaise: 10_000,
+            hsnCode: null,
+          },
+        ],
+        buyer: {
+          name: "Wipro Limited",
+          gstin: "29AAACW0387R1Z0",
+          stateCode: "29",
+          hsnDefault: "999293",
+        },
+        seller: {
+          gstin: "06ABCDE1234F1Z5",
+          legalName: "Practitionist (OPC) Private Limited",
+          address1: "Sector 67",
+          location: "Gurgaon",
+          pincode: "122018",
+          stateCode: "06",
+        },
+        docType: "CRN",
+        originalInvoiceNumber: "WIPRO-2026-0001",
+        originalInvoiceDate: ISSUED,
+      });
+      if (!built.ok) throw new Error(built.reason);
+
+      expect(built.payload).toMatchObject({
+        DocDtls: { Dt: "20/10/2026" },
+        OrigDocDtls: { No: "WIPRO-2026-0001", Dt: "20/10/2026" },
+      });
+    });
   });
 });

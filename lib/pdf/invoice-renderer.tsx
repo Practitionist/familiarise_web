@@ -80,15 +80,6 @@ function formatMoneyIntl(paise: number, currency: Currency): string {
   }).format(major);
 }
 
-/** The IRP's AckDt is an IST wall time parsed in the host zone, so the host zone reads its date back. */
-function irpAckDay(d: Date): string {
-  return d.toLocaleDateString("en-IN", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
-}
-
 // ============================================================================
 // Org (B2B OrganizationInvoice) — types, styles, document
 // ============================================================================
@@ -410,7 +401,7 @@ function OrgInvoiceDocument({ data }: { data: OrgInvoicePdfData }) {
                   {invoiceDateLabel("Ack date")}
                 </Text>
                 <Text style={orgStyles.irnValue}>
-                  {irpAckDay(data.irn.ackDate)}
+                  {formatInvoiceDate(data.irn.ackDate)}
                 </Text>
               </>
             )}

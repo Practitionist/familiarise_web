@@ -4,7 +4,11 @@
  * them in IST, whoever reads them and wherever the code runs.
  */
 
-import { formatOperatorInstant, type Instant } from "./operator-zone";
+import {
+  formatOperatorInstant,
+  toOperatorWallTime,
+  type Instant,
+} from "./operator-zone";
 
 export const INVOICE_DATE_ZONE_LABEL = "IST";
 
@@ -13,6 +17,11 @@ export function formatInvoiceDate(at: Instant | null | undefined): string {
   return at === null || at === undefined
     ? "—"
     : formatOperatorInstant(at, "date");
+}
+
+/** "2026-10-20", the same India date as calendar fields, for a filed format. */
+export function invoiceDateIso(at: Instant): string {
+  return toOperatorWallTime(at).slice(0, 10);
 }
 
 /** "20 Oct 2026 (IST)", for prose where a reader would assume their own zone. */
