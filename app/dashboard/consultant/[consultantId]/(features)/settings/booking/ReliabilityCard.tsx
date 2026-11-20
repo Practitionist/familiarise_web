@@ -68,7 +68,17 @@ export function ReliabilityCard({
                     key={strike.at}
                     className="flex flex-wrap justify-between gap-2"
                   >
-                    <span>{OWN_STRIKE_CAUSE_LABEL[strike.cause]}</span>
+                    <span>
+                      {OWN_STRIKE_CAUSE_LABEL[strike.cause]}
+                      {strike.planTitle && (
+                        <span className="block text-xs text-muted-foreground">
+                          {strike.planTitle}
+                          {strike.sessionAt
+                            ? ` · session on ${zoned(strike.sessionAt, "d MMM yyyy, h:mm a")}`
+                            : ""}
+                        </span>
+                      )}
+                    </span>
                     <span className="text-muted-foreground">
                       {zoned(strike.at, "d MMM yyyy")}
                     </span>

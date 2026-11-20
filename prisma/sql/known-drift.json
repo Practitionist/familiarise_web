@@ -130,6 +130,18 @@
       "expires": "2026-11-30"
     },
     {
+      "statement": "DROP INDEX \"Collaborator_consultantProfileId_webinarPlanId_key\"",
+      "reason": "One row per expert per plan became one row per period on the team, so the total unique gives way to the partial unique collaborator_one_active_{webinar,class} in check-constraints.sql, which the sidecar step creates straight after the push.",
+      "trackedBy": "#2803",
+      "expires": "2026-12-07"
+    },
+    {
+      "statement": "DROP INDEX \"Collaborator_consultantProfileId_classPlanId_key\"",
+      "reason": "One row per expert per plan became one row per period on the team, so the total unique gives way to the partial unique collaborator_one_active_{webinar,class} in check-constraints.sql, which the sidecar step creates straight after the push.",
+      "trackedBy": "#2803",
+      "expires": "2026-12-07"
+    },
+    {
       "statement": "ALTER TYPE \"StreamRevocationKind\" ADD VALUE 'CONDUCT_CALL_BLOCK'",
       "reason": "The revocation kind that blocks a conduct-removed attendee from the appointment's rooms and unblocks them once support overturns it. Additive, so only the drift check reads it; it goes with this PR's own push.",
       "trackedBy": "#2799",
@@ -139,6 +151,18 @@
       "statement": "ALTER TYPE \"SupportCaseEventKind\" ADD VALUE 'REMOVAL_REVIEW_LAPSED'",
       "reason": "The case event the support SLA sweep writes once when a conduct removal passes its 72-hour review deadline undecided. Additive, so only the drift check reads it; it goes with this PR's own push.",
       "trackedBy": "#2799",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "ALTER TABLE \"AppointmentParticipant\" DROP CONSTRAINT \"AppointmentParticipant_removedByUserId_fkey\"",
+      "reason": "The removal mark's foreign key moves from SET NULL to RESTRICT, so deleting a remover's account cannot erase a block. The owner applies temp/2849-fk-restrict.sql.",
+      "trackedBy": "#2849",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "ALTER TABLE \"AppointmentParticipant\" ADD CONSTRAINT \"AppointmentParticipant_removedByUserId_fkey\" FOREIGN KEY (\"removedByUserId\") REFERENCES \"users\"(\"id\") ON DELETE RESTRICT ON UPDATE CASCADE",
+      "reason": "The removal mark's foreign key moves from SET NULL to RESTRICT, so deleting a remover's account cannot erase a block. The owner applies temp/2849-fk-restrict.sql.",
+      "trackedBy": "#2849",
       "expires": "2026-12-31"
     }
   ],

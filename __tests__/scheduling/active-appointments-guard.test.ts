@@ -27,16 +27,20 @@ function db(counts: Partial<Record<string, number>>) {
 
 describe("checkActiveAppointments", () => {
   it("is clear when every bucket is empty", async () => {
-    const result = await checkActiveAppointments("cp-1", db({}));
+    const result = await checkActiveAppointments("cp-1", db({}), "removal");
     expect(result.hasActive).toBe(false);
     expect(result.total).toBe(0);
     expect(result.details).toBeUndefined();
   });
 
   it("counts an active trial as blocking", async () => {
-    const result = await checkActiveAppointments("cp-1", db({ trial: 1 }));
+    const result = await checkActiveAppointments(
+      "cp-1",
+      db({ trial: 1 }),
+      "removal",
+    );
     expect(result.hasActive).toBe(true);
-    expect(result.breakdown.activeTrials).toBe(1);
+    expect(result.breakdown.trials).toBe(1);
     expect(result.details).toBe("1 active trial");
   });
 
@@ -44,6 +48,7 @@ describe("checkActiveAppointments", () => {
     const result = await checkActiveAppointments(
       "cp-1",
       db({ rescheduleRequest: 2 }),
+      "removal",
     );
     expect(result.hasActive).toBe(true);
     expect(result.details).toBe("2 open reschedule requests");
@@ -51,7 +56,7 @@ describe("checkActiveAppointments", () => {
 
   it("queries trials by the statuses the occupancy policy treats as live", async () => {
     const mocked = db({});
-    await checkActiveAppointments("cp-1", mocked);
+    await checkActiveAppointments("cp-1", mocked, "scheduleSwitch");
     const trialCount = (mocked as unknown as { trial: { count: jest.Mock } })
       .trial.count;
     expect(trialCount).toHaveBeenCalledWith({

@@ -1264,6 +1264,7 @@ describe("event access predicate", () => {
     const query = mockRevocationPrisma.webinar.findFirst.mock.calls[0][0];
     expect(query.select.appointment.select.participants.where).toEqual({
       ...paidParticipant(),
+      role: { not: "COLLABORATOR" },
       userId: { in: ["attendee-keep"] },
     });
   });
@@ -1492,16 +1493,6 @@ describe("a writer settles only the intent generation it wrote", () => {
         }),
       }),
     ]);
-  });
-
-  it("gives a queued collaborator row a fresh generation the sweep can check", async () => {
-    const { enqueueCollaboratorRevocationRetry } =
-      await import("../../lib/stream/access-revocation");
-
-    await enqueueCollaboratorRevocationRetry("webinar", "plan-1", "collab-1");
-
-    const [written] = writtenGenerations();
-    expect(written.nextRetryAt).toBeInstanceOf(Date);
   });
 });
 

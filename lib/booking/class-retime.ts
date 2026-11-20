@@ -8,7 +8,8 @@
  * a full refund until `retimeBy`. A move is not a cancel, so it is never a
  * host miss and never counts toward a learner's exit right.
  *
- * Lock order: event checkout → appointment → host + co-host slot batch.
+ * Lock order: event checkout → appointment → host + co-host slot batch, then
+ * the plan row as the transaction's first row lock.
  */
 import { followClassSessions } from "@/lib/booking/allocation/event-data";
 import type { Prisma } from "@prisma/client";
@@ -33,11 +34,15 @@ import { MAX_CLASS_SESSIONS_PER_DAY } from "@/utils/scheduling-engine/sessionCap
 import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
 import { isDeadOccurrence } from "@/lib/appointments/occurrences";
 import { BookingRuleError } from "./booking-rule-error";
+import { RETIMED_REASON } from "./event-retime";
 import { eventTimeRefusal } from "./event-time-rules";
 import { RESCHEDULE_LEAD_TIME_MS } from "./lead-time";
+import { transitionOccurrenceCompletion } from "./transitions";
+import { collaboratorUserIds } from "@/lib/collaborators/recipients";
 import {
   acceptedCohostProfileIds,
   hostBatchEntries,
+  lockPlanForMove,
   withHostSlotBatch,
 } from "./host-slot-batch";
 import {
@@ -149,14 +154,16 @@ async function assertDailyCap(
 
 /**
  * Lifts the moving rows out of the overlap constraint, so a session may take
- * another's old time, then confirms each at its new time. Every write names
- * the time it read and must match its row, so a stale move changes nothing.
+ * another's old time, then confirms each at its new time with one history row
+ * naming the actor. Every write names the time it read and must match its
+ * row, so a stale move changes nothing.
  */
 async function confirmMovedSessions(
   tx: Tx,
   appointmentId: string,
   windows: readonly SeriesWindow[],
   now: Date,
+  actor: { actorUserId: string; organizationId: string | null },
 ): Promise<void> {
   const lifted = await tx.appointmentOccurrence.updateMany({
     where: {
@@ -172,18 +179,24 @@ async function confirmMovedSessions(
   if (lifted.count !== windows.length) throw refuse(CHANGED_MEANWHILE);
   try {
     for (const { session, startsAt, endsAt } of windows) {
-      const confirmed = await tx.appointmentOccurrence.updateMany({
+      const confirmed = await transitionOccurrenceCompletion(tx, {
+        ...actor,
+        reason: RETIMED_REASON,
+        appointmentId,
+        at: now,
         where: {
           id: session.id,
           appointmentId,
           startsAt: session.startsAt,
           isTentative: true,
           deletedAt: null,
-          completionStatus: "SCHEDULED",
         },
+        to: "SCHEDULED",
+        fromIn: ["SCHEDULED"],
         data: { startsAt, endsAt, movedAt: now, isTentative: false },
+        allowZero: true,
       });
-      if (confirmed.count !== 1) throw refuse(CHANGED_MEANWHILE);
+      if (confirmed !== 1) throw refuse(CHANGED_MEANWHILE);
     }
   } catch (error) {
     if (isExclusionViolation(error)) {
@@ -300,6 +313,7 @@ export async function retimeClassSeries(args: {
           ),
           () =>
             prisma.$transaction(async (tx) => {
+              await lockPlanForMove(tx, "CLASS", plan.id, profiles);
               const { schedulingTimezone } = await assertSnapshotCurrent(
                 tx,
                 hosted.cls.id,
@@ -332,7 +346,10 @@ export async function retimeClassSeries(args: {
                 windows,
                 schedulingTimezone,
               );
-              await confirmMovedSessions(tx, appointmentId, windows, now);
+              await confirmMovedSessions(tx, appointmentId, windows, now, {
+                actorUserId,
+                organizationId: hosted.appointment.organizationId,
+              });
               await followClassSessions(tx, hosted.cls.id);
 
               const seats = await tx.appointmentParticipant.findMany({
@@ -400,14 +417,10 @@ export async function retimeClassSeries(args: {
                 );
                 bells.push(...staged.map((r) => r.staged));
               }
-              // The host and accepted co-hosts hear of a move someone else made.
-              const cohosts = await tx.consultantProfile.findMany({
-                where: { id: { in: cohostProfileIds } },
-                select: { userId: true },
-              });
+              // The host and the plan's team hear of a move someone else made.
               const hostSide = [
                 plan.consultantProfile?.user.id,
-                ...cohosts.map((c) => c.userId),
+                ...(await collaboratorUserIds("class", plan.id, tx)),
               ].filter(
                 (id): id is string =>
                   !!id && id !== actorUserId && !seatUserIds.includes(id),

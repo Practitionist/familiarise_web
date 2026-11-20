@@ -10,6 +10,8 @@ import {
   scopeAppointmentDetail,
   type TAppointmentDetail,
 } from "@/lib/data/appointment-detail";
+import { managesGroupPlanAsNamedExpert } from "@/lib/enterprise/membership-guards";
+import type { PrismaLike } from "@/lib/prisma";
 import {
   paymentDisplayStatus,
   seatPaymentsByUser,
@@ -27,6 +29,8 @@ import {
 const HOST = "u-host";
 const A = "u-a";
 const B = "u-b";
+const PRESENTER = "u-presenter";
+const CREW = "u-crew";
 
 const detail = {
   appointment: {
@@ -34,8 +38,17 @@ const detail = {
     organizationId: null,
     webinarId: "web-1",
     classId: null,
-    webinar: { webinarPlan: { consultantProfile: { userId: HOST } } },
+    webinar: {
+      webinarPlan: {
+        consultantProfile: { userId: HOST },
+        collaborators: [
+          { tier: "PRESENTER", consultantProfile: { userId: PRESENTER } },
+          { tier: "CREW", consultantProfile: { userId: CREW } },
+        ],
+      },
+    },
     occurrences: [{}],
+    rescheduleRequests: [],
     participants: [
       { userId: A, role: "CONSULTEE", user: { id: A, name: "A", image: null } },
       { userId: B, role: "CONSULTEE", user: { id: B, name: "B", image: null } },
@@ -72,9 +85,14 @@ const detail = {
   siblings: [],
 } as unknown as TAppointmentDetail;
 
+/** A viewer who does not manage the plan: an attendee, a collaborator, a payer. */
+const attendee = (userId: string) => ({ userId, managesGroupPlan: false });
+const MANAGING_EXPERT = { userId: HOST, managesGroupPlan: true };
+const STAFF = { userId: "u-staff", privileged: true, managesGroupPlan: false };
+
 describe("scopeAppointmentDetail", () => {
   it("gives an attendee only their own payment rows", () => {
-    const scoped = scopeAppointmentDetail(detail, A);
+    const scoped = scopeAppointmentDetail(detail, attendee(A));
     expect(scoped.appointment.payment.map((p) => p.id)).toEqual(["p-a"]);
   });
 
@@ -92,6 +110,7 @@ describe("scopeAppointmentDetail", () => {
           requestedBy: { userId: A },
         },
         occurrences: [],
+        rescheduleRequests: [],
         participants: [],
         payment: [
           {
@@ -109,27 +128,67 @@ describe("scopeAppointmentDetail", () => {
       siblings: [],
     } as unknown as TAppointmentDetail;
     expect(
-      scopeAppointmentDetail(consultation, A).appointment.payment,
+      scopeAppointmentDetail(consultation, attendee(A)).appointment.payment,
     ).toHaveLength(1);
   });
 
   it("leaves the host's and staff's view whole", () => {
     expect(
-      scopeAppointmentDetail(detail, HOST).appointment.payment,
+      scopeAppointmentDetail(detail, MANAGING_EXPERT).appointment.payment,
     ).toHaveLength(2);
     expect(
-      scopeAppointmentDetail(detail, "u-staff", true).appointment.payment,
+      scopeAppointmentDetail(detail, STAFF).appointment.payment,
     ).toHaveLength(2);
   });
 
+  it("gives a presenter every seat and no attendee's payment, and crew neither", () => {
+    const presenter = scopeAppointmentDetail(
+      detail,
+      attendee(PRESENTER),
+    ).appointment;
+    expect(presenter.participants.map((p) => p.userId)).toEqual([A, B]);
+    expect(presenter.payment).toEqual([]);
+    const crew = scopeAppointmentDetail(detail, attendee(CREW)).appointment;
+    expect(crew.participants).toEqual([]);
+    expect(crew.payment).toEqual([]);
+  });
+
+  it("says which of the roster and the payments each viewer is shown", () => {
+    const shown = (viewer: Parameters<typeof scopeAppointmentDetail>[1]) => {
+      const { rosterVisible, paymentsVisible } = scopeAppointmentDetail(
+        detail,
+        viewer,
+      );
+      return { rosterVisible, paymentsVisible };
+    };
+    const both = { rosterVisible: true, paymentsVisible: true };
+    expect(shown(MANAGING_EXPERT)).toEqual(both);
+    expect(shown(STAFF)).toEqual(both);
+    expect(shown(attendee(PRESENTER))).toEqual({
+      rosterVisible: true,
+      paymentsVisible: false,
+    });
+    expect(shown(attendee(CREW))).toEqual({
+      rosterVisible: false,
+      paymentsVisible: false,
+    });
+  });
+
+  it("gives the named expert who no longer manages the plan no attendee's seat or payment", () => {
+    const lapsed = scopeAppointmentDetail(detail, attendee(HOST)).appointment;
+    expect(lapsed.participants).toEqual([]);
+    expect(lapsed.payment).toEqual([]);
+  });
+
   it("keeps a receipt only on the payer's own rows, and on staff's", () => {
-    const host = scopeAppointmentDetail(detail, HOST).appointment.payment[0];
+    const host = scopeAppointmentDetail(detail, MANAGING_EXPERT).appointment
+      .payment[0];
     expect(host.consumerInvoice).toBeNull();
     expect(host.childPayments[0].consumerInvoice).toBeNull();
-    const own = scopeAppointmentDetail(detail, A).appointment.payment[0];
-    expect(own.consumerInvoice).toEqual({ id: "inv-a" });
-    const staff = scopeAppointmentDetail(detail, "u-staff", true).appointment
+    const own = scopeAppointmentDetail(detail, attendee(A)).appointment
       .payment[0];
+    expect(own.consumerInvoice).toEqual({ id: "inv-a" });
+    const staff = scopeAppointmentDetail(detail, STAFF).appointment.payment[0];
     expect(staff.consumerInvoice).toEqual({ id: "inv-a" });
   });
 });
@@ -449,5 +508,54 @@ describe("refundRailLine — one sentence per rail (#1675 X6)", () => {
     expect(
       refundRailLine("GATEWAY", { ...amounts, estimatedRefundPaise: 0 }),
     ).toMatch(/^No refund at this notice/);
+  });
+});
+
+describe("managesGroupPlanAsNamedExpert", () => {
+  const count = jest.fn();
+  const db = { membership: { count } } as unknown as PrismaLike;
+  const booking = (organizationId: string | null) => ({
+    webinar: {
+      webinarPlan: {
+        organizationId,
+        consultantProfile: { id: "cp-host", userId: HOST },
+      },
+    },
+    class: null,
+  });
+
+  beforeEach(() => count.mockReset());
+
+  it("on an organisation's plan, holds for the named expert only while an active expert of that organisation", async () => {
+    count.mockResolvedValue(1);
+    await expect(
+      managesGroupPlanAsNamedExpert(db, booking("org-1"), HOST),
+    ).resolves.toBe(true);
+    expect(count).toHaveBeenCalledWith({
+      where: {
+        organizationId: "org-1",
+        consultantProfileId: "cp-host",
+        status: "ACTIVE",
+        role: "EXPERT",
+      },
+    });
+
+    count.mockResolvedValue(0);
+    await expect(
+      managesGroupPlanAsNamedExpert(db, booking("org-1"), HOST),
+    ).resolves.toBe(false);
+  });
+
+  it("holds on a personal plan and for nobody else, without reading a membership", async () => {
+    await expect(
+      managesGroupPlanAsNamedExpert(db, booking(null), HOST),
+    ).resolves.toBe(true);
+    await expect(
+      managesGroupPlanAsNamedExpert(db, booking("org-1"), A),
+    ).resolves.toBe(false);
+    await expect(
+      managesGroupPlanAsNamedExpert(db, { webinar: null, class: null }, HOST),
+    ).resolves.toBe(false);
+    expect(count).not.toHaveBeenCalled();
   });
 });

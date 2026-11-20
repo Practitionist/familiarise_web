@@ -1,25 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { previewOverageForBooking } from "@/lib/payments/billing/overage-preview";
+import { orgFundingRefusal } from "@/lib/payments/checkout/org-funding";
+import {
+  CheckoutPreviewQuerySchema,
+  type CheckoutPreviewResponse,
+} from "@/schemas/organizations";
 import type { CoveredPlanType } from "@prisma/client";
-
-/**
- * #777 §C — advisory pre-checkout overage preview. Any ACTIVE member can ask
- * "will booking this plan via this org breach my cap, and what does it cost?".
- *
- * The price is read SERVER-SIDE from the plan (no client-supplied amount, no
- * paise/rupee ambiguity); it's the plan's list price, so the preview is a safe
- * (slight over-) estimate vs the post-discount charge. The authoritative charge
- * is still computed at checkout by `recordOverageAtCheckout`.
- */
-const QuerySchema = z.object({
-  planType: z.enum(["CONSULTATION", "CLASS", "WEBINAR", "SUBSCRIPTION"]),
-  planId: z.string().min(1),
-  sessions: z.coerce.number().int().min(1).max(1000).default(1),
-});
 
 /** List price of a plan this org's members can book: live, and public or this org's own. */
 async function planListPricePaise(
@@ -68,6 +57,17 @@ async function planListPricePaise(
   }
 }
 
+/**
+ * Advisory pre-checkout overage preview. Any ACTIVE member can ask
+ * "will booking this plan via this org breach my cap, and what does it cost?".
+ *
+ * The price is read SERVER-SIDE from the plan (no client-supplied amount, no
+ * paise/rupee ambiguity); it's the plan's list price, so the preview is a safe
+ * (slight over-) estimate vs the post-discount charge. The authoritative charge
+ * is still computed at checkout by `recordOverageAtCheckout`.
+ * `fundingRefusal` is the coverage or GST refusal checkout would answer for
+ * this payer, so the picker can disable the organisation before Pay.
+ */
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ orgId: string }> },
@@ -77,7 +77,7 @@ export async function GET(
   if (access.error) return access.error;
 
   const url = new URL(req.url);
-  const parsed = QuerySchema.safeParse({
+  const parsed = CheckoutPreviewQuerySchema.safeParse({
     planType: url.searchParams.get("planType"),
     planId: url.searchParams.get("planId"),
     sessions: url.searchParams.get("sessions") ?? undefined,
@@ -105,6 +105,14 @@ export async function GET(
     bookingPricePaise: pricePaise,
     engagementsConsumed: parsed.data.sessions,
   });
+  const fundingRefusal = await orgFundingRefusal(
+    orgId,
+    access.member.id,
+    parsed.data.planType,
+  );
 
-  return NextResponse.json(result);
+  return NextResponse.json({
+    ...result,
+    fundingRefusal,
+  } satisfies CheckoutPreviewResponse);
 }

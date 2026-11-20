@@ -3,6 +3,7 @@
 import { EmptyState } from "@/components/dashboard/EmptyState";
 import { KeyValueList, Section } from "@/components/dashboard/Section";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { formatInvoiceDate, invoiceDateLabel } from "@/lib/time/invoice-date";
 
 import type { BillingSummary } from "./billing-api";
 
@@ -11,13 +12,6 @@ const CYCLE_LABEL = {
   QUARTERLY: "quarter",
   ANNUAL: "year",
 } as const;
-
-const fmtDate = (iso: string) =>
-  new Date(iso).toLocaleDateString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
 
 /**
  * Billing › License: the LICENSE commercial terms captured at contract
@@ -53,13 +47,19 @@ export function LicensePanel({
                 ? "Not recorded"
                 : `${formatCurrencyAmount(sub.flatFeePaise, "INR")} per ${CYCLE_LABEL[sub.cycle]}`,
             hint:
-              sub.flatFeePaise === null ? "Required before renewal." : undefined,
+              sub.flatFeePaise === null
+                ? "Required before renewal."
+                : undefined,
+          },
+          // The cycle becomes the renewal invoice's billing period, so it reads as invoice dates do.
+          {
+            label: invoiceDateLabel("Current cycle"),
+            value: `${formatInvoiceDate(sub.currentCycleStart)} – ${formatInvoiceDate(sub.currentCycleEnd)}`,
           },
           {
-            label: "Current cycle",
-            value: `${fmtDate(sub.currentCycleStart)} – ${fmtDate(sub.currentCycleEnd)}`,
+            label: invoiceDateLabel("Next renewal"),
+            value: formatInvoiceDate(sub.nextInvoiceDate),
           },
-          { label: "Next renewal", value: fmtDate(sub.nextInvoiceDate) },
           {
             label: "Auto-renew",
             value: contract.autoRenew ? "On" : "Off",

@@ -10,7 +10,6 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
@@ -34,9 +33,11 @@ import { isExternalPayHref } from "@/lib/payments/pay-link-href";
 import { useZonedFormat } from "@/lib/time/zoned-format";
 import { SUPPORT_PATH } from "@/lib/appointments/new-time-door";
 import { CountdownBadge } from "./CountdownBadge";
+import { formatRole } from "@/components/collaborators/format";
 import { KIND_LABEL } from "./AppointmentRow";
 import { RowPrimaryAction } from "./RowPrimaryAction";
 import { SessionTimeline } from "./SessionTimeline";
+import { CounterpartAvatar } from "./CounterpartAvatar";
 
 /** The note a row with no live session shows in place of its timeline. */
 const NO_SESSION_NOTE: Partial<Record<NeedsActionReason, string>> = {
@@ -75,15 +76,6 @@ function NeedsNewTimeNote({
       </Link>
     </>
   );
-}
-
-function initials(name: string): string {
-  return name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase())
-    .join("");
 }
 
 interface AppointmentSheetProps {
@@ -141,22 +133,21 @@ export function AppointmentSheet({
       <SheetContent className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-md max-h-[100dvh]">
         <SheetHeader className="shrink-0 space-y-3 border-b border-border px-5 py-5 text-left sm:px-6 sm:py-6">
           <div className="flex items-start gap-3">
-            <Avatar className="h-11 w-11 border border-border shrink-0">
-              <AvatarImage
-                src={vm.counterpart.image ?? undefined}
-                alt={vm.counterpart.name}
-              />
-              <AvatarFallback className="text-sm font-medium">
-                {initials(vm.counterpart.name) || "?"}
-              </AvatarFallback>
-            </Avatar>
+            <CounterpartAvatar
+              counterpart={vm.counterpart}
+              className="h-11 w-11 border border-border shrink-0"
+              fallbackClassName="text-sm font-medium"
+            />
             <div className="min-w-0">
               <SheetTitle className="text-base leading-snug">
                 {vm.title}
               </SheetTitle>
               <SheetDescription className="mt-0.5">
                 {KIND_LABEL[vm.kind]}
-                {vm.meta ? ` · ${vm.meta}` : ""} · with {vm.counterpart.name}
+                {vm.meta ? ` · ${vm.meta}` : ""}
+                {vm.counterpart.audience
+                  ? ""
+                  : ` · with ${vm.counterpart.name}`}
               </SheetDescription>
             </div>
           </div>
@@ -173,7 +164,7 @@ export function AppointmentSheet({
             )}
             {vm.collaboratorRole && (
               <span className="rounded bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300 px-1.5 py-px text-[10px] font-medium">
-                Your role: {vm.collaboratorRole}
+                Your role: {formatRole(vm.collaboratorRole)}
               </span>
             )}
             {vm.kind === "TRIAL" && (

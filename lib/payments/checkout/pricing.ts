@@ -9,7 +9,6 @@ import {
   type Currency,
   type OfferingPlanStatus,
   type OrgPlanVisibility,
-  PaymentStatus,
 } from "@prisma/client";
 import { Refusal } from "@/lib/errors/refusal";
 import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
@@ -44,6 +43,7 @@ import {
   findPriorSeatPayment,
   assertSeatRemintable,
   assertClassEnrolmentOpen,
+  refusesBeforeReuse,
 } from "@/lib/payments/checkout/seats";
 import { resolveSubscriptionCheckoutPeriod } from "@/lib/payments/checkout/renewal";
 import { validateSlotAvailability } from "@/lib/payments/checkout/occupancy-validate";
@@ -319,11 +319,11 @@ export async function calculateAmountAndValidate(
           });
         }
 
-        // A settled seat fails fast before any gateway order; a HELD one may still be resumed below.
+        // A settled or removed seat fails fast before any gateway order; a HELD one may still be resumed below.
         const priorWebinarSeat = webinar.appointment
           ? await findPriorSeatPayment(tx, userId, webinar.appointment.id)
           : null;
-        if (priorWebinarSeat?.paymentStatus === PaymentStatus.SUCCEEDED) {
+        if (priorWebinarSeat && refusesBeforeReuse(priorWebinarSeat)) {
           assertSeatRemintable(priorWebinarSeat, "WEBINAR");
         }
         if (holdsSettledSeat(webinar.appointment, userId)) {
@@ -387,11 +387,11 @@ export async function calculateAmountAndValidate(
           });
         }
 
-        // A settled seat fails fast before any gateway order; a HELD one may still be resumed below.
+        // A settled or removed seat fails fast before any gateway order; a HELD one may still be resumed below.
         const priorClassSeat = classInstance.appointment
           ? await findPriorSeatPayment(tx, userId, classInstance.appointment.id)
           : null;
-        if (priorClassSeat?.paymentStatus === PaymentStatus.SUCCEEDED) {
+        if (priorClassSeat && refusesBeforeReuse(priorClassSeat)) {
           assertSeatRemintable(priorClassSeat, "CLASS");
         }
         if (holdsSettledSeat(classInstance.appointment, userId)) {

@@ -29,6 +29,7 @@ import { liveCheckoutHold } from "@/lib/booking/request-cohort";
 import { liveReminderPayment } from "@/lib/booking/payment-reminder-eligibility";
 import { mapLimit, poolLimit } from "@/lib/db/bounded";
 import { MINIMUM_BOOKING_LEAD_TIME_MS } from "@/lib/payments/constants";
+import { isPreMintIntent } from "@/lib/payments/pre-mint-intent";
 import { lifecycleOf, planOf } from "@/lib/appointments/presentation-input";
 import { isSponsoredPayment } from "@/lib/appointments/payment-display";
 import {
@@ -119,7 +120,14 @@ const INBOX_APPOINTMENT_SELECT = {
       },
     },
     deletedAt: true,
-    payment: { select: { ...BUYER_PAYMENT_DISPLAY_SELECT, deletedAt: true } },
+    // The order id is read only to say whether a gateway order ever existed.
+    payment: {
+      select: {
+        ...BUYER_PAYMENT_DISPLAY_SELECT,
+        deletedAt: true,
+        paymentIntent: true,
+      },
+    },
     organization: { select: { name: true } },
     // #1760 — the EXPIRED edge tells a lapsed pay link from an unanswered
     // request. #1846 added the second arm: a consultant's withdraw-approval now
@@ -337,6 +345,7 @@ function toPaymentInput(p: PaymentRow): PaymentInput {
     currency: p.currency,
     createdAt: p.createdAt,
     expiresAt: p.expiresAt,
+    gatewayOrderMinted: !isPreMintIntent(p.paymentIntent),
   };
 }
 

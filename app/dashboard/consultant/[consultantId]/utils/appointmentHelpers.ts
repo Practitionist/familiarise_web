@@ -93,22 +93,6 @@ export function getCollaboratorRole(
   return null;
 }
 
-/** Format a collaborator role enum value to a human-readable label */
-export function formatCollaboratorRole(role: string): string {
-  const labels: Record<string, string> = {
-    HOST: "Host",
-    CO_HOST: "Co-Host",
-    MODERATOR: "Moderator",
-    GUEST_SPEAKER: "Guest Speaker",
-    TECHNICAL_SUPPORT: "Tech Support",
-    CO_INSTRUCTOR: "Co-Instructor",
-    TEACHING_ASSISTANT: "TA",
-    GUEST_LECTURER: "Guest Lecturer",
-    CONTENT_CREATOR: "Content Creator",
-  };
-  return labels[role] || role;
-}
-
 /** Get the CSS class for a collaborator role badge */
 export function getRoleBadgeStyle(role: string): string {
   if (role === "HOST") return "bg-gray-900 text-white";
@@ -126,13 +110,11 @@ type AppointmentWithTrial = TAppointment & {
   } | null;
 };
 
-// Get the relevant name based on appointment type
-// For consultations/subscriptions/trials: returns the consultee (requester) name
-// For webinars/classes: returns the consultant (host) name
+/** Whose session this is: the learner on a 1:1, the owner for a co-host; null on a host's own webinar or class. */
 export const getConsumeeName = (
   appointment: TAppointment,
   viewerConsultantId?: string,
-): string => {
+): string | null => {
   if (!appointment) return "Unknown User";
   const appt = appointment as AppointmentWithTrial;
 
@@ -156,7 +138,7 @@ export const getConsumeeName = (
       ) {
         return plan.consultantProfile?.user?.name ?? "Unknown expert";
       }
-      return "Registered attendees";
+      return null;
     }
     case "CLASS": {
       const plan = appointment.class?.classPlan;
@@ -167,7 +149,7 @@ export const getConsumeeName = (
       ) {
         return plan.consultantProfile?.user?.name ?? "Unknown expert";
       }
-      return "Enrolled learners";
+      return null;
     }
     default:
       return "Unknown User";

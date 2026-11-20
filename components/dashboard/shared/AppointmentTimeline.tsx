@@ -27,7 +27,7 @@ import type {
 
 /**
  * `BookingHistoryEntity` values read as SQL enums; these are the operator's
- * words for the same seven lifecycles. An unknown key reads "Booking" rather
+ * words for the same lifecycles, and for one attendee's seat. An unknown key reads "Booking" rather
  * than printing the raw enum.
  */
 const ENTITY_LABEL: Record<string, string> = {
@@ -38,6 +38,7 @@ const ENTITY_LABEL: Record<string, string> = {
   TRIAL: "Trial",
   RESCHEDULE_REQUEST: "Reschedule",
   OCCURRENCE: "Session",
+  SEAT: "Seat",
 };
 
 function entityLabel(entity: string): string {
@@ -63,9 +64,17 @@ function actorLabel(entry: BookingTimelineEntry): string {
   return entry.actor?.name?.trim() || "system";
 }
 
+/** A seat row that keeps its status (a lift) is its reason, not an edge. */
+function seatReasonOnly(entry: BookingTimelineEntry): boolean {
+  return (
+    entry.entity === "SEAT" && entry.from === entry.to && Boolean(entry.reason)
+  );
+}
+
 /** A status edge in words ("Scheduled → Unverified"); a reschedule row is the proposal, its answer is an edge. */
 export function timelineStepLabel(entry: BookingTimelineEntry): string {
   if (entry.kind === "reschedule") return "Proposed";
+  if (seatReasonOnly(entry) && entry.reason) return entry.reason;
   const to = humanizeEnum(entry.to);
   return entry.from ? `${humanizeEnum(entry.from)} → ${to}` : to;
 }
@@ -77,6 +86,7 @@ function TimelineRow({ entry }: { entry: BookingTimelineEntry }) {
       <div className="flex flex-wrap items-center gap-2">
         <Badge variant="secondary" className="bg-muted text-muted-foreground">
           {entityLabel(entry.entity)}
+          {entry.seatHolder?.name ? ` · ${entry.seatHolder.name}` : ""}
         </Badge>
         <span className="text-xs text-foreground">
           {timelineStepLabel(entry)}
@@ -95,7 +105,7 @@ function TimelineRow({ entry }: { entry: BookingTimelineEntry }) {
           </>
         )}
       </p>
-      {entry.reason && (
+      {entry.reason && !seatReasonOnly(entry) && (
         <p className="mt-1 text-xs text-muted-foreground/80">{entry.reason}</p>
       )}
     </li>

@@ -2,15 +2,17 @@
  * @jest-environment node
  */
 
-/**
- * #1580 — an erased consultant used to stay an ACCEPTED collaborator in every
- * split and roster. The scrub now runs the same flip the moderation ban runs
- * inside its transaction and revokes Stream access per plan after commit.
- */
+// An erased expert leaves every team: the scrub ends their invitations and
+// team places as REMOVED inside its transaction and takes Stream access back
+// per plan after it, through the erasure's own outbox.
 
 // Digital product erasure has its own suite; these scrubs own no products.
+const mockStageNotices = jest.fn(async (..._args: unknown[]) => ({}));
+const mockSendOwed = jest.fn(async (..._args: unknown[]) => undefined);
 jest.mock("@/lib/collaborators/notifications", () => ({
-  stageCollaboratorNotifications: jest.fn(async () => ({})),
+  stageCollaboratorNotifications: (...args: unknown[]) =>
+    mockStageNotices(...args),
+  sendOwedCohostEmails: (...args: unknown[]) => mockSendOwed(...args),
 }));
 jest.mock("../../lib/compliance/erasure/mail-footprint", () => ({
   scrubMailFootprintTx: jest.fn(),
@@ -38,8 +40,14 @@ jest.mock("../../lib/prisma", () => ({
     return mockLogDb;
   },
 }));
-jest.mock("../../lib/collaborators/service", () => ({
-  revokeCollaboratorAccess: jest.fn(async () => ({ success: true })),
+const mockPersistRevocation = jest.fn();
+jest.mock("../../lib/stream/access-revocation", () => ({
+  persistCollaboratorRevocationInTx: (...args: unknown[]) =>
+    mockPersistRevocation(...args),
+  revokeCollaboratorAccess: jest.fn(),
+}));
+jest.mock("../../lib/stream/collaborator-access", () => ({
+  driveCollaboratorRevocation: jest.fn(async () => null),
 }));
 jest.mock("../../lib/stream-client", () => ({
   isStreamConfigured: jest.fn(() => true),
@@ -50,7 +58,7 @@ jest.mock("../../lib/stream-client", () => ({
   })),
 }));
 
-import { revokeCollaboratorAccess } from "@/lib/collaborators/service";
+import { driveCollaboratorRevocation } from "@/lib/stream/collaborator-access";
 import { scrubUser } from "@/lib/compliance/erasure/scrub-user";
 import { supportScrubModels } from "../fixtures/support-erasure-models";
 
@@ -60,14 +68,25 @@ const tx = {
     update: jest.fn(async () => ({})),
     findUnique: jest.fn(async () => ({ consultantProfileId: "cp-1" })),
   },
-  consultantProfile: { updateMany: jest.fn(async () => ({ count: 1 })) },
-  // #1598 P4-P0-05 — the consultee free-text scrub runs in the same tx.
+  consultantProfile: {
+    updateMany: jest.fn(async () => ({ count: 1 })),
+    findUnique: jest.fn(async () => ({ userId: "u1" })),
+  },
+  // The consultee free-text scrub runs in the same tx.
   consulteeProfile: { updateMany: jest.fn(async () => ({ count: 0 })) },
   trial: { updateMany: jest.fn(async () => ({ count: 0 })) },
   consultation: { updateMany: jest.fn(async () => ({ count: 0 })) },
   collaborator: {
+    findMany: jest.fn(async () => [{ id: "c-1" }]),
     updateManyAndReturn: jest.fn(async () => [
-      { collaboratorType: "WEBINAR", webinarPlanId: "wp-1", classPlanId: null },
+      {
+        id: "c-1",
+        consultantProfileId: "cp-1",
+        webinarPlanId: "wp-1",
+        classPlanId: null,
+        status: "REMOVED",
+        acceptedAt: new Date("2026-11-01T00:00:00Z"),
+      },
     ]),
   },
   session: {
@@ -80,8 +99,8 @@ const tx = {
   appointmentWaitlist: { deleteMany: jest.fn(async () => ({ count: 0 })) },
   windowBackupInterest: { deleteMany: jest.fn(async () => ({ count: 0 })) },
   referral: { updateMany: jest.fn(async () => ({ count: 1 })) },
-  // #1593 — the outbox: the request being processed and the rows the scrub
-  // writes for it inside the transaction.
+  // The outbox: the request being processed and the rows the scrub writes
+  // for it inside the transaction.
   erasureRequest: { findFirst: jest.fn(async () => ({ id: "er-1" })) },
   streamRevocationRetry: { createMany: jest.fn(async () => ({ count: 1 })) },
 };
@@ -102,23 +121,45 @@ const db = {
 beforeEach(() => jest.clearAllMocks());
 
 describe("DPDP erasure flips collaborator rows", () => {
-  it("moves PENDING/ACCEPTED rows to REMOVED in the transaction and revokes each plan after it", async () => {
+  it("ends the user's PENDING and ACCEPTED rows as REMOVED in the transaction and revokes each plan after it", async () => {
     const result = await scrubUser(db as never, "u1");
 
     expect(result.scrubbed).toBe(true);
-    expect(tx.collaborator.updateManyAndReturn).toHaveBeenCalledWith(
+    expect(tx.collaborator.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
-          consultantProfileId: "cp-1",
+          consultantProfile: { userId: "u1" },
           status: { in: ["PENDING", "ACCEPTED"] },
         },
-        data: { status: "REMOVED", respondedAt: expect.any(Date) },
       }),
     );
-    expect(revokeCollaboratorAccess).toHaveBeenCalledWith(
-      "webinar",
-      "wp-1",
+    // The platform ended it, so no person is named.
+    expect(tx.collaborator.updateManyAndReturn).toHaveBeenCalledWith({
+      where: { id: "c-1", status: { in: ["PENDING", "ACCEPTED"] } },
+      data: { status: "REMOVED", endedByUserId: null },
+    });
+    // The erasure's own outbox row records the access to take back.
+    expect(mockPersistRevocation).not.toHaveBeenCalled();
+    expect(driveCollaboratorRevocation).toHaveBeenCalledWith(
+      { planType: "webinar", planId: "wp-1" },
       "u1",
+      Number.POSITIVE_INFINITY,
+    );
+  });
+
+  it("stages the seat holders' emails of an erased co-presenter once the scrub has committed", async () => {
+    const owed = { collaboratorId: "c-1", userIds: ["u-l1"] };
+    mockStageNotices.mockResolvedValueOnce({ learnerEmails: owed });
+    const committed = jest.fn();
+    db.$transaction.mockImplementationOnce(async (fn) => {
+      const result = await fn(tx);
+      committed();
+      return result;
+    });
+    await scrubUser(db as never, "u1");
+    expect(mockSendOwed.mock.calls).toEqual([[[owed], "scrubUser"]]);
+    expect(mockSendOwed.mock.invocationCallOrder[0]).toBeGreaterThan(
+      committed.mock.invocationCallOrder[0],
     );
   });
 
@@ -183,12 +224,12 @@ describe("DPDP erasure flips collaborator rows", () => {
     expect(sql).not.toContain("users");
   });
 
-  it("writes the outbox row inside the transaction and settles it after the attempt (#1593)", async () => {
+  it("writes the outbox row inside the transaction and settles it after the attempt", async () => {
     // The revocation fails this time: the row was already durable before the
     // attempt, and is left FAILED with its first retry slot for the sweep.
-    (revokeCollaboratorAccess as jest.Mock).mockResolvedValueOnce({
-      success: false,
-    });
+    (driveCollaboratorRevocation as jest.Mock).mockResolvedValueOnce(
+      "1 of 2 event channels not left",
+    );
 
     await scrubUser(db as never, "u1");
 

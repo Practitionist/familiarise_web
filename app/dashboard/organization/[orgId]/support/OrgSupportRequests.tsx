@@ -17,7 +17,7 @@ import {
 import { useListParams } from "@/hooks/useListParams";
 import { caseKeyOf } from "@/lib/support/case-key";
 import { humanizeEnum, type Tone } from "@/lib/ui/tone";
-import { ISSUE_TYPE_LABELS } from "@/utils/supportTicketUrl";
+import { CASE_TOPIC_LABEL, ticketTopic } from "@/lib/support/case-topic";
 import { supportKeys } from "@/lib/support/support-keys";
 import { useZoneClock } from "@/lib/time/use-zone-clock";
 import type { ZoneClock } from "@/lib/time/zone-clock";
@@ -79,13 +79,12 @@ function buildColumns(
     {
       key: "category",
       header: "Category",
-      cell: (t) => {
-        const label =
-          (t.issueType &&
-            ISSUE_TYPE_LABELS[t.issueType as keyof typeof ISSUE_TYPE_LABELS]) ??
-          (t.category ? humanizeEnum(t.category) : "—");
-        return <span className="text-muted-foreground">{label}</span>;
-      },
+      // The topic the case page header reads, so both name the same category.
+      cell: (t) => (
+        <span className="text-muted-foreground">
+          {CASE_TOPIC_LABEL[ticketTopic(t)]}
+        </span>
+      ),
     },
     {
       key: "status",

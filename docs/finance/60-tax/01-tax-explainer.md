@@ -32,7 +32,7 @@ What the code does about GST once registered:
 
 - It charges 18 percent on the discounted price at checkout. The default SAC code is 999293 (commercial training and coaching), which every tax invoice carries; the checkout tax result names 999294 for webinars and classes, but that code is not written onto a document.
 - It splits the tax into the right parts. If the buyer's state is the platform's own state, the 18 percent is two halves, 9 percent for the central government (CGST) and 9 percent for the state (SGST). If the buyer is in another state, it is 18 percent IGST. If the buyer's state is not known, a personal buyer is treated as in the platform's own state.
-- It issues a numbered tax invoice for each personal payment, and a credit note when part or all of it is refunded. The invoice needs the platform's own GSTIN to be configured; without it no invoice is issued, and the booking is not affected.
+- It issues a numbered tax invoice for each personal payment, and a credit note when part or all of it is refunded. How referral credits and member-paid overage should appear on those documents is an open question for the accountant ([open GST questions](06-open-gst-questions-for-the-accountant.md)). The invoice needs the platform's own GSTIN to be configured; without it no invoice is issued, and the booking is not affected.
 - It produces one file per month of every invoice and credit note, which the accountant uses for the monthly GST return.
 
 ## TDS: tax withheld from the expert
@@ -80,6 +80,7 @@ If the platform pays a micro or small enterprise late, the platform cannot deduc
 
 - [How payouts work](../40-payouts/01-how-payouts-work.md)
 - [Money map](../00-overview/01-money-map.md)
+- [Open GST questions for the accountant](06-open-gst-questions-for-the-accountant.md)
 
 ## Deprecated & Superseded Approaches
 

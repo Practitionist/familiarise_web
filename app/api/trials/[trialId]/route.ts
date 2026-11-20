@@ -56,7 +56,11 @@ import {
   stageTrialCancelNotice,
   type TrialCancelNotice,
 } from "@/lib/trials/cancel-notice";
-import { TrialCancelBodySchema, UpdateTrialSchema } from "@/schemas/trials";
+import {
+  TrialCancelBodySchema,
+  UpdateTrialSchema,
+  type TrialCancelBody,
+} from "@/schemas/trials";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 import { platformCancelDoorRefusal } from "@/lib/booking/platform-cancel";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
@@ -872,7 +876,9 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
       isConsultantInitiated &&
       session.user.consultantProfileId === existingTrial.consultantProfileId &&
       existingTrial.status === TrialStatus.SCHEDULED;
-    const confirmedRefundPaise = await readConfirmedRefund(request);
+    const read = await readCancelClick(request);
+    if (!read.ok) return read.response;
+    const { click } = read;
     const noticeUserIds = [
       existingTrial.consultantProfile.user.id,
       existingTrial.consulteeProfile.user.id,
@@ -963,7 +969,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
         paymentId: existingTrial.paymentId,
         isConsultantInitiated,
       });
-      assertTrialQuoteConfirmed(quote, confirmedRefundPaise);
+      assertTrialQuoteConfirmed(quote, click);
       const owed = trialRefundOwed({ trialId, quote, side: cancelSide });
       return { quote, owed, cancelled: await cancelTrial(owed) };
     };
@@ -1066,14 +1072,31 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
   }
 }
 
-/**
- * #1846 — the refund amount the caller confirmed from the cancel preview, in
- * paise, from an optional JSON body. Absent or malformed means unconfirmed.
- */
-async function readConfirmedRefund(
+/** What the click confirmed from the cancel dialog: an empty body confirms nothing, a malformed one answers 400. */
+async function readCancelClick(
   request: NextRequest,
-): Promise<number | undefined> {
-  const body: unknown = await request.json().catch(() => null);
+): Promise<
+  { ok: true; click: TrialCancelBody } | { ok: false; response: NextResponse }
+> {
+  const text = await request.text().catch(() => "");
+  if (text.trim() === "") return { ok: true, click: {} };
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    body = undefined;
+  }
   const parsed = TrialCancelBodySchema.safeParse(body);
-  return parsed.success ? parsed.data.confirmedRefundPaise : undefined;
+  if (parsed.success) return { ok: true, click: parsed.data };
+  return {
+    ok: false,
+    response: NextResponse.json(
+      {
+        error: "Validation failed",
+        code: "VALIDATION_FAILED",
+        details: parsed.error.issues,
+      },
+      { status: 400 },
+    ),
+  };
 }

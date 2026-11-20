@@ -1,6 +1,9 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
-import { liveParticipant } from "@/lib/booking/participants";
+import {
+  liveParticipant,
+  NOT_COLLABORATOR_ROW,
+} from "@/lib/booking/participants";
 import { NextRequest, NextResponse } from "next/server";
 import { listDateFilterSchema } from "@/schemas/list-date-filter";
 import { Prisma } from "@prisma/client";
@@ -154,6 +157,7 @@ export async function GET(request: NextRequest) {
                 participants: {
                   some: {
                     ...liveParticipant(),
+                    ...NOT_COLLABORATOR_ROW,
                     user: { consulteeProfile: { id: consulteeProfileId } },
                   },
                 },

@@ -8,9 +8,15 @@
  * the scheduling bucket and translate its span onto the viewer's clock.
  */
 
-import { formatClockTime, formatDayLabel } from "@/lib/time/display";
+import {
+  formatClockTime,
+  formatDateTimeLabel,
+  formatDayLabel,
+  type DisplayOpts,
+} from "@/lib/time/display";
 import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
 import { REQUEST_INDETERMINATE_ERROR } from "./allocationService";
+import type { JustTakenReason } from "./week-grid-model";
 
 export interface AllocationToast {
   title: string;
@@ -214,6 +220,41 @@ export const sessionBeingRescheduled = (): AllocationToast => ({
     "This is the session you're rescheduling — pick a new available time for it.",
 });
 
+export const otherSessionOfBooking = (): AllocationToast => ({
+  variant: "default",
+  title: "Another session of this booking",
+  description:
+    "That time is a session of this booking you are not moving. Pick a free time, or choose that session to move it as well.",
+});
+
+/** A pick the latest data no longer allows was removed: says which rule removed it. */
+export function selectionDropped(
+  reasons: readonly JustTakenReason[],
+): AllocationToast {
+  if (reasons.includes("taken")) {
+    return {
+      variant: "destructive",
+      title: "One of your chosen times was just taken",
+      description:
+        "That time is no longer free, so it has been removed — pick another time.",
+    };
+  }
+  if (reasons.includes("ownSession")) {
+    return {
+      variant: "destructive",
+      title: "One of your chosen times is another session of this booking",
+      description:
+        "That session is not being moved, so the time has been removed — pick another time.",
+    };
+  }
+  return {
+    variant: "destructive",
+    title: "One of your chosen times can't be booked any more",
+    description:
+      "It is now too close to its start or past this plan's limit. It has been removed — pick another time.",
+  };
+}
+
 export const slotUnavailable = (isBooked: boolean): AllocationToast => ({
   variant: "destructive",
   title: "Slot unavailable",
@@ -256,11 +297,27 @@ export const keepGoing = (
 // #1705 — one title for every "it worked" outcome. Manual, auto and
 // requested-times approvals used to answer with three different headlines
 // for the same fact; the description carries what differs.
-export const timingsSaved = (): AllocationToast => ({
-  variant: "default",
-  title: "Sessions scheduled",
-  description: "The times you picked are confirmed.",
-});
+// An unpaid request is held, not confirmed: the toast names the pay link's end
+// when this call minted one, and otherwise only that the learner must pay.
+export const timingsSaved = (
+  result: { awaitingPayment?: boolean; payExpiresAt?: Date | null } = {},
+  opts?: DisplayOpts,
+): AllocationToast => {
+  if (result.awaitingPayment !== true) {
+    return {
+      variant: "default",
+      title: "Sessions scheduled",
+      description: "The times you picked are confirmed.",
+    };
+  }
+  return {
+    variant: "default",
+    title: "Times held",
+    description: result.payExpiresAt
+      ? `The learner has until ${formatDateTimeLabel(result.payExpiresAt, opts)} to pay. The sessions are confirmed once they do.`
+      : "The learner has to pay before the sessions are confirmed.",
+  };
+};
 
 export const autoScheduled = (): AllocationToast => ({
   variant: "default",

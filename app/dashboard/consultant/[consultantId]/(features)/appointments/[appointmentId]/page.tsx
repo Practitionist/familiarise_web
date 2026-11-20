@@ -7,9 +7,13 @@ import {
 import {
   readAppointmentDetail,
   scopeAppointmentDetail,
+  viewerMayWithdrawReschedule,
 } from "@/lib/data/appointment-detail";
+import { managesGroupPlanAsNamedExpert } from "@/lib/enterprise/membership-guards";
+import prisma from "@/lib/prisma";
 import DetailPageClient from "./DetailPageClient";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
+import { getSession } from "@/lib/auth-server";
 import { getViewerZone } from "@/lib/time/viewer-zone-server";
 import { DisplayZoneProvider } from "@/lib/time/zoned-format";
 
@@ -60,11 +64,24 @@ export default async function AppointmentDetailPage({
   // One zone for the server render and hydration (#418, #1527 QA).
   const viewerZone = await getViewerZone();
   const queryClient = new QueryClient();
-  // The same shape the API route answers: the host reads every seat, but a
-  // receipt pointer travels only on rows the viewer paid (or to staff).
+  // The same shape the API route answers: the expert who manages the plan
+  // reads every seat, but a receipt pointer travels only on rows the viewer
+  // paid (or to staff).
   queryClient.setQueryData(
     ["appointment-detail", appointmentId],
-    scopeAppointmentDetail(detail, access.userId, access.isInspecting),
+    scopeAppointmentDetail(detail, {
+      userId: access.userId,
+      privileged: access.isInspecting,
+      managesGroupPlan: await managesGroupPlanAsNamedExpert(
+        prisma,
+        appointment,
+        access.userId,
+      ),
+      mayWithdrawReschedule: await viewerMayWithdrawReschedule(
+        detail,
+        await getSession(),
+      ),
+    }),
   );
 
   return (

@@ -1,10 +1,75 @@
 import { faker } from "@faker-js/faker";
+import type { CollaboratorRole, CollaboratorStatus } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import { tierForRole } from "../../lib/collaborators/roles";
 
+const WEBINAR_ROLES: CollaboratorRole[] = [
+  "CO_HOST",
+  "MODERATOR",
+  "GUEST_SPEAKER",
+  "TECHNICAL_SUPPORT",
+];
+
+const CLASS_ROLES: CollaboratorRole[] = [
+  "CO_INSTRUCTOR",
+  "TEACHING_ASSISTANT",
+  "GUEST_LECTURER",
+  "CONTENT_CREATOR",
+];
+
+const SEEDED_STATUSES: CollaboratorStatus[] = [
+  "PENDING",
+  "ACCEPTED",
+  "DECLINED",
+];
+
+type SeedPlan = { id: string; consultantProfileId: string | null };
+
 /**
- * Creates collaborators for some webinar and class plans.
+ * One invitation, then its answer. A row is born PENDING and the database
+ * stamps the accepted and ended times on the move, so the seed takes the same
+ * two steps the product does. Returns false when the plan's rules refuse the
+ * row (a second presenter, a fourth collaborator, shares past 90%).
  */
+async function seedCollaborator(
+  planType: "WEBINAR" | "CLASS",
+  plan: SeedPlan,
+  consultantProfileId: string,
+): Promise<boolean> {
+  const role = faker.helpers.arrayElement(
+    planType === "WEBINAR" ? WEBINAR_ROLES : CLASS_ROLES,
+  );
+  const status = faker.helpers.arrayElement(SEEDED_STATUSES);
+  try {
+    const invited = await prisma.collaborator.create({
+      data: {
+        consultantProfileId,
+        collaboratorType: planType,
+        ...(planType === "WEBINAR"
+          ? { webinarPlanId: plan.id }
+          : { classPlanId: plan.id }),
+        role,
+        tier: tierForRole(role),
+        revenueShareBps: faker.helpers.arrayElement([
+          1000, 1500, 2000, 2500, 3000,
+        ]),
+        invitedById: plan.consultantProfileId,
+      },
+      select: { id: true },
+    });
+    if (status !== "PENDING") {
+      await prisma.collaborator.update({
+        where: { id: invited.id },
+        data: { status },
+      });
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Seeds one or two collaborators on half of the webinar and class plans. */
 export async function createCollaborators() {
   console.log("Creating collaborators...");
 
@@ -18,120 +83,40 @@ export async function createCollaborators() {
     return;
   }
 
-  let webinarCollabsCreated = 0;
-  let classCollabsCreated = 0;
+  const [webinarPlans, classPlans] = await Promise.all([
+    prisma.webinarPlan.findMany({
+      select: { id: true, consultantProfileId: true },
+      take: 10,
+    }),
+    prisma.classPlan.findMany({
+      select: { id: true, consultantProfileId: true },
+      take: 10,
+    }),
+  ]);
 
-  // Get webinar plans with their owners
-  const webinarPlans = await prisma.webinarPlan.findMany({
-    select: { id: true, consultantProfileId: true },
-    take: 10,
-  });
+  const created = { WEBINAR: 0, CLASS: 0 };
+  const batches = [
+    { planType: "WEBINAR" as const, plans: webinarPlans },
+    { planType: "CLASS" as const, plans: classPlans },
+  ];
 
-  // Get class plans with their owners
-  const classPlans = await prisma.classPlan.findMany({
-    select: { id: true, consultantProfileId: true },
-    take: 10,
-  });
-
-  const webinarRoles = [
-    "CO_HOST",
-    "MODERATOR",
-    "GUEST_SPEAKER",
-    "TECHNICAL_SUPPORT",
-  ] as const;
-
-  const classRoles = [
-    "CO_INSTRUCTOR",
-    "TEACHING_ASSISTANT",
-    "GUEST_LECTURER",
-    "CONTENT_CREATOR",
-  ] as const;
-
-  const statuses = ["PENDING", "ACCEPTED", "DECLINED"] as const;
-
-  // Add collaborators to ~50% of webinar plans
-  for (const plan of webinarPlans.slice(
-    0,
-    Math.ceil(webinarPlans.length * 0.5),
-  )) {
-    // Pick 1-2 collaborators (not the owner)
-    const availableCollaborators = consultantProfiles.filter(
-      (cp) => cp.id !== plan.consultantProfileId,
-    );
-
-    const numCollabs = faker.number.int({ min: 1, max: 2 });
-    const selectedCollabs = faker.helpers
-      .shuffle(availableCollaborators)
-      .slice(0, numCollabs);
-
-    for (const collab of selectedCollabs) {
-      try {
-        const status = faker.helpers.arrayElement(statuses);
-        const role = faker.helpers.arrayElement(webinarRoles);
-        await prisma.collaborator.create({
-          data: {
-            consultantProfileId: collab.id,
-            collaboratorType: "WEBINAR",
-            webinarPlanId: plan.id,
-            role,
-            tier: tierForRole(role),
-            revenueShareBps: faker.helpers.arrayElement([
-              1000, 1500, 2000, 2500, 3000,
-            ]),
-            status,
-            invitedById: plan.consultantProfileId!,
-            ...(status === "ACCEPTED" || status === "DECLINED"
-              ? { respondedAt: faker.date.recent({ days: 7 }) }
-              : {}),
-          },
-        });
-        webinarCollabsCreated++;
-      } catch {
-        // Skip unique constraint violations
-      }
-    }
-  }
-
-  // Add collaborators to ~50% of class plans
-  for (const plan of classPlans.slice(0, Math.ceil(classPlans.length * 0.5))) {
-    const availableCollaborators = consultantProfiles.filter(
-      (cp) => cp.id !== plan.consultantProfileId,
-    );
-
-    const numCollabs = faker.number.int({ min: 1, max: 2 });
-    const selectedCollabs = faker.helpers
-      .shuffle(availableCollaborators)
-      .slice(0, numCollabs);
-
-    for (const collab of selectedCollabs) {
-      try {
-        const status = faker.helpers.arrayElement(statuses);
-        const role = faker.helpers.arrayElement(classRoles);
-        await prisma.collaborator.create({
-          data: {
-            consultantProfileId: collab.id,
-            collaboratorType: "CLASS",
-            classPlanId: plan.id,
-            role,
-            tier: tierForRole(role),
-            revenueShareBps: faker.helpers.arrayElement([
-              1000, 1500, 2000, 2500, 3000,
-            ]),
-            status,
-            invitedById: plan.consultantProfileId!,
-            ...(status === "ACCEPTED" || status === "DECLINED"
-              ? { respondedAt: faker.date.recent({ days: 7 }) }
-              : {}),
-          },
-        });
-        classCollabsCreated++;
-      } catch {
-        // Skip unique constraint violations
+  for (const { planType, plans } of batches) {
+    for (const plan of plans.slice(0, Math.ceil(plans.length * 0.5))) {
+      const others = consultantProfiles.filter(
+        (profile) => profile.id !== plan.consultantProfileId,
+      );
+      const invitees = faker.helpers
+        .shuffle(others)
+        .slice(0, faker.number.int({ min: 1, max: 2 }));
+      for (const invitee of invitees) {
+        if (await seedCollaborator(planType, plan, invitee.id)) {
+          created[planType]++;
+        }
       }
     }
   }
 
   console.log(
-    `Created ${webinarCollabsCreated} webinar collaborators, ${classCollabsCreated} class collaborators`,
+    `Created ${created.WEBINAR} webinar collaborators, ${created.CLASS} class collaborators`,
   );
 }

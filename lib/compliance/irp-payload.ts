@@ -17,6 +17,7 @@
  * the GSTIN where available, with an alpha→numeric lookup as the fallback.
  */
 
+import { invoiceDateIso } from "@/lib/time/invoice-date";
 import { numericStateCode } from "./state-codes";
 
 interface IrpPayloadLineItem {
@@ -87,12 +88,9 @@ function toRupees(paise: number): number {
   return Math.round(paise) / 100;
 }
 
-// DD/MM/YYYY in UTC — the IRP doc-date format. UTC keeps it deterministic
-// regardless of the cron host TZ.
+// DD/MM/YYYY, the IRP doc-date format, on the India date the PDF prints.
 function formatDocDate(d: Date): string {
-  const dd = String(d.getUTCDate()).padStart(2, "0");
-  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const yyyy = d.getUTCFullYear();
+  const [yyyy, mm, dd] = invoiceDateIso(d).split("-");
   return `${dd}/${mm}/${yyyy}`;
 }
 

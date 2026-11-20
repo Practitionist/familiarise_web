@@ -1,96 +1,29 @@
-import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
+import {
+  CollaborationError,
+  leaveCollaboration,
+  removeCollaborator,
+  updatePendingTerms,
+} from "@/lib/collaborators/service";
+import { planWhere, type PlanType } from "@/lib/collaborators/team";
+import { resolveCollaborationViewer } from "@/lib/collaborators/viewer";
 import prisma from "@/lib/prisma";
 import {
-  CollaboratorCapError,
-  CollaboratorNotFoundError,
-  CollaboratorTermsLockedError,
-  updateCollaborator,
-  removeCollaborator,
-} from "@/lib/collaborators/service";
-import {
-  updateClassCollaboratorSchema,
-  updateWebinarCollaboratorSchema,
+  memberParamsSchema,
+  updatePendingTermsSchemas,
 } from "@/schemas/collaborators";
-import { hasOrgPermission } from "@/lib/auth/org-permissions";
+import {
+  collaborationErrorResponse,
+  parseBody,
+  parseParams,
+  requireManager,
+  unauthorized,
+} from "./http";
 
-type PlanType = "webinar" | "class";
 type RouteContext = { params: Promise<{ planId: string; id: string }> };
 
-const UPDATE_SCHEMAS = {
-  webinar: updateWebinarCollaboratorSchema,
-  class: updateClassCollaboratorSchema,
-} as const;
-
-const captureRouteError = (
-  error: unknown,
-  what: string,
-  planType: PlanType,
-) => {
-  Sentry.captureException(
-    error instanceof Error ? error : new Error(String(error)),
-    { tags: { subsystem: "collaborations" } },
-  );
-  console.error(`Error ${what} ${planType} collaborator:`, error);
-};
-
-async function resolveParties(
-  planType: PlanType,
-  planId: string,
-  userId: string,
-) {
-  const [plan, callerProfile] = await Promise.all([
-    planType === "webinar"
-      ? prisma.webinarPlan.findUnique({
-          where: { id: planId },
-          select: { consultantProfileId: true, organizationId: true },
-        })
-      : prisma.classPlan.findUnique({
-          where: { id: planId },
-          select: { consultantProfileId: true, organizationId: true },
-        }),
-    prisma.consultantProfile.findFirst({
-      where: { userId },
-      select: { id: true },
-    }),
-  ]);
-  if (!plan) return null;
-
-  const isOwner =
-    Boolean(callerProfile?.id) &&
-    plan.consultantProfileId === callerProfile?.id;
-
-  let isOrgAdmin = false;
-  if (!isOwner && plan.organizationId) {
-    const membership = await prisma.membership.findUnique({
-      where: {
-        userId_organizationId: {
-          userId,
-          organizationId: plan.organizationId,
-        },
-      },
-      select: {
-        status: true,
-        role: true,
-        organization: { select: { status: true } },
-      },
-    });
-    isOrgAdmin = Boolean(
-      membership?.status === "ACTIVE" &&
-      membership.organization.status !== "DEACTIVATED" &&
-      hasOrgPermission(membership.role, "catalog.manage"),
-    );
-  }
-
-  if (!callerProfile && !isOrgAdmin) return null;
-
-  return {
-    callerProfileId: callerProfile?.id ?? null,
-    canManagePlan: isOwner || isOrgAdmin,
-  };
-}
-
+/** A manager changes a pending invitation's terms. */
 export async function patchCollaborator(
   planType: PlanType,
   req: NextRequest,
@@ -98,57 +31,21 @@ export async function patchCollaborator(
 ) {
   try {
     const session = await getSession();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    const { planId, id } = await params;
-
-    const parties = await resolveParties(planType, planId, session.user.id);
-    if (!parties?.canManagePlan) {
-      return NextResponse.json(
-        { error: "Only the plan owner can update collaborators" },
-        { status: 403 },
-      );
-    }
-
-    const body = await req.json();
-    const parsed = UPDATE_SCHEMAS[planType].safeParse(body);
-    if (!parsed.success) {
-      return NextResponse.json(
-        { error: parsed.error.errors.map((e) => e.message).join(", ") },
-        { status: 400 },
-      );
-    }
-
-    const collab = await updateCollaborator(planType, id, planId, parsed.data);
-    if (!collab) {
-      return NextResponse.json(
-        { error: "Failed to update collaborator" },
-        { status: 400 },
-      );
-    }
-    return NextResponse.json({ data: collab });
-  } catch (error) {
-    if (error instanceof CollaboratorTermsLockedError) {
-      return NextResponse.json({ error: error.message }, { status: 409 });
-    }
-    if (error instanceof CollaboratorCapError) {
-      return NextResponse.json({ error: error.message }, { status: 409 });
-    }
-    if (error instanceof CollaboratorNotFoundError) {
-      return NextResponse.json({ error: error.message }, { status: 404 });
-    }
-    captureRouteError(error, "updating", planType);
-    return NextResponse.json(
-      { error: "Failed to update collaborator" },
-      { status: 500 },
+    if (!session?.user?.id) return unauthorized();
+    const { planId, id } = parseParams(memberParamsSchema, await params);
+    const ref = { planType, planId };
+    requireManager(
+      await resolveCollaborationViewer(prisma, ref, session.user.id),
     );
+    const body = await parseBody(req, updatePendingTermsSchemas[planType]);
+    const data = await updatePendingTerms({ ref, collaboratorId: id, ...body });
+    return NextResponse.json({ data });
+  } catch (error) {
+    return collaborationErrorResponse(error, `${planType}.team.updateTerms`);
   }
 }
 
-const NOT_A_PARTY =
-  "Only the plan owner or the collaborator can remove this collaboration";
-
+/** A manager removes any row on the plan; a collaborator ends only their own, and hears when it has already ended. */
 export async function deleteCollaborator(
   planType: PlanType,
   _req: NextRequest,
@@ -156,38 +53,60 @@ export async function deleteCollaborator(
 ) {
   try {
     const session = await getSession();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!session?.user?.id) return unauthorized();
+    const userId = session.user.id;
+    const { planId, id } = parseParams(memberParamsSchema, await params);
+    const ref = { planType, planId };
+    const access = await resolveCollaborationViewer(prisma, ref, userId);
+    if (!access.plan) {
+      throw new CollaborationError("NOT_FOUND", "Plan not found.");
     }
-    const { planId, id } = await params;
 
-    const parties = await resolveParties(planType, planId, session.user.id);
-    if (!parties) {
-      return NextResponse.json({ error: NOT_A_PARTY }, { status: 403 });
-    }
-
-    let collab = null;
-    if (parties.canManagePlan) {
-      collab = await removeCollaborator(planType, id, planId);
-    } else if (parties.callerProfileId) {
-      collab = await removeCollaborator(planType, id, planId, {
-        withdrawnByProfileId: parties.callerProfileId,
+    if (access.viewer.kind === "manager") {
+      requireManager(access);
+      const data = await removeCollaborator({
+        ref,
+        collaboratorId: id,
+        removedByUserId: userId,
       });
+      return NextResponse.json({ data });
     }
-    if (!collab) {
-      return parties.canManagePlan
-        ? NextResponse.json(
-            { error: "Failed to remove collaborator" },
-            { status: 400 },
-          )
-        : NextResponse.json({ error: NOT_A_PARTY }, { status: 403 });
+    if (
+      !access.callerProfileId ||
+      access.viewer.kind === "none" ||
+      access.viewer.collaboratorId !== id
+    ) {
+      // Only the caller's own ended row says so; any other id gets the refusal below.
+      const ownEnded =
+        access.callerProfileId &&
+        (await prisma.collaborator.findFirst({
+          where: {
+            ...planWhere(ref),
+            id,
+            consultantProfileId: access.callerProfileId,
+            status: { notIn: ["PENDING", "ACCEPTED"] },
+          },
+          select: { id: true },
+        }));
+      if (ownEnded) {
+        throw new CollaborationError(
+          "NOT_FOUND",
+          "This collaboration has already ended.",
+        );
+      }
+      throw new CollaborationError(
+        "FORBIDDEN",
+        "Only the plan's host or the collaborator can end this collaboration.",
+      );
     }
-    return NextResponse.json({ data: collab });
+    const data = await leaveCollaboration({
+      ref,
+      collaboratorId: id,
+      consultantProfileId: access.callerProfileId,
+      userId,
+    });
+    return NextResponse.json({ data });
   } catch (error) {
-    captureRouteError(error, "removing", planType);
-    return NextResponse.json(
-      { error: "Failed to remove collaborator" },
-      { status: 500 },
-    );
+    return collaborationErrorResponse(error, `${planType}.team.end`);
   }
 }

@@ -165,6 +165,7 @@
     "valibot": "^1.5.0",
     "deepmerge-ts": "^8.0.2",
     "seroval": "^1.6.8",
-    "source-map-js": "^1.2.2"
+    "source-map-js": "^1.2.2",
+    "effect": "^3.22.5"
   }
 }

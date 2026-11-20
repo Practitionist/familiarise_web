@@ -11,6 +11,8 @@ import { bookingOrgId, getDmChannelId } from "@/lib/stream-utils";
 import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
 import { liveParticipant, paidParticipant } from "@/lib/booking/participants";
 import { captureThrottled } from "@/lib/observability/throttled-capture";
+import { planWhere, type PlanRef } from "@/lib/collaborators/team";
+import { driveCollaboratorRevocation } from "@/lib/stream/collaborator-access";
 import {
   isDmChannelIdEligible,
   isDmContextEligible,
@@ -179,14 +181,31 @@ function reportStreamUnconfigured(): void {
 
 class RevocationBudgetSpent extends Error {}
 
-/** Stops waiting on a vendor call once the slice's budget is spent; the call itself may still land. */
-function withinBudget<T>(work: Promise<T>, deadlineMs: number): Promise<T> {
-  work.catch(() => undefined);
+/**
+ * Stops waiting on a vendor call once the slice's budget is spent. The call may
+ * still land at Stream, so one that settles after the deadline, either way, runs `onLate`.
+ */
+function withinBudget<T>(
+  work: Promise<T>,
+  deadlineMs: number,
+  onLate?: () => void,
+): Promise<T> {
+  let timedOut = false;
+  const late = () => {
+    if (timedOut) onLate?.();
+  };
+  work.then(late, late);
   const remainingMs = deadlineMs - Date.now();
-  if (remainingMs <= 0) return Promise.reject(new RevocationBudgetSpent());
+  if (remainingMs <= 0) {
+    timedOut = true;
+    return Promise.reject(new RevocationBudgetSpent());
+  }
   let timer: ReturnType<typeof setTimeout> | undefined;
   const expiry = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new RevocationBudgetSpent()), remainingMs);
+    timer = setTimeout(() => {
+      timedOut = true;
+      reject(new RevocationBudgetSpent());
+    }, remainingMs);
   });
   return Promise.race([work, expiry]).finally(() => clearTimeout(timer));
 }
@@ -195,13 +214,14 @@ async function removeFromDm(
   channelId: string,
   userId: string,
   deadlineMs = Number.POSITIVE_INFINITY,
+  onLate?: () => void,
 ): Promise<boolean> {
   try {
     const removal = getStreamChatClient()
       .channel("messaging", channelId)
       .removeMembers([userId]);
     await (Number.isFinite(deadlineMs)
-      ? withinBudget(removal, deadlineMs)
+      ? withinBudget(removal, deadlineMs, onLate)
       : removal);
     return true;
   } catch (error) {
@@ -385,10 +405,18 @@ async function admittedSeatHolders(
 
 class PendingRevocations {
   readonly byUser = new Map<string, string>();
+  constructor(
+    private readonly onLateRemoval: (userIds: string[]) => void = () =>
+      undefined,
+  ) {}
   add(userIds: Iterable<string>, reason: string): void {
     for (const userId of userIds) {
       if (!this.byUser.has(userId)) this.byUser.set(userId, reason);
     }
+  }
+  /** What a removal of `userIds` runs if it lands after its budget. */
+  lateFor(userIds: string[]): () => void {
+    return () => this.onLateRemoval(userIds);
   }
 }
 
@@ -408,6 +436,7 @@ async function removeFromSeatDms(
         userId,
         organizationId,
         deadlineMs,
+        pending.lateFor([userId]),
       );
       if (failure) pending.add([userId], failure);
     }
@@ -420,6 +449,7 @@ async function removeFromSeatDm(
   userId: string,
   organizationId: string | null,
   deadlineMs: number,
+  onLate: () => void,
 ): Promise<string | null> {
   if (Date.now() >= deadlineMs) return "time budget spent before DM removal";
   try {
@@ -430,7 +460,7 @@ async function removeFromSeatDm(
     return "DM eligibility check failed";
   }
   const channelId = getDmChannelId(counterpart, userId, organizationId);
-  return (await removeFromDm(channelId, userId, deadlineMs))
+  return (await removeFromDm(channelId, userId, deadlineMs, onLate))
     ? null
     : "DM removal failed";
 }
@@ -457,6 +487,7 @@ async function removeChunkFromCall(
   streamCallId: string,
   chunk: string[],
   deadlineMs: number,
+  onLate?: () => void,
 ): Promise<string[]> {
   const call = getStreamVideoClient().video.call(
     STREAM_CALL_TYPE,
@@ -466,6 +497,7 @@ async function removeChunkFromCall(
     await withinBudget(
       call.updateCallMembers({ remove_members: chunk }),
       deadlineMs,
+      onLate,
     );
     return [];
   } catch (error) {
@@ -568,10 +600,12 @@ async function removeFromRoom(
   blocked: Set<string>,
 ): Promise<void> {
   for (let i = 0; i < userIds.length; i += MEMBER_CHUNK) {
+    const chunk = userIds.slice(i, i + MEMBER_CHUNK);
     const kept = await removeChunkFromCall(
       meeting.streamCallId,
-      userIds.slice(i, i + MEMBER_CHUNK),
+      chunk,
       deadlineMs,
+      pending.lateFor(chunk),
     );
     pending.add(kept, "call removal failed");
     for (const userId of kept) blocked.add(userId);
@@ -699,6 +733,7 @@ async function removeFromEventChannel(
     const { failedUserIds } = await withinBudget(
       removeUsersFromEventChannel(event.type, event.id, userIds),
       deadlineMs,
+      pending.lateFor(userIds),
     );
     pending.add(failedUserIds, "event channel removal failed");
   } catch {
@@ -715,16 +750,21 @@ async function driveSeatRevocation(
   appointmentId: string,
   userIds: string[],
   deadlineMs: number,
+  /** Set by the sweep: an owed user the join gate admits again may have lost a grant to an earlier drive. */
+  { regrantAdmitted = false }: { regrantAdmitted?: boolean } = {},
 ): Promise<Map<string, string>> {
-  const pending = new PendingRevocations();
+  let ctx: SeatContext | null = null;
+  const pending = new PendingRevocations((late) => {
+    if (ctx) void rearmReadmittedSeats(appointmentId, ctx, late);
+  });
   if (!isStreamConfigured()) {
     // No vendor call happened, so the intents stay owed until the keys are back.
     pending.add(userIds, STREAM_UNCONFIGURED);
     reportStreamUnconfigured();
     return pending.byUser;
   }
-  let ctx: SeatContext | null;
   let revoked: string[];
+  let readmitted: string[];
   try {
     ctx = await loadSeatContext(appointmentId);
     // A deleted appointment took its Meeting rows with it; nothing addressable is left.
@@ -734,18 +774,99 @@ async function driveSeatRevocation(
       seatStaffUserIds(ctx),
     ]);
     revoked = userIds.filter((id) => !admitted.has(id) && !staff.has(id));
+    readmitted = regrantAdmitted
+      ? userIds.filter((id) => admitted.has(id) && !staff.has(id))
+      : [];
   } catch {
     pending.add(userIds, "seat lookup failed");
     return pending.byUser;
   }
-  if (revoked.length === 0) return pending.byUser;
-
-  // Chat gets at most half the slice, so a stalled chat API never starves the room removals.
-  const chatDeadlineMs = Date.now() + (deadlineMs - Date.now()) / 2;
-  await removeFromEventChannel(ctx, revoked, chatDeadlineMs, pending);
-  await removeFromSeatDms(ctx, revoked, chatDeadlineMs, pending);
-  await removeFromAppointmentCalls(appointmentId, revoked, deadlineMs, pending);
+  if (revoked.length > 0) {
+    // Chat gets at most half the slice, so a stalled chat API never starves the room removals.
+    const chatDeadlineMs = Date.now() + (deadlineMs - Date.now()) / 2;
+    await removeFromEventChannel(ctx, revoked, chatDeadlineMs, pending);
+    await removeFromSeatDms(ctx, revoked, chatDeadlineMs, pending);
+    await removeFromAppointmentCalls(
+      appointmentId,
+      revoked,
+      deadlineMs,
+      pending,
+    );
+  }
+  await restoreReadmittedSeats(
+    appointmentId,
+    ctx,
+    { removed: revoked, readmitted },
+    deadlineMs,
+    pending,
+  );
   return pending.byUser;
+}
+
+/**
+ * Re-checks the users just removed and grants back anyone a rejoin re-admitted
+ * while the removal was in flight. A removal left unconfirmed may still land after
+ * the grant, so its user stays owed and the sweep's re-drive grants them again.
+ */
+async function restoreReadmittedSeats(
+  appointmentId: string,
+  ctx: SeatContext,
+  users: { removed: string[]; readmitted: string[] },
+  deadlineMs: number,
+  pending: PendingRevocations,
+): Promise<void> {
+  // Only a webinar or class seat can be rejoined; a 1:1 booking's access is never re-granted here.
+  if (!ctx.webinar && !ctx.class) return;
+  const { removed } = users;
+  const regrant = [...users.readmitted];
+  if (removed.length > 0) {
+    try {
+      const admitted = await withinBudget(
+        admittedSeatHolders(appointmentId, ctx, removed),
+        deadlineMs,
+      );
+      regrant.push(...removed.filter((id) => admitted.has(id)));
+    } catch {
+      pending.add(removed, "rejoin re-check deferred");
+      return;
+    }
+  }
+  if (regrant.length === 0) return;
+  try {
+    // Lazy: ensure-channels imports this module.
+    const { ensureChannelsForAppointment } =
+      await import("@/lib/payments/webhooks/ensure-channels");
+    const synced = await withinBudget(
+      ensureChannelsForAppointment(appointmentId, regrant),
+      deadlineMs,
+    );
+    // A channel member the vendor did not add is retried; any other refusal would refuse again.
+    if (synced.reason === "event_channel_member_not_added") {
+      pending.add(regrant, "rejoin re-grant incomplete");
+    }
+  } catch {
+    pending.add(regrant, "rejoin re-grant deferred");
+  }
+}
+
+/**
+ * A removal that landed after its budget may have undone a re-grant, so the gate is read
+ * again and an admitted user's intent is re-armed for the sweep. Never throws.
+ */
+async function rearmReadmittedSeats(
+  appointmentId: string,
+  ctx: SeatContext,
+  userIds: string[],
+): Promise<void> {
+  let admitted: Set<string>;
+  try {
+    admitted = await admittedSeatHolders(appointmentId, ctx, userIds);
+  } catch {
+    // An unreadable gate re-arms: the sweep reads it again before any vendor call.
+    admitted = new Set(userIds);
+  }
+  const owed = userIds.filter((id) => admitted.has(id));
+  if (owed.length > 0) await persistSeatRevocation(appointmentId, owed);
 }
 
 const intentNotBefore = () => new Date(Date.now() + INTENT_SWEEP_GRACE_MS);
@@ -1177,23 +1298,148 @@ export async function revokeRefundedSeatAccess(
   }
 }
 
-/** Queues a collaborator revocation that `revokeCollaboratorAccess` reported as incomplete. */
-export async function enqueueCollaboratorRevocationRetry(
-  planType: "webinar" | "class",
-  planId: string,
+/** The request's own slice of a collaborator revocation; the sweep finishes whatever it leaves. */
+const SYNC_COLLABORATOR_REVOCATION_BUDGET_MS = 8_000;
+
+const collaboratorTarget = (ref: PlanRef, userId: string) => ({
+  kind: "COLLAB_REVOKE" as const,
+  userId,
+  planId: ref.planId,
+  planType:
+    ref.planType === "webinar" ? ("WEBINAR" as const) : ("CLASS" as const),
+});
+
+/** True while the user is on the plan's team, which is all a collaborator's Stream access rests on. */
+async function isAcceptedCollaborator(
+  ref: PlanRef,
   userId: string,
-): Promise<void> {
-  await enqueueOrReport(
-    [
-      {
-        kind: "COLLAB_REVOKE",
-        userId,
-        planId,
-        planType: planType === "webinar" ? "WEBINAR" : "CLASS",
-      },
-    ],
-    "collaborator.revokeAccess",
+): Promise<boolean> {
+  const row = await prisma.collaborator.findFirst({
+    where: {
+      ...planWhere(ref),
+      status: "ACCEPTED",
+      consultantProfile: { userId, deletedAt: null },
+    },
+    select: { id: true },
+  });
+  return row !== null;
+}
+
+/**
+ * Drives a collaborator revocation unless Postgres has the user on the team
+ * again, waiting no longer than `deadlineMs`. Returns the error to record, or null.
+ */
+async function driveCollaboratorIntent(
+  ref: PlanRef,
+  userId: string,
+  deadlineMs: number,
+): Promise<string | null> {
+  const drive = async () =>
+    (await isAcceptedCollaborator(ref, userId))
+      ? null
+      : driveCollaboratorRevocation(ref, userId, deadlineMs);
+  try {
+    return await withinBudget(drive(), deadlineMs);
+  } catch (error) {
+    if (error instanceof RevocationBudgetSpent) return "time budget spent";
+    throw error;
+  }
+}
+
+/**
+ * Persists the revocation an ended collaboration owes, reading nothing first.
+ * Returns the row's generation, or null when it was not written. Never throws.
+ */
+function persistCollaboratorRevocation(
+  ref: PlanRef,
+  userId: string,
+): Promise<Date | null> {
+  return enqueueOrReport(
+    [collaboratorTarget(ref, userId)],
+    "collaborator.persistRevocation",
+    { nextRetryAt: intentNotBefore() },
   );
+}
+
+/**
+ * Writes the collaborator's revocation intent through the transaction that ends
+ * the collaboration, so both commit or roll back together. Returns the row's generation.
+ */
+export async function persistCollaboratorRevocationInTx(
+  tx: Tx,
+  ref: PlanRef,
+  userId: string,
+): Promise<Date> {
+  return enqueueInTx(tx, [collaboratorTarget(ref, userId)]);
+}
+
+/**
+ * Ends the Stream access an ended collaboration no longer justifies. Without the
+ * `generation` the ending transaction wrote, the obligation is persisted before
+ * any lookup or vendor call. It is driven inside the request's budget and settles
+ * only that generation; `retry-moderation-enforcement` owns the rest. Never throws.
+ */
+export async function revokeCollaboratorAccess(
+  ref: PlanRef,
+  userId: string,
+  generation?: Date | null,
+): Promise<void> {
+  const owned =
+    generation ?? (await persistCollaboratorRevocation(ref, userId));
+  if (!isStreamConfigured()) {
+    // No vendor call happened, so the intent stays owed until the keys are back.
+    reportStreamUnconfigured();
+    return;
+  }
+  let error: string | null;
+  try {
+    error = await driveCollaboratorIntent(
+      ref,
+      userId,
+      Date.now() + SYNC_COLLABORATOR_REVOCATION_BUDGET_MS,
+    );
+  } catch (caught) {
+    error = caught instanceof Error ? caught.message : String(caught);
+    error ||= "collaborator revocation interrupted";
+  }
+  if (error) {
+    // The intent stays owed; the sweep re-drives it.
+    streamLogger.warn("Collaborator revocation left owed", { ...ref, error });
+    return;
+  }
+  await settleIntents("COLLAB_REVOKE", ref.planId, [userId], owned);
+}
+
+/** A fence that could not read the collaboration says so; the caller must not treat the user as on the team. */
+export type CollaboratorGrantFence =
+  { verified: true; lost: boolean } | { verified: false };
+
+/**
+ * Re-checks a user who was just granted Stream access as a collaborator, and
+ * takes it back when the collaboration ended meanwhile: a revoker that ran
+ * between the grant's check and its write saw nothing to remove. When the
+ * re-check cannot be read, the grant stays owed to the sweep, which spares
+ * anyone still on the team.
+ */
+export async function fenceCollaboratorGrant(
+  ref: PlanRef,
+  userId: string,
+): Promise<CollaboratorGrantFence> {
+  let accepted: boolean;
+  try {
+    accepted = await isAcceptedCollaborator(ref, userId);
+  } catch (error) {
+    await persistCollaboratorRevocation(ref, userId);
+    captureThrottled("stream.collaborator.fenceGrant", error, {
+      subsystem: "collaborators",
+      op: "collaborator.fenceGrant",
+      extra: { ...ref },
+    });
+    return { verified: false };
+  }
+  if (accepted) return { verified: true, lost: false };
+  await revokeCollaboratorAccess(ref, userId);
+  return { verified: true, lost: true };
 }
 
 /** Queues an org-member revocation that did not fully land. */
@@ -1218,10 +1464,10 @@ export interface AccessRevocationRow {
 
 /**
  * Re-drives one queued revocation. Returns the error to record, or null when
- * the access is gone or Postgres has since re-granted it; without Stream's keys
- * nothing is done and `STREAM_UNCONFIGURED` comes back. A seat, refund or
- * conduct block row stops starting Stream work at its slice or at `deadlineMs`,
- * whichever is sooner.
+ * the access is gone or Postgres has since re-granted it (a seat's Stream access then synced back); without Stream's keys
+ * nothing is done and `STREAM_UNCONFIGURED` comes back. A seat, refund,
+ * conduct block or collaborator row stops starting Stream work at its slice or
+ * at `deadlineMs`, whichever is sooner.
  */
 export async function redriveAccessRevocation(
   row: AccessRevocationRow,
@@ -1234,7 +1480,7 @@ export async function redriveAccessRevocation(
   if (!isStreamConfigured()) return STREAM_UNCONFIGURED;
   switch (row.kind) {
     case "COLLAB_REVOKE":
-      return redriveCollaboratorRevocation(row);
+      return redriveCollaboratorRevocation(row, deadlineMs);
     case "EVENT_CHANNEL_REMOVE":
       return redriveEventChannelRemoval(row);
     case "DM_REMOVE":
@@ -1246,6 +1492,7 @@ export async function redriveAccessRevocation(
         row.planId,
         [row.userId],
         deadlineMs,
+        { regrantAdmitted: true },
       );
       return pending.get(row.userId) ?? null;
     }
@@ -1260,28 +1507,15 @@ export async function redriveAccessRevocation(
 
 async function redriveCollaboratorRevocation(
   row: AccessRevocationRow,
+  deadlineMs: number,
 ): Promise<string | null> {
   if (!row.planType) return "COLLAB_REVOKE row has no plan type";
   const planType = row.planType === "WEBINAR" ? "webinar" : "class";
-  const regranted = await prisma.collaborator.findFirst({
-    where: {
-      status: "ACCEPTED",
-      consultantProfile: { userId: row.userId, deletedAt: null },
-      ...(planType === "webinar"
-        ? { webinarPlanId: row.planId }
-        : { classPlanId: row.planId }),
-    },
-    select: { id: true },
-  });
-  if (regranted) return null;
-  const { revokeCollaboratorAccess } =
-    await import("@/lib/collaborators/service");
-  const { success } = await revokeCollaboratorAccess(
-    planType,
-    row.planId,
+  return driveCollaboratorIntent(
+    { planType, planId: row.planId },
     row.userId,
+    deadlineMs,
   );
-  return success ? null : "Collaborator Stream access not fully revoked";
 }
 
 async function redriveEventChannelRemoval(

@@ -77,6 +77,24 @@ describe("month marks in the display zone", () => {
   });
 });
 
+describe("a move read through the month picker", () => {
+  it("names its purpose, so the booking horizon does not bind it", async () => {
+    fetchMock.mockResolvedValue(answer(200, { data: {} }));
+    renderHook(
+      () =>
+        useAvailabilityMonth({
+          consultantId: "cp-1",
+          monthStart: new Date(2026, 9, 1),
+          timezone: "UTC",
+          lead: { purpose: "reschedule" },
+        }),
+      { wrapper },
+    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(String(fetchMock.mock.calls[0][0])).toContain("purpose=reschedule");
+  });
+});
+
 describe("a failed grid read", () => {
   it("carries fixed copy, never the server's error text", async () => {
     fetchMock.mockResolvedValue(

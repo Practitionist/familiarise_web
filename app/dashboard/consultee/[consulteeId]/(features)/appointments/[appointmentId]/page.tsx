@@ -8,12 +8,15 @@ import prisma from "@/lib/prisma";
 import {
   readAppointmentDetail,
   scopeAppointmentDetail,
+  viewerMayWithdrawReschedule,
 } from "@/lib/data/appointment-detail";
+import { managesGroupPlanAsNamedExpert } from "@/lib/enterprise/membership-guards";
 import DetailPageClient from "./DetailPageClient";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { viewerSeatReleased } from "@/lib/appointments/presentation-input";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
+import { getSession } from "@/lib/auth-server";
 import { getViewerZone } from "@/lib/time/viewer-zone-server";
 
 type PageProps = {
@@ -66,7 +69,18 @@ export default async function AppointmentDetailPage({
   // other attendee's money before the refetch replaced it.
   queryClient.setQueryData(
     ["appointment-detail", appointmentId],
-    scopeAppointmentDetail(detail, profile.userId),
+    scopeAppointmentDetail(detail, {
+      userId: profile.userId,
+      managesGroupPlan: await managesGroupPlanAsNamedExpert(
+        prisma,
+        appointment,
+        profile.userId,
+      ),
+      mayWithdrawReschedule: await viewerMayWithdrawReschedule(
+        detail,
+        await getSession(),
+      ),
+    }),
   );
 
   return (

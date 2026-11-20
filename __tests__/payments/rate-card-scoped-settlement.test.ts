@@ -50,7 +50,7 @@ interface Captured {
 const capturedConsultantEarnings: Captured[] = [];
 const capturedOrgEarnings: Captured[] = [];
 
-jest.mock("../../lib/collaborators/service", () => ({
+jest.mock("../../lib/collaborators/revenue-split", () => ({
   calculateRevenueSplit: jest.fn().mockResolvedValue([]),
 }));
 jest.mock("../../lib/feature-flags", () => ({

@@ -70,6 +70,10 @@ export interface AllocationResult {
   strategy?: string;
   /** HTTP status of a failed allocate call — 409 means "allocated elsewhere". */
   httpStatus?: number;
+  /** The saved times wait on the learner's payment. */
+  awaitingPayment?: boolean;
+  /** When the pay link minted by this call stops being payable. */
+  payExpiresAt?: Date | null;
 }
 
 export class AllocationAlgorithms {
@@ -249,6 +253,8 @@ export class AllocationAlgorithms {
         success: true,
         selectedSlots: selectedSlots,
         strategy: "manual",
+        awaitingPayment: allocationResult.awaitingPayment,
+        payExpiresAt: allocationResult.payExpiresAt,
       };
     } catch (error) {
       console.warn("Manual allocation error:", error);

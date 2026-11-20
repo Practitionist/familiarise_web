@@ -2,7 +2,10 @@ import * as Sentry from "@sentry/nextjs";
 import type { StreamChat } from "stream-chat";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
-import { paidParticipant } from "@/lib/booking/participants";
+import {
+  NOT_COLLABORATOR_ROW,
+  paidParticipant,
+} from "@/lib/booking/participants";
 import {
   getStreamChatClient,
   isExpectedStreamError,
@@ -33,6 +36,7 @@ import {
 import { OPENABLE_EVENT_STATUSES } from "@/lib/stream/dm-eligibility-statuses";
 import { ConsentRequiredError } from "@/lib/compliance/dpdp";
 import { isUpsertRefusal } from "@/lib/stream/connect-failure";
+import type { PlanRef } from "@/lib/collaborators/team";
 
 export const STREAM_SERVER_TRUSTED = Symbol.for(
   "familiarise.stream.serverTrusted",
@@ -81,19 +85,35 @@ export async function checkEventChannelExists(
   const client = getStreamChatClient();
 
   try {
-    const channel = client.channel(channelType, channelId);
-    await withStreamCircuitBreaker(
-      () => channel.query({ state: false, messages: { limit: 0 } }),
+    // A read by channel id: a chat that is not there is an empty answer, and
+    // Stream is never asked to make it.
+    const [found] = await withStreamCircuitBreaker(
+      () =>
+        client.queryChannels(
+          { cid: { $eq: `${channelType}:${channelId}` } },
+          [],
+          {
+            limit: 1,
+            state: false,
+            watch: false,
+            presence: false,
+          },
+        ),
       () => {
         throw new StreamUnavailableError();
       },
     );
+    if (!found) {
+      streamLogger.debug("Channel does not exist", { channelId });
+      return false;
+    }
 
     markChannelExists(channelType, channelId);
     streamLogger.debug("Channel exists", { channelId });
     return true;
   } catch {
-    streamLogger.debug("Channel does not exist", { channelId });
+    // The breaker has reported a failed read; the caller gets "not there".
+    streamLogger.debug("Channel existence could not be read", { channelId });
     return false;
   }
 }
@@ -135,12 +155,13 @@ const MODERATOR_COLLABORATOR_ROLES = new Set([
   "MODERATOR",
 ]);
 
-async function resolveEventCollaboratorChannelRole(
+/** The user's accepted collaboration on the event's plan, with the channel role it carries. */
+async function resolveEventCollaboration(
   eventType: EventType,
   eventId: string,
   userId: string,
-): Promise<"channel_moderator" | undefined> {
-  if (eventType !== "webinar" && eventType !== "class") return undefined;
+): Promise<{ ref: PlanRef; channelRole?: "channel_moderator" } | null> {
+  if (eventType !== "webinar" && eventType !== "class") return null;
 
   const collab = await prisma.collaborator.findFirst({
     where: {
@@ -150,14 +171,17 @@ async function resolveEventCollaboratorChannelRole(
         ? { webinarPlan: { webinars: { some: { id: eventId } } } }
         : { classPlan: { classes: { some: { id: eventId } } } }),
     },
-    select: { role: true },
+    select: { role: true, webinarPlanId: true, classPlanId: true },
   });
+  const planId = collab?.webinarPlanId ?? collab?.classPlanId;
+  if (!collab || !planId) return null;
 
-  if (collab && MODERATOR_COLLABORATOR_ROLES.has(collab.role)) {
-    return "channel_moderator";
-  }
-
-  return undefined;
+  return {
+    ref: { planType: eventType, planId },
+    ...(MODERATOR_COLLABORATOR_ROLES.has(collab.role)
+      ? { channelRole: "channel_moderator" as const }
+      : {}),
+  };
 }
 
 async function tryAddToExistingChannel(
@@ -216,17 +240,29 @@ async function eventAppointmentId(
   return row?.id ?? null;
 }
 
+/** `quiet` leaves a thrown failure unreported, for a caller that collects and reports once for its run. */
+export interface EventChannelWriteOptions {
+  quiet?: boolean;
+}
+
 /** Adds the user to the event channel, then fences every seat the join wrote, even when a write throws. */
 export async function addUserToEventChannel(
   eventType: EventType,
   eventId: string,
   userId: string,
+  options: EventChannelWriteOptions = {},
 ): Promise<EventChannelJoin> {
   // Loaded before any write, and lazily: access-revocation imports this module.
   const { fenceSeatGrants } = await import("@/lib/stream/access-revocation");
   const granted: EventChannelGrants = { appointmentId: null, userIds: [] };
   try {
-    return await grantEventChannelMember(eventType, eventId, userId, granted);
+    return await grantEventChannelMember(
+      eventType,
+      eventId,
+      userId,
+      granted,
+      options,
+    );
   } finally {
     if (granted.appointmentId && granted.userIds.length > 0) {
       await fenceSeatGrants(
@@ -237,12 +273,55 @@ export async function addUserToEventChannel(
   }
 }
 
-/** `addUserToEventChannel` without the fence; the caller fences `granted` once after all its writes. */
+/** The collaborators one event-channel write granted, all on the event's plan. */
+interface CollaboratorGrants {
+  ref: PlanRef | null;
+  userIds: Set<string>;
+}
+
+/**
+ * `addUserToEventChannel` without the seat fence; the caller fences `granted`
+ * once after all its writes. Collaborators it granted are re-checked here.
+ */
 export async function grantEventChannelMember(
   eventType: EventType,
   eventId: string,
   userId: string,
   granted: EventChannelGrants,
+  options: EventChannelWriteOptions = {},
+): Promise<EventChannelJoin> {
+  const collaborators: CollaboratorGrants = { ref: null, userIds: new Set() };
+  try {
+    return await writeEventChannelMember(
+      eventType,
+      eventId,
+      userId,
+      granted,
+      collaborators,
+      options,
+    );
+  } finally {
+    const { ref } = collaborators;
+    if (ref && collaborators.userIds.size > 0) {
+      // Lazy: access-revocation imports this module.
+      const { fenceCollaboratorGrant } =
+        await import("@/lib/stream/access-revocation");
+      await Promise.all(
+        Array.from(collaborators.userIds, (id) =>
+          fenceCollaboratorGrant(ref, id),
+        ),
+      );
+    }
+  }
+}
+
+async function writeEventChannelMember(
+  eventType: EventType,
+  eventId: string,
+  userId: string,
+  granted: EventChannelGrants,
+  collaborators: CollaboratorGrants,
+  { quiet = false }: EventChannelWriteOptions,
 ): Promise<EventChannelJoin> {
   eventTypeSchema.parse(eventType);
   eventIdSchema.parse(eventId);
@@ -263,11 +342,17 @@ export async function grantEventChannelMember(
     return { success: false, channelId, reason: "account_refused" };
   }
 
-  const collaboratorChannelRole = await resolveEventCollaboratorChannelRole(
+  // Read before the write, so the grant made on it can be re-checked after.
+  const collaboration = await resolveEventCollaboration(
     eventType,
     eventId,
     userId,
   );
+  const collaboratorChannelRole = collaboration?.channelRole;
+  if (collaboration) {
+    collaborators.ref = collaboration.ref;
+    collaborators.userIds.add(userId);
+  }
   const memberSpec = collaboratorChannelRole
     ? [{ user_id: userId, channel_role: collaboratorChannelRole }]
     : [userId];
@@ -320,6 +405,12 @@ export async function grantEventChannelMember(
     const droppedIds = new Set(upsertResult?.droppedIds ?? []);
     const syncedMembers = allMembers.filter((id) => !droppedIds.has(id));
     granted.userIds.push(...syncedMembers);
+    if ("collaborators" in eventData) {
+      collaborators.ref = eventData.collaborators.ref;
+      for (const id of eventData.collaborators.userIds) {
+        if (syncedMembers.includes(id)) collaborators.userIds.add(id);
+      }
+    }
 
     const eventChannelData = {
       name,
@@ -405,15 +496,17 @@ export async function grantEventChannelMember(
 
     return { success: true, channelId, created: true };
   } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "stream" } },
-    );
-    streamLogger.error("Failed to add user to event channel", error, {
-      eventType,
-      eventId,
-      userId,
-    });
+    if (!quiet) {
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "stream" } },
+      );
+      streamLogger.error("Failed to add user to event channel", error, {
+        eventType,
+        eventId,
+        userId,
+      });
+    }
     throw error;
   }
 }
@@ -486,12 +579,13 @@ const groupEventPlanInclude = {
 // Chat membership follows a paid seat; an unpaid HELD one is not a member.
 const groupEventAppointmentInclude = {
   participants: {
-    where: paidParticipant(),
+    where: { ...paidParticipant(), ...NOT_COLLABORATOR_ROW },
     select: { userId: true },
   },
 };
 
 function buildGroupEventData(
+  ref: PlanRef,
   plan: {
     title: string;
     organizationId: string | null;
@@ -527,6 +621,10 @@ function buildGroupEventData(
     consultantId,
     members,
     moderatorIds,
+    collaborators: {
+      ref,
+      userIds: collaborators.map((c) => c.consultantProfile.userId),
+    },
     name: plan.title,
     organizationId,
   };
@@ -543,7 +641,11 @@ export async function getEventData(eventType: EventType, eventId: string) {
         },
       });
       if (!webinar) return null;
-      return buildGroupEventData(webinar.webinarPlan, webinar.appointment);
+      return buildGroupEventData(
+        { planType: "webinar", planId: webinar.webinarPlanId },
+        webinar.webinarPlan,
+        webinar.appointment,
+      );
     }
 
     case "class": {
@@ -555,7 +657,11 @@ export async function getEventData(eventType: EventType, eventId: string) {
         },
       });
       if (!classData) return null;
-      return buildGroupEventData(classData.classPlan, classData.appointment);
+      return buildGroupEventData(
+        { planType: "class", planId: classData.classPlanId },
+        classData.classPlan,
+        classData.appointment,
+      );
     }
 
     case "consultation": {
@@ -706,7 +812,11 @@ export async function eventParticipantsAmong(
         select: { occurrences: { where: { deletedAt: null } } },
       },
       participants: {
-        where: { ...paidParticipant(), userId: { in: ids } },
+        where: {
+          ...paidParticipant(),
+          ...NOT_COLLABORATOR_ROW,
+          userId: { in: ids },
+        },
         select: { userId: true },
       },
     },

@@ -3,36 +3,11 @@
  */
 
 /**
- * #1580 C-P0-1 — settlement calls `calculateRevenueSplit` from inside the
- * earnings transaction. Under PG_POOL_MAX=1 a read on the GLOBAL client there
- * queues behind the connection the transaction holds (the #1435 shape), so the
- * split must be read through whichever client the caller hands over.
+ * Settlement calls `calculateRevenueSplit` inside the earnings transaction. On
+ * a one-connection pool a read on the global client there queues behind the
+ * connection the transaction holds, so every read goes through the client the
+ * caller hands over, and the team is the one on the plan at the time given.
  */
-
-jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
-jest.mock("../../lib/stream-client", () => ({
-  getStreamChatClient: jest.fn(),
-}));
-jest.mock("../../actions/stream/chat/event-channel.action", () => ({
-  removeUserFromEventChannel: jest.fn(),
-}));
-jest.mock("../../lib/novu/service", () => ({
-  notifyCollaboratorInvited: jest.fn(),
-  notifyCollaboratorAccepted: jest.fn(),
-  notifyCollaboratorRemoved: jest.fn(),
-}));
-jest.mock("../../lib/email/senders/collaborators", () => ({
-  sendCollaboratorInvitedEmail: jest.fn(),
-  sendCollaboratorAcceptedEmail: jest.fn(),
-  sendCollaboratorDeclinedEmail: jest.fn(),
-  sendCollaboratorRemovedEmail: jest.fn(),
-  sendCollaboratorWithdrawnEmail: jest.fn(),
-}));
-jest.mock(
-  "../../utils/organization-roles",
-  () => ({ hasOrgPermission: jest.fn(() => false) }),
-  { virtual: true },
-);
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
@@ -44,20 +19,24 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 import globalPrisma from "@/lib/prisma";
-import { calculateRevenueSplit } from "@/lib/collaborators/service";
+import { calculateRevenueSplit } from "@/lib/collaborators/revenue-split";
 
-function makeTx() {
+const AT = new Date("2026-03-10T09:00:00Z");
+const WEBINAR = { planType: "webinar", planId: "plan-1" } as const;
+
+function makeTx(shareBps: number[] = [3000]) {
   return {
     collaborator: {
-      findMany: jest.fn().mockResolvedValue([
-        {
-          consultantProfileId: "collab-1",
-          status: "ACCEPTED",
+      findMany: jest.fn().mockResolvedValue(
+        shareBps.map((revenueShareBps, i) => ({
+          id: `row-${i + 1}`,
+          consultantProfileId: `collab-${i + 1}`,
           role: "CO_HOST",
-          revenueShareBps: 3000,
-          consultantProfile: { userId: "collab-user-1" },
-        },
-      ]),
+          tier: "STANDARD",
+          revenueShareBps,
+          consultantProfile: { userId: `collab-user-${i + 1}` },
+        })),
+      ),
     },
     webinarPlan: {
       findUnique: jest.fn().mockResolvedValue({ consultantProfileId: "owner" }),
@@ -67,17 +46,20 @@ function makeTx() {
 }
 
 describe("calculateRevenueSplit reads through the client it is given", () => {
-  it("performs every read on the passed client and none on the global one", async () => {
+  it("performs every read on the passed client, for the team at the time given", async () => {
     const tx = makeTx();
 
-    const splits = await calculateRevenueSplit(
-      "webinar",
-      "plan-1",
-      10_000,
-      tx as never,
-    );
+    const splits = await calculateRevenueSplit(WEBINAR, 10_000, tx as never, {
+      at: AT,
+    });
 
     expect(tx.collaborator.findMany).toHaveBeenCalledTimes(1);
+    expect(tx.collaborator.findMany.mock.calls[0][0].where).toEqual({
+      webinarPlanId: "plan-1",
+      acceptedAt: { lte: AT },
+      OR: [{ endedAt: null }, { endedAt: { gt: AT } }],
+      consultantProfile: { deletedAt: null },
+    });
     expect(tx.webinarPlan.findUnique).toHaveBeenCalledTimes(1);
     expect(globalPrisma.collaborator.findMany).not.toHaveBeenCalled();
     expect(globalPrisma.webinarPlan.findUnique).not.toHaveBeenCalled();
@@ -96,7 +78,12 @@ describe("calculateRevenueSplit reads through the client it is given", () => {
   it("reads the class plan through the same client", async () => {
     const tx = makeTx();
     tx.classPlan.findUnique.mockResolvedValue({ consultantProfileId: "owner" });
-    await calculateRevenueSplit("class", "plan-1", 10_000, tx as never);
+    await calculateRevenueSplit(
+      { planType: "class", planId: "plan-1" },
+      10_000,
+      tx as never,
+      { at: AT },
+    );
     expect(tx.classPlan.findUnique).toHaveBeenCalledTimes(1);
     expect(tx.webinarPlan.findUnique).not.toHaveBeenCalled();
     expect(globalPrisma.classPlan.findUnique).not.toHaveBeenCalled();
@@ -106,25 +93,28 @@ describe("calculateRevenueSplit reads through the client it is given", () => {
     // An acceptance can land between the checkout guard's read and settlement;
     // the exclusion at the money boundary is what makes that window harmless.
     const splits = await calculateRevenueSplit(
-      "webinar",
-      "plan-1",
+      WEBINAR,
       10_000,
       makeTx() as never,
-      { excludeBuyerUserId: "collab-user-1" },
+      { at: AT, excludeBuyerUserId: "collab-user-1" },
     );
     expect(splits).toEqual([]);
   });
 
-  it("a zero pool splits to zero everywhere, never to a negative owner share", async () => {
-    // The pool is what remains after the platform fee is floored off the gross;
-    // a fully discounted seat hands settlement a zero, and the owner is the
-    // residual party, so nothing may round below it.
-    const splits = await calculateRevenueSplit(
-      "webinar",
-      "plan-1",
-      0,
-      makeTx() as never,
-    );
+  it("splits a zero amount to zero everywhere, never to a negative owner share", async () => {
+    const splits = await calculateRevenueSplit(WEBINAR, 0, makeTx() as never, {
+      at: AT,
+    });
     expect(splits.map((s) => s.share)).toEqual([0, 0]);
+  });
+
+  it("leaves the owner the remainder of whatever shares the database allowed", async () => {
+    const splits = await calculateRevenueSplit(
+      WEBINAR,
+      10_000,
+      makeTx([5000, 4000]) as never,
+      { at: AT },
+    );
+    expect(splits.map((s) => s.share)).toEqual([1000, 5000, 4000]);
   });
 });

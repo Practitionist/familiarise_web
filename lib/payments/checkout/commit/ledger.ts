@@ -30,9 +30,14 @@ export async function recordSynchronousEarnings(
       tx,
     );
     if (resolvedEarnings) {
+      // Read back through this transaction: the capture time this commit
+      // stamped on a re-bought seat, else the row's creation in this commit.
       await createEarningsFromPayment({
         payment: resolvedEarnings.paymentForEarnings,
         appointmentType: resolvedEarnings.earningsAppointmentType,
+        teamAt:
+          resolvedEarnings.paymentForEarnings.capturedAt ??
+          resolvedEarnings.paymentForEarnings.createdAt,
         tx,
       });
     }

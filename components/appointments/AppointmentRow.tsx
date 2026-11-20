@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import {
   appointmentStatusChip,
@@ -18,8 +17,10 @@ import {
   type ViewerZone,
 } from "@/lib/time/viewer-zone";
 import { cn } from "@/utils/tailwind";
+import { formatRole } from "@/components/collaborators/format";
 import { RowPrimaryAction } from "./RowPrimaryAction";
 import { RowOverflowMenu } from "./RowOverflowMenu";
+import { CounterpartAvatar } from "./CounterpartAvatar";
 
 export const KIND_LABEL: Record<AppointmentVM["kind"], string> = {
   CONSULTATION: "Consultation",
@@ -28,15 +29,6 @@ export const KIND_LABEL: Record<AppointmentVM["kind"], string> = {
   CLASS: "Class",
   TRIAL: "Trial",
 };
-
-function initials(name: string): string {
-  return name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase())
-    .join("");
-}
 
 interface AppointmentRowProps {
   vm: AppointmentVM;
@@ -119,15 +111,11 @@ export function AppointmentRow({
     >
       {/* Identity */}
       <div className="flex items-center gap-3 min-w-0 flex-1">
-        <Avatar className="h-10 w-10 shrink-0 border border-border">
-          <AvatarImage
-            src={vm.counterpart.image ?? undefined}
-            alt={vm.counterpart.name}
-          />
-          <AvatarFallback className="text-xs font-medium">
-            {initials(vm.counterpart.name) || "?"}
-          </AvatarFallback>
-        </Avatar>
+        <CounterpartAvatar
+          counterpart={vm.counterpart}
+          className="h-10 w-10 shrink-0 border border-border"
+          fallbackClassName="text-xs font-medium"
+        />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 min-w-0">
             <p className="font-medium text-sm text-foreground truncate">
@@ -138,10 +126,13 @@ export function AppointmentRow({
             </span>
           </div>
           <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground mt-0.5">
-            <span className="truncate">{vm.counterpart.name}</span>
+            {/* A host's own webinar or class has no one person to name. */}
+            {!vm.counterpart.audience && (
+              <span className="truncate">{vm.counterpart.name}</span>
+            )}
             {vm.collaboratorRole && (
               <span className="shrink-0 rounded bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300 px-1.5 py-px text-[10px] font-medium">
-                {vm.collaboratorRole}
+                {formatRole(vm.collaboratorRole)}
               </span>
             )}
             {vm.meta && <span className="truncate">{vm.meta}</span>}
@@ -173,8 +164,8 @@ export function AppointmentRow({
         </div>
       </div>
 
-      {/* Schedule + status + actions */}
-      <div className="flex items-center justify-between sm:justify-end gap-3 sm:gap-4 pl-[52px] sm:pl-0">
+      {/* Schedule + status + actions; on a phone the actions wrap under the time. */}
+      <div className="flex flex-wrap sm:flex-nowrap items-center justify-between sm:justify-end gap-3 sm:gap-4 pl-[52px] sm:pl-0">
         <div className="text-right shrink-0">
           <p className="text-sm font-medium text-foreground tabular-nums">
             {timeLabel}
@@ -195,7 +186,7 @@ export function AppointmentRow({
           )}
         </div>
         <StatusBadge {...badge} withDot size="sm" />
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 ml-auto sm:ml-0">
           <RowPrimaryAction action={action} onView={open} />
           <RowOverflowMenu items={overflow} />
         </div>

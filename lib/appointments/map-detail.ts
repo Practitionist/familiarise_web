@@ -167,6 +167,7 @@ export function mapAppointmentDetail(
                   ? "Registered attendees"
                   : "Enrolled learners",
               image: facts.consultant.image,
+              audience: true,
             }));
 
   const rawOccurrences: OccurrenceLike[] = all
@@ -204,6 +205,7 @@ export function mapAppointmentDetail(
     title: facts.title,
     counterpart,
     consultantProfileId: facts.consultantProfileId,
+    expertProfileIsPublic: detail.expertProfileIsPublic,
     status: facts.status,
     ...deriveBucket({ status: facts.status, occurrences, now }, role),
     nextAt: getAnchorTime(occurrences, now),

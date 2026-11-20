@@ -20,13 +20,18 @@
  * RSC → client boundary verbatim. Auth stays at the call site.
  */
 
-import type { LedgerTransactionKind, OrgInvoiceStatus } from "@prisma/client";
+import type {
+  LedgerTransactionKind,
+  MemberRole,
+  OrgInvoiceStatus,
+} from "@prisma/client";
 
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { ledgerAccountId } from "@/lib/payments/ledger/post";
 import { ORG_CLAWBACK_KEY_FILTER } from "@/lib/payments/payouts/clawback-recovery";
 import { sumPaise } from "@/lib/payments/utils/money";
+import { canSeeDraftInvoices } from "@/lib/enterprise/invoice-visibility";
 
 /** How many postings the page shows before it says there are more. */
 export const ORG_RECEIVABLES_PAGE_SIZE = 50;
@@ -46,9 +51,16 @@ export interface OrgReceivablePosting {
   paymentId: string | null;
   /** The booking behind the payment, when the posting has one. */
   appointmentId: string | null;
+  /**
+   * The posting's own invoice, else the invoice its booking was billed on.
+   * Id and number are null for a draft the viewer may not see; status stays.
+   */
   invoiceId: string | null;
-  /** Where the invoice that would clear this stands, when there is one. */
+  invoiceNumber: string | null;
+  /** Where that invoice stands, when there is one. */
   invoiceStatus: OrgInvoiceStatus | null;
+  /** A charge whose payment the billing summary counts as "not yet invoiced". */
+  awaitingInvoice: boolean;
 }
 
 export interface OrgReceivablesPayload {
@@ -77,6 +89,7 @@ const EMPTY: OrgReceivablesPayload = {
 
 export async function getOrgReceivables(
   orgId: string,
+  viewerRole: MemberRole,
   limit: number = ORG_RECEIVABLES_PAGE_SIZE,
 ): Promise<OrgReceivablesPayload> {
   // The account id is deterministic, so no lookup by scope is needed and an
@@ -146,33 +159,42 @@ export async function getOrgReceivables(
         .filter((id): id is string => !!id),
     ),
   ];
+  const payments = paymentIds.length
+    ? await prisma.payment.findMany({
+        where: { id: { in: paymentIds } },
+        select: {
+          id: true,
+          appointmentId: true,
+          paymentStatus: true,
+          billableToOrgInvoiceId: true,
+        },
+      })
+    : [];
+  const paymentById = new Map(payments.map((p) => [p.id, p]));
+
+  // A booking's posting never carries an invoice id; the invoice it was billed
+  // on is the payment's billableToOrgInvoiceId, the field the summary counts.
+  const invoiceIdOf = (entry: (typeof entries)[number]): string | null => {
+    if (entry.transaction.invoiceId) return entry.transaction.invoiceId;
+    if (entry.direction !== "DEBIT" || !entry.transaction.paymentId) {
+      return null;
+    }
+    return (
+      paymentById.get(entry.transaction.paymentId)?.billableToOrgInvoiceId ??
+      null
+    );
+  };
   const invoiceIds = [
-    ...new Set(
-      entries
-        .map((e) => e.transaction.invoiceId)
-        .filter((id): id is string => !!id),
-    ),
+    ...new Set(entries.map(invoiceIdOf).filter((id): id is string => !!id)),
   ];
-
-  const [payments, invoices] = await Promise.all([
-    paymentIds.length
-      ? prisma.payment.findMany({
-          where: { id: { in: paymentIds } },
-          select: { id: true, appointmentId: true },
-        })
-      : Promise.resolve([]),
-    invoiceIds.length
-      ? prisma.organizationInvoice.findMany({
-          where: { id: { in: invoiceIds }, organizationId: orgId },
-          select: { id: true, status: true },
-        })
-      : Promise.resolve([]),
-  ]);
-
-  const appointmentByPayment = new Map(
-    payments.map((p) => [p.id, p.appointmentId]),
-  );
-  const statusByInvoice = new Map(invoices.map((i) => [i.id, i.status]));
+  const invoices = invoiceIds.length
+    ? await prisma.organizationInvoice.findMany({
+        where: { id: { in: invoiceIds }, organizationId: orgId },
+        select: { id: true, status: true, invoiceNumber: true },
+      })
+    : [];
+  const invoiceById = new Map(invoices.map((i) => [i.id, i]));
+  const draftsVisible = canSeeDraftInvoices(viewerRole);
 
   return {
     hasAccount: true,
@@ -180,21 +202,31 @@ export async function getOrgReceivables(
     clearedPaise,
     outstandingPaise: accruedPaise - clearedPaise,
     totalPostings,
-    postings: entries.map((entry) => ({
-      entryId: entry.id,
-      postedAt: entry.createdAt.toISOString(),
-      amountPaise: sumPaise(entry.amountPaise),
-      movement: entry.direction === "DEBIT" ? "ACCRUED" : "CLEARED",
-      kind: entry.transaction.kind,
-      description: entry.transaction.description,
-      paymentId: entry.transaction.paymentId,
-      appointmentId: entry.transaction.paymentId
-        ? (appointmentByPayment.get(entry.transaction.paymentId) ?? null)
-        : null,
-      invoiceId: entry.transaction.invoiceId,
-      invoiceStatus: entry.transaction.invoiceId
-        ? (statusByInvoice.get(entry.transaction.invoiceId) ?? null)
-        : null,
-    })),
+    postings: entries.map((entry): OrgReceivablePosting => {
+      const payment = entry.transaction.paymentId
+        ? paymentById.get(entry.transaction.paymentId)
+        : undefined;
+      const invoiceId = invoiceIdOf(entry);
+      const invoice = invoiceId ? invoiceById.get(invoiceId) : undefined;
+      const hidden = invoice?.status === "DRAFT" && !draftsVisible;
+      return {
+        entryId: entry.id,
+        postedAt: entry.createdAt.toISOString(),
+        amountPaise: sumPaise(entry.amountPaise),
+        movement: entry.direction === "DEBIT" ? "ACCRUED" : "CLEARED",
+        kind: entry.transaction.kind,
+        description: entry.transaction.description,
+        paymentId: entry.transaction.paymentId,
+        appointmentId: payment?.appointmentId ?? null,
+        invoiceId: hidden ? null : invoiceId,
+        invoiceNumber: hidden ? null : (invoice?.invoiceNumber ?? null),
+        invoiceStatus: invoice?.status ?? null,
+        // The billing summary's pending-charges predicate, applied to this row.
+        awaitingInvoice:
+          entry.direction === "DEBIT" &&
+          invoiceId === null &&
+          payment?.paymentStatus === "SUCCEEDED",
+      };
+    }),
   };
 }

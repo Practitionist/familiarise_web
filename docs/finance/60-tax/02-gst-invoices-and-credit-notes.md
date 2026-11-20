@@ -63,7 +63,7 @@ The mint returns without a document in these cases:
 - the payment already has a `PENDING` or `SUCCEEDED` refund. The refund's credit note is minted only against an existing invoice, so an invoice minted afterwards would stand with no credit note; ops issue that pair by hand. The check runs inside the mint's transaction before a number is taken, on the capture path and in the healer alike;
 - the supplier state is ambiguous (above), or the reconstructed total is zero or less.
 
-The invoice total is the full pre-credit consideration, the amount charged plus any referral credit applied, because a credit the platform funds is a discount, not a reduction of the value supplied. The tax heads are split out of the tax the buyer actually paid, never recomputed from a rate, so the document agrees with the `GST_PAYABLE` credit to the paisa. The idempotency probe on `paymentId` runs before any number is allocated, so a redelivered webhook cannot burn a number and leave a gap in a gapless series.
+The invoice total is the full pre-credit consideration, the amount charged plus any referral credit applied, because a credit the platform funds is a discount, not a reduction of the value supplied. Whether that is the right treatment, and what a credit note must then cover, is an open question for the accountant ([open GST questions](06-open-gst-questions-for-the-accountant.md)). The tax heads are split out of the tax the buyer actually paid, never recomputed from a rate, so the document agrees with the `GST_PAYABLE` credit to the paisa. For an export, that agreement assumes the LUT state has not changed between checkout and the mint: `determineTax` decides the charge from the LUT state at checkout, while `deriveConsumerInvoiceTax` takes the zero-rating classification from the LUT state when the invoice is minted, so an export charged IGST and invoiced after a valid LUT is configured would carry no IGST head and a total below the amount charged. The idempotency probe on `paymentId` runs before any number is allocated, so a redelivered webhook cannot burn a number and leave a gap in a gapless series.
 
 Rule 46 asks a B2C invoice of ₹50,000 (5,000,000 paise) or more to carry the recipient's name, address and state. The mint still issues the invoice without them, because withholding a buyer's document is worse, and sets `needsBuyerAddress` so the register flags it.
 
@@ -88,7 +88,7 @@ The consumer series is platform-wide because the supplier is the platform. The c
 
 ## Credit notes
 
-A refund never deletes or rewrites an invoice. A credit note beside it reverses part or all of it.
+A refund never deletes or rewrites an invoice. A credit note beside it reverses part or all of it. A personal credit note for a refund that returns cash is sized on the cash refunded, and a restored referral credit gets no document. The exception is a booking paid entirely with credits, whose refund takes a credit note sized on the credits; the accountant has not yet ruled on that ([open GST questions](06-open-gst-questions-for-the-accountant.md)).
 
 **Personal.** `mintConsumerCreditNote` runs from the refund cascade (`applyRefundCascade` in `lib/payments/operations/refund.ts`), from the credit-only refund path in `lib/payments/operations/booking-refund.ts`, and from the lost-chargeback settlement in `app/api/webhooks/utils.ts`. It is idempotent on `refundId` or `disputeId`, each unique. `deriveConsumerCreditNoteAmounts` sizes it:
 
@@ -123,6 +123,14 @@ The register needs the platform's supplier identity, because without it no consu
 
 An administrator fetches a month through `GET /api/admin/compliance/gst-register?period=2026-10`. The route is ADMIN-only, rebuilds the storage path with `gstOutwardRegisterCsvStoragePath`, answers 404 for a month the job has not produced, and otherwise redirects to a signed URL that expires after ten minutes. To rebuild another month, call `/api/cleanup/gst-outward-register-export?period=YYYY-MM` with the cron bearer secret; the month is reckoned in India time, and a malformed value answers 400 `INVALID_PERIOD`. Because every run covers exactly one calendar month, the admin route can fetch any file the job has written.
 
+## Document dates are India dates
+
+A tax invoice and a credit note are dated in the supplier's calendar, which is India's. Every date a document carries is the India calendar date of its stored instant, printed by `formatInvoiceDate` (`lib/time/invoice-date.ts`) as "20 Oct 2026": the invoice date, the date of supply, the due date and billing period of an organisation invoice, a credit note's date and its original invoice's date. The four PDFs, the organisation Billing tab (the invoice list, the invoice drawer and the Licence tab), the invoice CSV export (`issue_date_ist`, `due_date_ist`), the invoice-issued and overdue emails and the invoice-issued bell all print through it, labelled "(IST)", so no reader takes the date for their own zone; the back office prints the same text through `formatOperatorInstant`. A payment, a wallet entry or a usage posting is a moment, not a document date, and stays in the viewer's profile zone.
+
+**Example.** An organisation invoice issued at 23:33 UTC on 19 Oct 2026 (05:03 IST on 20 Oct) and due 30 days later reads "Issued: 20 Oct 2026" and "Due: 19 Nov 2026" under "Dates (IST)" on its PDF, rendered on a UTC server, and "Issued (IST) 20 Oct 2026" on the Billing tab for an owner whose profile zone is Los Angeles, where it is still 19 Oct. The decision is [ADR 2026-11-20](../../decisions/2026-11-20-invoice-dates-in-india-time.md).
+
+The e-invoice follows the same rule. `formatDocDate` (`lib/compliance/irp-payload.ts`) files `DocDtls.Dt` and a credit note's `OrigDocDtls.Dt` as the same India date in the IRP's DD/MM/YYYY format (`invoiceDateIso`), so the invoice above is filed as 20/10/2026. ClearTax answers with `AckDt`, an India wall time such as "2026-10-20 21:15:00"; `generateIrn` (`lib/compliance/irp.ts`) reads it as Asia/Kolkata (`fromOperatorWallTime`) and stores the true instant, 15:45 UTC, which the PDF prints as "Ack date (IST)" 20 Oct 2026.
+
 ## Downloading a document
 
 | Route                                                          | Returns                                                            |
@@ -149,6 +157,7 @@ A B2B `OrganizationInvoice` with a buyer GSTIN is eligible for an Invoice Refere
 | Credit notes never exceed their invoice                   | Cumulative cap under a row lock in `mintConsumerCreditNote`                 | `__tests__/payments/currency-and-tax-gates.test.ts`                    | An operator reviews the recorded `SystemEvent`                |
 | Past the section 34(2) cutoff a note carries no tax       | `isPastGstCreditNoteCutoff`                                                 | `__tests__/compliance/gst-credit-note-cutoff.test.ts`                  | None needed                                                   |
 | A register row is stamped only after the upload succeeded | The order of upload then stamp in the export job                            | `__tests__/compliance/gst-register-upload-then-stamp.test.ts`          | Re-run the job; the file is overwritten                       |
+| A document's date is its India date on every surface      | `formatInvoiceDate` (`lib/time/invoice-date.ts`)                            | `__tests__/enterprise/invoice-dates-india-time.test.tsx`               | None needed; a cached PDF re-renders after 24 hours           |
 
 ## Where in code
 
@@ -161,6 +170,7 @@ A B2B `OrganizationInvoice` with a buyer GSTIN is eligible for an Invoice Refere
 ## Related
 
 - [Tax in plain language](01-tax-explainer.md)
+- [Open GST questions for the accountant](06-open-gst-questions-for-the-accountant.md)
 - [Refunds](../30-refunds-disputes/01-refunds.md)
 - [Invoices, purchase orders and dunning](../50-b2b/04-invoices-purchase-orders-and-dunning.md)
 - [MSME, statutory exports and the calendar](04-msme-statutory-exports-and-calendar.md)
@@ -173,4 +183,5 @@ A B2B `OrganizationInvoice` with a buyer GSTIN is eligible for an Invoice Refere
 - **Zero-rating on browser language.** Detecting the buyer's country from `Accept-Language` zero-rated every `en-US` browser. It was removed.
 - **Independent clock reads** across credit-note minting and the ledger's GST reversal. They are one pinned `cascadeNow` now.
 - **Database writes through the global client** inside the mint error handlers. They pass the enclosing transaction (`db: tx`) so a single-connection pool cannot deadlock.
+- **Document dates in UTC or the server's zone.** The consumer documents and the organisation credit note pinned UTC and the organisation invoice used the server's zone, so a document issued before 05:30 IST printed the previous day. The IRP payload filed the UTC date and the acknowledgement was parsed in the server's zone. All of them use India dates now.
 - **Environment overrides for the register window and the series.** `GST_REGISTER_PERIOD_START`, `GST_REGISTER_PERIOD_END`, `PLATFORM_INVOICE_PREFIX` and `CLEARTAX_GSTIN` no longer exist. The month is the `?period=YYYY-MM` argument, the prefix is a constant in `lib/company.ts`, and the IRP uses `PLATFORM_GSTIN`.

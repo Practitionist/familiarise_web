@@ -398,8 +398,13 @@ beforeEach(() => {
     },
     appointmentParticipant: {
       createMany: jest.fn().mockResolvedValue({ count: 1 }),
+      // A seat confirmed at birth returns its row, for its SEAT history row.
+      createManyAndReturn: jest.fn(async ({ data }: { data: object[] }) =>
+        data.map((row, i) => ({ id: `seat-${i}`, ...row })),
+      ),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
+    bookingStatusHistory: { createMany: jest.fn(async () => ({ count: 1 })) },
     consulteeProfile: {
       findUnique: jest.fn(async () => ({ userId: "user_1" })),
     },

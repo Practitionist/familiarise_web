@@ -99,6 +99,11 @@ describe("Consultant group-event counterpart resolution", () => {
 
     expect(consultantDetail.vm.counterpart.name).toBe("Registered attendees");
     expect(consulteeDetail.vm.counterpart.name).toBe("Aarav Anderson");
+    // The host's audience is a label the header and cancel dialog never address.
+    expect(webinarVm?.counterpart.audience).toBe(true);
+    expect(classVm?.counterpart.audience).toBe(true);
+    expect(consultantDetail.vm.counterpart.audience).toBe(true);
+    expect(consulteeDetail.vm.counterpart.audience).toBeUndefined();
   });
 
   it("preserves plan owner name as counterpart when viewing as a collaborator", () => {
@@ -161,13 +166,12 @@ describe("Consultant group-event counterpart resolution", () => {
     );
 
     expect(collaboratorDetail.vm.counterpart.name).toBe("Aarav Anderson");
+    expect(collaboratorDetail.vm.counterpart.audience).toBeUndefined();
     expect(ownerDetail.vm.counterpart.name).toBe("Registered attendees");
     expect(getConsumeeName(collabWebinar, "cp_guest_speaker")).toBe(
       "Aarav Anderson",
     );
-    expect(getConsumeeName(collabWebinar, "cp_owner")).toBe(
-      "Registered attendees",
-    );
+    expect(getConsumeeName(collabWebinar, "cp_owner")).toBeNull();
   });
 
   it("retains in-progress sessions in getUpcomingAppointments so Consultant Home renders 'Session in progress'", () => {

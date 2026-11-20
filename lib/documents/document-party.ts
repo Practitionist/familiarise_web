@@ -2,7 +2,7 @@ import "server-only";
 
 import type { AppointmentStatus, Prisma, TrialStatus } from "@prisma/client";
 
-import { KNOWN_HISTORY_ENTITIES } from "@/lib/booking/history-entities";
+import { BOOKING_HISTORY_ENTITIES } from "@/lib/booking/history-entities";
 import { subscriptionPlanEnd } from "@/lib/booking/entitlement";
 import type { PrismaLike } from "@/lib/prisma";
 import { documentDates, type DocumentDates } from "./document-dates";
@@ -117,7 +117,7 @@ export const documentBookingSelect = {
   },
   statusHistory: {
     where: {
-      entity: { in: [...KNOWN_HISTORY_ENTITIES] },
+      entity: { in: [...BOOKING_HISTORY_ENTITIES] },
       toStatus: { in: [...TERMINAL_REQUEST_STATUSES] },
     },
     orderBy: { createdAt: "desc" },

@@ -146,15 +146,7 @@ export interface AllocationRequest {
    * accept and auto-confirm): the allocator renews it instead of acquiring it.
    */
   heldAppointmentLock?: ApprovalLock;
-  /** The hourly top-up placing a plan's open week as the system, not a person. */
-  bySweep?: boolean;
-  /**
-   * The plan's own consultant placed the sessions. Only then can a first
-   * placement record the plan's Auto choice; any other caller (staff, a host
-   * or sponsor org operator, or a door that does not say) is a one-off.
-   */
-  byConsultant?: boolean;
-  /** The person who placed the times, recorded on the approval's history row; null for a sweep. */
+  /** The person who placed the times, recorded on the approval's history row. */
   actorUserId?: string | null;
   /** Manual mode: run every check before the locks' write and stop; nothing is written. */
   checkOnly?: boolean;

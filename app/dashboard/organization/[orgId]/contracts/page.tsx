@@ -33,6 +33,8 @@ import { ErrorState } from "@/components/dashboard/ErrorState";
 import {
   FUNDING_SOURCE_LABEL,
   PROGRAM_TYPE_LABEL,
+  contractAutoRenewLabel,
+  contractIsEditable,
 } from "@/lib/labels/org-labels";
 import { humanizeEnum, type Tone } from "@/lib/ui/tone";
 import { formatCurrencyAmount } from "@/utils/formatting";
@@ -1167,7 +1169,7 @@ function ContractDetailDialog({
               </DetailRow>
               <DetailRow label="Payment terms">{fmtPaymentTerms(c)}</DetailRow>
               <DetailRow label="Auto-renew">
-                {c.autoRenew ? "Yes" : "No"}
+                {contractAutoRenewLabel(c)}
               </DetailRow>
               {c.subscription && (
                 <DetailRow label="Subscription">
@@ -1226,9 +1228,9 @@ function ContractDetailDialog({
 }
 
 // ---------------------------------------------------------------------------
-// Edit dialog (#777 §B) — autoRenew editable always; effective dates and
-// payment terms only while the contract isn't locked (still DRAFT, unsigned,
-// no invoices / live assignments). The lock is server-derived.
+// Edit dialog, offered until the contract expires or is terminated: autoRenew
+// always; effective dates and payment terms only while the server-derived lock
+// is off (still DRAFT, unsigned, no invoices / live assignments).
 // ---------------------------------------------------------------------------
 
 function ContractLockedHint() {
@@ -1552,7 +1554,7 @@ export default function OrgContractsPage({
       cell: (c) => (
         <>
           {formatContractTermsCell(c)}
-          {c.autoRenew && (
+          {c.autoRenew && contractIsEditable(c.status) && (
             <span className="ml-1 text-xs text-muted-foreground/70">
               (auto-renew)
             </span>
@@ -1583,16 +1585,18 @@ export default function OrgContractsPage({
       >
         <Eye className="h-3.5 w-3.5 mr-1" /> View
       </Button>
-      <Button
-        size="sm"
-        variant="outline"
-        onClick={() => {
-          setActionError(null);
-          setEditTarget(c);
-        }}
-      >
-        <Pencil className="h-3.5 w-3.5 mr-1" /> Edit
-      </Button>
+      {contractIsEditable(c.status) && (
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => {
+            setActionError(null);
+            setEditTarget(c);
+          }}
+        >
+          <Pencil className="h-3.5 w-3.5 mr-1" /> Edit
+        </Button>
+      )}
       {c.status === "DRAFT" && (
         <>
           <Button

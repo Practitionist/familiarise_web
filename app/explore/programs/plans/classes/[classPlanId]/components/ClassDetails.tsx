@@ -10,7 +10,10 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import { Calendar, Clock, Users, GraduationCap, ArrowLeft } from "lucide-react";
 import { deriveBatchCards } from "@/lib/booking/batch-cards";
-import { formatRole } from "@/components/collaborators/format";
+import {
+  CoHostList,
+  hasPublicExpertPage,
+} from "@/app/explore/programs/plans/components/CoHostList";
 import { BatchSchedule } from "./BatchSchedule";
 import { ClientClassRegistration } from "./ClientClassRegistration";
 import { BuyerPrice } from "@/components/pricing/BuyerPriceProvider";
@@ -187,59 +190,22 @@ export function ClassDetails({
                     An experienced professional dedicated to sharing knowledge
                     and expertise.
                   </p>
-                  <Link
-                    href={`/explore/experts/${plan.consultantProfile?.id}`}
-                    className="inline-flex items-center gap-1 text-sm font-medium text-foreground hover:text-muted-foreground mt-3"
-                  >
-                    View Full Profile
-                    <ArrowLeft className="w-4 h-4 rotate-180" />
-                  </Link>
+                  {hasPublicExpertPage(plan.consultantProfile) && (
+                    <Link
+                      href={`/explore/experts/${plan.consultantProfile?.id}`}
+                      className="inline-flex items-center gap-1 text-sm font-medium text-foreground hover:text-muted-foreground mt-3"
+                    >
+                      View Full Profile
+                      <ArrowLeft className="w-4 h-4 rotate-180" />
+                    </Link>
+                  )}
                 </CardContent>
               </Card>
 
-              {/* Collaborators */}
-              {plan.collaborators && plan.collaborators.length > 0 && (
-                <Card className="border-border shadow-sm">
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-lg flex items-center gap-2">
-                      <Users className="w-4 h-4" />
-                      Co-Instructors
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    {plan.collaborators.map((collab) => (
-                      <Link
-                        key={collab.id}
-                        href={`/explore/experts/${collab.consultantProfile.id}`}
-                        className="flex items-center gap-3 hover:bg-muted rounded-lg p-2 -mx-2 transition-colors"
-                      >
-                        <div className="relative h-10 w-10 rounded-full overflow-hidden ring-2 ring-border flex-shrink-0">
-                          <Image
-                            src={
-                              collab.consultantProfile.user.image ??
-                              "/placeholder-user.jpg"
-                            }
-                            alt={
-                              collab.consultantProfile.user.name ??
-                              "Co-instructor"
-                            }
-                            fill
-                            className="object-cover"
-                          />
-                        </div>
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium text-foreground">
-                            {collab.consultantProfile.user.name}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            {formatRole(collab.role)}
-                          </p>
-                        </div>
-                      </Link>
-                    ))}
-                  </CardContent>
-                </Card>
-              )}
+              <CoHostList
+                collaborators={plan.collaborators}
+                className="border-border shadow-sm"
+              />
 
               {/* Registration Card */}
               <ClientClassRegistration

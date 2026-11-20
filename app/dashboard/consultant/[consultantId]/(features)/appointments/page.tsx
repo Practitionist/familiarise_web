@@ -10,7 +10,7 @@ import {
 } from "@/lib/data/consultant-appointments";
 import { getSession } from "@/lib/auth-server";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
-import { getViewerZone } from "@/lib/time/viewer-zone-server";
+import { getPersonalViewerZone } from "@/lib/time/viewer-zone-server";
 
 type PageProps = {
   params: Promise<{ consultantId: string }>;
@@ -27,7 +27,7 @@ export default async function AppointmentsPage({
   const viewer = access.isInspecting ? (await getSession())?.user : undefined;
   // Read here and passed down: the server render and the hydrating client
   // then format every time from the same zone (hydration #418).
-  const viewerZone = await getViewerZone();
+  const viewerZone = await getPersonalViewerZone("consultant", consultantId);
   const queryClient = new QueryClient();
 
   // #890 — SSR prefetch the DEFAULT ("personal") appointments view so the

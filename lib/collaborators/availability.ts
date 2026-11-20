@@ -34,6 +34,8 @@ export class CollaboratorUnavailableError extends Error {
 export class ConsultantScheduleConflictError extends Error {
   constructor(
     message = "That time conflicts with another confirmed session on your calendar.",
+    /** The caller's own window that met the conflict, when the check knows it; never the commitment it met. */
+    readonly window: CollaboratorWindow | null = null,
   ) {
     super(message);
     this.name = "ConsultantScheduleConflictError";
@@ -283,11 +285,21 @@ export async function assertConsultantAvailableForWindows(
         now,
       ),
     },
-    select: { id: true },
+    select: { id: true, startsAt: true, endsAt: true },
+    orderBy: { startsAt: "asc" },
   });
 
   if (conflict) {
-    throw new ConsultantScheduleConflictError();
+    // The earliest of the caller's windows the conflict overlaps.
+    const [clashed] = params.windows
+      .filter(
+        (w) => w.startsAt < conflict.endsAt && w.endsAt > conflict.startsAt,
+      )
+      .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
+    throw new ConsultantScheduleConflictError(
+      undefined,
+      clashed ? { startsAt: clashed.startsAt, endsAt: clashed.endsAt } : null,
+    );
   }
 }
 

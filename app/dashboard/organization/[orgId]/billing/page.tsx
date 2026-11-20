@@ -22,8 +22,10 @@ export default async function OrgBillingPage({
   if (access.error) {
     redirect(`/dashboard/organization/${orgId}/home`);
   }
-  const receivables: OrgReceivablesPayload | null =
-    await getOrgReceivables(orgId);
+  const receivables: OrgReceivablesPayload | null = await getOrgReceivables(
+    orgId,
+    access.member.role,
+  );
 
   return <BillingPageClient orgId={orgId} receivables={receivables} />;
 }

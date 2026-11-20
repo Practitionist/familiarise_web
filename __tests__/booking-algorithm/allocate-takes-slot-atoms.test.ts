@@ -73,6 +73,7 @@ jest.mock("../../lib/booking/allocation/guards", () => ({
 }));
 jest.mock("../../lib/booking/allocation/collaborators", () => ({
   assertCollaboratorsFree: jest.fn().mockResolvedValue(undefined),
+  lockPlanForAllocation: jest.fn().mockResolvedValue(undefined),
 }));
 jest.mock("../../lib/booking/allocation/commit/release-tentative", () => ({
   deleteExistingAppointments: jest.fn().mockResolvedValue({

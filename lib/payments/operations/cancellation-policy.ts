@@ -187,7 +187,7 @@ export interface BookingRefundQuoteInput {
   sessionsRefunded: number;
   /** #1766 — sessions delivered (COMPLETED or UNVERIFIED). */
   sessionsCompleted?: number;
-  /** #1766 — start instants (epoch ms) of every session still scheduled. */
+  /** One start instant (epoch ms) per session priced at a notice tier; a released session counts at its capped original start. */
   scheduledStarts?: number[];
   /**
    * Subscriptions only: what single sessions of this payment already got back

@@ -1,4 +1,5 @@
 import { caseKeyOf } from "@/lib/support/case-key";
+import { formatCurrencyAmount } from "@/utils/formatting";
 import type { ActionItem } from "@/lib/enterprise/org-activation";
 import {
   CONSULTEE_JOIN_WINDOW_MS,
@@ -22,6 +23,9 @@ import {
  * click. "You have 12 upcoming sessions" is not an action — it's a summary,
  * and summaries belong further down the page.
  */
+
+/** The id of a booking's review form on its detail page. */
+export const SESSION_REVIEW_ANCHOR = "review";
 
 /** A session is "imminent" inside this window — close enough to act on. */
 const IMMINENT_MS = 60 * 60 * 1000; // 1 hour
@@ -176,8 +180,9 @@ export function deriveConsultantActionItems({
       key: "pending-requests",
       severity: "warning",
       title: `${pendingApprovals} ${pluralise(pendingApprovals, "request", "requests")} to answer`,
-      body: "Learners are waiting on you before they can book.",
-      ctaLabel: "Answer",
+      // The count holds paid plans waiting for times as well as new requests.
+      body: "Answer new requests and place the sessions learners have paid for.",
+      ctaLabel: "Review",
       ctaHref: `${basePath}/requests`,
     });
   }
@@ -260,7 +265,11 @@ export interface ConsulteeActionInput {
     counterpartName: string;
   }[];
   /** #1300 — held sessions with no review yet; the prompt lives here, not in the room. */
-  sessionsToRate?: { key: string; consultantName: string; href: string }[];
+  sessionsToRate?: {
+    appointmentId: string;
+    consultantName: string;
+    profileIsPublic: boolean;
+  }[];
   /** The expert asked for a revised upload (review status NEEDS_REVISION). */
   documentsToRevise?: { id: string; name: string; appointmentId: string }[];
   /** A refund the gateway rejected; staff re-issue it, the learner can follow up. */
@@ -311,7 +320,7 @@ export function deriveConsulteeActionItems({
   if (pendingPaymentCount > 0) {
     const amount =
       pendingPaymentTotalPaise > 0
-        ? ` (₹${(pendingPaymentTotalPaise / 100).toLocaleString("en-IN")})`
+        ? ` (${formatCurrencyAmount(pendingPaymentTotalPaise, "INR")})`
         : "";
     items.push({
       key: "pending-payments",
@@ -369,12 +378,15 @@ export function deriveConsulteeActionItems({
 
   for (const session of sessionsToRate) {
     items.push({
-      key: `rate:${session.key}`,
+      key: `rate:${session.appointmentId}`,
       severity: "info",
       title: `How was your session with ${session.consultantName}?`,
-      body: "A short review helps other learners choose.",
+      body: session.profileIsPublic
+        ? "A short review helps other learners choose."
+        : "Your review will appear on their profile once it is live.",
       ctaLabel: "Rate",
-      ctaHref: session.href,
+      // The booking's own review form: the public profile 404s until the expert is verified.
+      ctaHref: `${basePath}/appointments/${session.appointmentId}#${SESSION_REVIEW_ANCHOR}`,
     });
   }
 

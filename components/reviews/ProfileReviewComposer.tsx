@@ -12,34 +12,10 @@
  */
 
 import { useQuery } from "@tanstack/react-query";
-import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { useSession } from "@/lib/auth-client";
-import { throwSupportError } from "@/lib/support/error-copy";
-import { RatingCauseSchema } from "@/schemas/enums";
 import { ReviewComposer } from "./ReviewComposer";
-
-const ReviewableSessionsResponseSchema = z.object({
-  data: z.array(
-    z.object({
-      appointmentId: z.string(),
-      consultantName: z.string().nullable(),
-      title: z.string(),
-      heldAt: z.string().nullable(),
-      existingReview: z
-        .object({
-          id: z.string(),
-          rating: z.number(),
-          reviewDescription: z.string().nullable(),
-          ratingCause: RatingCauseSchema.nullable(),
-        })
-        .nullable(),
-    }),
-  ),
-});
-type ReviewableSession = z.infer<
-  typeof ReviewableSessionsResponseSchema
->["data"][number];
+import { fetchReviewableSessions } from "./reviewable-sessions";
 
 export function ProfileReviewComposer({
   consultantProfileId,
@@ -60,14 +36,7 @@ export function ProfileReviewComposer({
     enabled: !!viewerId && !sessionPending,
     // A 401 from an expired cookie is still an answer ("nothing to offer").
     retry: false,
-    queryFn: async (): Promise<ReviewableSession[]> => {
-      const res = await fetch(
-        `/api/user/reviews/reviewable-sessions?consultantProfileId=${encodeURIComponent(consultantProfileId)}`,
-      );
-      if (res.status === 401) return [];
-      if (!res.ok) await throwSupportError(res, "review eligibility");
-      return ReviewableSessionsResponseSchema.parse(await res.json()).data;
-    },
+    queryFn: () => fetchReviewableSessions({ consultantProfileId }),
   });
 
   // A failed check is NOT "you may not review". Rendering nothing for both is
@@ -105,6 +74,7 @@ export function ProfileReviewComposer({
           consultantName={consultantName ?? session.consultantName}
           contextLine={session.title}
           existing={session.existingReview}
+          profileIsPublic={session.profileIsPublic}
           invalidateKeys={[queryKey]}
         />
       </div>

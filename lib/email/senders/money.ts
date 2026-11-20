@@ -47,6 +47,7 @@ import { RefundProcessedEmail } from "@/emails/payments/RefundProcessedEmail";
 import type { Tx } from "@/lib/prisma";
 import { getAppUrl } from "@/lib/url";
 import { goHref } from "@/lib/dashboard/go";
+import { formatInvoiceDateWithZone } from "@/lib/time/invoice-date";
 import { EMAIL_BUDGET_MS, SENDERS, supportEmail } from "../config";
 import type { EmailRecipient } from "../preferences";
 import type {
@@ -375,7 +376,7 @@ function orgInvoiceOverdueSpec(
         orgName: args.orgName,
         invoiceNumber: args.invoiceNumber,
         amountText,
-        dueDateText: dateText(args.dueDate, r.zone),
+        dueDateText: formatInvoiceDateWithZone(args.dueDate),
         daysLate: args.daysLate,
         reminderStage: args.reminderStage,
         payUrl: absolute(args.payUrl),
@@ -733,7 +734,9 @@ function buildOrgBillingEmail(args: OrgBillingEmailArgs): {
           orgName: args.orgName,
           amountText,
           invoiceNumber: args.invoiceNumber,
-          dueDateText: args.dueDate ? dateText(args.dueDate, r.zone) : null,
+          dueDateText: args.dueDate
+            ? formatInvoiceDateWithZone(args.dueDate)
+            : null,
           newBalanceText,
           settledText: args.receivableSettledPaise
             ? money(args.receivableSettledPaise, args.currency)

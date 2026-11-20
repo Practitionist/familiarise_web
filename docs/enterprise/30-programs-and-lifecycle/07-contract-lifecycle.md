@@ -128,7 +128,13 @@ returns `409 CONTRACT_TERMS_LOCKED`. `autoRenew` is deliberately **not** locked:
 it's a forward-looking toggle that can't rewrite already-settled money, so an
 operator can flip it on a live contract at will. The `GET` route returns a
 `locked` boolean alongside the contract so the edit drawer disables the locked
-inputs without a second round-trip. The rationale mirrors the
+inputs without a second round-trip. Once a contract is `EXPIRED` or
+`TERMINATED` the Contracts page offers no Edit and reads auto-renew as "Not
+applicable: the contract has expired" (or "was terminated"): its terms are
+locked and the auto-renew cron only reads `ACTIVE` contracts, so the stored
+`autoRenew` flag can no longer do anything (`contractIsEditable` and
+`contractAutoRenewLabel` in `lib/labels/org-labels.ts`). The PATCH route still
+accepts the toggle on an ended contract; nothing reads it. The rationale mirrors the
 [RateCard bump](../../finance/50-b2b/03-rate-cards-and-overage.md) / program config-lock immutable
 pattern: to change committed terms you **supersede**, you don't mutate.
 

@@ -316,9 +316,9 @@ ALTER TABLE "RateCard" ADD CONSTRAINT "rate_card_bps_sum_is_whole"
   );
 
 -- SPLIT
--- A collaborator's share is a fraction of the whole, so it lives in [0, 10000].
--- The cross-row "shares on one plan sum to <= 10000" invariant cannot be a
--- CHECK; it is asserted by the ledger reconciler instead.
+-- One collaborator's share is between 1 and 9000 basis points. The cross-row
+-- rule, that a plan's live shares sum to at most 9000, cannot be a CHECK; the
+-- collaborator_plan_caps trigger below enforces it.
 ALTER TABLE "Collaborator" DROP CONSTRAINT IF EXISTS "collaborator_share_bps_in_range";
 -- SPLIT
 ALTER TABLE "Collaborator" ADD CONSTRAINT "collaborator_share_bps_in_range"
@@ -699,6 +699,164 @@ DROP INDEX IF EXISTS "collaborator_one_presenter_class";
 CREATE UNIQUE INDEX IF NOT EXISTS "collaborator_one_presenter_class"
   ON "Collaborator" ("classPlanId")
   WHERE "tier" = 'PRESENTER' AND "status" IN ('PENDING', 'ACCEPTED');
+-- SPLIT
+-- A row is one period on a plan's team, so an expert may hold many ended rows
+-- on a plan and at most one that is PENDING or ACCEPTED.
+DROP INDEX IF EXISTS "collaborator_one_active_webinar";
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "collaborator_one_active_webinar"
+  ON "Collaborator" ("consultantProfileId", "webinarPlanId")
+  WHERE "status" IN ('PENDING', 'ACCEPTED');
+-- SPLIT
+DROP INDEX IF EXISTS "collaborator_one_active_class";
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "collaborator_one_active_class"
+  ON "Collaborator" ("consultantProfileId", "classPlanId")
+  WHERE "status" IN ('PENDING', 'ACCEPTED');
+-- SPLIT
+-- Dropped before the backfill below and created after it, so the guard never
+-- judges rows written before the period columns existed.
+DROP TRIGGER IF EXISTS collaborator_transition_guard ON "Collaborator";
+-- SPLIT
+-- A row on the team carries its accepted time and no end; an ended row carries
+-- its end. Rows that predate the columns take the nearest recorded times.
+DO $$
+BEGIN
+  UPDATE "Collaborator"
+  SET "acceptedAt" = COALESCE("respondedAt", "createdAt") AT TIME ZONE 'UTC'
+  WHERE "acceptedAt" IS NULL
+    AND ("status" = 'ACCEPTED'
+      OR ("status" IN ('REMOVED', 'WITHDRAWN') AND "respondedAt" IS NOT NULL));
+
+  UPDATE "Collaborator"
+  SET "endedAt" = "updatedAt" AT TIME ZONE 'UTC'
+  WHERE "endedAt" IS NULL
+    AND "status" IN ('DECLINED', 'REMOVED', 'WITHDRAWN', 'EXPIRED');
+
+  ALTER TABLE "Collaborator" ADD CONSTRAINT "collaborator_period_is_coherent"
+    CHECK (
+      ("status" = 'PENDING' AND "acceptedAt" IS NULL AND "endedAt" IS NULL)
+      OR ("status" = 'ACCEPTED' AND "acceptedAt" IS NOT NULL AND "endedAt" IS NULL)
+      OR ("status" IN ('DECLINED', 'EXPIRED') AND "acceptedAt" IS NULL AND "endedAt" IS NOT NULL)
+      OR ("status" IN ('REMOVED', 'WITHDRAWN') AND "endedAt" IS NOT NULL)
+    );
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
+-- SPLIT
+-- The collaborator state machine, for every writer. A row is born PENDING. A
+-- PENDING row may change its terms or move to ACCEPTED, DECLINED, EXPIRED or
+-- REMOVED. An ACCEPTED row keeps its terms and may only move to REMOVED or
+-- WITHDRAWN. An ended row never changes again. The trigger stamps the period:
+-- writers cannot set acceptedAt or endedAt themselves.
+CREATE OR REPLACE FUNCTION assert_collaborator_transition() RETURNS trigger AS $$
+DECLARE
+  -- One reading of the wall clock per call: the time of this transition, on every stamp it writes.
+  stamp timestamptz := clock_timestamp();
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    IF NEW."status" <> 'PENDING' THEN
+      RAISE EXCEPTION 'a collaboration starts as an invitation, not as %', NEW."status"
+        USING ERRCODE = 'check_violation', CONSTRAINT = 'collaborator_transition_guard';
+    END IF;
+    NEW."acceptedAt" := NULL;
+    NEW."endedAt" := NULL;
+    RETURN NEW;
+  END IF;
+
+  IF NEW."consultantProfileId" <> OLD."consultantProfileId"
+     OR NEW."collaboratorType" <> OLD."collaboratorType"
+     OR NEW."webinarPlanId" IS DISTINCT FROM OLD."webinarPlanId"
+     OR NEW."classPlanId" IS DISTINCT FROM OLD."classPlanId" THEN
+    RAISE EXCEPTION 'collaboration % cannot move to another expert or plan', OLD."id"
+      USING ERRCODE = 'check_violation', CONSTRAINT = 'collaborator_transition_guard';
+  END IF;
+
+  IF OLD."status" <> 'PENDING' AND (
+       NEW."role" <> OLD."role"
+       OR NEW."tier" <> OLD."tier"
+       OR NEW."revenueShareBps" <> OLD."revenueShareBps") THEN
+    RAISE EXCEPTION 'the terms of collaboration % were fixed when it was accepted or ended', OLD."id"
+      USING ERRCODE = 'check_violation', CONSTRAINT = 'collaborator_transition_guard';
+  END IF;
+
+  NEW."acceptedAt" := OLD."acceptedAt";
+  NEW."endedAt" := OLD."endedAt";
+  IF NEW."status" = OLD."status" THEN
+    RETURN NEW;
+  END IF;
+
+  IF OLD."status" = 'PENDING' AND NEW."status" = 'ACCEPTED' THEN
+    NEW."acceptedAt" := stamp;
+    NEW."respondedAt" := stamp AT TIME ZONE 'UTC';
+  ELSIF OLD."status" = 'PENDING' AND NEW."status" IN ('DECLINED', 'EXPIRED', 'REMOVED') THEN
+    NEW."endedAt" := stamp;
+    IF NEW."status" = 'DECLINED' THEN
+      NEW."respondedAt" := stamp AT TIME ZONE 'UTC';
+    END IF;
+  ELSIF OLD."status" = 'ACCEPTED' AND NEW."status" IN ('REMOVED', 'WITHDRAWN') THEN
+    NEW."endedAt" := stamp;
+  ELSE
+    RAISE EXCEPTION 'collaboration % cannot go from % to %', OLD."id", OLD."status", NEW."status"
+      USING ERRCODE = 'check_violation', CONSTRAINT = 'collaborator_transition_guard';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+-- SPLIT
+CREATE TRIGGER collaborator_transition_guard
+  BEFORE INSERT OR UPDATE ON "Collaborator"
+  FOR EACH ROW
+  EXECUTE FUNCTION assert_collaborator_transition();
+-- SPLIT
+-- A plan carries at most three PENDING or ACCEPTED collaborators, whose shares
+-- sum to at most 9000 basis points, so its owner keeps at least a tenth. The
+-- plan row is locked first, which makes two concurrent invites on one plan
+-- queue instead of both passing the count. NO KEY UPDATE does not block the
+-- inserts of rows that reference the plan.
+DROP TRIGGER IF EXISTS collaborator_plan_caps ON "Collaborator";
+-- SPLIT
+CREATE OR REPLACE FUNCTION assert_collaborator_plan_caps() RETURNS trigger AS $$
+DECLARE
+  live_count integer;
+  live_share integer;
+BEGIN
+  IF NEW."status" NOT IN ('PENDING', 'ACCEPTED') THEN
+    RETURN NULL;
+  END IF;
+
+  IF NEW."webinarPlanId" IS NOT NULL THEN
+    PERFORM 1 FROM "WebinarPlan" WHERE "id" = NEW."webinarPlanId" FOR NO KEY UPDATE;
+    SELECT count(*), COALESCE(sum("revenueShareBps"), 0)
+      INTO live_count, live_share
+      FROM "Collaborator"
+      WHERE "webinarPlanId" = NEW."webinarPlanId"
+        AND "status" IN ('PENDING', 'ACCEPTED');
+  ELSE
+    PERFORM 1 FROM "ClassPlan" WHERE "id" = NEW."classPlanId" FOR NO KEY UPDATE;
+    SELECT count(*), COALESCE(sum("revenueShareBps"), 0)
+      INTO live_count, live_share
+      FROM "Collaborator"
+      WHERE "classPlanId" = NEW."classPlanId"
+        AND "status" IN ('PENDING', 'ACCEPTED');
+  END IF;
+
+  IF live_count > 3 THEN
+    RAISE EXCEPTION 'a plan carries at most 3 pending or accepted collaborators'
+      USING ERRCODE = 'check_violation', CONSTRAINT = 'collaborator_plan_team_size';
+  END IF;
+  IF live_share > 9000 THEN
+    RAISE EXCEPTION 'collaborator shares on a plan sum to at most 9000 basis points, not %', live_share
+      USING ERRCODE = 'check_violation', CONSTRAINT = 'collaborator_plan_share_total';
+  END IF;
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+-- SPLIT
+CREATE TRIGGER collaborator_plan_caps
+  AFTER INSERT OR UPDATE OF "status", "revenueShareBps" ON "Collaborator"
+  FOR EACH ROW
+  EXECUTE FUNCTION assert_collaborator_plan_caps();
 -- SPLIT
 -- #1551 — a review revision is an append-only record of what the review said.
 -- UPDATE never; DELETE only once the parent review row itself is gone (the

@@ -70,6 +70,10 @@ Buyer organisation and host organisation can differ: a Wipro learner booking an 
 8. For every non-`PERSONAL` rail: an `ACTIVE` `ProgramAssignment` for the member, on an `ACTIVE` programme that covers this appointment type, under an `ACTIVE` contract inside its effective window. A missing assignment answers 409 `PROGRAM_ASSIGNMENT_INACTIVE`. Checkout refuses; it never falls back to charging the learner's card.
 9. Inside the lock, the curated-panel allowlist and exclusive-engagement checks (`revalidateInsideLock`, `lib/payments/checkout/revalidate.ts`).
 
+After these gates, `handleCheckout` refuses any non-`PERSONAL` rail with 403 `GST_REGISTRATION_REQUIRED` while the platform is not GST-registered (`assertOrgBillingAvailable`, `lib/payments/tax/gst-regime.ts`): "Booking on your organisation's account isn't available yet. You can still pay yourself."
+
+The checkout payer picker (`OrgPayerSelector`) asks the same two questions before it offers an organisation. `orgFundingRefusal` (`lib/payments/checkout/org-funding.ts`) runs gate 8 through the shared `findCoveringAssignment` and then the GST gate, and the preview route `GET /api/organizations/[orgId]/checkout/overage-preview` returns the result as `fundingRefusal`. An organisation with a refusal is shown disabled with that refusal's sentence, so a learner whose only programme covers consultations cannot pick the organisation for a webinar. The other gates are still answered only at Pay.
+
 Inside the transaction, for a wallet-funded booking, a frozen wallet refuses with `WalletFrozenError` and a short balance with `WALLET_INSUFFICIENT_FUNDS` (402), both described in [the wallet page](02-wallet-and-top-ups.md).
 
 ## Legs per rail
