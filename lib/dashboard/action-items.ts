@@ -1,4 +1,5 @@
 import { caseKeyOf } from "@/lib/support/case-key";
+import { formatCurrencyAmount } from "@/utils/formatting";
 import type { ActionItem } from "@/lib/enterprise/org-activation";
 import {
   CONSULTEE_JOIN_WINDOW_MS,
@@ -312,7 +313,7 @@ export function deriveConsulteeActionItems({
   if (pendingPaymentCount > 0) {
     const amount =
       pendingPaymentTotalPaise > 0
-        ? ` (₹${(pendingPaymentTotalPaise / 100).toLocaleString("en-IN")})`
+        ? ` (${formatCurrencyAmount(pendingPaymentTotalPaise, "INR")})`
         : "";
     items.push({
       key: "pending-payments",
