@@ -33,6 +33,13 @@ jest.mock("../../../lib/stream/access-revocation", () => {
   const actual = jest.requireActual("../../../lib/stream/access-revocation");
   return {
     ...actual,
+    // Inside the removal's transaction, for every seat: a free seat holds no earnings.
+    persistConductBlockInTx: async (...args: unknown[]) => {
+      const during = mockDuringRemoval.run;
+      mockDuringRemoval.run = null;
+      during?.();
+      return actual.persistConductBlockInTx(...args);
+    },
     syncConductCallBlock: async (...args: unknown[]) => {
       if (mockDieAfterCommit.next) {
         mockDieAfterCommit.next = false;
@@ -47,9 +54,6 @@ jest.mock("../../../lib/support/case-holds", () => {
   return {
     ...actual,
     holdPaymentForCase: async (...args: unknown[]) => {
-      const during = mockDuringRemoval.run;
-      mockDuringRemoval.run = null;
-      during?.();
       if (mockFailHold.next) {
         mockFailHold.next = false;
         throw new Error("database went away mid-transaction");
@@ -110,6 +114,7 @@ import {
 } from "../../../lib/support/conduct-removal-case";
 import { redriveAccessRevocation } from "../../../lib/stream/access-revocation";
 import { refundBookingPayment } from "../../../lib/payments/operations/booking-refund";
+import { handlePaymentSuccess } from "../../../lib/payments/webhooks/handlers";
 
 const refundDoor = refundBookingPayment as jest.Mock;
 const HOUR_MS = 3_600_000;
@@ -1230,14 +1235,27 @@ describe("a removal's refund belongs to the order it ended", () => {
     );
     const reminted = await prisma.payment.findUniqueOrThrow({
       where: { id: payment.id },
-      select: { paymentIntent: true },
+      select: { paymentIntent: true, amount: true },
     });
     expect(reminted.paymentIntent).not.toBe(payment.paymentIntent);
-    await captured(payment.id);
-    await prisma.appointmentParticipant.updateMany({
-      where: { appointmentId: webinar.appointmentId, userId },
-      data: { status: "CONFIRMED" },
-    });
+    // The replacement order captures through the gateway's confirmation path.
+    await handlePaymentSuccess(
+      reminted.paymentIntent,
+      {
+        appointmentId: "pending",
+        appointmentType: "WEBINAR",
+        userId,
+        planId: webinar.planId,
+        eventId: webinar.webinarId,
+      },
+      Number(reminted.amount),
+    );
+    expect(
+      await prisma.appointmentParticipant.findFirstOrThrow({
+        where: { appointmentId: webinar.appointmentId, userId },
+        select: { status: true },
+      }),
+    ).toEqual({ status: "CONFIRMED" });
     const second = (await remove(webinar, userId))!;
     expect(second.caseId).not.toBe(first.caseId);
 
