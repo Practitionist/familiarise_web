@@ -1,4 +1,5 @@
 import { caseKeyOf } from "@/lib/support/case-key";
+import { formatCurrencyAmount } from "@/utils/formatting";
 import type { ActionItem } from "@/lib/enterprise/org-activation";
 import {
   CONSULTEE_JOIN_WINDOW_MS,
@@ -176,8 +177,9 @@ export function deriveConsultantActionItems({
       key: "pending-requests",
       severity: "warning",
       title: `${pendingApprovals} ${pluralise(pendingApprovals, "request", "requests")} to answer`,
-      body: "Learners are waiting on you before they can book.",
-      ctaLabel: "Answer",
+      // The count holds paid plans waiting for times as well as new requests.
+      body: "Answer new requests and place the sessions learners have paid for.",
+      ctaLabel: "Review",
       ctaHref: `${basePath}/requests`,
     });
   }
@@ -311,7 +313,7 @@ export function deriveConsulteeActionItems({
   if (pendingPaymentCount > 0) {
     const amount =
       pendingPaymentTotalPaise > 0
-        ? ` (₹${(pendingPaymentTotalPaise / 100).toLocaleString("en-IN")})`
+        ? ` (${formatCurrencyAmount(pendingPaymentTotalPaise, "INR")})`
         : "";
     items.push({
       key: "pending-payments",

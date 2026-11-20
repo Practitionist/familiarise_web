@@ -23,6 +23,7 @@ import { buildCheckoutOptions } from "@/lib/payments/client/checkout-options";
 import { FUNDING_SOURCE_LABEL } from "@/lib/labels/org-labels";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { replaceUrl } from "@/lib/navigation/history";
+import { formatInvoiceDate, invoiceDateLabel } from "@/lib/time/invoice-date";
 
 import {
   INVOICE_STATUS,
@@ -75,13 +76,16 @@ const invoiceColumns: ResponsiveColumn<OrgInvoice>[] = [
     },
   },
   {
-    key: "due",
-    header: "Due",
+    key: "issued",
+    header: invoiceDateLabel("Issued"),
     className: "text-xs text-muted-foreground",
-    cell: (inv) => {
-      const due = shownDueDate(inv);
-      return due ? new Date(due).toLocaleDateString() : "—";
-    },
+    cell: (inv) => formatInvoiceDate(inv.issuedAt),
+  },
+  {
+    key: "due",
+    header: invoiceDateLabel("Due"),
+    className: "text-xs text-muted-foreground",
+    cell: (inv) => formatInvoiceDate(shownDueDate(inv)),
   },
 ];
 
@@ -91,7 +95,7 @@ const countOf = (n: number, noun: string) =>
 function SummaryStats({ summary }: Readonly<{ summary: BillingSummary }>) {
   const fundingSource = summary.fundingSource;
   return (
-    <StatRow columns={4}>
+    <StatRow columns={4} stackOnPhone>
       <Stat
         label="Spent (net of refunds)"
         value={formatCurrencyAmount(summary.monthToDate.net, "INR")}
@@ -332,7 +336,7 @@ export function InvoicesPanel({
   let summaryBlock: React.ReactNode;
   if (summary.isPending) {
     summaryBlock = (
-      <StatRow columns={4}>
+      <StatRow columns={4} stackOnPhone>
         <StatSkeleton />
         <StatSkeleton />
         <StatSkeleton />

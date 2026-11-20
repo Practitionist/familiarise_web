@@ -147,6 +147,8 @@ export type PaymentInput = PaymentDisplayLike & {
   expiresAt?: Date | string | null;
   /** #1775 C-2 — the capture clock; a read without it falls back to createdAt. */
   capturedAt?: Date | string | null;
+  /** False only for a pre-mint placeholder no gateway ever saw; absent reads as minted. */
+  gatewayOrderMinted?: boolean;
 };
 
 export type RefundInput = {
@@ -350,6 +352,12 @@ function planEndedShortWhy(input: BookingPresentationInput): string | null {
   }
   return head;
 }
+/** Stored statuses a late capture still confirms, while the booked time is free. */
+const CAPTURE_CAN_CONFIRM = new Set([
+  "PENDING",
+  "APPROVED_PENDING_PAYMENT",
+  "AWAITING_PAYMENT",
+]);
 const OPEN_DISPUTES = new Set([
   "WARNING_NEEDS_RESPONSE",
   "WARNING_UNDER_REVIEW",
@@ -504,11 +512,27 @@ function statusFacts(
   };
 }
 
+/**
+ * An open order means the buyer is paying now, so a request with one is not
+ * "not due": it is due while its window is open and lapsed once it closes.
+ */
+function moneyStage(
+  input: BookingPresentationInput,
+  booking: BookingStateKind,
+  now: Date,
+): BookingStateKind {
+  const open = input.payments.find((x) => x.paymentStatus === "PENDING");
+  if (booking !== "REQUESTED" || !open) return booking;
+  const closes = toDateOrNull(open.expiresAt);
+  return closes && closes <= now ? "PAYMENT_LAPSED" : "AWAITING_PAYMENT";
+}
+
 function deriveMoney(
   input: BookingPresentationInput,
   booking: BookingStateKind,
   viewer: Viewer,
   holdExpiresAt: Date | null,
+  now: Date,
   zone?: string | null,
 ): MoneyState {
   const c = input.names.consultant;
@@ -516,6 +540,21 @@ function deriveMoney(
   const you = viewer === "CONSULTEE";
   const paid = input.payments.find((x) => x.paymentStatus === "SUCCEEDED");
   const pending = input.payments.find((x) => x.paymentStatus === "PENDING");
+  // A gateway order that existed can still capture late, and that capture is
+  // refunded; only rows that never reached a gateway prove nothing was charged.
+  const unpaid = input.payments.filter((x) => x.paymentStatus !== "SUCCEEDED");
+  const mayHaveCharged = unpaid.some((x) => x.gatewayOrderMinted !== false);
+  const declined =
+    unpaid.length > 0 && unpaid.every((x) => x.paymentStatus === "FAILED");
+  const chargedWho = you ? "you were" : `${p} was`;
+  const ifCharged = `If ${chargedWho} charged, the money is refunded automatically.`;
+  // Only an EXPIRED or FAILED order, or a booking that has ended, refunds a late
+  // capture; a PENDING order on an open booking confirms it instead.
+  const lateCaptureMayConfirm =
+    !!pending &&
+    pending.gatewayOrderMinted !== false &&
+    (CAPTURE_CAN_CONFIRM.has(normalizeStatus(input.request?.status)) ||
+      normalizeStatus(input.seatStatus) === "HELD");
   // A CHARGE_ORG overage child is the organisation's charge, never a co-pay.
   const coPay = input.childPayments.filter(
     (x) => x.paymentStatus === "SUCCEEDED" && !isSponsoredPayment(x),
@@ -613,7 +652,8 @@ function deriveMoney(
     );
   }
 
-  if (booking === "AWAITING_PAYMENT" && pending) {
+  const stage = moneyStage(input, booking, now);
+  if (stage === "AWAITING_PAYMENT" && pending) {
     const rail = paymentRailLabel(pending);
     const until = holdExpiresAt
       ? ` · link valid until ${dayTime(holdExpiresAt, zone)}`
@@ -626,7 +666,7 @@ function deriveMoney(
   }
   // A held trial or checkout whose order is minted only on the pay page.
   if (
-    booking === "AWAITING_PAYMENT" &&
+    stage === "AWAITING_PAYMENT" &&
     input.plan &&
     Number(input.plan.pricePaise) > 0
   ) {
@@ -639,15 +679,30 @@ function deriveMoney(
       `${money(input.plan.pricePaise, input.plan.currency)} due${until}`,
     );
   }
-  if (booking === "PAYMENT_LAPSED") {
+  if (stage === "PAYMENT_LAPSED") {
     const on = holdExpiresAt ? ` on ${day(holdExpiresAt, zone)}` : "";
-    return build(
-      "NOT_DUE",
-      "Not charged",
-      `Nothing was charged — the payment link expired${on}.`,
-    );
+    if (!mayHaveCharged) {
+      return build(
+        "NOT_DUE",
+        "Not charged",
+        `Nothing was charged — the payment link expired${on}.`,
+      );
+    }
+    if (lateCaptureMayConfirm) {
+      const whose = you ? "your" : `${p}'s`;
+      const what = input.seatStatus ? "a place" : "the time";
+      return build(
+        "NOT_DUE",
+        "Not completed",
+        `The payment window closed${on}. If ${whose} payment still goes through, the booking is confirmed while ${what} can still be booked; otherwise the money is refunded automatically.`,
+      );
+    }
+    const what = declined
+      ? "The payment did not go through."
+      : `The payment link expired${on}.`;
+    return build("NOT_DUE", "Not completed", `${what} ${ifCharged}`);
   }
-  if (booking === "REQUESTED") {
+  if (stage === "REQUESTED") {
     // #1675 — one session-count story: the header owns "<held> of <plan>
     // sessions"; this line only prices the plan, so it no longer repeats a
     // second, differently-worded count.
@@ -676,6 +731,12 @@ function deriveMoney(
       "Sponsored",
       `Sponsored by ${input.sponsorOrgName}${coPayLine}`,
     );
+  }
+  if (mayHaveCharged) {
+    const what = declined
+      ? "The payment did not go through."
+      : "This order was cancelled.";
+    return build("NOT_DUE", "Not completed", `${what} ${ifCharged}`);
   }
   return build(
     "NOT_DUE",
@@ -996,7 +1057,14 @@ export function deriveBookingPresentation(
     tone: status.tone,
     why: status.line,
   };
-  const moneyState = deriveMoney(input, b.state, viewer, holdExpiresAt, zone);
+  const moneyState = deriveMoney(
+    input,
+    b.state,
+    viewer,
+    holdExpiresAt,
+    now,
+    zone,
+  );
   const nextAction = deriveNext(
     input,
     b.state,

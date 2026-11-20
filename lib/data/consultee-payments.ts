@@ -25,12 +25,18 @@ import {
   type FundingBreakdownEntry,
   type PaymentDiscountBreakdown,
 } from "@/lib/appointments/payment-display";
-import { lifecycleOf, planOf } from "@/lib/appointments/presentation-input";
 import {
-  requestHoldDeadline,
-  type PaymentInput,
-  type PaymentRowInput,
+  bookingSourceOf,
+  holdDeadlineOf,
+  lifecycleOf,
+  planOf,
+} from "@/lib/appointments/presentation-input";
+import type {
+  PaymentInput,
+  PaymentRowInput,
 } from "@/lib/dashboard/money-state";
+import { isPreMintIntent } from "@/lib/payments/pre-mint-intent";
+import { liveParticipant } from "@/lib/booking/participants";
 import {
   BUYER_PAYMENT_DISPLAY_SELECT,
   DISCOUNT_CODE_SUMMARY_SELECT,
@@ -247,6 +253,8 @@ function historyWhere(
 export function paymentRowSelect(userId: string) {
   return {
     ...BUYER_PAYMENT_DISPLAY_SELECT,
+    // Read only to say whether a gateway order ever existed; never shipped.
+    paymentIntent: true,
     organizationId: true,
     gstRegime: true,
     organization: { select: { name: true } },
@@ -270,6 +278,7 @@ export function paymentRowSelect(userId: string) {
           select: {
             status: true,
             requestedAt: true,
+            bookingSource: true,
             consultationPlan: planSelect,
           },
         },
@@ -277,6 +286,7 @@ export function paymentRowSelect(userId: string) {
           select: {
             status: true,
             requestedAt: true,
+            bookingSource: true,
             // #1766 — the frozen entitlement drives the plan-size copy.
             sessionsTotal: true,
             subscriptionPlan: {
@@ -286,6 +296,12 @@ export function paymentRowSelect(userId: string) {
         },
         webinar: { select: { status: true, webinarPlan: planSelect } },
         class: { select: { status: true, classPlan: planSelect } },
+        // The payer's own event seat, which the booking page reads too.
+        participants: {
+          where: { ...liveParticipant(userId), role: "CONSULTEE" as const },
+          select: { status: true },
+          take: 1,
+        },
         trial: {
           select: {
             status: true,
@@ -354,6 +370,8 @@ function toPaymentInput(
     currency: p.currency,
     createdAt: p.createdAt,
     expiresAt: p.expiresAt,
+    gatewayOrderMinted:
+      "paymentIntent" in p ? !isPreMintIntent(p.paymentIntent) : undefined,
   };
 }
 
@@ -374,13 +392,13 @@ export function toRow(p: PaymentRecord): ConsulteePaymentRow {
   const plan = planRow(a);
   const consultantName =
     plan?.consultantProfile?.user?.name ?? "The consultant";
-  // The pay link's own clock while one is live; else the request hold's.
-  const holdExpiresAt =
-    (p.paymentStatus === "PENDING" ? p.expiresAt : null) ??
-    a?.trial?.paymentDueAt ??
-    (request?.status === "PENDING"
-      ? requestHoldDeadline(request.kind, request.requestedAt)
-      : null);
+  const source = a ? bookingSourceOf(a) : null;
+  const holdExpiresAt = holdDeadlineOf({
+    payments: [p],
+    trialDueAt: a?.trial?.paymentDueAt,
+    request,
+    source,
+  });
   const presentation: PaymentRowInput = {
     appointmentType: a?.appointmentType ?? "CONSULTATION",
     request,
@@ -393,6 +411,9 @@ export function toRow(p: PaymentRecord): ConsulteePaymentRow {
       : null,
     holdExpiresAt,
     history: a?.statusHistory ?? [],
+    source,
+    seatStatus:
+      a?.webinar || a?.class ? (a.participants[0]?.status ?? null) : null,
     plan: a ? planOf(a) : null,
     names: { payer: "you", consultant: consultantName },
   };

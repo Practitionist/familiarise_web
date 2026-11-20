@@ -25,6 +25,7 @@ import type {
   RefundStatus,
 } from "@prisma/client";
 import { toPlain } from "@/lib/data/serialize";
+import { isPreMintIntent } from "@/lib/payments/pre-mint-intent";
 import {
   bookingAnomalies,
   scheduleAnomalyReport,
@@ -229,6 +230,8 @@ async function loadAppointmentDetail(appointmentId: string) {
           expiresAt: true,
           // #1775 C-5 — the 48 h allocate-or-refund clock.
           capturedAt: true,
+          // Read only to say whether a gateway order ever existed; never shipped.
+          paymentIntent: true,
           deletedAt: true,
           // Which rail funded the row (lib/appointments/payment-display.ts):
           // an org-funded booking shows its sponsor and no amount.
@@ -326,6 +329,10 @@ async function loadAppointmentDetail(appointmentId: string) {
     reminderExpiresAt: reminder?.expiresAt.toISOString() ?? null,
     appointment: {
       ...appointment,
+      payment: appointment.payment.map(({ paymentIntent, ...p }) => ({
+        ...p,
+        gatewayOrderMinted: !isPreMintIntent(paymentIntent),
+      })),
       consultation: consultation && {
         ...consultation,
         requestedBy: {

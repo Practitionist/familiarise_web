@@ -21,6 +21,8 @@ import {
 } from "@/schemas/interest";
 
 const SESSION_FORMAT = "EEE, d MMM · h:mm a";
+/** The default button size on a phone, the compact one from `sm` up. */
+const ROW_ACTION = "h-9 px-4 text-sm sm:h-8 sm:px-3 sm:text-xs";
 
 async function fetchEventWaitlist(): Promise<EventWaitlistAlert[]> {
   const res = await fetch("/api/scheduling/event-waitlist");
@@ -170,12 +172,12 @@ export function MyAlerts({ viewerZone }: Readonly<{ viewerZone: ViewerZone }>) {
                   {alert.nextSessionAt
                     ? `Next session ${formatForViewer(new Date(alert.nextSessionAt), viewerZone, SESSION_FORMAT)}`
                     : "No session scheduled"}
-                  {seatOpen ? "" : " · Waiting for a seat"}
+                  {seatOpen ? " · A seat is open" : " · Waiting for a seat"}
                 </p>
               </div>
               <div className="flex items-center gap-2">
                 {seatOpen && (
-                  <Button size="sm" asChild>
+                  <Button size="sm" className={ROW_ACTION} asChild>
                     <Link href={alert.checkoutHref}>Seat open — book now</Link>
                   </Button>
                 )}
@@ -183,6 +185,7 @@ export function MyAlerts({ viewerZone }: Readonly<{ viewerZone: ViewerZone }>) {
                   type="button"
                   variant="outline"
                   size="sm"
+                  className={ROW_ACTION}
                   disabled={leaveWaitlist.isPending}
                   onClick={() => leaveWaitlist.mutate(alert)}
                 >
@@ -208,7 +211,7 @@ export function MyAlerts({ viewerZone }: Readonly<{ viewerZone: ViewerZone }>) {
             </div>
             <div className="flex items-center gap-2">
               {entry.status === "NOTIFIED" && !hasStarted(entry, nowMs) && (
-                <Button size="sm" asChild>
+                <Button size="sm" className={ROW_ACTION} asChild>
                   <Link href={backupBookHref(entry)}>Book now</Link>
                 </Button>
               )}
@@ -216,6 +219,7 @@ export function MyAlerts({ viewerZone }: Readonly<{ viewerZone: ViewerZone }>) {
                 type="button"
                 variant="outline"
                 size="sm"
+                className={ROW_ACTION}
                 disabled={stopBackup.isPending}
                 onClick={() => stopBackup.mutate(entry.id)}
               >

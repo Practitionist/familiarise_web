@@ -57,6 +57,7 @@ import {
   type TriggerOptions,
 } from "./service";
 import type { NovuWorkflowId } from "./templates/types";
+import { formatInvoiceDateWithZone } from "@/lib/time/invoice-date";
 import {
   DEFAULT_NOTIFICATION_TIMEZONE,
   formatNotificationDateTime,
@@ -284,12 +285,12 @@ export const notifyOrgInviteAccepted =
   );
 
 export const notifyOrgInvoiceIssued =
-  defineOrgZonedRosterNotifier<OrgInvoiceIssuedInput>(
+  defineOrgRosterNotifier<OrgInvoiceIssuedInput>(
     W.ORG_INVOICE_ISSUED,
     OWNER_ONLY,
-    (p, tz): Partial<OrgInvoiceIssuedPayload> => ({
+    (p): Partial<OrgInvoiceIssuedPayload> => ({
       total: formatNotificationMoney(p.totalPaise, p.currency),
-      dueDate: zonedDate(p.dueDate, tz),
+      dueDate: formatInvoiceDateWithZone(p.dueDate),
       dueDateIso: p.dueDate,
     }),
   );

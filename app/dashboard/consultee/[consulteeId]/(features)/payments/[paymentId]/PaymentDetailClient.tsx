@@ -26,13 +26,17 @@ const formatWhen = (value: Date | string) => DATE_TIME.format(new Date(value));
 
 type Money = (paise: number) => string;
 
+// An expired gateway order can still capture late; only one never minted provably charged nothing.
+const neverCharged = (detail: ConsulteePaymentDetail) =>
+  detail.row.status === "EXPIRED" && !detail.gatewayOrderMinted;
+
 function chargeFacts(detail: ConsulteePaymentDetail, money: Money) {
   const { row, moneyState } = detail;
   return [
     ...(detail.showAmount && moneyState.state !== "SPONSORED"
       ? [
           {
-            label: "Amount",
+            label: neverCharged(detail) ? "Would have been" : "Amount",
             value: money(row.amount),
             hint:
               row.taxAmount > 0
@@ -109,7 +113,8 @@ function chargeDocuments(detail: ConsulteePaymentDetail) {
 /**
  * "What happened to this charge?": the money line and its facts,
  * the refund timeline with arrival times, every document for it, and the
- * same "Problem with this charge" door the appointment page has.
+ * same "Problem with this charge" door the appointment page has, offered only
+ * when money was taken or may have been.
  */
 export function PaymentDetailClient({
   consulteeId,
@@ -126,6 +131,9 @@ export function PaymentDetailClient({
     : `${basePath}/support?context=platform`;
 
   const facts = chargeFacts(detail, money);
+  const nothingCharged =
+    moneyState.state === "FREE" ||
+    (neverCharged(detail) && detail.creditHeldPaise === 0);
   const taxDocsPending =
     !detail.gstUnregistered &&
     !detail.taxDocumentsAvailable &&
@@ -139,7 +147,9 @@ export function PaymentDetailClient({
       <PageHeader
         back={{ href: `${basePath}/payments?tab=history`, label: "Billing" }}
         title={row.planTitle}
-        description={moneyState.line}
+        description={
+          moneyState.line === moneyState.label ? undefined : moneyState.line
+        }
         meta={
           <StatusBadge
             {...toneBadge(moneyState.tone, moneyState.label)}
@@ -147,12 +157,14 @@ export function PaymentDetailClient({
           />
         }
         actions={
-          <Button variant="outline" size="sm" asChild>
-            <Link href={helpHref}>
-              <LifeBuoy className="mr-1.5 h-4 w-4" />
-              Problem with this charge
-            </Link>
-          </Button>
+          nothingCharged ? undefined : (
+            <Button variant="outline" size="sm" asChild>
+              <Link href={helpHref}>
+                <LifeBuoy className="mr-1.5 h-4 w-4" />
+                Problem with this charge
+              </Link>
+            </Button>
+          )
         }
       />
 

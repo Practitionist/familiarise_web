@@ -48,6 +48,7 @@ function wrapper(
       taxAmount: 0,
       currency: "INR",
       paymentStatus: p.status,
+      paymentIntent: `order_${id}${i}`,
       paymentMethod: "CARD",
       paymentGateway: "RAZORPAY",
       receiptUrl: null,
