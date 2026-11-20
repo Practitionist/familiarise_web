@@ -185,6 +185,16 @@ jest.mock("../../lib/payments/checkout/gateway-intent", () => ({
     mockTombstone(input),
 }));
 
+// The credit return on a re-mint is pinned by who it is called with and when.
+const mockReverseCredits = jest.fn(
+  async (_paymentId: string, _tx: unknown) => 0,
+);
+jest.mock("../../lib/referrals/service", () => ({
+  ...jest.requireActual("../../lib/referrals/service"),
+  reverseCreditsForPayment: (paymentId: string, tx: unknown) =>
+    mockReverseCredits(paymentId, tx),
+}));
+
 // Direct checkout's pricing refuses a review-first expert; the pay link must never reach it.
 jest.mock("../../lib/payments/checkout/pricing", () => ({
   __esModule: true,
@@ -990,3 +1000,47 @@ it("types the exists and already-paid refusals with their codes", () => {
 
 // Priced and invoiced as a GST-registered platform.
 runAsRegisteredPlatform();
+
+describe("a re-mint returns the credit the replaced order used", () => {
+  const livePretaxRow = () => ({
+    id: "pay-pretax",
+    paymentStatus: PaymentStatus.PENDING,
+    paymentIntent: "order_pretax",
+    amount: 500_000,
+    currency: Currency.INR,
+    expiresAt: new Date(Date.now() + 60_000),
+  });
+
+  it("returns it in the re-mint's own transaction, before the tombstone takes the old order", async () => {
+    state.appointmentPayments = [livePretaxRow()];
+
+    await createApprovalPaymentIntent(mintParams());
+
+    expect(mockReverseCredits).toHaveBeenCalledTimes(1);
+    const [paymentId, tx] = mockReverseCredits.mock.calls[0];
+    expect(paymentId).toBe("pay-pretax");
+    expect(tx).toHaveProperty("referralCreditUsage");
+    expect(mockReverseCredits.mock.invocationCallOrder[0]).toBeGreaterThan(
+      mockedPaymentUpdate.mock.invocationCallOrder[0],
+    );
+    expect(mockReverseCredits.mock.invocationCallOrder[0]).toBeLessThan(
+      mockTx.paymentCreate.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("returns nothing when the re-mint CAS loses", async () => {
+    state.appointmentPayments = [livePretaxRow()];
+    state.remintCasCount = 0;
+    state.remintFreshRow = {
+      paymentStatus: PaymentStatus.SUCCEEDED,
+      paymentIntent: "order_pretax",
+      amount: 500_000,
+      currency: Currency.INR,
+    };
+
+    await expect(createApprovalPaymentIntent(mintParams())).rejects.toThrow(
+      /already been paid/,
+    );
+    expect(mockReverseCredits).not.toHaveBeenCalled();
+  });
+});

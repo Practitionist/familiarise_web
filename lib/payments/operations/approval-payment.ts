@@ -24,6 +24,7 @@ import { detectBuyerCountry } from "@/lib/payments/tax/buyer-country";
 import { appointmentTypeToServiceType } from "@/lib/payments/tax/tax-engine";
 import { tombstoneAbortedGatewayOrder } from "@/lib/payments/checkout/gateway-intent";
 import { tombstonePriorIntent } from "@/lib/payments/operations/prior-intent-tombstone";
+import { reverseCreditsForPayment } from "@/lib/referrals/service";
 import { reportSentryError } from "@/lib/observability/report";
 import {
   PRE_MINT_INTENT_PREFIX,
@@ -667,6 +668,8 @@ async function claimRowForRemint(
       },
     });
     if (cas.count !== 1) return false;
+    // The new order charges the full price, so the credit the old one used goes back now.
+    await reverseCreditsForPayment(existing.id, tx);
     if (fields.consumerStateCode) {
       // A state already on the row was declared by the buyer and is never overwritten.
       await tx.payment.updateMany({

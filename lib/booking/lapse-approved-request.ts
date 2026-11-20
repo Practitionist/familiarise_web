@@ -7,7 +7,6 @@ import prisma, { type Tx } from "@/lib/prisma";
 import {
   AppointmentStatus,
   OccurrenceCompletionStatus,
-  PaymentStatus,
   Prisma,
 } from "@prisma/client";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
@@ -24,7 +23,7 @@ import {
   transitionSubscriptionRequest,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
-import { reverseCreditsForPayment } from "@/lib/referrals/service";
+import { expirePendingPaymentsInTx } from "@/lib/booking/pending-payment-expiry";
 
 /**
  * #1775 — one approved-but-unpaid request lapsing, whoever asks for it: the
@@ -57,6 +56,13 @@ const LAPSED_TO: Record<LapseReason, AppointmentStatus> = {
   WITHDRAWN_BY_CONSULTANT: AppointmentStatus.CANCELLED,
   // The pay window closed before it could open: a window that ran out.
   TOO_CLOSE_TO_PAY: AppointmentStatus.EXPIRED,
+};
+
+/** The engagement-reversal note each reason leaves on the organisation's usage row. */
+const LAPSE_NOTE: Record<LapseReason, string> = {
+  PAYMENT_LAPSED: "Approved request lapsed unpaid",
+  WITHDRAWN_BY_CONSULTANT: "Approval withdrawn by the expert before payment",
+  TOO_CLOSE_TO_PAY: "Approval released: too close to the session to pay",
 };
 
 export interface LapseApprovedRequestArgs {
@@ -139,20 +145,13 @@ export async function lapseApprovedRequest(
     data: { deletedAt: new Date() },
     allowZero: true,
   });
-  // Only a still-PENDING order expires; a capture that raced this write keeps
-  // its SUCCEEDED row (the request CAS above already lost to it).
-  const expired = await tx.payment.updateManyAndReturn({
-    where: {
-      appointmentId: appointment.id,
-      paymentStatus: PaymentStatus.PENDING,
-    },
-    data: { paymentStatus: PaymentStatus.EXPIRED },
-    select: { id: true },
+  // Each still-PENDING order is claimed by CAS and gives back what its checkout
+  // consumed. A Razorpay "cancel" only reads the order, so none is called; a late
+  // capture on the EXPIRED row is refunded.
+  await expirePendingPaymentsInTx(tx, {
+    appointmentId: appointment.id,
+    reason: LAPSE_NOTE[args.reason],
   });
-  // Only rows this claim moved give back their referral credit, so it returns once.
-  for (const payment of expired) {
-    await reverseCreditsForPayment(payment.id, tx);
-  }
   const hasHoldNotices =
     (holdNotices?.bells?.length ?? 0) > 0 ||
     (holdNotices?.emails?.length ?? 0) > 0;
