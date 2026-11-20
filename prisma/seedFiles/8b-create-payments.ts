@@ -41,6 +41,23 @@ export function buildSeedPaymentLegs(
   return [{ source: PaymentLegSource.CARD, amountPaise, sourceRef }];
 }
 
+/** A plan is paid at purchase by its requester, so an approved subscription's row is their SUCCEEDED payment. */
+export function seedPaymentOutcome(
+  appointment: { subscription: { requestedBy: { userId: string } } | null },
+  drawnUserId: string,
+): { userId: string; paymentStatus: PaymentStatus } {
+  if (appointment.subscription) {
+    return {
+      userId: appointment.subscription.requestedBy.userId,
+      paymentStatus: PaymentStatus.SUCCEEDED,
+    };
+  }
+  return {
+    userId: drawnUserId,
+    paymentStatus: weightedRandom(SEED_PAYMENT_STATUS_WEIGHTS),
+  };
+}
+
 // Payment volume - configurable via SEED_MODE environment variable
 const NUM_PAYMENTS = config.volumes.payments;
 
@@ -68,6 +85,7 @@ export async function createPayments(users: UserWithProfiles[]) {
       subscription: {
         include: {
           subscriptionPlan: true,
+          requestedBy: { select: { userId: true } },
         },
       },
       webinar: {
@@ -86,8 +104,11 @@ export async function createPayments(users: UserWithProfiles[]) {
 
   const paidAppointmentIds: string[] = [];
   for (let i = 0; i < appointments.length; i++) {
-    const user = faker.helpers.arrayElement(users);
     const appointment = appointments[i];
+    const { userId, paymentStatus } = seedPaymentOutcome(
+      appointment,
+      faker.helpers.arrayElement(users).id,
+    );
 
     try {
       // Determine the amount based on the appointment type and plan
@@ -128,11 +149,10 @@ export async function createPayments(users: UserWithProfiles[]) {
         }
       }
 
-      const paymentStatus = weightedRandom(SEED_PAYMENT_STATUS_WEIGHTS);
       const paymentIntent = faker.string.uuid();
       const legs = buildSeedPaymentLegs(finalAmount, paymentIntent);
       const paymentData: Prisma.PaymentCreateInput = {
-        user: { connect: { id: user.id } },
+        user: { connect: { id: userId } },
         amount: finalAmount,
         originalAmount: amount,
         // INR, like every real payment. This used to pick a random foreign
@@ -172,14 +192,14 @@ export async function createPayments(users: UserWithProfiles[]) {
       await prisma.appointmentParticipant.updateMany({
         where: {
           appointmentId: appointment.id,
-          userId: user.id,
+          userId,
           paymentId: null,
         },
         data: { paymentId: created.id },
       });
     } catch (error) {
       console.error(
-        `Failed to create payment for user ${user.id}:`,
+        `Failed to create payment for user ${userId}:`,
         error instanceof Error ? error.message : String(error),
       );
     }

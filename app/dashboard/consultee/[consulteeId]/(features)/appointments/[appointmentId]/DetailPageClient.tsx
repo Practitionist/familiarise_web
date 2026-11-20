@@ -30,6 +30,7 @@ import {
 import { DisplayZoneProvider } from "@/lib/time/zoned-format";
 import { seatLapsedOrReleased } from "@/lib/appointments/status";
 import { IncidentRemedyBanner } from "@/components/appointments/consultee/IncidentRemedyBanner";
+import { RequestAgainButton } from "@/components/booking/RequestAgainButton";
 
 /** Sessions worth putting in a calendar: booked (not held), live, not over. */
 function calendarSessions(vm: AppointmentVM) {
@@ -277,6 +278,8 @@ function deriveConsulteeActionMeta(vm: AppointmentVM) {
 
   const initialRequestNotes =
     rawConsultation?.requestNotes ?? rawSub?.requestNotes ?? "";
+  // A late capture could still confirm this booking, so rebooking may close its order first.
+  const rebookPayments = rawAppt?.payment ?? [];
 
   return {
     canRebook,
@@ -291,6 +294,7 @@ function deriveConsulteeActionMeta(vm: AppointmentVM) {
     isCompletedOneOnOne,
     isUnpaidRequested,
     initialRequestNotes,
+    rebookPayments,
   };
 }
 
@@ -317,6 +321,7 @@ export function ConsulteeExtraActions({
     canRenewSubscription,
     showLowSessionRenewalNudge,
     isCompletedOneOnOne,
+    rebookPayments,
   } = deriveConsulteeActionMeta(vm);
 
   return (
@@ -364,12 +369,14 @@ export function ConsulteeExtraActions({
         </Button>
       )}
       {canRebook && (
-        <Button variant="outline" size="sm" asChild>
-          <Link href={`/explore/experts/${vm.consultantProfileId}`}>
-            <RotateCcw className="mr-1.5 h-4 w-4" />
-            Book again
-          </Link>
-        </Button>
+        <RequestAgainButton
+          appointmentId={vm.appointmentId}
+          href={`/explore/experts/${vm.consultantProfileId}`}
+          payments={rebookPayments}
+        >
+          <RotateCcw className="mr-1.5 h-4 w-4" />
+          Book again
+        </RequestAgainButton>
       )}
     </>
   );
@@ -474,11 +481,14 @@ export default function DetailPageClient({
   consulteeId,
   appointmentId,
   viewerZone,
+  operatorView,
 }: Readonly<{
   consulteeId: string;
   appointmentId: string;
   /** Server-read viewer zone, so SSR and hydration agree. */
   viewerZone: string;
+  /** Staff viewing this learner's booking. */
+  operatorView: boolean;
 }>) {
   const adapter = useConsulteeAppointmentsAdapter();
 
@@ -491,6 +501,7 @@ export default function DetailPageClient({
         backHref={`/dashboard/consultee/${consulteeId}/appointments`}
         supportRequestsBase={`/dashboard/consultee/${consulteeId}/support/requests`}
         joinWindowMs={CONSULTEE_JOIN_WINDOW_MS}
+        operatorView={operatorView}
         renderExtraActions={(vm, { openChat }) => {
           const hasOverflowMessageAction = adapter
             .overflowItems(vm)

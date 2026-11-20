@@ -30,7 +30,7 @@ export default async function AppointmentDetailPage({
   // Ownership is enforced HERE, not by the layout: the layout is a client
   // component, so its check runs after this server render has already read
   // and streamed the data. See lib/auth/personal-dashboard-access.ts.
-  await requirePersonalProfileAccess("consultee", consulteeId);
+  const access = await requirePersonalProfileAccess("consultee", consulteeId);
 
   const [detail, profile] = await Promise.all([
     readAppointmentDetail(appointmentId),
@@ -89,6 +89,7 @@ export default async function AppointmentDetailPage({
         consulteeId={consulteeId}
         appointmentId={appointmentId}
         viewerZone={viewerZone.zone}
+        operatorView={access.isInspecting}
       />
     </HydrationBoundary>
   );

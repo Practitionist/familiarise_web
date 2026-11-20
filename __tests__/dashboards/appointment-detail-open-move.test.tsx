@@ -175,6 +175,7 @@ async function page(
         backHref="/back"
         resourceHrefs={{ documents: "/d", recordings: "/r" }}
         supportRequestsBase="/support/requests"
+        operatorView={false}
         consultantId="cp-1"
       />
     </DisplayZoneProvider>,
@@ -297,6 +298,7 @@ describe("a move the learner's organisation opened, seen by the learner", () => 
           backHref="/back"
           resourceHrefs={{ documents: "/d", recordings: "/r" }}
           supportRequestsBase="/support/requests"
+          operatorView={false}
           consultantId="cp-1"
         />
       </DisplayZoneProvider>,
