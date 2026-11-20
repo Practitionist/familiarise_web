@@ -22,10 +22,10 @@ import {
 } from "@/lib/dashboard/account-href";
 import type { EmailCategoryColumn } from "@/lib/email/preferences";
 import {
+  alwaysSentNotices,
   receivableSwitches,
   showsQuietHours,
 } from "@/lib/notifications/receivable";
-import { ALWAYS_SENT_LINE } from "@/lib/notifications/required-notices";
 import {
   NotificationPreferenceSchema,
   QUIET_HOURS_DEFAULT_END,
@@ -396,12 +396,17 @@ export function NotificationPreferencesPanel() {
             disabled={pendingKeys.has("allNotifications")}
             onCheckedChange={(checked) => save({ allNotifications: checked })}
           />
-          <p
-            className="mt-3 text-xs text-zinc-500"
+          <div
+            className="mt-3 text-sm text-zinc-600"
             data-testid="notification-always-sent"
           >
-            {ALWAYS_SENT_LINE}
-          </p>
+            <p>Always sent, whatever you choose here:</p>
+            <ul className="mt-1 list-disc space-y-1 pl-5">
+              {alwaysSentNotices(viewer).map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </div>
           {optionalOff && (
             <p className="mt-3 text-xs text-zinc-500">
               The choices below are kept and apply again when you turn optional

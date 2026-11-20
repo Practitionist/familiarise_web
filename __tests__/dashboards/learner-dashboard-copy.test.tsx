@@ -110,7 +110,7 @@ describe("Billing: Needs you rows", () => {
 });
 
 describe("Referrals: a programme taking no new referrals", () => {
-  it("says so in words true whether it is not open yet, paused or out of budget", () => {
+  it("says so in plain words, outside the green offer box, whether it is not open yet, paused or out of budget", () => {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false, staleTime: Infinity } },
     });
@@ -142,5 +142,7 @@ describe("Referrals: a programme taking no new referrals", () => {
       "The referral programme is not taking new referrals right now.",
     );
     expect(text).not.toMatch(/paused|reopens|resume/);
+    const box = screen.getByTestId("referral-offer");
+    expect(box.className).not.toMatch(/emerald/);
   });
 });

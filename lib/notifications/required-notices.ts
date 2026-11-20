@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 
 /**
  * Notices that reach the recipient whatever their switches say, because
@@ -46,6 +47,64 @@ export const REQUIRED_NOTICE_LABEL: Record<RequiredNoticeKind, string> = {
   COHOST_CHANGED: "a co-host joining or leaving a class or webinar you booked",
 };
 
+/** Who a required notice can reach; `alwaysSentNotices` reads it against the viewer. */
+export type NoticeAudience =
+  "everyone" | "booker" | "expert" | "reviewer" | "admin";
+
+/** Co-hosting notices reach experts; every other kind reaches whoever booked. */
+export const REQUIRED_NOTICE_AUDIENCE: Record<
+  RequiredNoticeKind,
+  NoticeAudience
+> = {
+  CANCELLED_BY_HOST: "booker",
+  CANCELLED_BY_STAFF: "booker",
+  REFUND_FROM_HOST_CANCEL: "booker",
+  REFUND_FROM_STAFF_CANCEL: "booker",
+  REQUEST_DECLINED: "booker",
+  RESCHEDULE_PROPOSED: "booker",
+  PROPOSAL_LAPSED: "booker",
+  PROPOSAL_WITHDRAWN: "booker",
+  MOVE_AUTO_CONFIRMED: "booker",
+  SERIES_MOVED: "booker",
+  EVENT_MOVED: "booker",
+  SEAT_RELEASED: "booker",
+  CLASS_SESSION_REFUNDED: "booker",
+  COLLABORATION_CHANGED: "expert",
+  COHOST_CHANGED: "booker",
+};
+
+type SystemNotice = { label: string; audience: NoticeAudience };
+const ACCOUNT: SystemNotice = {
+  label: "account and security notices",
+  audience: "everyone",
+};
+const MODERATION: SystemNotice = {
+  label: "moderation decisions",
+  audience: "everyone",
+};
+
+/** The `required: true` templates in `lib/novu/templates`, named for Settings; a test pins the key set to them. */
+export const REQUIRED_WORKFLOW_NOTICES: Readonly<Record<string, SystemNotice>> =
+  {
+    [NOVU_WORKFLOWS.ACCOUNT_SECURITY_NOTICE]: ACCOUNT,
+    [NOVU_WORKFLOWS.ACCOUNT_SUSPENDED]: ACCOUNT,
+    [NOVU_WORKFLOWS.ACCOUNT_BANNED]: ACCOUNT,
+    [NOVU_WORKFLOWS.MODERATION_WARNING]: MODERATION,
+    [NOVU_WORKFLOWS.CONTENT_REMOVED_NOTICE]: MODERATION,
+    [NOVU_WORKFLOWS.VERIFICATION_STATUS_CHANGED]: {
+      label: "profile verification updates",
+      audience: "expert",
+    },
+    [NOVU_WORKFLOWS.NEW_CONSULTANT_APPLICATION]: {
+      label: "new expert applications",
+      audience: "reviewer",
+    },
+    [NOVU_WORKFLOWS.COMPLIANCE_DEADLINE_ALERT]: {
+      label: "compliance deadline alerts",
+      audience: "admin",
+    },
+  };
+
 /** A per-send override: these recipients get this notice whatever their switches say. */
 export type RequiredOverride = {
   kind: RequiredNoticeKind;
@@ -64,8 +123,3 @@ export function requiredNoticeOf(payload: unknown): RequiredNoticeKind | null {
   const parsed = RequiredPayloadSchema.safeParse(payload);
   return parsed.success ? parsed.data[REQUIRED_NOTICE_FIELD] : null;
 }
-
-/** The Settings list of what arrives whatever the switches say; the booking part is built from the kinds so it cannot drift. */
-export const ALWAYS_SENT_LINE = `Always sent, whatever you choose here: account, security and moderation notices in the bell and by email; payment receipts and invitations you must answer, by email; and changes someone else makes to your booking or your co-hosting (${[
-  ...new Set(REQUIRED_NOTICE_KINDS.map((kind) => REQUIRED_NOTICE_LABEL[kind])),
-].join(", ")}).`;

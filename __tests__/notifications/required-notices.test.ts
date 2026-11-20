@@ -32,9 +32,7 @@ import {
 import { NOVU_WORKFLOWS, notificationScope } from "@/lib/novu/workflows";
 import { loadEmailRecipients } from "@/lib/email/preferences";
 import {
-  ALWAYS_SENT_LINE,
   REQUIRED_NOTICE_KINDS,
-  REQUIRED_NOTICE_LABEL,
   requiredNoticeOf,
 } from "@/lib/notifications/required-notices";
 import { refundNoticeText } from "@/lib/notifications/refund-wording";
@@ -200,14 +198,6 @@ describe("refund cause", () => {
 });
 
 describe("copy", () => {
-  it("the Settings line names every required kind once", () => {
-    for (const kind of REQUIRED_NOTICE_KINDS) {
-      expect(ALWAYS_SENT_LINE.split(REQUIRED_NOTICE_LABEL[kind])).toHaveLength(
-        2,
-      );
-    }
-  });
-
   it("a series move lists ten sessions, then the rest as a count", () => {
     const moves = Array.from({ length: 12 }, (_, i) => ({
       from: new Date(Date.UTC(2026, 11, 1 + i, 4, 30)).toISOString(),
