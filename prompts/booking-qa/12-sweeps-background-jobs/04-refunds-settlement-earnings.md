@@ -84,16 +84,16 @@
 
 **Probe further:** between the flag write and the run, does the grid offer that time to another buyer (the hold rule treats a tentative session with a paid payment as occupied, MO-12)? It must not.
 
-## SW-32 — A partly scheduled plan is topped up once the expert opens more hours `[sweep]`
+## SW-32 — A partly scheduled plan is never topped up by a job; the expert is reminded `[sweep]`
 
-**Why it matters:** the job auto-places the missing sessions of a partial allocation; it must keep existing sessions, respect the plan week and run only after availability changes.
+**Why it matters:** nothing is placed on a calendar unless a person clicks. The hourly job only repairs flags and detects overlaps; an unplaced session waits for the expert, who is reminded on the week's first day.
 
-**Setup:** B1's plan with a partial week (SU-45: "Schedule 2 now", one session unplaced) and no tentative rows. H1 then adds availability inside that plan week (Settings → Availability, a new window; restore it at SW-39).
+**Setup:** B1's plan with a partial week (SU-45: "Schedule 2 now", one session unplaced) and no tentative rows. H1 then adds availability inside that plan week (Settings → Availability, a new window; restore it at SW-39). Repeat with a second plan whose first week H1 placed with the **Auto** button, also one session short.
 
-**Steps:** NEEDS-OWNER-RUN `reconcile-occurrence-availability`; run again without further availability changes.
+**Steps:** NEEDS-OWNER-RUN `reconcile-occurrence-availability`, twice. Then NEEDS-OWNER-RUN `expire-stale-requests` after 09:00 in H1's zone on the plan week's first day.
 
-**Expect:** run 1: the missing session placed (`topUp`) inside the open plan week and H1's new hours; the two existing sessions keep their ids; R-06 per-week ≤ 3; R-05 zero rows; both parties notified of the new session (record). Run 2: nothing (no availability change since). A plan carrying a tentative row (a move in flight) is skipped.
+**Expect:** both reconcile runs place nothing on either plan: session counts and ids unchanged, no `BookingStatusHistory` row with a `schedule:` reason written by the run, no booked notice to B1; the run result carries only `tentativeFlagsCleared` and `doubleBookingsDetected`. The reminder run sends H1 one bell and one email listing **both** plans (the Auto plan is not skipped on day 0), each with "Auto-schedule this week". Tapping it places the missing session (history reason `schedule:auto`); the existing sessions keep their ids; R-06 per-week ≤ 3; R-05 zero rows.
 
-**Aftermath:** B1 sees the third session with its time in IST; H1's tray shows 3 of 3. Does anything tell H1 the platform placed it automatically?
+**Aftermath:** before the tap B1 sees 2 of 3 and H1's tray shows 2 of 3; after it both show 3 of 3 and B1 has the new session in IST.
 
-**Probe further:** an event that timed out once on this availability change gets one retry only (`retriedAfterTimeout`); record if visible.
+**Probe further:** any session that appears on either plan with no click from H1, ST or an operator is a **BUG** (P1). An older history row may still read "Scheduled automatically" from a stored `schedule:top-up` or `schedule:week-auto` token; that is display only.

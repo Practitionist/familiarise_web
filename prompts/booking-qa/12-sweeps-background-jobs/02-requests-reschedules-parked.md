@@ -12,9 +12,9 @@ Cut-offs from code (`expire-stale-requests`): a `PENDING` consultation 48 h afte
 
 **Setup:** H1 in request mode (03's switch). Three fresh B2 requests (CO-20 body, different windows). Owner-approved: set `requestedAt` to `now() - interval '49 hours'` (A), `'47 hours'` (B), and A' = 49 h but with an open consultee proposal on it (C; create the proposal through the product first if the shape is reachable, else skip C).
 
-**Steps:** NEEDS-OWNER-RUN `expire-stale-requests`; run again.
+**Steps:** before any run, as B1 read H1's grid for A's and B's requested times. Then NEEDS-OWNER-RUN `expire-stale-requests`; run again.
 
-**Expect:** A `EXPIRED`, its tentative slot released in the same pass (not waiting for `tentative-occurrences`), one notice to B2 (and record whether H1 is told). B and C untouched. Run 2: nothing new, no second notice.
+**Expect:** before the run, A's time already reads free and can be booked (a request past 48 hours stops holding the expert's time by the clock, swept or not), B's still reads taken, and C's still reads taken (a booking being moved keeps its hold). After the run: A `EXPIRED`, its tentative slot released in the same pass (not waiting for `tentative-occurrences`), one notice to B2 (and record whether H1 is told). B and C untouched. Run 2: nothing new, no second notice.
 
 **Aftermath:** B2 sees "expired" with a next step (request again / pick another expert); H1's requests list drops A.
 
@@ -106,6 +106,6 @@ Cut-offs from code (`expire-stale-requests`): a `PENDING` consultation 48 h afte
 
 **Steps:** NEEDS-OWNER-RUN `expire-stale-requests` twice.
 
-**Expect:** one bell + one email to H1 naming the open week (the dedupe key covers the plan and week) linking to `…/requests?type=subscription`; run 2 sends nothing. A plan with a move in flight (a tentative row) gets no nudge. A plan never scheduled is the 48-h cohort's (SW-11), not this one's.
+**Expect:** one bell + one email to H1 naming the open week (the dedupe key covers the plan and week) linking to `…/requests?type=subscription`; run 2 sends nothing. The reminder goes out on the week's first day (from 09:00 in H1's zone), the next day and the third, for every plan, including one whose first week was placed with Auto: no plan skips the first day. A plan with a move in flight (a tentative row) gets no nudge. A plan never scheduled is the 48-h cohort's (SW-11), not this one's.
 
 **Probe further:** the nudge's week summary is in H1's zone (`formatInTimeZone(now, zone, …)`)? Does it say how many sessions are left and by when?

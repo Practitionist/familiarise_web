@@ -89,19 +89,21 @@ WHERE p."appointmentId" = :webinarAid;
 
 **Probe further:** quote the reminder. Is the deadline correct for B2 (London) on a link minted by an IST expert?
 
-## SW-07 — Tentative slots: released after 24 h, never while a human is reviewing `[sweep]`
+## SW-07 — Tentative slots: released after 24 h, never while a human is reviewing or a move is open `[sweep]`
 
-**Why it matters:** salvaged from old 011 Phase 5; a pending request waits on the expert, not on a payment window.
+**Why it matters:** salvaged from old 011 Phase 5; a pending request waits on the expert, not on a payment window, and a session released for a move is tentative until its request ends.
 
 **Setup (owner-approved shifts on QA rows):**
 
 - A: a tentative occurrence whose appointment has only an `EXPIRED` payment and whose request is `CANCELLED` or `EXPIRED`; set the occurrence `updatedAt = now() - interval '25 hours'`.
 - B: a tentative occurrence of a `PENDING` request with `bookingSource = REQUEST_SUBMITTED` (CO-20 shape), `updatedAt` 25 h ago.
 - C: as A but `updatedAt` 23 h ago (control).
+- D: a session released for a move (`RESCHEDULED`, tentative) on a booking with an open (`PENDING_REVIEW`) reschedule request and no succeeded payment (a free consultation or a free trial being moved), `updatedAt` 25 h ago.
+- E: the tentative session of a paid trial still `AWAITING_PAYMENT`, `updatedAt` 25 h ago.
 
 **Steps:** NEEDS-OWNER-RUN `tentative-occurrences`.
 
-**Expect:** A released; B kept (parent under review); C kept. Run record `cleanup-tentative-occurrences` with `slotsReleased = 1`.
+**Expect:** A released; B kept (parent under review); C kept; D kept (the move is open, and the request can still be accepted afterwards); E kept (a live trial; `expire-unpaid-trials` ends an unpaid hold). Run record `cleanup-tentative-occurrences` with `slotsReleased = 1`.
 
 **Probe further:** the script's header says "Schedule: Every 2 hours" and its comment mentions "the 2-hourly cron cadence", but the ticker runs it every 15 minutes (`lib/cron/schedule.ts`): DOC-DRIFT (minor).
 
