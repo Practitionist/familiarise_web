@@ -43,6 +43,7 @@ import {
   type DashboardFacetKind,
   type DashboardFacetMembership,
 } from "@/lib/labels/personal-dashboard";
+import { operatorSwitcherState } from "@/lib/dashboard/operator-view";
 
 interface AllMembershipsRow {
   organizationId: string;
@@ -180,6 +181,8 @@ export interface ContextSwitcherProps {
    * which may be absent from the session (PENDING_VERIFICATION).
    */
   current?: { name: string; image?: string | null; label: string };
+  /** Set in operator view: the route profile is someone else's; names its owner. */
+  viewing?: { ownerName: string | null };
 }
 
 /**
@@ -189,7 +192,10 @@ export interface ContextSwitcherProps {
  * expert when entitled. Always rendered — it hosts those two actions even for
  * a single-facet user.
  */
-export function ContextSwitcher({ current }: Readonly<ContextSwitcherProps>) {
+export function ContextSwitcher({
+  current,
+  viewing,
+}: Readonly<ContextSwitcherProps>) {
   const { data: session } = useSession();
   const pathname = usePathname() ?? "";
   const collapsed = useSidebarCollapsed();
@@ -242,7 +248,10 @@ export function ContextSwitcher({ current }: Readonly<ContextSwitcherProps>) {
     });
   }, [user, allMemberships]);
 
-  const activeKey = activeFacetKey(pathname);
+  const operatorView = viewing
+    ? operatorSwitcherState(facets.platform, viewing.ownerName)
+    : null;
+  const activeKey = operatorView?.activeKey ?? activeFacetKey(pathname);
   const activeFacet = [
     ...facets.you,
     ...facets.organizations,
@@ -262,6 +271,12 @@ export function ContextSwitcher({ current }: Readonly<ContextSwitcherProps>) {
       image: current.image ?? null,
       label: current.label,
     };
+  } else if (operatorView) {
+    trigger = {
+      name: userName,
+      image: user?.image ?? seeded?.image ?? null,
+      label: operatorView.label ?? "",
+    };
   } else if (activeFacet?.kind === "organization") {
     trigger = {
       name: activeFacet.label,
@@ -275,6 +290,8 @@ export function ContextSwitcher({ current }: Readonly<ContextSwitcherProps>) {
       label: activeFacet.label,
     };
   }
+  // The role line waits for the session, and in operator view for the owner's name.
+  const labelPending = !user || (operatorView !== null && !operatorView.label);
   const { createOrganizationHref, becomeExpertHref } = facets.actions;
 
   return (
@@ -311,15 +328,21 @@ export function ContextSwitcher({ current }: Readonly<ContextSwitcherProps>) {
             (identityKnown ? (
               <>
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium leading-tight text-zinc-900 dark:text-zinc-100">
+                  <p
+                    title={trigger.name}
+                    className="truncate text-sm font-medium leading-tight text-zinc-900 dark:text-zinc-100"
+                  >
                     {trigger.name}
                   </p>
                   {trigger.label ? (
-                    <p className="mt-0.5 truncate text-xs leading-tight text-zinc-500 dark:text-zinc-400">
+                    <p
+                      title={trigger.label}
+                      className="mt-0.5 truncate text-xs leading-tight text-zinc-500 dark:text-zinc-400"
+                    >
                       {trigger.label}
                     </p>
                   ) : (
-                    !user && <Skeleton className="mt-1 h-3 w-14" />
+                    labelPending && <Skeleton className="mt-1 h-3 w-14" />
                   )}
                   <span className="sr-only">, switch dashboard</span>
                 </div>

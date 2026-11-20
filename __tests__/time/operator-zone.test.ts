@@ -19,6 +19,7 @@ import {
   fromOperatorWallTime,
   toOperatorWallTime,
 } from "../../lib/time/operator-zone";
+import { formatInvoiceDate } from "../../lib/time/invoice-date";
 
 // 00:00 IST on 1 Apr 2026 is 18:30 UTC the day before.
 const IST_MIDNIGHT = "2026-03-31T18:30:00.000Z";
@@ -46,6 +47,16 @@ describe("operator time", () => {
     expect(formatOperatorInstant(BEFORE_UTC_MIDNIGHT, "date")).toBe(
       "1 Apr 2026",
     );
+  });
+
+  it("prints three-letter months, September included, on invoices too", () => {
+    // 08:30 UTC on 24 Sep 2026 is 2:00 pm IST.
+    const sep = "2026-09-24T08:30:00.000Z";
+    expect(formatOperatorInstant(sep, "date")).toBe("24 Sep 2026");
+    expect(formatOperatorInstant(sep)).toBe("24 Sep 2026, 2:00 pm IST");
+    expect(formatUtcInstant(sep)).toBe("24 Sep 2026, 8:30 am UTC");
+    expect(formatInvoiceDate(sep)).toBe("24 Sep 2026");
+    expect(formatInvoiceDate("2026-10-20T06:00:00.000Z")).toBe("20 Oct 2026");
   });
 
   it("answers a dash for no instant", () => {
