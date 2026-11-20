@@ -460,6 +460,7 @@ export async function leaveEventSeat(args: {
             },
             select: {
               id: true,
+              status: true,
               appointmentId: true,
               createdAt: true,
               refundWindowHours: true,
@@ -485,11 +486,22 @@ export async function leaveEventSeat(args: {
               payment,
             );
           }
-          const count = await releaseParticipant(tx, {
-            appointment: filter,
-            userId: args.userId,
-            role: "CONSULTEE",
-          });
+          // The status read above pins the CAS, so the history needs no second read.
+          const count = await releaseParticipant(
+            tx,
+            { id: seat.id, role: "CONSULTEE" },
+            {
+              fromIn: [seat.status],
+              // An organiser removal marks the seat, which blocks a rejoin until the block is lifted.
+              ...(args.isSelfLeave
+                ? {}
+                : { data: { removedByUserId: args.actorUserId } }),
+              history: {
+                reason: args.isSelfLeave ? "self_leave" : "organiser_removal",
+                actorUserId: args.actorUserId,
+              },
+            },
+          );
           if (count === 0) return null;
           const seatRevocation = await persistSeatRevocationInTx(
             tx,

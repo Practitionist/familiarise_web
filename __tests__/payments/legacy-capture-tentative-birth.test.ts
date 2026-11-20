@@ -89,6 +89,17 @@ const txStub = {
   appointmentParticipant: {
     createMany: participantCreateMany,
     updateMany: participantUpdateMany,
+    // The capture's seat CAS returns the moved rows, for their SEAT history row.
+    updateManyAndReturn: async (args: { select?: unknown }) => {
+      const { select: _select, ...cas } = args;
+      const res = (await participantUpdateMany(cas)) as { count?: number };
+      return Array.from({ length: res?.count ?? 0 }, (_v, i) => ({
+        id: `part-${i}`,
+        appointmentId: "appt",
+        userId: "user",
+        role: "CONSULTEE",
+      }));
+    },
     findMany: jest.fn().mockResolvedValue([]),
   },
   appointment: { create: appointmentCreate, findUnique: appointmentFindUnique },
@@ -98,7 +109,7 @@ const txStub = {
     findUnique: subscriptionFindUnique,
     updateMany: subscriptionUpdateMany,
   },
-  bookingStatusHistory: { create: historyCreate },
+  bookingStatusHistory: { createMany: jest.fn(), create: historyCreate },
 };
 
 jest.mock("../../lib/payments/ledger/unapplied-receipts", () => ({

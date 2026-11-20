@@ -40,6 +40,14 @@ import {
 } from "@/lib/appointments/seat-payments";
 
 import type { ClassEvent, WebinarEvent } from "@/types/planner-events";
+import type { SeatTrailStep } from "@/lib/booking/seat-history";
+import {
+  seatTrailText,
+  type SeatTrailText,
+} from "@/lib/booking/seat-trail-copy";
+import { allowBackRequest } from "@/lib/events/seat-lift-request";
+import { useViewerZone } from "@/lib/time/use-viewer-zone";
+import { SeatLiftResponseSchema } from "@/schemas/seat-removal-lift";
 
 /** URL segment → API path segment and the noun used in the count line. */
 const EVENT_KINDS = {
@@ -75,6 +83,17 @@ type RegisteredParticipant = {
   email?: string;
   participantStatus?: string | null;
   participantRole?: string | null;
+  /** The seat's history, oldest first; only steps after the first registration are shown. */
+  seatTrail?: SeatTrailStep[];
+};
+
+/** An attendee removed from this event who may not register again until the block is lifted. */
+type RemovedAttendee = {
+  id: string;
+  name?: string;
+  email?: string;
+  removal: "ORGANISER" | "CONDUCT";
+  seatTrail?: SeatTrailStep[];
 };
 
 type ParticipantsResponse = (
@@ -82,6 +101,7 @@ type ParticipantsResponse = (
   | { classEvent: ClassEvent; webinarEvent?: never }
 ) & {
   participants?: RegisteredParticipant[];
+  removedAttendees?: RemovedAttendee[];
   seatPayments?: SeatPayment[];
   /** Open notify-me rows; a count, never names. */
   waitingCount?: number;
@@ -190,6 +210,45 @@ const removeForConduct = async ({
   return conductRemovalResult.parse(await response.json());
 };
 
+const allowBack = async ({
+  apiSegment,
+  eventId,
+  userId,
+}: {
+  apiSegment: "webinar" | "class";
+  eventId: string;
+  userId: string;
+}) => {
+  const { url, init } = allowBackRequest(apiSegment, eventId, userId);
+  const response = await fetch(url, init);
+  if (!response.ok) {
+    const body = refusalBody.safeParse(await response.json().catch(() => null));
+    throw new RemovalRefusedError(
+      body.success
+        ? body.data.error
+        : "We couldn't allow them back. Try again.",
+    );
+  }
+  return SeatLiftResponseSchema.parse(await response.json());
+};
+
+/** An attendee's name with their seat's trail ("Left 12 Nov · rejoined 13 Nov (IST)") under it. */
+function NameWithTrail({
+  name,
+  trail,
+}: Readonly<{ name?: string; trail: SeatTrailText }>) {
+  return (
+    <span className="flex flex-col">
+      <span>{name}</span>
+      {trail.line && (
+        <span className="text-xs text-muted-foreground" title={trail.full}>
+          {trail.line}
+        </span>
+      )}
+    </span>
+  );
+}
+
 export default function EventParticipantsPage() {
   const params = useParams();
   const queryClient = useQueryClient();
@@ -197,6 +256,11 @@ export default function EventParticipantsPage() {
   // The person the confirm dialog is about; null closes it.
   const [pendingRemoval, setPendingRemoval] =
     useState<RegisteredParticipant | null>(null);
+
+  const viewerZone = useViewerZone();
+  // The same words and the same compaction as the learner's own trail, in the reader's zone.
+  const trailOf = (steps: SeatTrailStep[] | undefined) =>
+    seatTrailText(steps ?? [], viewerZone.zone);
 
   const eventType = params.eventType as string;
   const eventId = params.eventId as string;
@@ -313,6 +377,35 @@ export default function EventParticipantsPage() {
     },
   });
 
+  const allowBackMutation = useMutation({
+    mutationFn: allowBack,
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({
+        queryKey: ["event-participants", eventType, eventId],
+      });
+      toast({
+        title: "They can come back",
+        description:
+          result.rejoinPath === "REGISTER"
+            ? "We told them they can register again while seats are left."
+            : "We told them support will help them rejoin.",
+      });
+    },
+    onError: (err) => {
+      if (!(err instanceof RemovalRefusedError)) {
+        Sentry.captureException(err, { tags: { subsystem: "client" } });
+      }
+      toast({
+        title: "Couldn't allow them back",
+        description:
+          err instanceof RemovalRefusedError
+            ? err.message
+            : "We couldn't confirm the change. Refresh the roster and try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
   // Only webinars and classes have a roster worth managing. Anything else in
   // the URL is a hand-edit or a stale link.
   if (!kind) notFound();
@@ -375,7 +468,12 @@ export default function EventParticipantsPage() {
   );
 
   const registeredColumns: ResponsiveColumn<RegisteredParticipant>[] = [
-    { key: "name", header: "Name", primary: true, cell: (p) => p.name },
+    {
+      key: "name",
+      header: "Name",
+      primary: true,
+      cell: (p) => <NameWithTrail name={p.name} trail={trailOf(p.seatTrail)} />,
+    },
     { key: "email", header: "Email", cell: (p) => p.email },
     {
       key: "seat",
@@ -445,6 +543,38 @@ export default function EventParticipantsPage() {
     </Button>
   );
 
+  const removedAttendees: RemovedAttendee[] = data?.removedAttendees ?? [];
+  const removedColumns: ResponsiveColumn<RemovedAttendee>[] = [
+    {
+      key: "name",
+      header: "Name",
+      primary: true,
+      cell: (p) => <NameWithTrail name={p.name} trail={trailOf(p.seatTrail)} />,
+    },
+    { key: "email", header: "Email", cell: (p) => p.email },
+  ];
+  const renderRemovedActions = (attendee: RemovedAttendee) =>
+    attendee.removal === "CONDUCT" ? (
+      <span className="text-xs text-muted-foreground">
+        Support reviews this removal
+      </span>
+    ) : (
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={allowBackMutation.isPending}
+        onClick={() =>
+          allowBackMutation.mutate({
+            apiSegment: kind.apiSegment,
+            eventId,
+            userId: attendee.id,
+          })
+        }
+      >
+        {allowBackMutation.isPending ? "Allowing back..." : "Allow back"}
+      </Button>
+    );
+
   return (
     <>
       <DashboardHeader
@@ -478,6 +608,23 @@ export default function EventParticipantsPage() {
           />
         </CardContent>
       </Card>
+
+      {removedAttendees.length > 0 && (
+        <Card className="mt-6">
+          <CardContent className="pt-6 space-y-3">
+            <h2 className="text-sm font-medium">Removed attendees</h2>
+            <p className="text-xs text-muted-foreground">
+              They can&apos;t register again until they&apos;re allowed back.
+            </p>
+            <ResponsiveTable<RemovedAttendee>
+              columns={removedColumns}
+              rows={removedAttendees}
+              getRowId={(p) => p.id}
+              rowActions={renderRemovedActions}
+            />
+          </CardContent>
+        </Card>
+      )}
 
       <RemoveParticipantDialog
         open={pendingRemoval !== null}

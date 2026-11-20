@@ -23,6 +23,9 @@ const mockRosterDb = {
   consultantProfile: { findFirst: jest.fn() },
   collaborator: { findFirst: jest.fn() },
   membership: { findUnique: jest.fn(), count: jest.fn() },
+  // The roster also lists removed attendees and each seat's trail: none here.
+  appointmentParticipant: { findMany: jest.fn(async () => []) },
+  bookingStatusHistory: { findMany: jest.fn(async () => []) },
 };
 const mockRosterAuth = jest.fn();
 

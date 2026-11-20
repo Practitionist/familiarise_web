@@ -235,10 +235,14 @@ export function CaseDetails({ data }: Readonly<{ data: CaseWorkspace }>) {
                   <p className="font-medium text-foreground">
                     {ev.actorName ?? "System"} · {humanizeEnum(ev.kind)}
                   </p>
-                  {(ev.fromValue || ev.toValue) && (
-                    <p className="text-muted-foreground">
-                      {ev.fromValue ?? "—"} → {ev.toValue ?? "—"}
-                    </p>
+                  {ev.summary ? (
+                    <p className="text-muted-foreground">{ev.summary}</p>
+                  ) : (
+                    (ev.fromValue || ev.toValue) && (
+                      <p className="text-muted-foreground">
+                        {ev.fromValue ?? "—"} → {ev.toValue ?? "—"}
+                      </p>
+                    )
                   )}
                   {ev.note && (
                     <p className="italic text-foreground">{ev.note}</p>
