@@ -302,7 +302,13 @@ gate a concurrent writer walked through:
   in-lock re-read), trials, requests and every approval or trial pay-link mint
   with 409 `EXPERT_NOT_VERIFIED` (`assertExpertVerified` in
   `lib/booking/booking-rule-error.ts`); paid bookings already made are
-  unaffected, and plan rows are never unpublished for it.
+  unaffected, and plan rows are never unpublished for it. Approving an unpaid
+  request for them is refused too (`assertUnpaidApprovalVerified`). A
+  moderation reject ends their unpaid sales in its own transaction
+  (`endUnpaidSalesInTx`): approved links expire through `lapseApprovedRequest`,
+  unanswered unpaid requests are declined, unpaid trial holds are cancelled,
+  every open order is expired by CAS with its spend returned, and the real
+  gateway orders are cancelled after commit; a late capture is refunded.
 - A review-first expert (`bookingMode = REQUEST`) refuses a direct consultation
   checkout with 409 `REQUEST_APPROVAL_REQUIRED` on every rail (card,
   zero-amount, organisation-funded), before any gateway order; plans, trials and
