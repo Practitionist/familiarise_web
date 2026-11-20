@@ -133,3 +133,28 @@ it("keeps a window that is under way but offers no Book now", async () => {
   expect(await screen.findByText("Stop notifying me")).toBeTruthy();
   expect(screen.queryByText("Book now")).toBeNull();
 });
+
+it("a NOTIFIED row with a free seat says so in its text", async () => {
+  mockApi([waitlistRow({ status: "NOTIFIED" })], []);
+  renderAlerts();
+  expect(await screen.findByText(/A seat is open/)).toBeTruthy();
+  expect(screen.queryByText(/Waiting for a seat/)).toBeNull();
+});
+
+it("every row action keeps the default button height below sm", async () => {
+  mockApi([waitlistRow({ status: "NOTIFIED" })], [backupRow()]);
+  renderAlerts();
+  await screen.findByText("Stop notifying me");
+  const actions = [
+    screen.getByText("Seat open — book now"),
+    screen.getByText("Leave"),
+    screen.getByText("Book now"),
+    screen.getByText("Stop notifying me"),
+  ];
+  for (const action of actions) {
+    const classes = action.className.split(" ");
+    expect(classes).toContain("h-9");
+    expect(classes).toContain("sm:h-8");
+    expect(classes).not.toContain("h-8");
+  }
+});

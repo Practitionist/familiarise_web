@@ -20,12 +20,17 @@ import {
   AvailabilitySaveConfirm,
   outsideHoursLinks,
 } from "../../app/dashboard/consultant/[consultantId]/(features)/settings/AvailabilitySaveConfirm";
-import type { AvailabilitySavePreview } from "../../app/dashboard/consultant/[consultantId]/(features)/settings/use-consultant-settings-form";
+import {
+  availabilitySavePreviewSchema,
+  type AvailabilitySavePreview,
+} from "@/schemas/availability-preview";
 
 const session = (id: string) => ({
   appointmentId: id,
   startsAt: "2099-12-10T06:00:00.000Z",
   held: false,
+  planTitle: "Career chat",
+  learnerName: "Priya Nair" as string | null,
 });
 
 /** The settings form's half: it keeps the preview and marks it saved. */
@@ -133,6 +138,63 @@ describe("AvailabilitySaveConfirm", () => {
         "1 booking is outside your new hours. Reschedule or cancel it if you can't make it.",
       ),
     ).toBeTruthy();
+  });
+
+  it("dismisses with Keep editing, and names the booking a row's cancel link cancels", async () => {
+    render(
+      <Harness
+        preview={{ sessions: [session("a-1")], customDatesRemoved: 0 }}
+        save={async () => undefined}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Keep editing" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save anyway" }));
+    });
+    expect(links().map((l) => l.textContent)).toEqual([
+      "Reschedule",
+      "Cancel booking",
+    ]);
+  });
+
+  it("names each booking's learner and plan, and only the plan for a group event", () => {
+    render(
+      <Harness
+        preview={{
+          sessions: [
+            session("a-1"),
+            {
+              ...session("a-2"),
+              planTitle: "System Design Cohort",
+              learnerName: null,
+            },
+          ],
+          customDatesRemoved: 0,
+        }}
+        save={async () => undefined}
+      />,
+    );
+    const rows = screen.getAllByRole("listitem").map((li) => li.textContent);
+    expect(rows[0]).toMatch(/ · Priya Nair · Career chat$/);
+    expect(rows[1]).toMatch(/^[^·]+ · System Design Cohort$/);
+  });
+
+  it("parses a preview from the API before plan and learner names, and still lists the booking", () => {
+    const preview = availabilitySavePreviewSchema.parse({
+      sessions: [
+        {
+          appointmentId: "a-1",
+          startsAt: "2099-12-10T06:00:00.000Z",
+          held: true,
+        },
+      ],
+      customDatesRemoved: 0,
+    });
+    render(<Harness preview={preview} save={async () => undefined} />);
+    expect(screen.getByRole("listitem").textContent).toMatch(
+      /^[^·]+ · A booking · awaiting payment or approval$/,
+    );
   });
 
   it("links to the expert's existing reschedule and booking pages", () => {

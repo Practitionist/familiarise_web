@@ -5,7 +5,13 @@
  */
 
 import * as React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 type SessionUser = {
@@ -137,4 +143,25 @@ it("has no marketing switch and points marketing to the consent section", async 
     "href",
     "/dashboard/consultee/ce1/settings/account#data-consent",
   );
+});
+
+it("lists every notice that still arrives as short items for the viewer's role", async () => {
+  mockUser = { id: "u1", role: "CONSULTANT", consultantProfileId: "cp1" };
+  renderPanel();
+  await screen.findByRole("switch", { name: "Optional notifications" });
+  const block = screen.getByTestId("notification-always-sent");
+  const items = within(block)
+    .getAllByRole("listitem")
+    .map((li) => li.textContent);
+  expect(items).toEqual([
+    "Account and security notices, moderation decisions and profile verification updates",
+    "Payment receipts and invitations you must answer, by email",
+    expect.stringMatching(
+      /^Changes someone else makes to your booking or your co-hosting: /,
+    ),
+  ]);
+  const master = document.getElementById(
+    "notification-allNotifications-description",
+  )?.textContent;
+  expect(master).not.toContain("account, security");
 });

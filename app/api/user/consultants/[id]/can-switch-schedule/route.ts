@@ -39,7 +39,11 @@ export async function GET(
     }
 
     // Check for active appointments using shared utility
-    const activeAppointments = await checkActiveAppointments(consultantId);
+    const activeAppointments = await checkActiveAppointments(
+      consultantId,
+      prisma,
+      "scheduleSwitch",
+    );
 
     if (activeAppointments.hasActive) {
       return NextResponse.json({

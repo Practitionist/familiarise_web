@@ -2,13 +2,15 @@
  * GET /api/organizations/[orgId]/billing-account/invoices
  *
  * The org's invoice register. Only the platform raises an invoice, through
- * POST /api/admin/organizations/[orgId]/invoices or the billing crons.
+ * POST /api/admin/organizations/[orgId]/invoices or the billing crons. Drafts
+ * are listed only for a role that manages billing.
  */
 
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+import { visibleInvoiceWhere } from "@/lib/enterprise/invoice-visibility";
 import { outstandingPaiseByInvoice } from "@/lib/payments/billing/org-invoice-settlement";
 
 const InvoiceStatusSchema = z.enum([
@@ -41,9 +43,13 @@ export async function GET(
     Math.max(1, Number(url.searchParams.get("perPage") ?? 20)),
   );
 
+  // AND keeps a ?status=DRAFT request from overriding the draft filter.
   const where = {
     organizationId: orgId,
-    ...(status?.success ? { status: status.data } : {}),
+    AND: [
+      visibleInvoiceWhere(access.member.role),
+      status?.success ? { status: status.data } : {},
+    ],
   };
 
   const [total, invoices] = await prisma.$transaction([

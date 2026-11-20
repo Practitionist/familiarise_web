@@ -8,6 +8,7 @@ import { TrendingUp, X } from "lucide-react";
 import { z } from "zod";
 
 import { Button } from "@/components/ui/button";
+import { useNowTick } from "@/hooks/use-now-tick";
 import {
   demandSignals,
   dismissalHolds,
@@ -54,6 +55,7 @@ function signalLines(
   d: ExpertDemand,
   signals: readonly DemandSignal[],
   format: (date: Date, pattern: string) => string,
+  now: Date,
 ): string[] {
   const when = (iso: string | null) =>
     iso ? format(new Date(iso), "EEE d MMM, h:mm a") : "";
@@ -67,8 +69,16 @@ function signalLines(
           : `You have ${d.openRequests} open requests; your limit is ${d.maxOpenRequests}.`;
       case "REQUEST_EXPIRING":
         return `A request lapses at ${when(d.nearestRequestExpiry)} unless you answer it.`;
-      case "PLANS_UNPLACED":
-        return `${plural(d.unplacedPlans, "paid plan is", "paid plans are")} waiting for times; place the first by ${when(d.nearestPlacementDeadline)}.`;
+      case "PLANS_UNPLACED": {
+        const waiting = `${plural(d.unplacedPlans, "paid plan is", "paid plans are")} waiting for times`;
+        // A deadline already behind us is stated as overdue, never as a target.
+        const due = d.nearestPlacementDeadline
+          ? Date.parse(d.nearestPlacementDeadline)
+          : Number.NaN;
+        return due <= now.getTime()
+          ? `${waiting}; the first was due by ${when(d.nearestPlacementDeadline)}. Place it now.`
+          : `${waiting}; place the first by ${when(d.nearestPlacementDeadline)}.`;
+      }
       case "WEEKS_FULL":
         return `Your next two weeks are ${Math.round((d.bookedShare ?? 0) * 100)}% booked.`;
       case "LEARNERS_WAITING":
@@ -99,9 +109,10 @@ export function DemandBanner({
   }, [consultantId]);
 
   const { data } = useExpertDemand(consultantId);
+  // Re-renders an open tab, so a deadline that passes turns into the overdue line.
+  const now = useNowTick();
 
   if (!data || dismissal === undefined) return null;
-  const now = new Date();
   const signals = demandSignals(data, now);
   if (signals.length === 0 || dismissalHolds(dismissal, signals, now)) {
     return null;
@@ -135,7 +146,7 @@ export function DemandBanner({
               You&apos;re in demand
             </p>
             <ul className="space-y-0.5 text-sm text-foreground">
-              {signalLines(data, signals, format).map((line) => (
+              {signalLines(data, signals, format, now).map((line) => (
                 <li key={line}>{line}</li>
               ))}
             </ul>
