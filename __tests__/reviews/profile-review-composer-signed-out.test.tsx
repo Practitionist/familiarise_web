@@ -66,6 +66,7 @@ describe("ProfileReviewComposer session gate", () => {
             consultantName: "Hannah",
             title: "Career consultation",
             heldAt: "2026-11-02T04:30:00.000Z",
+            profileIsPublic: true,
             existingReview: null,
           },
         ],

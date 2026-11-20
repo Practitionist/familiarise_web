@@ -217,9 +217,11 @@ export function UnpaidRequestedBookingControls({
 }
 
 function deriveConsulteeActionMeta(vm: AppointmentVM) {
+  // Both next steps open the expert's public profile, which 404s until it is served.
+  const profileLinkable =
+    Boolean(vm.consultantProfileId) && vm.expertProfileIsPublic === true;
   const canRebook =
-    Boolean(vm.consultantProfileId) &&
-    (vm.bucket === "past" || vm.bucket === "cancelled");
+    profileLinkable && (vm.bucket === "past" || vm.bucket === "cancelled");
   const seatGone = seatLapsedOrReleased(vm);
   const canAddToCalendar = !seatGone && calendarSessions(vm).length > 0;
   const expertName = vm.counterpart.name || "Expert";
@@ -260,7 +262,7 @@ function deriveConsulteeActionMeta(vm: AppointmentVM) {
   const isCompletedOneOnOne =
     vm.kind === "CONSULTATION" &&
     (vm.status === "COMPLETED" || vm.bucket === "past") &&
-    Boolean(vm.consultantProfileId);
+    profileLinkable;
 
   const isPendingRequestEntity =
     rawConsultation?.status === "PENDING" || rawSub?.status === "PENDING";
@@ -296,7 +298,7 @@ function deriveConsulteeActionMeta(vm: AppointmentVM) {
   };
 }
 
-function ConsulteeExtraActions({
+export function ConsulteeExtraActions({
   vm,
   consulteeId,
   appointmentId,
@@ -381,10 +383,15 @@ function ConsulteeExtraActions({
 }
 
 /** A trial's next step with its expert: quiet before the session, prominent once it is completed. */
-function TrialContinueCard({ vm }: Readonly<{ vm: AppointmentVM }>) {
+export function TrialContinueCard({ vm }: Readonly<{ vm: AppointmentVM }>) {
   const live = vm.status === "SCHEDULED" || vm.status === "AWAITING_PAYMENT";
   const completed = vm.status === "COMPLETED";
-  if (vm.kind !== "TRIAL" || !vm.consultantProfileId || !(live || completed)) {
+  if (
+    vm.kind !== "TRIAL" ||
+    !vm.consultantProfileId ||
+    vm.expertProfileIsPublic !== true ||
+    !(live || completed)
+  ) {
     return null;
   }
   const expertName = vm.counterpart.name || "your expert";

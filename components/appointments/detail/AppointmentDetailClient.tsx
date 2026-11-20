@@ -21,7 +21,6 @@ import {
   Video,
   MessageSquare,
   Receipt,
-  Star,
   Users,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -116,6 +115,7 @@ import { LazyAppointmentChatSheet } from "../LazyAppointmentChatSheet";
 import { caseKeyOf } from "@/lib/support/case-key";
 import { AppointmentSupportStatusCard } from "@/components/support/AppointmentSupportStatusCard";
 import { SessionRatingRow } from "@/components/reviews/SessionRatingRow";
+import { SessionReviewCard } from "@/components/reviews/SessionReviewCard";
 import { useSessionFeedback } from "@/hooks/useSessionFeedback";
 import { ResourceSnapshot, type ResourceHrefs } from "./ResourceSnapshot";
 import { cn } from "@/utils/tailwind";
@@ -706,14 +706,6 @@ export function AppointmentDetailClient({
         {scheduleItems.map(renderActionButton)}
       </div>
     ) : null;
-  // The review invite follows the outcome: a session this learner attended.
-  const showReviewCard =
-    role === "consultee" &&
-    !!vm.consultantProfileId &&
-    (bookingState.state === "COMPLETED" ||
-      detail.appointment.occurrences.some((o) =>
-        sessionFeedback.rateable.has(o.id),
-      ));
   const showProgress =
     !!vm.group && vm.group.total > 0 && postApproval && !usesSessionProgress;
   const hasDetails =
@@ -1510,30 +1502,12 @@ export function AppointmentDetailClient({
                 readOnly={adapter.readOnly}
               />
             )}
-            {/* The public review lives on the expert's profile; this card only
-                links there, and waits until a session has actually run. */}
-            {showReviewCard && (
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-card px-5 py-4 shadow-sm">
-                <div className="flex min-w-0 items-start gap-3">
-                  <Star className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-foreground">
-                      Reviewed this expert?
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      Share a public review on {vm.counterpart.name}&apos;s
-                      profile.
-                    </p>
-                  </div>
-                </div>
-                <Button variant="outline" size="sm" asChild>
-                  <Link
-                    href={`/explore/experts/${vm.consultantProfileId}#reviews`}
-                  >
-                    Write or update your review
-                  </Link>
-                </Button>
-              </div>
+            {/* The review route decides whether this learner may review this session. */}
+            {role === "consultee" && (
+              <SessionReviewCard
+                appointmentId={appointmentId}
+                consultantName={vm.counterpart.name}
+              />
             )}
             {sessionsCard}
             {participantsCard}

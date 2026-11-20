@@ -75,6 +75,7 @@ import {
   type OpenRescheduleProposal,
 } from "@/lib/appointments/consultee-affordances";
 import type { ConsulteeMoneySummary } from "@/lib/data/consultee-payments";
+import { fetchReviewableSessions } from "@/components/reviews/reviewable-sessions";
 import type { LibraryDocument, LibraryPage } from "@/lib/library/library-query";
 import { MyAlerts } from "@/components/appointments/consultee/MyAlerts";
 import { fetchPendingPayments } from "./PendingPaymentsWidget";
@@ -473,13 +474,6 @@ function lowSessionSubscriptions(
   });
 }
 
-interface ReviewableSessionRow {
-  appointmentId: string;
-  consultantProfileId: string;
-  consultantName: string | null;
-  existingReview: unknown;
-}
-
 type SessionCaseRow = {
   id: string;
   category: string | null;
@@ -624,11 +618,7 @@ export default function HomeTab({
     queryKey: ["reviewable-sessions"],
     staleTime: 5 * 60_000,
     enabled: isOwner,
-    queryFn: () =>
-      fetchJson<ReviewableSessionRow[]>(
-        "/api/user/reviews/reviewable-sessions?unreviewed=1",
-        true,
-      ),
+    queryFn: () => fetchReviewableSessions({ unreviewed: "1" }),
   });
   const { data: revisions } = useQuery({
     queryKey: ["documents", "library", "consultee", consulteeId, "your-turn"],
@@ -692,9 +682,9 @@ export default function HomeTab({
           .filter((s) => !s.existingReview)
           .slice(0, RATE_PROMPT_LIMIT)
           .map((s) => ({
-            key: s.appointmentId,
+            appointmentId: s.appointmentId,
             consultantName: s.consultantName ?? "your expert",
-            href: `/explore/experts/${s.consultantProfileId}#reviews`,
+            profileIsPublic: s.profileIsPublic,
           })),
         documentsToRevise: (revisions?.groups ?? [])
           .flatMap((g) =>
