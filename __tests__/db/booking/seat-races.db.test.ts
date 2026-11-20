@@ -96,7 +96,7 @@ jest.mock("../../../lib/payments/operations/event-refunds", () => {
 // The free seat's booked notice is outside the races under test.
 jest.mock("../../../lib/payments/checkout/free-seat-notice", () => ({
   ...jest.requireActual("../../../lib/payments/checkout/free-seat-notice"),
-  notifyFreeSeatRegistered: jest.fn(async () => undefined),
+  stageFreeSeatNoticeTx: jest.fn(async () => ({})),
 }));
 
 import { handleCheckout } from "../../../lib/payments/checkout";

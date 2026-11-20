@@ -96,7 +96,7 @@ jest.mock("../../../lib/compliance/dpdp", () => ({
 }));
 jest.mock("../../../lib/payments/checkout/free-seat-notice", () => ({
   ...jest.requireActual("../../../lib/payments/checkout/free-seat-notice"),
-  notifyFreeSeatRegistered: jest.fn(async () => undefined),
+  stageFreeSeatNoticeTx: jest.fn(async () => ({})),
 }));
 
 import { removeAttendeeForConduct } from "../../../lib/booking/conduct-removal";

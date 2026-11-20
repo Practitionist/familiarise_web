@@ -21,7 +21,10 @@ import { settleCheckoutLegs } from "@/lib/payments/checkout/commit/payment-legs"
 import { writeCheckoutPayment } from "@/lib/payments/checkout/commit/payment-row";
 import type { CheckoutCommitInput } from "@/lib/payments/checkout/commit/types";
 import type { PriorSeatPayment } from "@/lib/payments/checkout/seats";
-import { readSeatJoin } from "@/lib/payments/checkout/free-seat-notice";
+import {
+  readSeatJoin,
+  stageFreeSeatNoticeTx,
+} from "@/lib/payments/checkout/free-seat-notice";
 import { stageCreditsApplied } from "@/lib/referrals/referral-notify";
 
 /**
@@ -258,13 +261,26 @@ export async function commitCheckout(input: CheckoutCommitInput) {
           priorSeat,
           eventPricePaise,
         });
+        // No capture follows a free seat, so its booked notice commits with the join here.
+        const seatNotice =
+          seatJoin &&
+          createdAppointment &&
+          (validatedData.appointmentType === "WEBINAR" ||
+            validatedData.appointmentType === "CLASS")
+            ? await stageFreeSeatNoticeTx(tx, {
+                appointmentId: createdAppointment.id,
+                userId,
+                appointmentType: validatedData.appointmentType,
+                join: seatJoin,
+              })
+            : null;
         // A rejoined free seat revived on its earlier payment, whose legs and earnings already exist.
         if (payment.rejoined) {
           return {
             appointmentId: createdAppointment?.id,
             paymentId: payment.id,
             reusedPaymentIntent: payment.reusedPaymentIntent,
-            seatJoin,
+            seatNotice,
             holdExpiresAt: payment.expiresAt,
             creditsApplied: 0,
             creditNotices: {},
@@ -303,7 +319,7 @@ export async function commitCheckout(input: CheckoutCommitInput) {
           appointmentId: createdAppointment?.id,
           paymentId: payment.id,
           reusedPaymentIntent: null as string | null,
-          seatJoin,
+          seatNotice,
           holdExpiresAt: payment.expiresAt,
           creditsApplied: actualCreditsApplied,
           creditNotices,

@@ -35,7 +35,6 @@ import {
   hasBilledSupply,
   isZeroAmountOrder,
 } from "@/lib/payments/checkout/zero-amount";
-import { notifyFreeSeatRegistered } from "@/lib/payments/checkout/free-seat-notice";
 import {
   DIRECT_CHECKOUT_HOLD_MS,
   SEAT_CHECKOUT_HOLD_MS,
@@ -767,20 +766,12 @@ export async function handleCheckout(
           });
         }
 
-        // No capture follows a free seat, so its booked notice is staged here, first join and rejoin alike.
-        if (
-          isZeroAmountPayment &&
-          result.appointmentId &&
-          result.seatJoin &&
-          (validatedData.appointmentType === "WEBINAR" ||
-            validatedData.appointmentType === "CLASS")
-        ) {
-          await notifyFreeSeatRegistered({
-            appointmentId: result.appointmentId,
-            userId,
-            appointmentType: validatedData.appointmentType,
-            join: result.seatJoin,
-          });
+        // A free seat's booked notice was staged in the commit; it is sent here.
+        if (result.seatNotice) {
+          await flushNotificationsAfter(
+            result.seatNotice,
+            "checkout.free-seat-booked",
+          );
         }
 
         const appointmentIdForChannels = result.appointmentId;

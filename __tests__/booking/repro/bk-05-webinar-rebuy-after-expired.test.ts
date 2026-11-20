@@ -22,10 +22,13 @@ jest.mock("../../../lib/payments/operations/cancellation-policy-store", () => ({
   resolveCheckoutCancellationPolicyId: jest.fn(async () => "policy-1"),
 }));
 
-const mockFreeSeatNotice = jest.fn(async (_args: unknown) => undefined);
+const mockFreeSeatNotice = jest.fn(
+  async (_tx: unknown, _args: unknown) => ({}),
+);
 jest.mock("../../../lib/payments/checkout/free-seat-notice", () => ({
   ...jest.requireActual("../../../lib/payments/checkout/free-seat-notice"),
-  notifyFreeSeatRegistered: (args: unknown) => mockFreeSeatNotice(args),
+  stageFreeSeatNoticeTx: (tx: unknown, args: unknown) =>
+    mockFreeSeatNotice(tx, args),
 }));
 
 import { handleCheckout } from "../../../lib/payments/checkout";
@@ -331,8 +334,9 @@ describe("rejoining a free webinar seat its holder left", () => {
         reason: { in: ["registered", "rejoined"] },
       },
     });
-    // The rejoin's own SEAT row keys the notice, not the first registration's.
+    // The rejoin's own SEAT row keys the notice, which the commit stages on its transaction.
     expect(mockFreeSeatNotice).toHaveBeenCalledWith(
+      expect.anything(),
       expect.objectContaining({
         appointmentId: APPT,
         join: { participantId: "part-1", joinId: "hist-rejoin" },
