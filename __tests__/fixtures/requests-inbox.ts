@@ -248,8 +248,8 @@ const statusMatches = (row: Row, where: Where): boolean => {
   if (!(where.AND ?? []).every((part) => statusMatches(row, part))) {
     return false;
   }
-  // OR arms the fake understands: a bookingSource exclusion or a payment
-  // status on the wrapper; any other arm counts as a match.
+  // OR arms the fake understands: a bookingSource exclusion, a payment status
+  // on the wrapper, or an arm with its own status; any other arm is a match.
   return !where.OR || where.OR.some((part) => orArmMatches(row, part));
 };
 const orArmMatches = (row: Row, arm: Where): boolean => {
@@ -263,7 +263,7 @@ const orArmMatches = (row: Row, arm: Where): boolean => {
       (p) => p.paymentStatus === some,
     );
   }
-  return true;
+  return statusMatches(row, arm);
 };
 
 /**
