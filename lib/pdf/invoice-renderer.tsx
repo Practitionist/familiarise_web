@@ -45,11 +45,11 @@ import {
   BODY_FONT,
   StatutoryDocumentFrame,
   statutoryStyles,
-  formatStatutoryDate,
   taxTotalLines,
   type StatutorySupplier,
   type StatutoryBuyer,
 } from "./statutory-document-frame";
+import { formatInvoiceDate, invoiceDateLabel } from "@/lib/time/invoice-date";
 
 // The Devanagari face used by statutory documents is registered once in
 // ./statutory-document-frame. Re-exported here because that is where callers
@@ -80,10 +80,10 @@ function formatMoneyIntl(paise: number, currency: Currency): string {
   }).format(major);
 }
 
-function formatDateLong(d: Date | null | undefined): string {
-  if (!d) return "—";
-  return new Date(d).toLocaleDateString("en-IN", {
-    day: "2-digit",
+/** The IRP's AckDt is an IST wall time parsed in the host zone, so the host zone reads its date back. */
+function irpAckDay(d: Date): string {
+  return d.toLocaleDateString("en-IN", {
+    day: "numeric",
     month: "short",
     year: "numeric",
   });
@@ -293,22 +293,24 @@ function OrgInvoiceDocument({ data }: { data: OrgInvoicePdfData }) {
             )}
           </View>
           <View style={orgStyles.party}>
-            <Text style={orgStyles.sectionTitle}>Dates</Text>
-            <Text style={orgStyles.partyLine}>
-              Issued: {formatDateLong(data.issuedAt ?? null)}
+            <Text style={orgStyles.sectionTitle}>
+              {invoiceDateLabel("Dates")}
             </Text>
             <Text style={orgStyles.partyLine}>
-              Due: {formatDateLong(data.dueDate)}
+              Issued: {formatInvoiceDate(data.issuedAt)}
+            </Text>
+            <Text style={orgStyles.partyLine}>
+              Due: {formatInvoiceDate(data.dueDate)}
             </Text>
             {data.paidAt && (
               <Text style={orgStyles.partyLine}>
-                Paid: {formatDateLong(data.paidAt)}
+                Paid: {formatInvoiceDate(data.paidAt)}
               </Text>
             )}
             {data.billingCycleStart && data.billingCycleEnd && (
               <Text style={orgStyles.partyLine}>
-                Cycle: {formatDateLong(data.billingCycleStart)} —{" "}
-                {formatDateLong(data.billingCycleEnd)}
+                Cycle: {formatInvoiceDate(data.billingCycleStart)} —{" "}
+                {formatInvoiceDate(data.billingCycleEnd)}
               </Text>
             )}
             {data.placeOfSupply && (
@@ -405,10 +407,10 @@ function OrgInvoiceDocument({ data }: { data: OrgInvoicePdfData }) {
             {data.irn.ackDate && (
               <>
                 <Text style={{ ...orgStyles.irnLabel, marginTop: 4 }}>
-                  Ack date
+                  {invoiceDateLabel("Ack date")}
                 </Text>
                 <Text style={orgStyles.irnValue}>
-                  {formatDateLong(data.irn.ackDate)}
+                  {irpAckDay(data.irn.ackDate)}
                 </Text>
               </>
             )}
@@ -483,12 +485,12 @@ export function ConsumerInvoiceDocument({
           buyerHeading="Bill to"
           details={[
             {
-              label: "Invoice date",
-              value: formatStatutoryDate(data.issuedAt),
+              label: invoiceDateLabel("Invoice date"),
+              value: formatInvoiceDate(data.issuedAt),
             },
             {
-              label: "Date of supply",
-              value: formatStatutoryDate(data.supplyDate),
+              label: invoiceDateLabel("Date of supply"),
+              value: formatInvoiceDate(data.supplyDate),
             },
             { label: "Place of supply", value: data.placeOfSupply ?? "—" },
             { label: "Reverse charge", value: "No" },
