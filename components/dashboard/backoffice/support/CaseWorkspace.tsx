@@ -493,7 +493,7 @@ export function CaseWorkspace({
                 Reply due {when(data.ackDueAt)}
               </span>
             )}
-          {data.resolutionDueAt && deadline && (
+          {data.effectiveResolutionDueAt && deadline && (
             <span
               className={cn(
                 "text-xs",
@@ -502,7 +502,7 @@ export function CaseWorkspace({
                   : "text-muted-foreground",
               )}
             >
-              {deadline.prefix} {when(data.resolutionDueAt)}
+              {deadline.prefix} {when(data.effectiveResolutionDueAt)}
             </span>
           )}
           {data.reviewDueAt && (

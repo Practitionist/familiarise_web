@@ -41,6 +41,21 @@ jest.mock(
   }),
 );
 
+const mockCase: Record<string, unknown> = {};
+jest.mock("../../lib/prisma", () => ({
+  __esModule: true,
+  default: {
+    supportCase: {
+      findFirst: jest.fn(async () => mockCase),
+      findMany: jest.fn(async () => []),
+    },
+  },
+}));
+jest.mock("../../lib/observability/sentry-issues", () => ({
+  findUserIssues: async () => [],
+}));
+
+import { readCaseWorkspace } from "../../lib/support/case-workspace";
 import { StaffSupportComposeDialog } from "../../components/dashboard/backoffice/support/StaffSupportComposeDialog";
 import { resolutionDeadline, slaHint } from "../../lib/support/sla-hint";
 import { slaStateOf, type SlaClock } from "../../lib/support/sla";
@@ -88,6 +103,59 @@ describe("support countdowns", () => {
       NOW,
     );
     expect(resolutionDeadline(resolved)).toBeNull();
+  });
+});
+
+describe("case workspace deadline", () => {
+  it("serves the resolution deadline the SLA is judged against, pauses included", async () => {
+    // Due 2 hours ago as stored, but the case waited 5 hours on the customer.
+    Object.assign(mockCase, {
+      id: "case-9",
+      title: "Refund",
+      referenceNumber: "FAM-2026-000009",
+      category: "REFUND_REQUEST",
+      issueType: null,
+      status: "IN_PROGRESS",
+      priority: "MEDIUM",
+      activeChannel: "HUMAN",
+      assignedTo: null,
+      ackDueAt: null,
+      acknowledgedAt: new Date(Date.now() - 10 * HOUR),
+      resolutionDueAt: new Date(Date.now() - 2 * HOUR),
+      resolvedAt: null,
+      awaitingUserSince: null,
+      pausedSeconds: 5 * 3600,
+      statutoryDueAt: null,
+      reopenedAt: null,
+      lastMessageAt: null,
+      createdAt: new Date(Date.now() - 48 * HOUR),
+      updatedAt: new Date(),
+      description: "",
+      appointmentId: null,
+      requesterUserId: "u_1",
+      externalRequesterEmail: null,
+      externalRequesterName: null,
+      callbackPhone: null,
+      requester: {
+        id: "u_1",
+        name: "Patrick",
+        email: "p@example.com",
+        phone: null,
+        role: "CONSULTEE",
+        createdAt: new Date(),
+      },
+      organization: null,
+      subjects: [],
+      messages: [],
+      events: [],
+    });
+    const ws = await readCaseWorkspace(
+      { kind: "case", id: "case-9" },
+      { showContact: false, showPayment: false },
+    );
+    const stored = Date.parse(ws!.resolutionDueAt!);
+    expect(Date.parse(ws!.effectiveResolutionDueAt!) - stored).toBe(5 * HOUR);
+    expect(resolutionDeadline(ws!.sla)?.prefix).toBe("Resolve by");
   });
 });
 
