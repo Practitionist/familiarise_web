@@ -198,11 +198,14 @@ describe("one instant prints one day in a Los Angeles browser", () => {
     render(invoicesPanel());
 
     const drawer = await screen.findByRole("dialog");
-    await within(drawer).findByText("Due");
+    await within(drawer).findByText("Subtotal");
     expect(within(drawer).getAllByText("20 Oct 2026")).toHaveLength(2);
-    expect(drawer.textContent).not.toContain("19 Oct");
-    const table = await screen.findByRole("table");
-    expect(within(table).getByText("20 Oct 2026")).toBeTruthy();
+    // The list row behind the open drawer (table cell and phone card) prints the same day.
+    const listed = screen
+      .getAllByText("20 Oct 2026")
+      .filter((el) => !drawer.contains(el));
+    expect(listed.length).toBeGreaterThan(0);
+    expect(document.body.textContent).not.toContain("19 Oct");
   });
 
   it("on the licence terms", () => {

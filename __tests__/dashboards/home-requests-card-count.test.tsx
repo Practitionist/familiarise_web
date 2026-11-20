@@ -74,6 +74,7 @@ import {
   serve,
   serveInboxFixture,
 } from "../fixtures/requests-inbox";
+import { stubDesktopMatchMedia } from "../fixtures/requests-inbox-render";
 
 const db = prisma as unknown as Record<string, Record<string, jest.Mock>>;
 
@@ -300,6 +301,7 @@ describe("an inbox body the renderers cannot draw", () => {
   });
 
   it("shows Retry on the Requests page", async () => {
+    stubDesktopMatchMedia();
     serveRoute(await truncated());
     renderWithQueries(
       <RequestsInbox consultantProfileId={CP} viewerZone="Asia/Kolkata" />,
