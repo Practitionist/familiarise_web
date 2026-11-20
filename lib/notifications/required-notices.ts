@@ -49,7 +49,7 @@ export const REQUIRED_NOTICE_LABEL: Record<RequiredNoticeKind, string> = {
 
 /** Who a required notice can reach; `alwaysSentNotices` reads it against the viewer. */
 export type NoticeAudience =
-  "everyone" | "booker" | "expert" | "reviewer" | "admin";
+  "everyone" | "booker" | "expert" | "reviewer" | "compliance";
 
 /** Co-hosting notices reach experts; every other kind reaches whoever booked. */
 export const REQUIRED_NOTICE_AUDIENCE: Record<
@@ -101,7 +101,7 @@ export const REQUIRED_WORKFLOW_NOTICES: Readonly<Record<string, SystemNotice>> =
     },
     [NOVU_WORKFLOWS.COMPLIANCE_DEADLINE_ALERT]: {
       label: "compliance deadline alerts",
-      audience: "admin",
+      audience: "compliance",
     },
   };
 

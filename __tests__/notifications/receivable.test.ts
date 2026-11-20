@@ -15,6 +15,7 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
+import { COMPLIANCE_ALERT_EMAIL } from "@/lib/company";
 import { EMAIL_CATEGORY_COLUMN, isEmailAllowed } from "@/lib/email/preferences";
 import { resolveRecipientBellPolicy } from "@/lib/novu/policy";
 import { NOVU_WORKFLOW_TEMPLATES } from "@/lib/novu/templates";
@@ -155,6 +156,22 @@ describe("alwaysSentNotices", () => {
     expect(text({ role: "ADMIN", hasOrgMembership: false })).toContain(
       "new expert applications and compliance deadline alerts",
     );
+  });
+
+  it("the staff account on the compliance mailbox sees compliance alerts; other staff do not", () => {
+    const officer = text({
+      role: "STAFF",
+      email: COMPLIANCE_ALERT_EMAIL.toUpperCase(),
+      hasOrgMembership: false,
+    });
+    expect(officer).toContain("compliance deadline alerts");
+    expect(
+      text({
+        role: "STAFF",
+        email: "someone-else@example.test",
+        hasOrgMembership: false,
+      }),
+    ).not.toContain("compliance");
   });
 
   it("a workspace operator, who books nothing, has no booking line", () => {

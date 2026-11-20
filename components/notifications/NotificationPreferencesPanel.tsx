@@ -266,6 +266,7 @@ export function NotificationPreferencesPanel() {
   const viewer = {
     role: user?.role,
     consultantProfileId: user?.consultantProfileId,
+    email: user?.email,
     hasOrgMembership: memberships.length > 0,
   };
   const switches = receivableSwitches(viewer);

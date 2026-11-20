@@ -8,6 +8,7 @@
  */
 
 import { z } from "zod";
+import { COMPLIANCE_ALERT_EMAIL } from "@/lib/company";
 import type { EmailCategoryColumn } from "@/lib/email/preferences";
 import {
   REQUIRED_NOTICE_AUDIENCE,
@@ -51,6 +52,7 @@ const ROLE_SWITCHES: Record<
 export interface PreferenceViewer {
   role?: string | null;
   consultantProfileId?: string | null;
+  email?: string | null;
   /** True when the viewer holds at least one active organisation membership. */
   hasOrgMembership: boolean;
 }
@@ -86,8 +88,12 @@ function reaches(audience: NoticeAudience, viewer: PreferenceViewer): boolean {
       return isExpert(viewer);
     case "reviewer":
       return role === "STAFF" || role === "ADMIN";
-    case "admin":
-      return role === "ADMIN";
+    case "compliance":
+      // The deadline sweeps alert every admin and the account on the compliance mailbox.
+      return (
+        role === "ADMIN" ||
+        viewer.email?.toLowerCase() === COMPLIANCE_ALERT_EMAIL.toLowerCase()
+      );
   }
 }
 

@@ -76,6 +76,7 @@ it("never selects or returns the gateway's raw refund failure text", async () =>
     paymentStatus: "SUCCEEDED",
     paymentMethod: "card",
     paymentGateway: "RAZORPAY",
+    paymentIntent: "order_Nx79",
     receiptUrl: null,
     expiresAt: null,
     createdAt: at,
@@ -129,6 +130,7 @@ describe("the detail page when nothing was charged", () => {
     paymentStatus: "SUCCEEDED",
     paymentMethod: "card",
     paymentGateway: "RAZORPAY",
+    paymentIntent: "order_Nx80",
     receiptUrl: null,
     expiresAt: null,
     createdAt: new Date("2026-09-01T10:00:00Z"),
@@ -172,9 +174,10 @@ describe("the detail page when nothing was charged", () => {
     expect(html).not.toContain("Problem with this charge");
   });
 
-  it("a cancelled hold labels its amount Would have been and offers no dispute", async () => {
+  it("a hold that lapsed before its gateway order existed labels its amount Would have been and offers no dispute", async () => {
     const { detail, html } = await page({
       paymentStatus: "EXPIRED",
+      paymentIntent: "premint_9f2c",
       amount: 161_444,
       originalAmount: 161_444,
     });
@@ -184,6 +187,18 @@ describe("the detail page when nothing was charged", () => {
     expect(html).toContain("Would have been");
     expect(html).not.toContain(">Amount<");
     expect(html).not.toContain("Problem with this charge");
+  });
+
+  it("a cancelled gateway order keeps its Amount and the dispute door: a late capture can still land", async () => {
+    const { html } = await page({
+      paymentStatus: "EXPIRED",
+      paymentIntent: "order_Nx81",
+      amount: 161_444,
+      originalAmount: 161_444,
+    });
+    expect(html).toContain(">Amount<");
+    expect(html).not.toContain("Would have been");
+    expect(html).toContain("Problem with this charge");
   });
 
   it("a lapsed hold that still holds referral credit keeps the dispute door", async () => {

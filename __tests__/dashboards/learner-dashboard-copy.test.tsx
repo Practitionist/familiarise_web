@@ -4,7 +4,7 @@
  */
 
 import * as React from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 jest.mock("@/lib/auth-client", () => ({
@@ -89,23 +89,62 @@ describe("Billing: Needs you rows", () => {
     expect(screen.getByRole("link", { name: "Pay ₹2,790.50" })).toBeTruthy();
   });
 
-  it("the cancel dialog names the referral credit that goes back", () => {
+  /** The route as the dialog re-reads it when it opens. */
+  const serveRows = (pendingPayments: unknown[]) => {
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ pendingPayments, lapsedPayLinks: [] }),
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    return fetchMock;
+  };
+
+  it("the cancel dialog names the referral credit that goes back", async () => {
+    const credited = row({
+      source: "gateway_pending",
+      referralCreditPaise: 20_000,
+    });
+    serveRows([credited]);
+    renderWidget([credited]);
+    fireEvent.click(screen.getByRole("button", { name: /Cancel/ }));
+    expect(
+      await screen.findByText(
+        /Your ₹200\.00 referral credit goes back to your balance if it is still valid when you cancel\./,
+      ),
+    ).toBeTruthy();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Cancel booking" }),
+      ).not.toBeDisabled(),
+    );
+  });
+
+  it("the cancel dialog promises no credit when none was applied", async () => {
+    const plain = row({ source: "gateway_pending", referralCreditPaise: 0 });
+    serveRows([plain]);
+    renderWidget([plain]);
+    fireEvent.click(screen.getByRole("button", { name: /Cancel/ }));
+    expect(
+      await screen.findByText("Cancel this pending payment?"),
+    ).toBeTruthy();
+    expect(screen.queryByText(/referral credit/)).toBeNull();
+  });
+
+  it("the cancel dialog re-reads the order on open and drops credit a replacement order does not hold", async () => {
+    const fetchMock = serveRows([
+      row({ source: "gateway_pending", referralCreditPaise: 0 }),
+    ]);
     renderWidget([
       row({ source: "gateway_pending", referralCreditPaise: 20_000 }),
     ]);
     fireEvent.click(screen.getByRole("button", { name: /Cancel/ }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.queryByText(/referral credit/)).toBeNull(),
+    );
     expect(
-      screen.getByText(
-        /Your ₹200\.00 referral credit goes back to your balance if it is still valid when you cancel\./,
-      ),
-    ).toBeTruthy();
-  });
-
-  it("the cancel dialog promises no credit when none was applied", () => {
-    renderWidget([row({ source: "gateway_pending", referralCreditPaise: 0 })]);
-    fireEvent.click(screen.getByRole("button", { name: /Cancel/ }));
-    expect(screen.getByText("Cancel this pending payment?")).toBeTruthy();
-    expect(screen.queryByText(/referral credit/)).toBeNull();
+      screen.getByRole("button", { name: "Cancel booking" }),
+    ).not.toBeDisabled();
   });
 });
 

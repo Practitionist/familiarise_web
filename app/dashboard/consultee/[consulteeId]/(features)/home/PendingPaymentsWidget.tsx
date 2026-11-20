@@ -195,21 +195,22 @@ function pendingDetailsHref(payment: PendingPayment): string | null {
 }
 
 type PendingCancelTarget =
-  | {
-      kind: "gateway";
-      paymentId: string;
-      title: string;
-      creditBack: string | null;
-    }
+  | { kind: "gateway"; paymentId: string; title: string }
   | { kind: "approval"; appointmentId: string; title: string };
 
-/** The cancel dialog's body: a gateway order names the referral credit it returns. */
-function cancelDescription(target: PendingCancelTarget | null): string {
+/**
+ * The cancel dialog's body. A gateway order names the referral credit its
+ * current row holds: checkout can re-mint the same Payment id without credit.
+ */
+function cancelDescription(
+  target: PendingCancelTarget | null,
+  current: PendingPayment | undefined,
+): string {
   if (target?.kind === "approval") {
     return `"${target.title}" will be cancelled. Nothing has been charged — the expert's approval and any held slots are released.`;
   }
-  const credit = target?.creditBack
-    ? ` Your ${target.creditBack} referral credit goes back to your balance if it is still valid when you cancel.`
+  const credit = current?.referralCreditPaise
+    ? ` Your ${formatCurrencyAmount(current.referralCreditPaise, current.currency || "INR")} referral credit goes back to your balance if it is still valid when you cancel.`
     : "";
   return `"${target?.title ?? ""}" will be cancelled and your held slot released.${credit} If the payment already went through, it will be reconciled automatically.`;
 }
@@ -241,6 +242,7 @@ export function PendingPaymentsWidget({
   const {
     data: payload,
     isLoading: loading,
+    isFetching,
     error: queryError,
   } = useQuery({
     queryKey: ["pending-payments", consulteeId],
@@ -260,6 +262,27 @@ export function PendingPaymentsWidget({
 
   const [cancelTarget, setCancelTarget] = useState<PendingCancelTarget | null>(
     null,
+  );
+  const cancelRow =
+    cancelTarget?.kind === "gateway"
+      ? pendingPayments.find(
+          (p) =>
+            p.id === cancelTarget.paymentId && p.source === "gateway_pending",
+        )
+      : undefined;
+  // The dialog quotes the order as just re-read, never the row it was opened from.
+  const openGatewayCancel = useCallback(
+    (payment: PendingPayment) => {
+      setCancelTarget({
+        kind: "gateway",
+        paymentId: payment.id,
+        title: payment.title,
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ["pending-payments", consulteeId],
+      });
+    },
+    [queryClient, consulteeId],
   );
 
   // #849 — release the caller's own tentative hold instead of waiting out
@@ -527,19 +550,7 @@ export function PendingPaymentsWidget({
                       variant="ghost"
                       disabled={cancellingId === payment.id}
                       className="h-7 px-2 text-xs text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 font-semibold"
-                      onClick={() =>
-                        setCancelTarget({
-                          kind: "gateway",
-                          paymentId: payment.id,
-                          title: payment.title,
-                          creditBack: payment.referralCreditPaise
-                            ? formatCurrencyAmount(
-                                payment.referralCreditPaise,
-                                payment.currency || "INR",
-                              )
-                            : null,
-                        })
-                      }
+                      onClick={() => openGatewayCancel(payment)}
                     >
                       {cancellingId === payment.id ? (
                         <Loader2 className="h-3 w-3 animate-spin" />
@@ -623,13 +634,14 @@ export function PendingPaymentsWidget({
                 : "Cancel this pending payment?"}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              {cancelDescription(cancelTarget)}
+              {cancelDescription(cancelTarget, cancelRow)}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Keep booking</AlertDialogCancel>
             <AlertDialogAction
               className="bg-red-600 hover:bg-red-700 text-white"
+              disabled={cancelTarget?.kind === "gateway" && isFetching}
               onClick={handleConfirmCancel}
             >
               Cancel booking

@@ -26,9 +26,9 @@ const formatWhen = (value: Date | string) => DATE_TIME.format(new Date(value));
 
 type Money = (paise: number) => string;
 
-// An expired order is a hold that lapsed or was cancelled: no gateway money moved.
-const amountLabel = (status: string) =>
-  status === "EXPIRED" ? "Would have been" : "Amount";
+// An expired gateway order can still capture late; only one never minted provably charged nothing.
+const neverCharged = (detail: ConsulteePaymentDetail) =>
+  detail.row.status === "EXPIRED" && !detail.gatewayOrderMinted;
 
 function chargeFacts(detail: ConsulteePaymentDetail, money: Money) {
   const { row, moneyState } = detail;
@@ -36,7 +36,7 @@ function chargeFacts(detail: ConsulteePaymentDetail, money: Money) {
     ...(detail.showAmount && moneyState.state !== "SPONSORED"
       ? [
           {
-            label: amountLabel(row.status),
+            label: neverCharged(detail) ? "Would have been" : "Amount",
             value: money(row.amount),
             hint:
               row.taxAmount > 0
@@ -133,7 +133,7 @@ export function PaymentDetailClient({
   const facts = chargeFacts(detail, money);
   const nothingCharged =
     moneyState.state === "FREE" ||
-    (row.status === "EXPIRED" && detail.creditHeldPaise === 0);
+    (neverCharged(detail) && detail.creditHeldPaise === 0);
   const taxDocsPending =
     !detail.gstUnregistered &&
     !detail.taxDocumentsAvailable &&
