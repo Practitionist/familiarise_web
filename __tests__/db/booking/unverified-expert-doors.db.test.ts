@@ -405,7 +405,7 @@ describe("a moderation reject stops new sales and honours what is booked", () =>
       userId: buyer.userId,
       appointmentType: "TRIAL",
       trialId: trial.id,
-      appointmentId: trial.appointmentId,
+      appointmentId: trial.appointmentId ?? undefined,
       planId: plan.id,
       paymentGateway: "RAZORPAY",
     }).then(
