@@ -476,6 +476,7 @@ function lowSessionSubscriptions(
 interface ReviewableSessionRow {
   appointmentId: string;
   consultantName: string | null;
+  profileIsPublic: boolean;
   existingReview: unknown;
 }
 
@@ -693,6 +694,7 @@ export default function HomeTab({
           .map((s) => ({
             appointmentId: s.appointmentId,
             consultantName: s.consultantName ?? "your expert",
+            profileIsPublic: s.profileIsPublic,
           })),
         documentsToRevise: (revisions?.groups ?? [])
           .flatMap((g) =>

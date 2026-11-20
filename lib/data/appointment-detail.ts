@@ -18,6 +18,10 @@ import {
   NOT_COLLABORATOR_ROW,
 } from "@/lib/booking/participants";
 import { liveReminderPayment } from "@/lib/booking/payment-reminder-eligibility";
+import {
+  isPublicExpertProfile,
+  publicProfileFacts,
+} from "@/lib/profiles/public-profile";
 import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
 import type {
   AppointmentFeedbackRole,
@@ -53,6 +57,18 @@ const slotsInclude = {
 const consultantProfileSelect = {
   select: { id: true, userId: true, user: userSelect },
 } as const;
+
+// The plan's expert, plus the facts that say whether their public profile is served.
+const hostProfileSelect = {
+  select: { ...consultantProfileSelect.select, ...publicProfileFacts },
+} as const;
+
+/** The detail ships the boolean, never the verification status it was read from. */
+function withoutProfileFacts<
+  T extends { verificationStatus: unknown; deletedAt: unknown },
+>({ verificationStatus: _status, deletedAt: _deletedAt, ...profile }: T) {
+  return profile;
+}
 
 const consulteeProfileSelect = {
   select: { id: true, userId: true, user: userSelect },
@@ -177,7 +193,7 @@ async function loadAppointmentDetail(appointmentId: string) {
       consultation: {
         include: {
           consultationPlan: {
-            include: { consultantProfile: consultantProfileSelect },
+            include: { consultantProfile: hostProfileSelect },
           },
           requestedBy: consultationPayerSelect,
         },
@@ -185,7 +201,7 @@ async function loadAppointmentDetail(appointmentId: string) {
       subscription: {
         include: {
           subscriptionPlan: {
-            include: { consultantProfile: consultantProfileSelect },
+            include: { consultantProfile: hostProfileSelect },
           },
           requestedBy: consulteeProfileSelect,
         },
@@ -194,7 +210,7 @@ async function loadAppointmentDetail(appointmentId: string) {
         include: {
           webinarPlan: {
             include: {
-              consultantProfile: consultantProfileSelect,
+              consultantProfile: hostProfileSelect,
               collaborators: collaboratorsInclude,
             },
           },
@@ -204,7 +220,7 @@ async function loadAppointmentDetail(appointmentId: string) {
         include: {
           classPlan: {
             include: {
-              consultantProfile: consultantProfileSelect,
+              consultantProfile: hostProfileSelect,
               collaborators: collaboratorsInclude,
             },
           },
@@ -216,7 +232,7 @@ async function loadAppointmentDetail(appointmentId: string) {
           // The trial's delivering expert, who answers its reschedules.
           consultantProfile: consultantProfileSelect,
           subscriptionPlan: {
-            include: { consultantProfile: consultantProfileSelect },
+            include: { consultantProfile: hostProfileSelect },
           },
         },
       },
@@ -325,8 +341,19 @@ async function loadAppointmentDetail(appointmentId: string) {
           new Date(),
         )
       : null;
+  const { subscription, webinar, trial } = appointment;
+  const cls = appointment.class;
+  // The expert the booking page names and links to, as `mapAppointmentDetail` picks them.
+  const host =
+    trial?.subscriptionPlan.consultantProfile ??
+    consultation?.consultationPlan.consultantProfile ??
+    subscription?.subscriptionPlan.consultantProfile ??
+    webinar?.webinarPlan.consultantProfile ??
+    cls?.classPlan.consultantProfile ??
+    null;
   const detail = toPlain({
     reminderExpiresAt: reminder?.expiresAt.toISOString() ?? null,
+    expertProfileIsPublic: host ? isPublicExpertProfile(host) : false,
     appointment: {
       ...appointment,
       payment: appointment.payment.map(({ paymentIntent, ...p }) => ({
@@ -335,9 +362,51 @@ async function loadAppointmentDetail(appointmentId: string) {
       })),
       consultation: consultation && {
         ...consultation,
+        consultationPlan: {
+          ...consultation.consultationPlan,
+          consultantProfile: withoutProfileFacts(
+            consultation.consultationPlan.consultantProfile,
+          ),
+        },
         requestedBy: {
           ...consultation.requestedBy,
           user: withoutEmail(consultation.requestedBy.user),
+        },
+      },
+      subscription: subscription && {
+        ...subscription,
+        subscriptionPlan: {
+          ...subscription.subscriptionPlan,
+          consultantProfile: withoutProfileFacts(
+            subscription.subscriptionPlan.consultantProfile,
+          ),
+        },
+      },
+      trial: trial && {
+        ...trial,
+        subscriptionPlan: {
+          ...trial.subscriptionPlan,
+          consultantProfile: withoutProfileFacts(
+            trial.subscriptionPlan.consultantProfile,
+          ),
+        },
+      },
+      webinar: webinar && {
+        ...webinar,
+        webinarPlan: {
+          ...webinar.webinarPlan,
+          consultantProfile:
+            webinar.webinarPlan.consultantProfile &&
+            withoutProfileFacts(webinar.webinarPlan.consultantProfile),
+        },
+      },
+      class: cls && {
+        ...cls,
+        classPlan: {
+          ...cls.classPlan,
+          consultantProfile:
+            cls.classPlan.consultantProfile &&
+            withoutProfileFacts(cls.classPlan.consultantProfile),
         },
       },
       statusHistory: appointment.statusHistory.map(

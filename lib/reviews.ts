@@ -1,5 +1,9 @@
 import prisma, { type Tx } from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
+import {
+  isPublicExpertProfile,
+  publicProfileFacts,
+} from "@/lib/profiles/public-profile";
 import type {
   AppointmentsType,
   ReviewActor,
@@ -593,6 +597,8 @@ export interface ReviewableSession {
   title: string;
   heldAt: Date | null;
   reviewed: boolean;
+  /** Whether the expert's public profile is served, so the form promises only what is true. */
+  profileIsPublic: boolean;
   /** This consultee's own review of this session, if they have written one. */
   existingReview: {
     id: string;
@@ -709,7 +715,10 @@ function loadReviewableAppointments(
               title: true,
               consultantProfileId: true,
               consultantProfile: {
-                select: { user: { select: { name: true } } },
+                select: {
+                  ...publicProfileFacts,
+                  user: { select: { name: true } },
+                },
               },
             },
           },
@@ -722,7 +731,10 @@ function loadReviewableAppointments(
               title: true,
               consultantProfileId: true,
               consultantProfile: {
-                select: { user: { select: { name: true } } },
+                select: {
+                  ...publicProfileFacts,
+                  user: { select: { name: true } },
+                },
               },
             },
           },
@@ -731,7 +743,9 @@ function loadReviewableAppointments(
       trial: {
         select: {
           consultantProfileId: true,
-          consultantProfile: { select: { user: { select: { name: true } } } },
+          consultantProfile: {
+            select: { ...publicProfileFacts, user: { select: { name: true } } },
+          },
         },
       },
       webinar: {
@@ -741,7 +755,10 @@ function loadReviewableAppointments(
               title: true,
               consultantProfileId: true,
               consultantProfile: {
-                select: { user: { select: { name: true } } },
+                select: {
+                  ...publicProfileFacts,
+                  user: { select: { name: true } },
+                },
               },
             },
           },
@@ -754,7 +771,10 @@ function loadReviewableAppointments(
               title: true,
               consultantProfileId: true,
               consultantProfile: {
-                select: { user: { select: { name: true } } },
+                select: {
+                  ...publicProfileFacts,
+                  user: { select: { name: true } },
+                },
               },
             },
           },
@@ -814,6 +834,14 @@ function describe(
   // Group plans may carry no consultant at all; there is nobody to review.
   if (!consultantProfileId) return null;
 
+  const profile =
+    row.consultation?.consultationPlan?.consultantProfile ??
+    row.subscription?.subscriptionPlan?.consultantProfile ??
+    row.trial?.consultantProfile ??
+    row.webinar?.webinarPlan?.consultantProfile ??
+    row.class?.classPlan?.consultantProfile ??
+    null;
+
   const track = trackForAppointment(row);
   // Group only. A 1:1 review is one data point by construction now, so a bucket
   // key for it would be a column that always holds exactly one row.
@@ -828,13 +856,7 @@ function describe(
   return {
     appointmentId: row.id,
     consultantProfileId,
-    consultantName:
-      row.consultation?.consultationPlan?.consultantProfile?.user?.name ??
-      row.subscription?.subscriptionPlan?.consultantProfile?.user?.name ??
-      row.trial?.consultantProfile?.user?.name ??
-      row.webinar?.webinarPlan?.consultantProfile?.user?.name ??
-      row.class?.classPlan?.consultantProfile?.user?.name ??
-      null,
+    consultantName: profile?.user?.name ?? null,
     track,
     ratingUnitId,
     appointmentType: row.appointmentType,
@@ -846,6 +868,7 @@ function describe(
       "Session",
     heldAt: row.occurrences[0]?.endsAt ?? null,
     reviewed: Boolean(existingReview),
+    profileIsPublic: profile ? isPublicExpertProfile(profile) : false,
     existingReview,
   };
 }

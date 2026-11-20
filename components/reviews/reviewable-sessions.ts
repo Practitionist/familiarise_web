@@ -10,12 +10,15 @@ export const ReviewableSessionsResponseSchema = z.object({
       consultantName: z.string().nullable(),
       title: z.string(),
       heldAt: z.string().nullable(),
+      profileIsPublic: z.boolean(),
       existingReview: z
         .object({
           id: z.string(),
           rating: z.number(),
           reviewDescription: z.string().nullable(),
           ratingCause: RatingCauseSchema.nullable(),
+          // Seeds the form's checkbox, so an edit keeps an anonymous review anonymous.
+          isAnonymous: z.boolean(),
         })
         .nullable(),
     }),

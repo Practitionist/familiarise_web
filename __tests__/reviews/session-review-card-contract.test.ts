@@ -35,8 +35,15 @@ const held: ReviewableSession = {
   appointmentType: "CONSULTATION",
   title: "Career consultation",
   heldAt: new Date("2026-11-10T05:30:00.000Z"),
-  reviewed: false,
-  existingReview: null,
+  reviewed: true,
+  profileIsPublic: false,
+  existingReview: {
+    id: "rev_1",
+    rating: 4,
+    reviewDescription: "Practical and well paced.",
+    ratingCause: null,
+    isAnonymous: true,
+  },
 };
 
 afterEach(() => {
@@ -65,7 +72,15 @@ it("resolves exactly the booking the form sits on", async () => {
       consultantName: "Michael Anderson",
       title: "Career consultation",
       heldAt: "2026-11-10T05:30:00.000Z",
-      existingReview: null,
+      profileIsPublic: false,
+      // An anonymous review reopens anonymous, so an edit does not publish the name.
+      existingReview: {
+        id: "rev_1",
+        rating: 4,
+        reviewDescription: "Practical and well paced.",
+        ratingCause: null,
+        isAnonymous: true,
+      },
     },
   ]);
 });

@@ -74,6 +74,7 @@ export function ProfileReviewComposer({
           consultantName={consultantName ?? session.consultantName}
           contextLine={session.title}
           existing={session.existingReview}
+          profileIsPublic={session.profileIsPublic}
           invalidateKeys={[queryKey]}
         />
       </div>

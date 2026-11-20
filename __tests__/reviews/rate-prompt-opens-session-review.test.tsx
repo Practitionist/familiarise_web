@@ -39,6 +39,7 @@ const reviewable: ReviewableSession = {
   title: "Career consultation",
   heldAt: new Date("2026-11-10T05:30:00.000Z"),
   reviewed: false,
+  profileIsPublic: false,
   existingReview: null,
 };
 
@@ -89,5 +90,14 @@ describe("learner Home rate prompt", () => {
       "href",
       "/dashboard/consultee/ce_daniel/appointments/appt_held#review",
     );
+    // The profile is not served yet, so the card does not promise other learners will read it.
+    expect(
+      screen.getByText(
+        "Your review will appear on their profile once it is live.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("A short review helps other learners choose."),
+    ).toBeNull();
   });
 });

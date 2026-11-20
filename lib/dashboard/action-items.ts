@@ -265,7 +265,11 @@ export interface ConsulteeActionInput {
     counterpartName: string;
   }[];
   /** #1300 — held sessions with no review yet; the prompt lives here, not in the room. */
-  sessionsToRate?: { appointmentId: string; consultantName: string }[];
+  sessionsToRate?: {
+    appointmentId: string;
+    consultantName: string;
+    profileIsPublic: boolean;
+  }[];
   /** The expert asked for a revised upload (review status NEEDS_REVISION). */
   documentsToRevise?: { id: string; name: string; appointmentId: string }[];
   /** A refund the gateway rejected; staff re-issue it, the learner can follow up. */
@@ -377,7 +381,9 @@ export function deriveConsulteeActionItems({
       key: `rate:${session.appointmentId}`,
       severity: "info",
       title: `How was your session with ${session.consultantName}?`,
-      body: "A short review helps other learners choose.",
+      body: session.profileIsPublic
+        ? "A short review helps other learners choose."
+        : "Your review will appear on their profile once it is live.",
       ctaLabel: "Rate",
       // The booking's own review form: the public profile 404s until the expert is verified.
       ctaHref: `${basePath}/appointments/${session.appointmentId}#${SESSION_REVIEW_ANCHOR}`,

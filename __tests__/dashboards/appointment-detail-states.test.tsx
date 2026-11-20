@@ -272,6 +272,7 @@ describe("consultee · COMPLETED subscription", () => {
         title: "Comprehensive Subscription",
         heldAt: new Date(NOW - DAY).toISOString(),
         reviewed: false,
+        profileIsPublic: true,
         existingReview: null,
       },
     ];

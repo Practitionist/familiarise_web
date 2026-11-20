@@ -45,6 +45,7 @@ export function ReviewComposer({
   consultantName,
   contextLine,
   existing,
+  profileIsPublic,
   invalidateKeys,
   onSaved,
   compact = false,
@@ -55,6 +56,8 @@ export function ReviewComposer({
   /** Small line under the heading, e.g. the session title. */
   contextLine?: string;
   existing: ExistingReview | null;
+  /** Whether the expert's public profile is served; the line under the heading follows it. */
+  profileIsPublic: boolean;
   /** Query keys to refresh once the write lands. */
   invalidateKeys: readonly (readonly unknown[])[];
   onSaved?: () => void;
@@ -132,8 +135,10 @@ export function ReviewComposer({
       </h4>
       <p className="mt-0.5 text-xs text-muted-foreground">
         {contextLine ? `${contextLine} · ` : ""}
-        Public — it appears on their profile with the date. One review per
-        expert; you can edit it after a later session.
+        {profileIsPublic
+          ? "Public — it appears on their profile with the date."
+          : "Public — it will appear on their profile once it is live."}{" "}
+        One review per expert; you can edit it after a later session.
       </p>
 
       <div className="mt-3 flex items-center gap-1">

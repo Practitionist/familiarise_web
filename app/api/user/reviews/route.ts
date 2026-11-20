@@ -26,6 +26,10 @@ import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { publicCacheHeaders } from "@/lib/api/cdn-cache";
 import { z } from "zod";
 import { readJsonBody } from "@/lib/api/parse";
+import {
+  isPublicExpertProfile,
+  publicProfileFacts,
+} from "@/lib/profiles/public-profile";
 
 /** The CDN keys on exactly the query keys GET reads; bounded so junk values cannot mint cache entries. */
 const LIST_CACHE_HEADERS = publicCacheHeaders({
@@ -266,8 +270,7 @@ export async function POST(req: NextRequest) {
             consultantProfile: {
               select: {
                 userId: true,
-                verificationStatus: true,
-                deletedAt: true,
+                ...publicProfileFacts,
                 user: { select: { name: true } },
               },
             },
@@ -406,10 +409,8 @@ export async function POST(req: NextRequest) {
           ...publicRow,
           consultantProfile: { user: consultantProfile.user },
         }),
-        // The same gate as getConsultantDetail: the author is told whether the review shows yet.
-        profileIsPublic:
-          consultantProfile.verificationStatus === "VERIFIED" &&
-          consultantProfile.deletedAt === null,
+        // The author is told whether the review shows yet.
+        profileIsPublic: isPublicExpertProfile(consultantProfile),
       },
       { status: isNew ? 201 : 200 },
     );

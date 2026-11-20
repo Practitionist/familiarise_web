@@ -64,6 +64,7 @@ export function SessionReviewCard({
         consultantName={consultantName ?? session.consultantName}
         contextLine={session.title}
         existing={session.existingReview}
+        profileIsPublic={session.profileIsPublic}
         // Home's prompt and the profile's form read the same eligibility.
         invalidateKeys={[
           queryKey,

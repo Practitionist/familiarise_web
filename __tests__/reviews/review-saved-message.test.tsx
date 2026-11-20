@@ -1,6 +1,6 @@
 /**
- * The message after posting a review names the expert's profile as where it
- * appears only when that profile is public; the review route says which.
+ * The form's line and the message after posting name the expert's profile as
+ * where the review appears only when that profile is public.
  */
 
 import * as React from "react";
@@ -26,7 +26,7 @@ it.each([
     "Saved. It will appear on Michael Anderson's public profile once that profile is live.",
   ],
 ])(
-  "profileIsPublic=%s tells the learner where the review shows",
+  "profileIsPublic=%s: the form and the saved message say where the review shows",
   async (profileIsPublic, description) => {
     global.fetch = jest.fn().mockResolvedValue({
       ok: true,
@@ -39,10 +39,18 @@ it.each([
           appointmentId="appt_held"
           consultantName="Michael Anderson"
           existing={null}
+          profileIsPublic={profileIsPublic}
           invalidateKeys={[]}
         />
       </QueryClientProvider>,
     );
+    expect(
+      screen.getByText(
+        profileIsPublic
+          ? /Public — it appears on their profile with the date\./
+          : /Public — it will appear on their profile once it is live\./,
+      ),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "5 stars" }));
     fireEvent.click(screen.getByRole("button", { name: "Post review" }));
     await waitFor(() =>
