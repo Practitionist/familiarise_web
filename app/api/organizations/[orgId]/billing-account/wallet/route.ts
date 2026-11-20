@@ -6,8 +6,8 @@
  * INVOICE or LICENSE orgs the wallet isn't meaningful, so callers get
  * a 404 rather than a zero-balance ghost response.
  *
- * Top-ups go through the sibling /top-ups route. Rows name the ledger kind;
- * transaction descriptions are internal and never reach the org.
+ * Top-ups go through the sibling /top-ups route. Rows name why the balance
+ * moved; transaction descriptions are internal and never reach the org.
  */
 
 import { NextResponse, type NextRequest } from "next/server";
@@ -17,6 +17,8 @@ import { requireOrgAccess } from "@/lib/auth-helpers";
 import { ledgerAccountId } from "@/lib/payments/ledger/post";
 import {
   signedDeltaPaise,
+  walletLedgerLineSelect,
+  walletLedgerRow,
   withRunningBalance,
 } from "@/lib/api/organizations/wallet";
 
@@ -109,11 +111,7 @@ export async function GET(
             orderBy: ledgerOrder,
             skip,
             take: perPage,
-            include: {
-              transaction: {
-                select: { kind: true, paymentId: true },
-              },
-            },
+            select: walletLedgerLineSelect,
           }),
           tx.ledgerEntry.groupBy({
             by: ["direction"],
@@ -159,16 +157,7 @@ export async function GET(
   const newerDelta = signedDeltaPaise(newerEntries);
 
   const ledger = withRunningBalance(
-    entries.map((e) => ({
-      id: e.id,
-      deltaPaise:
-        e.direction === "CREDIT"
-          ? Number(e.amountPaise)
-          : -Number(e.amountPaise),
-      reason: e.transaction.kind,
-      paymentId: e.transaction.paymentId,
-      createdAt: e.createdAt,
-    })),
+    entries.map(walletLedgerRow),
     journalBalance - newerDelta,
   );
 

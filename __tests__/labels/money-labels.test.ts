@@ -1,6 +1,6 @@
 import {
   WALLET_REASON_LABEL,
-  type WalletLedgerKind,
+  type WalletEntryReason,
   disputeReasonText,
   disputeStatusLabel,
   walletReasonLabel,
@@ -8,27 +8,26 @@ import {
 import { payoutNoticeReason } from "@/lib/dashboard/earnings-state";
 
 describe("money label maps", () => {
-  it("names every ledger kind that posts to an org wallet in words, never the enum", () => {
-    const walletKinds: WalletLedgerKind[] = [
+  it("names every wallet reason in words, never the enum", () => {
+    const reasons: WalletEntryReason[] = [
       "TOPUP",
       "BOOKING",
+      "OVERAGE_SURCHARGE",
       "REFUND",
       "TOPUP_REFUND",
       "INVOICE_REFUND",
-      "OVERAGE_MEMBER",
+      "OVERAGE_MEMBER_BILLED",
+      "OVERAGE_MEMBER_UNPAID",
       "WALLET_ADJUSTMENT",
     ];
     expect(Object.keys(WALLET_REASON_LABEL).sort()).toEqual(
-      [...walletKinds].sort(),
+      [...reasons].sort(),
     );
-    for (const kind of walletKinds) {
-      expect(walletReasonLabel(kind)).not.toMatch(/_|^[A-Z ]+$/);
+    for (const reason of reasons) {
+      expect(walletReasonLabel(reason)).not.toMatch(/_|^[A-Z ]+$/);
     }
     expect(walletReasonLabel("TOPUP")).toBe("Top-up");
     expect(walletReasonLabel("REFUND")).toBe("Refund or chargeback");
-    expect(walletReasonLabel("OVERAGE_MEMBER")).toBe(
-      "Extra session charged to a member",
-    );
     expect(walletReasonLabel("WALLET_ADJUSTMENT")).toBe(
       "Adjustment by our team",
     );
