@@ -41,7 +41,7 @@ jest.mock("../../lib/prisma", () => {
       findMany: jest.fn().mockResolvedValue([]),
       updateManyAndReturn: jest.fn().mockResolvedValue([]),
     },
-    payment: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+    payment: { updateManyAndReturn: jest.fn().mockResolvedValue([]) },
     bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
   };
   db.$transaction = jest.fn(async (fn: (tx: unknown) => unknown) => fn(db));
@@ -222,7 +222,7 @@ describe("lapseApprovedRequest — one body, two terminal words", () => {
     });
 
     expect(out).toEqual({ moved: 0, appointmentId: null });
-    expect(db.payment.updateMany).not.toHaveBeenCalled();
+    expect(db.payment.updateManyAndReturn).not.toHaveBeenCalled();
     expect(db.appointmentOccurrence.updateManyAndReturn).not.toHaveBeenCalled();
   });
 });
@@ -252,9 +252,10 @@ describe("POST …/withdraw-approval answers the status it wrote", () => {
       status: "CANCELLED",
       pendingPaymentUrl: null,
     });
-    expect(db.payment.updateMany).toHaveBeenCalledWith({
+    expect(db.payment.updateManyAndReturn).toHaveBeenCalledWith({
       where: { appointmentId: "a-1", paymentStatus: "PENDING" },
       data: { paymentStatus: "EXPIRED" },
+      select: { id: true },
     });
     // The notice names the withdrawal, so the buyer is never told a window
     // lapsed on an act a person took.
@@ -283,7 +284,7 @@ describe("POST …/withdraw-approval answers the status it wrote", () => {
     expect(await res.json()).toMatchObject({
       code: "REQUEST_CHANGED_ELSEWHERE",
     });
-    expect(db.payment.updateMany).not.toHaveBeenCalled();
+    expect(db.payment.updateManyAndReturn).not.toHaveBeenCalled();
     expect(notifyConsulteeRequestExpired).not.toHaveBeenCalled();
   });
 });

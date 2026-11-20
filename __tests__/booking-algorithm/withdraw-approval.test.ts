@@ -43,7 +43,7 @@ jest.mock("../../lib/prisma", () => {
       findMany: jest.fn().mockResolvedValue([]),
       updateManyAndReturn: jest.fn().mockResolvedValue([]),
     },
-    payment: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+    payment: { updateManyAndReturn: jest.fn().mockResolvedValue([]) },
     bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
   };
   db.$transaction = jest.fn(async (fn: (tx: unknown) => unknown) => fn(db));
@@ -157,7 +157,7 @@ describe("lapseApprovedRequest (B-1)", () => {
       actorUserId: null,
     });
     expect(out).toEqual({ moved: 0, appointmentId: null });
-    expect(db.payment.updateMany).not.toHaveBeenCalled();
+    expect(db.payment.updateManyAndReturn).not.toHaveBeenCalled();
     expect(db.appointmentOccurrence.updateManyAndReturn).not.toHaveBeenCalled();
   });
 
@@ -195,9 +195,10 @@ describe("lapseApprovedRequest (B-1)", () => {
     expect(db.subscription.updateMany.mock.calls[0][0].data.status).toBe(
       "CANCELLED",
     );
-    expect(db.payment.updateMany).toHaveBeenCalledWith({
+    expect(db.payment.updateManyAndReturn).toHaveBeenCalledWith({
       where: { appointmentId: "a-1", paymentStatus: "PENDING" },
       data: { paymentStatus: "EXPIRED" },
+      select: { id: true },
     });
     expect(
       db.appointmentOccurrence.updateManyAndReturn.mock.calls[0][0].where,
@@ -214,7 +215,7 @@ describe("POST …/withdraw-approval (B-2)", () => {
     expect(await res.json()).toMatchObject({
       code: "REQUEST_CHANGED_ELSEWHERE",
     });
-    expect(db.payment.updateMany).not.toHaveBeenCalled();
+    expect(db.payment.updateManyAndReturn).not.toHaveBeenCalled();
     expect(notifyConsulteeRequestExpired).not.toHaveBeenCalled();
   });
 
@@ -238,9 +239,10 @@ describe("POST …/withdraw-approval (B-2)", () => {
     // claim + front-door refund (capture-amount-parity.test.ts). This is the
     // Payment row, so it is EXPIRED on BOTH paths — the EXPIRED→SUCCEEDED
     // claim is exactly why the withdraw leaves one.
-    expect(db.payment.updateMany).toHaveBeenCalledWith({
+    expect(db.payment.updateManyAndReturn).toHaveBeenCalledWith({
       where: { appointmentId: "a-1", paymentStatus: "PENDING" },
       data: { paymentStatus: "EXPIRED" },
+      select: { id: true },
     });
     expect(notifyConsulteeRequestExpired).toHaveBeenCalledWith(
       expect.objectContaining({

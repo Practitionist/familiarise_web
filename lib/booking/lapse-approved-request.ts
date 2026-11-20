@@ -24,6 +24,7 @@ import {
   transitionSubscriptionRequest,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import { reverseCreditsForPayment } from "@/lib/referrals/service";
 
 /**
  * #1775 — one approved-but-unpaid request lapsing, whoever asks for it: the
@@ -140,13 +141,18 @@ export async function lapseApprovedRequest(
   });
   // Only a still-PENDING order expires; a capture that raced this write keeps
   // its SUCCEEDED row (the request CAS above already lost to it).
-  await tx.payment.updateMany({
+  const expired = await tx.payment.updateManyAndReturn({
     where: {
       appointmentId: appointment.id,
       paymentStatus: PaymentStatus.PENDING,
     },
     data: { paymentStatus: PaymentStatus.EXPIRED },
+    select: { id: true },
   });
+  // Only rows this claim moved give back their referral credit, so it returns once.
+  for (const payment of expired) {
+    await reverseCreditsForPayment(payment.id, tx);
+  }
   const hasHoldNotices =
     (holdNotices?.bells?.length ?? 0) > 0 ||
     (holdNotices?.emails?.length ?? 0) > 0;
