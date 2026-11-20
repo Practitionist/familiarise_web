@@ -89,6 +89,32 @@ describe("InvoiceComposer due date", () => {
     expect(body.dueDate.toISOString()).toBe(DEFAULT_DUE);
   });
 
+  it("sends the submit-time default when left untouched across India midnight", async () => {
+    // Opened at 23:59 IST, submitted two minutes later on the next India day.
+    nowSpy.mockReturnValue(Date.parse("2026-11-20T18:29:00.000Z"));
+    compose();
+    expect(screen.getByLabelText("Due date (Net 30)")).toHaveValue(
+      "2026-12-20",
+    );
+    const submitAt = Date.parse("2026-11-20T18:31:00.000Z");
+    nowSpy.mockReturnValue(submitAt);
+    fireEvent.click(screen.getByRole("button", { name: "Create invoice" }));
+    const body = await sentBody();
+    expect(body.dueDate.toISOString()).toBe(
+      new Date(submitAt + 30 * 86_400_000).toISOString(),
+    );
+  });
+
+  it("sends an edited date as typed, even one equal to the prefill", async () => {
+    compose();
+    const due = screen.getByLabelText("Due date (Net 30)");
+    fireEvent.change(due, { target: { value: "2026-12-22" } });
+    fireEvent.change(due, { target: { value: "2026-12-21" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create invoice" }));
+    const body = await sentBody();
+    expect(body.dueDate.toISOString()).toBe("2026-12-21T00:00:00.000Z");
+  });
+
   it("sends a date the operator picked", async () => {
     compose();
     fireEvent.change(screen.getByLabelText("Due date (Net 30)"), {

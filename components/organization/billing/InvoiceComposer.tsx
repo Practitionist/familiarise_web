@@ -40,22 +40,23 @@ function makeEmptyLine(): LineItem {
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** The terms-default due instant and the India date the picker shows for it. */
-function defaultInvoiceDue(
-  paymentTermsDays: number,
-  now: number = Date.now(),
-): { at: Date; day: string } {
-  const at = new Date(now + paymentTermsDays * DAY_MS);
+function defaultInvoiceDue(paymentTermsDays: number): {
+  at: Date;
+  day: string;
+} {
+  const at = new Date(Date.now() + paymentTermsDays * DAY_MS);
   return { at, day: toOperatorWallTime(at).slice(0, 10) };
 }
 
-/** An untouched prefill sends the terms-default instant; a picked date is sent as typed. */
+/** An untouched (or cleared) field sends the terms-default instant at submit; an edited date is sent as typed. */
 function invoiceDueDateBody(
   picked: string,
+  edited: boolean,
   paymentTermsDays: number,
-  now: number = Date.now(),
 ): string {
-  const fallback = defaultInvoiceDue(paymentTermsDays, now);
-  return picked && picked !== fallback.day ? picked : fallback.at.toISOString();
+  return edited && picked
+    ? picked
+    : defaultInvoiceDue(paymentTermsDays).at.toISOString();
 }
 
 /**
@@ -79,6 +80,7 @@ export function InvoiceComposer({
   const [dueDate, setDueDate] = useState(
     () => defaultInvoiceDue(paymentTermsDays).day,
   );
+  const [dueEdited, setDueEdited] = useState(false);
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -120,7 +122,7 @@ export function InvoiceComposer({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           items,
-          dueDate: invoiceDueDateBody(dueDate, paymentTermsDays),
+          dueDate: invoiceDueDateBody(dueDate, dueEdited, paymentTermsDays),
           issueImmediately: true,
           reason: reason.trim(),
         }),
@@ -135,6 +137,7 @@ export function InvoiceComposer({
       });
       setLineItems([makeEmptyLine()]);
       setDueDate(defaultInvoiceDue(paymentTermsDays).day);
+      setDueEdited(false);
       setReason("");
       onOpenChange(false);
     } catch {
@@ -215,7 +218,10 @@ export function InvoiceComposer({
               id="inv-due"
               type="date"
               value={dueDate}
-              onChange={(e) => setDueDate(e.target.value)}
+              onChange={(e) => {
+                setDueDate(e.target.value);
+                setDueEdited(true);
+              }}
             />
           </div>
           <div className="space-y-2">
