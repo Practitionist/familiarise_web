@@ -305,7 +305,38 @@ describe("an expert who is not verified takes no new booking", () => {
 });
 
 describe("a moderation reject stops new sales and honours what is booked", () => {
-  it("refuses the unpaid approved link and leaves the paid future session as it was", async () => {
+  it("refuses an approved link's mint for an expert who is not verified", async () => {
+    const host = await seedHost();
+    const unpaid = await seedOneToOne(
+      "consultation",
+      host,
+      await seedConsultee(),
+      { startsAt: futureAt(9, 9), endsAt: futureAt(9, 10) },
+      {
+        status: "APPROVED_PENDING_PAYMENT",
+        bookingSource: "REQUEST_SUBMITTED",
+        isTentative: true,
+      },
+    );
+    await setStatus(host, "PENDING_VERIFICATION");
+
+    const mint = await mintApprovalPaymentAfterCommit({
+      kind: "consultation",
+      id: unpaid.consultationId!,
+    });
+
+    expect(mint.status).toBe("mint_failed");
+    expect(mint.status === "mint_failed" && mint.error).toMatchObject({
+      code: "EXPERT_NOT_VERIFIED",
+    });
+    expect(
+      await prisma.payment.count({
+        where: { appointmentId: unpaid.appointmentId },
+      }),
+    ).toBe(0);
+  }, 30_000);
+
+  it("expires the unpaid approved link and leaves the paid future session as it was", async () => {
     const host = await seedHost();
     const paidBuyer = await seedConsultee();
     const paid = await seedOneToOne(
@@ -346,14 +377,17 @@ describe("a moderation reject stops new sales and honours what is booked", () =>
       }),
     );
 
+    // The reject expired the link itself, so nothing is left to mint.
+    const unpaidRow = await prisma.consultation.findUniqueOrThrow({
+      where: { id: unpaid.consultationId! },
+      select: { status: true },
+    });
+    expect(unpaidRow.status).toBe("EXPIRED");
     const mint = await mintApprovalPaymentAfterCommit({
       kind: "consultation",
       id: unpaid.consultationId!,
     });
-    expect(mint.status).toBe("mint_failed");
-    expect(mint.status === "mint_failed" && mint.error).toMatchObject({
-      code: "EXPERT_NOT_VERIFIED",
-    });
+    expect(mint.status).toBe("not_delivered");
     expect(
       await prisma.payment.count({
         where: { appointmentId: unpaid.appointmentId },
