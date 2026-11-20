@@ -26,7 +26,12 @@ import {
 import { normalizeStatus } from "./status";
 import { trialMeta } from "./trial-labels";
 import { payablePaymentId } from "@/lib/payments/pay-link-href";
-import { paymentsLapsed } from "./list-status-facts";
+import {
+  bucketFactsOf,
+  listStatusFacts,
+  paymentsLapsed,
+  trialHoldFacts,
+} from "./list-status-facts";
 import {
   sortOccurrences,
   toDate,
@@ -193,6 +198,27 @@ export function mapAppointmentDetail(
     role === "consultee" && group
       ? appointment.participants.find((p) => p.role === "CONSULTEE")
       : undefined;
+  // The list's own facts and input, so the page files the booking in the list's tab.
+  const holdFacts = appointment.trial
+    ? trialHoldFacts({
+        paymentDueAt: appointment.trial.paymentDueAt,
+        appointment,
+      })
+    : listStatusFacts(appointment, occurrences, {
+        side: role === "consultee" ? "REQUESTER" : "CONSULTANT",
+      });
+  const bucketInput = bucketFactsOf(
+    {
+      kind: appointment.trial ? "TRIAL" : appointment.appointmentType,
+      source:
+        appointment.consultation?.bookingSource ??
+        appointment.subscription?.bookingSource ??
+        null,
+      seatStatus: ownSeat?.status ?? null,
+    },
+    holdFacts,
+    now,
+  );
   const pendingDeadline = appointment.payment
     .filter((p) => p.paymentStatus === "PENDING" && p.expiresAt)
     .map((p) => toDate(p.expiresAt!))
@@ -207,7 +233,10 @@ export function mapAppointmentDetail(
     consultantProfileId: facts.consultantProfileId,
     expertProfileIsPublic: detail.expertProfileIsPublic,
     status: facts.status,
-    ...deriveBucket({ status: facts.status, occurrences, now }, role),
+    ...deriveBucket(
+      { status: facts.status, occurrences, ...bucketInput },
+      role,
+    ),
     nextAt: getAnchorTime(occurrences, now),
     occurrences,
     group: isGroup

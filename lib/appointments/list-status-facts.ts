@@ -1,4 +1,6 @@
+import type { BucketInput } from "./bucket";
 import { openProposalTarget } from "./consultee-affordances";
+import { isUnpaidSeat } from "./status";
 import { toDate, type AppointmentVM, type OccurrenceVM } from "./view-model";
 
 /**
@@ -119,5 +121,38 @@ export function trialHoldFacts(trial: {
       ? toDate(trial.paymentDueAt)
       : facts.payDeadline,
     payLapsed: facts.payLapsed,
+  };
+}
+
+/**
+ * Everything `deriveBucket` reads beyond status and sessions, from one booking's
+ * facts. Every list and the detail page pass this, so a booking files in one tab
+ * everywhere. A trial's hold is its window alone.
+ */
+export function bucketFactsOf(
+  booking: {
+    kind: string;
+    source?: string | null;
+    /** The viewer's own webinar or class seat, when they hold one. */
+    seatStatus?: string | null;
+  },
+  facts: Pick<AppointmentVM, "paid" | "payDeadline" | "payLapsed"> &
+    Partial<Pick<AppointmentVM, "reschedule">>,
+  now: Date,
+): Omit<BucketInput, "status" | "occurrences" | "isUnscheduled"> {
+  const holdOpen = holdOpenFrom(facts, now);
+  if (booking.kind === "TRIAL") return { kind: booking.kind, now, holdOpen };
+  return {
+    kind: booking.kind,
+    now,
+    source: booking.source ?? null,
+    holdOpen,
+    paid: facts.paid,
+    moving: !!facts.reschedule,
+    moveMine: facts.reschedule?.mine,
+    unpaidSeat: isUnpaidSeat({
+      seatStatus: booking.seatStatus,
+      paid: facts.paid,
+    }),
   };
 }
