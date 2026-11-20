@@ -47,14 +47,17 @@ export function consulteeSettingsHref(
   return `/dashboard/consultee/${consulteeId}/settings/${section.slug}`;
 }
 
-/** The sections in nav order, grouped under their titles. */
-export function consulteeSettingsGroups(consulteeId: string) {
+/** The sections in nav order, grouped under their titles; the "Your …" descriptions only for the owner. */
+export function consulteeSettingsGroups(
+  consulteeId: string,
+  viewerOwnsProfile = true,
+) {
   const groups: {
     title: string;
     sections: {
       key: string;
       label: string;
-      description: string;
+      description?: string;
       href: string;
     }[];
   }[] = [];
@@ -62,7 +65,7 @@ export function consulteeSettingsGroups(consulteeId: string) {
     const entry = {
       key: section.key,
       label: section.label,
-      description: section.description,
+      description: viewerOwnsProfile ? section.description : undefined,
       href: consulteeSettingsHref(consulteeId, section),
     };
     const last = groups.at(-1);

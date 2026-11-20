@@ -35,6 +35,7 @@ import { useServerUserId } from "@/components/dashboard/ServerUserId";
 import { schedulePrefetch } from "@/lib/dashboard-queries";
 import { accountSettingsHref } from "@/lib/dashboard/account-href";
 import { personalAccessDecision } from "@/lib/dashboard/personal-access";
+import { personalShellPeople } from "@/lib/dashboard/operator-view";
 import { fetchUserDetails } from "@/lib/user";
 import type { DashboardNav } from "@/lib/dashboard/nav/types";
 import type { FindSettingsGroup } from "@/lib/dashboard/nav/find-index";
@@ -88,11 +89,7 @@ export interface PersonalDashboardCoreProps<P> {
   profileDisplayImage?: (
     profile: P | null | undefined,
   ) => string | null | undefined;
-  /**
-   * The route profile's owner, for the operator-view banner:
-   * the header identity is the signed-in operator, the banner names whose
-   * dashboard this is.
-   */
+  /** The route profile's owner, named by the operator-view banner. */
   profileOwnerName: (
     profile: P | null | undefined,
   ) => string | null | undefined;
@@ -108,9 +105,11 @@ export interface PersonalDashboardCoreProps<P> {
   includeUserError?: boolean;
   renderError?: (message: string) => React.ReactNode;
   useExtras?: (ctx: PersonalDashboardExtrasCtx<P>) => PersonalDashboardExtras;
+  /** Receives the route profile so pages can read whose dashboard this is. */
   wrapShell?: (
     shell: React.ReactNode,
     user: PersonalDashboardUser,
+    profile: P | null | undefined,
   ) => React.ReactNode;
   children: React.ReactNode;
 }
@@ -467,21 +466,23 @@ export function PersonalDashboardLayoutCore<P>({
     typeof session?.user?.name === "string" ? session.user.name : null;
   const sessionImage =
     typeof session?.user?.image === "string" ? session.user.image : null;
-  const userName =
-    profileDisplayName?.(profileData) ??
-    userDetails?.name ??
-    sessionName ??
-    null;
-  const userImage =
-    profileDisplayImage?.(profileData) ??
-    userDetails?.image ??
-    sessionImage ??
-    null;
-
   const operatorTree = OPERATOR_TREE[userDetails?.role ?? ""] ?? null;
   const ownsProfile =
     userDetails?.consultantProfileId === routeParam ||
     userDetails?.consulteeProfileId === routeParam;
+  const { account, identity } = personalShellPeople({
+    viewer: {
+      name: userDetails?.name ?? sessionName,
+      image: userDetails?.image ?? sessionImage,
+      role: userDetails?.role,
+    },
+    owner: {
+      name: profileDisplayName?.(profileData) ?? null,
+      image: profileDisplayImage?.(profileData) ?? null,
+    },
+    operatorView: !!operatorTree && !ownsProfile,
+    sideLabel: chipRole,
+  });
   const operatorBanner =
     operatorTree && !ownsProfile ? (
       <OperatorViewBanner
@@ -509,16 +510,14 @@ export function PersonalDashboardLayoutCore<P>({
       badges={badges}
       switcher={<ContextSwitcher />}
       account={{
-        name: userName,
-        image: userImage,
-        roleLabel: chipRole,
+        ...account,
         settingsHref: avatarSettingsHref(ownsProfile, basePath, userDetails),
       }}
       onSignOut={() => void signOutEverywhere()}
       contextBar={{
         identity: {
-          name: userName ?? identityFallbackName,
-          image: userImage,
+          name: identity.name ?? identityFallbackName,
+          image: identity.image,
           FallbackIcon: UserRound,
         },
         badges: extras.badges ?? [],
@@ -534,7 +533,7 @@ export function PersonalDashboardLayoutCore<P>({
   return (
     <>
       {extras.overlay}
-      {userDetails ? wrapShell(shell, userDetails) : shell}
+      {userDetails ? wrapShell(shell, userDetails, profileData) : shell}
     </>
   );
 }
