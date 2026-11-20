@@ -30,6 +30,8 @@ jest.mock("../../lib/enterprise/suspended-member-sessions", () => ({
   isSuspendedInFundingOrg: (...a: unknown[]) => mockSuspended(...(a as [])),
 }));
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { Session } from "@/lib/auth";
 import {
   scopeAppointmentDetail,
@@ -140,4 +142,17 @@ describe("scopeAppointmentDetail", () => {
       false,
     );
   });
+});
+
+it("a read-only proposal card offers no way to keep the original time", () => {
+  const card = readFileSync(
+    join(
+      process.cwd(),
+      "components/appointments/detail/RescheduleProposalCard.tsx",
+    ),
+    "utf8",
+  );
+  expect(card).toMatch(
+    /const keepsOwnTime =\s*!readOnly && !isInitiator && proposal\.viewerMayWithdraw === true;/,
+  );
 });

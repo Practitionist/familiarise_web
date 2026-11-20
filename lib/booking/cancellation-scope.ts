@@ -111,8 +111,6 @@ export type BookingRefundContext = {
    * they released it.
    */
   scheduledStarts: number[];
-  /** The instant `scheduledStarts` were measured at; the quote reads the same clock. */
-  quotedAtMs: number;
   /**
    * Subscriptions: what the payment already got back for single sessions
    * (voids, incidents) and money-only support remedies. A session-count remedy
@@ -358,7 +356,6 @@ export async function resolveBookingRefundContext(
     sessionsTotal,
     sessionsRefunded,
     scheduledStarts,
-    quotedAtMs: nowMs,
     alreadyRefundedPaise,
     windowState,
   };
