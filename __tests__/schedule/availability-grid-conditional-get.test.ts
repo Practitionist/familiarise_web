@@ -88,6 +88,8 @@ describe("availability grid conditional GET", () => {
     const etag = res.headers.get("ETag");
     expect(etag).toMatch(/^"[A-Za-z0-9_-]+"$/);
     expect(res.headers.get("Cache-Control")).toBe("private, max-age=30");
+    // The body depends on who is signed in, so a stored copy is per cookie.
+    expect(res.headers.get("Vary")).toBe("Cookie");
     expect(mockedProfile).toHaveBeenCalledTimes(1);
   });
 
@@ -103,6 +105,7 @@ describe("availability grid conditional GET", () => {
     expect(second.status).toBe(304);
     expect(second.headers.get("ETag")).toBe(etag);
     expect(second.headers.get("Cache-Control")).toBe("private, max-age=30");
+    expect(second.headers.get("Vary")).toBe("Cookie");
     // The whole point: no availability read, no occupancy read.
     expect(mockedProfile).not.toHaveBeenCalled();
     expect(mockedAppointments).not.toHaveBeenCalled();
@@ -138,6 +141,21 @@ describe("availability grid conditional GET", () => {
       ]),
     );
     mockedMarker.mockResolvedValue(marker({ slotRowCount: 1 }));
+
+    const second = await GET(request(etag), { params });
+    expect(second.status).toBe(200);
+    expect(second.headers.get("ETag")).not.toBe(etag);
+  });
+
+  it("answers 200 when only a seat row moved: a free seat left or taken back", async () => {
+    const first = await GET(request(), { params });
+    const etag = first.headers.get("ETag") as string;
+    const statement = (mockedMarker.mock.calls[0][0] as string[]).join("?");
+    expect(statement).toContain('AS "participantsUpdatedAt"');
+
+    mockedMarker.mockResolvedValue(
+      marker({ participantsUpdatedAt: new Date("2026-09-02T09:30:00.000Z") }),
+    );
 
     const second = await GET(request(etag), { params });
     expect(second.status).toBe(200);

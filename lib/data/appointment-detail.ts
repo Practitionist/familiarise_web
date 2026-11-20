@@ -12,6 +12,7 @@
  */
 
 import { moveHasLapsed } from "@/lib/appointments/lapsed-move";
+import type { Session } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import {
   liveParticipant,
@@ -487,11 +488,39 @@ function isPresenter(userId: string, detail: TAppointmentDetail): boolean {
   );
 }
 
+/**
+ * Whether the withdraw route would accept this viewer for the booking's open
+ * reschedule, asked of the route's own authority so the page never offers a
+ * Withdraw the route refuses.
+ */
+export async function viewerMayWithdrawReschedule(
+  detail: TAppointmentDetail,
+  session: Session | null,
+): Promise<boolean> {
+  const open = detail.appointment.rescheduleRequests[0];
+  if (!open || !session) return false;
+  // Loaded on use: the withdraw module carries the booking locks and the
+  // notifier, which a plain read never needs.
+  const { rescheduleWithdrawAuthority } =
+    await import("@/lib/booking/reschedule-withdraw");
+  const authority = await rescheduleWithdrawAuthority(
+    {
+      initiatedById: open.initiatedById,
+      initiatorRole: open.initiatorRole,
+      appointment: detail.appointment,
+    },
+    session,
+  );
+  return authority.allowed;
+}
+
 /** Who is reading a booking's detail. */
 export type DetailViewer = {
   userId: string;
   /** Platform staff: every row, receipts included. */
   privileged?: boolean;
+  /** {@link viewerMayWithdrawReschedule} for this viewer; absent reads as no. */
+  mayWithdrawReschedule?: boolean;
   /**
    * The viewer manages the webinar or class plan as its named expert
    * (`managesGroupPlanAsNamedExpert`): on an organisation's plan, only while
@@ -500,12 +529,16 @@ export type DetailViewer = {
   managesGroupPlan: boolean;
 };
 
-/** Which of a booking's lists the scoped detail carries whole. */
+/** Which of a booking's lists the scoped detail carries whole, and what this viewer may do. */
 export type DetailVisibility = {
   /** Every attendee's seat is in `participants`. */
   rosterVisible: boolean;
   /** Every attendee's payment is in `payment`. */
   paymentsVisible: boolean;
+  appointment: {
+    /** The withdraw route accepts this viewer for the open reschedule. */
+    rescheduleRequests: { viewerMayWithdraw: boolean }[];
+  };
 };
 
 /** A booking's detail as one viewer receives it. */
@@ -546,6 +579,12 @@ export function scopeAppointmentDetail<T extends TAppointmentDetail>(
     paymentsVisible: everyPayment,
     appointment: {
       ...detail.appointment,
+      rescheduleRequests: detail.appointment.rescheduleRequests.map(
+        (request) => ({
+          ...request,
+          viewerMayWithdraw: viewer.mayWithdrawReschedule === true,
+        }),
+      ),
       participants: scopedParticipants,
       payment: rows.map((p) =>
         privileged || p.userId === viewer.userId ? p : withoutReceipt(p),

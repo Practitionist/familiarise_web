@@ -29,7 +29,7 @@ const DECIDED = new Set(["COMPLETED", "UNVERIFIED", "VOIDED"]);
 const RESCHEDULABLE = new Set(["SCHEDULED", "RESCHEDULED"]);
 
 const RESCHEDULE_COPY =
-  "This only releases the time: the customer picks the new times, and both parties are notified. Nothing is refunded now, and a session within 24 hours cannot be moved.";
+  "This only releases the time: the expert places the new time, and both parties are notified. The original time is not put back on its own, so follow up until a new one is placed. Nothing is refunded now, and a session within 24 hours cannot be moved.";
 
 /**
  * #1771 — a booking's Ops actions, by type. Every booking lists its sessions

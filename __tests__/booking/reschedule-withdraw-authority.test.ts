@@ -3,9 +3,11 @@
  */
 
 /**
- * Only the initiator withdraws an open reschedule, and only while they still
- * act for the side they opened it from: an expert whose account is STAFF is
- * still the expert, and a learner suspended in the funding org moves nothing.
+ * The initiator withdraws an open reschedule, and only while they still act
+ * for the side they opened it from: an expert whose account is STAFF is still
+ * the expert, and a learner suspended in the funding org moves nothing. A move
+ * an organisation actor opened may also be withdrawn by anyone acting for that
+ * same side; a party's own move, and the other side's, stay out of reach.
  */
 
 const caller = {
@@ -24,13 +26,17 @@ const open = {
       consultationId: "con-1",
       subscriptionId: null,
       organizationId: "org-1",
-      consultation: { requestedBy: { userId: "u-buyer" } },
+      consultation: {
+        requestedBy: { userId: "u-buyer" },
+        consultationPlan: { consultantProfile: { userId: "u-expert" } },
+      },
       subscription: null,
       trial: null,
     },
   },
 };
 const hostOrgOperators = new Set<string>();
+const mockSponsorAdmins = new Set<string>();
 const mockSuspended = jest.fn(async () => false);
 // The real helper answers "staff" for a privileged role unless asked as a party.
 const mockHostActor = jest.fn(
@@ -68,14 +74,18 @@ jest.mock("../../lib/enterprise/suspended-member-sessions", () => ({
     Response.json({ code: "MEMBERSHIP_SUSPENDED" }, { status: 403 }),
 }));
 jest.mock("../../lib/booking/org-actor", () => ({
-  isOrgAdminOfAppointment: jest.fn(async () => false),
+  isOrgAdminOfAppointment: jest.fn(async (userId: string) =>
+    mockSponsorAdmins.has(userId),
+  ),
 }));
 jest.mock("../../lib/rate-limit", () => ({
   applyRateLimit: jest.fn(async () => null),
   eventMutationLimiter: {},
   rescheduleAppointmentLimiter: {},
 }));
+// The authority the route asks is the real one; only the withdrawal is stubbed.
 jest.mock("../../lib/booking/reschedule-withdraw", () => ({
+  ...jest.requireActual("../../lib/booking/reschedule-withdraw"),
   withdrawRescheduleRequest: (...a: unknown[]) => mockWithdraw(...(a as [])),
 }));
 
@@ -106,6 +116,7 @@ beforeEach(() => {
     initiatorRole: "CONSULTANT",
   };
   hostOrgOperators.clear();
+  mockSponsorAdmins.clear();
   mockSuspended.mockResolvedValue(false);
 });
 
@@ -177,4 +188,109 @@ it("refuses a buyer suspended in the organisation funding the booking", async ()
   expect(res.status).toBe(403);
   expect((await res.json()).code).toBe("MEMBERSHIP_SUSPENDED");
   expect(mockWithdraw).not.toHaveBeenCalled();
+});
+
+describe("a move an organisation actor opened", () => {
+  const BUYER = { id: "u-buyer", role: "CONSULTEE", consultantProfileId: null };
+  const EXPERT = {
+    id: "u-expert",
+    role: "CONSULTANT",
+    consultantProfileId: "cp-1",
+  };
+  const sponsorMove = () => {
+    mockSponsorAdmins.add("u-sponsor");
+    open.current = {
+      ...open.current,
+      initiatedById: "u-sponsor",
+      initiatorRole: "CONSULTEE",
+    };
+  };
+
+  it("lets the learner withdraw the sponsor admin's move", async () => {
+    sponsorMove();
+    caller.current = BUYER;
+    const res = await withdraw();
+    expect(res.status).toBe(200);
+    // Not "your request": the learner did not open it.
+    expect((await res.json()).message).toBe(
+      "The request to move this booking has been withdrawn, so it keeps its original time.",
+    );
+    expect(mockWithdraw).toHaveBeenCalledWith({
+      rescheduleRequestId: "rr-1",
+      withdrawnById: "u-buyer",
+      sameSideActor: true,
+    });
+  });
+
+  it("lets another admin of the sponsor withdraw it", async () => {
+    sponsorMove();
+    mockSponsorAdmins.add("u-sponsor-2");
+    caller.current = { ...BUYER, id: "u-sponsor-2" };
+    expect((await withdraw()).status).toBe(200);
+  });
+
+  it("lets the plan's expert withdraw a host-org operator's move", async () => {
+    hostOrgOperators.add("u-ops");
+    caller.current = EXPERT;
+    expect((await withdraw()).status).toBe(200);
+    expect(mockWithdraw).toHaveBeenCalledWith({
+      rescheduleRequestId: "rr-1",
+      withdrawnById: "u-expert",
+      sameSideActor: true,
+    });
+  });
+
+  it("answers 404 to the other side", async () => {
+    sponsorMove();
+    caller.current = EXPERT;
+    expect((await withdraw()).status).toBe(404);
+
+    open.current = {
+      ...open.current,
+      initiatedById: "u-ops",
+      initiatorRole: "CONSULTANT",
+    };
+    caller.current = BUYER;
+    expect((await withdraw()).status).toBe(404);
+    expect(mockWithdraw).not.toHaveBeenCalled();
+  });
+
+  it("refuses a learner suspended in the organisation funding the booking", async () => {
+    sponsorMove();
+    caller.current = BUYER;
+    mockSuspended.mockResolvedValue(true);
+    const res = await withdraw();
+    expect(res.status).toBe(403);
+    expect((await res.json()).code).toBe("MEMBERSHIP_SUSPENDED");
+    expect(mockWithdraw).not.toHaveBeenCalled();
+  });
+});
+
+describe("a party's own move", () => {
+  it("is not the sponsor admin's to withdraw", async () => {
+    mockSponsorAdmins.add("u-sponsor");
+    open.current = {
+      ...open.current,
+      initiatedById: "u-buyer",
+      initiatorRole: "CONSULTEE",
+    };
+    caller.current = {
+      id: "u-sponsor",
+      role: "CONSULTEE",
+      consultantProfileId: null,
+    };
+    expect((await withdraw()).status).toBe(404);
+    expect(mockWithdraw).not.toHaveBeenCalled();
+  });
+
+  it("is not a host-org operator's to withdraw", async () => {
+    hostOrgOperators.add("u-ops");
+    open.current = {
+      ...open.current,
+      initiatedById: "u-expert",
+      initiatorRole: "CONSULTANT",
+    };
+    expect((await withdraw()).status).toBe(404);
+    expect(mockWithdraw).not.toHaveBeenCalled();
+  });
 });

@@ -1,14 +1,23 @@
 /**
  * The mobile day list's model: which session starts each of the next days
- * offers, read from the same grid answer the desktop heat map paints.
+ * offers, read from the same grid answer the desktop heat map paints and
+ * judged by the same atom resolver (`describeAtom`).
  *
  * A start is offered only when every 30-minute atom the session covers is
- * free (`available`, not too soon, not over a plan limit), it is not inside
- * the checkout lead time or the caller's extra notice, and the whole session
- * sits inside the allowed window. Days are calendar dates of the display
+ * one the week grid would let a click take: free, or part of a session of
+ * this booking that is being moved. Days are calendar dates of the display
  * zone; a start belongs to the day its first atom is keyed under.
  */
-import { MINIMUM_BOOKING_LEAD_TIME_MS } from "@/lib/payments/constants";
+import {
+  atomIsFree,
+  atomIsPlaceable,
+  describeAtom,
+  selectionConflicts,
+  type AtomContext,
+  type JustTakenReason,
+  type OverlapDetail,
+  type ServerCell,
+} from "@/lib/scheduling/week-grid-model";
 import {
   formatClockTime,
   formatDayLabel,
@@ -28,6 +37,8 @@ export interface DayListAtom {
   bookingStatus?: "available" | "partially-booked" | "fully-booked";
   tooSoon?: boolean;
   limitReached?: boolean;
+  beyondHorizon?: boolean;
+  outsideCoHostHours?: boolean;
 }
 
 /** One whole-session pick, ISO instants. */
@@ -51,6 +62,10 @@ export interface DayListDay {
   /** "Thu 24 Sep", for the chip's accessible name. */
   label: string;
   starts: DayListStart[];
+  /** No start is offered, and one would be if the plan's limit were not used up. */
+  limitReached: boolean;
+  /** No start is offered, and the day has times later than bookings open. */
+  beyondHorizon: boolean;
 }
 
 export interface DayListRules {
@@ -62,8 +77,10 @@ export interface DayListRules {
   allowedStart?: Date;
   /** Selectable window, inclusive end of the last session. */
   allowedEnd?: Date;
-  /** Notice the caller requires on top of the checkout lead time. */
-  minLeadHours?: number;
+  /** The lead time the server applied to the answer; re-applied between polls. */
+  leadMs?: number | null;
+  /** The sessions a reschedule is moving: a new time may overlap their own. */
+  movingSessions?: readonly DayListPick[];
 }
 
 export const DAY_LIST_DAYS = 14;
@@ -151,52 +168,87 @@ export function dayListPageStart(
   return dayRangeBounds(day, day, zone).start.getTime();
 }
 
-/** Start instants (ms) of every atom that is free to book. */
-export function freeAtomStarts(
-  data: Readonly<Record<string, readonly DayListAtom[]>>,
-): Set<number> {
-  const free = new Set<number>();
-  for (const atoms of Object.values(data)) {
-    for (const atom of atoms) {
-      if (
-        (atom.bookingStatus ?? "available") === "available" &&
-        atom.tooSoon !== true &&
-        atom.limitReached !== true
-      ) {
-        free.add(new Date(atom.startsAt).getTime());
-      }
-    }
-  }
-  return free;
+const NO_STARTS: ReadonlySet<number> = new Set();
+const NO_OVERLAPS: OverlapDetail[] = [];
+
+function atomCount(sessionMinutes: number): number {
+  return Math.max(1, Math.round(sessionMinutes / 30));
 }
 
-/** Whether a session starting at `startMs` is offered under `rules`. */
-export function isStartOffered(
-  startMs: number,
-  free: ReadonlySet<number>,
+/** The week grid's atom context for one answer, so both surfaces judge an atom alike. */
+function dayListContext(
+  data: Readonly<Record<string, readonly DayListAtom[]>>,
   rules: DayListRules,
-): boolean {
-  const atoms = Math.max(1, Math.round(rules.sessionMinutes / 30));
-  const endMs = startMs + atoms * ATOM_MS;
-  const notice = Math.max(
-    MINIMUM_BOOKING_LEAD_TIME_MS,
-    (rules.minLeadHours ?? 0) * 60 * 60 * 1000,
-  );
-  if (startMs < rules.nowMs + notice) return false;
-  if (rules.allowedStart && startMs < rules.allowedStart.getTime()) {
-    return false;
+): AtomContext {
+  const serverCells = new Map<number, ServerCell>();
+  for (const atoms of Object.values(data)) {
+    for (const atom of atoms) {
+      const startMs = new Date(atom.startsAt).getTime();
+      serverCells.set(startMs, {
+        startMs,
+        endMs: startMs + ATOM_MS,
+        bookingStatus: atom.bookingStatus ?? "available",
+        tooSoon: atom.tooSoon === true,
+        limitReached: atom.limitReached === true,
+        beyondHorizon: atom.beyondHorizon === true,
+        outsideCoHostHours: atom.outsideCoHostHours === true,
+        overlappingAppointments: NO_OVERLAPS,
+      });
+    }
   }
-  if (rules.allowedEnd && endMs > rules.allowedEnd.getTime()) return false;
-  for (let k = 0; k < atoms; k++) {
-    if (!free.has(startMs + k * ATOM_MS)) return false;
+  const movingStarts = new Set<number>();
+  for (const session of rules.movingSessions ?? []) {
+    const endMs = new Date(session.endsAt).getTime();
+    for (
+      let atom =
+        Math.floor(new Date(session.startsAt).getTime() / ATOM_MS) * ATOM_MS;
+      atom < endMs;
+      atom += ATOM_MS
+    ) {
+      movingStarts.add(atom);
+    }
   }
-  return true;
+  return {
+    serverCells,
+    eventStarts: movingStarts,
+    tentativeStarts: NO_STARTS,
+    selectedStarts: NO_STARTS,
+    justTakenStarts: NO_STARTS,
+    requestedStarts: NO_STARTS,
+    nowMs: rules.nowMs,
+    allowedStartMs: rules.allowedStart?.getTime(),
+    allowedEndMs: rules.allowedEnd?.getTime(),
+    leadMs: rules.leadMs,
+  };
+}
+
+/**
+ * Whether a session starting at `startMs` is offered: "limit" when only the
+ * plan's used-up limit keeps it back. A start inside the lead time is never
+ * offered, even on the moving session's own time.
+ */
+function startVerdict(
+  startMs: number,
+  ctx: AtomContext,
+  sessionMinutes: number,
+): "offered" | "limit" | "no" {
+  let limited = false;
+  for (let k = 0; k < atomCount(sessionMinutes); k++) {
+    const atomStart = startMs + k * ATOM_MS;
+    const described = describeAtom(atomStart, atomStart + ATOM_MS, ctx);
+    if (k === 0 && described.isTooSoon) return "no";
+    // The booking horizon binds the session's start; the atoms after it only
+    // have to be free, as the booking doors judge it.
+    const atom = k === 0 ? described : { ...described, isBeyondHorizon: false };
+    if (atomIsPlaceable(atom)) continue;
+    if (!atomIsFree({ ...atom, isLimitReached: false })) return "no";
+    limited = true;
+  }
+  return limited ? "limit" : "offered";
 }
 
 function sessionEnd(startMs: number, sessionMinutes: number): Date {
-  return new Date(
-    startMs + Math.max(1, Math.round(sessionMinutes / 30)) * ATOM_MS,
-  );
+  return new Date(startMs + atomCount(sessionMinutes) * ATOM_MS);
 }
 
 /** "9:30 am – 10:30 am". */
@@ -215,15 +267,20 @@ export function buildDayList(
   rules: DayListRules,
   fromMs: number,
 ): DayListDay[] {
-  const free = freeAtomStarts(data);
+  const ctx = dayListContext(data, rules);
   return dayListDates(fromMs, rules.zone).map((date) => {
     const key = calendarDateKey(date);
-    const startsMs = [
+    const verdicts = [
       ...new Set(
         (data[key] ?? []).map((atom) => new Date(atom.startsAt).getTime()),
       ),
-    ]
-      .filter((startMs) => isStartOffered(startMs, free, rules))
+    ].map(
+      (startMs) =>
+        [startMs, startVerdict(startMs, ctx, rules.sessionMinutes)] as const,
+    );
+    const startsMs = verdicts
+      .filter(([, verdict]) => verdict === "offered")
+      .map(([startMs]) => startMs)
       .sort((a, b) => a - b);
     const noon = new Date(
       dayRangeBounds(date, date, rules.zone).start.getTime() + 12 * 3_600_000,
@@ -240,27 +297,44 @@ export function buildDayList(
         };
         return { ...pick, label: timeRangeLabel(pick, rules.zone) };
       }),
+      limitReached:
+        startsMs.length === 0 &&
+        verdicts.some(([, verdict]) => verdict === "limit"),
+      beyondHorizon:
+        startsMs.length === 0 &&
+        (data[key] ?? []).some((atom) => atom.beyondHorizon === true),
     };
   });
 }
 
 /**
- * Picks inside the read's range that the latest answer no longer offers.
- * A pick outside the range is left alone: this read cannot speak for it.
+ * Picks inside the read's range that the latest answer no longer offers, and
+ * why: "taken" when someone else holds part of it or it is no longer
+ * published, "expired" for every other rule. A pick outside the range is left
+ * alone: this read cannot speak for it.
  */
 export function stalePicks(
   picks: readonly DayListPick[],
   data: Readonly<Record<string, readonly DayListAtom[]>>,
   rules: DayListRules,
   fromMs: number,
-): string[] {
+): Map<string, JustTakenReason> {
   const { start, end } = dayListBounds(fromMs, rules.zone);
-  const free = freeAtomStarts(data);
-  return picks
-    .filter((pick) => {
-      const startMs = new Date(pick.startsAt).getTime();
-      if (startMs < start.getTime() || startMs >= end.getTime()) return false;
-      return !isStartOffered(startMs, free, rules);
-    })
-    .map((pick) => pick.startsAt);
+  const window = { startMs: start.getTime(), endMs: end.getTime() };
+  const ctx = dayListContext(data, rules);
+  const stale = new Map<string, JustTakenReason>();
+  for (const pick of picks) {
+    const startMs = new Date(pick.startsAt).getTime();
+    if (startMs < window.startMs || startMs >= window.endMs) continue;
+    if (startVerdict(startMs, ctx, rules.sessionMinutes) === "offered") {
+      continue;
+    }
+    const atoms = Array.from(
+      { length: atomCount(rules.sessionMinutes) },
+      (_, k) => startMs + k * ATOM_MS,
+    );
+    const reasons = [...selectionConflicts(atoms, ctx, window).values()];
+    stale.set(pick.startsAt, reasons.includes("taken") ? "taken" : "expired");
+  }
+  return stale;
 }

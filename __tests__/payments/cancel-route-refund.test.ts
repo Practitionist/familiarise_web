@@ -155,8 +155,12 @@ jest.mock("../../utils/appointmentlock", () => ({
   withAppointmentLock: jest.fn(
     async (_id: string, fn: () => Promise<unknown>) => fn(),
   ),
+  renewAppointmentLock: jest.fn(async () => undefined),
   withEventCheckoutLock: jest.fn(
-    async (_key: unknown, fn: () => Promise<unknown>) => fn(),
+    async (
+      _key: unknown,
+      fn: (renew: () => Promise<void>) => Promise<unknown>,
+    ) => fn(async () => undefined),
   ),
   BookingLockUnavailableError: class extends Error {},
   AppointmentBusyError: class extends Error {},
@@ -718,6 +722,31 @@ describe("subscriptions", () => {
     expect(body.refund.refundPct).toBe(100);
     expect(body.refund.amountRefundedPaise).toBe(Math.floor((GROSS * 7) / 10));
     expect(body.refund.amountRefundedPaise).not.toBe(GROSS);
+  });
+
+  it("leaves a session awaiting review as it is when the plan is cancelled", async () => {
+    // The quote counted it delivered; cancelling it would take it off the
+    // review list before anyone decided whether it took place.
+    mockGetSession.mockResolvedValue(sessionAs("consultee"));
+    mockAppointmentFindUnique.mockResolvedValue(subscriptionAppointment());
+    mockAppointmentFindMany.mockImplementation(async () =>
+      bookingRows({
+        unverifiedSlotHours: [-72],
+        liveSlotHours: [72, 96],
+      }),
+    );
+
+    const res = await cancelHandler(makeRequest(), makeParams(APPT));
+    expect(res.status).toBe(200);
+
+    const sweeps =
+      txStub.appointmentOccurrence.updateManyAndReturn.mock.calls.filter(
+        ([call]) => call.data.completionStatus === "CANCELLED",
+      );
+    expect(sweeps).toHaveLength(1);
+    expect(sweeps[0][0].where.completionStatus).toEqual({
+      in: ["SCHEDULED", "RESCHEDULED"],
+    });
   });
 });
 

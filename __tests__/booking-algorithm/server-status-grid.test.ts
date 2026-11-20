@@ -73,6 +73,16 @@ describe("extractOverlapTitleAndParticipant", () => {
     expect(result).toEqual({ title: "Webinar" });
   });
 
+  it('labels a trial "Trial session" with the learner\'s name', () => {
+    const result = extractOverlapTitleAndParticipant({
+      id: "appt-trial",
+      appointmentType: "TRIAL",
+      occurrences: [],
+      trial: { consulteeProfile: { user: { name: "Charlotte Reid" } } },
+    });
+    expect(result).toEqual({ title: "Trial session", with: "Charlotte Reid" });
+  });
+
   it("never returns a participant name for webinar/class (no requestedBy on those types)", () => {
     const webinar = extractOverlapTitleAndParticipant({
       id: "a4",

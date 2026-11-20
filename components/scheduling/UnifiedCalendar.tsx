@@ -69,11 +69,17 @@ import {
   pastSessionBlocked,
   sessionTooSoon,
   sessionBeingRescheduled,
+  otherSessionOfBooking,
+  selectionDropped,
   slotUnavailable,
   notEnoughConsecutive,
 } from "@/lib/scheduling/allocationMessages";
 import { useToast } from "@/hooks/use-toast";
-import type { SlotStatusKey } from "@/lib/scheduling/interval-status-tokens";
+import {
+  isFreeStatusKey,
+  SLOT_STATUS_TOKENS,
+  type SlotStatusKey,
+} from "@/lib/scheduling/interval-status-tokens";
 import { quotaFooterText } from "@/lib/scheduling/grid-quota";
 import { MINIMUM_BOOKING_LEAD_TIME_MS } from "@/lib/payments/constants";
 import {
@@ -88,6 +94,8 @@ import {
 import { cn } from "@/utils/tailwind";
 import { buildGridBlocks } from "@/lib/scheduling/grid-blocks";
 import {
+  atomIsPlaceable,
+  atomIsPlaceableAfterStart,
   buildWeekCells,
   describeAtom,
   expandToSession,
@@ -97,7 +105,9 @@ import {
   weekDayFits,
   selectionConflicts,
   ownHoldStarts,
+  stayingSessionStarts,
   type AtomContext,
+  type JustTakenReason,
   type CellView,
   type RowWindow,
 } from "@/lib/scheduling/week-grid-model";
@@ -844,6 +854,14 @@ export function UnifiedCalendar({
     () => startsOf(eventTentativeSlots),
     [eventTentativeSlots],
   );
+  // On a reschedule only the sessions being moved may be picked over.
+  const stayingStarts = useMemo(
+    () =>
+      mode === "select" && releasingOccurrenceIds
+        ? stayingSessionStarts(eventOccurrences, releasingOccurrenceIds)
+        : EMPTY_STARTS,
+    [mode, releasingOccurrenceIds, eventOccurrences],
+  );
   const selectedStarts = useMemo(
     () => startsOf(selectedSlots),
     [selectedSlots],
@@ -878,6 +896,7 @@ export function UnifiedCalendar({
       selectedStarts,
       justTakenStarts: EMPTY_STARTS,
       requestedStarts,
+      stayingStarts,
       nowMs: matrixNowMs,
       allowedStartMs,
       allowedEndMs,
@@ -889,6 +908,7 @@ export function UnifiedCalendar({
       tentativeStarts,
       selectedStarts,
       requestedStarts,
+      stayingStarts,
       matrixNowMs,
       allowedStartMs,
       allowedEndMs,
@@ -903,7 +923,7 @@ export function UnifiedCalendar({
   const conflicts = useMemo(
     () =>
       mode === "view" || isAllocating || eventSlotsFailed
-        ? new Map<number, "taken" | "expired">()
+        ? new Map<number, JustTakenReason>()
         : selectionConflicts(selectedStarts, baseContext, cellsWindow),
     [
       mode,
@@ -932,16 +952,7 @@ export function UnifiedCalendar({
         conflicts,
       ),
     );
-    const anyTaken = [...conflicts.values()].includes("taken");
-    toast({
-      variant: "destructive",
-      title: anyTaken
-        ? "One of your chosen times was just taken"
-        : "One of your chosen times can't be booked any more",
-      description: anyTaken
-        ? "That time is no longer free, so it has been removed — pick another time."
-        : "It is now too close to its start or past this plan's limit. It has been removed — pick another time.",
-    });
+    toast(selectionDropped([...conflicts.values()]));
   }, [
     conflicts,
     selectedSlots,
@@ -1101,27 +1112,12 @@ export function UnifiedCalendar({
       row.getBoundingClientRect().top - weekGridEl.getBoundingClientRect().top;
   }, [focus, weekGridEl, availableSlots, rowWindow, gridZone, rowModel]);
 
-  /** A free, placeable atom a session may grow into: what a click may take. */
-  const isFreeAtom = useCallback(
-    (startMs: number): boolean => {
-      if (!serverCells.has(startMs) || selectedStarts.has(startMs)) {
-        return false;
-      }
-      const atom = describeAtom(startMs, startMs + ATOM_MS, atomContext);
-      return (
-        atom.isAvailable &&
-        !atom.isInPast &&
-        !atom.isOutsidePeriod &&
-        !atom.isTooSoon &&
-        !atom.isLimitReached
-      );
-    },
-    [serverCells, atomContext, selectedStarts],
-  );
-
-  /** A free atom, or one of this booking's own upcoming ones: a session may take either. */
+  /**
+   * A free atom, or one of this booking's own upcoming ones: a session may
+   * take either. `afterStart` is an atom the session runs over past its start.
+   */
   const isExpandableAtom = useCallback(
-    (startMs: number): boolean => {
+    (startMs: number, afterStart: boolean): boolean => {
       // The request's own hold inside the allocate lead is never part of a session.
       if (
         holdStarts.has(startMs) &&
@@ -1129,17 +1125,13 @@ export function UnifiedCalendar({
       ) {
         return false;
       }
-      if (isFreeAtom(startMs)) return true;
       if (selectedStarts.has(startMs)) return false;
       const atom = describeAtom(startMs, startMs + ATOM_MS, atomContext);
-      return (
-        atom.isThisEvent &&
-        !atom.isInPast &&
-        !atom.isOutsidePeriod &&
-        !atom.isTentative
-      );
+      return afterStart
+        ? atomIsPlaceableAfterStart(atom)
+        : atomIsPlaceable(atom);
     },
-    [isFreeAtom, selectedStarts, atomContext, holdStarts, leadMs],
+    [selectedStarts, atomContext, holdStarts, leadMs],
   );
 
   /** Consecutive free atoms around a clicked one, to fill one whole session. */
@@ -1149,7 +1141,9 @@ export function UnifiedCalendar({
       return expandToSession(
         clickedMs,
         slotLimits.slotsPerSession,
-        (startMs) => startMs === clickedMs || isExpandableAtom(startMs),
+        (startMs) =>
+          startMs === clickedMs ||
+          isExpandableAtom(startMs, startMs > clickedMs),
       ).map((startMs) =>
         startMs === clickedMs
           ? clickedSlot
@@ -1188,7 +1182,7 @@ export function UnifiedCalendar({
   const ghost = useMemo<GhostPiece[]>(() => {
     if (mode === "view" || isAllocating || previewStart === null) return [];
     const previewCell = weekCells.byStart.get(previewStart);
-    if (previewCell?.statusKey !== "available") return [];
+    if (!previewCell || !isFreeStatusKey(previewCell.statusKey)) return [];
     const size = Math.max(1, slotLimits.slotsPerSession || 1);
     const previewSlot: CalendarInterval = {
       startTime: new Date(previewStart),
@@ -1284,6 +1278,10 @@ export function UnifiedCalendar({
         else toast(pastSessionBlocked());
         return;
       }
+      if (cell.isStaying) {
+        toast(otherSessionOfBooking());
+        return;
+      }
       // The request's own hold may be picked up to the allocate lead; a
       // confirmed session of this booking under 24 hours away is not moved here.
       const isOwnHold = holdStarts.has(cell.startMs);
@@ -1320,12 +1318,26 @@ export function UnifiedCalendar({
         });
         return;
       }
+      if (!cell.isThisEvent && cell.statusKey === "beyondHorizon") {
+        toast({
+          title: SLOT_STATUS_TOKENS.beyondHorizon.label,
+          description: `${SLOT_STATUS_TOKENS.beyondHorizon.hint} Pick an earlier time.`,
+        });
+        return;
+      }
       if (!cell.isThisEvent && cell.statusKey === "limitReached") {
         toast({
           title: "Limit reached",
           description: quota
             ? `${quotaFooterText(quota, gridZone)}. Pick a day or week that still has room.`
             : "This plan's sessions for that week or day are already used.",
+        });
+        return;
+      }
+      if (!cell.isThisEvent && cell.statusKey === "outsideCoHostHours") {
+        toast({
+          title: cell.stateLabel,
+          description: `${SLOT_STATUS_TOKENS.outsideCoHostHours.hint} Pick another time.`,
         });
         return;
       }
@@ -1375,11 +1387,14 @@ export function UnifiedCalendar({
   const tooltipOf = useCallback(
     (cell: CellView): CellTooltip | null => {
       if (cell.isThisEvent) {
+        const action = cell.isStaying
+          ? "Not being moved"
+          : "Click to change this time";
         return {
           title: "This booking",
           lines: [
             eventTypeLabel(eventType),
-            cell.isInPast ? "Past session" : "Click to change this time",
+            cell.isInPast ? "Past session" : action,
           ],
         };
       }
@@ -1406,8 +1421,9 @@ export function UnifiedCalendar({
     if (view !== "month") return new Map<string, number>();
     serverCells.forEach((cell) => {
       if (
-        describeAtom(cell.startMs, cell.endMs, atomContext).statusKey !==
-        "available"
+        !isFreeStatusKey(
+          describeAtom(cell.startMs, cell.endMs, atomContext).statusKey,
+        )
       ) {
         return;
       }

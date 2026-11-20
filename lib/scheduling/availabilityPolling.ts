@@ -91,6 +91,8 @@ export const RATE_LIMIT_FALLBACK_BACKOFF_MS = 60_000;
 export interface PollFetchOutcome {
   /** Set when the server answered 429; the next tick waits at least this long. */
   rateLimitedForMs?: number;
+  /** Set when the server answered a new body (a 200, not a 304). */
+  changed?: boolean;
 }
 
 export interface PollContext {

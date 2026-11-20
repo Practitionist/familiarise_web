@@ -20,6 +20,10 @@ import { CreateTrialSchema } from "@/schemas/trials";
 const HOUR = 3_600_000;
 const DAY = Date.parse("2030-03-12T00:00:00.000Z");
 
+// The doors read the real clock; the pick is two days ahead of it.
+beforeEach(() => jest.useFakeTimers({ now: DAY - 48 * HOUR }));
+afterEach(() => jest.useRealTimers());
+
 function pickFrom(type: "WEEKLY" | "CUSTOM") {
   const atoms = [10, 10.5].map((h) => ({
     startsAt: new Date(DAY + h * HOUR).toISOString(),

@@ -772,7 +772,6 @@ describe("#1340 — resolveConsumedPreferenceRequests and the confirming proposa
 
   interface SweepWhere {
     id?: { not?: string };
-    proposedTimes?: unknown;
   }
 
   /** A transaction stub that answers the sweep's reads the way Postgres would. */
@@ -780,14 +779,18 @@ describe("#1340 — resolveConsumedPreferenceRequests and the confirming proposa
     const declined: string[] = [];
     const tx = {
       rescheduleRequest: {
-        // Two reads in order: the preference-only rows first, then every OTHER
-        // open proposal on the same released slots.
+        // One read: every OTHER open proposal on the same released slots,
+        // each carrying the times it named.
         findMany: jest.fn(async ({ where }: { where: SweepWhere }) => {
-          if (where.proposedTimes) return [];
           const excluded = where.id?.not;
           return openProposalIds
             .filter((id) => id !== excluded)
-            .map((id) => ({ id }));
+            .map((id) => ({
+              id,
+              initiatorRole: "CONSULTEE",
+              appointmentId: "appt-1",
+              _count: { proposedTimes: 1 },
+            }));
         }),
         findUnique: jest.fn(async () => ({
           status: "PENDING_REVIEW",
@@ -828,10 +831,8 @@ describe("#1340 — resolveConsumedPreferenceRequests and the confirming proposa
     await runSweep(tx, ["released-slot-1"], SELF);
 
     expect(declined).toEqual([STALE]);
-    const supersedeRead = tx.rescheduleRequest.findMany.mock.calls
-      .map(([arg]) => arg.where)
-      .find((where) => !where.proposedTimes);
-    expect(supersedeRead?.id).toEqual({ not: SELF });
+    const [[supersedeRead]] = tx.rescheduleRequest.findMany.mock.calls;
+    expect(supersedeRead.where.id).toEqual({ not: SELF });
   });
 
   it("still declines every open proposal when no confirmation is in flight", async () => {
@@ -862,5 +863,76 @@ describe("#1340 — resolveConsumedPreferenceRequests and the confirming proposa
       errorCode: "PROPOSE_TIMES_REQUIRED",
       message: "Propose new times so your client can accept one.",
     });
+  });
+
+  /** Open requests on the released session, answered the way Postgres would. */
+  function makeOpenRequestsTx(
+    rows: {
+      id: string;
+      proposedTimes: number;
+      preferredTimeOfDay?: string | null;
+    }[],
+  ) {
+    const closedAs = new Map<string, string>();
+    const tx = {
+      rescheduleRequest: {
+        findMany: jest.fn(
+          async ({
+            where,
+          }: {
+            where: { OR?: unknown; proposedTimes?: { none: object } };
+          }) =>
+            rows
+              .filter((r) => !where.OR || !!r.preferredTimeOfDay)
+              .filter((r) => !where.proposedTimes || r.proposedTimes === 0)
+              .map((r) => ({
+                id: r.id,
+                initiatorRole: "CONSULTEE",
+                appointmentId: "appt-1",
+                _count: { proposedTimes: r.proposedTimes },
+              })),
+        ),
+        findUnique: jest.fn(async () => ({
+          status: "PENDING_REVIEW",
+          appointmentId: "appt-1",
+        })),
+        updateMany: jest.fn(
+          async ({
+            where,
+            data,
+          }: {
+            where: { id: string };
+            data: { status: string };
+          }) => {
+            closedAs.set(where.id, data.status);
+            return { count: 1 };
+          },
+        ),
+      },
+      bookingStatusHistory: { create: jest.fn(async () => ({})) },
+    };
+    return { tx, closedAs };
+  }
+
+  it("records an 'any time works' request with no stated preference as accepted when its new time is placed", async () => {
+    const { tx, closedAs } = makeOpenRequestsTx([
+      { id: "any-time", proposedTimes: 0, preferredTimeOfDay: null },
+    ]);
+
+    await runSweep(tx, ["released-slot-1"]);
+
+    expect(closedAs.get("any-time")).toBe("ACCEPTED");
+  });
+
+  it("keeps accepting a request that stated a preference, and declining one that named other times", async () => {
+    const { tx, closedAs } = makeOpenRequestsTx([
+      { id: "mornings", proposedTimes: 0, preferredTimeOfDay: "MORNING" },
+      { id: "named-times", proposedTimes: 2 },
+    ]);
+
+    await runSweep(tx, ["released-slot-1"]);
+
+    expect(closedAs.get("mornings")).toBe("ACCEPTED");
+    expect(closedAs.get("named-times")).toBe("DECLINED");
   });
 });

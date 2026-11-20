@@ -8,14 +8,13 @@ import {
   makeLocalizer,
   processAvailabilitySlots,
   synthesizeOrphanCells,
+  THIRTY_MIN_MS,
   WeeklySlot,
 } from "@/utils/scheduling-engine/intervals";
 import { NextRequest, NextResponse } from "next/server";
 import {
   buildConsultantOccupancyWhere,
   OCCUPYING_OCCURRENCE_WHERE,
-  buildOccupiedAppointmentFilter,
-  timeHoldingParticipant,
 } from "@/utils/scheduling-engine/occupancyPolicy";
 import { isOccupiedByLiveAppointment } from "@/utils/scheduling-engine/ScheduleValidationService";
 import { getSession } from "@/lib/auth-server";
@@ -31,6 +30,7 @@ import { apiError } from "@/lib/errors/api-error";
 import { Refusal } from "@/lib/errors/refusal";
 import {
   availabilityGridEtag,
+  horizonBucket,
   ifNoneMatchSatisfied,
   leadTimeBucket,
   readAvailabilityGridMarker,
@@ -46,7 +46,12 @@ import {
   soldTermsOf,
   subscriptionEntitlement,
 } from "@/lib/booking/entitlement";
-import { LEAD_PURPOSES, leadMsFor } from "@/lib/booking/lead-time";
+import {
+  isBeyondBookingHorizon,
+  LEAD_PURPOSES,
+  leadMsFor,
+  MAX_BOOKING_HORIZON_MS,
+} from "@/lib/booking/lead-time";
 import {
   createWeeklyCoverage,
   partitionWeeklyRows,
@@ -69,6 +74,12 @@ type SlotTimingWithOverlap = TIntervalTiming & {
   isAllocated: boolean;
   bookingStatus: BookingStatus;
   overlappingAppointments?: OverlapAppointmentMeta[];
+  /** Free for the host, but an accepted co-host has not published this half-hour. */
+  outsideCoHostHours?: true;
+  /** Those co-hosts' first names; only for a viewer who may see names. */
+  outsideCoHostHoursOf?: string[];
+  /** Starts later than a 1:1 booking may be placed. */
+  beyondHorizon?: true;
 };
 
 // #1164 — browser-only cache for the polling grid. `private`, not the sibling's
@@ -83,7 +94,11 @@ const GridLeadQuerySchema = z.object({
   unpaid: z.enum(["1"]).optional(),
 });
 
-const GRID_CACHE_CONTROL = "private, max-age=30";
+// The body depends on the signed-in viewer, so a browser's stored copy is per cookie.
+const GRID_CACHE_HEADERS = {
+  "Cache-Control": "private, max-age=30",
+  Vary: "Cookie",
+} as const;
 
 /**
  * The grid is O(window width) CPU, so a caller asking for a whole scheduling
@@ -226,6 +241,9 @@ export async function GET(
     // A host moving their own webinar or class may land on that event's own time.
     const movingEvent =
       leadQuery.data.purpose === "reschedule" && Boolean(webinarId || classId);
+    // The booking horizon binds a 1:1 session, request or trial, placed or
+    // moved: not a webinar, a class or a subscription's plan weeks.
+    const horizonApplies = !webinarId && !classId && !requestedSubscriptionId;
 
     // The gates below need the caller's identity, so resolve it once. Skipped
     // on the public path, where none of these parameters is present.
@@ -516,7 +534,7 @@ export async function GET(
             scheduleType: true,
             availabilityWindowsWeekly: true,
             availabilityWindowsCustom: { where: customWindowOverlapWhere },
-            user: { select: { id: true } },
+            user: { select: { id: true, name: true } },
           },
         },
       },
@@ -533,7 +551,7 @@ export async function GET(
           startsAt: Date;
           endsAt: Date;
         }[];
-        user?: { id?: string } | null;
+        user?: { id?: string; name?: string | null } | null;
       } | null;
     };
     type EventLookup = {
@@ -624,6 +642,12 @@ export async function GET(
           classId,
           leadBucket: leadTimeBucket(now.getTime(), leadMs),
           leadMs,
+          // Only a window that reaches past the horizon has cells it can open.
+          horizonBucket:
+            horizonApplies &&
+            endDate.getTime() > now.getTime() + MAX_BOOKING_HORIZON_MS
+              ? horizonBucket(now.getTime())
+              : null,
           quotaFold: quotaSubject?.fold ?? null,
           excludedAppointmentId,
         })
@@ -634,7 +658,7 @@ export async function GET(
     if (etag && ifNoneMatchSatisfied(ifNoneMatchHeader, etag)) {
       return new NextResponse(null, {
         status: 304,
-        headers: { "Cache-Control": GRID_CACHE_CONTROL, ETag: etag },
+        headers: { ...GRID_CACHE_HEADERS, ETag: etag },
       });
     }
 
@@ -684,6 +708,7 @@ export async function GET(
     type CoHostScheduleProfile = {
       consultantProfileId: string;
       userId: string;
+      firstName: string | null;
       scheduleType?: string;
       availabilityWindowsWeekly?: StoredWeeklyRow[];
       availabilityWindowsCustom?: {
@@ -703,6 +728,7 @@ export async function GET(
           coHostProfiles.push({
             consultantProfileId: row.consultantProfileId,
             userId: uid,
+            firstName: cp?.user?.name?.trim().split(/\s+/)[0] || null,
             scheduleType: cp?.scheduleType,
             availabilityWindowsWeekly: cp?.availabilityWindowsWeekly,
             availabilityWindowsCustom: cp?.availabilityWindowsCustom,
@@ -793,16 +819,24 @@ export async function GET(
     // A PrismaPromise does not execute until awaited, so it is handed to the
     // Promise.all below to run alongside the consultant query rather than
     // after it — separate query, same round-trip.
+    //
+    // A consultee who is an expert is busy on their own calendar too (hosted
+    // sessions, accepted co-host seats), as checkout reads them.
+    const consulteeProfile = consulteeUserId
+      ? await prisma.consultantProfile.findUnique({
+          where: { userId: consulteeUserId },
+          select: { id: true },
+        })
+      : null;
     const consulteeOccupancy = consulteeUserId
       ? prisma.appointment.findMany({
           where: {
             AND: [
-              { OR: buildOccupiedAppointmentFilter() },
-              {
-                participants: {
-                  some: timeHoldingParticipant(now, consulteeUserId),
-                },
-              },
+              buildConsultantOccupancyWhere(
+                consulteeProfile?.id,
+                consulteeUserId,
+                now,
+              ),
               slotsInWindow,
             ],
           },
@@ -863,6 +897,13 @@ export async function GET(
             },
             webinar: { select: { webinarPlan: { select: { title: true } } } },
             class: { select: { classPlan: { select: { title: true } } } },
+            trial: {
+              select: {
+                consulteeProfile: {
+                  select: { user: { select: { name: true } } },
+                },
+              },
+            },
             payment: { select: { expiresAt: true, paymentStatus: true } },
           },
         }),
@@ -918,9 +959,15 @@ export async function GET(
     // Occupied time clipped to the window; an impossible row is dropped and
     // reported once per row per day, never once per poll.
     const occupiedFindings = anomalyCollector();
+    // A zone with a :15 or :45 offset ends its day mid half-hour. Cells and
+    // the busy time painted on them run to the end of that half-hour, so the
+    // atom belongs to the window its start falls in.
+    const cellsEnd = new Date(
+      Math.ceil(endDate.getTime() / THIRTY_MIN_MS) * THIRTY_MIN_MS,
+    );
     const occupiedSlots = occupiedIntervalsIn(
       rawSlotsOfAppointment,
-      { start: startDate, end: endDate },
+      { start: startDate, end: cellsEnd },
       occupiedFindings.sink,
     );
     scheduleAnomalyReport(occupiedFindings.anomalies(), "availability-grid");
@@ -1024,13 +1071,13 @@ export async function GET(
         filteredCustomSlots,
         appointmentSlots,
         startDate,
-        endDate,
+        cellsEnd,
         timezone,
       );
 
-    // #1689 — When allocating a webinar or class with ACCEPTED co-hosts whose
-    // schedules were loaded, an unallocated slot is only available if every
-    // co-host with schedule data also covers that 30-min atom.
+    // The allocator refuses a time a co-host has not published, so a free cell
+    // outside their hours is flagged and no picker offers it; their
+    // commitments block above.
     const coHostsWithSchedule = coHostProfiles.filter(
       (ch) =>
         ch.scheduleType &&
@@ -1068,13 +1115,20 @@ export async function GET(
         );
       };
 
-      for (const dateKey of Object.keys(slotsByDate)) {
-        slotsByDate[dateKey] = slotsByDate[dateKey].filter((slot) => {
-          if (slot.isAllocated) return true;
-          const s = new Date(slot.startsAt);
-          const e = new Date(slot.endsAt);
-          return coHostsWithSchedule.every((ch) => isCoveredByCoHost(s, e, ch));
-        });
+      for (const slot of Object.values(slotsByDate).flat()) {
+        if (slot.isAllocated) continue;
+        const s = new Date(slot.startsAt);
+        const e = new Date(slot.endsAt);
+        const outside = coHostsWithSchedule.filter(
+          (ch) => !isCoveredByCoHost(s, e, ch),
+        );
+        if (outside.length === 0) continue;
+        slot.outsideCoHostHours = true;
+        if (includeAppointmentDetails) {
+          slot.outsideCoHostHoursOf = outside.flatMap((ch) =>
+            ch.firstName ? [ch.firstName] : [],
+          );
+        }
       }
     }
 
@@ -1170,6 +1224,9 @@ export async function GET(
         }
         // The writers refuse a start at or before the cutoff.
         if (endMs > nowMs && startMs <= leadCutoffMs) slot.tooSoon = true;
+        if (horizonApplies && isBeyondBookingHorizon(startMs, nowMs)) {
+          slot.beyondHorizon = true;
+        }
         if (
           quotaSource &&
           cellLimitReached(quotaSource.quota, startMs, endMs) &&
@@ -1187,7 +1244,7 @@ export async function GET(
       {
         status: 200,
         headers: {
-          "Cache-Control": GRID_CACHE_CONTROL,
+          ...GRID_CACHE_HEADERS,
           // #1319 PR 9 — what the next poll sends back as If-None-Match.
           ...(etag ? { ETag: etag } : {}),
         },
