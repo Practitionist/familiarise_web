@@ -44,6 +44,7 @@ import {
 } from "@/lib/booking/booking-rule-error";
 import { assertNoLiveCheckoutHold } from "@/lib/booking/request-cohort";
 import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
+import { assertUnpaidApprovalVerified } from "@/lib/booking/approval-verification";
 import { isExclusionViolation } from "@/lib/db/pg-errors";
 import {
   assertHeldTimesStillFree,
@@ -345,6 +346,13 @@ export async function PATCH(
               }
             }
 
+            if (status === AppointmentStatus.APPROVED) {
+              await assertUnpaidApprovalVerified(
+                tx,
+                "subscription",
+                subscriptionId,
+              );
+            }
             // A decline, like an approval, waits for the buyer's own live
             // checkout to finish or lapse.
             if (status === AppointmentStatus.REJECTED) {

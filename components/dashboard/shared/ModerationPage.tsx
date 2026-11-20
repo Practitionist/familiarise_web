@@ -264,6 +264,15 @@ function sideEffectLines(sideEffects: ModerationSideEffects | null): string[] {
   if (sideEffects.profilesUnverified !== undefined) {
     lines.push(`profiles unverified: ${sideEffects.profilesUnverified}`);
   }
+  if (sideEffects.payLinksClosed !== undefined) {
+    lines.push(`unpaid links closed: ${sideEffects.payLinksClosed}`);
+  }
+  if (sideEffects.requestsDeclined !== undefined) {
+    lines.push(`requests declined: ${sideEffects.requestsDeclined}`);
+  }
+  if (sideEffects.trialHoldsReleased !== undefined) {
+    lines.push(`trial holds released: ${sideEffects.trialHoldsReleased}`);
+  }
   if (sideEffects.reviewRemoved) lines.push("review removed: yes");
   if (sideEffects.cancellations?.engagementsCancelled !== undefined) {
     lines.push(

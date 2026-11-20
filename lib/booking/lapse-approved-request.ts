@@ -23,7 +23,10 @@ import {
   transitionSubscriptionRequest,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
-import { expirePendingPaymentsInTx } from "@/lib/booking/pending-payment-expiry";
+import {
+  expirePendingPaymentsInTx,
+  type GatewayCancel,
+} from "@/lib/booking/pending-payment-expiry";
 import {
   REQUEST_AGAIN_NOTE,
   REQUESTED_AGAIN_REASON,
@@ -51,7 +54,8 @@ export type LapseReason =
   | "PAYMENT_LAPSED"
   | "WITHDRAWN_BY_CONSULTANT"
   | "TOO_CLOSE_TO_PAY"
-  | typeof REQUESTED_AGAIN_REASON;
+  | typeof REQUESTED_AGAIN_REASON
+  | "EXPERT_NOT_VERIFIED";
 
 /**
  * The terminal status each reason earns. EXPIRED is reserved for a lapsed
@@ -66,6 +70,8 @@ const LAPSED_TO: Record<LapseReason, AppointmentStatus> = {
   TOO_CLOSE_TO_PAY: AppointmentStatus.EXPIRED,
   // The learner closes a window that already ran out before requesting again.
   [REQUESTED_AGAIN_REASON]: AppointmentStatus.EXPIRED,
+  // Moderation rejected the expert: the unpaid link can no longer be paid.
+  EXPERT_NOT_VERIFIED: AppointmentStatus.EXPIRED,
 };
 
 /** The engagement-reversal note each reason leaves on the organisation's usage row. */
@@ -74,6 +80,7 @@ const LAPSE_NOTE: Record<LapseReason, string> = {
   WITHDRAWN_BY_CONSULTANT: "Approval withdrawn by the expert before payment",
   TOO_CLOSE_TO_PAY: "Approval released: too close to the session to pay",
   [REQUESTED_AGAIN_REASON]: REQUEST_AGAIN_NOTE,
+  EXPERT_NOT_VERIFIED: "Approval lapsed: the expert is no longer verified",
 };
 
 export interface LapseApprovedRequestArgs {
@@ -91,6 +98,8 @@ export type LapseOutcome =
       moved: 1;
       appointmentId: string | null;
       holdNotices?: StagedBackupInterestNotices;
+      /** The orders this lapse expired, for a caller that cancels them after commit. */
+      gatewayCancels?: GatewayCancel[];
     };
 
 // The unpaid arm of the approval decision (#1775 B-9), one copy for every
@@ -159,7 +168,7 @@ export async function lapseApprovedRequest(
   // Each still-PENDING order is claimed by CAS and gives back what its checkout
   // consumed. A Razorpay "cancel" only reads the order, so none is called; a late
   // capture on the EXPIRED row is refunded.
-  await expirePendingPaymentsInTx(tx, {
+  const { gatewayCancels } = await expirePendingPaymentsInTx(tx, {
     appointmentId: appointment.id,
     reason: LAPSE_NOTE[args.reason],
   });
@@ -169,6 +178,7 @@ export async function lapseApprovedRequest(
   return {
     moved: 1,
     appointmentId: appointment.id,
+    ...(gatewayCancels.length > 0 ? { gatewayCancels } : {}),
     ...(hasHoldNotices && holdNotices ? { holdNotices } : {}),
   };
 }

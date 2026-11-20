@@ -70,6 +70,7 @@ import { stageBell } from "@/lib/novu/stage-bell";
 import type { StagedEmailBundleEntry } from "@/lib/novu/stage-then-attempt";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import { goHref } from "@/lib/dashboard/go";
+import type { EndedUnpaidSales } from "@/lib/booking/unverified-expert-sales";
 
 export interface ModerationReportRef {
   id: string;
@@ -105,6 +106,15 @@ export interface TransactionalEffectResult {
   reviewRemovedConsultantProfileId?: string;
   /** The rejected expert's profile, purged from the public surfaces after commit. */
   unverifiedConsultantProfileId?: string;
+  /** The rejected expert's unpaid sales the reject ended, by kind. */
+  payLinksClosed?: number;
+  requestsDeclined?: number;
+  trialHoldsReleased?: number;
+  /** What phase 2 owes those endings: order cancels and notices; never persisted. */
+  unpaidSalesEnded?: Pick<
+    EndedUnpaidSales,
+    "ended" | "gatewayCancels" | "holdNotices"
+  >;
   banExpires?: string | null;
   collaborationsRemoved?: PlanRef[];
   /** The seat holders' emails of a co-presenter who left; phase 2 stages them, never persisted. */
@@ -517,11 +527,39 @@ async function unverifyProfiles(
     data: { isVerified: false, verificationStatus: "REJECTED" },
     select: { id: true },
   });
+  const profileId = updated[0]?.id;
   // Only a verified expert holds a place on a team.
+  const collaborations = await endCollaborationsAsModeration(
+    tx,
+    targetUserId,
+    staffUserId,
+  );
+  // Stop new, honour booked: every unpaid sale ends now; paid bookings stay.
+  // Lazy: the booking graph loads only for a reject.
+  const { endUnpaidSalesInTx } =
+    await import("@/lib/booking/unverified-expert-sales");
+  const sales = profileId
+    ? await endUnpaidSalesInTx(tx, {
+        consultantProfileId: profileId,
+        actorUserId: staffUserId,
+      })
+    : null;
   return {
     profilesUnverified: updated.length,
-    ...(updated[0] ? { unverifiedConsultantProfileId: updated[0].id } : {}),
-    ...(await endCollaborationsAsModeration(tx, targetUserId, staffUserId)),
+    ...(profileId ? { unverifiedConsultantProfileId: profileId } : {}),
+    ...collaborations,
+    ...(sales
+      ? {
+          payLinksClosed: sales.payLinksClosed,
+          requestsDeclined: sales.requestsDeclined,
+          trialHoldsReleased: sales.trialHoldsReleased,
+          unpaidSalesEnded: {
+            ended: sales.ended,
+            gatewayCancels: sales.gatewayCancels,
+            holdNotices: sales.holdNotices,
+          },
+        }
+      : {}),
   };
 }
 
@@ -651,6 +689,7 @@ export async function applyBestEffortEffects(
   const {
     stagedSessionEnds = [],
     owedCohostEmails = [],
+    unpaidSalesEnded,
     ...committed
   } = transactional;
   // The ban or suspension has committed; a failed log write cannot undo it.
@@ -680,6 +719,14 @@ export async function applyBestEffortEffects(
       owedCohostEmails,
       "moderation.collaborationsRemoved",
     );
+  }
+
+  if (unpaidSalesEnded) {
+    const { settleEndedUnpaidSales } =
+      await import("@/lib/booking/unverified-expert-notices");
+    const notices = await settleEndedUnpaidSales(unpaidSalesEnded);
+    summary.stagedBells?.push(...notices.bells);
+    summary.stagedEmails?.push(...notices.emails);
   }
 
   await runNotification(input, transactional, summary, errors);

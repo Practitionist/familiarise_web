@@ -28,6 +28,7 @@ import {
   unlockApproval,
 } from "@/utils/appointmentlock";
 import { transitionConsultationRequest } from "@/lib/booking/transitions";
+import { assertUnpaidApprovalVerified } from "@/lib/booking/approval-verification";
 import { agreedConsultationPricePaise } from "@/lib/booking/sold-terms";
 import { flushBackupInterestNotices } from "@/lib/booking/backup-interest";
 import {
@@ -377,6 +378,11 @@ export async function PATCH(
             }
 
             if (status === AppointmentStatus.APPROVED) {
+              await assertUnpaidApprovalVerified(
+                tx,
+                "consultation",
+                consultationId,
+              );
               // The buyer's own checkout is not a request to answer yet.
               await assertNoLiveCheckoutHold(
                 tx,

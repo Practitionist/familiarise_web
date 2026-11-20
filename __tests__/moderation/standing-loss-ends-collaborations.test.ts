@@ -119,6 +119,10 @@ const tx = {
     updateMany: jest.fn(async () => ({ count: 1 })),
     updateManyAndReturn: jest.fn(async () => [{ id: "cp-1" }]),
   },
+  // The expert has no unpaid sale open, so the reject ends none.
+  consultation: { findMany: jest.fn(async () => []) },
+  subscription: { findMany: jest.fn(async () => []) },
+  trial: { findMany: jest.fn(async () => []) },
   collaborator: {
     findMany: jest.fn(async ({ where }: { where: Where }) =>
       live(where).map(({ id }) => ({ id })),
