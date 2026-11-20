@@ -59,6 +59,7 @@ async function renderWith(payment: Pay) {
     subscriptionId: null,
     sessions: [],
     payments: [payment],
+    removedSeats: [],
   };
   global.fetch = jest
     .fn()
