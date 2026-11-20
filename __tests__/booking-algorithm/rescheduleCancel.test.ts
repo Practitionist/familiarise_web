@@ -117,8 +117,12 @@ jest.mock("../../utils/appointmentlock", () => ({
   withAppointmentLock: jest.fn(
     async (_id: string, fn: () => Promise<unknown>) => fn(),
   ),
+  renewAppointmentLock: jest.fn(async () => undefined),
   withEventCheckoutLock: jest.fn(
-    async (_key: unknown, fn: () => Promise<unknown>) => fn(),
+    async (
+      _key: unknown,
+      fn: (renew: () => Promise<void>) => Promise<unknown>,
+    ) => fn(async () => undefined),
   ),
   BookingLockUnavailableError: class extends Error {},
   AppointmentBusyError: class extends Error {},
@@ -151,7 +155,6 @@ jest.mock("../../lib/stream/access-revocation", () => ({
   persistSeatRevocationInTx: jest.fn(async () => seatGeneration),
   revokeEndedSeatAccess: jest.fn().mockResolvedValue(undefined),
   fenceSeatGrants: jest.fn().mockResolvedValue({ verified: true, lost: [] }),
-  enqueueCollaboratorRevocationRetry: jest.fn().mockResolvedValue(undefined),
 }));
 
 // ─── Imports ────────────────────────────────────────────────────────────────
@@ -772,6 +775,54 @@ describe("Reschedule Route Handler - POST", () => {
     expect(mockTx.rescheduleRequest.create).not.toHaveBeenCalled();
   });
 
+  it("refuses to move a 1:1 to a time past the booking horizon", async () => {
+    mockTx.appointment.findUnique.mockResolvedValue(
+      makeConsultationAppointment({
+        occurrences: [makeSlot("slot-1", NEAR_DATE)],
+      }),
+    );
+    const startsAt = new Date(Date.now() + 91 * 24 * 60 * 60 * 1000);
+    startsAt.setUTCMinutes(0, 0, 0);
+    const res = await rescheduleHandler(
+      makeRescheduleRequest("apt-1", "CONSULTATION", {
+        proposedSlots: [
+          {
+            startsAt: startsAt.toISOString(),
+            endsAt: new Date(startsAt.getTime() + 30 * 60 * 1000).toISOString(),
+          },
+        ],
+      }),
+      makeParams("apt-1"),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      code: "SLOT_TOO_FAR",
+      error: "Bookings open up to 90 days ahead. Pick an earlier time.",
+    });
+    expect(mockTx.rescheduleRequest.create).not.toHaveBeenCalled();
+  });
+
+  it("judges the horizon by the session's start, so an hour starting on it may run past it", async () => {
+    const HALF_HOUR = 30 * 60 * 1000;
+    mockTx.appointment.findUnique.mockResolvedValue(
+      makeConsultationAppointment(),
+    );
+    const start =
+      Math.floor((Date.now() + 90 * 24 * 60 * 60 * 1000) / HALF_HOUR) *
+      HALF_HOUR;
+    const res = await rescheduleHandler(
+      makeRescheduleRequest("apt-1", "CONSULTATION", {
+        proposedSlots: [start, start + HALF_HOUR].map((at) => ({
+          startsAt: new Date(at).toISOString(),
+          endsAt: new Date(at + HALF_HOUR).toISOString(),
+        })),
+      }),
+      makeParams("apt-1"),
+    );
+    expect(res.status).toBe(200);
+    expect(mockTx.rescheduleRequest.create).toHaveBeenCalled();
+  });
+
   // ─── CONSULTATION Reschedule ────────────────────────────────────────────
 
   describe("CONSULTATION", () => {
@@ -1366,13 +1417,12 @@ describe("Cancel Route Handler - POST", () => {
         expect.objectContaining({
           // RESCHEDULED counts too: a slot released by a pending reschedule is
           // not SCHEDULED, and skipping it left non-terminal rows on a booking
-          // that no longer exists. UNVERIFIED counts as well: auto-complete
-          // stamps past-no-meeting sessions UNVERIFIED, and leaving them live
-          // keeps a non-tombstoned row on the calendar of a dead booking.
+          // that no longer exists. UNVERIFIED stays out: the quote counted it
+          // delivered and it waits for an ops verdict.
           where: {
             appointmentId: "apt-1",
             completionStatus: {
-              in: ["SCHEDULED", "RESCHEDULED", "UNVERIFIED"],
+              in: ["SCHEDULED", "RESCHEDULED"],
             },
           },
           // The tombstone is the other half of the soft-cancel (#676 A10).

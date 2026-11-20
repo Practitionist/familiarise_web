@@ -1,5 +1,6 @@
 // The org-funded gate ahead of the lock (org status, membership, consent, rail,
-// credit ceiling, programme assignment) and the invoice credit-limit check.
+// credit ceiling, programme assignment), the invoice credit-limit check, and
+// the coverage and GST refusals the checkout payer picker reads before Pay.
 
 import {
   checkAssignee,
@@ -15,6 +16,13 @@ import { checkConsent } from "@/lib/compliance/dpdp";
 import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
 import { ENABLE_DUNNING_SUSPEND } from "@/lib/feature-flags";
 import { sumPaise } from "@/lib/payments/utils/money";
+import {
+  assertOrgBillingAvailable,
+  currentGstRegime,
+} from "@/lib/payments/tax/gst-regime";
+import { isRefusal, type RefusalShape } from "@/lib/errors/refusal";
+import type { CoveredPlanType } from "@prisma/client";
+import { COVERED_PLAN_TYPE_LABEL } from "@/lib/labels/org-labels";
 
 /**
  * #1744 row 4 — the one credit-limit predicate both gates share: the booking
@@ -89,6 +97,81 @@ export async function readInvoiceExposurePaise(
     _sum: { totalPaise: true },
   });
   return accrued + sumPaise(outstandingAgg._sum.totalPaise);
+}
+
+export const PROGRAM_ASSIGNMENT_INACTIVE = "PROGRAM_ASSIGNMENT_INACTIVE";
+
+/** The refusal sentence when no active programme assignment covers `planType`. */
+export function noCoveringAssignmentMessage(planType: CoveredPlanType): string {
+  const bookings = `${COVERED_PLAN_TYPE_LABEL[planType].toLowerCase()} bookings`;
+  return `No active program assignment covers this booking. Ask your organisation admin to assign you to a Program that covers ${bookings}.`;
+}
+
+/**
+ * The member's active assignment at this organisation, today, whose Program
+ * and contract are ACTIVE and whose `coveredPlanTypes` include `planType`
+ * (empty covers everything).
+ */
+export function findCoveringAssignment(
+  membershipId: string,
+  organizationId: string,
+  planType: CoveredPlanType,
+): Promise<{ id: string; programId: string } | null> {
+  const now = new Date();
+  return prisma.programAssignment.findFirst({
+    where: {
+      membershipId,
+      status: "ACTIVE",
+      periodStart: { lte: now },
+      periodEnd: { gte: now },
+      program: {
+        status: "ACTIVE",
+        OR: [
+          { coveredPlanTypes: { isEmpty: true } },
+          { coveredPlanTypes: { has: planType } },
+        ],
+        contract: {
+          organizationId,
+          status: "ACTIVE",
+          effectiveFrom: { lte: now },
+          OR: [{ effectiveTo: null }, { effectiveTo: { gte: now } }],
+        },
+      },
+    },
+    orderBy: { periodEnd: "desc" },
+    select: { id: true, programId: true },
+  });
+}
+
+/**
+ * The refusal checkout would give this member for billing `planType` to the
+ * organisation now on programme coverage or GST registration; null when neither refuses.
+ */
+export async function orgFundingRefusal(
+  organizationId: string,
+  membershipId: string,
+  planType: CoveredPlanType,
+): Promise<RefusalShape | null> {
+  const account = await prisma.billingAccount.findUnique({
+    where: { ownerOrgId: organizationId },
+    select: { fundingSource: true },
+  });
+  // The PERSONAL rail is the learner's own card; neither gate applies to it.
+  if ((account?.fundingSource ?? "PERSONAL") === "PERSONAL") return null;
+
+  if (!(await findCoveringAssignment(membershipId, organizationId, planType))) {
+    return {
+      code: PROGRAM_ASSIGNMENT_INACTIVE,
+      message: noCoveringAssignmentMessage(planType),
+    };
+  }
+  try {
+    assertOrgBillingAvailable(currentGstRegime());
+  } catch (error) {
+    if (isRefusal(error)) return error.toShape();
+    throw error;
+  }
+  return null;
 }
 
 /**
@@ -306,39 +389,16 @@ export async function resolveOrgFunding(
       fundingSource !== "PERSONAL" ||
       Boolean(prisma.programAssignment?.findFirst)
     ) {
-      const now = new Date();
-      const assignment = await prisma.programAssignment.findFirst({
-        where: {
-          membershipId: callerMembership.id,
-          status: "ACTIVE",
-          periodStart: { lte: now },
-          periodEnd: { gte: now },
-          program: {
-            status: "ACTIVE",
-            OR: [
-              { coveredPlanTypes: { isEmpty: true } },
-              { coveredPlanTypes: { has: appointmentType } },
-            ],
-            contract: {
-              organizationId: org.id,
-              status: "ACTIVE",
-              effectiveFrom: { lte: now },
-              OR: [{ effectiveTo: null }, { effectiveTo: { gte: now } }],
-            },
-          },
-        },
-        orderBy: { periodEnd: "desc" },
-        select: { id: true, programId: true },
-      });
+      const assignment = await findCoveringAssignment(
+        callerMembership.id,
+        org.id,
+        appointmentType,
+      );
 
       if (!assignment && fundingSource !== "PERSONAL") {
         throw Object.assign(
-          new Error(
-            "No active program assignment covers this booking. Ask your organization admin to assign you to a Program that covers " +
-              appointmentType +
-              ".",
-          ),
-          { httpStatus: 409, code: "PROGRAM_ASSIGNMENT_INACTIVE" },
+          new Error(noCoveringAssignmentMessage(appointmentType)),
+          { httpStatus: 409, code: PROGRAM_ASSIGNMENT_INACTIVE },
         );
       }
       if (assignment) {

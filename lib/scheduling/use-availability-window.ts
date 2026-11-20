@@ -10,6 +10,8 @@ import type { TIntervalTiming } from "@/types/slots";
 import { createGridPollInterval } from "@/lib/scheduling/availabilityPolling";
 import { calendarDateKey, dayRangeBounds } from "@/lib/time/grid-zone";
 import { byCodeUnit } from "@/lib/scheduling/code-unit-order";
+import type { GridLead } from "@/lib/scheduling/allocationService";
+import { gridQuotaSchema, type GridQuota } from "@/lib/scheduling/grid-quota";
 
 /**
  * One day of the availability-with-allocation grid answer.
@@ -20,9 +22,24 @@ import { byCodeUnit } from "@/lib/scheduling/code-unit-order";
 export type AvailabilityDaySlots = (TIntervalTiming & {
   isAllocated: boolean;
   bookingStatus: "available" | "partially-booked" | "fully-booked";
+  /** Starts later than a 1:1 booking may be placed. */
+  beyondHorizon?: boolean;
 })[];
 
 export type AvailabilityWindowData = Record<string, AvailabilityDaySlots>;
+
+/** One grid answer: the cells by day and the overlays the pickers read. */
+interface AvailabilityAnswer {
+  data: AvailabilityWindowData;
+  /** The plan's weekly/day limit, when a subscription was named. */
+  quota: GridQuota | null;
+  /** The lead time the server applied to these cells. */
+  leadMs: number | null;
+}
+
+const cellsOf = (answer: AvailabilityAnswer): AvailabilityWindowData =>
+  answer.data;
+const wholeAnswer = (answer: AvailabilityAnswer): AvailabilityAnswer => answer;
 
 /** The copy every reader shows when the grid cannot be read; detail goes to the console. */
 export const AVAILABILITY_READ_FAILED_MESSAGE =
@@ -40,10 +57,10 @@ class AvailabilityReadError extends Error {
   }
 }
 
-export interface EtagCacheEntry {
+interface EtagCacheEntry {
   key: string;
   etag: string;
-  data: AvailabilityWindowData;
+  answer: AvailabilityAnswer;
 }
 
 async function fetchWindow(
@@ -57,14 +74,15 @@ async function fetchWindow(
   subscriptionId?: string,
   releasing?: string,
   eventQuery = "",
-): Promise<AvailabilityWindowData> {
+  leadQuery = "",
+): Promise<AvailabilityAnswer> {
   const consulteeParam = consulteeUserId
     ? `&consulteeUserId=${encodeURIComponent(consulteeUserId)}`
     : "";
   const subscriptionParam = subscriptionId
     ? `&subscriptionId=${encodeURIComponent(subscriptionId)}${releasing ? `&releasing=${encodeURIComponent(releasing)}` : ""}`
     : "";
-  const url = `/api/scheduling/availability-with-allocation/${consultantId}?startDateInUtc=${startUtc.toISOString()}&endDateInUtc=${endUtc.toISOString()}&timezone=${encodeURIComponent(timezone)}${consulteeParam}${subscriptionParam}${eventQuery}`;
+  const url = `/api/scheduling/availability-with-allocation/${consultantId}?startDateInUtc=${startUtc.toISOString()}&endDateInUtc=${endUtc.toISOString()}&timezone=${encodeURIComponent(timezone)}${consulteeParam}${subscriptionParam}${eventQuery}${leadQuery}`;
 
   const cachedEntry =
     !noStore && etagCacheRef?.current?.key === url
@@ -100,11 +118,12 @@ async function fetchWindow(
       subscriptionId,
       releasing,
       eventQuery,
+      leadQuery,
     );
   }
   if (response.status === 304) {
     if (cachedEntry) {
-      return cachedEntry.data;
+      return cachedEntry.answer;
     }
     response = await fetch(url, {
       credentials: "include",
@@ -116,18 +135,19 @@ async function fetchWindow(
     console.warn("Availability read failed", response.status, detail);
     throw new AvailabilityReadError(response.status, detail);
   }
-  const { data } = await response.json();
-  const resolved = (data ?? {}) as AvailabilityWindowData;
+  const body = await response.json();
+  const quota = gridQuotaSchema.safeParse(body.quota);
+  const answer: AvailabilityAnswer = {
+    data: (body.data ?? {}) as AvailabilityWindowData,
+    quota: quota.success ? quota.data : null,
+    leadMs: typeof body.leadMs === "number" ? body.leadMs : null,
+  };
   const responseEtag =
     response.headers?.get?.("ETag") ?? response.headers?.get?.("etag") ?? null;
   if (responseEtag && etagCacheRef) {
-    etagCacheRef.current = {
-      key: url,
-      etag: responseEtag,
-      data: resolved,
-    };
+    etagCacheRef.current = { key: url, etag: responseEtag, answer };
   }
-  return resolved;
+  return answer;
 }
 
 /**
@@ -174,6 +194,12 @@ function eventQueryOf(event: AvailabilityEvent | undefined): string {
   return "";
 }
 
+/** The writer's lead time as the route reads it; a plain booking is the route's default. */
+function leadQueryOf(lead: GridLead | undefined): string {
+  if (!lead || lead.purpose === "book") return "";
+  return `&purpose=${lead.purpose}${lead.unpaid ? "&unpaid=1" : ""}`;
+}
+
 export function availabilityQueryKey(
   consultantId: string,
   startUtc: Date,
@@ -183,6 +209,7 @@ export function availabilityQueryKey(
   subscriptionId?: string,
   releasing?: string,
   eventQuery?: string,
+  leadQuery?: string,
 ) {
   const base = consulteeUserId
     ? [
@@ -208,7 +235,8 @@ export function availabilityQueryKey(
         `releasing:${releasing ?? ""}`,
       ]
     : base;
-  return eventQuery ? [...keyed, `event:${eventQuery}`] : keyed;
+  const withEvent = eventQuery ? [...keyed, `event:${eventQuery}`] : keyed;
+  return leadQuery ? [...withEvent, `lead:${leadQuery}`] : withEvent;
 }
 
 /**
@@ -229,19 +257,16 @@ export function availabilityQueryKey(
  * the next fetch past the browser cache once (back/forward restore after a
  * checkout 409), then it resets itself.
  */
-export function useAvailabilityWindow({
-  consultantId,
-  startUtc,
-  endUtc,
-  timezone,
-  consulteeUserId,
-  subscriptionId,
-  releasingIds,
-  event,
-  enabled = true,
-  bypassRef,
-  keepPrevious = false,
-}: {
+export function useAvailabilityWindow(args: AvailabilityWindowArgs) {
+  return useWindowQuery(args, cellsOf);
+}
+
+/** The same read with its overlays: the plan's limit and the server's lead time. */
+export function useAvailabilityAnswer(args: AvailabilityWindowArgs) {
+  return useWindowQuery(args, wholeAnswer);
+}
+
+interface AvailabilityWindowArgs {
   consultantId: string | undefined;
   startUtc: Date | null;
   endUtc: Date | null;
@@ -253,17 +278,38 @@ export function useAvailabilityWindow({
   releasingIds?: readonly string[];
   /** The event being placed or moved. */
   event?: AvailabilityEvent;
+  /** The writer the picks go to; its lead time decides "too soon". A moving event names its own. */
+  lead?: GridLead;
   enabled?: boolean;
   bypassRef?: MutableRefObject<boolean>;
   /** Keep showing the last answer while a new window loads (no skeleton swap). */
   keepPrevious?: boolean;
-}) {
+}
+
+function useWindowQuery<T>(
+  {
+    consultantId,
+    startUtc,
+    endUtc,
+    timezone,
+    consulteeUserId,
+    subscriptionId,
+    releasingIds,
+    event,
+    lead,
+    enabled = true,
+    bypassRef,
+    keepPrevious = false,
+  }: AvailabilityWindowArgs,
+  select: (answer: AvailabilityAnswer) => T,
+) {
   const etagCacheRef = useRef<EtagCacheEntry | null>(null);
   const pollOptions = useGridPollOptions();
   const releasing = releasingIds?.length
     ? [...releasingIds].sort(byCodeUnit).join(",")
     : undefined;
   const eventQuery = eventQueryOf(event);
+  const leadQuery = event?.moving ? "" : leadQueryOf(lead);
   const ready =
     enabled && !!consultantId && !!startUtc && !!endUtc && !!timezone;
   return useQuery({
@@ -278,6 +324,7 @@ export function useAvailabilityWindow({
             subscriptionId,
             releasing,
             eventQuery,
+            leadQuery,
           )
         : ["availability", "disabled"],
     queryFn: () => {
@@ -294,8 +341,10 @@ export function useAvailabilityWindow({
         subscriptionId,
         releasing,
         eventQuery,
+        leadQuery,
       );
     },
+    select,
     enabled: ready,
     placeholderData: keepPrevious ? keepPreviousData : undefined,
     // The grid answer is `private, max-age=30`: re-reading sooner than that
@@ -347,6 +396,7 @@ export function useAvailabilityMonth({
   timezone,
   consulteeUserId,
   event,
+  lead,
   bypassRef,
   enabled = true,
 }: {
@@ -356,6 +406,8 @@ export function useAvailabilityMonth({
   consulteeUserId?: string;
   /** The event being placed or moved. */
   event?: AvailabilityEvent;
+  /** The writer the pick goes to, when the route's default (a plain booking) is wrong for it. */
+  lead?: GridLead;
   /** Set to true to send the next read past the browser cache once. */
   bypassRef?: MutableRefObject<boolean>;
   enabled?: boolean;
@@ -368,7 +420,9 @@ export function useAvailabilityMonth({
   const baseKey = consulteeUserId
     ? ["availability-month", consultantId, monthKey, timezone, consulteeUserId]
     : ["availability-month", consultantId, monthKey, timezone];
-  const queryKey = eventQuery ? [...baseKey, `event:${eventQuery}`] : baseKey;
+  const leadQuery = event?.moving ? "" : leadQueryOf(lead);
+  const eventKey = eventQuery ? [...baseKey, `event:${eventQuery}`] : baseKey;
+  const queryKey = leadQuery ? [...eventKey, `lead:${leadQuery}`] : eventKey;
   const activeQueryKey = ready ? queryKey : ["availability-month", "disabled"];
   return useQuery({
     queryKey: activeQueryKey,
@@ -388,8 +442,10 @@ export function useAvailabilityMonth({
         undefined,
         undefined,
         eventQuery,
+        leadQuery,
       );
     },
+    select: cellsOf,
     enabled: ready,
     staleTime: 60_000,
     retry: 1,

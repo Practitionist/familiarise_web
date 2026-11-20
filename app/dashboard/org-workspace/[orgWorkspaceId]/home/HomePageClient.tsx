@@ -5,9 +5,8 @@
  *
  *   1. Figures — orgs you own, their active members, and what they owe and
  *      hold, one total per currency (never a mixed-currency sum).
- *   2. Every organization you belong to, grouped by your role in it, each
- *      with its status. Only OWNER rows used to show, so a maintainer or
- *      learner elsewhere had no way in from here.
+ *   2. Every active organization you belong to, grouped by your role in it;
+ *      the rest sit in a collapsed "Not active (N)" group, as on Spend.
  *   3. "New organization" — the create wizard inside this same chrome.
  *
  * The server page SSR-prefetches the org list and the billing roll-up under
@@ -42,6 +41,7 @@ import { ORG_STATUS } from "@/lib/labels/backoffice-labels";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { useWorkspaceBilling } from "../hooks/useWorkspaceBilling";
 import { formatCurrencyTotals } from "../currency-totals";
+import { NotActiveGroup } from "../NotActiveGroup";
 
 interface OrgMembershipRow {
   membershipId: string;
@@ -155,9 +155,12 @@ export function HomePageClient({ orgWorkspaceId }: { orgWorkspaceId: string }) {
   const createHref = `/dashboard/org-workspace/${orgWorkspaceId}/create`;
 
   const rows = orgs.data?.data ?? [];
+  const inactiveRows = rows.filter((r) => r.organization.status !== "ACTIVE");
   const groups = ROLE_ORDER.map((role) => ({
     role,
-    rows: rows.filter((r) => r.role === role),
+    rows: rows.filter(
+      (r) => r.role === role && r.organization.status === "ACTIVE",
+    ),
   })).filter((g) => g.rows.length > 0);
 
   let figures: React.ReactNode;
@@ -180,7 +183,15 @@ export function HomePageClient({ orgWorkspaceId }: { orgWorkspaceId: string }) {
   } else {
     figures = (
       <StatRow columns={4}>
-        <Stat label="Organizations you own" value={summary.orgsOwned} />
+        <Stat
+          label="Organizations you own"
+          value={summary.activeOrgs}
+          hint={
+            summary.inactiveOrgs > 0
+              ? `active; ${summary.inactiveOrgs} not active`
+              : undefined
+          }
+        />
         <Stat
           label="Active members"
           value={summary.totalActiveMembers.toLocaleString("en-IN")}
@@ -189,7 +200,9 @@ export function HomePageClient({ orgWorkspaceId }: { orgWorkspaceId: string }) {
           label="Outstanding"
           value={formatCurrencyTotals(summary.outstandingByCurrency)}
           tone={
-            summary.outstandingByCurrency.length > 0 ? "warning" : "neutral"
+            summary.outstandingByCurrency.some((t) => t.paise > 0)
+              ? "warning"
+              : "neutral"
           }
         />
         <Stat
@@ -216,7 +229,7 @@ export function HomePageClient({ orgWorkspaceId }: { orgWorkspaceId: string }) {
         onRetry={() => void orgs.refetch()}
       />
     );
-  } else if (groups.length === 0) {
+  } else if (rows.length === 0) {
     list = (
       <EmptyState
         icon={Building2}
@@ -230,18 +243,31 @@ export function HomePageClient({ orgWorkspaceId }: { orgWorkspaceId: string }) {
       />
     );
   } else {
-    list = groups.map((g) => (
-      <Section
-        key={g.role}
-        title={`${MEMBER_ROLE_LABEL[g.role]} (${g.rows.length})`}
-      >
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {g.rows.map((row) => (
-            <OrgCard key={row.membershipId} row={row} />
-          ))}
-        </div>
-      </Section>
-    ));
+    list = (
+      <>
+        {groups.map((g) => (
+          <Section
+            key={g.role}
+            title={`${MEMBER_ROLE_LABEL[g.role]} (${g.rows.length})`}
+          >
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {g.rows.map((row) => (
+                <OrgCard key={row.membershipId} row={row} />
+              ))}
+            </div>
+          </Section>
+        ))}
+        {inactiveRows.length > 0 && (
+          <NotActiveGroup count={inactiveRows.length}>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {inactiveRows.map((row) => (
+                <OrgCard key={row.membershipId} row={row} />
+              ))}
+            </div>
+          </NotActiveGroup>
+        )}
+      </>
+    );
   }
 
   return (

@@ -44,7 +44,8 @@ export async function countActiveConsultationRequests(
       requestedById: consulteeProfileId,
       status: AppointmentStatus.PENDING,
       bookingSource: BookingSource.REQUEST_SUBMITTED,
-      // A request past its hold window no longer holds anything, swept or not.
+      // A request past its hold window holds nothing, swept or not: occupancy
+      // frees its time at the same instant (`buildDeadHoldFilter`).
       requestedAt: { gte: holdingSince("CONSULTATION", now) },
       NOT: { appointment: BEING_MOVED },
     },
@@ -88,8 +89,8 @@ export function pausedRefusal(profile: {
 
 /**
  * The cap refusal. Call it inside the `request-cap` lock with the write
- * transaction: the count (real submitted requests and trial requests, the
- * same one the inbox shows) is the guard, and a cap of null skips the read.
+ * transaction: the count (submitted 1:1 and plan requests still inside their
+ * hold; a trial never counts) is the guard, and a cap of null skips the read.
  */
 export async function capacityRefusal(
   db: RequestCounters,

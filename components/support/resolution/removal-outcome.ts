@@ -10,7 +10,7 @@ export function removalOutcomeCopy(
     return {
       appealable: false,
       label: "Removal overturned",
-      note: "Support found the removal was not justified. Your seat is not given back, but anything still unrefunded on it was refunded to where you paid before this decision was recorded, and the block on the event's calls is lifted.",
+      note: "Support found the removal was not justified. Your seat is not given back, but anything still unrefunded on it was refunded to where you paid before this decision was recorded, and the block on rejoining the event and its calls is lifted. You can register for a free event again; for a paid seat, support will help you rejoin.",
     };
   }
   return {

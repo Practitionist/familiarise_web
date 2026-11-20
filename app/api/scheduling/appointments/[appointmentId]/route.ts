@@ -2,7 +2,16 @@ import { NextRequest, NextResponse } from "next/server";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
-import { liveParticipant } from "@/lib/booking/participants";
+import {
+  liveParticipant,
+  NOT_COLLABORATOR_ROW,
+} from "@/lib/booking/participants";
+import type { PlanRef } from "@/lib/collaborators/team";
+import {
+  resolveCollaborationViewer,
+  seesAttendeePayments,
+  seesAttendees,
+} from "@/lib/collaborators/viewer";
 import {
   HOST_PROFILE_SELECT,
   PARTY_PROFILE_SELECT,
@@ -11,12 +20,16 @@ import {
   publicRequester,
 } from "@/lib/booking/list-selects";
 
-/** What a caller may read of an appointment: every attendee's rows, only their own, or nothing. */
-type AppointmentAccess = "every-seat" | "own-seat";
+/** How far a caller's read of a booking's seats or payments reaches. */
+type Reach = "all" | "own" | "none";
+type AppointmentAccess = { seats: Reach; payments: Reach };
+
+const EVERY_ROW: AppointmentAccess = { seats: "all", payments: "all" };
 
 /**
- * Hosts (plan consultant or accepted collaborator) and 1:1 parties see every seat;
- * a group seat holder sees only their own. Null when the caller is no party.
+ * A 1:1 party reads the whole booking. On a webinar or class the plan's
+ * manager reads every seat and payment, a presenter the seats alone, crew
+ * neither, and a seat holder their own. Null when the caller is no party.
  */
 async function appointmentAccess(
   userId: string,
@@ -30,7 +43,7 @@ async function appointmentAccess(
       participants: {
         select: { id: true },
         take: 1,
-        where: liveParticipant(userId),
+        where: { ...liveParticipant(userId), ...NOT_COLLABORATOR_ROW },
       },
       consultation: {
         select: {
@@ -44,51 +57,33 @@ async function appointmentAccess(
           subscriptionPlan: { select: { consultantProfileId: true } },
         },
       },
-      webinar: {
-        select: {
-          webinarPlan: {
-            select: {
-              consultantProfileId: true,
-              collaborators: {
-                where: { status: "ACCEPTED" },
-                select: { consultantProfileId: true },
-              },
-            },
-          },
-        },
-      },
-      class: {
-        select: {
-          classPlan: {
-            select: {
-              consultantProfileId: true,
-              collaborators: {
-                where: { status: "ACCEPTED" },
-                select: { consultantProfileId: true },
-              },
-            },
-          },
-        },
-      },
+      webinar: { select: { webinarPlanId: true } },
+      class: { select: { classPlanId: true } },
     },
   });
 
   if (!appointment) return null;
 
-  const groupPlan =
-    appointment.webinar?.webinarPlan ?? appointment.class?.classPlan;
-  if (groupPlan) {
-    const isHost =
-      !!consultantProfileId &&
-      (groupPlan.consultantProfileId === consultantProfileId ||
-        groupPlan.collaborators.some(
-          (c) => c.consultantProfileId === consultantProfileId,
-        ));
-    if (isHost) return "every-seat";
-    return appointment.participants.length > 0 ? "own-seat" : null;
+  const planRef: PlanRef | null = appointment.webinar
+    ? { planType: "webinar", planId: appointment.webinar.webinarPlanId }
+    : appointment.class
+      ? { planType: "class", planId: appointment.class.classPlanId }
+      : null;
+  if (planRef) {
+    const { viewer } = await resolveCollaborationViewer(
+      prisma,
+      planRef,
+      userId,
+    );
+    if (seesAttendeePayments(viewer)) return EVERY_ROW;
+    if (seesAttendees(viewer)) return { seats: "all", payments: "none" };
+    if (viewer.kind === "crew") return { seats: "none", payments: "none" };
+    return appointment.participants.length > 0
+      ? { seats: "own", payments: "own" }
+      : null;
   }
 
-  if (appointment.participants.length > 0) return "every-seat";
+  if (appointment.participants.length > 0) return EVERY_ROW;
   const request = appointment.consultation ?? appointment.subscription;
   const requestPlanConsultantId =
     appointment.consultation?.consultationPlan.consultantProfileId ??
@@ -99,7 +94,7 @@ async function appointmentAccess(
       requestPlanConsultantId === consultantProfileId) ||
       (!!consulteeProfileId && request.requestedById === consulteeProfileId))
   )
-    return "every-seat";
+    return EVERY_ROW;
   return null;
 }
 
@@ -115,7 +110,7 @@ export async function GET(
     const { appointmentId } = await params;
 
     const access = isPrivileged(session.user.role)
-      ? "every-seat"
+      ? EVERY_ROW
       : await appointmentAccess(
           session.user.id,
           session.user.consultantProfileId,
@@ -125,8 +120,8 @@ export async function GET(
     if (!access) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
-    // A group seat holder reads only their own seat and Payment; the filter rides the WHERE.
-    const ownSeatUserId = access === "own-seat" ? session.user.id : undefined;
+    // Rows the caller may not read are never selected; an own-row read carries the caller in its WHERE.
+    const ownId = session.user.id;
 
     const appointment = await prisma.appointment.findUnique({
       where: { id: appointmentId },
@@ -135,11 +130,16 @@ export async function GET(
           where: { deletedAt: null },
           orderBy: { startsAt: "asc" },
         },
-        // #1554 — the roster lives on the appointment, not on each occurrence.
-        participants: {
-          where: liveParticipant(ownSeatUserId),
-          include: { user: PUBLIC_USER_SELECT },
-        },
+        // The roster lives on the appointment, not on each occurrence.
+        ...(access.seats !== "none" && {
+          participants: {
+            where: {
+              ...liveParticipant(access.seats === "own" ? ownId : undefined),
+              ...NOT_COLLABORATOR_ROW,
+            },
+            include: { user: PUBLIC_USER_SELECT },
+          },
+        }),
         consultation: {
           include: {
             consultationPlan: {
@@ -200,20 +200,22 @@ export async function GET(
             },
           },
         },
-        payment: {
-          where: ownSeatUserId ? { userId: ownSeatUserId } : undefined,
-          select: {
-            id: true,
-            amount: true,
-            taxAmount: true,
-            currency: true,
-            paymentStatus: true,
-            paymentMethod: true,
-            createdAt: true,
-            userId: true,
-            user: PUBLIC_USER_SELECT,
+        ...(access.payments !== "none" && {
+          payment: {
+            where: access.payments === "own" ? { userId: ownId } : undefined,
+            select: {
+              id: true,
+              amount: true,
+              taxAmount: true,
+              currency: true,
+              paymentStatus: true,
+              paymentMethod: true,
+              createdAt: true,
+              userId: true,
+              user: PUBLIC_USER_SELECT,
+            },
           },
-        },
+        }),
       },
     });
 

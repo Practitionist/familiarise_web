@@ -40,7 +40,11 @@ import type {
   ProgramType,
 } from "@prisma/client";
 import { ORG_ROLE_RANK } from "@/lib/auth/role-ranks";
-import { hasOrgPermission } from "@/lib/auth/org-permissions";
+import {
+  hasOrgPermission,
+  rolesWithOrgPermission,
+  type OrgSurface,
+} from "@/lib/auth/org-permissions";
 import type { Tone } from "@/lib/ui/tone";
 import { formatOperatorInstant } from "@/lib/time/operator-zone";
 
@@ -152,6 +156,26 @@ export const CONTRACT_STATUS_LABEL: Record<ContractStatus, string> = {
   TERMINATED: "Terminated",
 };
 
+const ENDED_CONTRACT_REASON: Partial<Record<ContractStatus, string>> = {
+  EXPIRED: "the contract has expired",
+  TERMINATED: "the contract was terminated",
+};
+
+/** An expired or terminated contract never renews and its terms are locked, so it has nothing left to edit. */
+export function contractIsEditable(status: ContractStatus): boolean {
+  return ENDED_CONTRACT_REASON[status] === undefined;
+}
+
+/** Auto-renew as the Contracts page states it: not applicable, with the reason, once the contract has ended. */
+export function contractAutoRenewLabel(c: {
+  status: ContractStatus;
+  autoRenew: boolean;
+}): string {
+  const ended = ENDED_CONTRACT_REASON[c.status];
+  if (ended) return `Not applicable: ${ended}`;
+  return c.autoRenew ? "Yes" : "No";
+}
+
 export const CONTRACT_SUPERSESSION_REASON_LABEL: Record<
   ContractSupersessionReason,
   string
@@ -232,6 +256,15 @@ export const MEMBER_ROLE_LABEL: Record<MemberRole, string> = {
   LEARNER: "Learner",
   SUPPORT: "Support",
 };
+
+/** The roles holding `surface`, as words ("Owner or Billing admin"), for who-can-act copy. */
+export function rolesHoldingLabel(surface: OrgSurface): string {
+  const labels = rolesWithOrgPermission(surface).map(
+    (role) => MEMBER_ROLE_LABEL[role],
+  );
+  if (labels.length < 2) return labels[0] ?? "";
+  return `${labels.slice(0, -1).join(", ")} or ${labels.at(-1)}`;
+}
 
 // Zod enum mirroring the prisma MemberRole enum; exported for callers that
 // need to narrow a string coming from the API / DB at a boundary where

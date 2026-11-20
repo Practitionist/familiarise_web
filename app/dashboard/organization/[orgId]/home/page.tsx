@@ -9,6 +9,7 @@ import { requireOrgAccess } from "@/lib/auth-helpers";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { getOrgAnalytics, orgAnalyticsForRole } from "@/lib/data/org-analytics";
 import { getOrgActivityFeed } from "@/lib/data/org-activity";
+import { resolveViewerZone } from "@/lib/time/viewer-zone";
 
 import { HomePageClient } from "./HomePageClient";
 
@@ -48,7 +49,12 @@ export default async function OrgHomePage({
       queryClient.prefetchQuery({
         queryKey: ["org-activity", orgId],
         queryFn: () =>
-          getOrgActivityFeed(orgId, access.member.role, 5).then((rows) => ({
+          getOrgActivityFeed(
+            orgId,
+            access.member.role,
+            resolveViewerZone({ userTimezone: access.session.user.timezone }),
+            5,
+          ).then((rows) => ({
             activity: rows,
           })),
       }),

@@ -31,19 +31,30 @@ import {
   persistConductBlockInTx,
   syncConductCallBlock,
 } from "@/lib/stream/access-revocation";
-import { holdPaymentForCase } from "./case-holds";
+import { liftBlockTx } from "@/lib/booking/seat-removal-lift";
+import type { SeatHistoryReason } from "@/lib/booking/seat-history";
+import { activeHolds, caseHoldEvents, holdPaymentForCase } from "./case-holds";
+import { stageCaseNotice } from "./case-notice";
+import { REMOVAL_ORDER_PREFIX } from "./case-event-copy";
 import { stageSupportCaseIntakeTx } from "./case-service";
 import { supportDeadline } from "./deadline-policy";
 import { priorityForReason } from "./priority";
 import { allocateTicketReference } from "./reference";
 import { slaDeadlinesFor } from "./sla";
 import {
+  endSystemClosedChatTx,
+  releaseSystemClosedCaseTx,
+  systemCloseHoldRefusalTx,
+} from "./system-case-close";
+import { caseTransitionRefusal } from "./case-transitions";
+import { BookingRuleError } from "@/lib/booking/booking-rule-error";
+import {
   CONDUCT_REMOVAL_REVIEW_HOURS,
   conductRemovalRefundKey,
+  removalReviewStart,
   reviewedRemovalCaseId,
 } from "./conduct-removal-state";
 
-const HOUR_MS = 3_600_000;
 const REMOVAL_CASE_TITLE = "Removed from a group session";
 
 interface OpenRemovalCaseInput {
@@ -55,14 +66,20 @@ interface OpenRemovalCaseInput {
   note: string | null;
 }
 
-/** What the host recorded; the removed attendee adds their side as replies. */
-function removalCaseBody(input: {
-  eventTitle: string | null;
-  reasonLabel: string;
-  note: string | null;
-}): string {
+/** What the host recorded; the removed attendee adds their side as replies. A joined removal says it is a repeat. */
+function removalCaseBody(
+  input: {
+    eventTitle: string | null;
+    reasonLabel: string;
+    note: string | null;
+  },
+  again = false,
+): string {
+  const event = input.eventTitle ?? "a group session";
   const lines = [
-    `The host removed you from ${input.eventTitle ?? "a group session"}.`,
+    again
+      ? `The host removed you from ${event} again. This review covers both removals; the earlier one is in the first message.`
+      : `The host removed you from ${event}.`,
     `Reason recorded: ${input.reasonLabel}`,
   ];
   if (input.note) lines.push(`Host's note: ${input.note}`);
@@ -73,6 +90,58 @@ function removalCaseBody(input: {
   return lines.join("\n");
 }
 
+const removalOrderValue = (order: string | null) =>
+  order ? `${REMOVAL_ORDER_PREFIX}${order}` : null;
+
+/** The seat's paid order at the removal: its gateway order id, which a re-mint replaces. Null for a free seat or none. */
+async function endedOrderTx(
+  tx: Tx,
+  input: { appointmentId: string; removedUserId: string },
+): Promise<string | null> {
+  const seat = await tx.appointmentParticipant.findUnique({
+    where: {
+      appointmentId_userId: {
+        appointmentId: input.appointmentId,
+        userId: input.removedUserId,
+      },
+    },
+    select: {
+      payment: {
+        select: { paymentIntent: true, amount: true, originalAmount: true },
+      },
+    },
+  });
+  const order = seat?.payment;
+  if (
+    !order ||
+    isPriceFreePayment({
+      paymentIntent: order.paymentIntent,
+      amountPaise: Number(order.amount),
+      listPricePaise: Number(order.originalAmount),
+    })
+  ) {
+    return null;
+  }
+  return order.paymentIntent;
+}
+
+/** The order the case's latest removal ended, as its opening or join event recorded it; null when none was. */
+async function recordedRemovalOrder(
+  db: PrismaLike,
+  caseId: string,
+): Promise<string | null> {
+  const event = await db.supportCaseEvent.findFirst({
+    where: {
+      caseId,
+      kind: { in: ["CREATED", "REOPENED"] },
+      fromValue: { startsWith: REMOVAL_ORDER_PREFIX },
+    },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    select: { fromValue: true },
+  });
+  return event?.fromValue?.slice(REMOVAL_ORDER_PREFIX.length) ?? null;
+}
+
 /**
  * Opens the case on `tx` with the attendee as requester and submitter, so the
  * host never reads it. The CREATED event's actor is the remover.
@@ -81,6 +150,7 @@ export async function openConductRemovalCaseTx(
   tx: Tx,
   input: OpenRemovalCaseInput,
   now: Date,
+  endedOrder: string | null = null,
 ): Promise<{ id: string; referenceNumber: string }> {
   const body = removalCaseBody(input);
   const priority = priorityForReason(null);
@@ -130,6 +200,7 @@ export async function openConductRemovalCaseTx(
           {
             actorId: input.actorUserId,
             kind: "CREATED",
+            fromValue: removalOrderValue(endedOrder),
             toValue: "OPEN",
             note: "Opened by a host removing the attendee for conduct",
             createdAt: now,
@@ -141,6 +212,181 @@ export async function openConductRemovalCaseTx(
   // AGENT, not SYSTEM: the attendee must get the bell; SYSTEM notifies staff only.
   await stageSupportCaseIntakeTx(tx, created, "AGENT");
   return { id: created.id, referenceNumber: created.referenceNumber };
+}
+
+/**
+ * The learner's unclosed removal case on this event, if any: the open-case unique key
+ * (`support_case_open_scope_key`) allows one, so a second removal joins or closes it.
+ */
+function unclosedRemovalCase(tx: Tx, input: OpenRemovalCaseInput) {
+  return tx.supportCase.findFirst({
+    where: {
+      ownershipScope: "PERSONAL",
+      organizationId: null,
+      scopeKey: `APPOINTMENT:${input.appointmentId}`,
+      requesterUserId: input.removedUserId,
+      submitterUserId: input.removedUserId,
+      category: CONDUCT_REMOVAL_CATEGORY,
+      closedAt: null,
+      deletedAt: null,
+    },
+    select: {
+      id: true,
+      referenceNumber: true,
+      title: true,
+      status: true,
+      category: true,
+    },
+  });
+}
+
+type UnclosedRemovalCase = NonNullable<
+  Awaited<ReturnType<typeof unclosedRemovalCase>>
+>;
+
+const removalConflict = () =>
+  new BookingRuleError(
+    "REMOVAL_CONFLICT",
+    "This attendee's removal case changed while you were saving the removal. Reload the attendee list and try again.",
+    409,
+  );
+
+/**
+ * Closes a decided removal case by compare-and-set, as the system's RESOLVED to
+ * CLOSED move, so a fresh case can review the new removal; its history stays.
+ */
+async function closeDecidedRemovalCaseTx(
+  tx: Tx,
+  decided: UnclosedRemovalCase,
+  now: Date,
+): Promise<void> {
+  if (
+    decided.category !== CONDUCT_REMOVAL_CATEGORY ||
+    caseTransitionRefusal(decided.status, "CLOSED", {
+      decided: true,
+      actor: "SYSTEM",
+    })
+  ) {
+    throw removalConflict();
+  }
+  const closed = await tx.supportCase.updateMany({
+    where: {
+      id: decided.id,
+      status: decided.status,
+      category: CONDUCT_REMOVAL_CATEGORY,
+      closedAt: null,
+    },
+    data: { status: "CLOSED", closedAt: now },
+  });
+  if (closed.count !== 1) throw removalConflict();
+  // As an auto-close: holds a pending refund review or frozen money doors still need stay, for staff to release.
+  const keep = await systemCloseHoldRefusalTx(tx, decided.id);
+  if (!keep) {
+    await releaseSystemClosedCaseTx(
+      tx,
+      decided.id,
+      now,
+      "Released when a new removal closed this decided case",
+    );
+    return;
+  }
+  await endSystemClosedChatTx(tx, decided.id, now);
+  await postCaseMessageTx(
+    tx,
+    decided.id,
+    `Payout holds kept when a new removal closed this case (${keep}); release them from this case once that is settled.`,
+    true,
+    now,
+  );
+}
+
+/**
+ * Adds the new removal to an undecided case: one review, and one verdict, covers both.
+ * The summary moves to the latest removal and the learner is told the review restarted.
+ */
+async function joinUndecidedRemovalCaseTx(
+  tx: Tx,
+  open: UnclosedRemovalCase,
+  input: OpenRemovalCaseInput,
+  now: Date,
+  endedOrder: string | null,
+): Promise<void> {
+  const due = supportDeadline(CONDUCT_REMOVAL_CATEGORY, now);
+  const body = removalCaseBody(input, true);
+  const { messageSeq } = await tx.supportCase.update({
+    where: { id: open.id },
+    data: {
+      description: body,
+      statutoryDueAt: due.statutoryDueAt,
+      messageSeq: { increment: 1 },
+      lastMessageAt: now,
+    },
+    select: { messageSeq: true },
+  });
+  await tx.supportCaseMessage.create({
+    data: {
+      caseId: open.id,
+      seq: messageSeq,
+      sender: "SYSTEM",
+      isInternal: false,
+      body,
+      createdAt: now,
+    },
+  });
+  await stageCaseNotice(
+    tx,
+    { ...open, organizationId: null },
+    [input.removedUserId],
+    `The host removed you again. Support's ${CONDUCT_REMOVAL_REVIEW_HOURS}-hour review restarts from this removal.`,
+    `conduct-removal-joined:${open.id}:${messageSeq}`,
+  );
+  await tx.supportCaseEvent.create({
+    data: {
+      caseId: open.id,
+      actorId: input.actorUserId,
+      kind: "REOPENED",
+      fromValue: removalOrderValue(endedOrder),
+      note: `The host removed the attendee for conduct again (${input.reasonLabel}); the ${CONDUCT_REMOVAL_REVIEW_HOURS}-hour review restarts from this removal and its decision covers both.`,
+      createdAt: now,
+    },
+  });
+}
+
+/**
+ * The new removal's case. The learner's unclosed case on this event, which the open-case
+ * key (`support_case_open_scope_key`) allows one of, is joined while undecided; once decided
+ * it is closed and a fresh case opens, with its own verdict, appeal, refund and 72 hours.
+ */
+export async function openOrJoinConductRemovalCaseTx(
+  tx: Tx,
+  input: OpenRemovalCaseInput,
+  now: Date,
+): Promise<{ id: string; referenceNumber: string }> {
+  const endedOrder = await endedOrderTx(tx, input);
+  const prior = await unclosedRemovalCase(tx, input);
+  if (!prior) return openConductRemovalCaseTx(tx, input, now, endedOrder);
+  const decision = await tx.supportCaseDecision.findFirst({
+    where: { caseId: prior.id },
+    select: { id: true },
+  });
+  if (!decision) {
+    await joinUndecidedRemovalCaseTx(tx, prior, input, now, endedOrder);
+    return { id: prior.id, referenceNumber: prior.referenceNumber };
+  }
+  await closeDecidedRemovalCaseTx(tx, prior, now);
+  const fresh = await openConductRemovalCaseTx(tx, input, now, endedOrder);
+  await tx.supportCaseEvent.create({
+    data: {
+      caseId: prior.id,
+      actorId: null,
+      kind: "STATUS_CHANGED",
+      fromValue: prior.status,
+      toValue: "CLOSED",
+      note: `Closed when the attendee was removed for conduct again; case ${fresh.referenceNumber} reviews the new removal.`,
+      createdAt: now,
+    },
+  });
+  return fresh;
 }
 
 /** Posts a line on the case the attendee and support both read. */
@@ -189,15 +435,28 @@ function seatPayment(db: PrismaLike, appointmentId: string, userId: string) {
 }
 
 /**
- * Holds the seat's unpaid earnings for the case; a payment another refund holds, or a payout
- * already sending, is left alone and the case says why. Returns whether it held.
+ * Holds the seat's unpaid earnings for the case; a free seat has none, and a payment another
+ * refund holds, or a payout already sending, is left alone and the case says why. Returns whether the case holds it.
  */
 export async function holdSeatEarningsTx(
   tx: Tx,
   args: { appointmentId: string; userId: string; caseId: string; now: Date },
 ): Promise<boolean> {
   const payment = await seatPayment(tx, args.appointmentId, args.userId);
-  if (!payment || payment.refundOwedKey) return false;
+  if (
+    !payment ||
+    payment.refundOwedKey ||
+    isPriceFreePayment({
+      paymentIntent: payment.paymentIntent,
+      amountPaise: Number(payment.amount),
+      listPricePaise: Number(payment.originalAmount),
+    })
+  ) {
+    return false;
+  }
+  // A removal joining the case freezes any newer earnings, but the case already records the hold.
+  const alreadyHeld =
+    activeHolds(await caseHoldEvents(tx, [args.caseId], payment.id)).length > 0;
   const note = "Held while support reviews a host's removal of the attendee";
   try {
     await holdPaymentForCase(tx, {
@@ -214,8 +473,10 @@ export async function holdSeatEarningsTx(
       true,
       args.now,
     );
-    return false;
+    // An earlier removal's hold on this payment still stands for the case.
+    return alreadyHeld;
   }
+  if (alreadyHeld) return true;
   await tx.supportCaseEvent.create({
     data: {
       caseId: args.caseId,
@@ -234,21 +495,153 @@ interface ConductRemovalRemedy {
   caseId: string;
   appointmentId: string;
   userId: string;
-  /** Null when nothing is owed: a free seat, no payment, or another door's refund holds it. */
+  /** Null when nothing is owed: a free seat, no payment, a later sale's order, or another door's refund holding it. */
   marker: RefundOwedMarker | null;
   /** The unblock intent's generation; null when only the money is owed. */
   unblockGeneration: Date | null;
+}
+
+interface RemovalTarget {
+  appointmentId: string;
+  userId: string;
+  removedAt: Date;
+}
+
+async function removalTargetTx(
+  db: PrismaLike,
+  removalCaseId: string,
+): Promise<RemovalTarget | null> {
+  const removal = await db.supportCase.findUniqueOrThrow({
+    where: { id: removalCaseId },
+    select: {
+      appointmentId: true,
+      requesterUserId: true,
+      createdAt: true,
+      statutoryDueAt: true,
+    },
+  });
+  if (!removal.appointmentId) return null;
+  return {
+    appointmentId: removal.appointmentId,
+    userId: removal.requesterUserId,
+    // The latest removal the case reviews, which a joined removal moved forward.
+    removedAt: removalReviewStart(removal),
+  };
+}
+
+/** Whether a SEAT row with one of `reasons` follows the removal on the learner's seat. */
+async function seatStepSinceRemoval(
+  tx: Pick<Tx, "appointmentParticipant" | "bookingStatusHistory">,
+  target: RemovalTarget,
+  reasons: readonly SeatHistoryReason[],
+): Promise<boolean> {
+  const seat = await tx.appointmentParticipant.findUnique({
+    where: {
+      appointmentId_userId: {
+        appointmentId: target.appointmentId,
+        userId: target.userId,
+      },
+    },
+    select: { id: true },
+  });
+  if (!seat) return false;
+  const step = await tx.bookingStatusHistory.findFirst({
+    where: {
+      entity: "SEAT",
+      entityId: seat.id,
+      reason: { in: [...reasons] },
+      createdAt: { gte: target.removedAt },
+    },
+    select: { id: true },
+  });
+  return step !== null;
+}
+
+/** Whether a lift has followed the removal on the learner's seat, so its mark is gone. */
+const liftedSinceRemoval = (
+  tx: Pick<Tx, "appointmentParticipant" | "bookingStatusHistory">,
+  target: RemovalTarget,
+) => seatStepSinceRemoval(tx, target, ["block_lifted"]);
+
+/**
+ * Whether the seat was registered again after the removal: a re-bought seat's capture, or a free rejoin,
+ * writes that row, and the checkout before it re-minted the order, so the seat's current order is a later sale.
+ */
+const reboughtSinceRemoval = (
+  tx: Pick<Tx, "appointmentParticipant" | "bookingStatusHistory">,
+  target: RemovalTarget,
+) => seatStepSinceRemoval(tx, target, ["registered", "rejoined"]);
+
+/**
+ * Where the payment a removal case may refund is: the seat's payment while it still carries
+ * the order the removal ended. Null once a later sale's order replaced it; a case from before
+ * the order was recorded falls back to the seat's history.
+ */
+async function removalPaymentWhere(
+  db: PrismaLike,
+  caseId: string,
+  target: RemovalTarget,
+): Promise<Prisma.PaymentWhereInput | null> {
+  const seat = {
+    userId: target.userId,
+    appointmentId: target.appointmentId,
+    deletedAt: null,
+  };
+  const order = await recordedRemovalOrder(db, caseId);
+  if (order) return { ...seat, paymentIntent: order };
+  return (await reboughtSinceRemoval(db, target)) ? null : seat;
+}
+
+/**
+ * Whether a refund door of this case may refund the payment: always for any payment but the
+ * removed seat's, and for the seat's only while it carries the order the removal ended.
+ */
+export async function removalCaseRefundsPaymentTx(
+  db: PrismaLike,
+  supportCase: {
+    id: string;
+    category: string | null;
+    appealOfDecisionId: string | null;
+  },
+  paymentId: string,
+): Promise<boolean> {
+  const caseId = await reviewedRemovalCaseId(db, supportCase);
+  const target = caseId ? await removalTargetTx(db, caseId) : null;
+  if (!caseId || !target) return true;
+  const seatPayment = await db.payment.findFirst({
+    where: {
+      id: paymentId,
+      userId: target.userId,
+      appointmentId: target.appointmentId,
+    },
+    select: { id: true },
+  });
+  if (!seatPayment) return true;
+  const where = await removalPaymentWhere(db, caseId, target);
+  if (!where) return false;
+  return (await db.payment.count({ where: { ...where, id: paymentId } })) > 0;
 }
 
 /** Stamps the seat's unrefunded balance as owed, keyed on the removal case so it is refunded once. */
 async function stampRemovalRefundTx(
   tx: Tx,
   caseId: string,
-  appointmentId: string,
-  userId: string,
+  target: RemovalTarget,
   reason: string,
 ): Promise<RefundOwedMarker | null> {
-  const payment = await seatPayment(tx, appointmentId, userId);
+  const where = await removalPaymentWhere(tx, caseId, target);
+  if (!where) return null;
+  const payment = await tx.payment.findFirst({
+    orderBy: { createdAt: "asc" },
+    where: { ...where, paymentStatus: "SUCCEEDED" },
+    select: {
+      id: true,
+      amount: true,
+      originalAmount: true,
+      paymentIntent: true,
+      refundOwedKey: true,
+    },
+  });
   if (
     !payment ||
     isPriceFreePayment({
@@ -272,18 +665,6 @@ async function stampRemovalRefundTx(
   return null;
 }
 
-async function removalTargetTx(db: PrismaLike, removalCaseId: string) {
-  const removal = await db.supportCase.findUniqueOrThrow({
-    where: { id: removalCaseId },
-    select: { appointmentId: true, requesterUserId: true },
-  });
-  if (!removal.appointmentId) return null;
-  return {
-    appointmentId: removal.appointmentId,
-    userId: removal.requesterUserId,
-  };
-}
-
 /** What an overturn must refund first on which payment: unrefunded paise, unrestored credits, or null. */
 export async function removalRefundOutstandingTx(
   tx: Tx,
@@ -295,15 +676,12 @@ export async function removalRefundOutstandingTx(
 ): Promise<{ paymentId: string; owed: number | "credits" } | null> {
   const caseId = await reviewedRemovalCaseId(tx, supportCase);
   const target = caseId ? await removalTargetTx(tx, caseId) : null;
-  if (!target) return null;
+  const where =
+    caseId && target ? await removalPaymentWhere(tx, caseId, target) : null;
+  if (!where) return null;
   const payment = await tx.payment.findFirst({
     orderBy: { createdAt: "asc" },
-    where: {
-      userId: target.userId,
-      appointmentId: target.appointmentId,
-      paymentStatus: "SUCCEEDED",
-      deletedAt: null,
-    },
+    where: { ...where, paymentStatus: "SUCCEEDED" },
     select: {
       id: true,
       amount: true,
@@ -340,12 +718,72 @@ export async function conductRemovalDecidedTx(
     appealOfDecisionId: string | null;
   },
   outcome: string,
+  actorUserId: string,
 ): Promise<void> {
   if (outcome !== "OVERTURNED") return;
   const caseId = await reviewedRemovalCaseId(tx, supportCase);
   const target = caseId ? await removalTargetTx(tx, caseId) : null;
   if (!target) return;
   await persistConductBlockInTx(tx, target.appointmentId, target.userId);
+  // A lift after the removal already cleared its mark; a mark the seat carries now is a later removal's.
+  if (await liftedSinceRemoval(tx, target)) return;
+  await liftBlockTx(tx, {
+    appointmentId: target.appointmentId,
+    userId: target.userId,
+    actorUserId,
+  });
+}
+
+/** How the learner of a reviewed removal may come back once it is overturned. */
+export async function removalRejoinPathTx(
+  tx: Tx,
+  supportCase: {
+    id: string;
+    category: string | null;
+    appealOfDecisionId: string | null;
+  },
+): Promise<"REGISTER" | "SUPPORT"> {
+  const caseId = await reviewedRemovalCaseId(tx, supportCase);
+  const target = caseId ? await removalTargetTx(tx, caseId) : null;
+  if (!target) return "SUPPORT";
+  const seat = await tx.appointmentParticipant.findUnique({
+    where: {
+      appointmentId_userId: {
+        appointmentId: target.appointmentId,
+        userId: target.userId,
+      },
+    },
+    select: {
+      removedByUserId: true,
+      payment: {
+        select: { paymentIntent: true, amount: true, originalAmount: true },
+      },
+      appointment: {
+        select: {
+          webinar: { select: { webinarPlan: { select: { price: true } } } },
+          class: { select: { classPlan: { select: { price: true } } } },
+        },
+      },
+    },
+  });
+  // A lift already followed this removal, so a mark the seat carries now is a later removal's and stays.
+  if (seat?.removedByUserId && (await liftedSinceRemoval(tx, target))) {
+    return "SUPPORT";
+  }
+  const p = seat?.payment;
+  // Checkout revives a free seat only on an event still free, so a since-priced one goes to support.
+  const plan =
+    seat?.appointment.webinar?.webinarPlan ??
+    seat?.appointment.class?.classPlan;
+  return p &&
+    isPriceFreePayment({
+      paymentIntent: p.paymentIntent,
+      amountPaise: Number(p.amount),
+      listPricePaise: Number(p.originalAmount),
+    }) &&
+    Number(plan?.price ?? 0) === 0
+    ? "REGISTER"
+    : "SUPPORT";
 }
 
 /** After an OVERTURNED decision commits: drives whatever marker and block intent are still owed. Never throws. */
@@ -425,8 +863,8 @@ async function settleConductRemovalRemedy(
 }
 
 /**
- * Removal cases past their 72-hour deadline with no lapse recorded and no decision made in time:
- * a decision after the deadline does not cancel the refund it owes.
+ * Removal cases whose current review is past its deadline with no lapse and no decision since its
+ * latest removal: a decision after the deadline does not cancel the refund it owes.
  */
 function lapsedCaseIds(
   db: PrismaLike,
@@ -434,20 +872,25 @@ function lapsedCaseIds(
   limit: number,
   onlyCaseId?: string,
 ) {
+  const window = Prisma.sql`${CONDUCT_REMOVAL_REVIEW_HOURS}::int * interval '1 hour'`;
+  // The deadline a joined removal restarted; the review began one window before it.
+  const due = Prisma.sql`COALESCE(c."statutoryDueAt", c."createdAt" + ${window})`;
   return db.$queryRaw<{ id: string }[]>`
     SELECT c.id FROM "SupportCase" c
     WHERE c.category = ${CONDUCT_REMOVAL_CATEGORY}
       ${onlyCaseId ? Prisma.sql`AND c.id = ${onlyCaseId}` : Prisma.empty}
       AND c."deletedAt" IS NULL
       AND c."appointmentId" IS NOT NULL
-      AND c."createdAt" <= ${new Date(now.getTime() - CONDUCT_REMOVAL_REVIEW_HOURS * HOUR_MS)}
+      AND ${due} <= ${now}
       AND NOT EXISTS (
         SELECT 1 FROM "SupportCaseEvent" e
-        WHERE e."caseId" = c.id AND e.kind = 'REMOVAL_REVIEW_LAPSED')
+        WHERE e."caseId" = c.id AND e.kind = 'REMOVAL_REVIEW_LAPSED'
+          AND e."createdAt" >= ${due} - ${window})
       AND NOT EXISTS (
         SELECT 1 FROM "SupportCaseDecision" d
         WHERE d."caseId" = c.id
-          AND d."createdAt" <= c."createdAt" + ${CONDUCT_REMOVAL_REVIEW_HOURS}::int * interval '1 hour')
+          AND d."createdAt" >= ${due} - ${window}
+          AND d."createdAt" <= ${due})
     ORDER BY c."createdAt" ASC, c.id ASC
     LIMIT ${limit}`;
 }
@@ -493,8 +936,7 @@ async function lapseRemovalTx(
   const marker = await stampRemovalRefundTx(
     tx,
     caseId,
-    target.appointmentId,
-    target.userId,
+    target,
     "conduct removal review lapsed",
   );
   if (marker) {

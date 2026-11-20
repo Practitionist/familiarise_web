@@ -68,6 +68,7 @@ function view(overrides: Partial<BookingOpsView> = {}): BookingOpsView {
     subscriptionId: null,
     sessions: [session("next-1", 3 * DAY)],
     payments: [],
+    removedSeats: [],
     ...overrides,
   };
 }

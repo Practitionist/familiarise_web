@@ -297,28 +297,66 @@ describe("expert reliability strikes", () => {
       }),
     });
   });
-  it("reads the expert's own record newest first, in the expert's words", async () => {
-    const strike = (strike: string, at: string) => ({
-      createdAt: new Date(at),
-      context: { strike, appointmentId: "appt-1", occurrenceIds: ["occ-1"] },
+  it("reads the expert's own record newest first, in the expert's words, with each strike's plan and session", async () => {
+    const strike = (
+      strike: string,
+      at: string,
+      context: { appointmentId: string; occurrenceIds?: string[] },
+    ) => ({ createdAt: new Date(at), context: { strike, ...context } });
+    const titled = (id: string, startsAt: string, title: string) => ({
+      id,
+      startsAt: new Date(startsAt),
+      appointment: {
+        id: "appt-1",
+        appointmentType: "CONSULTATION",
+        consultation: { consultationPlan: { title } },
+        subscription: null,
+        webinar: null,
+        class: null,
+        trial: null,
+      },
     });
+    const occurrences = jest.fn(async () => [
+      titled("occ-1", "2026-10-21T04:30:00Z", "Career chat"),
+    ]);
     const db = {
       systemEvent: {
         findMany: jest.fn(async () => [
-          strike("CONSULTANT_NO_SHOW", "2026-10-30T10:00:00Z"),
-          strike("EXPERT_CANCEL", "2026-10-20T10:00:00Z"),
+          strike("CONSULTANT_NO_SHOW", "2026-10-30T10:00:00Z", {
+            appointmentId: "appt-1",
+            occurrenceIds: ["occ-1"],
+          }),
+          strike("EXPERT_CANCEL", "2026-10-20T10:00:00Z", {
+            appointmentId: "appt-2",
+          }),
         ]),
       },
       platformIncident: { findMany: jest.fn(async () => []) },
+      appointmentOccurrence: { findMany: occurrences },
     } as never;
     await expect(readOwnStrikes("cp-1", { now: NOW, db })).resolves.toEqual({
       windowDays: 90,
       count: 2,
       recent: [
-        { at: "2026-10-30T10:00:00.000Z", cause: "CONSULTANT_NO_SHOW" },
-        { at: "2026-10-20T10:00:00.000Z", cause: "EXPERT_CANCEL" },
+        {
+          at: "2026-10-30T10:00:00.000Z",
+          cause: "CONSULTANT_NO_SHOW",
+          planTitle: "Career chat",
+          sessionAt: "2026-10-21T04:30:00.000Z",
+        },
+        {
+          at: "2026-10-20T10:00:00.000Z",
+          cause: "EXPERT_CANCEL",
+          planTitle: null,
+          sessionAt: null,
+        },
       ],
     });
+    // One batched read for every listed strike's sessions.
+    expect(occurrences).toHaveBeenCalledTimes(1);
+    expect(occurrences).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: ["occ-1"] } } }),
+    );
   });
 
   it("records the judged occurrence on a no-show strike", async () => {

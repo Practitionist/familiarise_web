@@ -297,6 +297,8 @@ async function settleProductSale(
       },
     },
     appointmentType: "DIGITAL_PRODUCT",
+    // A product has no plan and so no team; the time is its capture.
+    teamAt: payment.capturedAt ?? payment.createdAt,
     tx,
   });
   return { kind: "settled", paymentId: payment.id };

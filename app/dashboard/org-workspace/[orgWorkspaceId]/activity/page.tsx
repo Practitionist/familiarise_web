@@ -5,6 +5,7 @@ import {
 } from "@tanstack/react-query";
 import { requireAuth } from "@/lib/auth-guard";
 import { getWorkspaceActivity } from "@/lib/data/org-workspace";
+import { resolveViewerZone } from "@/lib/time/viewer-zone";
 import { ActivityPageClient } from "./ActivityPageClient";
 
 /**
@@ -23,6 +24,7 @@ export default async function OrgWorkspaceActivityPage({
   const { orgWorkspaceId } = await params;
   const session = await requireAuth();
   const userId = session.user.id;
+  const zone = resolveViewerZone({ userTimezone: session.user.timezone });
 
   const queryClient = new QueryClient();
 
@@ -30,7 +32,7 @@ export default async function OrgWorkspaceActivityPage({
     queryClient.prefetchInfiniteQuery({
       queryKey: ["org-workspace-activity", orgWorkspaceId, "all", "all"],
       queryFn: ({ pageParam }) =>
-        getWorkspaceActivity(userId, pageParam as string | null),
+        getWorkspaceActivity(userId, zone, pageParam as string | null),
       initialPageParam: null as string | null,
     }),
   ]);

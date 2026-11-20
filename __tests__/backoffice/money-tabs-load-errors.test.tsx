@@ -9,7 +9,13 @@
  */
 
 import * as React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 const mockCapability = {
@@ -54,6 +60,13 @@ function renderWithQuery(ui: React.ReactElement) {
       {ui}
     </QueryClientProvider>,
   );
+}
+
+/** The alert block that holds the given title. */
+function alertWith(title: string): HTMLElement {
+  const el = screen.getByText(title).closest('[role="alert"]');
+  if (!(el instanceof HTMLElement)) throw new Error(`no alert holds ${title}`);
+  return el;
 }
 
 const originalFetch = global.fetch;
@@ -166,6 +179,97 @@ describe("TDS export", () => {
       ),
     );
   });
+});
+
+it("TDS says the quarterly summary failed, never ₹0.00 or All filed", async () => {
+  let quartersOk = false;
+  global.fetch = jest.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("view=consultants"))
+      return { ok: false, json: async () => ({}) };
+    if (!quartersOk) return { ok: false, json: async () => ({}) };
+    return {
+      ok: true,
+      json: async () => ({
+        financialYear: "2026-27",
+        quarters: [
+          {
+            financialYear: "2026-27",
+            quarter: 1,
+            totalConsultants: 1,
+            totalAmountCredited: 5_000_000,
+            totalTDSDeducted: 50_000,
+            totalRecords: 3,
+            unfiledRecords: 3,
+          },
+        ],
+      }),
+    };
+  }) as unknown as typeof fetch;
+  renderWithQuery(<AdminTDSPage />);
+  expect(
+    await screen.findByText("Couldn't load the quarterly TDS summary"),
+  ).toBeTruthy();
+  expect(screen.queryByText("All filed")).toBeNull();
+  expect(screen.queryByText("₹0.00")).toBeNull();
+  expect(screen.getAllByText("Unavailable")).toHaveLength(4);
+
+  quartersOk = true;
+  fireEvent.click(
+    within(alertWith("Couldn't load the quarterly TDS summary")).getByRole(
+      "button",
+      { name: /Try again/ },
+    ),
+  );
+  expect(await screen.findByText("3 unfiled")).toBeTruthy();
+  expect(screen.getByText("Q1 (Apr–Jun)")).toBeTruthy();
+  expect(screen.getByText("Action needed")).toBeTruthy();
+  expect(
+    screen.queryByText("Couldn't load the quarterly TDS summary"),
+  ).toBeNull();
+  // The consultant read is still failing, so only its card stays unavailable.
+  expect(screen.getAllByText("Unavailable")).toHaveLength(1);
+  const consultantsCard = screen.getByRole("heading", {
+    name: "Consultants with TDS",
+  }).parentElement?.parentElement;
+  if (!consultantsCard) throw new Error("no Consultants with TDS card");
+  expect(within(consultantsCard).getByText("Unavailable")).toBeTruthy();
+});
+
+it("TDS consultant breakdown failure offers Try again, which reads it again", async () => {
+  let consultantsOk = false;
+  global.fetch = jest.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("view=consultants")) {
+      if (!consultantsOk) return { ok: false, json: async () => ({}) };
+      return {
+        ok: true,
+        json: async () => ({
+          financialYear: "2026-27",
+          consultants: [],
+          total: 0,
+          deducteeCount: 0,
+          page: 1,
+          pageSize: 25,
+        }),
+      };
+    }
+    return {
+      ok: true,
+      json: async () => ({ financialYear: "2026-27", quarters: [] }),
+    };
+  }) as unknown as typeof fetch;
+  renderWithQuery(<AdminTDSPage />);
+  await screen.findByText("Couldn't load the consultant breakdown");
+  const alert = alertWith("Couldn't load the consultant breakdown");
+  expect(screen.queryByText(/No TDS deductions recorded/)).toBeNull();
+
+  consultantsOk = true;
+  fireEvent.click(within(alert).getByRole("button", { name: /Try again/ }));
+  expect(await screen.findByText(/No TDS deductions recorded/)).toBeTruthy();
+  expect(
+    screen.queryByText("Couldn't load the consultant breakdown"),
+  ).toBeNull();
 });
 
 describe("keepPreviousPageOnly", () => {

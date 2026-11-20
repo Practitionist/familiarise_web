@@ -66,6 +66,16 @@ const REFUNDED_OR_DISPUTED: Prisma.PaymentWhereInput = {
   ],
 };
 
+/**
+ * No earnings of either kind. A seat on a plan an organisation owns settles
+ * into organisation earnings alone, and every row of a payment is written in
+ * one transaction, so either kind means the payment is settled.
+ */
+const NO_EARNINGS = {
+  earnings: { none: {} },
+  organizationEarnings: { none: {} },
+} satisfies Prisma.PaymentWhereInput;
+
 /** The cohort the sweep accrues; shared with the ticker's idle probe. */
 const UNEARNED_PAYMENT_WHERE: Prisma.PaymentWhereInput = {
   paymentStatus: PaymentStatus.SUCCEEDED,
@@ -73,7 +83,7 @@ const UNEARNED_PAYMENT_WHERE: Prisma.PaymentWhereInput = {
   isMockPayment: false,
   // An appointment-less row is never healed here, so it must not hold a cohort slot.
   appointmentId: { not: null },
-  earnings: { none: {} }, // No linked earnings
+  ...NO_EARNINGS,
   refunds: { none: { status: { in: [...RETURNED_REFUND_STATUSES] } } },
   disputes: { none: { status: { in: [...RETURNED_DISPUTE_STATUSES] } } },
   // A parked capture's cash sits in UNAPPLIED_RECEIPTS; booking it would count CASH twice.
@@ -84,7 +94,7 @@ const UNEARNED_PAYMENT_WHERE: Prisma.PaymentWhereInput = {
 const REFUNDED_UNEARNED_PAYMENT_WHERE: Prisma.PaymentWhereInput = {
   paymentStatus: PaymentStatus.SUCCEEDED,
   appointmentId: { not: null },
-  earnings: { none: {} },
+  ...NO_EARNINGS,
   ...REFUNDED_OR_DISPUTED,
 };
 
@@ -266,7 +276,7 @@ async function retireUnaccruablePayments(
         where: {
           id: payment.id,
           paymentStatus: PaymentStatus.SUCCEEDED,
-          earnings: { none: {} },
+          ...NO_EARNINGS,
           AND: [notSettledElsewhereWhere],
         },
         data: {
@@ -382,6 +392,7 @@ async function syncPaymentEarningsUnlocked(
                   select: {
                     id: true,
                     consultantProfileId: true,
+                    organizationId: true,
                   },
                 },
               },
@@ -392,6 +403,7 @@ async function syncPaymentEarningsUnlocked(
                   select: {
                     id: true,
                     consultantProfileId: true,
+                    organizationId: true,
                   },
                 },
               },
@@ -451,11 +463,20 @@ async function syncPaymentEarningsUnlocked(
         appointment?.webinar?.webinarPlan?.consultantProfileId ||
         appointment?.class?.classPlan?.consultantProfileId;
 
-      if (!appointment || !consultantProfileId) {
-        // #1319 — a booking that resolves no consultant will not heal on the
-        // next run either, so it is escalated rather than skipped in silence.
-        // Fresh payments are left alone: settlement runs post-commit and may
-        // still be in flight.
+      // A webinar or class plan may be owned by an organisation with no
+      // consultant; its seat settles to that organisation, as at capture.
+      const groupPlan =
+        appointment?.webinar?.webinarPlan ?? appointment?.class?.classPlan;
+      const ownerOrganizationId =
+        consultantProfileId || !groupPlan
+          ? null
+          : (groupPlan.organizationId ?? appointment?.organizationId ?? null);
+
+      if (!appointment || (!consultantProfileId && !ownerOrganizationId)) {
+        // A booking that resolves no consultant and no owning organisation
+        // will not heal on the next run either, so it is escalated rather
+        // than skipped in silence. Fresh payments are left alone: settlement
+        // runs post-commit and may still be in flight.
         if (appointment && payment.createdAt < alertCutoff) {
           unaccruable.push({
             id: payment.id,
@@ -491,7 +512,10 @@ async function syncPaymentEarningsUnlocked(
           payment: {
             ...payment,
             appointment: {
-              consultantProfile: { id: consultantProfileId },
+              ...(consultantProfileId
+                ? { consultantProfile: { id: consultantProfileId } }
+                : {}),
+              organizationId: ownerOrganizationId,
               webinar: appointment.webinar
                 ? { webinarPlanId: appointment.webinar.webinarPlanId }
                 : null,
@@ -501,8 +525,11 @@ async function syncPaymentEarningsUnlocked(
             },
           },
           appointmentType: mapAppointmentType(appointment.appointmentType),
+          // The team as of the capture this retries, never as of this run.
+          teamAt: payment.capturedAt ?? payment.createdAt,
         });
-        if (earningsId) {
+        // An organisation-owned plan has no owner earning to name; it settled unless it threw.
+        if (earningsId || ownerOrganizationId) {
           createdCount++;
         } else {
           skippedCount++;

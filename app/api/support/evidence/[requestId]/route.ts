@@ -5,10 +5,8 @@ import { attachmentCaseAccess } from "@/lib/support/case-attachments";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
 import { assertBodySize } from "@/lib/validation/limits";
-import {
-  evidenceRecipients,
-  stageCaseNotice,
-} from "@/lib/support/case-actions";
+import { evidenceRecipients } from "@/lib/support/case-actions";
+import { stageCaseNotice } from "@/lib/support/case-notice";
 import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { sessionRole } from "@/lib/auth/session-role";
 import { PLAN_TITLE_SELECT, planTitle } from "@/lib/support/case-read";

@@ -35,6 +35,7 @@ import {
   hasBilledSupply,
   isZeroAmountOrder,
 } from "@/lib/payments/checkout/zero-amount";
+import { prepareFreeSeatNotice } from "@/lib/payments/checkout/free-seat-notice";
 import {
   DIRECT_CHECKOUT_HOLD_MS,
   SEAT_CHECKOUT_HOLD_MS,
@@ -654,6 +655,19 @@ export async function handleCheckout(
       // connection deadlocks (#1435, see lib/prisma.ts).
       await ensurePlatformCancellationPolicy(prisma);
 
+      // A free seat's booked email renders here, on the global client, before the Serializable commit opens.
+      const seatType = validatedData.appointmentType;
+      const preparedSeatNotice =
+        isZeroAmountPayment &&
+        validatedData.eventId &&
+        (seatType === "WEBINAR" || seatType === "CLASS")
+          ? await prepareFreeSeatNotice({
+              appointmentType: seatType,
+              eventId: validatedData.eventId,
+              userId,
+            })
+          : null;
+
       const result = await commitCheckout({
         validatedData,
         userId,
@@ -678,6 +692,7 @@ export async function handleCheckout(
         exchangeRateAtCheckout,
         exhaustedBell,
         priced,
+        preparedSeatNotice,
       }).catch(async (err) => {
         // #1435 — post-rollback delivery for the one bell whose news IS the
         // refusal. Nothing else below is reached when the transaction fails.
@@ -688,6 +703,14 @@ export async function handleCheckout(
         }
         throw err;
       });
+
+      // A rejoined free seat stands on its earlier payment, so the answer names that payment's intent.
+      if (result.reusedPaymentIntent) {
+        paymentResponse = {
+          id: result.reusedPaymentIntent,
+          client_secret: null,
+        };
+      }
 
       if (preMintSeat) {
         // The seat is committed: free the event and buyer keys for the next
@@ -756,6 +779,14 @@ export async function handleCheckout(
           await mintConsumerInvoiceBestEffort({
             paymentIntent: mintedOrder.id,
           });
+        }
+
+        // A free seat's booked notice was staged in the commit; it is sent here.
+        if (result.seatNotice) {
+          await flushNotificationsAfter(
+            result.seatNotice,
+            "checkout.free-seat-booked",
+          );
         }
 
         const appointmentIdForChannels = result.appointmentId;

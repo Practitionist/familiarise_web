@@ -26,6 +26,7 @@ import {
 } from "@prisma/client";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import { transitionSlotsInChunks } from "@/lib/booking/slot-release";
+import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
 
 // #833 — hours, not days: gateway orders expire well inside a day, so a
 // 7-day hold locked users out of rebooking for most of a week. 24h keeps
@@ -35,10 +36,14 @@ const TENTATIVE_EXPIRATION_HOURS = 24;
 
 const REVIEWING = ["PENDING", "APPROVED_PENDING_PAYMENT"] as const;
 const LIVE_EVENT = ["SCHEDULED"] as const;
+// A trial holding its time: the unpaid-trial sweep ends an unpaid hold.
+const LIVE_TRIAL = ["AWAITING_PAYMENT", "SCHEDULED"] as const;
 
 /**
- * A live tentative hold with no successful payment whose parent is neither
- * under review nor a live event; the release CAS re-states it under the row lock.
+ * A live tentative hold with no successful payment whose parent is not under
+ * review, a live event or a live trial, and whose booking has no open
+ * reschedule request (a session released for a move is tentative until that
+ * request ends); the release CAS re-states it under the row lock.
  */
 function releasableTentativeWhere() {
   return {
@@ -46,6 +51,9 @@ function releasableTentativeWhere() {
     deletedAt: null,
     appointment: {
       payment: { none: { paymentStatus: PaymentStatus.SUCCEEDED } },
+      rescheduleRequests: {
+        none: { status: { in: RESCHEDULE_OPEN_STATUSES } },
+      },
       AND: [
         {
           OR: [
@@ -69,6 +77,12 @@ function releasableTentativeWhere() {
           OR: [
             { class: null },
             { class: { status: { notIn: [...LIVE_EVENT] } } },
+          ],
+        },
+        {
+          OR: [
+            { trial: null },
+            { trial: { status: { notIn: [...LIVE_TRIAL] } } },
           ],
         },
       ],
@@ -244,8 +258,9 @@ async function cleanupTentativeSlotsUnlocked(
       slotsReleased = await transitionSlotsInChunks(
         staleTentativeSlots.map((s) => s.id),
         (idChunk) => ({
-          // Re-stated under the row lock: a hold confirmed by a capture, or a
-          // parent back under review or live, since the scan keeps its slot.
+          // Re-stated under the row lock: a hold confirmed by a capture, a
+          // parent back under review or live, or a move opened since the scan
+          // keeps its slot.
           where: { id: { in: idChunk }, ...releasableTentativeWhere() },
           to: OccurrenceCompletionStatus.CANCELLED,
           data: { deletedAt: new Date() },

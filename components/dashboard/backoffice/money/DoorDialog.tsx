@@ -17,6 +17,8 @@ export type Door = {
   body?: Record<string, unknown>;
   /** The make-up door also asks for a start time and the window bypass. */
   extra?: "make-up";
+  /** The toast after it goes through, from what the route answered; "Done" otherwise. */
+  success?: (data: Record<string, unknown>) => string;
 };
 
 /** #1771 K-6 — the reason-gated dialog behind every class and sweep door. */
@@ -39,7 +41,7 @@ export function DoorDialog({
   const [startsAt, setStartsAt] = useState("");
   const [bypass, setBypass] = useState(false);
   const mutation = useOpsDoor({
-    success: "Done",
+    success: door?.success ?? "Done",
     invalidate,
     onDone: onClose,
     refusalCopy,

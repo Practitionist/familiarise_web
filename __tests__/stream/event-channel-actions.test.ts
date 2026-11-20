@@ -80,7 +80,7 @@ describe("Event Channel Actions", () => {
       const result = await checkEventChannelExists("webinar", "webinar-123");
 
       expect(result).toBe(true);
-      expect(mockStreamClient.channel).not.toHaveBeenCalled();
+      expect(mockStreamClient.queryChannels).not.toHaveBeenCalled();
       expect(mockLogger.debug).toHaveBeenCalledWith(
         "Channel existence from cache",
         expect.objectContaining({ exists: true }),
@@ -96,12 +96,12 @@ describe("Event Channel Actions", () => {
       const result = await checkEventChannelExists("class", "class-456");
 
       expect(result).toBe(false);
-      expect(mockStreamClient.channel).not.toHaveBeenCalled();
+      expect(mockStreamClient.queryChannels).not.toHaveBeenCalled();
     });
 
     it("should query API and cache result on cache miss", async () => {
       mockCache.isChannelCached.mockReturnValue(undefined);
-      mockChannel.query.mockResolvedValue({ state: {} });
+      mockStreamClient.queryChannels.mockResolvedValue([{ id: "found" }]);
 
       const { checkEventChannelExists } =
         await import("../../actions/stream/chat/event-channel.action");
@@ -109,17 +109,19 @@ describe("Event Channel Actions", () => {
       const result = await checkEventChannelExists("consultation", "cons-789");
 
       expect(result).toBe(true);
-      expect(mockStreamClient.channel).toHaveBeenCalledWith(
-        "messaging",
-        "consultation-cons-789",
+      expect(mockStreamClient.queryChannels).toHaveBeenCalledWith(
+        { cid: { $eq: "messaging:consultation-cons-789" } },
+        [],
+        expect.any(Object),
       );
-      expect(mockChannel.query).toHaveBeenCalled();
       expect(mockCache.markChannelExists).toHaveBeenCalled();
     });
 
     it("should return false when channel query fails", async () => {
       mockCache.isChannelCached.mockReturnValue(undefined);
-      mockChannel.query.mockRejectedValue(new Error("Channel not found"));
+      mockStreamClient.queryChannels.mockRejectedValue(
+        new Error("Stream unavailable"),
+      );
 
       const { checkEventChannelExists } =
         await import("../../actions/stream/chat/event-channel.action");
@@ -127,39 +129,36 @@ describe("Event Channel Actions", () => {
       const result = await checkEventChannelExists("subscription", "sub-abc");
 
       expect(result).toBe(false);
-      expect(mockLogger.debug).toHaveBeenCalledWith(
-        "Channel does not exist",
-        expect.any(Object),
-      );
+      expect(mockCache.markChannelExists).not.toHaveBeenCalled();
     });
 
     it("should return team type for webinar", async () => {
       mockCache.isChannelCached.mockReturnValue(undefined);
-      mockChannel.query.mockResolvedValue({});
 
       const { checkEventChannelExists } =
         await import("../../actions/stream/chat/event-channel.action");
 
       await checkEventChannelExists("webinar", "web-123");
 
-      expect(mockStreamClient.channel).toHaveBeenCalledWith(
-        "team",
-        "webinar-web-123",
+      expect(mockStreamClient.queryChannels).toHaveBeenCalledWith(
+        { cid: { $eq: "team:webinar-web-123" } },
+        [],
+        expect.any(Object),
       );
     });
 
     it("should return team type for class", async () => {
       mockCache.isChannelCached.mockReturnValue(undefined);
-      mockChannel.query.mockResolvedValue({});
 
       const { checkEventChannelExists } =
         await import("../../actions/stream/chat/event-channel.action");
 
       await checkEventChannelExists("class", "cls-123");
 
-      expect(mockStreamClient.channel).toHaveBeenCalledWith(
-        "team",
-        "class-cls-123",
+      expect(mockStreamClient.queryChannels).toHaveBeenCalledWith(
+        { cid: { $eq: "team:class-cls-123" } },
+        [],
+        expect.any(Object),
       );
     });
 
@@ -168,7 +167,7 @@ describe("Event Channel Actions", () => {
         await import("../../actions/stream/chat/event-channel.action");
 
       await expect(
-        checkEventChannelExists("invalid" as any, "id-123"),
+        checkEventChannelExists("invalid" as "webinar", "id-123"),
       ).rejects.toThrow();
     });
 
@@ -441,6 +440,10 @@ describe("Event Channel Actions", () => {
           collaborators: [{ consultantProfile: { userId: "cohost-1" } }],
         },
         appointments: [],
+      });
+      // The co-host is still on the team when the roster's grant is re-checked.
+      (mockPrisma.collaborator.findFirst as jest.Mock).mockResolvedValue({
+        id: "collab-1",
       });
 
       const { addUserToEventChannel } =

@@ -17,6 +17,7 @@ import { Loader2 } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { ErrorState } from "@/components/dashboard/ErrorState";
 
 export interface Column<T> {
   header: string;
@@ -29,6 +30,8 @@ export interface ScopedListTableProps<T> {
   isLoading: boolean;
   isError: boolean;
   errorMessage?: string;
+  /** Refetches the list; when given, a failed read offers Try again. */
+  onRetry?: () => void;
   items: T[];
   total: number;
   page: number;
@@ -46,6 +49,7 @@ export function ScopedListTable<T>({
   isLoading,
   isError,
   errorMessage,
+  onRetry,
   items,
   total,
   page,
@@ -63,6 +67,17 @@ export function ScopedListTable<T>({
     sp.set("page", String(newPage));
     return `?${sp.toString()}`;
   };
+
+  const errorBody = onRetry ? (
+    <ErrorState
+      title={errorMessage ?? "Couldn't load this list"}
+      onRetry={onRetry}
+    />
+  ) : (
+    <div className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-900">
+      {errorMessage ?? "Failed to load. Please retry."}
+    </div>
+  );
 
   return (
     <Card>
@@ -83,9 +98,7 @@ export function ScopedListTable<T>({
             Loading…
           </div>
         ) : isError ? (
-          <div className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-900">
-            {errorMessage ?? "Failed to load. Please retry."}
-          </div>
+          errorBody
         ) : items.length === 0 ? (
           <div className="py-12 text-center text-sm text-muted-foreground">
             {emptyMessage}

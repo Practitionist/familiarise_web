@@ -32,15 +32,25 @@ export const UpdateTrialSchema = z.object({
 /** The trial cancel door's optional body: the refund the caller confirmed from its preview, in paise. */
 export const TrialCancelBodySchema = z.object({
   confirmedRefundPaise: z.number().int().nonnegative().optional(),
+  /** False when the dialog showed an unpaid trial; absent from an older client. */
+  expectedPaid: z.boolean().optional(),
 });
+export type TrialCancelBody = z.infer<typeof TrialCancelBodySchema>;
 
 /** What a trial cancel sends; the DELETE route parses the body with `TrialCancelBodySchema`. */
 export function trialCancelRequest(
   trialId: string,
-  quote?: { estimatedRefundPaise: number },
-): { url: string; body: z.infer<typeof TrialCancelBodySchema> } {
+  quote?: { estimatedRefundPaise: number; expectedPaid?: boolean },
+): { url: string; body: TrialCancelBody } {
   return {
     url: `/api/trials/${trialId}`,
-    body: quote ? { confirmedRefundPaise: quote.estimatedRefundPaise } : {},
+    body: quote
+      ? {
+          confirmedRefundPaise: quote.estimatedRefundPaise,
+          ...(quote.expectedPaid === undefined
+            ? {}
+            : { expectedPaid: quote.expectedPaid }),
+        }
+      : {},
   };
 }

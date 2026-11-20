@@ -11,6 +11,7 @@ import {
   FileWarning,
   Gauge,
   Gift,
+  Handshake,
   Percent,
   Home,
   Inbox,
@@ -177,6 +178,12 @@ function groupSpecs({ showTds = false }: BackofficeNavOptions): NavGroupSpec[] {
           icon: CalendarCheck,
           path: "appointments",
           surface: "appointments.manage",
+        },
+        {
+          name: "Collaborations",
+          icon: Handshake,
+          path: "collaborations",
+          surface: "payouts.read",
         },
         { name: "Users", icon: Users, path: "users", surface: "users.read" },
         // #1927 — the operator roster and the invitation door. It exists as a

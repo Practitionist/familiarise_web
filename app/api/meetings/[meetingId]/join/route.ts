@@ -24,7 +24,10 @@ import {
   assertValidUpdateUserPermissions,
 } from "@/lib/stream/video-contracts";
 import { reportSentryError } from "@/lib/observability/report";
-import { fenceSeatGrants } from "@/lib/stream/access-revocation";
+import {
+  fenceCollaboratorGrant,
+  fenceSeatGrants,
+} from "@/lib/stream/access-revocation";
 import { captureThrottled } from "@/lib/observability/throttled-capture";
 
 /** The only capabilities Stream's UpdateUserPermissions accepts; any other name fails the whole request. */
@@ -144,7 +147,8 @@ export async function POST(
 
       const isOneToMany = isOneToManyAppointmentType(appointmentType);
 
-      if (isOneToMany && access.role === "host") {
+      // Hosts, presenters and speaking crew talk, show their camera and share a screen from the moment they join.
+      if (isOneToMany && (access.role === "host" || access.speakingCrew)) {
         const grantPayload = {
           user_id: userId,
           grant_permissions: [...PUBLISH_PERMISSIONS],
@@ -167,6 +171,9 @@ export async function POST(
     } catch (error) {
       // A membership that landed before a later write threw is re-checked like any other grant.
       if (appointmentId) await fenceSeatGrants(appointmentId, [userId]);
+      if (access.collaboratorOf) {
+        await fenceCollaboratorGrant(access.collaboratorOf, userId);
+      }
       throw error;
     }
 
@@ -216,6 +223,29 @@ export async function POST(
       );
     }
 
+    // A collaborator's access rests on their row alone: an ended one is taken back, an unread one is never admitted.
+    const collaboratorFence = access.collaboratorOf
+      ? await fenceCollaboratorGrant(access.collaboratorOf, userId)
+      : null;
+    if (collaboratorFence && !collaboratorFence.verified) {
+      return NextResponse.json(
+        {
+          error: "We could not confirm your access. Please try again.",
+          code: "COLLABORATION_UNVERIFIED",
+        },
+        { status: 503 },
+      );
+    }
+    if (collaboratorFence?.lost) {
+      return NextResponse.json(
+        {
+          error: "You are no longer on this session's team.",
+          code: "COLLABORATION_ENDED",
+        },
+        { status: 403 },
+      );
+    }
+
     streamLogger.info("Admitted to meeting", {
       userId,
       meetingId: resolvedCallId,
@@ -226,6 +256,7 @@ export async function POST(
       callType: STREAM_CALL_TYPE,
       callId: resolvedCallId,
       role: access.role,
+      ...(access.coPresenter ? { coPresenter: true } : {}),
     });
   } catch (error) {
     if (error instanceof StreamUnavailableError) {

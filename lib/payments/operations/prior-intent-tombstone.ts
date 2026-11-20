@@ -24,7 +24,7 @@ export type PriorIntent = {
 
 /**
  * Call after the re-mint CAS moved `prior.id` off its old intent: an EXPIRED, appointment-less row keeps
- * the old order with its legs and credit usages, so a late capture on it lands and is auto-refunded.
+ * the old order with its legs and any credit usages still on it, so a late capture lands and is auto-refunded.
  */
 export async function tombstonePriorIntent(
   tx: Tx,

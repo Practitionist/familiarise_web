@@ -4,7 +4,7 @@
  * pinned, so a server render and the hydrating browser print the same text.
  */
 
-import { formatClockTime, formatDateLabel } from "./display";
+import { formatClockTime } from "./display";
 import { UTC_ZONE, zoneLabel } from "./viewer-zone";
 
 export const OPERATOR_ZONE = "Asia/Kolkata";
@@ -70,14 +70,52 @@ function toDate(instant: Instant): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-function inZone(date: Date, zone: string, kind: OperatorInstantKind): string {
-  const opts = { zone };
-  if (kind === "date") return formatDateLabel(date, opts);
-  const clock = `${formatClockTime(date, opts)} ${zoneLabel(date, zone)}`;
-  return kind === "time" ? clock : `${formatDateLabel(date, opts)}, ${clock}`;
+// Pinned: en-IN's ICU data prints September as "Sept"; operator text keeps three letters.
+const MONTHS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+] as const;
+
+const dayParts = new Map<string, Intl.DateTimeFormat>();
+
+function dayPartsIn(zone: string): Intl.DateTimeFormat {
+  const cached = dayParts.get(zone);
+  if (cached) return cached;
+  const created = new Intl.DateTimeFormat("en-CA", {
+    timeZone: zone,
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+  });
+  dayParts.set(zone, created);
+  return created;
 }
 
-/** "24 Sept 2026" / "2:00 pm IST" / "24 Sept 2026, 2:00 pm IST"; "—" for no instant. */
+/** "24 Sep 2026": the calendar date of the instant in `zone`. */
+function dateLabel(date: Date, zone: string): string {
+  const parts = dayPartsIn(zone).formatToParts(date);
+  const field = (type: Intl.DateTimeFormatPartTypes) =>
+    Number(parts.find((p) => p.type === type)?.value);
+  return `${field("day")} ${MONTHS[field("month") - 1]} ${field("year")}`;
+}
+
+function inZone(date: Date, zone: string, kind: OperatorInstantKind): string {
+  if (kind === "date") return dateLabel(date, zone);
+  const clock = `${formatClockTime(date, { zone })} ${zoneLabel(date, zone)}`;
+  return kind === "time" ? clock : `${dateLabel(date, zone)}, ${clock}`;
+}
+
+/** "24 Sep 2026" / "2:00 pm IST" / "24 Sep 2026, 2:00 pm IST"; "—" for no instant. */
 export function formatOperatorInstant(
   instant: Instant,
   kind: OperatorInstantKind = "dateTime",

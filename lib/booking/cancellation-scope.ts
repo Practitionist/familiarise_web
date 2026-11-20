@@ -104,8 +104,15 @@ export type BookingRefundContext = {
   sessionsTotal: number | null;
   /** Sessions a support refund removed from the plan (0 for any other booking). */
   sessionsRefunded: number;
-  /** #1766 — start instants (epoch ms, ascending) of the sessions still scheduled. */
+  /**
+   * One start instant (epoch ms, ascending) per session a plan cancel prices
+   * at a notice tier: each confirmed session, and each session released for a
+   * move at its original start, capped by the notice the consultee gave when
+   * they released it.
+   */
   scheduledStarts: number[];
+  /** The instant `scheduledStarts` were measured at; the quote reads the same clock. */
+  quotedAtMs: number;
   /**
    * Subscriptions: what the payment already got back for single sessions
    * (voids, incidents) and money-only support remedies. A session-count remedy
@@ -276,13 +283,6 @@ export async function resolveBookingRefundContext(
     )
     .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
 
-  // A RESCHEDULED row is the tombstone of a moved session, so it is not on the
-  // calendar twice; a tentative row is an unpaid hold, not an entitlement.
-  const scheduledStarts = slots
-    .filter((s) => s.completionStatus === "SCHEDULED" && !s.isTentative)
-    .map((s) => s.startsAt.getTime())
-    .sort((a, b) => a - b);
-
   const nowMs = Date.now();
   // A session that already ended but is not swept yet is not outstanding.
   const outstanding = liveSlots.filter(
@@ -310,6 +310,23 @@ export async function resolveBookingRefundContext(
     outstanding.length > 0
       ? Math.min(...outstanding.map((s) => noticeHoursOf(s)))
       : null;
+
+  // One start per session a plan cancel prices on the calendar: a confirmed
+  // session, or one released for a move (an unconfirmed SCHEDULED row is an
+  // unpaid hold, not an entitlement). A released or learner-moved session
+  // sits at its effective notice; every other session at its own start.
+  const scheduledStarts = slots
+    .filter((s) =>
+      s.completionStatus === "SCHEDULED"
+        ? !s.isTentative
+        : s.completionStatus === "RESCHEDULED",
+    )
+    .map((s) =>
+      s.completionStatus === "RESCHEDULED" || floors.has(s.ordinal)
+        ? nowMs + noticeHoursOf(s) * 3_600_000
+        : s.startsAt.getTime(),
+    )
+    .sort((a, b) => a - b);
 
   const sessionsCompleted = slots.filter(isCompletedOccurrence).length;
   const alreadyRefundedPaise =
@@ -341,6 +358,7 @@ export async function resolveBookingRefundContext(
     sessionsTotal,
     sessionsRefunded,
     scheduledStarts,
+    quotedAtMs: nowMs,
     alreadyRefundedPaise,
     windowState,
   };

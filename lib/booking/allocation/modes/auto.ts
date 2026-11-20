@@ -81,7 +81,10 @@ import {
 } from "@/lib/booking/allocation/preference";
 import { replacementLeadMs } from "@/lib/booking/reschedule-proposals";
 import { findIdempotentAllocation } from "@/lib/booking/allocation/idempotency";
-import { assertCollaboratorsFree } from "@/lib/booking/allocation/collaborators";
+import {
+  assertCollaboratorsFree,
+  lockPlanForAllocation,
+} from "@/lib/booking/allocation/collaborators";
 import { findAvailableSlots } from "@/lib/booking/allocation/search/find-available-slots";
 import { assertSlotsStillPublished } from "@/lib/booking/allocation/coverage";
 import { ALLOCATOR_SEARCH_TIME_BUDGET_MS } from "@/lib/booking/allocation/search/constants";
@@ -532,6 +535,10 @@ export async function autoAllocate(
           isFreshAllocation && !isTopUp,
         );
         if (lockedReplay) return lockedReplay;
+        // The plan row is the first row lock, after the event's advisory lock
+        // and before any read of the team, so a co-host accept and this write
+        // queue on one plan.
+        await lockPlanForAllocation(tx, eventType, planId, batchProfiles);
         // A sold webinar or class is re-timed, never re-planned.
         if (!isTopUp) await assertGroupEventUnsoldInTx(tx, eventType, eventId);
         // #1766 — a stale tab must not append a second cycle: re-count the

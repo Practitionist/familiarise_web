@@ -66,6 +66,7 @@ import {
 import {
   acceptedCohostProfileIds,
   hostBatchEntries,
+  lockPlanForMove,
   withHostSlotBatch,
 } from "@/lib/booking/host-slot-batch";
 import {
@@ -804,6 +805,11 @@ export async function PATCH(request: NextRequest) {
                 async (tx) => {
                   await renewEventLock();
                   await renewHostBatch();
+                  // An edit that takes host time queues behind a team change on
+                  // the plan, then refuses a team its batch did not cover.
+                  if (batchProfiles.length > 0) {
+                    await lockPlanForMove(tx, "CLASS", id, batchProfiles);
+                  }
                   // Use topics from existingPlan fetched *before* the transaction
                   const currentTopicIdsFromOuterScope = existingPlan.topics.map(
                     (t) => t.id,

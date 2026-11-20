@@ -14,6 +14,7 @@ const waitlistUpdateMany = jest.fn(async () => ({ count: 0 }));
 const updateManyAndReturn = jest.fn();
 const membershipFindMany = jest.fn(async () => [] as { userId: string }[]);
 const paymentFindMany = jest.fn(async () => [] as unknown[]);
+const seatHistoryFindMany = jest.fn(async () => [] as unknown[]);
 const participantFindMany = jest.fn(
   async (_args: { where: Record<string, unknown> }) =>
     [] as { userId: string }[],
@@ -38,6 +39,8 @@ const tx = {
   },
   membership: { findMany: membershipFindMany },
   payment: { findMany: paymentFindMany },
+  // A left free seat's latest SEAT row decides whether it may come back.
+  bookingStatusHistory: { findMany: seatHistoryFindMany },
   appointmentParticipant: { findMany: participantFindMany },
   notificationOutbox: { createManyAndReturn },
 };
@@ -80,6 +83,7 @@ import { canViewPlanDetail } from "@/lib/data/plan-viewable";
 import { stageEventSeatOpenedEmails } from "@/lib/email/senders/booking";
 import {
   assertSeatRemintable,
+  canBuySeat,
   seatRebuyRefusal,
   type PriorSeatPayment,
 } from "@/lib/payments/checkout/seats";
@@ -393,6 +397,18 @@ describe("joinEventWaitlist", () => {
       { appointmentParticipants: [{ status: "CANCELLED" }] },
       "SEAT_REBUY_UNSUPPORTED",
     ],
+    [
+      "removed",
+      {
+        amount: 0,
+        originalAmount: 0,
+        paymentIntent: "free_1",
+        appointmentParticipants: [
+          { status: "CANCELLED", removedByUserId: "host-1" },
+        ],
+      },
+      "SEAT_REBUY_UNSUPPORTED",
+    ],
   ])(
     "refuses a %s earlier seat with checkout's own answer",
     async (_l, prior, code) => {
@@ -410,6 +426,28 @@ describe("joinEventWaitlist", () => {
       await expect(join()).rejects.toMatchObject({ code });
     },
   );
+
+  it("lets a learner who left a price-free seat wait for the next one", async () => {
+    soldOut();
+    seatHistoryFindMany.mockResolvedValueOnce([
+      { entityId: "part-1", reason: "self_leave" },
+    ]);
+    paymentFindMany.mockResolvedValueOnce([
+      {
+        userId: "u-1",
+        paymentStatus: "SUCCEEDED",
+        paymentIntent: "free_1",
+        amount: 0,
+        originalAmount: 0,
+        refunds: [],
+        appointmentParticipants: [
+          { id: "part-1", status: "CANCELLED", removedByUserId: null },
+        ],
+      },
+    ]);
+    await join();
+    expect(waitlistUpsert).toHaveBeenCalled();
+  });
 
   it("returns an open row as it is and reopens an expired one", async () => {
     soldOut();
@@ -445,11 +483,51 @@ describe("the shared seat rule", () => {
     [{ paymentStatus: "PENDING" }, "CHECKOUT_OPEN"],
     [{ refunds: [{ amountPaise: 500 }] }, "REFUNDED"],
     [{ appointmentParticipants: [{ status: "CANCELLED" }] }, "LEFT"],
+    [
+      {
+        amount: 0,
+        originalAmount: 0,
+        paymentIntent: "free_1",
+        appointmentParticipants: [
+          { status: "CANCELLED", removedByUserId: "host-1" },
+        ],
+      },
+      "REMOVED",
+    ],
     [{}, "ALREADY_REGISTERED"],
   ] as const)("classifies %j as %s", (over, refusal) => {
     expect(seatRebuyRefusal(prior(over as Partial<PriorSeatPayment>))).toBe(
       refusal,
     );
+  });
+
+  it("offers a seat to a learner who left a price-free seat, never to a removed one", () => {
+    const free = {
+      amount: 0,
+      originalAmount: 0,
+      paymentIntent: "free_1",
+      lastSeatReason: "self_leave",
+    };
+    expect(
+      canBuySeat(
+        prior({
+          ...free,
+          appointmentParticipants: [
+            { id: "seat-1", status: "CANCELLED", removedByUserId: null },
+          ],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      canBuySeat(
+        prior({
+          ...free,
+          appointmentParticipants: [
+            { id: "seat-1", status: "CANCELLED", removedByUserId: "host-1" },
+          ],
+        }),
+      ),
+    ).toBe(false);
   });
 
   it("keeps checkout's refusal sentences unchanged", () => {

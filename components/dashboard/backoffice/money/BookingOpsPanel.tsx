@@ -19,6 +19,7 @@ import { BookingDocumentsOps } from "./BookingDocumentsOps";
 import { ClassSeriesDoors } from "./ClassSeriesDoors";
 import { DoorDialog, type Door } from "./DoorDialog";
 import { PlatformCancelDoor } from "./PlatformCancelDoor";
+import { seatLiftDoor } from "./seat-lift-door";
 import { SetOutcomeDialog } from "./SetOutcomeDialog";
 
 type Session = BookingOpsView["sessions"][number];
@@ -28,8 +29,14 @@ const DECIDED = new Set(["COMPLETED", "UNVERIFIED", "VOIDED"]);
 // The reschedule door releases only a session that still holds a future time.
 const RESCHEDULABLE = new Set(["SCHEDULED", "RESCHEDULED"]);
 
+const REMOVAL_WORDS = {
+  ORGANISER: "removed by the organiser",
+  CONDUCT: "removed for conduct",
+  LEGACY: "left with no recorded leave",
+} as const;
+
 const RESCHEDULE_COPY =
-  "This only releases the time: the customer picks the new times, and both parties are notified. Nothing is refunded now, and a session within 24 hours cannot be moved.";
+  "This only releases the time: the expert places the new time, and both parties are notified. The original time is not put back on its own, so follow up until a new one is placed. Nothing is refunded now, and a session within 24 hours cannot be moved.";
 
 /**
  * #1771 — a booking's Ops actions, by type. Every booking lists its sessions
@@ -157,6 +164,34 @@ export function BookingOpsPanel({
           )}
         </div>
       </div>
+
+      {v.removedSeats.length > 0 && (
+        <div className="space-y-1 text-sm">
+          <p className="font-medium">Removed attendees</p>
+          <ul className="divide-y divide-border rounded-md border">
+            {v.removedSeats.map((seat) => (
+              <li
+                key={seat.userId}
+                className="flex flex-wrap items-center justify-between gap-2 p-2"
+              >
+                <span className="min-w-0 flex-1">
+                  {seat.name || "Attendee"} · {REMOVAL_WORDS[seat.removal]}
+                  {seat.paidSeat && " · paid seat: support rejoins them"}
+                </span>
+                {can("appointments.liftSeatRemoval") && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setDoor(seatLiftDoor(appointmentId, seat))}
+                  >
+                    Allow back
+                  </Button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="space-y-1 text-sm">
         <p className="font-medium">Money</p>

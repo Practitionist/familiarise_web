@@ -188,7 +188,8 @@ describe("related-party bookings", () => {
     const coHost = await seedHost();
     const { org, owner } = await seedOrgWithOwner(coHost.userId);
     const webinar = await seedWebinar({ capacity: 5 });
-    await prisma.collaborator.create({
+    // A collaboration is born an invitation; the accept is its own write.
+    const invitation = await prisma.collaborator.create({
       data: {
         consultantProfileId: coHost.consultantProfileId,
         collaboratorType: "WEBINAR",
@@ -196,8 +197,11 @@ describe("related-party bookings", () => {
         role: "CO_HOST",
         tier: "PRESENTER",
         revenueShareBps: 2000,
-        status: "ACCEPTED",
       },
+    });
+    await prisma.collaborator.update({
+      where: { id: invitation.id },
+      data: { status: "ACCEPTED" },
     });
     await prisma.$transaction((tx) =>
       recordRelatedPartyBooking(tx, {

@@ -52,6 +52,7 @@ import {
   caseTransitionRefusal,
 } from "./case-transitions";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
+import { learnerCaseEventValues } from "./case-event-copy";
 import {
   openWaitSeconds,
   reopenedClockPatch,
@@ -2082,8 +2083,7 @@ export async function readSupportCaseForViewer(
       .map((event) => ({
         id: event.id,
         kind: event.kind,
-        fromValue: event.fromValue,
-        toValue: event.toValue,
+        ...learnerCaseEventValues(event),
         createdAt: event.createdAt,
         actorId: null,
         note: null,

@@ -45,6 +45,8 @@ const tx = {
   appointmentParticipant: {
     updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     findFirst: jest.fn(),
+    // The REFUNDED stamp's pre-read for event learner seats; a 1:1 seat has none.
+    findMany: jest.fn().mockResolvedValue([]),
   },
   referralCreditUsage: { findMany: jest.fn() },
   streamRevocationRetry: { updateMany: jest.fn(), createMany: jest.fn() },

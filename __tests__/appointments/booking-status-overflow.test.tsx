@@ -16,18 +16,19 @@ import {
   storedTrial,
 } from "../fixtures/stored-bookings";
 
-jest.mock("next/navigation", () => ({
-  useRouter: () => ({ push: jest.fn(), refresh: jest.fn() }),
-  useParams: () => ({ consulteeId: "cee-1" }),
-}));
-jest.mock("@/lib/auth-client", () => ({
-  useSession: () => ({
-    data: { user: { id: "u-l", consulteeProfileId: "cee-1", role: "USER" } },
-  }),
-}));
-jest.mock("@/hooks/scheduling/useLazyJoinMeeting", () => ({
-  useLazyJoinMeeting: () => jest.fn(),
-}));
+jest.mock("next/navigation", () =>
+  jest
+    .requireActual("../fixtures/learner-adapter-mocks")
+    .learnerNavigationModule(),
+);
+jest.mock("@/lib/auth-client", () =>
+  jest
+    .requireActual("../fixtures/learner-adapter-mocks")
+    .learnerSessionModule(),
+);
+jest.mock("@/hooks/scheduling/useLazyJoinMeeting", () =>
+  jest.requireActual("../fixtures/learner-adapter-mocks").lazyJoinModule(),
+);
 jest.mock("@/hooks/use-toast", () => ({
   useToast: () => ({ toast: jest.fn() }),
 }));
@@ -193,5 +194,38 @@ describe("a row that reads Cancelled offers only neutral actions", () => {
     expect(row.bucket).toBe("cancelled");
     expect(row.primary).toBe("view");
     expect(row.menu.filter((key) => !NEUTRAL.has(key))).toEqual([]);
+  });
+});
+
+describe("the roster is offered only to someone who may open it", () => {
+  /** A paid webinar on the expert's list, by who owns the plan and who is on its team. */
+  const webinarRow = (ownerId: string, collaborators: Row[]) =>
+    expertRow(() => {
+      const { appointment, ...webinar } = storedSeat("paid");
+      const webinarPlan = {
+        ...webinar.webinarPlan,
+        consultantProfileId: ownerId,
+        collaborators,
+      };
+      return {
+        rows: [{ ...appointment, webinar: { ...webinar, webinarPlan } }],
+      };
+    });
+  const onTeamAs = (role: string) => [
+    { id: "collab-1", consultantProfileId: "cp-1", role, status: "ACCEPTED" },
+  ];
+
+  it.each([
+    ["the plan's host", () => webinarRow("cp-1", []), true],
+    ["a co-host", () => webinarRow("cp-host", onTeamAs("CO_HOST")), true],
+    [
+      "technical support",
+      () => webinarRow("cp-host", onTeamAs("TECHNICAL_SUPPORT")),
+      false,
+    ],
+    ["a moderator", () => webinarRow("cp-host", onTeamAs("MODERATOR")), false],
+  ])("%s", async (_viewer, read, offeredRoster) => {
+    const row = await read();
+    expect(row.menu.includes("participants")).toBe(offeredRoster);
   });
 });

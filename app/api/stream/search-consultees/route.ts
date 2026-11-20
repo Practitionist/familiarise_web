@@ -1,7 +1,10 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "lib/prisma";
-import { liveParticipant } from "@/lib/booking/participants";
+import {
+  liveParticipant,
+  NOT_COLLABORATOR_ROW,
+} from "@/lib/booking/participants";
 
 import { getSession } from "@/lib/auth-server";
 import {
@@ -190,9 +193,10 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    const liveSeat = { ...liveParticipant(), ...NOT_COLLABORATOR_ROW };
     const participantFilter = userSearchWhere
-      ? { ...liveParticipant(), user: userSearchWhere }
-      : liveParticipant();
+      ? { ...liveSeat, user: userSearchWhere }
+      : liveSeat;
 
     const eventInclude = {
       appointment: {

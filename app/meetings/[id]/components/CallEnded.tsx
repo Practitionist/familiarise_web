@@ -41,7 +41,9 @@ const CallEnded = ({
           {message}
         </h1>
         <p className="text-zinc-400 mb-8">
-          You can return to the home page or try to rejoin the meeting.
+          {onRejoin
+            ? "You can return to the home page or try to rejoin the meeting."
+            : "You can return to the home page."}
         </p>
 
         {/* Actions */}

@@ -171,6 +171,9 @@ describe("deriveConsultantActionItems", () => {
       basePath: CONSULTANT_BASE,
     });
     expect(item.title).toBe("3 requests to answer");
+    expect(item.body).toBe(
+      "Answer new requests and place the sessions learners have paid for.",
+    );
     expect(item.ctaHref).toBe(`${CONSULTANT_BASE}/requests`);
   });
 
@@ -266,6 +269,16 @@ describe("deriveConsulteeActionItems", () => {
     expect(item.severity).toBe("critical");
     expect(item.title).toContain("₹1,240");
     expect(item.ctaHref).toBe(`${CONSULTEE_BASE}/payments?tab=needs-you`);
+  });
+
+  it("writes the outstanding total in paise like the rows under it", () => {
+    const [item] = deriveConsulteeActionItems({
+      pendingPaymentCount: 2,
+      pendingPaymentTotalPaise: 578_090,
+      upcomingSessions: [],
+      basePath: CONSULTEE_BASE,
+    });
+    expect(item.title).toBe("2 payments are outstanding (₹5,780.90)");
   });
 
   it("omits the amount when it isn't known", () => {

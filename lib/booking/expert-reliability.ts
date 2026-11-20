@@ -7,6 +7,7 @@
 import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 
+import { BOOKING_TITLE_SELECT, bookingTitleOf } from "@/lib/data/booking-title";
 import prisma, { type Tx } from "@/lib/prisma";
 import {
   EXPERT_STRIKE_WINDOW_DAYS,
@@ -186,16 +187,60 @@ export async function readOwnStrikes(
     take: STRIKE_READ_CAP,
   });
   const counted = await countableStrikes(db, rows, since);
+  const recent = counted.slice(0, OWN_RECENT_LIMIT).flatMap((row) => {
+    const parsed = ownStrikeCauseSchema.safeParse(row.context);
+    return parsed.success
+      ? [
+          {
+            at: row.createdAt,
+            cause: parsed.data.strike,
+            occurrenceIds: strikeContextOf(row.context)?.occurrenceIds ?? [],
+          },
+        ]
+      : [];
+  });
+  const sessionOf = await strikeSessions(
+    db,
+    recent.flatMap((r) => r.occurrenceIds),
+  );
   return {
     windowDays: EXPERT_STRIKE_WINDOW_DAYS,
     count: counted.length,
-    recent: counted.slice(0, OWN_RECENT_LIMIT).flatMap((row) => {
-      const parsed = ownStrikeCauseSchema.safeParse(row.context);
-      return parsed.success
-        ? [{ at: row.createdAt.toISOString(), cause: parsed.data.strike }]
-        : [];
+    recent: recent.map((strike) => {
+      const sessions = strike.occurrenceIds
+        .flatMap((id) => sessionOf.get(id) ?? [])
+        .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
+      return {
+        at: strike.at.toISOString(),
+        cause: strike.cause,
+        planTitle: sessions[0]?.planTitle ?? null,
+        sessionAt: sessions[0]?.startsAt.toISOString() ?? null,
+      };
     }),
   };
+}
+
+/** The sessions the listed strikes name, with their plan's title, in one joined read. */
+async function strikeSessions(
+  db: Pick<Tx, "appointmentOccurrence">,
+  occurrenceIds: string[],
+): Promise<Map<string, { startsAt: Date; planTitle: string }>> {
+  if (occurrenceIds.length === 0) return new Map();
+  const rows = await db.appointmentOccurrence.findMany({
+    where: { id: { in: [...new Set(occurrenceIds)] } },
+    select: {
+      id: true,
+      startsAt: true,
+      appointment: { select: BOOKING_TITLE_SELECT },
+    },
+    relationLoadStrategy: "join",
+  });
+  return new Map(
+    rows.map((r) => [
+      r.id,
+      { startsAt: r.startsAt, planTitle: bookingTitleOf(r.appointment) },
+    ]),
+  );
 }
 
 /** The ops review list: experts with strikes in the window, most first. */

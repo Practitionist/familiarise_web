@@ -138,10 +138,17 @@ function earningActions(onAct: (acting: Acting) => void) {
  * hold or release one row with a reason. Release answers READY only when the
  * hold has matured and nothing is open on the payment.
  */
-export function EarningsTab() {
+export function EarningsTab({
+  initialConsultantProfileId = "",
+}: Readonly<{
+  /** The expert a link opened this tab on; the filter stays editable. */
+  initialConsultantProfileId?: string;
+}>) {
   // #1527 — held earnings are the ones waiting on an operator.
   const [status, setStatus] = useState("HELD");
-  const [consultantProfileId, setConsultantProfileId] = useState("");
+  const [consultantProfileId, setConsultantProfileId] = useState(
+    initialConsultantProfileId,
+  );
   const [paymentId, setPaymentId] = useState("");
   const [page, setPage] = useState(1);
   const { basePath } = useBackofficeCapability();

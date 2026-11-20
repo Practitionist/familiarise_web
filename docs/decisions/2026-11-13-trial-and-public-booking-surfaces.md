@@ -35,7 +35,7 @@ Hannah Anderson offers a free 30-minute consultation. Charlotte Brown books Mond
 
 5. **Strikes are private** (decided 2026-11-12, built).
    - The public profile no longer reads or prints strikes: the reliability line in `ProfileHeader`, its threading through the profile page and `ExpertProfileClient`, and `showsReliabilityNotice` are deleted. The public readers (`lib/data/consultant-detail.ts`, `lib/data/consultant-public.ts`) carry no strike field.
-   - The expert sees their own record on Settings → Booking (`ReliabilityCard`): the count in the last 90 days and the ten latest strikes with their cause and date, read by `readOwnStrikes` (`lib/booking/expert-reliability.ts`) through the owner-only `GET /api/user/consultants/[id]/strikes`. Strikes on a session inside a declared incident are dropped there as they are everywhere.
+   - The expert sees their own record on Settings → Booking (`ReliabilityCard`): the count in the last 90 days and the ten latest strikes with their cause and date, each with its plan title and session date when the strike names its sessions, read by `readOwnStrikes` (`lib/booking/expert-reliability.ts`) through the owner-only `GET /api/user/consultants/[id]/strikes`. Strikes on a session inside a declared incident are dropped there as they are everywhere.
    - Staff keep `ExpertStrikesCard`; an expert at `EXPERT_STRIKE_THRESHOLD` (3 in 90 days) is marked "needs review".
    - **Options considered** (from decision 17 of the scheduling surfaces record). Softer public wording was rejected. Moving the line into the Reviews section was the owner's first choice and was reversed the same day: reviews and ratings are the public signal.
 

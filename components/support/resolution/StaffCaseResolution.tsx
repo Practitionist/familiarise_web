@@ -20,7 +20,7 @@ import {
   DECISION_APPEAL_DAYS,
   decisionInForce,
   Outcome,
-  OUTCOME_LABEL,
+  outcomeLabel,
   outcomesFor,
   useCaseAction,
   useCaseResolution,
@@ -84,7 +84,7 @@ function DecisionDialog({
         >
           {outcomes.map((value) => (
             <option key={value} value={value}>
-              {OUTCOME_LABEL[value]}
+              {outcomeLabel(data, value)}
             </option>
           ))}
         </select>
@@ -102,7 +102,7 @@ function DecisionDialog({
           placeholder="Private operator rationale (optional)"
         />
         <Button size="sm" disabled={busy || !explanation.trim()}>
-          Review decision
+          {current ? "Review decision" : "Record decision"}
         </Button>
       </form>
       <AlertDialog open={confirming} onOpenChange={setConfirming}>
@@ -120,7 +120,7 @@ function DecisionDialog({
           <dl className="space-y-2 text-sm">
             <div>
               <dt className="text-xs text-muted-foreground">Outcome</dt>
-              <dd className="font-medium">{OUTCOME_LABEL[outcome]}</dd>
+              <dd className="font-medium">{outcomeLabel(data, outcome)}</dd>
             </div>
             <div>
               <dt className="text-xs text-muted-foreground">
@@ -351,7 +351,7 @@ export function StaffCaseResolution({
           className="space-y-2 border-b border-border pb-3"
         >
           <p className="font-medium">
-            {OUTCOME_LABEL[decision.outcome]}
+            {outcomeLabel(data, decision.outcome)}
             {superseded.has(decision.id) ? " · Superseded" : ""}
           </p>
           <p className="whitespace-pre-wrap">{decision.explanation}</p>

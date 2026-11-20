@@ -25,7 +25,6 @@ import {
   X,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
-import { useCurrency } from "@/hooks/useCurrency";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { cn } from "@/utils/tailwind";
 import { OUTCOME_UNKNOWN_MESSAGE } from "@/lib/fetch-helpers";
@@ -52,6 +51,8 @@ interface PendingPayment {
   expiresAt: string;
   isExpiringSoon: boolean;
   source?: "approval_pending" | "gateway_pending";
+  /** Referral credit on a gateway order that a cancel returns to the balance. */
+  referralCreditPaise?: number;
   /**
    * Appointment record id for approval-pending items — the abandon door
    * (`POST /api/bookings/[bookingId]/abandon`) keys on Appointment, not the
@@ -197,6 +198,23 @@ type PendingCancelTarget =
   | { kind: "gateway"; paymentId: string; title: string }
   | { kind: "approval"; appointmentId: string; title: string };
 
+/**
+ * The cancel dialog's body. A gateway order names the referral credit its
+ * current row holds: checkout can re-mint the same Payment id without credit.
+ */
+function cancelDescription(
+  target: PendingCancelTarget | null,
+  current: PendingPayment | undefined,
+): string {
+  if (target?.kind === "approval") {
+    return `"${target.title}" will be cancelled. Nothing has been charged — the expert's approval and any held slots are released.`;
+  }
+  const credit = current?.referralCreditPaise
+    ? ` Your ${formatCurrencyAmount(current.referralCreditPaise, current.currency || "INR")} referral credit goes back to your balance if it is still valid when you cancel.`
+    : "";
+  return `"${target?.title ?? ""}" will be cancelled and your held slot released.${credit} If the payment already went through, it will be reconciled automatically.`;
+}
+
 interface PendingPaymentsWidgetProps {
   consulteeId: string;
 }
@@ -205,12 +223,11 @@ interface PendingPaymentsWidgetProps {
  * Sidebar widget showing pending payments.
  * Shows two types:
  * 1. Approval-pending: consultant approved, awaiting checkout (shows "Pay Now")
- * 2. Gateway-pending: payment initiated, awaiting gateway confirmation (shows "Processing")
+ * 2. Gateway-pending: an open gateway order not yet paid (shows "Awaiting payment")
  */
 export function PendingPaymentsWidget({
   consulteeId,
 }: PendingPaymentsWidgetProps) {
-  const { formatPrice } = useCurrency();
   const { zone: viewerZone } = useZoneClock();
   const queryClient = useQueryClient();
   const [cancellingId, setCancellingId] = useState<string | null>(null);
@@ -225,6 +242,7 @@ export function PendingPaymentsWidget({
   const {
     data: payload,
     isLoading: loading,
+    isFetching,
     error: queryError,
   } = useQuery({
     queryKey: ["pending-payments", consulteeId],
@@ -244,6 +262,27 @@ export function PendingPaymentsWidget({
 
   const [cancelTarget, setCancelTarget] = useState<PendingCancelTarget | null>(
     null,
+  );
+  const cancelRow =
+    cancelTarget?.kind === "gateway"
+      ? pendingPayments.find(
+          (p) =>
+            p.id === cancelTarget.paymentId && p.source === "gateway_pending",
+        )
+      : undefined;
+  // The dialog quotes the order as just re-read, never the row it was opened from.
+  const openGatewayCancel = useCallback(
+    (payment: PendingPayment) => {
+      setCancelTarget({
+        kind: "gateway",
+        paymentId: payment.id,
+        title: payment.title,
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ["pending-payments", consulteeId],
+      });
+    },
+    [queryClient, consulteeId],
   );
 
   // #849 — release the caller's own tentative hold instead of waiting out
@@ -440,16 +479,12 @@ export function PendingPaymentsWidget({
             payment,
             viewerZone,
           );
-          // #1763 — `nextAction.label` runs its own `money()` helper, so an
-          // INR row diverged from the row's own `formatPrice` amount above.
-          const isNonInr =
-            payment.currency && payment.currency.toUpperCase() !== "INR";
+          const amountText = formatCurrencyAmount(
+            payment.amount,
+            payment.currency || "INR",
+          );
           const payLabel =
-            nextAction.kind !== "PAY"
-              ? "Pay now"
-              : isNonInr
-                ? nextAction.label
-                : formatPrice(payment.amount);
+            nextAction.kind === "PAY" ? nextAction.label : "Pay now";
 
           return (
             <div key={payment.id} className="px-5 py-3.5">
@@ -476,13 +511,7 @@ export function PendingPaymentsWidget({
                   </div>
                 </div>
                 <span className="text-sm font-semibold text-foreground tabular-nums shrink-0">
-                  {/* `formatPrice` assumes INR paise and applies the viewer's
-                      FX rate, so a payment already denominated in another
-                      currency was converted a second time and relabelled.
-                      Only INR rows go through the converter now. */}
-                  {payment.currency && payment.currency.toUpperCase() !== "INR"
-                    ? formatCurrencyAmount(payment.amount, payment.currency)
-                    : formatPrice(payment.amount)}
+                  {amountText}
                 </span>
               </div>
               <div className="flex items-center justify-between mt-2.5">
@@ -513,22 +542,15 @@ export function PendingPaymentsWidget({
                 </div>
                 {isGatewayPending ? (
                   <span className="inline-flex items-center gap-1.5">
-                    <span className="inline-flex items-center gap-1 h-7 px-3 text-xs font-semibold text-amber-700 bg-amber-100 rounded-md">
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                      Processing
+                    <span className="inline-flex items-center h-7 px-3 text-xs font-semibold text-amber-700 bg-amber-100 rounded-md">
+                      Awaiting payment
                     </span>
                     <Button
                       size="sm"
                       variant="ghost"
                       disabled={cancellingId === payment.id}
                       className="h-7 px-2 text-xs text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 font-semibold"
-                      onClick={() =>
-                        setCancelTarget({
-                          kind: "gateway",
-                          paymentId: payment.id,
-                          title: payment.title,
-                        })
-                      }
+                      onClick={() => openGatewayCancel(payment)}
                     >
                       {cancellingId === payment.id ? (
                         <Loader2 className="h-3 w-3 animate-spin" />
@@ -612,15 +634,14 @@ export function PendingPaymentsWidget({
                 : "Cancel this pending payment?"}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              {cancelTarget?.kind === "approval"
-                ? `"${cancelTarget.title}" will be cancelled. Nothing has been charged — the expert's approval and any held slots are released.`
-                : `"${cancelTarget?.title ?? ""}" will be cancelled and your held slot released. If the payment already went through, it will be reconciled automatically.`}
+              {cancelDescription(cancelTarget, cancelRow)}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Keep booking</AlertDialogCancel>
             <AlertDialogAction
               className="bg-red-600 hover:bg-red-700 text-white"
+              disabled={cancelTarget?.kind === "gateway" && isFetching}
               onClick={handleConfirmCancel}
             >
               Cancel booking

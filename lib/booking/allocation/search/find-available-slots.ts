@@ -25,6 +25,7 @@ import { isOccupiedByLiveAppointment } from "@/utils/scheduling-engine/ScheduleV
 import {
   buildConsultantOccupancyWhere,
   buildOccupiedAppointmentFilter,
+  LIVE_OCCUPANCY_READ,
   OCCUPYING_OCCURRENCE_WHERE,
   timeHoldingParticipant,
 } from "@/utils/scheduling-engine/occupancyPolicy";
@@ -206,11 +207,9 @@ export async function findAvailableSlots(
             : {}),
         },
       },
-      // RV-2 — status + payment let isOccupiedByLiveAppointment drop expired
-      // APPROVED_PENDING_PAYMENT holds, matching what the validator skips.
-      consultation: { select: { status: true, bookingSource: true } },
-      subscription: { select: { status: true, bookingSource: true } },
-      payment: { select: { expiresAt: true, paymentStatus: true } },
+      // What isOccupiedByLiveAppointment reads to drop a dead hold, matching
+      // what the validator skips.
+      ...LIVE_OCCUPANCY_READ,
     },
   });
 
@@ -280,9 +279,7 @@ export async function findAvailableSlots(
               : {}),
           },
         },
-        consultation: { select: { status: true, bookingSource: true } },
-        subscription: { select: { status: true, bookingSource: true } },
-        payment: { select: { expiresAt: true, paymentStatus: true } },
+        ...LIVE_OCCUPANCY_READ,
       },
     });
     consulteeAppointments

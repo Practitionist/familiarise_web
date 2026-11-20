@@ -54,12 +54,9 @@ export async function GET(req: NextRequest) {
         deletedAt: null,
         verificationStatus: "VERIFIED",
         ...(excludeId && { id: { not: excludeId } }),
-        user: {
-          OR: [
-            { name: { contains: query, mode: "insensitive" } },
-            { email: { contains: query, mode: "insensitive" } },
-          ],
-        },
+        // By name only: the answer shows a masked address, so a match on the
+        // address itself would confirm what the mask hides.
+        user: { name: { contains: query, mode: "insensitive" } },
       },
       select: {
         id: true,

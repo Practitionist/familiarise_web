@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo } from "react";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 // #248: do NOT statically import the Stream SDK (useStreamVideoClient) or
@@ -42,9 +41,10 @@ import {
   getTodayAppointments,
   getUpcomingAppointments,
   getCollaboratorRole,
-  formatCollaboratorRole,
   getRoleBadgeStyle,
 } from "../../utils/appointmentHelpers";
+import { formatRole } from "@/components/collaborators/format";
+import { CounterpartAvatar } from "@/components/appointments/CounterpartAvatar";
 
 import { ActionRequiredPanel } from "@/components/dashboard/ActionRequiredPanel";
 import { DemandBanner } from "../requests/DemandBanner";
@@ -66,7 +66,6 @@ import {
 import { bookingStatusBadge } from "@/lib/appointments/booking-status";
 import { TAppointment } from "@/types/appointment";
 import { useNowTick } from "@/hooks/use-now-tick";
-import { getInitials } from "@/utils/formatting";
 import { RequestsInboxPreview } from "@/components/dashboard/shared/requests/RequestsInboxPreview";
 import { ShareProfilePrompt, ThisMonthCard } from "./ThisMonthCard";
 import type {
@@ -286,6 +285,8 @@ export function HomeTab({
                         appointment,
                         consultantId,
                       );
+                      const typeAndPlan =
+                        getAppointmentTypeAndPlan(appointment);
                       const startTime = getStartTime(appointment);
                       const joinableSlot = getJoinableOccurrence(
                         appointment.occurrences ?? [],
@@ -311,20 +312,20 @@ export function HomeTab({
                           key={appointment.id}
                           className="flex items-center gap-4 py-3 first:pt-0 last:pb-0 hover:bg-zinc-50/50 -mx-5 px-5 transition-colors"
                         >
-                          <Avatar className="h-10 w-10 flex-shrink-0 ring-2 ring-white shadow-sm">
-                            <AvatarImage
-                              alt={userName}
-                              src={getConsumeeImage(appointment)}
-                            />
-                            <AvatarFallback className="bg-zinc-100 text-zinc-600 font-medium text-sm">
-                              {getInitials(userName)}
-                            </AvatarFallback>
-                          </Avatar>
+                          <CounterpartAvatar
+                            counterpart={{
+                              name: userName ?? typeAndPlan,
+                              image: getConsumeeImage(appointment),
+                              audience: userName === null,
+                            }}
+                            className="h-10 w-10 flex-shrink-0 ring-2 ring-white shadow-sm"
+                            fallbackClassName="bg-zinc-100 text-zinc-600 font-medium text-sm"
+                          />
 
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 flex-wrap">
                               <h3 className="font-medium text-zinc-900 truncate text-sm">
-                                {userName}
+                                {userName ?? typeAndPlan}
                               </h3>
                               {(() => {
                                 const sponsoringOrgName =
@@ -352,14 +353,17 @@ export function HomeTab({
                                   <Badge
                                     className={`text-[10px] px-1.5 py-0 h-5 flex-shrink-0 ${getRoleBadgeStyle(role)}`}
                                   >
-                                    {formatCollaboratorRole(role)}
+                                    {formatRole(role)}
                                   </Badge>
                                 ) : null;
                               })()}
                             </div>
-                            <p className="text-xs text-zinc-500 truncate">
-                              {getAppointmentTypeAndPlan(appointment)}
-                            </p>
+                            {/* A host's own webinar or class is titled by its plan, with no audience to name. */}
+                            {userName !== null && (
+                              <p className="text-xs text-zinc-500 truncate">
+                                {typeAndPlan}
+                              </p>
+                            )}
                           </div>
 
                           <div className="flex items-center gap-2 text-sm text-zinc-500 flex-shrink-0">
@@ -502,6 +506,8 @@ export function HomeTab({
                         firstAppointment,
                         consultantId,
                       );
+                      const title =
+                        userName ?? getAppointmentTypeAndPlan(firstAppointment);
                       const startTime = isRecurring
                         ? getNextUpcomingSlotTime(firstAppointment)
                         : getStartTime(firstAppointment);
@@ -519,20 +525,20 @@ export function HomeTab({
                           whileHover={{ x: 4 }}
                           className="group flex items-center gap-4 p-3 rounded-xl hover:bg-zinc-50 cursor-pointer transition-all"
                         >
-                          <Avatar className="h-10 w-10">
-                            <AvatarImage
-                              alt={userName}
-                              src={getConsumeeImage(firstAppointment)}
-                            />
-                            <AvatarFallback className="bg-zinc-100 text-zinc-600 text-sm">
-                              {getInitials(userName)}
-                            </AvatarFallback>
-                          </Avatar>
+                          <CounterpartAvatar
+                            counterpart={{
+                              name: title,
+                              image: getConsumeeImage(firstAppointment),
+                              audience: userName === null,
+                            }}
+                            className="h-10 w-10"
+                            fallbackClassName="bg-zinc-100 text-zinc-600 text-sm"
+                          />
 
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 flex-wrap">
                               <h4 className="font-medium text-zinc-900 truncate">
-                                {userName}
+                                {title}
                               </h4>
                               {(() => {
                                 const sponsoringOrgName =
@@ -560,7 +566,7 @@ export function HomeTab({
                                   <Badge
                                     className={`text-[10px] px-1.5 py-0 h-5 flex-shrink-0 ${getRoleBadgeStyle(role)}`}
                                   >
-                                    {formatCollaboratorRole(role)}
+                                    {formatRole(role)}
                                   </Badge>
                                 ) : null;
                               })()}
@@ -719,30 +725,39 @@ export function HomeTab({
               {clientBookings.length > 0 && (
                 <DataCard title="Booked as a client" icon={Calendar}>
                   <ul className="divide-y divide-border text-sm">
-                    {clientBookings.map((booking) => (
-                      <li
-                        key={booking.occurrenceId}
-                        className="flex items-center justify-between gap-3 py-2"
-                      >
-                        <div className="min-w-0">
-                          <p className="truncate font-medium text-foreground">
-                            Booked as a client with {booking.expertName}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            {formatForViewer(
-                              booking.startsAt,
-                              viewerZone,
-                              HOME_TIME_PATTERN,
-                            )}
-                          </p>
-                        </div>
-                        {booking.href ? (
-                          <Button asChild variant="outline" size="sm">
-                            <Link href={booking.href}>Open</Link>
-                          </Button>
-                        ) : null}
-                      </li>
-                    ))}
+                    {clientBookings.map((booking) => {
+                      const when = formatForViewer(
+                        booking.startsAt,
+                        viewerZone,
+                        HOME_TIME_PATTERN,
+                      );
+                      return (
+                        <li
+                          key={booking.occurrenceId}
+                          className="flex items-center justify-between gap-3 py-2"
+                        >
+                          <div className="min-w-0">
+                            <p className="truncate font-medium text-foreground">
+                              Booked as a client with {booking.expertName}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {when}
+                            </p>
+                          </div>
+                          {booking.href ? (
+                            <Button asChild variant="outline" size="sm">
+                              {/* The accessible name starts with the visible "Open". */}
+                              <Link
+                                href={booking.href}
+                                aria-label={`Open session with ${booking.expertName}, ${when}`}
+                              >
+                                Open
+                              </Link>
+                            </Button>
+                          ) : null}
+                        </li>
+                      );
+                    })}
                   </ul>
                 </DataCard>
               )}

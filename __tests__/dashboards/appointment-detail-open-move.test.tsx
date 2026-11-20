@@ -81,7 +81,10 @@ jest.mock("../../components/appointments/detail/ResourceSnapshot", () => ({
 import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AppointmentDetailClient } from "@/components/appointments/detail/AppointmentDetailClient";
-import { readAppointmentDetail } from "@/lib/data/appointment-detail";
+import {
+  readAppointmentDetail,
+  scopeAppointmentDetail,
+} from "@/lib/data/appointment-detail";
 import { DisplayZoneProvider } from "@/lib/time/zoned-format";
 import { formatInViewerZone } from "@/lib/time/viewer-zone";
 
@@ -263,4 +266,54 @@ describe("the first paint, before the session loads", () => {
       expect(html).not.toContain(">Decline…<");
     },
   );
+});
+
+describe("a move the learner's organisation opened, seen by the learner", () => {
+  /** The stored move, opened by the sponsor's admin, scoped as the server answered for the learner. */
+  async function learnerPage(mayWithdrawReschedule: boolean) {
+    const row = stored("CONSULTEE");
+    (row.rescheduleRequests as Row[])[0].initiatedById = "u-sponsor-admin";
+    mockStored = row;
+    const detail = await readAppointmentDetail("appt-1");
+    if (!detail) throw new Error("the stored booking did not read back");
+    mockDetail = scopeAppointmentDetail(detail, {
+      userId: learner.userId,
+      managesGroupPlan: false,
+      mayWithdrawReschedule,
+    });
+    mockViewerId = learner.userId;
+    return renderToStaticMarkup(
+      <DisplayZoneProvider zone={ZONE}>
+        <AppointmentDetailClient
+          appointmentId="appt-1"
+          role="consultee"
+          adapter={{
+            role: "consultee",
+            detailHref: () => null,
+            primaryAction: () => ({ kind: "view", label: "View" }),
+            overflowItems: () => [],
+            renderDialogs: () => null,
+          }}
+          backHref="/back"
+          resourceHrefs={{ documents: "/d", recordings: "/r" }}
+          supportRequestsBase="/support/requests"
+          consultantId="cp-1"
+        />
+      </DisplayZoneProvider>,
+    ).replace(/<!-- -->/g, "");
+  }
+
+  it("offers Keep my time and says whose move it is when the server allows the withdrawal", async () => {
+    const html = await learnerPage(true);
+    expect(html).toContain(">Keep my time<");
+    expect(html).toContain("Your organisation asked to move this booking");
+    expect(html).not.toContain(">Withdraw request<");
+    expect(html).not.toContain("Needs an answer by");
+  });
+
+  it("offers nothing to take back when the server does not", async () => {
+    const html = await learnerPage(false);
+    expect(html).not.toContain(">Keep my time<");
+    expect(html).not.toContain(">Withdraw request<");
+  });
 });

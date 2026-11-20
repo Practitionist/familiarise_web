@@ -140,7 +140,7 @@ export function DisputesPanel({ orgId }: Readonly<{ orgId: string }>) {
 
   if (isPending) {
     return (
-      <StatRow columns={3}>
+      <StatRow columns={3} stackOnPhone>
         <StatSkeleton />
         <StatSkeleton />
         <StatSkeleton />
@@ -171,7 +171,7 @@ export function DisputesPanel({ orgId }: Readonly<{ orgId: string }>) {
 
   return (
     <>
-      <StatRow columns={3}>
+      <StatRow columns={3} stackOnPhone>
         <Stat
           label="Open disputes"
           value={openCount}

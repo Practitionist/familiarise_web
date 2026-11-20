@@ -2,7 +2,6 @@
 
 import { motion } from "framer-motion";
 import { CalendarCheck } from "lucide-react";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { appointmentStatusChip } from "@/lib/appointments/occurrences";
 import type { AppointmentActionAdapter } from "@/lib/appointments/adapter";
@@ -15,6 +14,7 @@ import {
 import { CountdownBadge } from "./CountdownBadge";
 import { RowPrimaryAction } from "./RowPrimaryAction";
 import { KIND_LABEL } from "./AppointmentRow";
+import { CounterpartAvatar } from "./CounterpartAvatar";
 
 export interface HeroStat {
   label: string;
@@ -31,15 +31,6 @@ interface NextUpHeroProps {
   viewerZone: ViewerZone;
   stats: HeroStat[];
   onOpen?: (vm: AppointmentVM) => void;
-}
-
-function initials(name: string): string {
-  return name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase())
-    .join("");
 }
 
 export function NextUpHero({
@@ -78,15 +69,11 @@ export function NextUpHero({
             Next appointment
           </p>
           <div className="flex items-start gap-4">
-            <Avatar className="h-12 w-12 border border-border shrink-0">
-              <AvatarImage
-                src={vm.counterpart.image ?? undefined}
-                alt={vm.counterpart.name}
-              />
-              <AvatarFallback className="text-sm font-medium">
-                {initials(vm.counterpart.name) || "?"}
-              </AvatarFallback>
-            </Avatar>
+            <CounterpartAvatar
+              counterpart={vm.counterpart}
+              className="h-12 w-12 border border-border shrink-0"
+              fallbackClassName="text-sm font-medium"
+            />
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
                 <button
@@ -105,9 +92,11 @@ export function NextUpHero({
                   size="sm"
                 />
               </div>
-              <p className="text-sm text-muted-foreground mt-0.5 truncate">
-                with {vm.counterpart.name}
-              </p>
+              {!vm.counterpart.audience && (
+                <p className="text-sm text-muted-foreground mt-0.5 truncate">
+                  with {vm.counterpart.name}
+                </p>
+              )}
               {vm.nextAt && (
                 <div className="flex flex-wrap items-center gap-2 mt-2 text-sm">
                   <span className="font-medium text-foreground tabular-nums">

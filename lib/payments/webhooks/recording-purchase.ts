@@ -69,6 +69,8 @@ interface ResolvedPurchasePlanInfo {
   classPlanId: string | null;
   hostOrganizationId: string | null;
   visibility?: string | null;
+  /** When the recorded session started: the team of that moment shares the replay. */
+  sessionStartsAt: Date;
 }
 
 function resolvePurchasePlanInfo(purchase: {
@@ -76,6 +78,7 @@ function resolvePurchasePlanInfo(purchase: {
     organizationId?: string | null;
     meeting?: {
       occurrence?: {
+        startsAt: Date;
         appointment?: {
           organizationId?: string | null;
           webinar?: {
@@ -116,8 +119,10 @@ function resolvePurchasePlanInfo(purchase: {
   } | null;
 }): ResolvedPurchasePlanInfo | null {
   const recording = purchase.recording;
-  const appointment = recording?.meeting?.occurrence?.appointment;
-  if (!appointment) return null;
+  const occurrence = recording?.meeting?.occurrence;
+  const appointment = occurrence?.appointment;
+  if (!occurrence || !appointment) return null;
+  const sessionStartsAt = occurrence.startsAt;
 
   const fallbackOrgId =
     appointment.organizationId ?? recording?.organizationId ?? null;
@@ -131,6 +136,7 @@ function resolvePurchasePlanInfo(purchase: {
       classPlanId: null,
       hostOrganizationId: webinarPlan.organizationId ?? fallbackOrgId,
       visibility: webinarPlan.visibility ?? null,
+      sessionStartsAt,
     };
   }
 
@@ -143,6 +149,7 @@ function resolvePurchasePlanInfo(purchase: {
       classPlanId: appointment.class?.classPlanId ?? classPlan.id,
       hostOrganizationId: classPlan.organizationId ?? fallbackOrgId,
       visibility: classPlan.visibility ?? null,
+      sessionStartsAt,
     };
   }
 
@@ -155,6 +162,7 @@ function resolvePurchasePlanInfo(purchase: {
       classPlanId: null,
       hostOrganizationId: fallbackOrgId,
       visibility: appointment.consultation.consultationPlan.visibility ?? null,
+      sessionStartsAt,
     };
   }
 
@@ -167,6 +175,7 @@ function resolvePurchasePlanInfo(purchase: {
       classPlanId: null,
       hostOrganizationId: fallbackOrgId,
       visibility: appointment.subscription.subscriptionPlan.visibility ?? null,
+      sessionStartsAt,
     };
   }
 
@@ -363,6 +372,7 @@ async function settleReplaySale(
       },
     },
     appointmentType: planInfo.appointmentType,
+    teamAt: planInfo.sessionStartsAt,
     tx,
   });
   return { kind: "settled", paymentId: payment.id };
@@ -462,6 +472,7 @@ export async function handleRecordingPurchaseSuccess(
                 select: {
                   occurrence: {
                     select: {
+                      startsAt: true,
                       appointment: {
                         select: {
                           organizationId: true,
