@@ -15,6 +15,7 @@ import {
   ResponsiveModalTitle,
 } from "@/components/ui/responsive-modal";
 import { errorMessageFromBody } from "@/lib/fetch-helpers";
+import { toOperatorWallTime } from "@/lib/time/operator-zone";
 
 type LineItem = {
   key: string;
@@ -36,6 +37,27 @@ function makeEmptyLine(): LineItem {
   };
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** The terms-default due instant and the India date the picker shows for it. */
+function defaultInvoiceDue(
+  paymentTermsDays: number,
+  now: number = Date.now(),
+): { at: Date; day: string } {
+  const at = new Date(now + paymentTermsDays * DAY_MS);
+  return { at, day: toOperatorWallTime(at).slice(0, 10) };
+}
+
+/** An untouched prefill sends the terms-default instant; a picked date is sent as typed. */
+function invoiceDueDateBody(
+  picked: string,
+  paymentTermsDays: number,
+  now: number = Date.now(),
+): string {
+  const fallback = defaultInvoiceDue(paymentTermsDays, now);
+  return picked && picked !== fallback.day ? picked : fallback.at.toISOString();
+}
+
 /**
  * The back-office manual invoice composer: ops issue the invoice an org
  * requested through the audited admin door, with a required reason.
@@ -47,14 +69,16 @@ export function InvoiceComposer({
   onOpenChange,
 }: Readonly<{
   orgId: string;
-  /** The org's own terms; an unset due date falls this many days after today. */
+  /** The org's own terms; the due date starts this many days after today. */
   paymentTermsDays: number;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }>) {
   const queryClient = useQueryClient();
   const [lineItems, setLineItems] = useState<LineItem[]>([makeEmptyLine()]);
-  const [dueDate, setDueDate] = useState("");
+  const [dueDate, setDueDate] = useState(
+    () => defaultInvoiceDue(paymentTermsDays).day,
+  );
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -96,11 +120,7 @@ export function InvoiceComposer({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           items,
-          dueDate:
-            dueDate ||
-            new Date(
-              Date.now() + paymentTermsDays * 24 * 60 * 60 * 1000,
-            ).toISOString(),
+          dueDate: invoiceDueDateBody(dueDate, paymentTermsDays),
           issueImmediately: true,
           reason: reason.trim(),
         }),
@@ -114,7 +134,7 @@ export function InvoiceComposer({
         queryKey: ["org-billing-invoices", orgId],
       });
       setLineItems([makeEmptyLine()]);
-      setDueDate("");
+      setDueDate(defaultInvoiceDue(paymentTermsDays).day);
       setReason("");
       onOpenChange(false);
     } catch {
@@ -190,7 +210,7 @@ export function InvoiceComposer({
             </Button>
           </div>
           <div className="space-y-2">
-            <Label htmlFor="inv-due">Due date</Label>
+            <Label htmlFor="inv-due">Due date (Net {paymentTermsDays})</Label>
             <Input
               id="inv-due"
               type="date"
