@@ -3,6 +3,7 @@ import type { MemberRole, OrgAuditCategory, Prisma } from "@prisma/client";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
 
 import { AUDIT_ACTIONS } from "./audit-actions";
+import { canSeeDraftInvoices } from "./invoice-visibility";
 
 /**
  * #1527 audit split — which OrgAuditLog rows each role may read. Money rows
@@ -31,17 +32,29 @@ const MONEY_ROW: Prisma.OrgAuditLogWhereInput = {
   ],
 };
 
+// A draft invoice's generation row names the draft, so it follows draft visibility.
+const DRAFT_INVOICE_ROW: Prisma.OrgAuditLogWhereInput = {
+  action: AUDIT_ACTIONS.INVOICE.INVOICE_GENERATED,
+  details: { path: ["status"], equals: "DRAFT" },
+};
+
 /**
  * Prisma filter for the rows `role` may read: `{}` for both grants, the
  * money or non-money half for one, `null` when the role reads no audit rows.
+ * A role that cannot see draft invoices never reads a draft's generation row.
  */
 export function auditRowScope(
   role: MemberRole,
 ): Prisma.OrgAuditLogWhereInput | null {
   const ops = hasOrgPermission(role, "audit.read.ops");
   const money = hasOrgPermission(role, "audit.read.money");
-  if (ops && money) return {};
-  if (money) return MONEY_ROW;
+  const hideDrafts = money && !canSeeDraftInvoices(role);
+  if (ops && money) return hideDrafts ? { NOT: DRAFT_INVOICE_ROW } : {};
+  if (money) {
+    return hideDrafts
+      ? { AND: [MONEY_ROW, { NOT: DRAFT_INVOICE_ROW }] }
+      : MONEY_ROW;
+  }
   if (ops) return { NOT: MONEY_ROW };
   return null;
 }

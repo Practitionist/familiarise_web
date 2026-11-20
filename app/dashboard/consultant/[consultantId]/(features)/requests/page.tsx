@@ -11,9 +11,15 @@ import { RequestsInbox } from "@/components/dashboard/shared/requests/RequestsIn
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
 import {
+  INBOX_DEFAULT_TYPE,
   inboxQueryKey,
+  isInboxType,
+  landingInboxType,
   readInboxParams,
+  type InboxType,
+  type RequestsInboxPayload,
 } from "@/lib/dashboard/requests-inbox-state";
+import { countRequestsToAnswerByTab } from "@/lib/data/needs-you";
 import { readRequestsInbox } from "@/lib/data/requests-inbox";
 import prisma from "@/lib/prisma";
 import { getViewerZone } from "@/lib/time/viewer-zone-server";
@@ -41,14 +47,9 @@ export default async function RequestsPage({
   const { consultantId } = await params;
   await requirePersonalProfileAccess("consultant", consultantId);
   const sp = await searchParams;
-  const inbox = readInboxParams((key) => {
+  const param = (key: string) => {
     const v = sp[key];
     return Array.isArray(v) ? (v[0] ?? null) : (v ?? null);
-  });
-  const queryArgs = {
-    consultantProfileId: consultantId,
-    scope: "personal",
-    ...inbox,
   };
 
   const queryClient = new QueryClient();
@@ -60,21 +61,45 @@ export default async function RequestsPage({
     }),
   ]);
   // Swallow, don't rethrow: a read failure degrades to a client-side fetch.
-  await queryClient
-    .prefetchQuery({
-      queryKey: inboxQueryKey(queryArgs),
-      queryFn: () =>
-        readRequestsInbox({
-          consultantProfileId: consultantId,
-          type: inbox.type,
-          chip: inbox.chip ?? undefined,
-          sort: inbox.sort,
-          page: inbox.page,
-          after: inbox.after,
-          focusId: inbox.focus,
-        }),
-    })
-    .catch(() => undefined);
+  const seeded = new Set<InboxType>();
+  const seed = async (type: InboxType) => {
+    const inbox = readInboxParams(param, type);
+    seeded.add(inbox.type);
+    const queryKey = inboxQueryKey({
+      consultantProfileId: consultantId,
+      scope: "personal",
+      ...inbox,
+    });
+    await queryClient
+      .prefetchQuery({
+        queryKey,
+        queryFn: () =>
+          readRequestsInbox({
+            consultantProfileId: consultantId,
+            type: inbox.type,
+            chip: inbox.chip ?? undefined,
+            sort: inbox.sort,
+            page: inbox.page,
+            after: inbox.after,
+            focusId: inbox.focus,
+          }),
+      })
+      .catch(() => undefined);
+    return queryClient.getQueryData<RequestsInboxPayload>(queryKey);
+  };
+  // A link without `type` (Home's Review, the sidebar badge) opens the tab holding the rows it counted.
+  let landingType = INBOX_DEFAULT_TYPE;
+  if (!isInboxType(param("type"))) {
+    const toAnswer = await countRequestsToAnswerByTab({
+      consultantProfileId: consultantId,
+    }).catch(() => ({ consultation: 0, subscription: 0 }));
+    landingType = landingInboxType(toAnswer);
+    if (toAnswer.consultation + toAnswer.subscription === 0) {
+      const first = await seed(INBOX_DEFAULT_TYPE);
+      landingType = landingInboxType(toAnswer, first?.meta.counts);
+    }
+  }
+  if (!seeded.has(landingType)) await seed(landingType);
 
   return (
     <>
@@ -110,6 +135,7 @@ export default async function RequestsPage({
           <RequestsInbox
             consultantProfileId={consultantId}
             viewerZone={viewerZone.zone}
+            landingType={landingType}
           />
         </HydrationBoundary>
       </div>

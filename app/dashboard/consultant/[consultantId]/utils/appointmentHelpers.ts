@@ -110,13 +110,11 @@ type AppointmentWithTrial = TAppointment & {
   } | null;
 };
 
-// Get the relevant name based on appointment type
-// For consultations/subscriptions/trials: returns the consultee (requester) name
-// For webinars/classes: returns the consultant (host) name
+/** Whose session this is: the learner on a 1:1, the owner for a co-host; null on a host's own webinar or class. */
 export const getConsumeeName = (
   appointment: TAppointment,
   viewerConsultantId?: string,
-): string => {
+): string | null => {
   if (!appointment) return "Unknown User";
   const appt = appointment as AppointmentWithTrial;
 
@@ -140,7 +138,7 @@ export const getConsumeeName = (
       ) {
         return plan.consultantProfile?.user?.name ?? "Unknown expert";
       }
-      return "Registered attendees";
+      return null;
     }
     case "CLASS": {
       const plan = appointment.class?.classPlan;
@@ -151,7 +149,7 @@ export const getConsumeeName = (
       ) {
         return plan.consultantProfile?.user?.name ?? "Unknown expert";
       }
-      return "Enrolled learners";
+      return null;
     }
     default:
       return "Unknown User";

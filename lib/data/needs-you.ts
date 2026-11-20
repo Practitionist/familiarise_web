@@ -213,6 +213,18 @@ export async function countRequestsToAnswer(
   args: { consultantProfileId: string; orgScope?: Scope },
   db: RequestCounters = prisma,
 ): Promise<number> {
+  const { consultation, subscription } = await countRequestsToAnswerByTab(
+    args,
+    db,
+  );
+  return consultation + subscription;
+}
+
+/** The same number split by the Requests tab its rows are listed on. */
+export async function countRequestsToAnswerByTab(
+  args: { consultantProfileId: string; orgScope?: Scope },
+  db: RequestCounters = prisma,
+): Promise<{ consultation: number; subscription: number }> {
   const cp = args.consultantProfileId;
   const scope = args.orgScope ?? { kind: "personal" };
   const [consultations, subscriptions] = await runBounded([
@@ -236,7 +248,7 @@ export async function countRequestsToAnswer(
         },
       }),
   ] as const);
-  return consultations + subscriptions;
+  return { consultation: consultations, subscription: subscriptions };
 }
 
 /** A PENDING request asked for at or after this instant still holds its slots. */

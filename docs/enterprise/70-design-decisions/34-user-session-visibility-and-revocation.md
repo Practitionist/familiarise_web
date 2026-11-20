@@ -133,13 +133,13 @@ when the refresh hook ends the session. The app separates "failed" from
 
 Every session delete goes through `lib/auth/session-revoke.ts`:
 
-| Function                    | Caller                                                       |
-| --------------------------- | ------------------------------------------------------------ |
-| `revokeAllUserSessions`     | Ban and suspend, account deletion, erasure, 2FA enrolment    |
-| `revokeUserSessionsExcept`  | "Sign out other devices"                                     |
-| `revokeSessionById`         | Device list, staff revoke, the lifetime hook on refresh      |
-| `revokeEmailDomainSessions` | The SSO enforcement sweeps in `lib/sso/session-sweeps.ts`    |
-| `revokeSessionByToken`      | `supersededSessionRevocation`: signing in over a live cookie |
+| Function                    | Caller                                                           |
+| --------------------------- | ---------------------------------------------------------------- |
+| `revokeAllUserSessions`     | Ban and suspend, account deletion, erasure, 2FA enrolment        |
+| `revokeUserSessionsExcept`  | "Sign out other devices", "Sign out everywhere, this device too" |
+| `revokeSessionById`         | Device list, staff revoke, the lifetime hook on refresh          |
+| `revokeEmailDomainSessions` | The SSO enforcement sweeps in `lib/sso/session-sweeps.ts`        |
+| `revokeSessionByToken`      | `supersededSessionRevocation`: signing in over a live cookie     |
 
 - Each returns `{ revoked, ended }`. The caller stamps `ended` into the CERT-In
   access log with `stampSessionEnds` once its write commits, so a log failure

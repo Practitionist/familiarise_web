@@ -225,3 +225,59 @@ describe("pending-payments join-loads its four reads", () => {
     expect(paymentArgs.select).not.toHaveProperty("exchangeRateAtCheckout");
   });
 });
+
+describe("pending-payments names the referral credit a cancel gives back", () => {
+  const later = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+  const earlier = new Date(Date.now() - 60 * 1000);
+  const usage = (
+    amount: number,
+    credit: { state: string; expiresAt: Date | null; reversedAt: Date | null },
+  ) => ({ amount, credit });
+
+  it("sums only the usages a buyer cancel returns to the balance", async () => {
+    mockedGatewayPayments.mockResolvedValue([
+      {
+        id: "pay-1",
+        amount: 279_000,
+        currency: "INR",
+        expiresAt: later,
+        createdAt: new Date(),
+        appointment: null,
+        creditUsages: [
+          usage(20_000, {
+            state: "VESTED",
+            expiresAt: later,
+            reversedAt: null,
+          }),
+          usage(5_000, { state: "VESTED", expiresAt: null, reversedAt: null }),
+          usage(7_000, {
+            state: "VESTED",
+            expiresAt: earlier,
+            reversedAt: null,
+          }),
+          usage(3_000, { state: "EXPIRED", expiresAt: null, reversedAt: null }),
+          usage(1_000, {
+            state: "VESTED",
+            expiresAt: null,
+            reversedAt: earlier,
+          }),
+        ],
+      },
+    ]);
+    const items = await getPendingPayments();
+    const select = mockedGatewayPayments.mock.calls[0][0].select;
+    expect(select.creditUsages).toEqual({
+      select: {
+        amount: true,
+        credit: {
+          select: { state: true, expiresAt: true, reversedAt: true },
+        },
+      },
+    });
+    expect(items[0]).toMatchObject({
+      id: "pay-1",
+      source: "gateway_pending",
+      referralCreditPaise: 25_000,
+    });
+  });
+});

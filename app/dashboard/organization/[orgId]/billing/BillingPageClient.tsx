@@ -25,6 +25,7 @@ import {
 } from "@/components/organization/MotivationBanner";
 import { Button } from "@/components/ui/button";
 import type { OrgReceivablesPayload } from "@/lib/data/org-receivables";
+import { rolesHoldingLabel } from "@/lib/labels/org-labels";
 
 import { fetchBilling } from "./billing-api";
 import { InvoicesPanel } from "./InvoicesPanel";
@@ -68,7 +69,7 @@ export function BillingPageClient({
   orgId: string;
   receivables?: OrgReceivablesPayload | null;
 }) {
-  const { can } = useOrgRole(orgId);
+  const { can, isLoading: roleLoading } = useOrgRole(orgId);
   const requestHref = (ticketId: string) =>
     `/dashboard/organization/${orgId}/support/requests/${caseKeyOf({ kind: "case", id: ticketId })}`;
   const { allowed } = useRequireOrgAccess(orgId, {
@@ -162,6 +163,13 @@ export function BillingPageClient({
         }
       />
       <DashboardContent>
+        {!roleLoading && !can("billing.manage") && (
+          <p className="text-sm text-muted-foreground">
+            You can view this organization&apos;s billing. Paying or requesting
+            an invoice needs the {rolesHoldingLabel("billing.manage")} role; for
+            a question about a charge, use Ask us at the bottom of this page.
+          </p>
+        )}
         <BillingBlockBanner
           walletFrozen={walletFrozen}
           walletFrozenReason={summary.data?.walletFrozenReason}

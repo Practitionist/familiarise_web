@@ -596,3 +596,20 @@ describe("MobileDayListPicker agrees with the desktop grid", () => {
     expect(times()).toEqual(["11:00 am – 12:00 pm"]);
   });
 });
+
+it("keeps a pick on the next page while that page is still loading", async () => {
+  // The pick is in the second two weeks; the first page's answer has no cell for it.
+  const pick = {
+    startsAt: "2026-11-18T10:00:00.000Z",
+    endsAt: "2026-11-18T11:00:00.000Z",
+  };
+  const changes: DayListPick[][] = [];
+  await mount({ initial: [pick], onChange: (next) => changes.push(next) });
+
+  fetchMock.mockReturnValue(new Promise(() => {}));
+  fireEvent.click(screen.getByRole("button", { name: "Next 2 weeks" }));
+  await settle();
+
+  expect(changes).toEqual([]);
+  expect(screen.queryByText(/no longer free/)).toBeNull();
+});

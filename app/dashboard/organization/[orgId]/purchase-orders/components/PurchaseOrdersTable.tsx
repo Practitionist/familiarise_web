@@ -24,6 +24,20 @@ import {
 import { PO_STATUS, fmtDate, fmtMoney } from "../utils/formatting";
 import type { PoStatus, PurchaseOrderRow } from "../utils/types";
 
+/** "1 contract · 4 invoices"; null when the PO backs nothing yet. */
+function linkedLabel(count: PurchaseOrderRow["_count"]): string | null {
+  const parts: string[] = [];
+  if (count.contracts > 0) {
+    parts.push(
+      `${count.contracts} contract${count.contracts === 1 ? "" : "s"}`,
+    );
+  }
+  if (count.invoices > 0) {
+    parts.push(`${count.invoices} invoice${count.invoices === 1 ? "" : "s"}`);
+  }
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
 interface PurchaseOrdersTableProps {
   rows: PurchaseOrderRow[];
   isLoading: boolean;
@@ -140,13 +154,7 @@ export function PurchaseOrdersTable({
       className: "text-center text-sm text-muted-foreground",
       headClassName: "text-center",
       cell: (po) =>
-        po._count.contracts + po._count.invoices > 0 ? (
-          <span
-            title={`${po._count.contracts} contracts · ${po._count.invoices} invoices`}
-          >
-            {po._count.contracts}c · {po._count.invoices}i
-          </span>
-        ) : (
+        linkedLabel(po._count) ?? (
           <span className="text-muted-foreground/70">—</span>
         ),
     },

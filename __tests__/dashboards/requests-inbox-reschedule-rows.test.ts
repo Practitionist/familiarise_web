@@ -27,6 +27,7 @@ import { deriveBookingPresentation } from "@/lib/dashboard/money-state";
 import {
   proposalLine,
   rowActions,
+  whenLine,
 } from "@/components/dashboard/shared/requests/InboxRow";
 import { proposalAnswerToast } from "@/components/dashboard/shared/requests/labels";
 import {
@@ -34,6 +35,7 @@ import {
   NOW,
   hoursAhead,
   movingConsultation,
+  paidUnallocatedSubscription,
   serve,
   serveInboxFixture,
 } from "../fixtures/requests-inbox";
@@ -131,6 +133,43 @@ describe("Requests inbox rows for a booking being moved", () => {
       presentationOf(await rowFor("CONSULTEE", false)).bookingState.state,
     ).toBe("BEING_MOVED");
     expect((await rowFor("CONSULTEE", false)).bucket).toBe("answer-today");
+  });
+
+  it("headlines a move from its original time to the proposed one, in the viewer's zone", async () => {
+    expect(whenLine(await rowFor("CONSULTEE", true), viewer)).toBe(
+      "Move: Wed 23 Sep, 5:30 PM to Thu 24 Sep, 5:30 PM IST",
+    );
+    expect(whenLine(await rowFor("CONSULTEE", false), viewer)).toBe(
+      "Move from Wed 23 Sep, 5:30 PM IST",
+    );
+    expect(
+      whenLine(await rowFor("CONSULTEE", true), { zone: "UTC", own: false }),
+    ).toBe("Move: Wed 23 Sep, 12:00 PM to Thu 24 Sep, 12:00 PM UTC");
+  });
+
+  it("a subscription keeps its count line, and headlines an open move by its times", async () => {
+    const m = prisma as unknown as MockPrisma;
+    serveInboxFixture(m);
+    const s = serve([paidUnallocatedSubscription]);
+    m.subscription.findMany.mockImplementation(s.findMany);
+    m.subscription.count.mockImplementation(s.count);
+    const { rows } = await readRequestsInbox({
+      consultantProfileId: CP,
+      type: "subscription",
+      sort: "priority",
+      page: 1,
+      now: NOW,
+    });
+    const sub = rows.find((r) => r.id === "s-paid");
+    if (!sub?.entitlement) throw new Error("subscription row missing");
+    expect(whenLine(sub, viewer)).toBe("0 of 24 booked · pick 2");
+    const moving = await rowFor("CONSULTEE", true);
+    expect(
+      whenLine(
+        { ...sub, slots: moving.slots, proposal: moving.proposal },
+        viewer,
+      ),
+    ).toBe("Move: Wed 23 Sep, 5:30 PM to Thu 24 Sep, 5:30 PM IST");
   });
 
   it("no moving row ever offers Decline", async () => {

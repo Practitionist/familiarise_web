@@ -25,6 +25,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireBackofficeSurface, requireOrgAccess } from "@/lib/auth-helpers";
+import { visibleInvoiceWhere } from "@/lib/enterprise/invoice-visibility";
 import { applyRateLimit, moneyOpsLimiter } from "@/lib/rate-limit";
 import {
   renderOrgInvoicePdf,
@@ -87,7 +88,12 @@ export async function GET(
   }
 
   const invoice = await prisma.organizationInvoice.findFirst({
-    where: { id: invoiceId, organizationId: orgId },
+    where: {
+      id: invoiceId,
+      organizationId: orgId,
+      // A member who cannot see drafts gets a 404, not the draft refusal below.
+      ...(access.error ? {} : visibleInvoiceWhere(access.member.role)),
+    },
     include: {
       organization: {
         select: {

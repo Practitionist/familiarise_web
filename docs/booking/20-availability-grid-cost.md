@@ -73,11 +73,11 @@ this train's own change, landed in #1721: the marker moved from a
 consultant-wide scope to the requested-window scope, because the
 consultant-wide scope turned one booking into a simultaneous full-grid
 re-demand from every open calendar for that consultant, all serialised on a
-pool of one. `MARKER_VERSION = "av3"` (`lib/scheduling/availabilityGridMarker.ts`)
-is folded into the ETag alongside the tuple, so a client holding a stale
-pre-window-scoping tag can never collide with the new shape's tag. The version
-moves whenever the tuple's shape changes; it is `av5` today, the version that
-added the seat arm described under "The change marker".
+pool of one. `MARKER_VERSION` (`lib/scheduling/availabilityGridMarker.ts`)
+is folded into the ETag alongside the tuple, so a client holding a tag from an
+older shape can never collide with the new shape's tag. The version moves
+whenever the tuple's shape changes: window scoping was `av3`, and it is `av5`
+today, the version that added the seat arm described under "The change marker".
 
 ## A conditional GET that computes the right tag and still never 304s (#1723)
 

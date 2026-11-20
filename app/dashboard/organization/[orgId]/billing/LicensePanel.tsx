@@ -5,19 +5,13 @@ import { KeyValueList, Section } from "@/components/dashboard/Section";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
 import type { BillingSummary } from "./billing-api";
+import { ZonedDay } from "./ZonedDay";
 
 const CYCLE_LABEL = {
   MONTHLY: "month",
   QUARTERLY: "quarter",
   ANNUAL: "year",
 } as const;
-
-const fmtDate = (iso: string) =>
-  new Date(iso).toLocaleDateString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
 
 /**
  * Billing › License: the LICENSE commercial terms captured at contract
@@ -53,13 +47,23 @@ export function LicensePanel({
                 ? "Not recorded"
                 : `${formatCurrencyAmount(sub.flatFeePaise, "INR")} per ${CYCLE_LABEL[sub.cycle]}`,
             hint:
-              sub.flatFeePaise === null ? "Required before renewal." : undefined,
+              sub.flatFeePaise === null
+                ? "Required before renewal."
+                : undefined,
           },
           {
             label: "Current cycle",
-            value: `${fmtDate(sub.currentCycleStart)} – ${fmtDate(sub.currentCycleEnd)}`,
+            value: (
+              <>
+                <ZonedDay at={sub.currentCycleStart} /> –{" "}
+                <ZonedDay at={sub.currentCycleEnd} />
+              </>
+            ),
           },
-          { label: "Next renewal", value: fmtDate(sub.nextInvoiceDate) },
+          {
+            label: "Next renewal",
+            value: <ZonedDay at={sub.nextInvoiceDate} />,
+          },
           {
             label: "Auto-renew",
             value: contract.autoRenew ? "On" : "Off",

@@ -80,8 +80,10 @@ import { recomputeMenteesHelped } from "@/lib/profiles/mentees-helped";
 import { stampTrialEarningsHold } from "@/lib/trials/earnings-hold";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import {
-  ClassBetweenBatchesError,
+  ACCOUNTED_SESSION,
+  ClassNotFinishedError,
   classIsFinished,
+  classMayBeFinished,
 } from "@/lib/booking/class-completion";
 import {
   stampClassEndRefundsOwed,
@@ -145,8 +147,9 @@ function completableWebinarWhere(settled: SettledAnd) {
   } satisfies Prisma.WebinarWhereInput;
 }
 
-// Every placed session has ended. A class between batches matches too; the
-// completing transaction decides whether it is finished (classIsFinished).
+// Every placed session has ended. A class between batches matches too: the
+// pass skips it on the row it read (classMayBeFinished), and the completing
+// transaction decides the rest (classIsFinished).
 function completableClassWhere(settled: SettledAnd) {
   return {
     status: ClassStatus.SCHEDULED,
@@ -440,32 +443,46 @@ async function completeClasses(
       ...completableClassWhere(endedAndSettled(bufferTime)),
     },
     include: {
-      classPlan: { select: { title: true } },
+      classPlan: { select: { title: true, totalSessions: true } },
       appointment: {
         include: {
           occurrences: {
             orderBy: { endsAt: "desc" },
             take: 1,
           },
+          _count: { select: { occurrences: { where: ACCOUNTED_SESSION } } },
         },
       },
     },
   });
 
-  console.log(`Found ${classesToComplete.length} classes to auto-complete`);
+  console.log(`Found ${classesToComplete.length} classes whose sessions ended`);
 
   for (const cls of classesToComplete) {
     if (pastDeadline()) break;
+    // A class between batches costs this pass nothing beyond the row above.
+    if (
+      !classMayBeFinished(
+        {
+          schedulingPeriodEndsAt: cls.schedulingPeriodEndsAt,
+          totalSessions: cls.classPlan.totalSessions,
+          accountedRows: cls.appointment?._count.occurrences ?? 0,
+        },
+        new Date(),
+      )
+    ) {
+      continue;
+    }
     try {
       // The latest occurrence end on the wrapper
       const latestEnd: Date | null =
         cls.appointment?.occurrences[0]?.endsAt ?? null;
 
-      // CAS first, so it holds the class row while the finished check reads:
-      // a session placed meanwhile is either seen here or refused by the CAS
-      // it meets. The completing commit also stamps each seat's refund for
-      // sessions sold but never placed.
-      let betweenBatches = false;
+      // CAS first, so it holds the class row while the checks below read: a
+      // session placed since the cohort read is either seen here or refused by
+      // the CAS it meets. The completing commit also stamps each seat's refund
+      // for sessions sold but never placed.
+      let notFinished = false;
       const moved = await completeThroughHelper(async () => {
         try {
           const settlement = await prisma.$transaction(
@@ -476,8 +493,15 @@ async function completeClasses(
                 fromIn: EVENT_ALLOWED_FROM.COMPLETED,
                 reason: AUTO_COMPLETE_REASON,
               });
-              if (!(await classIsFinished(tx, cls.id, new Date()))) {
-                throw new ClassBetweenBatchesError(cls.id);
+              const stillEnded = await tx.appointment.findFirst({
+                where: { classId: cls.id, AND: endedAndSettled(bufferTime) },
+                select: { id: true },
+              });
+              if (
+                !stillEnded ||
+                !(await classIsFinished(tx, cls.id, new Date()))
+              ) {
+                throw new ClassNotFinishedError(cls.id);
               }
               return stampClassEndRefundsOwed(tx, cls.id);
             },
@@ -485,11 +509,11 @@ async function completeClasses(
           );
           addSettlement(classEnd, settlement);
         } catch (error) {
-          if (!(error instanceof ClassBetweenBatchesError)) throw error;
-          betweenBatches = true;
+          if (!(error instanceof ClassNotFinishedError)) throw error;
+          notFinished = true;
         }
       });
-      if (betweenBatches) continue;
+      if (notFinished) continue;
       if (!moved) {
         console.log(
           `\n⏭️ Class ${cls.id} skipped: status changed since the sweep read`,

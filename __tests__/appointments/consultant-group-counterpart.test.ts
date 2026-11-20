@@ -171,9 +171,7 @@ describe("Consultant group-event counterpart resolution", () => {
     expect(getConsumeeName(collabWebinar, "cp_guest_speaker")).toBe(
       "Aarav Anderson",
     );
-    expect(getConsumeeName(collabWebinar, "cp_owner")).toBe(
-      "Registered attendees",
-    );
+    expect(getConsumeeName(collabWebinar, "cp_owner")).toBeNull();
   });
 
   it("retains in-progress sessions in getUpcomingAppointments so Consultant Home renders 'Session in progress'", () => {

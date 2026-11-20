@@ -671,6 +671,7 @@ export function useCalendarData(
     if (!autoLoad || !consultantId) return;
     if (typeof document === "undefined") return;
 
+    let disposed = false;
     const poller = createAvailabilityPoller({
       isEnabled: () => Boolean(autoLoad && consultantId),
       visibilityState: () => document.visibilityState,
@@ -680,7 +681,8 @@ export function useCalendarData(
         const outcome = await fetchAvailabilitySlots({ background: true });
         // A changed body means something in the window moved, and this
         // booking's own sessions outrank the server cell: re-read them too.
-        if (outcome?.changed || eventSlotsFailedRef.current) {
+        // A poll that outlived its effect belongs to another event's calendar.
+        if (!disposed && (outcome?.changed || eventSlotsFailedRef.current)) {
           void fetchEventSlots();
         }
         return outcome;
@@ -696,6 +698,7 @@ export function useCalendarData(
     poller.arm();
 
     return () => {
+      disposed = true;
       poller.dispose();
       document.removeEventListener("visibilitychange", onVisibilityChange);
       window.removeEventListener("focus", onReturn);

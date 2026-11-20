@@ -117,7 +117,7 @@ Note before starting: S-11's trial is free only if `PlatformPricingConfig.minTri
 
 **Expect:** `paymentDueAt` = start − 15 min (not 24 h). The checkout page states it plainly ("pay by <time>"). After `paymentDueAt` the trial can't be paid (TR-08).
 
-**Probe further:** `payWindowEnd` (`lib/payments/operations/approval-payment.ts`: 24 h, never later than start − 15 min) is the only pay-window rule; a row whose `paymentDueAt` is the session start itself is a **BUG**.
+**Probe further:** `lib/trials/eligibility.ts` also has `computeTrialPaymentDueAt` (24 h clamped to the session start, no 15-min margin) next to `payWindowEnd` (start − 15 min). Record which the row got; two rules for one deadline is an open question.
 
 ## TR-08 — An unpaid hold lapses and frees the time `[sweep]`
 

@@ -105,9 +105,9 @@ Journeys are owned elsewhere (CO-01, SU-23, WE-19, CL-27, TR-04, CO-25). These c
 
 **Probe further:** the Booking settings copy promises "the pay link stays open for 24 hours"; with a session 10 h away, compare against `expiresAt` (FALSE-INFO P2 if it disagrees). Paying: CO-32. Lapse: CO-36 and SW-05.
 
-## MO-07 — Trial pay link: payment row and its one deadline
+## MO-07 — Trial pay link: payment row and the two deadlines
 
-**Why it matters:** one rule computes a trial's pay deadline (`payWindowEnd`: 24 hours, never later than 15 minutes before the session), for the trial row and the order alike.
+**Why it matters:** two different rules compute a trial's pay deadline (`payWindowEnd` vs `computeTrialPaymentDueAt`).
 
 **Setup:** TR-04's held paid trial (B1, ₹100).
 

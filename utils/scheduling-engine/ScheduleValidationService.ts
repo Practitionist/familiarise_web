@@ -323,10 +323,12 @@ export class ScheduleValidationService {
    */
   private beyondHorizonFindings(eventType: EventType, slots: Date[]): string[] {
     if (eventType !== "consultation") return [];
-    const now = Date.now();
-    const tooFar = slots.filter((slot) =>
-      isBeyondBookingHorizon(slot.getTime(), now),
-    );
+    if (slots.length === 0) return [];
+    // One session: its start is its earliest atom, as the booking doors check.
+    const start = new Date(Math.min(...slots.map((slot) => slot.getTime())));
+    const tooFar = isBeyondBookingHorizon(start.getTime(), Date.now())
+      ? [start]
+      : [];
     return tooFar.length === 0
       ? []
       : [

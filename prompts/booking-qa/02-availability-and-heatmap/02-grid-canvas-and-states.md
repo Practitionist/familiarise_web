@@ -1,4 +1,4 @@
-# 02-b · The grid: canvas, open hours, blocks and the 14 states
+# 02-b · The grid: canvas, open hours, blocks and the 12 states
 
 **Needs:** 01 (F-AV1, F-PL1, F-BUSY), HM-15 fixtures. HM-15 is `[local]` (mock pay). HM-25 needs a booking with an open reschedule from 03-consultations (run it after 03's first consultee reschedule case).
 **Personas:** H1 (IST), B1 (IST), B2 (Europe/London), B3 (America/Los_Angeles).
@@ -91,7 +91,7 @@ Reading the grid with the DevTools MCP:
 
 ## HM-19 — Legend and tooltips: only painted states, each explained
 
-**Why it matters:** fourteen states with colour plus a non-colour cue; the legend must explain exactly what's on screen.
+**Why it matters:** twelve states with colour plus a non-colour cue; the legend must explain exactly what's on screen.
 
 **Steps:**
 
@@ -101,7 +101,7 @@ Reading the grid with the DevTools MCP:
 
 **Expect:**
 
-- Legend lists only painted states, each with its count; hints match the tokens: Free "Free to book.", Booked "Already taken.", Selected "You have chosen this time.", This booking "Belongs to the booking you are working on.", Being moved "Released by a reschedule and waiting for a new time.", Limit reached "This plan's sessions for that week or day are already used.", Too soon "Too close to its start for this booking — pick a later time.", Just taken "Someone booked this a moment ago.", Outside period "Inside the published hours but outside this booking's dates.", Past "Already gone; shown so the day reads whole.", Unavailable "Outside the published hours.", Partly booked "Part of this half-hour is taken — choose another time.", Too far ahead "Bookings open up to 90 days ahead." (a 1:1 grid paged more than 90 days out; not pickable; never on a plan, webinar or class grid), Outside a co-host's hours "Free for the host, but a co-host's available hours don't cover this time." (a webinar or class host's own picker with an accepted co-host; the cell is not pickable and names the co-host when there is exactly one).
+- Legend lists only painted states, each with its count; hints match the tokens: Free "Free to book.", Booked "Already taken.", Selected "You have chosen this time.", This booking "Belongs to the booking you are working on.", Being moved "Released by a reschedule and waiting for a new time.", Limit reached "This plan's sessions for that week or day are already used.", Too soon "Too close to its start for this booking — pick a later time.", Just taken "Someone booked this a moment ago.", Outside period "Inside the published hours but outside this booking's dates.", Past "Already gone; shown so the day reads whole.", Unavailable "Outside the published hours.", Partly booked "Part of this half-hour is taken — choose another time."
 - Every state has a non-colour cue (icon, border style or pattern). Take a greyscale screenshot (`emulate` vision deficiency if available) and say whether any two states look alike.
 - On G-SUB a "Requested" outline doesn't appear (no requested times); on G-REQ (HM-21) it does, explained as "Requested".
 

@@ -7,7 +7,7 @@ import { liveOccurrenceWhere } from "@/lib/appointments/occurrences";
  * placed session, or one the host cancelled (its make-up or refund is the
  * miss machine's, not a session still to place).
  */
-const ACCOUNTED_SESSION = {
+export const ACCOUNTED_SESSION = {
   isTentative: false,
   deletedAt: null,
   OR: [
@@ -45,10 +45,30 @@ export async function classIsFinished(
   return placed.length >= cls.classPlan.totalSessions;
 }
 
-/** Thrown inside the completing transaction to roll back a class that is between batches. */
-export class ClassBetweenBatchesError extends Error {
+/**
+ * A cheap answer from the cohort read's own row. Rows are counted, not
+ * ordinals, so it can say yes for a class that is not finished and never no
+ * for one that is: only a yes goes on to the exact check in the transaction.
+ */
+export function classMayBeFinished(
+  row: {
+    schedulingPeriodEndsAt: Date | null;
+    totalSessions: number;
+    accountedRows: number;
+  },
+  now: Date,
+): boolean {
+  return (
+    !row.schedulingPeriodEndsAt ||
+    row.schedulingPeriodEndsAt <= now ||
+    row.accountedRows >= row.totalSessions
+  );
+}
+
+/** Thrown inside the completing transaction to roll back a class that is not over. */
+export class ClassNotFinishedError extends Error {
   constructor(classId: string) {
-    super(`Class ${classId} still has sessions to place`);
-    this.name = "ClassBetweenBatchesError";
+    super(`Class ${classId} is not finished`);
+    this.name = "ClassNotFinishedError";
   }
 }

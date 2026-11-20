@@ -6,6 +6,8 @@
  * a jest pin share one definition.
  */
 
+import { z } from "zod";
+
 import type { SubscriptionEntitlement } from "@/lib/booking/entitlement";
 import type {
   BookingPresentationInput,
@@ -179,6 +181,126 @@ export interface RequestsInboxPayload {
   meta: InboxMeta;
 }
 
+const countsSchema = z.object({
+  consultation: z.number(),
+  subscription: z.number(),
+  trial: z.number(),
+});
+
+const stampSchema = z.union([z.string(), z.date()]);
+const records = z.array(z.record(z.unknown()));
+
+/** Every field Home's card and the Requests rows read, to the depth they read it. */
+const inboxRowShape = z.object({
+  id: z.string(),
+  kind: z.enum(["consultation", "subscription", "trial", "next-cycle"]),
+  appointmentId: z.string().nullable(),
+  reminderExpiresAt: stampSchema.nullable(),
+  planTitle: z.string(),
+  requester: z.object({ name: z.string(), image: z.string().nullable() }),
+  requestedAt: stampSchema,
+  deadline: stampSchema.nullable(),
+  bucket: z.enum(INBOX_BUCKETS),
+  amountPaise: z.number().nullable(),
+  currency: z.string(),
+  presentation: z.object({
+    appointmentType: z.string(),
+    request: z
+      .object({ status: z.string().nullish(), kind: z.string() })
+      .nullable(),
+    occurrences: records,
+    payments: records,
+    refunds: records,
+    disputes: records,
+    childPayments: records,
+    sponsorOrgName: z.string().nullable(),
+    holdExpiresAt: stampSchema.nullable(),
+    names: z.object({ payer: z.string(), consultant: z.string() }),
+  }),
+  names: z.object({ payer: z.string(), consultant: z.string() }),
+  hrefs: z.object({
+    detail: z.string().nullable(),
+    allocate: z.string().nullable(),
+  }),
+  requestNotes: z.string().nullable(),
+  bookingSource: z.enum(["DIRECT_CHECKOUT", "REQUEST_SUBMITTED"]).nullable(),
+  slots: z.array(
+    z.object({
+      startsAt: stampSchema,
+      endsAt: stampSchema,
+      isTentative: z.boolean(),
+      completionStatus: z.string().nullable(),
+    }),
+  ),
+  requiredSlots: z.number().nullable(),
+  tentativeSlotCount: z.number(),
+  rescheduledSlotCount: z.number(),
+  proposal: z
+    .object({
+      id: z.string(),
+      status: z.string(),
+      expiresAt: stampSchema,
+      initiatorRole: z.string(),
+      proposedTimes: z.array(
+        z.object({ startsAt: stampSchema, endsAt: stampSchema }),
+      ),
+    })
+    .nullable(),
+  schedulingPeriod: z
+    .object({ start: stampSchema, end: stampSchema })
+    .nullable(),
+  schedulingTimezone: z.string().nullable(),
+  entitlement: z
+    .object({
+      total: z.number(),
+      remaining: z.number(),
+      cycle: z.object({
+        nextBatch: z.number(),
+        windowStart: stampSchema,
+        windowEnd: stampSchema,
+      }),
+    })
+    .nullable(),
+  trial: z
+    .object({ durationMinutes: z.number(), consulteeUserId: z.string() })
+    .nullable(),
+  checkoutHold: z.object({ expiresAt: stampSchema }).nullable(),
+  requestedStartPassed: z.boolean(),
+});
+
+// Checked against the shape, kept as sent: the nested presentation facts pass through whole.
+const inboxRowSchema = z.custom<InboxRowInput>(
+  (v) => inboxRowShape.safeParse(v).success,
+);
+
+const requestsInboxPayloadSchema = z.object({
+  rows: z.array(inboxRowSchema),
+  meta: z.object({
+    total: z.number(),
+    limit: z.number(),
+    counts: countsSchema,
+    paging: z.enum(["cursor", "ranked"]),
+    nextCursor: z.string().nullable(),
+    page: z.number(),
+    windowSize: z.number(),
+    bucketTotals: z
+      .object({
+        "answer-today": z.number(),
+        "this-week": z.number(),
+        later: z.number(),
+        "waiting-on-them": z.number(),
+      })
+      .nullable(),
+  }),
+});
+
+/** The HTTP twin's 200 body; a malformed one fails the query (and its Retry) instead of the render. */
+export function parseRequestsInboxPayload(body: unknown): RequestsInboxPayload {
+  const parsed = requestsInboxPayloadSchema.safeParse(body);
+  if (!parsed.success) throw new Error("Requests could not be read.");
+  return parsed.data;
+}
+
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 
@@ -269,6 +391,54 @@ export function isInboxSort(v: string | null | undefined): v is InboxSort {
 }
 
 export const INBOX_DEFAULT_TYPE: InboxType = "consultation";
+
+/** The tabs a request to answer is listed on; a trial never waits on the expert. */
+export type AnswerTab = Exclude<InboxType, "trial">;
+
+/**
+ * The tab a link without `type` opens (Home's Review, the sidebar badge): the
+ * first holding a request to answer, else the first with rows, else the default.
+ */
+export function landingInboxType(
+  toAnswer: Record<AnswerTab, number>,
+  tabCounts?: Record<InboxType, number>,
+): InboxType {
+  const answering = INBOX_TYPES.find(
+    (type) => type !== "trial" && toAnswer[type] > 0,
+  );
+  if (answering) return answering;
+  if (!tabCounts || tabCounts[INBOX_DEFAULT_TYPE] > 0) {
+    return INBOX_DEFAULT_TYPE;
+  }
+  return INBOX_TYPES.find((type) => tabCounts[type] > 0) ?? INBOX_DEFAULT_TYPE;
+}
+
+/**
+ * A row `countRequestsToAnswer` counts: a PENDING request or unplaced paid
+ * plan, not a checkout still being paid and not the expert's own move with times.
+ */
+export function isRequestToAnswer(row: {
+  kind: InboxRowKind;
+  presentation: { request: { status?: string | null } | null };
+  checkoutHold?: InboxRowInput["checkoutHold"];
+  proposal: {
+    status: string;
+    initiatorRole: string;
+    proposedTimes: readonly unknown[];
+  } | null;
+}): boolean {
+  const own = row.proposal;
+  const ownMoveWithTimes =
+    own?.status === "PENDING_REVIEW" &&
+    own.initiatorRole === "CONSULTANT" &&
+    own.proposedTimes.length > 0;
+  return (
+    (row.kind === "consultation" || row.kind === "subscription") &&
+    row.presentation.request?.status === "PENDING" &&
+    !row.checkoutHold &&
+    !ownMoveWithTimes
+  );
+}
 export const INBOX_DEFAULT_SORT: InboxSort = "priority";
 export const INBOX_DEFAULT_LIMIT = 20;
 
@@ -343,9 +513,10 @@ export function inboxQueryString(args: InboxQueryArgs): string {
   return params.toString();
 }
 
-/** URL → inbox state; anything unknown falls to the default. */
+/** URL → inbox state; anything unknown falls to the default (`fallbackType` for the tab). */
 export function readInboxParams(
   get: (key: string) => string | null,
+  fallbackType: InboxType = INBOX_DEFAULT_TYPE,
 ): Pick<InboxQueryArgs, "type" | "chip" | "sort" | "page" | "after" | "focus"> {
   const type = get("type");
   const chip = get("chip");
@@ -353,7 +524,7 @@ export function readInboxParams(
   const page = Number.parseInt(get("page") ?? "1", 10);
   const after = get("after");
   const focus = get("focus");
-  const safeType = isInboxType(type) ? type : INBOX_DEFAULT_TYPE;
+  const safeType = isInboxType(type) ? type : fallbackType;
   const safeSort = isInboxSort(sort) ? sort : INBOX_DEFAULT_SORT;
   // A chip the tab does not offer is dropped, never sent.
   return {
@@ -383,12 +554,18 @@ export interface InboxParamsPatch {
  * type change clears the chip; any change resets the page and the cursor
  * unless it sets them; page 1, a cleared chip and the first cursor page are
  * absent, not "null". `focus` is dropped; other keys pass through.
+ * `shownType` is the tab on screen when the URL names none: it is written with
+ * the first change, so a reload with other counts keeps the same view.
  */
 export function nextInboxSearch(
   current: string,
   patch: InboxParamsPatch,
+  shownType?: InboxType,
 ): string {
   const next = new URLSearchParams(current);
+  if (shownType && !isInboxType(next.get("type"))) {
+    next.set("type", shownType);
+  }
   // A deep-linked row is highlighted once; any tab/chip/sort/page change ends it.
   next.delete("focus");
   const apply = (key: string, value: string | null) => {

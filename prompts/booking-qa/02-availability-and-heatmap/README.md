@@ -5,7 +5,7 @@ Availability editing edge cases and the scheduling grid (heat map) on every page
 | File | Cases | What |
 | --- | --- | --- |
 | [01-availability-editing.md](01-availability-editing.md) | HM-01 – HM-14 | Overnight windows and their tails, overlaps, zero-length and 12 h bounds, coalescing (weekly vs custom ids), empty set, custom dates and past dates, schedule-type lock, profile zone convert/keep, snapping, shrinking hours under a booking, stale tabs, window edges, dead vs paid holds |
-| [02-grid-canvas-and-states.md](02-grid-canvas-and-states.md) | HM-15 – HM-30 | Grid fixtures, ruled canvas, Open hours / Full day, session blocks, legend and tooltips, the 14 states (past, too soon per lead, too far ahead, limit reached, outside period, this booking, being moved, partly booked, just taken, outside a co-host's hours), zone switch, Kathmandu labels, skeleton |
+| [02-grid-canvas-and-states.md](02-grid-canvas-and-states.md) | HM-15 – HM-30 | Grid fixtures, ruled canvas, Open hours / Full day, session blocks, legend and tooltips, the 12 states (past, too soon per lead, limit reached, outside period, this booking, being moved, partly booked, just taken), zone switch, Kathmandu labels, skeleton |
 | [03-picking-tray-and-context.md](03-picking-tray-and-context.md) | HM-31 – HM-41 | Hover/focus ghost, whole-session pick and removal, tray progress/picks/meters/warnings, context row, month view "N fit", week navigation, clear/cancel, freshness, "Any time works" |
 | [04-surfaces-keyboard-viewports.md](04-surfaces-keyboard-viewports.md) | HM-42 – HM-52 | Allocate, both reschedules, manage timings, free rebook, expert-page dialog; keyboard and screen reader; four viewports; console hygiene; browser vs profile zone |
 

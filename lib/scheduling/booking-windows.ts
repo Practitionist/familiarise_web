@@ -110,7 +110,12 @@ export function windowsForDay(
       ...window,
       tooSoon: under.some((atom) => atom.tooSoon === true),
       limitReached: under.some((atom) => atom.limitReached === true),
-      beyondHorizon: under.some((atom) => atom.beyondHorizon === true),
+      // The writers judge the horizon by the session's start alone.
+      beyondHorizon: under.some(
+        (atom) =>
+          atom.beyondHorizon === true &&
+          new Date(atom.startsAt).getTime() === start,
+      ),
       outsideCoHostHours: under.some(
         (atom) => atom.outsideCoHostHours === true,
       ),
