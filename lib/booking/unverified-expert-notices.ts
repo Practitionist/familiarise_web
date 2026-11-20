@@ -8,8 +8,7 @@ import prisma from "@/lib/prisma";
 import { flushBackupInterestNotices } from "@/lib/booking/backup-interest";
 import { stageRequestEndedNotice } from "@/lib/booking/expiry-notices";
 import {
-  LINK_CLOSED_NOTICE,
-  REQUEST_DECLINED_NOTICE,
+  closedRequestNotice,
   type EndedUnpaidSales,
 } from "@/lib/booking/unverified-expert-sales";
 import { stageTrialLifecycleEmail } from "@/lib/email/senders/booking";
@@ -87,10 +86,7 @@ export async function settleEndedUnpaidSales(
           appointmentType:
             sale.kind === "consultation" ? "CONSULTATION" : "SUBSCRIPTION",
           startsAt: sale.startsAt,
-          reason:
-            sale.outcome === "LINK_CLOSED"
-              ? LINK_CLOSED_NOTICE
-              : REQUEST_DECLINED_NOTICE,
+          reason: closedRequestNotice(sale.expertName),
         },
         { recipients: [sale.learnerUserId] },
       );

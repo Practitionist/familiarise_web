@@ -25,6 +25,10 @@ import {
 import { remintTrialPayLink } from "@/lib/trials/pay-link";
 import { goHref } from "@/lib/dashboard/go";
 import { consumerStateCodeSchema } from "@/schemas/checkout";
+import {
+  isPublicExpertProfile,
+  publicProfileFacts,
+} from "@/lib/profiles/public-profile";
 
 export interface PayPageOrder {
   orderId: string;
@@ -57,7 +61,17 @@ export type PayPageState =
       /** Pre-fills the state picker; mirrors the checkout tax context. */
       taxContext: { billingStateCode: string | null; isInternational: boolean };
     }
-  | { kind: "unpayable"; doneHref: string };
+  | { kind: "unpayable"; doneHref: string; message: string };
+
+/** Why an order cannot be paid, as the payer reads it; never the expert's standing. */
+export const UNPAYABLE_MESSAGE =
+  "This booking can no longer be paid for here. It may have been cancelled, or its payment window may have closed. You can request it again from the expert's page.";
+export const EXPERT_UNAVAILABLE_MESSAGE =
+  "This expert isn't taking bookings right now. No payment was taken.";
+
+const EXPERT_FACTS = {
+  select: { consultantProfile: { select: publicProfileFacts } },
+} as const;
 
 const PAY_PAGE_SELECT = {
   id: true,
@@ -83,10 +97,20 @@ const PAY_PAGE_SELECT = {
   appointment: {
     select: {
       consultation: {
-        select: { id: true, status: true, pendingPaymentUrl: true },
+        select: {
+          id: true,
+          status: true,
+          pendingPaymentUrl: true,
+          consultationPlan: EXPERT_FACTS,
+        },
       },
       subscription: {
-        select: { id: true, status: true, pendingPaymentUrl: true },
+        select: {
+          id: true,
+          status: true,
+          pendingPaymentUrl: true,
+          subscriptionPlan: EXPERT_FACTS,
+        },
       },
       trial: {
         select: {
@@ -96,6 +120,7 @@ const PAY_PAGE_SELECT = {
           pendingPaymentUrl: true,
           paymentDueAt: true,
           subscriptionPlanId: true,
+          subscriptionPlan: EXPERT_FACTS,
           consulteeProfile: { select: { userId: true } },
           appointment: {
             select: {
@@ -143,6 +168,24 @@ function detailHref(row: PayPageRow): string {
   return consulteeId && row.appointmentId
     ? `/dashboard/consultee/${consulteeId}/appointments/${row.appointmentId}`
     : goHref("auto", "payments");
+}
+
+/** The unpayable answer; an expert who takes no bookings is named as such, with no way back offered. */
+function unpayable(row: PayPageRow): PayPageState {
+  const booking = row.appointment;
+  const expert =
+    booking?.consultation?.consultationPlan.consultantProfile ??
+    booking?.subscription?.subscriptionPlan.consultantProfile ??
+    booking?.trial?.subscriptionPlan.consultantProfile ??
+    null;
+  return {
+    kind: "unpayable",
+    doneHref: detailHref(row),
+    message:
+      expert && !isPublicExpertProfile(expert)
+        ? EXPERT_UNAVAILABLE_MESSAGE
+        : UNPAYABLE_MESSAGE,
+  };
 }
 
 function isLive(row: PayPageRow, now: Date): boolean {
@@ -261,23 +304,19 @@ export async function resolvePayPage(
       row.appointment?.subscription?.pendingPaymentUrl;
     return hosted && /^https?:\/\//.test(hosted)
       ? { kind: "redirect", href: hosted }
-      : { kind: "unpayable", doneHref: detailHref(row) };
+      : unpayable(row);
   }
   if (isLive(row, now)) return openState(row);
 
   // A newer live order on the same booking wins over re-minting this one.
   const newer = await findLiveOrder(row, now);
   if (newer) return { kind: "redirect", href: `/checkout/pay/${newer.id}` };
-  if (!(await remint(row))) {
-    return { kind: "unpayable", doneHref: detailHref(row) };
-  }
+  if (!(await remint(row))) return unpayable(row);
   const live = await findLiveOrder(row, now);
-  if (!live) return { kind: "unpayable", doneHref: detailHref(row) };
+  if (!live) return unpayable(row);
   if (live.id !== row.id) {
     return { kind: "redirect", href: `/checkout/pay/${live.id}` };
   }
   const fresh = await readPayPageRow(row.id);
-  return fresh && isLive(fresh, now)
-    ? openState(fresh)
-    : { kind: "unpayable", doneHref: detailHref(row) };
+  return fresh && isLive(fresh, now) ? openState(fresh) : unpayable(row);
 }

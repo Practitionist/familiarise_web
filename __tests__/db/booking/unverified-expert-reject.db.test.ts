@@ -73,6 +73,18 @@ import { bookTrialInTx } from "../../../lib/trials/book-trial";
 import { refundDoor } from "./harness-edges";
 
 const PRICE_PAISE = 80_000;
+/** The learner's notice: neutral, the expert named, no reason given. */
+const CLOSED_NOTICE =
+  "Database tier consultant isn't taking bookings right now, so your request was closed. No payment was taken.";
+
+/** The bells staged for one learner, as their outbox rows hold them. */
+async function bellPayloads(userId: string): Promise<string> {
+  const rows = await prisma.notificationOutbox.findMany({
+    where: { recipients: { has: userId } },
+    select: { payload: true },
+  });
+  return JSON.stringify(rows.map((r) => r.payload));
+}
 
 function rejectInput(host: SeededHost, staffUserId: string) {
   return {
@@ -319,6 +331,11 @@ describe("a moderation reject stops new sales and honours what is booked", () =>
     );
     expect(noticed).toContain("TRIAL_CANCELLED");
     expect(summary).not.toHaveProperty("unpaidSalesEnded");
+    for (const learner of [link.consultee.userId, requester.userId]) {
+      const bells = await bellPayloads(learner);
+      expect(bells).toContain(CLOSED_NOTICE);
+      expect(bells).not.toMatch(/reject/i);
+    }
   }, 60_000);
 
   it("refunds a late capture on a closed link and never confirms the booking", async () => {
@@ -328,7 +345,11 @@ describe("a moderation reject stops new sales and honours what is booked", () =>
     // The pay page no longer opens the order.
     expect(
       await resolvePayPage(link.request.payment!.id, link.consultee.userId),
-    ).toMatchObject({ kind: "unpayable" });
+    ).toMatchObject({
+      kind: "unpayable",
+      message:
+        "This expert isn't taking bookings right now. No payment was taken.",
+    });
 
     const outcome = await handlePaymentSuccess(
       link.request.payment!.paymentIntent,

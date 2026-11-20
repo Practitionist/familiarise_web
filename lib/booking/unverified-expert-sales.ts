@@ -29,13 +29,10 @@ import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 /** The history reason every ending below records. */
 export const EXPERT_NOT_VERIFIED_REASON = "EXPERT_NOT_VERIFIED";
 
-/** The learner's notice line for an unpaid link closed by the reject. */
-export const LINK_CLOSED_NOTICE =
-  "The expert can no longer take bookings, so this payment link was closed. No payment was taken.";
-
-/** The learner's notice line for an unanswered request declined by the reject. */
-export const REQUEST_DECLINED_NOTICE =
-  "The expert can no longer take bookings, so your request was declined. No payment was taken.";
+/** The learner's notice for a request or link the reject closed: neutral, never the reason. */
+export function closedRequestNotice(expertName: string): string {
+  return `${expertName} isn't taking bookings right now, so your request was closed. No payment was taken.`;
+}
 
 /** One booking the reject ended: who to tell, and about what. */
 export interface EndedSale {
