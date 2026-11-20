@@ -140,6 +140,7 @@ jest.mock("../../lib/prisma", () => ({
           priceCurrency: Currency.INR,
           trialEnabled: true,
           trialPriceInPaise: 250_000,
+          consultantProfile: { verificationStatus: "VERIFIED" },
         },
       })),
     },
@@ -236,6 +237,7 @@ function freshState(): State {
       title: "Career Clarity",
       price: 500_000,
       priceCurrency: Currency.INR,
+      consultantProfile: { verificationStatus: "VERIFIED" },
     },
     appointmentPayments: [],
     consultationStatus: AppointmentStatus.APPROVED_PENDING_PAYMENT,
@@ -454,7 +456,10 @@ describe("the approval mint is durable before the gateway call", () => {
   it("still mints for a paused expert: an approved request stays payable", async () => {
     state.consultationPlan = {
       ...state.consultationPlan,
-      consultantProfile: { acceptingRequests: false },
+      consultantProfile: {
+        acceptingRequests: false,
+        verificationStatus: "VERIFIED",
+      },
     };
 
     const result = await createApprovalPaymentIntent(mintParams());

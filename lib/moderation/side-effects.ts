@@ -103,6 +103,8 @@ export interface TransactionalEffectResult {
   expertUserId?: string;
   /** Whose public surfaces need purging once the transaction commits. */
   reviewRemovedConsultantProfileId?: string;
+  /** The rejected expert's profile, purged from the public surfaces after commit. */
+  unverifiedConsultantProfileId?: string;
   banExpires?: string | null;
   collaborationsRemoved?: PlanRef[];
   /** The seat holders' emails of a co-presenter who left; phase 2 stages them, never persisted. */
@@ -510,13 +512,15 @@ async function unverifyProfiles(
 ): Promise<TransactionalEffectResult> {
   // Both fields: explore + the booking gate filter on verificationStatus,
   // while isVerified is the projected display flag.
-  const updated = await tx.consultantProfile.updateMany({
+  const updated = await tx.consultantProfile.updateManyAndReturn({
     where: { userId: targetUserId },
     data: { isVerified: false, verificationStatus: "REJECTED" },
+    select: { id: true },
   });
   // Only a verified expert holds a place on a team.
   return {
-    profilesUnverified: updated.count,
+    profilesUnverified: updated.length,
+    ...(updated[0] ? { unverifiedConsultantProfileId: updated[0].id } : {}),
     ...(await endCollaborationsAsModeration(tx, targetUserId, staffUserId)),
   };
 }

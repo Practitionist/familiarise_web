@@ -36,7 +36,11 @@ import { isExclusionViolation } from "@/lib/db/pg-errors";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import { planSaleRefusal } from "@/lib/api/plans/visibility";
-import { BookingRuleError } from "@/lib/booking/booking-rule-error";
+import {
+  BookingRuleError,
+  assertExpertVerified,
+  assertPlanOnSale,
+} from "@/lib/booking/booking-rule-error";
 import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
 import { assertRequestLeadFits } from "@/lib/booking/lead-time";
 import { slotStartRefusal } from "@/lib/payments/utils/slot-validation";
@@ -353,13 +357,16 @@ export async function POST(request: NextRequest) {
             id: true,
             acceptingRequests: true,
             maxOpenRequests: true,
+            verificationStatus: true,
+            deletedAt: true,
             user: { select: { id: true, name: true } },
           },
         },
       },
     });
 
-    if (!subscriptionPlan) {
+    // A soft-deleted expert's plan answers as missing, as checkout does.
+    if (!subscriptionPlan || subscriptionPlan.consultantProfile.deletedAt) {
       return NextResponse.json(
         { error: "Subscription plan not found" },
         { status: 404 },
@@ -388,6 +395,16 @@ export async function POST(request: NextRequest) {
         },
         { status: 409 },
       );
+    }
+
+    // Checkout's sale gates: a verified expert, a plan on sale to this buyer.
+    try {
+      assertExpertVerified(subscriptionPlan.consultantProfile, "This trial");
+      assertPlanOnSale(subscriptionPlan, "This trial", organizationId);
+    } catch (error) {
+      if (error instanceof BookingRuleError) return bookingRuleResponse(error);
+      if (isRefusal(error)) return apiError({ tag: "[trials.POST]", error });
+      throw error;
     }
 
     // A paused expert takes no new booking, a trial included.

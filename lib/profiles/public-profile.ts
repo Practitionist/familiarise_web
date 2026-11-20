@@ -15,3 +15,9 @@ export function isPublicExpertProfile(profile: {
     profile.verificationStatus === "VERIFIED" && profile.deletedAt === null
   );
 }
+
+/** `isPublicExpertProfile` as a `where`: the owner a public plan surface may list. */
+export const publicExpertProfileWhere = {
+  verificationStatus: "VERIFIED",
+  deletedAt: null,
+} as const;

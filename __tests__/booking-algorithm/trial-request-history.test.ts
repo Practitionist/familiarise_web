@@ -163,8 +163,13 @@ beforeEach(() => {
     trialEnabled: true,
     trialDurationMinutes: 30,
     trialPriceInPaise: 0,
+    visibility: "PUBLIC",
+    organizationId: null,
+    archivedAt: null,
     consultantProfile: {
       maxOpenRequests: null,
+      verificationStatus: "VERIFIED",
+      deletedAt: null,
       user: { id: "expert-1", name: "Expert" },
     },
   });

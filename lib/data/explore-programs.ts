@@ -4,6 +4,7 @@ import { readByIds } from "@/lib/data/read-by-ids";
 import { toPlain } from "@/lib/data/serialize";
 import type { Prisma } from "@prisma/client";
 import { eventPlanDiscoverableWhere } from "@/lib/api/plans/visibility";
+import { publicExpertProfileWhere } from "@/lib/profiles/public-profile";
 import { generateProgramImageUrl } from "@/lib/explore/programs";
 import type {
   Program,
@@ -83,11 +84,13 @@ const planCollaboratorsInclude = {
   },
 };
 
-// #781 §B — soft-deleted profiles leave public surfaces. The owner relation is
-// nullable on Webinar/ClassPlan, so keep ownerless plans and drop only plans
-// whose owner is soft-deleted.
+// Only a verified, live owner's plans are listed. The owner relation is nullable on
+// Webinar/ClassPlan, so an ownerless plan stays.
 const liveConsultantWhere = {
-  OR: [{ consultantProfile: null }, { consultantProfile: { deletedAt: null } }],
+  OR: [
+    { consultantProfile: null },
+    { consultantProfile: publicExpertProfileWhere },
+  ],
 } satisfies Prisma.ClassPlanWhereInput & Prisma.WebinarPlanWhereInput;
 
 // ---------------------------------------------------------------------------

@@ -34,6 +34,7 @@ const plan = {
   visibility: "PUBLIC" as const,
   organizationId: null,
   archivedAt: null,
+  consultantProfile: null,
 };
 
 describe("planDetailResponse", () => {

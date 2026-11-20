@@ -83,8 +83,13 @@ jest.mock("../../lib/prisma", () => ({
         trialEnabled: true,
         trialDurationMinutes: 30,
         trialPriceInPaise: plan.trialPriceInPaise,
+        visibility: "PUBLIC",
+        organizationId: null,
+        archivedAt: null,
         consultantProfile: {
           acceptingRequests: plan.acceptingRequests,
+          verificationStatus: "VERIFIED",
+          deletedAt: null,
           maxOpenRequests: null,
           user: { id: "u-expert", name: "E" },
         },

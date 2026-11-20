@@ -85,6 +85,8 @@ const mockTrialCount = jest.fn(async () => 0);
 const mockProfile = {
   id: "cp_1",
   acceptingRequests: true,
+  verificationStatus: "VERIFIED",
+  deletedAt: null,
   bookingMode: "REQUEST" as "REQUEST" | "INSTANT",
   maxOpenRequests: null as number | null,
   user: { id: "user_consultant", name: "Olivia" },
@@ -113,6 +115,9 @@ jest.mock("../../lib/prisma", () => {
       findFirst: jest.fn(async () => ({
         id: "plan_1",
         title: "Plan",
+        visibility: "PUBLIC",
+        organizationId: null,
+        archivedAt: null,
         consultantProfile: mockProfile,
       })),
     },

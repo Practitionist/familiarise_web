@@ -3,6 +3,7 @@ import { unstable_cache } from "next/cache";
 import prisma from "@/lib/prisma";
 import { Prisma, type OrgPlanVisibility } from "@prisma/client";
 import { MARKETPLACE_VISIBILITY } from "@/lib/api/plans/visibility";
+import { publicExpertProfileWhere } from "@/lib/profiles/public-profile";
 import { normaliseSearchTerm } from "@/lib/explore/programs";
 import { publicCacheHeaders } from "@/lib/api/cdn-cache";
 
@@ -108,7 +109,16 @@ export interface PlanWhereClause {
   visibility?: { in: OrgPlanVisibility[] };
   /** #catalog-archive — `null` keeps withdrawn plans out of public lists. */
   archivedAt?: null;
+  AND?: ListedOwner[];
 }
+
+/** A verified, live owner, or none: an org may own a webinar or class plan. */
+type ListedOwner = {
+  OR: [
+    { consultantProfile: null },
+    { consultantProfile: typeof publicExpertProfileWhere },
+  ];
+};
 
 /**
  * Build a Prisma where clause from parsed plan filters.
@@ -130,6 +140,14 @@ export function buildPlanWhereClause(
   const where: PlanWhereClause = {
     visibility: { in: MARKETPLACE_VISIBILITY },
     archivedAt: null,
+    AND: [
+      {
+        OR: [
+          { consultantProfile: null },
+          { consultantProfile: publicExpertProfileWhere },
+        ],
+      },
+    ],
   };
 
   if (filters.consultantId) {

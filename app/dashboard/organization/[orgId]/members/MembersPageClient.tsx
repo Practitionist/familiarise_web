@@ -16,6 +16,7 @@ import {
   MEMBER_ROLE_LABEL,
   MEMBER_STATUS_LABEL,
   MEMBER_STATUS_TONE,
+  expertVerificationLabel,
   getInvitableRoles,
 } from "@/lib/labels/org-labels";
 import {
@@ -132,7 +133,7 @@ function ExpertLine({ member }: Readonly<{ member: MemberRow }>) {
       )}
       <StatusBadge
         size="sm"
-        label={profile?.isVerified ? "Verified" : "Unverified"}
+        label={expertVerificationLabel(profile?.isVerified ?? false)}
         tone={profile?.isVerified ? "success" : "neutral"}
       />
     </span>

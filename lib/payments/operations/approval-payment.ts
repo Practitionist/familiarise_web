@@ -46,6 +46,7 @@ import {
 } from "@/utils/appointmentlock";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import { liveOccurrenceWhere } from "@/lib/appointments/occurrences";
+import { assertExpertVerified } from "@/lib/booking/booking-rule-error";
 import {
   agreedConsultationPricePaise,
   agreedTrialPricePaise,
@@ -863,6 +864,7 @@ async function calculateAmount(
             trialPriceInPaise: true,
             trialEnabled: true,
             priceCurrency: true,
+            consultantProfile: { select: { verificationStatus: true } },
           },
         },
       },
@@ -872,6 +874,8 @@ async function calculateAmount(
       throw new Error("Trial not found");
     }
     const plan = trial.subscriptionPlan;
+    // Every mint and re-mint prices here, so an unverified expert's link is never issued.
+    assertExpertVerified(plan.consultantProfile, "This trial");
     if (!plan.trialEnabled) {
       throw new Error("This plan does not offer trials");
     }
@@ -902,7 +906,12 @@ async function calculateAmount(
     select: {
       agreedPricePaise: true,
       consultationPlan: {
-        select: { title: true, price: true, priceCurrency: true },
+        select: {
+          title: true,
+          price: true,
+          priceCurrency: true,
+          consultantProfile: { select: { verificationStatus: true } },
+        },
       },
     },
   });
@@ -911,6 +920,7 @@ async function calculateAmount(
     throw new Error("Consultation not found");
   }
   const plan = consultation.consultationPlan;
+  assertExpertVerified(plan.consultantProfile, "This consultation");
 
   const currency = plan.priceCurrency;
   // Every stage below treats the amount as INR paise, so a non-INR plan must refuse here.

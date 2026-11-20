@@ -117,6 +117,7 @@ const tx = {
   consultantProfile: {
     findUnique: jest.fn(async () => ({ userId: "u1" })),
     updateMany: jest.fn(async () => ({ count: 1 })),
+    updateManyAndReturn: jest.fn(async () => [{ id: "cp-1" }]),
   },
   collaborator: {
     findMany: jest.fn(async ({ where }: { where: Where }) =>

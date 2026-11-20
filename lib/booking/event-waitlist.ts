@@ -11,6 +11,7 @@ import {
   BackupInterestStatus,
   Prisma,
   type CollaboratorStatus,
+  type ConsultantVerificationStatus,
   type OccurrenceCompletionStatus,
   type OrgPlanVisibility,
 } from "@prisma/client";
@@ -18,6 +19,7 @@ import {
 import prisma, { type PrismaLike, type Tx } from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { canViewPlanDetail } from "@/lib/data/plan-viewable";
+import { publicProfileFacts } from "@/lib/profiles/public-profile";
 import { MARKETPLACE_VISIBILITY } from "@/lib/api/plans/visibility";
 import {
   MAX_GROUP_SESSION_PARTICIPANTS,
@@ -74,7 +76,7 @@ const PLAN_SELECT = {
   maxParticipants: true,
   waitlistEnabled: true,
   waitlistMax: true,
-  consultantProfile: { select: { userId: true, deletedAt: true } },
+  consultantProfile: { select: { userId: true, ...publicProfileFacts } },
   collaborators: {
     where: { status: { in: HOST_COLLABORATOR } },
     select: { consultantProfileId: true },
@@ -132,7 +134,11 @@ interface EventPlan {
   maxParticipants: number;
   waitlistEnabled: boolean;
   waitlistMax: number | null;
-  consultantProfile: { userId: string; deletedAt: Date | null } | null;
+  consultantProfile: {
+    userId: string;
+    verificationStatus: ConsultantVerificationStatus;
+    deletedAt: Date | null;
+  } | null;
   collaborators: { consultantProfileId: string }[];
 }
 
