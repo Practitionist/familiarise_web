@@ -43,6 +43,7 @@ import {
   isCursorSort,
   isInboxChip,
   nextInboxSearch,
+  parseRequestsInboxPayload,
   readInboxParams,
   toStampDate,
   type InboxChip,
@@ -97,6 +98,8 @@ export interface RequestsInboxProps {
   orgScope?: string;
   /** The RSC page's zone, so the seeded HTML and the hydrated tree agree. */
   viewerZone?: string | null;
+  /** The tab a URL without `type` shows; the RSC page picks it from the counts. */
+  landingType?: InboxType;
 }
 
 interface FetchError extends Error {
@@ -121,7 +124,7 @@ async function fetchInbox(query: string): Promise<RequestsInboxPayload> {
     error.status = response.status;
     throw error;
   }
-  return body as unknown as RequestsInboxPayload;
+  return parseRequestsInboxPayload(body);
 }
 
 /** A lifecycle POST (remind / withdraw) → its parsed body and status. */
@@ -165,12 +168,12 @@ function originalTimeOf(row: InboxRowInput, viewer: ViewerZone): string {
  * synchronously and no server round trip re-renders the page for a filter
  * click.
  */
-function useInboxUrlState() {
+function useInboxUrlState(landingType: InboxType | undefined) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const params = useMemo(
-    () => readInboxParams((key) => searchParams.get(key)),
-    [searchParams],
+    () => readInboxParams((key) => searchParams.get(key), landingType),
+    [searchParams, landingType],
   );
   const setParams = useCallback(
     (patch: InboxParamsPatch) => {
@@ -195,8 +198,9 @@ export function RequestsInbox({
   consultantProfileId,
   orgScope = "personal",
   viewerZone,
+  landingType,
 }: Readonly<RequestsInboxProps>) {
-  const { params, setParams } = useInboxUrlState();
+  const { params, setParams } = useInboxUrlState(landingType);
   // A breadcrumb / link may name one row; it is highlighted and scrolled to once.
   const focusId = params.focus;
   const viewer = useViewerZone(viewerZone);

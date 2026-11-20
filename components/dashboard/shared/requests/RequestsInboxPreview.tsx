@@ -14,6 +14,7 @@ import {
 import {
   inboxQueryKey,
   inboxQueryString,
+  parseRequestsInboxPayload,
   sortInboxRows,
   type InboxRowInput,
   type InboxType,
@@ -101,7 +102,7 @@ async function fetchPreviewTab(
   if (!response.ok) {
     throw new Error(errorSentence(body.code, body.error ?? "Could not load"));
   }
-  return body as unknown as RequestsInboxPayload;
+  return parseRequestsInboxPayload(body);
 }
 
 /**

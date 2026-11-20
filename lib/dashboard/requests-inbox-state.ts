@@ -6,6 +6,8 @@
  * a jest pin share one definition.
  */
 
+import { z } from "zod";
+
 import type { SubscriptionEntitlement } from "@/lib/booking/entitlement";
 import type {
   BookingPresentationInput,
@@ -179,6 +181,44 @@ export interface RequestsInboxPayload {
   meta: InboxMeta;
 }
 
+const countsSchema = z.object({
+  consultation: z.number(),
+  subscription: z.number(),
+  trial: z.number(),
+});
+
+const requestsInboxPayloadSchema = z.object({
+  rows: z.array(
+    z.custom<InboxRowInput>(
+      (v) => typeof v === "object" && v !== null && "id" in v && "kind" in v,
+    ),
+  ),
+  meta: z.object({
+    total: z.number(),
+    limit: z.number(),
+    counts: countsSchema,
+    paging: z.enum(["cursor", "ranked"]),
+    nextCursor: z.string().nullable(),
+    page: z.number(),
+    windowSize: z.number(),
+    bucketTotals: z
+      .object({
+        "answer-today": z.number(),
+        "this-week": z.number(),
+        later: z.number(),
+        "waiting-on-them": z.number(),
+      })
+      .nullable(),
+  }),
+});
+
+/** The HTTP twin's 200 body; a malformed one fails the query (and its Retry) instead of the render. */
+export function parseRequestsInboxPayload(body: unknown): RequestsInboxPayload {
+  const parsed = requestsInboxPayloadSchema.safeParse(body);
+  if (!parsed.success) throw new Error("Requests could not be read.");
+  return parsed.data;
+}
+
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 
@@ -268,6 +308,12 @@ export function isInboxSort(v: string | null | undefined): v is InboxSort {
 }
 
 export const INBOX_DEFAULT_TYPE: InboxType = "consultation";
+
+/** A link without `type` opens the default tab, or the first tab with rows when the default has none. */
+export function landingInboxType(counts: Record<InboxType, number>): InboxType {
+  if (counts[INBOX_DEFAULT_TYPE] > 0) return INBOX_DEFAULT_TYPE;
+  return INBOX_TYPES.find((type) => counts[type] > 0) ?? INBOX_DEFAULT_TYPE;
+}
 export const INBOX_DEFAULT_SORT: InboxSort = "priority";
 export const INBOX_DEFAULT_LIMIT = 20;
 
@@ -342,9 +388,10 @@ export function inboxQueryString(args: InboxQueryArgs): string {
   return params.toString();
 }
 
-/** URL → inbox state; anything unknown falls to the default. */
+/** URL → inbox state; anything unknown falls to the default (`fallbackType` for the tab). */
 export function readInboxParams(
   get: (key: string) => string | null,
+  fallbackType: InboxType = INBOX_DEFAULT_TYPE,
 ): Pick<InboxQueryArgs, "type" | "chip" | "sort" | "page" | "after" | "focus"> {
   const type = get("type");
   const chip = get("chip");
@@ -352,7 +399,7 @@ export function readInboxParams(
   const page = Number.parseInt(get("page") ?? "1", 10);
   const after = get("after");
   const focus = get("focus");
-  const safeType = isInboxType(type) ? type : INBOX_DEFAULT_TYPE;
+  const safeType = isInboxType(type) ? type : fallbackType;
   const safeSort = isInboxSort(sort) ? sort : INBOX_DEFAULT_SORT;
   // A chip the tab does not offer is dropped, never sent.
   return {
