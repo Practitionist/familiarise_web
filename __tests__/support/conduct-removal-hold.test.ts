@@ -18,6 +18,7 @@ jest.mock("../../lib/support/case-holds", () => ({
 }));
 
 import type { Tx } from "@/lib/prisma";
+import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { holdSeatEarningsTx } from "@/lib/support/conduct-removal-case";
 
 const NOW = new Date("2026-11-19T10:00:00.000Z");
@@ -27,7 +28,15 @@ function txFor(opts: {
   holdEvents: { kind: "HOLD_APPLIED" | "HOLD_RELEASED" }[];
 }) {
   const events: unknown[] = [];
+  const messages: { body: string; isInternal: boolean }[] = [];
   const tx = {
+    supportCase: { update: async () => ({ messageSeq: 3 }) },
+    supportCaseMessage: {
+      create: async (args: { data: { body: string; isInternal: boolean } }) => {
+        messages.push(args.data);
+        return {};
+      },
+    },
     payment: {
       findFirst: async () => ({
         id: "pay-1",
@@ -51,7 +60,7 @@ function txFor(opts: {
       },
     },
   } as unknown as Tx;
-  return { tx, events };
+  return { tx, events, messages };
 }
 
 const hold = (tx: Tx) =>
@@ -95,4 +104,27 @@ it("a free seat has no earnings to hold, so nothing is held or logged", async ()
   await expect(hold(tx)).resolves.toBe(false);
   expect(mockHold).not.toHaveBeenCalled();
   expect(events).toEqual([]);
+});
+
+it("a joined removal whose new hold is refused still reports the hold the case already has", async () => {
+  mockHold.mockRejectedValueOnce(
+    new OpsRefusal(
+      "PAYOUT_IN_FLIGHT",
+      "A linked payout is already being sent.",
+    ),
+  );
+  const { tx, events, messages } = txFor({
+    payment: PAID,
+    holdEvents: [{ kind: "HOLD_APPLIED" }],
+  });
+  await expect(hold(tx)).resolves.toBe(true);
+  expect(events).toEqual([]);
+  expect(messages).toEqual([
+    expect.objectContaining({
+      isInternal: true,
+      body: expect.stringContaining(
+        "Earnings hold not placed (PAYOUT_IN_FLIGHT)",
+      ),
+    }),
+  ]);
 });

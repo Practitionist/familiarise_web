@@ -415,7 +415,8 @@ export async function holdSeatEarningsTx(
       true,
       args.now,
     );
-    return false;
+    // An earlier removal's hold on this payment still stands for the case.
+    return alreadyHeld;
   }
   if (alreadyHeld) return true;
   await tx.supportCaseEvent.create({
