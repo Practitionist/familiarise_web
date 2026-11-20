@@ -6,6 +6,10 @@ export function noopModule(): object {
   const noop = jest.fn(async () => []);
   return new Proxy(
     {},
-    { get: (_target, prop) => (prop === "__esModule" ? true : noop) },
+    {
+      // Not a thenable, so a dynamic import of the mocked module resolves.
+      get: (_target, prop) =>
+        prop === "then" ? undefined : prop === "__esModule" ? true : noop,
+    },
   );
 }

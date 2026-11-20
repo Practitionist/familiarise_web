@@ -244,7 +244,12 @@ validation error, a 409) propagates immediately, by design: a business rejection
 must never be retried into accidental success. Because the callback runs up to
 four times, nothing inside it may be non-idempotent; gateway calls,
 notifications, emails and pay-link mints belong after the commit, and a lock
-grant taken before the loop must be renewed inside it (see §5).
+grant taken before the loop must be renewed inside it (see §5). A Read Committed
+booking transaction runs through `bookingTransaction`
+(`lib/db/booking-transaction.ts`), which replays a deadlock victim once: pass
+the lock renewals as its `beforeAttempt` hook (it runs ahead of every attempt,
+outside the transaction), as the cancel and reschedule routes do, so a replay
+never writes under a lapsed grant.
 
 Exhausted retries surface as a 409 — checkout answers `errorType:
 "SERIALIZATION_CONFLICT"` with `yourCardWasNotCharged: true` — never a 500. An
@@ -343,6 +348,29 @@ PENDING past its window stops counting for capacity and for the buyer's own
 calendar at once, before any sweep releases it. A seat leave or removal stamps
 its refund owed in the commit that releases the seat, so the
 `retry-auto-refunds` sweep re-drives a crash.
+
+A free seat rejoin is a seat checkout like any other: it takes the same key and
+the same Serializable recount, so two rejoins, or a rejoin and a new buyer, for
+the last seat seat exactly one and refuse the other `EVENT_FULL`. The handler
+reads the buyer's prior payment before `recordParticipants` revives the row and
+revives only `CANCELLED`; a removed seat never revives
+(`removedByUserId: null` in the revive's WHERE), and the handler's
+`stampRecordedSeat` refuses the commit when the seat write did not reach an
+unmarked row in the checkout's status. Lifting a removal clears the mark by
+compare-and-set (staff on `removedByUserId: { not: null }`, the organiser on
+`removedByUserId` equal to themselves), so a second lift and an overturn that
+lands after a lift change nothing. A leave's Stream removal is driven only by
+its durable revoker, which re-reads the seats after its vendor calls and
+re-syncs anyone a rejoin re-admitted meanwhile, inside its budget; deferred
+work leaves the intent owed for the sweep's re-drive to re-grant. A removal the
+drive could not confirm (it timed out or failed) may still land after that
+re-grant, so its user's intent stays owed through it, and a removal that lands
+after its budget (`withinBudget`'s `onLate`) re-reads the join gate and re-arms
+the intent of anyone it admits (`rearmReadmittedSeats`), the seat twin of the
+conduct block's `repairIfStale`. Every event
+seat move writes its SEAT history row on the same `tx` as the move
+(`lib/booking/seat-history.ts`); a caller whose CAS pins one from-status skips
+the pre-read.
 
 ## Deprecated & Superseded Approaches
 

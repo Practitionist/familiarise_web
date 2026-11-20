@@ -7,11 +7,13 @@ import {
 import {
   readAppointmentDetail,
   scopeAppointmentDetail,
+  viewerMayWithdrawReschedule,
 } from "@/lib/data/appointment-detail";
 import { managesGroupPlanAsNamedExpert } from "@/lib/enterprise/membership-guards";
 import prisma from "@/lib/prisma";
 import DetailPageClient from "./DetailPageClient";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
+import { getSession } from "@/lib/auth-server";
 import { getViewerZone } from "@/lib/time/viewer-zone-server";
 import { DisplayZoneProvider } from "@/lib/time/zoned-format";
 
@@ -74,6 +76,10 @@ export default async function AppointmentDetailPage({
         prisma,
         appointment,
         access.userId,
+      ),
+      mayWithdrawReschedule: await viewerMayWithdrawReschedule(
+        detail,
+        await getSession(),
       ),
     }),
   );

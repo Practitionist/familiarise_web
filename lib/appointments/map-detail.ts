@@ -205,6 +205,7 @@ export function mapAppointmentDetail(
     title: facts.title,
     counterpart,
     consultantProfileId: facts.consultantProfileId,
+    expertProfileIsPublic: detail.expertProfileIsPublic,
     status: facts.status,
     ...deriveBucket({ status: facts.status, occurrences, now }, role),
     nextAt: getAnchorTime(occurrences, now),

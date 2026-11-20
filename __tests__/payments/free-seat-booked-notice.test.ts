@@ -1,0 +1,148 @@
+/**
+ * @jest-environment node
+ */
+
+/**
+ * A free event seat has no capture, so its "you're registered" notice is staged
+ * on the checkout commit's own transaction, keyed by the join that commit wrote:
+ * the notice commits or rolls back with the seat, and a rejoin gets a notice of its own.
+ */
+
+const mockBooked = jest.fn(async (..._args: unknown[]) => [
+  { success: true, staged: { id: "bell-1" } },
+]);
+jest.mock("../../lib/novu", () => ({
+  notifyAppointmentBooked: (...args: unknown[]) => mockBooked(...args),
+  notifyPaymentSuccess: jest.fn(),
+}));
+const mockStageEmails = jest.fn(async (..._args: unknown[]) => [
+  { id: "mail-1" },
+]);
+const mockEvents: string[] = [];
+const PREPARED = { key: "booked-args", prepared: { rows: [] } };
+const mockPrepareEmails = jest.fn(async (..._args: unknown[]) => {
+  mockEvents.push("render");
+  return PREPARED;
+});
+jest.mock("../../lib/email/senders/booking", () => ({
+  stageAppointmentBookedEmail: (...args: unknown[]) => mockStageEmails(...args),
+  prepareAppointmentBookedEmail: (...args: unknown[]) =>
+    mockPrepareEmails(...args),
+}));
+// Reads before the commit go through the global client; nothing opens a transaction of its own.
+jest.mock("../../lib/prisma", () => ({
+  __esModule: true,
+  default: {
+    $transaction: () => {
+      throw new Error("the notice opened its own transaction");
+    },
+    webinar: {
+      findUnique: async () => ({ appointment: { id: "appt-1" } }),
+    },
+    user: { findUnique: async () => ({ name: "Riya" }) },
+    appointment: { findUnique: async () => mockAppointment },
+  },
+}));
+
+import type { Tx } from "@/lib/prisma";
+import {
+  freeSeatRegisteredKey,
+  prepareFreeSeatNotice,
+  stageFreeSeatNoticeTx,
+} from "@/lib/payments/checkout/free-seat-notice";
+
+const mockAppointment = {
+  id: "appt-1",
+  organizationId: null,
+  organization: null,
+  occurrences: [
+    {
+      startsAt: new Date("2026-11-20T10:00:00Z"),
+      endsAt: new Date("2026-11-20T11:00:00Z"),
+    },
+  ],
+  consultation: null,
+  subscription: null,
+  trial: null,
+  class: null,
+  webinar: {
+    webinarPlan: {
+      title: "Intro to Python",
+      collaborators: [],
+      consultantProfile: { user: { id: "host-1", name: "Arjun" } },
+    },
+  },
+};
+const commitTx = {
+  user: { findUnique: async () => ({ name: "Riya" }) },
+  appointment: { findUnique: async () => mockAppointment },
+} as unknown as Tx;
+
+const stage = (joinId = "hist-join-1") =>
+  stageFreeSeatNoticeTx(commitTx, {
+    appointmentId: "appt-1",
+    userId: "u-1",
+    appointmentType: "WEBINAR",
+    join: { participantId: "part-1", joinId },
+    prepared: null,
+  });
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockEvents.length = 0;
+});
+
+it("with no preparation, stages the booked bell and emails on the commit's transaction, under the join's key", async () => {
+  await expect(stage()).resolves.toEqual({
+    bells: [{ id: "bell-1" }],
+    emails: [{ rows: [{ id: "mail-1" }], emailType: "APPOINTMENT_BOOKED" }],
+  });
+  expect(mockBooked).toHaveBeenCalledWith(
+    ["u-1", "host-1"],
+    expect.objectContaining({ appointmentId: "appt-1", consulteeName: "Riya" }),
+    "seat-registered:part-1:hist-join-1",
+    expect.objectContaining({ tx: commitTx }),
+  );
+  // Nothing was prepared, so the commit reads and renders it itself.
+  expect(mockStageEmails).toHaveBeenCalledWith(
+    commitTx,
+    expect.anything(),
+    null,
+  );
+});
+
+it("gives a rejoin of the same seat a key of its own", () => {
+  expect(freeSeatRegisteredKey("part-1", "hist-rejoin")).not.toBe(
+    freeSeatRegisteredKey("part-1", "hist-join-1"),
+  );
+});
+
+it("renders the email before the commit opens, so the commit only inserts the rows", async () => {
+  const prepared = await prepareFreeSeatNotice({
+    appointmentType: "WEBINAR",
+    eventId: "web-1",
+    userId: "u-1",
+  });
+  expect(mockEvents).toEqual(["render"]);
+  // The commit's transaction has nothing to read: the notice was prepared from data read before it.
+  const insertOnlyTx = {} as unknown as Tx;
+  await stageFreeSeatNoticeTx(insertOnlyTx, {
+    appointmentId: "appt-1",
+    userId: "u-1",
+    appointmentType: "WEBINAR",
+    join: { participantId: "part-1", joinId: "hist-join-1" },
+    prepared,
+  });
+  expect(mockEvents).toEqual(["render"]);
+  expect(mockStageEmails).toHaveBeenCalledWith(
+    insertOnlyTx,
+    expect.anything(),
+    PREPARED,
+  );
+  expect(mockBooked).toHaveBeenCalledWith(
+    ["u-1", "host-1"],
+    expect.anything(),
+    "seat-registered:part-1:hist-join-1",
+    expect.objectContaining({ tx: insertOnlyTx }),
+  );
+});

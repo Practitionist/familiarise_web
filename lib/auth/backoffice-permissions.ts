@@ -47,6 +47,8 @@ export type BackofficeSurface =
   | "engineering.escalate"
   // Operations — booking-side triage and user verification.
   | "appointments.manage"
+  // Lifting an organiser or conduct removal so the attendee may register again.
+  | "appointments.liftSeatRemoval"
   | "newsletter.manage"
   | "leads.manage"
   | "users.read"
@@ -129,6 +131,8 @@ export const BACKOFFICE_PERMISSIONS: Record<
   // `users.moderate` (ban / role change / delete) is the one exception:
   // irreversible and account-destroying, so admin-only.
   "appointments.manage": OPERATORS,
+  // Support's call on who may come back; it moves no money and records no verdict.
+  "appointments.liftSeatRemoval": OPERATORS,
   "newsletter.manage": OPERATORS,
   // #1230 wave-4c — enterprise sales pipeline triage. Admin-only (#1527
   // §17b): staff are support (#1771), and the merged tree would otherwise

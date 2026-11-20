@@ -1,0 +1,481 @@
+/**
+ * @jest-environment node
+ */
+
+/**
+ * Lifting a removal: staff hold the new surface and pass step-up; the
+ * organiser may lift only a plain removal; the mark is cleared by
+ * compare-and-set, so a second lift changes nothing; and what both controls
+ * send parses through the routes' own schemas.
+ */
+
+jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
+jest.mock("../../lib/observability/report", () => ({
+  reportSentryError: jest.fn(),
+  reportSentryMessage: jest.fn(),
+}));
+jest.mock("../../lib/api/after-safe", () => ({
+  scheduleAfter: (fn: () => unknown) => fn(),
+}));
+const mockStale = { value: false };
+jest.mock("../../lib/auth/step-up", () => ({
+  requireFreshSession: () =>
+    mockStale.value
+      ? jest
+          .requireActual<typeof import("next/server")>("next/server")
+          .NextResponse.json({ code: "STEP_UP_REQUIRED" }, { status: 403 })
+      : null,
+}));
+const mockViewer = { id: "staff-1", role: "STAFF" };
+jest.mock("../../lib/auth-helpers", () => ({
+  requireBackofficeSurface: async (surface: BackofficeSurface) =>
+    jest
+      .requireActual<typeof import("../../lib/auth/backoffice-permissions")>(
+        "../../lib/auth/backoffice-permissions",
+      )
+      .hasBackofficePermission(mockViewer.role as UserRole, surface)
+      ? { session: { user: { ...mockViewer } } }
+      : {
+          error: jest
+            .requireActual<typeof import("next/server")>("next/server")
+            .NextResponse.json({ code: "FORBIDDEN" }, { status: 403 }),
+        },
+}));
+const mockSyncBlock = jest.fn(async () => undefined);
+const mockPersistBlock = jest.fn(async () => new Date("2026-11-18T10:00:00Z"));
+jest.mock("../../lib/stream/access-revocation", () => ({
+  persistConductBlockInTx: () => mockPersistBlock(),
+  syncConductCallBlock: () => mockSyncBlock(),
+}));
+const mockStageBell = jest.fn(async (_tx: unknown, args: unknown) => ({
+  id: "bell-1",
+  args,
+}));
+jest.mock("../../lib/novu/stage-bell", () => ({
+  stageBell: (tx: unknown, args: unknown) => mockStageBell(tx, args),
+}));
+jest.mock("../../lib/novu/stage-then-attempt", () => ({
+  flushNotificationsAfter: jest.fn(async () => undefined),
+}));
+
+/**
+ * One released learner seat, in the shape the lift selects: marked by a removal,
+ * or unmarked with whatever SEAT history `history` holds (newest first).
+ */
+const mockDb = {
+  marked: true,
+  // The learner's only CONSULTEE row is a cancelled 1:1 consultation, found only by an unscoped read.
+  oneToOne: false,
+  conductCase: false,
+  priceFree: true,
+  // The event's current list price; a host may price a once-free event.
+  eventPricePaise: 0,
+  history: [] as { entityId: string; reason: string }[],
+};
+const mockCas = jest.fn();
+const mockSeatLookup = jest.fn();
+const mockHistory = jest.fn();
+const mockOpsRows: unknown[] = [];
+function mockTx() {
+  return {
+    appointmentParticipant: {
+      findFirst: async (args: unknown) => {
+        mockSeatLookup(args);
+        if (mockDb.oneToOne) {
+          if (JSON.stringify(args).includes('"WEBINAR"')) return null;
+          return {
+            id: "part-1on1",
+            status: "CANCELLED",
+            appointmentId: APPT,
+            removedByUserId: null,
+            payment: null,
+            appointment: { webinar: null, class: null },
+          };
+        }
+        return {
+          id: "part-1",
+          status: "CANCELLED",
+          appointmentId: APPT,
+          removedByUserId: mockDb.marked ? "host-1" : null,
+          payment: mockDb.priceFree
+            ? { paymentIntent: "free_1", amount: 0, originalAmount: 0 }
+            : {
+                paymentIntent: "order_1",
+                amount: 50_000,
+                originalAmount: 50_000,
+              },
+          appointment: {
+            webinar: {
+              id: "web-1",
+              webinarPlan: {
+                id: "plan-1",
+                title: "Intro to Python",
+                price: mockDb.eventPricePaise,
+              },
+            },
+            class: null,
+          },
+        };
+      },
+      findUnique: async () => ({
+        id: "part-1",
+        removedByUserId: mockDb.marked ? "host-1" : null,
+      }),
+      updateMany: async (args: unknown) => {
+        mockCas(args);
+        const count = mockDb.marked ? 1 : 0;
+        mockDb.marked = false;
+        return { count };
+      },
+    },
+    supportCase: {
+      findFirst: async () =>
+        mockDb.conductCase
+          ? { id: "case-1", createdAt: new Date("2026-11-17T10:00:00Z") }
+          : null,
+    },
+    supportCaseDecision: { findFirst: async () => null },
+    bookingStatusHistory: {
+      // Every lift in these cases follows the conduct case.
+      findFirst: async () =>
+        mockDb.history.some((row) => row.reason === "block_lifted")
+          ? { id: "lift" }
+          : null,
+      findMany: async () => mockDb.history,
+      createMany: async (args: { data: { reason: string }[] }) => {
+        for (const row of args.data) {
+          mockDb.history.unshift({ entityId: "part-1", reason: row.reason });
+        }
+        return mockHistory(args);
+      },
+    },
+    opsActionLog: {
+      create: async ({ data }: { data: unknown }) => {
+        mockOpsRows.push(data);
+        return { id: "log" };
+      },
+    },
+  };
+}
+jest.mock("../../lib/prisma", () => ({
+  __esModule: true,
+  default: {
+    $transaction: async (fn: (tx: unknown) => unknown) => fn(mockTx()),
+  },
+}));
+
+import { NextRequest } from "next/server";
+import type { UserRole } from "@prisma/client";
+import type { BackofficeSurface } from "@/lib/auth/backoffice-permissions";
+import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
+import { POST as staffLift } from "@/app/api/staff/appointments/[appointmentId]/seats/lift/route";
+import {
+  liftSeatRemovalAsOrganiser,
+  rejoinNoticeText,
+} from "@/lib/booking/seat-removal-lift";
+import { allowBackRequest } from "@/lib/events/seat-lift-request";
+import { seatLiftDoor } from "@/components/dashboard/backoffice/money/seat-lift-door";
+import { opsReasonSchema } from "@/lib/backoffice/ops-reason";
+import {
+  SeatLiftBodySchema,
+  SeatLiftResponseSchema,
+} from "@/schemas/seat-removal-lift";
+
+const APPT = "8b2f6c1e-1d2a-4f3b-9c4d-5e6f7a8b9c0d";
+
+const post = (body: unknown) =>
+  staffLift(
+    new NextRequest(
+      `https://x.invalid/api/staff/appointments/${APPT}/seats/lift`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+    { params: Promise.resolve({ appointmentId: APPT }) },
+  );
+const REASON = "Learner apologised; host agreed to let them back";
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  Object.assign(mockDb, {
+    marked: true,
+    oneToOne: false,
+    conductCase: false,
+    priceFree: true,
+    eventPricePaise: 0,
+    history: [],
+  });
+  mockStale.value = false;
+  mockViewer.role = "STAFF";
+  mockOpsRows.length = 0;
+});
+
+describe("the staff lift door", () => {
+  it("is granted to support and admin only", () => {
+    for (const role of ["STAFF", "ADMIN"] as UserRole[]) {
+      expect(
+        hasBackofficePermission(role, "appointments.liftSeatRemoval"),
+      ).toBe(true);
+    }
+    for (const role of ["CONSULTANT", "CONSULTEE"] as UserRole[]) {
+      expect(
+        hasBackofficePermission(role, "appointments.liftSeatRemoval"),
+      ).toBe(false);
+    }
+  });
+
+  it("refuses a role without the surface and a stale session, writing nothing", async () => {
+    mockViewer.role = "CONSULTANT";
+    expect((await post({ userId: "u-1", reason: REASON })).status).toBe(403);
+    mockViewer.role = "STAFF";
+    mockStale.value = true;
+    const stale = await post({ userId: "u-1", reason: REASON });
+    expect(stale.status).toBe(403);
+    expect(await stale.json()).toMatchObject({ code: "STEP_UP_REQUIRED" });
+    expect(mockCas).not.toHaveBeenCalled();
+  });
+
+  it("lifts a conduct removal, writes the unblock intent and the audit row, and answers its schema", async () => {
+    mockDb.conductCase = true;
+    const res = await post({ userId: "u-1", reason: REASON });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(
+      SeatLiftResponseSchema.parse({ ...body, opsActionId: undefined }),
+    ).toEqual({ lifted: true, rejoinPath: "REGISTER", conduct: true });
+    expect(mockCas).toHaveBeenCalledWith({
+      where: { id: "part-1", removedByUserId: { not: null } },
+      data: { removedByUserId: null },
+    });
+    expect(mockHistory).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          entity: "SEAT",
+          entityId: "part-1",
+          reason: "block_lifted",
+          actorUserId: "staff-1",
+          fromStatus: "CANCELLED",
+          toStatus: "CANCELLED",
+        }),
+      ],
+    });
+    expect(mockPersistBlock).toHaveBeenCalledTimes(1);
+    expect(mockSyncBlock).toHaveBeenCalledTimes(1);
+    // The audit row keeps who removed the seat and how, since the lift clears it.
+    expect(mockOpsRows).toEqual([
+      expect.objectContaining({
+        surface: "appointments.liftSeatRemoval",
+        reason: REASON,
+        before: { removedByUserId: "host-1", removal: "CONDUCT" },
+      }),
+    ]);
+  });
+
+  it("answers a second lift of the same seat with REMOVAL_ALREADY_LIFTED", async () => {
+    expect((await post({ userId: "u-1", reason: REASON })).status).toBe(200);
+    const again = await post({ userId: "u-1", reason: REASON });
+    expect(again.status).toBe(409);
+    expect(await again.json()).toMatchObject({
+      code: "REMOVAL_ALREADY_LIFTED",
+    });
+    expect(mockHistory).toHaveBeenCalledTimes(1);
+  });
+
+  it("tells a paid seat that support will help, and a price-free one that it can register", async () => {
+    mockDb.priceFree = false;
+    await post({ userId: "u-1", reason: REASON });
+    expect(mockStageBell).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        recipients: ["u-1"],
+        payload: expect.objectContaining({
+          rejoinText: "Support will help you rejoin Intro to Python.",
+        }),
+      }),
+    );
+    expect(rejoinNoticeText("REGISTER", "Intro to Python")).toBe(
+      "You can register for Intro to Python again.",
+    );
+  });
+});
+
+it("sends a formerly free seat on an event now priced to support, as checkout would refuse it", async () => {
+  mockDb.eventPricePaise = 50_000;
+  const res = await post({ userId: "u-1", reason: REASON });
+  expect(await res.json()).toMatchObject({ rejoinPath: "SUPPORT" });
+  expect(mockStageBell).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.objectContaining({
+      payload: expect.objectContaining({
+        rejoinText: "Support will help you rejoin Intro to Python.",
+      }),
+    }),
+  );
+});
+
+describe("a free seat released before seat history was kept", () => {
+  beforeEach(() => {
+    mockDb.marked = false;
+  });
+
+  it("is lifted by staff with a block_lifted row, and the audit names it LEGACY", async () => {
+    const res = await post({ userId: "u-1", reason: REASON });
+    expect(res.status).toBe(200);
+    expect(mockCas).not.toHaveBeenCalled();
+    expect(mockHistory).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          reason: "block_lifted",
+          actorUserId: "staff-1",
+        }),
+      ],
+    });
+    expect(mockOpsRows).toEqual([
+      expect.objectContaining({
+        before: { removedByUserId: null, removal: "LEGACY" },
+      }),
+    ]);
+    // Lifted once: the latest SEAT row now opens the seat, so a second lift finds nothing.
+    const again = await post({ userId: "u-1", reason: REASON });
+    expect(again.status).toBe(409);
+  });
+
+  it("is not the organiser's to lift", async () => {
+    await expect(
+      liftSeatRemovalAsOrganiser({
+        appointmentId: APPT,
+        userId: "u-1",
+        actorUserId: "host-1",
+      }),
+    ).rejects.toMatchObject({ code: "LIFT_NOT_ALLOWED" });
+    expect(mockHistory).not.toHaveBeenCalled();
+  });
+
+  it("is not blocked when its latest SEAT row is the holder's own leave", async () => {
+    mockDb.history = [{ entityId: "part-1", reason: "self_leave" }];
+    const res = await post({ userId: "u-1", reason: REASON });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ code: "REMOVAL_ALREADY_LIFTED" });
+  });
+});
+
+describe("the organiser lift door", () => {
+  const lift = () =>
+    liftSeatRemovalAsOrganiser({
+      appointmentId: APPT,
+      userId: "u-1",
+      actorUserId: "host-1",
+    });
+
+  it("lifts a plain removal its own actor made, binding the compare-and-set to them", async () => {
+    await expect(lift()).resolves.toMatchObject({
+      rejoinPath: "REGISTER",
+      conduct: false,
+    });
+    expect(mockCas).toHaveBeenCalledWith({
+      where: { id: "part-1", removedByUserId: "host-1" },
+      data: { removedByUserId: null },
+    });
+    expect(mockPersistBlock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a plain removal another organiser made and leaves the mark", async () => {
+    await expect(
+      liftSeatRemovalAsOrganiser({
+        appointmentId: APPT,
+        userId: "u-1",
+        actorUserId: "cohost-2",
+      }),
+    ).rejects.toMatchObject({ code: "LIFT_NOT_ALLOWED", httpStatus: 403 });
+    expect(mockCas).not.toHaveBeenCalled();
+    expect(mockHistory).not.toHaveBeenCalled();
+    expect(mockDb.marked).toBe(true);
+  });
+
+  it("refuses a conduct removal that stands and leaves the mark", async () => {
+    mockDb.conductCase = true;
+    await expect(lift()).rejects.toMatchObject({ code: "LIFT_NOT_ALLOWED" });
+    expect(mockCas).not.toHaveBeenCalled();
+    expect(mockDb.marked).toBe(true);
+  });
+});
+
+describe("a 1:1 booking's learner row", () => {
+  it("is never lifted by the staff door, which reads only event seats", async () => {
+    mockDb.oneToOne = true;
+    const res = await post({ userId: "u-1", reason: REASON });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ code: "REMOVAL_ALREADY_LIFTED" });
+    expect(mockHistory).not.toHaveBeenCalled();
+    expect(mockOpsRows).toEqual([]);
+  });
+});
+
+describe("what the lift controls send", () => {
+  it("the staff door's toast says what the attendee can do now, from what the route answered", () => {
+    const door = seatLiftDoor(APPT, {
+      userId: "u-1",
+      name: "Riya",
+      removal: "ORGANISER",
+      paidSeat: false,
+      conductCase: null,
+    });
+    const said = (rejoinPath: "REGISTER" | "SUPPORT") =>
+      door.success?.(
+        SeatLiftResponseSchema.parse({
+          lifted: true,
+          rejoinPath,
+          conduct: false,
+        }),
+      );
+    expect(said("REGISTER")).toBe(
+      "Riya is allowed back and can register again while seats are left.",
+    );
+    expect(said("SUPPORT")).toBe(
+      "Riya is allowed back. Their seat was paid for, so they've been told support will help them rejoin.",
+    );
+  });
+
+  it("the staff door names the removal case's decision only when it has one", () => {
+    const describe = (conductCase: "DECIDED" | "UNDECIDED") =>
+      seatLiftDoor(APPT, {
+        userId: "u-1",
+        name: "Arjun",
+        removal: "CONDUCT",
+        paidSeat: false,
+        conductCase,
+      }).description;
+    expect(describe("DECIDED")).toMatch(
+      /The decision on the removal case stays as it is/,
+    );
+    expect(describe("UNDECIDED")).not.toMatch(/The decision/);
+    expect(describe("UNDECIDED")).toMatch(
+      /removal case is still undecided, and lifting the block doesn't decide it/,
+    );
+  });
+
+  it("the roster's Allow back parses through the organiser route's schema", () => {
+    const { url, init } = allowBackRequest("class", "cls-1", "u-1");
+    expect(url).toBe("/api/participants/class/cls-1/allow-back");
+    expect(init.method).toBe("POST");
+    expect(SeatLiftBodySchema.parse(JSON.parse(String(init.body)))).toEqual({
+      userId: "u-1",
+    });
+  });
+
+  it("the staff door's body, with its reason, parses through the staff route's schema", () => {
+    const door = seatLiftDoor(APPT, {
+      userId: "u-1",
+      name: "Riya",
+      removal: "CONDUCT",
+      paidSeat: true,
+      conductCase: "DECIDED",
+    });
+    expect(door.url).toBe(`/api/staff/appointments/${APPT}/seats/lift`);
+    expect(door.description).toMatch(/can't be bought again on their own yet/);
+    expect(
+      SeatLiftBodySchema.extend({ reason: opsReasonSchema }).parse({
+        ...door.body,
+        reason: REASON,
+      }),
+    ).toEqual({ userId: "u-1", reason: REASON });
+  });
+});

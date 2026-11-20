@@ -33,11 +33,16 @@ export function chatRevocationMock(): object {
   };
 }
 
-/** Staged notifications are never flushed. */
+/** Staged notifications are staged for real and never flushed. */
 export function noFlushMock(): object {
   return {
     __esModule: true,
     flushNotificationsAfter: jest.fn(async () => undefined),
+    stageNowAttemptAfter: jest.fn(
+      async (_label: string, stage: () => Promise<unknown>) => {
+        await stage();
+      },
+    ),
   };
 }
 

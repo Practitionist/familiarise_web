@@ -152,6 +152,18 @@
       "reason": "The case event the support SLA sweep writes once when a conduct removal passes its 72-hour review deadline undecided. Additive, so only the drift check reads it; it goes with this PR's own push.",
       "trackedBy": "#2799",
       "expires": "2026-12-31"
+    },
+    {
+      "statement": "ALTER TABLE \"AppointmentParticipant\" DROP CONSTRAINT \"AppointmentParticipant_removedByUserId_fkey\"",
+      "reason": "The removal mark's foreign key moves from SET NULL to RESTRICT, so deleting a remover's account cannot erase a block. The owner applies temp/2849-fk-restrict.sql.",
+      "trackedBy": "#2849",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "ALTER TABLE \"AppointmentParticipant\" ADD CONSTRAINT \"AppointmentParticipant_removedByUserId_fkey\" FOREIGN KEY (\"removedByUserId\") REFERENCES \"users\"(\"id\") ON DELETE RESTRICT ON UPDATE CASCADE",
+      "reason": "The removal mark's foreign key moves from SET NULL to RESTRICT, so deleting a remover's account cannot erase a block. The owner applies temp/2849-fk-restrict.sql.",
+      "trackedBy": "#2849",
+      "expires": "2026-12-31"
     }
   ],
   "knownDivergences": [

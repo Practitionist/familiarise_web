@@ -1,4 +1,3 @@
-import { removeUserFromEventChannel } from "@/actions/stream/chat/event-channel.action";
 import {
   handleGroupParticipantDelete,
   handleGroupParticipantsGet,
@@ -17,7 +16,5 @@ export async function DELETE(
   { params }: { params: Promise<{ classId: string }> },
 ) {
   const { classId } = await params;
-  return handleGroupParticipantDelete(request, "class", classId, (userId) =>
-    removeUserFromEventChannel("class", classId, userId),
-  );
+  return handleGroupParticipantDelete(request, "class", classId);
 }

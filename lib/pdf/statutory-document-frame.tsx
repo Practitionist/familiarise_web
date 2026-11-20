@@ -94,18 +94,6 @@ export function formatStatutoryMoney(
   }).format(paise / 100);
 }
 
-/** Date-precision, in UTC: these are filing dates, and a host west of UTC
- *  would otherwise render a UTC-midnight value as the previous day. */
-export function formatStatutoryDate(d: Date | null | undefined): string {
-  if (!d) return "—";
-  return new Date(d).toLocaleDateString("en-IN", {
-    timeZone: "UTC",
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
-}
-
 // ============================================================================
 // Styles
 // ============================================================================

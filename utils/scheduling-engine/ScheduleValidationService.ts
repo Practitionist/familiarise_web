@@ -9,6 +9,10 @@ import { reportSentryError } from "@/lib/observability/report";
 import prisma, { type PrismaLike } from "@/lib/prisma";
 import { MINIMUM_BOOKING_LEAD_TIME_MS } from "@/lib/payments/constants";
 import {
+  isBeyondBookingHorizon,
+  MAX_BOOKING_HORIZON_DAYS,
+} from "@/lib/booking/lead-time";
+import {
   isDeadOccurrence,
   SCHEDULING_INTERVAL_MS,
 } from "@/lib/appointments/occurrences";
@@ -39,8 +43,11 @@ import { ScheduleCalculationService } from "./ScheduleCalculationService";
 import { SubscriptionValidationService } from "../subscriptionValidation";
 import {
   buildCohostCommitmentFilter,
+  buildConsultantOccupancyWhere,
   buildOccupiedAppointmentFilter,
+  LIVE_OCCUPANCY_READ,
   OCCUPYING_OCCURRENCE_WHERE,
+  requestHoldCutoff,
   timeHoldingParticipant,
 } from "./occupancyPolicy";
 import {
@@ -58,32 +65,32 @@ import { reportIncompleteWeeklyRows } from "@/lib/scheduling/incomplete-weekly-r
 // rest of the booking math; inline the one true duration instead.
 
 /**
- * RV-2 — minimal shape needed to decide whether an overlapping appointment is a
- * live blocker. Both the validator and the allocator build occupancy from the
- * same rule via {@link isOccupiedByLiveAppointment}; keeping it here (rather than
- * duplicating the expiry check) is what stops `/validate` and `findAvailableSlots`
- * from disagreeing on expired APPROVED_PENDING_PAYMENT holds.
+ * What decides whether an overlapping appointment still holds its time. The
+ * validator and the allocator read occupancy through
+ * {@link isOccupiedByLiveAppointment}, so `/validate` and `findAvailableSlots`
+ * cannot disagree on a dead hold.
  */
+type RequestOccupancy = {
+  status?: AppointmentStatus | null;
+  bookingSource?: BookingSource | null;
+  requestedAt?: Date | null;
+};
 export interface LiveAppointmentOccupancy {
-  consultation?: {
-    status?: AppointmentStatus | null;
-    bookingSource?: BookingSource | null;
-  } | null;
-  subscription?: {
-    status?: AppointmentStatus | null;
-    bookingSource?: BookingSource | null;
-  } | null;
+  consultation?: RequestOccupancy | null;
+  subscription?: RequestOccupancy | null;
   payment?: Array<{
     expiresAt?: Date | null;
     paymentStatus?: PaymentStatus | null;
   }> | null;
+  /** `BEING_MOVED_COUNTS`; a booking read without them never lapses by the request clock. */
+  _count?: { rescheduleRequests: number; occurrences: number } | null;
 }
 
 /**
- * RV-2 — an overlapping appointment genuinely occupies its slot unless it is an
- * APPROVED_PENDING_PAYMENT request whose payment window has already lapsed (the
- * orphaned-payment case): that slot is free again. Any other state, or a payment
- * that has not expired, still blocks.
+ * An overlapping appointment holds its time unless it is a dead hold: an
+ * APPROVED_PENDING_PAYMENT or direct-checkout PENDING request whose every
+ * payment is dead, or an unanswered request past its hold window that is not
+ * being moved. The SQL twin is `buildDeadHoldFilter`.
  *
  * @param now - injectable clock so callers share a single transaction timestamp.
  */
@@ -93,13 +100,11 @@ export function isOccupiedByLiveAppointment(
 ): boolean {
   const request = appointment.consultation ?? appointment.subscription;
   const pendingStatus = request?.status;
-  // #873 — free the slot only when EVERY payment row is dead; a later active
-  // retry row can still be live even if payment[0] lapsed. A row is dead when
-  // the sweep already marked it EXPIRED or its window has passed.
   // A row is dead when the sweep marked it EXPIRED, the gateway FAILED it, or
   // it is still PENDING past its window. Never by the clock alone: a
   // SUCCEEDED row keeps its expiresAt, and its request can sit in PENDING
-  // until the confirmation write lands (#1319 review).
+  // until the confirmation write lands. Every row must be dead: a later retry
+  // row can still be live.
   const payments = appointment.payment ?? [];
   const allPaymentsDead =
     payments.length > 0 &&
@@ -115,17 +120,21 @@ export function isOccupiedByLiveAppointment(
   if (pendingStatus === AppointmentStatus.APPROVED_PENDING_PAYMENT) {
     if (allPaymentsDead) return false;
   }
-  // #1319 — a DIRECT_CHECKOUT hold sits in PENDING, not
-  // APPROVED_PENDING_PAYMENT (the consultant never approves it), so once its
-  // payment lapsed nothing here freed the slot: it stayed blocked until the
-  // 15-minute GitHub Actions sweep got round to it. A REQUEST_SUBMITTED
-  // PENDING is a different animal — it waits on a human, not a payment.
+  if (pendingStatus !== AppointmentStatus.PENDING) return true;
+  // A direct-checkout hold waits on a payment; a submitted request waits on
+  // the expert, for as long as the request caps count it.
+  if (request?.bookingSource === BookingSource.DIRECT_CHECKOUT) {
+    return !allPaymentsDead;
+  }
+  const moves = appointment._count;
   if (
-    pendingStatus === AppointmentStatus.PENDING &&
-    request?.bookingSource === BookingSource.DIRECT_CHECKOUT &&
-    allPaymentsDead
+    request?.bookingSource === BookingSource.REQUEST_SUBMITTED &&
+    request.requestedAt &&
+    moves?.rescheduleRequests === 0 &&
+    moves.occurrences === 0
   ) {
-    return false;
+    const kind = appointment.consultation ? "CONSULTATION" : "SUBSCRIPTION";
+    return new Date(request.requestedAt) >= requestHoldCutoff(kind, now);
   }
   return true;
 }
@@ -295,12 +304,35 @@ export class ScheduleValidationService {
       excludeAppointmentIds,
       options,
     );
-    if (futureCheck.isValid) return rest;
+    const edgeFindings = [
+      ...futureCheck.errors,
+      ...this.beyondHorizonFindings(eventType, slots),
+    ];
+    if (edgeFindings.length === 0) return rest;
     return {
       ...rest,
       isValid: false,
-      errors: [...futureCheck.errors, ...rest.errors],
+      errors: [...edgeFindings, ...rest.errors],
     };
+  }
+
+  /**
+   * A consultation starts inside the booking horizon, a moved one included.
+   * Plan weeks, webinars and classes follow their own period rules.
+   */
+  private beyondHorizonFindings(eventType: EventType, slots: Date[]): string[] {
+    if (eventType !== "consultation") return [];
+    if (slots.length === 0) return [];
+    // One session: its start is its earliest atom, as the booking doors check.
+    const start = new Date(Math.min(...slots.map((slot) => slot.getTime())));
+    const tooFar = isBeyondBookingHorizon(start.getTime(), Date.now())
+      ? [start]
+      : [];
+    return tooFar.length === 0
+      ? []
+      : [
+          `[TOO_FAR] ${tooFar.length} time(s) start more than ${MAX_BOOKING_HORIZON_DAYS} days ahead: ${tooFar.map((slot) => slot.toISOString()).join(", ")}`,
+        ];
   }
 
   /** Every check of `validate` but the lead time. */
@@ -771,6 +803,14 @@ export class ScheduleValidationService {
     const participantIds = consulteeUserId
       ? [consultantUserId, consulteeUserId]
       : [consultantUserId];
+    // A buyer who is an expert too is busy with what they host and co-host,
+    // as checkout and the grid read them; their seats are in the arm above.
+    const consulteeProfile = consulteeUserId
+      ? await this.prismaClient.consultantProfile.findUnique({
+          where: { userId: consulteeUserId },
+          select: { id: true },
+        })
+      : null;
 
     // Step 2: Single query — find ALL occupied appointments overlapping the envelope
     const conflictingAppointments =
@@ -821,6 +861,15 @@ export class ScheduleValidationService {
                       },
                     ]
                   : []),
+                ...(consulteeUserId && consulteeProfile
+                  ? [
+                      buildConsultantOccupancyWhere(
+                        consulteeProfile.id,
+                        consulteeUserId,
+                        now,
+                      ),
+                    ]
+                  : []),
               ],
             },
             {
@@ -860,9 +909,7 @@ export class ScheduleValidationService {
             },
           },
           // Only what the occupancy rule and the conflict detail read.
-          consultation: { select: { status: true, bookingSource: true } },
-          subscription: { select: { status: true, bookingSource: true } },
-          payment: { select: { expiresAt: true, paymentStatus: true } },
+          ...LIVE_OCCUPANCY_READ,
           webinar: { select: { id: true } },
           class: { select: { id: true } },
           // Whether the booking is on the consultant's own calendar.
@@ -874,12 +921,16 @@ export class ScheduleValidationService {
         },
       });
 
-    // Step 3: Match conflicts back to specific proposed slots in JS
+    // Step 3: Match conflicts back to specific proposed slots in JS. A dead
+    // hold leaves its time free, and never hides a live booking on the same time.
+    const liveAppointments = conflictingAppointments.filter((appt) =>
+      isOccupiedByLiveAppointment(appt, now),
+    );
     const conflicts: ConflictDetail[] = [];
     for (const slot of slots) {
       const slotEnd = new Date(slot.getTime() + SCHEDULING_INTERVAL_MS);
 
-      const existingAppointment = conflictingAppointments.find((appt) =>
+      const existingAppointment = liveAppointments.find((appt) =>
         appt.occurrences.some(
           (existingSlot) =>
             new Date(existingSlot.startsAt) < slotEnd &&
@@ -888,12 +939,6 @@ export class ScheduleValidationService {
       );
 
       if (existingAppointment) {
-        // RV-2 — an expired APPROVED_PENDING_PAYMENT hold leaves its slot free;
-        // shared with the allocator so /validate and findAvailableSlots agree.
-        if (!isOccupiedByLiveAppointment(existingAppointment, now)) {
-          continue;
-        }
-
         // Time only, never whose booking: the other booking may be the
         // consultee's own with another expert. The ISO start is what the
         // validate routes extract; `conflicts` carries the structured detail.

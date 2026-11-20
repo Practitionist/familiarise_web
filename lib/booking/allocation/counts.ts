@@ -14,7 +14,10 @@ import {
   isDeadOccurrence,
 } from "@/lib/appointments/occurrences";
 import { TWENTY_FOUR_HOURS_IN_MS } from "@/utils/scheduling-engine/slotTimeUtils";
-import { AllocationValidationError } from "@/utils/scheduling-engine/errors";
+import {
+  AllocationValidationError,
+  SlotShortageError,
+} from "@/utils/scheduling-engine/errors";
 import type { AppointmentWithSlots } from "@/lib/booking/allocation/types";
 
 /**
@@ -92,6 +95,45 @@ export function topUpTargetSessions(
     ScheduleCalculationService.calculateRequiredSlots(eventType, config) /
       slotsPerCall,
   );
+}
+
+/** "1 session" / "3 sessions". */
+export function sessionsLabel(count: number): string {
+  return `${count} session${count === 1 ? "" : "s"}`;
+}
+
+/**
+ * The count rule for a hand-picked batch of a class or a plan, whatever the
+ * batch is: fewer sessions than it owes needs `allowPartial`, and more is
+ * refused, except on a class top-up, the one way a host adds sessions beyond
+ * the plan's total. Returns the whole sessions picked.
+ */
+export function assertPickedSessionCount(args: {
+  /** What owes the sessions, as the refusal names it: "This cycle", "This class". */
+  subject: string;
+  pickedAtoms: number;
+  owedSessions: number;
+  slotsPerCall: number;
+  allowPartial: boolean;
+  bonusAllowed: boolean;
+}): number {
+  const owedAtoms = args.owedSessions * args.slotsPerCall;
+  const pickedSessions = Math.floor(args.pickedAtoms / args.slotsPerCall);
+  if (args.pickedAtoms > owedAtoms && !args.bonusAllowed) {
+    throw new AllocationValidationError(
+      `${args.subject} takes ${sessionsLabel(args.owedSessions)}. Pick no more than that.`,
+      "VALIDATION_ERROR",
+      { atoms: args.pickedAtoms, requiredAtoms: owedAtoms },
+    );
+  }
+  if (args.pickedAtoms < owedAtoms && !args.allowPartial) {
+    throw new SlotShortageError(
+      `${args.subject} takes ${sessionsLabel(args.owedSessions)}; you picked ${sessionsLabel(pickedSessions)}.`,
+      pickedSessions,
+      args.owedSessions,
+    );
+  }
+  return pickedSessions;
 }
 
 /**

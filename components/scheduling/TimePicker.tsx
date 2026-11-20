@@ -5,7 +5,6 @@ import { MobileAutoSchedule } from "./MobileAutoSchedule";
 import { rescheduleWindow } from "@/lib/booking/entitlement";
 import {
   isShortNotice,
-  leadMsFor,
   RESCHEDULE_MIN_LEAD_HOURS,
 } from "@/lib/booking/lead-time";
 import React from "react";
@@ -332,15 +331,14 @@ export function TimePicker({
     });
   };
 
-  /** The occurrences this submit would release, for the plan-limit overlay. */
-  const releasingIds = React.useMemo(() => {
+  /** The sessions this submit would move; a new time may overlap their own. */
+  const movingSessions = React.useMemo(() => {
     if (!isSelectMode || !policy.showReleasedSlots) return undefined;
-    const moving = picksSpecificSessions
+    return picksSpecificSessions
       ? sessions.filter((session) =>
           session.slots.every((slot) => selectedSlotIds.includes(slot.id)),
         )
       : sessions;
-    return moving.flatMap((session) => session.slots.map((slot) => slot.id));
   }, [
     isSelectMode,
     policy.showReleasedSlots,
@@ -348,6 +346,22 @@ export function TimePicker({
     sessions,
     selectedSlotIds,
   ]);
+  /** The occurrences this submit would release, for the plan-limit overlay. */
+  const releasingIds = React.useMemo(
+    () =>
+      movingSessions?.flatMap((session) =>
+        session.slots.map((slot) => slot.id),
+      ),
+    [movingSessions],
+  );
+  const movingTimes = React.useMemo(
+    () =>
+      movingSessions?.map((session) => ({
+        startsAt: session.startTime.toISOString(),
+        endsAt: session.endTime.toISOString(),
+      })),
+    [movingSessions],
+  );
   const isRecurring =
     subject.eventType === "subscription" || subject.eventType === "class";
   const dayCap = React.useMemo(
@@ -515,11 +529,8 @@ export function TimePicker({
           timesNeeded={sessionsBeingMoved}
           allowedStart={allowed.start}
           allowedEnd={allowed.end}
-          minLeadHours={
-            leadMsFor(policy.lead.purpose, {
-              settled: policy.lead.unpaid !== true,
-            }) / 3_600_000
-          }
+          lead={policy.lead}
+          movingSessions={movingTimes}
           focusAt={focus.precision === "session" ? focus.at : undefined}
           value={mobilePicks}
           onChange={setMobilePicks}

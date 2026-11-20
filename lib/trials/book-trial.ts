@@ -43,6 +43,19 @@ export class TrialTimeRefusedError extends Error {
   }
 }
 
+/** A learner may request this many trials in any 24 hours, across every expert. */
+export const MAX_TRIALS_PER_DAY = 3;
+const TRIAL_DAY_MS = 24 * 60 * 60 * 1000;
+
+/** The learner has used today's trial requests; nothing was written. */
+export class TrialDailyLimitError extends Error {
+  /** `retryAt`: when the oldest counted request leaves the 24 hours. */
+  constructor(readonly retryAt: Date) {
+    super("You've reached today's trial request limit.");
+    this.name = "TrialDailyLimitError";
+  }
+}
+
 /** The pair already holds a live or delivered trial; nothing was written. */
 export class TrialPairHeldError extends Error {
   constructor() {
@@ -86,6 +99,23 @@ export interface BookTrialArgs {
 /** Writes the trial, its appointment and its session on the caller's transaction;
  *  the caller holds the consultee lock and the window's slot atoms. */
 export async function bookTrialInTx(tx: Tx, args: BookTrialArgs) {
+  const now = args.now ?? new Date();
+  // Counted under the caller's consultee lock, in the transaction that
+  // inserts, so two requests cannot both take the day's last trial.
+  const requestedToday = await tx.trial.findMany({
+    where: {
+      consulteeProfileId: args.consulteeProfileId,
+      requestedAt: { gt: new Date(now.getTime() - TRIAL_DAY_MS) },
+    },
+    orderBy: { requestedAt: "desc" },
+    take: MAX_TRIALS_PER_DAY,
+    select: { requestedAt: true },
+  });
+  if (requestedToday.length >= MAX_TRIALS_PER_DAY) {
+    const oldest = requestedToday[requestedToday.length - 1].requestedAt;
+    throw new TrialDailyLimitError(new Date(oldest.getTime() + TRIAL_DAY_MS));
+  }
+
   // Re-read under the caller's consultee lock, so a rival request for the pair has committed.
   const held = await tx.trial.findFirst({
     where: blockingTrialWhere({
@@ -151,9 +181,7 @@ export async function bookTrialInTx(tx: Tx, args: BookTrialArgs) {
       organizationId: args.organizationId,
       appointmentId: appointment.id,
       // The pay window closes 15 minutes before the session at the latest.
-      ...(args.paid
-        ? { paymentDueAt: payWindowEnd(args.now ?? new Date(), args.startsAt) }
-        : {}),
+      ...(args.paid ? { paymentDueAt: payWindowEnd(now, args.startsAt) } : {}),
     },
     // The include is read back in one joined statement, not one per relation.
     relationLoadStrategy: "join",

@@ -16,6 +16,13 @@ const DEFAULT_BY_OP: Record<string, (args: unknown) => unknown> = {
   upsert: () => ({ id: "row" }),
   create: (a) => ({ id: "created", ...((a as { data?: object })?.data ?? {}) }),
   createMany: () => ({ count: 1 }),
+  // Every row inserts, as on an empty table; the bulk update moves nothing.
+  createManyAndReturn: (a) =>
+    ((a as { data?: object[] })?.data ?? []).map((row, i) => ({
+      id: `created-${i}`,
+      ...row,
+    })),
+  updateManyAndReturn: () => [],
   aggregate: () => ({ _sum: {}, _count: 0 }),
 };
 
