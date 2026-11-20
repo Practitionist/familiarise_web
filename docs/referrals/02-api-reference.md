@@ -86,7 +86,7 @@ A different ADMIN may always approve a schedule. The proposer may approve their 
 
 The payment code calls into the referral code at four points.
 
-- `resolveCheckoutAttribution` runs when an order is minted, both in `lib/payments/checkout/pricing.ts` and in the pricing preview route. A second live welcome-discounted order for the same buyer fails with the typed 409 `WELCOME_DISCOUNT_IN_USE`.
+- `resolveCheckoutAttribution` runs when an order is minted, both in `lib/payments/checkout/pricing.ts` and in the pricing preview route. A second live welcome-discounted order for the same buyer fails with the typed 409 `WELCOME_DISCOUNT_IN_USE`. An approval that re-mints a checkout order at the full price clears its `welcomeDiscountPaise`, which frees the slot (`claimRowForRemint`, `docs/decisions/2026-11-20-unpaid-approval-orders-return-what-checkout-consumed.md`).
 - `recordReferralCaptureInSavepoint` runs inside the payment confirmation, from the checkout capture path and from the webhook handlers. After a capture webhook is dispatched, `recordPayerInstruments` stores the payer's hashed UPI address and phone on the `Payment`.
 - `reverseCreditsForPayment` and `restoreCreditsForPaymentUpTo` run in the refund and cancel paths.
 - `voidVestedReferralRewards` runs inside `settleLostDispute`, so a lost chargeback on a vested referral's qualifying payment voids the referrer's unspent credit.
