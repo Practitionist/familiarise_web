@@ -8,6 +8,7 @@ import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import {
   AppointmentBusyError,
   BookingLockUnavailableError,
+  renewAppointmentLock,
   withAppointmentLock,
   withEventCheckoutLock,
 } from "@/utils/appointmentlock";
@@ -904,8 +905,8 @@ export async function POST(
           }
         : null;
     const runCancel = (captureLanded: boolean) =>
-      withEventCheckoutLock(eventCheckoutKey, () =>
-        withAppointmentLock(appointmentId, () =>
+      withEventCheckoutLock(eventCheckoutKey, (renewEventLock) =>
+        withAppointmentLock(appointmentId, (lock) =>
           bookingTransaction(
             async (tx) => {
               // The CAS below is pinned to this read, so a capture committing
@@ -942,6 +943,7 @@ export async function POST(
                       sessionsRefunded: bookingCtx.sessionsRefunded,
                       sessionsCompleted: bookingCtx.sessionsCompleted,
                       scheduledStarts: bookingCtx.scheduledStarts,
+                      nowMs: bookingCtx.quotedAtMs,
                       alreadyRefundedPaise: bookingCtx.alreadyRefundedPaise,
                       isSubscription: !!appointment.subscription,
                       isConsultantInitiated,
@@ -1206,10 +1208,9 @@ export async function POST(
                 // filters on `deletedAt: null` (#676 A10, the shape
                 // cleanup-abandoned-payments already writes).
                 data: { deletedAt: new Date() },
-                // Cancel must also sweep UNVERIFIED slots: auto-complete stamps
-                // past-no-meeting sessions UNVERIFIED, and leaving them live keeps
-                // a non-tombstoned row occupying the calendar on a dead booking.
-                fromIn: [...SLOT_RESCHEDULABLE_FROM, "UNVERIFIED"],
+                // An UNVERIFIED session stays as it is: the quote counted it
+                // delivered and it waits on the ops review list for a verdict.
+                fromIn: SLOT_RESCHEDULABLE_FROM,
                 // A booking whose sessions are all delivered or already terminal
                 // is still cancellable; matching no live slot is not a conflict.
                 allowZero: true,
@@ -1259,6 +1260,10 @@ export async function POST(
             {
               maxWait: 10000, // Max time to wait for connection
               timeout: 30000, // 30 second transaction timeout (was 5s default)
+              beforeAttempt: async () => {
+                await renewEventLock();
+                await renewAppointmentLock(lock);
+              },
             },
           ),
         ),

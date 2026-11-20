@@ -205,7 +205,8 @@ export function useRescheduleAnswer(
 export type RescheduleAnswerControl = ReturnType<typeof useRescheduleAnswer>;
 
 interface RescheduleProposalCardProps {
-  proposal: OpenRescheduleProposal;
+  /** `viewerMayWithdraw` is the detail read's answer: the withdraw route accepts this viewer. */
+  proposal: OpenRescheduleProposal & { viewerMayWithdraw?: boolean };
   /** Which detail page hosts the card — copy only, never authorization. */
   role: "consultee" | "consultant";
   /** The answers the routes accept from this viewer (`rescheduleAnswersFor`). */
@@ -215,7 +216,11 @@ interface RescheduleProposalCardProps {
   readOnly?: boolean;
 }
 
-/** The open proposal's times and expiry; the proposer withdraws here, the other side answers in the banner. */
+/**
+ * The open proposal's times and expiry. The proposer withdraws here, as does
+ * anyone on the same side when their organisation opened the move; the other
+ * side answers in the banner.
+ */
 export function RescheduleProposalCard({
   proposal,
   role,
@@ -230,12 +235,18 @@ export function RescheduleProposalCard({
   const isInitiator = viewerId
     ? viewerId === proposal.initiatedById
     : (role === "consultant") === (proposal.initiatorRole === "CONSULTANT");
+  // The viewer's own side, moved by their organisation: the server said the
+  // withdraw route takes it back from them too.
+  const keepsOwnTime =
+    !readOnly && !isInitiator && proposal.viewerMayWithdraw === true;
   // One line per proposed session, not per stored 30-minute row.
   const slots = proposedSessionsOf(proposal.proposedTimes);
 
   let heading: string;
   if (isInitiator) {
     heading = "You asked to reschedule";
+  } else if (keepsOwnTime) {
+    heading = "Your organisation asked to move this booking";
   } else if (proposal.initiatorRole === "CONSULTANT") {
     heading =
       role === "consultee"
@@ -292,7 +303,7 @@ export function RescheduleProposalCard({
       )}
 
       <p className="mt-2 text-xs text-muted-foreground">
-        {isInitiator ? "Expires" : "Needs an answer by"}{" "}
+        {isInitiator || keepsOwnTime ? "Expires" : "Needs an answer by"}{" "}
         {/* #1863 — `zzz` was missing and the requests inbox has always labelled
             the same deadline for the same booking (InboxRow.formatDateTime).
             Unlabelled, a deadline read on a laptop in a different zone from the
@@ -310,7 +321,7 @@ export function RescheduleProposalCard({
         </p>
       )}
 
-      {answers.includes("withdraw") && (
+      {(answers.includes("withdraw") || keepsOwnTime) && (
         <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-border pt-4">
           <Button
             variant="outline"
@@ -319,7 +330,7 @@ export function RescheduleProposalCard({
             onClick={() => control.answer("withdraw")}
           >
             {control.busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Withdraw request
+            {keepsOwnTime ? "Keep my time" : "Withdraw request"}
           </Button>
         </div>
       )}

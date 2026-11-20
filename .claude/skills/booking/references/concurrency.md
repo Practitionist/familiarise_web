@@ -244,7 +244,12 @@ validation error, a 409) propagates immediately, by design: a business rejection
 must never be retried into accidental success. Because the callback runs up to
 four times, nothing inside it may be non-idempotent; gateway calls,
 notifications, emails and pay-link mints belong after the commit, and a lock
-grant taken before the loop must be renewed inside it (see §5).
+grant taken before the loop must be renewed inside it (see §5). A Read Committed
+booking transaction runs through `bookingTransaction`
+(`lib/db/booking-transaction.ts`), which replays a deadlock victim once: pass
+the lock renewals as its `beforeAttempt` hook (it runs ahead of every attempt,
+outside the transaction), as the cancel and reschedule routes do, so a replay
+never writes under a lapsed grant.
 
 Exhausted retries surface as a 409 — checkout answers `errorType:
 "SERIALIZATION_CONFLICT"` with `yourCardWasNotCharged: true` — never a 500. An

@@ -168,7 +168,7 @@ describe("BookingOpsPanel reschedule door", () => {
     expect(screen.queryByRole("button", { name: /Reschedule/ })).toBeNull();
   });
 
-  it("says the release leaves the customer to pick the new times", async () => {
+  it("says the expert places the new time after a release, and that nothing puts the old one back", async () => {
     serve(view());
     renderPanel();
     fireEvent.click(
@@ -176,8 +176,11 @@ describe("BookingOpsPanel reschedule door", () => {
     );
     const copy = await screen.findByText(/Releases every live session/);
     expect(copy).toHaveTextContent(
-      "This only releases the time: the customer picks the new times",
+      "This only releases the time: the expert places the new time",
     );
-    expect(copy.textContent).not.toMatch(/expert places/i);
+    expect(copy).toHaveTextContent(
+      "The original time is not put back on its own",
+    );
+    expect(copy.textContent).not.toMatch(/customer picks/i);
   });
 });

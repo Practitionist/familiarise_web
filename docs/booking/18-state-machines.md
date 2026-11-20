@@ -68,7 +68,7 @@ Special sets:
 | **COMPLETED** |                                                                    | ✓                               |           |           |
 | **CANCELLED** | ✓ (a draft with placed sessions is cancellable)                    | ✓                               |           |           |
 
-A published event stays `SCHEDULED` while its sessions run, and the auto-complete pass moves it to `COMPLETED` once every session ended more than an hour ago.
+A published event stays `SCHEDULED` while its sessions run, and the auto-complete pass moves it to `COMPLETED` once every placed session ended more than an hour ago. A class has one more condition: every sold session is placed (counted by ordinal; a host-cancelled session counts as answered for), or its scheduling period has ended. `classIsFinished` (`lib/booking/class-completion.ts`) checks it inside the completing transaction, after the status compare-and-set, and a class between batches stays `SCHEDULED`.
 
 DRAFT keeps its status through allocation (B2/#1060): "add a session, then
 publish" is the editor flow. A draft is cancellable (`DRAFT → CANCELLED`) so a host with placed sessions is never stuck with it; `SCHEDULED` stays unreachable from `DRAFT` except by publishing, because a reschedule re-stamp must never publish an offering as a side effect.
@@ -184,7 +184,9 @@ export const PARTICIPANT_ALLOWED_FROM: Record<
   (`AUTO_ACCEPTED: []`) because the confirming hook (`closeConfirmedProposal`)
   is its one writer.
 - `ACCEPTED ← [PENDING_REVIEW]`; `DECLINED ←` open state; `WITHDRAWN ←` open
-  state (initiator only); `EXPIRED ← [PENDING_REVIEW]` (reschedule-proposals sweep, every 15 minutes).
+  state (the initiator, or for a move an organisation actor opened, anyone
+  acting for that same side: `rescheduleWithdrawAuthority` in
+  `lib/booking/reschedule-withdraw.ts`); `EXPIRED ← [PENDING_REVIEW]` (reschedule-proposals sweep, every 15 minutes).
   `openForAppointmentId @unique` enforces at most one live reschedule per
   appointment. `expiresAt` is stored at creation (`computeProposalExpiry`):
   the earlier of 72 hours and 24 hours before the earliest released session,
@@ -210,7 +212,7 @@ export const PARTICIPANT_ALLOWED_FROM: Record<
   places a time within 7 days, or by 48 hours after the released session's
   original start (`cancelAgedParkedConsultations` in
   `lib/booking/parked-consultation-sweep.ts`).
-- A confirmation is one transaction. The allocator commits the new times and, through its `inTx(tx)` hook, which runs after the allocator's status compare-and-swap, flips the proposal to `ACCEPTED` or `AUTO_ACCEPTED` in the same commit (`closeConfirmedProposal` in `lib/booking/reschedule-confirm.ts`). If the proposal is no longer `PENDING_REVIEW`, the hook throws 409 `RESCHEDULE_NO_LONGER_OPEN` and the whole move rolls back, so a booking can never move while its proposal says otherwise. Because the allocator's supersede sweep closes every other open proposal on the same released slots as `DECLINED`, a confirming caller passes `excludeRescheduleRequestId` to keep its own row out of that set.
+- A confirmation is one transaction. The allocator commits the new times and, through its `inTx(tx)` hook, which runs after the allocator's status compare-and-swap, flips the proposal to `ACCEPTED` or `AUTO_ACCEPTED` in the same commit (`closeConfirmedProposal` in `lib/booking/reschedule-confirm.ts`). If the proposal is no longer `PENDING_REVIEW`, the hook throws 409 `RESCHEDULE_NO_LONGER_OPEN` and the whole move rolls back, so a booking can never move while its proposal says otherwise. Because the allocator closes every other open request on the same released slots when it places times (`ACCEPTED` for a request that named no times, "Any time works" with or without a stated preference; `DECLINED` for one that named times and got different ones), a confirming caller passes `excludeRescheduleRequestId` to keep its own row out of that set.
 
 ## Raw status writers: none remain
 
@@ -242,3 +244,5 @@ Deliberately NOT migrated: payout/dispute/ledger state machines live under
 8. **A raw-status-writer inventory.** The cancel route, the reschedule route and `expire-stale-requests` were once listed as CAS-guarded raw writers; all of them go through the transition helpers now.
 9. **A per-void `void-unused:` refund at the scheduling period's end.** A subscription void is settled inside the plan-end refund.
 10. **Deciding an absence from webhook rows alone.** A one-sided set of presence rows used to settle at once as `LEARNER_ABSENT` (forfeit) or `HOST_ABSENT` (void) even when Stream had not been asked or could not answer. The outcome sweep now waits up to 24 hours past the booked end for Stream, then parks the session `UNVERIFIED` as `INCONCLUSIVE`.
+11. **Completing a class one hour after its last placed session.** It closed a class whose later sessions were not placed yet and refunded them. Replaced by `classIsFinished`.
+12. **A preference-only move closed `DECLINED`.** "Any time works" with no stated preference used to close `DECLINED` when the expert placed the new time. It now closes `ACCEPTED`; only a request that named times and got different ones closes `DECLINED`.

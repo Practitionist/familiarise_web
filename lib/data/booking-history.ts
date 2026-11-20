@@ -35,10 +35,7 @@
  * a select allow-list that stops at id and name (#946 — no email, ever).
  */
 
-import {
-  SCHEDULE_REASON_COPY,
-  parseScheduleReason,
-} from "@/lib/booking/allocation/schedule-choice";
+import { scheduleReasonWords } from "@/lib/booking/allocation/schedule-choice";
 import type {
   BookingHistoryEntity,
   OccurrenceOutcome,
@@ -365,8 +362,8 @@ const isOutcome = (value: string): value is OccurrenceOutcome =>
 
 /** A scheduling or outcome token reads as words; any other reason is already copy. */
 function scheduleReasonCopy(reason: string | null): string | null {
-  const token = parseScheduleReason(reason);
-  if (token) return SCHEDULE_REASON_COPY[token];
+  const words = scheduleReasonWords(reason);
+  if (words) return words;
   for (const [prefix, words] of OUTCOME_REASONS) {
     const outcome = reason?.startsWith(prefix) && reason.slice(prefix.length);
     if (outcome && isOutcome(outcome)) {

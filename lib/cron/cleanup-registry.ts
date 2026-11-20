@@ -1777,15 +1777,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
         summarize: (r) => ({
           tentativeFlagsCleared: r.tentativeFlagsCleared,
           doubleBookingsDetected: r.doubleBookingsDetected,
-          topUpsPlaced: r.topUps.placed,
-          topUpSessionsPlaced: r.topUps.sessionsPlaced,
         }),
         needsAttention: (r) => r.doubleBookingsDetected > 0,
         items: (r) => ({
-          processed:
-            r.tentativeFlagsCleared +
-            r.doubleBookingsDetected +
-            r.topUps.placed,
+          processed: r.tentativeFlagsCleared + r.doubleBookingsDetected,
         }),
         failureMessage: "Failed to reconcile slot availability",
       }),

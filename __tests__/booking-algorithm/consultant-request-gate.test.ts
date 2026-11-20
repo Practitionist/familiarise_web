@@ -135,6 +135,7 @@ import prisma from "../../lib/prisma";
 import { POST } from "../../app/api/scheduling/request-for-approval/route";
 import { PROFILE_WITH_USER_SELECT } from "../../lib/booking/list-selects";
 import { AllocationConflictError } from "../../utils/scheduling-engine/errors";
+import { freezeDateAt } from "../fixtures/frozen-date";
 import { assertSlotsStillPublished } from "../../lib/booking/allocation/coverage";
 import {
   expectNoBareProfile,
@@ -164,12 +165,17 @@ function request(
 
 beforeEach(() => {
   jest.clearAllMocks();
+  // The 2030 fixtures sit a few weeks ahead, inside the booking horizon.
+  freezeDateAt("2029-12-10T00:00:00.000Z");
   jest.spyOn(console, "log").mockImplementation(() => {});
   mockProfile.acceptingRequests = true;
   mockProfile.bookingMode = "REQUEST";
   mockProfile.maxOpenRequests = null;
 });
-afterEach(() => jest.restoreAllMocks());
+afterEach(() => {
+  jest.useRealTimers();
+  jest.restoreAllMocks();
+});
 
 describe("consultant request gate", () => {
   it("paused → 409 CONSULTANT_PAUSED before any lock", async () => {
