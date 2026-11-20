@@ -105,7 +105,11 @@ function makeTx() {
       ),
     },
     rescheduleRequest: {
-      findUnique: jest.fn(async () => state.request),
+      // The declined notice is staged on the decline's own transaction, so
+      // its reads go through `tx` and see this transaction's writes.
+      findUnique: jest.fn((...a: unknown[]) =>
+        (prisma.rescheduleRequest.findUnique as jest.Mock)(...a),
+      ),
       updateMany: jest.fn(async ({ where, data }: StatusCas) => {
         const row = state.request;
         if (!row || row.id !== where.id) return { count: 0 };
@@ -118,6 +122,9 @@ function makeTx() {
       }),
     },
     appointmentOccurrence: {
+      findFirst: jest.fn((...a: unknown[]) =>
+        (prisma.appointmentOccurrence.findFirst as jest.Mock)(...a),
+      ),
       findMany: jest.fn(async ({ where }: SlotCas) =>
         matchSlots(where).map((s) => ({
           id: s.id,
@@ -268,7 +275,11 @@ jest.mock("../../utils/appointmentlock", () => ({
 jest.mock("../../lib/email", () => ({
   __esModule: true,
   EMAIL_BUDGET_MS: { REQUEST: 250, JOB: 250 },
-  sendAppointmentRescheduledEmail: jest.fn().mockResolvedValue(undefined),
+}));
+jest.mock("../../lib/email/senders/booking", () => ({
+  __esModule: true,
+  stageAppointmentRescheduledEmail: jest.fn().mockResolvedValue([]),
+  attemptStaged: jest.fn().mockResolvedValue(undefined),
 }));
 
 import prisma from "@/lib/prisma";
@@ -279,7 +290,8 @@ import {
   rescheduleProposeOutcome,
 } from "../../lib/booking/reschedule-proposals";
 import { declineProposal } from "../../lib/booking/reschedule-respond";
-import { notifyAppointmentRescheduled } from "../../lib/novu";
+import { attemptTrigger, notifyAppointmentRescheduled } from "../../lib/novu";
+import { stageAppointmentRescheduledEmail } from "../../lib/email/senders/booking";
 
 const ATOM = 30 * 60 * 1000;
 const INITIATOR = "user-consultee";
@@ -675,9 +687,35 @@ describe("a decline restores the booking it declined to move", () => {
         outcome: "DECLINED",
         oldDateTime: at(FIRST_SESSION).toISOString(),
       }),
-      // The proposer's request was declined by the other party: required for them.
-      { required: { kind: "REQUEST_DECLINED", recipients: [INITIATOR] } },
+      // The proposer's request was declined by the other party: required for
+      // them, staged on the decline's transaction under the request's own key.
+      expect.objectContaining({
+        tx,
+        dedupeKey: "reschedule-declined:req-1:DECLINED",
+        required: { kind: "REQUEST_DECLINED", recipients: [INITIATOR] },
+      }),
     );
+  });
+
+  it("commits the declined notice with the decline, so a failure after the commit loses nothing", async () => {
+    seed();
+    (notifyAppointmentRescheduled as jest.Mock).mockResolvedValueOnce([
+      { success: true, staged: { id: "bell-row" } },
+    ]);
+    (attemptTrigger as jest.Mock).mockRejectedValueOnce(
+      new Error("the instance froze after the commit"),
+    );
+
+    await expect(decline()).resolves.toMatchObject({ done: true });
+
+    // Both rows were written through the transaction's own client.
+    expect(
+      (notifyAppointmentRescheduled as jest.Mock).mock.calls[0][2].tx,
+    ).toBe(tx);
+    expect(
+      (stageAppointmentRescheduledEmail as jest.Mock).mock.calls[0][0],
+    ).toBe(tx);
+    expect(attemptTrigger).toHaveBeenCalledWith({ id: "bell-row" });
   });
 
   it("leaves an unpaid APPROVED_PENDING_PAYMENT parent unpaid", async () => {

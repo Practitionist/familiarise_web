@@ -118,6 +118,9 @@ jest.mock("../../lib/prisma", () => ({
       // read onto the tx client, so this one must stay silent.
       findFirst: (...a: unknown[]) => globalAppointmentFindFirst(...a),
     },
+    organization: {
+      findUnique: jest.fn(async () => ({ name: "Acme Ltd" })),
+    },
     payment: {
       findMany: (...a: unknown[]) => mockPaymentFindMany(...a),
       // The org actor's funding proof (lib/booking/org-actor.ts): the booking's
@@ -184,7 +187,13 @@ jest.mock("../../lib/payments/operations/event-refunds", () => ({
 }));
 
 jest.mock("../../lib/novu", () => ({
-  notifyAppointmentCancelled: jest.fn().mockResolvedValue(undefined),
+  notifyAppointmentCancelled: jest.fn().mockResolvedValue([]),
+}));
+
+const mockCancelledEmail = jest.fn(async (..._a: unknown[]) => []);
+jest.mock("../../lib/email/senders/booking", () => ({
+  ...jest.requireActual("../../lib/email/senders/booking"),
+  stageAppointmentCancelledEmail: (...a: unknown[]) => mockCancelledEmail(...a),
 }));
 
 jest.mock("../../lib/enterprise/system-events", () => {
@@ -580,9 +589,7 @@ describe("a platform cancellation is not the buyer's choice", () => {
     );
     const [recipients, , opts] = (notifyAppointmentCancelled as jest.Mock).mock
       .calls[0];
-    expect(opts).toEqual({
-      required: { kind: "CANCELLED_BY_STAFF", recipients },
-    });
+    expect(opts.required).toEqual({ kind: "CANCELLED_BY_STAFF", recipients });
     expect(recipients).toEqual(
       expect.arrayContaining([CONSULTANT_USER, CONSULTEE_USER]),
     );
@@ -604,9 +611,9 @@ describe("a platform cancellation is not the buyer's choice", () => {
     const res = await cancelHandler(makeRequest(), makeParams(APPT));
 
     expect(res.status).toBe(200);
-    expect((notifyAppointmentCancelled as jest.Mock).mock.calls[0][2]).toBe(
-      undefined,
-    );
+    expect(
+      (notifyAppointmentCancelled as jest.Mock).mock.calls[0][2],
+    ).not.toHaveProperty("required");
   });
 
   it("refuses an operator who is not a party unless the audited platform door sent the request", async () => {
@@ -904,6 +911,49 @@ describe("#1166 — an admin of the funding org acts on the payer side", () => {
         action: "APPOINTMENT_CANCELLED_FOR_ORG",
       }),
     });
+  });
+
+  it("the organisation's cancel reaches its member whatever their switches say, and names the organisation", async () => {
+    mockGetSession.mockResolvedValue({
+      user: {
+        id: "org-owner-1",
+        name: "Org Owner",
+        consultantProfileId: null,
+        consulteeProfileId: null,
+      },
+    });
+    mockAppointmentFindUnique.mockResolvedValue(orgFundedAppointment());
+    mockMembershipFindUnique.mockResolvedValue({
+      status: "ACTIVE",
+      role: "OWNER",
+    });
+    mockOrgFundingPayment.mockResolvedValue({ paymentMethod: "WALLET" });
+    mockAppointmentFindMany.mockImplementation(async () =>
+      bookingRows({ liveSlotHours: [1] }),
+    );
+
+    const res = await cancelHandler(makeRequest(), makeParams(APPT));
+
+    expect(res.status).toBe(200);
+    const calls = (notifyAppointmentCancelled as jest.Mock).mock.calls;
+    for (const [, payload, opts] of calls) {
+      expect(payload.cancelledByName).toBe("Acme Ltd");
+      // Required for the member only; the expert's copy stays switchable.
+      expect(opts.required).toEqual({
+        kind: "CANCELLED_BY_STAFF",
+        recipients: [CONSULTEE_USER],
+      });
+    }
+    expect(calls.flatMap(([ids]) => ids).sort()).toEqual(
+      [CONSULTANT_USER, CONSULTEE_USER].sort(),
+    );
+    for (const [, email] of mockCancelledEmail.mock.calls as [
+      unknown,
+      { cancelledBy: string; requiredFor: string[] },
+    ][]) {
+      expect(email.cancelledBy).toBe("Acme Ltd");
+      expect(email.requiredFor).toEqual([CONSULTEE_USER]);
+    }
   });
 
   it("refuses an EXPERT of the same org", async () => {
@@ -1247,5 +1297,76 @@ describe("a cancel leaves an audit trail", () => {
     expect(res.status).toBe(409);
     expect(body.code).toBe("NOT_CANCELLABLE");
     expect(txStub.bookingStatusHistory.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("the cancel's notices", () => {
+  it("a sponsored booking on the expert's own plan: the expert's bell is personal, the learner's is the sponsor's", async () => {
+    mockGetSession.mockResolvedValue(sessionAs("consultee"));
+    mockAppointmentFindUnique.mockResolvedValue({
+      ...consultationAppointment(),
+      organizationId: "org-sponsor",
+    });
+    mockAppointmentFindMany.mockImplementation(async () =>
+      bookingRows({ liveSlotHours: [120] }),
+    );
+
+    const res = await cancelHandler(makeRequest(), makeParams(APPT));
+
+    expect(res.status).toBe(200);
+    const [expert, learner] = (notifyAppointmentCancelled as jest.Mock).mock
+      .calls;
+    expect(expert[0]).toEqual([CONSULTANT_USER]);
+    expect(expert[1]).toMatchObject({
+      scope: "personal",
+      organizationId: null,
+    });
+    expect(expert[1].dashboardUrl).toContain("/dashboard/go/auto/appointments");
+    expect(learner[0]).toEqual([CONSULTEE_USER]);
+    expect(learner[1]).toMatchObject({
+      scope: "org",
+      organizationId: "org-sponsor",
+    });
+    expect(learner[1].dashboardUrl).toContain(
+      "/dashboard/organization/org-sponsor/appointments",
+    );
+    // The email twin opens the same page as each bell.
+    expect(
+      (
+        mockCancelledEmail.mock.calls as [
+          unknown,
+          { userIds: string[]; dashboardUrl: string },
+        ][]
+      ).map(([, email]) => [email.userIds, email.dashboardUrl]),
+    ).toEqual([
+      [[CONSULTANT_USER], expert[1].dashboardUrl],
+      [[CONSULTEE_USER], learner[1].dashboardUrl],
+    ]);
+  });
+
+  it("the bells commit with the cancel, so a failure after the commit loses none", async () => {
+    mockGetSession.mockResolvedValue(sessionAs("consultant"));
+    mockAppointmentFindUnique.mockResolvedValue(consultationAppointment());
+    mockAppointmentFindMany.mockImplementation(async () =>
+      bookingRows({ liveSlotHours: [120] }),
+    );
+    let stagedBeforeCommit = false;
+    (notifyAppointmentCancelled as jest.Mock).mockImplementationOnce(
+      async () => {
+        stagedBeforeCommit = !txCommitted;
+        return [{ success: true, staged: { id: "bell-row" } }];
+      },
+    );
+    // The refund after the commit dies with the function.
+    mockRefundBookingPayment.mockImplementation(() => {
+      throw Object.assign(new Error("the instance froze"), { httpStatus: 504 });
+    });
+
+    await cancelHandler(makeRequest(), makeParams(APPT));
+
+    expect(stagedBeforeCommit).toBe(true);
+    const [, , opts] = (notifyAppointmentCancelled as jest.Mock).mock.calls[0];
+    expect(opts.tx).toBe(txStub);
+    expect(opts.dedupeKey).toBe(`appointment-cancelled:${APPT}`);
   });
 });

@@ -33,7 +33,7 @@ import {
 } from "@/lib/novu";
 import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
 import { notificationHref } from "@/lib/novu/resolve-href";
-import { notificationScope } from "@/lib/novu/workflows";
+import { bookingNoticeScopes, notificationScope } from "@/lib/novu/workflows";
 import { reportSentryError } from "@/lib/observability/report";
 import { getAppUrl } from "@/lib/url";
 
@@ -199,6 +199,7 @@ const PLAN_NOTIF_SELECT = {
   select: {
     id: true,
     title: true,
+    organizationId: true,
     consultantProfile: {
       select: { user: { select: { id: true, name: true } } },
     },
@@ -325,6 +326,7 @@ function bookedEmailArgs(
     startsAt,
     calendarSession: nextSessionAhead(appointment.occurrences),
     dashboardUrl: notificationHref(appointment.organizationId, "appointments"),
+    hostDashboardUrl: notificationHref(plan?.organizationId, "appointments"),
   };
 }
 
@@ -487,20 +489,19 @@ export async function stagePaymentSuccessBells(
   );
   if (paymentTrigger?.staged) staged.push(paymentTrigger.staged);
 
-  const notifUserIds = [payment.userId];
-  if (consultantUserId && consultantUserId !== payment.userId) {
-    notifUserIds.push(consultantUserId);
-  }
   const collaborators =
     appointment.webinar?.webinarPlan?.collaborators ??
     appointment.class?.classPlan?.collaborators ??
     [];
-  for (const collaborator of collaborators) {
-    const uid = collaborator.consultantProfile.user.id;
-    if (uid && !notifUserIds.includes(uid)) {
-      notifUserIds.push(uid);
-    }
-  }
+  // The expert and team are scoped by the plan's host organisation, the payer by their sponsor.
+  const groups = bookingNoticeScopes({
+    hostOrganizationId: plan?.organizationId,
+    hostUserIds: [
+      consultantUserId,
+      ...collaborators.map((c) => c.consultantProfile.user.id),
+    ],
+    buyers: [{ userId: payment.userId, organizationId: orgId }],
+  });
 
   const firstSlot = appointment.occurrences?.[0];
   if (!firstSlot?.startsAt) {
@@ -513,22 +514,26 @@ export async function stagePaymentSuccessBells(
       }),
     );
   } else {
-    const bookedTriggers = await notifyAppointmentBooked(
-      notifUserIds,
-      {
-        ...scope,
-        appointmentId: appointment.id,
-        dateTime: firstSlot.startsAt.toISOString(),
-        appointmentType,
-        consultantName,
-        consulteeName: payment.user.name || "User",
-        planTitle: resolvedPlanTitle,
-        dashboardUrl,
-      },
-      { tx },
-    );
-    for (const item of bookedTriggers ?? []) {
-      if (item?.staged) staged.push(item.staged);
+    for (const group of groups) {
+      const bookedTriggers = await notifyAppointmentBooked(
+        group.userIds,
+        {
+          ...(group.organizationId === orgId
+            ? scope
+            : notificationScope(group.organizationId)),
+          appointmentId: appointment.id,
+          dateTime: firstSlot.startsAt.toISOString(),
+          appointmentType,
+          consultantName,
+          consulteeName: payment.user.name || "User",
+          planTitle: resolvedPlanTitle,
+          dashboardUrl: notificationHref(group.organizationId, "appointments"),
+        },
+        { tx },
+      );
+      for (const item of bookedTriggers ?? []) {
+        if (item?.staged) staged.push(item.staged);
+      }
     }
   }
 

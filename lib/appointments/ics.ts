@@ -2,9 +2,61 @@
 // UTC (`Z`), which every calendar converts to the reader's zone; `zone` rides as `X-WR-TIMEZONE`.
 
 export interface IcsSession {
+  /** The entry's identity; {@link icsSessionId} keeps it the same across a move. */
   id: string;
   startsAt: Date;
   endsAt: Date | null;
+  /** Rises with each change to the session, so a re-import replaces the entry. */
+  sequence?: number;
+  /** The session was cancelled: the entry is marked so, never dropped. */
+  cancelled?: boolean;
+}
+
+/**
+ * A session's calendar identity: its booking and its ordinal. A moved session
+ * is a new row that inherits the ordinal, so the entry survives the move.
+ */
+export function icsSessionId(appointmentId: string, ordinal: number): string {
+  return `${appointmentId}-${ordinal}`;
+}
+
+/** One occurrence row of a booking, as the calendar reads it. */
+export interface IcsOccurrence {
+  ordinal: number;
+  startsAt: Date;
+  endsAt: Date | null;
+  updatedAt: Date;
+  cancelled: boolean;
+}
+
+/**
+ * One entry per session of the booking: the live row of each ordinal, else its
+ * latest cancelled one. The sequence is the session's latest change in whole
+ * seconds, across every row that carried the ordinal.
+ */
+export function icsSessions(
+  appointmentId: string,
+  rows: readonly IcsOccurrence[],
+): IcsSession[] {
+  const byOrdinal = new Map<number, IcsOccurrence[]>();
+  for (const row of rows) {
+    byOrdinal.set(row.ordinal, [...(byOrdinal.get(row.ordinal) ?? []), row]);
+  }
+  return [...byOrdinal.entries()]
+    .map(([ordinal, sameSession]) => {
+      const latestFirst = [...sameSession].sort(
+        (a, b) => b.updatedAt.getTime() - a.updatedAt.getTime(),
+      );
+      const shown = latestFirst.find((row) => !row.cancelled) ?? latestFirst[0];
+      return {
+        id: icsSessionId(appointmentId, ordinal),
+        startsAt: shown.startsAt,
+        endsAt: shown.endsAt,
+        sequence: Math.floor(latestFirst[0].updatedAt.getTime() / 1000),
+        cancelled: shown.cancelled,
+      };
+    })
+    .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
 }
 
 export interface IcsInput {
@@ -82,12 +134,15 @@ export function buildIcs({
   zone,
   now = new Date(),
 }: IcsInput): string {
+  // A file of nothing but cancelled sessions withdraws them (RFC 5546 CANCEL).
+  const cancelsAll =
+    sessions.length > 0 && sessions.every((session) => session.cancelled);
   const lines = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
     "PRODID:-//Familiarise//Appointments//EN",
     "CALSCALE:GREGORIAN",
-    "METHOD:PUBLISH",
+    `METHOD:${cancelsAll ? "CANCEL" : "PUBLISH"}`,
     `X-WR-TIMEZONE:${zone}`,
   ];
   for (const session of sessions) {
@@ -96,6 +151,8 @@ export function buildIcs({
       "BEGIN:VEVENT",
       `UID:${session.id}@familiarise`,
       `DTSTAMP:${stamp(now)}`,
+      `SEQUENCE:${session.sequence ?? 0}`,
+      `STATUS:${session.cancelled ? "CANCELLED" : "CONFIRMED"}`,
       `DTSTART:${stamp(session.startsAt)}`,
       `DTEND:${stamp(end)}`,
       `SUMMARY:${escapeText(title)}`,

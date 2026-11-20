@@ -1,9 +1,19 @@
-import prisma from "@/lib/prisma";
+import prisma, { type PrismaLike } from "@/lib/prisma";
 import { reportSentryError } from "@/lib/observability/report";
-import { notifyAppointmentRescheduled } from "@/lib/novu";
-import { sendAppointmentRescheduledEmail } from "@/lib/email";
-import { notificationScope } from "@/lib/novu/workflows";
+import { attemptTrigger, notifyAppointmentRescheduled } from "@/lib/novu";
+import {
+  attemptStaged,
+  stageAppointmentRescheduledEmail,
+  type StagedRecipientEmail,
+} from "@/lib/email/senders/booking";
+import type { StagedTrigger } from "@/lib/novu/outbox";
+import {
+  bookingNoticeScopes,
+  notificationScope,
+  type RescheduleOutcomeFields,
+} from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
+import type { RequiredOverride } from "@/lib/notifications/required-notices";
 
 const PARTY_USER = { select: { user: { select: { id: true, name: true } } } };
 
@@ -17,7 +27,11 @@ export const RESCHEDULE_PARTIES_SELECT = {
     select: {
       requestedBy: PARTY_USER,
       consultationPlan: {
-        select: { title: true, consultantProfile: PARTY_USER },
+        select: {
+          title: true,
+          organizationId: true,
+          consultantProfile: PARTY_USER,
+        },
       },
     },
   },
@@ -25,7 +39,11 @@ export const RESCHEDULE_PARTIES_SELECT = {
     select: {
       requestedBy: PARTY_USER,
       subscriptionPlan: {
-        select: { title: true, consultantProfile: PARTY_USER },
+        select: {
+          title: true,
+          organizationId: true,
+          consultantProfile: PARTY_USER,
+        },
       },
     },
   },
@@ -33,7 +51,11 @@ export const RESCHEDULE_PARTIES_SELECT = {
     select: {
       consulteeProfile: PARTY_USER,
       subscriptionPlan: {
-        select: { title: true, consultantProfile: PARTY_USER },
+        select: {
+          title: true,
+          organizationId: true,
+          consultantProfile: PARTY_USER,
+        },
       },
     },
   },
@@ -42,11 +64,14 @@ export const RESCHEDULE_PARTIES_SELECT = {
 type PartyUser = { id: string; name: string | null };
 type PlanSide = {
   title: string;
+  organizationId: string | null;
   consultantProfile: { user: PartyUser };
 };
 
 export interface RescheduleParties {
   planTitle: string;
+  /** The plan's host organisation: the expert's notice scope. */
+  hostOrganizationId: string | null;
   consultantUser: PartyUser;
   consulteeUser: PartyUser;
 }
@@ -68,6 +93,7 @@ export function rescheduleParties(appointment: {
 }): RescheduleParties | null {
   const pick = (consultee: PartyUser, plan: PlanSide): RescheduleParties => ({
     planTitle: plan.title,
+    hostOrganizationId: plan.organizationId,
     consultantUser: plan.consultantProfile.user,
     consulteeUser: consultee,
   });
@@ -92,15 +118,115 @@ export function rescheduleParties(appointment: {
   return null;
 }
 
+export interface RescheduleNotice {
+  appointment: {
+    id: string;
+    organizationId: string | null;
+    appointmentType: string;
+  };
+  parties: RescheduleParties;
+  /** Everyone told. */
+  userIds: readonly string[];
+  /** One key per request and outcome, so a later request on the same session is its own notice. */
+  dedupeKey: string;
+  required?: RequiredOverride;
+  /** What happened and the times it names. */
+  variant: RescheduleOutcomeFields;
+}
+
+export interface StagedRescheduleNotice {
+  bells: StagedTrigger[];
+  emails: StagedRecipientEmail[];
+}
+
 /**
- * Tell both parties that a reschedule ended with the booking back on its
- * original time: the initiator withdrew it (PR 2e), or nobody answered and it
- * expired (#1846, #1527 decision 9). One event on the existing
- * `appointment-rescheduled` family and its email twin, both awaited, because a
- * trigger left running after the response is lost when the instance freezes.
+ * Stages one reschedule notice, bell and email, on `db` (the change's own
+ * transaction where there is one); attempt it after the commit. The expert is
+ * scoped by the plan's host organisation, everyone else by the booking's sponsor.
+ */
+export async function stageRescheduleNotice(
+  db: PrismaLike,
+  n: RescheduleNotice,
+): Promise<StagedRescheduleNotice> {
+  const { planTitle, consultantUser, consulteeUser, hostOrganizationId } =
+    n.parties;
+  const staged: StagedRescheduleNotice = { bells: [], emails: [] };
+  const groups = bookingNoticeScopes({
+    hostOrganizationId,
+    hostUserIds: n.userIds.filter((id) => id === consultantUser.id),
+    buyers: n.userIds.map((userId) => ({
+      userId,
+      organizationId: n.appointment.organizationId,
+    })),
+  });
+  const { oldDateTime, newDateTime } = n.variant;
+  // A trial's booked notice carries no calendar link, so its move carries none.
+  const holdsCalendarLink =
+    n.appointment.appointmentType.toUpperCase() !== "TRIAL";
+  for (const group of groups) {
+    const dashboardUrl = notificationHref(group.organizationId, "appointments");
+    const bells = await notifyAppointmentRescheduled(
+      group.userIds,
+      {
+        ...notificationScope(group.organizationId),
+        ...n.variant,
+        appointmentId: n.appointment.id,
+        appointmentType: n.appointment.appointmentType,
+        consultantName: consultantUser.name || "Consultant",
+        consulteeName: consulteeUser.name || "Consultee",
+        planTitle,
+        dashboardUrl,
+      },
+      {
+        tx: db,
+        deferAttempt: true,
+        dedupeKey: n.dedupeKey,
+        ...(n.required ? { required: n.required } : {}),
+      },
+    );
+    staged.bells.push(
+      ...bells.flatMap((bell) => (bell.staged ? [bell.staged] : [])),
+    );
+    staged.emails.push(
+      ...(await stageAppointmentRescheduledEmail(db, {
+        appointmentId: n.appointment.id,
+        userIds: group.userIds,
+        outcome: n.variant.outcome,
+        appointmentType: n.appointment.appointmentType,
+        oldStartsAt: oldDateTime ? new Date(oldDateTime) : null,
+        newStartsAt: newDateTime ? new Date(newDateTime) : null,
+        calendarFor: holdsCalendarLink ? [consulteeUser.id] : [],
+        ...(n.required ? { requiredFor: n.required.recipients } : {}),
+        dashboardUrl,
+      })),
+    );
+  }
+  return staged;
+}
+
+/** Attempts a staged reschedule notice inline; what it cannot settle waits for the relays. */
+export async function attemptRescheduleNotice(
+  staged: StagedRescheduleNotice,
+  emailBudgetMs: number,
+): Promise<void> {
+  // A re-staged bell comes back with the same id; attempt it once.
+  const bells = [...new Map(staged.bells.map((b) => [b.id, b])).values()];
+  await Promise.all([
+    ...bells.map((bell) => attemptTrigger(bell)),
+    staged.emails.length > 0
+      ? attemptStaged(staged.emails, "APPOINTMENT_RESCHEDULED", emailBudgetMs)
+      : null,
+  ]);
+}
+
+/**
+ * Tell every party that a reschedule ended with the booking back on its
+ * original time: someone withdrew it, or nobody answered and it expired. A
+ * lapse is required for every party, a withdrawal for everyone but the person
+ * who withdrew it.
  *
  * Never throws: the ending has committed, and a notice failure must not undo
- * it or abort a sweep. `oldDateTime` is the earliest restored session, so the
+ * it or abort a sweep. `oldStartsAt` is the earliest restored session, so the
  * copy can say which time stands.
  */
 export async function notifyRescheduleRestored(
@@ -113,6 +239,7 @@ export async function notifyRescheduleRestored(
       where: { id: rescheduleRequestId },
       select: {
         initiatedById: true,
+        resolvedById: true,
         releasedOccurrenceIds: true,
         appointment: {
           select: {
@@ -128,11 +255,10 @@ export async function notifyRescheduleRestored(
     const parties = appt ? rescheduleParties(appt) : null;
     if (!detail || !parties || !appt) return;
 
-    const { planTitle, consultantUser, consulteeUser } = parties;
     const userIds = [
       detail.initiatedById,
-      consultantUser.id,
-      consulteeUser.id,
+      parties.consultantUser.id,
+      parties.consulteeUser.id,
     ].filter((id, i, arr) => arr.indexOf(id) === i);
 
     const restored = await prisma.appointmentOccurrence.findFirst({
@@ -144,43 +270,27 @@ export async function notifyRescheduleRestored(
       orderBy: { startsAt: "asc" },
       select: { startsAt: true },
     });
-    const dashboardUrl = notificationHref(appt.organizationId, "appointments");
-    // A lapse reaches every party; a withdrawal reaches everyone but the proposer who withdrew.
+    const withdrawnBy = detail.resolvedById ?? detail.initiatedById;
     const required =
       outcome === "EXPIRED"
         ? { kind: "PROPOSAL_LAPSED" as const, recipients: userIds }
         : {
             kind: "PROPOSAL_WITHDRAWN" as const,
-            recipients: userIds.filter((id) => id !== detail.initiatedById),
+            recipients: userIds.filter((id) => id !== withdrawnBy),
           };
 
-    await notifyAppointmentRescheduled(
+    const staged = await stageRescheduleNotice(prisma, {
+      appointment: appt,
+      parties,
       userIds,
-      {
-        ...notificationScope(appt.organizationId),
-        appointmentType: appt.appointmentType,
-        consultantName: consultantUser.name || "Consultant",
-        consulteeName: consulteeUser.name || "Consultee",
-        planTitle,
-        dashboardUrl,
+      dedupeKey: `reschedule-restored:${rescheduleRequestId}:${outcome}`,
+      required,
+      variant: {
         outcome,
         ...(restored ? { oldDateTime: restored.startsAt.toISOString() } : {}),
       },
-      { required },
-    );
-    // #1653 — the email twin; the sender never throws.
-    await sendAppointmentRescheduledEmail(
-      {
-        appointmentId: appt.id,
-        userIds,
-        outcome,
-        appointmentType: appt.appointmentType,
-        oldStartsAt: restored?.startsAt ?? null,
-        requiredFor: required.recipients,
-        dashboardUrl,
-      },
-      emailBudgetMs,
-    );
+    });
+    await attemptRescheduleNotice(staged, emailBudgetMs);
   } catch (notifyErr) {
     reportSentryError(
       notifyErr instanceof Error ? notifyErr : new Error(String(notifyErr)),

@@ -678,9 +678,10 @@ export async function POST(req: NextRequest) {
         );
 
         // ADR 23 — single recipient with a known side resolves to a precise route rather than the /dashboard bounce.
-        const requestOrgId = consultation.appointment?.organizationId ?? null;
+        // The expert's notice belongs to the plan's host organisation, never the learner's sponsor.
+        const hostOrgId = consultation.consultationPlan.organizationId ?? null;
         const reviewUrl = scopedHref({
-          organizationId: requestOrgId,
+          organizationId: hostOrgId,
           surface: "requests",
           personal: {
             kind: "consultant",
@@ -695,7 +696,7 @@ export async function POST(req: NextRequest) {
           notifyNewBookingRequest(
             consultation.consultationPlan.consultantProfile.user.id,
             {
-              ...notificationScope(requestOrgId),
+              ...notificationScope(hostOrgId),
               consulteeName:
                 consultation.requestedBy.user.name || "A consultee",
               planTitle: consultation.consultationPlan.title,

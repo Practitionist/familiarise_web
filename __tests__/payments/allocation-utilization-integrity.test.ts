@@ -206,7 +206,10 @@ const mockTx = {
     deleteMany: jest.fn(),
     count: jest.fn().mockResolvedValue(0),
     aggregate: jest.fn().mockResolvedValue({ _max: { ordinal: null } }),
+    // The first-placement email reads the placed sessions; none is upcoming here.
+    findMany: jest.fn().mockResolvedValue([]),
   },
+  failedEmail: { findFirst: jest.fn().mockResolvedValue(null) },
   $executeRaw: jest.fn().mockResolvedValue(1),
 };
 

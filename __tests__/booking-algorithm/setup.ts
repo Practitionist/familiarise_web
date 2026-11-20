@@ -6,10 +6,10 @@
 import { TextEncoder, TextDecoder } from "util";
 
 if (typeof global.TextEncoder === "undefined") {
-  (global as any).TextEncoder = TextEncoder;
+  Object.assign(global, { TextEncoder });
 }
 if (typeof global.TextDecoder === "undefined") {
-  (global as any).TextDecoder = TextDecoder;
+  Object.assign(global, { TextDecoder });
 }
 
 // PR 2c — the allocator imports lib/novu (allocation-time
@@ -25,7 +25,7 @@ jest.mock("../../lib/novu", () => ({
   notifyAppointmentPartiallyScheduled: jest.fn().mockResolvedValue([]),
   attemptTrigger: jest.fn(),
   notifyAppointmentCancelled: jest.fn(),
-  notifyAppointmentRescheduled: jest.fn(),
+  notifyAppointmentRescheduled: jest.fn().mockResolvedValue([]),
   notifyAppointmentCompleted: jest.fn(),
   notifyAppointmentReminder: jest.fn(),
   notifyPaymentSuccess: jest.fn(),

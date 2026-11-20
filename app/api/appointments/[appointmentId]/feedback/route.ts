@@ -14,7 +14,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
-import { appointmentRaterRole } from "@/lib/data/appointment-detail";
+import {
+  appointmentRaterRole,
+  type TAppointmentDetail,
+} from "@/lib/data/appointment-detail";
+import { unsettledSessionOf } from "@/lib/appointments/occurrences";
+import { toPresentationInput } from "@/lib/appointments/presentation-input";
+import { deriveBookingPresentation } from "@/lib/dashboard/money-state";
 import { heldOccurrence, resolveRatingCausePatch } from "@/lib/reviews";
 import { AppointmentIdParams } from "@/schemas/support";
 import { RatingCauseSchema } from "@/schemas/enums";
@@ -29,6 +35,29 @@ import { assertBodySize } from "@/lib/validation/limits";
 import { applyRateLimit, spamLimiter } from "@/lib/rate-limit";
 
 const FEEDBACK_ROUTE = "appointments.feedback";
+
+/**
+ * A one-off booking whose only session was voided or is under review, and is
+ * not yet made up, refunded or reviewed: the detail page's own rule, so the
+ * page and this route agree on when a rating is taken.
+ */
+function awaitsSettlement(
+  detail: TAppointmentDetail,
+  viewerId: string,
+  viewer: "CONSULTANT" | "CONSULTEE",
+): boolean {
+  const { appointmentType, occurrences } = detail.appointment;
+  if (!unsettledSessionOf(appointmentType, occurrences, false)) return false;
+  return deriveBookingPresentation(
+    toPresentationInput(detail, {
+      viewerId,
+      names: { payer: "", consultant: "" },
+      sponsorOrgName: null,
+    }),
+    viewer,
+    { viewerZone: "UTC" },
+  ).awaitsSettlement;
+}
 
 /** How much of the booking the GET answers for. Parsed rather than compared: an
  *  unrecognised value used to fall through to the single-appointment answer, so a
@@ -201,6 +230,25 @@ export async function POST(
         code: "VALIDATION_FAILED",
         detail: body.error.flatten(),
         context: { route: FEEDBACK_ROUTE, appointmentId },
+      });
+    }
+
+    if (
+      awaitsSettlement(
+        auth.detail,
+        auth.userId,
+        raterRole === "PROVIDER" ? "CONSULTANT" : "CONSULTEE",
+      )
+    ) {
+      return apiError({
+        tag: "[Feedback.POST]",
+        error: new Refusal({
+          code: "SESSION_NOT_SETTLED",
+          httpStatus: 409,
+          userMessage:
+            "This session didn't count as held, so it can't be rated yet. You can rate it once it has been made up, refunded or reviewed.",
+          context: { route: FEEDBACK_ROUTE, appointmentId },
+        }),
       });
     }
 

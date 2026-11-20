@@ -386,10 +386,12 @@ function cancelledWire(
   input: AppointmentCancelledInput,
   timezone: string,
 ): AppointmentCancelledPayload {
+  const { cancelledByName, ...rest } = input;
   return {
-    ...appointmentWire(input, timezone),
+    ...appointmentWire(rest, timezone),
     reason: cancellationReasonLabel(input.reason),
-    cancelledBy: cancelledByLabel(input.cancelledBy, input),
+    cancelledBy:
+      cancelledByName?.trim() || cancelledByLabel(input.cancelledBy, input),
     cancelledByRole: input.cancelledBy,
   };
 }

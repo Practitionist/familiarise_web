@@ -26,12 +26,12 @@ import { collaboratorUserIds } from "@/lib/collaborators/recipients";
 import { NextRequest, NextResponse } from "next/server";
 import type { z } from "zod";
 import { type AppointmentStatus, CancellationReason } from "@prisma/client";
-import { notifyAppointmentCancelled } from "@/lib/novu";
+import { notifyAppointmentCancelled, type StagedTrigger } from "@/lib/novu";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { refundOnItsWay } from "@/lib/email";
 import { refundStartedText } from "@/lib/notifications/refund-wording";
 import { stageAppointmentCancelledEmail } from "@/lib/email/senders/booking";
-import { notificationScope } from "@/lib/novu/workflows";
+import { bookingNoticeScopes, notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
 import { CancelAppointmentSchema } from "@/schemas/appointments";
@@ -892,6 +892,84 @@ export async function POST(
       staffCancel,
     );
 
+    // Who is told and in which scope, resolved before the transaction that
+    // stages their bells: the expert and team by the plan's host organisation,
+    // the buyer and attendees by the booking's sponsor.
+    const attendeeUserIds = attendees ? attendees.all : [];
+    const collaboratorIds = appointment.webinar?.webinarPlan
+      ? await collaboratorUserIds("webinar", appointment.webinar.webinarPlan.id)
+      : appointment.class?.classPlan
+        ? await collaboratorUserIds("class", appointment.class.classPlan.id)
+        : [];
+    const noticeScopes = bookingNoticeScopes({
+      hostOrganizationId: (
+        appointment.consultation?.consultationPlan ??
+        appointment.subscription?.subscriptionPlan ??
+        appointment.webinar?.webinarPlan ??
+        appointment.class?.classPlan
+      )?.organizationId,
+      hostUserIds: [consultantUserId, ...collaboratorIds],
+      buyers: [consulteeUserId, ...attendeeUserIds].map((userId) => ({
+        userId,
+        organizationId: appointment.organizationId,
+      })),
+    });
+    const userIds = noticeScopes.flatMap((scope) => scope.userIds);
+    // The host side cancelled: the buyer and every attendee hear it whatever
+    // their switches say; a staff cancel reaches every party but the actor.
+    const hostCancelled =
+      session.user.id === consultantUserId ||
+      (isHostOrgOperator && session.user.id !== consulteeUserId);
+    // The sponsoring organisation's operator cancelled its member's booking:
+    // the member hears it whatever their switches say, and the notice names
+    // the organisation.
+    const sponsorName = orgActor
+      ? ((
+          await prisma.organization.findUnique({
+            where: { id: orgActor.organizationId },
+            select: { name: true },
+          })
+        )?.name ?? undefined)
+      : undefined;
+    const bookedUserIds = staffCancel
+      ? userIds.filter((id) => id !== session.user.id)
+      : hostCancelled
+        ? [consulteeUserId, ...attendeeUserIds].filter(
+            (id): id is string => !!id && id !== session.user.id,
+          )
+        : orgActor && consulteeUserId
+          ? [consulteeUserId]
+          : [];
+    const cancelBellOptions = {
+      dedupeKey: `appointment-cancelled:${appointmentId}`,
+      ...(bookedUserIds.length > 0
+        ? {
+            required: {
+              kind:
+                staffCancel || orgActor
+                  ? ("CANCELLED_BY_STAFF" as const)
+                  : ("CANCELLED_BY_HOST" as const),
+              recipients: bookedUserIds,
+            },
+          }
+        : {}),
+    };
+    const cancelBellPayload = {
+      appointmentId,
+      appointmentType,
+      consultantName: consultantName || "Consultant",
+      consulteeName: consulteeName || "Consultee",
+      planTitle: planTitleOrSessionLabel(planTitle, appointmentType),
+      dateTime,
+      reason: validatedData.reason || undefined,
+      cancelledBy: hostCancelled
+        ? ("consultant" as const)
+        : session.user.id === consulteeUserId
+          ? ("consultee" as const)
+          : ("system" as const),
+      ...(sponsorName ? { cancelledByName: sponsorName } : {}),
+    };
+
     // Transaction for critical database operations only (with increased timeout)
     // #1319 — serialize lifecycle mutations per appointment (lock order:
     // appointment first, before any consultee/slot key a future change adds).
@@ -1239,6 +1317,27 @@ export async function POST(
 
               await declineOpenReschedules(tx, appointmentId, auditMeta);
 
+              // The bells commit with the cancel; the emails follow the refund,
+              // whose outcome their wording states.
+              const cancelBells: StagedTrigger[] = [];
+              for (const scope of noticeScopes) {
+                const staged = await notifyAppointmentCancelled(
+                  scope.userIds,
+                  {
+                    ...notificationScope(scope.organizationId),
+                    ...cancelBellPayload,
+                    dashboardUrl: notificationHref(
+                      scope.organizationId,
+                      "appointments",
+                    ),
+                  },
+                  { tx, ...cancelBellOptions },
+                );
+                cancelBells.push(
+                  ...staged.flatMap((r) => (r.staged ? [r.staged] : [])),
+                );
+              }
+
               return {
                 success: true,
                 cancellationReason: validatedData.reason,
@@ -1255,6 +1354,7 @@ export async function POST(
                 gatewayCancels: pendingExpiry?.gatewayCancels ?? [],
                 revokedUserIds,
                 seatRevocation,
+                cancelBells,
               };
             },
             {
@@ -1302,6 +1402,7 @@ export async function POST(
       eventPlans,
       revokedUserIds,
       seatRevocation,
+      cancelBells,
       ...result
     } = committed;
     await flushBackupInterestNotices(holdNotices);
@@ -1385,60 +1486,6 @@ export async function POST(
     // Chat and room access end with the booking; this settles the rows the cancel committed.
     await revokeEndedSeatAccess(appointmentId, revokedUserIds, seatRevocation);
 
-    // Notification metadata (for fire-and-forget notifications after transaction)
-    const notificationMeta = {
-      consultantUserId,
-      consulteeUserId,
-      consultantName,
-      consulteeName,
-      planTitle,
-      appointmentType,
-      dateTime,
-      cancelledBy: session.user.id,
-    };
-
-    // #1003 — every paid attendee of a cancelled group event has to hear about
-    // it too. They have no 1:1 counterpart on the booking, so they are read off
-    // the payments, exactly as the moderation bulk-cancel does.
-    const attendeeUserIds = attendees ? attendees.all : [];
-
-    // #1580 C-P1-5 — the event's accepted collaborators hear about it too.
-    let collaboratorIds: string[] = [];
-    if (appointment.webinar?.webinarPlan) {
-      collaboratorIds = await collaboratorUserIds(
-        "webinar",
-        appointment.webinar.webinarPlan.id,
-      );
-    } else if (appointment.class?.classPlan) {
-      collaboratorIds = await collaboratorUserIds(
-        "class",
-        appointment.class.classPlan.id,
-      );
-    }
-
-    // Fire-and-forget: notify both parties about cancellation
-    const userIds = Array.from(
-      new Set(
-        [
-          notificationMeta.consultantUserId,
-          notificationMeta.consulteeUserId,
-          ...attendeeUserIds,
-          ...collaboratorIds,
-        ].filter((id): id is string => !!id),
-      ),
-    );
-    // The host side cancelled: the buyer and every attendee hear it whatever
-    // their switches say; a staff cancel reaches every party but the actor.
-    const hostCancelled =
-      notificationMeta.cancelledBy === notificationMeta.consultantUserId ||
-      (isHostOrgOperator && session.user.id !== consulteeUserId);
-    const bookedUserIds = staffCancel
-      ? userIds.filter((id) => id !== session.user.id)
-      : hostCancelled
-        ? [consulteeUserId, ...attendeeUserIds].filter(
-            (id): id is string => !!id && id !== session.user.id,
-          )
-        : [];
     if (userIds.length > 0) {
       // A refund still pending at the gateway has started; only a settled one is on its way.
       const refundText =
@@ -1455,12 +1502,19 @@ export async function POST(
       const emailArgs = {
         appointmentId,
         startsAt: appointment.occurrences?.[0]?.startsAt ?? null,
-        cancelledBy: cancellerName(notificationMeta, consulteeUserId),
+        cancelledBy:
+          sponsorName ??
+          cancellerName(
+            {
+              cancelledBy: session.user.id,
+              consultantUserId,
+              consultantName,
+              consulteeName,
+            },
+            consulteeUserId,
+          ),
         reason: validatedData.reason || undefined,
-        dashboardUrl: notificationHref(
-          appointment.organizationId,
-          "appointments",
-        ),
+        requiredFor: bookedUserIds,
       };
       const attendeeGroups =
         attendees && eventRefund
@@ -1470,82 +1524,40 @@ export async function POST(
               eventRefund.failures.map((f) => f.paymentId),
             )
           : [];
-      const [bellResults, ...stagedEmailBatches] = await Promise.all([
-        notifyAppointmentCancelled(
-          userIds,
-          {
-            ...notificationScope(appointment.organizationId),
-            appointmentId,
-            appointmentType: notificationMeta.appointmentType,
-            consultantName: notificationMeta.consultantName || "Consultant",
-            consulteeName: notificationMeta.consulteeName || "Consultee",
-            planTitle: planTitleOrSessionLabel(
-              notificationMeta.planTitle,
-              notificationMeta.appointmentType,
-            ),
-            dateTime: notificationMeta.dateTime,
-            dashboardUrl: notificationHref(
-              appointment.organizationId,
-              "appointments",
-            ),
-            reason: validatedData.reason || undefined,
-            cancelledBy: hostCancelled
-              ? "consultant"
-              : notificationMeta.cancelledBy === consulteeUserId
-                ? "consultee"
-                : "system",
-          },
-          bookedUserIds.length > 0
-            ? {
-                required: {
-                  kind: staffCancel
-                    ? "CANCELLED_BY_STAFF"
-                    : "CANCELLED_BY_HOST",
-                  recipients: bookedUserIds,
-                },
-              }
-            : undefined,
-        ).catch((err) => {
-          console.error(
-            "Failed to send appointment cancellation notification:",
-            err,
-          );
-          return [];
-        }),
+      const stagedEmailBatches = await Promise.all([
         ...attendeeGroups.map((group) =>
           stageAppointmentCancelledEmail(prisma, {
             ...emailArgs,
             userIds: group.userIds,
             refundText: group.refundText,
             refundUserIds: group.refundText ? group.userIds : [],
-            requiredFor: bookedUserIds,
+            dashboardUrl: notificationHref(
+              appointment.organizationId,
+              "appointments",
+            ),
           }).catch(() => []),
         ),
-        stageAppointmentCancelledEmail(prisma, {
-          appointmentId,
-          userIds: userIds.filter((id) => !attendeeUserIds.includes(id)),
-          startsAt: appointment.occurrences?.[0]?.startsAt ?? null,
-          cancelledBy:
-            notificationMeta.cancelledBy === notificationMeta.consultantUserId
-              ? notificationMeta.consultantName || "The consultant"
-              : notificationMeta.cancelledBy === consulteeUserId
-                ? notificationMeta.consulteeName || "The consultee"
-                : "Familiarise",
-          reason: validatedData.reason || undefined,
-          refundText,
-          refundUserIds: refund
-            ? [consulteeUserId].filter((id): id is string => !!id)
-            : [],
-          requiredFor: bookedUserIds,
-          dashboardUrl: notificationHref(
-            appointment.organizationId,
-            "appointments",
-          ),
-        }).catch(() => []),
+        // The parties who hold no seat, each scope with its own link.
+        ...noticeScopes.map((scope) =>
+          stageAppointmentCancelledEmail(prisma, {
+            ...emailArgs,
+            userIds: scope.userIds.filter(
+              (id) => !attendeeUserIds.includes(id),
+            ),
+            refundText,
+            refundUserIds: refund
+              ? [consulteeUserId].filter((id): id is string => !!id)
+              : [],
+            dashboardUrl: notificationHref(
+              scope.organizationId,
+              "appointments",
+            ),
+          }).catch(() => []),
+        ),
       ]);
       await flushNotificationsAfter(
         {
-          bells: (bellResults ?? []).map((r) => r?.staged),
+          bells: cancelBells,
           emails: [
             {
               rows: stagedEmailBatches.flat(),

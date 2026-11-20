@@ -133,7 +133,7 @@ jest.mock("../../lib/auth-server", () => ({
 
 // Mock novu notifications
 jest.mock("../../lib/novu", () => ({
-  notifyAppointmentCancelled: jest.fn().mockResolvedValue(undefined),
+  notifyAppointmentCancelled: jest.fn().mockResolvedValue([]),
 }));
 
 // #776 §C — whole-event (class/webinar) cancel refunds are exercised in their
@@ -1554,7 +1554,8 @@ describe("Cancel Route Handler - POST", () => {
         appointmentType: "CONSULTATION",
         reason: "OTHER",
       }),
-      undefined,
+      // Nobody else acted, so the bell stays behind each person's switches.
+      expect.not.objectContaining({ required: expect.anything() }),
     );
   });
 
@@ -1635,7 +1636,8 @@ describe("Cancel Route Handler - POST", () => {
     expect(notifyAppointmentCancelled).toHaveBeenCalledWith(
       expect.arrayContaining(["consultant-1", "attendee-9"]),
       expect.objectContaining({ appointmentType: "CLASS" }),
-      undefined,
+      // Nobody else acted, so the bell stays behind each person's switches.
+      expect.not.objectContaining({ required: expect.anything() }),
     );
   });
 
@@ -1755,7 +1757,8 @@ describe("Cancel Route Handler - POST", () => {
     expect(notifyAppointmentCancelled).toHaveBeenCalledWith(
       expect.arrayContaining(["attendee-credit", "attendee-free"]),
       expect.objectContaining({ appointmentType: "CLASS" }),
-      undefined,
+      // Nobody else acted, so the bell stays behind each person's switches.
+      expect.not.objectContaining({ required: expect.anything() }),
     );
   });
 
@@ -1809,7 +1812,9 @@ describe("Cancel Route Handler - POST", () => {
         cancelledBy: "consultant",
       }),
       // The host side cancelled: the buyer hears it whatever their switches say.
-      { required: { kind: "CANCELLED_BY_HOST", recipients: ["user-1"] } },
+      expect.objectContaining({
+        required: { kind: "CANCELLED_BY_HOST", recipients: ["user-1"] },
+      }),
     );
   });
 
@@ -1834,7 +1839,8 @@ describe("Cancel Route Handler - POST", () => {
       expect.objectContaining({
         cancelledBy: "consultee",
       }),
-      undefined,
+      // Nobody else acted, so the bell stays behind each person's switches.
+      expect.not.objectContaining({ required: expect.anything() }),
     );
   });
 });

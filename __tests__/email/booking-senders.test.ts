@@ -101,6 +101,7 @@ it("booked (staged): reads recipients and stages through tx, never attempts", as
     appointmentType: "CONSULTATION",
     startsAt: new Date("2026-09-15T11:00:00Z"),
     dashboardUrl: "https://app.test/dashboard",
+    hostDashboardUrl: "https://app.test/dashboard",
   });
 
   expect(mockLoadEmailRecipients).toHaveBeenCalledWith(
@@ -121,4 +122,50 @@ it("booked (staged): reads recipients and stages through tx, never attempts", as
   expect(mockAttempt).not.toHaveBeenCalled();
   expect(mockDeliver).not.toHaveBeenCalled();
   expect(staged).toHaveLength(1);
+});
+
+it('booked (staged): several times placed at once reach the learner as one "sessions are scheduled" email', async () => {
+  const tx = { failedEmail: {}, user: {} };
+  mockStage.mockClear();
+  mockLoadEmailRecipients.mockResolvedValue([allowed]);
+  mockStage.mockResolvedValue({ id: "fe_2", idempotencyKey: "k2" });
+  const session = (iso: string) => ({
+    startsAt: new Date(iso),
+    endsAt: new Date(new Date(iso).getTime() + 3600_000),
+  });
+
+  await stageAppointmentBookedEmail(tx as never, {
+    appointmentId: "apt_1",
+    consulteeUserId: "user_1",
+    consultantUserId: null,
+    consulteeName: "One",
+    consultantName: "Ravi",
+    planTitle: "Weekly coaching",
+    appointmentType: "subscription",
+    startsAt: new Date("2026-09-15T11:00:00Z"),
+    calendarSession: session("2026-09-15T11:00:00Z"),
+    sessions: [
+      session("2026-09-15T11:00:00Z"),
+      session("2026-09-22T11:00:00Z"),
+    ],
+    dashboardUrl: "https://app.test/dashboard",
+    hostDashboardUrl: "https://app.test/dashboard",
+  });
+
+  // The learner alone; the expert placed the times.
+  expect(mockLoadEmailRecipients).toHaveBeenLastCalledWith(
+    ["user_1"],
+    "appointments",
+    tx,
+    undefined,
+  );
+  expect(mockStage).toHaveBeenCalledTimes(1);
+  expect(mockStage).toHaveBeenCalledWith(
+    expect.objectContaining({
+      to: "one@example.com",
+      subject: "Your sessions with Ravi are scheduled",
+    }),
+    "APPOINTMENT_BOOKED",
+    { tx, entityRef: "appointment:apt_1" },
+  );
 });

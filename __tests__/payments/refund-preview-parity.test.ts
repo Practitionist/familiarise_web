@@ -182,7 +182,7 @@ jest.mock("../../lib/payments/operations/event-refunds", () => ({
 }));
 
 jest.mock("../../lib/novu", () => ({
-  notifyAppointmentCancelled: jest.fn().mockResolvedValue(undefined),
+  notifyAppointmentCancelled: jest.fn().mockResolvedValue([]),
 }));
 
 jest.mock("../../lib/enterprise/system-events", () => {

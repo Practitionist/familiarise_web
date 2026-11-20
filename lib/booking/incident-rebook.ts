@@ -16,11 +16,7 @@ import { intervalStartsOf } from "@/lib/appointments/occurrences";
 import { recomputeEarningsHold } from "@/lib/payments/payouts/earnings-hold";
 import { fundingRailForIntent } from "@/lib/payments/funding-rail";
 import { slotStartRefusal } from "@/lib/payments/utils/slot-validation";
-import { stageAppointmentRescheduledEmail } from "@/lib/email/senders/booking";
-import { notifyAppointmentRescheduled } from "@/lib/novu/service";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
-import { notificationHref } from "@/lib/novu/resolve-href";
-import { notificationScope } from "@/lib/novu/workflows";
 import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
 import type { OpenIncidentRemedySchema } from "@/schemas/appointments";
 import { WEEKLY_COVERAGE_SELECT } from "@/utils/scheduling-engine/availabilityCoverage";
@@ -35,7 +31,10 @@ import {
 import { BookingRuleError } from "./booking-rule-error";
 import { createMakeUpOccurrence } from "./class-sessions";
 import { incidentRefundKey, isRebookableParent } from "./incident-keys";
-import { rescheduleNotificationVariant } from "./reschedule-proposals";
+import {
+  stageRescheduleNotice,
+  type StagedRescheduleNotice,
+} from "./reschedule-outcome-notice";
 import { transitionConsultationRequest, transitionTrial } from "./transitions";
 
 const HOUR_MS = 3_600_000;
@@ -73,6 +72,7 @@ const REMEDY_SELECT = {
               consultationPlan: {
                 select: {
                   title: true,
+                  organizationId: true,
                   consultantProfileId: true,
                   consultantProfile: { select: { user: PERSON } },
                 },
@@ -87,7 +87,9 @@ const REMEDY_SELECT = {
               consultantProfileId: true,
               consulteeProfile: { select: { user: PERSON } },
               consultantProfile: { select: { user: PERSON } },
-              subscriptionPlan: { select: { title: true } },
+              subscriptionPlan: {
+                select: { title: true, organizationId: true },
+              },
             },
           },
         },
@@ -109,6 +111,8 @@ interface VoidedBooking {
   expert: { id: string; name: string | null };
   learnerName: string | null;
   title: string;
+  /** The plan's host organisation: the expert's notice scope. */
+  hostOrganizationId: string | null;
   trialPaymentId: string | null;
 }
 
@@ -123,6 +127,7 @@ function bookingOf(remedy: RemedyRow): VoidedBooking | null {
       expert: trial.consultantProfile.user,
       learnerName: trial.consulteeProfile.user.name,
       title: trial.subscriptionPlan.title,
+      hostOrganizationId: trial.subscriptionPlan.organizationId,
       trialPaymentId: trial.paymentId,
     };
   }
@@ -136,6 +141,7 @@ function bookingOf(remedy: RemedyRow): VoidedBooking | null {
       expert: plan.consultantProfile.user,
       learnerName: consultation.requestedBy.user.name,
       title: plan.title,
+      hostOrganizationId: plan.organizationId,
       trialPaymentId: null,
     };
   }
@@ -400,63 +406,41 @@ async function commitRebook(
   return { occurrenceId: created.id };
 }
 
-/** Both sides hear "moved" through the existing reschedule bell and email. */
-async function notifyRebooked(ctx: RebookContext): Promise<void> {
+/**
+ * Both sides hear "moved" through the reschedule bell and email, staged on the
+ * rebook's own transaction. The move confirmed itself, so the party who did not
+ * rebook hears it whatever their switches say.
+ */
+function stageRebookedNotice(
+  tx: Tx,
+  ctx: RebookContext,
+): Promise<StagedRescheduleNotice> {
   const { remedy, booking } = ctx;
-  const appointmentId = remedy.occurrence.appointmentId;
-  const organizationId = remedy.occurrence.appointment.organizationId;
-  const appointmentType = booking.kind;
   const userIds = [...new Set([booking.expert.id, ctx.userId])];
-  // The move confirmed itself: the party who did not rebook hears it whatever their switches say.
-  const others = userIds.filter((id) => id !== ctx.userId);
-  const dashboardUrl = notificationHref(organizationId, "appointments");
-  const variant = rescheduleNotificationVariant({
-    releasedAt: remedy.occurrence.startsAt,
-    proposedAt: ctx.startsAt,
-    autoConfirmed: true,
-  });
-  const [bells, emails] = await Promise.all([
-    notifyAppointmentRescheduled(
-      userIds,
-      {
-        ...notificationScope(organizationId),
-        ...variant,
-        appointmentId,
-        appointmentType,
-        consultantName: booking.expert.name ?? "Consultant",
-        consulteeName: booking.learnerName ?? "Participant",
-        planTitle: planTitleOrSessionLabel(booking.title, appointmentType),
-        dashboardUrl,
-      },
-      {
-        deferAttempt: true,
-        required: { kind: "MOVE_AUTO_CONFIRMED", recipients: others },
-      },
-    ).catch((error: unknown) => {
-      console.error("[incident-rebook] Failed to stage the bell:", error);
-      return [];
-    }),
-    stageAppointmentRescheduledEmail(prisma, {
-      appointmentId,
-      userIds,
-      outcome: "MOVED",
-      appointmentType,
-      oldStartsAt: remedy.occurrence.startsAt,
-      newStartsAt: ctx.startsAt,
-      requiredFor: others,
-      dashboardUrl,
-    }).catch((error: unknown) => {
-      console.error("[incident-rebook] Failed to stage the email:", error);
-      return [];
-    }),
-  ]);
-  await flushNotificationsAfter(
-    {
-      bells: (bells ?? []).map((r) => r?.staged),
-      emails: [{ rows: emails, emailType: "APPOINTMENT_RESCHEDULED" }],
+  return stageRescheduleNotice(tx, {
+    appointment: {
+      id: remedy.occurrence.appointmentId,
+      organizationId: remedy.occurrence.appointment.organizationId,
+      appointmentType: booking.kind,
     },
-    "incident-rebook",
-  );
+    parties: {
+      planTitle: planTitleOrSessionLabel(booking.title, booking.kind),
+      hostOrganizationId: booking.hostOrganizationId,
+      consultantUser: booking.expert,
+      consulteeUser: { id: ctx.userId, name: booking.learnerName },
+    },
+    userIds,
+    dedupeKey: `incident-rebook:${remedy.id}`,
+    required: {
+      kind: "MOVE_AUTO_CONFIRMED",
+      recipients: userIds.filter((id) => id !== ctx.userId),
+    },
+    variant: {
+      outcome: "MOVED",
+      oldDateTime: remedy.occurrence.startsAt.toISOString(),
+      newDateTime: ctx.startsAt.toISOString(),
+    },
+  });
 }
 
 /** Rebooks the voided session free at `startsAt`, at its own length, with the same expert. */
@@ -507,9 +491,13 @@ export async function rebookIncidentRemedy(args: {
           })),
         );
         try {
-          return await prisma.$transaction((tx) => commitRebook(tx, ctx), {
-            timeout: 15_000,
-          });
+          return await prisma.$transaction(
+            async (tx) => ({
+              ...(await commitRebook(tx, ctx)),
+              notice: await stageRebookedNotice(tx, ctx),
+            }),
+            { timeout: 15_000 },
+          );
         } finally {
           await unlockSlotInterval(slotLocks);
         }
@@ -518,7 +506,15 @@ export async function rebookIncidentRemedy(args: {
       }
     },
   );
-  await notifyRebooked(ctx);
+  await flushNotificationsAfter(
+    {
+      bells: committed.notice.bells,
+      emails: [
+        { rows: committed.notice.emails, emailType: "APPOINTMENT_RESCHEDULED" },
+      ],
+    },
+    "incident-rebook",
+  );
   return {
     occurrenceId: committed.occurrenceId,
     startsAt: ctx.startsAt.toISOString(),

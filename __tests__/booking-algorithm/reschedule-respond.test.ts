@@ -62,7 +62,14 @@ function makeTxStub() {
     appointment: { findUnique: jest.fn().mockResolvedValue(null) },
     rescheduleRequest: {
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-      findUnique: jest.fn().mockResolvedValue({ status: "PENDING_REVIEW" }),
+      // The declined notice is staged on the decline's own transaction, so its
+      // read of the parties goes through `tx`; every other read is the status.
+      findUnique: jest.fn(
+        async (args: { select?: { appointment?: unknown } }) =>
+          args?.select?.appointment
+            ? mockRequestFindUnique(args)
+            : { status: "PENDING_REVIEW" },
+      ),
     },
     bookingStatusHistory: {
       create: jest.fn().mockResolvedValue({}),
@@ -76,6 +83,7 @@ function makeTxStub() {
       // must go through `transitionOccurrenceCompletion`: `updateManyAndReturn`
       // carries the from-set CAS and the history rows, and `updateMany` is here
       // only as the tripwire that catches a write which skipped both.
+      findFirst: jest.fn((...a: unknown[]) => mockOccurrenceFindFirst(...a)),
       findMany: jest.fn(),
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
       updateManyAndReturn: jest.fn(),
@@ -163,7 +171,11 @@ jest.mock("../../lib/observability/report", () => ({
 jest.mock("../../lib/email", () => ({
   __esModule: true,
   EMAIL_BUDGET_MS: { REQUEST: 250, JOB: 250 },
-  sendAppointmentRescheduledEmail: jest.fn().mockResolvedValue(undefined),
+}));
+jest.mock("../../lib/email/senders/booking", () => ({
+  __esModule: true,
+  stageAppointmentRescheduledEmail: jest.fn().mockResolvedValue([]),
+  attemptStaged: jest.fn().mockResolvedValue(undefined),
 }));
 
 // #1846 — a decline whose restore could not land records its durable operator
@@ -224,7 +236,11 @@ const HELD_LOCK = { key: "appointment-lock:appt-1" } as ApprovalLock;
 // #1846 — the durable operator trace and the notification, both of which the
 // decline reaches now that it restores.
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
-import { notifyAppointmentRescheduled } from "@/lib/novu";
+import {
+  notifyAppointmentBooked,
+  notifyAppointmentRescheduled,
+} from "@/lib/novu";
+import { stageAllocationNotices } from "@/lib/booking/allocation/notify";
 import { POST as respondHandler } from "@/app/api/appointments/[appointmentId]/reschedule/respond/route";
 
 const HOUR = 3_600_000;
@@ -423,6 +439,74 @@ describe("accept re-validates through the allocator before anything is written",
       actorUserId: CONSULTEE_USER,
       inTx: expect.any(Function),
     });
+  });
+
+  it("an accepted move rings once per person: the allocator stages no booked notice, the moved notice is the one", async () => {
+    // The accept reads the proposal with both parties for its moved notice.
+    mockRequestFindUnique.mockResolvedValue({
+      ...declineRow(),
+      ...proposalRow(),
+    });
+    const bookedRow = {
+      consultationPlan: {
+        title: "Plan",
+        organizationId: null,
+        consultantProfile: { user: { id: CONSULTANT_USER, name: "Host" } },
+      },
+      requestedBy: { user: { id: CONSULTEE_USER, name: "Buyer" } },
+      appointment: {
+        id: APPT,
+        organizationId: null,
+        occurrences: [{ startsAt: new Date("2026-09-01T10:00:00.000Z") }],
+      },
+    };
+    const allocationTx = {
+      ...txStub,
+      consultation: {
+        ...txStub.consultation,
+        findUnique: jest.fn().mockResolvedValue(bookedRow),
+      },
+    };
+    mockAllocate.mockImplementation(
+      async (req: {
+        inTx: (tx: unknown, moved: typeof NOTHING_MOVED) => Promise<void>;
+      }) => {
+        await req.inTx(allocationTx, NOTHING_MOVED);
+        // The allocator's own notice step, on the transaction the hook ran in.
+        await stageAllocationNotices(
+          allocationTx as never,
+          "consultation",
+          "cons-1",
+          undefined,
+          undefined,
+          ["occ-new"],
+        );
+        return { success: true };
+      },
+    );
+
+    const out = await acceptProposal({
+      heldAppointmentLock: HELD_LOCK,
+      rescheduleRequestId: REQ,
+      eventType: "consultation",
+      eventId: "cons-1",
+      resolvedById: CONSULTEE_USER,
+    });
+
+    expect(out).toEqual({ done: true });
+    expect(notifyAppointmentBooked).not.toHaveBeenCalled();
+    const moved = (notifyAppointmentRescheduled as jest.Mock).mock.calls;
+    expect(moved.flatMap(([ids]) => ids).sort()).toEqual(
+      [CONSULTANT_USER, CONSULTEE_USER].sort(),
+    );
+    for (const [, payload] of moved) expect(payload.outcome).toBe("MOVED");
+    // Any other allocation on a fresh transaction still announces its times.
+    await stageAllocationNotices(
+      { ...allocationTx } as never,
+      "consultation",
+      "cons-1",
+    );
+    expect(notifyAppointmentBooked).toHaveBeenCalledTimes(1);
   });
 
   it("rolls the move back when the proposal closed before the allocator committed", async () => {

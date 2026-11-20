@@ -37,6 +37,7 @@ const mockTrialBell = jest.fn(async (ids: string[], _payload: unknown) =>
 jest.mock("../../lib/novu", () => ({
   notifyAppointmentCancelled: (...a: unknown[]) => mockCancelledBell(...a),
   notifyAppointmentRescheduled: (...a: unknown[]) => mockRescheduledBell(...a),
+  attemptTrigger: jest.fn(async () => ({ success: true })),
 }));
 jest.mock("../../lib/novu/service", () => ({
   notifyTrialCompleted: (ids: string[], payload: unknown) =>
@@ -44,18 +45,13 @@ jest.mock("../../lib/novu/service", () => ({
 }));
 const mockCancelledEmail = jest.fn(async (..._a: unknown[]) => []);
 const mockTrialEmail = jest.fn(async (..._a: unknown[]) => [{ id: "email" }]);
+const mockRescheduledEmail = jest.fn(async (..._a: unknown[]) => []);
 jest.mock("../../lib/email/senders/booking", () => ({
+  attemptStaged: jest.fn(async () => ({ sent: 0, skipped: 0, failed: 0 })),
+  stageAppointmentRescheduledEmail: (...a: unknown[]) =>
+    mockRescheduledEmail(...a),
   stageAppointmentCancelledEmail: (...a: unknown[]) => mockCancelledEmail(...a),
   stageTrialLifecycleEmail: (...a: unknown[]) => mockTrialEmail(...a),
-}));
-const mockRescheduledEmail = jest.fn(async (..._a: unknown[]) => ({
-  sent: 1,
-  skipped: 0,
-  failed: 0,
-}));
-jest.mock("../../lib/email", () => ({
-  sendAppointmentRescheduledEmail: (...a: unknown[]) =>
-    mockRescheduledEmail(...a),
 }));
 jest.mock("../../lib/novu/stage-then-attempt", () => ({
   flushNotificationsAfter: jest.fn(async () => undefined),
@@ -134,40 +130,113 @@ it("the removed-seat bell template prints the removal note", () => {
   expect(template).toContain("payload.removalNote");
 });
 
+const restoredRequest = (over: {
+  initiatedById?: string;
+  resolvedById?: string | null;
+  sponsorOrg?: string | null;
+}) => ({
+  initiatedById: over.initiatedById ?? "c",
+  resolvedById: over.resolvedById ?? null,
+  releasedOccurrenceIds: ["o1"],
+  appointment: {
+    id: "a1",
+    organizationId: over.sponsorOrg ?? null,
+    appointmentType: "CONSULTATION",
+    consultation: {
+      requestedBy: party("c"),
+      consultationPlan: {
+        title: "Plan",
+        organizationId: null,
+        consultantProfile: party("e"),
+      },
+    },
+    subscription: null,
+    trial: null,
+  },
+});
+
 it.each([
-  ["EXPIRED", { kind: "PROPOSAL_LAPSED", recipients: ["c", "e"] }],
-  ["WITHDRAWN", { kind: "PROPOSAL_WITHDRAWN", recipients: ["e"] }],
+  ["EXPIRED", null, { kind: "PROPOSAL_LAPSED", recipients: ["c", "e"] }],
+  ["WITHDRAWN", "c", { kind: "PROPOSAL_WITHDRAWN", recipients: ["e"] }],
 ] as const)(
   "a %s proposal's restored notice: required %p",
-  async (outcome, required) => {
-    mockRescheduleFind.mockResolvedValue({
-      initiatedById: "c",
-      releasedOccurrenceIds: ["o1"],
-      appointment: {
-        id: "a1",
-        organizationId: null,
-        appointmentType: "CONSULTATION",
-        consultation: {
-          requestedBy: party("c"),
-          consultationPlan: { title: "Plan", consultantProfile: party("e") },
-        },
-        subscription: null,
-        trial: null,
-      },
-    });
+  async (outcome, resolvedById, required) => {
+    mockRescheduleFind.mockResolvedValue(restoredRequest({ resolvedById }));
     mockOccurrenceFind.mockResolvedValue({
       startsAt: new Date("2026-12-01T04:30:00Z"),
     });
 
     await notifyRescheduleRestored("r1", outcome, 1);
 
-    expect(mockRescheduledBell.mock.calls[0][2]).toEqual({ required });
-    const email = mockRescheduledEmail.mock.calls[0][0] as {
+    expect(mockRescheduledBell.mock.calls[0][2]).toMatchObject({ required });
+    const email = mockRescheduledEmail.mock.calls[0][1] as {
       requiredFor?: string[];
     };
     expect(email.requiredFor).toEqual(required?.recipients);
   },
 );
+
+it("a second lapse on the same session is its own notice: the key names the request and the outcome", async () => {
+  mockOccurrenceFind.mockResolvedValue({
+    startsAt: new Date("2026-12-01T04:30:00Z"),
+  });
+  mockRescheduleFind.mockResolvedValue(restoredRequest({}));
+
+  await notifyRescheduleRestored("r1", "EXPIRED", 1);
+  await notifyRescheduleRestored("r2", "EXPIRED", 1);
+  await notifyRescheduleRestored("r2", "WITHDRAWN", 1);
+
+  expect(
+    mockRescheduledBell.mock.calls.map(
+      ([, , opts]) => (opts as { dedupeKey?: string }).dedupeKey,
+    ),
+  ).toEqual([
+    "reschedule-restored:r1:EXPIRED",
+    "reschedule-restored:r2:EXPIRED",
+    "reschedule-restored:r2:WITHDRAWN",
+  ]);
+});
+
+it("a learner withdrawing a move their sponsor's admin opened: required for everyone but the learner who clicked", async () => {
+  mockRescheduleFind.mockResolvedValue(
+    restoredRequest({ initiatedById: "admin", resolvedById: "c" }),
+  );
+  mockOccurrenceFind.mockResolvedValue(null);
+
+  await notifyRescheduleRestored("r1", "WITHDRAWN", 1);
+
+  expect(mockRescheduledBell.mock.calls[0][2]).toMatchObject({
+    required: { kind: "PROPOSAL_WITHDRAWN", recipients: ["admin", "e"] },
+  });
+});
+
+it("a sponsored booking on the expert's own plan: the expert's restored notice is personal, the learner's is the sponsor's", async () => {
+  mockRescheduleFind.mockResolvedValue(
+    restoredRequest({ sponsorOrg: "org-sponsor" }),
+  );
+  mockOccurrenceFind.mockResolvedValue(null);
+
+  await notifyRescheduleRestored("r1", "EXPIRED", 1);
+
+  const [expert, learner] = mockRescheduledBell.mock.calls as unknown as [
+    string[],
+    { scope: string; dashboardUrl: string },
+  ][];
+  expect(expert[0]).toEqual(["e"]);
+  expect(expert[1].scope).toBe("personal");
+  expect(expert[1].dashboardUrl).toContain("/dashboard/go/auto/appointments");
+  expect(learner[0]).toEqual(["c"]);
+  expect(learner[1].scope).toBe("org");
+  expect(learner[1].dashboardUrl).toContain(
+    "/dashboard/organization/org-sponsor/appointments",
+  );
+  // The email twin opens the same page as the bell.
+  expect(
+    mockRescheduledEmail.mock.calls.map(
+      ([, args]) => (args as { dashboardUrl: string }).dashboardUrl,
+    ),
+  ).toEqual([expert[1].dashboardUrl, learner[1].dashboardUrl]);
+});
 
 it("a completed trial: the learner's bell and email open the plan, the expert gets a bell only", async () => {
   const staged = await stageTrialCompletedNotices({

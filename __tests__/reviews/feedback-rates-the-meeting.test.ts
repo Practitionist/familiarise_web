@@ -38,6 +38,19 @@ jest.mock("../../lib/data/appointment-detail", () => ({
   appointmentRaterRole: jest.fn(),
 }));
 
+// The booking's stage is the detail page's own derivation; these tests drive its answer.
+const mockAwaitsSettlement = jest.fn(() => false);
+jest.mock("../../lib/appointments/presentation-input", () => ({
+  __esModule: true,
+  toPresentationInput: jest.fn(() => ({})),
+}));
+jest.mock("../../lib/dashboard/money-state", () => ({
+  __esModule: true,
+  deriveBookingPresentation: jest.fn(() => ({
+    awaitsSettlement: mockAwaitsSettlement(),
+  })),
+}));
+
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
@@ -111,8 +124,12 @@ beforeEach(() => {
     userId: "u1",
     isOrgParty: false,
     organizationId: null,
-    detail: {},
+    // A plan of many sessions: its review never waits on one session's settlement.
+    detail: {
+      appointment: { appointmentType: "SUBSCRIPTION", occurrences: RUN },
+    },
   });
+  mockAwaitsSettlement.mockReturnValue(false);
   mockedRaterRole.mockReturnValue("CONSULTEE");
   mockedFindMany.mockResolvedValue(RUN);
   // jest.clearAllMocks keeps the factory implementations; only per-test
@@ -383,5 +400,71 @@ describe("#1300 — only a changed opinion is an edit", () => {
     });
     expect(mockedUpdate).not.toHaveBeenCalled();
     expect(mockedCreate.mock.calls[0][0].data).not.toHaveProperty("updatedAt");
+  });
+});
+
+describe("a one-off booking takes no rating until its only session is settled", () => {
+  const oneOff = (completionStatus: "VOIDED" | "UNVERIFIED" | "COMPLETED") => ({
+    userId: "u1",
+    isOrgParty: false,
+    organizationId: null,
+    detail: {
+      appointment: {
+        appointmentType: "CONSULTATION",
+        occurrences: [{ ...RUN[0], completionStatus }],
+      },
+    },
+  });
+  const submit = () =>
+    POST(post("slot-a"), { params: Promise.resolve({ appointmentId: APPT }) });
+
+  beforeEach(() => mockedFindFirst.mockResolvedValue({ id: "slot-a" }));
+
+  it.each(["VOIDED", "UNVERIFIED"] as const)(
+    "refuses a rating while the only session is %s and the booking still awaits its make-up, refund or review",
+    async (completionStatus) => {
+      mockedAuthorize.mockResolvedValue(oneOff(completionStatus));
+      mockAwaitsSettlement.mockReturnValue(true);
+
+      const res = await submit();
+      const body = await res.json();
+
+      expect(res.status).toBe(409);
+      expect(body.code).toBe("SESSION_NOT_SETTLED");
+      expect(JSON.stringify(body)).toMatch(/made up, refunded or reviewed/);
+      expect(mockedCreate).not.toHaveBeenCalled();
+    },
+  );
+
+  it("takes the rating once the booking is settled, for example refunded", async () => {
+    mockedAuthorize.mockResolvedValue(oneOff("VOIDED"));
+    mockAwaitsSettlement.mockReturnValue(false);
+
+    const res = await submit();
+
+    expect(res.status).toBe(200);
+    expect(mockedCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("a delivered one-off never asks whether it is settled", async () => {
+    mockedAuthorize.mockResolvedValue(oneOff("COMPLETED"));
+    mockAwaitsSettlement.mockReturnValue(true);
+
+    expect((await submit()).status).toBe(200);
+  });
+
+  it("a plan with a voided session is rated as before", async () => {
+    mockedAuthorize.mockResolvedValue({
+      ...oneOff("VOIDED"),
+      detail: {
+        appointment: {
+          appointmentType: "SUBSCRIPTION",
+          occurrences: [{ ...RUN[0], completionStatus: "VOIDED" }],
+        },
+      },
+    });
+    mockAwaitsSettlement.mockReturnValue(true);
+
+    expect((await submit()).status).toBe(200);
   });
 });

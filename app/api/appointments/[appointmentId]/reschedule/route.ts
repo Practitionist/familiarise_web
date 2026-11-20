@@ -56,7 +56,7 @@ import { isRefusal } from "@/lib/errors/refusal";
 import { notifyAppointmentRescheduled } from "@/lib/novu/service";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { stageAppointmentRescheduledEmail } from "@/lib/email/senders/booking";
-import { notificationScope } from "@/lib/novu/workflows";
+import { bookingNoticeScopes, notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
 import {
@@ -1189,6 +1189,7 @@ async function requestReschedule(
               consultationPlan: {
                 select: {
                   title: true,
+                  organizationId: true,
                   consultantProfile: {
                     select: { userId: true, user: { select: { name: true } } },
                   },
@@ -1204,6 +1205,7 @@ async function requestReschedule(
               subscriptionPlan: {
                 select: {
                   title: true,
+                  organizationId: true,
                   consultantProfile: {
                     select: { userId: true, user: { select: { name: true } } },
                   },
@@ -1219,6 +1221,7 @@ async function requestReschedule(
               subscriptionPlan: {
                 select: {
                   title: true,
+                  organizationId: true,
                   consultantProfile: {
                     select: { userId: true, user: { select: { name: true } } },
                   },
@@ -1286,10 +1289,6 @@ async function requestReschedule(
             proposedAt,
             autoConfirmed,
           });
-          const dashboardUrl = notificationHref(
-            appointment.organizationId,
-            "appointments",
-          );
           // A proposal, or a move that confirmed itself, reaches the party who
           // did not act whatever their switches say.
           const proposed = variant.outcome === "PROPOSED";
@@ -1298,58 +1297,87 @@ async function requestReschedule(
             : variant.outcome === "MOVED"
               ? ("MOVE_AUTO_CONFIRMED" as const)
               : null;
-          const [bellResults, emailRows] = await Promise.all([
-            notifyAppointmentRescheduled(
-              uniqueUserIds,
-              {
-                ...notificationScope(appointment.organizationId),
-                ...variant,
-                ...(proposed && result.proposalExpiresAt
-                  ? { respondBy: result.proposalExpiresAt.toISOString() }
-                  : {}),
-                appointmentType,
-                consultantName:
-                  plan?.consultantProfile?.user?.name ?? "Consultant",
-                consulteeName: requestedBy?.user?.name ?? "Participant",
-                planTitle: planTitleOrSessionLabel(
-                  plan?.title,
+          // The expert is scoped by the plan's host organisation, the buyer by the booking's sponsor.
+          const scopes = bookingNoticeScopes({
+            hostOrganizationId: plan?.organizationId,
+            hostUserIds: uniqueUserIds.filter(
+              (id) => id === plan?.consultantProfile?.userId,
+            ),
+            buyers: uniqueUserIds.map((userId) => ({
+              userId,
+              organizationId: appointment.organizationId,
+            })),
+          });
+          const staged = await Promise.all(
+            scopes.map(async (scope) => {
+              const dashboardUrl = notificationHref(
+                scope.organizationId,
+                "appointments",
+              );
+              const [bells, emails] = await Promise.all([
+                notifyAppointmentRescheduled(
+                  scope.userIds,
+                  {
+                    ...notificationScope(scope.organizationId),
+                    ...variant,
+                    ...(proposed && result.proposalExpiresAt
+                      ? { respondBy: result.proposalExpiresAt.toISOString() }
+                      : {}),
+                    appointmentType,
+                    consultantName:
+                      plan?.consultantProfile?.user?.name ?? "Consultant",
+                    consulteeName: requestedBy?.user?.name ?? "Participant",
+                    planTitle: planTitleOrSessionLabel(
+                      plan?.title,
+                      appointmentType,
+                    ),
+                    dashboardUrl,
+                  },
+                  {
+                    deferAttempt: true,
+                    ...(requiredKind
+                      ? {
+                          required: {
+                            kind: requiredKind,
+                            recipients: uniqueUserIds,
+                          },
+                        }
+                      : {}),
+                  },
+                ).catch((err) => {
+                  console.error(
+                    "[reschedule] Failed to send notification:",
+                    err,
+                  );
+                  return [];
+                }),
+                stageAppointmentRescheduledEmail(prisma, {
+                  appointmentId,
+                  userIds: scope.userIds,
+                  outcome: variant.outcome,
                   appointmentType,
-                ),
-                dashboardUrl,
-              },
-              {
-                deferAttempt: true,
-                ...(requiredKind
-                  ? {
-                      required: {
-                        kind: requiredKind,
-                        recipients: uniqueUserIds,
-                      },
-                    }
-                  : {}),
-              },
-            ).catch((err) => {
-              console.error("[reschedule] Failed to send notification:", err);
-              return [];
+                  oldStartsAt: result.releasedAt,
+                  newStartsAt: proposedAt,
+                  proposedBy: session.user.name || undefined,
+                  respondBy: result.proposalExpiresAt,
+                  ...(requiredKind ? { requiredFor: uniqueUserIds } : {}),
+                  // A trial's booked notice carries no calendar link, so its move carries none.
+                  calendarFor:
+                    !trial && requestedBy?.userId ? [requestedBy.userId] : [],
+                  dashboardUrl,
+                }).catch(() => []),
+              ]);
+              return { bells: bells ?? [], emails };
             }),
-            stageAppointmentRescheduledEmail(prisma, {
-              appointmentId,
-              userIds: uniqueUserIds,
-              outcome: variant.outcome,
-              appointmentType,
-              oldStartsAt: result.releasedAt,
-              newStartsAt: proposedAt,
-              proposedBy: session.user.name || undefined,
-              respondBy: result.proposalExpiresAt,
-              ...(requiredKind ? { requiredFor: uniqueUserIds } : {}),
-              dashboardUrl,
-            }).catch(() => []),
-          ]);
+          );
           await flushNotificationsAfter(
             {
-              bells: (bellResults ?? []).map((r) => r?.staged),
+              bells: staged.flatMap((s) => s.bells.map((r) => r?.staged)),
               emails: [
-                { rows: emailRows, emailType: "APPOINTMENT_RESCHEDULED" },
+                {
+                  rows: staged.flatMap((s) => s.emails),
+                  emailType: "APPOINTMENT_RESCHEDULED",
+                },
               ],
             },
             "reschedule-route",

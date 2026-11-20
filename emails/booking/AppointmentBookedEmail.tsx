@@ -21,6 +21,8 @@ export interface AppointmentBookedEmailProps {
   cancellationWindowText?: string;
   /** The attendee's own add-to-calendar links; absent for the host. */
   calendar?: { googleUrl: string; icsUrl: string } | null;
+  /** Several times placed at once: the attendee's copy lists each with its own calendar link. */
+  sessions?: { startsAtText: string; googleUrl: string | null }[];
   unsubscribeUrl?: string | null;
 }
 
@@ -36,10 +38,13 @@ export default function AppointmentBookedEmail({
   dashboardUrl,
   cancellationWindowText,
   calendar,
+  sessions,
   unsubscribeUrl,
 }: AppointmentBookedEmailProps) {
-  const title =
-    role === "consultee"
+  const listed = role === "consultee" && sessions ? sessions : null;
+  const title = listed
+    ? `Your sessions with ${otherPartyName} are scheduled`
+    : role === "consultee"
       ? `Your ${appointmentType} with ${otherPartyName} is confirmed`
       : `New booking: ${otherPartyName} for ${planTitle}`;
   return (
@@ -50,7 +55,12 @@ export default function AppointmentBookedEmail({
       <Text style={heading}>{title}</Text>
       <Text style={paragraph}>Hi {recipientName},</Text>
       <Text style={paragraph}>
-        {role === "consultee" ? (
+        {listed ? (
+          <>
+            Your sessions for <strong>{planTitle}</strong> with {otherPartyName}{" "}
+            now have their times:
+          </>
+        ) : role === "consultee" ? (
           <>
             Your {appointmentType} for <strong>{planTitle}</strong> with{" "}
             {otherPartyName} is booked for <strong>{startsAtText}</strong>.
@@ -62,16 +72,38 @@ export default function AppointmentBookedEmail({
           </>
         )}
       </Text>
+      {listed?.map((session) => (
+        <Text key={session.startsAtText} style={paragraph}>
+          <strong>{session.startsAtText}</strong>
+          {session.googleUrl ? (
+            <>
+              {" · "}
+              <Link href={session.googleUrl} style={link}>
+                Add to Google Calendar
+              </Link>
+            </>
+          ) : null}
+        </Text>
+      ))}
       <Text style={paragraph}>
-        A meeting room is created for this session and the join link appears on
-        your dashboard on the day.
+        {listed
+          ? "A meeting room is created for each session and its join link appears on your dashboard on the day."
+          : "A meeting room is created for this session and the join link appears on your dashboard on the day."}
       </Text>
       <Text style={paragraph}>
         {cancellationWindowText
           ? `Need to change plans? You can reschedule or cancel from your dashboard ${cancellationWindowText}.`
           : "Need to change plans? You can reschedule or cancel from your dashboard; the plan's cancellation policy applies."}
       </Text>
-      {calendar ? (
+      {calendar && listed ? (
+        <Text style={paragraph}>
+          Add all of them to Apple, Outlook and other calendars:{" "}
+          <Link href={calendar.icsUrl} style={link}>
+            download the .ics file
+          </Link>
+          .
+        </Text>
+      ) : calendar ? (
         <Text style={paragraph}>
           Add it to your calendar:{" "}
           <Link href={calendar.googleUrl} style={link}>

@@ -1,10 +1,11 @@
 import * as React from "react";
-import { Button, Section, Text } from "react-email";
+import { Button, Link, Section, Text } from "react-email";
 import { EmailLayout } from "@/emails/components/EmailLayout";
 import {
   button,
   buttonContainer,
   heading,
+  link,
   paragraph,
 } from "@/emails/components/styles";
 
@@ -28,6 +29,8 @@ export interface AppointmentRescheduledEmailProps {
   /** A series move: the listed sessions (at most ten, recipient's zone) and how many more moved. */
   moves?: { fromText: string; toText: string }[];
   moreMoves?: number;
+  /** MOVED: the attendee's own signed .ics link, which replaces the entry they added. */
+  calendarIcsUrl?: string | null;
   dashboardUrl: string;
   unsubscribeUrl?: string | null;
 }
@@ -135,6 +138,15 @@ export default function AppointmentRescheduledEmail(
       ) : (
         <Text style={paragraph}>{informationalBody(props)}</Text>
       )}
+      {outcome === "MOVED" && props.calendarIcsUrl ? (
+        <Text style={paragraph}>
+          Already added it to your calendar?{" "}
+          <Link href={props.calendarIcsUrl} style={link}>
+            Download the updated .ics file
+          </Link>
+          ; opening it replaces the old entry with the new time.
+        </Text>
+      ) : null}
       <Section style={buttonContainer}>
         <Button style={button} href={dashboardUrl}>
           {outcome === "PROPOSED" ? "Review the new time" : "View booking"}

@@ -2,6 +2,11 @@
  * @jest-environment node
  */
 import { classifySessionOutcome } from "@/lib/booking/session-outcome";
+import {
+  sessionHostUserIds,
+  sessionHostUserIdsAt,
+  type SessionHostsRow,
+} from "@/lib/booking/session-hosts";
 
 // #1569 D1 — the void rule's table; minutes are offsets from 10:00.
 const at = (m: number) => new Date(Date.UTC(2026, 8, 25, 10, 0) + m * 60_000);
@@ -104,5 +109,71 @@ describe("classifySessionOutcome (#1569 D1)", () => {
       outcome: "INCONCLUSIVE",
       completionStatus: "UNVERIFIED",
     });
+  });
+});
+
+describe("the host side is the team as of the session", () => {
+  const member = (
+    userId: string,
+    period: { acceptedAt: Date | null; endedAt: Date | null },
+    status: "ACCEPTED" | "REMOVED" = "REMOVED",
+  ) => ({
+    status,
+    ...period,
+    consultantProfile: { userId, deletedAt: null },
+  });
+  const classRow = (collaborators: ReturnType<typeof member>[]) =>
+    ({
+      consultation: null,
+      subscription: null,
+      trial: null,
+      webinar: null,
+      class: {
+        classPlan: { consultantProfile: { userId: "arjun" }, collaborators },
+      },
+    }) as SessionHostsRow;
+  const taughtThenLeft = member("meera", {
+    acceptedAt: at(-600),
+    endedAt: at(70),
+  });
+
+  it("a co-host who taught the hour and left the team ten minutes later still delivered it", () => {
+    const row = classRow([taughtThenLeft]);
+    const hostUserIds = sessionHostUserIdsAt(row, at(0), at(60));
+
+    expect(hostUserIds.sort()).toEqual(["arjun", "meera"]);
+    expect(
+      run(60, [seg("meera", 0, 60), seg("learner", 0, 60)], undefined, [
+        ...hostUserIds,
+      ]).outcome,
+    ).toBe("HELD");
+    // Today's team no longer has her; judged against it, the hour reads as host-absent.
+    const today = sessionHostUserIds(row);
+    expect(today).toEqual(["arjun"]);
+    expect(
+      run(60, [seg("meera", 0, 60), seg("learner", 0, 60)], undefined, today)
+        .outcome,
+    ).toBe("HOST_ABSENT");
+  });
+
+  it.each([
+    ["left before it began", { acceptedAt: at(-600), endedAt: at(-1) }],
+    ["joined after it ended", { acceptedAt: at(61), endedAt: null }],
+    ["never accepted", { acceptedAt: null, endedAt: null }],
+  ])("a collaborator who %s is not on its host side", (_name, period) => {
+    expect(
+      sessionHostUserIdsAt(classRow([member("x", period)]), at(0), at(60)),
+    ).toEqual(["arjun"]);
+  });
+
+  it("a current co-host counts for the session and for today", () => {
+    const row = classRow([
+      member("meera", { acceptedAt: at(-600), endedAt: null }, "ACCEPTED"),
+    ]);
+    expect(sessionHostUserIdsAt(row, at(0), at(60)).sort()).toEqual([
+      "arjun",
+      "meera",
+    ]);
+    expect(sessionHostUserIds(row).sort()).toEqual(["arjun", "meera"]);
   });
 });

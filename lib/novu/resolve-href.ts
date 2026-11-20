@@ -3,29 +3,20 @@ import { getAppUrl } from "@/lib/url";
 /**
  * Where a notification should land.
  *
- * ADR 19 puts org-hosted work in the organization dashboard and B2C work in the
- * personal ones. Notification deep-links did not follow: booking requests
- * hardcoded `/dashboard/consultant/<id>/requests` even for org-hosted plans, and
- * everything else sent a bare `/dashboard`, which the router bounces to the
- * recipient's personal tree regardless of who owns the session. A member
- * clicking an org-session notification was dropped into their personal
- * dashboard, where the item is filtered out by design.
+ * Several workflows trigger once for many recipients with a single payload, so
+ * one href has to be right for every one of them:
  *
- * There is a constraint that shapes all of this: several workflows trigger once
- * for MANY recipients with a single payload, so one href has to be right for
- * every one of them.
- *
- *   - Org-hosted work → the org route. Correct for every participant, because
- *     the LEARNER who attended and the EXPERT who delivered both reach the same
- *     `/dashboard/organization/<id>/…` page.
- *   - B2C work → `/dashboard/go/auto/<surface>` (#1527). Deliberately NOT a
- *     guessed personal route: the consultant and the consultee have different
- *     dashboards, and the go resolver picks each viewer's own side of the
- *     surface. A bare `/dashboard` only reached the viewer's role home, so a
- *     dual-role user landed on the wrong side.
+ *   - An organisation's work → the organisation route. Right only for people
+ *     who belong to that organisation, so pass the organisation of the
+ *     recipients' own side: the plan's host organisation for the expert and
+ *     team, the booking's sponsor for the buyer. The two differ on a sponsored
+ *     booking of an independent expert's plan; send each side separately.
+ *   - Personal work → `/dashboard/go/auto/<surface>`. The go resolver picks
+ *     each viewer's own dashboard, so the consultant and the consultee both
+ *     land on their side of the surface.
  *
  * Use {@link personalHref} instead when a trigger has exactly one recipient and
- * their side is known — a precise link beats a router bounce.
+ * their side is known: a precise link beats a router bounce.
  */
 
 type Surface =
@@ -39,7 +30,8 @@ function libraryAwarePath(surface: Surface): string {
 }
 
 /**
- * Multi-recipient safe. `organizationId` null means B2C.
+ * Safe for many recipients on the same side of a booking. `organizationId` is
+ * that side's organisation; null means personal.
  */
 export function notificationHref(
   organizationId: string | null | undefined,
@@ -81,8 +73,9 @@ export function personalHref(
 }
 
 /**
- * Convenience for the common case: one recipient whose side is known, but the
- * work may be org-hosted. Falls back to the org route when it is.
+ * One recipient whose side is known: the organisation route when their side of
+ * the work belongs to one (for an expert, the plan's host organisation), else
+ * their personal dashboard.
  */
 export function scopedHref(args: {
   organizationId: string | null | undefined;

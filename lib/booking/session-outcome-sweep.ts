@@ -39,7 +39,7 @@ import {
   type PresenceInterval,
   type SessionOutcomeVerdict,
 } from "./session-outcome";
-import { SESSION_HOSTS_SELECT, sessionHostUserIds } from "./session-hosts";
+import { SESSION_HOSTS_SELECT, sessionHostUserIdsAt } from "./session-hosts";
 import { transitionOccurrenceCompletion } from "./transitions";
 import { liveParticipant, transitionParticipant } from "./participants";
 import {
@@ -551,7 +551,11 @@ export async function decideSlotOutcome(
   let verdict = classifySessionOutcome({
     startsAt: slot.startsAt,
     endsAt: slot.endsAt,
-    hostUserIds: sessionHostUserIds(slot.appointment),
+    hostUserIds: sessionHostUserIdsAt(
+      slot.appointment,
+      slot.startsAt,
+      slot.endsAt,
+    ),
     intervals: presences,
     meeting: meeting
       ? { endedAt: meeting.endedAt, endedReason: meeting.endedReason }

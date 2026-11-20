@@ -95,7 +95,7 @@ import {
   type StagedTrigger,
 } from "@/lib/novu";
 import { stageTrialLifecycleEmail } from "@/lib/email/senders/booking";
-import { notificationScope } from "@/lib/novu/workflows";
+import { bookingNoticeScopes, notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import { goHref } from "@/lib/dashboard/go";
 import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
@@ -1492,20 +1492,24 @@ export async function handlePaymentSuccess(
         ),
       );
 
-      const notifUserIds = [userId];
-      if (consultantUserId && consultantUserId !== userId) {
-        notifUserIds.push(consultantUserId);
-      }
       const webinarPlanId = appointmentForNotif?.webinar?.webinarPlan?.id;
       const classPlanId = appointmentForNotif?.class?.classPlan?.id;
-      if (webinarPlanId || classPlanId) {
-        const collaboratorIds = webinarPlanId
-          ? await collaboratorUserIds("webinar", webinarPlanId)
-          : await collaboratorUserIds("class", classPlanId as string);
-        for (const id of collaboratorIds) {
-          if (!notifUserIds.includes(id)) notifUserIds.push(id);
-        }
-      }
+      const collaboratorIds = webinarPlanId
+        ? await collaboratorUserIds("webinar", webinarPlanId)
+        : classPlanId
+          ? await collaboratorUserIds("class", classPlanId)
+          : [];
+      // The expert and team are scoped by the plan's host organisation, the payer by their sponsor.
+      const bookedGroups = bookingNoticeScopes({
+        hostOrganizationId:
+          appointmentForNotif?.consultation?.consultationPlan?.organizationId ??
+          appointmentForNotif?.subscription?.subscriptionPlan?.organizationId ??
+          appointmentForNotif?.webinar?.webinarPlan?.organizationId ??
+          appointmentForNotif?.class?.classPlan?.organizationId ??
+          appointmentForNotif?.trial?.subscriptionPlan?.organizationId,
+        hostUserIds: [consultantUserId, ...collaboratorIds],
+        buyers: [{ userId, organizationId: orgId }],
+      });
 
       const firstSlot = await prisma.appointmentOccurrence.findFirst({
         where: { appointmentId },
@@ -1522,20 +1526,27 @@ export async function handlePaymentSuccess(
           }),
         );
       } else {
-        notifications.push(
-          Promise.resolve(
-            notifyAppointmentBooked(notifUserIds, {
-              ...scope,
-              appointmentId,
-              dateTime: firstSlot.startsAt.toISOString(),
-              appointmentType: metadata.appointmentType,
-              consultantName: consultantNameForNotif,
-              consulteeName: userName || "User",
-              planTitle: resolvedPlanTitle,
-              dashboardUrl,
-            }),
-          ),
-        );
+        for (const group of bookedGroups) {
+          notifications.push(
+            Promise.resolve(
+              notifyAppointmentBooked(group.userIds, {
+                ...(group.organizationId === orgId
+                  ? scope
+                  : notificationScope(group.organizationId)),
+                appointmentId,
+                dateTime: firstSlot.startsAt.toISOString(),
+                appointmentType: metadata.appointmentType,
+                consultantName: consultantNameForNotif,
+                consulteeName: userName || "User",
+                planTitle: resolvedPlanTitle,
+                dashboardUrl: notificationHref(
+                  group.organizationId,
+                  "appointments",
+                ),
+              }),
+            ),
+          );
+        }
       }
 
       await Promise.allSettled(

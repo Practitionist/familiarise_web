@@ -57,6 +57,48 @@ it("booked: consultee reads confirmed, consultant reads new booking", async () =
   expect(consultant).toContain("New booking: Asha for Interview prep");
 });
 
+it("booked: times placed after payment list every session with its own calendar link", async () => {
+  const base = {
+    recipientName: "Priya",
+    planTitle: "Weekly coaching",
+    appointmentType: "subscription",
+    startsAtText: when,
+    dashboardUrl,
+    calendar: {
+      googleUrl: "https://calendar.google.com/first",
+      icsUrl: "https://app.test/api/calendar/appt-1",
+    },
+    sessions: [
+      { startsAtText: when, googleUrl: "https://calendar.google.com/first" },
+      { startsAtText: later, googleUrl: "https://calendar.google.com/second" },
+    ],
+  };
+  const learner = await html(
+    <AppointmentBookedEmail
+      {...base}
+      role="consultee"
+      otherPartyName="Dr Rao"
+    />,
+  );
+  expect(learner).toContain("Your sessions with Dr Rao are scheduled");
+  expect(learner).toContain(when);
+  expect(learner).toContain(later);
+  expect(learner).toContain('href="https://calendar.google.com/second"');
+  expect(learner).toContain('href="https://app.test/api/calendar/appt-1"');
+  expect(learner).toContain(`href="${dashboardUrl}"`);
+
+  // The expert's copy never turns into the list.
+  const expert = await html(
+    <AppointmentBookedEmail
+      {...base}
+      role="consultant"
+      otherPartyName="Priya"
+    />,
+  );
+  expect(expert).toContain("New booking: Priya for Weekly coaching");
+  expect(expert).not.toContain(later);
+});
+
 it("cancelled: names who cancelled, the reason and the refund line", async () => {
   const out = await html(
     <AppointmentCancelledEmail
@@ -100,6 +142,30 @@ it("rescheduled: PROPOSED carries the deadline, MOVED is informational", async (
   expect(moved).toContain("Your consultation has moved");
   expect(moved).toContain(later);
   expect(moved).not.toContain("before it lapses");
+  expect(moved).not.toContain(".ics");
+});
+
+it("rescheduled: a moved session offers the attendee the updated calendar file, and only on a move", async () => {
+  const base = {
+    recipientName: "Asha",
+    appointmentType: "consultation",
+    oldStartsAtText: when,
+    newStartsAtText: later,
+    dashboardUrl,
+    calendarIcsUrl: "https://app.test/api/calendar/appt-1?u=asha&t=abc",
+  };
+  const moved = await html(
+    <AppointmentRescheduledEmail {...base} outcome="MOVED" />,
+  );
+  expect(moved).toContain(
+    'href="https://app.test/api/calendar/appt-1?u=asha&amp;t=abc"',
+  );
+  expect(moved).toContain("replaces the old entry");
+
+  const declined = await html(
+    <AppointmentRescheduledEmail {...base} outcome="DECLINED" />,
+  );
+  expect(declined).not.toContain("api/calendar");
 });
 
 it("reminder: joins when a join link is known, else views the booking", async () => {

@@ -26,7 +26,7 @@
  * rather than failing the decline.
  */
 
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import { reportSentryError } from "@/lib/observability/report";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import type { EventType } from "@/utils/scheduling-engine/types";
@@ -38,6 +38,7 @@ import {
   type ApprovalLock,
 } from "@/utils/appointmentlock";
 import { transitionRescheduleRequest } from "@/lib/booking/transitions";
+import { allocationConfirmsMove } from "@/lib/booking/allocation/notify";
 import { closeConfirmedProposal } from "@/lib/booking/reschedule-confirm";
 import { stageNoticesForFreedWindows } from "@/lib/booking/backup-interest";
 import {
@@ -46,14 +47,15 @@ import {
   reportPartialRestore,
   restoreRescheduledBooking,
 } from "@/lib/booking/reschedule-restore";
-import { notifyAppointmentRescheduled } from "@/lib/novu";
-import { EMAIL_BUDGET_MS, sendAppointmentRescheduledEmail } from "@/lib/email";
-import { notificationScope } from "@/lib/novu/workflows";
-import { notificationHref } from "@/lib/novu/resolve-href";
+import { EMAIL_BUDGET_MS } from "@/lib/email";
+import type { RescheduleOutcomeFields } from "@/lib/novu/workflows";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import {
+  attemptRescheduleNotice,
   RESCHEDULE_PARTIES_SELECT,
   rescheduleParties,
+  stageRescheduleNotice,
+  type StagedRescheduleNotice,
 } from "@/lib/booking/reschedule-outcome-notice";
 
 export type RespondOutcome = { done: true } | { done: false; reason: string };
@@ -133,6 +135,7 @@ export async function acceptProposal(args: {
     actorUserId: args.resolvedById,
     // ACCEPTED commits with the move or not at all.
     inTx: async (tx, moved) => {
+      allocationConfirmsMove(tx);
       await closeConfirmedProposal(tx, {
         where: { id: request.id },
         to: "ACCEPTED",
@@ -188,39 +191,26 @@ export async function acceptProposal(args: {
         })
       : null;
     if (detail && appt && parties && released && detail.proposedTimes[0]) {
-      const { planTitle, consultantUser, consulteeUser } = parties;
+      const { consultantUser, consulteeUser } = parties;
       const recipient = detail.initiatedById;
       const other =
         consulteeUser.id === detail.initiatedById
           ? consultantUser.id
           : consulteeUser.id;
-      const userIds = [recipient, other].filter(
-        (id): id is string => !!id && id !== recipient,
-      );
-      await notifyAppointmentRescheduled([recipient, ...userIds], {
-        ...notificationScope(appt.organizationId),
-        appointmentType: appt.appointmentType,
-        consultantName: consultantUser.name || "Consultant",
-        consulteeName: consulteeUser.name || "Consultee",
-        planTitle,
-        dashboardUrl: notificationHref(appt.organizationId, "appointments"),
-        outcome: "MOVED",
-        oldDateTime: released.startsAt.toISOString(),
-        newDateTime: detail.proposedTimes[0].startsAt.toISOString(),
-      });
-      // #1653 — the email twin; the sender never throws.
-      await sendAppointmentRescheduledEmail(
-        {
-          appointmentId: appt.id,
-          userIds: [recipient, ...userIds],
+      const staged = await stageRescheduleNotice(prisma, {
+        appointment: appt,
+        parties,
+        userIds: [recipient, other].filter(
+          (id, i, arr) => !!id && arr.indexOf(id) === i,
+        ),
+        dedupeKey: `reschedule-moved:${args.rescheduleRequestId}`,
+        variant: {
           outcome: "MOVED",
-          appointmentType: appt.appointmentType,
-          oldStartsAt: released.startsAt,
-          newStartsAt: detail.proposedTimes[0].startsAt,
-          dashboardUrl: notificationHref(appt.organizationId, "appointments"),
+          oldDateTime: released.startsAt.toISOString(),
+          newDateTime: detail.proposedTimes[0].startsAt.toISOString(),
         },
-        EMAIL_BUDGET_MS.REQUEST,
-      );
+      });
+      await attemptRescheduleNotice(staged, EMAIL_BUDGET_MS.REQUEST);
     }
   } catch (notifyErr) {
     await import("@/lib/observability/report")
@@ -289,6 +279,8 @@ export async function declineProposal(args: {
   let parkedStatus: string | null = null;
   /** Set when another party had already answered this proposal. */
   let answerLost = false;
+  /** Staged on the transaction that commits the decline; attempted after it. */
+  let declinedNotice: StagedRescheduleNotice | null = null;
 
   try {
     await withAppointmentLock(request.appointmentId, async () => {
@@ -321,6 +313,12 @@ export async function declineProposal(args: {
             restoreMiss = err;
             throw err;
           }
+          declinedNotice = await stageDeclinedNotice(
+            tx,
+            request.id,
+            resolvedById,
+            restored === request.releasedOccurrenceIds.length,
+          );
         });
         return;
       } catch (err) {
@@ -348,6 +346,12 @@ export async function declineProposal(args: {
               to: "DECLINED",
               data: { resolvedById },
             });
+            declinedNotice = await stageDeclinedNotice(
+              tx,
+              request.id,
+              resolvedById,
+              false,
+            );
             try {
               parkedStatus = await parkParentForUnrestoredEnding(tx, request, {
                 actorUserId: resolvedById,
@@ -458,90 +462,20 @@ export async function declineProposal(args: {
     });
   }
 
-  // PR 2e — the initiator learns their proposal was declined, and WHICH of the
-  // two things that means. The old notify path was one fixed sentence for both,
-  // so a restored booking was announced as if it were sitting in the allocate
-  // queue, and a stranded one was told its original time stood.
-  try {
-    const detail = await prisma.rescheduleRequest.findUnique({
-      where: { id: rescheduleRequestId },
-      select: {
-        initiatedById: true,
-        appointment: {
-          select: {
-            id: true,
-            organizationId: true,
-            appointmentType: true,
-            ...RESCHEDULE_PARTIES_SELECT,
-          },
-        },
-        releasedOccurrenceIds: true,
-      },
-    });
-    const appt = detail?.appointment;
-    const parties = appt ? rescheduleParties(appt) : null;
-    if (detail && parties && appt) {
-      const { planTitle, consultantUser, consulteeUser } = parties;
-      const declinedUserIds = [
-        detail.initiatedById,
-        consultantUser.id,
-        consulteeUser.id,
-      ].filter((id, i, arr) => arr.indexOf(id) === i);
-      // The earliest session the booking still owes, so the copy can name a
-      // time. On the restored path that is the earliest RESTORED one; on the
-      // stranded path it is the earliest still-released one, which is the time
-      // the counterparty has to give up.
-      const earliest = await prisma.appointmentOccurrence.findFirst({
-        where: {
-          id: { in: detail.releasedOccurrenceIds },
-          ...(restoredFully
-            ? { completionStatus: "SCHEDULED" as const }
-            : { completionStatus: "RESCHEDULED" as const }),
-          deletedAt: null,
-        },
-        orderBy: { startsAt: "asc" },
-        select: { startsAt: true },
-      });
-      const outcome = restoredFully ? "DECLINED" : "RELEASED";
-      // The proposer's request was declined by someone else: required for them.
-      const proposerIds = declinedUserIds.filter((id) => id !== resolvedById);
-      await notifyAppointmentRescheduled(
-        declinedUserIds,
+  // The notice committed with the decline; a failed attempt waits for the relays.
+  if (declinedNotice) {
+    try {
+      await attemptRescheduleNotice(declinedNotice, EMAIL_BUDGET_MS.REQUEST);
+    } catch (notifyErr) {
+      reportSentryError(
+        notifyErr instanceof Error ? notifyErr : new Error(String(notifyErr)),
         {
-          ...notificationScope(appt.organizationId),
-          appointmentType: appt.appointmentType,
-          consultantName: consultantUser.name || "Consultant",
-          consulteeName: consulteeUser.name || "Consultee",
-          planTitle,
-          dashboardUrl: notificationHref(appt.organizationId, "appointments"),
-          outcome,
-          ...(earliest ? { oldDateTime: earliest.startsAt.toISOString() } : {}),
+          subsystem: "bookings",
+          op: "reschedule-decline-notify",
+          expected: true,
         },
-        { required: { kind: "REQUEST_DECLINED", recipients: proposerIds } },
-      );
-      // #1653 — the email twin; the sender never throws.
-      await sendAppointmentRescheduledEmail(
-        {
-          appointmentId: appt.id,
-          userIds: declinedUserIds,
-          requiredFor: proposerIds,
-          outcome,
-          appointmentType: appt.appointmentType,
-          oldStartsAt: earliest?.startsAt ?? null,
-          dashboardUrl: notificationHref(appt.organizationId, "appointments"),
-        },
-        EMAIL_BUDGET_MS.REQUEST,
       );
     }
-  } catch (notifyErr) {
-    reportSentryError(
-      notifyErr instanceof Error ? notifyErr : new Error(String(notifyErr)),
-      {
-        subsystem: "bookings",
-        op: "reschedule-decline-notify",
-        expected: true,
-      },
-    );
   }
 
   // The route's DECLINED/RELEASED code and the notification above are both
@@ -550,4 +484,68 @@ export async function declineProposal(args: {
   // Reporting it is also what lets the route stop re-reading the rows: the
   // writer is the authority on what it wrote.
   return { done: true, restoredFully };
+}
+
+/**
+ * Stages the declined notice on the decline's own transaction, so it commits
+ * with the answer: DECLINED when every original time is back, RELEASED when the
+ * booking still owes a time. Required for everyone but the person who declined.
+ */
+async function stageDeclinedNotice(
+  tx: Tx,
+  rescheduleRequestId: string,
+  resolvedById: string,
+  restoredFully: boolean,
+): Promise<StagedRescheduleNotice | null> {
+  const detail = await tx.rescheduleRequest.findUnique({
+    where: { id: rescheduleRequestId },
+    select: {
+      initiatedById: true,
+      appointment: {
+        select: {
+          id: true,
+          organizationId: true,
+          appointmentType: true,
+          ...RESCHEDULE_PARTIES_SELECT,
+        },
+      },
+      releasedOccurrenceIds: true,
+    },
+  });
+  const appt = detail?.appointment;
+  const parties = appt ? rescheduleParties(appt) : null;
+  if (!detail || !parties || !appt) return null;
+  const userIds = [
+    detail.initiatedById,
+    parties.consultantUser.id,
+    parties.consulteeUser.id,
+  ].filter((id, i, arr) => arr.indexOf(id) === i);
+  // The earliest session the booking still owes, so the copy can name a time:
+  // the earliest restored one, or the earliest still released.
+  const earliest = await tx.appointmentOccurrence.findFirst({
+    where: {
+      id: { in: detail.releasedOccurrenceIds },
+      completionStatus: restoredFully ? "SCHEDULED" : "RESCHEDULED",
+      deletedAt: null,
+    },
+    orderBy: { startsAt: "asc" },
+    select: { startsAt: true },
+  });
+  const stillOwed = earliest
+    ? { oldDateTime: earliest.startsAt.toISOString() }
+    : {};
+  const variant: RescheduleOutcomeFields = restoredFully
+    ? { outcome: "DECLINED", ...stillOwed }
+    : { outcome: "RELEASED", ...stillOwed };
+  return stageRescheduleNotice(tx, {
+    appointment: appt,
+    parties,
+    userIds,
+    dedupeKey: `reschedule-declined:${rescheduleRequestId}:${variant.outcome}`,
+    required: {
+      kind: "REQUEST_DECLINED",
+      recipients: userIds.filter((id) => id !== resolvedById),
+    },
+    variant,
+  });
 }

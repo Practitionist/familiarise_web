@@ -11,20 +11,25 @@ import {
   notifyAppointmentBooked,
   notifyAppointmentPartiallyScheduled,
   type StagedTrigger,
+  type TriggerResult,
 } from "@/lib/novu";
-import { notificationScope } from "@/lib/novu/workflows";
+import { bookingNoticeScopes, notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import { LIVE_SLOT_WHERE } from "@/lib/booking/cancellation-scope";
 
-/** The booked notice's recipients: the host and learners, then the plan's team, each once. */
-const withTeam = (userIds: string[], team: string[]): string[] => [
-  ...new Set([...userIds, ...team]),
-];
+/** Transactions whose allocation confirms a move: its "moved" notice is the one both parties get. */
+const confirmingMove = new WeakSet<Tx>();
+
+/** Called from the allocation's `inTx` hook by the reschedule accept and auto-confirm. */
+export function allocationConfirmsMove(tx: Tx): void {
+  confirmingMove.add(tx);
+}
 
 /**
  * Stages the booked notice for both parties once real times exist. On a
  * webinar or class the learners are read from learner seats and the team from
- * the plan, never from staff participant rows.
+ * the plan, never from staff participant rows. The expert and team are scoped
+ * by the plan's host organisation, each learner by their own sponsor.
  */
 export async function stageAllocationNotices(
   tx: Tx,
@@ -47,6 +52,7 @@ export async function stageAllocationNotices(
   // #1775 B-9 — nothing is booked before payment: an awaiting-payment
   // approval's only consultee message is the pay-link email the mint sends.
   if (outcome === "awaiting_payment") return [];
+  if (confirmingMove.has(tx)) return [];
   const prisma = tx;
   // A top-up or reallocation keeps past and cancelled rows; the notice names the next live one.
   const nextLiveSession = {
@@ -55,15 +61,16 @@ export async function stageAllocationNotices(
     startsAt: { gte: new Date() },
   } satisfies Prisma.AppointmentOccurrenceWhereInput;
   let context: {
-    userIds: string[];
+    /** The plan's expert, then its team. */
+    hostUserIds: string[];
+    hostOrganizationId: string | null;
     // #1206 — the partial notice goes to these only; the consultant was
     // already shown the shortfall and confirmed it.
-    consulteeUserIds: string[];
+    buyers: { userId: string; organizationId: string | null }[];
     consultantName: string;
     consulteeName: string;
     planTitle: string;
     firstStart: Date | null;
-    organizationId: string | null;
     appointmentId?: string;
   } | null = null;
 
@@ -74,6 +81,7 @@ export async function stageAllocationNotices(
         consultationPlan: {
           select: {
             title: true,
+            organizationId: true,
             consultantProfile: {
               select: { user: { select: { id: true, name: true } } },
             },
@@ -99,17 +107,19 @@ export async function stageAllocationNotices(
     });
     if (!row?.appointment) return [];
     context = {
-      userIds: [
-        row.consultationPlan.consultantProfile.user.id,
-        row.requestedBy.user.id,
-      ].filter(Boolean),
-      consulteeUserIds: [row.requestedBy.user.id].filter(Boolean),
+      hostUserIds: [row.consultationPlan.consultantProfile.user.id],
+      hostOrganizationId: row.consultationPlan.organizationId,
+      buyers: [
+        {
+          userId: row.requestedBy.user.id,
+          organizationId: row.appointment.organizationId,
+        },
+      ],
       consultantName:
         row.consultationPlan.consultantProfile.user.name || "Consultant",
       consulteeName: row.requestedBy.user.name || "Consultee",
       planTitle: row.consultationPlan.title,
       firstStart: row.appointment.occurrences[0]?.startsAt ?? null,
-      organizationId: row.appointment.organizationId,
       appointmentId: row.appointment.id,
     };
   } else if (eventType === "subscription") {
@@ -119,6 +129,7 @@ export async function stageAllocationNotices(
         subscriptionPlan: {
           select: {
             title: true,
+            organizationId: true,
             consultantProfile: {
               select: { user: { select: { id: true, name: true } } },
             },
@@ -143,17 +154,19 @@ export async function stageAllocationNotices(
     });
     if (!row?.appointment) return [];
     context = {
-      userIds: [
-        row.subscriptionPlan.consultantProfile.user.id,
-        row.requestedBy.user.id,
-      ].filter(Boolean),
-      consulteeUserIds: [row.requestedBy.user.id].filter(Boolean),
+      hostUserIds: [row.subscriptionPlan.consultantProfile.user.id],
+      hostOrganizationId: row.subscriptionPlan.organizationId,
+      buyers: [
+        {
+          userId: row.requestedBy.user.id,
+          organizationId: row.appointment.organizationId,
+        },
+      ],
       consultantName:
         row.subscriptionPlan.consultantProfile.user.name || "Consultant",
       consulteeName: row.requestedBy.user.name || "Consultee",
       planTitle: row.subscriptionPlan.title,
       firstStart: row.appointment.occurrences[0]?.startsAt ?? null,
-      organizationId: row.appointment.organizationId,
       appointmentId: row.appointment.id,
     };
   } else if (eventType === "webinar") {
@@ -164,6 +177,7 @@ export async function stageAllocationNotices(
           select: {
             id: true,
             title: true,
+            organizationId: true,
             consultantProfile: {
               select: { user: { select: { id: true, name: true } } },
             },
@@ -175,7 +189,10 @@ export async function stageAllocationNotices(
             organizationId: true,
             participants: {
               where: liveLearnerSeat(),
-              select: { user: { select: { id: true, name: true } } },
+              select: {
+                organizationId: true,
+                user: { select: { id: true, name: true } },
+              },
             },
             occurrences: {
               where: nextLiveSession,
@@ -200,11 +217,12 @@ export async function stageAllocationNotices(
       userMap.set(u.id, u.name ?? "Attendee");
     userMap.delete(hostUser.id);
     context = {
-      userIds: withTeam(
-        [hostUser.id, ...userMap.keys()],
-        await collaboratorUserIds("webinar", plan.id, tx),
-      ),
-      consulteeUserIds: [...userMap.keys()],
+      hostUserIds: [
+        hostUser.id,
+        ...(await collaboratorUserIds("webinar", plan.id, tx)),
+      ],
+      hostOrganizationId: plan.organizationId,
+      buyers: seatBuyers(row.appointment.participants),
       consultantName: hostUser.name || "Consultant",
       consulteeName:
         userMap.size === 1
@@ -212,7 +230,6 @@ export async function stageAllocationNotices(
           : `${userMap.size} attendees`,
       planTitle: plan.title,
       firstStart,
-      organizationId: row.appointment.organizationId,
       appointmentId: row.appointment.id,
     };
   } else {
@@ -223,6 +240,7 @@ export async function stageAllocationNotices(
           select: {
             id: true,
             title: true,
+            organizationId: true,
             consultantProfile: {
               select: { user: { select: { id: true, name: true } } },
             },
@@ -234,7 +252,10 @@ export async function stageAllocationNotices(
             organizationId: true,
             participants: {
               where: liveLearnerSeat(),
-              select: { user: { select: { id: true, name: true } } },
+              select: {
+                organizationId: true,
+                user: { select: { id: true, name: true } },
+              },
             },
             occurrences: {
               where: nextLiveSession,
@@ -264,11 +285,12 @@ export async function stageAllocationNotices(
     }
     userMap.delete(host.id);
     context = {
-      userIds: withTeam(
-        [host.id, ...userMap.keys()],
-        await collaboratorUserIds("class", plan.id, tx),
-      ),
-      consulteeUserIds: [...userMap.keys()],
+      hostUserIds: [
+        host.id,
+        ...(await collaboratorUserIds("class", plan.id, tx)),
+      ],
+      hostOrganizationId: plan.organizationId,
+      buyers: seatBuyers(appts.flatMap((a) => a.participants)),
       consultantName: host.name || "Consultant",
       consulteeName:
         userMap.size === 1
@@ -276,52 +298,144 @@ export async function stageAllocationNotices(
           : `${userMap.size} attendees`,
       planTitle: plan.title,
       firstStart,
-      organizationId: appts[0]!.organizationId,
       appointmentId: appts[0]!.id,
     };
   }
 
-  if (!context || context.userIds.length === 0) return [];
+  if (!context) return [];
+  const booking = context;
+  const groups = bookingNoticeScopes(booking);
+  if (groups.length === 0) return [];
 
-  const payload = {
-    ...notificationScope(context.organizationId),
-    appointmentId: context.appointmentId,
-    dateTime: context.firstStart?.toISOString(),
+  const scoped = (organizationId: string | null) => ({
+    ...notificationScope(organizationId),
+    appointmentId: booking.appointmentId,
+    dateTime: booking.firstStart?.toISOString(),
     appointmentType: eventType,
-    consultantName: context.consultantName,
-    consulteeName: context.consulteeName,
-    planTitle: context.planTitle,
-    dashboardUrl: notificationHref(context.organizationId, "appointments"),
-  };
+    consultantName: booking.consultantName,
+    consulteeName: booking.consulteeName,
+    planTitle: booking.planTitle,
+    dashboardUrl: notificationHref(organizationId, "appointments"),
+  });
 
   const placedKeys = placedIds
     .filter((id): id is string => typeof id === "string")
     .sort((x, y) => (x < y ? -1 : x > y ? 1 : 0));
   const dedupeKey =
     placedKeys.length > 0
-      ? `allocation:${context.appointmentId ?? eventId}:${placedKeys.join(",")}`
+      ? `allocation:${booking.appointmentId ?? eventId}:${placedKeys.join(",")}`
       : undefined;
-  const results = await notifyAppointmentBooked(context.userIds, payload, {
-    tx,
-    dedupeKey,
-  });
-
-  // #1206 — a second, separate notice rather than a flag on the booking one:
-  // the times that WERE placed are a real booking and read as one, and the
-  // thing the consultee has to be told is what happened to the rest.
-  if (partial?.partial && context.consulteeUserIds.length > 0) {
+  const results: TriggerResult[] = [];
+  for (const group of groups) {
     results.push(
-      ...(await notifyAppointmentPartiallyScheduled(
-        context.consulteeUserIds,
-        {
-          ...payload,
-          placedSessions: partial.placedSessions ?? 0,
-          requiredSessions: partial.requiredSessions ?? 0,
-          unplacedSessions: partial.unplacedSessions ?? 0,
-        },
+      ...(await notifyAppointmentBooked(
+        group.userIds,
+        scoped(group.organizationId),
         { tx, dedupeKey },
       )),
     );
   }
+
+  await stageSessionsScheduledEmail(tx, eventType, booking, placedKeys);
+
+  // A separate notice, not a flag on the booked one: the placed times read as a
+  // real booking, and the learner is told what happens to the rest.
+  if (partial?.partial) {
+    const hostIds = new Set(booking.hostUserIds);
+    for (const group of groups) {
+      const learners = group.userIds.filter((id) => !hostIds.has(id));
+      if (learners.length === 0) continue;
+      results.push(
+        ...(await notifyAppointmentPartiallyScheduled(
+          learners,
+          {
+            ...scoped(group.organizationId),
+            placedSessions: partial.placedSessions ?? 0,
+            requiredSessions: partial.requiredSessions ?? 0,
+            unplacedSessions: partial.unplacedSessions ?? 0,
+          },
+          { tx, dedupeKey },
+        )),
+      );
+    }
+  }
   return results.flatMap((r) => (r.staged ? [r.staged] : []));
+}
+
+/**
+ * The learner's one email when a 1:1 booking's times are placed after payment:
+ * on the booking's first placement, unless its booked email already went.
+ * Later batches ring the bell only. Staged here; the email relay sends it.
+ */
+async function stageSessionsScheduledEmail(
+  tx: Tx,
+  eventType: EventType,
+  booking: {
+    appointmentId?: string;
+    buyers: { userId: string; organizationId: string | null }[];
+    hostOrganizationId: string | null;
+    consultantName: string;
+    consulteeName: string;
+    planTitle: string;
+  },
+  placedIds: string[],
+): Promise<void> {
+  if (eventType !== "consultation" && eventType !== "subscription") return;
+  const { appointmentId } = booking;
+  const learner = booking.buyers[0];
+  if (!appointmentId || !learner || placedIds.length === 0) return;
+  const earlierRows = await tx.appointmentOccurrence.count({
+    where: { appointmentId, id: { notIn: placedIds } },
+  });
+  if (earlierRows > 0) return;
+  const bookedEmail = await tx.failedEmail.findFirst({
+    where: {
+      entityRef: `appointment:${appointmentId}`,
+      emailType: "APPOINTMENT_BOOKED",
+    },
+    select: { id: true },
+  });
+  if (bookedEmail) return;
+  const sessions = await tx.appointmentOccurrence.findMany({
+    where: {
+      id: { in: placedIds },
+      ...LIVE_SLOT_WHERE,
+      isTentative: false,
+      startsAt: { gte: new Date() },
+    },
+    orderBy: { startsAt: "asc" },
+    select: { startsAt: true, endsAt: true },
+  });
+  const first = sessions[0];
+  if (!first) return;
+  // Loaded on use: the allocator imports this module and must not load the email templates.
+  const { stageAppointmentBookedEmail } =
+    await import("@/lib/email/senders/booking");
+  await stageAppointmentBookedEmail(tx, {
+    appointmentId,
+    consulteeUserId: learner.userId,
+    consultantUserId: null,
+    consulteeName: booking.consulteeName,
+    consultantName: booking.consultantName,
+    planTitle: booking.planTitle,
+    appointmentType: eventType,
+    startsAt: first.startsAt,
+    calendarSession: first,
+    sessions,
+    dashboardUrl: notificationHref(learner.organizationId, "appointments"),
+    hostDashboardUrl: notificationHref(
+      booking.hostOrganizationId,
+      "appointments",
+    ),
+  });
+}
+
+/** Each learner seat's holder in the seat's own sponsor scope. */
+function seatBuyers(
+  seats: readonly { organizationId: string | null; user: { id: string } }[],
+): { userId: string; organizationId: string | null }[] {
+  return seats.map((seat) => ({
+    userId: seat.user.id,
+    organizationId: seat.organizationId,
+  }));
 }

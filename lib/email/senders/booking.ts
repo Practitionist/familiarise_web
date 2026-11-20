@@ -102,7 +102,11 @@ export interface AppointmentBookedEmailArgs {
   startsAt: Date;
   /** The next session ahead, which the attendee's calendar links name; none means no links. */
   calendarSession?: CalendarSession | null;
+  /** Times placed after payment: with more than one, the attendee's copy lists them all. */
+  sessions?: CalendarSession[];
+  /** The learner's link; the expert and team open `hostDashboardUrl`. */
   dashboardUrl: string;
+  hostDashboardUrl: string;
   cancellationWindowText?: string;
 }
 
@@ -110,14 +114,27 @@ function bookedSpec(args: AppointmentBookedEmailArgs): RecipientEmailSpec {
   const type = humanType(args.appointmentType);
   const role = (r: EmailRecipient) =>
     r.userId === args.consulteeUserId ? "consultee" : "consultant";
+  const listed = (r: EmailRecipient) =>
+    role(r) === "consultee" && args.sessions && args.sessions.length > 1
+      ? args.sessions
+      : null;
+  const links = (r: EmailRecipient, session: CalendarSession) =>
+    calendarLinks({
+      appointmentId: args.appointmentId,
+      userId: r.userId,
+      title: args.planTitle,
+      ...session,
+    });
   return {
     emailType: "APPOINTMENT_BOOKED",
     category: "appointments",
     entityRef: `appointment:${args.appointmentId}`,
     subject: (r) =>
-      role(r) === "consultee"
-        ? `Your ${type} with ${args.consultantName} is confirmed`
-        : `New booking: ${args.consulteeName} for ${args.planTitle}`,
+      listed(r)
+        ? `Your sessions with ${args.consultantName} are scheduled`
+        : role(r) === "consultee"
+          ? `Your ${type} with ${args.consultantName} is confirmed`
+          : `New booking: ${args.consulteeName} for ${args.planTitle}`,
     render: (r) =>
       React.createElement(AppointmentBookedEmail, {
         role: role(r),
@@ -127,17 +144,18 @@ function bookedSpec(args: AppointmentBookedEmailArgs): RecipientEmailSpec {
         planTitle: args.planTitle,
         appointmentType: type,
         startsAtText: whenText(args.startsAt, r.zone),
-        dashboardUrl: absolute(args.dashboardUrl),
+        dashboardUrl: absolute(
+          role(r) === "consultee" ? args.dashboardUrl : args.hostDashboardUrl,
+        ),
         cancellationWindowText: args.cancellationWindowText,
         calendar:
           role(r) === "consultee" && args.calendarSession
-            ? calendarLinks({
-                appointmentId: args.appointmentId,
-                userId: r.userId,
-                title: args.planTitle,
-                ...args.calendarSession,
-              })
+            ? links(r, args.calendarSession)
             : null,
+        sessions: listed(r)?.map((session) => ({
+          startsAtText: whenText(session.startsAt, r.zone),
+          googleUrl: links(r, session)?.googleUrl ?? null,
+        })),
         unsubscribeUrl: r.unsubscribeUrl,
       }),
   };
@@ -251,6 +269,8 @@ export interface AppointmentRescheduledEmailArgs {
   moves?: readonly SessionMove[];
   /** Recipients the other party's change makes this a required notice for. */
   requiredFor?: readonly string[];
+  /** MOVED: the seat holders whose copy carries their calendar link. */
+  calendarFor?: readonly string[];
   dashboardUrl: string;
 }
 
@@ -298,6 +318,17 @@ function buildRescheduledEmail(args: AppointmentRescheduledEmailArgs): {
               : undefined,
           clash: args.outcome === "MOVED" && args.clash === true,
           ...movesProps(args, r.zone),
+          calendarIcsUrl:
+            args.outcome === "MOVED" &&
+            args.newStartsAt &&
+            args.calendarFor?.includes(r.userId)
+              ? calendarLinks({
+                  appointmentId: args.appointmentId,
+                  userId: r.userId,
+                  title: subjects.MOVED,
+                  startsAt: args.newStartsAt,
+                })?.icsUrl
+              : null,
           dashboardUrl: absolute(args.dashboardUrl),
           unsubscribeUrl: r.unsubscribeUrl,
         }),

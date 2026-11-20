@@ -164,6 +164,39 @@ export function notificationScope(
   };
 }
 
+/**
+ * A booking's notice recipients grouped by the organisation each one's notice
+ * belongs to: the delivery side (the plan's expert and team) in the plan's host
+ * organisation, each buyer in their sponsor's. A person on both sides is on the
+ * delivery side.
+ */
+export function bookingNoticeScopes(args: {
+  hostOrganizationId: string | null | undefined;
+  hostUserIds: readonly (string | null | undefined)[];
+  buyers: readonly {
+    userId: string | null | undefined;
+    organizationId: string | null | undefined;
+  }[];
+}): Array<{ organizationId: string | null; userIds: string[] }> {
+  const seen = new Set<string>();
+  const byScope = new Map<string | null, string[]>();
+  const add = (
+    userId: string | null | undefined,
+    organizationId: string | null | undefined,
+  ) => {
+    if (!userId || seen.has(userId)) return;
+    seen.add(userId);
+    const scope = organizationId ?? null;
+    byScope.set(scope, [...(byScope.get(scope) ?? []), userId]);
+  };
+  for (const userId of args.hostUserIds) add(userId, args.hostOrganizationId);
+  for (const buyer of args.buyers) add(buyer.userId, buyer.organizationId);
+  return [...byScope].map(([organizationId, userIds]) => ({
+    organizationId,
+    userIds,
+  }));
+}
+
 // ============================================================================
 // Payload Type Definitions
 // ============================================================================
@@ -232,6 +265,8 @@ export type AppointmentCancelledPayload = AppointmentPayload & {
 export type AppointmentCancelledInput = AppointmentPayloadInput & {
   reason?: string;
   cancelledBy: "consultant" | "consultee" | "system";
+  /** Names the canceller when it is neither party, e.g. the sponsoring organisation. */
+  cancelledByName?: string;
   seatRemoved?: boolean;
   removalNote?: string;
 };

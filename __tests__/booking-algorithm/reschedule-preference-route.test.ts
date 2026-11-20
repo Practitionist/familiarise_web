@@ -27,6 +27,8 @@ jest.mock("../../lib/prisma", () => ({
     $transaction: jest.fn(),
     appointment: { findUnique: jest.fn().mockResolvedValue(null) },
     dispute: { findFirst: jest.fn().mockResolvedValue(null) },
+    // An org-tagged booking checks the learner's standing in the funding org.
+    membership: { findUnique: jest.fn().mockResolvedValue(null) },
   },
 }));
 
@@ -56,6 +58,7 @@ jest.mock("../../lib/booking/reschedule-auto-confirm", () => ({
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import { tryAutoConfirmProposal } from "@/lib/booking/reschedule-auto-confirm";
+import { notifyAppointmentRescheduled } from "@/lib/novu/service";
 import { POST as rescheduleHandler } from "@/app/api/appointments/[appointmentId]/reschedule/route";
 
 const APPOINTMENT_ID = "apt-1";
@@ -259,6 +262,50 @@ describe("reschedule route — preference without times", () => {
       }),
     );
     expect((await res.json()).rescheduleRequestId).toBeNull();
+  });
+
+  it("a sponsored booking on the expert's own plan: the expert's notice is personal and opens their own dashboard", async () => {
+    const base = subscriptionAppointment();
+    (prisma.appointment.findUnique as jest.Mock).mockResolvedValue({
+      ...base,
+      organizationId: "org-sponsor",
+      subscription: {
+        ...base.subscription,
+        subscriptionPlan: {
+          ...base.subscription.subscriptionPlan,
+          organizationId: null,
+          consultantProfile: {
+            id: "cp-001",
+            userId: "consultant-user",
+            user: { id: "consultant-user", name: "Dr. Smith" },
+          },
+        },
+        requestedBy: {
+          id: "ce-001",
+          userId: "consultee-user",
+          user: { id: "consultee-user", name: "John Doe" },
+        },
+      },
+    });
+    (notifyAppointmentRescheduled as jest.Mock).mockResolvedValue([]);
+
+    const res = await rescheduleHandler(
+      post({ preferredTimeOfDay: "MORNING" }),
+      params,
+    );
+
+    expect(res.status).toBe(200);
+    // The learner released it, so only the expert is told.
+    const calls = (notifyAppointmentRescheduled as jest.Mock).mock.calls;
+    expect(calls.map(([ids]) => ids)).toEqual([["consultant-user"]]);
+    expect(calls[0][1]).toMatchObject({
+      scope: "personal",
+      organizationId: null,
+    });
+    expect(calls[0][1].dashboardUrl).toContain(
+      "/dashboard/go/auto/appointments",
+    );
+    (prisma.appointment.findUnique as jest.Mock).mockResolvedValue(base);
   });
 
   it("rejects a preference value outside the enum", async () => {

@@ -108,19 +108,24 @@ jest.mock("../../lib/booking/transitions", () => ({
   transitionConsultationRequest: (...a: unknown[]) =>
     transitionConsultationRequest(...a),
 }));
-jest.mock("../../lib/novu/service", () => ({
-  notifyAppointmentRescheduled: jest.fn(async () => []),
+const stageBell = jest.fn(async (..._a: unknown[]) => [
+  { success: true, staged: { id: "bell-row" } },
+]);
+jest.mock("../../lib/novu", () => ({
+  notifyAppointmentRescheduled: (...a: unknown[]) => stageBell(...a),
+  attemptTrigger: jest.fn(),
 }));
 jest.mock("../../lib/novu/stage-then-attempt", () => ({
   flushNotificationsAfter: jest.fn(),
 }));
-const stageEmail = jest.fn(async () => []);
+const stageEmail = jest.fn(async (..._a: unknown[]) => [{ id: "email-row" }]);
 jest.mock("../../lib/email/senders/booking", () => ({
-  stageAppointmentRescheduledEmail: (...a: unknown[]) =>
-    stageEmail(...(a as [])),
+  stageAppointmentRescheduledEmail: (...a: unknown[]) => stageEmail(...a),
+  attemptStaged: jest.fn(),
 }));
 
 import prisma from "../../lib/prisma";
+import { flushNotificationsAfter } from "../../lib/novu/stage-then-attempt";
 import {
   bringIncidentRefundForward,
   rebookIncidentRemedy,
@@ -308,6 +313,50 @@ describe("a committed rebook", () => {
     expect(db.consultantEarnings.create).not.toHaveBeenCalled();
     expect(db.consultantEarnings.createMany).not.toHaveBeenCalled();
     expect(transitionConsultationRequest).not.toHaveBeenCalled();
+  });
+
+  it("commits the moved notice with the rebook: required for the expert, each side in its own scope", async () => {
+    seed("consultation");
+    (
+      state.remedy as {
+        occurrence: { appointment: { organizationId: string | null } };
+      }
+    ).occurrence.appointment.organizationId = "org-sponsor";
+    // The attempt after the commit dies; the staged rows are already written.
+    (flushNotificationsAfter as jest.Mock).mockRejectedValueOnce(
+      new Error("the instance froze after the commit"),
+    );
+
+    await expect(rebook()).rejects.toThrow("froze");
+
+    const [expert, learner] = stageBell.mock.calls as unknown as [
+      string[],
+      { scope: string; outcome: string; dashboardUrl: string },
+      { tx: unknown; dedupeKey: string; required: unknown },
+    ][];
+    expect(expert[0]).toEqual(["expert-user"]);
+    expect(expert[1]).toMatchObject({ scope: "personal", outcome: "MOVED" });
+    expect(learner[0]).toEqual(["learner"]);
+    expect(learner[1].scope).toBe("org");
+    expect(learner[1].dashboardUrl).toContain(
+      "/dashboard/organization/org-sponsor/appointments",
+    );
+    for (const [, , opts] of [expert, learner]) {
+      expect(opts.tx).toBe(prisma);
+      expect(opts.dedupeKey).toBe("incident-rebook:rem-1");
+      expect(opts.required).toEqual({
+        kind: "MOVE_AUTO_CONFIRMED",
+        recipients: ["expert-user"],
+      });
+    }
+    expect(stageEmail.mock.calls.every(([tx]) => tx === prisma)).toBe(true);
+    // The learner's copy carries the calendar link that replaces their entry.
+    expect(
+      stageEmail.mock.calls.map(
+        ([, email]) => (email as { calendarFor: string[] }).calendarFor,
+      ),
+    ).toEqual([["learner"], ["learner"]]);
+    expect(state.remedy).toMatchObject({ rebookedOccurrenceId: "occ-new" });
   });
 
   it("a completed consultation returns to APPROVED, and a second void of the rebooked session is rebookable again", async () => {

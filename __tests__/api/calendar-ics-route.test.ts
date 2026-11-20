@@ -54,6 +54,21 @@ const links = calendarLinks({
   startsAt,
 });
 
+function occurrence(over: {
+  completionStatus?: string;
+  deletedAt?: Date | null;
+}) {
+  return {
+    ordinal: 1,
+    startsAt,
+    endsAt: null,
+    updatedAt: new Date("2026-11-20T04:30:00Z"),
+    completionStatus: "SCHEDULED",
+    deletedAt: null,
+    ...over,
+  };
+}
+
 function get(url: string, appointmentId = "appt-1") {
   return GET(new NextRequest(url), {
     params: Promise.resolve({ appointmentId }),
@@ -70,7 +85,7 @@ beforeEach(() => {
     webinar: { webinarPlan: { title: "Deep work" } },
     class: null,
     trial: null,
-    occurrences: [{ id: "occ-1", startsAt, endsAt: null }],
+    occurrences: [occurrence({})],
   });
 });
 
@@ -82,6 +97,9 @@ it("serves the paid seat's sessions with the dashboard link and nothing else", a
   expect(res.headers.get("cache-control")).toBe("private, no-store");
   expect(res.headers.get("content-type")).toContain("text/calendar");
   expect(body).toContain("SUMMARY:Deep work");
+  // The entry is the booking's first session, whichever row carries it.
+  expect(body).toContain("UID:appt-1-1@familiarise");
+  expect(body).toContain("STATUS:CONFIRMED");
   expect(body).toContain("/dashboard/go/auto/appointments/appt-1");
   expect(body).not.toMatch(/meetings|stream|buyer/i);
   expect(findFirst.mock.calls[0][0].where).toMatchObject({
@@ -90,6 +108,26 @@ it("serves the paid seat's sessions with the dashboard link and nothing else", a
     participants: { some: { ...paidParticipant("buyer"), role: "CONSULTEE" } },
   });
   expect(links!.googleUrl).toContain("calendar.google.com");
+});
+
+it("a session cancelled on a seat that is still paid downloads as its cancellation, not a 404", async () => {
+  findFirst.mockResolvedValue({
+    appointmentType: "CLASS",
+    consultation: null,
+    subscription: null,
+    webinar: null,
+    class: { classPlan: { title: "Deep work" } },
+    trial: null,
+    occurrences: [occurrence({ completionStatus: "CANCELLED" })],
+  });
+
+  const res = await get(links!.icsUrl);
+  const body = await res.text();
+
+  expect(res.status).toBe(200);
+  expect(body).toContain("METHOD:CANCEL");
+  expect(body).toContain("STATUS:CANCELLED");
+  expect(body).toContain("UID:appt-1-1@familiarise");
 });
 
 it("answers a bad token, another booking and an unpaid seat with the same 404", async () => {

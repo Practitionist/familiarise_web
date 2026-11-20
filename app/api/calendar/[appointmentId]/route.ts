@@ -11,7 +11,7 @@ import {
   holdsCalendarSeat,
   verifyCalendarToken,
 } from "@/lib/appointments/calendar-links";
-import { buildIcs } from "@/lib/appointments/ics";
+import { buildIcs, icsSessions } from "@/lib/appointments/ics";
 import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
 import { applyRateLimit, calendarLimiter, getClientIp } from "@/lib/rate-limit";
 
@@ -28,7 +28,7 @@ function notFound(): NextResponse {
   return new NextResponse("Not found", { status: 404, headers: NO_STORE });
 }
 
-/** The booking's upcoming confirmed sessions, or null unless `userId` holds a paid, unrefunded seat on it. */
+/** The booking's upcoming sessions, confirmed or cancelled, or null unless `userId` holds a paid, unrefunded seat on it. */
 async function attendeeCalendar(appointmentId: string, userId: string) {
   if (!(await holdsCalendarSeat(prisma, appointmentId, userId))) return null;
   const appointment = await prisma.appointment.findFirst({
@@ -48,15 +48,21 @@ async function attendeeCalendar(appointmentId: string, userId: string) {
       webinar: { select: { webinarPlan: { select: { title: true } } } },
       class: { select: { classPlan: { select: { title: true } } } },
       trial: { select: { subscriptionPlan: { select: { title: true } } } },
+      // Upcoming sessions that are on, and cancelled ones so their entries are withdrawn.
       occurrences: {
         where: {
-          deletedAt: null,
           isTentative: false,
-          completionStatus: "SCHEDULED",
+          completionStatus: { in: ["SCHEDULED", "CANCELLED"] },
           startsAt: { gt: new Date() },
         },
-        orderBy: { startsAt: "asc" },
-        select: { id: true, startsAt: true, endsAt: true },
+        select: {
+          ordinal: true,
+          startsAt: true,
+          endsAt: true,
+          updatedAt: true,
+          completionStatus: true,
+          deletedAt: true,
+        },
       },
     },
   });
@@ -69,7 +75,19 @@ async function attendeeCalendar(appointmentId: string, userId: string) {
       appointment.trial?.subscriptionPlan?.title,
     appointment.appointmentType,
   );
-  return { title, sessions: appointment.occurrences };
+  return {
+    title,
+    sessions: icsSessions(
+      appointmentId,
+      appointment.occurrences.map((row) => ({
+        ordinal: row.ordinal,
+        startsAt: row.startsAt,
+        endsAt: row.endsAt,
+        updatedAt: row.updatedAt,
+        cancelled: row.completionStatus === "CANCELLED" || !!row.deletedAt,
+      })),
+    ),
+  };
 }
 
 export async function GET(

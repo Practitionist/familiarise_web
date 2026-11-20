@@ -54,15 +54,10 @@ jest.mock("../../lib/booking/allocation/coverage", () =>
 jest.mock("../../lib/novu", () => ({
   notifyNewBookingRequest: jest.fn(async () => ({ success: true })),
 }));
-jest.mock("../../lib/novu/workflows", () => ({
-  ...jest.requireActual("../../lib/novu/workflows"),
-  notificationScope: () => ({ organizationId: null, scope: "personal" }),
-}));
 // The route imports the stale-request sweep for its window constant, and the
 // sweep's nudge pass (#1703) pulls the Novu service and outbox.
 jest.mock("../../lib/novu/service", () => ({}));
 jest.mock("../../lib/novu/outbox", () => ({ deriveTransactionId: jest.fn() }));
-jest.mock("../../lib/novu/resolve-href", () => ({ scopedHref: () => "/x" }));
 jest.mock("../../lib/email", () => ({
   EMAIL_BUDGET_MS: { REQUEST: 1 },
   sendNewBookingRequestEmail: jest.fn(async () => ({ success: true })),
@@ -134,6 +129,7 @@ import { NextRequest } from "next/server";
 import prisma from "../../lib/prisma";
 import { POST } from "../../app/api/scheduling/request-for-approval/route";
 import { PROFILE_WITH_USER_SELECT } from "../../lib/booking/list-selects";
+import { notifyNewBookingRequest } from "../../lib/novu";
 import { AllocationConflictError } from "../../utils/scheduling-engine/errors";
 import { freezeDateAt } from "../fixtures/frozen-date";
 import { assertSlotsStillPublished } from "../../lib/booking/allocation/coverage";
@@ -271,6 +267,55 @@ describe("consultant request gate", () => {
     mockSubscriptionCount.mockResolvedValueOnce(1);
     const res = await POST(request());
     expect(res.status).toBe(201);
+  });
+});
+
+describe("the expert's request notice is scoped by the plan's host organisation", () => {
+  const created = (planOrg: string | null, sponsorOrg: string | null) => ({
+    id: "req_1",
+    requestedAt: new Date(),
+    consultationPlan: {
+      title: "Plan",
+      organizationId: planOrg,
+      consultantProfile: mockProfile,
+    },
+    requestedBy: { user: { name: "Sam" } },
+    appointment: { id: "apt_1", organizationId: sponsorOrg, occurrences: [] },
+  });
+  const bellPayload = () =>
+    (notifyNewBookingRequest as jest.Mock).mock.calls[0][1] as {
+      scope: string;
+      organizationId: string | null;
+      dashboardUrl: string;
+    };
+
+  it("a sponsored request on a personal plan stays personal and opens the expert's own requests", async () => {
+    mockedPrisma.consultation.create.mockResolvedValueOnce(
+      created(null, "org_sponsor"),
+    );
+    const res = await POST(request());
+    expect(res.status).toBe(201);
+    expect(bellPayload()).toMatchObject({
+      scope: "personal",
+      organizationId: null,
+    });
+    expect(bellPayload().dashboardUrl).toContain(
+      "/dashboard/consultant/cp_1/requests",
+    );
+  });
+
+  it("a request on an organisation's plan opens that organisation's requests", async () => {
+    mockedPrisma.consultation.create.mockResolvedValueOnce(
+      created("org_host", null),
+    );
+    await POST(request());
+    expect(bellPayload()).toMatchObject({
+      scope: "org",
+      organizationId: "org_host",
+    });
+    expect(bellPayload().dashboardUrl).toContain(
+      "/dashboard/organization/org_host/requests",
+    );
   });
 });
 
