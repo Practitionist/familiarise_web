@@ -96,7 +96,7 @@ describe("Billing: Needs you rows", () => {
     fireEvent.click(screen.getByRole("button", { name: /Cancel/ }));
     expect(
       screen.getByText(
-        /Your ₹200\.00 referral credit goes back to your balance\./,
+        /Your ₹200\.00 referral credit goes back to your balance if it is still valid when you cancel\./,
       ),
     ).toBeTruthy();
   });
@@ -139,9 +139,9 @@ describe("Referrals: a programme taking no new referrals", () => {
     );
     const text = document.body.textContent ?? "";
     expect(text).toContain(
-      "The referral programme is not taking new referrals right now.",
+      "The referral programme is not taking new referrals right now. A friend who signs up now gets no welcome discount, and the sign-up is not counted as your referral.",
     );
-    expect(text).not.toMatch(/paused|reopens|resume/);
+    expect(text).not.toMatch(/paused|reopens|resume|earn you nothing/);
     const box = screen.getByTestId("referral-offer");
     expect(box.className).not.toMatch(/emerald/);
   });

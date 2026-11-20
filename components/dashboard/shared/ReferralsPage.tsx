@@ -530,7 +530,7 @@ export function ReferralsPage({
                       </>
                     ) : (
                       // Null terms cover not open yet, paused and budget used up alike.
-                      "The referral programme is not taking new referrals right now. Friends who sign up now get no welcome discount and earn you nothing. The offer shows here whenever new referrals are rewarded."
+                      "The referral programme is not taking new referrals right now. A friend who signs up now gets no welcome discount, and the sign-up is not counted as your referral. The offer shows here whenever new referrals are rewarded."
                     )}
                     {isConsultant && terms && (
                       <span className="mt-1 block">

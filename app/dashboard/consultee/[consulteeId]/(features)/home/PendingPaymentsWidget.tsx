@@ -209,7 +209,7 @@ function cancelDescription(target: PendingCancelTarget | null): string {
     return `"${target.title}" will be cancelled. Nothing has been charged — the expert's approval and any held slots are released.`;
   }
   const credit = target?.creditBack
-    ? ` Your ${target.creditBack} referral credit goes back to your balance.`
+    ? ` Your ${target.creditBack} referral credit goes back to your balance if it is still valid when you cancel.`
     : "";
   return `"${target?.title ?? ""}" will be cancelled and your held slot released.${credit} If the payment already went through, it will be reconciled automatically.`;
 }

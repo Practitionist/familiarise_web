@@ -87,6 +87,7 @@ it("never selects or returns the gateway's raw refund failure text", async () =>
     organization: null,
     discountCode: null,
     childPayments: [],
+    creditUsages: [],
     appointment: null,
   });
   (prisma.refund.findMany as jest.Mock).mockImplementation(
@@ -139,6 +140,7 @@ describe("the detail page when nothing was charged", () => {
     organization: null,
     discountCode: null,
     childPayments: [],
+    creditUsages: [],
     appointment: null,
     ...over,
   });
@@ -182,6 +184,15 @@ describe("the detail page when nothing was charged", () => {
     expect(html).toContain("Would have been");
     expect(html).not.toContain(">Amount<");
     expect(html).not.toContain("Problem with this charge");
+  });
+
+  it("a lapsed hold that still holds referral credit keeps the dispute door", async () => {
+    const { detail, html } = await page({
+      paymentStatus: "EXPIRED",
+      creditUsages: [{ amount: 20_000 }],
+    });
+    expect(detail.creditHeldPaise).toBe(20_000);
+    expect(html).toContain("Problem with this charge");
   });
 
   it("a paid charge keeps its Amount and the dispute door", async () => {

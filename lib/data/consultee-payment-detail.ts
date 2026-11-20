@@ -68,6 +68,8 @@ export interface ConsulteePaymentDetail {
   invoicePdfHref: string | null;
   creditNotes: { id: string; number: string; issuedAt: Date; href: string }[];
   coPays: { id: string; amountPaise: number; currency: string }[];
+  /** Referral credit this charge still holds; an expired hold can keep it. */
+  creditHeldPaise: number;
 }
 
 export const REFUND_FAILED_NOTICE =
@@ -97,7 +99,10 @@ export async function readConsulteePaymentDetail(args: {
       parentPaymentId: null,
       deletedAt: null,
     },
-    select: paymentRowSelect(userId),
+    select: {
+      ...paymentRowSelect(userId),
+      creditUsages: { select: { amount: true } },
+    },
   });
   if (!payment) return null;
 
@@ -174,5 +179,9 @@ export async function readConsulteePaymentDetail(args: {
       href: `/api/payments/${payment.id}/credit-note/${note.id}/pdf`,
     })),
     coPays,
+    creditHeldPaise: payment.creditUsages.reduce(
+      (sum, usage) => sum + Number(usage.amount),
+      0,
+    ),
   });
 }
