@@ -2,6 +2,10 @@ import prisma from "@/lib/prisma";
 import { AppointmentStatus, BookingHistoryEntity } from "@prisma/client";
 import { scopeToWhereOrgId } from "@/lib/api/scope/parse";
 import {
+  isPublicExpertProfile,
+  publicProfileFacts,
+} from "@/lib/profiles/public-profile";
+import {
   LAPSED_PAY_LINK_VISIBLE_MS,
   toLapsedPayLinks,
   type ExpiredRequestRow,
@@ -18,20 +22,10 @@ const PLAN_SELECT = {
     title: true,
     consultantProfileId: true,
     consultantProfile: {
-      select: {
-        verificationStatus: true,
-        deletedAt: true,
-        user: { select: { name: true } },
-      },
+      select: { ...publicProfileFacts, user: { select: { name: true } } },
     },
   },
 } as const;
-
-/** The expert's public page exists: VERIFIED and not deleted. */
-const expertIsPublic = (profile: {
-  verificationStatus: string;
-  deletedAt: Date | null;
-}) => profile.verificationStatus === "VERIFIED" && profile.deletedAt === null;
 
 /**
  * Personal-pinned like the pending-payments read it rides with (ADR 19).
@@ -98,7 +92,7 @@ export async function readLapsedPayLinks(
       consultantName:
         c.consultationPlan.consultantProfile.user.name ?? "your expert",
       consultantProfileId: c.consultationPlan.consultantProfileId,
-      expertPublic: expertIsPublic(c.consultationPlan.consultantProfile),
+      expertPublic: isPublicExpertProfile(c.consultationPlan.consultantProfile),
       history: historyById.get(c.id) ?? [],
     })),
     ...subscriptions.map((s) => ({
@@ -108,7 +102,7 @@ export async function readLapsedPayLinks(
       consultantName:
         s.subscriptionPlan.consultantProfile.user.name ?? "your expert",
       consultantProfileId: s.subscriptionPlan.consultantProfileId,
-      expertPublic: expertIsPublic(s.subscriptionPlan.consultantProfile),
+      expertPublic: isPublicExpertProfile(s.subscriptionPlan.consultantProfile),
       history: historyById.get(s.id) ?? [],
     })),
   ];
