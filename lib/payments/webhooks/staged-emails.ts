@@ -69,7 +69,10 @@ export type StagedOutboxEmail = {
  * live occurrences (earliest first) inside Phase 1 so both staged emails and
  * Phase 2 Novu notifications share a single query.
  */
-export async function loadAppointmentForEmails(tx: Tx, appointmentId: string) {
+export async function loadAppointmentForEmails(
+  tx: Pick<Tx, "appointment">,
+  appointmentId: string,
+) {
   const appointment = await tx.appointment.findUnique({
     where: { id: appointmentId },
     include: {
@@ -295,7 +298,7 @@ export async function stagePaymentSuccessEmail(
 }
 
 /** Who booked: the paying user, or a free seat's holder. */
-type Booker = Pick<PaymentWithUser, "userId"> & {
+export type Booker = Pick<PaymentWithUser, "userId"> & {
   user: Pick<PaymentWithUser["user"], "name">;
 };
 
@@ -333,9 +336,9 @@ function bookedEmailArgs(
   };
 }
 
-/** Renders the booked notices before the capture transaction opens. */
+/** Renders the booked notices before the capture or free-seat commit opens. */
 export async function prepareBookedEmails(
-  payment: PaymentWithUser,
+  payment: Booker,
   appointment: AppointmentForEmails,
   appointmentType: string,
 ): Promise<PreparedSpecEmails | null> {

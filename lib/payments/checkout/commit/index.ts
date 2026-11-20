@@ -45,6 +45,7 @@ export async function commitCheckout(input: CheckoutCommitInput) {
     isOrgInvoicedPayment,
     isOrgSponsoredPayment,
     isZeroAmountPayment,
+    preparedSeatNotice,
   } = input;
   const {
     amount,
@@ -272,6 +273,7 @@ export async function commitCheckout(input: CheckoutCommitInput) {
                 userId,
                 appointmentType: validatedData.appointmentType,
                 join: seatJoin,
+                prepared: preparedSeatNotice,
               })
             : null;
         // A rejoined free seat revived on its earlier payment, whose legs and earnings already exist.
