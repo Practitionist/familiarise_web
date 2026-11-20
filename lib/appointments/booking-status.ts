@@ -12,6 +12,7 @@ import { isShortNotice } from "@/lib/booking/lead-time";
 import { eventStatusBadge } from "@/lib/labels/session-labels";
 import { toneClass, type Tone } from "@/lib/ui/tone";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { REQUESTED_AGAIN_REASON } from "@/lib/booking/request-again-rules";
 
 /** Where the booking is in its life; several stages share one word. */
 export const BOOKING_STAGES = [
@@ -398,6 +399,12 @@ function reasonOf(
     case "COMPLETED":
       return f.completedNote ?? "";
     case "PAYMENT_LAPSED":
+      // The learner closed the lapsed link themselves to book again.
+      if (edgeInto(f, upper(f.status))?.reason === REQUESTED_AGAIN_REASON) {
+        return isLearner
+          ? "You requested a new booking."
+          : `${cap(payer)} requested a new booking.`;
+      }
       return "Payment was not completed in time.";
     default:
       return endedReason(cause, f, viewer, consultant, payer, day);

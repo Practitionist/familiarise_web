@@ -9,7 +9,13 @@ import { getParticipantManagementUrl } from "../utils/participantHelpers";
 export default function DetailPageClient({
   consultantId,
   appointmentId,
-}: Readonly<{ consultantId: string; appointmentId: string }>) {
+  operatorView,
+}: Readonly<{
+  consultantId: string;
+  appointmentId: string;
+  /** Staff viewing this expert's booking. */
+  operatorView: boolean;
+}>) {
   const adapter = useConsultantAppointmentsAdapter(consultantId);
 
   return (
@@ -21,6 +27,7 @@ export default function DetailPageClient({
       supportRequestsBase={`/dashboard/consultant/${consultantId}/support/requests`}
       joinWindowMs={CONSULTANT_JOIN_WINDOW_MS}
       consultantId={consultantId}
+      operatorView={operatorView}
       resourceHrefs={{
         documents: `/dashboard/consultant/${consultantId}/appointments/${appointmentId}/documents`,
         recordings: `/dashboard/consultant/${consultantId}/appointments/${appointmentId}/recordings`,

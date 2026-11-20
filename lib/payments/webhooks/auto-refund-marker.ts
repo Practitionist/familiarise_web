@@ -62,7 +62,7 @@ function descriptionWithoutPrefixes(
   };
 }
 
-const REFUND_STATUSES_RETURNING_MONEY: RefundStatus[] = [
+export const REFUND_STATUSES_RETURNING_MONEY: RefundStatus[] = [
   "PENDING",
   "SUCCEEDED",
 ];
@@ -74,18 +74,23 @@ const DISPUTES_KEEPING_MONEY: DisputeStatus[] = [
 ];
 
 /**
- * A capture the recover door may still book: no refund pending or paid, no
- * owed-refund or auto-refund marker, and no dispute that is open or lost.
+ * A capture kept for its booking: no owed-refund or auto-refund marker and no
+ * dispute that is open or lost. Partial refunds are not excluded here.
  */
-export const unreturnedCaptureWhere: Prisma.PaymentWhereInput = {
+export const keptCaptureWhere: Prisma.PaymentWhereInput = {
   ...descriptionWithoutPrefixes([
     AUTO_REFUND_PENDING_PREFIX,
     AUTO_REFUNDED_PREFIX,
     AUTO_REFUND_STUCK_PREFIX,
   ]),
   refundOwedKey: null,
-  refunds: { none: { status: { in: REFUND_STATUSES_RETURNING_MONEY } } },
   disputes: { none: { status: { notIn: DISPUTES_KEEPING_MONEY } } },
+};
+
+/** A capture the recover door may still book: kept, and no refund pending or paid. */
+export const unreturnedCaptureWhere: Prisma.PaymentWhereInput = {
+  ...keptCaptureWhere,
+  refunds: { none: { status: { in: REFUND_STATUSES_RETURNING_MONEY } } },
 };
 
 /**
