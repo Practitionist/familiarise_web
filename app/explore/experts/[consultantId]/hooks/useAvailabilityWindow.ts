@@ -14,6 +14,7 @@ const gridAnswerSchema = z.object({
           isAllocated: z.boolean().optional(),
           bookingStatus: z.string().optional(),
           tooSoon: z.boolean().optional(),
+          beyondHorizon: z.boolean().optional(),
           limitReached: z.boolean().optional(),
         }),
       ),
@@ -38,17 +39,20 @@ export async function isSlotStillOffered(
   const body: unknown = await response.json().catch(() => null);
   const parsed = gridAnswerSchema.safeParse(body);
   if (!parsed.success) return true;
+  // The booking horizon binds the session's start alone, as checkout judges it.
   const free = new Set(
     Object.values(parsed.data.data ?? {})
       .flat()
+      .map((s) => ({ ...s, startMs: new Date(s.startsAt).getTime() }))
       .filter(
         (s) =>
           !s.isAllocated &&
           s.bookingStatus === "available" &&
           !s.tooSoon &&
+          !(s.beyondHorizon && s.startMs === startsAt.getTime()) &&
           !s.limitReached,
       )
-      .map((s) => new Date(s.startsAt).getTime()),
+      .map((s) => s.startMs),
   );
   for (let t = startsAt.getTime(); t < endsAt.getTime(); t += ATOM_MS) {
     if (!free.has(t)) return false;

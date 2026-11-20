@@ -9,10 +9,12 @@
  * never document a paint the grid does not use.
  */
 
+import { MAX_BOOKING_HORIZON_DAYS } from "@/lib/booking/lead-time";
 import { cn } from "@/utils/tailwind";
 
 export type SlotStatusKey =
   | "available"
+  | "outsideCoHostHours"
   | "partiallyBooked"
   | "fullyBooked"
   | "selected"
@@ -20,13 +22,15 @@ export type SlotStatusKey =
   | "rescheduling"
   | "limitReached"
   | "tooSoon"
+  | "beyondHorizon"
   | "justTaken"
   | "outsidePeriod"
   | "past"
   | "unavailable";
 
 /** The glyph a state draws inside its cell; rendered by `SlotStatusIcon`. */
-export type SlotStatusIconName = "lock" | "person" | "check" | "move";
+export type SlotStatusIconName =
+  "lock" | "person" | "people" | "check" | "move";
 
 /** Diagonal hatch for "partly taken". */
 const HATCH_AMBER =
@@ -37,6 +41,9 @@ const CROSS_HATCH_SLATE =
 /** Wide 45° stripe for "outside this booking's period". */
 const HATCH_SLATE =
   "bg-[repeating-linear-gradient(45deg,theme(colors.slate.300)_0_2px,transparent_2px_7px)]";
+/** Horizontal rules for "later than bookings open". */
+const RULED_SLATE =
+  "bg-[repeating-linear-gradient(0deg,theme(colors.slate.400)_0_1px,transparent_1px_5px)]";
 /** One diagonal rule across the cell: the strike-through of "just taken". */
 const STRIKE_ROSE =
   "bg-[linear-gradient(to_top_right,transparent_calc(50%-1px),theme(colors.rose.600)_calc(50%-1px),theme(colors.rose.600)_calc(50%+1px),transparent_calc(50%+1px))]";
@@ -95,6 +102,15 @@ const SLOT_STATUS_PAINT: Record<SlotStatusKey, SlotStatusPaint> = {
     text: "text-emerald-900",
     hover: "hover:bg-emerald-200",
     interactive: true,
+  },
+  outsideCoHostHours: {
+    label: "Outside a co-host's hours",
+    hint: "Free for the host, but a co-host's available hours don't cover this time.",
+    fill: "bg-slate-100",
+    border: "border-slate-500",
+    text: "text-slate-700",
+    icon: "people",
+    interactive: false,
   },
   partiallyBooked: {
     label: "Partly booked",
@@ -160,6 +176,15 @@ const SLOT_STATUS_PAINT: Record<SlotStatusKey, SlotStatusPaint> = {
     border: "border-slate-500",
     text: "text-slate-700",
     pattern: "border-2 border-dotted",
+    interactive: false,
+  },
+  beyondHorizon: {
+    label: "Too far ahead",
+    hint: `Bookings open up to ${MAX_BOOKING_HORIZON_DAYS} days ahead.`,
+    fill: "bg-slate-50",
+    border: "border-slate-500",
+    text: "text-slate-700",
+    pattern: RULED_SLATE,
     interactive: false,
   },
   justTaken: {
@@ -238,6 +263,18 @@ export const SLOT_STATUS_TOKENS = Object.fromEntries(
   }),
 ) as Record<SlotStatusKey, SlotStatusToken>;
 
+/** The free state: a click may place a session on it. */
+export function isFreeStatusKey(key: SlotStatusKey): boolean {
+  return key === "available";
+}
+
+/** The cell's name for "outsideCoHostHours": the co-host's first name when exactly one is known. */
+export function outsideCoHostHoursLabel(firstNames: readonly string[]): string {
+  return firstNames.length === 1
+    ? `Outside ${firstNames[0]}'s hours`
+    : SLOT_STATUS_PAINT.outsideCoHostHours.label;
+}
+
 /**
  * An outline drawn OVER a cell's own state: the consultee's requested times
  * on the allocate grid. Not a status, so it never replaces the fill.
@@ -286,8 +323,12 @@ export interface SlotVisualFlags {
   isOutsidePeriod?: boolean;
   /** Inside the minimum notice before a session can start. */
   isTooSoon?: boolean;
+  /** Later than a 1:1 booking may be placed. */
+  isBeyondHorizon?: boolean;
   /** The plan's weekly or per-day limit is used up. */
   isLimitReached?: boolean;
+  /** Free, but an accepted co-host has not published it. */
+  isOutsideCoHostHours?: boolean;
   isInPast: boolean;
 }
 
@@ -307,7 +348,9 @@ export function resolveSlotStatusKey(flags: SlotVisualFlags): SlotStatusKey {
   if (flags.isInPast) return "past";
   if (flags.isOutsidePeriod) return "outsidePeriod";
   if (flags.isTooSoon) return "tooSoon";
+  if (flags.isBeyondHorizon) return "beyondHorizon";
   if (flags.isLimitReached) return "limitReached";
+  if (flags.isOutsideCoHostHours) return "outsideCoHostHours";
   return "available";
 }
 
@@ -317,11 +360,13 @@ export const BUYER_LEGEND_KEYS: SlotStatusKey[] = [
   "partiallyBooked",
   "fullyBooked",
   "tooSoon",
+  "beyondHorizon",
 ];
 
 /** Everything the dashboard grid can show, in legend order. */
 export const CONSULTANT_LEGEND_KEYS: SlotStatusKey[] = [
   "available",
+  "outsideCoHostHours",
   "selected",
   "justTaken",
   "partiallyBooked",
@@ -330,6 +375,7 @@ export const CONSULTANT_LEGEND_KEYS: SlotStatusKey[] = [
   "rescheduling",
   "limitReached",
   "tooSoon",
+  "beyondHorizon",
   "outsidePeriod",
   "past",
 ];

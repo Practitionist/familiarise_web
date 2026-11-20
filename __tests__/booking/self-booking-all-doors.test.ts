@@ -143,6 +143,7 @@ import { NextRequest } from "next/server";
 import { POST } from "../../app/api/scheduling/request-for-approval/route";
 import { assertNotSelfBooking } from "../../lib/booking/self-booking";
 import { isRefusal } from "../../lib/errors/refusal";
+import { freezeDateAt } from "../fixtures/frozen-date";
 
 function request(extra: Record<string, unknown> = {}) {
   return new NextRequest("https://x.test/api/scheduling/request-for-approval", {
@@ -161,12 +162,17 @@ function request(extra: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  // The 2030 fixtures sit a few weeks ahead, inside the booking horizon.
+  freezeDateAt("2029-12-10T00:00:00.000Z");
   jest.spyOn(console, "log").mockImplementation(() => {});
   jest.spyOn(console, "warn").mockImplementation(() => {});
   mockSessionUser.consultantProfileId = undefined;
   mockOrgMembership.role = "LEARNER";
 });
-afterEach(() => jest.restoreAllMocks());
+afterEach(() => {
+  jest.useRealTimers();
+  jest.restoreAllMocks();
+});
 
 describe("assertNotSelfBooking", () => {
   const refusalOf = (fn: () => void) => {

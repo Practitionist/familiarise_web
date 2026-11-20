@@ -88,6 +88,8 @@ function Harness({
   allowedStart,
   allowedEnd,
   focusAt,
+  lead,
+  movingSessions,
 }: Readonly<{
   client: QueryClient;
   initial?: DayListPick[];
@@ -99,6 +101,8 @@ function Harness({
   allowedStart?: Date;
   allowedEnd?: Date;
   focusAt?: Date;
+  lead?: { purpose: "book" | "allocate" | "reschedule"; unpaid?: boolean };
+  movingSessions?: DayListPick[];
 }>) {
   const [value, setValue] = React.useState<DayListPick[]>(initial);
   return (
@@ -115,6 +119,8 @@ function Harness({
         allowedStart={allowedStart}
         allowedEnd={allowedEnd}
         focusAt={focusAt}
+        lead={lead}
+        movingSessions={movingSessions}
         value={value}
         onChange={(next) => {
           onChange?.(next);
@@ -428,4 +434,182 @@ describe("MobileDayListPicker", () => {
       ).toBeDisabled();
     });
   });
+});
+
+describe("MobileDayListPicker agrees with the desktop grid", () => {
+  /** One day's answer, with whatever overlays the test adds. */
+  function answer(
+    cells: ReturnType<typeof atom>[],
+    extra: Record<string, unknown> = {},
+  ) {
+    return {
+      status: 200,
+      ok: true,
+      json: async () => ({ data: { "2026-11-04": cells }, ...extra }),
+      headers: { get: () => null },
+    };
+  }
+
+  const QUOTA = {
+    unit: "week",
+    capacity: 3,
+    weekNumber: 3,
+    weekCount: 26,
+    filled: 3,
+    remainingThisCycle: 0,
+    allBooked: false,
+    windowStart: "2026-11-02T00:00:00.000Z",
+    windowEnd: "2026-11-09T00:00:00.000Z",
+    planEndsAt: "2027-04-01T00:00:00.000Z",
+    perDayCap: 1,
+    fullDays: [],
+    schedulingTimezone: "UTC",
+  };
+
+  it("asks for the same purpose and unpaid lead the desktop grid sends", async () => {
+    await mount({ lead: { purpose: "allocate", unpaid: true } });
+    const url = String(fetchMock.mock.calls[0][0]);
+    expect(url).toContain("purpose=allocate");
+    expect(url).toContain("unpaid=1");
+  });
+
+  it("applies the server's lead time between polls, not a fixed 15 minutes", async () => {
+    // Read at 08:00 with a 2-hour lead: nothing at or before 10:00 may start.
+    fetchMock.mockResolvedValue({
+      ...grid(),
+      json: async () => ({
+        ...(await grid().json()),
+        leadMs: 2 * 60 * 60 * 1000,
+      }),
+    });
+    await mount({ lead: { purpose: "allocate", unpaid: true } });
+    expect(times()).toEqual(["2:00 pm – 3:00 pm"]);
+  });
+
+  it("says the limit is reached, with the plan's week line, instead of no free times", async () => {
+    fetchMock.mockResolvedValue(
+      answer(
+        [
+          atom("2026-11-04T10:00:00Z", { limitReached: true }),
+          atom("2026-11-04T10:30:00Z", { limitReached: true }),
+        ],
+        { quota: QUOTA },
+      ),
+    );
+    await mount({ subscriptionId: "sub-1" });
+    expect(screen.getByText("Limit reached")).toBeInTheDocument();
+    expect(
+      screen.getAllByText(/Week 3 of 26 is set · next opens Mon,? 9 Nov/)
+        .length,
+    ).toBeGreaterThan(0);
+    expect(screen.queryByText(/No free times in these two weeks/)).toBeNull();
+  });
+
+  it("uses the desktop's words when a pick slides inside the lead time", async () => {
+    const pick = {
+      startsAt: "2026-11-04T10:00:00.000Z",
+      endsAt: "2026-11-04T11:00:00.000Z",
+    };
+    fetchMock.mockResolvedValue(
+      answer([atom("2026-11-04T10:00:00Z"), atom("2026-11-04T10:30:00Z")]),
+    );
+    const changes: DayListPick[][] = [];
+    const { client } = await mount({
+      initial: [pick],
+      onChange: (next) => changes.push(next),
+    });
+    expect(changes).toEqual([]);
+
+    fetchMock.mockResolvedValue(
+      answer([
+        atom("2026-11-04T10:00:00Z", { tooSoon: true }),
+        atom("2026-11-04T10:30:00Z"),
+      ]),
+    );
+    await act(async () => {
+      await client.refetchQueries();
+      await jest.advanceTimersByTimeAsync(10);
+    });
+
+    expect(changes.at(-1)).toEqual([]);
+    expect(screen.getByText(/can't be booked any more/)).toBeInTheDocument();
+    expect(screen.queryByText(/is no longer free/)).toBeNull();
+  });
+
+  it("offers a time that overlaps the moving session's own slot", async () => {
+    // The session being moved holds 10:00–11:00; 11:00–12:00 is free.
+    const cells = [
+      atom("2026-11-04T10:00:00Z", {
+        bookingStatus: "fully-booked",
+        isAllocated: true,
+      }),
+      atom("2026-11-04T10:30:00Z", {
+        bookingStatus: "fully-booked",
+        isAllocated: true,
+      }),
+      atom("2026-11-04T11:00:00Z"),
+      atom("2026-11-04T11:30:00Z"),
+    ];
+    fetchMock.mockResolvedValue(answer(cells));
+    await mount({
+      movingSessions: [
+        {
+          startsAt: "2026-11-04T10:00:00.000Z",
+          endsAt: "2026-11-04T11:00:00.000Z",
+        },
+      ],
+    });
+    expect(times()).toContain("10:30 am – 11:30 am");
+    expect(times()).toContain("11:00 am – 12:00 pm");
+  });
+
+  it("says bookings open up to 90 days ahead when that is why nothing is offered", async () => {
+    fetchMock.mockResolvedValue(
+      answer([
+        atom("2026-11-04T10:00:00Z", { beyondHorizon: true }),
+        atom("2026-11-04T10:30:00Z", { beyondHorizon: true }),
+      ]),
+    );
+    await mount();
+    expect(
+      screen.getByText("Bookings open up to 90 days ahead."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/No free times in these two weeks/)).toBeNull();
+  });
+
+  it("keeps another booking's busy time closed", async () => {
+    fetchMock.mockResolvedValue(
+      answer([
+        atom("2026-11-04T10:00:00Z", {
+          bookingStatus: "fully-booked",
+          isAllocated: true,
+        }),
+        atom("2026-11-04T10:30:00Z", {
+          bookingStatus: "fully-booked",
+          isAllocated: true,
+        }),
+        atom("2026-11-04T11:00:00Z"),
+        atom("2026-11-04T11:30:00Z"),
+      ]),
+    );
+    await mount();
+    expect(times()).toEqual(["11:00 am – 12:00 pm"]);
+  });
+});
+
+it("keeps a pick on the next page while that page is still loading", async () => {
+  // The pick is in the second two weeks; the first page's answer has no cell for it.
+  const pick = {
+    startsAt: "2026-11-18T10:00:00.000Z",
+    endsAt: "2026-11-18T11:00:00.000Z",
+  };
+  const changes: DayListPick[][] = [];
+  await mount({ initial: [pick], onChange: (next) => changes.push(next) });
+
+  fetchMock.mockReturnValue(new Promise(() => {}));
+  fireEvent.click(screen.getByRole("button", { name: "Next 2 weeks" }));
+  await settle();
+
+  expect(changes).toEqual([]);
+  expect(screen.queryByText(/no longer free/)).toBeNull();
 });

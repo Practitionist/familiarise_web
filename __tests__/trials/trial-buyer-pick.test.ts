@@ -26,6 +26,7 @@ jest.mock("../../lib/booking/participants", () => ({
 import { payWindowEnd } from "../../lib/payments/operations/approval-payment";
 import {
   bookTrialInTx,
+  TrialDailyLimitError,
   TrialTimeRefusedError,
 } from "../../lib/trials/book-trial";
 import type { Tx } from "../../lib/prisma";
@@ -34,17 +35,32 @@ const NOW = new Date("2026-11-10T08:00:00.000Z");
 const START = new Date("2026-11-12T10:00:00.000Z");
 const END = new Date("2026-11-12T10:30:00.000Z");
 
-function fakeTx() {
+/** `requestedToday`: when the learner's earlier trials were requested. */
+function fakeTx(requestedToday: Date[] = []) {
+  const requested = [...requestedToday];
   const tx = {
     appointment: { create: jest.fn(async () => ({ id: "apt-1" })) },
     trial: {
       // The pair holds no blocking trial.
       findFirst: jest.fn(async () => null),
-      create: jest.fn(async ({ data }: { data: { status: string } }) => ({
-        id: "trial-1",
-        status: data.status,
-        appointmentId: "apt-1",
-      })),
+      findMany: jest.fn(
+        async ({
+          where,
+          take,
+        }: {
+          where: { requestedAt: { gt: Date } };
+          take: number;
+        }) =>
+          requested
+            .filter((at) => at > where.requestedAt.gt)
+            .sort((a, b) => b.getTime() - a.getTime())
+            .slice(0, take)
+            .map((requestedAt) => ({ requestedAt })),
+      ),
+      create: jest.fn(async ({ data }: { data: { status: string } }) => {
+        requested.push(NOW);
+        return { id: "trial-1", status: data.status, appointmentId: "apt-1" };
+      }),
       updateMany: jest.fn(),
     },
     bookingStatusHistory: { create: jest.fn(async () => ({})) },
@@ -169,3 +185,47 @@ it.each(["OUTSIDE_AVAILABILITY", "SLOT_TAKEN"] as const)(
     expect(tx.trial.create).not.toHaveBeenCalled();
   },
 );
+
+describe("three trials in any 24 hours, counted where the trial is written", () => {
+  const hoursAgo = (hours: number) =>
+    new Date(NOW.getTime() - hours * 3_600_000);
+
+  it("two requests with one left, one after the other under the learner's lock: one trial, one refusal", async () => {
+    const { tx } = fakeTx([hoursAgo(20), hoursAgo(2)]);
+    await bookTrialInTx(tx as unknown as Tx, args(false));
+    const second = await bookTrialInTx(tx as unknown as Tx, args(false)).catch(
+      (e: unknown) => e,
+    );
+
+    expect(tx.trial.create).toHaveBeenCalledTimes(1);
+    expect(tx.appointment.create).toHaveBeenCalledTimes(1);
+    expect(second).toBeInstanceOf(TrialDailyLimitError);
+    expect((second as TrialDailyLimitError).message).toBe(
+      "You've reached today's trial request limit.",
+    );
+    // The place frees when the oldest of the three leaves the 24 hours.
+    expect((second as TrialDailyLimitError).retryAt).toEqual(
+      new Date(hoursAgo(20).getTime() + 24 * 3_600_000),
+    );
+  });
+
+  it("a trial requested more than 24 hours ago no longer counts", async () => {
+    const { tx } = fakeTx([hoursAgo(30), hoursAgo(25), hoursAgo(3)]);
+    await bookTrialInTx(tx as unknown as Tx, args(false));
+    expect(tx.trial.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("counts the learner's trials with every expert, whatever became of them", async () => {
+    const { tx } = fakeTx();
+    await bookTrialInTx(tx as unknown as Tx, args(false));
+    expect(tx.trial.findMany).toHaveBeenCalledWith({
+      where: {
+        consulteeProfileId: "cee-1",
+        requestedAt: { gt: hoursAgo(24) },
+      },
+      orderBy: { requestedAt: "desc" },
+      take: 3,
+      select: { requestedAt: true },
+    });
+  });
+});

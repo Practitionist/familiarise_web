@@ -11,7 +11,6 @@ import {
   makeSubscription,
   makeSubscriptionPlan,
   makeMockPrisma,
-  makeAppointmentWithSlots,
   makeConsecutiveSlotISOs,
 } from "../fixtures/booking.mockData";
 
@@ -273,22 +272,63 @@ describe("an open reschedule keeps the allocator's cycle anchor", () => {
 
 describe("the plan total and call counting", () => {
   it("refuses a proposal that would pass the frozen total", async () => {
-    const existing = [
-      makeAppointmentWithSlots(
-        "apt-old",
-        makeConsecutiveSlotISOs("2024-12-01T10:00:00.000Z", 2),
-      ),
-    ];
-    const result = await createService(
-      { sessionsTotal: 1 },
-      existing,
-    ).validateSubscriptionSlots(
+    const held = {
+      id: "apt-old",
+      occurrences: [
+        {
+          id: "occ-done",
+          startsAt: new Date("2024-12-01T10:00:00.000Z"),
+          endsAt: new Date("2024-12-01T11:00:00.000Z"),
+          completionStatus: "COMPLETED",
+          isTentative: false,
+          deletedAt: null,
+        },
+      ],
+    };
+    const result = await createService({
+      sessionsTotal: 1,
+      appointment: held,
+    }).validateSubscriptionSlots(
       "sub-1",
       makeConsecutiveSlotISOs("2025-01-07T10:00:00.000Z", 2),
     );
     expect(result.totalCallsScheduled).toBe(2);
     expect(result.maxTotalCalls).toBe(1);
     expect(result.isValid).toBe(false);
+  });
+
+  it("a full plan with one voided session accepts one replacement", async () => {
+    const row = (id: string, day: string, completionStatus: string) => ({
+      id,
+      startsAt: new Date(`${day}T10:00:00.000Z`),
+      endsAt: new Date(`${day}T11:00:00.000Z`),
+      completionStatus,
+      isTentative: false,
+      deletedAt: null,
+    });
+    const wrapper = {
+      id: "apt-1",
+      occurrences: [
+        row("occ-voided", "2025-01-07", "VOIDED"),
+        row("occ-held", "2025-01-08", "SCHEDULED"),
+      ],
+    };
+    const service = createService({ sessionsTotal: 2, appointment: wrapper }, [
+      wrapper,
+    ]);
+
+    const replacement = await service.validateSubscriptionSlots(
+      "sub-1",
+      makeConsecutiveSlotISOs("2025-01-09T10:00:00.000Z", 2),
+    );
+    expect(replacement.errors).toEqual([]);
+    expect(replacement.totalCallsScheduled).toBe(2);
+
+    const twoMore = await service.validateSubscriptionSlots("sub-1", [
+      ...makeConsecutiveSlotISOs("2025-01-09T10:00:00.000Z", 2),
+      ...makeConsecutiveSlotISOs("2025-01-10T10:00:00.000Z", 2),
+    ]);
+    expect(twoMore.isValid).toBe(false);
   });
 
   it("counts an overnight call as one", async () => {

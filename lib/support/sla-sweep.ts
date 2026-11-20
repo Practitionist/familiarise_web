@@ -33,13 +33,11 @@ import {
   hasConductRemovalLapse,
   sweepConductRemovalDeadlines,
 } from "./conduct-removal-case";
-import { activeHolds, caseHoldEvents, releaseAllCaseHolds } from "./case-holds";
-import { endCaseChatAccessTx } from "./chat-access-end";
 import {
-  moneyDoorsRefusal,
-  openRecommendationTx,
-  recordLifecycleHoldReleaseTx,
-} from "./case-service";
+  releaseSystemClosedCaseTx,
+  systemCloseHoldRefusalTx,
+} from "./system-case-close";
+import { moneyDoorsRefusal } from "./case-service";
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 24 * HOUR_MS;
@@ -522,39 +520,14 @@ async function processCandidateSlaNotices(
   );
 }
 
-/** No human acts on an auto-close, so the system releases the case's payout holds and ends its chat grants without step-up. */
-async function releaseAutoClosedCaseTx(tx: Tx, caseId: string, now: Date) {
-  const note = "Released when the case was auto-closed";
-  await recordLifecycleHoldReleaseTx(tx, {
+/** No human acts on an auto-close, so the system releases the case's payout holds and ends its chat grants. */
+function releaseAutoClosedCaseTx(tx: Tx, caseId: string, now: Date) {
+  return releaseSystemClosedCaseTx(
+    tx,
     caseId,
-    actorId: null,
-    actorRole: "SYSTEM",
-    status: "CLOSED",
-    reason: note,
-    released: await releaseAllCaseHolds(tx, { caseId, actorId: null, note }),
-  });
-  // The chat arm later in this run clears Familiarise Support from any grant still seated.
-  await endCaseChatAccessTx(tx, {
-    caseId,
-    actorId: null,
-    reason: "CASE_RESOLVED",
     now,
-  });
-}
-
-/**
- * Why a case holding payouts may not auto-close yet: an undecided refund
- * recommendation or closed money doors. The doors gate is read lazily.
- */
-async function autoCloseRefusalTx(
-  tx: Tx,
-  caseId: string,
-  doors: () => Promise<string | null>,
-): Promise<string | null> {
-  const held = activeHolds(await caseHoldEvents(tx, [caseId]));
-  if (held.length === 0) return null;
-  if (await openRecommendationTx(tx, caseId)) return "RECOMMENDATION_OPEN";
-  return doors();
+    "Released when the case was auto-closed",
+  );
 }
 
 type AutoCloseResult = Pick<
@@ -593,7 +566,7 @@ async function attemptAutoCloseCase(
   if (stamped.count === 0) return 0;
   return prisma.$transaction(
     async (tx) => {
-      const refused = await autoCloseRefusalTx(tx, c.id, doors);
+      const refused = await systemCloseHoldRefusalTx(tx, c.id, doors);
       if (refused) return refused;
       const res = await tx.supportCase.updateMany({
         where: {

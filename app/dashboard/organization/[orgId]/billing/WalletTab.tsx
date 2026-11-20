@@ -43,6 +43,8 @@ import { formatCurrencyAmount } from "@/utils/formatting";
 import { FUNDING_SOURCE_LABEL } from "@/lib/labels/org-labels";
 import { walletReasonLabel } from "@/lib/labels/money-labels";
 
+import { ZonedDay } from "./ZonedDay";
+
 const walletResponseSchema = z.object({
   billingAccount: z.object({
     id: z.string(),
@@ -459,7 +461,7 @@ export function WalletTab({
       header: "When",
       primary: true,
       className: "text-xs text-muted-foreground",
-      cell: (row) => new Date(row.createdAt).toLocaleString(),
+      cell: (row) => <ZonedDay at={row.createdAt} withTime />,
     },
     {
       key: "reason",

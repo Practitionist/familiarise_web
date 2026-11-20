@@ -17,7 +17,10 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
+import * as React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import prisma from "@/lib/prisma";
+import { PaymentDetailClient } from "@/app/dashboard/consultee/[consulteeId]/(features)/payments/[paymentId]/PaymentDetailClient";
 import {
   readConsulteePaymentDetail,
   REFUND_FAILED_NOTICE,
@@ -73,6 +76,7 @@ it("never selects or returns the gateway's raw refund failure text", async () =>
     paymentStatus: "SUCCEEDED",
     paymentMethod: "card",
     paymentGateway: "RAZORPAY",
+    paymentIntent: "order_Nx79",
     receiptUrl: null,
     expiresAt: null,
     createdAt: at,
@@ -84,6 +88,7 @@ it("never selects or returns the gateway's raw refund failure text", async () =>
     organization: null,
     discountCode: null,
     childPayments: [],
+    creditUsages: [],
     appointment: null,
   });
   (prisma.refund.findMany as jest.Mock).mockImplementation(
@@ -113,4 +118,101 @@ it("never selects or returns the gateway's raw refund failure text", async () =>
     gatewayRefundId: "rfnd_ABC123",
   });
   expect(JSON.stringify(detail)).not.toContain(raw);
+});
+
+describe("the detail page when nothing was charged", () => {
+  const record = (over: Record<string, unknown>) => ({
+    id: "pay-1",
+    amount: 50000,
+    originalAmount: 50000,
+    taxAmount: 0,
+    currency: "INR",
+    paymentStatus: "SUCCEEDED",
+    paymentMethod: "card",
+    paymentGateway: "RAZORPAY",
+    paymentIntent: "order_Nx80",
+    receiptUrl: null,
+    expiresAt: null,
+    createdAt: new Date("2026-09-01T10:00:00Z"),
+    consumerInvoice: null,
+    legs: [],
+    refunds: [],
+    disputes: [],
+    organizationId: null,
+    organization: null,
+    discountCode: null,
+    childPayments: [],
+    creditUsages: [],
+    appointment: null,
+    ...over,
+  });
+  const page = async (over: Record<string, unknown>) => {
+    (prisma.payment.findFirst as jest.Mock).mockResolvedValue(record(over));
+    (prisma.refund.findMany as jest.Mock).mockResolvedValue([]);
+    const detail = await readConsulteePaymentDetail({
+      paymentId: "pay-1",
+      consulteeId: "ce-1",
+      userId: "user-1",
+      viewerZone: "UTC",
+    });
+    if (!detail) throw new Error("no detail");
+    return {
+      detail,
+      html: renderToStaticMarkup(
+        React.createElement(PaymentDetailClient, {
+          consulteeId: "ce-1",
+          detail,
+        }),
+      ),
+    };
+  };
+
+  it("a ₹0 payment says Free once and offers no charge dispute", async () => {
+    const { detail, html } = await page({ amount: 0, originalAmount: 0 });
+    expect(detail.moneyState.label).toBe("Free");
+    expect(html.split(">Free<")).toHaveLength(2);
+    expect(html).not.toContain("Problem with this charge");
+  });
+
+  it("a hold that lapsed before its gateway order existed labels its amount Would have been and offers no dispute", async () => {
+    const { detail, html } = await page({
+      paymentStatus: "EXPIRED",
+      paymentIntent: "premint_9f2c",
+      amount: 161_444,
+      originalAmount: 161_444,
+    });
+    expect(detail.moneyState.line).toBe(
+      "Nothing was charged for this booking.",
+    );
+    expect(html).toContain("Would have been");
+    expect(html).not.toContain(">Amount<");
+    expect(html).not.toContain("Problem with this charge");
+  });
+
+  it("a cancelled gateway order keeps its Amount and the dispute door: a late capture can still land", async () => {
+    const { html } = await page({
+      paymentStatus: "EXPIRED",
+      paymentIntent: "order_Nx81",
+      amount: 161_444,
+      originalAmount: 161_444,
+    });
+    expect(html).toContain(">Amount<");
+    expect(html).not.toContain("Would have been");
+    expect(html).toContain("Problem with this charge");
+  });
+
+  it("a lapsed hold that still holds referral credit keeps the dispute door", async () => {
+    const { detail, html } = await page({
+      paymentStatus: "EXPIRED",
+      creditUsages: [{ amount: 20_000 }],
+    });
+    expect(detail.creditHeldPaise).toBe(20_000);
+    expect(html).toContain("Problem with this charge");
+  });
+
+  it("a paid charge keeps its Amount and the dispute door", async () => {
+    const { html } = await page({});
+    expect(html).toContain(">Amount<");
+    expect(html).toContain("Problem with this charge");
+  });
 });

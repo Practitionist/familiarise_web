@@ -141,6 +141,8 @@ export interface AppointmentVM {
    * rather than as a bug.
    */
   consultantProfileId: string | null;
+  /** Whether that expert's public profile is served; set by the detail mapper, absent on list rows. */
+  expertProfileIsPublic?: boolean;
   /** Normalized (uppercase) lifecycle status from the owning event's enum. */
   status: string;
   bucket: AppointmentBucket;

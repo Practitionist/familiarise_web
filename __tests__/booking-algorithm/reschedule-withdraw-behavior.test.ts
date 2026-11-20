@@ -247,6 +247,22 @@ describe("withdrawRescheduleRequest", () => {
     expect(state.request?.openForAppointmentId).toBeNull();
   });
 
+  it("lets someone the caller vouched for as acting for the initiator's side withdraw", async () => {
+    seed();
+
+    const result = await withdrawRescheduleRequest({
+      rescheduleRequestId: "req-1",
+      withdrawnById: OTHER,
+      sameSideActor: true,
+    });
+
+    expect(result).toEqual({ withdrawn: true });
+    expect(state.request?.status).toBe("WITHDRAWN");
+    expect(state.slots.every((s) => s.completionStatus === "SCHEDULED")).toBe(
+      true,
+    );
+  });
+
   it("refuses anyone who did not open it, and touches nothing", async () => {
     seed();
 

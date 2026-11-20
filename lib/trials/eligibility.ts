@@ -24,18 +24,3 @@ export function blockingTrialWhere(pair: {
 }): Prisma.TrialWhereInput {
   return { ...pair, status: { in: TRIAL_REQUEST_BLOCKING_STATUSES } };
 }
-
-/**
- * Paid-trial payment window: 24h from acceptance, clamped to the session start.
- * A slot three hours out must not stay payable past the slot itself.
- */
-export const TRIAL_PAYMENT_WINDOW_MS = 24 * 60 * 60 * 1000;
-
-export function computeTrialPaymentDueAt(
-  acceptedAt: Date,
-  sessionStartsAt: Date | null | undefined,
-): Date {
-  const window = new Date(acceptedAt.getTime() + TRIAL_PAYMENT_WINDOW_MS);
-  if (sessionStartsAt && sessionStartsAt < window) return sessionStartsAt;
-  return window;
-}

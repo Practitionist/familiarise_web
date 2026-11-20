@@ -157,6 +157,7 @@ function sameCellProps(
     a.cell.startMs === b.cell.startMs &&
     a.cell.statusKey === b.cell.statusKey &&
     a.cell.stateLabel === b.cell.stateLabel &&
+    a.cell.isStaying === b.cell.isStaying &&
     a.cell.isRequested === b.cell.isRequested &&
     a.dayIndex === b.dayIndex &&
     a.rowKey === b.rowKey &&
@@ -193,7 +194,7 @@ const SlotCell = memo(function SlotCell({
   onPreview,
 }: Readonly<SlotCellProps>) {
   const token = SLOT_STATUS_TOKENS[cell.statusKey];
-  const interactive = !readOnly && token.interactive;
+  const interactive = !readOnly && token.interactive && !cell.isStaying;
   const label = [
     cell.stateLabel,
     cell.isRequested ? REQUESTED_OUTLINE.label : null,
@@ -219,6 +220,7 @@ const SlotCell = memo(function SlotCell({
           joinTop && "border-t-0",
           joinBottom && "border-b-0",
           readOnly && "cursor-default",
+          cell.isStaying && "cursor-not-allowed",
           cell.isRequested && REQUESTED_OUTLINE.className,
         ),
       })}

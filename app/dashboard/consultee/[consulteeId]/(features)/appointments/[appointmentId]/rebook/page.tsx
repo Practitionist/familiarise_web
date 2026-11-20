@@ -14,7 +14,7 @@ import {
   readOpenIncidentRemedies,
 } from "@/lib/booking/incident-rebook";
 import { buildRescheduleSubject } from "@/lib/scheduling/time-picker-subject";
-import { getViewerZone } from "@/lib/time/viewer-zone-server";
+import { getPersonalViewerZone } from "@/lib/time/viewer-zone-server";
 
 import { RebookClient } from "./RebookClient";
 
@@ -74,7 +74,7 @@ export default async function RebookAppointmentPage({
     (Date.parse(remedy.sessionEndsAt) - Date.parse(remedy.sessionStartsAt)) /
     HOUR_MS;
   const now = new Date();
-  const viewerZone = await getViewerZone();
+  const viewerZone = await getPersonalViewerZone("consultee", consulteeId);
 
   return (
     <DashboardViewportFill className="gap-4">

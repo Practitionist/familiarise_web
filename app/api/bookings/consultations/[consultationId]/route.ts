@@ -459,6 +459,15 @@ export async function PATCH(
                   select: { startsAt: true },
                 });
                 assertUnpaidApprovalFits(firstSession?.startsAt);
+                // An unanswered request stops holding its time by the clock
+                // while it is still PENDING, and this approval makes it hold
+                // that time again: only while nobody else has taken it.
+                if (currentConsultation.appointment) {
+                  await assertHeldTimesStillFree(
+                    tx,
+                    currentConsultation.appointment.id,
+                  );
+                }
                 await transitionConsultationRequest(tx, {
                   where: { id: consultationId, ...NOT_BEING_MOVED },
                   to: AppointmentStatus.APPROVED_PENDING_PAYMENT,

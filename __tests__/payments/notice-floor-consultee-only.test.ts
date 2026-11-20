@@ -78,8 +78,12 @@ function move(
   };
 }
 
-/** One consultation booking: its live occurrences and its reschedule requests. */
-function fakeDb(args: { occurrences: Occ[]; requests: Request[] }) {
+/** One booking: its live occurrences and its reschedule requests; a plan when `sessionsTotal` is given. */
+function fakeDb(args: {
+  occurrences: Occ[];
+  requests: Request[];
+  sessionsTotal?: number;
+}) {
   const db = {
     appointment: {
       findFirst: jest.fn(async () => ({
@@ -94,7 +98,13 @@ function fakeDb(args: { occurrences: Occ[]; requests: Request[] }) {
             disputes: [],
           },
         ],
-        subscription: null,
+        subscription: args.sessionsTotal
+          ? {
+              sessionsTotal: args.sessionsTotal,
+              sessionsRefunded: 0,
+              subscriptionPlan: { totalSessions: args.sessionsTotal },
+            }
+          : null,
         occurrences: args.occurrences,
       })),
     },
@@ -232,5 +242,176 @@ describe("reschedule notice floor", () => {
       }),
     );
     expect(ctx.hoursUntilNextSession).toBeGreaterThan(95);
+  });
+});
+
+/** A session released for a move: its row stays, RESCHEDULED and unconfirmed. */
+function released(id: string, ordinal: number, startHours: number): Occ {
+  return {
+    ...occurrence(id, ordinal, startHours, "RESCHEDULED"),
+    isTentative: true,
+  };
+}
+
+/** A move of `ordinal` opened `agoHours` ago, `noticeHours` before its old start, still unanswered. */
+function openMove(
+  ordinal: number,
+  noticeHours: number,
+  agoHours: number,
+  over: Partial<Request> = {},
+): Request {
+  const createdAt = new Date(Date.now() - agoHours * HOUR);
+  return move(ordinal, noticeHours, {
+    status: "PENDING_REVIEW",
+    createdAt,
+    releasedSessions: [
+      {
+        ordinal,
+        startsAt: new Date(
+          createdAt.getTime() + noticeHours * HOUR,
+        ).toISOString(),
+      },
+    ],
+    ...over,
+  });
+}
+
+/** A four-session plan sold for ₹1,000 on the platform ladder: ₹250 a session. */
+const planContextOf = (occurrences: Occ[], requests: Request[]) =>
+  contextOf(fakeDb({ occurrences, requests, sessionsTotal: 4 }));
+
+const planQuoteFor = (
+  ctx: Awaited<ReturnType<typeof resolveBookingRefundContext>>,
+  isConsultantInitiated = false,
+) =>
+  quoteBookingRefund({
+    policy: ctx.policy,
+    hoursUntilNextSession: ctx.hoursUntilNextSession,
+    slotsTotal: ctx.slotsTotal,
+    sessionsRemaining: ctx.sessionsRemaining,
+    sessionsTotal: ctx.sessionsTotal,
+    sessionsRefunded: ctx.sessionsRefunded,
+    sessionsCompleted: ctx.sessionsCompleted,
+    scheduledStarts: ctx.scheduledStarts,
+    nowMs: ctx.quotedAtMs,
+    alreadyRefundedPaise: ctx.alreadyRefundedPaise,
+    isSubscription: true,
+    isConsultantInitiated,
+    isFreeCreditFunded: false,
+    grossPaise: 100_000,
+    refundablePaise: 100_000,
+  });
+
+describe("reschedule notice floor on a plan cancel", () => {
+  it("prices a session released an hour before its start at its original start while the request is open", async () => {
+    // Session 1 was released 30 minutes ago, an hour before its start; session
+    // 2 is days out; two sessions were never placed.
+    const ctx = await planContextOf(
+      [released("released-1", 1, 0.5), occurrence("next", 2, 144, "SCHEDULED")],
+      [openMove(1, 1, 0.5)],
+    );
+    expect(ctx.windowState).toBe("BEFORE");
+    expect(planQuoteFor(ctx).refundPaise).toBe(75_000);
+  });
+
+  it("keeps the one-hour cap after the move is accepted to a time five days out", async () => {
+    const ctx = await planContextOf(
+      [
+        occurrence("replacement", 1, 120, "SCHEDULED"),
+        occurrence("next", 2, 144, "SCHEDULED"),
+      ],
+      [move(1, 1)],
+    );
+    expect(planQuoteFor(ctx).refundPaise).toBe(75_000);
+  });
+
+  it("prices a session the learner released three hours before its start at the half tier after it moved", async () => {
+    const ctx = await planContextOf(
+      [
+        occurrence("replacement", 1, 120, "SCHEDULED"),
+        occurrence("next", 2, 144, "SCHEDULED"),
+      ],
+      [move(1, 3)],
+    );
+    expect(planQuoteFor(ctx).refundPaise).toBe(87_500);
+  });
+
+  it("prices a release made exactly 24 hours ahead at the full tier, however long the reads before the quote take", async () => {
+    const ctx = await planContextOf(
+      [
+        occurrence("replacement", 1, 120, "SCHEDULED"),
+        occurrence("next", 2, 144, "SCHEDULED"),
+      ],
+      [move(1, 24)],
+    );
+    const later = jest.spyOn(Date, "now").mockReturnValue(Date.now() + 5_000);
+    try {
+      expect(planQuoteFor(ctx).refundPaise).toBe(100_000);
+    } finally {
+      later.mockRestore();
+    }
+  });
+
+  it("leaves a session the expert released at its own notice", async () => {
+    const accepted = await planContextOf(
+      [
+        occurrence("replacement", 1, 120, "SCHEDULED"),
+        occurrence("next", 2, 144, "SCHEDULED"),
+      ],
+      [move(1, 1, { initiatorRole: "CONSULTANT" })],
+    );
+    expect(planQuoteFor(accepted).refundPaise).toBe(100_000);
+
+    // Still unanswered, its original start three days out.
+    const open = await planContextOf(
+      [released("released-1", 1, 72), occurrence("next", 2, 144, "SCHEDULED")],
+      [openMove(1, 96, 24, { initiatorRole: "CONSULTANT" })],
+    );
+    expect(planQuoteFor(open).refundPaise).toBe(100_000);
+  });
+
+  it("gives full notice to a released session whose time passed with no new one, unless the learner released it", async () => {
+    const byExpert = await planContextOf(
+      [released("released-1", 1, -3), occurrence("next", 2, 144, "SCHEDULED")],
+      [move(1, 1, { initiatorRole: "CONSULTANT", status: "EXPIRED" })],
+    );
+    expect(planQuoteFor(byExpert).refundPaise).toBe(100_000);
+
+    const byLearner = await planContextOf(
+      [released("released-1", 1, -3), occurrence("next", 2, 144, "SCHEDULED")],
+      [move(1, 1, { status: "EXPIRED" })],
+    );
+    expect(planQuoteFor(byLearner).refundPaise).toBe(75_000);
+  });
+
+  it("refunds every undelivered session in full when the expert cancels", async () => {
+    const ctx = await planContextOf(
+      [released("released-1", 1, 0.5), occurrence("next", 2, 144, "SCHEDULED")],
+      [openMove(1, 1, 0.5)],
+    );
+    expect(planQuoteFor(ctx, true).refundPaise).toBe(100_000);
+  });
+
+  it("keeps an unpaid hold out of the placed sessions", async () => {
+    const hold = {
+      ...occurrence("hold", 1, 1, "SCHEDULED"),
+      isTentative: true,
+    };
+    const ctx = await planContextOf([hold], []);
+    expect(ctx.scheduledStarts).toEqual([]);
+    expect(planQuoteFor(ctx).refundPaise).toBe(100_000);
+  });
+
+  it("quotes a plan with no released session off each session's own start", async () => {
+    const held = occurrence("held", 1, -72, "COMPLETED");
+    const soon = occurrence("soon", 2, 12, "SCHEDULED");
+    const later = occurrence("later", 3, 144, "SCHEDULED");
+    const ctx = await planContextOf([later, held, soon], []);
+    expect(ctx.scheduledStarts).toEqual([
+      soon.startsAt.getTime(),
+      later.startsAt.getTime(),
+    ]);
+    // Held: nothing. Twelve hours out: half. Days out and never placed: full.
+    expect(planQuoteFor(ctx).refundPaise).toBe(62_500);
   });
 });

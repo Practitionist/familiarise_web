@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRightLeft, Check, Lock, User } from "lucide-react";
+import { ArrowRightLeft, Check, Lock, User, Users } from "lucide-react";
 
 import type { SlotStatusIconName } from "@/lib/scheduling/interval-status-tokens";
 import { cn } from "@/utils/tailwind";
@@ -8,6 +8,7 @@ import { cn } from "@/utils/tailwind";
 const ICONS = {
   lock: Lock,
   person: User,
+  people: Users,
   check: Check,
   move: ArrowRightLeft,
 } as const satisfies Record<SlotStatusIconName, unknown>;

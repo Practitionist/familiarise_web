@@ -73,9 +73,11 @@ this train's own change, landed in #1721: the marker moved from a
 consultant-wide scope to the requested-window scope, because the
 consultant-wide scope turned one booking into a simultaneous full-grid
 re-demand from every open calendar for that consultant, all serialised on a
-pool of one. `MARKER_VERSION = "av3"` (`lib/scheduling/availabilityGridMarker.ts`)
-is folded into the ETag alongside the tuple, so a client holding a stale
-pre-window-scoping tag can never collide with the new shape's tag.
+pool of one. `MARKER_VERSION` (`lib/scheduling/availabilityGridMarker.ts`)
+is folded into the ETag alongside the tuple, so a client holding a tag from an
+older shape can never collide with the new shape's tag. The version moves
+whenever the tuple's shape changes: window scoping was `av3`, and it is `av5`
+today, the version that added the seat arm described under "The change marker".
 
 ## A conditional GET that computes the right tag and still never 304s (#1723)
 
@@ -156,7 +158,7 @@ exists to skip. Its measured plan is 3.4–5.5 ms of planning and 3.3–4.7 ms o
 execution, with 21–24 index scans against 4–7 sequential scans, and 32 ms of
 wall time end to end — which is the network round trip and almost nothing else.
 
-The marker is the tuple of seven values, hashed together with the request
+The marker is a tuple of the values below, hashed together with the request
 parameters into a strong ETag:
 
 1. `ConsultantProfile.updatedAt`, which covers `scheduleType` flipping between
@@ -187,6 +189,17 @@ parameters into a strong ETag:
 6. The earliest still-future `Payment.expiresAt` among `PENDING` payments on
    those appointments. This is the clock fold, and it is the only entry that
    is not a row version.
+7. The maximum `AppointmentParticipant.updatedAt` over the seat rows of this
+   consultant, and of the consultee when the request names one, on those same
+   appointments. A free seat given up or taken back writes no other row, so
+   this is what moves the tag for a seat change alone.
+
+When the requested window reaches past the 90-day booking horizon of a 1:1
+(`MAX_BOOKING_HORIZON_DAYS` in `lib/booking/lead-time.ts`), the ETag input also
+carries the half-hour bucket that `now` plus the horizon falls in
+(`horizonBucket`), so a cell stops reading "Too far ahead" on time. The
+response sends `Vary: Cookie` beside `Cache-Control: private, max-age=30`,
+because the body depends on the signed-in viewer.
 
 ### Why the clock fold works
 
@@ -204,8 +217,10 @@ When the request carries `purpose=reschedule` together with a `classId` or
 `webinarId`, and the caller is the consultant who owns that event, the route
 leaves the event's own appointment out of the busy time (the host's and the
 accepted co-hosts'), so a host may land a session on the time it already holds,
-and it folds the event's ACCEPTED co-hosts' published hours and busy time into
-the grid. Anyone else sending the same parameters still sees the event's
+and it paints the event's ACCEPTED co-hosts' busy time as busy. A free cell
+outside a co-host's published hours is flagged `outsideCoHostHours` and labelled
+(with the co-host's first name when exactly one is known). It cannot be picked,
+because the allocator refuses a webinar or class time a co-host has not published. Anyone else sending the same parameters still sees the event's
 sessions as busy. The excluded appointment id is appended to the ETag input
 (`excludedAppointmentId` in `lib/scheduling/availabilityGridMarker.ts`) only
 when it is set, so every other request keeps its tag. The single-session picker

@@ -190,13 +190,20 @@ describe("the pre-booking conflict check sees live tentative holds", () => {
     });
     await validateSlotAvailability(db as Tx, oneHour, undefined, "cons-user");
 
-    const where = wheres[0] as { AND: unknown[] };
-    expect(JSON.stringify(where)).not.toContain('"isTentative"');
-    expect(where.AND).toContainEqual({
+    const where = wheres[0] as {
+      AND: Array<{ appointment?: { AND?: unknown[] } }>;
+    };
+    const occupied = where.AND.find((clause) => clause.appointment?.AND);
+    expect(occupied).toEqual({
       appointment: {
         AND: [{ OR: buildOccupiedAppointmentFilter() }, expect.anything()],
       },
     });
+    // Only the dead-hold subtraction (a booking being moved names its
+    // released row) may read tentativeness.
+    expect(
+      JSON.stringify(where.AND.filter((clause) => clause !== occupied)),
+    ).not.toContain('"isTentative"');
   });
 
   it("refuses the slot while another buyer's hold occupies it", async () => {

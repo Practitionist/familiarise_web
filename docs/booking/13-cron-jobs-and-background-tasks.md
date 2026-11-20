@@ -69,19 +69,21 @@ Five other sweeps keep their cohorts moving past rows they cannot finish. `clean
 
 **Records affected**:
 
-| Entity       | Source Statuses | Target Status | Criteria                                                                   |
-| ------------ | --------------- | ------------- | -------------------------------------------------------------------------- |
-| Webinar      | `SCHEDULED`     | `COMPLETED`   | All slots ended > 1h ago                                                   |
-| Class        | `SCHEDULED`     | `COMPLETED`   | All slots across all appointments ended > 1h ago; stamps class-end refunds |
-| Consultation | `APPROVED`      | `COMPLETED`   | All slots ended > 1h ago, unless the consultant never joined (see below)   |
-| Subscription | `APPROVED`      | `COMPLETED`   | All slots ended > 1h ago and no session of the entitlement remains         |
-| Trial        | `SCHEDULED`     | `COMPLETED`   | All slots ended > 1h ago; also sets `completedAt`                          |
+| Entity       | Source Statuses | Target Status | Criteria                                                                                                                       |
+| ------------ | --------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Webinar      | `SCHEDULED`     | `COMPLETED`   | All slots ended > 1h ago                                                                                                       |
+| Class        | `SCHEDULED`     | `COMPLETED`   | All placed slots ended > 1h ago, and every sold session is placed or the scheduling period has ended; stamps class-end refunds |
+| Consultation | `APPROVED`      | `COMPLETED`   | All slots ended > 1h ago, unless the consultant never joined (see below)                                                       |
+| Subscription | `APPROVED`      | `COMPLETED`   | All slots ended > 1h ago and no session of the entitlement remains                                                             |
+| Trial        | `SCHEDULED`     | `COMPLETED`   | All slots ended > 1h ago; also sets `completedAt`                                                                              |
 
 **The consultant no-show handoff (#1504).** A consultation that the consultant never joined is not this job's to close. The only path that cancels such a booking and refunds the consultee in full is the no-show detector described in section g, and that detector only considers bookings that are still `APPROVED` or `SCHEDULED`. Because this job's buffer is one hour and the detector's grace window is two, this job used to reach every unattended consultation first and mark it `COMPLETED`, which removed it from the detector's candidate set permanently; the platform's promised refund could therefore never fire in production.
 
 Both jobs now read the same predicate from `lib/booking/attendance.ts`, which classifies a booking from the `MeetingAttendance` rows as one of three shapes. When the consultant has a recorded join, this job completes the booking as it always did. When the consultee has a join and the consultant does not, this job defers: it skips the booking and leaves it live for the detector. When there is no session at all, or nobody joined, the booking is not a consultant-fault refund and this job completes it, because the detector's remedy in that case is a support ticket rather than a status change.
 
 The deferral is bounded. The detector declines candidates it cannot decide — Stream's own call report contradicts our attendance rows, the session has no Stream call to ask about, or the run failed — and it leaves those bookings untouched. `NO_SHOW_HANDOFF_MINUTES` (the grace window plus two hours) is the point at which this job stops waiting and completes the booking anyway, so that the detector, which runs every 30 minutes, has had about four runs in which the booking was visible to it. A booking that neither job would ever claim would sit live forever, which is a worse outcome than completing it.
+
+**A class between batches is not completed.** A long class is scheduled a batch at a time, so "every placed session has ended" does not mean the class is over. `classIsFinished` (`lib/booking/class-completion.ts`) decides it: the class is finished when every sold session is placed, counted by ordinal so a session and its make-up count once and a host-cancelled session counts as answered for, or when its scheduling period has ended. The check runs inside the completing transaction, after the status compare-and-set holds the class row; a class that is not finished rolls back and stays `SCHEDULED`. For example, Hannah's 12-session class has sessions 1 to 4 placed and its period runs to 28 Feb 2027: after session 4 ends on Thu 3 Dec 2026 the class stays `SCHEDULED`, and it completes after session 12 ends, or on the first run after 28 Feb if some sessions were never placed.
 
 **Class-end settlement.** The commit that completes a class also stamps, through `stampClassEndRefundsOwed` (`lib/payments/operations/event-refunds.ts`), a refund marker on every live paid seat that was sold sessions no row ever placed: `floor(paid × unplaced / sessions bought)`, keyed `class-end:<classId>:pay:<paymentId>`. This job moves no money itself, but because it records refund obligations it is in `FINANCIAL_JOB_NAMES`, holds a fail-closed lock and pauses in DEGRADED maintenance. Each class completes in its own transaction of at most 6 seconds, which reads the whole roster's ledgers in a fixed five queries, and no class starts after the first 8 seconds of the run; a class not started waits for the next run. The `retry-auto-refunds` sweep, also a financial job, drives the markers, and each marker holds its payment's earnings until the refund settles. A seat whose payment already owes another door's refund refuses the completion, so the class waits for the next run. The rule is in `.claude/skills/booking/references/money-boundary.md` §14.
 
@@ -107,7 +109,7 @@ The deferral is bounded. The detector declines candidates it cannot decide — S
 
 **Threshold**: 24 hours since slot creation (`TENTATIVE_EXPIRATION_HOURS = 24`, cut from 7 days by #833).
 
-**Criteria**: Slot has `isTentative = true`, `createdAt` older than 24 hours, AND the associated appointment has no payment with `paymentStatus = SUCCEEDED`. Users can also release their own holds immediately via `DELETE /api/checkout/pending/[paymentId]` (#849) instead of waiting for this cron.
+**Criteria**: Slot has `isTentative = true`, `createdAt` older than 24 hours, AND the associated appointment has no payment with `paymentStatus = SUCCEEDED`. The job skips a session whose booking has an open reschedule request (a session released for a move stays tentative until that request ends) and the session of a live trial (`AWAITING_PAYMENT` or `SCHEDULED`; the unpaid-trial sweep ends an unpaid hold). Users can also release their own holds immediately via `DELETE /api/checkout/pending/[paymentId]` (#849) instead of waiting for this cron.
 
 **Action**: Deletes the stale `AppointmentOccurrence` records using `deleteMany`. This frees the time range for new bookings.
 
@@ -137,7 +139,7 @@ This job no longer exists: the `cleanup-invalid-appointments` script, its route 
 | **GitHub Actions** | None                                                                        |
 | **HTTP Methods**   | `GET`, `POST`                                                               |
 
-**Purpose**: Expires stale requests through the guarded transition helpers. Thresholds and refund policy remain separate by cohort:
+**Purpose**: Expires stale requests through the guarded transition helpers. An unanswered `PENDING` request stops holding the expert's time the moment its threshold passes, before this job runs: occupancy drops it by the clock (`buildDeadHoldFilter` in `utils/scheduling-engine/occupancyPolicy.ts` and its JS twin), unless the booking is being moved. The job then tidies the row and tells the learner. Thresholds and refund policy remain separate by cohort:
 
 | Cohort                                                                              | Threshold                                                                                         | Commit and follow-up                                                                                                                                 |
 | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -407,3 +409,6 @@ Each job adds additional fields specific to its operation (e.g., `webinarsComple
 2. **A separate `auto-complete-trials` endpoint.** Trials are completed by `auto-complete-appointments`.
 3. **`cleanup-stale-pending-consultations` and `cleanup-invalid-appointments`.** Retired; `expire-stale-requests` and the front-door checks replace them.
 4. **A start-minute pool budget in the workflow hygiene guard.** The guard once summed `# cron-runtime-minutes:` annotations per shared start-minute against a ten-minute budget. That check no longer exists; the guard now checks only declared secrets.
+5. **Completing a class one hour after its last placed session.** It closed a class between batches and refunded the sessions not yet placed. `classIsFinished` now decides.
+6. **A stale-hold sweep that released a session being moved, or a live trial's session.** A free trial being moved was left `SCHEDULED` with no session. The sweep now skips a booking with an open reschedule request and a live trial.
+7. **A request that held the expert's time until the sweep expired it.** Occupancy now stops counting an unanswered request when its hold window passes by the clock; the sweep only tidies the row and tells the learner.

@@ -44,7 +44,8 @@ export function isProposed(data: Record<string, unknown>): boolean {
 
 /** A door as a mutation: toasts the outcome and refreshes the given reads. */
 export function useOpsDoor(opts: {
-  success: string;
+  /** The success toast, or how to word it from the route's answer. */
+  success: string | ((data: Record<string, unknown>) => string);
   invalidate: readonly (readonly unknown[])[];
   onDone?: (data: Record<string, unknown>) => void;
   onFailed?: () => void;
@@ -64,7 +65,9 @@ export function useOpsDoor(opts: {
       body: Record<string, unknown>;
     }) => callOpsDoor(url, body),
     onSuccess: (data) => {
-      toast({ title: isProposed(data) ? PROPOSED_TOAST : opts.success });
+      const done =
+        typeof opts.success === "string" ? opts.success : opts.success(data);
+      toast({ title: isProposed(data) ? PROPOSED_TOAST : done });
       opts.onDone?.(data);
     },
     onError: (err: Error) => {

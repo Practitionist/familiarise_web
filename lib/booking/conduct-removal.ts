@@ -10,18 +10,16 @@ import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { scheduleAfter } from "@/lib/api/after-safe";
 import {
   holdSeatEarningsTx,
-  openConductRemovalCaseTx,
+  openOrJoinConductRemovalCaseTx,
 } from "@/lib/support/conduct-removal-case";
+import { isUniqueViolation } from "@/lib/db/pg-errors";
 import {
   persistConductBlockInTx,
   persistSeatRevocationInTx,
   revokeEndedSeatAccess,
   syncConductCallBlock,
 } from "@/lib/stream/access-revocation";
-import {
-  renewAppointmentLock,
-  withAppointmentLock,
-} from "@/utils/appointmentlock";
+import { withEventSeatLock } from "./event-seat-lock";
 import {
   CONDUCT_REMOVAL_REASON_LABELS,
   type ConductRemovalReason,
@@ -45,6 +43,15 @@ export function removalNote(
 ): string {
   const why = note ? `${reasonLabel} (${note})` : reasonLabel;
   return `Reason: ${why}. Support case ${caseReference} decides within ${CONDUCT_REMOVAL_REVIEW_HOURS} hours; reply there with your side.`;
+}
+
+/** A unique key a concurrent write took first: a typed 409 the organiser can retry, never a 500. */
+function removalConflict(): BookingRuleError {
+  return new BookingRuleError(
+    "REMOVAL_CONFLICT",
+    "This attendee's removal changed while you were saving it. Reload the attendee list and try again.",
+    409,
+  );
 }
 
 interface ConductRemovalInput {
@@ -89,12 +96,13 @@ export async function removeAttendeeForConduct(
   input: ConductRemovalInput,
 ): Promise<ConductRemovalResult | null> {
   const event = await removableEvent(input.appointmentId);
-  // Outside the retry, so a retried transaction re-stages the same notice keys.
-  const now = new Date();
   const note = input.note?.trim() || null;
-  const done = await withAppointmentLock(input.appointmentId, (lock) =>
-    withSerializableRetry(async () => {
-      await renewAppointmentLock(lock);
+  const done = await withEventSeatLock(input.appointmentId, (renew) => {
+    // Under the lock, which every lift also takes, so no lift lands between this instant and
+    // the write; outside the retry, so a retried transaction re-stages the same notice keys.
+    const now = new Date();
+    return withSerializableRetry(async () => {
+      await renew();
       return prisma.$transaction(
         async (tx) => {
           if (!(await input.authorizeTx(tx))) {
@@ -109,7 +117,13 @@ export async function removeAttendeeForConduct(
             ...liveParticipant(input.targetUserId),
             role: "CONSULTEE" as const,
           };
-          const released = await releaseParticipant(tx, seatWhere);
+          const released = await releaseParticipant(tx, seatWhere, {
+            data: { removedByUserId: input.actorUserId },
+            history: {
+              reason: "conduct_removal",
+              actorUserId: input.actorUserId,
+            },
+          });
           if (released === 0) return null;
           const seatRevocation = await persistSeatRevocationInTx(
             tx,
@@ -121,7 +135,7 @@ export async function removeAttendeeForConduct(
             input.appointmentId,
             input.targetUserId,
           );
-          const supportCase = await openConductRemovalCaseTx(
+          const supportCase = await openOrJoinConductRemovalCaseTx(
             tx,
             {
               appointmentId: input.appointmentId,
@@ -158,8 +172,10 @@ export async function removeAttendeeForConduct(
           timeout: 15_000,
         },
       );
-    }),
-  );
+    });
+  }).catch((error: unknown) => {
+    throw isUniqueViolation(error) ? removalConflict() : error;
+  });
   if (!done) return null;
 
   await scheduleAfter(

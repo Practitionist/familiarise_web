@@ -329,6 +329,10 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
     title: "That time isn't bookable",
     description: null, // "Times start on the hour or half hour" — already exact.
   },
+  [ErrorTypes.SLOT_TOO_FAR]: {
+    title: "That time is too far ahead",
+    description: null, // The server names the 90 days and the next step.
+  },
   [ErrorTypes.SLOT_TAKEN]: {
     title: SLOT_JUST_TAKEN_MESSAGE,
     description: null,
@@ -355,6 +359,7 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
 const TYPED_CODE_TOAST_MAP: Record<string, ToastMessage> = {
   [ErrorTypes.SLOT_TOO_SOON]: ERROR_TOAST_MAP[ErrorTypes.SLOT_TOO_SOON],
   [ErrorTypes.SLOT_NOT_ON_GRID]: ERROR_TOAST_MAP[ErrorTypes.SLOT_NOT_ON_GRID],
+  [ErrorTypes.SLOT_TOO_FAR]: ERROR_TOAST_MAP[ErrorTypes.SLOT_TOO_FAR],
   [ErrorTypes.SLOT_TAKEN]: ERROR_TOAST_MAP[ErrorTypes.SLOT_TAKEN],
   // Booking refusals: the server's sentence names the next step, so only the title lives here.
   EXPERT_RESCHEDULE_CAP: {

@@ -14,6 +14,8 @@ import {
 } from "@/lib/dashboard/nav/consultee";
 import { usePersonalNavBadges } from "@/hooks/usePersonalNavBadges";
 import { fetchConsulteeDetails } from "@/lib/user";
+import { viewedPerson } from "@/lib/dashboard/operator-view";
+import type { TConsulteeProfile } from "@/types/consultee";
 import { PERSONAL_SIDE_LABEL } from "@/lib/labels/personal-dashboard";
 import { UserProvider } from "./UserContext";
 import { consulteeSettingsGroups } from "./(features)/settings/settings";
@@ -27,8 +29,13 @@ const PREFETCH_SUFFIXES = ["home"];
 function wrapConsulteeShell(
   shell: React.ReactNode,
   user: PersonalDashboardUser,
+  profile: TConsulteeProfile | null | undefined,
 ) {
-  return <UserProvider userDetails={user as User}>{shell}</UserProvider>;
+  return (
+    <UserProvider userDetails={user as User} learner={viewedPerson(profile)}>
+      {shell}
+    </UserProvider>
+  );
 }
 
 interface PageProps {
@@ -65,6 +72,8 @@ function ConsulteeLayoutInner({ children, params }: Readonly<PageProps>) {
       profileQueryKey={["consultee-profile", consulteeId]}
       fetchProfile={() => fetchConsulteeDetails(consulteeId)}
       profileGatesOnUser={false}
+      profileDisplayName={(profile) => profile?.user?.name}
+      profileDisplayImage={(profile) => profile?.user?.image}
       profileOwnerName={(profile) => profile?.user?.name}
       hasAccess={(user) =>
         !!user &&

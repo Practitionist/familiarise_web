@@ -116,6 +116,8 @@ export interface CaseHistoryEvent {
   kind: string;
   fromValue: string | null;
   toValue: string | null;
+  /** Plain words for an event whose values are not staff copy (a removal's order marker). */
+  summary: string | null;
   note: string | null;
   actorName: string | null;
   createdAt: string;
@@ -135,6 +137,8 @@ export interface CaseWorkspace {
   sla: SlaState | null;
   ackDueAt: string | null;
   resolutionDueAt: string | null;
+  /** The deadline the SLA state is judged against: the stored one plus time waiting on the customer. */
+  effectiveResolutionDueAt: string | null;
   /** A conduct removal's 72-hour decision deadline; null for every other case. */
   reviewDueAt: string | null;
   lastMessageAt?: string | null;

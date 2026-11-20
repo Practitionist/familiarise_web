@@ -1,9 +1,14 @@
-import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
+import { reportSentryError } from "@/lib/observability/report";
 import { z } from "zod";
 import type { Session } from "@/lib/auth";
 import prisma, { type PrismaLike } from "@/lib/prisma";
-import { liveParticipant } from "@/lib/booking/participants";
+import {
+  liveParticipant,
+  RELEASED_PARTICIPANT_STATUSES,
+} from "@/lib/booking/participants";
+import { readSeatTrails, type SeatTrailStep } from "@/lib/booking/seat-history";
+import { lastRemovalKind } from "@/lib/booking/seat-trail-copy";
 import type { PlanRef } from "@/lib/collaborators/team";
 import {
   activeOrgRole,
@@ -18,12 +23,16 @@ import {
 } from "@/lib/auth-helpers";
 import { leaveEventSeat } from "@/lib/booking/seat-leave";
 import { removeAttendeeForConduct } from "@/lib/booking/conduct-removal";
+import { liftSeatRemovalAsOrganiser } from "@/lib/booking/seat-removal-lift";
+import {
+  SeatLiftBodySchema,
+  SeatLiftResponseSchema,
+} from "@/schemas/seat-removal-lift";
 import { ConductRemovalBodySchema } from "@/schemas/conduct-removal";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
 import { isRefusal } from "@/lib/errors/refusal";
 import { recordRefundNeedsSupport } from "@/lib/payments/operations/refund-owed";
-import { removeUserFromEventChannel } from "@/actions/stream/chat/event-channel.action";
 import { findLiveEventSlot } from "@/lib/appointments/live-event-slot";
 import {
   applyRateLimit,
@@ -40,9 +49,6 @@ import {
 } from "@/lib/enterprise/membership-guards";
 
 export type GroupEventKind = "webinar" | "class";
-
-const errorClass = (error: unknown) =>
-  error instanceof Error ? error.name : typeof error;
 
 const EVENT_ID = z.string().trim().min(1).max(64);
 
@@ -78,6 +84,7 @@ const APPOINTMENT_PARTICIPANTS_SELECT = {
     participants: {
       where: { ...liveParticipant(), role: "CONSULTEE" as const },
       select: {
+        id: true,
         status: true,
         role: true,
         user: { select: PARTICIPANT_USER_SELECT },
@@ -138,6 +145,7 @@ function deduplicateParticipants(
     | {
         id: string;
         participants: {
+          id: string;
           status: string;
           role: string;
           user: {
@@ -157,6 +165,7 @@ function deduplicateParticipants(
         participant.user.id,
         {
           ...participant.user,
+          participantId: participant.id,
           participantStatus: participant.status,
           participantRole: participant.role,
         },
@@ -225,6 +234,28 @@ async function queryGroupEventForRead(
   };
 }
 
+/** Seats an organiser or a conduct removal ended that still block a rejoin. */
+function readRemovedSeats(appointmentId: string) {
+  return prisma.appointmentParticipant.findMany({
+    where: {
+      appointmentId,
+      role: "CONSULTEE",
+      removedByUserId: { not: null },
+      status: { in: RELEASED_PARTICIPANT_STATUSES },
+    },
+    select: { id: true, user: { select: PARTICIPANT_USER_SELECT } },
+    orderBy: { updatedAt: "desc" },
+  });
+}
+
+/** A removed attendee row: who, how they were last removed, and their trail. */
+function removedAttendee(
+  seat: Awaited<ReturnType<typeof readRemovedSeats>>[number],
+  seatTrail: SeatTrailStep[],
+) {
+  return { ...seat.user, removal: lastRemovalKind(seatTrail), seatTrail };
+}
+
 async function readsAttendeePayments(
   planRef: PlanRef,
   userId: string,
@@ -268,7 +299,7 @@ export async function handleGroupParticipantsGet(
     const sendsPayments =
       isPrivileged(session.user.role) ||
       (await readsAttendeePayments(loaded.planRef, session.user.id));
-    const [seatPayments, waitingCount] = await Promise.all([
+    const [seatPayments, waitingCount, removedSeats] = await Promise.all([
       sendsPayments
         ? readSeatPayments(
             appointmentId ? [appointmentId] : [],
@@ -281,34 +312,42 @@ export async function handleGroupParticipantsGet(
             where: { appointmentId, status: { in: ["WAITING", "NOTIFIED"] } },
           })
         : Promise.resolve(0),
+      appointmentId ? readRemovedSeats(appointmentId) : Promise.resolve([]),
+    ]);
+    const trails = await readSeatTrails(prisma, [
+      ...participants.map((p) => p.participantId),
+      ...removedSeats.map((seat) => seat.id),
     ]);
 
     return NextResponse.json({
       [loaded.key]: loaded.event,
-      participants,
+      participants: participants.map(({ participantId, ...p }) => ({
+        ...p,
+        seatTrail: trails.get(participantId) ?? [],
+      })),
+      removedAttendees: removedSeats.map((seat) =>
+        removedAttendee(seat, trails.get(seat.id) ?? []),
+      ),
       collaborators: loaded.collaborators,
       ...(seatPayments && { seatPayments }),
       waitingCount,
     });
   } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "bookings" } },
-    );
-    const logLabel =
-      kind === "webinar"
-        ? "[WEBINAR_PARTICIPANTS_GET]"
-        : "[CLASS_PARTICIPANTS_GET]";
-    console.error(logLabel, error);
+    reportSentryError(error, {
+      subsystem: "bookings",
+      op: `${kind}-participants.read`,
+    });
     return new NextResponse("Internal error", { status: 500 });
   }
 }
 
+/** Platform staff act through the organiser's doors unless `staffBypass` is off; the allow-back door turns it off. */
 async function canOrganiserRemoveParticipant(
   session: Session,
+  { staffBypass = true }: { staffBypass?: boolean } = {},
 ): Promise<boolean> {
   if (
-    isPrivileged(session.user.role) ||
+    (staffBypass && isPrivileged(session.user.role)) ||
     Boolean(session.user.consultantProfileId)
   ) {
     return true;
@@ -333,9 +372,10 @@ async function verifyGroupEventExistsForDelete(
   eventId: string,
   session: Session,
   isSelfLeave: boolean,
+  { staffBypass = true }: { staffBypass?: boolean } = {},
 ): Promise<boolean> {
   const planAccess =
-    isSelfLeave || isPrivileged(session.user.role)
+    isSelfLeave || (staffBypass && isPrivileged(session.user.role))
       ? undefined
       : buildPlanAccessClauses(
           session,
@@ -529,12 +569,8 @@ export async function handleConductRemoval(
       earningsHeld: removed.earningsHeld,
     });
   } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "bookings" } },
-    );
-    // Sentry carries the error through its scrubber; the console gets its class only.
-    console.error("[CONDUCT_REMOVAL]", errorClass(error));
+    // The reporter logs the fault line and flushes before the function freezes.
+    reportSentryError(error, { subsystem: "bookings", op: "conduct-removal" });
     return new NextResponse("Internal error", { status: 500 });
   }
 }
@@ -573,13 +609,11 @@ export async function handleGroupConductRemoval(
   return handleConductRemoval(request, session, appointment.id);
 }
 
+/** The leave's own durable revoker ends the seat's chat and call access after its commit. */
 export async function handleGroupParticipantDelete(
   request: Request,
   kind: GroupEventKind,
   eventId: string,
-  removeFromChannel: (userId: string) => Promise<{ success: boolean }> = (
-    userId,
-  ) => removeUserFromEventChannel(kind, eventId, userId),
 ): Promise<NextResponse> {
   const authResult = await requireApiAuth();
   if (authResult.error) return authResult.error;
@@ -650,30 +684,87 @@ export async function handleGroupParticipantDelete(
       return NextResponse.json({ removed: false, refund: null });
     }
 
-    const channelRemoval = await removeFromChannel(userId);
-    if (!channelRemoval.success) {
-      console.warn(
-        JSON.stringify({
-          event: "attendee_channel_removal_failed",
-          eventType: kind,
-          eventId,
-          userId,
-          timestamp: new Date().toISOString(),
-        }),
-      );
-    }
-
     return NextResponse.json({ removed: true, refund: left.refund });
   } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "bookings" } },
+    reportSentryError(error, {
+      subsystem: "bookings",
+      op: `${kind}-participants.remove`,
+    });
+    return new NextResponse("Internal error", { status: 500 });
+  }
+}
+
+/**
+ * POST /api/participants/{webinar|class}/[eventId]/allow-back — the roster's
+ * "Allow back" for an attendee the organiser removed. A conduct removal that
+ * stands is refused here; support lifts it.
+ */
+export async function handleGroupSeatLift(
+  request: Request,
+  kind: GroupEventKind,
+  eventId: string,
+): Promise<NextResponse> {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const { session } = authResult;
+  const rl = await applyRateLimit(eventMutationLimiter, session.user.id);
+  if (rl) return rl;
+  try {
+    const parsedEventId = EVENT_ID.safeParse(eventId);
+    const body = SeatLiftBodySchema.safeParse(
+      await request.json().catch(() => null),
     );
-    const logLabel =
-      kind === "webinar"
-        ? "[WEBINAR_PARTICIPANT_DELETE]"
-        : "[CLASS_PARTICIPANT_DELETE]";
-    console.error(logLabel, error);
+    if (!parsedEventId.success || !body.success) {
+      return NextResponse.json(
+        { error: "Choose the attendee to allow back.", code: "INVALID_BODY" },
+        { status: 400 },
+      );
+    }
+    // Staff lift through the step-up staff door, which keeps the audit row.
+    const organiserOnly = { staffBypass: false };
+    if (!(await canOrganiserRemoveParticipant(session, organiserOnly))) {
+      return forbiddenResponse("Only the organiser can allow attendees back");
+    }
+    const exists = await verifyGroupEventExistsForDelete(
+      kind,
+      parsedEventId.data,
+      session,
+      false,
+      organiserOnly,
+    );
+    const appointment = exists
+      ? await prisma.appointment.findFirst({
+          where:
+            kind === "webinar"
+              ? { webinarId: parsedEventId.data }
+              : { classId: parsedEventId.data },
+          select: { id: true },
+        })
+      : null;
+    if (!appointment) {
+      return new NextResponse(
+        kind === "webinar" ? "Webinar not found" : "Class not found",
+        { status: 404 },
+      );
+    }
+    const lifted = await liftSeatRemovalAsOrganiser({
+      appointmentId: appointment.id,
+      userId: body.data.userId,
+      actorUserId: session.user.id,
+    }).catch((error: unknown) => {
+      if (error instanceof BookingRuleError) return error;
+      throw error;
+    });
+    if (lifted instanceof BookingRuleError) return bookingRuleResponse(lifted);
+    return NextResponse.json(
+      SeatLiftResponseSchema.parse({
+        lifted: true,
+        rejoinPath: lifted.rejoinPath,
+        conduct: lifted.conduct,
+      }),
+    );
+  } catch (error) {
+    reportSentryError(error, { subsystem: "bookings", op: "seat-lift" });
     return new NextResponse("Internal error", { status: 500 });
   }
 }

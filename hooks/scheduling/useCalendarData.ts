@@ -115,6 +115,8 @@ export interface SubscriptionMeta {
 
 /** One live-or-dead row of the event's wrapper, as the entitlement helper reads it. */
 export interface EventOccurrence {
+  /** Absent when the payload carries no occurrence id. */
+  id?: string;
   startsAt: string;
   endsAt: string;
   completionStatus: string | null;
@@ -133,6 +135,7 @@ interface AppointmentClass {
 }
 
 interface AppointmentSlotRaw {
+  id?: string;
   startsAt: string;
   endsAt: string;
   isTentative?: boolean;
@@ -193,6 +196,9 @@ export interface RawSlotData {
   tooSoon?: boolean;
   limitReached?: boolean;
   overlappingAppointments?: OverlapDetail[];
+  outsideCoHostHours?: boolean;
+  outsideCoHostHoursOf?: string[];
+  beyondHorizon?: boolean;
 }
 
 const NO_OVERLAPS: OverlapDetail[] = [];
@@ -351,6 +357,9 @@ export function useCalendarData(
         tooSoon: slot.tooSoon === true,
         limitReached: slot.limitReached === true,
         overlappingAppointments: slot.overlappingAppointments ?? NO_OVERLAPS,
+        outsideCoHostHours: slot.outsideCoHostHours === true,
+        outsideCoHostHoursOf: slot.outsideCoHostHoursOf,
+        beyondHorizon: slot.beyondHorizon === true,
       });
     }
     return map;
@@ -466,6 +475,7 @@ export function useCalendarData(
         setQuota(data.quota ?? null);
         setLeadMs(data.leadMs ?? null);
         setAvailabilityError(null);
+        return { changed: true };
       } catch (fetchError) {
         if (requestId !== availabilityRequestIdRef.current) return;
         // AllocationService already reported it (refusals are not faults).
@@ -594,6 +604,7 @@ export function useCalendarData(
       setEventOccurrences(
         activeData.flatMap((appointment) =>
           (appointment.occurrences ?? []).map((slot) => ({
+            id: slot.id ?? undefined,
             startsAt: slot.startsAt,
             endsAt: slot.endsAt,
             completionStatus: slot.completionStatus ?? null,
@@ -640,7 +651,7 @@ export function useCalendarData(
     fetchEventSlots,
   ]);
 
-  // Date-independent reads: once per open.
+  // Date-independent reads: on open; the poll re-reads own sessions on a changed body.
   useEffect(() => {
     if (autoLoad && consultantId) {
       void fetchConsultantDetails();
@@ -660,14 +671,21 @@ export function useCalendarData(
     if (!autoLoad || !consultantId) return;
     if (typeof document === "undefined") return;
 
+    let disposed = false;
     const poller = createAvailabilityPoller({
       isEnabled: () => Boolean(autoLoad && consultantId),
       visibilityState: () => document.visibilityState,
       msSinceLastFetch: () => Date.now() - availabilityFetchedAtRef.current,
       inFlight: () => availabilityInFlightRef.current,
-      fetch: () => {
-        if (eventSlotsFailedRef.current) void fetchEventSlots();
-        return fetchAvailabilitySlots({ background: true });
+      fetch: async () => {
+        const outcome = await fetchAvailabilitySlots({ background: true });
+        // A changed body means something in the window moved, and this
+        // booking's own sessions outrank the server cell: re-read them too.
+        // A poll that outlived its effect belongs to another event's calendar.
+        if (!disposed && (outcome?.changed || eventSlotsFailedRef.current)) {
+          void fetchEventSlots();
+        }
+        return outcome;
       },
       jitterMs: availabilityPollJitterMs,
     });
@@ -680,6 +698,7 @@ export function useCalendarData(
     poller.arm();
 
     return () => {
+      disposed = true;
       poller.dispose();
       document.removeEventListener("visibilitychange", onVisibilityChange);
       window.removeEventListener("focus", onReturn);

@@ -1,4 +1,8 @@
-import { isTooSoonFor } from "@/lib/booking/lead-time";
+import {
+  isBeyondBookingHorizon,
+  isTooSoonFor,
+  MAX_BOOKING_HORIZON_DAYS,
+} from "@/lib/booking/lead-time";
 import {
   MINIMUM_BOOKING_LEAD_TIME_MS,
   MINIMUM_BOOKING_LEAD_TIME_MINUTES,
@@ -32,14 +36,17 @@ const SLOT_GRID_MS = 30 * 60 * 1000;
 
 export const SLOT_NOT_ON_GRID_MESSAGE = "Times start on the hour or half hour";
 
+export const SLOT_TOO_FAR_MESSAGE = `Bookings open up to ${MAX_BOOKING_HORIZON_DAYS} days ahead. Pick an earlier time.`;
+
 /** The typed refusal codes a client-picked start can earn at the Zod edge. */
-export type SlotStartRefusalCode = "SLOT_NOT_ON_GRID" | "SLOT_TOO_SOON";
+export type SlotStartRefusalCode =
+  "SLOT_NOT_ON_GRID" | "SLOT_TOO_SOON" | "SLOT_TOO_FAR";
 
 /**
- * #1583 E-P1-03 / #1592 A-P1-04 — one edge check for every client-picked
- * start (request-for-approval and checkout): on the :00/:30 UTC grid, and at
- * least the checkout lead time ahead. The allocator applies the same 15 minutes
- * to a settled booking and 2 hours to an unpaid approval (`leadMsFor`).
+ * One edge check for every client-picked 1:1 start (request-for-approval,
+ * checkout, a trial): on the :00/:30 UTC grid, at least the checkout lead time
+ * ahead and inside the booking horizon. The allocator applies the same 15
+ * minutes to a settled booking and 2 hours to an unpaid approval (`leadMsFor`).
  */
 export function slotStartRefusal(
   slotStart: Date,
@@ -57,6 +64,9 @@ export function slotStartRefusal(
         validateSlotTiming(slotStart) ??
         `Bookings must be made at least ${MINIMUM_BOOKING_LEAD_TIME_MINUTES} minutes in advance.`,
     };
+  }
+  if (isBeyondBookingHorizon(slotStart.getTime(), now.getTime())) {
+    return { code: "SLOT_TOO_FAR", message: SLOT_TOO_FAR_MESSAGE };
   }
   return null;
 }

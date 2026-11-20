@@ -32,6 +32,8 @@ stateDiagram-v2
 
 An invoice number is `<PREFIX>-<FY>-<SEQ>`: the organisation's `invoiceNumberPrefix` or its upper-cased slug, the Indian fiscal year (April to March, reckoned in IST), and a four-digit sequence allocated atomically per organisation and fiscal year from `OrgInvoiceCounter`. The prefix is shortened so the whole number never exceeds 16 characters (`fitPrefixToRule46`). `@@unique([organizationId, invoiceNumber])` is the backstop.
 
+An invoice's issue date, due date and billing period are India calendar dates wherever they are printed: the PDF ("Dates (IST)"), the Billing list and drawer, the Licence tab, the CSV export (`issue_date_ist`, `due_date_ist`), the invoice emails and the bell all go through `formatInvoiceDate` (`lib/time/invoice-date.ts`). The stored values stay instants, and `dueDate` is still `issuedAt + paymentTermsDays`. The Paid date on screen is a payment moment and reads in the viewer's profile zone; the CSV's `paid_at` is a UTC timestamp. See [document dates](../60-tax/02-gst-invoices-and-credit-notes.md#document-dates-are-india-dates).
+
 ## Where invoices come from, and what issuing posts
 
 | Invoice                          | Created by                                                      | GST already booked elsewhere?                                                   | Journal at issue             |
@@ -114,7 +116,7 @@ A refund against an invoiced booking mints a credit note, the legal document tha
 
 ## Worked example: Wipro's month
 
-Wipro Limited (`INVOICE`, NET-60, purchase order `WIP-PO-2026-0042` of ₹50,00,000) accrues sponsored bookings through September 2026. On Thu 1 Oct 2026, in the 04:45 UTC slot (10:15 IST), the rollup bills ₹1,00,000 of bookings plus ₹18,000 of GST: an invoice of ₹1,18,000 (11,800,000 paise), number `WIPRO-2026-0001`. It draws 11,800,000 paise from the purchase order, leaving ₹48,82,000 (488,200,000 paise of 500,000,000), and posts no journal at issue because the receivable and GST were booked per booking. The due date is 60 days later, Mon 30 Nov 2026 at 04:45 UTC.
+Wipro Limited (`INVOICE`, NET-60, purchase order `WIP-PO-2026-0042` of ₹50,00,000) accrues sponsored bookings through September 2026. On Thu 1 Oct 2026, in the 04:45 UTC slot (10:15 IST), the rollup bills ₹1,00,000 of bookings plus ₹18,000 of GST: an invoice of ₹1,18,000 (11,800,000 paise), number `WIPRO-2026-0001`. It draws 11,800,000 paise from the purchase order, leaving ₹48,82,000 (488,200,000 paise of 500,000,000), and posts no journal at issue because the receivable and GST were booked per booking. The due date is 60 days later, Mon 30 Nov 2026 at 04:45 UTC, so the PDF and the Billing tab read Issued 1 Oct 2026 and Due 30 Nov 2026 (IST).
 
 On Mon 5 Oct a finance user records a ₹50,000 (5,000,000 paise) bank transfer with its UTR: `Dr CASH 5,000,000 / Cr ORG_RECEIVABLE(wipro) 5,000,000`. The invoice stays `ISSUED` with ₹68,000 outstanding, and `/pay` now charges 6,800,000 paise. A second transfer of ₹68,000 settles it and flips it to `PAID`.
 

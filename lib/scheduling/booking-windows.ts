@@ -21,6 +21,10 @@ export type SlotWithStatus = TIntervalTiming & {
   bookingStatus: BookingStatus;
   /** Starts before now plus the checkout lead time. */
   _isPast: boolean;
+  /** Starts later than a 1:1 booking may be placed. */
+  beyondHorizon?: boolean;
+  /** An accepted co-host's available hours do not cover it. */
+  outsideCoHostHours?: boolean;
 };
 
 /** The part of a grid atom the dialog's windows need; the rest is filled in. */
@@ -31,6 +35,8 @@ export interface GridAtomInput {
   bookingStatus?: BookingStatus;
   tooSoon?: boolean;
   limitReached?: boolean;
+  beyondHorizon?: boolean;
+  outsideCoHostHours?: boolean;
   slotId?: string;
   dateInISO?: string;
   availabilityWindowId?: string;
@@ -44,7 +50,12 @@ export interface GridAtomInput {
 function normalizeAtom(
   atom: GridAtomInput,
   index: number,
-): TIntervalTiming & { isAllocated: boolean; bookingStatus: BookingStatus } {
+): TIntervalTiming & {
+  isAllocated: boolean;
+  bookingStatus: BookingStatus;
+  beyondHorizon?: boolean;
+  outsideCoHostHours?: boolean;
+} {
   const startMs = new Date(atom.startsAt).getTime();
   const bookingStatus: BookingStatus = atom.bookingStatus ?? "available";
   return {
@@ -62,6 +73,8 @@ function normalizeAtom(
     bookingStatus,
     tooSoon: atom.tooSoon,
     limitReached: atom.limitReached,
+    beyondHorizon: atom.beyondHorizon,
+    outsideCoHostHours: atom.outsideCoHostHours,
   };
 }
 
@@ -97,6 +110,15 @@ export function windowsForDay(
       ...window,
       tooSoon: under.some((atom) => atom.tooSoon === true),
       limitReached: under.some((atom) => atom.limitReached === true),
+      // The writers judge the horizon by the session's start alone.
+      beyondHorizon: under.some(
+        (atom) =>
+          atom.beyondHorizon === true &&
+          new Date(atom.startsAt).getTime() === start,
+      ),
+      outsideCoHostHours: under.some(
+        (atom) => atom.outsideCoHostHours === true,
+      ),
       // The writers refuse a start at or before the cutoff.
       _isPast: start <= cutoff,
     };
@@ -104,15 +126,18 @@ export function windowsForDay(
 }
 
 /**
- * A window the buyer can take now: wholly free (a partly booked half-hour is
- * refused by every writer), not past or too soon, not over a plan limit.
+ * A window that can be taken now: wholly free (a partly booked half-hour is
+ * refused by every writer), not past, too soon or too far ahead, not over a
+ * plan limit, and inside every co-host's available hours.
  */
 export function isBookableWindow(slot: SlotWithStatus): boolean {
   return (
     !slot._isPast &&
     slot.bookingStatus === "available" &&
     slot.tooSoon !== true &&
-    slot.limitReached !== true
+    slot.limitReached !== true &&
+    slot.beyondHorizon !== true &&
+    slot.outsideCoHostHours !== true
   );
 }
 

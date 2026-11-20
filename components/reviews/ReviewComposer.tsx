@@ -3,7 +3,7 @@
 /**
  * #705 — the ONE public-review form.
  *
- * Shared by the profile page, the post-call sheet and nothing else. It exists
+ * Shared by the expert's profile and the booking's detail page. It exists
  * as its own component because the alternative is three copies drifting apart,
  * and this form carries constraints that must not drift: everyone is asked
  * identically after every held session, with no sentiment gate and no
@@ -21,12 +21,16 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { RatingCause } from "@prisma/client";
 import { Star } from "lucide-react";
+import { z } from "zod";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { throwSupportError } from "@/lib/support/error-copy";
 
 import { RatingCauseSelector } from "./RatingCauseSelector";
+
+/** The part of the review route's reply this form reads. */
+const ReviewSavedSchema = z.object({ profileIsPublic: z.boolean() });
 
 export interface ExistingReview {
   id: string;
@@ -41,6 +45,7 @@ export function ReviewComposer({
   consultantName,
   contextLine,
   existing,
+  profileIsPublic,
   invalidateKeys,
   onSaved,
   compact = false,
@@ -51,6 +56,8 @@ export function ReviewComposer({
   /** Small line under the heading, e.g. the session title. */
   contextLine?: string;
   existing: ExistingReview | null;
+  /** Whether the expert's public profile is served; the line under the heading follows it. */
+  profileIsPublic: boolean;
   /** Query keys to refresh once the write lands. */
   invalidateKeys: readonly (readonly unknown[])[];
   onSaved?: () => void;
@@ -90,12 +97,16 @@ export function ReviewComposer({
         body: JSON.stringify({ ...body, appointmentId }),
       });
       if (!res.ok) await throwSupportError(res, "review save");
-      return res.json();
+      return ReviewSavedSchema.parse(await res.json());
     },
-    onSuccess: async () => {
+    onSuccess: async ({ profileIsPublic }) => {
+      const name = consultantName ?? "the expert";
       toast({
         title: existing ? "Review updated" : "Thanks for your review",
-        description: `It appears on ${consultantName ?? "the expert"}'s profile.`,
+        // An unverified expert's public profile is not served yet.
+        description: profileIsPublic
+          ? `It appears on ${name}'s profile.`
+          : `Saved. It will appear on ${name}'s public profile once that profile is live.`,
       });
       // AWAITED: until this resolves `existing` is still null and the button
       // still reads "Post review", so a second press would POST again and take
@@ -124,8 +135,10 @@ export function ReviewComposer({
       </h4>
       <p className="mt-0.5 text-xs text-muted-foreground">
         {contextLine ? `${contextLine} · ` : ""}
-        Public — it appears on their profile with the date. One review per
-        expert; you can edit it after a later session.
+        {profileIsPublic
+          ? "Public — it appears on their profile with the date."
+          : "Public — it will appear on their profile once it is live."}{" "}
+        One review per expert; you can edit it after a later session.
       </p>
 
       <div className="mt-3 flex items-center gap-1">

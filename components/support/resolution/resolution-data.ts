@@ -143,6 +143,18 @@ const APPEAL_OUTCOMES: ReadonlySet<DecisionOutcome> = new Set([
   "OVERTURNED",
 ]);
 
+/** A first-instance conduct-removal review upholds or overturns the removal itself. */
+export function outcomeLabel(
+  data: Pick<CaseResolution, "isAppeal" | "reviewsRemoval">,
+  outcome: DecisionOutcome,
+): string {
+  if (data.reviewsRemoval === true && !data.isAppeal) {
+    if (outcome === "UPHELD") return "Removal upheld";
+    if (outcome === "OVERTURNED") return "Removal overturned";
+  }
+  return OUTCOME_LABEL[outcome];
+}
+
 /** Appeals and conduct removals are upheld or overturned; every other case gets a remedy outcome. */
 export function outcomesFor(data: CaseResolution): DecisionOutcome[] {
   const reviewed = data.isAppeal || data.reviewsRemoval === true;

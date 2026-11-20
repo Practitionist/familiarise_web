@@ -12,7 +12,7 @@ import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { AllocationConflictError } from "@/utils/scheduling-engine/errors";
 
 /** Open, preference-bearing reschedules that released any of these slots. */
-export function openPreferenceRequestWhere(
+function openPreferenceRequestWhere(
   releasedOccurrenceIds: string[],
 ): Prisma.RescheduleRequestWhereInput {
   return {
@@ -55,27 +55,19 @@ export async function findAllocationPreference(
 }
 
 /**
- * Close the preference-only reschedule this allocation just answered.
+ * Close the open reschedule requests this allocation answered.
  *
- * Placing replacement times IS the answer to "move these, ideally mornings",
- * so leaving the row PENDING_REVIEW would both mislabel it in the audit trail
- * — it was fulfilled, not lapsed unanswered — and keep its
- * openForAppointmentId reservation held until the hourly expiry sweep, which
- * would block the consultee from rescheduling the same booking again for up
- * to 72 hours.
- *
- * Deliberately scoped to rows carrying NO proposed times. A request that
- * named times and got different ones back has not been accepted, and how that
- * case resolves is existing behaviour (it lapses to EXPIRED) that this change
- * has no business rewriting.
+ * A request that named no times asked for any new time, with or without a
+ * stated preference, so placing one fulfils it: it closes ACCEPTED. A request
+ * that named times and got different ones back closes DECLINED. Either ending
+ * frees `openForAppointmentId`, so the booking can be moved again.
  *
  * resolvedById is left null: the allocator is reached from routes, crons and
  * the auto-confirm path, and inventing an actor here would be worse than
  * recording none.
  *
- * @param excludeRescheduleRequestId #1340 — the proposal this allocation is
- * confirming, which must survive the supersede sweep below so its caller can
- * close it as AUTO_ACCEPTED/ACCEPTED.
+ * @param excludeRescheduleRequestId The proposal this allocation is
+ * confirming, which its caller closes as AUTO_ACCEPTED/ACCEPTED itself.
  */
 export async function resolveConsumedPreferenceRequests(
   tx: Tx,
@@ -84,9 +76,9 @@ export async function resolveConsumedPreferenceRequests(
 ): Promise<void> {
   if (releasedOccurrenceIds.length === 0) return;
 
-  // Placing times answers every other open request on these sessions (they
-  // close DECLINED); the proposal this allocation confirms is excluded.
-  const superseded = await tx.rescheduleRequest.findMany({
+  // Placing times answers every open request on these sessions; the proposal
+  // this allocation confirms is excluded.
+  const answered = await tx.rescheduleRequest.findMany({
     where: {
       releasedOccurrenceIds: { hasSome: releasedOccurrenceIds },
       status: { in: [...RESCHEDULE_OPEN_STATUSES] },
@@ -104,7 +96,7 @@ export async function resolveConsumedPreferenceRequests(
   // The consultant's own proposal waits on the client's consent; placing other
   // times over it would move the booking without asking.
   if (
-    superseded.some(
+    answered.some(
       (r) => r.initiatorRole === "CONSULTANT" && r._count.proposedTimes > 0,
     )
   ) {
@@ -115,7 +107,7 @@ export async function resolveConsumedPreferenceRequests(
   }
   // The expert's bare release of a paid session is never placed by the expert
   // side: the client accepts proposed times, or the expiry restores the original.
-  const bareExpertRelease = superseded.filter(
+  const bareExpertRelease = answered.filter(
     (r) => r.initiatorRole === "CONSULTANT" && r._count.proposedTimes === 0,
   );
   if (
@@ -132,42 +124,21 @@ export async function resolveConsumedPreferenceRequests(
       "PROPOSE_TIMES_REQUIRED",
     );
   }
-  const consumed = await tx.rescheduleRequest.findMany({
-    where: {
-      ...openPreferenceRequestWhere(releasedOccurrenceIds),
-      proposedTimes: { none: {} },
-    },
-    select: { id: true },
-  });
 
-  for (const request of consumed) {
+  for (const request of answered) {
     try {
       // The shared transition helper rather than a bare update: reaching a
       // terminal state is what releases openForAppointmentId and stamps
       // resolvedAt, and callers must not have to remember that.
       await transitionRescheduleRequest(tx, {
         where: { id: request.id },
-        to: "ACCEPTED",
+        to: request._count.proposedTimes === 0 ? "ACCEPTED" : "DECLINED",
       });
     } catch (err) {
       // Losing the CAS means the initiator withdrew (or the sweep expired the
       // row) between the read above and here. That is a perfectly good ending
       // for the request and no reason to roll back an allocation that has
-      // already placed real times — closing the row is bookkeeping, the
-      // booking is the outcome.
-      if (!(err instanceof IllegalTransitionError)) throw err;
-    }
-  }
-
-  const accepted = new Set(consumed.map((r) => r.id));
-  for (const request of superseded) {
-    if (accepted.has(request.id)) continue;
-    try {
-      await transitionRescheduleRequest(tx, {
-        where: { id: request.id },
-        to: "DECLINED",
-      });
-    } catch (err) {
+      // already placed real times.
       if (!(err instanceof IllegalTransitionError)) throw err;
     }
   }
