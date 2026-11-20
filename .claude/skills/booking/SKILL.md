@@ -355,8 +355,10 @@ through its own sweep's writer: `lapseApprovedRequest` with reason
 `REQUESTED_AGAIN` (EXPIRED), the abandoned pass's shape for a pay-first hold
 (`DIRECT_CHECKOUT` only, never under an open move), CANCELLED for a paid trial
 with its hold notices staged, the caller's HELD seat for an event. A CAS miss
-throws so the expiries roll back, and the answer is 409 `ALREADY_PAID`; a later
-capture on the EXPIRED order is refunded
+throws so the expiries roll back, and the answer is 409 `ALREADY_PAID`. After the
+commit each closed order is re-read once, and a capture found goes through
+`handlePaymentSuccess` and is refunded; a later capture on the EXPIRED order is
+refunded
 (`docs/decisions/2026-11-20-request-again-closes-the-old-order.md`).
 
 A manual Remind on an approved-but-unpaid request is offered and accepted

@@ -5,6 +5,7 @@
  *  - a late capture afterwards is refunded and never confirms the old booking;
  *  - a capture that won first refuses the click, and nothing is closed;
  *  - a capture the gateway holds but the app has not recorded yet closes nothing;
+ *  - a capture landing between the gateway check and the commit is refunded once;
  *  - an open move, or a capture kept after a partial refund, refuses the click;
  *  - a second click changes nothing; an open window and a stranger are refused;
  *  - a pay-first hold, a trial and a webinar seat close the same way.
@@ -46,12 +47,31 @@ jest.mock("../../../lib/rate-limit", () =>
 );
 const mockGateway = {
   cancelRazorpayOrder: jest.fn(async (_orderId: string) => "no_live_payment"),
+  readRazorpayOrderHolding: jest.fn(
+    async (_orderId: string): Promise<unknown> => ({
+      kind: "empty",
+      onlyFailed: false,
+    }),
+  ),
 };
 jest.mock("../../../lib/payments/core/razorpay", () => ({
   ...jest.requireActual("../../../lib/payments/core/razorpay"),
   cancelRazorpayOrder: (orderId: string) =>
     mockGateway.cancelRazorpayOrder(orderId),
+  readRazorpayOrderHolding: (orderId: string) =>
+    mockGateway.readRazorpayOrderHolding(orderId),
 }));
+const mockReport = { message: jest.fn() };
+jest.mock("../../../lib/observability/report", () => {
+  const actual = jest.requireActual("../../../lib/observability/report");
+  return {
+    ...actual,
+    reportSentryMessage: (...args: unknown[]) => {
+      mockReport.message(...args);
+      return actual.reportSentryMessage(...args);
+    },
+  };
+});
 const mockLock = { busy: false };
 jest.mock("../../../utils/appointmentlock", () => {
   const actual = jest.requireActual("../../../utils/appointmentlock");
@@ -134,6 +154,8 @@ describe("Request again closes the old order first", () => {
   beforeEach(() => {
     refundDoor.refundBookingPayment.mockClear();
     mockGateway.cancelRazorpayOrder.mockClear();
+    mockGateway.readRazorpayOrderHolding.mockClear();
+    mockReport.message.mockClear();
     mockLock.busy = false;
   });
 
@@ -267,6 +289,65 @@ describe("Request again closes the old order first", () => {
     expect(await capture(request)).toBe("confirmed");
     expect(await consultationStatus(request.consultationId!)).toBe("APPROVED");
     expect(refundDoor.refundBookingPayment).not.toHaveBeenCalled();
+  });
+
+  it("a capture that lands between the check and the commit is refunded once", async () => {
+    const { consultee, request } = await lapsedApproval();
+    await prisma.payment.update({
+      where: { id: request.payment!.id },
+      data: { isMockPayment: false },
+    });
+    const gatewayPaymentId = `pay_dbtier_${randomUUID()}`;
+    mockGateway.readRazorpayOrderHolding.mockResolvedValueOnce({
+      kind: "captured",
+      paymentId: gatewayPaymentId,
+      amountPaise: PRICE_PAISE,
+    });
+
+    await expect(
+      click(request.appointmentId, consultee.userId),
+    ).resolves.toEqual({ ok: true, closed: 1 });
+
+    expect(mockGateway.readRazorpayOrderHolding).toHaveBeenCalledWith(
+      request.payment!.paymentIntent,
+    );
+    expect(await consultationStatus(request.consultationId!)).toBe("EXPIRED");
+    expect(refundDoor.refundBookingPayment).toHaveBeenCalledTimes(1);
+    expect(refundDoor.refundBookingPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentId: request.payment!.id }),
+    );
+    // The webhook arriving afterwards changes nothing more.
+    await handlePaymentSuccess(
+      request.payment!.paymentIntent,
+      request.captureMetadata,
+      PRICE_PAISE,
+      gatewayPaymentId,
+    );
+    expect(refundDoor.refundBookingPayment).toHaveBeenCalledTimes(1);
+    expect(await consultationStatus(request.consultationId!)).toBe("EXPIRED");
+  });
+
+  it("a re-check the gateway cannot answer keeps the close and reports once", async () => {
+    const { consultee, request } = await lapsedApproval();
+    await prisma.payment.update({
+      where: { id: request.payment!.id },
+      data: { isMockPayment: false },
+    });
+    mockGateway.readRazorpayOrderHolding.mockRejectedValueOnce(
+      new Error("gateway down"),
+    );
+
+    await expect(
+      click(request.appointmentId, consultee.userId),
+    ).resolves.toEqual({ ok: true, closed: 1 });
+
+    expect(await paymentStatus(request.payment!.id)).toBe("EXPIRED");
+    expect(await consultationStatus(request.consultationId!)).toBe("EXPIRED");
+    expect(
+      mockReport.message.mock.calls.filter(([m]) =>
+        String(m).startsWith("REQUEST_AGAIN_RECHECK_FAILED"),
+      ),
+    ).toHaveLength(1);
   });
 
   it("a stale click leaves an open move and its order alone", async () => {

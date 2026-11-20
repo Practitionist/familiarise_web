@@ -11,7 +11,8 @@
  * checkout consumed, and the booking takes its lapsed state through the writer
  * its own sweep uses. Every CAS carries the money predicate, so a capture that
  * committed first makes it miss, the transaction rolls back, and the answer is
- * ALREADY_PAID with nothing closed.
+ * ALREADY_PAID with nothing closed. After the commit each closed order is read
+ * once more, and a capture that landed meanwhile is refunded.
  */
 import { PaymentGateway, PaymentStatus, Prisma } from "@prisma/client";
 
@@ -23,7 +24,12 @@ import {
   keptCaptureWhere,
   REFUND_STATUSES_RETURNING_MONEY,
 } from "@/lib/payments/webhooks/auto-refund-marker";
-import type { RazorpayOrderCancelResult } from "@/lib/payments/core/razorpay";
+import {
+  readRazorpayOrderHolding,
+  type RazorpayOrderCancelResult,
+} from "@/lib/payments/core/razorpay";
+import { isPreMintIntent } from "@/lib/payments/pre-mint-intent";
+import { reportSentryMessage } from "@/lib/observability/report";
 import { softCancelTrialAppointmentInTx } from "@/lib/trials/cancellation";
 import { cancelPaymentIntent } from "@/scripts/payments/cleanup-abandoned-payments";
 import {
@@ -43,7 +49,10 @@ import {
 } from "./event-waitlist";
 import { lapseApprovedRequest } from "./lapse-approved-request";
 import { releaseParticipant, transitionParticipant } from "./participants";
-import { expirePendingPaymentsInTx } from "./pending-payment-expiry";
+import {
+  expirePendingPaymentsInTx,
+  type GatewayCancel,
+} from "./pending-payment-expiry";
 import {
   REQUEST_AGAIN_NOTE,
   REQUESTED_AGAIN_REASON,
@@ -74,6 +83,7 @@ type TxOutcome =
   | {
       ok: true;
       closed: number;
+      closedOrders: GatewayCancel[];
       holdNotices?: StagedBackupInterestNotices | null;
       seatOpened?: StagedSeatOpened | null;
     };
@@ -373,7 +383,7 @@ async function closeInTx(
   if (pending.length === 0) {
     return (await holdsCapture(tx, appointmentId, userId))
       ? { ok: false, code: "ALREADY_PAID" }
-      : { ok: true, closed: 0 };
+      : { ok: true, closed: 0, closedOrders: [] };
   }
   if (pending.some((p) => p.expiresAt === null || p.expiresAt > now)) {
     return { ok: false, code: "PAY_WINDOW_OPEN" };
@@ -382,14 +392,63 @@ async function closeInTx(
   if (arm.kind === "none" || pending.some((p) => !cleared.has(p.id)))
     return { ok: false, code: "NOT_CLOSABLE" };
 
-  const { expired } = await expirePendingPaymentsInTx(tx, {
+  const { expired, gatewayCancels } = await expirePendingPaymentsInTx(tx, {
     appointmentId,
     userId,
     reason: REQUEST_AGAIN_NOTE,
   });
   if (expired === 0) throw new LostToCapture();
   const notices = await endBooking(tx, arm, appointmentId, userId, now);
-  return { ok: true, closed: expired, ...notices };
+  return {
+    ok: true,
+    closed: expired,
+    closedOrders: gatewayCancels,
+    ...notices,
+  };
+}
+
+/**
+ * A capture can land between the gateway check and the commit. Each closed order
+ * is read once more; a capture found goes through `handlePaymentSuccess`, whose
+ * EXPIRED arm refunds it, so a later webhook or reconcile changes nothing more.
+ * Never undoes the close; unread orders are reported once per click.
+ */
+async function recheckClosedOrders(
+  orders: readonly GatewayCancel[],
+  appointmentId: string,
+): Promise<void> {
+  const unread: string[] = [];
+  for (const order of orders) {
+    if (
+      order.gateway !== PaymentGateway.RAZORPAY ||
+      isPreMintIntent(order.paymentIntent)
+    )
+      continue;
+    try {
+      const holding = await readRazorpayOrderHolding(order.paymentIntent);
+      if (holding.kind !== "captured") continue;
+      // Dynamic, as the recover door imports it: the capture handlers reach back into booking.
+      const { handlePaymentSuccess } =
+        await import("@/lib/payments/webhooks/handlers");
+      await handlePaymentSuccess(
+        order.paymentIntent,
+        {},
+        holding.amountPaise,
+        holding.paymentId,
+      );
+    } catch {
+      unread.push(order.paymentIntent);
+    }
+  }
+  if (unread.length === 0) return;
+  reportSentryMessage(
+    `REQUEST_AGAIN_RECHECK_FAILED: ${unread.length} closed order(s) not re-read`,
+    {
+      subsystem: "bookings",
+      level: "warning",
+      extra: { appointmentId, orderIds: unread },
+    },
+  );
 }
 
 export async function closeOrderForRequestAgain(args: {
@@ -431,7 +490,9 @@ export async function closeOrderForRequestAgain(args: {
       : { ok: false, code: "NOT_CLOSABLE" };
   }
   if (!outcome.ok) return outcome;
-  const { closed, holdNotices, seatOpened } = outcome;
+  const { closed, closedOrders, holdNotices, seatOpened } = outcome;
+
+  await recheckClosedOrders(closedOrders, appointmentId);
 
   await flushBackupInterestNotices(holdNotices);
   await scheduleAfter(
