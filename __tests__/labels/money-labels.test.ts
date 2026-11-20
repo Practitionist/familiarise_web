@@ -1,6 +1,6 @@
-import { WalletReason } from "@prisma/client";
 import {
   WALLET_REASON_LABEL,
+  type WalletEntryReason,
   disputeReasonText,
   disputeStatusLabel,
   walletReasonLabel,
@@ -9,11 +9,28 @@ import { payoutNoticeReason } from "@/lib/dashboard/earnings-state";
 
 describe("money label maps", () => {
   it("names every wallet reason in words, never the enum", () => {
-    for (const reason of Object.values(WalletReason)) {
-      expect(WALLET_REASON_LABEL[reason]).toBeTruthy();
-      expect(walletReasonLabel(reason)).not.toBe(reason);
+    const reasons: WalletEntryReason[] = [
+      "TOPUP",
+      "BOOKING",
+      "OVERAGE_SURCHARGE",
+      "REFUND",
+      "TOPUP_REFUND",
+      "INVOICE_REFUND",
+      "OVERAGE_MEMBER_BILLED",
+      "OVERAGE_MEMBER_UNPAID",
+      "WALLET_ADJUSTMENT",
+    ];
+    expect(Object.keys(WALLET_REASON_LABEL).sort()).toEqual(
+      [...reasons].sort(),
+    );
+    for (const reason of reasons) {
+      expect(walletReasonLabel(reason)).not.toMatch(/_|^[A-Z ]+$/);
     }
     expect(walletReasonLabel("TOPUP")).toBe("Top-up");
+    expect(walletReasonLabel("REFUND")).toBe("Refund or chargeback");
+    expect(walletReasonLabel("WALLET_ADJUSTMENT")).toBe(
+      "Adjustment by our team",
+    );
   });
 
   it("reads gateway dispute codes as words and passes prose through", () => {

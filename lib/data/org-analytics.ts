@@ -20,6 +20,10 @@ import type {
 } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { ledgerAccountId } from "@/lib/payments/ledger/post";
+import {
+  walletActivityByReason,
+  walletLedgerLineSelect,
+} from "@/lib/api/organizations/wallet";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { resolveActivationSignals } from "@/lib/enterprise/org-activation-signals";
 import { isHostOrgsEnabled } from "@/lib/enterprise/feature-flag";
@@ -201,11 +205,8 @@ export async function getOrgAnalytics(
         periodEnd: { gte: now },
       },
     }),
-    // #772 B3 — wallet activity derives from the double-entry journal: group the
-    // org's WALLET-account entries (last 30d) by originating txn kind and sum the
-    // signed delta (CREDIT = +, DEBIT = −), preserving the {reason,count,deltaPaise}
-    // shape. ORM read + JS aggregation (no raw SQL): the 30-day window per org is
-    // bounded, so pulling the entries and folding them in app code is fine.
+    // The org's WALLET journal lines of the last 30 days, grouped by the reason the
+    // Wallet tab shows; the window is bounded, so folding them in app code is fine.
     org.billingAccount?.fundingSource === "WALLET" &&
     baId &&
     org.billingAccount.currency
@@ -221,27 +222,9 @@ export async function getOrgAnalytics(
               }),
               createdAt: { gte: thirtyDaysAgo },
             },
-            select: {
-              direction: true,
-              amountPaise: true,
-              transaction: { select: { kind: true } },
-            },
+            select: walletLedgerLineSelect,
           });
-          // #780 — extended-client reads surface amountPaise as number.
-          const byKind = new Map<string, { count: number; delta: number }>();
-          for (const e of entries) {
-            const kind = e.transaction.kind;
-            const cur = byKind.get(kind) ?? { count: 0, delta: 0 };
-            cur.count += 1;
-            cur.delta +=
-              e.direction === "CREDIT" ? e.amountPaise : -e.amountPaise;
-            byKind.set(kind, cur);
-          }
-          return Array.from(byKind.entries()).map(([reason, v]) => ({
-            reason,
-            count: v.count,
-            deltaPaise: v.delta,
-          }));
+          return walletActivityByReason(entries);
         })()
       : Promise.resolve(
           [] as Array<{
