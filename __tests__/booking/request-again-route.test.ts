@@ -23,7 +23,10 @@ import {
   REQUEST_AGAIN_ALREADY_PAID,
   RequestAgainAnswerSchema,
 } from "../../lib/booking/request-again-rules";
-import { AppointmentBusyError } from "../../utils/appointmentlock";
+import {
+  AppointmentBusyError,
+  LockLostError,
+} from "../../utils/appointmentlock";
 
 const BOOKING = "7f1c2a9e-4b6d-4c1a-9e2f-0a1b2c3d4e5f";
 const call = (bookingId: string) =>
@@ -74,12 +77,17 @@ describe("POST /api/bookings/[bookingId]/request-again", () => {
     }
   });
 
-  it("a busy booking lock answers 423 in a shape the control parses", async () => {
-    mockClose.mockRejectedValueOnce(new AppointmentBusyError(BOOKING));
-    const res = await call(BOOKING);
-    expect(res.status).toBe(423);
-    expect(RequestAgainAnswerSchema.parse(await res.json())).toMatchObject({
-      code: "APPOINTMENT_BUSY",
-    });
+  it("a busy or lost booking lock answers in a shape the control parses", async () => {
+    for (const [error, status, code] of [
+      [new AppointmentBusyError(BOOKING), 423, "APPOINTMENT_BUSY"],
+      [new LockLostError(`appointment:${BOOKING}`), 409, "LOCK_LOST"],
+    ] as const) {
+      mockClose.mockRejectedValueOnce(error);
+      const res = await call(BOOKING);
+      expect(res.status).toBe(status);
+      expect(RequestAgainAnswerSchema.parse(await res.json())).toMatchObject({
+        code,
+      });
+    }
   });
 });

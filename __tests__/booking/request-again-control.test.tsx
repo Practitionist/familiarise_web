@@ -150,6 +150,7 @@ describe("RequestAgainButton", () => {
     for (const [status, code] of [
       [423, "APPOINTMENT_BUSY"],
       [503, "BOOKING_LOCK_UNAVAILABLE"],
+      [409, "LOCK_LOST"],
     ] as const) {
       const message = `Lock answer ${code}`;
       answering(status, { code, error: message });

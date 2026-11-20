@@ -57,10 +57,11 @@ export const REQUEST_AGAIN_REFUSALS = [
 ] as const;
 export type RequestAgainRefusal = (typeof REQUEST_AGAIN_REFUSALS)[number];
 
-/** The booking lock's answers (423, 503): try again shortly, not a refusal. */
+/** The booking lock's answers (busy 423, unavailable 503, lost 409): try again shortly, not a refusal. */
 export const REQUEST_AGAIN_LOCK_CODES = [
   "APPOINTMENT_BUSY",
   "BOOKING_LOCK_UNAVAILABLE",
+  "LOCK_LOST",
 ] as const;
 
 /** What the route answers; the control parses it before it navigates. */
