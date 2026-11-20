@@ -19,6 +19,7 @@ import {
   Prisma,
 } from "@prisma/client";
 import { liveParticipant } from "@/lib/booking/participants";
+import { requestHoldDeadline } from "@/lib/dashboard/money-state";
 
 /**
  * Consultation/Subscription statuses that count as "slot occupied"
@@ -205,13 +206,57 @@ export function buildCohostCommitmentFilter(
 }
 
 /**
- * #1319 — the SQL twin of isOccupiedByLiveAppointment, for callers that select
- * SLOTS rather than appointments and so cannot run the JS predicate (checkout
- * step 1, the trial route). Subtracts the two dead-hold shapes from the
- * occupancy filter: an APPROVED_PENDING_PAYMENT or DIRECT_CHECKOUT PENDING
- * request whose every payment is EXPIRED or past its window. Kept beside
- * buildOccupiedAppointmentFilter so the two cannot drift silently;
- * hold-expiry-predicate.test.ts asserts they agree.
+ * The two things that make a booking "being moved", as counts the JS twin can
+ * read off one appointment row. The same clauses as `BEING_MOVED`
+ * (`lib/data/needs-you.ts`), restated because that module loads the Prisma
+ * client; hold-expiry-predicate.test.ts asserts they are equal.
+ */
+export const BEING_MOVED_COUNTS = {
+  select: {
+    rescheduleRequests: { where: { status: "PENDING_REVIEW" } },
+    occurrences: {
+      where: {
+        isTentative: true,
+        completionStatus: "RESCHEDULED",
+        deletedAt: null,
+      },
+    },
+  },
+} satisfies Prisma.AppointmentCountOutputTypeDefaultArgs;
+
+/** Everything isOccupiedByLiveAppointment reads off an appointment row. */
+export const LIVE_OCCUPANCY_READ = {
+  consultation: {
+    select: { status: true, bookingSource: true, requestedAt: true },
+  },
+  subscription: {
+    select: { status: true, bookingSource: true, requestedAt: true },
+  },
+  payment: { select: { expiresAt: true, paymentStatus: true } },
+  _count: BEING_MOVED_COUNTS,
+} satisfies Prisma.AppointmentSelect;
+
+/**
+ * An unanswered request asked for before this instant has outlived its hold
+ * window. The request caps stop counting it at the same instant
+ * (`holdingSince`), from the same window.
+ */
+export function requestHoldCutoff(
+  kind: "CONSULTATION" | "SUBSCRIPTION",
+  now: Date,
+): Date {
+  const releasesAt = requestHoldDeadline(kind, now) ?? now;
+  return new Date(2 * now.getTime() - releasesAt.getTime());
+}
+
+/**
+ * The SQL twin of isOccupiedByLiveAppointment, for callers that filter in the
+ * query. Subtracts the dead holds from the occupancy filter: an
+ * APPROVED_PENDING_PAYMENT or DIRECT_CHECKOUT PENDING request whose every
+ * payment is EXPIRED, FAILED or past its window, and an unanswered request
+ * past its hold window. A booking being moved keeps its time: a reschedule
+ * puts the parent back to PENDING while its released sessions still need
+ * theirs. hold-expiry-predicate.test.ts asserts the twins agree.
  *
  * Prisma subtlety: `every` is vacuously true on an appointment with no
  * payments, so `some: {}` is required alongside it — that is the SQL form of
@@ -230,6 +275,25 @@ export function buildDeadHoldFilter(now: Date): Prisma.AppointmentWhereInput {
           { paymentStatus: PaymentStatus.PENDING, expiresAt: { lt: now } },
         ],
       },
+    },
+  };
+  const unanswered = (kind: "CONSULTATION" | "SUBSCRIPTION") => ({
+    status: AppointmentStatus.PENDING,
+    bookingSource: BookingSource.REQUEST_SUBMITTED,
+    requestedAt: { lt: requestHoldCutoff(kind, now) },
+  });
+  const notBeingMoved: Prisma.AppointmentWhereInput = {
+    NOT: {
+      OR: [
+        {
+          rescheduleRequests: {
+            some: BEING_MOVED_COUNTS.select.rescheduleRequests.where,
+          },
+        },
+        {
+          occurrences: { some: BEING_MOVED_COUNTS.select.occurrences.where },
+        },
+      ],
     },
   };
   return {
@@ -256,6 +320,8 @@ export function buildDeadHoldFilter(now: Date): Prisma.AppointmentWhereInput {
         },
         ...allPaymentsDead,
       },
+      { consultation: unanswered("CONSULTATION"), ...notBeingMoved },
+      { subscription: unanswered("SUBSCRIPTION"), ...notBeingMoved },
     ],
   };
 }

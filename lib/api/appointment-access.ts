@@ -21,6 +21,7 @@ import {
   readAppointmentDetail,
   canAccessAppointment,
   scopeAppointmentDetail,
+  viewerMayWithdrawReschedule,
   type TAppointmentDetail,
 } from "@/lib/data/appointment-detail";
 import { supportError } from "@/lib/api/support-http";
@@ -91,6 +92,7 @@ export async function authorizeAppointment(
         detail.appointment,
         session.user.id,
       ),
+      mayWithdrawReschedule: await viewerMayWithdrawReschedule(detail, session),
     });
   if (canAccessAppointment(session.user.id, detail)) {
     return {

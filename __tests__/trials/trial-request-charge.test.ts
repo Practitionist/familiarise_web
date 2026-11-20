@@ -26,12 +26,6 @@ jest.mock("../../lib/auth-helpers", () => ({
     },
   }),
 }));
-const trialRequestRefusal = jest.fn(async () => null);
-const spendTrialRequest = jest.fn(async () => undefined);
-jest.mock("../../lib/rate-limit", () => ({
-  trialRequestRefusal: (...a: unknown[]) => trialRequestRefusal(...(a as [])),
-  spendTrialRequest: (...a: unknown[]) => spendTrialRequest(...(a as [])),
-}));
 const prepared = { bells: [], emails: { prepared: {}, screened: [] } };
 const prepareNotices = jest.fn(async (..._args: unknown[]) => prepared);
 const stageNotices = jest.fn(async (..._args: unknown[]) => ({
@@ -59,12 +53,20 @@ const bookTrial = jest.fn(async (_tx: unknown, args: { paid: boolean }) => ({
   consulteeProfile: { user: { name: "B" } },
   consultantProfile: { user: { id: "u-expert", name: "E" } },
 }));
+class MockTrialDailyLimitError extends Error {
+  constructor(readonly retryAt: Date) {
+    super("You've reached today's trial request limit.");
+  }
+}
 jest.mock("../../lib/trials/book-trial", () => ({
   lockTrialPick: (...a: unknown[]) => lockPick(...(a as [])),
   bookTrialInTx: (...a: unknown[]) =>
     bookTrial(...(a as [unknown, { paid: boolean }])),
   TrialTimeRefusedError: class extends Error {},
   TrialPairHeldError: class extends Error {},
+  get TrialDailyLimitError() {
+    return MockTrialDailyLimitError;
+  },
 }));
 
 const plan = { trialPriceInPaise: 0, acceptingRequests: true };
@@ -151,15 +153,30 @@ it("a window that is not the trial's length answers 400 WINDOW_DURATION_MISMATCH
   expect(bookTrial).not.toHaveBeenCalled();
 });
 
-it("a refused request costs no attempt; only a created trial spends one", async () => {
-  plan.trialPriceInPaise = 0;
-  const refused = await post({ slot: slot(60) });
-  expect(refused.status).toBe(400);
-  expect(trialRequestRefusal).not.toHaveBeenCalled();
-  expect(spendTrialRequest).not.toHaveBeenCalled();
-  const created = await post();
-  expect(created.status).toBe(201);
-  expect(spendTrialRequest).toHaveBeenCalledTimes(1);
+it("a learner past today's trial limit is told so, and when to try again: 429, nothing minted", async () => {
+  plan.trialPriceInPaise = 50_000;
+  const retryAt = new Date(Date.now() + 90 * 60_000);
+  bookTrial.mockRejectedValueOnce(new MockTrialDailyLimitError(retryAt));
+  const res = await post();
+  expect(res.status).toBe(429);
+  expect(await res.json()).toMatchObject({
+    error: "You've reached today's trial request limit.",
+    code: "RATE_LIMITED",
+    retryAt: retryAt.toISOString(),
+  });
+  expect(Number(res.headers.get("Retry-After"))).toBeGreaterThan(5390);
+  expect(Number(res.headers.get("Retry-After"))).toBeLessThanOrEqual(5400);
+  expect(createIntent).not.toHaveBeenCalled();
+  expect(release).toHaveBeenCalledTimes(1);
+});
+
+it("the daily limit has one mechanism: the request limiter pair is gone", () => {
+  const read = (rel: string) =>
+    jest
+      .requireActual<typeof import("fs")>("fs")
+      .readFileSync(`${process.cwd()}/${rel}`, "utf8");
+  expect(read("app/api/trials/route.ts")).not.toContain("lib/rate-limit");
+  expect(read("lib/rate-limit.ts")).not.toContain("rl:trial-request");
 });
 
 it("a paid pick inside the unpaid lead time answers 409 REQUEST_TOO_SOON", async () => {

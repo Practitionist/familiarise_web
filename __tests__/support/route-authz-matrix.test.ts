@@ -533,6 +533,7 @@ function mockAppointmentDetail() {
       classId: null,
       participants: [],
       payment: [],
+      rescheduleRequests: [],
       consultation: {
         requestedBy: { userId: "u-owner" },
         consultationPlan: { consultantProfile: { userId: "u-expert" } },

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Db } from "@/lib/prisma";
 import { MINIMUM_BOOKING_LEAD_TIME_MS } from "@/lib/payments/constants";
+import { MAX_BOOKING_HORIZON_MS } from "@/lib/booking/lead-time";
 import { byCodeUnit } from "@/lib/scheduling/code-unit-order";
 
 /**
@@ -26,7 +27,7 @@ import { byCodeUnit } from "@/lib/scheduling/code-unit-order";
  * Bump when the response SHAPE changes (new field, different bucketing). Every
  * previously issued ETag then misses and the next poll repaints.
  */
-const MARKER_VERSION = "av4";
+const MARKER_VERSION = "av5";
 
 export interface AvailabilityGridMarker {
   /** Null when no such consultant — the caller must fall through to its 404. */
@@ -62,6 +63,11 @@ export interface AvailabilityGridMarker {
    * could 304 across the very change that added busy times to it.
    */
   collaboratorsUpdatedAt: Date | null;
+  /**
+   * Seat rows of this consultant (and the consultee, if given) on the window's
+   * appointments. A free seat given up or taken back writes no other row.
+   */
+  participantsUpdatedAt?: Date | null;
   /** Parent request rows — status flips that start or stop occupying. */
   requestsUpdatedAt: Date | null;
   /**
@@ -256,6 +262,11 @@ export async function readAvailabilityGridMarker(
       (SELECT max(cb."updatedAt")
          FROM "Collaborator" cb
          JOIN consultant co ON co.id = cb."consultantProfileId") AS "collaboratorsUpdatedAt",
+      (SELECT max(p."updatedAt")
+         FROM "AppointmentParticipant" p
+         JOIN reach r ON r.id = p."appointmentId"
+        WHERE p."userId" = ${consulteeKey}
+           OR p."userId" IN (SELECT c."userId" FROM consultant c)) AS "participantsUpdatedAt",
       (SELECT max(t) FROM (
           SELECT max(c."updatedAt") AS t
             FROM "Consultation" c
@@ -314,6 +325,8 @@ export interface AvailabilityGridEtagKey {
   quotaFold?: string | null;
   /** The moving event's own appointment, left out of the busy time. */
   excludedAppointmentId?: string | null;
+  /** {@link horizonBucket} when the window reaches past the booking horizon. */
+  horizonBucket?: number | null;
 }
 
 const THIRTY_MIN_MS = 30 * 60 * 1000;
@@ -327,6 +340,14 @@ export function leadTimeBucket(
   leadMs: number = MINIMUM_BOOKING_LEAD_TIME_MS,
 ): number {
   return Math.ceil((nowMs + leadMs) / THIRTY_MIN_MS);
+}
+
+/**
+ * The 30-minute bucket `now + the booking horizon` falls in. A cell stops
+ * being "too far ahead" when that instant reaches its start.
+ */
+export function horizonBucket(nowMs: number): number {
+  return Math.floor((nowMs + MAX_BOOKING_HORIZON_MS) / THIRTY_MIN_MS);
 }
 
 /**
@@ -387,8 +408,12 @@ export function availabilityGridEtag(
     iso(marker.paymentsUpdatedAt ?? null),
     iso(marker.requestsUpdatedAt),
     iso(marker.nextHoldExpiry),
+    iso(marker.participantsUpdatedAt ?? null),
     // Appended only when set, so every other request keeps its tag.
     ...(key.excludedAppointmentId ? [`x:${key.excludedAppointmentId}`] : []),
+    ...(typeof key.horizonBucket === "number"
+      ? [`h:${key.horizonBucket}`]
+      : []),
   ].join(" ");
   return `"${createHash("sha256").update(material).digest("base64url")}"`;
 }

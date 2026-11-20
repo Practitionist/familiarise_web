@@ -169,10 +169,28 @@ rows, because three things change a cell without any row changing: the earliest
 live hold's `expiresAt` (`nextHoldExpiry`), so a hold that lapses by the clock
 changes the tag; the lead time and its bucket (`leadMs`, `leadTimeBucket`), so a
 cell that enters the lead time, or a grid drawn for another purpose, changes it;
-and, when the overlay is asked for, the subscription quota fold.
+and, when the overlay is asked for, the subscription quota fold. The change
+marker (`MARKER_VERSION` `av5`) also reads the newest seat row
+(`AppointmentParticipant.updatedAt`) of the consultant and the consultee on the
+window's appointments, because a free seat given up or taken back writes no
+other row, and the horizon bucket (`horizonBucket`) when the window reaches past
+the booking horizon. The response sends `Vary: Cookie` with
+`Cache-Control: private, max-age=30`, because the body depends on the signed-in
+viewer. When a poll returns a changed body the calendar re-reads this booking's
+own sessions (`hooks/scheduling/useCalendarData.ts`).
 
 The route also returns per-cell flags the client paints as their own
-non-selectable states. The caller names the writer it draws for with
+states. A free cell outside an accepted co-host's published hours is flagged
+`outsideCoHostHours` (with `outsideCoHostHoursOf`, first names, for a viewer who
+may see names): it is labelled and not selectable, because the allocator
+refuses a webinar or class time a co-host has not published
+(`[COLLABORATOR_SCHEDULE]`). A cell that
+starts later than `MAX_BOOKING_HORIZON_DAYS` (90, `lib/booking/lead-time.ts`)
+is flagged `beyondHorizon` ("Too far ahead", not selectable) for a 1:1 session,
+request or trial, placed or moved; a subscription's plan weeks, a webinar and a
+class are not bound by it. A trial's block reads "Trial session", with the
+learner's name for the host. In a reschedule, a session of the same booking
+that is not being moved is not selectable. The caller names the writer it draws for with
 `?purpose=book|request|allocate|reschedule` (default `book`) and `&unpaid=1`,
 and the route applies that writer's lead time from `leadMsFor`
 (`lib/booking/lead-time.ts`, §6): a cell whose start is at or before
@@ -228,8 +246,13 @@ there is at least one; in Prisma that needs `some: {}` alongside `every`, since
 qualify: an `APPROVED_PENDING_PAYMENT` request, and — new in wave 5 (#1328) — a
 `PENDING` request whose `bookingSource` is `DIRECT_CHECKOUT`, which never sees a
 consultant approval and so stayed blocked until the sweep caught up. A `PENDING`
-`REQUEST_SUBMITTED` request waits on a human, not a payment, and always
-occupies.
+`REQUEST_SUBMITTED` request waits on the expert, not a payment, and occupies
+only while its hold window lasts: 48 hours for a consultation, 30 days for a
+subscription (`requestHoldCutoff`, from the same `requestHoldDeadline` window
+the request caps count by, so the cap and the calendar let go at the same
+instant). Past it the time is free by the clock, swept or not. A booking being
+moved (an open reschedule request or a released session, `BEING_MOVED_COUNTS`)
+keeps its hold, because a reschedule puts the parent back to `PENDING`.
 
 ## 6. Allocation modes, partial allocation, and the collaborator guard
 
@@ -351,25 +374,21 @@ week; `planWeekNumber`, `planWeekStartsAt` and `rescheduleWindow` are exported
 for copy, reminders and the reschedule picker. Copy reads "Week N of W"
 (`subscriptionCycleHeading`, the grid footer).
 
-The top-up sweep (`topUpIncompleteEvents` in
-`scripts/appointments/reconcile-occurrence-availability.ts`) retries a short
-recurring event when its consultant changed availability since the last attempt
-or when that attempt is at least 6 hours old (`TOP_UP_RETRY_MS`), so a plan week
-that opens on the calendar is filled without an availability edit. Changed
-calendars go first (newest change first), then rested ones oldest attempt first,
-still capped at 25 events and 60 seconds a run. A subscription is a candidate
-only when its consultant scheduled the plan with Auto: every allocation writes
-its placement on the approval's `BookingStatusHistory.reason` as a stable token
-(`SCHEDULE_REASON` / `scheduleReason` in `lib/booking/allocation/schedule-choice.ts`,
-parsed strictly, shown through `SCHEDULE_REASON_COPY`): `schedule:auto` /
-`schedule:by-hand` only for the plan's first scheduling (derived on the server
-from what the plan held before the run, never a client flag), `schedule:week-*`
-for a later week, `schedule:top-up` for the sweep (`bySweep`) and
-`schedule:reschedule` when released sessions are re-placed or a reschedule is
-confirmed. `plansOnAuto` reads the newest plan-level token; a plan with none
-(scheduled before tokens existed) counts as by hand. Other plans
-get the week reminder, which links to the allocate page's one-tap "Auto-schedule
-this week".
+No job places sessions: nothing goes on a calendar unless a person clicks.
+`scripts/appointments/reconcile-occurrence-availability.ts` only clears stale
+tentative flags, detects double bookings and reports participant drift. Do not
+add a placing pass to it or to any other job. Every allocation writes how its
+batch was placed on the approval's `BookingStatusHistory.reason` as a stable
+token (`SCHEDULE_REASON` / `scheduleReason` in
+`lib/booking/allocation/schedule-choice.ts`): `schedule:auto`,
+`schedule:by-hand`, or `schedule:reschedule` when released sessions are
+re-placed or a reschedule is confirmed, derived on the server and never from a
+client flag. `scheduleReasonWords` turns a token into the timeline's words and
+still reads `schedule:week-auto`, `schedule:week-by-hand` and `schedule:top-up`
+on stored history rows; never write those three, and never read a token to
+decide behaviour. Every plan with an unplaced current week gets the week
+reminder on days 0, 1 and 3 (`lib/booking/week-nudge.ts`), which links to the
+allocate page's one-tap "Auto-schedule this week".
 
 Also as of wave 5 (#1329), the co-host guard runs in **every** allocation mode:
 `assertCollaboratorsFree` (`lib/booking/allocation/collaborators.ts`) calls
@@ -395,20 +414,22 @@ by hue alone, and every identifying border clears 3:1 against the white card.
 `resolveSlotStatusKey` is the one place a cell's state is decided, in this
 precedence order:
 
-| Key               | Label          | Fill        | Non-colour cue               |
-| ----------------- | -------------- | ----------- | ---------------------------- |
-| `justTaken`       | Just taken     | rose-100    | strike-through               |
-| `selected`        | Selected       | emerald-700 | check icon                   |
-| `thisEvent`       | This booking   | indigo-200  | person icon                  |
-| `rescheduling`    | Being moved    | orange-100  | dashed border, move icon     |
-| `fullyBooked`     | Booked         | slate-300   | lock icon                    |
-| `partiallyBooked` | Partly booked  | amber-100   | amber hatch; not selectable  |
-| `unavailable`     | Unavailable    | transparent | closed hatch on the gridcell |
-| `past`            | Past           | slate-50    | 50 % opacity                 |
-| `outsidePeriod`   | Outside period | white       | slate hatch                  |
-| `tooSoon`         | Too soon       | slate-100   | dotted border                |
-| `limitReached`    | Limit reached  | slate-100   | cross-hatch                  |
-| `available`       | Free           | emerald-100 | solid border                 |
+| Key                  | Label                     | Fill        | Non-colour cue                   |
+| -------------------- | ------------------------- | ----------- | -------------------------------- |
+| `justTaken`          | Just taken                | rose-100    | strike-through                   |
+| `selected`           | Selected                  | emerald-700 | check icon                       |
+| `thisEvent`          | This booking              | indigo-200  | person icon                      |
+| `rescheduling`       | Being moved               | orange-100  | dashed border, move icon         |
+| `fullyBooked`        | Booked                    | slate-300   | lock icon                        |
+| `partiallyBooked`    | Partly booked             | amber-100   | amber hatch; not selectable      |
+| `unavailable`        | Unavailable               | transparent | closed hatch on the gridcell     |
+| `past`               | Past                      | slate-50    | 50 % opacity                     |
+| `outsidePeriod`      | Outside period            | white       | slate hatch                      |
+| `tooSoon`            | Too soon                  | slate-100   | dotted border                    |
+| `beyondHorizon`      | Too far ahead             | slate-50    | horizontal rules; not selectable |
+| `limitReached`       | Limit reached             | slate-100   | cross-hatch                      |
+| `outsideCoHostHours` | Outside a co-host's hours | slate-100   | people icon; not selectable      |
+| `available`          | Free                      | emerald-100 | solid border                     |
 
 "Just taken" outranks "Selected": a pick that the latest poll proves gone paints
 "Just taken" for exactly one committed render, then is deselected and announced
@@ -440,7 +461,7 @@ The grid draws per-day row lists in the display zone, never from a browser-local
 whose start falls on that calendar date in the zone: 48 on a normal day, 46 or 50
 across an hour shift, 47 or 49 across a half-hour shift. Cells stay on the UTC
 :00/:30 grid whatever the offset, so a viewer at UTC+05:45 reads "9:15–9:45"
-labels, and the repeated fall-back hour is labelled "1:00 am (2nd)". `atomPhaseMinutes` gives a zone's phase (15 at +05:45), so a :45 host's class pattern offers :15 and :45 local starts (`lib/booking/class-pattern.ts`) and `WeekGrid` prints the hour label on the first row of each local hour. A pick that crosses local midnight is one session on the day it starts (`sessionDayKeys` in `lib/scheduling/intervalSelectionValidation.ts`). A host's picker for their own event sends `purpose=reschedule` with `classId` or `webinarId`; the grid then leaves that event's own appointment out of the busy time and folds in accepted co-hosts' hours, and the excluded id joins the ETag.
+labels, and the repeated fall-back hour is labelled "1:00 am (2nd)". `atomPhaseMinutes` gives a zone's phase (15 at +05:45), so a :45 host's class pattern offers :15 and :45 local starts (`lib/booking/class-pattern.ts`) and `WeekGrid` prints the hour label on the first row of each local hour. A pick that crosses local midnight is one session on the day it starts (`sessionDayKeys` in `lib/scheduling/intervalSelectionValidation.ts`). A host's picker for their own event sends `purpose=reschedule` with `classId` or `webinarId`; the grid then leaves that event's own appointment out of the busy time, paints accepted co-hosts' commitments busy and flags a free cell outside a co-host's published hours `outsideCoHostHours` (labelled, not pickable), and the excluded id joins the ETag.
 `cellInstant` and `dayStartInstant` resolve instants through the zone's rules.
 
 The display zone is the viewer's profile zone when it is valid
@@ -457,9 +478,12 @@ and a list of times, built by `lib/scheduling/day-list.ts` from the same grid
 endpoint, the same status tokens and the same quota overlay. It starts at the
 plan's allowed window and pages through it, refuses a pick that overlaps another
 pick or lands on a full day (`pickConflict`), and drops stale picks the same
-"Just taken" way. It receives the picker policy's lead as `minLeadHours`
-(`leadMsFor(policy.lead.purpose, …)`), so it offers no time the grid would paint
-"Too soon". Each `TimePickerPolicy` (`components/scheduling/time-picker-policy.ts`)
+"Just taken" way. It judges each atom with the week grid's own resolver
+(`describeAtom`), from the same answer: the policy's `purpose` goes to the
+server, the `leadMs` the server returns decides "Too soon" and is re-applied
+between polls, the weekly limit applies, and in a reschedule a new time may
+overlap the moving session's own slot, so it offers exactly what the desktop
+grid would let a click take. Each `TimePickerPolicy` (`components/scheduling/time-picker-policy.ts`)
 carries a `lead`: allocate is `allocate`, unpaid from `AllocationRequest.settled`;
 both reschedule policies are `reschedule` (24 h); rebook is `book`. A
 subscription reschedule clamps the picker to `rescheduleWindow`

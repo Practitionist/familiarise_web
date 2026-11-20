@@ -35,6 +35,8 @@ import {
   type AvailabilityEvent,
 } from "@/lib/scheduling/use-availability-window";
 import { useJustTaken } from "@/lib/scheduling/use-just-taken";
+import { SLOT_STATUS_TOKENS } from "@/lib/scheduling/interval-status-tokens";
+import type { GridLead } from "@/lib/scheduling/allocationService";
 import { DISPLAY_LOCALE, formatClockTime } from "@/lib/time/display";
 import { calendarDateKey, calendarDayOf } from "@/lib/time/grid-zone";
 import { canonicalZone } from "@/lib/time/viewer-zone";
@@ -94,6 +96,7 @@ export const TIME_JUST_TAKEN_MESSAGE =
 const PERIODS: readonly DayPeriod[] = ["Morning", "Afternoon", "Evening"];
 
 /** The picker's own width that fits the 22rem month, the gap and a two-column times pane in one row. */
+const MOVE_LEAD: GridLead = { purpose: "reschedule" };
 const SIDE_BY_SIDE_STEPS = [700] as const;
 /** The times list width that fits 2..6 columns of 7.5rem buttons with 0.5rem gaps. */
 const TIME_COLUMN_STEPS = [248, 376, 504, 632, 760] as const;
@@ -272,12 +275,15 @@ export function SingleTimePicker({
     }
   }
 
+  // A move is not bound by the booking horizon; every other pick reads the route's default.
+  const lead = purpose === "reschedule" ? MOVE_LEAD : undefined;
   const query = useAvailabilityMonth({
     consultantId,
     monthStart: month,
     timezone: mounted ? zone : null,
     consulteeUserId,
     event,
+    lead,
     bypassRef,
   });
   // A refusal overrides only a grid answer read before it.
@@ -404,6 +410,7 @@ export function SingleTimePicker({
     timezone: mounted && needNextMonth && canGoForward ? zone : null,
     consulteeUserId,
     event,
+    lead,
   });
   const nextFreeKey = useMemo(() => {
     if (!summary || !selectedKey) return null;
@@ -441,6 +448,11 @@ export function SingleTimePicker({
         }
       : null;
   const freeCount = options.filter((option) => option.state === "free").length;
+  const beyondHorizon =
+    selectedKey !== null &&
+    (query.data?.[selectedKey] ?? []).some(
+      (atom) => atom.beyondHorizon === true,
+    );
   const taken = audience === "buyer" ? takenTimes(options) : [];
   const outsideCount = options.filter(
     (option) => option.state === "outside-hours",
@@ -591,7 +603,9 @@ export function SingleTimePicker({
             {freeCount === 0 && (
               <div className="space-y-3 py-4">
                 <p className={cn("text-sm", tokens.heading)}>
-                  No free times on this day
+                  {beyondHorizon
+                    ? SLOT_STATUS_TOKENS.beyondHorizon.hint
+                    : "No free times on this day"}
                 </p>
                 {nextFreeKey && (
                   <button
