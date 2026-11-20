@@ -188,6 +188,7 @@ function pageFor(viewer: DetailViewer, seats = true) {
       }}
       participantsHref={() => ROSTER_HREF}
       supportRequestsBase="/support/requests"
+      operatorView={false}
       consultantId="cp-1"
     />,
   );

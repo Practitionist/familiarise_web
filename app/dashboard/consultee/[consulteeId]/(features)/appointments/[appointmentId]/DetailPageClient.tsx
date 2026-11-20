@@ -481,11 +481,14 @@ export default function DetailPageClient({
   consulteeId,
   appointmentId,
   viewerZone,
+  operatorView,
 }: Readonly<{
   consulteeId: string;
   appointmentId: string;
   /** Server-read viewer zone, so SSR and hydration agree. */
   viewerZone: string;
+  /** Staff viewing this learner's booking. */
+  operatorView: boolean;
 }>) {
   const adapter = useConsulteeAppointmentsAdapter();
 
@@ -498,6 +501,7 @@ export default function DetailPageClient({
         backHref={`/dashboard/consultee/${consulteeId}/appointments`}
         supportRequestsBase={`/dashboard/consultee/${consulteeId}/support/requests`}
         joinWindowMs={CONSULTEE_JOIN_WINDOW_MS}
+        operatorView={operatorView}
         renderExtraActions={(vm, { openChat }) => {
           const hasOverflowMessageAction = adapter
             .overflowItems(vm)

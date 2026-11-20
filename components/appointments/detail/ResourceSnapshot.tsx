@@ -50,6 +50,15 @@ const RETRYABLE = new Set([
   "RATE_LIMITED",
 ]);
 
+function errorCode(error: unknown): string {
+  return error instanceof FileActionError ? error.code : "SERVER_ERROR";
+}
+
+/** Only a failure a second try can cure is retried; a refusal answers the same again. */
+function retryTransient(failures: number, error: unknown): boolean {
+  return failures < 2 && RETRYABLE.has(errorCode(error));
+}
+
 async function getJson<T>(url: string): Promise<T> {
   let res: Response;
   try {
@@ -60,6 +69,9 @@ async function getJson<T>(url: string): Promise<T> {
   if (!res.ok) throw new FileActionError(await friendlyErrorFromResponse(res));
   return res.json();
 }
+
+/** Why the cards are not read: the booking was closed before it ran, or an operator is viewing someone else's booking. */
+export type ResourcesWithheld = "closed" | "operator";
 
 export interface ResourceHrefs {
   documents: string;
@@ -87,7 +99,7 @@ function CardError({
   onRetry,
   notFoundCopy,
 }: Readonly<{ error: unknown; onRetry: () => void; notFoundCopy: string }>) {
-  const code = error instanceof FileActionError ? error.code : "SERVER_ERROR";
+  const code = errorCode(error);
   const copy =
     code === "NOT_FOUND"
       ? notFoundCopy
@@ -138,6 +150,7 @@ function DocumentsCard({
         `/api/appointments/${encodeURIComponent(appointmentId)}/documents`,
       ),
     staleTime: 30_000,
+    retry: retryTransient,
   });
   if (isLoading) return <Skeleton className="h-16 w-full" />;
   if (error || !data) {
@@ -210,6 +223,7 @@ function MaterialsCard({ appointmentId }: Readonly<{ appointmentId: string }>) {
         `/api/appointments/${encodeURIComponent(appointmentId)}/materials`,
       ),
     staleTime: 60_000,
+    retry: retryTransient,
   });
   if (isLoading) return <Skeleton className="h-12 w-full" />;
   if (error || !data) {
@@ -309,6 +323,7 @@ function RecordingsCard({
         `/api/appointments/${encodeURIComponent(appointmentId)}/recordings`,
       ),
     staleTime: 30_000,
+    retry: retryTransient,
   });
   if (isLoading) return <Skeleton className="h-12 w-full" />;
   if (error || !data) {
@@ -376,11 +391,25 @@ export function ResourceSnapshot({
   appointmentId,
   supportsDocuments,
   hrefs,
+  withheld,
 }: Readonly<{
   appointmentId: string;
   supportsDocuments: boolean;
   hrefs: ResourceHrefs;
+  /** Set when the three reads would only be refused: nothing is requested. */
+  withheld: ResourcesWithheld | null;
 }>) {
+  if (withheld) {
+    return (
+      <p className="text-xs text-muted-foreground">
+        {withheld === "closed"
+          ? "No resources for this booking."
+          : supportsDocuments
+            ? "Only the learner and the expert can open this booking's resources."
+            : "Only the attendees and the host can open this booking's resources."}
+      </p>
+    );
+  }
   return (
     <div className="space-y-5">
       {supportsDocuments && (
