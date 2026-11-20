@@ -605,6 +605,7 @@ export interface ReviewableSession {
     rating: number;
     reviewDescription: string | null;
     ratingCause: RatingCause | null;
+    isAnonymous: boolean;
   } | null;
 }
 
