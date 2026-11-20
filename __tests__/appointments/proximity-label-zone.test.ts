@@ -57,4 +57,21 @@ describe("the list row and the Next card's chip", () => {
       ["in 8 days", "8d"],
     );
   });
+
+  it("keep hours for a same-day session 24 h away across the fall-back night", () => {
+    // 00:15 EDT to 23:30 EST on Sun 1 Nov 2026 in New York: one calendar day, 24 h 15 min.
+    const fallBackNow = new Date("2026-11-01T04:15:00.000Z");
+    const sameDay = new Date("2026-11-02T04:30:00.000Z");
+    jest.spyOn(Date, "now").mockReturnValue(fallBackNow.getTime());
+    const chip = renderToStaticMarkup(
+      createElement(DisplayZoneProvider, {
+        zone: "America/New_York",
+        children: createElement(CountdownBadge, { targetDate: sameDay }),
+      }),
+    );
+    expect([
+      getProximityLabel(sameDay, "America/New_York", fallBackNow),
+      chip.replace(/<[^>]+>/g, ""),
+    ]).toEqual(["Today", "24h"]);
+  });
 });

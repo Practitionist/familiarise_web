@@ -37,7 +37,8 @@ function formatCountdown(target: number, now: number, zone: string): string {
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h`;
   const days = calendarDaysUntil(new Date(target), zone, new Date(now));
-  return `${Math.max(days, 1)}d`;
+  // A fall-back day holds 25 h, so 24 h or more can still be today.
+  return days > 0 ? `${days}d` : `${hours}h`;
 }
 
 const tierStyles: Record<Tier, string> = {
