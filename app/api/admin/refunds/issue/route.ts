@@ -9,12 +9,27 @@ import {
   refundablePaymentPaise,
   refundInFlightOr,
 } from "@/lib/backoffice/refund-doors";
+import { assertRefundDoorOpen } from "@/lib/backoffice/refund-eligibility";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import { occurrenceRefundKey } from "@/lib/booking/class-sessions";
 
 /** 400 copy for a missing/malformed `idempotencyKey` (via withOpsAction). */
 const KEY_REQUIRED_COPY =
   "idempotencyKey is required and must be a UUID — send the per-dialog key the refund dialog already mints. Without it this door cannot tell a double-click from a second refund, and would mint a fresh one instead, leaving the unique dedupe column inert.";
+
+/**
+ * Deterministic in the caller's key, so `Refund.dedupeKey @unique` fires on a
+ * second click. A UUID has no colon: never equals `ops:credits:…`.
+ */
+function issueDedupeKey(body: {
+  paymentId: string;
+  idempotencyKey: string;
+  occurrenceId?: string;
+}): string {
+  return body.occurrenceId
+    ? occurrenceRefundKey(body.occurrenceId, body.paymentId)
+    : `ops:${body.idempotencyKey}`;
+}
 
 /**
  * #1771 K-5 — "Issue refund" and "Ladder override". A full refund (no
@@ -57,6 +72,8 @@ export const POST = withOpsAction(
         );
       }
       await assertMoneyOpsBudget(actor.userId);
+      const dedupeKey = issueDedupeKey(body);
+      await assertRefundDoorOpen(body.paymentId, dedupeKey);
       const override =
         body.tierOverridePct === undefined
           ? null
@@ -68,11 +85,6 @@ export const POST = withOpsAction(
         );
       }
       const amountPaise = override?.amountPaise ?? body.amountPaise;
-      // Deterministic in the caller's key, so `Refund.dedupeKey @unique` fires
-      // on a second click. A UUID has no colon: never equals `ops:credits:…`.
-      const dedupeKey = body.occurrenceId
-        ? occurrenceRefundKey(body.occurrenceId, body.paymentId)
-        : `ops:${body.idempotencyKey}`;
       if (body.occurrenceId) {
         await assertSessionRefundable({
           paymentId: body.paymentId,
@@ -106,6 +118,8 @@ export const POST = withOpsAction(
       target: ({ body }) => ({ kind: "Payment", id: body.paymentId }),
       // A body naming both runs straight into the door's own refusal.
       amountPaise: async (body) => {
+        // A refund the door would refuse is never held for a second admin.
+        await assertRefundDoorOpen(body.paymentId, issueDedupeKey(body));
         if (body.tierOverridePct === undefined) {
           return body.amountPaise ?? refundablePaymentPaise(body.paymentId);
         }

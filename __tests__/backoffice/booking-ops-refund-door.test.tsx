@@ -42,6 +42,7 @@ function pay(overrides: Partial<Pay>): Pay {
     currency: "INR",
     refundedPaise: 0,
     pendingRefundPaise: 0,
+    refundable: true,
     ...overrides,
   };
 }
@@ -77,7 +78,7 @@ async function renderWith(payment: Pay) {
 }
 
 describe("BookingOpsPanel refund door", () => {
-  it("offers a refund on a succeeded payment with money left", async () => {
+  it("offers a refund on a payment the server marks refundable", async () => {
     await renderWith(
       pay({ refundedPaise: 20_000, pendingRefundPaise: 10_000 }),
     );
@@ -86,22 +87,11 @@ describe("BookingOpsPanel refund door", () => {
     ).toBeInTheDocument();
   });
 
-  it("offers a refund on a ₹0 credits booking, whose refund restores credits", async () => {
-    await renderWith(pay({ amountPaise: 0 }));
-    expect(
-      screen.getByRole("link", { name: "Issue refund" }),
-    ).toBeInTheDocument();
-  });
-
   it.each([
-    ["pending", pay({ status: "PENDING" })],
-    ["expired", pay({ status: "EXPIRED" })],
-    [
-      "fully refunded",
-      pay({ refundedPaise: 70_000, pendingRefundPaise: 30_000 }),
-    ],
-    ["pending ₹0", pay({ status: "PENDING", amountPaise: 0 })],
-  ])("hides the refund door on a %s payment", async (_, payment) => {
+    ["free ₹0 seat", pay({ amountPaise: 0, refundable: false })],
+    ["restored credits booking", pay({ amountPaise: 0, refundable: false })],
+    ["disputed card payment", pay({ refundable: false })],
+  ])("hides the refund door on a %s", async (_, payment) => {
     await renderWith(payment);
     expect(
       screen.queryByRole("link", { name: "Issue refund" }),

@@ -35,6 +35,10 @@ jest.mock("../../lib/auth-helpers", () => ({
 jest.mock("../../lib/backoffice/money-limit", () => ({
   assertMoneyOpsBudget: jest.fn(),
 }));
+// Eligibility has its own suite on real rows; this one pins the door's other contract.
+jest.mock("../../lib/backoffice/refund-eligibility", () => ({
+  assertRefundDoorOpen: jest.fn(async () => undefined),
+}));
 const create = jest.fn(async (_a: unknown) => ({ id: "row" }));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
