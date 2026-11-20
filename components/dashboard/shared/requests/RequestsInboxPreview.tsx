@@ -14,30 +14,29 @@ import {
 import {
   inboxQueryKey,
   inboxQueryString,
+  isRequestToAnswer,
+  parseRequestsInboxPayload,
+  sortInboxRows,
   type InboxRowInput,
+  type InboxType,
   type RequestsInboxPayload,
 } from "@/lib/dashboard/requests-inbox-state";
 import { useViewerZone } from "@/lib/time/use-viewer-zone";
 import { formatInViewerZone } from "@/lib/time/viewer-zone";
 
-import {
-  KIND_LABEL,
-  NEXT_CYCLE_BADGE,
-  errorSentence,
-  nextCycleLine,
-} from "./labels";
+import { KIND_LABEL, errorSentence } from "./labels";
 import { requestCountLine } from "./request-count-line";
 
 const PREVIEW_ROWS = 5;
 
 /**
- * The rows Home shows, first five. A checkout the learner is paying for is
- * nobody's request, so it is left out; a row without the field is shown.
+ * The rows Home shows, first five: the ones Home's count holds, so a pay link
+ * or a checkout waiting on the learner is left to the Requests page.
  */
 export function homePreviewRows<
-  T extends { checkoutHold?: InboxRowInput["checkoutHold"] },
+  T extends Parameters<typeof isRequestToAnswer>[0],
 >(rows: readonly T[]): T[] {
-  return rows.filter((row) => !row.checkoutHold).slice(0, PREVIEW_ROWS);
+  return rows.filter(isRequestToAnswer).slice(0, PREVIEW_ROWS);
 }
 
 /** The expert's own open proposal waits on the client; null for any other row. */
@@ -55,20 +54,54 @@ export function ownMoveWaitingLine(row: {
 function previewLine(row: InboxRowInput, zone: string): string {
   const ownMove = ownMoveWaitingLine(row);
   if (ownMove) return ownMove;
-  if (row.kind === "next-cycle" && row.entitlement) {
-    return nextCycleLine(row.entitlement);
-  }
   if (row.kind === "subscription" && row.entitlement) {
     return requestCountLine({ entitlement: row.entitlement });
   }
   return `Requested ${formatInViewerZone(new Date(row.requestedAt), zone, "d MMM, h:mm a")}`;
 }
 
+function previewQueryArgs(consultantProfileId: string, type: InboxType) {
+  return {
+    consultantProfileId,
+    scope: "personal",
+    type,
+    chip: null,
+    sort: "priority" as const,
+    page: 1,
+    after: null,
+    focus: null,
+  };
+}
+
+async function fetchPreviewTab(
+  args: ReturnType<typeof previewQueryArgs>,
+  signal: AbortSignal,
+): Promise<RequestsInboxPayload> {
+  // A stalled cold instance must surface as an error with a Retry, not
+  // as skeletons that never leave.
+  const response = await fetch(
+    `/api/bookings/inbox?${inboxQueryString(args)}`,
+    {
+      signal:
+        typeof AbortSignal.any === "function"
+          ? AbortSignal.any([signal, AbortSignal.timeout(20_000)])
+          : signal,
+    },
+  );
+  const body = (await response.json().catch(() => ({}))) as {
+    error?: string;
+    code?: string;
+  };
+  if (!response.ok) {
+    throw new Error(errorSentence(body.code, body.error ?? "Could not load"));
+  }
+  return parseRequestsInboxPayload(body);
+}
+
 /**
- * Home's "Pending requests" card: the first five rows of the SAME read the
- * inbox pages (#1775 A-6), priority order, no actions — "View all" is the
- * action. Reads the consultation tab, which is where a new consultant's
- * first request lands.
+ * Home's Requests card: the first five requests to answer, priority order, no
+ * actions ("Open Requests" is the action). The subscription tab is read when
+ * the inbox counts rows on it, so a paid plan waiting for times is listed.
  */
 export function RequestsInboxPreview({
   consultantProfileId,
@@ -76,49 +109,28 @@ export function RequestsInboxPreview({
   const params = useParams<{ consultantId: string }>();
   const consultantId = consultantProfileId ?? params?.consultantId ?? "";
   const viewer = useViewerZone();
-  const queryArgs = {
-    consultantProfileId: consultantId,
-    scope: "personal",
-    type: "consultation" as const,
-    chip: null,
-    sort: "priority" as const,
-    page: 1,
-    after: null,
-    focus: null,
-  };
+  const consultationArgs = previewQueryArgs(consultantId, "consultation");
+  const subscriptionArgs = previewQueryArgs(consultantId, "subscription");
   const query = useQuery({
-    queryKey: inboxQueryKey(queryArgs),
-    queryFn: async ({ signal }): Promise<RequestsInboxPayload> => {
-      // A stalled cold instance must surface as an error with a Retry, not
-      // as skeletons that never leave (QA #1783 case 9).
-      const response = await fetch(
-        `/api/bookings/inbox?${inboxQueryString(queryArgs)}`,
-        {
-          signal:
-            typeof AbortSignal.any === "function"
-              ? AbortSignal.any([signal, AbortSignal.timeout(20_000)])
-              : signal,
-        },
-      );
-      const body = (await response.json().catch(() => ({}))) as {
-        error?: string;
-        code?: string;
-      };
-      if (!response.ok) {
-        throw new Error(
-          errorSentence(body.code, body.error ?? "Could not load"),
-        );
-      }
-      return body as unknown as RequestsInboxPayload;
-    },
+    queryKey: inboxQueryKey(consultationArgs),
+    queryFn: ({ signal }) => fetchPreviewTab(consultationArgs, signal),
     enabled: consultantId !== "",
+    staleTime: 30_000,
+    retry: 1,
+  });
+  const readsSubscriptions = (query.data?.meta.counts.subscription ?? 0) > 0;
+  const subscriptions = useQuery({
+    queryKey: inboxQueryKey(subscriptionArgs),
+    queryFn: ({ signal }) => fetchPreviewTab(subscriptionArgs, signal),
+    enabled: readsSubscriptions,
     staleTime: 30_000,
     retry: 1,
   });
 
   // A disabled query never leaves pending; nothing to show without an id.
   if (consultantId === "") return null;
-  if (query.isPending) {
+  const reads = readsSubscriptions ? [query, subscriptions] : [query];
+  if (reads.some((read) => read.isPending)) {
     return (
       <div role="status" aria-live="polite" className="space-y-2 p-2">
         <span className="sr-only">Loading requests</span>
@@ -128,29 +140,37 @@ export function RequestsInboxPreview({
       </div>
     );
   }
-  if (query.isError) {
+  const failed = reads.find((read) => read.isError);
+  if (failed) {
     return (
       <div className="space-y-2 p-4 text-sm">
         <p className="text-destructive">
-          {query.error instanceof Error && query.error.name !== "TimeoutError"
-            ? query.error.message
+          {failed.error instanceof Error && failed.error.name !== "TimeoutError"
+            ? failed.error.message
             : "Requests took too long to load."}
         </p>
         <Button
           variant="outline"
           size="sm"
-          onClick={() => void query.refetch()}
+          onClick={() => {
+            for (const read of reads) void read.refetch();
+          }}
         >
           Retry
         </Button>
       </div>
     );
   }
-  const rows = homePreviewRows(query.data.rows);
+  const rows = homePreviewRows(
+    sortInboxRows(
+      reads.flatMap((read) => read.data?.rows ?? []),
+      "priority",
+    ),
+  );
   if (rows.length === 0) {
     return (
       <p className="p-4 text-center text-sm text-muted-foreground">
-        No pending requests
+        No requests to answer
       </p>
     );
   }
@@ -162,11 +182,9 @@ export function RequestsInboxPreview({
           "CONSULTANT",
           { viewerZone: viewer.zone },
         );
-        let badge = toneBadge(bookingState.tone, bookingState.label);
-        if (row.kind === "next-cycle") badge = NEXT_CYCLE_BADGE;
-        else if (ownMoveWaitingLine(row)) {
-          badge = toneBadge("info", "Waiting on client");
-        }
+        const badge = ownMoveWaitingLine(row)
+          ? toneBadge("info", "Waiting on client")
+          : toneBadge(bookingState.tone, bookingState.label);
         return (
           <li
             key={row.id}
@@ -184,7 +202,7 @@ export function RequestsInboxPreview({
               </p>
             </div>
             <Link
-              href={`/dashboard/consultant/${consultantId}/requests?type=${row.kind === "next-cycle" ? "subscription" : row.kind}`}
+              href={`/dashboard/consultant/${consultantId}/requests?type=${row.kind}`}
               className="shrink-0"
             >
               <StatusBadge {...badge} size="sm" />

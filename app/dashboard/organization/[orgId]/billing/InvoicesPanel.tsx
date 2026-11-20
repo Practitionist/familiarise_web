@@ -37,6 +37,7 @@ import {
   type OrgInvoice,
 } from "./billing-api";
 import { InvoiceDetailSheet } from "./InvoiceDetailSheet";
+import { ZonedDay } from "./ZonedDay";
 
 // Discriminated union for the post-checkout flow:
 //   - "confirmed": webhook landed within the poll budget; row is PAID.
@@ -80,7 +81,7 @@ const invoiceColumns: ResponsiveColumn<OrgInvoice>[] = [
     className: "text-xs text-muted-foreground",
     cell: (inv) => {
       const due = shownDueDate(inv);
-      return due ? new Date(due).toLocaleDateString() : "—";
+      return due ? <ZonedDay at={due} /> : "—";
     },
   },
 ];
@@ -91,7 +92,7 @@ const countOf = (n: number, noun: string) =>
 function SummaryStats({ summary }: Readonly<{ summary: BillingSummary }>) {
   const fundingSource = summary.fundingSource;
   return (
-    <StatRow columns={4}>
+    <StatRow columns={4} stackOnPhone>
       <Stat
         label="Spent (net of refunds)"
         value={formatCurrencyAmount(summary.monthToDate.net, "INR")}
@@ -332,7 +333,7 @@ export function InvoicesPanel({
   let summaryBlock: React.ReactNode;
   if (summary.isPending) {
     summaryBlock = (
-      <StatRow columns={4}>
+      <StatRow columns={4} stackOnPhone>
         <StatSkeleton />
         <StatSkeleton />
         <StatSkeleton />

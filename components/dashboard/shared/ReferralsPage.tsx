@@ -513,7 +513,14 @@ export function ReferralsPage({
             <>
               {code && (
                 <>
-                  <div className="mb-3 rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-800">
+                  <div
+                    data-testid="referral-offer"
+                    className={
+                      terms
+                        ? "mb-3 rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-800"
+                        : "mb-3 rounded-lg bg-zinc-50 border border-zinc-200 px-4 py-3 text-sm text-zinc-700"
+                    }
+                  >
                     {terms ? (
                       <>
                         Your friend gets {friendOffer}. You get{" "}
@@ -522,7 +529,8 @@ export function ReferralsPage({
                         has passed.
                       </>
                     ) : (
-                      "The referral programme is paused right now. Friends who sign up while it is paused get no welcome discount and earn you nothing; rewards for new sign-ups resume when it reopens."
+                      // Null terms cover not open yet, paused and budget used up alike.
+                      "The referral programme is not taking new referrals right now. A friend who signs up now gets no welcome discount, and the sign-up is not counted as your referral. The offer shows here whenever new referrals are rewarded."
                     )}
                     {isConsultant && terms && (
                       <span className="mt-1 block">

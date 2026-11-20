@@ -106,7 +106,7 @@ function readSubscriptionRenewal(sub: object | null | undefined): {
   return { id, status, deletedAt };
 }
 
-function UnpaidRequestedBookingControls({
+export function UnpaidRequestedBookingControls({
   appointmentId,
   initialNotes,
 }: Readonly<{
@@ -163,10 +163,10 @@ function UnpaidRequestedBookingControls({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <span className="font-medium text-foreground">
-            Unpaid booking request
-          </span>
-          <span className="ml-1.5 text-muted-foreground">
-            — You can edit your note before the expert responds.
+            Unpaid booking request.
+          </span>{" "}
+          <span className="text-muted-foreground">
+            You can edit your note before the expert responds.
           </span>
         </div>
         <div className="flex items-center gap-2">
