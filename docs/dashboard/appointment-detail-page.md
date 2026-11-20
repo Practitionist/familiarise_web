@@ -36,11 +36,28 @@ The Sessions card renders `SessionSchedule` (`components/appointments/detail/Ses
 
 The host's Payments card for a webinar or class counts attendee seats, not amounts. A seat that cost nothing (a free event or a full discount) reads "Free" (not "Paid") and is counted as a free seat, not a paid one; when every seat was free the card says "Nothing — every paid seat was free" instead of a bare "₹0.00 collected". The learner's money door reads "Problem with this charge" only when they were charged (a succeeded payment above zero), otherwise "Problem with this booking".
 
+## What the money line may claim
+
+The Payment card's money line, the Billing history row and the payment page read one payment through the same derivation (`deriveBookingPresentation` in `lib/dashboard/money-state.ts`), so all three print the same badge and sentence. Each reader hands it the booking's `source` (pay-first checkout or submitted request) and, per payment, `gatewayOrderMinted`: false only for a pre-mint placeholder whose order was never created (`isPreMintIntent`). The gateway order id itself never leaves the server.
+
+| What the rows hold                                   | Badge         | Line (learner)                                                                                      |
+| ---------------------------------------------------- | ------------- | --------------------------------------------------------------------------------------------------- |
+| An open order inside its window                      | Due           | "₹500.00 due · Razorpay · link valid until Fri 20 Nov 14:00"                                        |
+| An order whose window closed, swept or not yet       | Not completed | "The payment link expired on Fri 20 Nov. If you were charged, the money is refunded automatically." |
+| An order that was cancelled                          | Not completed | "This order was cancelled. If you were charged, the money is refunded automatically."               |
+| A failed payment                                     | Not completed | "The payment did not go through. If you were charged, the money is refunded automatically."         |
+| Only pre-mint placeholders, or no Payment row at all | Not charged   | "Nothing was charged for this booking." (or "Nothing was charged — the payment link expired.")      |
+
+"Nothing was charged" is said only in the last row, because a created order can still capture after it expired or was cancelled; that capture turns the row `SUCCEEDED` and is refunded automatically (`handlePaymentSuccess`), after which the line reads Refunded. "Not due yet — you are asked to pay after the expert approves" is said only for a request with no order open; a request carrying an open order reads Due, or Not completed once its window has passed, even on a reader that does not know the booking's source. The expert reads the same lines with the learner's name ("If Charlotte was charged, …"). The payment page labels the amount "Would have been" and offers no "Problem with this charge" only when nothing was provably charged. The table is pinned through each screen's real query by `__tests__/dashboards/money-state-provable.test.ts`.
+
 ## The public class schedule
 
 The class listing's schedule (`BatchSchedule` under `app/explore/programs/plans/classes/[classPlanId]/components/`) follows the same rules. It names the zone once per batch, shows no status pill on upcoming sessions, groups by week in the page's zone through the same `buildScheduleModel`, and shows a session's length only when lengths differ. When fewer sessions are on the calendar than the plan sells, the enrolment line says so: "Join now for ₹X · all 24 sessions (12 scheduled so far)".
 
 ## Deprecated & Superseded Approaches
+
+- **"Nothing was charged" on every unpaid booking.** A cancelled or expired gateway order read "Nothing was charged for this booking." and a lapsed link "Nothing was charged — the payment link expired", although the order could still capture. Replaced by the table in "What the money line may claim".
+- **Payment rows read without the booking's source.** The Billing row and the payment page called a pay-first hold a submitted request, so a hold whose window had passed read "Not due yet — you are asked to pay after the expert approves" while its booking page read "Payment link expired".
 
 - **The rail order Payment, details, resources, timeline, help, and the needs-you callout inside the header.** The banner now leads the page and the Payment card sits under Help.
 - **Per-surface status words.** The header badge used the learner's list chip for a confirmed booking and the derivation's own words otherwise; both now come from `bookingStatus`.
