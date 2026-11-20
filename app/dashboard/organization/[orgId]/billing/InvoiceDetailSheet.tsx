@@ -24,15 +24,7 @@ import {
   shownDueDate,
   type OrgInvoiceDetail,
 } from "./billing-api";
-
-const fmtDate = (iso: string | null) =>
-  iso
-    ? new Date(iso).toLocaleDateString("en-IN", {
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-      })
-    : "—";
+import { ZonedDay } from "./ZonedDay";
 
 function InvoiceBody({
   orgId,
@@ -64,16 +56,21 @@ function InvoiceBody({
 
       <KeyValueList
         items={[
-          { label: "Issued", value: fmtDate(invoice.issuedAt) },
-          { label: "Due", value: fmtDate(shownDueDate(invoice)) },
+          { label: "Issued", value: <ZonedDay at={invoice.issuedAt} /> },
+          { label: "Due", value: <ZonedDay at={shownDueDate(invoice)} /> },
           ...(invoice.paidAt
-            ? [{ label: "Paid", value: fmtDate(invoice.paidAt) }]
+            ? [{ label: "Paid", value: <ZonedDay at={invoice.paidAt} /> }]
             : []),
           ...(invoice.billingCycleStart
             ? [
                 {
                   label: "Billing period",
-                  value: `${fmtDate(invoice.billingCycleStart)} – ${fmtDate(invoice.billingCycleEnd)}`,
+                  value: (
+                    <>
+                      <ZonedDay at={invoice.billingCycleStart} /> –{" "}
+                      <ZonedDay at={invoice.billingCycleEnd} />
+                    </>
+                  ),
                 },
               ]
             : []),
@@ -133,7 +130,7 @@ function InvoiceBody({
                   <span className="font-medium">{note.creditNoteNumber}</span>
                   <span className="text-muted-foreground">
                     {" "}
-                    · {fmtDate(note.issuedAt)} · {money(note.totalPaise)}
+                    · <ZonedDay at={note.issuedAt} /> · {money(note.totalPaise)}
                   </span>
                   {note.reason && (
                     <span className="block text-xs text-muted-foreground">
