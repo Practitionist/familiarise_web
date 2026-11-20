@@ -304,11 +304,14 @@ gate a concurrent writer walked through:
   `lib/booking/booking-rule-error.ts`); paid bookings already made are
   unaffected, and plan rows are never unpublished for it. Approving an unpaid
   request for them is refused too (`assertUnpaidApprovalVerified`). A
-  moderation reject ends their unpaid sales in its own transaction
-  (`endUnpaidSalesInTx`): approved links expire through `lapseApprovedRequest`,
-  unanswered unpaid requests are declined, unpaid trial holds are cancelled,
-  every open order is expired by CAS with its spend returned, and the real
-  gateway orders are cancelled after commit; a late capture is refunded.
+  moderation reject ends their unpaid sales right after it commits, as Request
+  again closes an order (`endUnverifiedExpertSales`): the gateway is asked
+  first and a live payment keeps its sale open, then one transaction
+  (`endUnpaidSalesInTx`) expires approved links through `lapseApprovedRequest`,
+  declines unanswered unpaid requests and releases unpaid trial holds and group
+  seats, every open order expired by CAS with its spend returned; each closed
+  order is re-read after commit and a capture found is refunded. Every sale
+  writer re-reads standing under a share lock (`assertExpertStandsInTx`).
 - A review-first expert (`bookingMode = REQUEST`) refuses a direct consultation
   checkout with 409 `REQUEST_APPROVAL_REQUIRED` on every rail (card,
   zero-amount, organisation-funded), before any gateway order; plans, trials and
