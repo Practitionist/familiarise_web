@@ -668,6 +668,8 @@ async function claimRowForRemint(
         paymentGateway: fields.paymentGateway,
         gatewayPaymentId: null,
         capturedAt: null,
+        // A pay link applies no welcome discount; clearing it frees the buyer's one live welcome slot.
+        welcomeDiscountPaise: null,
       },
     });
     if (cas.count !== 1) return false;

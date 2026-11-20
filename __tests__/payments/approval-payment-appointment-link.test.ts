@@ -1121,3 +1121,31 @@ describe("a full-price re-mint drops the old order's discount code", () => {
     expect(clearCall()).toBeUndefined();
   });
 });
+
+describe("a full-price re-mint drops the old order's welcome discount", () => {
+  it.each([PaymentStatus.PENDING, PaymentStatus.EXPIRED])(
+    "clears welcomeDiscountPaise in the re-mint CAS itself (%s row)",
+    async (paymentStatus) => {
+      state.appointmentPayments = [
+        {
+          id: "pay-welcome",
+          paymentStatus,
+          paymentIntent: "order_welcome",
+          amount: 450_000,
+          currency: Currency.INR,
+          welcomeDiscountPaise: 50_000,
+          expiresAt:
+            paymentStatus === PaymentStatus.PENDING
+              ? new Date(Date.now() + 60_000)
+              : null,
+        },
+      ];
+
+      await createApprovalPaymentIntent(mintParams());
+
+      const [{ where, data }] = mockedPaymentUpdate.mock.calls[0];
+      expect(where).toMatchObject({ id: "pay-welcome", paymentStatus });
+      expect(data).toHaveProperty("welcomeDiscountPaise", null);
+    },
+  );
+});

@@ -4,7 +4,9 @@
  * and a still-counted discount-code use, with the code dropped from the row. The
  * tombstone keeping the old order holds neither, and a late capture on it is
  * refunded and returns nothing a second time. A dead order, whose exit already
- * gave its use back, has the code dropped without a second return.
+ * gave its use back, has the code dropped without a second return. The welcome
+ * discount is a computed price cut whose only hold is the buyer's one live
+ * welcome-order slot, so the re-mint clears it and the slot frees.
  */
 import { randomUUID } from "node:crypto";
 import prisma from "../../../lib/prisma";
@@ -124,11 +126,41 @@ async function seedApprovedCheckoutWithCredit(
     data: { discountCodeId: code.id },
   });
   return {
+    host,
+    consultee,
     request,
     creditId: credit.id,
     codeId: code.id,
     oldIntent: request.payment!.paymentIntent,
   };
+}
+
+type Seeded = Awaited<ReturnType<typeof seedApprovedCheckoutWithCredit>>;
+const WELCOME_PAISE = 5_000;
+
+/** Puts a welcome discount on the seeded order, as checkout prices a referee's first purchase. */
+const withWelcome = (paymentId: string) =>
+  prisma.payment.update({
+    where: { id: paymentId },
+    data: { welcomeDiscountPaise: BigInt(WELCOME_PAISE) },
+  });
+
+/** A second open checkout of the same buyer that also carries a welcome discount. */
+async function anotherWelcomeOrder(seeded: Seeded) {
+  const startsAt = new Date(Date.now() + 5 * 24 * 60 * MIN);
+  startsAt.setUTCMinutes(0, 0, 0);
+  const other = await seedOneToOne(
+    "consultation",
+    seeded.host,
+    seeded.consultee,
+    { startsAt, endsAt: new Date(startsAt.getTime() + 60 * MIN) },
+    {
+      status: "PENDING",
+      isTentative: true,
+      payment: { status: "PENDING", amount: PRICE_PAISE },
+    },
+  );
+  return withWelcome(other.payment!.id);
 }
 
 const usesOf = async (codeId: string) =>
@@ -226,5 +258,54 @@ describe("an approval re-mint returns what the replaced order consumed", () => {
       select: { paymentStatus: true, discountCodeId: true },
     });
     expect(live).toEqual({ paymentStatus: "PENDING", discountCodeId: null });
+  }, 30_000);
+
+  it("clears the welcome discount, so the buyer's one live welcome slot frees", async () => {
+    const seeded = await seedApprovedCheckoutWithCredit();
+    const paymentId = seeded.request.payment!.id;
+    await withWelcome(paymentId);
+
+    const outcome = await mintApprovalPaymentAfterCommit({
+      kind: "consultation",
+      id: seeded.request.consultationId!,
+    });
+
+    expect(outcome.status).not.toBe("mint_failed");
+    const live = await prisma.payment.findUniqueOrThrow({
+      where: { id: paymentId },
+      select: { paymentStatus: true, welcomeDiscountPaise: true },
+    });
+    expect(live).toMatchObject({
+      paymentStatus: "PENDING",
+      welcomeDiscountPaise: null,
+    });
+    const tombstone = await prisma.payment.findUniqueOrThrow({
+      where: { paymentIntent: seeded.oldIntent },
+      select: { welcomeDiscountPaise: true },
+    });
+    expect(tombstone.welcomeDiscountPaise).toBeNull();
+    // The slot is free: another open welcome-discounted order of this buyer now fits.
+    await expect(anotherWelcomeOrder(seeded)).resolves.toBeTruthy();
+  }, 30_000);
+
+  it("re-mints a dead welcome order even while the buyer holds another live one", async () => {
+    const seeded = await seedApprovedCheckoutWithCredit("EXPIRED");
+    await withWelcome(seeded.request.payment!.id);
+    await anotherWelcomeOrder(seeded);
+
+    const outcome = await mintApprovalPaymentAfterCommit({
+      kind: "consultation",
+      id: seeded.request.consultationId!,
+    });
+
+    expect(outcome.status).not.toBe("mint_failed");
+    const live = await prisma.payment.findUniqueOrThrow({
+      where: { id: seeded.request.payment!.id },
+      select: { paymentStatus: true, welcomeDiscountPaise: true },
+    });
+    expect(live).toMatchObject({
+      paymentStatus: "PENDING",
+      welcomeDiscountPaise: null,
+    });
   }, 30_000);
 });
