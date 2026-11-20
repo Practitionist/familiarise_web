@@ -701,6 +701,7 @@ export async function autoAllocate(
             : undefined,
           outcome,
           appointments.flatMap((a) => (a.occurrences ?? []).map((o) => o.id)),
+          !!excludeRescheduleRequestId,
         );
 
         return {

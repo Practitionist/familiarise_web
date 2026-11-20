@@ -1,5 +1,6 @@
 // A signed, session-less .ics: every refusal is the same 404, and the file carries only the
-// title, the times and the dashboard link, never the video link or attendee details.
+// title, the times and the dashboard link, never the video link or attendee details. A seat
+// that ended with a cancel reads a cancellation of its own entries and nothing more.
 
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
@@ -11,7 +12,11 @@ import {
   holdsCalendarSeat,
   verifyCalendarToken,
 } from "@/lib/appointments/calendar-links";
-import { buildIcs, icsSessions } from "@/lib/appointments/ics";
+import {
+  buildIcs,
+  calendarOccurrences,
+  icsSessions,
+} from "@/lib/appointments/ics";
 import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
 import { applyRateLimit, calendarLimiter, getClientIp } from "@/lib/rate-limit";
 
@@ -28,15 +33,39 @@ function notFound(): NextResponse {
   return new NextResponse("Not found", { status: 404, headers: NO_STORE });
 }
 
-/** The booking's upcoming sessions, confirmed or cancelled, or null unless `userId` holds a paid, unrefunded seat on it. */
-async function attendeeCalendar(appointmentId: string, userId: string) {
-  if (!(await holdsCalendarSeat(prisma, appointmentId, userId))) return null;
-  const appointment = await prisma.appointment.findFirst({
+/** A seat on this booking that ended with a cancel or its refund: it may still withdraw its entries. */
+async function heldEndedSeat(
+  appointmentId: string,
+  userId: string,
+): Promise<boolean> {
+  const seat = await prisma.appointmentParticipant.findFirst({
     where: {
-      id: appointmentId,
-      deletedAt: null,
-      participants: { some: calendarSeatWhere(userId) },
+      appointmentId,
+      userId,
+      role: "CONSULTEE",
+      status: { in: ["CANCELLED", "REFUNDED"] },
     },
+    select: { id: true },
+  });
+  return seat !== null;
+}
+
+/**
+ * What `userId` may download. A paid, unrefunded seat reads the booking's
+ * upcoming sessions, confirmed or cancelled. A seat that ended reads only the
+ * cancelled ones, as a cancellation. Anyone else reads nothing.
+ */
+async function attendeeCalendar(appointmentId: string, userId: string) {
+  const live = await holdsCalendarSeat(prisma, appointmentId, userId);
+  if (!live && !(await heldEndedSeat(appointmentId, userId))) return null;
+  const appointment = await prisma.appointment.findFirst({
+    where: live
+      ? {
+          id: appointmentId,
+          deletedAt: null,
+          participants: { some: calendarSeatWhere(userId) },
+        }
+      : { id: appointmentId },
     select: {
       appointmentType: true,
       consultation: {
@@ -48,25 +77,26 @@ async function attendeeCalendar(appointmentId: string, userId: string) {
       webinar: { select: { webinarPlan: { select: { title: true } } } },
       class: { select: { classPlan: { select: { title: true } } } },
       trial: { select: { subscriptionPlan: { select: { title: true } } } },
-      // Upcoming sessions that are on, and cancelled ones so their entries are withdrawn.
       occurrences: {
-        where: {
-          isTentative: false,
-          completionStatus: { in: ["SCHEDULED", "CANCELLED"] },
-          startsAt: { gt: new Date() },
-        },
         select: {
           ordinal: true,
           startsAt: true,
           endsAt: true,
           updatedAt: true,
+          isTentative: true,
           completionStatus: true,
           deletedAt: true,
         },
       },
     },
   });
-  if (!appointment || appointment.occurrences.length === 0) return null;
+  if (!appointment) return null;
+  const upcoming = icsSessions(
+    appointmentId,
+    calendarOccurrences(appointment.occurrences),
+  );
+  const sessions = live ? upcoming : upcoming.filter((s) => s.cancelled);
+  if (sessions.length === 0) return null;
   const title = planTitleOrSessionLabel(
     appointment.consultation?.consultationPlan?.title ??
       appointment.subscription?.subscriptionPlan?.title ??
@@ -75,19 +105,7 @@ async function attendeeCalendar(appointmentId: string, userId: string) {
       appointment.trial?.subscriptionPlan?.title,
     appointment.appointmentType,
   );
-  return {
-    title,
-    sessions: icsSessions(
-      appointmentId,
-      appointment.occurrences.map((row) => ({
-        ordinal: row.ordinal,
-        startsAt: row.startsAt,
-        endsAt: row.endsAt,
-        updatedAt: row.updatedAt,
-        cancelled: row.completionStatus === "CANCELLED" || !!row.deletedAt,
-      })),
-    ),
-  };
+  return { title, sessions, cancellationOnly: !live };
 }
 
 export async function GET(
@@ -118,8 +136,13 @@ export async function GET(
 
   const ics = buildIcs({
     title: calendar.title,
-    description: calendarDetails(appointmentId),
-    url: appointmentDashboardUrl(appointmentId),
+    // A cancellation carries the title and times only: no way back into the booking.
+    ...(calendar.cancellationOnly
+      ? {}
+      : {
+          description: calendarDetails(appointmentId),
+          url: appointmentDashboardUrl(appointmentId),
+        }),
     sessions: calendar.sessions,
     // Times are UTC; naming the attendee's own zone would put their data in a forwardable file.
     zone: "UTC",

@@ -96,6 +96,19 @@ export function verifyCalendarToken(
   return safeEquals(token, () => calendarToken(appointmentId, userId));
 }
 
+/** `userId`'s signed .ics link for the booking, or null when links cannot be signed here. */
+export function calendarIcsUrl(
+  appointmentId: string,
+  userId: string,
+): string | null {
+  if (!canSignLinks()) return null;
+  const query = new URLSearchParams({
+    u: userId,
+    t: calendarToken(appointmentId, userId),
+  });
+  return `${getAppUrl()}/api/calendar/${encodeURIComponent(appointmentId)}?${query}`;
+}
+
 /** Both links for `userId`, or null when links cannot be signed here. */
 export function calendarLinks(args: {
   appointmentId: string;
@@ -104,11 +117,8 @@ export function calendarLinks(args: {
   startsAt: Date;
   endsAt?: Date | null;
 }): CalendarLinks | null {
-  if (!canSignLinks()) return null;
-  const ics = new URLSearchParams({
-    u: args.userId,
-    t: calendarToken(args.appointmentId, args.userId),
-  });
+  const icsUrl = calendarIcsUrl(args.appointmentId, args.userId);
+  if (!icsUrl) return null;
   const google = new URLSearchParams({
     action: "TEMPLATE",
     text: args.title,
@@ -117,6 +127,6 @@ export function calendarLinks(args: {
   });
   return {
     googleUrl: `https://calendar.google.com/calendar/render?${google}`,
-    icsUrl: `${getAppUrl()}/api/calendar/${encodeURIComponent(args.appointmentId)}?${ics}`,
+    icsUrl,
   };
 }

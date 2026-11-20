@@ -4,7 +4,7 @@ import {
   type CohostChangeEvent,
   type CollaborationLifecycleEvent,
 } from "@/emails/collaborations/CollaborationLifecycleEmail";
-import { rolesWithOrgPermission } from "@/lib/auth/org-permissions";
+import { orgCatalogManagerUserIds } from "@/lib/collaborators/recipients";
 import { paidParticipant } from "@/lib/booking/participants";
 import type { Tx } from "@/lib/prisma";
 import { goHref } from "@/lib/dashboard/go";
@@ -134,16 +134,7 @@ async function hostSideUserIds(
 ): Promise<string[]> {
   if (plan?.consultantProfile) return [plan.consultantProfile.userId];
   if (!plan?.organizationId) return [];
-  const members = await tx.membership.findMany({
-    where: {
-      organizationId: plan.organizationId,
-      status: "ACTIVE",
-      role: { in: rolesWithOrgPermission("catalog.manage") },
-    },
-    select: { userId: true },
-    orderBy: { userId: "asc" },
-  });
-  return [...new Set(members.map((m) => m.userId))];
+  return orgCatalogManagerUserIds(plan.organizationId, tx);
 }
 
 /** The users holding a paid seat on any of the plan's live events. */

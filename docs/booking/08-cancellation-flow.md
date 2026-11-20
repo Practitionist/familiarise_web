@@ -576,13 +576,13 @@ refundAmount      = min(floor(500000 x 100 / 100), refundablePaise)
 
 Had this been a four-session subscription with one session already delivered, the base would have been prorated first — `floor(500000 x 3 / 4) = 375000` — and the tier applied to that. The next section works that case through in full.
 
-### Step 8: Fire-and-Forget Notification
+### Step 8: Notification
 
-After the refund settles, the notification fires using the data extracted in Step 4:
+The bell is staged inside the cancel transaction, using the data extracted in Step 4, once per side: the expert and team in the plan's host organisation's scope, the buyer and attendees in the sponsor's.
 
 ```typescript
-void notifyAppointmentCancelled(
-  ["user_bob", "user_alice"], // Both parties receive notification
+await notifyAppointmentCancelled(
+  ["user_bob"], // one call per side; Alice's follows with her own scope and link
   {
     appointmentType: "CONSULTATION",
     consultantName: "Bob Smith",
@@ -593,12 +593,13 @@ void notifyAppointmentCancelled(
     reason: "SCHEDULE_CONFLICT",
     cancelledBy: "consultee", // Because user_alice !== user_bob (consultant)
   },
+  { tx, dedupeKey: `appointment-cancelled:${appointmentId}` },
 );
 ```
 
-The `void` keyword is critical here. It means "call this function but do not await it." The API response is sent to Alice immediately without waiting for Novu to deliver the notification. If Novu is down or slow, Alice still gets her 200 OK.
+The bell rows commit with the cancel, so a request that dies during the refund still leaves them for the relay. They are attempted after the response (`flushNotificationsAfter`), so a slow Novu never delays Alice's 200 OK. The emails are staged after the refund settles, because their refund sentence states its outcome; the buyer's and attendees' copies carry the `.ics` link that withdraws the calendar entry.
 
-The `cancelledBy` label is three-way rather than two-way. Comparing only against the consultant would have meant that any platform or organization actor was reported to both parties as "the consultee", so an admin cancellation read as though Alice had walked away. A group event has no consultee at all, which is the other reason the third value exists: `system` is what the payload carries when the canceller is neither party.
+The `cancelledBy` label is three-way rather than two-way. Comparing only against the consultant would have meant that any platform or organization actor was reported to both parties as "the consultee", so an admin cancellation read as though Alice had walked away. A group event has no consultee at all, which is the other reason the third value exists: `system` is what the payload carries when the canceller is neither party. When a sponsoring organisation's operator cancels, the payload also carries `cancelledByName` with the organisation's name, the bell and the email say so, and the notice is required for the member.
 
 ### Step 9: Response
 
@@ -1051,16 +1052,16 @@ For webinars and classes the organiser is read off the plan and every paid atten
 
 **Notification payload**:
 
-| Field             | Value                                                         | Source                                                                                                                                             |
-| ----------------- | ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `appointmentType` | `"CONSULTATION"`, `"SUBSCRIPTION"`, `"WEBINAR"`, or `"CLASS"` | `appointment.appointmentType`                                                                                                                      |
-| `consultantName`  | e.g., `"Bob Smith"` or `"Consultant"` (fallback)              | Extracted in Phase 1, with fallback                                                                                                                |
-| `consulteeName`   | e.g., `"Alice Johnson"` or `"Consultee"` (fallback)           | Extracted in Phase 1, with fallback                                                                                                                |
-| `planTitle`       | e.g., `"Career Strategy Session"` or `"N/A"` (fallback)       | From consultation/subscription plan                                                                                                                |
-| `dateTime`        | ISO 8601 string or `undefined`                                | `appointmentOccurrences[0].startsAt`                                                                                                               |
-| `dashboardUrl`    | An org or personal appointments href                          | `notificationHref(appointment.organizationId, "appointments")` — both parties share one payload, so the href must suit either                      |
-| `reason`          | e.g., `"SCHEDULE_CONFLICT"` or `undefined`                    | From validated body                                                                                                                                |
-| `cancelledBy`     | `"consultant"`, `"consultee"`, or `"system"`                  | Three-way: the consultant's user ID, then the consultee's, then `system` for a platform or org actor and for group events, which have no consultee |
+| Field             | Value                                                         | Source                                                                                                                                                       |
+| ----------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `appointmentType` | `"CONSULTATION"`, `"SUBSCRIPTION"`, `"WEBINAR"`, or `"CLASS"` | `appointment.appointmentType`                                                                                                                                |
+| `consultantName`  | e.g., `"Bob Smith"` or `"Consultant"` (fallback)              | Extracted in Phase 1, with fallback                                                                                                                          |
+| `consulteeName`   | e.g., `"Alice Johnson"` or `"Consultee"` (fallback)           | Extracted in Phase 1, with fallback                                                                                                                          |
+| `planTitle`       | e.g., `"Career Strategy Session"` or `"N/A"` (fallback)       | From consultation/subscription plan                                                                                                                          |
+| `dateTime`        | ISO 8601 string or `undefined`                                | `appointmentOccurrences[0].startsAt`                                                                                                                         |
+| `dashboardUrl`    | An org or personal appointments href                          | `notificationHref(<the side's organisation>, "appointments")`: the plan's host organisation for the expert and team, the sponsor for the buyer and attendees |
+| `reason`          | e.g., `"SCHEDULE_CONFLICT"` or `undefined`                    | From validated body                                                                                                                                          |
+| `cancelledBy`     | `"consultant"`, `"consultee"`, or `"system"`                  | Three-way: the consultant's user ID, then the consultee's, then `system` for a platform or org actor and for group events, which have no consultee           |
 
 **Why fire-and-forget**: The notification is a courtesy, not a critical operation. If Novu is down for 5 minutes, the cancellation should still succeed. The user can always check their dashboard. Making the notification blocking would mean a Novu outage causes cancellation failures, which would be unacceptable.
 
@@ -1368,8 +1369,8 @@ sequenceDiagram
             DB-->>API: attendee user IDs
         end
 
-        API--)Novu: void notifyAppointmentCancelled<br/>(both parties + any attendees)
-        Note over API: Not awaited (void prefix)
+        API--)Novu: attempt the cancelled bells<br/>(both parties + any attendees)
+        Note over API: Staged in the cancel transaction, attempted after the response
         Novu->>Email: Deliver to every recipient
         Email-->>Novu: Delivered
 

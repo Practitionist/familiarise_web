@@ -29,6 +29,7 @@ import {
 import { PENDING_CONSULTATION_EXPIRATION_HOURS } from "@/scripts/appointments/expire-stale-requests";
 import { notificationScope } from "@/lib/novu/workflows";
 import { scopedHref } from "@/lib/novu/resolve-href";
+import { orgCatalogManagerUserIds } from "@/lib/collaborators/recipients";
 import { appendCreationHistory } from "@/lib/booking/transitions";
 import { recordParticipants } from "@/lib/booking/participants";
 import { PROFILE_WITH_USER_SELECT } from "@/lib/booking/list-selects";
@@ -441,6 +442,7 @@ export async function POST(req: NextRequest) {
       null;
     let lock: SlotBatchGrant | undefined;
     let stagedBell: StagedTrigger | undefined;
+    let operatorBells: Array<StagedTrigger | undefined> = [];
     let stagedEmailRows: StagedRecipientEmail[] = [];
     let createdConsultation:
       Awaited<ReturnType<typeof prisma.consultation.create>> | undefined;
@@ -692,20 +694,20 @@ export async function POST(req: NextRequest) {
           consultation.requestedAt.getTime() +
             PENDING_CONSULTATION_EXPIRATION_HOURS * 60 * 60 * 1000,
         );
+        const expertUserId =
+          consultation.consultationPlan.consultantProfile.user.id;
+        const requestBell = {
+          ...notificationScope(hostOrgId),
+          consulteeName: consultation.requestedBy.user.name || "A consultee",
+          planTitle: consultation.consultationPlan.title,
+          appointmentType: "CONSULTATION",
+          requestedDateTime: startTime.toISOString(),
+          dashboardUrl: reviewUrl,
+        };
         const [bellResult, emailRows] = await Promise.all([
-          notifyNewBookingRequest(
-            consultation.consultationPlan.consultantProfile.user.id,
-            {
-              ...notificationScope(hostOrgId),
-              consulteeName:
-                consultation.requestedBy.user.name || "A consultee",
-              planTitle: consultation.consultationPlan.title,
-              appointmentType: "CONSULTATION",
-              requestedDateTime: startTime.toISOString(),
-              dashboardUrl: reviewUrl,
-            },
-            { deferAttempt: true },
-          ),
+          notifyNewBookingRequest(expertUserId, requestBell, {
+            deferAttempt: true,
+          }),
           stageNewBookingRequestEmail({
             requestId: consultation.id,
             consultantUserId:
@@ -723,6 +725,27 @@ export async function POST(req: NextRequest) {
         ]);
         stagedBell = bellResult?.staged;
         stagedEmailRows = emailRows;
+        // The host organisation's operators can answer it too: one bell each,
+        // on the organisation's requests page. The plan's own expert already has theirs.
+        if (hostOrgId) {
+          operatorBells = await orgCatalogManagerUserIds(hostOrgId)
+            .then((ids) =>
+              Promise.all(
+                ids
+                  .filter((id) => id !== expertUserId)
+                  .map((id) =>
+                    notifyNewBookingRequest(
+                      id,
+                      requestBell,
+                      `booking-request:${consultation.id}:host-org`,
+                      { deferAttempt: true },
+                    ),
+                  ),
+              ),
+            )
+            .then((results) => results.map((r) => r?.staged))
+            .catch(() => []);
+        }
         createdConsultation = consultation;
       } catch (lockError) {
         if (lockError instanceof RequestRefusal) {
@@ -803,7 +826,7 @@ export async function POST(req: NextRequest) {
 
     await flushNotificationsAfter(
       {
-        bells: [stagedBell],
+        bells: [stagedBell, ...operatorBells],
         emails: [
           {
             rows: stagedEmailRows,

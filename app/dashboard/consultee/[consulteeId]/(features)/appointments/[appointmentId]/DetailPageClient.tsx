@@ -20,7 +20,11 @@ import {
   isDeadOccurrence,
   isOccurrenceOver,
 } from "@/lib/appointments/occurrences";
-import { buildIcs } from "@/lib/appointments/ics";
+import {
+  buildIcs,
+  calendarOccurrences,
+  icsSessions,
+} from "@/lib/appointments/ics";
 import type { AppointmentVM } from "@/lib/appointments/view-model";
 import type { AppointmentChatTarget } from "@/lib/appointments/adapter";
 import {
@@ -38,13 +42,19 @@ function calendarSessions(vm: AppointmentVM) {
   );
 }
 
-/** An .ics of the booking's upcoming sessions, built in the browser. */
+/**
+ * An .ics of the booking's sessions, built in the browser with the same entry
+ * identity as the emailed link, so either file updates the other's entries.
+ */
 function downloadIcs(vm: AppointmentVM) {
-  const sessions = calendarSessions(vm).map((o) => ({
-    id: o.occurrenceId,
-    startsAt: o.startsAt,
-    endsAt: o.endsAt,
-  }));
+  const bookings = vm.raw.groupAppointments?.length
+    ? vm.raw.groupAppointments
+    : vm.raw.appointment
+      ? [vm.raw.appointment]
+      : [];
+  const sessions = bookings.flatMap((booking) =>
+    icsSessions(booking.id, calendarOccurrences(booking.occurrences)),
+  );
   const ics = buildIcs({
     title: vm.title,
     description: `With ${vm.counterpart.name}`,

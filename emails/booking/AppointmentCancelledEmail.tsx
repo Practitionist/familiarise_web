@@ -1,10 +1,11 @@
 import * as React from "react";
-import { Button, Section, Text } from "react-email";
+import { Button, Link, Section, Text } from "react-email";
 import { EmailLayout } from "@/emails/components/EmailLayout";
 import {
   button,
   buttonContainer,
   heading,
+  link,
   paragraph,
 } from "@/emails/components/styles";
 
@@ -19,6 +20,8 @@ export interface AppointmentCancelledEmailProps {
   refundText?: string;
   /** A host removed this one seat; the event itself goes ahead. */
   removedFrom?: { eventLabel: string; planTitle: string };
+  /** The attendee's own signed .ics link, which withdraws the entry they added. */
+  calendarIcsUrl?: string | null;
   dashboardUrl: string;
   unsubscribeUrl?: string | null;
 }
@@ -30,6 +33,7 @@ export default function AppointmentCancelledEmail({
   reason,
   refundText,
   removedFrom,
+  calendarIcsUrl,
   dashboardUrl,
   unsubscribeUrl,
 }: AppointmentCancelledEmailProps) {
@@ -82,6 +86,15 @@ export default function AppointmentCancelledEmail({
         </Text>
       )}
       {refundText && <Text style={paragraph}>{refundText}</Text>}
+      {calendarIcsUrl ? (
+        <Text style={paragraph}>
+          Already added it to your calendar?{" "}
+          <Link href={calendarIcsUrl} style={link}>
+            Download the cancellation (.ics)
+          </Link>
+          ; opening it removes the entry.
+        </Text>
+      ) : null}
       <Text style={paragraph}>
         You can book another time from your dashboard whenever you are ready.
       </Text>

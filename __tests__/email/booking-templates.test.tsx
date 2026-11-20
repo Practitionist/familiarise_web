@@ -116,6 +116,44 @@ it("cancelled: names who cancelled, the reason and the refund line", async () =>
   expect(out).toContain(`href="${dashboardUrl}"`);
 });
 
+it("cancelled: the attendee's copy links the file that removes their calendar entry; a removed seat's never does", async () => {
+  const calendarIcsUrl = "https://app.test/api/calendar/appt-1?u=asha&t=abc";
+  const cancelled = await html(
+    <AppointmentCancelledEmail
+      recipientName="Asha"
+      startsAtText={when}
+      cancelledBy="Ravi"
+      calendarIcsUrl={calendarIcsUrl}
+      dashboardUrl={dashboardUrl}
+    />,
+  );
+  expect(cancelled).toContain(
+    'href="https://app.test/api/calendar/appt-1?u=asha&amp;t=abc"',
+  );
+  expect(cancelled).toContain("opening it removes the entry");
+
+  const expert = await html(
+    <AppointmentCancelledEmail
+      recipientName="Ravi"
+      startsAtText={when}
+      cancelledBy="Asha"
+      dashboardUrl={dashboardUrl}
+    />,
+  );
+  expect(expert).not.toContain("api/calendar");
+
+  const removed = await html(
+    <AppointmentCancelledEmail
+      recipientName="Asha"
+      cancelledBy="Ravi"
+      removedFrom={{ eventLabel: "class", planTitle: "Deep work" }}
+      calendarIcsUrl={calendarIcsUrl}
+      dashboardUrl={dashboardUrl}
+    />,
+  );
+  expect(removed).not.toContain("api/calendar");
+});
+
 it("rescheduled: PROPOSED carries the deadline, MOVED is informational", async () => {
   const base = {
     recipientName: "Asha",

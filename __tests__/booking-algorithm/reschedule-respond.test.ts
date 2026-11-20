@@ -236,11 +236,7 @@ const HELD_LOCK = { key: "appointment-lock:appt-1" } as ApprovalLock;
 // #1846 — the durable operator trace and the notification, both of which the
 // decline reaches now that it restores.
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
-import {
-  notifyAppointmentBooked,
-  notifyAppointmentRescheduled,
-} from "@/lib/novu";
-import { stageAllocationNotices } from "@/lib/booking/allocation/notify";
+import { notifyAppointmentRescheduled } from "@/lib/novu";
 import { POST as respondHandler } from "@/app/api/appointments/[appointmentId]/reschedule/respond/route";
 
 const HOUR = 3_600_000;
@@ -441,49 +437,12 @@ describe("accept re-validates through the allocator before anything is written",
     });
   });
 
-  it("an accepted move rings once per person: the allocator stages no booked notice, the moved notice is the one", async () => {
+  it("an accepted move tells each person once that it moved, and tells the allocator it confirms a reschedule", async () => {
     // The accept reads the proposal with both parties for its moved notice.
     mockRequestFindUnique.mockResolvedValue({
       ...declineRow(),
       ...proposalRow(),
     });
-    const bookedRow = {
-      consultationPlan: {
-        title: "Plan",
-        organizationId: null,
-        consultantProfile: { user: { id: CONSULTANT_USER, name: "Host" } },
-      },
-      requestedBy: { user: { id: CONSULTEE_USER, name: "Buyer" } },
-      appointment: {
-        id: APPT,
-        organizationId: null,
-        occurrences: [{ startsAt: new Date("2026-09-01T10:00:00.000Z") }],
-      },
-    };
-    const allocationTx = {
-      ...txStub,
-      consultation: {
-        ...txStub.consultation,
-        findUnique: jest.fn().mockResolvedValue(bookedRow),
-      },
-    };
-    mockAllocate.mockImplementation(
-      async (req: {
-        inTx: (tx: unknown, moved: typeof NOTHING_MOVED) => Promise<void>;
-      }) => {
-        await req.inTx(allocationTx, NOTHING_MOVED);
-        // The allocator's own notice step, on the transaction the hook ran in.
-        await stageAllocationNotices(
-          allocationTx as never,
-          "consultation",
-          "cons-1",
-          undefined,
-          undefined,
-          ["occ-new"],
-        );
-        return { success: true };
-      },
-    );
 
     const out = await acceptProposal({
       heldAppointmentLock: HELD_LOCK,
@@ -494,19 +453,15 @@ describe("accept re-validates through the allocator before anything is written",
     });
 
     expect(out).toEqual({ done: true });
-    expect(notifyAppointmentBooked).not.toHaveBeenCalled();
+    // This is the fact the allocator's notice step reads to stage no "booked".
+    expect(mockAllocate).toHaveBeenCalledWith(
+      expect.objectContaining({ excludeRescheduleRequestId: REQ }),
+    );
     const moved = (notifyAppointmentRescheduled as jest.Mock).mock.calls;
     expect(moved.flatMap(([ids]) => ids).sort()).toEqual(
       [CONSULTANT_USER, CONSULTEE_USER].sort(),
     );
     for (const [, payload] of moved) expect(payload.outcome).toBe("MOVED");
-    // Any other allocation on a fresh transaction still announces its times.
-    await stageAllocationNotices(
-      { ...allocationTx } as never,
-      "consultation",
-      "cons-1",
-    );
-    expect(notifyAppointmentBooked).toHaveBeenCalledTimes(1);
   });
 
   it("rolls the move back when the proposal closed before the allocator committed", async () => {

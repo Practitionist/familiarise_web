@@ -50,17 +50,10 @@ export async function allocate(
   try {
     const { stagedNotices, overageNotice, ...result } =
       await underAppointmentLock(request, () => dispatch(request));
-    // PR 2c — the allocation-time notification (audit G1 / B9's promised
-    // completion): APPOINTMENT_BOOKED was deliberately skipped at payment
-    // when no slots existed; THIS is where the times finally exist, so both
-    // parties hear about them from every caller path (routes, auto-confirm,
-    // accept-proposal).
-    // #1697 item 5 — the outbox rows were STAGED inside the write
-    // transaction (ADR 27), so a rollback takes them and an instance freeze
-    // after the response cannot lose them: the relay delivers what this
-    // attempt does not. Only the attempt is post-commit and best-effort.
-    // #1206 — a top-up that placed nothing stages nothing (see the
-    // suppressor at the staging site), so nothing is attempted here.
+    // The booked notice is staged inside the write transaction once real times
+    // exist, so a rollback takes it and the relay delivers what this attempt
+    // does not. A run that confirms a reschedule stages none: the reschedule
+    // path's "moved" notice is the one both parties get.
     if (stagedNotices && stagedNotices.length > 0) {
       void scheduleAfter(async () => {
         for (const staged of stagedNotices) await attemptTrigger(staged);

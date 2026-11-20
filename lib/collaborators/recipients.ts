@@ -1,3 +1,4 @@
+import { rolesWithOrgPermission } from "@/lib/auth/org-permissions";
 import prisma, { type PrismaLike } from "@/lib/prisma";
 
 type PlanType = "webinar" | "class";
@@ -44,4 +45,24 @@ export async function collaboratorUserIdsForEvent(
     select: { consultantProfile: { select: { userId: true } } },
   });
   return [...new Set(rows.map((row) => row.consultantProfile.userId))];
+}
+
+/**
+ * The organisation's active members who manage its catalogue: the operators
+ * who may act on the plans it hosts.
+ */
+export async function orgCatalogManagerUserIds(
+  organizationId: string,
+  db: PrismaLike = prisma,
+): Promise<string[]> {
+  const members = await db.membership.findMany({
+    where: {
+      organizationId,
+      status: "ACTIVE",
+      role: { in: rolesWithOrgPermission("catalog.manage") },
+    },
+    select: { userId: true },
+    orderBy: { userId: "asc" },
+  });
+  return [...new Set(members.map((m) => m.userId))];
 }

@@ -79,6 +79,22 @@ it("names the next live session on a subscription top-up", async () => {
   expect(payload.dateTime).toBe(OCCURRENCES[3].startsAt.toISOString());
 });
 
+it("a run that confirms a reschedule stages no booked notice: its moved notice is the one", async () => {
+  (notifyAppointmentBooked as jest.Mock).mockClear();
+  const staged = await stageAllocationNotices(
+    tx,
+    "subscription",
+    "sub-1",
+    undefined,
+    "approved",
+    ["occ-moved"],
+    true,
+  );
+
+  expect(staged).toEqual([]);
+  expect(notifyAppointmentBooked).not.toHaveBeenCalled();
+});
+
 it("keys each placement batch apart, so week two is not deduplicated into week one", async () => {
   (notifyAppointmentBooked as jest.Mock).mockClear();
   const week = (days: number) => [`occ-week-${days}`];

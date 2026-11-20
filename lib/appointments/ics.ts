@@ -29,6 +29,42 @@ export interface IcsOccurrence {
   cancelled: boolean;
 }
 
+/** A booking's occurrence row, read from the database or from its JSON. */
+export interface IcsRow {
+  ordinal: number;
+  startsAt: Date | string;
+  endsAt: Date | string | null;
+  updatedAt: Date | string;
+  isTentative: boolean;
+  completionStatus: string;
+  deletedAt: Date | string | null;
+}
+
+/**
+ * The rows every calendar file of a booking is built from: sessions still
+ * ahead that are on, and cancelled ones so their entries are withdrawn.
+ */
+export function calendarOccurrences(
+  rows: readonly IcsRow[],
+  now: Date = new Date(),
+): IcsOccurrence[] {
+  return rows
+    .filter(
+      (row) =>
+        !row.isTentative &&
+        new Date(row.startsAt).getTime() > now.getTime() &&
+        (row.completionStatus === "SCHEDULED" ||
+          row.completionStatus === "CANCELLED"),
+    )
+    .map((row) => ({
+      ordinal: row.ordinal,
+      startsAt: new Date(row.startsAt),
+      endsAt: row.endsAt ? new Date(row.endsAt) : null,
+      updatedAt: new Date(row.updatedAt),
+      cancelled: row.completionStatus === "CANCELLED" || !!row.deletedAt,
+    }));
+}
+
 /**
  * One entry per session of the booking: the live row of each ordinal, else its
  * latest cancelled one. The sequence is the session's latest change in whole

@@ -17,14 +17,6 @@ import { bookingNoticeScopes, notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import { LIVE_SLOT_WHERE } from "@/lib/booking/cancellation-scope";
 
-/** Transactions whose allocation confirms a move: its "moved" notice is the one both parties get. */
-const confirmingMove = new WeakSet<Tx>();
-
-/** Called from the allocation's `inTx` hook by the reschedule accept and auto-confirm. */
-export function allocationConfirmsMove(tx: Tx): void {
-  confirmingMove.add(tx);
-}
-
 /**
  * Stages the booked notice for both parties once real times exist. On a
  * webinar or class the learners are read from learner seats and the team from
@@ -48,11 +40,13 @@ export async function stageAllocationNotices(
   outcome?: ApprovalOutcome,
   /** The rows this run wrote; each write is its own notice, never deduplicated into an earlier one. */
   placedIds: readonly (string | undefined)[] = [],
+  /** This run confirms a reschedule: its "moved" notice is the one both parties get. */
+  confirmsReschedule = false,
 ): Promise<StagedTrigger[]> {
   // #1775 B-9 — nothing is booked before payment: an awaiting-payment
   // approval's only consultee message is the pay-link email the mint sends.
   if (outcome === "awaiting_payment") return [];
-  if (confirmingMove.has(tx)) return [];
+  if (confirmsReschedule) return [];
   const prisma = tx;
   // A top-up or reallocation keeps past and cancelled rows; the notice names the next live one.
   const nextLiveSession = {

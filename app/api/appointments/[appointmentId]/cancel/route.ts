@@ -1515,6 +1515,14 @@ export async function POST(
           ),
         reason: validatedData.reason || undefined,
         requiredFor: bookedUserIds,
+        // The seat holders: their copy links the file that withdraws their
+        // calendar entry, when this cancel took a session off the calendar.
+        calendarFor:
+          result.slotsCancelled > 0
+            ? [consulteeUserId, ...attendeeUserIds].filter(
+                (id): id is string => !!id,
+              )
+            : [],
       };
       const attendeeGroups =
         attendees && eventRefund

@@ -8,6 +8,7 @@
 
 import {
   buildIcs,
+  calendarOccurrences,
   icsSessionId,
   icsSessions,
 } from "../../lib/appointments/ics";
@@ -131,4 +132,55 @@ it("one entry per session: a live row wins over a cancelled row of the same ordi
   expect(sessions[0].sequence).toBe(
     Math.floor(at("2026-11-25T04:30:00Z").getTime() / 1000),
   );
+});
+
+describe("every producer reads a booking's rows the same way", () => {
+  const now = at("2026-11-20T00:00:00Z");
+  const row = (
+    over: Partial<Parameters<typeof calendarOccurrences>[0][0]>,
+  ) => ({
+    ordinal: 1,
+    startsAt: "2026-11-26T12:30:00.000Z",
+    endsAt: "2026-11-26T13:30:00.000Z",
+    updatedAt: "2026-11-19T04:30:00.000Z",
+    isTentative: false,
+    completionStatus: "SCHEDULED",
+    deletedAt: null,
+    ...over,
+  });
+
+  it("the dashboard's JSON rows and the route's database rows build the same entries", () => {
+    const fromJson = [
+      row({}),
+      row({ ordinal: 2, completionStatus: "CANCELLED" }),
+    ];
+    const fromDatabase = fromJson.map((r) => ({
+      ...r,
+      startsAt: at(r.startsAt as string),
+      endsAt: at(r.endsAt as string),
+      updatedAt: at(r.updatedAt as string),
+    }));
+
+    expect(icsSessions("appt-1", calendarOccurrences(fromJson, now))).toEqual(
+      icsSessions("appt-1", calendarOccurrences(fromDatabase, now)),
+    );
+  });
+
+  it("leaves out a held time, a released one, a delivered one and anything already past", () => {
+    const sessions = icsSessions(
+      "appt-1",
+      calendarOccurrences(
+        [
+          row({ ordinal: 1, isTentative: true }),
+          row({ ordinal: 2, completionStatus: "RESCHEDULED" }),
+          row({ ordinal: 3, completionStatus: "COMPLETED" }),
+          row({ ordinal: 4, startsAt: "2026-11-19T12:30:00.000Z" }),
+          row({ ordinal: 5 }),
+        ],
+        now,
+      ),
+    );
+
+    expect(sessions.map((s) => s.id)).toEqual([icsSessionId("appt-1", 5)]);
+  });
 });

@@ -104,6 +104,7 @@ jest.mock("../../utils/scheduling-engine/ScheduleValidationService", () => ({
 
 import prisma from "@/lib/prisma";
 import { allocate } from "@/lib/booking/allocation";
+import { notifyAppointmentBooked } from "@/lib/novu";
 import { ScheduleType, DayOfWeek } from "@prisma/client";
 
 const base = prisma as unknown as Record<string, Record<string, jest.Mock>>;
@@ -429,5 +430,29 @@ describe("the member-due overage notice waits for the allocation to commit", () 
     expect(mockNotifyOverageDue).toHaveBeenCalledWith(
       expect.objectContaining({ overageEventId: "overage-1" }),
     );
+  });
+});
+
+describe("the booked notice and a confirmed reschedule", () => {
+  beforeEach(() => (notifyAppointmentBooked as jest.Mock).mockClear());
+
+  it("an ordinary placement stages the booked notice", async () => {
+    const result = await allocateOneSession();
+
+    expect(result.success).toBe(true);
+    expect(notifyAppointmentBooked).toHaveBeenCalled();
+  });
+
+  it("a placement that confirms a reschedule stages none", async () => {
+    const result = await allocate({
+      eventType: "subscription",
+      eventId: "sub-1",
+      mode: "manual",
+      slots: [MON_0900, MON_0930],
+      excludeRescheduleRequestId: "rr-1",
+    });
+
+    expect(result.success).toBe(true);
+    expect(notifyAppointmentBooked).not.toHaveBeenCalled();
   });
 });

@@ -54,6 +54,10 @@ jest.mock("../../lib/booking/allocation/coverage", () =>
 jest.mock("../../lib/novu", () => ({
   notifyNewBookingRequest: jest.fn(async () => ({ success: true })),
 }));
+const mockOperators = jest.fn(async (..._a: unknown[]) => [] as string[]);
+jest.mock("../../lib/collaborators/recipients", () => ({
+  orgCatalogManagerUserIds: (...a: unknown[]) => mockOperators(...a),
+}));
 // The route imports the stale-request sweep for its window constant, and the
 // sweep's nudge pass (#1703) pulls the Novu service and outbox.
 jest.mock("../../lib/novu/service", () => ({}));
@@ -302,6 +306,42 @@ describe("the expert's request notice is scoped by the plan's host organisation"
     expect(bellPayload().dashboardUrl).toContain(
       "/dashboard/consultant/cp_1/requests",
     );
+  });
+
+  it("a request on an organisation's plan also rings each of its operators once, never the plan's own expert twice", async () => {
+    mockedPrisma.consultation.create.mockResolvedValueOnce(
+      created("org_host", null),
+    );
+    mockOperators.mockResolvedValueOnce(["op_1", "op_2", "user_consultant"]);
+
+    await POST(request());
+
+    expect(mockOperators).toHaveBeenCalledWith("org_host");
+    const [expert, ...operators] = (notifyNewBookingRequest as jest.Mock).mock
+      .calls;
+    expect(expert[0]).toBe("user_consultant");
+    expect(operators.map(([userId]) => userId)).toEqual(["op_1", "op_2"]);
+    for (const [, payload, dedupeKey] of operators) {
+      expect(payload).toMatchObject({
+        scope: "org",
+        organizationId: "org_host",
+      });
+      expect(payload.dashboardUrl).toContain(
+        "/dashboard/organization/org_host/requests",
+      );
+      expect(dedupeKey).toBe("booking-request:req_1:host-org");
+    }
+  });
+
+  it("a request on an expert's own plan asks no organisation", async () => {
+    mockedPrisma.consultation.create.mockResolvedValueOnce(
+      created(null, "org_sponsor"),
+    );
+
+    await POST(request());
+
+    expect(mockOperators).not.toHaveBeenCalled();
+    expect(notifyNewBookingRequest).toHaveBeenCalledTimes(1);
   });
 
   it("a request on an organisation's plan opens that organisation's requests", async () => {

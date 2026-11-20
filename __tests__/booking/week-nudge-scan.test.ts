@@ -32,6 +32,10 @@ jest.mock("../../lib/email", () => ({
   sendUnplacedWeekNudgeEmail: (...args: unknown[]) => mockSendEmail(...args),
   unplacedWeekNudgeEntityRef: (id: string, day: string) => `${id}:${day}`,
 }));
+const mockOperators = jest.fn(async (..._a: unknown[]) => [] as string[]);
+jest.mock("../../lib/collaborators/recipients", () => ({
+  orgCatalogManagerUserIds: (...args: unknown[]) => mockOperators(...args),
+}));
 jest.mock("../../lib/novu/outbox", () => ({
   deriveTransactionId: (...args: unknown[]) => JSON.stringify(args),
 }));
@@ -246,4 +250,105 @@ it("reports a failed read instead of throwing into the expiry job", async () => 
   expect(result.errors).toEqual([
     expect.stringContaining("Week reminders stopped: Error: db down"),
   ]);
+});
+
+describe("the host organisation's operators, on the expert's third reminder", () => {
+  const hosted = (id: string, consulteeName: string) => {
+    const plan = sub(id, consulteeName);
+    return {
+      ...plan,
+      subscriptionPlan: {
+        ...plan.subscriptionPlan,
+        organizationId: "org-host",
+        consultantProfile: {
+          id: "cp-1",
+          user: { id: "user-1", name: "Dr Rao", timezone: "Europe/London" },
+        },
+      },
+    };
+  };
+  const DAY_3 = "2026-03-12T10:00:00.000Z";
+  const operatorBells = () =>
+    mockNotify.mock.calls.filter(([userId]) => userId !== "user-1");
+
+  beforeEach(() => {
+    mockPrisma.subscription.findMany.mockResolvedValue([
+      hosted("sub-a", "Priya"),
+    ]);
+    // The expert manages the catalogue too; they already have their own reminder.
+    mockOperators.mockResolvedValue(["op-1", "op-2", "user-1"]);
+  });
+
+  it("rings each operator once, in the organisation's scope, on its requests page", async () => {
+    await runAt(DAY_3);
+
+    expect(mockOperators).toHaveBeenCalledWith("org-host");
+    expect(operatorBells().map(([userId]) => userId)).toEqual(["op-1", "op-2"]);
+    for (const [, payload, dedupeKey] of operatorBells()) {
+      expect(payload).toMatchObject({
+        scope: "org",
+        organizationId: "org-host",
+        consulteeName: "Priya",
+        planTitle: "Weekly coaching",
+      });
+      expect(payload.dashboardUrl).toContain(
+        "/dashboard/organization/org-host/requests",
+      );
+      expect(payload.weekSummary).toBe(
+        "Priya's week 2 with Dr Rao (3 sessions) still needs session times.",
+      );
+      // One notice per plan and week, however many runs see it.
+      expect(dedupeKey).toBe("subscription-week-host-org:sub-a:2");
+    }
+    // No email goes to operators.
+    expect(mockSendEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["the first reminder", "2026-03-09T10:00:00.000Z"],
+    ["the second reminder", "2026-03-10T10:00:00.000Z"],
+  ])("tells no operator on %s", async (_name, when) => {
+    await runAt(when);
+    expect(operatorBells()).toEqual([]);
+  });
+
+  it("tells nobody about an expert's own plan", async () => {
+    mockPrisma.subscription.findMany.mockResolvedValue([sub("sub-a", "Priya")]);
+    await runAt(DAY_3);
+    expect(mockOperators).not.toHaveBeenCalled();
+    expect(operatorBells()).toEqual([]);
+  });
+
+  it("does not ring an operator again on a later run the same day", async () => {
+    mockPrisma.notificationOutbox.findMany.mockImplementation(
+      async ({ where }: { where: { transactionId: { in: string[] } } }) =>
+        where.transactionId.in
+          .filter((id) => id.includes("op-1"))
+          .map((transactionId) => ({ transactionId })),
+    );
+
+    await runAt(DAY_3);
+
+    expect(operatorBells().map(([userId]) => userId)).toEqual(["op-2"]);
+  });
+
+  it("still rings the operators while the expert is inside their quiet hours", async () => {
+    mockPrisma.notificationPreference.findMany.mockImplementation(
+      async ({ where }: { where: { userId: { in: string[] } } }) =>
+        where.userId.in.includes("user-1")
+          ? [
+              {
+                userId: "user-1",
+                quietHoursStart: "09:30",
+                quietHoursEnd: "11:00",
+                quietHoursTimezone: "Europe/London",
+              },
+            ]
+          : [],
+    );
+
+    await runAt(DAY_3);
+
+    expect(operatorBells().map(([userId]) => userId)).toEqual(["op-1", "op-2"]);
+  });
 });

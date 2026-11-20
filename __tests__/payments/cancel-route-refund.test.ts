@@ -1342,6 +1342,34 @@ describe("the cancel's notices", () => {
       [[CONSULTANT_USER], expert[1].dashboardUrl],
       [[CONSULTEE_USER], learner[1].dashboardUrl],
     ]);
+    // Only the learner holds a seat, so only their copy can carry the calendar link.
+    for (const [, email] of mockCancelledEmail.mock.calls as [
+      unknown,
+      { calendarFor: string[] },
+    ][]) {
+      expect(email.calendarFor).toEqual([CONSULTEE_USER]);
+    }
+  });
+
+  it("a cancel that took no session off the calendar links no calendar file", async () => {
+    mockGetSession.mockResolvedValue(sessionAs("consultee"));
+    mockAppointmentFindUnique.mockResolvedValue(consultationAppointment());
+    mockAppointmentFindMany.mockImplementation(async () =>
+      bookingRows({ liveSlotHours: [120] }),
+    );
+    txStub.appointmentOccurrence.updateManyAndReturn.mockResolvedValue([]);
+
+    const res = await cancelHandler(makeRequest(), makeParams(APPT));
+
+    expect(res.status).toBe(200);
+    const emails = mockCancelledEmail.mock.calls as [
+      unknown,
+      { calendarFor: string[] },
+    ][];
+    expect(emails.length).toBeGreaterThan(0);
+    for (const [, email] of emails) {
+      expect(email.calendarFor).toEqual([]);
+    }
   });
 
   it("the bells commit with the cancel, so a failure after the commit loses none", async () => {

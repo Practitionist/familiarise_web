@@ -38,7 +38,6 @@ import {
   type ApprovalLock,
 } from "@/utils/appointmentlock";
 import { transitionRescheduleRequest } from "@/lib/booking/transitions";
-import { allocationConfirmsMove } from "@/lib/booking/allocation/notify";
 import { closeConfirmedProposal } from "@/lib/booking/reschedule-confirm";
 import { stageNoticesForFreedWindows } from "@/lib/booking/backup-interest";
 import {
@@ -135,7 +134,6 @@ export async function acceptProposal(args: {
     actorUserId: args.resolvedById,
     // ACCEPTED commits with the move or not at all.
     inTx: async (tx, moved) => {
-      allocationConfirmsMove(tx);
       await closeConfirmedProposal(tx, {
         where: { id: request.id },
         to: "ACCEPTED",

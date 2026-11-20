@@ -10,6 +10,7 @@ import * as React from "react";
 import { Button, Section, Text } from "react-email";
 import type { Tx } from "@/lib/prisma";
 import {
+  calendarIcsUrl,
   calendarLinks,
   type CalendarSession,
 } from "@/lib/appointments/calendar-links";
@@ -203,6 +204,8 @@ export interface AppointmentCancelledEmailArgs {
   requiredFor?: readonly string[];
   /** A host removed this one seat from a class or webinar; nothing was cancelled. */
   removedFrom?: { eventLabel: string; planTitle: string };
+  /** The seat holders whose copy carries the link that withdraws their calendar entry. */
+  calendarFor?: readonly string[];
   dashboardUrl: string;
 }
 
@@ -237,6 +240,9 @@ function buildCancelledEmail(args: AppointmentCancelledEmailArgs): {
           reason: args.reason ?? undefined,
           refundText: showRefund(r) ? args.refundText : undefined,
           removedFrom: args.removedFrom,
+          calendarIcsUrl: args.calendarFor?.includes(r.userId)
+            ? calendarIcsUrl(args.appointmentId, r.userId)
+            : null,
           dashboardUrl: absolute(args.dashboardUrl),
           unsubscribeUrl: r.unsubscribeUrl,
         }),
@@ -322,12 +328,7 @@ function buildRescheduledEmail(args: AppointmentRescheduledEmailArgs): {
             args.outcome === "MOVED" &&
             args.newStartsAt &&
             args.calendarFor?.includes(r.userId)
-              ? calendarLinks({
-                  appointmentId: args.appointmentId,
-                  userId: r.userId,
-                  title: subjects.MOVED,
-                  startsAt: args.newStartsAt,
-                })?.icsUrl
+              ? calendarIcsUrl(args.appointmentId, r.userId)
               : null,
           dashboardUrl: absolute(args.dashboardUrl),
           unsubscribeUrl: r.unsubscribeUrl,

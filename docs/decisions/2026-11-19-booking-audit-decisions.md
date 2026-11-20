@@ -1,6 +1,6 @@
 # ADR: Booking audit decisions: nothing is placed without a click, batches for long classes, and the limits that follow one clock
 
-- **Status**: Accepted (owner decisions, 2026-11-19). Each decision carries its own marker: **built** means built in [#2892](https://github.com/Practitionist/familiarise_web/pull/2892), the pull request that adds this record; **follow-up PR**, **planned** and **deferred** are not built yet.
+- **Status**: Accepted (owner decisions, 2026-11-19). Each decision carries its own marker: **built** means built in [#2892](https://github.com/Practitionist/familiarise_web/pull/2892), the pull request that adds this record; **built in the follow-up change** means built in the pull request after it; **follow-up PR**, **planned** and **deferred** are not built yet.
 - **Date**: 2026-11-19
 - **Author**: Platform engineering
 - **Related**: [Booking v2 direction](2026-11-03-booking-v2-direction.md) (item 7 is reversed here), [Booking v2 train B](2026-11-04-booking-v2-train-b.md) (decisions 1 to 5 are deferred here), [Allocation and reschedule correctness](2026-11-14-allocation-reschedule-and-short-notice-moves.md), [Scheduling surfaces and feasibility](2026-11-09-scheduling-surfaces-and-feasibility.md), [Booking system HLD](../start-here/01-booking-system-hld.md), [Cron jobs and background tasks](../booking/13-cron-jobs-and-background-tasks.md), [Cancellation flow](../booking/08-cancellation-flow.md), [Rescheduling flow](../booking/07-rescheduling-flow.md), [Booking API reference](../booking/04-api-reference.md)
@@ -58,12 +58,15 @@ A read-only audit of `dev` on 18 and 19 November 2026 found 77 code findings and
 9. **A one-off booking whose only session was voided or awaits review reads "Confirmed"**, with a line that names the remedy and its date, and it offers no rating until it is settled. Approved example: "This session was cut short. Hannah owes you a new time by 2 Dec, or you are refunded." **Follow-up PR.**
    - Options not chosen: keeping "Completed"; a new status word.
 
-10. **One "Your sessions are scheduled" email, with calendar links, on a booking's first placement only.** **Follow-up PR.**
+10. **One "Your sessions are scheduled" email, with calendar links, on a booking's first placement only.** **Built in the follow-up change.**
+    - Built: the learner's booked email is staged inside the allocation transaction on a 1:1 booking's first placement, listing every placed session with its calendar links; later batches ring the bell only. Not built: it is sent by the email retry job, not attempted right after the commit.
     - Options not chosen: an email for every batch; the bell only.
 
-11. **Move and cancel notices carry calendar links**, with one identity per session and a rising sequence, so importing the file again replaces the entry. The subscribable feed is deferred indefinitely ([#2894](https://github.com/Practitionist/familiarise_web/issues/2894)). **Follow-up PR.**
+11. **Move and cancel notices carry calendar links**, with one identity per session and a rising sequence, so importing the file again replaces the entry. The subscribable feed is deferred indefinitely ([#2894](https://github.com/Practitionist/familiarise_web/issues/2894)). **Built in the follow-up change.**
+    - Built: every calendar file names a session by its booking and ordinal with a sequence from its last change; the moved and cancelled emails carry the attendee's `.ics` link; a seat that ended with a cancel downloads a cancellation only. Not built: cancel emails still follow the refund, and the "move proposed" notice still stages after its commit.
 
-12. **Host-organisation operators are notified only where they can act**: a new request, and a plan week still unplaced after the expert's third reminder. **Follow-up PR.**
+12. **Host-organisation operators are notified only where they can act**: a new request, and a plan week still unplaced after the expert's third reminder. **Built in the follow-up change.**
+    - Built: one bell to each member holding `catalog.manage`, in the organisation's scope, linking to its requests page, keyed per request and per subscription and week. Not built: no email and no digest, by decision.
     - Options not chosen: no notices; a daily digest to sponsors.
 
 13. **The learner-side double-booking refusal stays as it is** ("You already have a session booked during this time"). Nothing new is tracked on the learner's side. **No change.**
@@ -77,7 +80,7 @@ A read-only audit of `dev` on 18 and 19 November 2026 found 77 code findings and
     - A free time outside a co-host's published hours says so on the grid (`outsideCoHostHours`, naming the co-host when one is known) instead of reading "Unavailable". It still cannot be picked: the allocator refuses a webinar or class time a co-host has not published (`[COLLABORATOR_SCHEDULE]`), so the hours bind. The default first proposed, a label on a cell that stays pickable, rested on a wrong reading that no writer enforces a co-host's hours; it was built and corrected in this pull request. **Built.**
     - A learner may move a session onto its own slot on the phone, as on desktop. **Built.**
     - A move opened by an organisation can be withdrawn by anyone on that side (`rescheduleWithdrawAuthority` in `lib/booking/reschedule-withdraw.ts`). **Built.**
-    - A sponsoring organisation's cancel is a required notice that names the organisation. **Follow-up PR.**
+    - A sponsoring organisation's cancel is a required notice that names the organisation. **Built in the follow-up change**: required for the member (as `CANCELLED_BY_STAFF`), with the organisation named in the bell and the email. Not built: the refund notice that cancel causes keeps its own rule.
     - A class takes sessions beyond its plan total only through a top-up, and refunds still divide by the plan total (`assertPickedSessionCount` in `lib/booking/allocation/counts.ts`). **Built.**
 
 ## The other corrections in this pull request
@@ -102,6 +105,7 @@ A read-only audit of `dev` on 18 and 19 November 2026 found 77 code findings and
 - **The row order of auto-schedule** ([#2895](https://github.com/Practitionist/familiarise_web/issues/2895)).
 - **The rule set of the validate endpoints** ([#2896](https://github.com/Practitionist/familiarise_web/issues/2896)).
 - **The volume of booked bells to co-hosts** ([#2898](https://github.com/Practitionist/familiarise_web/issues/2898)).
+- **The grid can show a lapsed request's time as busy for up to 30 minutes** ([#2919](https://github.com/Practitionist/familiarise_web/issues/2919)).
 - **A retry of a subscription's or class's later batch still does not replay.** The grid hook keeps its key after a success, so a server-side replay would answer "saved" for the next week's click and place nothing. The hook has to be fixed first ([#2902](https://github.com/Practitionist/familiarise_web/issues/2902)).
 
 ## Consequences

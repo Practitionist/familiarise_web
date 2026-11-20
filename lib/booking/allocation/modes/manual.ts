@@ -670,6 +670,7 @@ export async function manualAllocate(
             manualPartialInfo,
             outcome,
             appointments.flatMap((a) => (a.occurrences ?? []).map((o) => o.id)),
+            !!excludeRescheduleRequestId,
           ),
         };
       },

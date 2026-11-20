@@ -63,6 +63,7 @@ function occurrence(over: {
     startsAt,
     endsAt: null,
     updatedAt: new Date("2026-11-20T04:30:00Z"),
+    isTentative: false,
     completionStatus: "SCHEDULED",
     deletedAt: null,
     ...over,
@@ -128,6 +129,72 @@ it("a session cancelled on a seat that is still paid downloads as its cancellati
   expect(body).toContain("METHOD:CANCEL");
   expect(body).toContain("STATUS:CANCELLED");
   expect(body).toContain("UID:appt-1-1@familiarise");
+});
+
+describe("a seat that ended because the booking was cancelled", () => {
+  const cancelledBooking = {
+    appointmentType: "WEBINAR",
+    consultation: null,
+    subscription: null,
+    webinar: { webinarPlan: { title: "Deep work" } },
+    class: null,
+    trial: null,
+    occurrences: [
+      occurrence({ completionStatus: "CANCELLED", deletedAt: new Date() }),
+    ],
+  };
+
+  it.each(["CANCELLED", "REFUNDED"])(
+    "a %s seat downloads the cancellation only: the same entry, title and time, nothing else",
+    async (status) => {
+      seats.splice(0, seats.length, { ...paidSeat([]), status });
+      findFirst.mockResolvedValue(cancelledBooking);
+
+      const res = await get(links!.icsUrl);
+      const body = await res.text();
+
+      expect(res.status).toBe(200);
+      expect(body).toContain("METHOD:CANCEL");
+      expect(body).toContain("STATUS:CANCELLED");
+      expect(body).toContain("UID:appt-1-1@familiarise");
+      expect(body).toContain("SUMMARY:Deep work");
+      expect(body).not.toContain("STATUS:CONFIRMED");
+      // No way back into the booking and nothing about anyone else.
+      expect(body).not.toMatch(/DESCRIPTION|URL:|dashboard|meetings|buyer/i);
+    },
+  );
+
+  it("an ended seat never reads sessions that are still on", async () => {
+    seats.splice(0, seats.length, { ...paidSeat([]), status: "CANCELLED" });
+    // The attendee left a class that goes ahead: nothing of theirs was cancelled.
+    findFirst.mockResolvedValue({
+      ...cancelledBooking,
+      occurrences: [occurrence({})],
+    });
+
+    expect((await get(links!.icsUrl)).status).toBe(404);
+  });
+
+  it("someone who never held a seat still gets the same 404", async () => {
+    seats.splice(0, seats.length);
+    findFirst.mockResolvedValue(cancelledBooking);
+
+    const res = await get(links!.icsUrl);
+
+    expect(res.status).toBe(404);
+    expect(await res.text()).toBe("Not found");
+  });
+
+  it("the expert's own row on the booking is not a seat", async () => {
+    seats.splice(0, seats.length, {
+      ...paidSeat([]),
+      role: "CONSULTANT",
+      status: "CANCELLED",
+    });
+    findFirst.mockResolvedValue(cancelledBooking);
+
+    expect((await get(links!.icsUrl)).status).toBe(404);
+  });
 });
 
 it("answers a bad token, another booking and an unpaid seat with the same 404", async () => {

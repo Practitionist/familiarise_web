@@ -25,6 +25,8 @@ import {
 import { notifyUnplacedWeekNudge } from "@/lib/novu/service";
 import { NOVU_WORKFLOWS, notificationScope } from "@/lib/novu/workflows";
 import { deriveTransactionId } from "@/lib/novu/outbox";
+import { notificationHref } from "@/lib/novu/resolve-href";
+import { orgCatalogManagerUserIds } from "@/lib/collaborators/recipients";
 import { DEFAULT_NOTIFICATION_TIMEZONE } from "@/lib/novu/humanize";
 import { formatDateRangeLabel } from "@/lib/time/display";
 import { getAppUrl } from "@/lib/url";
@@ -39,6 +41,8 @@ export const WEEK_NUDGE_DAYS = [0, 1, 3] as const;
 const LADDER_START_HOUR = 9;
 /** Reminders go out only inside these local hours [start, end). */
 export const WAKING_HOURS = { start: 8, end: 21 } as const;
+/** The consultant's last reminder: the host organisation's operators are told on it. */
+const OPERATOR_LADDER_DAY = WEEK_NUDGE_DAYS[WEEK_NUDGE_DAYS.length - 1];
 /** Consultants read per page and pages per run (keyset over id, a fair rotation). */
 const NUDGE_PAGE = 200;
 const NUDGE_PAGES = 5;
@@ -49,6 +53,8 @@ export interface WeekNudge {
   sessionsToPlace: number;
   weekStartsAt: Date;
   weekEndsAt: Date;
+  /** Which ladder day this reminder is (`WEEK_NUDGE_DAYS`). */
+  ladderDay: number;
 }
 
 const localHour = (instant: Date, zone: string) =>
@@ -106,6 +112,7 @@ export function weekNudgeFor(
     sessionsToPlace: nextBatch,
     weekStartsAt,
     weekEndsAt: windowEnd,
+    ladderDay: daysIn,
   };
 }
 
@@ -118,8 +125,12 @@ export function weekNudgeDedupeKey(
 }
 
 interface DuePlan {
+  subscriptionId: string;
   consulteeName: string;
+  consultantName: string | null;
   planTitle: string;
+  /** The organisation that hosts the plan, whose operators may place its sessions. */
+  hostOrganizationId: string | null;
   url: string;
   nudge: WeekNudge;
   zone: string;
@@ -168,8 +179,12 @@ const NUDGE_PLAN_SELECT = {
       totalSessions: true,
       sessionsPerWeek: true,
       durationInMonths: true,
+      organizationId: true,
       consultantProfile: {
-        select: { id: true, user: { select: { id: true, timezone: true } } },
+        select: {
+          id: true,
+          user: { select: { id: true, name: true, timezone: true } },
+        },
       },
     },
   },
@@ -285,8 +300,11 @@ function dueNudgeFor(
     userId: consultant.user.id,
     zone,
     plan: {
+      subscriptionId: sub.id,
       consulteeName: sub.requestedBy.user.name ?? "Your client",
+      consultantName: consultant.user.name,
       planTitle: plan.title,
+      hostOrganizationId: plan.organizationId,
       // The allocate page, where "Auto-schedule this week" is one tap.
       url: `${getAppUrl()}/dashboard/consultant/${consultant.id}/requests/${encodeURIComponent(sub.id)}/allocate?type=subscription`,
       nudge,
@@ -411,6 +429,93 @@ async function sendConsultantNudge(
   }
 }
 
+/** The outbox key for one plan week's notice to the host organisation's operators. */
+export function hostOperatorWeekKey(
+  subscriptionId: string,
+  weekNumber: number,
+): string {
+  return `subscription-week-host-org:${subscriptionId}:${weekNumber}`;
+}
+
+/**
+ * On the consultant's last reminder for a week, one bell to each operator of
+ * the organisation that hosts the plan, in the organisation's scope, on its
+ * requests page. Once per plan and week; an operator inside their quiet hours
+ * hears on a later run.
+ */
+async function notifyHostOperators(
+  due: ReadonlyArray<{ plan: DuePlan; expertUserId: string }>,
+  now: Date,
+): Promise<void> {
+  const notices: {
+    userId: string;
+    organizationId: string;
+    plan: DuePlan;
+    dedupeKey: string;
+    transactionId: string;
+  }[] = [];
+  const operatorsOf = new Map<string, Promise<string[]>>();
+  for (const { plan, expertUserId } of due) {
+    const organizationId = plan.hostOrganizationId;
+    if (!organizationId || plan.nudge.ladderDay !== OPERATOR_LADDER_DAY) {
+      continue;
+    }
+    const operators =
+      operatorsOf.get(organizationId) ??
+      orgCatalogManagerUserIds(organizationId);
+    operatorsOf.set(organizationId, operators);
+    const dedupeKey = hostOperatorWeekKey(
+      plan.subscriptionId,
+      plan.nudge.weekNumber,
+    );
+    for (const userId of await operators) {
+      if (userId === expertUserId) continue;
+      notices.push({
+        userId,
+        organizationId,
+        plan,
+        dedupeKey,
+        transactionId: deriveTransactionId(
+          NOVU_WORKFLOWS.NEW_BOOKING_REQUEST,
+          [userId],
+          {},
+          dedupeKey,
+        ),
+      });
+    }
+  }
+  if (notices.length === 0) return;
+  const [quiet, staged] = await Promise.all([
+    usersInQuietHours([...new Set(notices.map((n) => n.userId))], now),
+    prisma.notificationOutbox
+      .findMany({
+        where: { transactionId: { in: notices.map((n) => n.transactionId) } },
+        select: { transactionId: true },
+      })
+      .then((rows) => new Set(rows.map((row) => row.transactionId))),
+  ]);
+  for (const n of notices) {
+    if (quiet.has(n.userId) || staged.has(n.transactionId)) continue;
+    const { plan } = n;
+    const sessions =
+      plan.nudge.sessionsToPlace === 1
+        ? "1 session"
+        : `${plan.nudge.sessionsToPlace} sessions`;
+    await notifyUnplacedWeekNudge(
+      n.userId,
+      {
+        ...notificationScope(n.organizationId),
+        consulteeName: plan.consulteeName,
+        planTitle: plan.planTitle,
+        appointmentType: "SUBSCRIPTION",
+        dashboardUrl: notificationHref(n.organizationId, "requests"),
+        weekSummary: `${plan.consulteeName}'s week ${plan.nudge.weekNumber} with ${plan.consultantName ?? "their expert"} (${sessions}) still needs session times.`,
+      },
+      n.dedupeKey,
+    );
+  }
+}
+
 /**
  * Remind consultants whose plans have an open week with sessions left to
  * place. Plans never scheduled are the 48 h cohort's; a plan with a move in
@@ -462,6 +567,17 @@ async function runWeekNudges(
     return { nudged: 0, errors };
   }
   if (byConsultant.size === 0) return { nudged: 0, errors };
+
+  try {
+    await notifyHostOperators(
+      [...byConsultant.values()].flatMap((c) =>
+        c.plans.map((plan) => ({ plan, expertUserId: c.userId })),
+      ),
+      now,
+    );
+  } catch (error) {
+    errors.push(`Week notices to host organisations failed: ${error}`);
+  }
 
   // Quiet hours on top of the waking window, for the email as for the bell.
   const quiet = await usersInQuietHours(

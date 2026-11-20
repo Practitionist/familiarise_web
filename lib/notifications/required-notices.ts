@@ -29,8 +29,10 @@ export type RequiredNoticeKind = z.infer<typeof RequiredNoticeKindSchema>;
 
 /** How Settings names each kind; kinds that share a label are named once. */
 export const REQUIRED_NOTICE_LABEL: Record<RequiredNoticeKind, string> = {
-  CANCELLED_BY_HOST: "cancellations by your expert, host or our staff",
-  CANCELLED_BY_STAFF: "cancellations by your expert, host or our staff",
+  CANCELLED_BY_HOST:
+    "cancellations by your expert, host, our staff or the organisation paying for your booking",
+  CANCELLED_BY_STAFF:
+    "cancellations by your expert, host, our staff or the organisation paying for your booking",
   REFUND_FROM_HOST_CANCEL: "the refunds those cause",
   REFUND_FROM_STAFF_CANCEL: "the refunds those cause",
   REQUEST_DECLINED: "declined requests",

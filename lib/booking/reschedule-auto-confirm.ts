@@ -10,7 +10,6 @@
 import prisma from "@/lib/prisma";
 import type { EventType } from "@/utils/scheduling-engine/types";
 import { allocate } from "@/lib/booking/allocation";
-import { allocationConfirmsMove } from "@/lib/booking/allocation/notify";
 import { closeConfirmedProposal } from "@/lib/booking/reschedule-confirm";
 import { stageNoticesForFreedWindows } from "@/lib/booking/backup-interest";
 import {
@@ -103,7 +102,6 @@ export async function tryAutoConfirmProposal(
         actorUserId: request.initiatedById,
         // AUTO_ACCEPTED commits with the move or not at all.
         inTx: async (tx, moved) => {
-          allocationConfirmsMove(tx);
           // Re-decided here, on this transaction's clock: a lock wait must not
           // carry a move inside 24 hours without the other side's acceptance.
           if (
