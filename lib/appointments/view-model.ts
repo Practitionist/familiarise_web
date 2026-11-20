@@ -177,6 +177,10 @@ export interface AppointmentVM {
   reschedule?: OpenRescheduleInput | null;
   /** Refunds that have landed on the booking, summed; null when none. */
   refunded?: BookingStatusFacts["refunded"];
+  /** An unpaid pay link was minted at some point, so a history-less EXPIRED row lapsed unpaid. */
+  unpaidLinkSeen?: boolean;
+  /** The booking's EXPIRED edge, where the read carries it, for its end reason. */
+  history?: BookingStatusFacts["history"];
   /** Consultant view: the viewer's own role on a collaborative event. */
   collaboratorRole: string | null;
   raw: AppointmentVMRaw;

@@ -19,6 +19,7 @@ import prisma from "@/lib/prisma";
 import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
 import type { Prisma } from "@prisma/client";
 import type { Scope } from "@/lib/api/scope/parse";
+import { expiredEdgeInclude } from "@/lib/appointments/list-status-facts";
 import { scopeToWhereOrgId } from "@/lib/api/scope/parse";
 import { toPlain } from "@/lib/data/serialize";
 import { withLapsedRequestRestored } from "@/lib/appointments/lapsed-move";
@@ -176,6 +177,7 @@ export async function readConsulteeEvents(
           appointment: {
             include: {
               rescheduleRequests: liveProposalInclude,
+              statusHistory: expiredEdgeInclude,
               occurrences: {
                 orderBy: { startsAt: "asc" },
                 include: {
@@ -221,6 +223,7 @@ export async function readConsulteeEvents(
           appointment: {
             include: {
               rescheduleRequests: liveProposalInclude,
+              statusHistory: expiredEdgeInclude,
               occurrences: {
                 orderBy: { startsAt: "asc" },
                 include: {

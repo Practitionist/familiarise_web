@@ -1,3 +1,5 @@
+import type { Prisma } from "@prisma/client";
+
 import type { BucketInput } from "./bucket";
 import { openProposalTarget } from "./consultee-affordances";
 import { isUnpaidSeat } from "./status";
@@ -15,6 +17,27 @@ export function holdOpenFrom(
   if (facts.payDeadline) return facts.payDeadline.getTime() > now.getTime();
   return undefined;
 }
+
+/** An unpaid pay link was minted at some point: the booking page and the lists read a history-less EXPIRED row by it. */
+export function unpaidLinkSeen(
+  payments: ReadonlyArray<{
+    paymentStatus: string;
+    expiresAt?: Date | string | null;
+  }>,
+): boolean {
+  return payments.some((p) => p.paymentStatus !== "SUCCEEDED" && !!p.expiresAt);
+}
+
+/** The EXPIRED edge a list read selects, so its row ends for the reason its booking page gives. */
+export const expiredEdgeInclude = {
+  where: {
+    entity: { in: ["CONSULTATION", "SUBSCRIPTION"] },
+    toStatus: "EXPIRED",
+  },
+  orderBy: { createdAt: "desc" },
+  take: 1,
+  select: { fromStatus: true, toStatus: true, reason: true, createdAt: true },
+} satisfies Prisma.Appointment$statusHistoryArgs;
 
 /** A hold lapsed only on evidence: nothing paid, nothing payable open, and a payment that expired or failed. */
 export function paymentsLapsed(
@@ -50,6 +73,12 @@ export function listStatusFacts(
             updatedAt: Date | string;
           }>;
         }> | null;
+        statusHistory?: ReadonlyArray<{
+          fromStatus: string;
+          toStatus: string;
+          reason?: string | null;
+          createdAt?: Date | string | null;
+        }> | null;
       }
     | null
     | undefined,
@@ -58,7 +87,13 @@ export function listStatusFacts(
   viewer?: { side: "CONSULTANT" | "REQUESTER"; userId?: string | null },
 ): Pick<
   AppointmentVM,
-  "paid" | "payDeadline" | "payLapsed" | "reschedule" | "refunded"
+  | "paid"
+  | "payDeadline"
+  | "payLapsed"
+  | "reschedule"
+  | "refunded"
+  | "unpaidLinkSeen"
+  | "history"
 > {
   const payments = appointment?.payment ?? [];
   const charged = payments.filter(
@@ -97,6 +132,10 @@ export function listStatusFacts(
     // A read without payments says nothing: an unknown deadline is never a lapse.
     payDeadline: open[0] ?? (appointment?.payment ? null : undefined),
     payLapsed: paymentsLapsed(payments),
+    unpaidLinkSeen: unpaidLinkSeen(payments),
+    history: appointment?.statusHistory
+      ? appointment.statusHistory.map((e) => ({ ...e }))
+      : undefined,
     reschedule: proposal
       ? {
           by: proposalSide(proposal),
