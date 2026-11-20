@@ -30,11 +30,11 @@ import {
   BODY_FONT,
   StatutoryDocumentFrame,
   statutoryStyles,
-  formatStatutoryDate,
   taxTotalLines,
   type StatutorySupplier,
   type StatutoryBuyer,
 } from "./statutory-document-frame";
+import { formatInvoiceDate, invoiceDateLabel } from "@/lib/time/invoice-date";
 
 export type CreditNotePdfData = {
   creditNoteNumber: string;
@@ -69,13 +69,6 @@ function formatMoney(paise: number, currency: Currency): string {
     currency,
     minimumFractionDigits: 2,
   }).format(paise / 100);
-}
-
-function fmt(d: Date | null | undefined): string {
-  if (!d) return "—";
-  // UTC (CR #1234): match the IRP payload's date components — a host west of
-  // UTC would otherwise render a UTC-midnight value as the previous day.
-  return new Date(d).toLocaleDateString("en-IN", { timeZone: "UTC" });
 }
 
 const styles = StyleSheet.create({
@@ -177,7 +170,9 @@ export function OrgCreditNoteDocument({
           </View>
           <View style={{ alignItems: "flex-end" }}>
             <Text style={{ fontWeight: "bold" }}>{data.creditNoteNumber}</Text>
-            <Text>Date: {fmt(data.issuedAt)}</Text>
+            <Text>
+              {invoiceDateLabel("Date")}: {formatInvoiceDate(data.issuedAt)}
+            </Text>
           </View>
         </View>
 
@@ -203,10 +198,8 @@ export function OrgCreditNoteDocument({
             value={data.originalInvoiceNumber ?? "B2C / unregistered supply"}
           />
           <Kv
-            label="Invoice date"
-            value={
-              data.originalInvoiceDate ? fmt(data.originalInvoiceDate) : "—"
-            }
+            label={invoiceDateLabel("Invoice date")}
+            value={formatInvoiceDate(data.originalInvoiceDate)}
           />
         </View>
 
@@ -326,14 +319,14 @@ export function ConsumerCreditNoteDocument({
           buyerHeading="Recipient"
           details={[
             {
-              label: "Credit note date",
-              value: formatStatutoryDate(data.issuedAt),
+              label: invoiceDateLabel("Credit note date"),
+              value: formatInvoiceDate(data.issuedAt),
             },
             // s.34(1)(a) — the original document must be identified on the note.
             { label: "Original invoice", value: data.originalInvoiceNumber },
             {
-              label: "Invoice date",
-              value: formatStatutoryDate(data.originalInvoiceDate),
+              label: invoiceDateLabel("Invoice date"),
+              value: formatInvoiceDate(data.originalInvoiceDate),
             },
             { label: "Place of supply", value: data.placeOfSupply ?? "—" },
           ]}
