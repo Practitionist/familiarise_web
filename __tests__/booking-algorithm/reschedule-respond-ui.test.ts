@@ -54,6 +54,12 @@ describe("#1163 — the proposal card answers through the lifecycle endpoints", 
     expect(proposalCard).toContain('mutation.mutate("decline")');
   });
 
+  it("a read-only card offers no way to keep the original time", () => {
+    expect(proposalCard).toMatch(
+      /const keepsOwnTime =\s*!readOnly && !isInitiator && proposal\.viewerMayWithdraw === true;/,
+    );
+  });
+
   it("decline confirms first and says the booking is not being cancelled", () => {
     const dialogCopy = copy(proposalCard);
     expect(dialogCopy).toContain("not");

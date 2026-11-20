@@ -11,6 +11,10 @@
 const mockSponsorAdmins = new Set<string>();
 const mockSuspended = jest.fn(async () => false);
 jest.mock("../../lib/prisma", () => ({ __esModule: true, default: {} }));
+jest.mock("../../utils/appointmentlock", () => ({
+  __esModule: true,
+  withAppointmentLock: jest.fn(),
+}));
 jest.mock("../../lib/auth-helpers", () => ({
   resolveEventHostActor: jest.fn(
     async (session: { user: { consultantProfileId: string | null } }) =>

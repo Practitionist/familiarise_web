@@ -139,6 +139,7 @@ export function MobileDayListPicker({
     keepPrevious: true,
   });
   const cells = query.data?.data;
+  const isPreviousAnswer = query.isPlaceholderData;
   const quota = query.data?.quota ?? null;
   const leadMs = query.data?.leadMs ?? null;
 
@@ -174,10 +175,11 @@ export function MobileDayListPicker({
   const [announcement, setAnnouncement] = useState("");
   const stale = useMemo(
     () =>
-      cells
+      // While the next page loads, `cells` is still the previous page's answer.
+      cells && !isPreviousAnswer
         ? stalePicks(value, cells, rules, fromMs)
         : new Map<string, JustTakenReason>(),
-    [cells, value, rules, fromMs],
+    [cells, isPreviousAnswer, value, rules, fromMs],
   );
   const dropStale = useCallback(
     (keys: string[]) => {

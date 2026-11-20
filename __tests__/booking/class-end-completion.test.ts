@@ -12,9 +12,12 @@ import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 
 const mockClassFindUnique = jest.fn();
 const mockOccurrenceFindMany = jest.fn();
+const mockStillEnded = jest.fn();
+const mockClassRows = jest.fn();
 const mockTx = {
   tag: "completing-tx",
   class: { findUnique: (...a: unknown[]) => mockClassFindUnique(...a) },
+  appointment: { findFirst: (...a: unknown[]) => mockStillEnded(...a) },
   appointmentOccurrence: {
     findMany: (...a: unknown[]) => mockOccurrenceFindMany(...a),
   },
@@ -23,6 +26,18 @@ const PERIOD_OVER = new Date("2020-01-01T00:00:00.000Z");
 const PERIOD_AHEAD = new Date("2999-01-01T00:00:00.000Z");
 const ordinals = (n: number) =>
   Array.from({ length: n }, (_, i) => ({ ordinal: i + 1 }));
+/** The cohort read's row: the period end, the sessions sold and the rows accounted for. */
+const classRow = (
+  schedulingPeriodEndsAt: Date,
+  totalSessions: number,
+  accountedRows: number,
+) => ({
+  id: "cls-1",
+  status: "SCHEDULED",
+  schedulingPeriodEndsAt,
+  classPlan: { title: "Ten weeks of Python", totalSessions },
+  appointment: { occurrences: [], _count: { occurrences: accountedRows } },
+});
 const mockTransitionClassEvent = jest.fn();
 const mockStamp = jest.fn();
 const mockTransaction = jest.fn(
@@ -35,14 +50,7 @@ jest.mock("../../lib/prisma", () => {
     __esModule: true,
     default: {
       class: {
-        findMany: jest.fn(async () => [
-          {
-            id: "cls-1",
-            status: "SCHEDULED",
-            classPlan: { title: "Ten weeks of Python" },
-            appointment: { occurrences: [] },
-          },
-        ]),
+        findMany: (...a: unknown[]) => mockClassRows(...a),
       },
       webinar: emptyTable(),
       consultation: emptyTable(),
@@ -87,6 +95,8 @@ beforeEach(() => {
     classPlan: { totalSessions: 96 },
   });
   mockOccurrenceFindMany.mockReset().mockResolvedValue(ordinals(8));
+  mockStillEnded.mockReset().mockResolvedValue({ id: "apt-1" });
+  mockClassRows.mockReset().mockResolvedValue([classRow(PERIOD_OVER, 96, 8)]);
 });
 
 it("stamps the class-end refunds on the completing transaction, after the CAS", async () => {
@@ -152,14 +162,12 @@ describe("a class between batches", () => {
     mockStamp.mockResolvedValue({ owed: 0, owedPaise: 0, escalated: 0 });
   });
 
-  it("stays open with 8 of 96 sessions placed and its period still running", async () => {
-    mockClassFindUnique.mockResolvedValue({
-      schedulingPeriodEndsAt: PERIOD_AHEAD,
-      classPlan: { totalSessions: 96 },
-    });
+  it("stays open with 8 of 96 sessions placed and its period still running, without opening a transaction", async () => {
+    mockClassRows.mockResolvedValue([classRow(PERIOD_AHEAD, 96, 8)]);
 
     const result = await autoCompleteAppointments();
 
+    expect(mockTransaction).not.toHaveBeenCalled();
     expect(mockStamp).not.toHaveBeenCalled();
     expect(result.classesCompleted).toBe(0);
     expect(result.errors).toEqual([]);
@@ -172,7 +180,34 @@ describe("a class between batches", () => {
     expect(result.classesCompleted).toBe(1);
   });
 
+  it("stays open when the row count passes but two rows share an ordinal", async () => {
+    // A cancelled session and its make-up are two rows and one session.
+    mockClassRows.mockResolvedValue([classRow(PERIOD_AHEAD, 9, 9)]);
+    mockClassFindUnique.mockResolvedValue({
+      schedulingPeriodEndsAt: PERIOD_AHEAD,
+      classPlan: { totalSessions: 9 },
+    });
+
+    const result = await autoCompleteAppointments();
+
+    expect(mockTransaction).toHaveBeenCalledTimes(1);
+    expect(mockStamp).not.toHaveBeenCalled();
+    expect(result.classesCompleted).toBe(0);
+    expect(result.errors).toEqual([]);
+  });
+
+  it("stays open when a session was placed after the cohort read", async () => {
+    mockStillEnded.mockResolvedValue(null);
+
+    const result = await autoCompleteAppointments();
+
+    expect(mockStamp).not.toHaveBeenCalled();
+    expect(result.classesCompleted).toBe(0);
+    expect(result.errors).toEqual([]);
+  });
+
   it("completes before its period ends once every sold session is placed", async () => {
+    mockClassRows.mockResolvedValue([classRow(PERIOD_AHEAD, 8, 8)]);
     mockClassFindUnique.mockResolvedValue({
       schedulingPeriodEndsAt: PERIOD_AHEAD,
       classPlan: { totalSessions: 8 },
@@ -184,6 +219,7 @@ describe("a class between batches", () => {
   });
 
   it("counts sessions by ordinal, with a host-cancelled session answered for", async () => {
+    mockClassRows.mockResolvedValue([classRow(PERIOD_AHEAD, 8, 8)]);
     mockClassFindUnique.mockResolvedValue({
       schedulingPeriodEndsAt: PERIOD_AHEAD,
       classPlan: { totalSessions: 8 },

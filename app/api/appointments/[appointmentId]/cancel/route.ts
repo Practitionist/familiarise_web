@@ -943,6 +943,7 @@ export async function POST(
                       sessionsRefunded: bookingCtx.sessionsRefunded,
                       sessionsCompleted: bookingCtx.sessionsCompleted,
                       scheduledStarts: bookingCtx.scheduledStarts,
+                      nowMs: bookingCtx.quotedAtMs,
                       alreadyRefundedPaise: bookingCtx.alreadyRefundedPaise,
                       isSubscription: !!appointment.subscription,
                       isConsultantInitiated,

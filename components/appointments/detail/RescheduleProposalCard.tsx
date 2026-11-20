@@ -237,7 +237,8 @@ export function RescheduleProposalCard({
     : (role === "consultant") === (proposal.initiatorRole === "CONSULTANT");
   // The viewer's own side, moved by their organisation: the server said the
   // withdraw route takes it back from them too.
-  const keepsOwnTime = !isInitiator && proposal.viewerMayWithdraw === true;
+  const keepsOwnTime =
+    !readOnly && !isInitiator && proposal.viewerMayWithdraw === true;
   // One line per proposed session, not per stored 30-minute row.
   const slots = proposedSessionsOf(proposal.proposedTimes);
 

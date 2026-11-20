@@ -126,7 +126,11 @@ describe("the buyer's doors", () => {
 });
 
 describe("the allocator's validator", () => {
-  const validate = (eventType: "consultation" | "subscription", start: Date) =>
+  const validate = (
+    eventType: "consultation" | "subscription",
+    start: Date,
+    atoms = 1,
+  ) =>
     new ScheduleValidationService({
       appointment: { findMany: jest.fn().mockResolvedValue([]) },
       appointmentOccurrence: { findMany: jest.fn().mockResolvedValue([]) },
@@ -134,14 +138,17 @@ describe("the allocator's validator", () => {
     } as never).validate(
       eventType,
       "event-1",
-      [start],
+      Array.from(
+        { length: atoms },
+        (_, k) => new Date(start.getTime() + k * HALF_HOUR),
+      ),
       {
         userId: "u-1",
         scheduleType: ScheduleType.CUSTOM,
         availabilityWindowsWeekly: [],
         availabilityWindowsCustom: [],
       },
-      { durationInHours: 0.5 },
+      { durationInHours: atoms / 2 },
       [],
       { overrideAvailabilityWindow: true, consultantProfileId: "cp-1" },
     );
@@ -153,6 +160,14 @@ describe("the allocator's validator", () => {
     expect(refusalCopyFor(result.errors)).toBe(SLOT_TOO_FAR_MESSAGE);
 
     expect((await validate("consultation", atHorizon)).isValid).toBe(true);
+  });
+
+  it("judges a one-hour consultation by its start, as the booking doors do", async () => {
+    const onTheLine = await validate("consultation", atHorizon, 2);
+    expect(onTheLine.errors.some((e) => e.startsWith("[TOO_FAR]"))).toBe(false);
+
+    const past = await validate("consultation", pastHorizon, 2);
+    expect(past.errors[0]).toMatch(/^\[TOO_FAR\] 1 time/);
   });
 
   it("never refuses a subscription time for the horizon", async () => {

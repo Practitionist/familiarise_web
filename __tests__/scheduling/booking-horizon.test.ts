@@ -84,6 +84,19 @@ describe("the booking horizon", () => {
     expect(bookable).toEqual([new Date(T + ATOM).toISOString()]);
   });
 
+  it("judges a window by its start, as the booking doors do", () => {
+    // T starts exactly on the horizon; the half-hours after it are past it.
+    const atoms = [
+      { startsAt: new Date(T).toISOString() },
+      { startsAt: new Date(T + ATOM).toISOString(), beyondHorizon: true },
+      { startsAt: new Date(T + 2 * ATOM).toISOString(), beyondHorizon: true },
+    ];
+    const bookable = windowsForDay(atoms, 1, "UTC", NOW)
+      .filter(isBookableWindow)
+      .map((w) => w.startsAt);
+    expect(bookable).toEqual([new Date(T).toISOString()]);
+  });
+
   it("is not a start the phone day list offers", () => {
     const days = buildDayList(
       {
