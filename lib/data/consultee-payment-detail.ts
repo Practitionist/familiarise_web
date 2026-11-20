@@ -23,7 +23,6 @@ import {
 } from "@/lib/appointments/payment-display";
 import { getPlatformSupplier } from "@/lib/pdf/supplier";
 import { toPlain } from "@/lib/data/serialize";
-import { isPreMintIntent } from "@/lib/payments/pre-mint-intent";
 import { BUYER_REFUND_DETAIL_SELECT } from "@/lib/data/payments-select";
 import {
   paymentRowSelect,
@@ -104,7 +103,6 @@ export async function readConsulteePaymentDetail(args: {
     },
     select: {
       ...paymentRowSelect(userId),
-      paymentIntent: true,
       creditUsages: { select: { amount: true } },
     },
   });
@@ -187,6 +185,7 @@ export async function readConsulteePaymentDetail(args: {
       (sum, usage) => sum + Number(usage.amount),
       0,
     ),
-    gatewayOrderMinted: !isPreMintIntent(payment.paymentIntent),
+    gatewayOrderMinted:
+      row.presentation.payments[0].gatewayOrderMinted !== false,
   });
 }

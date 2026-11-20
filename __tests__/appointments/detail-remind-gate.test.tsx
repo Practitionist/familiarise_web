@@ -31,6 +31,7 @@ const PAYER_EMAIL = "payer-secret@test";
 const pending = (over: Record<string, unknown> = {}) => ({
   id: "pay-1",
   paymentStatus: "PENDING",
+  paymentIntent: "order_pay1",
   createdAt: new Date(Date.now() - HOUR),
   expiresAt: new Date(Date.now() + 20 * HOUR),
   deletedAt: null,

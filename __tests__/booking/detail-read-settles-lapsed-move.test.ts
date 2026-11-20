@@ -22,6 +22,7 @@ it("ends a lapsed move and returns the booking as it now stands", async () => {
     .mockResolvedValueOnce({
       id: "appt-1",
       occurrences: [],
+      payment: [],
       participants: [],
       statusHistory: [],
       rescheduleRequests: [{ expiresAt: new Date(Date.now() - 60_000) }],
