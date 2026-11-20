@@ -2,18 +2,13 @@
  * @jest-environment node
  */
 
-/** The operator home counts only succeeded payments and refunds. */
+/** Each operator-home money tile takes its count and value from one aggregate row. */
 
 import { getOperatorDashboardStats } from "../../lib/api/operators/stats";
 
 const mockPrisma = {
-  payment: {
-    count: jest.fn(),
-    aggregate: jest.fn(),
-    findMany: jest.fn(),
-    groupBy: jest.fn(),
-  },
-  refund: { count: jest.fn(), aggregate: jest.fn(), findMany: jest.fn() },
+  payment: { aggregate: jest.fn(), findMany: jest.fn(), groupBy: jest.fn() },
+  refund: { aggregate: jest.fn(), findMany: jest.fn() },
   dispute: { count: jest.fn() },
 };
 
@@ -24,35 +19,59 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
+const STATUS_ROWS = [
+  {
+    paymentStatus: "SUCCEEDED",
+    _count: { _all: 3 },
+    _sum: { amount: 150000n },
+  },
+  { paymentStatus: "PENDING", _count: { _all: 1 }, _sum: { amount: 20000n } },
+];
+
 describe("getOperatorDashboardStats", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockPrisma.payment.count.mockResolvedValue(0);
-    mockPrisma.payment.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
+    mockPrisma.payment.groupBy.mockImplementation(
+      async (args: { by: string[] }) =>
+        args.by[0] === "paymentStatus"
+          ? STATUS_ROWS
+          : [{ paymentGateway: "RAZORPAY", _count: 4 }],
+    );
     mockPrisma.payment.findMany.mockResolvedValue([]);
-    mockPrisma.payment.groupBy.mockResolvedValue([]);
-    mockPrisma.refund.count.mockResolvedValue(0);
     mockPrisma.refund.aggregate.mockResolvedValue({
-      _sum: { amountPaise: 0 },
+      _count: { _all: 2 },
+      _sum: { amountPaise: 30000n },
     });
     mockPrisma.refund.findMany.mockResolvedValue([]);
     mockPrisma.dispute.count.mockResolvedValue(0);
   });
 
-  it("scopes the payments count to SUCCEEDED", async () => {
-    await getOperatorDashboardStats();
-    expect(mockPrisma.payment.count).toHaveBeenCalledWith({
-      where: { paymentStatus: "SUCCEEDED" },
+  it("reads the payment tiles from one groupBy per status", async () => {
+    const stats = await getOperatorDashboardStats();
+    expect(mockPrisma.payment.groupBy).toHaveBeenCalledWith({
+      by: ["paymentStatus"],
+      where: { paymentStatus: { in: ["SUCCEEDED", "PENDING", "EXPIRED"] } },
+      _count: { _all: true },
+      _sum: { amount: true },
+    });
+    expect(mockPrisma.payment.aggregate).not.toHaveBeenCalled();
+    expect(stats).toMatchObject({
+      totalPayments: 3,
+      totalPaymentsValue: 150000,
+      pendingPayments: 1,
+      pendingPaymentsValue: 20000,
+      expiredPayments: 0,
     });
   });
 
-  it("scopes the refund count and sum to SUCCEEDED", async () => {
-    await getOperatorDashboardStats();
-    expect(mockPrisma.refund.count).toHaveBeenCalledWith({
+  it("reads the refund tile's count and value from one SUCCEEDED aggregate", async () => {
+    const stats = await getOperatorDashboardStats();
+    expect(mockPrisma.refund.aggregate).toHaveBeenCalledWith({
       where: { status: "SUCCEEDED" },
+      _count: { _all: true },
+      _sum: { amountPaise: true },
     });
-    expect(mockPrisma.refund.aggregate).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { status: "SUCCEEDED" } }),
-    );
+    expect(stats.totalRefunds).toBe(2);
+    expect(stats.totalRefundsValue).toBe(30000);
   });
 });
