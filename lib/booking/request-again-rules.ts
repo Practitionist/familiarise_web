@@ -57,9 +57,16 @@ export const REQUEST_AGAIN_REFUSALS = [
 ] as const;
 export type RequestAgainRefusal = (typeof REQUEST_AGAIN_REFUSALS)[number];
 
+/** The booking lock's answers (423, 503): try again shortly, not a refusal. */
+export const REQUEST_AGAIN_LOCK_CODES = [
+  "APPOINTMENT_BUSY",
+  "BOOKING_LOCK_UNAVAILABLE",
+] as const;
+
 /** What the route answers; the control parses it before it navigates. */
 export const RequestAgainAnswerSchema = z.union([
   z.object({ closed: z.number().int().nonnegative() }),
   z.object({ code: z.enum(REQUEST_AGAIN_REFUSALS), error: z.string() }),
+  z.object({ code: z.enum(REQUEST_AGAIN_LOCK_CODES), error: z.string() }),
 ]);
 export type RequestAgainAnswer = z.infer<typeof RequestAgainAnswerSchema>;

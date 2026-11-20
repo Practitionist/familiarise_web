@@ -146,6 +146,30 @@ describe("RequestAgainButton", () => {
     expect(document.body.textContent).toContain(REQUEST_AGAIN_ALREADY_PAID);
   });
 
+  it("a busy or unavailable booking lock: shows the server's message and stays put", async () => {
+    for (const [status, code] of [
+      [423, "APPOINTMENT_BUSY"],
+      [503, "BOOKING_LOCK_UNAVAILABLE"],
+    ] as const) {
+      const message = `Lock answer ${code}`;
+      answering(status, { code, error: message });
+      render(lapsed);
+
+      act(() => buttonNamed("Book again").click());
+      await act(async () => buttonNamed("Close it and continue").click());
+
+      expect(document.body.textContent).toContain(message);
+      expect(mockRouter.push).not.toHaveBeenCalled();
+    }
+  });
+
+  it("an order still PENDING never sits behind a plain link the browser could follow", () => {
+    render([
+      { paymentStatus: "PENDING", expiresAt: new Date(Date.now() + 60_000) },
+    ]);
+    expect(buttonNamed("Book again").hasAttribute("href")).toBe(false);
+  });
+
   it("decides at the click: a window that closed after the render still closes first", async () => {
     const fetchSpy = answering(200, { closed: 1 });
     render([

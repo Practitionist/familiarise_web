@@ -20,16 +20,20 @@ import {
   openOrderPastWindow,
   REQUEST_AGAIN_ALREADY_PAID,
   REQUEST_AGAIN_WARNING,
+  REQUEST_AGAIN_LOCK_CODES,
   RequestAgainAnswerSchema,
   requestAgainPath,
   type RequestAgainPaymentRow,
 } from "@/lib/booking/request-again-rules";
 
+const isLockCode = (code: string) =>
+  (REQUEST_AGAIN_LOCK_CODES as readonly string[]).includes(code);
+
 /**
- * Every "Request again" / "Book again" that leads to a new booking. A link that,
- * when clicked while one of `payments` is still PENDING past its window, warns,
- * closes that order through the request-again route, and navigates only once the
- * route says it is closed.
+ * Every "Request again" / "Book again" that leads to a new booking. With an order
+ * still PENDING it is a button: past that order's window it warns, closes it
+ * through the request-again route and navigates only once the route says it is
+ * closed; inside the window it navigates. Otherwise it is a plain link.
  */
 export function RequestAgainButton({
   appointmentId,
@@ -69,12 +73,10 @@ export function RequestAgainButton({
       }
       setOpen(false);
       if (answer.success && "code" in answer.data) {
-        setNotice(
-          answer.data.code === "ALREADY_PAID"
-            ? REQUEST_AGAIN_ALREADY_PAID
-            : answer.data.error,
-        );
-        router.refresh();
+        const { code, error } = answer.data;
+        setNotice(code === "ALREADY_PAID" ? REQUEST_AGAIN_ALREADY_PAID : error);
+        // A busy lock changed nothing, so there is nothing to reload.
+        if (!isLockCode(code)) router.refresh();
         return;
       }
       setNotice("Could not close the earlier payment link. Try again.");
@@ -86,23 +88,33 @@ export function RequestAgainButton({
     }
   }
 
+  // While an order is PENDING the control has no href, so no browser shortcut skips the close.
+  const orderOpen =
+    !!appointmentId && payments.some((p) => p.paymentStatus === "PENDING");
   return (
     <>
-      <Button variant={variant} size={size} className={className} asChild>
-        <Link
-          href={href}
-          onClick={(event) => {
+      {orderOpen ? (
+        <Button
+          variant={variant}
+          size={size}
+          className={className}
+          onClick={() => {
             // Decided at the click: a window can close after the page rendered.
-            if (!appointmentId || !openOrderPastWindow(payments, new Date()))
+            if (!openOrderPastWindow(payments, new Date())) {
+              router.push(href);
               return;
-            event.preventDefault();
+            }
             setNotice(null);
             setOpen(true);
           }}
         >
           {children}
-        </Link>
-      </Button>
+        </Button>
+      ) : (
+        <Button variant={variant} size={size} className={className} asChild>
+          <Link href={href}>{children}</Link>
+        </Button>
+      )}
       {notice && (
         <output className="block text-xs text-muted-foreground">
           {notice}
