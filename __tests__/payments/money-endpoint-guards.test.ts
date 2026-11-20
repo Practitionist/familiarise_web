@@ -102,15 +102,15 @@ describe("PM-37 — evidenceDeadlinePassed guard", () => {
 });
 
 describe("PM-37 — disputes route enforces the guard before gateway push", () => {
-  it("the route calls evidenceDeadlinePassed before contestDispute", () => {
+  it("the route calls the shared evidence predicate before contestDispute", () => {
     const src = read("app/api/payments/disputes/route.ts");
-    const guardIdx = src.indexOf("evidenceDeadlinePassed(");
+    const guardIdx = src.indexOf("evidenceRefusal(");
     const submitIdx = src.indexOf("contestDispute(");
     expect(guardIdx).toBeGreaterThan(-1);
     expect(submitIdx).toBeGreaterThan(-1);
     expect(guardIdx).toBeLessThan(submitIdx);
     // Typed rejection, not a bare message.
     expect(src).toContain("EVIDENCE_DEADLINE_PASSED");
-    expect(src).toMatch(/,\s*410,?\s*\)/);
+    expect(src).toMatch(/EVIDENCE_DEADLINE_PASSED: \{[^}]*status: 410/);
   });
 });

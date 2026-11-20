@@ -9,7 +9,14 @@ import {
 } from "@prisma/client";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
-import type { DisputeListItem } from "@/lib/backoffice/money-list-schemas";
+import type {
+  DisputeListItem,
+  UrgentEvidence,
+} from "@/lib/backoffice/money-list-schemas";
+import {
+  evidenceRefusal,
+  type EvidenceRefusalCode,
+} from "@/lib/payments/dispute-status";
 import { BOOKING_TITLE_SELECT, bookingRefOf } from "@/lib/data/booking-title";
 import {
   OPEN_DISPUTE_STATUSES,
@@ -77,6 +84,34 @@ const disputeListSelect = (withEmail: boolean) =>
       },
     },
   }) satisfies Prisma.DisputeSelect;
+
+const EVIDENCE_BUCKET = {
+  NOT_RAZORPAY: "otherGateway",
+  EVIDENCE_DEADLINE_PASSED: "deadlinePassed",
+  DISPUTE_NOT_OPEN: "notOpen",
+} as const satisfies Record<EvidenceRefusalCode, keyof UrgentEvidence>;
+
+/** The urgent disputes split by the evidence door's own answer, so the banner never promises what it refuses. */
+function urgentByEvidence(
+  urgent: {
+    status: DisputeStatus;
+    paymentGateway: string;
+    dueBy: Date | null;
+  }[],
+): UrgentEvidence {
+  const counts: UrgentEvidence = {
+    open: 0,
+    deadlinePassed: 0,
+    notOpen: 0,
+    otherGateway: 0,
+  };
+  const nowMs = Date.now();
+  for (const dispute of urgent) {
+    const refusal = evidenceRefusal(dispute, nowMs);
+    counts[refusal ? EVIDENCE_BUCKET[refusal] : "open"] += 1;
+  }
+  return counts;
+}
 
 async function loadDisputePage(params: {
   where: Prisma.DisputeWhereInput;
@@ -201,10 +236,10 @@ export async function GET(req: NextRequest) {
     const withEmail =
       role.success && hasBackofficePermission(role.data, "disputes.manage");
 
-    const [total, urgentDisputes, underReviewCount, wonCount, disputes] =
+    const [total, urgent, underReviewCount, wonCount, disputes] =
       await Promise.all([
         prisma.dispute.count({ where }),
-        prisma.dispute.count({
+        prisma.dispute.findMany({
           where: {
             ...OPEN_DISPUTE_WHERE,
             status: { in: ACTIONABLE_OPEN_STATUSES },
@@ -212,6 +247,7 @@ export async function GET(req: NextRequest) {
               lte: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000),
             },
           },
+          select: { status: true, paymentGateway: true, dueBy: true },
         }),
         prisma.dispute.count({ where: { status: "UNDER_REVIEW" } }),
         prisma.dispute.count({ where: { status: "WON" } }),
@@ -241,7 +277,8 @@ export async function GET(req: NextRequest) {
         },
       })),
       total,
-      urgentDisputes,
+      urgentDisputes: urgent.length,
+      urgentEvidence: urgentByEvidence(urgent),
       stats: { underReviewCount, wonCount },
       page,
       limit,

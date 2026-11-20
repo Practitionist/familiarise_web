@@ -124,10 +124,20 @@ export const disputeListItemSchema = z.object({
 });
 export type DisputeListItem = z.infer<typeof disputeListItemSchema>;
 
+/** The urgent disputes by what the Razorpay evidence door answers for each. */
+export const urgentEvidenceSchema = z.object({
+  open: z.number().int().nonnegative(),
+  deadlinePassed: z.number().int().nonnegative(),
+  notOpen: z.number().int().nonnegative(),
+  otherGateway: z.number().int().nonnegative(),
+});
+export type UrgentEvidence = z.infer<typeof urgentEvidenceSchema>;
+
 export const disputeListPageSchema = z.object({
   disputes: z.array(disputeListItemSchema),
   ...pageMeta,
   urgentDisputes: z.number().int().nonnegative(),
+  urgentEvidence: urgentEvidenceSchema,
   stats: z.object({
     underReviewCount: z.number().int().nonnegative(),
     wonCount: z.number().int().nonnegative(),
