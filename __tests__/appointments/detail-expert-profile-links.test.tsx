@@ -11,6 +11,10 @@ jest.mock("../../lib/prisma", () => ({
     appointment: { findUnique: (...a: unknown[]) => findUnique(...a) },
   },
 }));
+// "Book again" is the RequestAgainButton, which needs the app router.
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: jest.fn(), refresh: jest.fn() }),
+}));
 jest.mock("@/lib/auth-client", () => ({
   useSession: () => ({ data: null }),
 }));

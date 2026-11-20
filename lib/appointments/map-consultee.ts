@@ -27,14 +27,10 @@ import {
   liveOccurrences,
   occurrencesOfAppointment,
 } from "./occurrences";
-import {
-  isReleasedSeat,
-  isUnpaidSeat,
-  normalizeStatus,
-  ownSeatStatusOf,
-} from "./status";
+import { isReleasedSeat, normalizeStatus, ownSeatStatusOf } from "./status";
 import { bookingStatus } from "./booking-status";
 import {
+  bucketFactsOf,
   holdOpenFrom,
   listStatusFacts,
   trialHoldFacts,
@@ -131,13 +127,11 @@ function mapConsultation(
       {
         status,
         occurrences,
-        kind: "CONSULTATION",
-        now,
-        source: c.bookingSource,
-        holdOpen: holdOpenFrom(facts, now),
-        paid: facts.paid,
-        moving: !!facts.reschedule,
-        moveMine: facts.reschedule?.mine,
+        ...bucketFactsOf(
+          { kind: "CONSULTATION", source: c.bookingSource },
+          facts,
+          now,
+        ),
       },
       "consultee",
     ),
@@ -185,12 +179,11 @@ function mapSubscription(
       {
         status,
         occurrences,
-        now,
-        source: s.bookingSource,
-        holdOpen: holdOpenFrom(facts, now),
-        paid: facts.paid,
-        moving: !!facts.reschedule,
-        moveMine: facts.reschedule?.mine,
+        ...bucketFactsOf(
+          { kind: "SUBSCRIPTION", source: s.bookingSource },
+          facts,
+          now,
+        ),
       },
       "consultee",
     ),
@@ -281,9 +274,7 @@ function mapWebinar(
       {
         status,
         occurrences,
-        now,
-        unpaidSeat: isUnpaidSeat({ seatStatus, paid: facts.paid }),
-        holdOpen: holdOpenFrom(facts, now),
+        ...bucketFactsOf({ kind: "WEBINAR", seatStatus }, facts, now),
       },
       "consultee",
     ),
@@ -327,9 +318,7 @@ function mapClass(c: TConsulteeClass, now: Date, zone?: string): AppointmentVM {
       {
         status,
         occurrences,
-        now,
-        unpaidSeat: isUnpaidSeat({ seatStatus, paid: facts.paid }),
-        holdOpen: holdOpenFrom(facts, now),
+        ...bucketFactsOf({ kind: "CLASS", seatStatus }, facts, now),
       },
       "consultee",
     ),
@@ -369,7 +358,10 @@ function mapTrial(t: TTrialWithPlan, now: Date): AppointmentVM {
     counterpart: person(t.subscriptionPlan.consultantProfile?.user),
     consultantProfileId: t.subscriptionPlan.consultantProfile?.id ?? null,
     status,
-    ...deriveBucket({ status, occurrences, now, holdOpen }, "consultee"),
+    ...deriveBucket(
+      { status, occurrences, ...bucketFactsOf({ kind: "TRIAL" }, hold, now) },
+      "consultee",
+    ),
     ...hold,
     nextAt: getAnchorTime(occurrences, now),
     occurrences,

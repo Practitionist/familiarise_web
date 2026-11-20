@@ -39,6 +39,7 @@ import {
 } from "@/lib/appointments/report-anomalies";
 import type { TAppointmentWithSeats } from "@/types/appointment";
 import type { Scope } from "@/lib/api/scope/parse";
+import { expiredEdgeInclude } from "@/lib/appointments/list-status-facts";
 import { scopeToPlanHostWhere, scopeToWhereOrgId } from "@/lib/api/scope/parse";
 import {
   CONSULTANT_APPOINTMENTS_PAGE,
@@ -428,6 +429,8 @@ export async function readConsultantAppointmentsPage(
         },
       },
     },
+    // Why an EXPIRED booking ended, read as its booking page reads it.
+    statusHistory: expiredEdgeInclude,
     // The open move, so a booking being rescheduled reads "Being moved" here too.
     rescheduleRequests: {
       where: { status: { in: RESCHEDULE_OPEN_STATUSES } },

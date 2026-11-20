@@ -48,8 +48,12 @@ jest.mock("../../components/support/AppointmentSupportStatusCard", () => ({
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 // The resource cards read their own APIs; this suite pins the booking states.
 jest.mock("../../components/appointments/detail/ResourceSnapshot", () => ({
-  ResourceSnapshot: () => null,
+  ResourceSnapshot: (props: { withheld: unknown }) => {
+    mockResourcesWithheld.push(props.withheld);
+    return null;
+  },
 }));
+const mockResourcesWithheld: unknown[] = [];
 
 import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -146,7 +150,7 @@ const adapter = (
   renderDialogs: () => null,
 });
 
-function render(role: "consultee" | "consultant") {
+function render(role: "consultee" | "consultant", operatorView = false) {
   return renderToStaticMarkup(
     <AppointmentDetailClient
       appointmentId="appt-1"
@@ -159,6 +163,7 @@ function render(role: "consultee" | "consultant") {
       }}
       supportRequestsBase="/support/requests"
       consultantId="cp-1"
+      operatorView={operatorView}
     />,
   );
 }
@@ -440,5 +445,29 @@ describe("consultant · hosted webinar header", () => {
     expect(headerText(render("consultant"))).toMatch(
       /\bwith Rachel Anderson\b/,
     );
+  });
+});
+
+describe("Resources card: which reads the page sends", () => {
+  const paid = () => confirmedOneOfFour();
+  it("a party's live booking reads them; a closed booking and an operator's view do not", () => {
+    viewerId = "u-rachel";
+    mockResourcesWithheld.length = 0;
+    currentDetail = paid();
+    render("consultee");
+    const closed = paid();
+    (closed.appointment as Record<string, unknown>).deletedAt = new Date(NOW);
+    currentDetail = closed;
+    render("consultee");
+    render("consultant");
+    viewerId = "u-staff";
+    currentDetail = paid();
+    render("consultee", true);
+    expect(mockResourcesWithheld).toEqual([
+      null,
+      "closed",
+      "closed",
+      "operator",
+    ]);
   });
 });
