@@ -17,7 +17,7 @@ import { caseKeyOf, type CaseRef } from "./case-key";
 import { isPresenterAuthoredMessage } from "./case-message-actor";
 import { PLAN_TITLE_SELECT, planTitle } from "./case-read";
 import { ticketTopic } from "./case-topic";
-import { slaStateOf } from "./sla";
+import { effectiveResolutionDueAt, slaStateOf } from "./sla";
 export const TIMELINE_LIMIT = 200;
 const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);
 
@@ -382,6 +382,7 @@ export async function readCaseWorkspace(
     status: c.status,
     priority: c.priority,
     channel: c.activeChannel,
+    effectiveResolutionDueAt: iso(effectiveResolutionDueAt(c)),
     assignee: c.assignedTo,
     sla: slaStateOf(c),
     ackDueAt: iso(c.ackDueAt),

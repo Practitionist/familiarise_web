@@ -52,6 +52,10 @@ import { EmptyState } from "@/components/dashboard/EmptyState";
 import { ActionRequiredPanel } from "@/components/dashboard/ActionRequiredPanel";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { deriveConsulteeActionItems } from "@/lib/dashboard/action-items";
+import {
+  personalHomeTitle,
+  type ViewedPerson,
+} from "@/lib/dashboard/operator-view";
 import { isExternalPayHref } from "@/lib/payments/pay-link-href";
 import { WaitingTimesStrip } from "@/components/booking/WaitingTimesStrip";
 import { isInactiveStatus, isConfirmedStatus } from "@/lib/appointments/status";
@@ -120,15 +124,12 @@ const TYPE_LABEL: Record<ProcessedEvent["type"], string> = {
 
 interface HomeTabProps {
   /**
-   * Nullable: the layout user fetch may land after the events query. The
-   * page paints events first; only the greeting waits (inline shimmer).
+   * The route's learner, never the signed-in operator. Nullable: the profile
+   * fetch may land after the events query; only the greeting waits.
    */
-  userDetails: {
-    id: string;
-    name: string;
-    email: string;
-    image?: string;
-  } | null;
+  learner: ViewedPerson | null;
+  /** Session-keyed reads (alerts, reviews, own cases, org links) answer only for the owner. */
+  viewerOwnsProfile: boolean;
   eventsData: TConsulteeEventsResponse;
   consulteeId: string;
   /** From the RSC page, so server and client format one wall clock. #1703 */
@@ -359,12 +360,12 @@ type WithProposals = {
   rescheduleRequests?: OpenRescheduleProposal[];
 };
 
-/** Proposals from the expert that wait on this learner's answer (#1163). */
+/** Proposals from the expert that wait on this learner's answer. */
 function proposalsAwaiting(
   eventsData: TConsulteeEventsResponse,
-  viewerId: string | undefined,
+  learnerUserId: string | undefined,
 ) {
-  if (!viewerId) return [];
+  if (!learnerUserId) return [];
   const rows = [
     ...(eventsData.consultations ?? []).map((c) => ({
       appointment: c.appointment as WithProposals | null | undefined,
@@ -382,7 +383,7 @@ function proposalsAwaiting(
   return rows.flatMap((row) => {
     const target = openProposalTarget([row.appointment]);
     // The initiator waits; the other side answers (RescheduleProposalCard).
-    if (!target || target.proposal.initiatedById === viewerId) return [];
+    if (!target || target.proposal.initiatedById === learnerUserId) return [];
     return [
       {
         appointmentId: target.appointmentId,
@@ -519,7 +520,8 @@ function formatSpend(summary: ConsulteeMoneySummary | undefined): string {
 }
 
 export default function HomeTab({
-  userDetails,
+  learner,
+  viewerOwnsProfile: isOwner,
   eventsData,
   consulteeId,
   viewerZone,
@@ -531,9 +533,6 @@ export default function HomeTab({
   const { toast } = useToast();
   const { formatPrice } = useCurrency();
   const { data: session } = useSession();
-  // Reads keyed on the session (reviews) only answer for the owner; an
-  // inspecting admin would otherwise see their own prompts here.
-  const isOwner = session?.user?.consulteeProfileId === consulteeId;
 
   // #1280 2.7 — the ref-backed guard closes the double-click window that the
   // async `joiningEventId` state write leaves open.
@@ -653,6 +652,7 @@ export default function HomeTab({
   const { data: sessionCases } = useQuery({
     queryKey: ["support-requests", "session", "home"],
     staleTime: 2 * 60_000,
+    enabled: isOwner,
     queryFn: () =>
       fetchJson<SessionCaseRow[]>("/api/support/requests?scope=session", true),
   });
@@ -686,8 +686,9 @@ export default function HomeTab({
           consultantName: link.consultantName,
           href: link.requestAgainHref,
         })),
-        rescheduleProposals: proposalsAwaiting(eventsData, userDetails?.id),
-        sessionsToRate: (reviewable ?? [])
+        rescheduleProposals: proposalsAwaiting(eventsData, learner?.userId),
+        // Both keys are session-scoped and not per learner: a cached owner read must not reach an operator view.
+        sessionsToRate: (isOwner ? (reviewable ?? []) : [])
           .filter((s) => !s.existingReview)
           .slice(0, RATE_PROMPT_LIMIT)
           .map((s) => ({
@@ -710,10 +711,11 @@ export default function HomeTab({
           paymentId: r.paymentId,
           amountText: formatCurrencyAmount(r.amountPaise, r.currency),
         })),
-        removalReviews: openRemovalReviews(sessionCases),
+        removalReviews: isOwner ? openRemovalReviews(sessionCases) : [],
         now,
       }),
-      ...lowSessionSubscriptions(eventsData, now),
+      // Renewing buys a new plan as the signed-in viewer: the owner's action only.
+      ...(isOwner ? lowSessionSubscriptions(eventsData, now) : []),
     ],
     [
       pendingPayments,
@@ -721,22 +723,26 @@ export default function HomeTab({
       upcomingEvents,
       basePath,
       eventsData,
-      userDetails?.id,
+      learner?.userId,
       reviewable,
       revisions,
       sessionCases,
+      isOwner,
       now,
     ],
   );
 
   const orgDashboards = useMemo(
     () =>
-      resolveDashboardFacets({
-        role: session?.user.role,
-        memberships: session?.user.organizationMemberships ?? [],
-      }).organizations.filter((f) => f.kind === "organization"),
-    [session?.user.role, session?.user.organizationMemberships],
+      isOwner
+        ? resolveDashboardFacets({
+            role: session?.user.role,
+            memberships: session?.user.organizationMemberships ?? [],
+          }).organizations.filter((f) => f.kind === "organization")
+        : [],
+    [isOwner, session?.user.role, session?.user.organizationMemberships],
   );
+  const title = personalHomeTitle(learner, isOwner);
 
   const monthSessions = useMemo(
     () => sessionsThisMonth(processedEvents, viewerZone.zone, now),
@@ -748,9 +754,7 @@ export default function HomeTab({
       <PageHeader
         className="mb-0"
         title={
-          userDetails ? (
-            <>Welcome back, {userDetails.name?.split(" ")[0]}</>
-          ) : (
+          title ?? (
             <span
               className="inline-block h-7 w-48 motion-safe:animate-pulse rounded-md bg-muted align-middle"
               aria-label="Loading greeting"
@@ -760,7 +764,7 @@ export default function HomeTab({
         description="What needs you, and what's next."
       />
 
-      <MyAlerts viewerZone={viewerZone} />
+      {isOwner && <MyAlerts viewerZone={viewerZone} />}
 
       <ActionRequiredPanel
         items={actionItems}
@@ -876,7 +880,7 @@ export default function HomeTab({
       </Section>
 
       {/* #1778 — held times this learner asked to hear about. */}
-      <WaitingTimesStrip />
+      {isOwner && <WaitingTimesStrip />}
 
       {/* #1527 — answers live in the public Help Center; your private
           conversations with us live in Support cases. */}

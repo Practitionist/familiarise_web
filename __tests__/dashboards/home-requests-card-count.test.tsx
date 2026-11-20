@@ -30,6 +30,7 @@ jest.mock("../../lib/auth/personal-dashboard-access", () => ({
 }));
 jest.mock("../../lib/time/viewer-zone-server", () => ({
   getViewerZone: async () => ({ zone: "Asia/Kolkata", own: true }),
+  getPersonalViewerZone: async () => ({ zone: "Asia/Kolkata", own: true }),
 }));
 
 import {

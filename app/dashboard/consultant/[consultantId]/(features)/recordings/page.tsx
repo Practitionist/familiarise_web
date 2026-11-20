@@ -10,7 +10,7 @@ import { readRecordingLibrary } from "@/lib/data/recording-library";
 import { libraryKeys } from "@/lib/documents/query-keys";
 import { parseLibraryQuery } from "@/lib/library/library-query";
 import { seedLibraryPage } from "@/lib/library/library-seed";
-import { getViewerZone } from "@/lib/time/viewer-zone-server";
+import { getPersonalViewerZone } from "@/lib/time/viewer-zone-server";
 import { DisplayZoneProvider } from "@/lib/time/zoned-format";
 
 export default async function ConsultantRecordingsRoute({
@@ -22,7 +22,7 @@ export default async function ConsultantRecordingsRoute({
 }>) {
   const { consultantId } = await params;
   const access = await requirePersonalProfileAccess("consultant", consultantId);
-  const viewerZone = await getViewerZone();
+  const viewerZone = await getPersonalViewerZone("consultant", consultantId);
   const seed = await seedLibraryPage({
     name: "recordings:expert",
     queryKey: libraryKeys.personal("recordings", "consultant", consultantId),

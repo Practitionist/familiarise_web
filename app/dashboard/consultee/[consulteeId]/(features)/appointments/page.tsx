@@ -6,7 +6,7 @@ import {
 import AppointmentsPageClient from "./AppointmentsPageClient";
 import { readConsulteeEvents } from "@/lib/data/consultee-events-read";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
-import { getViewerZone } from "@/lib/time/viewer-zone-server";
+import { getPersonalViewerZone } from "@/lib/time/viewer-zone-server";
 
 type PageProps = {
   params: Promise<{ consulteeId: string }>;
@@ -23,7 +23,7 @@ export default async function AppointmentsPage({
   await requirePersonalProfileAccess("consultee", consulteeId);
   // Read here and passed down: the server render and the hydrating client
   // then format every time from the same zone (hydration #418).
-  const viewerZone = await getViewerZone();
+  const viewerZone = await getPersonalViewerZone("consultee", consulteeId);
   const queryClient = new QueryClient();
 
   // #890 — SSR prefetch the default (personal) scope so the client
