@@ -82,7 +82,11 @@ it("leaves a later plain removal's mark alone when a lift already followed the c
 
 describe("what the overturn notice promises", () => {
   /** A free seat; `markedNow` is the seat's current mark, `liftedSinceCase` a lift after the case. */
-  function noticeTx(opts: { liftedSinceCase: boolean; markedNow: boolean }) {
+  function noticeTx(opts: {
+    liftedSinceCase: boolean;
+    markedNow: boolean;
+    eventPricePaise?: number;
+  }) {
     return {
       supportCase: {
         findUniqueOrThrow: async () => ({
@@ -96,6 +100,10 @@ describe("what the overturn notice promises", () => {
           id: "part-1",
           removedByUserId: opts.markedNow ? "host-1" : null,
           payment: { paymentIntent: "free_1", amount: 0, originalAmount: 0 },
+          appointment: {
+            webinar: { webinarPlan: { price: opts.eventPricePaise ?? 0 } },
+            class: null,
+          },
         }),
       },
       bookingStatusHistory: {
@@ -117,6 +125,19 @@ describe("what the overturn notice promises", () => {
     await expect(
       removalRejoinPathTx(
         noticeTx({ liftedSinceCase: true, markedNow: true }),
+        removalCase,
+      ),
+    ).resolves.toBe("SUPPORT");
+  });
+
+  it("points to support when the host has since priced the event, as checkout would refuse the rejoin", async () => {
+    await expect(
+      removalRejoinPathTx(
+        noticeTx({
+          liftedSinceCase: false,
+          markedNow: true,
+          eventPricePaise: 50_000,
+        }),
         removalCase,
       ),
     ).resolves.toBe("SUPPORT");

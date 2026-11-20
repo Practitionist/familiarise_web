@@ -34,7 +34,7 @@ export interface BookingOpsView {
     name: string | null;
     /** LEGACY: a free seat released with no recorded leave, which only staff can open again. */
     removal: "ORGANISER" | "CONDUCT" | "LEGACY";
-    /** Paid or credit-funded: lifting lets support rejoin them, not a self-serve rebuy. */
+    /** Paid, credit-funded, or on an event since priced: lifting lets support rejoin them, not a self-serve rebuy. */
     paidSeat: boolean;
     /** A conduct removal's latest case, decided or not; null for any other removal. */
     conductCase: "DECIDED" | "UNDECIDED" | null;

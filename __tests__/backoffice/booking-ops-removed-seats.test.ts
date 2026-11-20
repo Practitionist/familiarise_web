@@ -8,7 +8,13 @@
  * removal still stands, paid or free, shown as a conduct removal.
  */
 
-const mockConduct = { standing: true, type: "WEBINAR" };
+const mockConduct = {
+  standing: true,
+  type: "WEBINAR",
+  // A free seat an organiser removed, on an event priced at `price` since.
+  freeRemoved: false,
+  price: 0,
+};
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
@@ -20,7 +26,23 @@ jest.mock("../../lib/prisma", () => ({
         subscriptionId: null,
         occurrences: [],
         payment: [],
+        webinar: { webinarPlan: { price: mockConduct.price } },
+        class: null,
         participants: [
+          ...(mockConduct.freeRemoved
+            ? [
+                {
+                  id: "part-free",
+                  user: { id: "u-free", name: "Daniel" },
+                  removedByUserId: "host-1",
+                  payment: {
+                    paymentIntent: "free_1",
+                    amount: 0,
+                    originalAmount: 0,
+                  },
+                },
+              ]
+            : []),
           {
             id: "part-paid",
             user: { id: "u-paid", name: "Dev" },
@@ -90,4 +112,17 @@ it("lists no learner row of a 1:1 booking, whatever its case or history", async 
   Object.assign(mockConduct, { standing: true, type: "CONSULTATION" });
   const view = await readBookingOps("appt-1");
   expect(view?.removedSeats).toEqual([]);
+});
+
+it("offers a free seat on an event since priced the support path, as checkout would refuse its rejoin", async () => {
+  Object.assign(mockConduct, {
+    standing: false,
+    type: "WEBINAR",
+    freeRemoved: true,
+    price: 50_000,
+  });
+  const view = await readBookingOps("appt-1");
+  expect(view?.removedSeats).toEqual([
+    expect.objectContaining({ userId: "u-free", paidSeat: true }),
+  ]);
 });

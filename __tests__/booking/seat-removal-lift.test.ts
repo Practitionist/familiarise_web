@@ -68,6 +68,8 @@ const mockDb = {
   oneToOne: false,
   conductCase: false,
   priceFree: true,
+  // The event's current list price; a host may price a once-free event.
+  eventPricePaise: 0,
   history: [] as { entityId: string; reason: string }[],
 };
 const mockCas = jest.fn();
@@ -105,7 +107,11 @@ function mockTx() {
           appointment: {
             webinar: {
               id: "web-1",
-              webinarPlan: { id: "plan-1", title: "Intro to Python" },
+              webinarPlan: {
+                id: "plan-1",
+                title: "Intro to Python",
+                price: mockDb.eventPricePaise,
+              },
             },
             class: null,
           },
@@ -194,6 +200,7 @@ beforeEach(() => {
     oneToOne: false,
     conductCase: false,
     priceFree: true,
+    eventPricePaise: 0,
     history: [],
   });
   mockStale.value = false;
@@ -288,6 +295,20 @@ describe("the staff lift door", () => {
       "You can register for Intro to Python again.",
     );
   });
+});
+
+it("sends a formerly free seat on an event now priced to support, as checkout would refuse it", async () => {
+  mockDb.eventPricePaise = 50_000;
+  const res = await post({ userId: "u-1", reason: REASON });
+  expect(await res.json()).toMatchObject({ rejoinPath: "SUPPORT" });
+  expect(mockStageBell).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.objectContaining({
+      payload: expect.objectContaining({
+        rejoinText: "Support will help you rejoin Intro to Python.",
+      }),
+    }),
+  );
 });
 
 describe("a free seat released before seat history was kept", () => {

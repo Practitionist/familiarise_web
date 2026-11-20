@@ -30,6 +30,8 @@ export async function readBookingOps(
       appointmentType: true,
       classId: true,
       subscriptionId: true,
+      webinar: { select: { webinarPlan: { select: { price: true } } } },
+      class: { select: { classPlan: { select: { price: true } } } },
       occurrences: {
         where: { deletedAt: null, isTentative: false },
         orderBy: { startsAt: "asc" },
@@ -87,6 +89,11 @@ export async function readBookingOps(
     appt.id,
     seats.filter((seat) => !seat.removedByUserId).map((seat) => seat.user.id),
   );
+  // Checkout revives a free seat only on an event still free.
+  const eventPriced =
+    Number(
+      appt.webinar?.webinarPlan.price ?? appt.class?.classPlan.price ?? 0,
+    ) > 0;
   const decidedCases = await decidedRemovalCases(
     appt.id,
     seats.map((seat) => seat.user.id),
@@ -142,7 +149,7 @@ export async function readBookingOps(
           userId: seat.user.id,
           name: seat.user.name,
           removal,
-          paidSeat: !priceFree,
+          paidSeat: !priceFree || eventPriced,
           conductCase,
         },
       ];

@@ -52,13 +52,13 @@ const SEAT_SELECT = {
       webinar: {
         select: {
           id: true,
-          webinarPlan: { select: { id: true, title: true } },
+          webinarPlan: { select: { id: true, title: true, price: true } },
         },
       },
       class: {
         select: {
           id: true,
-          classPlan: { select: { id: true, title: true } },
+          classPlan: { select: { id: true, title: true, price: true } },
         },
       },
     },
@@ -83,15 +83,21 @@ function findLearnerSeat(
 
 type RemovedSeat = NonNullable<Awaited<ReturnType<typeof findLearnerSeat>>>;
 
-/** A price-free seat rejoins through checkout; a paid or credit-funded one needs support. */
+/**
+ * A price-free seat on an event still free rejoins through checkout; a paid or credit-funded
+ * seat, or one on an event since priced (which checkout refuses to revive), needs support.
+ */
 function rejoinPathOf(seat: RemovedSeat): RejoinPath {
   const p = seat.payment;
+  const plan =
+    seat.appointment.webinar?.webinarPlan ?? seat.appointment.class?.classPlan;
   return p &&
     isPriceFreePayment({
       paymentIntent: p.paymentIntent,
       amountPaise: Number(p.amount),
       listPricePaise: Number(p.originalAmount),
-    })
+    }) &&
+    Number(plan?.price ?? 0) === 0
     ? "REGISTER"
     : "SUPPORT";
 }

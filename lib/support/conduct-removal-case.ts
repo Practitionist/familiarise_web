@@ -760,6 +760,12 @@ export async function removalRejoinPathTx(
       payment: {
         select: { paymentIntent: true, amount: true, originalAmount: true },
       },
+      appointment: {
+        select: {
+          webinar: { select: { webinarPlan: { select: { price: true } } } },
+          class: { select: { classPlan: { select: { price: true } } } },
+        },
+      },
     },
   });
   // A lift already followed this removal, so a mark the seat carries now is a later removal's and stays.
@@ -767,12 +773,17 @@ export async function removalRejoinPathTx(
     return "SUPPORT";
   }
   const p = seat?.payment;
+  // Checkout revives a free seat only on an event still free, so a since-priced one goes to support.
+  const plan =
+    seat?.appointment.webinar?.webinarPlan ??
+    seat?.appointment.class?.classPlan;
   return p &&
     isPriceFreePayment({
       paymentIntent: p.paymentIntent,
       amountPaise: Number(p.amount),
       listPricePaise: Number(p.originalAmount),
-    })
+    }) &&
+    Number(plan?.price ?? 0) === 0
     ? "REGISTER"
     : "SUPPORT";
 }
