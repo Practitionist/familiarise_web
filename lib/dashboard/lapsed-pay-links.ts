@@ -32,6 +32,8 @@ export interface ExpiredRequestRow {
   title: string;
   consultantName: string;
   consultantProfileId: string;
+  /** False when the expert's public page would 404 (not VERIFIED, or deleted). */
+  expertPublic: boolean;
   history: {
     fromStatus: string;
     toStatus: string;
@@ -57,6 +59,8 @@ export function toLapsedPayLinks(
       continue;
     // The learner closed this link to request again; there is nothing left to prompt.
     if (edge.reason === REQUESTED_AGAIN_REASON) continue;
+    // Request again links to the expert's public page, which must exist.
+    if (!row.expertPublic) continue;
     const at = edge.createdAt.getTime();
     if (at < cutoff) continue;
     lapsed.push({

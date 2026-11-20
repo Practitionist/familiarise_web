@@ -17,9 +17,21 @@ const PLAN_SELECT = {
   select: {
     title: true,
     consultantProfileId: true,
-    consultantProfile: { select: { user: { select: { name: true } } } },
+    consultantProfile: {
+      select: {
+        verificationStatus: true,
+        deletedAt: true,
+        user: { select: { name: true } },
+      },
+    },
   },
 } as const;
+
+/** The expert's public page exists: VERIFIED and not deleted. */
+const expertIsPublic = (profile: {
+  verificationStatus: string;
+  deletedAt: Date | null;
+}) => profile.verificationStatus === "VERIFIED" && profile.deletedAt === null;
 
 /**
  * Personal-pinned like the pending-payments read it rides with (ADR 19).
@@ -86,6 +98,7 @@ export async function readLapsedPayLinks(
       consultantName:
         c.consultationPlan.consultantProfile.user.name ?? "your expert",
       consultantProfileId: c.consultationPlan.consultantProfileId,
+      expertPublic: expertIsPublic(c.consultationPlan.consultantProfile),
       history: historyById.get(c.id) ?? [],
     })),
     ...subscriptions.map((s) => ({
@@ -95,6 +108,7 @@ export async function readLapsedPayLinks(
       consultantName:
         s.subscriptionPlan.consultantProfile.user.name ?? "your expert",
       consultantProfileId: s.subscriptionPlan.consultantProfileId,
+      expertPublic: expertIsPublic(s.subscriptionPlan.consultantProfile),
       history: historyById.get(s.id) ?? [],
     })),
   ];

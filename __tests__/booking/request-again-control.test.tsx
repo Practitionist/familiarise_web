@@ -174,6 +174,7 @@ describe("the Home lapsed-link list", () => {
       title: "Plan",
       consultantName: "Asha",
       consultantProfileId: "profile-1",
+      expertPublic: true,
       history: [edge(reason)],
     });
     const links = toLapsedPayLinks(
