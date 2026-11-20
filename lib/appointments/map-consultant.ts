@@ -10,7 +10,7 @@ import { withLapsedMoveRestored } from "@/lib/appointments/lapsed-move";
 import type { TAppointment, TAppointmentWithSeats } from "@/types/appointment";
 import { deriveBucket } from "./bucket";
 import {
-  holdOpenFrom,
+  bucketFactsOf,
   listStatusFacts,
   trialHoldFacts,
 } from "./list-status-facts";
@@ -312,13 +312,7 @@ function mapSingle(
       {
         status,
         occurrences,
-        kind,
-        now,
-        source,
-        holdOpen: holdOpenFrom(facts, now),
-        paid: facts.paid,
-        moving: !!facts.reschedule,
-        moveMine: facts.reschedule?.mine,
+        ...bucketFactsOf({ kind, source }, facts, now),
       },
       "consultant",
     ),
@@ -377,12 +371,7 @@ function mapGroup(
       {
         status,
         occurrences,
-        now,
-        source,
-        holdOpen: holdOpenFrom(facts, now),
-        paid: facts.paid,
-        moving: !!facts.reschedule,
-        moveMine: facts.reschedule?.mine,
+        ...bucketFactsOf({ kind: first.appointmentType, source }, facts, now),
       },
       "consultant",
     ),
@@ -443,7 +432,7 @@ function mapTrial(
     counterpart: person(t.consulteeProfile.user),
     status,
     ...deriveBucket(
-      { status, occurrences, now, holdOpen: holdOpenFrom(hold, now) },
+      { status, occurrences, ...bucketFactsOf({ kind: "TRIAL" }, hold, now) },
       "consultant",
     ),
     ...hold,

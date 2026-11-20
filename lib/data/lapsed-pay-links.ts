@@ -2,6 +2,10 @@ import prisma from "@/lib/prisma";
 import { AppointmentStatus, BookingHistoryEntity } from "@prisma/client";
 import { scopeToWhereOrgId } from "@/lib/api/scope/parse";
 import {
+  isPublicExpertProfile,
+  publicProfileFacts,
+} from "@/lib/profiles/public-profile";
+import {
   LAPSED_PAY_LINK_VISIBLE_MS,
   toLapsedPayLinks,
   type ExpiredRequestRow,
@@ -17,7 +21,9 @@ const PLAN_SELECT = {
   select: {
     title: true,
     consultantProfileId: true,
-    consultantProfile: { select: { user: { select: { name: true } } } },
+    consultantProfile: {
+      select: { ...publicProfileFacts, user: { select: { name: true } } },
+    },
   },
 } as const;
 
@@ -67,6 +73,7 @@ export async function readLapsedPayLinks(
       entityId: true,
       fromStatus: true,
       toStatus: true,
+      reason: true,
       createdAt: true,
     },
   });
@@ -85,6 +92,7 @@ export async function readLapsedPayLinks(
       consultantName:
         c.consultationPlan.consultantProfile.user.name ?? "your expert",
       consultantProfileId: c.consultationPlan.consultantProfileId,
+      expertPublic: isPublicExpertProfile(c.consultationPlan.consultantProfile),
       history: historyById.get(c.id) ?? [],
     })),
     ...subscriptions.map((s) => ({
@@ -94,6 +102,7 @@ export async function readLapsedPayLinks(
       consultantName:
         s.subscriptionPlan.consultantProfile.user.name ?? "your expert",
       consultantProfileId: s.subscriptionPlan.consultantProfileId,
+      expertPublic: isPublicExpertProfile(s.subscriptionPlan.consultantProfile),
       history: historyById.get(s.id) ?? [],
     })),
   ];
