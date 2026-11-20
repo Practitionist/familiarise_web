@@ -283,8 +283,9 @@ move is what the open order's checkout consumed: after the request CAS wins,
 each `PENDING` order by its own CAS and returns its referral credit, code use and
 engagement in the same transaction. A captured, already-expired or second-lapsed
 order returns nothing, and no gateway cancel runs. An approval re-mint returns
-the old order's credit at once (`claimRowForRemint`), because the new order
-charges the full price (`docs/decisions/2026-11-20-unpaid-approval-orders-return-what-checkout-consumed.md`; no
+the old order's credit and, for a still-PENDING order, its code use at once, and
+drops the code from the row (`claimRowForRemint`), because the new order charges
+the full price (`docs/decisions/2026-11-20-unpaid-approval-orders-return-what-checkout-consumed.md`; no
 backfill). The sweep that does refund is a
 different cohort — `expireApprovedUnallocatedSubscriptions` in
 `scripts/appointments/expire-stale-requests.ts` expires an `APPROVED` plan that
