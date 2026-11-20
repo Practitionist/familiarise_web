@@ -6,7 +6,6 @@ import {
   subscriptionEntitlement,
 } from "@/lib/booking/entitlement";
 import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
-import { OCCUPIED_REQUEST_STATUSES } from "@/utils/scheduling-engine/occupancyPolicy";
 import { SCHEDULING_INTERVAL_MS } from "@/lib/appointments/occurrences";
 import { isReleasedForReschedule } from "@/utils/scheduling-engine/types";
 
@@ -93,11 +92,6 @@ export class SubscriptionValidationService {
     });
     const { windowStart, windowEnd, nextBatch } = entitlement.cycle;
 
-    const existingCalls = await this.countExistingCalls(
-      subscriptionId,
-      excludeAppointmentIds,
-      excludeOccurrenceIds,
-    );
     const cycleCalls = countWholeCalls(
       proposedSlotDates,
       soldSessionMinutes(subscription) / 60,
@@ -109,7 +103,8 @@ export class SubscriptionValidationService {
       warnings: [],
       cycleCalls,
       cycleCap: nextBatch,
-      totalCallsScheduled: existingCalls + cycleCalls,
+      // The entitlement's own count, so a session it asks to replace fits.
+      totalCallsScheduled: entitlement.held + cycleCalls,
       maxTotalCalls: entitlement.total,
       subscriptionPeriod: { start: windowStart, end: windowEnd },
     };
@@ -139,28 +134,6 @@ export class SubscriptionValidationService {
     }
 
     return result;
-  }
-
-  /** Live occurrence rows on the wrapper, minus the rows being replaced. */
-  private async countExistingCalls(
-    subscriptionId: string,
-    excludeAppointmentIds: string[],
-    excludeOccurrenceIds: string[],
-  ): Promise<number> {
-    const rows = await this.prisma.appointmentOccurrence.findMany({
-      where: {
-        id: { notIn: excludeOccurrenceIds },
-        deletedAt: null,
-        completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
-        appointment: {
-          subscriptionId,
-          id: { notIn: excludeAppointmentIds },
-          subscription: { status: { in: OCCUPIED_REQUEST_STATUSES } },
-        },
-      },
-      select: { id: true },
-    });
-    return rows.length;
   }
 }
 

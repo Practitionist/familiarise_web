@@ -10,16 +10,29 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 
 let mockMonth: Record<string, unknown[]> = {};
 let mockReadAt = 0;
+let mockMonthLead: unknown = undefined;
 jest.mock("@/lib/scheduling/use-availability-window", () => ({
   ...jest.requireActual("@/lib/scheduling/use-availability-window"),
-  useAvailabilityMonth: ({ timezone }: { timezone: string | null }) => ({
+  useAvailabilityMonth: ({
+    timezone,
+    lead,
+  }: {
+    timezone: string | null;
+    lead?: unknown;
+  }) => {
+    mockMonthLead = lead;
+    return monthAnswer(timezone);
+  },
+}));
+function monthAnswer(timezone: string | null) {
+  return {
     data: timezone ? mockMonth : undefined,
     dataUpdatedAt: mockReadAt,
     isPending: !timezone,
     isError: false,
     refetch: jest.fn(),
-  }),
-}));
+  };
+}
 jest.mock("@/components/booking/NotifyWhenFreeButton", () => ({
   NotifyWhenFreeButton: () => <span>Notify me</span>,
 }));
@@ -228,4 +241,25 @@ it("lays out by its own width: panes side by side from 700 px, times up to six c
   } finally {
     globalThis.ResizeObserver = original;
   }
+});
+
+it("tells the grid when the pick is a move, and only then", () => {
+  const { unmount } = render(<Harness purpose="reschedule" />);
+  expect(mockMonthLead).toEqual({ purpose: "reschedule" });
+  unmount();
+  render(<Harness purpose="book" />);
+  expect(mockMonthLead).toBeUndefined();
+});
+
+it("says bookings open up to 90 days ahead on a day past the horizon", () => {
+  mockMonth = {
+    "2026-11-04": atoms(9, 11).map((atom) => ({
+      ...atom,
+      beyondHorizon: true,
+    })),
+  };
+  render(<Harness />);
+  fireEvent.click(screen.getByRole("button", { name: /\b4 November/ }));
+  expect(screen.getByText("Bookings open up to 90 days ahead.")).toBeVisible();
+  expect(screen.queryByText("No free times on this day")).toBeNull();
 });

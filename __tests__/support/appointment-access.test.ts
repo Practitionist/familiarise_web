@@ -52,6 +52,8 @@ jest.mock("../../lib/data/appointment-detail", () => ({
   // The participant branch scopes the payment rows; identity here, since
   // this suite is about who gets in, not what they see of the money.
   scopeAppointmentDetail: jest.fn((detail: unknown) => detail),
+  // No open reschedule in this suite, so nobody has one to withdraw.
+  viewerMayWithdrawReschedule: jest.fn(async () => false),
 }));
 
 import { scopeAppointmentDetail as mockedScopeFn } from "../../lib/data/appointment-detail";
@@ -141,6 +143,7 @@ describe("authorizeAppointment — legitimate access", () => {
       userId: "staff-attendee",
       privileged: true,
       managesGroupPlan: false,
+      mayWithdrawReschedule: false,
     });
   });
 

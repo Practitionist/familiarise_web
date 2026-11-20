@@ -368,6 +368,17 @@ export const POST = withOpsAction(
         );
       }
 
+      // This door only marks the row cancelled. A booking's sessions, seats,
+      // payments and refund end through the booking's own cancel.
+      if (existing.appointment) {
+        throw new OpsRefusal(
+          "USE_CANCEL_DOOR",
+          "This subscription has a booking, so it can't just be marked cancelled. Cancel the booking instead: that releases its sessions and refunds the buyer.",
+          409,
+          { appointmentId: existing.appointment.id },
+        );
+      }
+
       await prisma.$transaction((tx) =>
         transitionSubscriptionRequest(tx, {
           actorUserId: actor.userId,

@@ -175,7 +175,13 @@ consultee-initiated requests that really moved sessions (not withdrawn, not
 restored), and timed from the request's `createdAt`. An expert's reschedule never
 lowers the buyer's refund. A released session whose original time passed with no
 replacement counts as full notice (past every tier), unless the consultee
-released it, in which case the recorded floor still applies. A booking with no live session left gets no notice
+released it, in which case the recorded floor still applies. A plan cancel
+prices one start per session on the calendar (`scheduledStarts`): each confirmed
+session, and each session released for a move, at its original start and capped
+by the same floor, before and after it gets a new time. A released session is
+never "never scheduled", so releasing a session and then cancelling the plan
+cannot refund it at 100 %; an expert's release or unanswered proposal leaves the
+session priced at its original start. A booking with no live session left gets no notice
 figure at all, so it never falls back to the floor; the window refuses it first
 (`resolveBookingRefundContext` in `lib/booking/cancellation-scope.ts`). Preview
 and POST resolve the actor through one function, `resolveCancelActor`
@@ -669,7 +675,12 @@ back while the session can still be re-booked; it waits for the plan end.
 
 ## 14. A class settles its never-placed sessions when it completes
 
-A class completes once every placed session has ended and been decided
+A class completes once every placed session has ended and been decided and the
+class is finished: every sold session is placed (counted by ordinal; a
+host-cancelled session counts as answered for), or its scheduling period has
+ended (`classIsFinished` in `lib/booking/class-completion.ts`, checked inside
+the completing transaction after the status compare-and-set). A class between
+batches stays `SCHEDULED` and nothing is refunded
 (`completeClasses` in `scripts/appointments/auto-complete-appointments.ts`), and
 the same transaction that moves it to COMPLETED stamps class-end settlement
 (`stampClassEndRefundsOwed` in `lib/payments/operations/event-refunds.ts`).
@@ -728,3 +739,10 @@ and reverses the refunded share.
   never-placed sessions were neither delivered nor refunded and the earnings
   released in full. Class-end settlement owes them now.
 - A pending 1:1 request or trial priced from the live plan at approval, with a live pay-link re-minted at the new amount: replaced by `agreedPricePaise` read through `agreedConsultationPricePaise` / `agreedTrialPricePaise`.
+- **A released plan session quoted as never scheduled.** A plan cancel left a
+  session released for a move out of the on-the-calendar list, so it came back
+  at 100 % whatever notice the learner gave. It is priced at its original start,
+  capped by the learner's release notice.
+- **A class completed one hour after its last placed session.** It closed a
+  class between batches and refunded the sessions not yet placed.
+  `classIsFinished` decides now.

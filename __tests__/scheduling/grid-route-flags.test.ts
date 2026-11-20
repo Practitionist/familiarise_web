@@ -451,3 +451,400 @@ describe("an event's own sessions on a move", () => {
     expect(other.headers.get("ETag")).not.toBe(own.headers.get("ETag"));
   });
 });
+
+describe("a co-host's published hours", () => {
+  // The host publishes 08:00–12:00; the accepted co-host only 10:00–12:00.
+  const query = `${DAY_QUERY}&classId=class-1`;
+  type CoHostCell = Cell & {
+    outsideCoHostHours?: boolean;
+    outsideCoHostHoursOf?: string[];
+  };
+
+  beforeEach(() => {
+    (prisma.class.findFirst as jest.Mock).mockResolvedValue({
+      appointment: { id: "appt-class" },
+      classPlan: {
+        collaborators: [
+          {
+            consultantProfileId: "cohost-1",
+            consultantProfile: {
+              id: "cohost-1",
+              userId: "user-cohost",
+              scheduleType: "CUSTOM",
+              availabilityWindowsWeekly: [],
+              availabilityWindowsCustom: [
+                {
+                  id: "cohost-custom-1",
+                  startsAt: new Date("2026-09-07T10:00:00.000Z"),
+                  endsAt: new Date("2026-09-07T12:00:00.000Z"),
+                },
+              ],
+              user: { id: "user-cohost", name: "Arjun Mehta" },
+            },
+          },
+        ],
+      },
+    });
+  });
+
+  const startsOf = (cells: CoHostCell[]) =>
+    cells.map((c) => c.startsAt.slice(11, 16));
+
+  it("keeps the host's free cells and flags the ones the co-host has not published", async () => {
+    const cells = (await cellsOf(
+      await GET(request(query), { params }),
+    )) as CoHostCell[];
+    expect(startsOf(cells)).toEqual([
+      "08:00",
+      "08:30",
+      "09:00",
+      "09:30",
+      "10:00",
+      "10:30",
+      "11:00",
+      "11:30",
+    ]);
+    expect(cells.every((c) => c.bookingStatus === "available")).toBe(true);
+    expect(startsOf(cells.filter((c) => c.outsideCoHostHours))).toEqual([
+      "08:00",
+      "08:30",
+      "09:00",
+      "09:30",
+    ]);
+  });
+
+  it("names the co-host only for a viewer who already sees names", async () => {
+    const anonymous = (await cellsOf(
+      await GET(request(query), { params }),
+    )) as CoHostCell[];
+    expect(anonymous.some((c) => "outsideCoHostHoursOf" in c)).toBe(false);
+
+    mockedSession.mockResolvedValue({
+      user: { id: "user-consultant", consultantProfileId: CONSULTANT_ID },
+    });
+    const own = (await cellsOf(
+      await GET(request(`${query}&includeAppointmentDetails=true`), {
+        params,
+      }),
+    )) as CoHostCell[];
+    expect(own.find((c) => c.startsAt.endsWith("08:00:00.000Z"))).toMatchObject(
+      { outsideCoHostHours: true, outsideCoHostHoursOf: ["Arjun"] },
+    );
+    expect(
+      own.find((c) => c.startsAt.endsWith("10:30:00.000Z")),
+    ).not.toHaveProperty("outsideCoHostHours");
+  });
+
+  it("still blocks the co-host's actual commitments", async () => {
+    mockedAppointments.mockImplementation(
+      async ({ where }: { where: { AND: unknown[] } }) =>
+        JSON.stringify(where).includes("cohost-1")
+          ? [
+              {
+                id: "appt-cohost",
+                consultation: {
+                  status: "SCHEDULED",
+                  bookingSource: "DIRECT_CHECKOUT",
+                },
+                subscription: null,
+                payment: [],
+                occurrences: [
+                  {
+                    id: "occ-cohost",
+                    startsAt: new Date("2026-09-07T11:00:00.000Z"),
+                    endsAt: new Date("2026-09-07T12:00:00.000Z"),
+                  },
+                ],
+              },
+            ]
+          : [],
+    );
+    const cells = (await cellsOf(
+      await GET(request(query), { params }),
+    )) as CoHostCell[];
+    expect(
+      startsOf(cells.filter((c) => c.bookingStatus === "fully-booked")),
+    ).toEqual(["11:00", "11:30"]);
+  });
+});
+
+describe("a viewer zone that ends its day mid half-hour", () => {
+  // Asia/Kathmandu (UTC+05:45): the week ends at local midnight, 18:15Z.
+  const KATHMANDU_WEEK =
+    "startDateInUtc=2026-11-21T18:15:00.000Z&endDateInUtc=2026-11-28T18:15:00.000Z&timezone=Asia/Kathmandu";
+
+  beforeEach(() => {
+    mockedProfile.mockResolvedValue({
+      id: CONSULTANT_ID,
+      userId: "user-consultant",
+      deletedAt: null,
+      scheduleType: "CUSTOM",
+      availabilityWindowsWeekly: [],
+      availabilityWindowsCustom: [
+        {
+          id: "custom-sat",
+          startsAt: new Date("2026-11-28T14:00:00.000Z"),
+          endsAt: new Date("2026-11-28T22:00:00.000Z"),
+        },
+      ],
+    });
+  });
+
+  it("keeps the half-hour that starts before the window's end", async () => {
+    const cells = await cellsOf(await GET(request(KATHMANDU_WEEK), { params }));
+    expect(cells.at(-1)).toMatchObject({
+      startsAt: "2026-11-28T18:00:00.000Z",
+      endsAt: "2026-11-28T18:30:00.000Z",
+      bookingStatus: "available",
+    });
+  });
+
+  it("reads a session across that boundary as booked, not partly booked", async () => {
+    mockedAppointments.mockResolvedValue([
+      {
+        id: "appt-1",
+        consultation: { status: "SCHEDULED", bookingSource: "DIRECT_CHECKOUT" },
+        subscription: null,
+        payment: [],
+        occurrences: [
+          {
+            id: "occ-1",
+            startsAt: new Date("2026-11-28T18:00:00.000Z"),
+            endsAt: new Date("2026-11-28T19:00:00.000Z"),
+          },
+        ],
+      },
+    ]);
+    const cells = await cellsOf(await GET(request(KATHMANDU_WEEK), { params }));
+    expect(cells.at(-1)).toMatchObject({
+      startsAt: "2026-11-28T18:00:00.000Z",
+      bookingStatus: "fully-booked",
+    });
+  });
+});
+
+describe("an expert buyer's own calendar", () => {
+  const BUYER_QUERY = `${DAY_QUERY}&consulteeUserId=user-buyer&includeAppointmentDetails=true`;
+  const hostRow = {
+    id: CONSULTANT_ID,
+    userId: "user-consultant",
+    deletedAt: null,
+    scheduleType: "CUSTOM",
+    availabilityWindowsWeekly: [],
+    availabilityWindowsCustom: [
+      {
+        id: "custom-1",
+        startsAt: new Date("2026-09-07T08:00:00.000Z"),
+        endsAt: new Date("2026-09-07T12:00:00.000Z"),
+      },
+    ],
+  };
+
+  beforeEach(() => {
+    mockedSession.mockResolvedValue({
+      user: { id: "user-consultant", consultantProfileId: CONSULTANT_ID },
+    });
+    mockedProfile.mockImplementation(
+      async ({ where }: { where: { id?: string; userId?: string } }) =>
+        where.userId === "user-buyer" ? { id: "buyer-profile" } : hostRow,
+    );
+    // The buyer is an accepted co-host on someone else's webinar, 10:30–11:30.
+    mockedAppointments.mockImplementation(
+      async ({ where }: { where: unknown }) =>
+        JSON.stringify(where).includes(
+          '"collaborators":{"some":{"consultantProfileId":"buyer-profile","status":"ACCEPTED"}}',
+        )
+          ? [
+              {
+                id: "appt-cohosted",
+                consultation: null,
+                subscription: null,
+                payment: [],
+                occurrences: [
+                  {
+                    id: "occ-cohosted",
+                    startsAt: new Date("2026-09-07T10:30:00.000Z"),
+                    endsAt: new Date("2026-09-07T11:30:00.000Z"),
+                  },
+                ],
+              },
+            ]
+          : [],
+    );
+  });
+
+  it("paints the buyer's co-host commitment busy, with no detail", async () => {
+    const res = await GET(request(BUYER_QUERY), { params });
+    expect(res.status).toBe(200);
+    const cells = (await cellsOf(res)) as (Cell & {
+      overlappingAppointments?: unknown[];
+    })[];
+    const busy = cells.filter((c) => c.bookingStatus === "fully-booked");
+    expect(busy.map((c) => c.startsAt.slice(11, 16))).toEqual([
+      "10:30",
+      "11:00",
+    ]);
+    for (const cell of busy) expect(cell.overlappingAppointments).toEqual([]);
+  });
+
+  it("reads a buyer with no expert profile by their seats alone", async () => {
+    mockedProfile.mockImplementation(
+      async ({ where }: { where: { id?: string; userId?: string } }) =>
+        where.userId === "user-buyer" ? null : hostRow,
+    );
+    const res = await GET(request(BUYER_QUERY), { params });
+    expect(res.status).toBe(200);
+    const cells = await cellsOf(res);
+    expect(cells.every((c) => c.bookingStatus === "available")).toBe(true);
+    const consulteeWhere = JSON.stringify(
+      mockedAppointments.mock.calls.map(([args]) => args.where),
+    );
+    expect(consulteeWhere).toContain('"userId":"user-buyer"');
+    expect(consulteeWhere).not.toContain("buyer-profile");
+  });
+});
+
+describe("a trial on the host's detail grid", () => {
+  it('reads "Trial session" with the learner\'s name, for the host only', async () => {
+    mockedAppointments.mockResolvedValue([
+      {
+        id: "appt-trial",
+        appointmentType: "TRIAL",
+        consultation: null,
+        subscription: null,
+        payment: [],
+        trial: { consulteeProfile: { user: { name: "Charlotte Reid" } } },
+        occurrences: [
+          {
+            id: "occ-trial",
+            startsAt: new Date("2026-09-07T10:30:00.000Z"),
+            endsAt: new Date("2026-09-07T11:00:00.000Z"),
+          },
+        ],
+      },
+    ]);
+    mockedSession.mockResolvedValue({
+      user: { id: "user-consultant", consultantProfileId: CONSULTANT_ID },
+    });
+    const own = (await cellsOf(
+      await GET(request(`${DAY_QUERY}&includeAppointmentDetails=true`), {
+        params,
+      }),
+    )) as (Cell & { overlappingAppointments?: unknown[] })[];
+    expect(
+      own.find((c) => c.startsAt.endsWith("10:30:00.000Z"))
+        ?.overlappingAppointments,
+    ).toEqual([
+      {
+        id: "appt-trial",
+        type: "TRIAL",
+        title: "Trial session",
+        with: "Charlotte Reid",
+      },
+    ]);
+    const detailQuery = mockedAppointments.mock.calls[0][0];
+    expect(detailQuery.include.trial).toEqual({
+      select: {
+        consulteeProfile: { select: { user: { select: { name: true } } } },
+      },
+    });
+
+    mockedAppointments.mockClear();
+    mockedSession.mockResolvedValue(null);
+    const anonymous = await cellsOf(await GET(request(DAY_QUERY), { params }));
+    expect(anonymous.some((c) => "overlappingAppointments" in c)).toBe(false);
+    for (const [args] of mockedAppointments.mock.calls) {
+      expect(args.include).not.toHaveProperty("trial");
+    }
+  });
+});
+
+describe("the 90-day booking horizon", () => {
+  // now is 7 Sep 09:50Z, so the horizon falls on 6 Dec at 09:50Z.
+  const HORIZON_DAY =
+    "startDateInUtc=2026-12-06T00:00:00.000Z&endDateInUtc=2026-12-07T00:00:00.000Z&timezone=UTC";
+  type HorizonCell = Cell & { beyondHorizon?: boolean };
+
+  beforeEach(() => {
+    mockedProfile.mockResolvedValue({
+      id: CONSULTANT_ID,
+      userId: "user-consultant",
+      deletedAt: null,
+      scheduleType: "CUSTOM",
+      availabilityWindowsWeekly: [],
+      availabilityWindowsCustom: [
+        {
+          id: "custom-dec",
+          startsAt: new Date("2026-12-06T08:00:00.000Z"),
+          endsAt: new Date("2026-12-06T12:00:00.000Z"),
+        },
+      ],
+    });
+    (prisma.class.findFirst as jest.Mock).mockResolvedValue({
+      appointment: { id: "appt-class" },
+      classPlan: { collaborators: [] },
+    });
+  });
+
+  const flagged = async (query: string) =>
+    ((await cellsOf(await GET(request(query), { params }))) as HorizonCell[])
+      .filter((c) => c.beyondHorizon)
+      .map((c) => c.startsAt.slice(11, 16));
+
+  it("flags a 1:1 cell that starts more than 90 days from now", async () => {
+    const beyond = ["10:00", "10:30", "11:00", "11:30"];
+    expect(await flagged(HORIZON_DAY)).toEqual(beyond);
+    expect(await flagged(`${HORIZON_DAY}&purpose=request`)).toEqual(beyond);
+    expect(await flagged(`${HORIZON_DAY}&purpose=allocate`)).toEqual(beyond);
+  });
+
+  it("leaves the flagged cells free underneath", async () => {
+    const cells = (await cellsOf(
+      await GET(request(HORIZON_DAY), { params }),
+    )) as HorizonCell[];
+    expect(cells.every((c) => c.bookingStatus === "available")).toBe(true);
+  });
+
+  it("binds a 1:1 that is being moved too", async () => {
+    expect(
+      (await flagged(`${HORIZON_DAY}&purpose=reschedule`)).length,
+    ).toBeGreaterThan(0);
+    expect(await flagged(`${HORIZON_DAY}&purpose=reschedule`)).toEqual(
+      await flagged(HORIZON_DAY),
+    );
+  });
+
+  it("does not apply to a class, a webinar or a subscription's plan weeks", async () => {
+    expect(await flagged(`${HORIZON_DAY}&classId=class-1`)).toEqual([]);
+    expect(
+      await flagged(`${HORIZON_DAY}&classId=class-1&purpose=allocate`),
+    ).toEqual([]);
+  });
+
+  it("does not 304 across the horizon, and leaves a nearer window's tag alone", async () => {
+    const first = await GET(request(HORIZON_DAY), { params });
+    const etag = first.headers.get("ETag") as string;
+    // 10:00 + 90 days is reached at 10:00: the 10:00 cell opens.
+    jest.setSystemTime(new Date("2026-09-07T10:01:00.000Z"));
+    const crossed = await GET(request(HORIZON_DAY, etag), { params });
+    expect(crossed.status).toBe(200);
+    expect(
+      ((await cellsOf(crossed)) as HorizonCell[])
+        .filter((c) => c.beyondHorizon)
+        .map((c) => c.startsAt.slice(11, 16)),
+    ).toEqual(["10:30", "11:00", "11:30"]);
+
+    // A window that ends inside the horizon: the same two instants share a
+    // lead-time bucket, so nothing has changed for it.
+    jest.setSystemTime(NOW);
+    const near = await GET(request(DAY_QUERY), { params });
+    jest.setSystemTime(new Date("2026-09-07T10:01:00.000Z"));
+    expect(
+      (
+        await GET(request(DAY_QUERY, near.headers.get("ETag") as string), {
+          params,
+        })
+      ).status,
+    ).toBe(304);
+  });
+});

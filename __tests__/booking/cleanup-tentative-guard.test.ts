@@ -117,3 +117,50 @@ describe("#829 — cleanup release re-states the tentative + unpaid guards", () 
     ).not.toHaveBeenCalled();
   });
 });
+
+describe("a session being moved, or held by a live trial, is not a stale hold", () => {
+  const OPEN_MOVE_GUARD = {
+    rescheduleRequests: { none: { status: { in: ["PENDING_REVIEW"] } } },
+  };
+  const LIVE_TRIAL_GUARD = {
+    OR: [
+      { trial: null },
+      { trial: { status: { notIn: ["AWAITING_PAYMENT", "SCHEDULED"] } } },
+    ],
+  };
+
+  it("leaves out a released session whose reschedule request is open", async () => {
+    mocked.appointmentOccurrence.findMany.mockResolvedValue([]);
+    await cleanupTentativeOccurrences();
+
+    const [cohortRead] = mocked.appointmentOccurrence.findMany.mock.calls[0];
+    expect(cohortRead.where.appointment).toEqual(
+      expect.objectContaining(OPEN_MOVE_GUARD),
+    );
+  });
+
+  it("leaves out the session of a trial that is awaiting payment or scheduled", async () => {
+    mocked.appointmentOccurrence.findMany.mockResolvedValue([]);
+    await cleanupTentativeOccurrences();
+
+    const [cohortRead] = mocked.appointmentOccurrence.findMany.mock.calls[0];
+    expect(cohortRead.where.appointment.AND).toEqual(
+      expect.arrayContaining([LIVE_TRIAL_GUARD]),
+    );
+  });
+
+  it("re-states both guards in the release compare-and-set", async () => {
+    mocked.appointmentOccurrence.findMany.mockResolvedValue([STALE_SLOT]);
+    mocked.appointmentOccurrence.updateManyAndReturn.mockResolvedValue([
+      { id: "slot-1" },
+    ]);
+    await cleanupTentativeOccurrences();
+
+    const [{ where }] =
+      mocked.appointmentOccurrence.updateManyAndReturn.mock.calls[0];
+    expect(where.appointment).toEqual(expect.objectContaining(OPEN_MOVE_GUARD));
+    expect(where.appointment.AND).toEqual(
+      expect.arrayContaining([LIVE_TRIAL_GUARD]),
+    );
+  });
+});

@@ -26,6 +26,7 @@ import { SCHEDULING_INTERVAL_MS } from "@/lib/appointments/occurrences";
 import { seatHoldingParticipant } from "@/utils/scheduling-engine/occupancyPolicy";
 import { BookingRuleError } from "./booking-rule-error";
 import { isTooSoonFor, RESCHEDULE_MIN_LEAD_HOURS } from "./lead-time";
+import { transitionOccurrenceCompletion } from "./transitions";
 import { collaboratorUserIds } from "@/lib/collaborators/recipients";
 import {
   acceptedCohostProfileIds,
@@ -44,6 +45,9 @@ import {
   retimeLeaveUntil,
   splitByClash,
 } from "./retime-leave";
+
+/** The history reason of a session moved in place; it keeps its status, so the row needs words. */
+export const RETIMED_REASON = "Moved to a new time";
 
 export type RetimeResult = {
   occurrenceId: string;
@@ -182,15 +186,23 @@ export async function retimeWebinar(args: {
               );
               let moved;
               try {
-                moved = await tx.appointmentOccurrence.updateMany({
+                // Same status, new time: the helper writes the history row.
+                moved = await transitionOccurrenceCompletion(tx, {
+                  actorUserId: args.actorUserId,
+                  reason: RETIMED_REASON,
+                  organizationId: pre.organizationId,
+                  appointmentId,
+                  at: now,
                   where: {
                     id: session.id,
                     appointmentId,
                     deletedAt: null,
-                    completionStatus: "SCHEDULED",
                     startsAt: session.startsAt,
                   },
+                  to: "SCHEDULED",
+                  fromIn: ["SCHEDULED"],
                   data: { startsAt, endsAt, movedAt: now },
+                  allowZero: true,
                 });
               } catch (error) {
                 if (isExclusionViolation(error)) {
@@ -202,7 +214,7 @@ export async function retimeWebinar(args: {
                 }
                 throw error;
               }
-              if (moved.count === 0) {
+              if (moved === 0) {
                 throw refuse(
                   "RETIME_NOT_ALLOWED",
                   "This webinar changed while you were re-timing it. Refresh and try again.",
