@@ -17,22 +17,24 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button, type ButtonProps } from "@/components/ui/button";
 import {
+  openOrderPastWindow,
   REQUEST_AGAIN_ALREADY_PAID,
   REQUEST_AGAIN_WARNING,
   RequestAgainAnswerSchema,
   requestAgainPath,
+  type RequestAgainPaymentRow,
 } from "@/lib/booking/request-again-rules";
 
 /**
- * Every "Request again" / "Book again" that leads to a new booking. When the old
- * booking still has an order PENDING past its window (`closeFirst`), it warns,
+ * Every "Request again" / "Book again" that leads to a new booking. A link that,
+ * when clicked while one of `payments` is still PENDING past its window, warns,
  * closes that order through the request-again route, and navigates only once the
- * route says it is closed; otherwise it is a plain link.
+ * route says it is closed.
  */
 export function RequestAgainButton({
   appointmentId,
   href,
-  closeFirst,
+  payments,
   children,
   variant = "outline",
   size = "sm",
@@ -40,7 +42,8 @@ export function RequestAgainButton({
 }: Readonly<{
   appointmentId: string | null;
   href: string;
-  closeFirst: boolean;
+  /** The caller's own payment rows on the old booking. */
+  payments: readonly RequestAgainPaymentRow[];
   children: ReactNode;
   variant?: ButtonProps["variant"];
   size?: ButtonProps["size"];
@@ -51,16 +54,7 @@ export function RequestAgainButton({
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
-  if (!closeFirst || !appointmentId) {
-    return (
-      <Button variant={variant} size={size} className={className} asChild>
-        <Link href={href}>{children}</Link>
-      </Button>
-    );
-  }
-  const bookingId = appointmentId;
-
-  async function closeAndContinue() {
+  async function closeAndContinue(bookingId: string) {
     setBusy(true);
     try {
       const response = await fetch(requestAgainPath(bookingId), {
@@ -94,21 +88,25 @@ export function RequestAgainButton({
 
   return (
     <>
-      <Button
-        variant={variant}
-        size={size}
-        className={className}
-        onClick={() => {
-          setNotice(null);
-          setOpen(true);
-        }}
-      >
-        {children}
+      <Button variant={variant} size={size} className={className} asChild>
+        <Link
+          href={href}
+          onClick={(event) => {
+            // Decided at the click: a window can close after the page rendered.
+            if (!appointmentId || !openOrderPastWindow(payments, new Date()))
+              return;
+            event.preventDefault();
+            setNotice(null);
+            setOpen(true);
+          }}
+        >
+          {children}
+        </Link>
       </Button>
       {notice && (
-        <p role="status" className="text-xs text-muted-foreground">
+        <output className="block text-xs text-muted-foreground">
           {notice}
-        </p>
+        </output>
       )}
       <AlertDialog open={open} onOpenChange={(next) => !busy && setOpen(next)}>
         <AlertDialogContent>
@@ -127,7 +125,7 @@ export function RequestAgainButton({
               onClick={(event) => {
                 // The dialog stays open until the route answers.
                 event.preventDefault();
-                void closeAndContinue();
+                if (appointmentId) void closeAndContinue(appointmentId);
               }}
             >
               {busy && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}

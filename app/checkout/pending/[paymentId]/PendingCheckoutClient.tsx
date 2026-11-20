@@ -9,7 +9,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { apiErrorSchema, errorMessageFromBody } from "@/lib/fetch-helpers";
 import { payPagePath } from "@/lib/payments/pay-link-href";
-import { openOrderPastWindow } from "@/lib/booking/request-again-rules";
 import { RequestAgainButton } from "@/components/booking/RequestAgainButton";
 import type { PendingCheckout } from "@/lib/data/pending-checkout";
 import { formatCurrencyAmount } from "@/utils/formatting";
@@ -184,15 +183,9 @@ export function PendingCheckoutClient({
             <RequestAgainButton
               appointmentId={pending.appointmentId}
               href="/explore"
-              closeFirst={openOrderPastWindow(
-                [
-                  {
-                    paymentStatus: pending.status,
-                    expiresAt: pending.expiresAt,
-                  },
-                ],
-                new Date(),
-              )}
+              payments={[
+                { paymentStatus: pending.status, expiresAt: pending.expiresAt },
+              ]}
               variant="default"
               size="default"
               className="w-full"

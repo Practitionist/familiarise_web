@@ -3,21 +3,29 @@
  * PENDING closes the caller's old order before the new request starts, so a late
  * capture is refunded instead of confirming a second booking.
  *
- * One Serializable transaction under the appointment lock. The caller's PENDING
- * orders expire first (the capture's lock order: payment, then booking), each
- * giving back what its checkout consumed; then the booking takes its lapsed state
- * through the writer its own sweep uses. Every CAS carries the money predicate, so
- * a capture that committed first makes it miss, the transaction rolls back, and
- * the answer is ALREADY_PAID with nothing closed. Gateway cancels run after commit.
+ * Ownership is read before the lock. Under the appointment lock the gateway is
+ * asked first, as the abandoned-payment sweep asks it: a payment it already holds
+ * leaves the order PENDING for reconciliation, and an unanswered ask closes
+ * nothing. Then one Serializable transaction expires the caller's orders (the
+ * capture's lock order: payment, then booking), each giving back what its
+ * checkout consumed, and the booking takes its lapsed state through the writer
+ * its own sweep uses. Every CAS carries the money predicate, so a capture that
+ * committed first makes it miss, the transaction rolls back, and the answer is
+ * ALREADY_PAID with nothing closed.
  */
-import { PaymentStatus, Prisma } from "@prisma/client";
+import { PaymentGateway, PaymentStatus, Prisma } from "@prisma/client";
 
 import prisma, { type Tx } from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { scheduleAfter } from "@/lib/api/after-safe";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
-import { unreturnedCaptureWhere } from "@/lib/payments/webhooks/auto-refund-marker";
+import {
+  keptCaptureWhere,
+  REFUND_STATUSES_RETURNING_MONEY,
+} from "@/lib/payments/webhooks/auto-refund-marker";
+import type { RazorpayOrderCancelResult } from "@/lib/payments/core/razorpay";
 import { softCancelTrialAppointmentInTx } from "@/lib/trials/cancellation";
+import { cancelPaymentIntent } from "@/scripts/payments/cleanup-abandoned-payments";
 import {
   renewAppointmentLock,
   withAppointmentLock,
@@ -35,11 +43,7 @@ import {
 } from "./event-waitlist";
 import { lapseApprovedRequest } from "./lapse-approved-request";
 import { releaseParticipant, transitionParticipant } from "./participants";
-import {
-  cancelGatewayOrders,
-  expirePendingPaymentsInTx,
-  type GatewayCancel,
-} from "./pending-payment-expiry";
+import { expirePendingPaymentsInTx } from "./pending-payment-expiry";
 import {
   REQUEST_AGAIN_NOTE,
   REQUESTED_AGAIN_REASON,
@@ -70,7 +74,6 @@ type TxOutcome =
   | {
       ok: true;
       closed: number;
-      gatewayCancels: GatewayCancel[];
       holdNotices?: StagedBackupInterestNotices | null;
       seatOpened?: StagedSeatOpened | null;
     };
@@ -82,9 +85,32 @@ const NO_CAPTURE = {
   payment: { none: { paymentStatus: PaymentStatus.SUCCEEDED } },
 } as const;
 
+type OwnedRequest = {
+  id: string;
+  status: string;
+  bookingSource: string;
+  requestedBy: { userId: string };
+};
+
+/** A request's arm: only an approval awaiting payment or a pay-first hold, never one under an open move. */
+function requestArm(
+  row: OwnedRequest,
+  request: RequestKind,
+  userId: string,
+  moving: boolean,
+): Arm | null {
+  if (row.requestedBy.userId !== userId) return null;
+  if (moving) return { kind: "none" };
+  if (row.status === "APPROVED_PENDING_PAYMENT")
+    return { kind: "approved", request, id: row.id };
+  if (row.status === "PENDING" && row.bookingSource === "DIRECT_CHECKOUT")
+    return { kind: "hold", request, id: row.id };
+  return { kind: "none" };
+}
+
 /** The booking as the caller owns it, or null when it is not theirs. */
 async function readOwnedArm(
-  tx: Tx,
+  db: Pick<Tx, "appointment">,
   appointmentId: string,
   userId: string,
 ): Promise<Arm | null> {
@@ -92,10 +118,11 @@ async function readOwnedArm(
     select: {
       id: true,
       status: true,
+      bookingSource: true,
       requestedBy: { select: { userId: true } },
     },
   } as const;
-  const appt = await tx.appointment.findUnique({
+  const appt = await db.appointment.findUnique({
     where: { id: appointmentId },
     select: {
       consultation: request,
@@ -114,21 +141,19 @@ async function readOwnedArm(
         select: { id: true },
         take: 1,
       },
+      rescheduleRequests: {
+        where: { openForAppointmentId: appointmentId },
+        select: { id: true },
+        take: 1,
+      },
     },
   });
   if (!appt) return null;
-  const row = appt.consultation ?? appt.subscription;
-  if (row) {
-    if (row.requestedBy.userId !== userId) return null;
-    const kind: RequestKind = appt.consultation
-      ? "consultation"
-      : "subscription";
-    if (row.status === "APPROVED_PENDING_PAYMENT")
-      return { kind: "approved", request: kind, id: row.id };
-    if (row.status === "PENDING")
-      return { kind: "hold", request: kind, id: row.id };
-    return { kind: "none" };
-  }
+  const moving = appt.rescheduleRequests.length > 0;
+  if (appt.consultation)
+    return requestArm(appt.consultation, "consultation", userId, moving);
+  if (appt.subscription)
+    return requestArm(appt.subscription, "subscription", userId, moving);
   if (appt.trial) {
     if (appt.trial.consulteeProfile.userId !== userId) return null;
     return appt.trial.status === "AWAITING_PAYMENT"
@@ -213,7 +238,7 @@ async function endBooking(
       return {
         holdNotices: await expireHold(tx, arm, appointmentId, userId, now),
       };
-    case "trial":
+    case "trial": {
       await transitionTrial(tx, {
         actorUserId: userId,
         reason: REQUESTED_AGAIN_REASON,
@@ -231,8 +256,14 @@ async function endBooking(
         },
         data: { pendingPaymentUrl: null, paymentDueAt: null },
       });
+      // Read before the release below stops these times counting as held.
+      const holdNotices = await stageNoticesForAppointmentHolds(
+        tx,
+        appointmentId,
+      );
       await softCancelTrialAppointmentInTx(tx, appointmentId);
-      return {};
+      return { holdNotices };
+    }
     case "seat": {
       const released = await releaseParticipant(tx, {
         appointmentId,
@@ -249,21 +280,80 @@ async function endBooking(
   }
 }
 
-/** True when a capture of the caller's on this booking still holds its money. */
+/** True when a capture of the caller's is kept for this booking and not wholly refunded. */
 async function holdsCapture(
   db: Pick<Tx, "payment">,
   appointmentId: string,
   userId: string,
 ): Promise<boolean> {
-  const paid = await db.payment.count({
+  const paid = await db.payment.findMany({
     where: {
       appointmentId,
       userId,
       paymentStatus: PaymentStatus.SUCCEEDED,
-      ...unreturnedCaptureWhere,
+      ...keptCaptureWhere,
+    },
+    select: {
+      amount: true,
+      refunds: {
+        where: { status: { in: REFUND_STATUSES_RETURNING_MONEY } },
+        select: { amountPaise: true },
+      },
     },
   });
-  return paid > 0;
+  return paid.some(
+    (p) =>
+      p.refunds.reduce((sum, r) => sum + Number(r.amountPaise), 0) <
+      Number(p.amount),
+  );
+}
+
+type GatewayCheck =
+  | { ok: true; cleared: ReadonlySet<string> }
+  | { ok: false; code: "PAYMENT_IN_PROGRESS" | "GATEWAY_UNCHECKED" };
+
+/** What the gateway answers for one order; a cancel that threw is unproven. */
+async function askGateway(order: {
+  paymentIntent: string;
+  paymentGateway: PaymentGateway;
+}): Promise<RazorpayOrderCancelResult> {
+  try {
+    return await cancelPaymentIntent(order.paymentIntent, order.paymentGateway);
+  } catch {
+    return "unknown";
+  }
+}
+
+/**
+ * The abandoned-payment sweep's rule: an order expires only once its gateway
+ * holds no live payment. A live one stays PENDING for reconciliation to confirm
+ * or refund; an unproven answer closes nothing.
+ */
+async function checkGateway(
+  appointmentId: string,
+  userId: string,
+): Promise<GatewayCheck> {
+  const orders = await prisma.payment.findMany({
+    where: { appointmentId, userId, paymentStatus: PaymentStatus.PENDING },
+    select: {
+      id: true,
+      paymentIntent: true,
+      paymentGateway: true,
+      isMockPayment: true,
+    },
+  });
+  const cleared = new Set<string>();
+  for (const order of orders) {
+    const answer = order.isMockPayment
+      ? "no_live_payment"
+      : await askGateway(order);
+    if (answer === "has_live_payment")
+      return { ok: false, code: "PAYMENT_IN_PROGRESS" };
+    if (answer !== "no_live_payment")
+      return { ok: false, code: "GATEWAY_UNCHECKED" };
+    cleared.add(order.id);
+  }
+  return { ok: true, cleared };
 }
 
 async function closeInTx(
@@ -271,32 +361,35 @@ async function closeInTx(
   appointmentId: string,
   userId: string,
   now: Date,
+  cleared: ReadonlySet<string>,
 ): Promise<TxOutcome> {
   const arm = await readOwnedArm(tx, appointmentId, userId);
   if (!arm) return { ok: false, code: "NOT_FOUND" };
   const pending = await tx.payment.findMany({
     where: { appointmentId, userId, paymentStatus: PaymentStatus.PENDING },
-    select: { expiresAt: true },
+    select: { id: true, expiresAt: true },
   });
   // Nothing open: already closed (a second click, or the sweep), or paid.
   if (pending.length === 0) {
     return (await holdsCapture(tx, appointmentId, userId))
       ? { ok: false, code: "ALREADY_PAID" }
-      : { ok: true, closed: 0, gatewayCancels: [] };
+      : { ok: true, closed: 0 };
   }
   if (pending.some((p) => p.expiresAt === null || p.expiresAt > now)) {
     return { ok: false, code: "PAY_WINDOW_OPEN" };
   }
-  if (arm.kind === "none") return { ok: false, code: "NOT_CLOSABLE" };
+  // A booking in another state, or an order the gateway was not asked about.
+  if (arm.kind === "none" || pending.some((p) => !cleared.has(p.id)))
+    return { ok: false, code: "NOT_CLOSABLE" };
 
-  const { expired, gatewayCancels } = await expirePendingPaymentsInTx(tx, {
+  const { expired } = await expirePendingPaymentsInTx(tx, {
     appointmentId,
     userId,
     reason: REQUEST_AGAIN_NOTE,
   });
   if (expired === 0) throw new LostToCapture();
   const notices = await endBooking(tx, arm, appointmentId, userId, now);
-  return { ok: true, closed: expired, gatewayCancels, ...notices };
+  return { ok: true, closed: expired, ...notices };
 }
 
 export async function closeOrderForRequestAgain(args: {
@@ -305,22 +398,27 @@ export async function closeOrderForRequestAgain(args: {
 }): Promise<RequestAgainResult> {
   const { appointmentId, userId } = args;
   const now = new Date();
+  // Before the lock, so a stranger's answer never depends on who else holds it.
+  const owned = await readOwnedArm(prisma, appointmentId, userId);
+  if (!owned) return { ok: false, code: "NOT_FOUND" };
   let outcome: TxOutcome;
   try {
-    // The retry loop outlives the lock grant, so each attempt re-grants it.
-    outcome = await withAppointmentLock(appointmentId, async (lock) =>
-      withSerializableRetry(async () => {
+    outcome = await withAppointmentLock(appointmentId, async (lock) => {
+      const gateway = await checkGateway(appointmentId, userId);
+      if (!gateway.ok) return gateway;
+      // The retry loop outlives the lock grant, so each attempt re-grants it.
+      return withSerializableRetry(async () => {
         await renewAppointmentLock(lock);
         return prisma.$transaction(
-          (tx) => closeInTx(tx, appointmentId, userId, now),
+          (tx) => closeInTx(tx, appointmentId, userId, now, gateway.cleared),
           {
             isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
             maxWait: 10_000,
             timeout: 15_000,
           },
         );
-      }),
-    );
+      });
+    });
   } catch (error) {
     if (
       !(error instanceof LostToCapture) &&
@@ -333,16 +431,12 @@ export async function closeOrderForRequestAgain(args: {
       : { ok: false, code: "NOT_CLOSABLE" };
   }
   if (!outcome.ok) return outcome;
-  const { closed, gatewayCancels, holdNotices, seatOpened } = outcome;
+  const { closed, holdNotices, seatOpened } = outcome;
 
   await flushBackupInterestNotices(holdNotices);
   await scheduleAfter(
     () => finishSeatOpenedNotices(seatOpened),
     "request-again.seat-opened",
   );
-  await cancelGatewayOrders(gatewayCancels, {
-    op: "request-again.gateway-cancel",
-    appointmentId,
-  });
   return { ok: true, closed };
 }

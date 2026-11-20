@@ -15,7 +15,7 @@ export const REQUEST_AGAIN_NOTE =
 
 /** The confirmation shown before the old order is closed. */
 export const REQUEST_AGAIN_WARNING =
-  "Your earlier payment link will be closed. If it was already paid, the money is refunded automatically.";
+  "Your earlier payment link will be closed, and a payment that reaches it after this is refunded automatically. If it was already paid, that booking is kept and no new request starts.";
 
 /** The answer to a click that lost to a capture: nothing was closed. */
 export const REQUEST_AGAIN_ALREADY_PAID =
@@ -50,6 +50,8 @@ export const RequestAgainParamsSchema = z.object({
 export const REQUEST_AGAIN_REFUSALS = [
   "NOT_FOUND",
   "ALREADY_PAID",
+  "PAYMENT_IN_PROGRESS",
+  "GATEWAY_UNCHECKED",
   "PAY_WINDOW_OPEN",
   "NOT_CLOSABLE",
 ] as const;

@@ -58,5 +58,18 @@ describe("POST /api/bookings/[bookingId]/request-again", () => {
       code: "ALREADY_PAID",
       error: REQUEST_AGAIN_ALREADY_PAID,
     });
+
+    // A payment the gateway holds, or one it could not answer for, closes nothing.
+    for (const [code, status] of [
+      ["PAYMENT_IN_PROGRESS", 409],
+      ["GATEWAY_UNCHECKED", 503],
+    ] as const) {
+      mockClose.mockResolvedValueOnce({ ok: false, code });
+      const res = await call(BOOKING);
+      expect(res.status).toBe(status);
+      expect(RequestAgainAnswerSchema.parse(await res.json())).toMatchObject({
+        code,
+      });
+    }
   });
 });

@@ -4,6 +4,8 @@
  *  - the click expires the order and returns what its checkout consumed, once;
  *  - a late capture afterwards is refunded and never confirms the old booking;
  *  - a capture that won first refuses the click, and nothing is closed;
+ *  - a capture the gateway holds but the app has not recorded yet closes nothing;
+ *  - an open move, or a capture kept after a partial refund, refuses the click;
  *  - a second click changes nothing; an open window and a stranger are refused;
  *  - a pay-first hold, a trial and a webinar seat close the same way.
  */
@@ -42,6 +44,25 @@ jest.mock("../../../lib/stream/access-revocation", () =>
 jest.mock("../../../lib/rate-limit", () =>
   jest.requireActual("./harness-edges").rateLimitMock(),
 );
+const mockGateway = {
+  cancelRazorpayOrder: jest.fn(async (_orderId: string) => "no_live_payment"),
+};
+jest.mock("../../../lib/payments/core/razorpay", () => ({
+  ...jest.requireActual("../../../lib/payments/core/razorpay"),
+  cancelRazorpayOrder: (orderId: string) =>
+    mockGateway.cancelRazorpayOrder(orderId),
+}));
+const mockLock = { busy: false };
+jest.mock("../../../utils/appointmentlock", () => {
+  const actual = jest.requireActual("../../../utils/appointmentlock");
+  return {
+    ...actual,
+    withAppointmentLock: async (id: string, ...rest: unknown[]) => {
+      if (mockLock.busy) throw new actual.AppointmentBusyError(id);
+      return actual.withAppointmentLock(id, ...rest);
+    },
+  };
+});
 
 import { closeOrderForRequestAgain } from "../../../lib/booking/request-again";
 import { handlePaymentSuccess } from "../../../lib/payments/webhooks/handlers";
@@ -56,10 +77,11 @@ async function lapsedApproval(
   shape: { status?: "PENDING" | "SUCCEEDED"; expiresAt?: Date } = {},
 ) {
   const startsAt = futureAt(4, 10);
+  const host = await seedHost();
   const consultee = await seedConsultee();
   const request = await seedOneToOne(
     "consultation",
-    await seedHost(),
+    host,
     consultee,
     { startsAt, endsAt: new Date(startsAt.getTime() + HOUR_MS) },
     {
@@ -79,7 +101,7 @@ async function lapsedApproval(
     request.payment!.id,
     PRICE_PAISE,
   );
-  return { consultee, request, consumption };
+  return { host, consultee, request, consumption };
 }
 
 const click = (appointmentId: string, userId: string) =>
@@ -109,7 +131,11 @@ const paymentStatus = async (id: string) =>
   ).paymentStatus;
 
 describe("Request again closes the old order first", () => {
-  beforeEach(() => refundDoor.refundBookingPayment.mockClear());
+  beforeEach(() => {
+    refundDoor.refundBookingPayment.mockClear();
+    mockGateway.cancelRazorpayOrder.mockClear();
+    mockLock.busy = false;
+  });
 
   it("closes the open order and returns what its checkout consumed, once", async () => {
     const { consultee, request, consumption } = await lapsedApproval();
@@ -201,6 +227,99 @@ describe("Request again closes the old order first", () => {
     ]).toContainEqual(outcome);
   });
 
+  it("a capture kept after a partial refund still refuses the click", async () => {
+    const { consultee, request } = await lapsedApproval();
+    await capture(request);
+    await prisma.refund.create({
+      data: {
+        paymentId: request.payment!.id,
+        amountPaise: BigInt(100),
+        status: "SUCCEEDED",
+        refundId: `rfnd_dbtier_${randomUUID()}`,
+        paymentGateway: "RAZORPAY",
+      },
+    });
+
+    await expect(
+      click(request.appointmentId, consultee.userId),
+    ).resolves.toEqual({ ok: false, code: "ALREADY_PAID" });
+    expect(await consultationStatus(request.consultationId!)).toBe("APPROVED");
+  });
+
+  it("a capture the gateway holds but the app has not recorded closes nothing", async () => {
+    const { consultee, request, consumption } = await lapsedApproval();
+    await prisma.payment.update({
+      where: { id: request.payment!.id },
+      data: { isMockPayment: false },
+    });
+    mockGateway.cancelRazorpayOrder.mockResolvedValueOnce("has_live_payment");
+
+    await expect(
+      click(request.appointmentId, consultee.userId),
+    ).resolves.toEqual({ ok: false, code: "PAYMENT_IN_PROGRESS" });
+
+    expect(mockGateway.cancelRazorpayOrder).toHaveBeenCalledWith(
+      request.payment!.paymentIntent,
+    );
+    // Still PENDING, so payment reconciliation finds the capture and confirms it.
+    expect(await paymentStatus(request.payment!.id)).toBe("PENDING");
+    expect(await consumedBy(consumption)).toEqual(STILL_SPENT);
+    expect(await capture(request)).toBe("confirmed");
+    expect(await consultationStatus(request.consultationId!)).toBe("APPROVED");
+    expect(refundDoor.refundBookingPayment).not.toHaveBeenCalled();
+  });
+
+  it("a stale click leaves an open move and its order alone", async () => {
+    const { host, consultee, request, consumption } = await lapsedApproval();
+    // The committed state the move route writes from a lapsed approval.
+    await prisma.consultation.update({
+      where: { id: request.consultationId! },
+      data: { status: "PENDING" },
+    });
+    await prisma.appointmentOccurrence.update({
+      where: { id: request.occurrenceId },
+      data: { completionStatus: "RESCHEDULED" },
+    });
+    const move = await prisma.rescheduleRequest.create({
+      data: {
+        appointmentId: request.appointmentId,
+        initiatorRole: "CONSULTANT",
+        initiatedById: host.userId,
+        releasedOccurrenceIds: [request.occurrenceId],
+        originStatus: "APPROVED_PENDING_PAYMENT",
+        expiresAt: new Date(Date.now() + 24 * HOUR_MS),
+        openForAppointmentId: request.appointmentId,
+      },
+    });
+
+    await expect(
+      click(request.appointmentId, consultee.userId),
+    ).resolves.toEqual({ ok: false, code: "NOT_CLOSABLE" });
+
+    expect(await paymentStatus(request.payment!.id)).toBe("PENDING");
+    expect(await consumedBy(consumption)).toEqual(STILL_SPENT);
+    const after = await prisma.rescheduleRequest.findUniqueOrThrow({
+      where: { id: move.id },
+      select: { openForAppointmentId: true },
+    });
+    expect(after.openForAppointmentId).toBe(request.appointmentId);
+    const released = await prisma.appointmentOccurrence.findUniqueOrThrow({
+      where: { id: request.occurrenceId },
+      select: { deletedAt: true },
+    });
+    expect(released.deletedAt).toBeNull();
+  });
+
+  it("a stranger is told not found even while the booking is locked", async () => {
+    const { request } = await lapsedApproval();
+    const stranger = await seedConsultee();
+    mockLock.busy = true;
+
+    await expect(
+      click(request.appointmentId, stranger.userId),
+    ).resolves.toEqual({ ok: false, code: "NOT_FOUND" });
+  });
+
   it("refuses a window that is still open, and a booking that is not the caller's", async () => {
     const { consultee, request, consumption } = await lapsedApproval({
       expiresAt: new Date(Date.now() + 30 * 60_000),
@@ -256,7 +375,7 @@ describe("Request again closes the old order first", () => {
     expect(seat.status).toBe("CANCELLED");
   });
 
-  it("a paid trial's lapsed order closes and the trial is cancelled", async () => {
+  it("a paid trial's lapsed order closes, the trial is cancelled and its time is announced", async () => {
     const host = await seedHost();
     await publishEveryHour(host);
     const buyer = await seedBuyer();
@@ -305,6 +424,17 @@ describe("Request again closes the old order first", () => {
       },
     });
 
+    const waiting = await seedConsultee();
+    const interest = await prisma.windowBackupInterest.create({
+      data: {
+        consultantProfileId: host.consultantProfileId,
+        userId: waiting.userId,
+        windowStart: startsAt,
+        windowEnd: new Date(startsAt.getTime() + 30 * 60_000),
+        planKind: "SUBSCRIPTION",
+      },
+    });
+
     await expect(click(trial.appointmentId, buyer.userId)).resolves.toEqual({
       ok: true,
       closed: 1,
@@ -316,6 +446,12 @@ describe("Request again closes the old order first", () => {
       select: { status: true, pendingPaymentUrl: true },
     });
     expect(row).toEqual({ status: "CANCELLED", pendingPaymentUrl: null });
+    // The learner waiting on the released time hears it is free.
+    const heard = await prisma.windowBackupInterest.findUniqueOrThrow({
+      where: { id: interest.id },
+      select: { status: true },
+    });
+    expect(heard.status).toBe("NOTIFIED");
   });
 
   it("a webinar seat's lapsed order closes only the caller's seat", async () => {

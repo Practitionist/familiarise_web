@@ -18,6 +18,16 @@ const REFUSALS: Record<RequestAgainRefusal, { status: number; error: string }> =
   {
     NOT_FOUND: { status: 404, error: "No booking of yours was found here." },
     ALREADY_PAID: { status: 409, error: REQUEST_AGAIN_ALREADY_PAID },
+    PAYMENT_IN_PROGRESS: {
+      status: 409,
+      error:
+        "Your earlier payment is still going through. Once it lands, that booking is confirmed, or the money is refunded if the time is no longer free. Check back in a few minutes.",
+    },
+    GATEWAY_UNCHECKED: {
+      status: 503,
+      error:
+        "We could not check your earlier payment just now, so nothing was closed. Try again in a minute.",
+    },
     PAY_WINDOW_OPEN: {
       status: 409,
       error:

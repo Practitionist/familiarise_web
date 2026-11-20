@@ -44,13 +44,18 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
-function render(closeFirst: boolean) {
+type Row = { paymentStatus: string; expiresAt: Date | string | null };
+const lapsed: Row[] = [
+  { paymentStatus: "PENDING", expiresAt: new Date(Date.now() - 60_000) },
+];
+
+function render(payments: Row[]) {
   act(() =>
     root.render(
       <RequestAgainButton
         appointmentId={BOOKING}
         href={HREF}
-        closeFirst={closeFirst}
+        payments={payments}
       >
         Book again
       </RequestAgainButton>,
@@ -99,7 +104,7 @@ describe("openOrderPastWindow", () => {
 describe("RequestAgainButton", () => {
   it("with no open order, navigates without asking or calling the route", () => {
     const fetchSpy = answering(200, { closed: 0 });
-    render(false);
+    render([]);
     expect(buttonNamed("Book again").getAttribute("href")).toBe(HREF);
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(document.body.textContent).not.toContain(REQUEST_AGAIN_WARNING);
@@ -107,7 +112,7 @@ describe("RequestAgainButton", () => {
 
   it("warns first, closes the old order through the route, then navigates", async () => {
     const fetchSpy = answering(200, { closed: 1 });
-    render(true);
+    render(lapsed);
 
     act(() => buttonNamed("Book again").click());
     expect(document.body.textContent).toContain(REQUEST_AGAIN_WARNING);
@@ -129,14 +134,29 @@ describe("RequestAgainButton", () => {
 
   it("a capture that won first: says so and never starts the new request", async () => {
     answering(409, { code: "ALREADY_PAID", error: REQUEST_AGAIN_ALREADY_PAID });
-    render(true);
+    render(lapsed);
 
     act(() => buttonNamed("Book again").click());
     await act(async () => buttonNamed("Close it and continue").click());
 
     expect(mockRouter.push).not.toHaveBeenCalled();
     expect(mockRouter.refresh).toHaveBeenCalled();
+    // The refresh brings the captured row, and the notice stays.
+    render([{ paymentStatus: "SUCCEEDED", expiresAt: null }]);
     expect(document.body.textContent).toContain(REQUEST_AGAIN_ALREADY_PAID);
+  });
+
+  it("decides at the click: a window that closed after the render still closes first", async () => {
+    const fetchSpy = answering(200, { closed: 1 });
+    render([
+      { paymentStatus: "PENDING", expiresAt: new Date(Date.now() + 20) },
+    ]);
+    await act(() => new Promise((resolve) => setTimeout(resolve, 40)));
+
+    act(() => buttonNamed("Book again").click());
+
+    expect(document.body.textContent).toContain(REQUEST_AGAIN_WARNING);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
 
