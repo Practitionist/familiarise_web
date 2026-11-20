@@ -66,7 +66,7 @@ Priya Anderson refers Charlotte Brown, and Charlotte's first paid booking is del
 
 ## 5. Refunds and restoring credits
 
-When a payment that used credits is refunded, cancelled or ends unpaid (the buyer's cancel, a superseded order, the abandoned sweep, a payment failure, the reconcile, or an expert declining the request), `reverseCreditsForPayment` returns the value through the `ReferralCreditUsage` rows. A full refund restores everything. A partial refund restores in proportion to the cumulative refunded amount, so rounding never drifts across several partial refunds. A credit-funded class seat, whose refund rows are for ₹0, uses `restoreCreditsForPaymentUpTo`, which restores up to a stated amount and keeps the usage row at 0 so later returns have a stable basis.
+When a payment that used credits is refunded, cancelled or ends unpaid (the buyer's cancel, a superseded order, the abandoned sweep, a payment failure, the reconcile, an expert declining the request, or an approved request that lapses or is withdrawn before it is paid), `reverseCreditsForPayment` returns the value through the `ReferralCreditUsage` rows. A full refund restores everything. A partial refund restores in proportion to the cumulative refunded amount, so rounding never drifts across several partial refunds. A credit-funded class seat, whose refund rows are for ₹0, uses `restoreCreditsForPaymentUpTo`, which restores up to a stated amount and keeps the usage row at 0 so later returns have a stable basis.
 
 What a restore is worth depends on who caused the refund, read from the refund row's `metadata.initiatedByUserId` through `refundInitiatedByBuyer` (the buyer's own id, or an unreadable value, counts as a buyer cancel).
 

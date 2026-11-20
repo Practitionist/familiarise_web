@@ -274,10 +274,16 @@ CANCELLED. As of wave 5 (#1321) the unscheduled
 `app/api/cleanup/approval-payments` route is deleted and its work rides inside
 the abandoned-payments run, so there is one code path and one semantics. Sibling
 sweeps with _different_ cohorts still end in CANCELLED, so the one-outcome rule
-is about approved-but-unpaid specifically, not all abandonment. No money moves
-in this sweep, because a paid row never reaches the expiry: `SUCCEEDED` payments
-are filtered out by the cohort read and again by the CAS `where`, and the payment
-rows themselves expire from `PENDING` only. The sweep that does refund is a
+is about approved-but-unpaid specifically, not all abandonment. No captured
+money moves in this sweep, because a paid row never reaches the expiry:
+`SUCCEEDED` payments are filtered out by the cohort read and again by the CAS
+`where`, and the payment rows themselves expire from `PENDING` only. What does
+move is the referral credit the open order used: `lapseApprovedRequest` claims
+the orders with one `updateManyAndReturn` on `PENDING` and calls
+`reverseCreditsForPayment(paymentId, tx)` for each row that claim moved, in the
+same transaction, so a captured, already-expired or second-lapsed order returns
+nothing (`docs/decisions/2026-11-20-lapse-returns-referral-credit.md`; no
+backfill). It does not return the discount-code use or the engagement. The sweep that does refund is a
 different cohort — `expireApprovedUnallocatedSubscriptions` in
 `scripts/appointments/expire-stale-requests.ts` expires an `APPROVED` plan that
 never had a confirmed session and has no open proposal (`approvedUnallocatedWhere`,
