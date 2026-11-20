@@ -5,7 +5,7 @@
  */
 
 import * as React from "react";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Prisma, User } from "@prisma/client";
 
@@ -21,11 +21,24 @@ jest.mock(
   }),
 );
 let mockPathname = "/dashboard/consultee/cp_learner/settings/profile";
+const mockSessionUser = {
+  id: "u_operator",
+  name: "Natalie Brown",
+  role: "STAFF",
+  staffProfileId: "sp_1",
+  onboardingCompleted: true,
+  organizationMemberships: [],
+};
+jest.mock("../../lib/auth-client", () => ({
+  useSession: () => ({ data: { user: mockSessionUser }, isPending: false }),
+}));
+jest.mock("../../hooks/use-hydrated", () => ({ useHydrated: () => true }));
 jest.mock("next/navigation", () => ({
   useParams: () => ({ consulteeId: "cp_learner" }),
   usePathname: () => mockPathname,
 }));
 
+import { ContextSwitcher } from "../../components/dashboard/ContextSwitcher";
 import HomePageClient from "../../app/dashboard/consultee/[consulteeId]/(features)/home/HomePageClient";
 import ConsulteeSettingsLayout from "../../app/dashboard/consultee/[consulteeId]/(features)/settings/layout";
 import { UserProvider } from "../../app/dashboard/consultee/[consulteeId]/UserContext";
@@ -185,6 +198,26 @@ describe("Learner settings for a non-owner", () => {
     renderSettings(operator);
     expect(screen.getByText("Learning profile")).toBeInTheDocument();
     expect(screen.queryByText(/^Your /)).toBeNull();
+    expect(screen.queryByRole("link", { name: /Account/ })).toBeNull();
+    expect(screen.queryByRole("link", { name: /Notifications/ })).toBeNull();
+    mockPathname = "/dashboard/consultee/cp_learner/settings/profile";
+  });
+});
+
+describe("ContextSwitcher in operator view", () => {
+  it("marks the Staff facet current and says whose dashboard is open", async () => {
+    mockPathname = "/dashboard/consultee/cp_learner/home";
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ContextSwitcher viewing={{ ownerName: "Samantha Anderson" }} />
+      </QueryClientProvider>,
+    );
+    const trigger = screen.getByRole("button", { name: /switch dashboard/ });
+    expect(trigger).toHaveTextContent("Natalie Brown");
+    expect(trigger).toHaveTextContent("Staff · viewing Samantha Anderson");
+    fireEvent.keyDown(trigger, { key: "Enter" });
+    const staff = await screen.findByRole("menuitem", { name: /Staff/ });
+    expect(staff).toHaveAttribute("aria-current", "page");
     mockPathname = "/dashboard/consultee/cp_learner/settings/profile";
   });
 });

@@ -76,3 +76,19 @@ export function personalShellPeople({
   };
   return { account: { ...self, roleLabel: sideLabel }, identity: self };
 }
+
+/**
+ * The switcher in operator view: the operator's platform facet is current, and
+ * the trigger says whose dashboard is open. Null when the viewer has no platform facet.
+ */
+export function operatorSwitcherState(
+  platformFacets: readonly { key: string; label: string }[],
+  ownerName: string | null,
+): { activeKey: string; label: string } | null {
+  const facet = platformFacets[0];
+  if (!facet) return null;
+  return {
+    activeKey: facet.key,
+    label: `${facet.label} · viewing ${ownerName ?? "this user"}`,
+  };
+}

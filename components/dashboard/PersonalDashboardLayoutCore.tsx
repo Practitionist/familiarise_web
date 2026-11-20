@@ -470,6 +470,7 @@ export function PersonalDashboardLayoutCore<P>({
   const ownsProfile =
     userDetails?.consultantProfileId === routeParam ||
     userDetails?.consulteeProfileId === routeParam;
+  const operatorView = !!operatorTree && !ownsProfile;
   const { account, identity } = personalShellPeople({
     viewer: {
       name: userDetails?.name ?? sessionName,
@@ -480,7 +481,7 @@ export function PersonalDashboardLayoutCore<P>({
       name: profileDisplayName?.(profileData) ?? null,
       image: profileDisplayImage?.(profileData) ?? null,
     },
-    operatorView: !!operatorTree && !ownsProfile,
+    operatorView,
     sideLabel: chipRole,
   });
   const operatorBanner =
@@ -508,7 +509,13 @@ export function PersonalDashboardLayoutCore<P>({
       // An operator inspecting someone's dashboard can't open their settings.
       findSettings={ownsProfile ? settingsGroups : undefined}
       badges={badges}
-      switcher={<ContextSwitcher />}
+      switcher={
+        <ContextSwitcher
+          viewing={
+            operatorView ? { ownerName: identity.name ?? null } : undefined
+          }
+        />
+      }
       account={{
         ...account,
         settingsHref: avatarSettingsHref(ownsProfile, basePath, userDetails),

@@ -687,7 +687,8 @@ export default function HomeTab({
           href: link.requestAgainHref,
         })),
         rescheduleProposals: proposalsAwaiting(eventsData, learner?.userId),
-        sessionsToRate: (reviewable ?? [])
+        // Both keys are session-scoped and not per learner: a cached owner read must not reach an operator view.
+        sessionsToRate: (isOwner ? (reviewable ?? []) : [])
           .filter((s) => !s.existingReview)
           .slice(0, RATE_PROMPT_LIMIT)
           .map((s) => ({
@@ -710,7 +711,7 @@ export default function HomeTab({
           paymentId: r.paymentId,
           amountText: formatCurrencyAmount(r.amountPaise, r.currency),
         })),
-        removalReviews: openRemovalReviews(sessionCases),
+        removalReviews: isOwner ? openRemovalReviews(sessionCases) : [],
         now,
       }),
       ...lowSessionSubscriptions(eventsData, now),
@@ -725,6 +726,7 @@ export default function HomeTab({
       reviewable,
       revisions,
       sessionCases,
+      isOwner,
       now,
     ],
   );

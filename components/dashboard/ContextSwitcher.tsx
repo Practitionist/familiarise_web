@@ -43,6 +43,7 @@ import {
   type DashboardFacetKind,
   type DashboardFacetMembership,
 } from "@/lib/labels/personal-dashboard";
+import { operatorSwitcherState } from "@/lib/dashboard/operator-view";
 
 interface AllMembershipsRow {
   organizationId: string;
@@ -180,6 +181,8 @@ export interface ContextSwitcherProps {
    * which may be absent from the session (PENDING_VERIFICATION).
    */
   current?: { name: string; image?: string | null; label: string };
+  /** Set in operator view: the route profile is someone else's; names its owner. */
+  viewing?: { ownerName: string | null };
 }
 
 /**
@@ -189,7 +192,10 @@ export interface ContextSwitcherProps {
  * expert when entitled. Always rendered — it hosts those two actions even for
  * a single-facet user.
  */
-export function ContextSwitcher({ current }: Readonly<ContextSwitcherProps>) {
+export function ContextSwitcher({
+  current,
+  viewing,
+}: Readonly<ContextSwitcherProps>) {
   const { data: session } = useSession();
   const pathname = usePathname() ?? "";
   const collapsed = useSidebarCollapsed();
@@ -242,7 +248,10 @@ export function ContextSwitcher({ current }: Readonly<ContextSwitcherProps>) {
     });
   }, [user, allMemberships]);
 
-  const activeKey = activeFacetKey(pathname);
+  const operatorView = viewing
+    ? operatorSwitcherState(facets.platform, viewing.ownerName)
+    : null;
+  const activeKey = operatorView?.activeKey ?? activeFacetKey(pathname);
   const activeFacet = [
     ...facets.you,
     ...facets.organizations,
@@ -261,6 +270,12 @@ export function ContextSwitcher({ current }: Readonly<ContextSwitcherProps>) {
       name: current.name,
       image: current.image ?? null,
       label: current.label,
+    };
+  } else if (operatorView) {
+    trigger = {
+      name: userName,
+      image: user?.image ?? seeded?.image ?? null,
+      label: operatorView.label,
     };
   } else if (activeFacet?.kind === "organization") {
     trigger = {
