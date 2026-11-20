@@ -127,10 +127,13 @@ function eventOf(appointment: TDetailAppointment): {
 }
 
 export function mapAppointmentDetail(
-  detail: TAppointmentDetail,
+  /** `rosterVisible` from `scopeAppointmentDetail`: every attendee's seat was sent. */
+  detail: TAppointmentDetail & { rosterVisible?: boolean },
   role: Role,
   now: Date = new Date(),
   viewerConsultantId?: string,
+  /** The signed-in user: their own seat is the only one a learner's view reads. */
+  viewerUserId?: string | null,
 ): { vm: AppointmentVM } {
   const { appointment } = detail;
   const facts = eventOf(appointment);
@@ -192,11 +195,16 @@ export function mapAppointmentDetail(
       (a, b) => toDate(a.startsAt).getTime() - toDate(b.startsAt).getTime(),
     );
 
-  // A learner's read is scoped to their own seat and payments.
+  // The viewer's own seat only: a scoped roster holds just theirs, a whole one (plan
+  // manager, presenter, staff) is matched by user id, and with no id there is none.
   const group = !!appointment.webinar || !!appointment.class;
   const ownSeat =
     role === "consultee" && group
-      ? appointment.participants.find((p) => p.role === "CONSULTEE")
+      ? appointment.participants.find(
+          (p) =>
+            p.role === "CONSULTEE" &&
+            (detail.rosterVisible ? p.userId === viewerUserId : true),
+        )
       : undefined;
   // The list's own facts and input, so the page files the booking in the list's tab.
   const holdFacts = appointment.trial

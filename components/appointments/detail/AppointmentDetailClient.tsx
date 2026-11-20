@@ -360,7 +360,13 @@ export function AppointmentDetailClient({
   });
 
   const mapped = detail
-    ? mapAppointmentDetail(detail, role, new Date(), consultantId)
+    ? mapAppointmentDetail(
+        detail,
+        role,
+        new Date(),
+        consultantId,
+        session?.user?.id ?? null,
+      )
     : null;
   // #1540 — which calls of this booking the viewer has already rated, in ONE
   // request; #1554 made the booking one Appointment, so that is one row.

@@ -17,6 +17,7 @@ import {
   seedHost,
   seedOneToOne,
 } from "./harness";
+import { seedHeldSeat, seedWebinar } from "./harness-seats";
 
 const PAST = () => new Date(Date.now() - 60_000);
 const FUTURE = () => new Date(Date.now() + 30 * 60_000);
@@ -103,5 +104,23 @@ describe("the booking page buckets a booking as the list does", () => {
     const { list, detail } = await buckets(consultee, appointmentId);
     expect(list).toEqual(expected);
     expect(detail).toEqual(list);
+  });
+
+  it("a plan manager who sees the roster is never handed another learner's seat", async () => {
+    const webinar = await seedWebinar();
+    // The roster's first learner seat is someone else's lapsed hold.
+    await seedHeldSeat(webinar, { status: "PENDING", expiresAt: PAST() });
+    const detail = await readAppointmentDetail(webinar.appointmentId);
+    const { vm } = mapAppointmentDetail(
+      scopeAppointmentDetail(detail!, {
+        userId: webinar.host.userId,
+        managesGroupPlan: true,
+      }),
+      "consultee",
+      new Date(),
+      undefined,
+      webinar.host.userId,
+    );
+    expect([vm.seatStatus, vm.bucket]).toEqual([null, "upcoming"]);
   });
 });
