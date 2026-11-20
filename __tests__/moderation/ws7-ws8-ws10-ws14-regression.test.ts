@@ -441,58 +441,66 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
     const fixtures = [
       {
         id: "disp-open-soon",
+        paymentGateway: "RAZORPAY",
         status: "NEEDS_RESPONSE",
         dueBy: new Date(nowMs + 2 * dayMs),
       },
       {
         id: "disp-warning-overdue",
+        paymentGateway: "RAZORPAY",
         status: "WARNING_NEEDS_RESPONSE",
         dueBy: new Date(nowMs - 2 * dayMs),
       },
       {
         id: "disp-review-overdue",
+        paymentGateway: "RAZORPAY",
         status: "UNDER_REVIEW",
         dueBy: new Date(nowMs - 2 * dayMs),
       },
     ];
 
-    mockDispute.count.mockImplementation(
-      async ({ where }: { where?: Record<string, unknown> }) => {
-        if (!where || Object.keys(where).length === 0) {
-          return fixtures.length;
+    // The urgent read and the stats counts apply the same where; one filter answers both.
+    const matching = (where: Record<string, unknown> = {}) =>
+      fixtures.filter((item) => {
+        const statusFilter = where.status;
+        if (typeof statusFilter === "string" && item.status !== statusFilter) {
+          return false;
         }
-        return fixtures.filter((item) => {
-          const statusFilter = where.status;
-          if (
-            typeof statusFilter === "string" &&
-            item.status !== statusFilter
-          ) {
-            return false;
-          }
-          if (
-            statusFilter &&
-            typeof statusFilter === "object" &&
-            "in" in statusFilter &&
-            Array.isArray(statusFilter.in) &&
-            !statusFilter.in.includes(item.status)
-          ) {
-            return false;
-          }
-          const dueByFilter = where.dueBy;
-          if (
-            dueByFilter &&
-            typeof dueByFilter === "object" &&
-            "lte" in dueByFilter &&
-            dueByFilter.lte instanceof Date &&
-            item.dueBy.getTime() > dueByFilter.lte.getTime()
-          ) {
-            return false;
-          }
-          return true;
-        }).length;
-      },
+        if (
+          statusFilter &&
+          typeof statusFilter === "object" &&
+          "in" in statusFilter &&
+          Array.isArray(statusFilter.in) &&
+          !statusFilter.in.includes(item.status)
+        ) {
+          return false;
+        }
+        const dueByFilter = where.dueBy;
+        if (
+          dueByFilter &&
+          typeof dueByFilter === "object" &&
+          "lte" in dueByFilter &&
+          dueByFilter.lte instanceof Date &&
+          item.dueBy.getTime() > dueByFilter.lte.getTime()
+        ) {
+          return false;
+        }
+        return true;
+      });
+    mockDispute.count.mockImplementation(
+      async ({ where }: { where?: Record<string, unknown> }) =>
+        matching(where).length,
     );
-    mockDispute.findMany.mockResolvedValue([]);
+    // The urgent banner reads its rows; the page read (it pages with `take`) stays empty here.
+    mockDispute.findMany.mockImplementation(
+      async ({
+        where,
+        take,
+      }: {
+        where?: Record<string, unknown>;
+        take?: number;
+      }) => (take === undefined ? matching(where) : []),
+    );
 
     const req = new NextRequest("http://localhost/api/admin/disputes");
     const res = await getAdminDisputesListRoute(req);
