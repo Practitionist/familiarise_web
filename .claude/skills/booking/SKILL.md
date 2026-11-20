@@ -278,12 +278,14 @@ is about approved-but-unpaid specifically, not all abandonment. No captured
 money moves in this sweep, because a paid row never reaches the expiry:
 `SUCCEEDED` payments are filtered out by the cohort read and again by the CAS
 `where`, and the payment rows themselves expire from `PENDING` only. What does
-move is the referral credit the open order used: `lapseApprovedRequest` claims
-the orders with one `updateManyAndReturn` on `PENDING` and calls
-`reverseCreditsForPayment(paymentId, tx)` for each row that claim moved, in the
-same transaction, so a captured, already-expired or second-lapsed order returns
-nothing (`docs/decisions/2026-11-20-lapse-returns-referral-credit.md`; no
-backfill). It does not return the discount-code use or the engagement. The sweep that does refund is a
+move is what the open order's checkout consumed: after the request CAS wins,
+`lapseApprovedRequest` calls `expirePendingPaymentsInTx(tx, …)`, which claims
+each `PENDING` order by its own CAS and returns its referral credit, code use and
+engagement in the same transaction. A captured, already-expired or second-lapsed
+order returns nothing, and no gateway cancel runs. An approval re-mint returns
+the old order's credit at once (`claimRowForRemint`), because the new order
+charges the full price (`docs/decisions/2026-11-20-unpaid-approval-orders-return-what-checkout-consumed.md`; no
+backfill). The sweep that does refund is a
 different cohort — `expireApprovedUnallocatedSubscriptions` in
 `scripts/appointments/expire-stale-requests.ts` expires an `APPROVED` plan that
 never had a confirmed session and has no open proposal (`approvedUnallocatedWhere`,
