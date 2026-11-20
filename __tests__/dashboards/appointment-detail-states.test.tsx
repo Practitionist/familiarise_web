@@ -13,9 +13,11 @@ jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn() }),
 }));
 jest.mock("@tanstack/react-query", () => ({
-  useQuery: () => ({
-    data: currentDetail,
+  useQuery: ({ queryKey }: { queryKey: readonly unknown[] }) => ({
+    data:
+      queryKey[0] === "reviewable-session" ? currentReviewable : currentDetail,
     isLoading: false,
+    isError: false,
     error: null,
     refetch: jest.fn(),
   }),
@@ -58,6 +60,7 @@ import type { TAppointmentDetail } from "@/lib/data/appointment-detail";
 const NOW = Date.now();
 const DAY = 24 * 60 * 60 * 1000;
 let currentDetail: TAppointmentDetail;
+let currentReviewable: unknown[] = [];
 let viewerId = "u-ethan";
 
 const user = (id: string, name: string) => ({ id, name, image: null });
@@ -243,9 +246,8 @@ describe("consultee · REQUESTED subscription (#1675 owner decision 2026-09-20)"
     // A wait is not an action: the badge's reason line says it, the banner stays away.
     expect(html).toContain("Waiting for Ethan to answer (within 48 hours).");
     expect(html).not.toContain('aria-label="Needs you"');
-    // Nothing was ever held or completed, so the profile-review nudge does
-    // not appear before there is anything to review.
-    expect(html).not.toContain("Reviewed this expert");
+    // Nothing was ever held, so the review route offers nothing and no form appears.
+    expect(html).not.toContain('id="review"');
     // Demoted: the destructive control renders after "Get help", not
     // leading the action bar the way an actionable Pay/Approve would.
     expect(html.indexOf("Get help")).toBeLessThan(
@@ -255,11 +257,29 @@ describe("consultee · REQUESTED subscription (#1675 owner decision 2026-09-20)"
 });
 
 describe("consultee · COMPLETED subscription", () => {
-  it("shows the review-this-expert nudge once the booking is done", () => {
+  it("offers the review form in the page, never a link to the public profile", () => {
     viewerId = "u-rachel";
     currentDetail = subscriptionDetail({ status: "COMPLETED" });
+    // The reviewable-sessions route's answer for this appointment.
+    currentReviewable = [
+      {
+        appointmentId: "appt-1",
+        consultantProfileId: "cp-1",
+        consultantName: "Ethan",
+        track: "ONE_TO_ONE",
+        ratingUnitId: null,
+        appointmentType: "SUBSCRIPTION",
+        title: "Comprehensive Subscription",
+        heldAt: new Date(NOW - DAY).toISOString(),
+        reviewed: false,
+        existingReview: null,
+      },
+    ];
     const html = render("consultee");
-    expect(html).toContain("Reviewed this expert");
+    currentReviewable = [];
+    expect(html).toContain('id="review"');
+    expect(html).toContain("Write a review of Ethan");
+    expect(html).not.toContain("/explore/experts/");
   });
 });
 

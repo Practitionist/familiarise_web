@@ -3,7 +3,7 @@
 /**
  * #705 — the ONE public-review form.
  *
- * Shared by the profile page, the post-call sheet and nothing else. It exists
+ * Shared by the expert's profile and the booking's detail page. It exists
  * as its own component because the alternative is three copies drifting apart,
  * and this form carries constraints that must not drift: everyone is asked
  * identically after every held session, with no sentiment gate and no

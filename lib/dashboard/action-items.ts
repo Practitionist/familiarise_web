@@ -24,6 +24,9 @@ import {
  * and summaries belong further down the page.
  */
 
+/** The id of a booking's review form on its detail page. */
+export const SESSION_REVIEW_ANCHOR = "review";
+
 /** A session is "imminent" inside this window — close enough to act on. */
 const IMMINENT_MS = 60 * 60 * 1000; // 1 hour
 
@@ -262,7 +265,7 @@ export interface ConsulteeActionInput {
     counterpartName: string;
   }[];
   /** #1300 — held sessions with no review yet; the prompt lives here, not in the room. */
-  sessionsToRate?: { key: string; consultantName: string; href: string }[];
+  sessionsToRate?: { appointmentId: string; consultantName: string }[];
   /** The expert asked for a revised upload (review status NEEDS_REVISION). */
   documentsToRevise?: { id: string; name: string; appointmentId: string }[];
   /** A refund the gateway rejected; staff re-issue it, the learner can follow up. */
@@ -371,12 +374,13 @@ export function deriveConsulteeActionItems({
 
   for (const session of sessionsToRate) {
     items.push({
-      key: `rate:${session.key}`,
+      key: `rate:${session.appointmentId}`,
       severity: "info",
       title: `How was your session with ${session.consultantName}?`,
       body: "A short review helps other learners choose.",
       ctaLabel: "Rate",
-      ctaHref: session.href,
+      // The booking's own review form: the public profile 404s until the expert is verified.
+      ctaHref: `${basePath}/appointments/${session.appointmentId}#${SESSION_REVIEW_ANCHOR}`,
     });
   }
 

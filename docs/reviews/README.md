@@ -38,6 +38,7 @@ The table below lists the files the reviews subsystem is built from.
 | `scripts/db/preflight-push.ts`                         | `npm run db:preflight`, the destructive-push guard                                                                                           |
 | `components/reviews/ProfileReviewComposer.tsx`         | The composer, a client island on the expert's profile                                                                                        |
 | `components/reviews/ReviewComposer.tsx`                | The form the island wraps; always `POST`s, edit or not                                                                                       |
+| `components/reviews/SessionReviewCard.tsx`             | The same form on a booking's detail page, the target of Home's "Rate" prompt                                                                 |
 | `__tests__/reviews/rating-aggregation.test.ts`         | The two-track scoring pins                                                                                                                   |
 | `__tests__/reviews/public-review-allowlist.test.ts`    | Pins the public projection against leakage                                                                                                   |
 | `__tests__/reviews/review-privacy.test.ts`             | Pins the anonymity strip                                                                                                                     |
