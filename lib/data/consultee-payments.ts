@@ -36,6 +36,7 @@ import type {
   PaymentRowInput,
 } from "@/lib/dashboard/money-state";
 import { isPreMintIntent } from "@/lib/payments/pre-mint-intent";
+import { liveParticipant } from "@/lib/booking/participants";
 import {
   BUYER_PAYMENT_DISPLAY_SELECT,
   DISCOUNT_CODE_SUMMARY_SELECT,
@@ -295,6 +296,12 @@ export function paymentRowSelect(userId: string) {
         },
         webinar: { select: { status: true, webinarPlan: planSelect } },
         class: { select: { status: true, classPlan: planSelect } },
+        // The payer's own event seat, which the booking page reads too.
+        participants: {
+          where: { ...liveParticipant(userId), role: "CONSULTEE" as const },
+          select: { status: true },
+          take: 1,
+        },
         trial: {
           select: {
             status: true,
@@ -405,6 +412,8 @@ export function toRow(p: PaymentRecord): ConsulteePaymentRow {
     holdExpiresAt,
     history: a?.statusHistory ?? [],
     source,
+    seatStatus:
+      a?.webinar || a?.class ? (a.participants[0]?.status ?? null) : null,
     plan: a ? planOf(a) : null,
     names: { payer: "you", consultant: consultantName },
   };

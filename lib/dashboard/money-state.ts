@@ -352,6 +352,12 @@ function planEndedShortWhy(input: BookingPresentationInput): string | null {
   }
   return head;
 }
+/** Stored statuses a late capture still confirms, while the booked time is free. */
+const CAPTURE_CAN_CONFIRM = new Set([
+  "PENDING",
+  "APPROVED_PENDING_PAYMENT",
+  "AWAITING_PAYMENT",
+]);
 const OPEN_DISPUTES = new Set([
   "WARNING_NEEDS_RESPONSE",
   "WARNING_UNDER_REVIEW",
@@ -541,6 +547,13 @@ function deriveMoney(
   const declined =
     unpaid.length > 0 && unpaid.every((x) => x.paymentStatus === "FAILED");
   const ifCharged = `If ${you ? "you were" : `${p} was`} charged, the money is refunded automatically.`;
+  // Only an EXPIRED or FAILED order, or a booking that has ended, refunds a late
+  // capture; a PENDING order on an open booking confirms it instead.
+  const lateCaptureMayConfirm =
+    !!pending &&
+    pending.gatewayOrderMinted !== false &&
+    (CAPTURE_CAN_CONFIRM.has(normalizeStatus(input.request?.status)) ||
+      normalizeStatus(input.seatStatus) === "HELD");
   // A CHARGE_ORG overage child is the organisation's charge, never a co-pay.
   const coPay = input.childPayments.filter(
     (x) => x.paymentStatus === "SUCCEEDED" && !isSponsoredPayment(x),
@@ -672,6 +685,15 @@ function deriveMoney(
         "NOT_DUE",
         "Not charged",
         `Nothing was charged — the payment link expired${on}.`,
+      );
+    }
+    if (lateCaptureMayConfirm) {
+      const whose = you ? "your" : `${p}'s`;
+      const what = input.seatStatus ? "a place" : "the time";
+      return build(
+        "NOT_DUE",
+        "Not completed",
+        `The payment window closed${on}. If ${whose} payment still goes through, the booking is confirmed while ${what} can still be booked; otherwise the money is refunded automatically.`,
       );
     }
     const what = declined

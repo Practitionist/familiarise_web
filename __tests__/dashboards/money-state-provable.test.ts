@@ -6,7 +6,8 @@
  * One payment, one sentence: the booking page, the Billing history row and the
  * payment page read the same stored rows through their real queries and must
  * print the same money state. "Nothing was charged" is said only when no
- * gateway order ever existed; a pay window that closed never reads "Not due yet".
+ * gateway order ever existed, "refunded automatically" only when a late capture
+ * is refunded, and a pay window that closed never reads "Not due yet".
  */
 
 import { projectRow } from "../fixtures/prisma-projection";
@@ -94,6 +95,9 @@ import { formatInViewerZone } from "@/lib/time/viewer-zone";
 const MIN = 60_000;
 const ZONE = "UTC";
 const IF_CHARGED = "If you were charged, the money is refunded automatically.";
+/** A PENDING order on an open booking: a late capture confirms it while the time is free. */
+const stillOpen = (closed: string, who = "your") =>
+  `The payment window closed on ${closed}. If ${who} payment still goes through, the booking is confirmed while the time can still be booked; otherwise the money is refunded automatically.`;
 
 interface Stored {
   status: string;
@@ -103,7 +107,30 @@ interface Stored {
   expiresAt?: Date;
   refunded?: boolean;
   history?: { fromStatus: string; toStatus: string }[];
+  /** A webinar seat held by the learner, in place of the 1:1. */
+  seat?: string;
 }
+
+/** The learner's webinar seat, as the event and its roster hold it. */
+const webinarSeat = (seat: string) => ({
+  appointmentType: "WEBINAR",
+  webinarId: "w-1",
+  webinar: {
+    id: "w-1",
+    status: "SCHEDULED",
+    webinarPlanId: "plan-1",
+    webinarPlan: { ...plan, collaborators: [] },
+  },
+  participants: [
+    {
+      userId: "u-l",
+      role: "CONSULTEE",
+      status: seat,
+      deletedAt: null,
+      user: learner.user,
+    },
+  ],
+});
 
 /** The one Payment row and the 1:1 it paid for, as the tables hold them. */
 function seed(s: Stored) {
@@ -172,9 +199,13 @@ function seed(s: Stored) {
     createdAt: later(-20 * MIN),
   }));
   const shared = {
-    appointmentType: "CONSULTATION",
-    consultationId: "c-1",
-    consultation,
+    ...(s.seat
+      ? webinarSeat(s.seat)
+      : {
+          appointmentType: "CONSULTATION",
+          consultationId: "c-1",
+          consultation,
+        }),
     statusHistory,
     supportCases: [],
   };
@@ -257,9 +288,57 @@ const STATES: [string, Stored, Partial<Shown>][] = [
       payment: "PENDING",
       expiresAt: windowClosed,
     },
+    { label: "Not completed", line: stillOpen(day(windowClosed)) },
+  ],
+  [
+    "pending, pay window passed (an approval link not yet swept)",
+    {
+      status: "APPROVED_PENDING_PAYMENT",
+      source: "REQUEST_SUBMITTED",
+      payment: "PENDING",
+      expiresAt: windowClosed,
+    },
+    { label: "Not completed", line: stillOpen(day(windowClosed)) },
+  ],
+  [
+    "a held webinar seat, pay window open",
+    {
+      status: "SCHEDULED",
+      source: "DIRECT_CHECKOUT",
+      payment: "PENDING",
+      expiresAt: windowOpen,
+      seat: "HELD",
+    },
+    {
+      label: "Due",
+      line: `₹500.00 due · Razorpay · link valid until ${dayTime(windowOpen)}`,
+    },
+  ],
+  [
+    "a held webinar seat, pay window passed",
+    {
+      status: "SCHEDULED",
+      source: "DIRECT_CHECKOUT",
+      payment: "PENDING",
+      expiresAt: windowClosed,
+      seat: "HELD",
+    },
     {
       label: "Not completed",
-      line: `The payment link expired on ${day(windowClosed)}. ${IF_CHARGED}`,
+      line: stillOpen(day(windowClosed)).replace("the time", "a place"),
+    },
+  ],
+  [
+    "pending order on a booking that was cancelled",
+    {
+      status: "CANCELLED",
+      source: "DIRECT_CHECKOUT",
+      payment: "PENDING",
+      expiresAt: windowClosed,
+    },
+    {
+      label: "Not completed",
+      line: `This order was cancelled. ${IF_CHARGED}`,
     },
   ],
   [
@@ -331,26 +410,29 @@ describe("every learner screen says the same thing about one payment", () => {
     expect(bookingPage).toMatchObject(expected);
   });
 
-  it("a closed window never reads Not due yet, for the learner or the expert", async () => {
-    seed(STATES[1][1]);
-    const lines = (await screens()).map((s) => s.line);
-    const detail = await readAppointmentDetail("appt-1");
-    const expertPage = deriveBookingPresentation(
-      toPresentationInput(detail!, {
-        viewerId: "u-e",
-        names: presentationNames(detail!, { role: "consultant", name: null }),
-        sponsorOrgName: null,
-      }),
-      "CONSULTANT",
-      { viewerZone: ZONE },
-    ).moneyState.line;
-    for (const line of [...lines, expertPage]) {
-      expect(line).not.toMatch(/Not due yet|Nothing was charged/);
-    }
-    expect(expertPage).toBe(
-      `The payment link expired on ${day(windowClosed)}. If Charlotte was charged, the money is refunded automatically.`,
-    );
-  });
+  it.each([1, 2])(
+    "a closed window on an open order never promises a refund or reads Not due yet, for the learner or the expert (state %i)",
+    async (i) => {
+      seed(STATES[i][1]);
+      const lines = (await screens()).map((s) => s.line);
+      const detail = await readAppointmentDetail("appt-1");
+      const expertPage = deriveBookingPresentation(
+        toPresentationInput(detail!, {
+          viewerId: "u-e",
+          names: presentationNames(detail!, { role: "consultant", name: null }),
+          sponsorOrgName: null,
+        }),
+        "CONSULTANT",
+        { viewerZone: ZONE },
+      ).moneyState.line;
+      for (const line of [...lines, expertPage]) {
+        expect(line).not.toMatch(
+          /Not due yet|Nothing was charged|If (you were|Charlotte was) charged/,
+        );
+      }
+      expect(expertPage).toBe(stillOpen(day(windowClosed), "Charlotte's"));
+    },
+  );
 });
 
 describe("the expert's Requests row and booking page agree on a checkout hold", () => {
@@ -408,9 +490,9 @@ describe("the expert's Requests row and booking page agree on a checkout hold", 
     );
   });
 
-  it("a row left open past the window reads as lapsed", async () => {
+  it("a row left open past the window says a late payment can still confirm it", async () => {
     expect(await inboxMoney("CONSULTANT", hoursAhead(1))).toBe(
-      `₹1,500.00 · The payment link expired on ${formatInViewerZone(hoursAhead(0.25), ZONE, "EEE d MMM")}. If Priya Nair was charged, the money is refunded automatically.`,
+      `₹1,500.00 · ${stillOpen(formatInViewerZone(hoursAhead(0.25), ZONE, "EEE d MMM"), "Priya Nair's")}`,
     );
   });
 });
