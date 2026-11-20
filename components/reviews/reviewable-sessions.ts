@@ -30,7 +30,10 @@ export type ReviewableSessionRow = z.infer<
 
 /** Sessions the signed-in learner may review; a 401 means there is nothing to offer. */
 export async function fetchReviewableSessions(
-  filter: { consultantProfileId: string } | { appointmentId: string },
+  filter:
+    | { consultantProfileId: string }
+    | { appointmentId: string }
+    | { unreviewed: "1" },
 ): Promise<ReviewableSessionRow[]> {
   const res = await fetch(
     `/api/user/reviews/reviewable-sessions?${new URLSearchParams(filter).toString()}`,

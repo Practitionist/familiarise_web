@@ -75,6 +75,7 @@ import {
   type OpenRescheduleProposal,
 } from "@/lib/appointments/consultee-affordances";
 import type { ConsulteeMoneySummary } from "@/lib/data/consultee-payments";
+import { fetchReviewableSessions } from "@/components/reviews/reviewable-sessions";
 import type { LibraryDocument, LibraryPage } from "@/lib/library/library-query";
 import { MyAlerts } from "@/components/appointments/consultee/MyAlerts";
 import { fetchPendingPayments } from "./PendingPaymentsWidget";
@@ -473,13 +474,6 @@ function lowSessionSubscriptions(
   });
 }
 
-interface ReviewableSessionRow {
-  appointmentId: string;
-  consultantName: string | null;
-  profileIsPublic: boolean;
-  existingReview: unknown;
-}
-
 type SessionCaseRow = {
   id: string;
   category: string | null;
@@ -624,11 +618,7 @@ export default function HomeTab({
     queryKey: ["reviewable-sessions"],
     staleTime: 5 * 60_000,
     enabled: isOwner,
-    queryFn: () =>
-      fetchJson<ReviewableSessionRow[]>(
-        "/api/user/reviews/reviewable-sessions?unreviewed=1",
-        true,
-      ),
+    queryFn: () => fetchReviewableSessions({ unreviewed: "1" }),
   });
   const { data: revisions } = useQuery({
     queryKey: ["documents", "library", "consultee", consulteeId, "your-turn"],
