@@ -14,6 +14,7 @@ import {
 import {
   inboxQueryKey,
   inboxQueryString,
+  isRequestToAnswer,
   parseRequestsInboxPayload,
   sortInboxRows,
   type InboxRowInput,
@@ -23,24 +24,19 @@ import {
 import { useViewerZone } from "@/lib/time/use-viewer-zone";
 import { formatInViewerZone } from "@/lib/time/viewer-zone";
 
-import {
-  KIND_LABEL,
-  NEXT_CYCLE_BADGE,
-  errorSentence,
-  nextCycleLine,
-} from "./labels";
+import { KIND_LABEL, errorSentence } from "./labels";
 import { requestCountLine } from "./request-count-line";
 
 const PREVIEW_ROWS = 5;
 
 /**
- * The rows Home shows, first five. A checkout the learner is paying for is
- * nobody's request, so it is left out; a row without the field is shown.
+ * The rows Home shows, first five: the ones Home's count holds, so a pay link
+ * or a checkout waiting on the learner is left to the Requests page.
  */
 export function homePreviewRows<
-  T extends { checkoutHold?: InboxRowInput["checkoutHold"] },
+  T extends Parameters<typeof isRequestToAnswer>[0],
 >(rows: readonly T[]): T[] {
-  return rows.filter((row) => !row.checkoutHold).slice(0, PREVIEW_ROWS);
+  return rows.filter(isRequestToAnswer).slice(0, PREVIEW_ROWS);
 }
 
 /** The expert's own open proposal waits on the client; null for any other row. */
@@ -58,9 +54,6 @@ export function ownMoveWaitingLine(row: {
 function previewLine(row: InboxRowInput, zone: string): string {
   const ownMove = ownMoveWaitingLine(row);
   if (ownMove) return ownMove;
-  if (row.kind === "next-cycle" && row.entitlement) {
-    return nextCycleLine(row.entitlement);
-  }
   if (row.kind === "subscription" && row.entitlement) {
     return requestCountLine({ entitlement: row.entitlement });
   }
@@ -106,10 +99,9 @@ async function fetchPreviewTab(
 }
 
 /**
- * Home's "Pending requests" card: the first five rows the Requests page lists,
- * priority order, no actions ("View all" is the action). The subscription tab
- * is read when the inbox counts rows on it, so a paid plan waiting for times
- * is listed here as Home's "requests" count includes it.
+ * Home's Requests card: the first five requests to answer, priority order, no
+ * actions ("Open Requests" is the action). The subscription tab is read when
+ * the inbox counts rows on it, so a paid plan waiting for times is listed.
  */
 export function RequestsInboxPreview({
   consultantProfileId,
@@ -178,7 +170,7 @@ export function RequestsInboxPreview({
   if (rows.length === 0) {
     return (
       <p className="p-4 text-center text-sm text-muted-foreground">
-        No pending requests
+        No requests to answer
       </p>
     );
   }
@@ -190,11 +182,9 @@ export function RequestsInboxPreview({
           "CONSULTANT",
           { viewerZone: viewer.zone },
         );
-        let badge = toneBadge(bookingState.tone, bookingState.label);
-        if (row.kind === "next-cycle") badge = NEXT_CYCLE_BADGE;
-        else if (ownMoveWaitingLine(row)) {
-          badge = toneBadge("info", "Waiting on client");
-        }
+        const badge = ownMoveWaitingLine(row)
+          ? toneBadge("info", "Waiting on client")
+          : toneBadge(bookingState.tone, bookingState.label);
         return (
           <li
             key={row.id}
@@ -212,7 +202,7 @@ export function RequestsInboxPreview({
               </p>
             </div>
             <Link
-              href={`/dashboard/consultant/${consultantId}/requests?type=${row.kind === "next-cycle" ? "subscription" : row.kind}`}
+              href={`/dashboard/consultant/${consultantId}/requests?type=${row.kind}`}
               className="shrink-0"
             >
               <StatusBadge {...badge} size="sm" />

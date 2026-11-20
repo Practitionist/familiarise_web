@@ -37,6 +37,7 @@ import { FilterMenu } from "@/components/dashboard/FilterMenu";
 import type { AllocationAttemptKey } from "@/hooks/scheduling/useScheduling";
 import {
   CHIPS_FOR_TYPE,
+  INBOX_DEFAULT_TYPE,
   INBOX_TYPES,
   inboxQueryKey,
   inboxQueryString,
@@ -179,10 +180,14 @@ function useInboxUrlState(landingType: InboxType | undefined) {
     (patch: InboxParamsPatch) => {
       // The live URL, not the `searchParams` closure: two writes before the
       // router sync lands would otherwise both start from the same value.
-      const qs = nextInboxSearch(window.location.search, patch);
+      const qs = nextInboxSearch(
+        window.location.search,
+        patch,
+        landingType ?? INBOX_DEFAULT_TYPE,
+      );
       replaceUrl(qs ? `${pathname}?${qs}` : pathname);
     },
-    [pathname],
+    [pathname, landingType],
   );
   return { params, setParams };
 }
