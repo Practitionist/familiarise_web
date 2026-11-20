@@ -19,6 +19,7 @@ import { isPresenterAuthoredMessage } from "./case-message-actor";
 import { PLAN_TITLE_SELECT, planTitle } from "./case-read";
 import { ticketTopic } from "./case-topic";
 import { slaStateOf } from "./sla";
+import { readableCaseEvent } from "./case-event-copy";
 export const TIMELINE_LIMIT = 200;
 const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);
 
@@ -417,8 +418,7 @@ export async function readCaseWorkspace(
     events: c.events.reverse().map((e) => ({
       id: e.id,
       kind: e.kind,
-      fromValue: e.fromValue,
-      toValue: e.toValue,
+      ...readableCaseEvent(e),
       note: e.note,
       actorName: e.actor?.name ?? null,
       createdAt: e.createdAt.toISOString(),

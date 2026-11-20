@@ -116,6 +116,8 @@ export interface CaseHistoryEvent {
   kind: string;
   fromValue: string | null;
   toValue: string | null;
+  /** Plain words for an event whose values are not staff copy (a removal's order marker). */
+  summary: string | null;
   note: string | null;
   actorName: string | null;
   createdAt: string;

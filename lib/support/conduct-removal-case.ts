@@ -35,6 +35,7 @@ import { liftBlockTx } from "@/lib/booking/seat-removal-lift";
 import type { SeatHistoryReason } from "@/lib/booking/seat-history";
 import { activeHolds, caseHoldEvents, holdPaymentForCase } from "./case-holds";
 import { stageCaseNotice } from "./case-notice";
+import { REMOVAL_ORDER_PREFIX } from "./case-event-copy";
 import { stageSupportCaseIntakeTx } from "./case-service";
 import { supportDeadline } from "./deadline-policy";
 import { priorityForReason } from "./priority";
@@ -88,9 +89,6 @@ function removalCaseBody(
   );
   return lines.join("\n");
 }
-
-/** Marks the gateway order a removal ended on its case's opening or join event (`fromValue`). */
-const REMOVAL_ORDER_PREFIX = "removal-order:";
 
 const removalOrderValue = (order: string | null) =>
   order ? `${REMOVAL_ORDER_PREFIX}${order}` : null;

@@ -12,6 +12,7 @@ import { sentrySearchHref } from "@/lib/observability/sentry-issues";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { formatOperatorInstant } from "@/lib/time/operator-zone";
 import { humanizeEnum } from "@/lib/ui/tone";
+import { readableCaseEvent } from "@/lib/support/case-event-copy";
 import {
   TRACE_SOURCES,
   type EntityTrace,
@@ -1058,16 +1059,24 @@ export async function readEntityTrace(args: {
             }),
           (c) => {
             t.addCapped("support", c.events, CASE_EVENT_CAP, (events) =>
-              events.flatMap((ev) =>
-                makeRow("support", c.id, `event:${ev.id}`, ev.createdAt, {
-                  status: `Case ${c.referenceNumber}: ${enumWords(ev.kind)}`,
-                  actor: ev.actor?.name ?? null,
-                  detail:
-                    ev.fromValue || ev.toValue
-                      ? `${ev.fromValue ?? "—"} → ${ev.toValue ?? "—"}`
-                      : null,
-                }),
-              ),
+              events.flatMap((ev) => {
+                const shown = readableCaseEvent(ev);
+                return makeRow(
+                  "support",
+                  c.id,
+                  `event:${ev.id}`,
+                  ev.createdAt,
+                  {
+                    status: `Case ${c.referenceNumber}: ${enumWords(ev.kind)}`,
+                    actor: ev.actor?.name ?? null,
+                    detail:
+                      shown.summary ??
+                      (shown.fromValue || shown.toValue
+                        ? `${shown.fromValue ?? "—"} → ${shown.toValue ?? "—"}`
+                        : null),
+                  },
+                );
+              }),
             );
             t.addCapped("support", c.recommendations, TRACE_ROW_CAP, (recs) =>
               recs.flatMap((rec) => [
