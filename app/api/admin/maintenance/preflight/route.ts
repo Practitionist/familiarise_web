@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
-import { CONSULTANT_JOIN_WINDOW_MS } from "@/lib/appointments/occurrences";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
+import { countActiveCalls } from "@/lib/meetings/active-calls";
 import prisma from "@/lib/prisma";
 
 /**
@@ -18,25 +18,14 @@ export async function GET() {
   const fourHoursFromNow = new Date(now.getTime() + 4 * 60 * 60 * 1000);
 
   const [
-    activeCalls,
+    calls,
     pendingPayments,
     upcomingAppointments,
     pendingPayouts,
     openDisputes,
   ] = await Promise.all([
-    // Open rooms whose join window has opened. Late joins and extensions can run
-    // a call hours past its booked end; a room open 12 h past it is abandoned.
-    prisma.meeting.count({
-      where: {
-        endedAt: null,
-        occurrence: {
-          startsAt: {
-            lte: new Date(now.getTime() + CONSULTANT_JOIN_WINDOW_MS),
-          },
-          endsAt: { gte: new Date(now.getTime() - 12 * 60 * 60 * 1000) },
-        },
-      },
-    }),
+    // Presence and Stream decide; a moved schedule says nothing about who is in the room.
+    countActiveCalls(prisma, now),
     prisma.payment.count({ where: { paymentStatus: "PENDING" } }),
     prisma.appointmentOccurrence.count({
       where: {
@@ -55,7 +44,12 @@ export async function GET() {
     }),
   ]);
 
+  const activeCalls = calls.active;
   const warnings: string[] = [];
+  if (calls.unverified > 0)
+    warnings.push(
+      `${calls.unverified} open room(s) could not be checked with Stream and are counted as active`,
+    );
   if (activeCalls > 0)
     warnings.push(`${activeCalls} active video call(s) in progress`);
   if (pendingPayments > 0)
