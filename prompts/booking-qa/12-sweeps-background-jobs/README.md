@@ -9,7 +9,7 @@ Journey cases elsewhere already assert the main outcome of several sweeps (CO-36
 | [01-holds-checkouts-pay-links.md](01-holds-checkouts-pay-links.md) | SW-01 – SW-08 | Preflight (who runs jobs on the shared DB), abandoned checkout scope and re-run, what a released hold looks like, legacy 35-min rows, lapsed pay links once, pay-link reminder, tentative-slot cleanup, payment status reconcile |
 | [02-requests-reschedules-parked.md](02-requests-reschedules-parked.md) | SW-09 – SW-17 | 48-h request expiry edge, 30-day / 7-day backstops, paid plan never scheduled (nudges, 48-h refund), 30-day approved-unallocated edge, stale released subscription sessions, parked consultation deadlines, proposal expiry restore, waitlist and backup-interest lapse, plan-week nudges |
 | [03-trials-completion-no-shows.md](03-trials-completion-no-shows.md) | SW-18 – SW-24 | Unpaid trial lapse, unanswered paid trial refund, completion at end + 1 h, consultant no-show, sessions parked for ops (72 h alert, 7-day escalation), reminders, class end refunds stamped |
-| [04-refunds-settlement-earnings.md](04-refunds-settlement-earnings.md) | SW-25 – SW-32 | Refund-owed retry and reconcile in order, host-cancelled class sessions after 14 days, voided sessions, plan end settlement, earnings release, missing earnings, stale tentative flags and double-booking detection, no automatic placement on a partly scheduled plan |
+| [04-refunds-settlement-earnings.md](04-refunds-settlement-earnings.md) | SW-25 – SW-32 | Refund-owed retry and reconcile in order, host-cancelled class sessions after 14 days, voided sessions, plan end settlement, earnings release, missing earnings, stale tentative flags and double-booking detection, automatic top-up of partly scheduled plans |
 | [05-maintenance-and-ops.md](05-maintenance-and-ops.md) | SW-33 – SW-39 | DEGRADED gating (owner drill), production-only run doors, overlapping runs, platform incidents, maintenance remediation, the day after a full sweep cycle, cleanup |
 
 **Count:** 39 cases.
@@ -32,7 +32,7 @@ Journey cases elsewhere already assert the main outcome of several sweeps (CO-36
 | `settle-cancelled-sessions` | same | 30 min | yes | Refund cancelled class sessions not made up within 14 days (plus voids and plan end) | SW-26…SW-28 |
 | `release-earnings` | same | 15 min | yes | Move held earnings to ready after the hold period | SW-29 |
 | `sync-payment-earnings` | same | 15 min | yes | Create missing earnings records for succeeded payments | SW-30 |
-| `reconcile-occurrence-availability` | same | 60 min | no | Clear stale tentative flags and detect double bookings (it places no session) | SW-31, SW-32 |
+| `reconcile-occurrence-availability` | same | 60 min | no | Clear stale tentative flags and detect double bookings; also tops up partly scheduled subscriptions and classes after the expert changes availability | SW-31, SW-32 |
 | `settle-platform-incidents` | same | 60 min | yes | Void and refund the sessions of a declared platform incident | SW-36 |
 | `maintenance-booking-remediation` | same | 15 min | yes | Process one explicitly confirmed booking cancellation; held until maintenance ends | SW-37 |
 | `alert-orphaned-payments`, `reconcile-orphaned-payments`, `reconcile-orphaned-confirmations`, `sweep-stuck-webhook-events` | same | 15–30 min | healer: yes | Find and heal captured payments with no booking; re-drive stuck webhooks | MO-65, MO-67 |
