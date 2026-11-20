@@ -3,6 +3,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { z } from "zod";
 
+import { useSession } from "@/lib/auth-client";
+
 const responseSchema = z.object({
   consultantProfileId: z.string(),
   href: z.string().startsWith("/"),
@@ -11,8 +13,12 @@ const responseSchema = z.object({
 /** The signed-in expert's own share link for their own page; otherwise the plain profile path. */
 export function useExpertShareHref(consultantId: string): string {
   const plain = `/explore/experts/${consultantId}`;
+  // The link is the signed-in viewer's own, so an operator viewing an expert never asks.
+  const ownsPage =
+    useSession().data?.user?.consultantProfileId === consultantId;
   const { data } = useQuery({
     queryKey: ["expert-share-href", consultantId],
+    enabled: ownsPage,
     queryFn: async () => {
       const res = await fetch("/api/referrals/expert-link");
       if (!res.ok) throw new Error("Failed to load the share link");
@@ -20,7 +26,9 @@ export function useExpertShareHref(consultantId: string): string {
     },
     staleTime: Infinity,
   });
-  return data?.consultantProfileId === consultantId ? data.href : plain;
+  return ownsPage && data?.consultantProfileId === consultantId
+    ? data.href
+    : plain;
 }
 
 /**

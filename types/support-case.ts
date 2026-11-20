@@ -137,6 +137,8 @@ export interface CaseWorkspace {
   sla: SlaState | null;
   ackDueAt: string | null;
   resolutionDueAt: string | null;
+  /** The deadline the SLA state is judged against: the stored one plus time waiting on the customer. */
+  effectiveResolutionDueAt: string | null;
   /** A conduct removal's 72-hour decision deadline; null for every other case. */
   reviewDueAt: string | null;
   lastMessageAt?: string | null;

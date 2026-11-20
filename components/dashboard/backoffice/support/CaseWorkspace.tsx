@@ -41,7 +41,7 @@ import { parseCaseKey } from "@/lib/support/case-key";
 import { CASE_TOPIC_LABEL, type CaseTopic } from "@/lib/support/case-topic";
 import { throwSupportError } from "@/lib/support/error-copy";
 import { savedRepliesFor } from "@/lib/support/saved-replies";
-import { slaHint } from "@/lib/support/sla-hint";
+import { resolutionDeadline, slaHint } from "@/lib/support/sla-hint";
 import { supportKeys } from "@/lib/support/support-keys";
 import { OperatorTime } from "@/lib/time/operator-time";
 import type {
@@ -56,6 +56,7 @@ import { CaseConversation, type ComposerMode } from "./CaseConversation";
 import { useCaseMutations } from "./useCaseMutations";
 import styles from "./support-layout.module.css";
 import { cn } from "@/utils/tailwind";
+import { toneTextClass } from "@/lib/ui/tone";
 
 const UNASSIGNED = "unassigned";
 const SETTLED = new Set(["RESOLVED", "CLOSED"]);
@@ -277,6 +278,7 @@ export function CaseWorkspace({
   }
 
   const sla = slaHint(data.sla);
+  const deadline = resolutionDeadline(data.sla);
   const settled = SETTLED.has(data.status);
   const insert = (text: string) => {
     setMode("reply");
@@ -491,9 +493,16 @@ export function CaseWorkspace({
                 Reply due {when(data.ackDueAt)}
               </span>
             )}
-          {data.resolutionDueAt && data.sla?.msToResolutionDue !== null && (
-            <span className="text-xs text-muted-foreground">
-              Resolve by {when(data.resolutionDueAt)}
+          {data.effectiveResolutionDueAt && deadline && (
+            <span
+              className={cn(
+                "text-xs",
+                deadline.tone === "critical"
+                  ? `font-medium ${toneTextClass(deadline.tone)}`
+                  : "text-muted-foreground",
+              )}
+            >
+              {deadline.prefix} {when(data.effectiveResolutionDueAt)}
             </span>
           )}
           {data.reviewDueAt && (
