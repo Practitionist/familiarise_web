@@ -373,24 +373,27 @@ credit-funded or paid seat answer `SEAT_REBUY_UNSUPPORTED` (paid rebuy is
 left (`priorSeatStanding` answers `REJOINABLE`) revives on its earlier
 `SUCCEEDED` ₹0 payment: no payment insert, no re-mint, no tombstone, and the
 commit skips the legs, the utilisation meter and the synchronous earnings, so a
-rejoin moves no money and writes no money row. Its booked notice is staged after
-the commit (`notifyFreeSeatRegistered`), keyed on the join's own SEAT row
-(`readSeatJoin`, read in the commit) and claimed once. A removed seat refuses
+rejoin moves no money and writes no money row. Its booked notice is staged in
+the commit's own transaction (`stageFreeSeatNoticeTx`), keyed on the join's own SEAT
+row (`readSeatJoin`), so the notice commits or rolls back with the seat. A removed seat refuses
 before its EXPIRED, FAILED or PENDING row is looked at, so a removal outlasts
 its lapsed checkout, and the rejoin gate reads the event price under the lock.
 
 **A conduct removal refunds only the order it ended.** The re-mint keeps the
-`Payment` id, so a removal case never trusts the seat's current order. When the
-learner's seat has a `registered` or `rejoined` SEAT row after the case's latest
-removal, the seat was bought again: a re-bought seat's checkout re-minted the
-order and wrote no row (a `HELD` seat is a checkout), and its capture confirmed
-the seat and wrote `registered` (`handlePaymentSuccess`). The order the removal
-ended is then the tombstone, whose own late capture is auto-refunded. The case's 72-hour lapse (`stampRemovalRefundTx`) and its
-refund-first overturn gate (`removalRefundOutstandingTx`, both in
-`lib/support/conduct-removal-case.ts`) then owe nothing on the current order,
-which the fresh case for the next removal reviews. With no such row the current
-order is still the removed one, so an order unpaid at the removal that captures
-later is refunded by the lapse as before.
+`Payment` id, so a removal case never trusts the seat's current order. The
+removal records the seat's paid gateway order id (`paymentIntent`) on the case's
+`CREATED` event, and a joined removal on its `REOPENED` event, as `fromValue`
+`removal-order:<order id>`. The lapse (`stampRemovalRefundTx`), the refund-first
+gate of an overturn or appeal (`removalRefundOutstandingTx`) and support's
+recommendation, review and execution (`removalCaseRefundsPaymentTx`, refusing
+`PAYMENT_AFTER_REMOVAL`) act on the seat's payment only while it still carries
+that order; the old order's own late capture lands on its tombstone and is
+auto-refunded there. A case from before the record falls back to the seat's
+history: a `registered` or `rejoined` SEAT row after its latest removal means the
+seat was bought again (a re-bought seat's capture writes `registered` in
+`handlePaymentSuccess`), so the case owes nothing on the current order. An order
+unpaid at the removal that captures later, with no re-mint, is still the case's
+to refund.
 
 ## 10. A refund owed is never lost, and the quote is bound to the click
 

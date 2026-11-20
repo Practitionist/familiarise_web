@@ -152,7 +152,7 @@ A rejoin revives only the `CANCELLED` seat row it classified, back to `CONFIRMED
 
 For example, Priya Anderson (seed learner) takes a free seat on a webinar and later leaves it. Her `Payment` stays `SUCCEEDED` at 0 paise with no refund row, and her participant row ends `CANCELLED`. When she registers again the same row goes back to `CONFIRMED` on the same payment and she gets the booked notice again. Had she paid ₹500, she would be told she left and to contact support ([Free seat rejoin](../decisions/2026-11-18-free-seat-rejoin.md)).
 
-A zero-amount webinar or class seat has no capture, so after its commit `notifyFreeSeatRegistered` (`lib/payments/checkout/free-seat-notice.ts`) stages the booked bell and email that the capture path sends for a paid seat, keyed on the seat and the SEAT history row its registration or rejoin wrote (`readSeatJoin`, read in the commit). A rejoin therefore gets its own notice, a removal that releases the seat before the staging runs does not swallow it, and one claim per join stops a re-stage from sending it twice.
+A zero-amount webinar or class seat has no capture, so its checkout commit stages, on its own transaction, the booked bell and email that the capture path sends for a paid seat (`stageFreeSeatNoticeTx` in `lib/payments/checkout/free-seat-notice.ts`), keyed on the seat and the SEAT history row its registration or rejoin wrote (`readSeatJoin`). The notice commits or rolls back with the seat, so a registered seat always has it owed to the relays; a rejoin gets its own notice, and the checkout flushes the rows after the response.
 
 ### Gateway order cleanup
 
