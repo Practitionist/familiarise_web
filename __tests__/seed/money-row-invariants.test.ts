@@ -35,6 +35,7 @@ jest.mock("../../lib/payments/ledger/post", () => ({
 import {
   SEED_PAYMENT_STATUS_WEIGHTS,
   buildSeedPaymentLegs,
+  seedPaymentOutcome,
 } from "../../prisma/seedFiles/8b-create-payments";
 import { seedRefundStatus } from "../../prisma/seedFiles/11a-create-refunds";
 import { seedDisputeDueBy } from "../../prisma/seedFiles/11b-create-disputes";
@@ -58,6 +59,18 @@ describe("seeded payments", () => {
       { source: "CARD", amountPaise: 118_000, sourceRef: "order_1" },
     ]);
     expect(buildSeedPaymentLegs(0, "order_2")).toEqual([]);
+  });
+
+  it("an approved plan is paid by its own learner, so it never finishes unpaid", () => {
+    expect(
+      seedPaymentOutcome(
+        { subscription: { requestedBy: { userId: "u-learner" } } },
+        "u-drawn",
+      ),
+    ).toEqual({ userId: "u-learner", paymentStatus: "SUCCEEDED" });
+    expect(seedPaymentOutcome({ subscription: null }, "u-drawn").userId).toBe(
+      "u-drawn",
+    );
   });
 });
 
