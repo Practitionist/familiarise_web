@@ -21,12 +21,16 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { RatingCause } from "@prisma/client";
 import { Star } from "lucide-react";
+import { z } from "zod";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { throwSupportError } from "@/lib/support/error-copy";
 
 import { RatingCauseSelector } from "./RatingCauseSelector";
+
+/** The part of the review route's reply this form reads. */
+const ReviewSavedSchema = z.object({ profileIsPublic: z.boolean() });
 
 export interface ExistingReview {
   id: string;
@@ -90,12 +94,16 @@ export function ReviewComposer({
         body: JSON.stringify({ ...body, appointmentId }),
       });
       if (!res.ok) await throwSupportError(res, "review save");
-      return res.json();
+      return ReviewSavedSchema.parse(await res.json());
     },
-    onSuccess: async () => {
+    onSuccess: async ({ profileIsPublic }) => {
+      const name = consultantName ?? "the expert";
       toast({
         title: existing ? "Review updated" : "Thanks for your review",
-        description: `It appears on ${consultantName ?? "the expert"}'s profile.`,
+        // An unverified expert's public profile is not served yet.
+        description: profileIsPublic
+          ? `It appears on ${name}'s profile.`
+          : `Saved. It will appear on ${name}'s public profile once that profile is live.`,
       });
       // AWAITED: until this resolves `existing` is still null and the button
       // still reads "Post review", so a second press would POST again and take

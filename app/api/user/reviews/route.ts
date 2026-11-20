@@ -264,7 +264,12 @@ export async function POST(req: NextRequest) {
             ...publicReviewSelect,
             updatedAt: true,
             consultantProfile: {
-              select: { userId: true, user: { select: { name: true } } },
+              select: {
+                userId: true,
+                verificationStatus: true,
+                deletedAt: true,
+                user: { select: { name: true } },
+              },
             },
             consulteeProfile: {
               select: { user: { select: { name: true, image: true } } },
@@ -396,10 +401,16 @@ export async function POST(req: NextRequest) {
       ...publicRow
     } = newReview;
     return NextResponse.json(
-      sanitisePublicReview({
-        ...publicRow,
-        consultantProfile: { user: consultantProfile.user },
-      }),
+      {
+        ...sanitisePublicReview({
+          ...publicRow,
+          consultantProfile: { user: consultantProfile.user },
+        }),
+        // The same gate as getConsultantDetail: the author is told whether the review shows yet.
+        profileIsPublic:
+          consultantProfile.verificationStatus === "VERIFIED" &&
+          consultantProfile.deletedAt === null,
+      },
       { status: isNew ? 201 : 200 },
     );
   } catch (error) {
