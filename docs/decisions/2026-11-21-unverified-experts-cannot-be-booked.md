@@ -1,0 +1,45 @@
+# ADR: An expert who is not verified cannot be booked
+
+- **Status**: Accepted by the owner on 2026-11-20 and 2026-11-21. Ships in the pull request that adds this record.
+- **Date**: 2026-11-21
+- **Author**: Platform engineering
+- **Related**: issue #2925 "[booking][P1] An unverified expert can still get sessions", [Verification lifecycle](../onboarding/04-verification-lifecycle.md), [Booking system HLD](../start-here/01-booking-system-hld.md), [Approval payments](../finance/10-money-in/05-approval-payments.md), [Public pages and discovery](../enterprise/30-programs-and-lifecycle/05-public-pages-and-discovery.md)
+
+## Context
+
+An expert is verified when platform staff have checked their identity and credentials (`ConsultantProfile.verificationStatus = VERIFIED`; the other values are `PENDING_VERIFICATION`, `UNDER_REVIEW` and `REJECTED`). Until this change only direct checkout refused an unverified expert (`EXPERT_NOT_VERIFIED`, 409). A free or paid trial, a 1:1 request, its approval pay-link and a trial pay-link re-mint never asked, so a learner who reached an unverified expert's plan could book a real session with them. The public plan list APIs, the plan pages, the webinar and class listing behind `/explore/programs` and an organisation's member catalog all listed those plans, and an expert invited by an organisation starts as `PENDING_VERIFICATION`, so the catalog was a real way in.
+
+When moderation rejected a verified expert (`PROFILE_UNVERIFIED`, `unverifyProfiles` in `lib/moderation/side-effects.ts`), their plans stayed listed, their approved-but-unpaid links stayed payable, and their cached public profile kept offering trials and requests for up to five minutes because the action route purged only the review surfaces.
+
+## Worked example
+
+Priya Nair signs up as a career coach and publishes a 1:1 consultation at ₹1,500 and a subscription with a free 30-minute trial. Her profile is `PENDING_VERIFICATION`.
+
+- Before: Rahul Verma opened her subscription plan from a shared link, booked the free trial and got a confirmed session. Her plans showed in `GET /api/plans/consultations` and on her organisation's member catalog.
+- Now: Priya still sees and edits both plans in her planner and opens their pages as a preview. Rahul gets a 404 on the plan page, does not see the plans in any list, and a hand-built `POST /api/trials` answers 409 `EXPERT_NOT_VERIFIED` ("This trial isn't available to book until the expert is verified.") with no trial, appointment or payment written. Her organisation's admin sees "Waiting for verification" against her on the Members page.
+- Staff verify Priya. Every list and page shows her plans again on its next read; nothing was unpublished, so nothing has to be republished.
+- Months later, moderation rejects Priya. Anil, who paid ₹1,500 for next Tuesday, keeps his session, and Priya's payout follows the normal holds. Meera, whose request Priya approved yesterday but whose order has lapsed unpaid, can no longer get a payment link: the re-mint answers `EXPERT_NOT_VERIFIED` and nothing is charged. With no live order the request is expired by the stale-request sweep's seven-day fallback (`PAYMENT_PENDING_EXPIRATION_DAYS` in `scripts/appointments/expire-stale-requests.ts`), and its tentative hold on Priya's calendar is released then.
+
+## Decisions
+
+1. **Every booking door refuses an unverified expert with one check.** `assertExpertVerified` (`lib/booking/booking-rule-error.ts`) throws `BookingRuleError("EXPERT_NOT_VERIFIED")` with the copy checkout already used. It is called by checkout's pricing (`calculateAmountAndValidate`), checkout's in-lock re-read (`verifyPlanExistsInsideLock` in `lib/payments/checkout/locks.ts`, so an expert rejected between pricing and the lock is refused before any gateway order), `POST /api/trials` (free and paid), `POST /api/scheduling/request-for-approval`, and the pay-link price (`calculateAmount` in `lib/payments/operations/approval-payment.ts`, both the consultation and the trial arm, which every new mint and every re-mint runs). The approval routes answer the pay-link refusal as a 409 with the code (`approvalMintConflict`), and neither the mint nor the trial re-mint reports it to Sentry.
+2. **The trial and request doors also refuse what checkout refuses.** `assertPlanOnSale` (same file) refuses an archived plan (`PLAN_ARCHIVED`) and a plan kept to an organisation the buyer is not booking for (`PLAN_NOT_AVAILABLE_TO_ORG`); checkout's pricing now calls it too, so the three doors share one rule. A soft-deleted expert's plan answers 404 "plan not found" at both doors, as checkout answers.
+3. **An unverified expert's plans are shown to that expert only.** The rule is `isPublicExpertProfile` and its `where` form `publicExpertProfileWhere` (`lib/profiles/public-profile.ts`): verified and not deleted. It filters `oneOnOnePlanListWhere` (the 1:1 and subscription list APIs) for everyone but the owner, `buildPlanWhereClause` (the webinar and class list APIs behind `/explore/programs`), `liveConsultantWhere` in `lib/data/explore-programs.ts` (curated sections and topic counts), and `getOrgMemberCatalog`. The plan page gate `isPlanViewable` now takes the owner's facts as a required field, so every caller selects them: the four detail readers in `lib/data/plan-details.ts`, the 1:1 and subscription by-id APIs, the webinar and class by-id APIs, and the event waitlist. The owner preview arm runs first, so the expert opens their own pages. Experts may still create and publish plans while they wait, so they are bookable the moment they are verified.
+4. **A rejection stops new sales and honours what is booked.** The verification filter does the stopping; plan rows are not unpublished or archived, so a re-verified expert's plans come back by themselves. Paid future sessions run and payouts are unchanged. Suspend or ban stays the tool for cancelling and refunding everything. The moderation action route calls `purgeExpertSurfaces` with the rejected profile's id after the commit (`unverifiedConsultantProfileId` on the transactional result).
+5. **An organisation's invited experts are verified first.** The member catalog lists only verified experts' plans. The admin's Members page derives its badge from the same rule (`memberExpertOf` in `lib/data/org-members-query.ts` sends a boolean, never the raw status) and reads "Waiting for verification" (`expertVerificationLabel` in `lib/labels/org-labels.ts`).
+6. **The free remedy rebook after a platform incident is left alone.** `rebookIncidentRemedy` (`lib/booking/incident-rebook.ts`) replaces a session the learner already paid for, which is an existing booking the rejection honours.
+
+## Evidence
+
+- Marketplaces that sell on a provider's credentials keep that provider unlisted and unbookable until a person approves them: Practo ([guiding principles](https://www.practo.com/company/guiding-principles)), Preply ([register to teach](https://help.preply.com/en/articles/4175138-register-to-teach-on-preply)), Clarity.fm ([expert FAQ](https://clarity.fm/help/topics/5/expert-faqs)), Urban Company (background checks at onboarding), and Airbnb, whose listing "won't be published until you finish" verification ([help](https://www.airbnb.com/help/article/1237)).
+- Open listing with a badge (Topmate, UrbanPro) is the long-tail model, and even Topmate gates legal, medical, financial and mental-health experts ([expert policies](https://topmate.io/expert-policies)).
+- The RBI's 2025 Master Direction on payment aggregators requires merchant due diligence and that a marketplace "does not accept payments for a seller not onboarded" ([RBI](https://rbi.org.in/scripts/BS_ViewMasDirections.aspx?id=12896), paragraph 13).
+- Platforms that sell coaching under their own brand vet every coach (BetterUp; CoachHub, at about 5% acceptance). Organisation-vouched publishing exists only on tools for an organisation's own people (LinkedIn Learning, Udemy Business, mentoring platforms). Familiarise sells sessions under its own name and collects and pays out the money, so verify-first fits; an organisation that needs speed gets faster review of the experts it invites.
+- Not verified in the research: the Fiverr, MentorCruise, Udemy and Upwork pages returned 403 and are cited from search summaries, and whether the e-commerce "fall-back liability" amendment was notified.
+
+## Consequences
+
+- Seeded and test experts must be `VERIFIED` to take bookings; the database tier's `seedHost` now seeds them so.
+- A pay-link order that was minted before the rejection and is still live stays payable on `/checkout/pay/<paymentId>` until its window ends, because the pay page opens a live order without re-pricing it. A capture of it confirms the booking through `handlePaymentSuccess` as before.
+- A request made before the rejection can still be approved. A paid one gets no link and lapses; an approval that lands in `APPROVED` with nothing to pay confirms the session.
+- The topic chips' program counts (`GET /api/topics?withProgramCount=true`) and the language facet on `/explore/programs` still count every plan; they carry counts and names, not plans.

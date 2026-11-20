@@ -298,6 +298,11 @@ gate a concurrent writer walked through:
   route all call it, so a 6-hour window can no longer be sold at a 1-hour price.
 - A paused expert (`acceptingRequests = false`) refuses direct checkout and
   trials with 409 `NOT_ACCEPTING_BOOKINGS`; existing bookings are unaffected.
+- An expert who is not verified refuses direct checkout (pricing and the
+  in-lock re-read), trials, requests and every approval or trial pay-link mint
+  with 409 `EXPERT_NOT_VERIFIED` (`assertExpertVerified` in
+  `lib/booking/booking-rule-error.ts`); paid bookings already made are
+  unaffected, and plan rows are never unpublished for it.
 - A review-first expert (`bookingMode = REQUEST`) refuses a direct consultation
   checkout with 409 `REQUEST_APPROVAL_REQUIRED` on every rail (card,
   zero-amount, organisation-funded), before any gateway order; plans, trials and
