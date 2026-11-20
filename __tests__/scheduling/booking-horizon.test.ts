@@ -110,4 +110,24 @@ describe("the booking horizon", () => {
     );
     expect(days[0].starts).toEqual([]);
   });
+
+  it("the phone day list offers a one-hour session that starts exactly on the horizon", () => {
+    const days = buildDayList(
+      {
+        "2026-12-06": [
+          { startsAt: new Date(T).toISOString() },
+          { startsAt: new Date(T + ATOM).toISOString(), beyondHorizon: true },
+          {
+            startsAt: new Date(T + 2 * ATOM).toISOString(),
+            beyondHorizon: true,
+          },
+        ],
+      },
+      { zone: "UTC", sessionMinutes: 60, nowMs: NOW },
+      T,
+    );
+    expect(days[0].starts.map((start) => start.startsAt)).toEqual([
+      new Date(T).toISOString(),
+    ]);
+  });
 });

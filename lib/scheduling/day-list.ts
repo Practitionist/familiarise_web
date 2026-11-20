@@ -233,8 +233,11 @@ function startVerdict(
   let limited = false;
   for (let k = 0; k < atomCount(sessionMinutes); k++) {
     const atomStart = startMs + k * ATOM_MS;
-    const atom = describeAtom(atomStart, atomStart + ATOM_MS, ctx);
-    if (k === 0 && atom.isTooSoon) return "no";
+    const described = describeAtom(atomStart, atomStart + ATOM_MS, ctx);
+    if (k === 0 && described.isTooSoon) return "no";
+    // The booking horizon binds the session's start; the atoms after it only
+    // have to be free, as the booking doors judge it.
+    const atom = k === 0 ? described : { ...described, isBeyondHorizon: false };
     if (atomIsPlaceable(atom)) continue;
     if (!atomIsFree({ ...atom, isLimitReached: false })) return "no";
     limited = true;
