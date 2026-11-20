@@ -88,10 +88,10 @@ Control D: a paid session that ended 50 minutes ago.
 
 **Why it matters:** a class that ends with sessions never scheduled owes each seat those sessions.
 
-**Setup:** an H2 class sold to B3 (and B2), with fewer live sessions than `sessionsPurchased` (CL-22's partial schedule, sold, or owner-approved deletion of one future session on a QA class). Owner-approved: move every remaining session into the past (ended > 1 h ago) and complete them.
+**Setup:** an H2 class sold to B3 (and B2), with fewer live sessions than `sessionsPurchased` (CL-22's partial schedule, sold, or owner-approved deletion of one future session on a QA class). Owner-approved: move every remaining session into the past (ended > 1 h ago) and complete them. Leave the class's `schedulingPeriodEndsAt` in the future for run 1, then move it into the past for run 2.
 
-**Steps:** NEEDS-OWNER-RUN `auto-complete-appointments` (completes the class and stamps refunds), then `retry-auto-refunds` (drives them). Run both again.
+**Steps:** NEEDS-OWNER-RUN `auto-complete-appointments` with the period still running (run 1). Move the period end into the past and run it again (run 2: completes the class and stamps refunds), then `retry-auto-refunds` (drives them). Run both again.
 
-**Expect:** class `COMPLETED`; each paid seat's payment gets a marker and then a `Refund` keyed `class-end:<classId>:pay:<paymentId>` for the never-placed sessions, net of any unit already refunded (MO-41); a seat funded by credits is queued for a human instead (record). Only the retry job (a financial job) moves money; auto-complete only stamps. Run 2: nothing new.
+**Expect:** run 1: the class stays `SCHEDULED` and nothing is stamped or refunded, because sessions are still to place and its period has not ended (a class between batches is not over). Run 2: class `COMPLETED`; each paid seat's payment gets a marker and then a `Refund` keyed `class-end:<classId>:pay:<paymentId>` for the never-placed sessions, net of any unit already refunded (MO-41); a seat funded by credits is queued for a human instead (record). Only the retry job (a financial job) moves money; auto-complete only stamps. A further run: nothing new. A class with every sold session placed completes one hour after the last one ends, whatever its period.
 
 **Aftermath:** B3's Payments shows the refund labelled by its reason; H2's earnings reverse by the same units; the class page shows "completed" with the right session count.

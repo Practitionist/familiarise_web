@@ -16,7 +16,7 @@ Free and paid trials on subscription plans: the buyer picks the time, a free tri
 **Open points written into the cases (report the result either way):**
 
 - `CANCELLED` frees the learner–expert pair even when the expert cancelled (TR-12, TR-30, TR-33).
-- Two pay-window rules: `payWindowEnd` (start − 15 min) and `computeTrialPaymentDueAt` (clamped to the start) (TR-07).
+- One pay-window rule: `payWindowEnd` (24 h, never later than start − 15 min) (TR-07).
 - Conversion: doc says any plan of the same expert; the PATCH `CONVERTED` handler checks the same plan. No trial-fee credit on the plan price (TR-38).
 - The booking-mode setting ("Review requests first") doesn't apply to trials in code (TR-16).
 - A trial is 30 or 60 minutes; a legacy length (45) still books (TR-41).

@@ -60,7 +60,7 @@ COMMIT;
 - UI (allocate): heading "Week 2 of 4 · pick 3 for <range> · 3 of 12 booked".
 - UI (B3): the booking shows 3 completed sessions and that the next week is waiting on the expert (record copy).
 
-**Cross-check:** the week-nudge email to H1 is a sweep (`expire-stale-requests` runs `nudgeUnplacedPlanWeeks`): mark that part NEEDS-OWNER-RUN and give the R-07 query for H1's outbox. 12 (`SW-`) owns the sweep.
+**Cross-check:** the week-nudge email to H1 is a sweep (`expire-stale-requests` runs `nudgeUnplacedPlanWeeks`): mark that part NEEDS-OWNER-RUN and give the R-07 query for H1's outbox. It is due from 09:00 in H1's zone on the week's first day for every plan, however week 1 was placed (Auto or by hand), and no job places week 2 on its own: after the run B3's plan still holds 3 sessions until H1 clicks. 12 (`SW-`) owns the sweep.
 
 **Probe further:** "cycle" (badge) vs "week" (heading) again. Does B3 (LA) see "this week" boundaries in IST without explanation?
 

@@ -77,16 +77,18 @@ Money depth (GST credit notes, collaborator splits, gateway failures) is 08's (`
 
 **Why it matters:** decision 9: "A class that completes with sessions sold but never placed refunds each seat for them."
 
-**Setup:** a sold class `qa-CL-68` (8 sessions, ₹800, B2 on time, B4 late-joined with `sessionsPurchased = 6` paying ₹600). Owner-approved: tombstone the last 2 occurrences (`deletedAt = now()`) so only 6 were ever placed; shift the remaining 6 into the past, `COMPLETED`.
+**Setup:** a sold class `qa-CL-68` (8 sessions, ₹800, B2 on time, B4 late-joined with `sessionsPurchased = 6` paying ₹600). Owner-approved: tombstone the last 2 occurrences (`deletedAt = now()`) so only 6 were ever placed; shift the remaining 6 into the past, `COMPLETED`. Leave `Class.schedulingPeriodEndsAt` in the future for step 1.
 
 **Steps:**
 
-1. Run `auto-complete-appointments` (NEEDS-OWNER-RUN on a preview).
-2. Read both payments. Then run `retry-auto-refunds`.
+1. Run `auto-complete-appointments` (NEEDS-OWNER-RUN on a preview) with the scheduling period still running. Read `Class.status` and both payments.
+2. Owner-approved: move `Class.schedulingPeriodEndsAt` into the past. Run `auto-complete-appointments` again.
+3. Read both payments. Then run `retry-auto-refunds`.
 
 **Expect:**
 
-- At completion: each seat's `Payment.refundOwedKey = class-end:<classId>:pay:<paymentId>` and `refundOwedPaise` = ⌊paid × unplaced ÷ sessionsPurchased⌋ minus earlier class-end refunds: B2 = ⌊80000 × 2 ÷ 8⌋ = 20000 (₹200); B4 = ⌊60000 × 2 ÷ 6⌋ = 20000 (₹200). Earnings stay held while the marker is open.
+- After step 1: the class stays `SCHEDULED`, with no marker and no refund on either payment. Two sold sessions are still to place and the period has not ended, so the class is between batches, not over. A class that goes `COMPLETED` here is a **BUG** (P1): it refunds sessions the host can still place.
+- At completion (step 2): each seat's `Payment.refundOwedKey = class-end:<classId>:pay:<paymentId>` and `refundOwedPaise` = ⌊paid × unplaced ÷ sessionsPurchased⌋ minus earlier class-end refunds: B2 = ⌊80000 × 2 ÷ 8⌋ = 20000 (₹200); B4 = ⌊60000 × 2 ÷ 6⌋ = 20000 (₹200). Earnings stay held while the marker is open.
 - After the retry sweep: `Refund` rows for those amounts; markers cleared; earnings released for the delivered share.
 - `Class.status = COMPLETED`.
 
@@ -139,7 +141,7 @@ Money depth (GST credit notes, collaborator splits, gateway failures) is 08's (`
 
 **Why it matters:** two doors (per-session settlement and class-end) must never pay for the same session.
 
-**Setup:** a sold class (8 sessions, ₹800, B2 seated). Cancel session 4 (no make-up) and let the 14-day settlement refund B2 one unit (CL-56; owner-approved `hostCancelledAt` shift + `settle-cancelled-sessions`). Tombstone the last occurrence (owner-approved) so one session was never placed. Shift the rest into the past, `COMPLETED`.
+**Setup:** a sold class (8 sessions, ₹800, B2 seated). Cancel session 4 (no make-up) and let the 14-day settlement refund B2 one unit (CL-56; owner-approved `hostCancelledAt` shift + `settle-cancelled-sessions`). Tombstone the last occurrence (owner-approved) so one session was never placed. Shift the rest into the past, `COMPLETED`, and move `Class.schedulingPeriodEndsAt` into the past (a class with a session still to place completes only once its period has ended).
 
 **Steps:** run `auto-complete-appointments`, then `retry-auto-refunds`.
 

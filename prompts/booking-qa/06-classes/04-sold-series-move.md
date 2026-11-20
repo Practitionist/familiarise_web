@@ -32,9 +32,9 @@ After every move: R-03, R-05; record `movedAt`, `hostCancelledAt`, `retimeBy`.
 
 **Steps:** as H2, `PATCH …/allocate` with `{ isAuto: false, topUp: true, slots: <2 atoms for one new session after the last> }`.
 
-**Expect:** 200; 8 live sessions; the 7 existing ids unchanged. Without `topUp: true` → 409 `USE_RETIME`.
+**Expect:** 200; 8 live sessions; the 7 existing ids unchanged. Without `topUp: true` → 409 `USE_RETIME`. Nothing but this call adds the session: no job places it (run `reconcile-occurrence-availability` first if the owner can, and the class still holds 7).
 
-**Probe further:** is there any UI path to a top-up for a sold class, or is it API-only? A host whose class lost a session (ops void) needs one.
+**Probe further:** is there any UI path to a top-up for a sold class, or is it API-only? A host whose class lost a session (ops void) needs one. A top-up is also the only way to add a session beyond the plan's total: repeat the call on the full class (8 of 8) with one more session and `topUp: true` and record the answer; any other manual allocation with more sessions than the plan total is refused ("This class takes 8 sessions. Pick no more than that."), and one with fewer needs `allowPartial`.
 
 ## CL-40 — Open the series move and read what it will touch
 
