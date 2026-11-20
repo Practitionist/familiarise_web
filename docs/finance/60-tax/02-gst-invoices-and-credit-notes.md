@@ -123,6 +123,14 @@ The register needs the platform's supplier identity, because without it no consu
 
 An administrator fetches a month through `GET /api/admin/compliance/gst-register?period=2026-10`. The route is ADMIN-only, rebuilds the storage path with `gstOutwardRegisterCsvStoragePath`, answers 404 for a month the job has not produced, and otherwise redirects to a signed URL that expires after ten minutes. To rebuild another month, call `/api/cleanup/gst-outward-register-export?period=YYYY-MM` with the cron bearer secret; the month is reckoned in India time, and a malformed value answers 400 `INVALID_PERIOD`. Because every run covers exactly one calendar month, the admin route can fetch any file the job has written.
 
+## Document dates are India dates
+
+A tax invoice and a credit note are dated in the supplier's calendar, which is India's. Every date a document carries is the India calendar date of its stored instant, printed by `formatInvoiceDate` (`lib/time/invoice-date.ts`) as "20 Oct 2026": the invoice date, the date of supply, the due date and billing period of an organisation invoice, a credit note's date and its original invoice's date. The four PDFs, the organisation Billing tab (the invoice list, the invoice drawer and the Licence tab), the invoice CSV export (`issue_date_ist`, `due_date_ist`), the invoice-issued and overdue emails and the invoice-issued bell all print through it, labelled "(IST)", so no reader takes the date for their own zone; the back office prints the same text through `formatOperatorInstant`. A payment, a wallet entry or a usage posting is a moment, not a document date, and stays in the viewer's profile zone.
+
+**Example.** An organisation invoice issued at 23:33 UTC on 19 Oct 2026 (05:03 IST on 20 Oct) and due 30 days later reads "Issued: 20 Oct 2026" and "Due: 19 Nov 2026" under "Dates (IST)" on its PDF, rendered on a UTC server, and "Issued (IST) 20 Oct 2026" on the Billing tab for an owner whose profile zone is Los Angeles, where it is still 19 Oct. The decision is [ADR 2026-11-20](../../decisions/2026-11-20-invoice-dates-in-india-time.md).
+
+Two dates are not printed through `formatInvoiceDate`. The IRN acknowledgement date is the IRP's own IST wall time, read back in the zone it was parsed in (`irpAckDay`). The e-invoice payload's `DocDtls.Dt` is still the UTC date (`formatDocDate` in `lib/compliance/irp-payload.ts`), a filing value outside this rule.
+
 ## Downloading a document
 
 | Route                                                          | Returns                                                            |
@@ -149,6 +157,7 @@ A B2B `OrganizationInvoice` with a buyer GSTIN is eligible for an Invoice Refere
 | Credit notes never exceed their invoice                   | Cumulative cap under a row lock in `mintConsumerCreditNote`                 | `__tests__/payments/currency-and-tax-gates.test.ts`                    | An operator reviews the recorded `SystemEvent`                |
 | Past the section 34(2) cutoff a note carries no tax       | `isPastGstCreditNoteCutoff`                                                 | `__tests__/compliance/gst-credit-note-cutoff.test.ts`                  | None needed                                                   |
 | A register row is stamped only after the upload succeeded | The order of upload then stamp in the export job                            | `__tests__/compliance/gst-register-upload-then-stamp.test.ts`          | Re-run the job; the file is overwritten                       |
+| A document's date is its India date on every surface      | `formatInvoiceDate` (`lib/time/invoice-date.ts`)                            | `__tests__/enterprise/invoice-dates-india-time.test.tsx`               | None needed; a cached PDF re-renders after 24 hours           |
 
 ## Where in code
 
@@ -174,4 +183,5 @@ A B2B `OrganizationInvoice` with a buyer GSTIN is eligible for an Invoice Refere
 - **Zero-rating on browser language.** Detecting the buyer's country from `Accept-Language` zero-rated every `en-US` browser. It was removed.
 - **Independent clock reads** across credit-note minting and the ledger's GST reversal. They are one pinned `cascadeNow` now.
 - **Database writes through the global client** inside the mint error handlers. They pass the enclosing transaction (`db: tx`) so a single-connection pool cannot deadlock.
+- **Document dates in UTC or the server's zone.** The consumer documents and the organisation credit note pinned UTC and the organisation invoice used the server's zone, so a document issued before 05:30 IST printed the previous day. They print India dates now.
 - **Environment overrides for the register window and the series.** `GST_REGISTER_PERIOD_START`, `GST_REGISTER_PERIOD_END`, `PLATFORM_INVOICE_PREFIX` and `CLEARTAX_GSTIN` no longer exist. The month is the `?period=YYYY-MM` argument, the prefix is a constant in `lib/company.ts`, and the IRP uses `PLATFORM_GSTIN`.
