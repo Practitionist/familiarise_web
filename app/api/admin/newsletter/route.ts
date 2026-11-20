@@ -47,6 +47,7 @@ export async function GET(request: NextRequest): Promise<Response> {
     if (format === "csv") {
       const csv = await exportSubscribersCsv(filters);
       // A bulk export of subscriber emails leaves one audit row, or no file.
+      // The search text may be an email, so the row keeps only whether one was applied.
       const actor = opsActorOf(auth.session);
       await recordOpsAction(prisma, {
         actorUserId: actor.userId,
@@ -59,7 +60,7 @@ export async function GET(request: NextRequest): Promise<Response> {
         after: {
           status: filters.status ?? null,
           source: filters.source ?? null,
-          search: filters.search ?? null,
+          searchApplied: Boolean(filters.search),
         },
       });
       return new Response(csv, {

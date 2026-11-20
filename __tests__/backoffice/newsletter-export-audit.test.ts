@@ -61,3 +61,16 @@ it("does not return the CSV when the audit write fails", async () => {
   expect(res.status).not.toBe(200);
   expect(res.headers.get("Content-Type")).not.toMatch(/text\/csv/);
 });
+
+it("records that a search was applied, never the search text", async () => {
+  await call("?format=csv&status=SUBSCRIBED&search=priya%40example.com");
+  const { data } = mockCreate.mock.calls[0][0] as {
+    data: { after: unknown };
+  };
+  expect(data.after).toEqual({
+    status: "SUBSCRIBED",
+    source: null,
+    searchApplied: true,
+  });
+  expect(JSON.stringify(data)).not.toContain("priya");
+});
