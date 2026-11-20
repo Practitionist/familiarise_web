@@ -23,6 +23,7 @@ import { buildCheckoutOptions } from "@/lib/payments/client/checkout-options";
 import { FUNDING_SOURCE_LABEL } from "@/lib/labels/org-labels";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { replaceUrl } from "@/lib/navigation/history";
+import { formatInvoiceDate, invoiceDateLabel } from "@/lib/time/invoice-date";
 
 import {
   INVOICE_STATUS,
@@ -37,7 +38,6 @@ import {
   type OrgInvoice,
 } from "./billing-api";
 import { InvoiceDetailSheet } from "./InvoiceDetailSheet";
-import { ZonedDay } from "./ZonedDay";
 
 // Discriminated union for the post-checkout flow:
 //   - "confirmed": webhook landed within the poll budget; row is PAID.
@@ -76,13 +76,16 @@ const invoiceColumns: ResponsiveColumn<OrgInvoice>[] = [
     },
   },
   {
-    key: "due",
-    header: "Due",
+    key: "issued",
+    header: invoiceDateLabel("Issued"),
     className: "text-xs text-muted-foreground",
-    cell: (inv) => {
-      const due = shownDueDate(inv);
-      return due ? <ZonedDay at={due} /> : "—";
-    },
+    cell: (inv) => formatInvoiceDate(inv.issuedAt),
+  },
+  {
+    key: "due",
+    header: invoiceDateLabel("Due"),
+    className: "text-xs text-muted-foreground",
+    cell: (inv) => formatInvoiceDate(shownDueDate(inv)),
   },
 ];
 
