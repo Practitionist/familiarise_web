@@ -1075,8 +1075,9 @@ export async function GET(
         timezone,
       );
 
-    // No writer enforces a co-host's published hours, so a free cell outside
-    // them stays pickable and is only flagged; their commitments block above.
+    // The allocator refuses a time a co-host has not published, so a free cell
+    // outside their hours is flagged and no picker offers it; their
+    // commitments block above.
     const coHostsWithSchedule = coHostProfiles.filter(
       (ch) =>
         ch.scheduleType &&

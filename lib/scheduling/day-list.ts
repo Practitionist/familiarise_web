@@ -38,6 +38,7 @@ export interface DayListAtom {
   tooSoon?: boolean;
   limitReached?: boolean;
   beyondHorizon?: boolean;
+  outsideCoHostHours?: boolean;
 }
 
 /** One whole-session pick, ISO instants. */
@@ -190,6 +191,7 @@ function dayListContext(
         tooSoon: atom.tooSoon === true,
         limitReached: atom.limitReached === true,
         beyondHorizon: atom.beyondHorizon === true,
+        outsideCoHostHours: atom.outsideCoHostHours === true,
         overlappingAppointments: NO_OVERLAPS,
       });
     }

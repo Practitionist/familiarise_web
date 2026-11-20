@@ -178,6 +178,28 @@ beforeEach(() => {
   mockCalendarData = calendarData();
 });
 
+describe("a free time outside a co-host's hours", () => {
+  it("is not selectable and says why", () => {
+    const serverCells = mockCalendarData.serverCells as Map<number, ServerCell>;
+    const outside = MOVING + 2 * HOUR;
+    serverCells.set(outside, {
+      ...cell(outside, "available"),
+      outsideCoHostHours: true,
+    });
+    serverCells.set(outside + ATOM, cell(outside + ATOM, "available"));
+    const { container } = renderReschedule();
+    const flagged = cellAt(container, outside);
+    expect(flagged.getAttribute("data-slot-state")).toBe("outsideCoHostHours");
+
+    fireEvent.click(flagged);
+
+    expect(mockToggleSlot).not.toHaveBeenCalled();
+    expect(mockToast).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Outside a co-host's hours" }),
+    );
+  });
+});
+
 describe("a session of this booking that is not being moved", () => {
   it("is not selectable and says why", () => {
     const { container } = renderReschedule();

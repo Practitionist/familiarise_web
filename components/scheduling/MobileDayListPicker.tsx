@@ -69,6 +69,42 @@ function timesWord(count: number): string {
   return `${count} time${count === 1 ? "" : "s"}`;
 }
 
+/** Why the open day lists no times: the plan's limit, the booking horizon, or nothing free. */
+function NoTimesNote({
+  limitIsWhy,
+  horizonIsWhy,
+  quotaLine,
+  someDayHasTimes,
+  canNext,
+}: Readonly<{
+  limitIsWhy: boolean;
+  horizonIsWhy: boolean;
+  quotaLine: string | null;
+  someDayHasTimes: boolean;
+  canNext: boolean;
+}>) {
+  if (limitIsWhy) {
+    return (
+      <div className="text-sm text-muted-foreground">
+        <p className="font-medium text-foreground">{LIMIT_REACHED.label}</p>
+        <p>
+          {quotaLine
+            ? `${quotaLine}. Pick a day or week that still has room.`
+            : LIMIT_REACHED.hint}
+        </p>
+      </div>
+    );
+  }
+  let note = "No free times in these two weeks.";
+  if (horizonIsWhy) note = BEYOND_HORIZON.hint;
+  else if (someDayHasTimes)
+    note = "No free times on this day. Pick another day.";
+  else if (canNext) {
+    note = "No free times in these two weeks. Try the next two weeks.";
+  }
+  return <p className="text-sm text-muted-foreground">{note}</p>;
+}
+
 /**
  * The consultee's picker below `md`: a row of day chips over two weeks and
  * the session starts each day offers, read from the same grid endpoint as the
@@ -412,29 +448,14 @@ export function MobileDayListPicker({
                 );
               })}
             </ul>
-          ) : limitIsWhy ? (
-            <div className="text-sm text-muted-foreground">
-              <p className="font-medium text-foreground">
-                {LIMIT_REACHED.label}
-              </p>
-              <p>
-                {quotaLine
-                  ? `${quotaLine}. Pick a day or week that still has room.`
-                  : LIMIT_REACHED.hint}
-              </p>
-            </div>
-          ) : horizonIsWhy ? (
-            <p className="text-sm text-muted-foreground">
-              {BEYOND_HORIZON.hint}
-            </p>
           ) : (
-            <p className="text-sm text-muted-foreground">
-              {days.some((day) => day.starts.length > 0)
-                ? "No free times on this day. Pick another day."
-                : canNext
-                  ? "No free times in these two weeks. Try the next two weeks."
-                  : "No free times in these two weeks."}
-            </p>
+            <NoTimesNote
+              limitIsWhy={limitIsWhy}
+              horizonIsWhy={horizonIsWhy}
+              quotaLine={quotaLine}
+              someDayHasTimes={days.some((day) => day.starts.length > 0)}
+              canNext={canNext}
+            />
           )}
 
           {full && timesNeeded > 0 && (

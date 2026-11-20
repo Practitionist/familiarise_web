@@ -95,6 +95,7 @@ import { cn } from "@/utils/tailwind";
 import { buildGridBlocks } from "@/lib/scheduling/grid-blocks";
 import {
   atomIsPlaceable,
+  atomIsPlaceableAfterStart,
   buildWeekCells,
   describeAtom,
   expandToSession,
@@ -1111,9 +1112,12 @@ export function UnifiedCalendar({
       row.getBoundingClientRect().top - weekGridEl.getBoundingClientRect().top;
   }, [focus, weekGridEl, availableSlots, rowWindow, gridZone, rowModel]);
 
-  /** A free atom, or one of this booking's own upcoming ones: a session may take either. */
+  /**
+   * A free atom, or one of this booking's own upcoming ones: a session may
+   * take either. `afterStart` is an atom the session runs over past its start.
+   */
   const isExpandableAtom = useCallback(
-    (startMs: number): boolean => {
+    (startMs: number, afterStart: boolean): boolean => {
       // The request's own hold inside the allocate lead is never part of a session.
       if (
         holdStarts.has(startMs) &&
@@ -1122,9 +1126,10 @@ export function UnifiedCalendar({
         return false;
       }
       if (selectedStarts.has(startMs)) return false;
-      return atomIsPlaceable(
-        describeAtom(startMs, startMs + ATOM_MS, atomContext),
-      );
+      const atom = describeAtom(startMs, startMs + ATOM_MS, atomContext);
+      return afterStart
+        ? atomIsPlaceableAfterStart(atom)
+        : atomIsPlaceable(atom);
     },
     [selectedStarts, atomContext, holdStarts, leadMs],
   );
@@ -1136,7 +1141,9 @@ export function UnifiedCalendar({
       return expandToSession(
         clickedMs,
         slotLimits.slotsPerSession,
-        (startMs) => startMs === clickedMs || isExpandableAtom(startMs),
+        (startMs) =>
+          startMs === clickedMs ||
+          isExpandableAtom(startMs, startMs > clickedMs),
       ).map((startMs) =>
         startMs === clickedMs
           ? clickedSlot
@@ -1324,6 +1331,13 @@ export function UnifiedCalendar({
           description: quota
             ? `${quotaFooterText(quota, gridZone)}. Pick a day or week that still has room.`
             : "This plan's sessions for that week or day are already used.",
+        });
+        return;
+      }
+      if (!cell.isThisEvent && cell.statusKey === "outsideCoHostHours") {
+        toast({
+          title: cell.stateLabel,
+          description: `${SLOT_STATUS_TOKENS.outsideCoHostHours.hint} Pick another time.`,
         });
         return;
       }

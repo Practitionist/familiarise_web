@@ -190,8 +190,17 @@ export function atomIsPlaceable(atom: AtomState): boolean {
       !atom.isStaying &&
       !atom.isInPast &&
       !atom.isOutsidePeriod &&
+      !atom.isBeyondHorizon &&
       !atom.isTentative)
   );
+}
+
+/**
+ * An atom a session may run over after its start. The booking horizon binds
+ * the session's start alone, as the booking doors judge it.
+ */
+export function atomIsPlaceableAfterStart(atom: AtomState): boolean {
+  return atomIsPlaceable({ ...atom, isBeyondHorizon: false });
 }
 
 /** A cell ready to render: the atom plus its state's name. Busy runs are labelled by their block, not the cell. */
@@ -391,7 +400,7 @@ export type JustTakenReason = "taken" | "expired" | "ownSession";
 /**
  * Selected atoms the latest data no longer allows, inside the window the data
  * covers. "taken" when someone else now holds it or it is no longer
- * published; "expired" when it slid into the past, the notice period or a
+ * published, by the host or by a co-host; "expired" when it slid into the past, the notice period or a
  * used-up limit; "ownSession" when it sits on a session of this booking that
  * is not being moved. The sessions being moved are never conflicts.
  */
@@ -409,7 +418,10 @@ export function selectionConflicts(
       continue;
     }
     const server = ctx.serverCells.get(startMs);
-    if (server?.bookingStatus !== "available") {
+    if (
+      server?.bookingStatus !== "available" ||
+      server.outsideCoHostHours === true
+    ) {
       conflicts.set(startMs, "taken");
     } else if (
       server.endMs < ctx.nowMs ||

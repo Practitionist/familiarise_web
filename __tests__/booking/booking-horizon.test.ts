@@ -123,6 +123,32 @@ describe("the buyer's doors", () => {
       true,
     );
   });
+
+  it("checkout's re-ask keeps a one-hour session whose start is inside the horizon", async () => {
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: {
+          day: [
+            { startsAt: atHorizon.toISOString(), bookingStatus: "available" },
+            {
+              startsAt: new Date(atHorizon.getTime() + HALF_HOUR).toISOString(),
+              bookingStatus: "available",
+              beyondHorizon: true,
+            },
+          ],
+        },
+      }),
+    });
+    global.fetch = fetchMock;
+    await expect(
+      isSlotStillOffered(
+        "cp-1",
+        atHorizon,
+        new Date(atHorizon.getTime() + 2 * HALF_HOUR),
+      ),
+    ).resolves.toBe(true);
+  });
 });
 
 describe("the allocator's validator", () => {
