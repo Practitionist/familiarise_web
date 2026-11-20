@@ -1,7 +1,7 @@
 /**
- * Home's pending-requests card drops a checkout the learner is paying for and
- * nothing else: a row whose payload carries no `checkoutHold` key at all (an
- * older cached payload) is still a request waiting on the expert.
+ * Home's Requests card keeps the requests Home counts, five at most: a checkout
+ * the learner is paying for is left out, and a row whose payload carries no
+ * `checkoutHold` key at all (an older cached payload) is still listed.
  */
 jest.mock("next/navigation", () => ({ useParams: () => ({}) }));
 jest.mock("../../lib/auth-client", () => ({
@@ -13,12 +13,22 @@ import {
   ownMoveWaitingLine,
 } from "../../components/dashboard/shared/requests/RequestsInboxPreview";
 
+const pending = (id: string) => ({
+  id,
+  kind: "consultation" as const,
+  presentation: { request: { status: "PENDING" } },
+  proposal: null,
+});
+
 describe("homePreviewRows", () => {
   it("keeps a row without the checkoutHold key and drops a held checkout", () => {
     const rows = [
-      { id: "no-key" },
-      { id: "null-hold", checkoutHold: null },
-      { id: "paying", checkoutHold: { expiresAt: "2026-09-24T08:45:00.000Z" } },
+      pending("no-key"),
+      { ...pending("null-hold"), checkoutHold: null },
+      {
+        ...pending("paying"),
+        checkoutHold: { expiresAt: "2026-09-24T08:45:00.000Z" },
+      },
     ];
     expect(homePreviewRows(rows).map((row) => row.id)).toEqual([
       "no-key",
@@ -27,10 +37,7 @@ describe("homePreviewRows", () => {
   });
 
   it("shows at most five", () => {
-    const rows = Array.from({ length: 7 }, (_, i) => ({
-      id: `r${i}`,
-      checkoutHold: null,
-    }));
+    const rows = Array.from({ length: 7 }, (_, i) => pending(`r${i}`));
     expect(homePreviewRows(rows)).toHaveLength(5);
   });
 });

@@ -73,20 +73,26 @@ export function Stat({
   return <div className={cn(TILE, className)}>{body}</div>;
 }
 
-/** 2 columns on mobile; at md/lg stays 2 when `columns === 2`, 3 at md, 4 at lg. */
+/**
+ * 2 columns on mobile; at md/lg stays 2 when `columns === 2`, 3 at md, 4 at lg.
+ * `stackOnPhone` gives each tile its own row below sm, for money that must not truncate.
+ */
 export function StatRow({
   children,
   columns = 4,
+  stackOnPhone = false,
   className,
 }: Readonly<{
   children: ReactNode;
   columns?: 2 | 3 | 4;
+  stackOnPhone?: boolean;
   className?: string;
 }>) {
   return (
     <div
       className={cn(
-        "grid grid-cols-2 gap-3 sm:gap-4",
+        "grid gap-3 sm:gap-4",
+        stackOnPhone ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-2",
         columns >= 3 && "md:grid-cols-3",
         columns === 4 && "lg:grid-cols-4",
         className,
