@@ -186,10 +186,11 @@ export const toStampDate = (v: Stamp): Date =>
   v instanceof Date ? v : new Date(v);
 
 /**
- * Bucketed by who acts next. A request to answer (REQUESTED) or sessions to
- * schedule (a paid plan's cycle 1, or its open week) is the consultant's, banded
- * by how much of its clock is left; a pay link or a checkout in progress is the
- * client's.
+ * Bucketed by who acts next. A request to answer (REQUESTED), a move to answer
+ * (BEING_MOVED) or sessions to schedule (a paid plan's cycle 1, or its open
+ * week) is the consultant's, banded by how much of its clock is left; a pay
+ * link or a checkout in progress is the client's. The read files the
+ * consultant's own proposal under the client before it asks.
  */
 export function inboxBucketOf(
   row: {
@@ -207,7 +208,7 @@ export function inboxBucketOf(
   if (schedulesNext) {
     // A plan week with no clock of its own is still this week's work.
     if (row.deadline === null) return "this-week";
-  } else if (row.kind === "next-cycle" || state !== "REQUESTED") {
+  } else if (state !== "REQUESTED" && state !== "BEING_MOVED") {
     return "waiting-on-them";
   }
   if (row.requestedStartPassed || row.deadline === null) return "answer-today";

@@ -5,7 +5,7 @@
 /**
  * #1775 PR-A A-4 — the inbox anatomy over the A-1 fixture: four rows land in
  * their buckets, no raw enum text reaches the DOM, the awaiting-payment row
- * offers Remind + Withdraw, the next-cycle row offers Allocate, and only the
+ * offers Remind + Withdraw, the next-cycle row offers to schedule its batch, and only the
  * dialog-free row gets a batch checkbox.
  */
 
@@ -105,7 +105,7 @@ describe("Requests inbox anatomy (A-4)", () => {
     for (const line of moneyLines) expect(line).toMatch(/₹|Free trial/);
   });
 
-  it("offers one primary action per row: Remind + Withdraw, Allocate, Approve, countdown-only", async () => {
+  it("offers one primary action per row: Remind + Withdraw, Schedule the next N, Approve, countdown-only", async () => {
     const rows = await fixtureRows();
     const actionsOf = (id: string) => {
       const row = rows.find((r) => r.id === id)!;
@@ -134,7 +134,8 @@ describe("Requests inbox anatomy (A-4)", () => {
     expect(actionsOf("t-awaiting")).toEqual({ primary: null, secondary: [] });
     const html = render(rows);
     expect(html).toContain(">Remind<");
-    expect(html).toContain(">Allocate<");
+    // The open week's button names its batch, as the detail page's does.
+    expect(html).toContain(">Schedule the next 1<");
     expect(html).toContain(">Approve<");
   });
 

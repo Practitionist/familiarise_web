@@ -17,6 +17,7 @@ import {
 } from "@/lib/dashboard/money-state";
 import { exitThresholdFor } from "@/lib/booking/class-series";
 import { PLAN_END_REFUND_REASON } from "@/lib/payments/refund-reasons";
+import { UNPLACED_PLAN_REASON } from "@/lib/booking/unplaced-plan";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
 const NOW = new Date("2026-09-20T09:12:00Z");
@@ -355,6 +356,13 @@ describe("deriveBookingPresentation — the money line and the timeline", () => 
     const input = base({
       occurrences: [],
       plan: { pricePaise: 14_400, currency: "INR", sessions: 12 },
+      entitlement: {
+        total: 12,
+        held: 0,
+        completed: 0,
+        remaining: 12,
+        nextBatch: 4,
+      },
     });
     const u = deriveBookingPresentation(input, "CONSULTEE", {
       viewerZone: "UTC",
@@ -363,12 +371,20 @@ describe("deriveBookingPresentation — the money line and the timeline", () => 
     expect(u.sessionProgress).toBe("0 of 12 sessions scheduled");
   });
 
-  it("#1675 — one session-count story: a 6-held / 144-plan subscription", () => {
+  it("one session-count story: the header reads the entitlement, never the rows held for a request", () => {
     const input = base({
+      // Six times held for the request: none is a scheduled session yet.
       occurrences: Array.from({ length: 6 }, (_, i) =>
         slot(true, new Date(IN_4D.getTime() + i * 3_600_000)),
       ),
       plan: { pricePaise: 14_400, currency: "INR", sessions: 12 },
+      entitlement: {
+        total: 12,
+        held: 0,
+        completed: 0,
+        remaining: 12,
+        nextBatch: 4,
+      },
     });
     const u = deriveBookingPresentation(input, "CONSULTEE", {
       viewerZone: "UTC",
@@ -377,7 +393,7 @@ describe("deriveBookingPresentation — the money line and the timeline", () => 
     expect(u.moneyState.detail).toBe(
       "₹144.00 for the plan · 12 sessions · ₹12.00 each",
     );
-    expect(u.sessionProgress).toBe("6 of 12 sessions scheduled");
+    expect(u.sessionProgress).toBe("0 of 12 sessions scheduled");
   });
 });
 
@@ -657,5 +673,44 @@ describe("a plan that ended with sessions not held", () => {
       entitlement: { remaining: 0, nextBatch: 0, notHeld: 0, planEnded: true },
     });
     expect(whyFor(input)[0].why).toBe("");
+  });
+});
+
+describe("a paid plan that expired because no session was placed", () => {
+  const expired = base({
+    request: req("EXPIRED"),
+    occurrences: [],
+    payments: paid,
+    holdExpiresAt: null,
+    source: "DIRECT_CHECKOUT",
+    history: [
+      {
+        fromStatus: "PENDING",
+        toStatus: "EXPIRED",
+        reason: UNPLACED_PLAN_REASON,
+        by: null,
+      },
+    ],
+  });
+  const read = (viewer: "CONSULTANT" | "CONSULTEE") =>
+    deriveBookingPresentation(expired, viewer, { viewerZone: "UTC", now: NOW });
+
+  it("names the missed placement to both sides", () => {
+    expect(read("CONSULTEE").bookingState).toMatchObject({
+      state: "CANCELLED",
+      label: "Cancelled",
+      why: "The expert did not place the sessions in time.",
+    });
+    expect(read("CONSULTANT").bookingState.why).toBe(
+      "You did not place the sessions in time.",
+    );
+  });
+
+  it("has no expired pay link on its timeline and does not ask the learner to request again", () => {
+    const { timeline, nextAction } = read("CONSULTEE");
+    const labels = timeline.map((e) => e.label);
+    expect(labels).toEqual(["Booked (you)", "Paid", "Cancelled"]);
+    expect(labels).not.toContain("Payment link expired");
+    expect(nextAction.kind).toBe("NONE");
   });
 });

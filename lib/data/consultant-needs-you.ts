@@ -201,7 +201,8 @@ export async function readSessionsDelivered(
   startOfMonth: Date,
 ): Promise<{ thisMonth: number; lifetime: number }> {
   const where: Prisma.AppointmentOccurrenceWhereInput = {
-    completionStatus: "COMPLETED",
+    // Delivered as the plan entitlement counts it: confirmed, or past and parked for a human.
+    completionStatus: { in: ["COMPLETED", "UNVERIFIED"] },
     deletedAt: null,
     appointment: deliveredBy(consultantProfileId),
   };

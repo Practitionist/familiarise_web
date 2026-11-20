@@ -44,7 +44,9 @@ import { deriveBookingPresentation } from "@/lib/dashboard/money-state";
 import {
   CP,
   NOW,
+  hoursAgo,
   hoursAhead,
+  nextCycleSubscription,
   paidUnallocatedSubscription,
   serve,
   serveInboxFixture,
@@ -104,12 +106,19 @@ describe("readRequestsInbox (A-1)", () => {
     expect(new Date(byId["c-awaiting"].deadline!)).toEqual(hoursAhead(6));
     expect(new Date(byId["s-next"].deadline!)).toEqual(NOW);
     expect(new Date(byId["t-awaiting"].deadline!)).toEqual(hoursAhead(20));
+    // The open plan week is the consultant's to schedule, banded by its clock.
     expect(rows.map((r) => r.bucket)).toEqual([
       "answer-today",
       "waiting-on-them",
-      "waiting-on-them",
+      "answer-today",
       "waiting-on-them",
     ]);
+    expect(
+      deriveBookingPresentation(byId["s-next"].presentation, "CONSULTANT", {
+        viewerZone: "UTC",
+        now: NOW,
+      }).nextAction,
+    ).toMatchObject({ kind: "ALLOCATE", label: "Schedule the next 1" });
     // The subscription's words: the next batch and the booked count, never "slots".
     expect(byId["s-next"].entitlement).toMatchObject({
       total: 24,
@@ -155,7 +164,134 @@ describe("readRequestsInbox (A-1)", () => {
     });
   });
 
-  it("the bucket rule: only a REQUESTED row is the consultant's to answer", () => {
+  it("the subscription Answer today chip matches a paid plan in the last day of its placement window, as its bucket does", async () => {
+    const capturedHoursAgo = (h: number) => ({
+      ...paidUnallocatedSubscription,
+      appointment: {
+        ...paidUnallocatedSubscription.appointment,
+        payment: paidUnallocatedSubscription.appointment.payment.map((p) => ({
+          ...p,
+          createdAt: hoursAgo(h),
+        })),
+      },
+    });
+    const bucketFor = async (h: number) => {
+      const one = serve([capturedHoursAgo(h)]);
+      (prisma.subscription.findMany as jest.Mock).mockImplementation(
+        one.findMany,
+      );
+      (prisma.subscription.count as jest.Mock).mockImplementation(one.count);
+      const { rows } = await read({
+        type: "subscription",
+        chip: "answer-today",
+      });
+      return rows.find((r) => r.id === "s-paid")?.bucket;
+    };
+    expect(await bucketFor(30)).toBe("answer-today");
+    expect(await bucketFor(2)).toBe("this-week");
+
+    // The chip's SQL arm: paid, nothing placed, captured at least 24 h ago.
+    type Arm = {
+      appointment?: {
+        payment?: {
+          some?: { paymentStatus?: string; createdAt?: { lte?: Date } };
+        };
+        occurrences?: { none?: unknown };
+      };
+    };
+    const arms: Arm[] = [];
+    const collect = (node: unknown) => {
+      if (Array.isArray(node)) return node.forEach(collect);
+      if (!node || typeof node !== "object" || node instanceof Date) return;
+      const arm = node as Arm;
+      if (arm.appointment?.payment?.some?.createdAt) arms.push(arm);
+      Object.values(node).forEach(collect);
+    };
+    const [{ where }] = (
+      prisma.subscription.findMany as jest.Mock
+    ).mock.calls.at(-1);
+    collect(where);
+    expect(arms).toHaveLength(1);
+    expect(arms[0].appointment?.payment?.some).toEqual({
+      paymentStatus: "SUCCEEDED",
+      createdAt: { lte: hoursAgo(24) },
+    });
+    expect(arms[0].appointment?.occurrences?.none).toEqual({
+      deletedAt: null,
+      completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
+    });
+  });
+
+  it("a plan week with nothing left to place does not wait on the consultant", async () => {
+    const ended = serve([
+      { ...nextCycleSubscription, planEndsAt: hoursAgo(1) },
+    ]);
+    (prisma.subscription.findMany as jest.Mock).mockImplementation(
+      ended.findMany,
+    );
+    (prisma.subscription.count as jest.Mock).mockImplementation(ended.count);
+    const { rows } = await read({ type: "subscription" });
+    const row = rows.find((r) => r.id === "s-next");
+    expect(row?.entitlement?.cycle.nextBatch).toBe(0);
+    expect(row?.bucket).toBe("waiting-on-them");
+  });
+
+  it("every row's status is built with its source, as the detail page's is", async () => {
+    const { rows } = await read({ type: "consultation" });
+    expect(rows.map((r) => r.presentation.source)).toEqual([
+      "REQUEST_SUBMITTED",
+      "REQUEST_SUBMITTED",
+    ]);
+    const paid = serve([paidUnallocatedSubscription]);
+    (prisma.subscription.findMany as jest.Mock).mockImplementation(
+      paid.findMany,
+    );
+    (prisma.subscription.count as jest.Mock).mockImplementation(paid.count);
+    const subscriptions = await read({ type: "subscription" });
+    expect(subscriptions.rows[0].presentation.source).toBe("DIRECT_CHECKOUT");
+  });
+
+  it("the bucket rule: a week to schedule and a move to answer are the consultant's, banded by their clocks", () => {
+    expect(
+      inboxBucketOf(
+        { kind: "next-cycle", deadline: hoursAhead(30) },
+        "AWAITING_ALLOCATION",
+        NOW,
+        true,
+      ),
+    ).toBe("this-week");
+    expect(
+      inboxBucketOf(
+        { kind: "next-cycle", deadline: NOW },
+        "AWAITING_ALLOCATION",
+        NOW,
+        true,
+      ),
+    ).toBe("answer-today");
+    expect(
+      inboxBucketOf(
+        { kind: "next-cycle", deadline: hoursAhead(30) },
+        "CONFIRMED",
+        NOW,
+      ),
+    ).toBe("waiting-on-them");
+    expect(
+      inboxBucketOf(
+        { kind: "consultation", deadline: hoursAhead(20) },
+        "BEING_MOVED",
+        NOW,
+      ),
+    ).toBe("answer-today");
+    expect(
+      inboxBucketOf(
+        { kind: "subscription", deadline: hoursAhead(30) },
+        "BEING_MOVED",
+        NOW,
+      ),
+    ).toBe("this-week");
+  });
+
+  it("the bucket rule: a REQUESTED row is the consultant's to answer; a pay link is the client's", () => {
     expect(
       inboxBucketOf(
         { kind: "consultation", deadline: hoursAhead(30) },

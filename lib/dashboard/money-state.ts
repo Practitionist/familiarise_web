@@ -22,6 +22,7 @@ import {
   isDeadOccurrence,
   isDeliberateEnd,
   isOccurrenceHeld,
+  unsettledSessionOf,
 } from "@/lib/appointments/occurrences";
 import { isCompletedOccurrence } from "@/lib/booking/entitlement";
 import { normalizeStatus } from "@/lib/appointments/status";
@@ -38,6 +39,7 @@ import { PLAN_END_REFUND_REASON } from "@/lib/payments/refund-reasons";
 import { paymentsLapsed } from "@/lib/appointments/list-status-facts";
 import {
   BOOKING_STAGES,
+  REQUEST_HOLD_MS,
   bookingStatus,
   expertApproval,
   type BookingStage,
@@ -132,6 +134,8 @@ export type OccurrenceInput = {
   isTentative: boolean;
   completionStatus?: string | null;
   outcome?: string | null;
+  /** When the session was voided; its make-up window runs from here. */
+  voidedAt?: Date | string | null;
   deletedAt?: Date | string | null;
   meeting?: {
     endedAt: Date | string | null;
@@ -216,6 +220,12 @@ export interface BookingPresentationInput {
   names: { payer: string; consultant: string };
   /** #1775 C-5 — a subscription's entitlement summary (lib/booking/entitlement). */
   entitlement?: {
+    /** Sessions sold less the sessions support refunded. */
+    total?: number;
+    /** Delivered sessions plus those firmly on the calendar. */
+    held?: number;
+    /** Delivered sessions. */
+    completed?: number;
     remaining: number;
     nextBatch: number;
     /** Sessions of the plan that were never delivered. */
@@ -240,10 +250,9 @@ export interface BookingPresentation {
   /** Schedule words only for a Sessions row — never a money word. */
   sessionRowLabel: (occurrence: OccurrenceInput) => string;
   /**
-   * #1675 — the header's one session-count story: "<held> of <plan> sessions
-   * scheduled" once the plan size is known, else the bare held count. The
-   * header uses this for SUBSCRIPTION/CLASS instead of a second, conflicting
-   * count next to the money line.
+   * The header's one session count for a plan or a class: "<held> of <sold>
+   * sessions scheduled · <delivered> completed", from the plan's entitlement
+   * or the class plan's total. Empty when the read carries neither.
    */
   sessionProgress: string;
   /**
@@ -251,6 +260,11 @@ export interface BookingPresentation {
    * confirmation pipeline has not landed, so the success page keeps polling.
    */
   settled: boolean;
+  /**
+   * A one-off's session was voided or is under review: the page offers no
+   * rating until the make-up, the refund or the review settles it.
+   */
+  awaitsSettlement: boolean;
 }
 
 export interface DeriveOptions {
@@ -267,14 +281,6 @@ const toDate = (v: Date | string): Date =>
   v instanceof Date ? v : new Date(v);
 const toDateOrNull = (v: Date | string | null | undefined): Date | null =>
   v === null || v === undefined ? null : toDate(v);
-
-// PENDING requests expire in expire-stale-requests.ts (48 h consultation,
-// 30 d subscription); the held slots release with them. Mirrored, not
-// imported: that script loads Prisma.
-const REQUEST_HOLD_MS: Record<string, number> = {
-  CONSULTATION: 48 * 60 * 60 * 1000,
-  SUBSCRIPTION: 30 * 24 * 60 * 60 * 1000,
-};
 
 /** The deadline a PENDING request's held slots release at. */
 export function requestHoldDeadline(
@@ -494,6 +500,11 @@ function statusFacts(
         live.length > 0 &&
         live.every((o) => isOccurrencePastGrace(o, now)),
     },
+    unsettled: unsettledSessionOf(
+      normalizeStatus(input.request?.kind || input.appointmentType),
+      live,
+      !!paidRow && !isFreePayment(paidRow) && !isSponsoredPayment(paidRow),
+    ),
     planEnded: !!input.entitlement?.planEnded,
     planWait: allocationWait(input, live, paid, now),
     allocateBy: allocateDeadline(input.payments),
@@ -971,6 +982,29 @@ function refundTimeline(input: BookingPresentationInput): TimelineEvent[] {
   });
 }
 
+/** Delivered, or firmly on the calendar: what the entitlement counts as held. */
+const isHeldSession = (o: OccurrenceInput) =>
+  isCompletedOccurrence(o) ||
+  (!o.isTentative &&
+    (!o.completionStatus ||
+      normalizeStatus(o.completionStatus) === "SCHEDULED"));
+
+function sessionProgressLine(
+  input: BookingPresentationInput,
+  live: OccurrenceInput[],
+): string {
+  const plan = input.entitlement;
+  const sold = plan?.total ?? input.series?.N;
+  if (sold === undefined) return "";
+  const held = plan?.held ?? live.filter(isHeldSession).length;
+  const delivered =
+    plan?.completed ?? live.filter(isCompletedOccurrence).length;
+  return (
+    `${held} of ${sold} sessions scheduled` +
+    (delivered > 0 ? ` · ${delivered} completed` : "")
+  );
+}
+
 export function deriveBookingPresentation(
   input: BookingPresentationInput,
   viewer: Viewer,
@@ -984,11 +1018,14 @@ export function deriveBookingPresentation(
     input.payments.find((x) => x.paymentStatus === "SUCCEEDED") ?? null;
   const holdExpiresAt = toDateOrNull(input.holdExpiresAt);
 
-  const status = bookingStatus(
-    statusFacts(input, live, !!paidRow, now, options.heldOccurrenceIds),
-    viewer,
-    { now, zone },
+  const facts = statusFacts(
+    input,
+    live,
+    !!paidRow,
+    now,
+    options.heldOccurrenceIds,
   );
+  const status = bookingStatus(facts, viewer, { now, zone });
   const b = { state: status.stage };
   const bookingState: BookingState = {
     state: status.stage,
@@ -1025,17 +1062,7 @@ export function deriveBookingPresentation(
     paidRow && (live.length > 0 ? live.every((o) => o.isTentative) : !lazy)
   );
 
-  // #1675 — same "held" the header's bare count used (live.length), so
-  // swapping one for the other never changes what number the viewer sees.
-  // #1766 — the plan size is the frozen entitlement; delivered sessions are
-  // named once they exist (COMPLETED and UNVERIFIED both count as held).
-  const planSessions = input.plan?.sessions;
-  const completedCount = live.filter(isCompletedOccurrence).length;
-  const sessionProgress =
-    (planSessions && planSessions > 1
-      ? `${live.length} of ${planSessions} sessions scheduled`
-      : `${live.length} sessions`) +
-    (completedCount > 0 ? ` · ${completedCount} completed` : "");
+  const sessionProgress = sessionProgressLine(input, live);
 
   return {
     bookingState,
@@ -1052,6 +1079,7 @@ export function deriveBookingPresentation(
       ),
     sessionProgress,
     settled,
+    awaitsSettlement: status.stage === "CONFIRMED" && !!facts.unsettled,
   };
 }
 

@@ -30,10 +30,12 @@ import { HeldSlotBadge } from "./HeldSlotBadge";
  * room key and the join gate use, so re-grouping here would only undo it.
  */
 
-type SessionStatus =
+export type SessionStatus =
   | "completed"
   | "cutShort"
-  | "noShow"
+  | "hostAbsent"
+  | "platformIssue"
+  | "notHeld"
   | "inconclusive"
   | "noRecord"
   | "upcoming"
@@ -103,19 +105,16 @@ export function slotStatus(
   if (state === "joinable") return "joinable";
   if (state === "countdown") return "upcoming";
 
-  if (slot.outcome === "DELIVERED") return "completed";
   if (slot.outcome === "CUT_SHORT") return "cutShort";
-  if (
-    slot.outcome === "CONSULTANT_NO_SHOW" ||
-    slot.outcome === "CONSULTEE_NO_SHOW" ||
-    slot.outcome === "BOTH_NO_SHOW"
-  ) {
-    return "noShow";
-  }
   if (slot.outcome === "INCONCLUSIVE") return "inconclusive";
 
   if (slot.completionStatus === "COMPLETED") return "completed";
-  if (slot.completionStatus === "VOIDED") return "noShow";
+  // A voided session is named by what happened to it.
+  if (slot.completionStatus === "VOIDED") {
+    if (slot.outcome === "HOST_ABSENT") return "hostAbsent";
+    if (slot.outcome === "PLATFORM_OUTAGE") return "platformIssue";
+    return "notHeld";
+  }
   if (slot.completionStatus === "UNVERIFIED") return "inconclusive";
 
   // The host closing the call early is what separates a session we have a
@@ -158,7 +157,9 @@ function toSessionGroups(sessions: OccurrenceVM[]): SessionGroup[] {
 const statusIcon: Record<SessionStatus, string> = {
   completed: "✅",
   cutShort: "⚠️",
-  noShow: "⚠️",
+  hostAbsent: "⚠️",
+  platformIssue: "⚠️",
+  notHeld: "⚠️",
   inconclusive: "⏳",
   noRecord: "⚠️",
   joinable: "◉",
@@ -166,29 +167,36 @@ const statusIcon: Record<SessionStatus, string> = {
 };
 
 /**
- * The `joinable` entry is reachable ONLY when the row is inside its window and
- * the caller supplied no join handler — a joinable row that can be joined
- * renders the button instead. It used to read "JOIN" in unmuted text, so a row
- * the adapter had deliberately refused looked like a live button and did
- * nothing when clicked (#1270). It now names a state, not an action.
+ * The one word for each session status, on the timeline and on the detail
+ * page's schedule. `joinable` names a state, never the action: it shows only
+ * where the row cannot be joined, and the Join button owns that word.
  */
-const statusLabel: Record<SessionStatus, string> = {
-  completed: "COMPLETED",
-  cutShort: "CUT SHORT",
-  noShow: "NO-SHOW",
-  inconclusive: "VERIFYING",
-  noRecord: "NO RECORD",
-  joinable: "IN PROGRESS",
-  upcoming: "upcoming",
+export const SESSION_STATUS_LABEL: Record<SessionStatus, string> = {
+  completed: "Completed",
+  cutShort: "Cut short",
+  hostAbsent: "Host did not join",
+  platformIssue: "Platform issue",
+  notHeld: "Not held",
+  inconclusive: "Verifying",
+  noRecord: "No record",
+  joinable: "In progress",
+  upcoming: "Upcoming",
 };
+
+/** Past sessions that were not delivered as booked; they share the amber accent. */
+export const NOT_DELIVERED: ReadonlySet<SessionStatus> = new Set<SessionStatus>(
+  ["noRecord", "cutShort", "hostAbsent", "platformIssue", "notHeld"],
+);
 
 /**
  * Why a row that looks actionable is not. Only the states that can confuse
  * someone carry a reason; everything else is self-evident from its label.
  */
-const INERT_STATUS_TITLES: Partial<Record<SessionStatus, string>> = {
+export const SESSION_STATUS_TITLE: Partial<Record<SessionStatus, string>> = {
   cutShort: "This session ended earlier than the scheduled duration.",
-  noShow: "One or more participants did not attend this session.",
+  hostAbsent: "The host did not join this session.",
+  platformIssue: "A platform issue stopped this session.",
+  notHeld: "This session did not take place as booked.",
   inconclusive: "Session attendance is being verified.",
   noRecord:
     "No meeting record found for this session. It may have been missed or held outside the platform.",
@@ -369,10 +377,7 @@ export function SessionTimeline({
                 ? "bg-green-50 border border-green-200 cursor-pointer hover:bg-green-100 dark:bg-green-900/20 dark:border-green-900/40 dark:hover:bg-green-900/30"
                 : "bg-muted",
               status === "completed" && "opacity-70",
-              (status === "noRecord" ||
-                status === "cutShort" ||
-                status === "noShow" ||
-                status === "inconclusive") &&
+              (status === "inconclusive" || NOT_DELIVERED.has(status)) &&
                 "opacity-80",
             )}
             onClick={joinable ? () => onJoinSession?.(joinable) : undefined}
@@ -446,15 +451,13 @@ export function SessionTimeline({
               <span
                 className={cn(
                   "text-[10px] font-medium uppercase text-muted-foreground",
-                  (status === "noRecord" ||
-                    status === "cutShort" ||
-                    status === "noShow") &&
+                  NOT_DELIVERED.has(status) &&
                     "text-amber-700 dark:text-amber-400",
                   status === "inconclusive" && "text-sky-600 dark:text-sky-400",
                 )}
-                title={INERT_STATUS_TITLES[status]}
+                title={SESSION_STATUS_TITLE[status]}
               >
-                {statusLabel[status]}
+                {SESSION_STATUS_LABEL[status]}
               </span>
             )}
           </div>

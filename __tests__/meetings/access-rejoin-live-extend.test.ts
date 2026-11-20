@@ -666,20 +666,44 @@ describe("OverrunBanner state & Trial in-call chat guard", () => {
       meetingEndedReason: "call_ended",
     };
 
-    expect(slotStatus({ ...baseVm, outcome: "DELIVERED" }, 15 * MINUTE)).toBe(
+    expect(slotStatus({ ...baseVm, outcome: "HELD" }, 15 * MINUTE)).toBe(
       "completed",
     );
     expect(slotStatus({ ...baseVm, outcome: "CUT_SHORT" }, 15 * MINUTE)).toBe(
       "cutShort",
     );
     expect(
-      slotStatus({ ...baseVm, outcome: "CONSULTANT_NO_SHOW" }, 15 * MINUTE),
-    ).toBe("noShow");
-    expect(
       slotStatus({ ...baseVm, outcome: "INCONCLUSIVE" }, 15 * MINUTE),
     ).toBe("inconclusive");
     expect(slotStatus({ ...baseVm, outcome: null }, 15 * MINUTE)).toBe(
       "completed",
     );
+  });
+
+  it("names a voided session by what happened, never as a no-show", () => {
+    const voided = (outcome: string | null) => ({
+      occurrenceId: "occ-1",
+      appointmentId: "appt-1",
+      startsAt: new Date(Date.now() - 120 * MINUTE),
+      endsAt: new Date(Date.now() - 60 * MINUTE),
+      isTentative: false,
+      completionStatus: "VOIDED",
+      outcome,
+      meetingEndedAt: null,
+      meetingEndedReason: null,
+    });
+    expect(slotStatus(voided("PLATFORM_OUTAGE"), 15 * MINUTE)).toBe(
+      "platformIssue",
+    );
+    expect(slotStatus(voided("CUT_SHORT"), 15 * MINUTE)).toBe("cutShort");
+    expect(slotStatus(voided("HOST_ABSENT"), 15 * MINUTE)).toBe("hostAbsent");
+    expect(slotStatus(voided(null), 15 * MINUTE)).toBe("notHeld");
+    // A host absence still parked for review is being verified, not decided.
+    expect(
+      slotStatus(
+        { ...voided("HOST_ABSENT"), completionStatus: "UNVERIFIED" },
+        15 * MINUTE,
+      ),
+    ).toBe("inconclusive");
   });
 });

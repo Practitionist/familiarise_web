@@ -466,6 +466,11 @@ export async function readConsultantAppointmentsPage(
         amount: true,
         currency: true,
         createdAt: true,
+        // Landed refunds, so the list says "Refunded" where the detail page does.
+        refunds: {
+          where: { status: "SUCCEEDED", deletedAt: null },
+          select: { amountPaise: true, updatedAt: true },
+        },
       },
     },
     consultation: {

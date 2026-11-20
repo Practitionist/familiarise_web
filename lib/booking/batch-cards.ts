@@ -12,6 +12,7 @@ import {
   type ClassEnrolment,
   type EnrolmentSession,
 } from "./class-enrolment";
+import { MAKEUP_WINDOW_DAYS } from "./misses";
 
 export type BatchPhase = "upcoming" | "running" | "completed" | "unscheduled";
 
@@ -31,7 +32,11 @@ export interface BatchCardClass {
   maxParticipants?: number | null;
   deletedAt?: Date | string | null;
   appointment?: {
-    occurrences: (EnrolmentSession & { endsAt: Date | string })[];
+    occurrences: (EnrolmentSession & {
+      endsAt: Date | string;
+      /** Set on a session the host cancelled; its make-up window runs from here. */
+      hostCancelledAt?: Date | string | null;
+    })[];
     /** Seats taken, host excluded; the public payload never lists who holds them. */
     _count?: { participants: number };
   } | null;
@@ -50,7 +55,7 @@ export interface BatchCard {
   enrolment: ClassEnrolment;
   /** A seat bought now cancels free until this instant (next session − window); null once past. */
   freeCancellationUntil: Date | null;
-  /** Open for enrolment, not full, and not a draft or cancelled batch. */
+  /** Open for enrolment, fully planned, not full, and not a draft or cancelled batch. */
   canEnrol: boolean;
   /** For a card that cannot be joined: when the next joinable batch starts. */
   nextBatchStartsAt: Date | null;
@@ -58,6 +63,45 @@ export interface BatchCard {
 
 const SELLABLE = new Set(["SCHEDULED"]);
 const GONE = new Set(["CANCELLED", "RESCHEDULED"]);
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Sessions of a batch that count as planned for a new seat: every live row (a
+ * released one awaits its new time), plus a session the host cancelled whose
+ * make-up is still owed inside the make-up window. Checkout sells a seat only
+ * once this reaches the plan's total, and the card offers Enrol by the same count.
+ */
+export function plannedSessionCount(
+  occurrences: ReadonlyArray<{
+    ordinal?: number | null;
+    startsAt: Date | string;
+    completionStatus: string;
+    deletedAt?: Date | string | null;
+    hostCancelledAt?: Date | string | null;
+  }>,
+  now: Date,
+): number {
+  const key = (o: { ordinal?: number | null; startsAt: Date | string }) =>
+    o.ordinal ?? new Date(o.startsAt).getTime();
+  const rows = occurrences.filter((o) => !o.deletedAt);
+  const live = rows.filter((o) => o.completionStatus !== "CANCELLED");
+  // A make-up takes its cancelled session's ordinal, so that session is not counted twice.
+  const placed = new Set(live.map(key));
+  const owed = new Set(
+    rows
+      .filter(
+        (o) =>
+          o.completionStatus === "CANCELLED" &&
+          !!o.hostCancelledAt &&
+          now.getTime() <
+            new Date(o.hostCancelledAt).getTime() +
+              MAKEUP_WINDOW_DAYS * DAY_MS &&
+          !placed.has(key(o)),
+      )
+      .map(key),
+  );
+  return live.length + owed.size;
+}
 
 /** "Mondays", "Mondays and Thursdays", or "Varies" when the days drift. */
 function weekdayPattern(starts: Date[], perWeek: number, tz: string) {
@@ -167,7 +211,10 @@ export function deriveBatchCards(
           enrolment.state === "open" &&
           !seats.isFull &&
           SELLABLE.has(cls.status) &&
-          (phase === "upcoming" || phase === "running"),
+          (phase === "upcoming" || phase === "running") &&
+          // Checkout refuses a batch whose sessions are not all planned yet.
+          plannedSessionCount(cls.appointment?.occurrences ?? [], now) >=
+            plan.totalSessions,
         nextBatchStartsAt: null,
       };
     });

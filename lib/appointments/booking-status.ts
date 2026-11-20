@@ -9,6 +9,7 @@
 
 import { formatInViewerZone } from "@/lib/time/viewer-zone";
 import { isShortNotice } from "@/lib/booking/lead-time";
+import { UNPLACED_PLAN_REASON } from "@/lib/booking/unplaced-plan";
 import { eventStatusBadge } from "@/lib/labels/session-labels";
 import { toneClass, type Tone } from "@/lib/ui/tone";
 import { formatCurrencyAmount } from "@/utils/formatting";
@@ -61,6 +62,23 @@ export interface OpenRescheduleInput {
   expiresAt: Date | string | null;
 }
 
+/**
+ * A consultation's or trial's session that was voided or is parked for review,
+ * with none delivered since: the booking is not completed until it is settled.
+ */
+export interface UnsettledSessionInput {
+  cause:
+    | "CUT_SHORT"
+    | "HOST_ABSENT"
+    | "PLATFORM_ISSUE"
+    | "NOT_HELD"
+    | "UNDER_REVIEW";
+  /** What the learner is owed: a make-up (or else a refund), a support review, or nothing. */
+  owed: "MAKE_UP_OR_REFUND" | "MAKE_UP" | "REVIEW" | "NOTHING";
+  /** The day the make-up is due by; null when no date applies or the read lacks it. */
+  owedBy?: Date | string | null;
+}
+
 export interface BookingStatusFacts {
   /** CONSULTATION, SUBSCRIPTION, WEBINAR, CLASS or TRIAL. */
   kind: string;
@@ -97,6 +115,8 @@ export interface BookingStatusFacts {
     /** Every session's time has passed with no outcome recorded yet. */
     awaitingOutcome?: boolean;
   };
+  /** The one-off's session was voided or is under review; never Completed until settled. */
+  unsettled?: UnsettledSessionInput | null;
   /** A plan's end has passed; until then held sessions never complete the plan. */
   planEnded?: boolean;
   /** A paid plan waiting for its first or its next placement. */
@@ -154,7 +174,22 @@ const RELEASED_SEAT = new Set(["CANCELLED", "REFUNDED"]);
 const WITHDRAWN_BY_CONSULTANT = "WITHDRAWN_BY_CONSULTANT";
 const PAYMENT_CAPTURED = "payment captured";
 
+// A submitted request expires unanswered in expire-stale-requests.ts, and its
+// held times release with it. Mirrored, not imported: that script loads Prisma.
+export const REQUEST_HOLD_MS: Record<string, number> = {
+  CONSULTATION: 48 * 60 * 60 * 1000,
+  SUBSCRIPTION: 30 * 24 * 60 * 60 * 1000,
+};
+
 const upper = (v: string | null | undefined) => v?.toUpperCase() ?? "";
+
+/** The request kind's answer window in words ("48 hours", "30 days"); null when the kind has none. */
+function answerWindow(kind: string): string | null {
+  const ms = REQUEST_HOLD_MS[upper(kind)];
+  if (!ms) return null;
+  const hours = ms / 3_600_000;
+  return hours <= 48 ? `${hours} hours` : `${hours / 24} days`;
+}
 const cap = (v: string) => v.charAt(0).toUpperCase() + v.slice(1);
 const asDate = (v: Date | string | null | undefined): Date | null =>
   v === null || v === undefined ? null : v instanceof Date ? v : new Date(v);
@@ -193,14 +228,21 @@ function endCause(f: BookingStatusFacts, status: string): EndCause {
   const edge = edgeInto(f, status);
   const from = upper(edge?.fromStatus);
   if (status === "REJECTED") return "DECLINED";
+  // A booking that was paid never ended for want of payment.
+  const unpaid = !f.paid;
   if (status === "EXPIRED") {
-    if (!edge) return f.unpaidLinkSeen ? "PAYMENT_LAPSED" : "UNANSWERED";
+    if (edge?.reason === UNPLACED_PLAN_REASON) return "UNPLACED";
+    if (!edge) {
+      return f.unpaidLinkSeen && unpaid ? "PAYMENT_LAPSED" : "UNANSWERED";
+    }
     if (from === "APPROVED") return "UNPLACED";
     if (from === "PENDING" && source !== "DIRECT_CHECKOUT") return "UNANSWERED";
-    return "PAYMENT_LAPSED";
+    return unpaid ? "PAYMENT_LAPSED" : "CANCELLED";
   }
   if (edge?.reason === WITHDRAWN_BY_CONSULTANT) return "APPROVAL_WITHDRAWN";
-  if (edge && !edge.by && UNPAID_OPEN.has(from)) return "PAYMENT_LAPSED";
+  if (edge && !edge.by && UNPAID_OPEN.has(from) && unpaid) {
+    return "PAYMENT_LAPSED";
+  }
   if (
     edge?.by === "REQUESTER" &&
     source === "REQUEST_SUBMITTED" &&
@@ -264,7 +306,11 @@ function stageOf(
       return { stage: f.paid ? "CONFIRMED" : "AWAITING_PAYMENT" };
     }
     // A plan completes at its stored end or its plan end, not when the placed sessions are held.
-    if (sessions.done && (kind !== "SUBSCRIPTION" || f.planEnded)) {
+    if (
+      sessions.done &&
+      !f.unsettled &&
+      (kind !== "SUBSCRIPTION" || f.planEnded)
+    ) {
       return { stage: "COMPLETED" };
     }
   }
@@ -318,10 +364,14 @@ function reasonOf(
     return at ? `${amount} refunded on ${day(at)}.` : `${amount} refunded.`;
   }
   switch (stage) {
-    case "REQUESTED":
+    case "REQUESTED": {
       if (f.paid) return `Paid; ${consultant} is asked to approve next.`;
       if (isExpert) return `${cap(payer)} is waiting for your answer.`;
-      return `Waiting for ${consultant} to answer (within 48 hours).`;
+      const within = answerWindow(f.kind);
+      return within
+        ? `Waiting for ${consultant} to answer (within ${within}).`
+        : `Waiting for ${consultant} to answer.`;
+    }
     case "AWAITING_PAYMENT":
       if (!deadline)
         return isLearner
@@ -341,7 +391,8 @@ function reasonOf(
           : `Week done. ${cap(consultant)} is placing the next ${next}.`;
       }
       if (isExpert) {
-        return by
+        // The placement deadline is a plan's first week's; nothing else has one here.
+        return f.planWait === "CYCLE_1" && by
           ? `Paid. Place the first sessions by ${dayTime(by)}.`
           : "Place the sessions on the calendar.";
       }
@@ -392,9 +443,10 @@ function reasonOf(
       if (f.paid && f.sessions?.allTentative) {
         return "Payment received; the session is being locked in.";
       }
-      return f.sessions?.awaitingOutcome
-        ? "This session's time has passed. We're confirming what happened."
-        : "";
+      if (f.unsettled) {
+        return unsettledReason(f.unsettled, viewer, consultant, payer, day);
+      }
+      return f.sessions?.awaitingOutcome ? AWAITING_OUTCOME : "";
     case "COMPLETED":
       return f.completedNote ?? "";
     case "PAYMENT_LAPSED":
@@ -402,6 +454,50 @@ function reasonOf(
     default:
       return endedReason(cause, f, viewer, consultant, payer, day);
   }
+}
+
+const AWAITING_OUTCOME =
+  "This session's time has passed. We're confirming what happened.";
+
+/** What happened to a one-off's session, and what the learner is owed for it. */
+function unsettledReason(
+  u: UnsettledSessionInput,
+  viewer: StatusViewer,
+  consultant: string,
+  payer: string,
+  day: (d: Date) => string,
+): string {
+  if (u.cause === "UNDER_REVIEW") return AWAITING_OUTCOME;
+  const isExpert = viewer === "CONSULTANT";
+  const isLearner = viewer === "CONSULTEE";
+  const happened = {
+    CUT_SHORT: "This session was cut short.",
+    HOST_ABSENT: isExpert
+      ? "You did not join this session."
+      : `${cap(consultant)} did not join this session.`,
+    PLATFORM_ISSUE: "This session was stopped by a problem on our side.",
+    NOT_HELD: "This session did not take place as booked.",
+  }[u.cause];
+  if (u.owed === "NOTHING") return happened;
+  if (u.owed === "REVIEW") {
+    return `${happened} Our support team is reviewing it.`;
+  }
+  const by = asDate(u.owedBy);
+  const when = by ? ` by ${day(by)}` : "";
+  // Only a session the host lost is the host's to make up by name.
+  const hostOwes = u.cause === "CUT_SHORT" || u.cause === "HOST_ABSENT";
+  let owes: string;
+  if (!hostOwes) {
+    owes = isLearner
+      ? `You are owed a new time${when}`
+      : `${cap(payer)} is owed a new time${when}`;
+  } else if (isExpert) {
+    owes = `You owe ${payer} a new time${when}`;
+  } else {
+    owes = `${cap(consultant)} owes ${isLearner ? "you" : payer} a new time${when}`;
+  }
+  if (u.owed === "MAKE_UP") return `${happened} ${owes}.`;
+  return `${happened} ${owes}, or ${isLearner ? "you are" : "they are"} refunded.`;
 }
 
 function endedReason(
@@ -419,10 +515,12 @@ function endedReason(
       return isExpert
         ? "You declined this request."
         : "The expert declined this request.";
-    case "UNANSWERED":
+    case "UNANSWERED": {
+      const within = answerWindow(f.kind) ?? "time";
       return isExpert
-        ? "You did not answer in 48 hours."
-        : "The expert did not answer in 48 hours.";
+        ? `You did not answer in ${within}.`
+        : `The expert did not answer in ${within}.`;
+    }
     case "UNPLACED":
       return isExpert
         ? "You did not place the sessions in time."

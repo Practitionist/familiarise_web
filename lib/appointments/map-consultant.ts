@@ -18,7 +18,7 @@ import { occurrencesOfAppointment } from "./occurrences";
 import {
   getAnchorTime,
   isOccurrenceOver,
-  liveOccurrences,
+  soldSessionProgress,
 } from "./occurrences";
 import { normalizeStatus } from "./status";
 import { trialMeta } from "./trial-labels";
@@ -351,9 +351,6 @@ function mapGroup(
     children.flatMap((c) => occurrencesOfAppointment(c)),
   );
   const { title, counterpart, status } = eventFacts(first, consultantId);
-  // #1554 — progress is counted over live occurrence rows, not wrappers.
-  const live = liveOccurrences(occurrences);
-  const completed = live.filter((s) => isOccurrenceOver(s, now)).length;
   const target = nextActionableChild(children, now);
   const source = first.subscription?.bookingSource ?? null;
   const facts = listStatusFacts(first, occurrences, {
@@ -390,7 +387,7 @@ function mapGroup(
     ...facts,
     nextAt: getAnchorTime(occurrences, now),
     occurrences,
-    group: { total: live.length, completed },
+    group: soldSessionProgress(first, occurrences),
     meta: null,
     organizationId: first.organizationId ?? null,
     pendingPaymentUrl: null,

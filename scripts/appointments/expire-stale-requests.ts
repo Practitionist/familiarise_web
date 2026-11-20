@@ -2,6 +2,7 @@
 
 import { scrubStringValue } from "@/lib/observability/sentry-scrubber";
 import { nudgeUnplacedPlanWeeks } from "@/lib/booking/week-nudge";
+import { UNPLACED_PLAN_REASON } from "@/lib/booking/unplaced-plan";
 import prisma from "../../lib/prisma";
 import type { PrismaLike } from "../../lib/prisma";
 import {
@@ -1416,7 +1417,7 @@ function retainedUnallocatedObligationWhere(subscriptionId?: string) {
       AND EXISTS (
         SELECT 1 FROM "BookingStatusHistory" h
         WHERE h."entityId" = s.id AND h.entity = 'SUBSCRIPTION'
-          AND h.reason = 'UNALLOCATED_48H' AND h."toStatus" = 'EXPIRED'
+          AND h.reason = ${UNPLACED_PLAN_REASON} AND h."toStatus" = 'EXPIRED'
       )`;
 }
 
@@ -1519,7 +1520,7 @@ async function expireOneUnallocated(
             to: AppointmentStatus.EXPIRED,
             fromIn: [AppointmentStatus.PENDING],
             actorUserId: null,
-            reason: "UNALLOCATED_48H",
+            reason: UNPLACED_PLAN_REASON,
           });
           const due = await tx.$queryRaw<{ id: string }[]>(Prisma.sql`
         SELECT p.id FROM "Payment" p
@@ -1631,7 +1632,7 @@ export async function expireUnallocatedPaidSubscriptionForOne(
                   some: {
                     entity: "SUBSCRIPTION",
                     entityId: subscriptionId,
-                    reason: "UNALLOCATED_48H",
+                    reason: UNPLACED_PLAN_REASON,
                     toStatus: AppointmentStatus.EXPIRED,
                   },
                 },

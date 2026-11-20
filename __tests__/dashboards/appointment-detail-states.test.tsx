@@ -241,7 +241,8 @@ describe("consultee · REQUESTED subscription (#1675 owner decision 2026-09-20)"
     currentDetail = subscriptionDetail({ status: "PENDING" });
     const html = render("consultee");
     // A wait is not an action: the badge's reason line says it, the banner stays away.
-    expect(html).toContain("Waiting for Ethan to answer (within 48 hours).");
+    // A plan request holds for 30 days, not the 48 hours of a 1:1.
+    expect(html).toContain("Waiting for Ethan to answer (within 30 days).");
     expect(html).not.toContain('aria-label="Needs you"');
     // Nothing was ever held or completed, so the profile-review nudge does
     // not appear before there is anything to review.

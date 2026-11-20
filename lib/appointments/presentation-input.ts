@@ -290,6 +290,9 @@ export function entitlementSummary(
 ): BookingPresentationInput["entitlement"] {
   return e
     ? {
+        total: e.total,
+        held: e.held,
+        completed: e.completed,
         remaining: e.remaining,
         nextBatch: e.cycle.nextBatch,
         notHeld: e.remaining,

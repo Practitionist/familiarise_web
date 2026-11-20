@@ -59,14 +59,13 @@ async function rowFor(...args: Parameters<typeof movingConsultation>) {
   return row;
 }
 
+const presentationOf = (row: Awaited<ReturnType<typeof rowFor>>) =>
+  deriveBookingPresentation(row.presentation, "CONSULTANT", {
+    viewerZone: "UTC",
+    now: NOW,
+  });
 const actionsOf = (row: Awaited<ReturnType<typeof rowFor>>) =>
-  rowActions(
-    row,
-    deriveBookingPresentation(row.presentation, "CONSULTANT", {
-      viewerZone: "UTC",
-      now: NOW,
-    }),
-  );
+  rowActions(row, presentationOf(row));
 
 beforeEach(() => jest.clearAllMocks());
 
@@ -115,6 +114,25 @@ describe("Requests inbox rows for a booking being moved", () => {
     });
   });
 
+  it("every moving row reads Being moved, as the list and the detail page do", async () => {
+    const client = await rowFor("CONSULTEE", true);
+    expect(presentationOf(client).bookingState).toMatchObject({
+      state: "BEING_MOVED",
+      label: "Being moved",
+    });
+    expect(presentationOf(client).bookingState.why).toMatch(
+      /^Priya Nair proposed .*; originally /,
+    );
+    // The consultant's own request without times is still theirs to finish.
+    const own = await rowFor("CONSULTANT", false);
+    expect(presentationOf(own).bookingState.state).toBe("BEING_MOVED");
+    expect(own.bucket).toBe("answer-today");
+    expect(
+      presentationOf(await rowFor("CONSULTEE", false)).bookingState.state,
+    ).toBe("BEING_MOVED");
+    expect((await rowFor("CONSULTEE", false)).bucket).toBe("answer-today");
+  });
+
   it("no moving row ever offers Decline", async () => {
     for (const [by, times] of [
       ["CONSULTEE", true],
@@ -156,18 +174,14 @@ describe("a move past its deadline, before the sweep ends it", () => {
       now: NOW,
     });
     const row = rows.find((r) => r.id === "c-moving");
-    if (!row) return;
+    if (!row) throw new Error("lapsed moving row missing");
     const actions = actionsOf(row);
     const kinds = [actions.primary, ...actions.secondary].map((a) => a?.kind);
     expect(kinds).not.toContain("accept-proposal");
     expect(kinds).not.toContain("keep-original");
     expect(row.proposal).toBeNull();
-    expect(
-      deriveBookingPresentation(row.presentation, "CONSULTANT", {
-        viewerZone: "UTC",
-        now: NOW,
-      }).bookingState.state,
-    ).not.toBe("BEING_MOVED");
+    expect(row.presentation.reschedule).toBeNull();
+    expect(presentationOf(row).bookingState.state).toBe("CONFIRMED");
   });
 });
 

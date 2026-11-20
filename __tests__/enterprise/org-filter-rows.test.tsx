@@ -151,6 +151,48 @@ describe("org appointments filter row", () => {
     }
   });
 
+  it("prints a session's time in India time with its IST label", async () => {
+    fetchMock.mockImplementation(async () => ({
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-type": "application/json" }),
+      json: async () => ({
+        items: [
+          {
+            id: "appt-1",
+            appointmentType: "CONSULTATION",
+            createdAt: "2026-11-10T06:00:00.000Z",
+            organizationId: "org-1",
+            occurrences: [
+              {
+                id: "occ-1",
+                startsAt: "2026-11-23T17:00:00.000Z",
+                endsAt: "2026-11-23T18:00:00.000Z",
+                isTentative: false,
+                completionStatus: "SCHEDULED",
+              },
+            ],
+            consultation: {
+              status: "APPROVED",
+              consultationPlan: { title: "Career chat" },
+              requestedBy: {
+                user: { id: "u-a", name: "Aiko", email: "aiko@example.test" },
+              },
+            },
+            subscription: null,
+            webinar: null,
+            class: null,
+          },
+        ],
+        total: 1,
+        page: 1,
+        perPage: 20,
+      }),
+    }));
+    renderWithQuery(<AppointmentsPageClient orgId="org-1" />);
+    expect(await screen.findByText(/23 Nov 2026, 10:30 pm IST/)).toBeVisible();
+  });
+
   it("clears a URL type filter and resets the page", () => {
     mockSearch = "appointmentType=WEBINAR&page=3";
     renderWithQuery(<AppointmentsPageClient orgId="org-1" />);

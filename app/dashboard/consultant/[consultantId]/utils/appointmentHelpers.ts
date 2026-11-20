@@ -5,8 +5,8 @@ import {
   isOccurrenceOver,
   liveOccurrences,
   occurrencesOfAppointment,
+  soldSessionProgress,
 } from "@/lib/appointments/occurrences";
-import { subscriptionEntitlement } from "@/lib/booking/entitlement";
 
 /**
  * The LIVE slot rows of an appointment — dead rows (CANCELLED / RESCHEDULED /
@@ -243,75 +243,28 @@ export const getSlotTimes = (appointment: TAppointment): Date[] => {
     .filter((date) => !isNaN(date.getTime()));
 };
 
-/** #1766 — the wrapper's subscription, when the read carried its entitlement. */
-type EntitledSubscription = {
-  sessionsTotal?: number | null;
-  sessionsPerWeek?: number | null;
-  sessionsRefunded?: number;
-  schedulingPeriodStartsAt?: Date | string | null;
-  schedulingTimezone?: string | null;
-  planEndsAt?: Date | string | null;
-  subscriptionPlan?: {
-    sessionsPerWeek?: number;
-    durationInMonths?: number;
-    totalSessions?: number;
-  } | null;
-};
-
 /**
- * Calculates session progress metrics for a group of appointments
- * @param groupAppointments - The group's wrapper(s); #1554 — a subscription or
- * class is one Appointment whose live occurrence rows are its sessions.
- * #1766 — with the wrapper's subscription present, the total is the frozen
- * entitlement and "completed" the delivered rows, through the one helper.
- * @param referenceDate - Optional reference date for comparison (defaults to now)
- * @returns Session progress metrics including total, completed, remaining sessions and percentage
+ * Session progress for a plan or a class group: sessions delivered of sessions
+ * sold, the count the Appointments list and the detail page show. A group
+ * whose read carries no sold total counts nothing.
  */
 export const calculateSessionProgress = (
   groupAppointments: TAppointment[],
-  referenceDate: Date = new Date(),
 ): {
   totalSessions: number;
   completedSessions: number;
   remainingSessions: number;
   progressPercentage: number;
 } => {
-  const rows = groupAppointments.flatMap((app) =>
-    occurrencesOfAppointment(app),
-  );
-  const sessions = liveOccurrences(rows);
-  const sub = groupAppointments[0]?.subscription as
-    EntitledSubscription | null | undefined;
-  const plan = sub?.subscriptionPlan;
-
-  let totalSessions = sessions.length;
-  let completedSessions = sessions.filter((session) =>
-    isOccurrenceOver(session, referenceDate),
-  ).length;
-  if (
-    plan &&
-    typeof plan.sessionsPerWeek === "number" &&
-    typeof plan.durationInMonths === "number" &&
-    typeof plan.totalSessions === "number"
-  ) {
-    const entitlement = subscriptionEntitlement({
-      sessionsTotal: sub?.sessionsTotal ?? plan.totalSessions,
-      sessionsRefunded: sub?.sessionsRefunded ?? 0,
-      sessionsPerWeek: sub?.sessionsPerWeek ?? plan.sessionsPerWeek,
-      durationInMonths: plan.durationInMonths,
-      // A row with no end (legacy shape) contributes its start to the window.
-      occurrences: rows.map((row) => ({
-        ...row,
-        endsAt: row.endsAt ?? row.startsAt,
-      })),
-      schedulingPeriodStartsAt: sub?.schedulingPeriodStartsAt ?? referenceDate,
-      schedulingTimezone: sub?.schedulingTimezone ?? "Asia/Kolkata",
-      planEndsAt: sub?.planEndsAt ?? null,
-      now: referenceDate,
-    });
-    totalSessions = entitlement.total;
-    completedSessions = entitlement.completed;
-  }
+  const first = groupAppointments[0];
+  const progress = first
+    ? soldSessionProgress(
+        first,
+        groupAppointments.flatMap((app) => occurrencesOfAppointment(app)),
+      )
+    : null;
+  const totalSessions = progress?.total ?? 0;
+  const completedSessions = progress?.completed ?? 0;
   const remainingSessions = totalSessions - completedSessions;
   const progressPercentage =
     totalSessions > 0 ? (completedSessions / totalSessions) * 100 : 0;

@@ -3,10 +3,10 @@
  */
 
 /**
- * #1554 — a subscription's "N of M" on the detail page counts LIVE calls,
- * the same rule the consultee list's group card applies. A dead row (one the
- * reschedule released, or a cancelled one) is not a session the buyer is
- * owed, so it belongs in neither the numerator nor the denominator.
+ * A subscription's "k of n" on the detail page: n is the sessions sold and k
+ * the sessions delivered, the same rule the list's group card applies. A dead
+ * row (one a reschedule released, or a cancelled one) is never counted as
+ * delivered, and the rows placed so far are never the denominator.
  */
 
 jest.mock("../../lib/prisma", () => ({ __esModule: true, default: {} }));
@@ -42,6 +42,8 @@ const detail = {
     subscription: {
       status: "SCHEDULED",
       pendingPaymentUrl: null,
+      sessionsTotal: 12,
+      sessionsRefunded: 0,
       subscriptionPlan: {
         title: "Weekly coaching",
         consultantProfile: { id: "cp-1", user: { name: "Coach", image: null } },
@@ -61,9 +63,9 @@ const detail = {
   },
 } as unknown as TAppointmentDetail;
 
-it("counts live calls only, the same way the list's group card does", () => {
+it("counts delivered sessions of the sessions sold, the same way the list's group card does", () => {
   const { vm } = mapAppointmentDetail(detail, "consultee", NOW);
-  expect(vm.group).toEqual({ total: 4, completed: 2 });
+  expect(vm.group).toEqual({ total: 12, completed: 2 });
 });
 
 // #1766 — with the plan and the frozen entitlement present the programme is

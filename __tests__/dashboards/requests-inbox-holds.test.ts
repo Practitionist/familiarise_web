@@ -173,7 +173,9 @@ describe("direct checkout holds", () => {
       expect(JSON.stringify(where)).not.toContain(
         '"bookingSource":"DIRECT_CHECKOUT"',
       );
-      expect(where.AND).toContainEqual(ANSWERABLE_CONSULTATION);
+      // The requests arm; the other arm is a paid consultation parked without a time.
+      expect(where.OR[0].AND).toContainEqual(ANSWERABLE_CONSULTATION);
+      expect(where.OR[1].status).toBe("APPROVED");
     }
   });
 });

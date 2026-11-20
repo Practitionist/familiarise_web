@@ -167,10 +167,47 @@ const AWAITING_CLIENT_ANSWER = {
 } satisfies Prisma.ConsultationWhereInput & Prisma.SubscriptionWhereInput;
 
 /**
+ * An APPROVED consultation whose whole-booking reschedule ended (declined or
+ * expired) after its original time was claimed by another booking: its only
+ * occurrences are still `RESCHEDULED`, no live confirmed session exists, and
+ * no `PENDING_REVIEW` proposal remains open. The Requests inbox lists it and
+ * the requests-to-answer number counts it, so the consultant places a new time
+ * before the booking is cancelled and refunded.
+ */
+export function strandedApprovedConsultationWhere(
+  cp: string,
+  scope: Scope,
+): Prisma.ConsultationWhereInput {
+  return {
+    status: "APPROVED",
+    consultationPlan: {
+      consultantProfileId: cp,
+      ...scopeToPlanHostWhere(scope),
+    },
+    appointment: {
+      occurrences: {
+        some: { completionStatus: "RESCHEDULED", deletedAt: null },
+        none: {
+          completionStatus: {
+            in: ["SCHEDULED", "COMPLETED", "UNVERIFIED"],
+          },
+          isTentative: false,
+          deletedAt: null,
+        },
+      },
+      rescheduleRequests: {
+        none: { status: "PENDING_REVIEW" },
+      },
+    },
+  };
+}
+
+/**
  * The one "requests to answer" number: PENDING consultations and live
- * subscriptions that are real requests (never an unpaid checkout in flight);
- * a trial never waits on the expert. The nav badge, Home, NeedsYou and the request cap all
- * read it, so they cannot disagree. `db` lets a caller count inside its lock.
+ * subscriptions that are real requests (never an unpaid checkout in flight),
+ * and paid consultations parked without a time. A trial never waits on the
+ * expert, and a plan week to schedule is not counted. The nav badge, Home and
+ * NeedsYou read it, so they cannot disagree. `db` lets a caller count inside its lock.
  */
 export async function countRequestsToAnswer(
   args: { consultantProfileId: string; orgScope?: Scope },
@@ -182,8 +219,13 @@ export async function countRequestsToAnswer(
     () =>
       db.consultation.count({
         where: {
-          ...pendingConsultationWhere(cp, scope),
-          NOT: AWAITING_CLIENT_ANSWER,
+          OR: [
+            {
+              ...pendingConsultationWhere(cp, scope),
+              NOT: AWAITING_CLIENT_ANSWER,
+            },
+            strandedApprovedConsultationWhere(cp, scope),
+          ],
         },
       }),
     () =>

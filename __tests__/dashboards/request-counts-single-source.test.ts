@@ -37,6 +37,7 @@ import {
   countOpenRequestsForCap,
   countRequestsToAnswer,
   getNeedsYouSummary,
+  strandedApprovedConsultationWhere,
 } from "@/lib/data/needs-you";
 
 const m = prisma as unknown as Record<string, Record<string, jest.Mock>>;
@@ -111,6 +112,44 @@ describe("one requests-to-answer number", () => {
       "org-1",
     ]);
     expect(summary.total).toBe(10);
+  });
+});
+
+describe("a paid consultation parked without a time", () => {
+  it("is counted with the requests, by the predicate the inbox lists it with, in the same statement", async () => {
+    await countRequestsToAnswer({ consultantProfileId: "cp-1" });
+    expect(m.consultation.count).toHaveBeenCalledTimes(1);
+    const [{ where }] = m.consultation.count.mock.calls[0];
+    expect(where.OR).toHaveLength(2);
+    expect(where.OR[1]).toEqual(
+      strandedApprovedConsultationWhere("cp-1", { kind: "personal" }),
+    );
+    expect(where.OR[1]).toMatchObject({
+      status: "APPROVED",
+      appointment: {
+        occurrences: {
+          some: { completionStatus: "RESCHEDULED", deletedAt: null },
+        },
+        rescheduleRequests: { none: { status: "PENDING_REVIEW" } },
+      },
+    });
+  });
+
+  it("is counted in an organisation's scope too", async () => {
+    const orgScope = { kind: "org", orgId: "org-1" } as const;
+    await countRequestsToAnswer({ consultantProfileId: "cp-1", orgScope });
+    const [{ where }] = m.consultation.count.mock.calls[0];
+    expect(where.OR[1]).toEqual(
+      strandedApprovedConsultationWhere("cp-1", orgScope),
+    );
+  });
+
+  it("open plan weeks stay out of the number: subscriptions count PENDING requests only", async () => {
+    await countRequestsToAnswer({ consultantProfileId: "cp-1" });
+    expect(m.subscription.count).toHaveBeenCalledTimes(1);
+    const [{ where }] = m.subscription.count.mock.calls[0];
+    expect(JSON.stringify(where)).not.toContain('"APPROVED"}');
+    expect(where.AND[0]).toMatchObject({ status: "PENDING" });
   });
 });
 

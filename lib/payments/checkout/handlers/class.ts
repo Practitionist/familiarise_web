@@ -7,6 +7,7 @@ import type { CheckoutInput } from "@/schemas/checkout";
 import { isUserEnrolled } from "@/lib/payments/utils/participants";
 import { getClassCapacity } from "@/lib/events/capacity";
 import { classEnrolmentFrom } from "@/lib/booking/class-enrolment";
+import { plannedSessionCount } from "@/lib/booking/batch-cards";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import {
   assertClassEnrolmentOpen,
@@ -117,6 +118,7 @@ export async function handleClassCheckout(
     throw alreadyHeldSeatError("CLASS");
   }
 
+  const now = new Date();
   // B11 — a partially-scheduled class (consultant hasn't allocated every
   // session yet) must not accept paid enrollments: the seat below covers
   // only EXISTING sessions, silently shorting the buyer the rest.
@@ -126,9 +128,31 @@ export async function handleClassCheckout(
     expectedSessions > 0 &&
     sessions.length < expectedSessions
   ) {
-    throw new Error(
-      `This class is not fully scheduled yet (${sessions.length} of ${expectedSessions} sessions). Enrollment opens once all sessions are scheduled.`,
-    );
+    // A session the host cancelled still counts while its make-up is owed.
+    const hostCancelled = wrapper
+      ? await tx.appointmentOccurrence.findMany({
+          where: {
+            appointmentId: wrapper.id,
+            deletedAt: null,
+            completionStatus: "CANCELLED",
+            hostCancelledAt: { not: null },
+          },
+          select: {
+            ordinal: true,
+            startsAt: true,
+            completionStatus: true,
+            hostCancelledAt: true,
+          },
+        })
+      : [];
+    if (
+      plannedSessionCount([...sessions, ...hostCancelled], now) <
+      expectedSessions
+    ) {
+      throw new Error(
+        `This class is not fully scheduled yet (${sessions.length} of ${expectedSessions} sessions). Enrollment opens once all sessions are scheduled.`,
+      );
+    }
   }
   if (!wrapper) {
     throw new Error("No class sessions found");
@@ -136,7 +160,6 @@ export async function handleClassCheckout(
 
   // #1819 — re-derived at commit over the quote's rows (cancelled ones too): a
   // session that started since the quote re-prices the order.
-  const now = new Date();
   const enrolment = assertClassEnrolmentOpen(
     classEnrolmentFrom({
       pricePaise: plan.price,

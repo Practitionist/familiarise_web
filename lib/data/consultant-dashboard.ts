@@ -322,6 +322,8 @@ const appointmentSelect = {
         select: {
           id: true,
           title: true,
+          // Home's "k/n sessions" counts against the sessions sold.
+          totalSessions: true,
           ...planOwnerSelect,
           collaborators: acceptedCollaboratorsSelect,
         },

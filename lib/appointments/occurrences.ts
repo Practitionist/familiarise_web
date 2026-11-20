@@ -24,8 +24,16 @@ import {
   type OccurrenceVM,
 } from "./view-model";
 import { normalizeOccurrences, type AnomalySink } from "./normalize";
-import { bookingStatus, bookingStatusBadge } from "./booking-status";
-import { isCompletedOccurrence } from "@/lib/booking/entitlement";
+import {
+  bookingStatus,
+  bookingStatusBadge,
+  type UnsettledSessionInput,
+} from "./booking-status";
+import { MAKEUP_WINDOW_DAYS, missedAt } from "@/lib/booking/misses";
+import {
+  isCompletedOccurrence,
+  schedulableSessionsOf,
+} from "@/lib/booking/entitlement";
 import type { StatusBadgeStyle } from "@/lib/labels/session-labels";
 import { formatInViewerZone } from "@/lib/time/viewer-zone";
 
@@ -491,6 +499,33 @@ export function liveOccurrences(occurrences: OccurrenceVM[]): OccurrenceVM[] {
   return occurrences.filter((row) => !isDeadOccurrence(row));
 }
 
+/**
+ * "k of n sessions" for a plan or a class: n is the sessions sold (a plan's
+ * sold total less refunded sessions; a class plan's total), k the sessions
+ * delivered as the entitlement counts them. Null when the read carries no total.
+ */
+export function soldSessionProgress(
+  booking: {
+    subscription?: Parameters<typeof schedulableSessionsOf>[0] | null;
+    class?: { classPlan?: { totalSessions?: number | null } | null } | null;
+  },
+  occurrences: ReadonlyArray<{
+    completionStatus?: string | null;
+    deletedAt?: Date | string | null;
+  }>,
+): { total: number; completed: number } | null {
+  const total = booking.subscription
+    ? schedulableSessionsOf(booking.subscription)
+    : (booking.class?.classPlan?.totalSessions ?? null);
+  if (total === null) return null;
+  return {
+    total,
+    completed: occurrences.filter(
+      (row) => !isDeadOccurrence(row) && isCompletedOccurrence(row),
+    ).length,
+  };
+}
+
 export function isOccurrenceOver(
   occurrence: OccurrenceVM,
   now = new Date(),
@@ -515,6 +550,54 @@ export function isOccurrenceHeld(o: {
   return (
     isCompletedOccurrence(o) || o.completionStatus === "VOIDED" || !!o.outcome
   );
+}
+
+const VOID_CAUSE: Record<string, UnsettledSessionInput["cause"]> = {
+  CUT_SHORT: "CUT_SHORT",
+  HOST_ABSENT: "HOST_ABSENT",
+  PLATFORM_OUTAGE: "PLATFORM_ISSUE",
+};
+
+/**
+ * A consultation or trial whose live sessions were all voided or parked for
+ * review, none delivered: what happened to the latest one and what it is owed.
+ * A consultation's void is made up within the make-up window or refunded; a
+ * paid trial's waits on support; a free trial's is a record only. Null for any
+ * other booking.
+ */
+export function unsettledSessionOf(
+  kind: string | null | undefined,
+  occurrences: ReadonlyArray<{
+    startsAt: Date | string;
+    completionStatus?: string | null;
+    outcome?: string | null;
+    voidedAt?: Date | string | null;
+    deletedAt?: Date | string | null;
+  }>,
+  /** The learner paid money for it, so a refund is the alternative to a make-up. */
+  charged: boolean,
+): UnsettledSessionInput | null {
+  if (kind !== "CONSULTATION" && kind !== "TRIAL") return null;
+  const live = occurrences.filter((o) => !isDeadOccurrence(o));
+  const unsettled = (o: { completionStatus?: string | null }) =>
+    o.completionStatus === "VOIDED" || o.completionStatus === "UNVERIFIED";
+  if (live.length === 0 || !live.every(unsettled)) return null;
+  const last = [...live].sort(
+    (a, b) => toDate(b.startsAt).getTime() - toDate(a.startsAt).getTime(),
+  )[0];
+  if (last.completionStatus === "UNVERIFIED") {
+    return { cause: "UNDER_REVIEW", owed: "NOTHING" };
+  }
+  const cause = VOID_CAUSE[last.outcome ?? ""] ?? "NOT_HELD";
+  if (kind === "TRIAL") return { cause, owed: charged ? "REVIEW" : "NOTHING" };
+  const voidedAt = missedAt({ voidedAt: toDateOrNull(last.voidedAt) });
+  return {
+    cause,
+    owed: charged ? "MAKE_UP_OR_REFUND" : "MAKE_UP",
+    owedBy: voidedAt
+      ? new Date(voidedAt.getTime() + MAKEUP_WINDOW_DAYS * 86_400_000)
+      : null,
+  };
 }
 
 /** True when every live session's outcome is recorded or its call was ended by the host. */
@@ -625,6 +708,7 @@ function rowBookingStatus(vm: ChipVM, role: "consultee" | "consultant") {
       refunded: vm.refunded,
       sessions:
         vm.occurrences && live ? listSessions(vm.occurrences, live) : undefined,
+      unsettled: unsettledSessionOf(vm.kind, vm.occurrences ?? [], !!vm.paid),
     },
     role === "consultant" ? "CONSULTANT" : "CONSULTEE",
   );

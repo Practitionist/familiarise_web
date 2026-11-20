@@ -273,8 +273,8 @@ describe("#1270 — the surfaces are wired to those predicates", () => {
   it("never renders the word JOIN as inert text", () => {
     // The button owns that word. The status label is a state, and it is muted
     // like every other non-actionable one.
-    expect(timeline).not.toContain('joinable: "JOIN"');
-    expect(timeline).toContain('joinable: "IN PROGRESS"');
+    expect(timeline).not.toMatch(/joinable: "join"/i);
+    expect(timeline).toContain('joinable: "In progress"');
   });
 });
 

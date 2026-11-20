@@ -91,7 +91,10 @@ import type { AppointmentVM } from "../../lib/appointments/view-model";
 import { OPS_HINT_LABEL } from "../../components/appointments/OperatorOpsHint";
 import { useConsulteeAppointmentsAdapter } from "../../components/appointments/consultee/ConsulteeAppointmentsAdapter";
 import { useConsultantAppointmentsAdapter } from "../../app/dashboard/consultant/[consultantId]/(features)/appointments/ConsultantAppointmentsAdapter";
-import { OrgActorDetail } from "../../app/dashboard/organization/[orgId]/appointments/[appointmentId]/OrgActorDetail";
+import {
+  OrgActorDetail,
+  type OrgActorDetailProps,
+} from "../../app/dashboard/organization/[orgId]/appointments/[appointmentId]/OrgActorDetail";
 import ConsulteeReschedulePage, {
   generateMetadata as consulteeRescheduleMetadata,
 } from "../../app/dashboard/consultee/[consulteeId]/(features)/appointments/[appointmentId]/reschedule/page";
@@ -277,6 +280,37 @@ describe("OrgActorDetail", () => {
       screen.getByRole("button", { name: "Cancel booking" }),
     ).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Ops panel" })).toBeNull();
+  });
+
+  it("words a hosted webinar as the event and prints its sessions in labelled India time", () => {
+    const draft: string = "DRAFT";
+    render(
+      <OrgActorDetail
+        {...props}
+        canCancel={false}
+        canReschedule={false}
+        meta={{
+          ...props.meta,
+          title: "Workshop",
+          kind: "WEBINAR" as const,
+          // An event's status rides the same prop as a booking's.
+          status: draft as OrgActorDetailProps["meta"]["status"],
+          learnerName: null,
+          learnerUserId: null,
+          sessions: [
+            {
+              id: "occ-1",
+              startsAt: new Date("2026-11-23T17:00:00.000Z"),
+              endsAt: new Date("2026-11-23T18:00:00.000Z"),
+            },
+          ],
+        }}
+      />,
+      { wrapper },
+    );
+    expect(screen.getByText("Draft")).toBeInTheDocument();
+    expect(screen.queryByText("Registered")).toBeNull();
+    expect(screen.getByText(/10:30 pm IST/)).toBeInTheDocument();
   });
 
   it("shows a platform operator the Ops panel link instead", () => {

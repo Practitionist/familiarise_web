@@ -24,12 +24,16 @@ import { UTC_ZONE } from "@/lib/time/viewer-zone";
 import { withLapsedRequestRestored } from "@/lib/appointments/lapsed-move";
 import prisma from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
-import { scopeToPlanHostWhere, type Scope } from "@/lib/api/scope/parse";
+import type { Scope } from "@/lib/api/scope/parse";
 import { liveCheckoutHold } from "@/lib/booking/request-cohort";
 import { liveReminderPayment } from "@/lib/booking/payment-reminder-eligibility";
 import { mapLimit, poolLimit } from "@/lib/db/bounded";
 import { MINIMUM_BOOKING_LEAD_TIME_MS } from "@/lib/payments/constants";
-import { lifecycleOf, planOf } from "@/lib/appointments/presentation-input";
+import {
+  entitlementSummary,
+  lifecycleOf,
+  planOf,
+} from "@/lib/appointments/presentation-input";
 import { isSponsoredPayment } from "@/lib/appointments/payment-display";
 import {
   soldSessionMinutes,
@@ -38,12 +42,16 @@ import {
   subscriptionPlanEnd,
   type SubscriptionEntitlement,
 } from "@/lib/booking/entitlement";
-import { bookedSessionMinutes } from "@/lib/appointments/occurrences";
+import {
+  bookedSessionMinutes,
+  liveOccurrenceWhere,
+} from "@/lib/appointments/occurrences";
 import {
   APPOINTMENT_LIST_SELECT,
   PROFILE_WITH_USER_SELECT,
 } from "@/lib/booking/list-selects";
 import {
+  ALLOCATE_WINDOW_MS,
   deriveBookingPresentation,
   requestHoldDeadline,
   type BookingPresentationInput,
@@ -73,6 +81,7 @@ import {
   nextCycleSubscriptionWhere,
   pendingConsultationWhere,
   pendingSubscriptionWhere,
+  strandedApprovedConsultationWhere,
   subscriptionRequestWhere,
   trialRequestWhere,
 } from "@/lib/data/needs-you";
@@ -403,6 +412,7 @@ function namesOf(
 
 function wrapperFacts(a: AppointmentRow | null, appointmentType: string) {
   const slots = a?.occurrences ?? [];
+  const move = a?.rescheduleRequests[0];
   return {
     appointmentType,
     occurrences: slots,
@@ -415,6 +425,20 @@ function wrapperFacts(a: AppointmentRow | null, appointmentType: string) {
       ? (a?.organization?.name ?? null)
       : null,
     history: a?.statusHistory ?? [],
+    // The open move, as the detail page passes it, so the row reads "Being moved".
+    reschedule:
+      move?.status === "PENDING_REVIEW"
+        ? {
+            by:
+              move.initiatorRole === "CONSULTANT"
+                ? ("CONSULTANT" as const)
+                : ("REQUESTER" as const),
+            proposedStartsAt: move.proposedTimes[0]?.startsAt ?? null,
+            originalStartsAt:
+              slots.find(isReleasedForReschedule)?.startsAt ?? null,
+            expiresAt: move.expiresAt,
+          }
+        : null,
     slots: slots.map((s) => ({
       startsAt: s.startsAt,
       endsAt: s.endsAt,
@@ -423,13 +447,12 @@ function wrapperFacts(a: AppointmentRow | null, appointmentType: string) {
     })),
     tentativeSlotCount: slots.filter((s) => s.isTentative).length,
     rescheduledSlotCount: slots.filter(isReleasedForReschedule).length,
-    proposal: a?.rescheduleRequests[0]
+    proposal: move
       ? {
-          ...a.rescheduleRequests[0],
-          reason: a.rescheduleRequests[0].reason ?? null,
-          preferredTimeOfDay:
-            a.rescheduleRequests[0].preferredTimeOfDay ?? null,
-          preferredDays: a.rescheduleRequests[0].preferredDays ?? null,
+          ...move,
+          reason: move.reason ?? null,
+          preferredTimeOfDay: move.preferredTimeOfDay ?? null,
+          preferredDays: move.preferredDays ?? null,
         }
       : null,
   };
@@ -513,6 +536,7 @@ function consultationRow(
   const presentation: BookingPresentationInput = {
     ...facts,
     request,
+    source: c.bookingSource,
     holdExpiresAt: clock,
     plan: planOf({ consultation: c }),
     names: namesOf(c.requestedBy, c.consultationPlan.consultantProfile),
@@ -652,9 +676,11 @@ function subscriptionRow(
   const presentation: BookingPresentationInput = {
     ...facts,
     request,
+    source: s.bookingSource,
     holdExpiresAt: kind === "next-cycle" ? null : clock,
     plan: planOf({ subscription: s }),
     names: namesOf(s.requestedBy, s.subscriptionPlan.consultantProfile),
+    entitlement: entitlementSummary(entitlement, now),
   };
   const slotsPerSession = Math.max(
     1,
@@ -808,38 +834,23 @@ function answerToday(holdMs: number, now: Date) {
 }
 
 /**
- * An APPROVED consultation whose whole-booking reschedule ended (declined or
- * expired) after its original time was claimed by another booking: its only
- * occurrences are still `RESCHEDULED`, no live confirmed session exists, and
- * no `PENDING_REVIEW` proposal remains open. Surface it in the Requests inbox
- * so the consultant can allocate a replacement slot.
+ * A paid plan with nothing placed is due 48 h after its capture, the clock its
+ * bucket reads: "today" is the last 24 h of that window, or past it.
  */
-function strandedApprovedConsultationWhere(
-  cp: string,
-  scope: Scope,
-): Prisma.ConsultationWhereInput {
+function unplacedPlanDueToday(now: Date) {
   return {
-    status: "APPROVED",
-    consultationPlan: {
-      consultantProfileId: cp,
-      ...scopeToPlanHostWhere(scope),
-    },
     appointment: {
-      occurrences: {
-        some: { completionStatus: "RESCHEDULED", deletedAt: null },
-        none: {
-          completionStatus: {
-            in: ["SCHEDULED", "COMPLETED", "UNVERIFIED"],
+      payment: {
+        some: {
+          paymentStatus: "SUCCEEDED" as const,
+          createdAt: {
+            lte: new Date(now.getTime() - (ALLOCATE_WINDOW_MS - DAY_MS)),
           },
-          isTentative: false,
-          deletedAt: null,
         },
       },
-      rescheduleRequests: {
-        none: { status: "PENDING_REVIEW" },
-      },
+      occurrences: { none: liveOccurrenceWhere },
     },
-  };
+  } satisfies Prisma.SubscriptionWhereInput;
 }
 
 /**
@@ -1045,7 +1056,17 @@ function planSources(
       "answer-today": [
         subscriptionSource(
           cp,
-          { AND: [pending, answerToday(SUBSCRIPTION_HOLD_MS, now)] },
+          {
+            AND: [
+              pending,
+              {
+                OR: [
+                  answerToday(SUBSCRIPTION_HOLD_MS, now),
+                  unplacedPlanDueToday(now),
+                ],
+              },
+            ],
+          },
           now,
         ),
       ],

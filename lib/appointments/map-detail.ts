@@ -11,7 +11,6 @@ import type {
   TDetailAppointment,
 } from "@/lib/data/appointment-detail";
 import type { TAppointment } from "@/types/appointment";
-import { detailEntitlement } from "./presentation-input";
 import { deriveBucket } from "./bucket";
 import { normalizeOccurrences } from "./normalize";
 import {
@@ -19,9 +18,8 @@ import {
   getAnchorTime,
   isDeadOccurrence,
   isDeliberateEnd,
-  isOccurrenceOver,
-  liveOccurrences,
   occurrencesOfAppointment,
+  soldSessionProgress,
 } from "./occurrences";
 import { normalizeStatus } from "./status";
 import { trialMeta } from "./trial-labels";
@@ -136,16 +134,6 @@ export function mapAppointmentDetail(
   const isGroup =
     appointment.appointmentType === "SUBSCRIPTION" ||
     appointment.appointmentType === "CLASS";
-  // #1554 — progress counts LIVE rows, exactly as map-consultee's
-  // groupProgress does, so "2 of 10" reads the same on the list and here.
-  const live = liveOccurrences(occurrences);
-  const completed = live.filter((s) => isOccurrenceOver(s, now)).length;
-  // #1766 — a subscription's programme is its frozen entitlement, so the
-  // count reads "0 of T" before allocation instead of vanishing at 0 rows.
-  const entitlement = detailEntitlement(appointment, now);
-  const subscriptionGroup = entitlement
-    ? { total: entitlement.total, completed: entitlement.completed }
-    : null;
 
   const isCollaboratorViewer =
     role === "consultant" &&
@@ -209,9 +197,8 @@ export function mapAppointmentDetail(
     ...deriveBucket({ status: facts.status, occurrences, now }, role),
     nextAt: getAnchorTime(occurrences, now),
     occurrences,
-    group: isGroup
-      ? (subscriptionGroup ?? { total: live.length, completed })
-      : null,
+    // Sessions delivered of sessions sold, the count the list rows show.
+    group: isGroup ? soldSessionProgress(appointment, occurrences) : null,
     meta: appointment.trial
       ? trialMeta(
           appointment.trial.subscriptionPlan?.trialPriceInPaise ?? null,

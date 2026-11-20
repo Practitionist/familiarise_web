@@ -34,7 +34,13 @@ import {
 import { cn } from "@/utils/tailwind";
 
 import { CountdownBadge } from "../CountdownBadge";
-import { slotStatus } from "../SessionTimeline";
+import {
+  NOT_DELIVERED,
+  SESSION_STATUS_LABEL,
+  SESSION_STATUS_TITLE,
+  slotStatus,
+  type SessionStatus,
+} from "../SessionTimeline";
 
 /** One thing a viewer can do to a single session, offered on its row. */
 export interface SessionRowAction {
@@ -47,47 +53,18 @@ export interface SessionRowAction {
   destructive?: boolean;
 }
 
-type RowStatus = ReturnType<typeof slotStatus>;
+/** Sessions that are over: delivered, under review, or not delivered as booked. */
+const isPastStatus = (status: SessionStatus) =>
+  status === "completed" ||
+  status === "inconclusive" ||
+  NOT_DELIVERED.has(status);
 
-/**
- * Upcoming is the default and says nothing; only states a reader must notice
- * carry a word, and only the exceptions carry colour.
- */
-const STATUS_TEXT: Partial<Record<RowStatus, string>> = {
-  completed: "Done",
-  cutShort: "Cut short",
-  noShow: "No-show",
-  inconclusive: "Verifying",
-  noRecord: "No record",
-  joinable: "Live now",
-};
-
-const STATUS_DOT: Partial<Record<RowStatus, string>> = {
-  completed: "bg-muted-foreground/40",
-  cutShort: "bg-amber-500",
-  noShow: "bg-amber-500",
-  inconclusive: "bg-sky-500",
-  noRecord: "bg-amber-500",
-  joinable: "bg-emerald-500",
-};
-
-const STATUS_TITLE: Partial<Record<RowStatus, string>> = {
-  cutShort: "This session ended earlier than the scheduled duration.",
-  noShow: "One or more participants did not attend this session.",
-  inconclusive: "Session attendance is being verified.",
-  noRecord:
-    "No meeting record found for this session. It may have been missed or held outside the platform.",
-  joinable:
-    "This session's time has arrived, but it cannot be joined from here.",
-};
-
-const PAST: ReadonlySet<RowStatus> = new Set([
-  "completed",
-  "cutShort",
-  "noShow",
-  "inconclusive",
-  "noRecord",
-]);
+/** Only the exceptions carry colour. */
+function statusDot(status: SessionStatus): string {
+  if (status === "joinable") return "bg-emerald-500";
+  if (status === "inconclusive") return "bg-sky-500";
+  return NOT_DELIVERED.has(status) ? "bg-amber-500" : "bg-muted-foreground/40";
+}
 
 interface SessionScheduleProps {
   occurrences: OccurrenceVM[];
@@ -198,8 +175,8 @@ function ScheduleBody({
 
   const statusOf = (s: ScheduleSession<Row>) =>
     slotStatus(s.session.vm, joinWindowMs, now);
-  const past = model.sessions.filter((s) => PAST.has(statusOf(s)));
-  const ahead = model.sessions.filter((s) => !PAST.has(statusOf(s)));
+  const past = model.sessions.filter((s) => isPastStatus(statusOf(s)));
+  const ahead = model.sessions.filter((s) => !isPastStatus(statusOf(s)));
   const nextKey = ahead.find(
     (s) => statusOf(s) === "upcoming" && !noteOf(s.session.vm),
   )?.session.key;
@@ -363,7 +340,7 @@ function SessionRow({
 }: Readonly<{
   entry: ScheduleSession<Row>;
   cancelledNote: string | null;
-  status: RowStatus;
+  status: SessionStatus;
   isNext: boolean;
   showLength: boolean;
   isJoining: boolean;
@@ -377,7 +354,7 @@ function SessionRow({
   const cancelled = cancelledNote !== null;
   const canJoin = !cancelled && status === "joinable" && !!onJoinSession;
   const inline = actions.find((a) => !a.destructive && !a.disabled);
-  const isPast = !cancelled && PAST.has(status);
+  const isPast = !cancelled && isPastStatus(status);
   const details = [
     `Session ${entry.number}`,
     showLength ? lengthLabel(entry.minutes) : null,
@@ -434,16 +411,17 @@ function SessionRow({
             targetDate={row.startsAt}
             sessionEndDate={row.endsAt}
           />
-        ) : STATUS_TEXT[status] ? (
+        ) : status !== "upcoming" ? (
+          // Upcoming is the default and says nothing.
           <span
             className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"
-            title={STATUS_TITLE[status]}
+            title={SESSION_STATUS_TITLE[status]}
           >
             <span
               aria-hidden
-              className={cn("h-1.5 w-1.5 rounded-full", STATUS_DOT[status])}
+              className={cn("h-1.5 w-1.5 rounded-full", statusDot(status))}
             />
-            {STATUS_TEXT[status]}
+            {SESSION_STATUS_LABEL[status]}
           </span>
         ) : null}
 

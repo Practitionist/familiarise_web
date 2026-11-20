@@ -36,6 +36,7 @@ import { isConfirmedStatus } from "@/lib/appointments/status";
 import type { MeetingAppointment } from "@/lib/meeting";
 import { useLazyJoinMeeting } from "@/hooks/scheduling/useLazyJoinMeeting";
 import { useNowTick } from "@/hooks/use-now-tick";
+import { OperatorTime } from "@/lib/time/operator-time";
 
 // Slot shape as delivered by getOrgMemberAppointments (see the include in
 // lib/api/scope/list-appointments.ts). Dates survive the RSC boundary as
@@ -189,18 +190,6 @@ function displaySlot(
   return upcoming ?? sorted[sorted.length - 1];
 }
 
-function formatSlot(slot: MyAppointmentSlot): string {
-  return new Date(slot.startsAt).toLocaleString("en-IN", {
-    // RSC renders in UTC otherwise; this component is client-side but the
-    // fixed IST zone keeps parity with the compensation page's formatting.
-    timeZone: "Asia/Kolkata",
-    day: "2-digit",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
 export function MyAppointmentsClient({
   orgId,
   viewerId,
@@ -327,7 +316,11 @@ export function MyAppointmentsClient({
                 )}
                 <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
                   <CalendarClock className="h-3.5 w-3.5 shrink-0" />
-                  {shown ? formatSlot(shown) : "No session scheduled yet"}
+                  {/* India time with its label, as the operator list prints it. */}
+                  <OperatorTime
+                    value={shown?.startsAt}
+                    fallback="No session scheduled yet"
+                  />
                 </p>
               </div>
 

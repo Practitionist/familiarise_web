@@ -41,7 +41,9 @@ import {
   isDeadOccurrence,
   isDeliberateEnd,
   isOccurrenceHeld,
+  unsettledSessionOf,
 } from "@/lib/appointments/occurrences";
+import { OperatorTime } from "@/lib/time/operator-time";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { humanizeEnum, type Tone } from "@/lib/ui/tone";
 import {
@@ -204,6 +206,7 @@ export function rowStatus(stored: AppointmentRow): {
     live.every((o) => isOccurrenceHeld(o) || isDeliberateEnd(o.meeting));
   const timePassed = (o: AppointmentSlot) =>
     new Date(o.endsAt ?? o.startsAt).getTime() < Date.now();
+  const paid = (row._count?.payment ?? 0) > 0;
   const { label, tone } = bookingStatus(
     {
       kind: row.appointmentType,
@@ -214,8 +217,11 @@ export function rowStatus(stored: AppointmentRow): {
         row.class?.status,
       source:
         row.consultation?.bookingSource ?? row.subscription?.bookingSource,
-      paid: (row._count?.payment ?? 0) > 0,
+      paid,
+      // A webinar or class row is the whole event here, never a seat.
+      eventView: true,
       reschedule: openMove(row),
+      unsettled: unsettledSessionOf(row.appointmentType, live, paid),
       sessions: {
         live: live.length,
         allTentative: live.length > 0 && live.every((o) => o.isTentative),
@@ -226,23 +232,6 @@ export function rowStatus(stored: AppointmentRow): {
     "ORG_ADMIN",
   );
   return { label, tone };
-}
-
-function rowSessionDate(row: AppointmentRow): string {
-  const slot = displaySlot(row.occurrences);
-  if (!slot) return "—";
-  return new Date(slot.startsAt).toLocaleString("en-IN", {
-    // Fixed IST, matching the member view and the compensation page.
-    timeZone: "Asia/Kolkata",
-    day: "2-digit",
-    month: "short",
-    // The org feed pages back through historical bookings and the adjacent
-    // Booked column carries the year, so omitting it here made sessions a year
-    // apart indistinguishable and read as a bug rather than a choice.
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 }
 
 function columns(orgId: string): Column<AppointmentRow>[] {
@@ -273,8 +262,11 @@ function columns(orgId: string): Column<AppointmentRow>[] {
     },
     { header: "Member", accessor: (r) => getMember(r) },
     {
+      // India time with its label, as the member view and the back office print it.
       header: "Session",
-      accessor: (r) => rowSessionDate(r),
+      accessor: (r) => (
+        <OperatorTime value={displaySlot(r.occurrences)?.startsAt} />
+      ),
     },
     {
       header: "Status",

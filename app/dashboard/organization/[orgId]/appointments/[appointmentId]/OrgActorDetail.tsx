@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Building2 } from "lucide-react";
@@ -22,6 +22,7 @@ import {
   type OpenRescheduleInput,
 } from "@/lib/appointments/booking-status";
 import { humanizeEnum } from "@/lib/ui/tone";
+import { OperatorTime } from "@/lib/time/operator-time";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import {
   CancelRefundPreviewSchema,
@@ -69,16 +70,6 @@ export interface OrgActorDetailProps {
   /** Set for a platform operator, who reschedules and cancels from the back office instead. */
   opsHref?: string | null;
 }
-
-const fmt = (d: Date) =>
-  new Date(d).toLocaleString("en-IN", {
-    timeZone: "Asia/Kolkata",
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 
 async function postJson(
   url: string,
@@ -181,6 +172,8 @@ export function OrgActorDetail({
             status: meta.status,
             source: meta.source,
             paid: meta.paid,
+            // A webinar or class is the whole event here, never a seat.
+            eventView: true,
             reschedule: meta.reschedule,
           },
           "ORG_ADMIN",
@@ -293,7 +286,12 @@ export function OrgActorDetail({
                 value:
                   meta.sessions.length === 0
                     ? "Not scheduled yet"
-                    : meta.sessions.map((s) => fmt(s.startsAt)).join(" · "),
+                    : meta.sessions.map((s, i) => (
+                        <Fragment key={s.id}>
+                          {i > 0 ? " · " : null}
+                          <OperatorTime value={s.startsAt} />
+                        </Fragment>
+                      )),
               },
             ]}
           />

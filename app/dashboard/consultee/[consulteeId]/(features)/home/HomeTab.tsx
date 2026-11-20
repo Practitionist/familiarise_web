@@ -38,12 +38,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useCurrency } from "@/hooks/useCurrency";
 import type { TConsulteeEventsResponse } from "@/types/consultee-events";
 import { isDeliberateEnd } from "@/lib/appointments/occurrences";
-import { noSessionLabel } from "@/lib/appointments/bucket";
-import {
-  toOccurrenceVM,
-  type AppointmentKind,
-  type NeedsActionReason,
-} from "@/lib/appointments/view-model";
+import { toOccurrenceVM } from "@/lib/appointments/view-model";
 import { formatForViewer, type ViewerZone } from "@/lib/time/viewer-zone";
 import { PageHeader } from "@/components/dashboard/PageScaffold";
 import { Section } from "@/components/dashboard/Section";
@@ -55,11 +50,9 @@ import { deriveConsulteeActionItems } from "@/lib/dashboard/action-items";
 import { isExternalPayHref } from "@/lib/payments/pay-link-href";
 import { WaitingTimesStrip } from "@/components/booking/WaitingTimesStrip";
 import { isInactiveStatus, isConfirmedStatus } from "@/lib/appointments/status";
-import { bookingStatus } from "@/lib/appointments/booking-status";
 import {
   CONSULTEE_JOIN_WINDOW_MS,
   REJOIN_GRACE_MS,
-  appointmentStatusChip,
   getOccurrenceJoinState,
   isDeadOccurrence,
   isOccurrenceOver,
@@ -76,36 +69,13 @@ import { MyAlerts } from "@/components/appointments/consultee/MyAlerts";
 import { fetchPendingPayments } from "./PendingPaymentsWidget";
 import {
   type ProcessedEvent,
+  awaitingLabel,
+  homeStatusChip,
   processAllEvents,
   getUpcomingEvents,
   selectNextUp,
   sessionsThisMonth,
 } from "./event-processor";
-
-const KIND_OF: Record<ProcessedEvent["type"], AppointmentKind> = {
-  consultation: "CONSULTATION",
-  subscription: "SUBSCRIPTION",
-  webinar: "WEBINAR",
-  class: "CLASS",
-  trial: "TRIAL",
-};
-
-/** The shared Appointments chip; Home lists only bookings that can still happen. */
-function homeStatusChip(event: ProcessedEvent) {
-  return appointmentStatusChip(
-    {
-      status: event.status.toUpperCase(),
-      kind: KIND_OF[event.type],
-      bookingSource: event.bookingSource,
-      seatStatus: event.seatStatus,
-      paid: event.paid,
-      payDeadline: event.payDeadline,
-      payLapsed: event.payLapsed,
-      reschedule: event.reschedule,
-    },
-    "consultee",
-  );
-}
 
 const NEXT_UP_LIMIT = 3;
 const RATE_PROMPT_LIMIT = 2;
@@ -135,37 +105,23 @@ interface HomeTabProps {
   viewerZone: ViewerZone;
 }
 
-/** The card's corner badge, in the booking words the Appointments list uses. */
-function awaitingLabel(reason: NeedsActionReason | null): string {
-  switch (reason) {
-    case "PAY_NOW":
-      return bookingStatus(
-        { kind: "CONSULTATION", status: "APPROVED_PENDING_PAYMENT" },
-        "CONSULTEE",
-      ).label;
-    case "PENDING_APPROVAL":
-      return bookingStatus(
-        { kind: "CONSULTATION", status: "PENDING" },
-        "CONSULTEE",
-      ).label;
-    default:
-      return noSessionLabel(reason);
-  }
-}
-
-// Get time away text
+/** The card's corner badge: how far away the session is, or what the booking waits for. */
 function getTimeAway(
-  date: Date | null,
-  reason: NeedsActionReason | null,
-  endsAt?: Date | null,
-  now: Date = new Date(),
-  meetingEnded = false,
+  event: ProcessedEvent,
+  now: Date,
 ): { text: string; urgent: boolean } {
-  if (meetingEnded) return { text: "Completed", urgent: false };
-  if (!date)
-    return { text: awaitingLabel(reason), urgent: reason === "PAY_NOW" };
+  if (isDeliberateEnd(event.joinableOccurrence?.meeting)) {
+    return { text: "Completed", urgent: false };
+  }
+  const date = event.startsAt;
+  if (!date) {
+    return {
+      text: awaitingLabel(event),
+      urgent: event.needsActionReason === "PAY_NOW",
+    };
+  }
   const startMs = date.getTime();
-  const endMs = (endsAt ?? date).getTime() + REJOIN_GRACE_MS;
+  const endMs = (event.endsAt ?? date).getTime() + REJOIN_GRACE_MS;
   const nowMs = now.getTime();
   if (nowMs >= startMs && nowMs <= endMs) {
     return { text: "In progress", urgent: true };
@@ -223,13 +179,7 @@ function NextUpCard({
   onJoin?: () => void;
   isJoining?: boolean;
 }>) {
-  const timeAway = getTimeAway(
-    event.startsAt,
-    event.needsActionReason,
-    event.endsAt,
-    now,
-    isDeliberateEnd(event.joinableOccurrence?.meeting),
-  );
+  const timeAway = getTimeAway(event, now);
 
   // Shared guards (lib/appointments/status-guards.ts) — same semantics as the
   // Appointments tab cards.

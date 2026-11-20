@@ -62,7 +62,11 @@ import {
   appointmentStatusLine,
 } from "@/lib/appointments/occurrences";
 import { openProposalTarget } from "@/lib/appointments/consultee-affordances";
-import { processAllEvents } from "@/app/dashboard/consultee/[consulteeId]/(features)/home/event-processor";
+import {
+  awaitingLabel,
+  homeStatusChip,
+  processAllEvents,
+} from "@/app/dashboard/consultee/[consulteeId]/(features)/home/event-processor";
 import {
   rowStatus,
   type AppointmentRow,
@@ -200,6 +204,112 @@ describe("a learner's webinar seat follows its own payment, on the list and on H
     expect(processAllEvents(events, NOW)[0]).toMatchObject({
       bookingStatus: "CONFIRMED",
     });
+  });
+});
+
+describe("a refunded booking reads Refunded on the expert's list as on the learner's", () => {
+  const refunded = () => {
+    const { consultation, appointment } = storedConsultation(
+      "CANCELLED",
+      "paid",
+    );
+    const paid = payment("paid");
+    return {
+      consultation,
+      appointment: {
+        ...appointment,
+        payment: [
+          {
+            ...paid,
+            refunds: [
+              {
+                id: "rf-1",
+                status: "SUCCEEDED",
+                deletedAt: null,
+                amountPaise: paid.amount,
+                updatedAt: later(-30_000),
+              },
+            ],
+          },
+        ],
+      },
+    };
+  };
+
+  it("the expert's Appointments list", async () => {
+    reset();
+    const { consultation, appointment } = refunded();
+    mockRows.appointment = [{ ...appointment, consultation }];
+    const page = await readConsultantAppointmentsPage({
+      consultantProfileId: "cp-1",
+      scope: { kind: "personal" },
+      now: NOW,
+    } as Parameters<typeof readConsultantAppointmentsPage>[0]);
+    const [vm] = mapConsultantAppointments(
+      {
+        consultantId: "cp-1",
+        appointments: page.rows.slice(0, 1),
+      } as unknown as Parameters<typeof mapConsultantAppointments>[0],
+      NOW,
+    );
+    expect(appointmentStatusChip(vm, "consultant").label).toBe("Refunded");
+  });
+
+  it("the learner's list", async () => {
+    const { vms } = await learnerVms(() => {
+      const { consultation, appointment } = refunded();
+      mockRows.consultation = [{ ...consultation, appointment }];
+    });
+    expect(appointmentStatusChip(vms[0], "consultee").label).toBe("Refunded");
+  });
+});
+
+describe("the learner's Home card says one thing about a booking with no session yet", () => {
+  it("a paid plan waiting for its times reads Confirmed in the corner and on the chip, never Requested", async () => {
+    const { events } = await learnerVms(() => {
+      const { subscription, appointment } = storedPaidPlanAwaitingTimes();
+      mockRows.subscription = [{ ...subscription, appointment }];
+    });
+    const [card] = processAllEvents(events, NOW);
+    expect(card.startsAt).toBeNull();
+    // The viewer-neutral bucket files it as a pending row; the corner must not word it from that.
+    expect(card.needsActionReason).toBe("PENDING_APPROVAL");
+    expect(homeStatusChip(card).label).toBe("Confirmed");
+    expect(awaitingLabel(card)).toBe("Confirmed");
+  });
+
+  it("a hold the learner must pay reads Awaiting payment in both places", async () => {
+    const { events } = await learnerVms(() => {
+      const { consultation, appointment } = storedConsultation(
+        "PENDING",
+        "live",
+      );
+      mockRows.consultation = [
+        { ...consultation, appointment: { ...appointment, occurrences: [] } },
+      ];
+    });
+    const [card] = processAllEvents(events, NOW);
+    expect(homeStatusChip(card).label).toBe("Awaiting payment");
+    expect(awaitingLabel(card)).toBe("Awaiting payment");
+  });
+
+  it("a submitted request the expert has not answered reads Requested in both places", async () => {
+    const { events } = await learnerVms(() => {
+      const { consultation, appointment } = storedConsultation(
+        "PENDING",
+        "live",
+      );
+      mockRows.consultation = [
+        {
+          ...consultation,
+          bookingSource: "REQUEST_SUBMITTED",
+          appointment: { ...appointment, occurrences: [], payment: [] },
+        },
+      ];
+    });
+    const [card] = processAllEvents(events, NOW);
+    expect(homeStatusChip(card).label).toBe("Requested");
+    expect(awaitingLabel(card)).toBe("Requested");
   });
 });
 

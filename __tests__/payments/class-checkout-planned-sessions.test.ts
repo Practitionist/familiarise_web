@@ -105,7 +105,10 @@ function occurrence(
   };
 }
 
-/** A four-session class where session 2 has been released for rescheduling. */
+/**
+ * A four-session class. The class read carries `occurrences` (it leaves
+ * cancelled rows out); the occurrence reads see `stored`, by their status filter.
+ */
 function txWith(
   occurrences: ReturnType<typeof occurrence>[],
   plan: {
@@ -113,6 +116,7 @@ function txWith(
     totalSessions?: number;
     lateJoinUntilSession?: number | null;
   } = {},
+  stored: ReturnType<typeof occurrence>[] = occurrences,
 ) {
   const createMany = jest.fn().mockResolvedValue({ count: 1 });
   const tx = {
@@ -130,7 +134,14 @@ function txWith(
       }),
     },
     appointmentOccurrence: {
-      findMany: jest.fn().mockResolvedValue(occurrences),
+      findMany: jest.fn(
+        async (args: { where?: { completionStatus?: string } }) =>
+          stored.filter(
+            (o) =>
+              !args.where?.completionStatus ||
+              o.completionStatus === args.where.completionStatus,
+          ),
+      ),
     },
     appointmentParticipant: {
       createMany,
@@ -188,6 +199,43 @@ it("still refuses a class that is genuinely short of sessions", async () => {
       false,
     ),
   ).rejects.toThrow(/not fully scheduled yet \(3 of 4 sessions\)/);
+});
+
+describe("a session the host cancelled, inside its make-up window", () => {
+  const DAY = 24 * HOUR;
+  // Sessions 1, 3 and 4 are live; session 2 was cancelled by the host.
+  const live = [
+    { ...occurrence("s1", future(7)), ordinal: 1 },
+    { ...occurrence("s3", future(21)), ordinal: 3 },
+    { ...occurrence("s4", future(28)), ordinal: 4 },
+  ];
+  const cancelled = (daysAgo: number) => ({
+    ...occurrence("s2", future(14), "CANCELLED"),
+    ordinal: 2,
+    hostCancelledAt: new Date(Date.now() - daysAgo * DAY),
+  });
+
+  const txWithCancelled = (daysAgo: number) =>
+    txWith(live, {}, [...live, cancelled(daysAgo)]);
+  const buy = (tx: Tx) =>
+    handleClassCheckout(
+      tx,
+      { eventId: "class-1" } as unknown as CheckoutInput,
+      "buyer-1",
+      false,
+    );
+
+  it("counts as planned: the seat is sold for all four sessions", async () => {
+    const result = await buy(txWithCancelled(1));
+    expect(result.sessionsPurchased).toBe(4);
+    expect(result.amount).toBe(100_000);
+  });
+
+  it("is refused again once the make-up window has closed", async () => {
+    await expect(buy(txWithCancelled(15))).rejects.toThrow(
+      /not fully scheduled yet \(3 of 4 sessions\)/,
+    );
+  });
 });
 
 describe("#1819 — late join", () => {

@@ -87,7 +87,7 @@ export interface OccurrenceVM {
   isTentative: boolean;
   /** Raw OccurrenceCompletionStatus (CANCELLED/RESCHEDULED mark a dead call). */
   completionStatus: string | null;
-  /** Persisted OccurrenceOutcome (DELIVERED, CUT_SHORT, *_NO_SHOW, INCONCLUSIVE). */
+  /** Persisted OccurrenceOutcome (HELD, CUT_SHORT, HOST_ABSENT, PLATFORM_OUTAGE, INCONCLUSIVE, …). */
   outcome?: string | null;
   /** Meeting ended early by the host — the call is over regardless of endsAt. */
   meetingEndedAt: Date | null;

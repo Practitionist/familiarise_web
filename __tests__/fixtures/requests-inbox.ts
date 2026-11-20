@@ -140,7 +140,7 @@ export const awaitingConsultation = {
   }),
 };
 
-const nextCycleSubscription = {
+export const nextCycleSubscription = {
   ...subscriptionBase,
   id: "s-next",
   status: "APPROVED",

@@ -121,6 +121,7 @@ import { ResourceSnapshot, type ResourceHrefs } from "./ResourceSnapshot";
 import { cn } from "@/utils/tailwind";
 
 const PARTICIPANTS_PREVIEW = 5;
+const NOTHING_RATEABLE = new Set<string>();
 
 /** Overflow actions that change when sessions happen; they sit with the sessions. */
 const SCHEDULE_KEYS = new Set(["reschedule", "new-time", "retime", "timings"]);
@@ -363,7 +364,7 @@ export function AppointmentDetailClient({
     : null;
   // #1540 — which calls of this booking the viewer has already rated, in ONE
   // request; #1554 made the booking one Appointment, so that is one row.
-  const sessionFeedback = useSessionFeedback(appointmentId);
+  const feedback = useSessionFeedback(appointmentId);
   useSetBreadcrumbLabel(mapped?.vm.title);
   const viewerZone = useProvidedZone();
   // The provided zone, else the browser's once hydrated: what every printed hold time reads in.
@@ -476,10 +477,14 @@ export function AppointmentDetailClient({
     {
       joinWindowMs,
       viewerZone: clockZone,
-      heldOccurrenceIds: sessionFeedback.rateable,
+      heldOccurrenceIds: feedback.rateable,
     },
   );
   const { bookingState, moneyState, nextAction } = presentation;
+  // A one-off whose session awaits its make-up, refund or review takes no rating yet.
+  const sessionFeedback = presentation.awaitsSettlement
+    ? { ...feedback, rateable: NOTHING_RATEABLE }
+    : feedback;
   const postApproval = POST_APPROVAL.has(bookingState.state);
   const headerChip = toneBadge(bookingState.tone, bookingState.label);
   // #1163 — the proposal card below IS the answer surface; the adapter's

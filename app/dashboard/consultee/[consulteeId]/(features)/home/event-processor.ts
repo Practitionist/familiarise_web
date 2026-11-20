@@ -18,11 +18,13 @@ import type {
 import type { MeetingAppointment, MeetingSlot } from "@/lib/meeting";
 import {
   REJOIN_GRACE_MS,
+  appointmentStatusChip,
   getCurrentOrNextOccurrence,
   getOccurrenceJoinState,
   liveOccurrencesOf,
 } from "@/lib/appointments/occurrences";
-import { deriveBucket } from "@/lib/appointments/bucket";
+import { deriveBucket, noSessionLabel } from "@/lib/appointments/bucket";
+import type { StatusBadgeStyle } from "@/lib/labels/session-labels";
 import type { OpenRescheduleInput } from "@/lib/appointments/booking-status";
 import {
   holdOpenFrom,
@@ -45,6 +47,7 @@ import {
 } from "@/lib/appointments/status";
 import {
   toOccurrenceVM,
+  type AppointmentKind,
   type NeedsActionReason,
 } from "@/lib/appointments/view-model";
 
@@ -105,6 +108,42 @@ export interface ProcessedEvent {
   organizationId?: string | null;
   /** An organization's money paid for the viewer's place (the plan host is irrelevant). */
   orgFunded: boolean;
+}
+
+const KIND_OF: Record<ProcessedEvent["type"], AppointmentKind> = {
+  consultation: "CONSULTATION",
+  subscription: "SUBSCRIPTION",
+  webinar: "WEBINAR",
+  class: "CLASS",
+  trial: "TRIAL",
+};
+
+/** The shared Appointments chip; Home lists only bookings that can still happen. */
+export function homeStatusChip(event: ProcessedEvent): StatusBadgeStyle {
+  return appointmentStatusChip(
+    {
+      status: event.status.toUpperCase(),
+      kind: KIND_OF[event.type],
+      bookingSource: event.bookingSource,
+      seatStatus: event.seatStatus,
+      paid: event.paid,
+      payDeadline: event.payDeadline,
+      payLapsed: event.payLapsed,
+      reschedule: event.reschedule,
+    },
+    "consultee",
+  );
+}
+
+/**
+ * The card's corner word for a booking with no session yet: the chip's own
+ * word while it waits on an answer or a payment, else what its schedule waits for.
+ */
+export function awaitingLabel(event: ProcessedEvent): string {
+  const reason = event.needsActionReason;
+  return reason === "PAY_NOW" || reason === "PENDING_APPROVAL"
+    ? homeStatusChip(event).label
+    : noSessionLabel(reason);
 }
 
 /** True when one of the viewer's live payments on the booking rode an org rail. */

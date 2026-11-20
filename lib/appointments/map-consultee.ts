@@ -23,9 +23,8 @@ import {
   getAnchorTime,
   isDeadOccurrence,
   isDeliberateEnd,
-  isOccurrenceOver,
-  liveOccurrences,
   occurrencesOfAppointment,
+  soldSessionProgress,
 } from "./occurrences";
 import {
   isReleasedSeat,
@@ -46,7 +45,6 @@ import {
   type AppointmentVM,
   type PersonVM,
   type OccurrenceLike,
-  type OccurrenceVM,
 } from "./view-model";
 
 interface ConsulteeCollaboratorLike {
@@ -93,19 +91,6 @@ function actionableSlots(slots: OccurrenceLike[], now: Date): OccurrenceLike[] {
     .sort(
       (a, b) => toDate(a.startsAt).getTime() - toDate(b.startsAt).getTime(),
     );
-}
-
-/** Group progress over the wrapper's live occurrences (#1554): one row is
- *  one session; completed = the row has elapsed. */
-function groupProgress(
-  occurrences: OccurrenceVM[],
-  now: Date,
-): { total: number; completed: number } {
-  const live = liveOccurrences(occurrences);
-  return {
-    total: live.length,
-    completed: live.filter((s) => isOccurrenceOver(s, now)).length,
-  };
 }
 
 function mapConsultation(
@@ -196,7 +181,7 @@ function mapSubscription(
     ),
     nextAt: getAnchorTime(occurrences, now),
     occurrences,
-    group: groupProgress(occurrences, now),
+    group: soldSessionProgress({ subscription: s }, occurrences),
     meta: null,
     organizationId: target?.organizationId ?? null,
     pendingPaymentUrl: s.pendingPaymentUrl ?? null,
@@ -335,7 +320,7 @@ function mapClass(c: TConsulteeClass, now: Date, zone?: string): AppointmentVM {
     ),
     nextAt: getAnchorTime(occurrences, now),
     occurrences,
-    group: groupProgress(occurrences, now),
+    group: soldSessionProgress({ class: c }, occurrences),
     meta: null,
     organizationId: target?.organizationId ?? null,
     pendingPaymentUrl: null,
