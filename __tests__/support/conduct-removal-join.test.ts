@@ -14,6 +14,10 @@ jest.mock("../../lib/support/reference", () => ({
 jest.mock("../../lib/support/case-service", () => ({
   stageSupportCaseIntakeTx: async () => undefined,
 }));
+const mockStageBell = jest.fn(async (..._args: unknown[]) => undefined);
+jest.mock("../../lib/novu/stage-bell", () => ({
+  stageBell: (...args: unknown[]) => mockStageBell(...args),
+}));
 const mockRelease = jest.fn(async (..._args: unknown[]) => undefined);
 jest.mock("../../lib/support/system-case-close", () => ({
   releaseSystemClosedCaseTx: (...args: unknown[]) => mockRelease(...args),
@@ -42,6 +46,7 @@ function txFor(opts: { status: string; decided: boolean; closes?: number }) {
       findFirst: async () => ({
         id: "case-1",
         referenceNumber: "FAM-2026-000013",
+        title: "Removed from a group session",
         status: opts.status,
         category: "CONDUCT_REMOVAL",
       }),
@@ -63,7 +68,7 @@ function txFor(opts: { status: string; decided: boolean; closes?: number }) {
   return { tx, statusCas, created, deadline, events };
 }
 
-const removeAgain = (tx: Tx) =>
+const removeAgain = (tx: Tx, reasonLabel = "Harassment") =>
   openOrJoinConductRemovalCaseTx(
     tx,
     {
@@ -71,7 +76,7 @@ const removeAgain = (tx: Tx) =>
       removedUserId: "learner-1",
       actorUserId: "host-1",
       eventTitle: "Intro to Python",
-      reasonLabel: "Harassment",
+      reasonLabel,
       note: null,
     },
     NOW,
@@ -147,4 +152,33 @@ it("refuses with REMOVAL_CONFLICT when the decided case moved under the close", 
     code: "REMOVAL_CONFLICT",
   });
   expect(created).not.toHaveBeenCalled();
+});
+
+it("a joined removal's summary names the latest reason, and the learner is told the review restarted", async () => {
+  mockStageBell.mockClear();
+  const { tx, deadline } = txFor({ status: "OPEN", decided: false });
+  await removeAgain(tx, "Persistently off-topic");
+
+  expect(deadline).toHaveBeenCalledWith(
+    expect.objectContaining({
+      data: expect.objectContaining({
+        description: expect.stringContaining(
+          "Reason recorded: Persistently off-topic",
+        ),
+      }),
+    }),
+  );
+  expect(mockStageBell).toHaveBeenCalledTimes(1);
+  expect(mockStageBell).toHaveBeenCalledWith(
+    tx,
+    expect.objectContaining({
+      recipients: ["learner-1"],
+      dedupeKey: "conduct-removal-joined:case-1:4",
+      payload: expect.objectContaining({
+        ticketId: "case-1",
+        reference: "FAM-2026-000013",
+        status: expect.stringMatching(/72-hour review restarts/),
+      }),
+    }),
+  );
 });

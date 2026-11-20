@@ -155,12 +155,14 @@ jest.mock("../../lib/support/case-service", () => ({
     supportCase: mockCaseRow("case-personal"),
   })),
 }));
+jest.mock("../../lib/support/case-notice", () => ({
+  stageCaseNotice: jest.fn(async () => undefined),
+}));
 jest.mock("../../lib/support/case-actions", () => ({
   __esModule: true,
   ...jest.requireActual<typeof import("../../lib/support/case-actions")>(
     "../../lib/support/case-actions",
   ),
-  stageCaseNotice: jest.fn(async () => undefined),
   quoteCaseRefund: jest.fn(async () => ({
     refundablePaise: 1000,
     rail: "GATEWAY",

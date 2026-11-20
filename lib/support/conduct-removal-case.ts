@@ -33,7 +33,8 @@ import {
 } from "@/lib/stream/access-revocation";
 import { liftBlockTx } from "@/lib/booking/seat-removal-lift";
 import type { SeatHistoryReason } from "@/lib/booking/seat-history";
-import { holdPaymentForCase } from "./case-holds";
+import { activeHolds, caseHoldEvents, holdPaymentForCase } from "./case-holds";
+import { stageCaseNotice } from "./case-notice";
 import { stageSupportCaseIntakeTx } from "./case-service";
 import { supportDeadline } from "./deadline-policy";
 import { priorityForReason } from "./priority";
@@ -64,14 +65,20 @@ interface OpenRemovalCaseInput {
   note: string | null;
 }
 
-/** What the host recorded; the removed attendee adds their side as replies. */
-function removalCaseBody(input: {
-  eventTitle: string | null;
-  reasonLabel: string;
-  note: string | null;
-}): string {
+/** What the host recorded; the removed attendee adds their side as replies. A joined removal says it is a repeat. */
+function removalCaseBody(
+  input: {
+    eventTitle: string | null;
+    reasonLabel: string;
+    note: string | null;
+  },
+  again = false,
+): string {
+  const event = input.eventTitle ?? "a group session";
   const lines = [
-    `The host removed you from ${input.eventTitle ?? "a group session"}.`,
+    again
+      ? `The host removed you from ${event} again. This review covers both removals; the earlier one is in the first message.`
+      : `The host removed you from ${event}.`,
     `Reason recorded: ${input.reasonLabel}`,
   ];
   if (input.note) lines.push(`Host's note: ${input.note}`);
@@ -171,6 +178,7 @@ function unclosedRemovalCase(tx: Tx, input: OpenRemovalCaseInput) {
     select: {
       id: true,
       referenceNumber: true,
+      title: true,
       status: true,
       category: true,
     },
@@ -237,7 +245,10 @@ async function closeDecidedRemovalCaseTx(
   );
 }
 
-/** Adds the new removal to an undecided case: one review, and one verdict, covers both. */
+/**
+ * Adds the new removal to an undecided case: one review, and one verdict, covers both.
+ * The summary moves to the latest removal and the learner is told the review restarted.
+ */
 async function joinUndecidedRemovalCaseTx(
   tx: Tx,
   open: UnclosedRemovalCase,
@@ -245,9 +256,11 @@ async function joinUndecidedRemovalCaseTx(
   now: Date,
 ): Promise<void> {
   const due = supportDeadline(CONDUCT_REMOVAL_CATEGORY, now);
+  const body = removalCaseBody(input, true);
   const { messageSeq } = await tx.supportCase.update({
     where: { id: open.id },
     data: {
+      description: body,
       statutoryDueAt: due.statutoryDueAt,
       messageSeq: { increment: 1 },
       lastMessageAt: now,
@@ -260,10 +273,17 @@ async function joinUndecidedRemovalCaseTx(
       seq: messageSeq,
       sender: "SYSTEM",
       isInternal: false,
-      body: removalCaseBody(input),
+      body,
       createdAt: now,
     },
   });
+  await stageCaseNotice(
+    tx,
+    { ...open, organizationId: null },
+    [input.removedUserId],
+    `The host removed you again. Support's ${CONDUCT_REMOVAL_REVIEW_HOURS}-hour review restarts from this removal.`,
+    `conduct-removal-joined:${open.id}:${messageSeq}`,
+  );
   await tx.supportCaseEvent.create({
     data: {
       caseId: open.id,
@@ -357,15 +377,28 @@ function seatPayment(db: PrismaLike, appointmentId: string, userId: string) {
 }
 
 /**
- * Holds the seat's unpaid earnings for the case; a payment another refund holds, or a payout
- * already sending, is left alone and the case says why. Returns whether it held.
+ * Holds the seat's unpaid earnings for the case; a free seat has none, and a payment another
+ * refund holds, or a payout already sending, is left alone and the case says why. Returns whether the case holds it.
  */
 export async function holdSeatEarningsTx(
   tx: Tx,
   args: { appointmentId: string; userId: string; caseId: string; now: Date },
 ): Promise<boolean> {
   const payment = await seatPayment(tx, args.appointmentId, args.userId);
-  if (!payment || payment.refundOwedKey) return false;
+  if (
+    !payment ||
+    payment.refundOwedKey ||
+    isPriceFreePayment({
+      paymentIntent: payment.paymentIntent,
+      amountPaise: Number(payment.amount),
+      listPricePaise: Number(payment.originalAmount),
+    })
+  ) {
+    return false;
+  }
+  // A removal joining the case freezes any newer earnings, but the case already records the hold.
+  const alreadyHeld =
+    activeHolds(await caseHoldEvents(tx, [args.caseId], payment.id)).length > 0;
   const note = "Held while support reviews a host's removal of the attendee";
   try {
     await holdPaymentForCase(tx, {
@@ -384,6 +417,7 @@ export async function holdSeatEarningsTx(
     );
     return false;
   }
+  if (alreadyHeld) return true;
   await tx.supportCaseEvent.create({
     data: {
       caseId: args.caseId,
