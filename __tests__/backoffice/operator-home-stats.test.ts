@@ -23,9 +23,13 @@ const STATUS_ROWS = [
   {
     paymentStatus: "SUCCEEDED",
     _count: { _all: 3 },
-    _sum: { amount: 150000n },
+    _sum: { amount: BigInt(150000) },
   },
-  { paymentStatus: "PENDING", _count: { _all: 1 }, _sum: { amount: 20000n } },
+  {
+    paymentStatus: "PENDING",
+    _count: { _all: 1 },
+    _sum: { amount: BigInt(20000) },
+  },
 ];
 
 describe("getOperatorDashboardStats", () => {
@@ -40,7 +44,7 @@ describe("getOperatorDashboardStats", () => {
     mockPrisma.payment.findMany.mockResolvedValue([]);
     mockPrisma.refund.aggregate.mockResolvedValue({
       _count: { _all: 2 },
-      _sum: { amountPaise: 30000n },
+      _sum: { amountPaise: BigInt(30000) },
     });
     mockPrisma.refund.findMany.mockResolvedValue([]);
     mockPrisma.dispute.count.mockResolvedValue(0);
