@@ -43,6 +43,11 @@ import {
 import { reportSentryMessage } from "@/lib/observability/report";
 import { reportStandingFinding } from "@/lib/observability/standing-finding";
 import { razorpayNotesSchema } from "@/schemas/webhooks/razorpay";
+import {
+  razorpayErrorDescription,
+  razorpayGet,
+  recordGatewayRefunds,
+} from "@/lib/payments/webhooks/gateway-refund-import";
 import { z } from "zod";
 
 // Only reconcile payments older than 5 minutes (give webhooks time)
@@ -161,15 +166,19 @@ async function readClosedOrderCohort(now: Date, limit: number) {
   return ids.flatMap((r) => byId.get(r.id) ?? []);
 }
 
-/** Alternates the lists so each gets its share of `limit`, a list with fewer rows giving its share to the other. */
+/**
+ * Alternates the lists so each gets its share of `limit`, a list with fewer rows giving its share to the other.
+ * Every list with rows gets at least one, so a limit below the list count still reaches each.
+ */
 function interleave<T>(lists: T[][], limit: number): T[] {
+  const cap = Math.max(limit, lists.filter((l) => l.length > 0).length);
   const out: T[] = [];
-  for (let i = 0; out.length < limit; i++) {
+  for (let i = 0; out.length < cap; i++) {
     const round = lists.map((l) => l[i]).filter((x) => x !== undefined);
     if (round.length === 0) break;
     out.push(...round);
   }
-  return out.slice(0, limit);
+  return out.slice(0, cap);
 }
 
 /** PENDING rows past the orphan age; shared with the ticker's idle probe. */
@@ -250,7 +259,7 @@ type GatewayLookup =
   | { kind: "gateway_error"; detail: string };
 
 export interface ReconcilePaymentStatusOptions {
-  /** Maximum candidates examined per run across both cohorts; defaults to 50. */
+  /** Maximum candidates examined per run, but at least one from each cohort with work; defaults to 50. */
   limit?: number;
   startedAt?: number;
 }
@@ -359,20 +368,6 @@ const orderPaymentsSchema = z.object({
   ),
 });
 
-const paymentRefundsSchema = z.object({
-  items: z.array(
-    z
-      .object({
-        id: z.string(),
-        amount: z.number().int().positive(),
-        currency: z.string(),
-        status: z.string(),
-        notes: razorpayNotesSchema,
-      })
-      .passthrough(),
-  ),
-});
-
 /** What a closed order holds at the gateway; an authorisation alone is left to Razorpay's own auto-refund. */
 type ClosedOrderLookup =
   | {
@@ -386,25 +381,6 @@ type ClosedOrderLookup =
   | { kind: "authorized" }
   | { kind: "nothing" }
   | { kind: "gateway_error"; detail: string };
-
-/** A Razorpay GET; `null` when the id is unknown (400 or 404). Throws when the gateway cannot answer. */
-async function razorpayGet(path: string, deadlineAt: number): Promise<unknown> {
-  const keyId = process.env.RAZORPAY_KEY_ID;
-  const keySecret = process.env.RAZORPAY_SECRET;
-  if (!keyId || !keySecret) {
-    throw new Error("Razorpay credentials not configured");
-  }
-  const credentials = Buffer.from(`${keyId}:${keySecret}`).toString("base64");
-  const res = await fetch(`https://api.razorpay.com/v1/${path}`, {
-    method: "GET",
-    headers: { Authorization: `Basic ${credentials}` },
-    signal: AbortSignal.timeout(Math.max(1, deadlineAt - Date.now())),
-  });
-  if (res.ok) return res.json();
-  const description = await razorpayErrorDescription(res);
-  if (res.status === 400 || res.status === 404) return null;
-  throw new Error(`${res.status} ${description}`);
-}
 
 /** GET /v1/orders/:id/payments for an order we closed; an id Razorpay does not know holds nothing. */
 async function readClosedOrder(
@@ -460,8 +436,6 @@ async function refundClosedOrderCapture(
   // Dynamic, as Request again's re-check imports them: the capture handlers reach back into booking.
   const { handlePaymentSuccess, refundLateCapture, settleAutoRefundMarker } =
     await import("@/lib/payments/webhooks/handlers");
-  const { handleRefundCreated, DeferSignal } =
-    await import("@/app/api/webhooks/utils");
   const outcome = await handlePaymentSuccess(
     payment.paymentIntent,
     held.notes,
@@ -471,23 +445,11 @@ async function refundClosedOrderCapture(
   );
   if (outcome !== "captured_after_release") return false;
   if (held.refundedPaise > 0) {
-    const body = await razorpayGet(
-      `payments/${encodeURIComponent(held.paymentId)}/refunds`,
+    await recordGatewayRefunds(
+      payment.paymentIntent,
+      held.paymentId,
       deadlineAt,
     );
-    const { items } = paymentRefundsSchema.parse(body ?? { items: [] });
-    for (const refund of items) {
-      const recorded = await handleRefundCreated(
-        refund.id,
-        payment.paymentIntent,
-        refund.amount,
-        refund.currency,
-        refund.status,
-        held.paymentId,
-        refund.notes,
-      );
-      if (recorded instanceof DeferSignal) throw new Error(recorded.reason);
-    }
   }
   const owedPaise = held.amountPaise - held.refundedPaise;
   if (owedPaise > 0) {
@@ -502,22 +464,6 @@ async function refundClosedOrderCapture(
     await settleAutoRefundMarker(payment.id);
   }
   return true;
-}
-
-/** Razorpay's error body is `{ error: { code, description } }`; tolerate anything else. */
-async function razorpayErrorDescription(res: Response): Promise<string> {
-  try {
-    const body = (await res.json()) as {
-      error?: { code?: unknown; description?: unknown };
-    };
-    const code = body?.error?.code;
-    const description = body?.error?.description;
-    return [code, description]
-      .filter((v): v is string => typeof v === "string")
-      .join(": ");
-  } catch {
-    return "";
-  }
 }
 
 /**

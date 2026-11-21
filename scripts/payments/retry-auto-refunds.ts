@@ -31,7 +31,12 @@
  */
 
 import { createHash } from "node:crypto";
-import { PaymentStatus, RefundStatus, type Prisma } from "@prisma/client";
+import {
+  PaymentGateway,
+  PaymentStatus,
+  RefundStatus,
+  type Prisma,
+} from "@prisma/client";
 
 import prisma, { type PrismaLike } from "../../lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
@@ -69,6 +74,8 @@ import {
   type RefundOwedOutcome,
 } from "@/lib/payments/operations/refund-owed";
 import { stampTrialEarningsOnCancel } from "@/lib/trials/cancellation";
+import { recordGatewayRefunds } from "@/lib/payments/webhooks/gateway-refund-import";
+import { isMockPaymentId } from "@/lib/payments/operations/mock";
 import { reportSentryError } from "@/lib/observability/report";
 import { startDeadline, startDeadlineShare } from "@/lib/cron/run-deadline";
 import { scrubStringValue } from "@/lib/observability/sentry-scrubber";
@@ -111,6 +118,8 @@ export const MAX_AUTO_REFUND_ATTEMPTS = 3;
 /** A refund owed this long after its door committed is surfaced to ops. */
 const OWED_ALERT_AFTER_MS = 6 * 60 * 60_000;
 const OWED_REPORT_WINDOW_MS = 24 * 60 * 60_000;
+/** Bounds the read of a capture's gateway refunds before its retry. */
+const GATEWAY_REFUNDS_READ_TIMEOUT_MS = 10_000;
 
 /** Pending auto-refund markers past the webhook's grace. */
 function autoRefundDueWhere(now: Date): Prisma.PaymentWhereInput {
@@ -216,6 +225,9 @@ async function retryUnlocked(limit: number): Promise<RetryAutoRefundsResult> {
       id: true,
       description: true,
       appointmentId: true,
+      paymentGateway: true,
+      paymentIntent: true,
+      gatewayPaymentId: true,
       refunds: {
         where: { status: RefundStatus.FAILED },
         select: { id: true },
@@ -427,6 +439,9 @@ async function retryOne(
     id: string;
     description: string | null;
     appointmentId: string | null;
+    paymentGateway: PaymentGateway;
+    paymentIntent: string;
+    gatewayPaymentId: string | null;
     refunds: { id: string }[];
   },
   result: RetryAutoRefundsResult,
@@ -455,6 +470,19 @@ async function retryOne(
     });
     if (retired) result.stuck.push(payment.id);
     return;
+  }
+
+  // Refunds already made at the gateway (the dashboard included) are recorded first, so only the rest is asked for.
+  if (
+    payment.paymentGateway === PaymentGateway.RAZORPAY &&
+    payment.gatewayPaymentId?.startsWith("pay_") &&
+    !isMockPaymentId(payment.gatewayPaymentId)
+  ) {
+    await recordGatewayRefunds(
+      payment.paymentIntent,
+      payment.gatewayPaymentId,
+      Date.now() + GATEWAY_REFUNDS_READ_TIMEOUT_MS,
+    );
   }
 
   let settled = false;

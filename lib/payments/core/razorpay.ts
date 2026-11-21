@@ -918,6 +918,7 @@ export async function createRazorpayRefund({
   metadata,
   idempotencyKey,
   receipt,
+  failureReportedByCaller,
 }: RefundParams): Promise<RefundResult> {
   const razorpayClient = getRazorpayClient();
   if (!razorpayClient) {
@@ -980,7 +981,7 @@ export async function createRazorpayRefund({
     reportSentryError(error, {
       subsystem: "payments",
       tags: { provider: "razorpay" },
-      expected: isModelledValidation,
+      expected: isModelledValidation || failureReportedByCaller === true,
     });
     throw refundError;
   }

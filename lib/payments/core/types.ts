@@ -62,6 +62,8 @@ export interface RefundParams {
   idempotencyKey: string;
   /** Razorpay refund `receipt`: unique per gateway payment, so a second refund carrying it is refused. */
   receipt?: string;
+  /** The caller reports a failed refund once per run, network faults included, so the client does not. */
+  failureReportedByCaller?: boolean;
 }
 
 export interface RefundResult {
