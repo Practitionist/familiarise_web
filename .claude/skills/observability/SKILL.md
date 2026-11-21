@@ -33,7 +33,7 @@ The full reasoning for each rule is in `references/sentry.md` and `references/jo
 
 - **Name the rung of evidence you reached.** Calling `reportSentryError` proves intent, the wire envelope proves serialisation, and a queryable event proves the lot. Never collapse them.
 - **Worker helpers import `@sentry/core`.** Standalone Node ESM workers keep Core and the Next SDK at matching pinned versions, and `__tests__/observability/native-sentry-runtime.test.ts` runs with the real SDK; a 202 or an invocation receipt proves neither completion nor flush.
-- **Never hardcode a Sentry coordinate.** Read organisation, project and URLs from the environment, by slug. A DSN literal in source is a history-rewrite failure.
+- **Never hardcode a Sentry coordinate.** Read organisation, project and URLs from the environment, by slug. A DSN literal in source is a history-rewrite failure. The one exception is the synthetic, unroutable test DSN exported as `SYNTHETIC_DSN` from `__tests__/fixtures/sentry-fake-transport.ts`; tests import it rather than writing their own, and no real coordinate may appear anywhere.
 - **The org id is in the DSN host and the project id is the last path segment.** Both are sixteen digits. Slugs go in config and ids come out of the DSN.
 - **Unset token is off; empty token is broken on.** Gate token paths on presence, not truthiness.
 - **The SDK is not on `window`.** Attach a listener from a `<script>` in the page's main world, because a DevTools evaluation runs in an isolated world and looks identical to "Sentry is not initialised".
