@@ -74,6 +74,7 @@ jest.mock("../../../lib/payments/core/razorpay", () => ({
 }));
 // The sweep's mutual exclusion is a lease the database tier need not hold.
 jest.mock("../../../lib/cron/with-cron-lock", () => ({
+  ...jest.requireActual("../../../lib/cron/with-cron-lock"),
   withCronLock: (_job: string, _opts: unknown, fn: () => unknown) => fn(),
 }));
 const mockReport = { message: jest.fn() };
