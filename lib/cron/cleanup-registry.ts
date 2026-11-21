@@ -2035,6 +2035,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           redrivenCount: r.redrivenCount,
           redriveFailedCount: r.redriveFailedCount,
           redriveDeadLettered: r.redriveDeadLettered,
+          seatsFinalised: r.seatsFinalised,
           errors: r.errors.slice(0, 5),
         }),
         failureMessage: "Failed to reconcile refunds",

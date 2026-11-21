@@ -377,3 +377,33 @@ it("decides from the row's stored intent, never the deciding caller's", async ()
 
   expect(decided).toBe(false);
 });
+
+it("a FAILED refund stores no decision and keeps the seat", async () => {
+  const metadata = {
+    seatIntent: {
+      keepSeat: false,
+      keepSeatIfPartial: false,
+      amountNamed: false,
+    },
+  };
+  mockState.refunds.push({
+    id: "refund-1",
+    paymentId: "pay-1",
+    amountPaise: 50_000,
+    status: "FAILED",
+    dedupeKey: null,
+    refundId: "rfnd_1",
+    metadata,
+  });
+
+  const decided = await prisma.$transaction((tx) =>
+    decideRefundSeatTx(tx, {
+      refundRowId: "refund-1",
+      paymentId: "pay-1",
+      paymentPaise: 50_000,
+    }),
+  );
+
+  expect(decided).toBe(false);
+  expect(mockState.refunds[0]?.metadata).toEqual(metadata);
+});

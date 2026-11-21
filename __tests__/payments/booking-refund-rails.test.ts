@@ -82,6 +82,7 @@ jest.mock("../../lib/prisma", () => ({
             return { count: 1 };
           },
         },
+        dispute: { aggregate: async () => ({ _sum: { amountPaise: 0 } }) },
         streamRevocationRetry: {
           updateMany: async () => ({ count: 0 }),
           createMany: async (args: { data: unknown[] }) => {
@@ -166,6 +167,7 @@ jest.mock("../../lib/stream/access-revocation", () => ({
 }));
 
 import {
+  finaliseSettledRefundSeat,
   refundBookingPayment,
   restampRefundedSeats,
 } from "../../lib/payments/operations/booking-refund";
@@ -1047,5 +1049,103 @@ describe("a replayed refund follows the seat decision stored on its row", () => 
 
     await expect(restampRefundedSeats("refund-row-1")).resolves.toBe("skipped");
     expect(mockTransitionParticipant).not.toHaveBeenCalled();
+  });
+});
+
+describe("a refund that settled while its seat decision was still pending", () => {
+  // The ₹500 full refund settled by webhook after the reserving call died; its intent ends the seat.
+  const interrupted = {
+    id: "refund-row-1",
+    paymentId: PAYMENT_ID,
+    amountPaise: 50_000,
+    status: "SUCCEEDED",
+    metadata: {
+      seatDecision: "pending",
+      seatIntent: {
+        keepSeat: false,
+        keepSeatIfPartial: false,
+        amountNamed: false,
+      },
+    },
+  };
+  const seatEnded = () =>
+    mockTransitionParticipant.mock.calls.some((c) => c[2] === "REFUNDED");
+  const decisionStored = () =>
+    expect(mockRefundUpdate).toHaveBeenCalledWith({
+      where: { id: "refund-row-1" },
+      data: {
+        metadata: {
+          seatIntent: interrupted.metadata.seatIntent,
+          endsSeat: true,
+        },
+      },
+    });
+  beforeEach(() => {
+    mockRefundFindMany.mockResolvedValue([interrupted]);
+    mockRefundFindUnique.mockResolvedValue({
+      ...interrupted,
+      payment: { userId: "payer-1", amount: 50_000 },
+    });
+  });
+
+  it("the sweep's finaliser decides it from the stored intent and ends the seat with its access", async () => {
+    await expect(finaliseSettledRefundSeat("refund-row-1")).resolves.toBe(
+      "ended",
+    );
+
+    decisionStored();
+    expect(seatEnded()).toBe(true);
+    expect(mockPersistRefundRevocation).toHaveBeenCalledWith({
+      refundId: "refund-row-1",
+      payerUserId: "payer-1",
+    });
+    expect(mockRevokeRefundedSeatAccess).toHaveBeenCalledTimes(1);
+  });
+
+  it("the revocation sweep's restamp decides it and stamps the seat", async () => {
+    await expect(restampRefundedSeats("refund-row-1")).resolves.toBe("stamped");
+
+    decisionStored();
+    expect(seatEnded()).toBe(true);
+  });
+
+  it("a replay decides it instead of answering it as in flight", async () => {
+    mockPaymentFindUnique.mockResolvedValue({
+      paymentIntent: "pay_ABC",
+      userId: "payer-1",
+      amount: 50_000,
+    });
+    mockRefundPayment.mockResolvedValue({
+      refundId: "refund-row-1",
+      paymentId: PAYMENT_ID,
+      amountRefundedPaise: 50_000,
+      status: "SUCCEEDED",
+      seatPending: true,
+    });
+
+    await refundBookingPayment({
+      paymentId: PAYMENT_ID,
+      reason: "support refund",
+      dedupeKey: "case-recommendation:rec-1",
+      keepSeat: true,
+    });
+
+    decisionStored();
+    expect(seatEnded()).toBe(true);
+    expect(mockRevokeRefundedSeatAccess).toHaveBeenCalledTimes(1);
+  });
+
+  it("a row still at the gateway is left alone by the finaliser", async () => {
+    mockRefundFindUnique.mockResolvedValue({
+      ...interrupted,
+      status: "PENDING",
+      payment: { userId: "payer-1", amount: 50_000 },
+    });
+
+    await expect(finaliseSettledRefundSeat("refund-row-1")).resolves.toBe(
+      "skipped",
+    );
+    expect(mockRefundUpdate).not.toHaveBeenCalled();
+    expect(seatEnded()).toBe(false);
   });
 });

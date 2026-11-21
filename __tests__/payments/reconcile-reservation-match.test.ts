@@ -99,6 +99,11 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
   LONG_JOB_TTL_MS: 35 * 60_000,
 }));
 
+const mockFinaliseSeat = jest.fn(async (_refundId: string) => "skipped");
+jest.mock("../../lib/payments/operations/booking-refund", () => ({
+  finaliseSettledRefundSeat: (refundId: string) => mockFinaliseSeat(refundId),
+}));
+
 import { Prisma } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import { listRefunds, getRefund } from "../../lib/payments";
@@ -108,6 +113,7 @@ import { notifyRefundFailed } from "../../lib/novu/service";
 import { reverseCreditsForPayment } from "../../lib/referrals/service";
 import { stageRefundFailedEmail } from "../../lib/email";
 import {
+  hasPendingRefundWork,
   reconcilePendingRefunds,
   notifyFailedRefunds,
 } from "../../scripts/refunds/reconcile-pending-refunds";
@@ -604,9 +610,13 @@ describe("reconcilePendingRefunds — failed-refund notice", () => {
 
     await reconcilePendingRefunds();
 
-    expect(refundTable.findMany).toHaveBeenCalledTimes(3);
+    // Pending, real-id and failure-notice passes, then the pending-seat pass.
+    expect(refundTable.findMany).toHaveBeenCalledTimes(4);
     expect(refundTable.findMany.mock.calls[2][0]).toMatchObject({
       where: { status: "FAILED", failedNotifiedAt: null },
+    });
+    expect(refundTable.findMany.mock.calls[3][0]).toMatchObject({
+      where: { status: "SUCCEEDED" },
     });
     expect(refundTable.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -883,4 +893,44 @@ test("notice staging failure preserves completed polling counters and returns an
       expect.stringContaining("notice staging unavailable"),
     ]),
   );
+});
+
+describe("a settled refund whose seat decision is still pending", () => {
+  const seatPending = {
+    status: "SUCCEEDED",
+    metadata: { path: ["seatDecision"], equals: "pending" },
+  };
+
+  test("is selected by the run and the idle probe, and finalised from its stored intent", async () => {
+    refundTable.findMany.mockImplementation(
+      async (query: { where: { metadata?: unknown } }) =>
+        query.where.metadata ? [{ id: "ref_interrupted" }] : [],
+    );
+    mockFinaliseSeat.mockResolvedValueOnce("ended");
+
+    const result = await reconcilePendingRefunds();
+
+    expect(refundTable.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining(seatPending) }),
+    );
+    expect(mockFinaliseSeat).toHaveBeenCalledWith("ref_interrupted");
+    expect(result).toMatchObject({ seatsFinalised: 1, success: true });
+
+    const findFirst = jest.fn(async () => null);
+    await hasPendingRefundWork(
+      {
+        refund: { findFirst },
+        $queryRaw: jest.fn(async () => []),
+      } as unknown as Parameters<typeof hasPendingRefundWork>[0],
+      new Date(),
+      () => false,
+    );
+    expect(findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          OR: expect.arrayContaining([expect.objectContaining(seatPending)]),
+        },
+      }),
+    );
+  });
 });

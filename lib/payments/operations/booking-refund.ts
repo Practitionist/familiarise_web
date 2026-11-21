@@ -66,15 +66,30 @@ async function leavesRefundable(paymentId: string): Promise<boolean> {
   }
 }
 
+/** Decides and stores a refund's seat from its stored intent; an unreadable balance keeps the seat. */
+function decideStoredSeat(
+  refundRowId: string,
+  paymentId: string,
+  paymentPaise: number,
+): Promise<boolean> {
+  return prisma
+    .$transaction((tx) =>
+      decideRefundSeatTx(tx, { refundRowId, paymentId, paymentPaise }),
+    )
+    .catch(() => false);
+}
+
 /**
- * The seat a refund ends: its stored decision; none while the reserving call still owns it; else the
- * decision from the stored intent. Only a row from before the intent was stored reads the request.
+ * The seat a refund ends: its stored decision; none while the reserving call still has it at the
+ * gateway; else the decision from the stored intent, including for a row that settled with its
+ * marker still on. Only a row from before the intent was stored reads the request.
  */
 async function replayedSeat(
   input: { keepSeat?: boolean },
   r: {
     refundId: string;
     paymentId: string;
+    status?: "SUCCEEDED" | "PENDING";
     endsSeat?: boolean;
     seatPending?: true;
     seatIntent?: SeatIntent;
@@ -82,18 +97,10 @@ async function replayedSeat(
   paymentPaise: number,
 ): Promise<boolean> {
   if (r.endsSeat !== undefined) return r.endsSeat;
-  if (r.seatPending) return false;
-  if (!r.seatIntent) return legacyReplayEndsSeat(input, r.paymentId);
-  // An unreadable balance keeps the seat and stores nothing.
-  return prisma
-    .$transaction((tx) =>
-      decideRefundSeatTx(tx, {
-        refundRowId: r.refundId,
-        paymentId: r.paymentId,
-        paymentPaise,
-      }),
-    )
-    .catch(() => false);
+  if (r.seatPending && r.status !== "SUCCEEDED") return false;
+  if (!r.seatPending && !r.seatIntent)
+    return legacyReplayEndsSeat(input, r.paymentId);
+  return decideStoredSeat(r.refundId, r.paymentId, paymentPaise);
 }
 
 /** A row with no seat decision, marker or intent ends the seat only when nothing is left to refund. */
@@ -316,42 +323,109 @@ export async function refundBookingPayment(
   const outcome = await refundBookingPaymentOnRail(input);
   if (!outcome.endsSeat) return outcome.result;
   // After commit: the refunded seat loses the chat and call access the join gate no longer grants.
-  const { persistRefundRevocation, revokeRefundedSeatAccess } =
+  const { revokeRefundedSeatAccess } =
     await import("@/lib/stream/access-revocation");
   const intent = {
     refundId: outcome.result.refundId,
     payerUserId: outcome.seat.payerUserId,
   };
   if (outcome.result.rail === "GATEWAY") {
-    // The intent lands first, so a failed stamp is re-stamped by the sweep.
-    await persistRefundRevocation(intent);
-    await markParticipantsRefunded(
+    await endGatewaySeat(
+      intent,
       outcome.seat.paymentId,
       input.initiatedByUserId,
     );
+    return outcome.result;
   }
   await revokeRefundedSeatAccess(intent, outcome.intentGeneration);
   return outcome.result;
 }
 
+/** A gateway refund's seat ending, after its commit: the intent lands first, so a failed stamp is re-stamped by the sweep. */
+async function endGatewaySeat(
+  intent: { refundId: string; payerUserId: string },
+  paymentId: string,
+  actorUserId: string | null | undefined,
+): Promise<void> {
+  const { persistRefundRevocation, revokeRefundedSeatAccess } =
+    await import("@/lib/stream/access-revocation");
+  await persistRefundRevocation(intent);
+  await markParticipantsRefunded(paymentId, actorUserId);
+  await revokeRefundedSeatAccess(intent, null);
+}
+
+/**
+ * Finalises a refund that settled while its reserving call never stored a seat decision (a SUCCEEDED
+ * row still carrying the pending marker): decides from its stored intent, then ends the seat as the
+ * live path does. A row still PENDING at the gateway is left until it settles.
+ */
+export async function finaliseSettledRefundSeat(
+  refundId: string,
+): Promise<"ended" | "kept" | "skipped"> {
+  const refund = await prisma.refund.findUnique({
+    where: { id: refundId },
+    select: {
+      status: true,
+      paymentId: true,
+      metadata: true,
+      payment: { select: { userId: true, amount: true } },
+    },
+  });
+  if (
+    !refund ||
+    refund.status !== RefundStatus.SUCCEEDED ||
+    !seatDecisionPending(refund.metadata)
+  ) {
+    return "skipped";
+  }
+  const endsSeat = await decideStoredSeat(
+    refundId,
+    refund.paymentId,
+    Number(refund.payment.amount),
+  );
+  if (!endsSeat) return "kept";
+  await endGatewaySeat(
+    { refundId, payerUserId: refund.payment.userId },
+    refund.paymentId,
+    null,
+  );
+  return "ended";
+}
+
 /**
  * Re-applies a seat-ending refund's REFUNDED stamp, only while the refund stands as SUCCEEDED or
- * PENDING and its row records neither keeping the seat nor a pending decision; a FAILED or CANCELLED
- * refund moved no money.
+ * PENDING and its row does not record keeping the seat; a FAILED or CANCELLED refund moved no money.
+ * A settled row whose decision is still pending is decided from its stored intent first; one still
+ * at the gateway is left alone.
  */
 export async function restampRefundedSeats(
   refundId: string,
 ): Promise<"stamped" | "skipped"> {
   const refund = await prisma.refund.findUnique({
     where: { id: refundId },
-    select: { status: true, paymentId: true, metadata: true },
+    select: {
+      status: true,
+      paymentId: true,
+      metadata: true,
+      payment: { select: { amount: true } },
+    },
   });
   if (
     !refund ||
     (refund.status !== RefundStatus.SUCCEEDED &&
       refund.status !== RefundStatus.PENDING) ||
-    storedSeatDecision(refund.metadata) === false ||
-    seatDecisionPending(refund.metadata)
+    storedSeatDecision(refund.metadata) === false
+  ) {
+    return "skipped";
+  }
+  if (
+    seatDecisionPending(refund.metadata) &&
+    (refund.status !== RefundStatus.SUCCEEDED ||
+      !(await decideStoredSeat(
+        refundId,
+        refund.paymentId,
+        Number(refund.payment?.amount ?? 0),
+      )))
   ) {
     return "skipped";
   }
@@ -476,7 +550,11 @@ async function refundBookingPaymentOnRail(
     decided?.endsSeat ??
     (await replayedSeat(
       input,
-      { ...keyed, refundId: keyed.result.refundId },
+      {
+        ...keyed,
+        refundId: keyed.result.refundId,
+        status: keyed.result.status,
+      },
       Number(payment.amount),
     ));
   return {

@@ -103,7 +103,7 @@ export function withoutSeatMarker(
 /**
  * Decides and stores a refund's seat from the intent stored on its row (else `intent`), against the
  * payment's committed balance read through `tx`: a concurrent refund that failed meanwhile counts as
- * refundable. A decision already stored on the row wins.
+ * refundable. A decision already stored on the row wins; only a SUCCEEDED or PENDING row is decided.
  */
 export async function decideRefundSeatTx(
   tx: Pick<Tx, "refund" | "dispute">,
@@ -123,6 +123,8 @@ export async function decideRefundSeatTx(
   const row = refunds.find((r) => r.id === args.refundRowId);
   const stored = storedSeatDecision(row?.metadata);
   if (stored !== undefined) return stored;
+  // A refund that moved no money (FAILED, CANCELLED) keeps the seat and stores nothing.
+  if (!row || !RETURNED_REFUND_STATUSES.has(row.status)) return false;
   const intent = storedSeatIntent(row?.metadata) ?? args.intent;
   // No intent anywhere: keep the seat rather than guess.
   if (!intent) return false;
@@ -140,11 +142,9 @@ export async function decideRefundSeatTx(
   const leftPaise =
     args.paymentPaise - returnedPaise - sumPaise(chargedBack._sum.amountPaise);
   const endsSeat = seatEndsLeaving(intent, leftPaise);
-  if (row) {
-    await tx.refund.update({
-      where: { id: row.id },
-      data: { metadata: { ...withoutSeatMarker(row.metadata), endsSeat } },
-    });
-  }
+  await tx.refund.update({
+    where: { id: row.id },
+    data: { metadata: { ...withoutSeatMarker(row.metadata), endsSeat } },
+  });
   return endsSeat;
 }
