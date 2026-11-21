@@ -175,7 +175,7 @@ export type RefundInput = {
   dedupeKey?: string;
   /** Razorpay `receipt`: a second refund on the same gateway payment with it is refused. */
   gatewayReceipt?: string;
-  /** The caller reports a failed gateway refund itself, once per run, so this door does not. */
+  /** The caller reports a failed gateway refund itself, once per run, so neither this door nor the gateway client does. */
   failureReportedByCaller?: boolean;
   supportRecommendationId?: string;
 } & OwedMarkerInput;
@@ -654,6 +654,9 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       // refunds of the same amount still each get their own.
       idempotencyKey: reserved.id,
       ...(input.gatewayReceipt ? { receipt: input.gatewayReceipt } : {}),
+      ...(input.failureReportedByCaller
+        ? { failureReportedByCaller: true }
+        : {}),
       // #676 B1 — the same id rides the gateway notes, so the refund WEBHOOK
       // (and the reconcile sweep) can bind a gateway refund back to its
       // PENDING reservation exactly, instead of amount+time-window guessing.
@@ -752,6 +755,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       subsystem: "payments",
       tags: { feature: "refund" },
       extra: { paymentId: input.paymentId, refundRowId: reserved.id },
+      expected: input.failureReportedByCaller === true,
     });
     throw declineErr;
   }
