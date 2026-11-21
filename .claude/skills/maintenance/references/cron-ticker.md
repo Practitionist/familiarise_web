@@ -4,7 +4,7 @@
 
 `lib/cron/cleanup-registry.ts` supplies the single implementation dispatch for
 `/api/cleanup/[job]`. Its bearer check uses `CRON_SECRET`. The Netlify scheduled
-adapter runs every five minutes and schedules every registered job (80 targets);
+adapter runs every five minutes and schedules every registered job (81 targets);
 no Actions workflow schedules a registry job. Check executable target metadata
 rather than assuming a registered job is scheduled.
 

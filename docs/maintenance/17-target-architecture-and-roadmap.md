@@ -11,7 +11,7 @@ This page opens with an executive summary of the problems, the experiments and t
 
 ### 1.1 Today
 
-About 76 jobs run from one Netlify Scheduled Function, `netlify/functions/cron-tick.mts`. Every five minutes it POSTs the due jobs, at most 12 per tick (`MAX_TARGETS_PER_TICK` in `lib/cron/schedule.ts`). Most land on Netlify functions in Singapore, and six land on Netlify Background Functions. Correctness comes from four things: state as the outbox, `withCronLock` leases (one run per job name, `lib/cron/with-cron-lock.ts`), compare-and-swap status writes, and the Postgres constraints and triggers in `prisma/sql/`.
+The 81 scheduled targets (`TARGETS` in `lib/cron/schedule.ts`) run from one Netlify Scheduled Function, `netlify/functions/cron-tick.mts`. Every five minutes it POSTs the due jobs, at most 12 per tick (`MAX_TARGETS_PER_TICK` in `lib/cron/schedule.ts`). Most land on Netlify functions in Singapore, and six land on Netlify Background Functions. Correctness comes from four things: state as the outbox, `withCronLock` leases (one run per job name, `lib/cron/with-cron-lock.ts`), compare-and-swap status writes, and the Postgres constraints and triggers in `prisma/sql/`.
 
 ### 1.2 The problems, in order of impact
 

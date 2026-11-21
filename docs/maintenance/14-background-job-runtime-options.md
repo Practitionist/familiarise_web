@@ -29,7 +29,7 @@ The picture shows how the jobs run today: one scheduled function fans out HTTP c
  ┌──────────────────────────────────────┐
  │ Netlify Scheduled Function           │  30 s hard limit for the ticker itself
  │ cron-tick.mts  (Singapore)           │
- │  1. which of the ~76 jobs are due?    │  ≤12 jobs per tick, spread by offsets
+ │  1. which of the ~81 jobs are due?    │  ≤12 jobs per tick, spread by offsets
  │  2. POST each one in parallel ───────┼──────────┐
  └──────────────────────────────────────┘          │
                                                    ▼
@@ -937,7 +937,7 @@ Yes, and it already is. Live RazorpayX answers only allowlisted IP addresses, up
 
 Because the function that runs the step is a Netlify function, and Netlify's edge cuts a request that has sent no data after about 26 s on production (about 30 s on a throwaway site, and Netlify support has confirmed a second ceiling near 37–38 s; see `.claude/skills/deployment/netlify/platform-limits.md`). Inngest can split a sequence of short steps across many requests, and a durable `step.sleep` costs no compute, but it cannot make one request outlive the edge. The 504 it sees is also the same 504 QStash sees (section 5.3). Inngest `connect` would avoid the HTTP timeout (DOCS: "Step execution is not bound by platform http timeouts"), but it requires a long-running server and does not support serverless runtimes, so it needs the same long-lived host that pg-boss and DBOS need.
 
-### 9.6 Can the ~76 jobs conflict with each other?
+### 9.6 Can the ~81 jobs conflict with each other?
 
 They can contend, but a conflict costs wasted work and waiting, not corruption. A lost compare-and-swap is a no-op: the loser updates zero rows and moves on. A lock wait lasts about as long as the other writer holds the lock, so it scales with lock-hold time (about 700 ms from Singapore, about 20 ms from Mumbai as an ESTIMATE, 10.6–19.6 ms measured on `bom1`). Serializable retries happen occasionally (`withSerializableRetry` in `lib/db/serializable-retry.ts`), and a deadlock is detected by Postgres, which aborts one side so the job retries next tick. Engine concurrency controls (Inngest concurrency keys, QStash flow control, DBOS global limits) are a convenience that reduces wasted work. Layers 2 to 4 below, all in Postgres and in the status writes, are the guarantee. The enforcers are CAS-in-WHERE status transitions and per-entity claims, provider idempotency keys with reconciliation for the vendor side, and the constraints and triggers in the `prisma/sql/` sidecars (`ledger_txn_balanced`, `payment_legs_sum_to_amount`, `occurrence_no_confirmed_overlap`).
 
