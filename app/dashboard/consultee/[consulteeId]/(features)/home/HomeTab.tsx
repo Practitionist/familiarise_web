@@ -810,15 +810,21 @@ export default function HomeTab({
         ) : (
           <EmptyState
             icon={Calendar}
-            title="No upcoming sessions"
-            description="Book a session with an expert to get started."
+            title={isOwner ? "No upcoming sessions" : "Nothing booked yet"}
+            description={
+              isOwner
+                ? "Book a session with an expert to get started."
+                : "Their upcoming sessions will show up here."
+            }
             action={
-              <Button asChild>
-                <Link href="/explore/experts">
-                  <Users className="mr-2 h-4 w-4" />
-                  Find experts
-                </Link>
-              </Button>
+              isOwner ? (
+                <Button asChild>
+                  <Link href="/explore/experts">
+                    <Users className="mr-2 h-4 w-4" />
+                    Find experts
+                  </Link>
+                </Button>
+              ) : undefined
             }
           />
         )}
@@ -851,7 +857,7 @@ export default function HomeTab({
           <Stat
             label="Sessions"
             value={monthSessions}
-            hint="Your own, scheduled or held this month"
+            hint={`${isOwner ? "Your" : "Their"} own, scheduled or held this month`}
             href={`${basePath}/appointments`}
           />
           <Stat

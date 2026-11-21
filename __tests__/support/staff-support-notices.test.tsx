@@ -216,6 +216,17 @@ describe("StaffSupportComposeDialog", () => {
     expect(mockPush).toHaveBeenCalledWith("/dashboard/staff/support/c_case-7");
   });
 
+  it("says before sending that an open case takes the message as a reply", () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <StaffSupportComposeDialog open onOpenChange={jest.fn()} />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByLabelText("Message *")).toHaveAccessibleDescription(
+      /If the customer already has an open case, it is added there as a reply they can see/,
+    );
+  });
+
   it("stays quiet for a new case", async () => {
     await submitWith(
       {

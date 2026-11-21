@@ -124,8 +124,8 @@ describe("a list row's end reason", () => {
       }),
     ).resolves.toEqual({ ok: true, closed: 1 });
     expect(await lines(s)).toEqual({
-      learner: "You requested a new booking.",
-      expert: "The learner requested a new booking.",
+      learner: "You closed this payment link and requested again.",
+      expert: "The learner closed this payment link and requested again.",
     });
   });
 });

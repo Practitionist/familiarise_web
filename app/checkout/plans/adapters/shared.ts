@@ -24,11 +24,15 @@ export function loadErrorMessage(error: unknown): string | null {
     : "An unexpected error occurred. Please try again.";
 }
 
+/** What a plan its reader may not open says; the checkout's error card keys its title and Browse experts link on it. */
+export const PLAN_UNAVAILABLE_MESSAGE =
+  "This plan isn't available to book right now. Browse other experts to find another.";
+
 /** The plan read failed: a hidden or withdrawn plan is not bookable, never a raw status. */
 export function planLoadError(status: number): Error {
   return new Error(
     status === 404
-      ? "This plan isn't available to book right now. Browse other experts to find another."
+      ? PLAN_UNAVAILABLE_MESSAGE
       : "We couldn't load this checkout. Please try again.",
   );
 }

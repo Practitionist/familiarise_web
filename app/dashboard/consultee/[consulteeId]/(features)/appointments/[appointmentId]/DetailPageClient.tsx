@@ -29,6 +29,7 @@ import {
 } from "@/components/appointments/consultee/ConsulteeAppointmentsAdapter";
 import { DisplayZoneProvider } from "@/lib/time/zoned-format";
 import { seatLapsedOrReleased } from "@/lib/appointments/status";
+import { isGroupKind } from "@/lib/appointments/kind-capabilities";
 import { IncidentRemedyBanner } from "@/components/appointments/consultee/IncidentRemedyBanner";
 import { RequestAgainButton } from "@/components/booking/RequestAgainButton";
 
@@ -373,6 +374,7 @@ export function ConsulteeExtraActions({
           appointmentId={vm.appointmentId}
           href={`/explore/experts/${vm.consultantProfileId}`}
           payments={rebookPayments}
+          seat={isGroupKind(vm.kind)}
         >
           <RotateCcw className="mr-1.5 h-4 w-4" />
           Book again

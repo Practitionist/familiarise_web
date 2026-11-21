@@ -266,8 +266,16 @@ export function StaffSupportComposeDialog({
               rows={4}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="Write the message that will open the user's support case…"
+              placeholder="Write the message the customer will read…"
+              aria-describedby="outbound-description-hint"
             />
+            <p
+              id="outbound-description-hint"
+              className="text-xs text-muted-foreground"
+            >
+              A new case opens with this message. If the customer already has an
+              open case, it is added there as a reply they can see.
+            </p>
           </div>
 
           {error && <p className="text-sm text-red-600">{error}</p>}

@@ -183,9 +183,17 @@ function isHostEvent(f: BookingStatusFacts, viewer: StatusViewer): boolean {
 }
 
 /** The latest edge into the booking's current status. */
-function edgeInto(f: BookingStatusFacts, status: string) {
+function edgeInto(f: Pick<BookingStatusFacts, "history">, status: string) {
   const edges = (f.history ?? []).filter((e) => upper(e.toStatus) === status);
   return edges.at(-1) ?? null;
+}
+
+/** The edge that closed this booking because the learner requested again, if that is how it ended. */
+export function requestedAgainEdge(
+  f: Pick<BookingStatusFacts, "history" | "status">,
+): HistoryEdgeInput | null {
+  const edge = edgeInto(f, upper(f.status));
+  return edge?.reason === REQUESTED_AGAIN_REASON ? edge : null;
 }
 
 /** Why an EXPIRED or CANCELLED booking ended, read off its history edge. */
@@ -400,10 +408,10 @@ function reasonOf(
       return f.completedNote ?? "";
     case "PAYMENT_LAPSED":
       // The learner closed the lapsed link themselves to book again.
-      if (edgeInto(f, upper(f.status))?.reason === REQUESTED_AGAIN_REASON) {
+      if (requestedAgainEdge(f)) {
         return isLearner
-          ? "You requested a new booking."
-          : `${cap(payer)} requested a new booking.`;
+          ? "You closed this payment link and requested again."
+          : "The learner closed this payment link and requested again.";
       }
       return "Payment was not completed in time.";
     default:
@@ -461,6 +469,8 @@ function endedReason(
       if (mine) who = " by you";
       else if (by === "CONSULTANT") who = ` by ${consultant}`;
       else if (by === "REQUESTER") who = ` by ${payer}`;
+      // With no history edge or date there is no reason to give; the chip already says Cancelled.
+      if (!who && !at) return "";
       return `Cancelled${who}${at ? ` on ${day(at)}` : ""}.`;
     }
   }
