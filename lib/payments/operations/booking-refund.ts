@@ -67,8 +67,8 @@ async function leavesRefundable(paymentId: string): Promise<boolean> {
 }
 
 /**
- * A replayed refund whose row predates the stored seat decision: the original call already
- * applied it, so the replay ends the seat only when nothing is left to refund.
+ * A refund whose row stores no seat decision (written before it was stored, or its decision read
+ * failed): the replay ends the seat only when nothing is left to refund.
  */
 async function legacyReplayEndsSeat(
   input: { keepSeat?: boolean },
@@ -405,7 +405,7 @@ async function refundBookingPaymentOnRail(
 
   if (!isInternalFundedIntent(payment.paymentIntent)) {
     const r = await refundPayment(input);
-    // Decided in the reservation and stored on the row; the caller stamps the seat after commit.
+    // Decided once the gateway answered and stored on the row; the caller stamps the seat after commit.
     const endsSeat =
       r.endsSeat ?? (await legacyReplayEndsSeat(input, r.paymentId));
     return {

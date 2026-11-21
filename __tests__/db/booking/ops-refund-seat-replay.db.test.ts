@@ -1,7 +1,8 @@
 /**
  * The issue door's partial refund keeps the webinar seat, and resending its key
  * with no amount replays that refund with the seat still live: the real refund
- * writer stores the seat decision on the row and the replay reads it back.
+ * writer stores the seat decision on the row once the gateway answers, and the
+ * replay reads it back.
  */
 import { randomUUID } from "node:crypto";
 import { NextRequest } from "next/server";
@@ -63,6 +64,8 @@ beforeAll(async () => {
   mockAdmin.id = (await seedUser("ADMIN")).userId;
 });
 beforeEach(() => {
+  mockCreateRefund.mockClear();
+  mockRevokeSeat.mockClear();
   const writer = jest.requireActual(
     "../../../lib/payments/operations/booking-refund",
   ) as { refundBookingPayment: (...a: unknown[]) => unknown };
@@ -118,6 +121,57 @@ it("resending a ₹100 partial refund's key with no amount replays it and keeps 
     }),
   ]);
   expect(mockCreateRefund).toHaveBeenCalledTimes(1);
+  expect(mockRevokeSeat).not.toHaveBeenCalled();
+  expect(
+    await prisma.appointmentParticipant.findFirstOrThrow({
+      where: { appointmentId: webinar.appointmentId, userId: buyer.userId },
+      select: { status: true },
+    }),
+  ).toEqual({ status: "CONFIRMED" });
+});
+
+it("keeps the seat when a concurrent ₹400 refund fails while this ₹100 one is at the gateway", async () => {
+  const webinar = await seedWebinar({ capacity: 20, price: 50_000 });
+  const { buyer, payment } = await seedHeldSeat(webinar, {
+    status: "SUCCEEDED",
+    expiresAt: null,
+  });
+  const other = await prisma.refund.create({
+    data: {
+      paymentId: payment.id,
+      amountPaise: BigInt(40_000),
+      status: "PENDING",
+      refundId: `pending_dbtier_${randomUUID()}`,
+      paymentGateway: "RAZORPAY",
+    },
+  });
+  // At this refund's reservation the other was still out; it fails before the gateway answers.
+  mockCreateRefund.mockImplementationOnce(async (params) => {
+    await prisma.refund.updateMany({
+      where: { id: other.id, status: "PENDING" },
+      data: { status: "FAILED", failedAt: new Date() },
+    });
+    return {
+      refundId: `rfnd_dbtier_${randomUUID()}`,
+      amount: params.amount,
+      currency: "INR",
+      status: "SUCCEEDED" as const,
+    };
+  });
+
+  const res = await issue({
+    paymentId: payment.id,
+    idempotencyKey: randomUUID(),
+    amountPaise: 10_000,
+  });
+
+  expect(res.status).toBe(200);
+  expect(
+    await prisma.refund.findFirstOrThrow({
+      where: { paymentId: payment.id, status: "SUCCEEDED" },
+      select: { metadata: true },
+    }),
+  ).toMatchObject({ metadata: expect.objectContaining({ endsSeat: false }) });
   expect(mockRevokeSeat).not.toHaveBeenCalled();
   expect(
     await prisma.appointmentParticipant.findFirstOrThrow({

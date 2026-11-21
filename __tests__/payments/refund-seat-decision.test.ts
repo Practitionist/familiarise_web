@@ -3,9 +3,10 @@
  */
 
 /**
- * The gateway rail decides whether a refund ends the seat inside its
- * reservation, stores it on the Refund row, and a keyed replay answers it.
- * The gateway answers PENDING, so each refund stops before the cascade.
+ * The gateway rail decides whether a refund ends the seat once the gateway has
+ * answered, against the balance committed then, stores it on the Refund row,
+ * and a keyed replay answers it. No refund here reaches the cascade: the
+ * gateway answers PENDING, or a webhook settled the row first.
  */
 
 type RefundRow = {
@@ -17,7 +18,13 @@ type RefundRow = {
   refundId: string;
   metadata: Record<string, unknown>;
 };
-const mockState = { refunds: [] as RefundRow[], chargedBackPaise: 0 };
+const mockState = {
+  refunds: [] as RefundRow[],
+  chargedBackPaise: 0,
+  /** What happens while this refund is at the gateway, before its answer. */
+  atGateway: null as null | (() => void),
+  gatewayStatus: "PENDING" as "PENDING" | "SUCCEEDED",
+};
 const live = () =>
   mockState.refunds.filter((r) => ["SUCCEEDED", "PENDING"].includes(r.status));
 
@@ -28,12 +35,19 @@ jest.mock("../../lib/novu/service", () => ({
   notifyRefundRequested: jest.fn(async () => undefined),
 }));
 jest.mock("../../lib/payments", () => ({
-  createRefund: jest.fn(async () => ({
-    refundId: "",
-    amount: 0,
-    currency: "INR",
-    status: "PENDING",
-  })),
+  createRefund: jest.fn(async () => {
+    mockState.atGateway?.();
+    return {
+      refundId: "",
+      amount: 0,
+      currency: "INR",
+      status: mockState.gatewayStatus,
+    };
+  }),
+}));
+jest.mock("../../lib/email", () => ({
+  ...jest.requireActual("../../lib/email"),
+  prepareRefundProcessedEmail: jest.fn(async () => null),
 }));
 jest.mock("../../lib/prisma", () => {
   const db = {
@@ -51,10 +65,11 @@ jest.mock("../../lib/prisma", () => {
         displayCurrencyAtCheckout: null,
         exchangeRateAtCheckout: null,
         organizationId: null,
-        refunds: live().map((r) => ({
+        refunds: mockState.refunds.map((r) => ({
           amountPaise: r.amountPaise,
           status: r.status,
         })),
+        disputes: [{ amountPaise: mockState.chargedBackPaise, status: "LOST" }],
       }),
     },
     dispute: {
@@ -64,15 +79,36 @@ jest.mock("../../lib/prisma", () => {
       findFirst: async () => null,
     },
     refund: {
-      findUnique: async ({ where }: { where: { dedupeKey?: string } }) =>
-        mockState.refunds.find((r) => r.dedupeKey === where.dedupeKey) ?? null,
-      findMany: async () => live().map((r) => ({ amountPaise: r.amountPaise })),
+      findUnique: async ({
+        where,
+      }: {
+        where: { id?: string; dedupeKey?: string };
+      }) =>
+        mockState.refunds.find((r) =>
+          where.id ? r.id === where.id : r.dedupeKey === where.dedupeKey,
+        ) ?? null,
+      findMany: async ({ where }: { where: { status?: { in: string[] } } }) =>
+        where.status ? live() : mockState.refunds,
       create: async ({ data }: { data: Omit<RefundRow, "id"> }) => {
         const row = { ...data, id: `refund-${mockState.refunds.length + 1}` };
         mockState.refunds.push(row);
         return row;
       },
-      updateMany: async () => ({ count: 1 }),
+      // A webhook that already settled the row leaves the settle claim nothing to flip.
+      updateMany: async ({ where }: { where: { status?: string } }) => ({
+        count: where.status === "PENDING" ? 0 : 1,
+      }),
+      update: async ({
+        where,
+        data,
+      }: {
+        where: { id: string };
+        data: { metadata: Record<string, unknown> };
+      }) => {
+        const row = mockState.refunds.find((r) => r.id === where.id);
+        if (row) row.metadata = data.metadata;
+        return row;
+      },
     },
     $transaction: (fn: (tx: unknown) => unknown) => fn(db),
   };
@@ -84,6 +120,71 @@ import { refundPayment } from "../../lib/payments/operations/refund";
 beforeEach(() => {
   mockState.refunds = [];
   mockState.chargedBackPaise = 0;
+  mockState.atGateway = null;
+  mockState.gatewayStatus = "PENDING";
+});
+
+/** ₹400 of the ₹500 payment is already out at the gateway as another refund, PENDING. */
+const concurrentPending = () =>
+  mockState.refunds.push({
+    id: "refund-other",
+    paymentId: "pay-1",
+    amountPaise: 40_000,
+    status: "PENDING",
+    dedupeKey: "ops:other",
+    refundId: "pending_other",
+    metadata: {},
+  });
+const otherFails = () => {
+  const other = mockState.refunds.find((r) => r.id === "refund-other");
+  if (other) other.status = "FAILED";
+};
+
+const settleOwnRow = (): void => {
+  const own = mockState.refunds.find((r) => r.id !== "refund-other");
+  if (own) own.status = "SUCCEEDED";
+};
+
+it.each<[string, "PENDING" | "SUCCEEDED", () => void]>([
+  ["answers PENDING", "PENDING", () => undefined],
+  ["answers SUCCEEDED after a webhook settled it", "SUCCEEDED", settleOwnRow],
+])(
+  "keeps the seat when a concurrent ₹400 refund fails while this ₹100 one is at the gateway, and the gateway %s",
+  async (_answer, status, settledByWebhook) => {
+    concurrentPending();
+    mockState.gatewayStatus = status;
+    mockState.atGateway = () => {
+      otherFails();
+      settledByWebhook();
+    };
+
+    // At its reservation this ₹100 left nothing refundable; once the other failed, ₹400 is.
+    const refund = await refundPayment({
+      paymentId: "pay-1",
+      amountPaise: 10_000,
+      reason: "ops refund: goodwill",
+      dedupeKey: "ops:k",
+      keepSeatIfPartial: true,
+    });
+
+    expect(refund.endsSeat).toBe(false);
+    expect(
+      mockState.refunds.find((r) => r.dedupeKey === "ops:k")?.metadata,
+    ).toMatchObject({ endsSeat: false });
+  },
+);
+
+it("ends the seat when the concurrent refund is still out once this one is final", async () => {
+  concurrentPending();
+
+  const refund = await refundPayment({
+    paymentId: "pay-1",
+    amountPaise: 10_000,
+    reason: "ops refund: goodwill",
+    keepSeatIfPartial: true,
+  });
+
+  expect(refund.endsSeat).toBe(true);
 });
 
 it("a ₹100 partial keeps the seat, and resending its key with no amount answers that decision", async () => {

@@ -99,7 +99,7 @@ import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 // Late-bound cycle: reversal-engine imports applyRefundCascade from here.
 import { clawBackCompletedOrgPayout } from "./reversal-engine";
 import { retireSupersededPlaceholderTx } from "./refund-placeholder";
-import { refundEndsSeat, storedSeatDecision } from "./refund-seat";
+import { decideRefundSeatTx, storedSeatDecision } from "./refund-seat";
 import {
   accumulatePaidConsultantClawback,
   applyPaidConsultantClawbacks,
@@ -534,8 +534,6 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
   // Prisma error instead of being retried into the correct answer (either a
   // successful reservation or a typed AMOUNT_EXCEEDS_REFUNDABLE rejection).
   let settledOwed = null as HandSettledOwed | null;
-  // Decided against the reservation's own balance read, so a keyed replay reuses it.
-  let endsSeat = true;
   const reserveRefund = () =>
     withSerializableRetry(() =>
       prisma.$transaction(
@@ -605,7 +603,6 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
             handPaise: requested,
             refundableBeforePaise: remainingNow,
           });
-          endsSeat = refundEndsSeat(input, requested, remainingNow);
 
           return tx.refund.create({
             data: {
@@ -629,7 +626,6 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
               metadata: {
                 initiatedByUserId: input.initiatedByUserId ?? null,
                 source: "app",
-                endsSeat,
                 ...(settledOwed ? { settledOwed } : {}),
               } as Prisma.InputJsonValue,
             },
@@ -745,7 +741,6 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     const metadata = {
       initiatedByUserId: input.initiatedByUserId ?? null,
       source: "app",
-      endsSeat,
       ...(settledOwed ? { settledOwed } : {}),
       gateway_error: gatewayError,
     } as Prisma.InputJsonValue;
@@ -911,7 +906,29 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     }
   }
 
+  // Decided once the gateway has answered, so a concurrent refund that failed meanwhile is refundable again.
+  const decideSeat = (tx: Tx) =>
+    decideRefundSeatTx(tx, {
+      refundRowId: boundRefundRowId,
+      paymentId: payment.id,
+      paymentPaise: payment.amount,
+      policy: input,
+    });
+  // An unreadable balance stores nothing; the booking wrapper then reads the balance itself.
+  const decideSeatAfter = () =>
+    prisma.$transaction(decideSeat).catch((err: unknown) => {
+      console.warn(
+        JSON.stringify({
+          event: "refund_seat_decision_failed",
+          refundRowId: boundRefundRowId,
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      );
+      return undefined;
+    });
+
   if (gateway.status !== "SUCCEEDED") {
+    const endsSeat = await decideSeatAfter();
     return {
       refundId: boundRefundRowId,
       paymentId: payment.id,
@@ -922,7 +939,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       clawbackInitiated: false,
       status: "PENDING" as const,
       gatewayRefundId: gateway.refundId || undefined,
-      endsSeat,
+      ...(endsSeat === undefined ? {} : { endsSeat }),
       ...(settledOwed ? { settledOwed } : {}),
     };
   }
@@ -937,6 +954,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     clawbackInitiated: boolean;
     status: "SUCCEEDED" | "PENDING";
     gatewayRefundId: string | undefined;
+    endsSeat?: boolean;
   };
   let stagedBell: StagedTrigger | null = null;
   let stagedEmails: StagedRecipientEmail[] = [];
@@ -965,6 +983,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
             where: { id: boundRefundRowId, status: RefundStatus.PENDING },
             data: { status: RefundStatus.SUCCEEDED },
           });
+          const endsSeat = await decideSeat(tx);
           if (settledClaim.count === 0) {
             casMiss();
             const current = await tx.refund.findUnique({
@@ -984,6 +1003,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
                   ? ("SUCCEEDED" as const)
                   : ("PENDING" as const),
               gatewayRefundId: gateway.refundId || undefined,
+              endsSeat,
             };
           }
 
@@ -1049,6 +1069,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
             ...cascade,
             status: "SUCCEEDED" as const,
             gatewayRefundId: gateway.refundId || undefined,
+            endsSeat,
           };
         },
         {
@@ -1080,6 +1101,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
           ? ("SUCCEEDED" as const)
           : ("PENDING" as const),
       gatewayRefundId: gateway.refundId || undefined,
+      endsSeat: await decideSeatAfter(),
     };
   }
 
@@ -1092,7 +1114,12 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     ),
   ]);
 
-  return { ...settled, endsSeat, ...(settledOwed ? { settledOwed } : {}) };
+  const { endsSeat, ...rest } = settled;
+  return {
+    ...rest,
+    ...(endsSeat === undefined ? {} : { endsSeat }),
+    ...(settledOwed ? { settledOwed } : {}),
+  };
 }
 
 /** The refund a fully-refunded booking owes on one CHARGE_MEMBER side-payment. */
