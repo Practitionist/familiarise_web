@@ -58,6 +58,22 @@ const orgSurcharge = line(
   "overage-accrual:ov_2",
 );
 
+// A top-up refund after part of the top-up was spent: the clawback and the unrecovered part.
+const topUpRefunded = line(
+  "e6",
+  "DEBIT",
+  1000_00,
+  "TOPUP_REFUND",
+  "topup-refund:rfnd_1",
+);
+const topUpRefundShortfall = line(
+  "e7",
+  "CREDIT",
+  700_00,
+  "TOPUP_REFUND",
+  "topup-refund-shortfall:rfnd_1",
+);
+
 const labelOf = (l: WalletLedgerLine) =>
   walletReasonLabel(walletLedgerRow(l).reason);
 
@@ -75,6 +91,14 @@ describe("wallet ledger rows", () => {
   it("names an org-paid overage surcharge apart from the session it rode on", () => {
     expect(labelOf(orgSurcharge)).toBe("Extra-session surcharge");
     expect(labelOf(booked)).toBe("Session booked");
+  });
+
+  it("names a top-up refund's unrecovered part apart from the refund", () => {
+    expect(walletLedgerRow(topUpRefundShortfall).reason).toBe(
+      "TOPUP_REFUND_SHORTFALL",
+    );
+    expect(labelOf(topUpRefunded)).toBe("Top-up refunded");
+    expect(labelOf(topUpRefundShortfall)).not.toBe(labelOf(topUpRefunded));
   });
 
   it("signs the amount and carries no internal description", () => {
@@ -112,5 +136,14 @@ describe("org analytics wallet activity", () => {
     for (const r of rows) {
       expect(walletReasonLabel(r.reason)).not.toMatch(/_/);
     }
+  });
+
+  it("keeps a top-up refund and its unrecovered part in separate rows", () => {
+    expect(
+      walletActivityByReason([topUpRefunded, topUpRefundShortfall]),
+    ).toEqual([
+      { reason: "TOPUP_REFUND", count: 1, deltaPaise: -1000_00 },
+      { reason: "TOPUP_REFUND_SHORTFALL", count: 1, deltaPaise: 700_00 },
+    ]);
   });
 });

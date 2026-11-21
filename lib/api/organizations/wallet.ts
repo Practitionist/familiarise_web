@@ -33,7 +33,10 @@ import prisma, { type Db, type Tx } from "@/lib/prisma";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { gatewayCashAccount } from "@/lib/payments/ledger/gateway-account";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
-import { walletEntryReason } from "@/lib/labels/money-labels";
+import {
+  TOPUP_REFUND_SHORTFALL_KEY_PREFIX,
+  walletEntryReason,
+} from "@/lib/labels/money-labels";
 
 /**
  * #1477 — an org that has run its wallet down is refusing a booking, not
@@ -611,7 +614,7 @@ export async function confirmTopUp(
 const TOPUP_SETTLED_RECEIVABLE_KEYS = [
   "overage-restore:",
   "overage-recarve:",
-  "topup-refund-shortfall:",
+  TOPUP_REFUND_SHORTFALL_KEY_PREFIX,
   "chargeback:",
   "topup:",
 ];

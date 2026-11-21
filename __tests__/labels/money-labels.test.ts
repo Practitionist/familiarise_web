@@ -15,6 +15,7 @@ describe("money label maps", () => {
       "OVERAGE_SURCHARGE",
       "REFUND",
       "TOPUP_REFUND",
+      "TOPUP_REFUND_SHORTFALL",
       "INVOICE_REFUND",
       "OVERAGE_MEMBER_BILLED",
       "OVERAGE_MEMBER_UNPAID",
@@ -31,6 +32,7 @@ describe("money label maps", () => {
     expect(walletReasonLabel("WALLET_ADJUSTMENT")).toBe(
       "Adjustment by our team",
     );
+    expect(walletReasonLabel("TOPUP_REFUND_SHORTFALL")).toMatch(/still owes/);
   });
 
   it("reads gateway dispute codes as words and passes prose through", () => {

@@ -34,6 +34,8 @@ export const WALLET_REASON_LABEL = {
   OVERAGE_SURCHARGE: "Extra-session surcharge",
   REFUND: "Refund or chargeback",
   TOPUP_REFUND: "Top-up refunded",
+  TOPUP_REFUND_SHORTFALL:
+    "Top-up refund the organisation still owes: already spent from the wallet",
   INVOICE_REFUND: "Invoice refunded to wallet",
   OVERAGE_MEMBER_BILLED:
     "Returned to the wallet: a member is billed for their extra session",
@@ -43,6 +45,9 @@ export const WALLET_REASON_LABEL = {
 } as const satisfies Record<string, string>;
 
 export type WalletEntryReason = keyof typeof WALLET_REASON_LABEL;
+
+/** Key prefix of the part of a top-up refund the wallet could not cover, booked as owed by the org. */
+export const TOPUP_REFUND_SHORTFALL_KEY_PREFIX = "topup-refund-shortfall:";
 
 /** The stored facts that name one line on an organisation's WALLET journal. */
 export interface WalletJournalLine {
@@ -60,6 +65,12 @@ export function walletEntryReason(
   const { kind, idempotencyKey } = line.transaction;
   if (kind === "BOOKING" && idempotencyKey.startsWith("overage-accrual:")) {
     return "OVERAGE_SURCHARGE";
+  }
+  if (
+    kind === "TOPUP_REFUND" &&
+    idempotencyKey.startsWith(TOPUP_REFUND_SHORTFALL_KEY_PREFIX)
+  ) {
+    return "TOPUP_REFUND_SHORTFALL";
   }
   if (kind === "OVERAGE_MEMBER") {
     return line.direction === "CREDIT"
