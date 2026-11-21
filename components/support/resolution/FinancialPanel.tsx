@@ -62,6 +62,8 @@ const Preview = z.object({
     amountPaise: z.number(),
     rail: z.string(),
     blockedReason: z.string().nullable(),
+    /** Plain copy for a remedy that moves no money, e.g. a 100% discount booking. */
+    note: z.string().nullable(),
     committedPaise: z.number(),
   }),
 });
@@ -231,7 +233,8 @@ function ReviewDialog({
           <AlertDialogDescription>
             {preview &&
               (preview.rail === "CREDITS"
-                ? "Restore the booking's credits in full. No cash refund is sent."
+                ? (preview.note ??
+                  "Restore the booking's credits in full. No cash refund is sent.")
                 : `${inr(preview.amountPaise)} through ${preview.rail}. Current refundable balance: ${inr(preview.refundablePaise)}.`)}
           </AlertDialogDescription>
         </AlertDialogHeader>

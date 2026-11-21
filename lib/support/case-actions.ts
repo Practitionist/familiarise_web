@@ -29,6 +29,7 @@ import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import { proposalStatusWhere } from "@/lib/backoffice/ops-proposals";
 import { refundInFlightOr } from "@/lib/backoffice/refund-doors";
 import {
+  isDiscountFreeBooking,
   REFUND_DOOR_SELECT,
   refundDoorRefusal,
   type RefundDoorRefusal,
@@ -545,6 +546,10 @@ const DOOR_BLOCK_REASON: Record<RefundDoorRefusal["code"], string> = {
   REFUND_BLOCKED_BY_DISPUTE: "A gateway chargeback is active",
 };
 
+/** The preview's line for a 100% discount booking, which an approval ends at ₹0. */
+const DISCOUNT_FREE_NOTE =
+  "This booking was free with a discount code; ending it returns no money but reverses the expert's earnings.";
+
 /** A removal case never refunds the order of a sale made after its removal. */
 const AFTER_REMOVAL_BLOCK = {
   code: "PAYMENT_AFTER_REMOVAL",
@@ -636,6 +641,8 @@ export async function quoteCaseRefund(
     committedPaise,
     rail: fundingRailForIntent(payment.paymentIntent),
     blocked,
+    note:
+      !blocked && isDiscountFreeBooking(payment) ? DISCOUNT_FREE_NOTE : null,
   };
 }
 

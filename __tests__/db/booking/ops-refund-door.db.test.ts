@@ -314,3 +314,62 @@ it("a key spent on one buyer's refund answers 422 on another buyer's payment", a
     findDedupedRefund(`ops:${key}`, { paymentId: a.payment.id }),
   ).resolves.toMatchObject({ refundId: spent.id, paymentId: a.payment.id });
 });
+
+it("a 100% discount booking opens the door as a ₹0 refund, once", async () => {
+  const webinar = await seedWebinar({ capacity: 20, price: 50_000 });
+  const discountSeat = async (ended: boolean) => {
+    const buyer = await seedSeatBuyer();
+    const payment = await prisma.payment.create({
+      data: {
+        amount: BigInt(0),
+        originalAmount: BigInt(50_000),
+        paymentMethod: "credits",
+        paymentIntent: `free_dbtier_${randomUUID()}`,
+        paymentGateway: "RAZORPAY",
+        paymentStatus: "SUCCEEDED",
+        userId: buyer.userId,
+        appointmentId: webinar.appointmentId,
+        isMockPayment: true,
+      },
+    });
+    if (ended) {
+      await prisma.refund.create({
+        data: {
+          paymentId: payment.id,
+          amountPaise: BigInt(0),
+          status: "SUCCEEDED",
+          refundId: `credits_${randomUUID()}`,
+          paymentGateway: "RAZORPAY",
+        },
+      });
+    }
+    await prisma.appointmentParticipant.create({
+      data: {
+        appointmentId: webinar.appointmentId,
+        userId: buyer.userId,
+        role: "CONSULTEE",
+        status: ended ? "REFUNDED" : "CONFIRMED",
+        paymentId: payment.id,
+      },
+    });
+    return payment;
+  };
+  const live = await discountSeat(false);
+  const ended = await discountSeat(true);
+
+  expect(await panelRow(webinar, live.id)).toMatchObject({ refundable: true });
+  expect(await panelRow(webinar, ended.id)).toMatchObject({
+    refundable: false,
+  });
+  const refused = await issue(ended.id);
+  expect(refused.status).toBe(409);
+  expect(await refused.json()).toMatchObject({
+    code: "ALREADY_FULLY_REFUNDED",
+  });
+  expect(refundDoor.refundBookingPayment).not.toHaveBeenCalled();
+
+  expect((await issue(live.id)).status).toBe(200);
+  expect(refundDoor.refundBookingPayment).toHaveBeenCalledWith(
+    expect.objectContaining({ paymentId: live.id, amountPaise: undefined }),
+  );
+});

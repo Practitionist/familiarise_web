@@ -55,6 +55,21 @@ const INACTIVE_DISPUTES: ReadonlySet<string> = new Set(
   DISPUTE_INACTIVE_FOR_GATING,
 );
 
+/** A `free_` booking with a list price and no credit spent: a 100% discount code paid for it. */
+export function isDiscountFreeBooking(
+  p: Pick<
+    RefundDoorPayment,
+    "paymentIntent" | "amount" | "originalAmount" | "creditUsages"
+  >,
+): boolean {
+  return (
+    fundingRailForIntent(p.paymentIntent) === "CREDITS" &&
+    Number(p.amount) === 0 &&
+    Number(p.originalAmount) > 0 &&
+    p.creditUsages.length === 0
+  );
+}
+
 /** Null when the door may refund the payment; otherwise why it may not. */
 export function refundDoorRefusal(
   p: RefundDoorPayment,
@@ -81,12 +96,20 @@ export function refundDoorRefusal(
           "This seat was free, so nothing was paid and there is nothing to refund.",
       };
     }
-    // The credits rail restores once: any returned refund row is that restoration.
-    const restored = p.refunds.some((r) =>
-      RETURNED_REFUND_STATUSES.has(r.status),
-    );
+    // The credits rail ends a booking once: any returned refund row is that ending.
+    const ended = p.refunds.some((r) => RETURNED_REFUND_STATUSES.has(r.status));
+    if (isDiscountFreeBooking(p)) {
+      // A 100% discount spent no credit; its ₹0 refund still reverses the journal and earnings.
+      return ended
+        ? {
+            code: "ALREADY_FULLY_REFUNDED",
+            message:
+              "This booking was already ended, so nothing is left to refund.",
+          }
+        : null;
+    }
     const stillUsed = p.creditUsages.reduce((s, u) => s + Number(u.amount), 0);
-    return restored || stillUsed <= 0
+    return ended || stillUsed <= 0
       ? {
           code: "ALREADY_FULLY_REFUNDED",
           message: "The credits behind this booking were already returned.",

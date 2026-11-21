@@ -741,6 +741,53 @@ describe("refund execution correctness", () => {
     );
   });
 
+  it("ends a 100% discount booking at ₹0: recommend, preview and approval accept it", async () => {
+    mockStore.payment = {
+      ...mockStore.payment,
+      amount: 0,
+      originalAmount: 500_000,
+      paymentIntent: "free_discount",
+      creditUsages: [],
+    };
+    mockStore.recommendations = [];
+    await performCaseAction("case-1", staff, {
+      action: "RECOMMEND_REFUND" as const,
+      clientActionId: "rec-discount",
+      expectedUpdatedAt: caseUpdatedAt.toISOString(),
+      paymentId: "pay-1",
+      amountPaise: 0,
+      reason: "Session not delivered",
+      releaseSeat: true,
+    });
+    expect(db.supportFinancialRecommendation.create).toHaveBeenCalled();
+
+    mockStore.recommendations = [
+      recommendation({
+        amountPaise: 0,
+        payment: { paymentIntent: "free_discount" },
+      }),
+    ];
+    expect(
+      await quoteCaseRefund(db as never, "case-1", {
+        id: "rec-1",
+        paymentId: "pay-1",
+      }),
+    ).toMatchObject({
+      refundablePaise: 0,
+      rail: "CREDITS",
+      blocked: null,
+      note: expect.stringContaining("free with a discount code"),
+    });
+    await performCaseAction(
+      "case-1",
+      admin,
+      review(true, { expectedRefundablePaise: 0 }),
+    );
+    expect(refundBookingPayment).toHaveBeenCalledWith(
+      expect.not.objectContaining({ amountPaise: expect.anything() }),
+    );
+  });
+
   it("gives a price-free seat no remedy: recommend, preview, pricing and approval all refuse", async () => {
     mockStore.payment = {
       ...mockStore.payment,
