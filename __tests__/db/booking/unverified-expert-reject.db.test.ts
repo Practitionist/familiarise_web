@@ -72,6 +72,10 @@ jest.mock("../../../lib/payments/core/razorpay", () => ({
   readRazorpayOrderHolding: (orderId: string) =>
     mockGateway.readRazorpayOrderHolding(orderId),
 }));
+// The sweep's mutual exclusion is a lease the database tier need not hold.
+jest.mock("../../../lib/cron/with-cron-lock", () => ({
+  withCronLock: (_job: string, _opts: unknown, fn: () => unknown) => fn(),
+}));
 const mockReport = { message: jest.fn() };
 jest.mock("../../../lib/observability/report", () => {
   const actual = jest.requireActual("../../../lib/observability/report");
@@ -94,6 +98,7 @@ import { allocate } from "../../../lib/booking/allocation";
 import { bookTrialInTx } from "../../../lib/trials/book-trial";
 import { refundDoor } from "./harness-edges";
 import { seedHeldSeat, seedWebinar } from "./harness-seats";
+import { retryModerationEnforcement } from "../../../scripts/cleanup/retry-moderation-enforcement";
 
 const PRICE_PAISE = 80_000;
 /** The learner's notice: neutral, the expert named, no reason given; no charge promised once an order existed. */
@@ -564,4 +569,100 @@ describe("a moderation reject stops new sales and honours what is booked", () =>
     });
     expect(await statusOf.consultation(unpaid.consultationId)).toBe("PENDING");
   }, 60_000);
+
+  describe("when the ending fails after the reject commits", () => {
+    /** A committed reject whose phase 2 never ended the sales, as the action row records it. */
+    async function failedEnding(host: SeededHost) {
+      const reporter = await seedConsultee();
+      const staff = await seedConsultee();
+      const report = await prisma.moderationReport.create({
+        data: {
+          type: "PROFILE",
+          reason: "OTHER",
+          status: "ACTION_TAKEN",
+          reportedById: reporter.userId,
+          targetUserId: host.userId,
+        },
+      });
+      return prisma.moderationAction.create({
+        data: {
+          actionType: "PROFILE_UNVERIFIED",
+          reportId: report.id,
+          takenById: staff.userId,
+          sideEffects: {
+            profilesUnverified: 1,
+            unverifiedConsultantProfileId: host.consultantProfileId,
+            unpaidSales: "failed",
+            unpaidSalesAttempts: 1,
+          },
+        },
+      });
+    }
+    const sideEffectsOf = async (id: string) =>
+      JSON.stringify(
+        (
+          await prisma.moderationAction.findUniqueOrThrow({
+            where: { id },
+            select: { sideEffects: true },
+          })
+        ).sideEffects,
+      );
+
+    it("the retry sweep ends the sales and marks the step settled", async () => {
+      const host = await seedHost();
+      const request = await seedOneToOne(
+        "consultation",
+        host,
+        await seedConsultee(),
+        { startsAt: futureAt(6, 14), endsAt: futureAt(6, 15) },
+        {
+          status: "PENDING",
+          bookingSource: "REQUEST_SUBMITTED",
+          isTentative: true,
+        },
+      );
+      await prisma.consultantProfile.update({
+        where: { id: host.consultantProfileId },
+        data: { verificationStatus: "REJECTED" },
+      });
+      const action = await failedEnding(host);
+
+      await retryModerationEnforcement();
+
+      expect(await statusOf.consultation(request.consultationId!)).toBe(
+        "REJECTED",
+      );
+      const settled = await sideEffectsOf(action.id);
+      expect(settled).toContain('"unpaidSales":"ok"');
+      expect(settled).toContain('"requestsDeclined":1');
+      // Settled rows leave the queue: a second run changes nothing.
+      await retryModerationEnforcement();
+      expect(await sideEffectsOf(action.id)).toBe(settled);
+    }, 60_000);
+
+    it("skips the ending for an expert verified again since", async () => {
+      const host = await seedHost();
+      const request = await seedOneToOne(
+        "consultation",
+        host,
+        await seedConsultee(),
+        { startsAt: futureAt(6, 16), endsAt: futureAt(6, 17) },
+        {
+          status: "PENDING",
+          bookingSource: "REQUEST_SUBMITTED",
+          isTentative: true,
+        },
+      );
+      const action = await failedEnding(host);
+
+      await retryModerationEnforcement();
+
+      expect(await statusOf.consultation(request.consultationId!)).toBe(
+        "PENDING",
+      );
+      expect(await sideEffectsOf(action.id)).toContain(
+        '"unpaidSales":"skipped"',
+      );
+    }, 60_000);
+  });
 });

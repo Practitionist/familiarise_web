@@ -55,9 +55,8 @@ describe("planDetailResponse", () => {
     const res = await planDetailResponse(plan, "not found");
 
     expect(res.status).toBe(200);
-    expect(res.headers.get("Cache-Control")).toBe(
-      "public, s-maxage=60, stale-while-revalidate=300",
-    );
+    // At most a minute and never stale: a plan hidden by a reject stops being served within it.
+    expect(res.headers.get("Cache-Control")).toBe("public, s-maxage=60");
     await expect(res.json()).resolves.toEqual({ data: plan });
     expect(mockCanView).toHaveBeenCalledTimes(1);
     expect(mockCanView).toHaveBeenCalledWith(plan, null);

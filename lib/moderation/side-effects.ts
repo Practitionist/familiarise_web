@@ -126,7 +126,9 @@ export interface SideEffectSummary extends TransactionalEffectResult {
   seatsReleased?: number;
   /** Sales left open: a live payment holds them, or the gateway could not be asked. */
   salesKept?: number;
+  /** "failed" queues the ending for the enforcement retry sweep. */
   unpaidSales?: StepStatus;
+  unpaidSalesAttempts?: number;
   cancellations?: BulkCancelSummary;
   stream?: StepStatus;
   streamAttempts?: number;
@@ -731,8 +733,10 @@ async function runUnpaidSalesEnding(
     summary.stagedBells?.push(...outcome.bells);
     summary.stagedEmails?.push(...outcome.emails);
     summary.unpaidSales = "ok";
+    summary.unpaidSalesAttempts = 1;
   } catch (error) {
     summary.unpaidSales = "failed";
+    summary.unpaidSalesAttempts = 1;
     errors.push(`unpaidSales: ${errMsg(error)}`);
     captureModerationError(error);
   }
