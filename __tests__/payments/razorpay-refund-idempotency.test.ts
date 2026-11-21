@@ -99,6 +99,25 @@ describe("X-Refund-Idempotency header", () => {
     );
   });
 
+  it("sends a receipt in the body only when the caller gives one", async () => {
+    fetchMock.mockResolvedValue(okResponse());
+
+    await createRazorpayRefund({
+      paymentIntentId: "order_1",
+      amount: 5000,
+      idempotencyKey: "clx3k2j9a0000abcd1234efgh",
+      receipt: "late_capture_pay_captured",
+    });
+    await createRazorpayRefund({
+      paymentIntentId: "order_1",
+      amount: 5000,
+      idempotencyKey: "clx3k2j9a0000abcd1234efgi",
+    });
+
+    expect(bodyOf(0).receipt).toBe("late_capture_pay_captured");
+    expect(bodyOf(1)).not.toHaveProperty("receipt");
+  });
+
   it("refuses a key that cannot satisfy Razorpay's >=10 char rule", async () => {
     fetchMock.mockResolvedValue(okResponse());
 

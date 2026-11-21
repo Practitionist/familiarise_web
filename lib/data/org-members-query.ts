@@ -6,6 +6,10 @@
 
 import type { MemberRole, Prisma } from "@prisma/client";
 import {
+  isPublicExpertProfile,
+  publicProfileFacts,
+} from "@/lib/profiles/public-profile";
+import {
   MEMBER_LIST_STATUSES,
   type MembersListQuery,
 } from "@/schemas/organizations";
@@ -63,8 +67,22 @@ export const MEMBER_EXPERT_SELECT = {
   publishedRatingOneToOne: true,
   publishedRatingGroup: true,
   ratedClientsOneToOne: true,
-  isVerified: true,
+  ...publicProfileFacts,
 } satisfies Prisma.ConsultantProfileSelect;
+
+type MemberExpertRow = Prisma.ConsultantProfileGetPayload<{
+  select: typeof MEMBER_EXPERT_SELECT;
+}>;
+
+/** The row the roster sends: whether the expert is verified, never the raw status. */
+export function memberExpertOf(profile: MemberExpertRow | null) {
+  if (!profile) return null;
+  const { verificationStatus, deletedAt, ...shown } = profile;
+  return {
+    ...shown,
+    isVerified: isPublicExpertProfile({ verificationStatus, deletedAt }),
+  };
+}
 
 export function toRoleCounts(
   groups: { role: MemberRole; _count: { _all: number } }[],

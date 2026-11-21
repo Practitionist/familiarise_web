@@ -20,7 +20,7 @@ Journey cases elsewhere already assert the main outcome of several sweeps (CO-36
 | --- | --- | --- | --- | --- | --- |
 | `abandoned-payments` | `cleanup-abandoned-payments` | 15 min | yes | Expire abandoned checkouts and lapsed approval pay-links, and remind payers who owe one | SW-02…SW-06 |
 | `tentative-occurrences` | `cleanup-tentative-occurrences` | 15 min | no | Release slots held for abandoned booking flows (24 h) | SW-07 |
-| `reconcile-payment-status` | same | 15 min | yes | Query Razorpay for the actual status of stale pending payments | SW-08 |
+| `reconcile-payment-status` | same | 15 min | yes | Query Razorpay for the actual status of stale pending payments and of orders closed in the last 72 hours | SW-08 |
 | `expire-stale-requests` | same | 15 min | yes | Expire unanswered requests and refund approved requests that were never scheduled (plus parked consultations, stale released sessions, waitlists, nudges) | SW-09…SW-14, SW-16, SW-17 |
 | `reschedule-proposals` | `expire-reschedule-proposals` | 15 min | no | Lapse reschedule proposals nobody answered and restore the original time | SW-15 |
 | `expire-unpaid-trials` | same | 15 min | yes | Expire unpaid trials and refund paid trials nobody answered | SW-18, SW-19 |

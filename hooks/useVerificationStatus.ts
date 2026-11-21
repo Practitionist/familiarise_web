@@ -99,3 +99,17 @@ export function useVerificationStatus(
     retry: 2,
   });
 }
+
+/**
+ * Whether the planner's published offerings are open to learners: true for a
+ * viewer who does not own the planner, null while the owner's standing loads.
+ */
+export function useOfferingsListed(
+  userId: string | null | undefined,
+  ownsPlanner: boolean,
+): boolean | null {
+  const { data, isSuccess } = useVerificationStatus(userId, ownsPlanner);
+  if (!ownsPlanner) return true;
+  if (!isSuccess) return null;
+  return data?.verificationStatus === "VERIFIED";
+}

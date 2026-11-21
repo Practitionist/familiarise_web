@@ -102,7 +102,11 @@ function plan(over: Record<string, unknown> = {}) {
     maxParticipants: 2,
     waitlistEnabled: true,
     waitlistMax: null,
-    consultantProfile: { userId: "u-host", deletedAt: null },
+    consultantProfile: {
+      userId: "u-host",
+      verificationStatus: "VERIFIED",
+      deletedAt: null,
+    },
     collaborators: [],
     ...over,
   };

@@ -762,11 +762,13 @@ async function postRefund({
   amount,
   notes,
   idempotencyKey,
+  receipt,
 }: {
   paymentId: string;
   amount?: number;
   notes: Record<string, unknown>;
   idempotencyKey: string;
+  receipt?: string;
 }): Promise<RazorpayRefundResponse> {
   const keyId = process.env.RAZORPAY_KEY_ID;
   const keySecret = process.env.RAZORPAY_SECRET;
@@ -802,7 +804,11 @@ async function postRefund({
   }
   headers["X-Refund-Idempotency"] = idempotencyKey;
 
-  const body = JSON.stringify({ ...(amount ? { amount } : {}), notes });
+  const body = JSON.stringify({
+    ...(amount ? { amount } : {}),
+    ...(receipt ? { receipt } : {}),
+    notes,
+  });
   const url = `${RAZORPAY_API_BASE}/payments/${encodeURIComponent(paymentId)}/refund`;
 
   // Razorpay answers a *concurrent* duplicate of the same key with 409 while the
@@ -911,6 +917,7 @@ export async function createRazorpayRefund({
   reason,
   metadata,
   idempotencyKey,
+  receipt,
 }: RefundParams): Promise<RefundResult> {
   const razorpayClient = getRazorpayClient();
   if (!razorpayClient) {
@@ -948,6 +955,7 @@ export async function createRazorpayRefund({
         ...metadata,
       },
       idempotencyKey,
+      receipt,
     });
 
     return {

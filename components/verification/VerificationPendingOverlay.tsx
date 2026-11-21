@@ -293,8 +293,9 @@ export function VerificationBanner({
           <>
             <span className="font-semibold">Complete your verification.</span>{" "}
             <span>
-              Your profile isn&apos;t visible to clients until you submit your
-              verification details.
+              Your profile and plans aren&apos;t visible to learners, and
+              can&apos;t be booked, until you submit your verification details
+              and are verified.
             </span>
           </>
         ) : (
@@ -302,7 +303,8 @@ export function VerificationBanner({
             <span className="font-semibold">Verification under review.</span>{" "}
             <span>
               Our team is reviewing your profile — you&apos;ll receive an email
-              once the review is complete (usually 1-2 business days).
+              once the review is complete (usually 1-2 business days). Your
+              plans go live for learners once you are verified.
             </span>
           </>
         )}

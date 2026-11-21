@@ -60,6 +60,8 @@ export interface RefundParams {
   // real caller already passes its Phase-1 reservation id, so the type now says
   // what the code already did.
   idempotencyKey: string;
+  /** Razorpay refund `receipt`: unique per gateway payment, so a second refund carrying it is refused. */
+  receipt?: string;
 }
 
 export interface RefundResult {

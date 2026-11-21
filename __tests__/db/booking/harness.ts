@@ -21,13 +21,19 @@ export function futureAt(days: number, hourUtc: number, minute = 0): Date {
   return d;
 }
 
+/** A verified expert: only a verified expert takes a new booking or payment. */
 export async function seedHost() {
   const { userId } = await seedUser("CONSULTANT");
   const domain = await prisma.domain.create({
     data: { name: `db-tier-${randomUUID()}` },
   });
   const profile = await prisma.consultantProfile.create({
-    data: { userId, domainId: domain.id, scheduleType: "WEEKLY" },
+    data: {
+      userId,
+      domainId: domain.id,
+      scheduleType: "WEEKLY",
+      verificationStatus: "VERIFIED",
+    },
   });
   return { userId, consultantProfileId: profile.id };
 }

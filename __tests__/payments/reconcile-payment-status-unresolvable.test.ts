@@ -31,6 +31,8 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     $executeRaw: jest.fn().mockResolvedValue(1),
+    // The closed-order cohort's ids; empty unless a test says otherwise.
+    $queryRaw: jest.fn().mockResolvedValue([]),
     payment: {
       findMany: jest.fn(),
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),

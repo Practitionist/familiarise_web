@@ -12,6 +12,8 @@
  * validator, the notifiers. What is under test is the gate and its codes.
  */
 
+import { requestDoorProfile } from "../fixtures/request-door-db";
+
 jest.mock("../../lib/auth-server", () => ({
   getSession: jest.fn(async () => ({ user: { id: "user_consultee" } })),
 }));
@@ -82,53 +84,17 @@ jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 const mockConsultationCount = jest.fn(async () => 0);
 const mockSubscriptionCount = jest.fn(async () => 0);
 const mockTrialCount = jest.fn(async () => 0);
-const mockProfile = {
-  id: "cp_1",
-  acceptingRequests: true,
-  bookingMode: "REQUEST" as "REQUEST" | "INSTANT",
-  maxOpenRequests: null as number | null,
-  user: { id: "user_consultant", name: "Olivia" },
-};
-jest.mock("../../lib/prisma", () => {
-  const created = () => ({
-    id: "req_1",
-    requestedAt: new Date(),
-    consultationPlan: { title: "Plan", consultantProfile: mockProfile },
-    requestedBy: { user: { name: "Sam" } },
-    appointment: { id: "apt_1", organizationId: null, occurrences: [] },
-  });
-  const db: Record<string, unknown> = {
-    consulteeProfile: {
-      findUnique: jest.fn(async () => ({ id: "cs_1", user: {} })),
-    },
-    consultantProfile: {
-      findUnique: jest.fn(async () => ({
-        bookingMode: mockProfile.bookingMode,
-      })),
-    },
-    availabilityWindowWeekly: jest.requireActual(
-      "../fixtures/request-door-hours",
-    ).namedWeeklyWindow,
-    consultationPlan: {
-      findFirst: jest.fn(async () => ({
-        id: "plan_1",
-        title: "Plan",
-        consultantProfile: mockProfile,
-      })),
-    },
-    consultation: {
-      count: (...a: unknown[]) => mockConsultationCount(...(a as [])),
-      create: jest.fn(async () => created()),
-      findUnique: jest.fn(async () => null),
-    },
-    subscription: {
-      count: (...a: unknown[]) => mockSubscriptionCount(...(a as [])),
-    },
-    trial: { count: (...a: unknown[]) => mockTrialCount(...(a as [])) },
-    $transaction: jest.fn(async (fn: (tx: unknown) => unknown) => fn(db)),
-  };
-  return { __esModule: true, default: db };
-});
+const mockProfile = requestDoorProfile();
+jest.mock("../../lib/prisma", () => ({
+  __esModule: true,
+  default: jest
+    .requireActual("../fixtures/request-door-db")
+    .requestDoorDb(() => mockProfile, {
+      consultation: (...a: unknown[]) => mockConsultationCount(...(a as [])),
+      subscription: (...a: unknown[]) => mockSubscriptionCount(...(a as [])),
+      trial: (...a: unknown[]) => mockTrialCount(...(a as [])),
+    }),
+}));
 
 import { NextRequest } from "next/server";
 import prisma from "../../lib/prisma";
