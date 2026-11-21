@@ -313,7 +313,7 @@ gate a concurrent writer walked through:
   each learner notice in that transaction; each closed gateway order is
   re-read after commit and a capture found is refunded. An unanswered first
   read leaves its sale open; a failed re-read closed the sale but does not
-  know whether a capture landed, so it is reported as unresolved. Never close
+  know whether a capture landed, so it is reported as unresolved, as is a re-read that still finds a live payment. Never close
   an unread order, and never treat a failed re-read as settled: until the
   reconciler of #2934 runs, a webhook is the only automatic refund for it.
   Every sale writer, including the pay-link fill after the gateway call,
