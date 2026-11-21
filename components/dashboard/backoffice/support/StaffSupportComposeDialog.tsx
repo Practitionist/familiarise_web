@@ -274,7 +274,8 @@ export function StaffSupportComposeDialog({
               className="text-xs text-muted-foreground"
             >
               A new case opens with this message. If the customer already has an
-              open case, it is added there as a reply they can see.
+              open case of this issue type, it is added there as a reply they
+              can see.
             </p>
           </div>
 

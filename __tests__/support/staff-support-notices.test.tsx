@@ -223,7 +223,7 @@ describe("StaffSupportComposeDialog", () => {
       </QueryClientProvider>,
     );
     expect(screen.getByLabelText("Message *")).toHaveAccessibleDescription(
-      /If the customer already has an open case, it is added there as a reply they can see/,
+      /If the customer already has an open case of this issue type, it is added there as a reply they can see/,
     );
   });
 

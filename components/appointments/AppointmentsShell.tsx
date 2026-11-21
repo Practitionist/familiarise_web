@@ -156,8 +156,8 @@ const EMPTY_COPY: Record<TabValue, Record<Viewer, EmptyCopy>> = {
 /** The learner's empty states as an operator reads them: about the learner, not to them. */
 const OPERATOR_LEARNER_EMPTY_COPY: Partial<Record<TabValue, EmptyCopy>> = {
   upcoming: {
-    title: "Nothing booked yet",
-    description: "Their upcoming sessions will show up here.",
+    title: "No upcoming appointments",
+    description: "Sessions they book will show up here.",
   },
   waiting: {
     title: "Nothing waiting on an expert",

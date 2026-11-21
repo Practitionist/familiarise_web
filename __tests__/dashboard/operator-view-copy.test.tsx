@@ -124,9 +124,9 @@ describe("a learner's appointments list in operator view", () => {
       />,
     );
 
-  it("says nothing is booked yet instead of promising the operator's sessions", () => {
+  it("describes the empty list about the learner instead of promising the operator's sessions", () => {
     shell(true);
-    expect(screen.getByText("Nothing booked yet")).toBeInTheDocument();
+    expect(screen.getByText("No upcoming appointments")).toBeInTheDocument();
     expect(
       screen.queryByText("Sessions you book will show up here."),
     ).not.toBeInTheDocument();

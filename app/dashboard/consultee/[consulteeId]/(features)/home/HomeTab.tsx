@@ -810,7 +810,7 @@ export default function HomeTab({
         ) : (
           <EmptyState
             icon={Calendar}
-            title={isOwner ? "No upcoming sessions" : "Nothing booked yet"}
+            title="No upcoming sessions"
             description={
               isOwner
                 ? "Book a session with an expert to get started."
