@@ -156,7 +156,10 @@ async function readClosedOrderCohort(now: Date, limit: number) {
     LIMIT ${limit}`;
   if (ids.length === 0) return [];
   const rows = await prisma.payment.findMany({
-    where: { id: { in: ids.map((r) => r.id) } },
+    // The probe's superset, so the idle probe and this claim read one predicate.
+    where: {
+      AND: [{ id: { in: ids.map((r) => r.id) } }, closedOrderProbeWhere(now)],
+    },
     include: {
       user: { select: { email: true, name: true } },
       appointment: { select: { id: true, appointmentType: true } },
