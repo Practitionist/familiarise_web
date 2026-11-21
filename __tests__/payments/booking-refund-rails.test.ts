@@ -241,6 +241,7 @@ describe("refundBookingPayment", () => {
     mockRefundPayment.mockResolvedValue({
       refundId: "r1",
       amountRefundedPaise: 50_000,
+      endsSeat: true,
     });
 
     const result = await refundBookingPayment({
@@ -273,6 +274,7 @@ describe("refundBookingPayment", () => {
     mockRefundPayment.mockResolvedValue({
       refundId: "r1",
       amountRefundedPaise: 10_000,
+      endsSeat: false,
     });
 
     await refundBookingPayment({
@@ -599,32 +601,34 @@ describe("keepSeatIfPartial: the seat ends once the payment is fully returned", 
     disputes,
   });
 
-  it("gateway rail: reads the rail's own balance after the refund commits", async () => {
-    mockRefundPayment.mockResolvedValue({
-      refundId: "r1",
-      amountRefundedPaise: 1,
+  it("gateway rail: follows the decision its reservation stored, without reading the balance", async () => {
+    mockPaymentFindUnique.mockResolvedValue({
+      paymentIntent: "pay_ABC",
+      userId: "payer-1",
     });
+    const refund = (endsSeat: boolean) => {
+      mockRefundPayment.mockResolvedValueOnce({
+        refundId: "r1",
+        paymentId: PAYMENT_ID,
+        amountRefundedPaise: 40_000,
+        endsSeat,
+      });
+      return refundBookingPayment({
+        paymentId: PAYMENT_ID,
+        amountPaise: 40_000,
+        reason: "goodwill",
+        keepSeatIfPartial: true,
+      });
+    };
 
-    mockPaymentFindUnique.mockResolvedValue(gatewayBalance([40_000]));
-    await refundBookingPayment({
-      paymentId: PAYMENT_ID,
-      amountPaise: 40_000,
-      reason: "goodwill",
-      keepSeatIfPartial: true,
-    });
+    await refund(false);
     expect(seatEnded()).toBe(false);
-
-    mockPaymentFindUnique.mockResolvedValue(gatewayBalance([40_000, 60_000]));
-    await refundBookingPayment({
-      paymentId: PAYMENT_ID,
-      amountPaise: 60_000,
-      reason: "goodwill",
-      keepSeatIfPartial: true,
-    });
+    await refund(true);
     expect(seatEnded()).toBe(true);
+    expect(mockPaymentFindUnique).toHaveBeenCalledTimes(2);
   });
 
-  it("gateway rail: a lost chargeback counts toward the returned total", async () => {
+  it("gateway rail: a replay with no stored decision counts a lost chargeback toward the drained balance", async () => {
     mockRefundPayment.mockResolvedValue({
       refundId: "r1",
       amountRefundedPaise: 1,
@@ -643,7 +647,7 @@ describe("keepSeatIfPartial: the seat ends once the payment is fully returned", 
     expect(seatEnded()).toBe(true);
   });
 
-  it("gateway rail: an unreadable balance keeps the seat and keeps the refund", async () => {
+  it("gateway rail: a replay with no stored decision and an unreadable balance keeps the seat and the refund", async () => {
     mockRefundPayment.mockResolvedValue({
       refundId: "r1",
       amountRefundedPaise: 1,
@@ -662,26 +666,6 @@ describe("keepSeatIfPartial: the seat ends once the payment is fully returned", 
     ).resolves.toMatchObject({ refundId: "r1", rail: "GATEWAY" });
     expect(seatEnded()).toBe(false);
   });
-
-  it("gateway rail: a refund with no amount ends the seat without reading the balance", async () => {
-    mockRefundPayment.mockResolvedValue({
-      refundId: "r1",
-      amountRefundedPaise: 100_000,
-    });
-    mockPaymentFindUnique
-      .mockResolvedValueOnce({ paymentIntent: "pay_ABC", userId: "payer-1" })
-      .mockRejectedValueOnce(new Error("db down"));
-
-    await refundBookingPayment({
-      paymentId: PAYMENT_ID,
-      reason: "goodwill",
-      keepSeatIfPartial: true,
-    });
-
-    expect(mockPaymentFindUnique).toHaveBeenCalledTimes(1);
-    expect(seatEnded()).toBe(true);
-    expect(mockRevokeRefundedSeatAccess).toHaveBeenCalledTimes(1);
-  });
 });
 
 describe("the access revocation a seat-ending refund owes", () => {
@@ -696,6 +680,7 @@ describe("the access revocation a seat-ending refund owes", () => {
       refundId: "refund-row-9",
       paymentId: PAYMENT_ID,
       amountRefundedPaise: 100_000,
+      endsSeat: true,
     });
 
     await refundBookingPayment({ paymentId: PAYMENT_ID, reason: "cancel" });
@@ -727,6 +712,7 @@ describe("the access revocation a seat-ending refund owes", () => {
       refundId: "refund-row-9",
       paymentId: PAYMENT_ID,
       amountRefundedPaise: 100_000,
+      endsSeat: true,
     });
     mockTransitionParticipant.mockRejectedValueOnce(new Error("db blip"));
     jest.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -818,6 +804,7 @@ describe("the access revocation a seat-ending refund owes", () => {
       mockRefundPayment.mockResolvedValue({
         refundId: "r1",
         amountRefundedPaise: 10_000,
+        endsSeat: false,
       });
 
       await refundBookingPayment({
@@ -874,7 +861,7 @@ describe("restampRefundedSeats", () => {
   });
 });
 
-describe("an internal-rail refund replayed by its dedupe key", () => {
+describe("an internal-rail refund replayed by a key whose row stored no seat decision", () => {
   // The first call stamped the seat in its transaction, then died before persisting the intent.
   const replay = (amountPaise?: number) => {
     mockFindDedupedRefund.mockResolvedValue({
@@ -921,5 +908,104 @@ describe("an internal-rail refund replayed by its dedupe key", () => {
     await replay(10_000);
 
     expect(mockRevokeRefundedSeatAccess).not.toHaveBeenCalled();
+  });
+});
+
+describe("a replayed refund follows the seat decision stored on its row", () => {
+  // ₹500 webinar seat; the first call under the key refunded ₹100 and kept the seat.
+  const keptSeatReplay = {
+    refundId: "refund-row-1",
+    paymentId: PAYMENT_ID,
+    amountRefundedPaise: 10_000,
+    status: "SUCCEEDED" as const,
+    endsSeat: false,
+  };
+  const seatEnded = () =>
+    mockTransitionParticipant.mock.calls.some((c) => c[2] === "REFUNDED");
+  const resend = () =>
+    refundBookingPayment({
+      paymentId: PAYMENT_ID,
+      reason: "ops refund: goodwill",
+      dedupeKey: "ops:k",
+      keepSeatIfPartial: true,
+    });
+
+  it("gateway rail: a resend without an amount keeps the seat the first call kept", async () => {
+    mockPaymentFindUnique.mockResolvedValue({
+      paymentIntent: "pay_ABC",
+      userId: "payer-1",
+    });
+    mockRefundPayment.mockResolvedValue(keptSeatReplay);
+
+    await expect(resend()).resolves.toMatchObject({
+      refundId: "refund-row-1",
+      amountRefundedPaise: 10_000,
+    });
+    expect(seatEnded()).toBe(false);
+    expect(mockRevokeRefundedSeatAccess).not.toHaveBeenCalled();
+  });
+
+  it("internal rail: a resend without an amount keeps the seat the first call kept", async () => {
+    mockPaymentFindUnique.mockResolvedValue({
+      paymentIntent: "org_wallet_1_a",
+      userId: "payer-1",
+    });
+    mockFindDedupedRefund.mockResolvedValue(keptSeatReplay);
+
+    await expect(resend()).resolves.toMatchObject({
+      refundId: "refund-row-1",
+      rail: "INTERNAL",
+    });
+    expect(mockApplyReversal).not.toHaveBeenCalled();
+    expect(mockRevokeRefundedSeatAccess).not.toHaveBeenCalled();
+  });
+
+  it("a stored seat-ending decision still ends the seat on a replay", async () => {
+    mockPaymentFindUnique.mockResolvedValue({
+      paymentIntent: "pay_ABC",
+      userId: "payer-1",
+    });
+    mockRefundPayment.mockResolvedValue({ ...keptSeatReplay, endsSeat: true });
+
+    await resend();
+
+    expect(seatEnded()).toBe(true);
+    expect(mockRevokeRefundedSeatAccess).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["keeps", [10_000], false],
+    ["ends", [10_000, 40_000], true],
+  ])(
+    "a row with no stored decision %s the seat by the balance it left",
+    async (_verb, refunds, ends) => {
+      mockPaymentFindUnique
+        .mockResolvedValueOnce({ paymentIntent: "pay_ABC", userId: "payer-1" })
+        .mockResolvedValueOnce({
+          amount: 50_000,
+          refunds: refunds.map((amountPaise) => ({
+            amountPaise,
+            status: "SUCCEEDED",
+          })),
+          disputes: [],
+        });
+      const { endsSeat: _stored, ...legacy } = keptSeatReplay;
+      mockRefundPayment.mockResolvedValue(legacy);
+
+      await resend();
+
+      expect(seatEnded()).toBe(ends);
+    },
+  );
+
+  it("restamping skips a refund whose stored decision kept the seat", async () => {
+    mockRefundFindUnique.mockResolvedValue({
+      status: "SUCCEEDED",
+      paymentId: PAYMENT_ID,
+      metadata: { endsSeat: false },
+    });
+
+    await expect(restampRefundedSeats("refund-row-1")).resolves.toBe("skipped");
+    expect(mockTransitionParticipant).not.toHaveBeenCalled();
   });
 });

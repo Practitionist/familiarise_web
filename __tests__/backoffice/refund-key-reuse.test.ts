@@ -43,11 +43,14 @@ const mockPayments: Record<string, Record<string, unknown>> = {
   "pay-A": { paymentIntent: "order_A", userId: "buyer-A" },
   "pay-B": { paymentIntent: "order_B", userId: "buyer-B" },
   "pay-C": { paymentIntent: "free_C", userId: "buyer-C", amount: 0 },
+  "pay-D": { paymentIntent: "order_D", userId: "buyer-D", amount: 5_000_000 },
 };
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     opsActionLog: { create: async () => ({ id: "ops_1" }) },
+    // Two active admins, so an amount above the threshold would be held.
+    user: { count: async () => 2 },
     refund: {
       findUnique: async ({ where }: { where: { dedupeKey?: string } }) =>
         where.dedupeKey && mockStore.spent?.dedupeKey === where.dedupeKey
@@ -64,7 +67,16 @@ jest.mock("../../lib/prisma", () => ({
               paymentStatus: "SUCCEEDED",
               amount: 5_000,
               originalAmount: 5_000,
-              refunds: [],
+              // The spent refund counts against its own payment's balance.
+              refunds:
+                mockStore.spent?.paymentId === where.id
+                  ? [
+                      {
+                        amountPaise: mockStore.spent.amountPaise,
+                        status: "SUCCEEDED",
+                      },
+                    ]
+                  : [],
               disputes: [],
               creditUsages: [{ amount: 5_000 }],
               refundOwedKey: null,
@@ -171,6 +183,22 @@ describe("the issue door", () => {
     expect(res.status).toBe(422);
     expect(await res.json()).toMatchObject({ code: "IDEMPOTENCY_KEY_REUSED" });
     noSeatEnded();
+  });
+
+  it("replays an approved ₹30,000 override with the stored refund, opening no second proposal", async () => {
+    spend(`ops:${KEY}`, {
+      id: "ref-D",
+      paymentId: "pay-D",
+      amountPaise: 3_000_000,
+    });
+
+    const res = await issueFor({ paymentId: "pay-D", tierOverridePct: 60 });
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).result).toMatchObject({
+      refundId: "ref-D",
+      amountRefundedPaise: 3_000_000,
+    });
   });
 
   it("replays a ladder override at the amount it sent, without re-pricing it", async () => {

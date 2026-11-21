@@ -143,13 +143,14 @@ export const POST = withOpsAction(
           issueDedupeKey(body),
           replayAmount(body),
         );
+        // A matching replay moves no money: the door answers the stored refund, unheld.
+        if (replay) return 0;
         if (body.tierOverridePct === undefined) {
           return body.amountPaise ?? refundablePaymentPaise(body.paymentId);
         }
         if (body.amountPaise !== undefined) return 0;
         return (
-          replay ??
-          (await ladderOverrideAmount(body.paymentId, body.tierOverridePct))
+          await ladderOverrideAmount(body.paymentId, body.tierOverridePct)
         ).amountPaise;
       },
     },
