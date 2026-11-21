@@ -6,6 +6,7 @@ import {
   type Prisma,
 } from "@prisma/client";
 import prisma from "@/lib/prisma";
+import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 
 /**
  * #1775 B-9 — approving a REQUEST-mode booking is one decision with two
@@ -87,15 +88,21 @@ export type MintApprovalOutcome =
 
 /**
  * #1780 R-4 — a mint failure that is a state answer, not a fault: another
- * action minted the order first (PAYMENT_ALREADY_EXISTS) or the request is
- * already paid (ALREADY_PAID). Read by code so this light module never loads
- * the payments barrel. Null means a real fault (502).
+ * action minted the order first (PAYMENT_ALREADY_EXISTS), the request is
+ * already paid (ALREADY_PAID), or the expert is not verified. Read by code so
+ * this light module never loads the payments barrel. Null means a real fault (502).
  */
+const MINT_CONFLICT_CODES = new Set([
+  "PAYMENT_ALREADY_EXISTS",
+  "ALREADY_PAID",
+  "EXPERT_NOT_VERIFIED",
+]);
+
 export function approvalMintConflict(
   error: unknown,
 ): { code: string; message: string } | null {
   const code = (error as { code?: unknown } | null)?.code;
-  if (code === "PAYMENT_ALREADY_EXISTS" || code === "ALREADY_PAID") {
+  if (typeof code === "string" && MINT_CONFLICT_CODES.has(code)) {
     return { code, message: (error as Error).message };
   }
   return null;
@@ -277,7 +284,8 @@ export async function mintApprovalPaymentAfterCommit(args: {
       });
       return { status: "lapsed", message: TOO_CLOSE_TO_PAY_REASON };
     }
-    report(linkError);
+    // An unverified expert's refusal is an answer, not a fault.
+    if (!(linkError instanceof BookingRuleError)) report(linkError);
     return { status: "mint_failed", error: linkError };
   }
 

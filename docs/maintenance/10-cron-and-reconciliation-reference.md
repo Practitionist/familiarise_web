@@ -180,16 +180,16 @@ Reconcilers are set-based, and there are two families plus a third category that
 
 **Vendor-boundary reconcilers** adopt the external system's answer when it disagrees with a local row.
 
-| Job                             | Boundary                                                                                         |
-| ------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `reconcile-payment-status`      | Razorpay payment lookup; `unknown_id` becomes unresolvable, then retired past an age bound       |
-| `reconcile-payout-status`       | RazorpayX payout status                                                                          |
-| `handle-stuck-payouts`          | Payouts stuck in `PROCESSING` beyond a window                                                    |
-| `reconcile-disputes`            | Gateway dispute status; writes a reconciliation note for manual review rather than moving status |
-| `reconcile-refunds`             | Gateway refund status for local `PENDING` refunds                                                |
-| `reconcile-orphaned-recordings` | Stream recordings for meetings that ended                                                        |
-| `reconcile-document-storage`    | Supabase Storage objects against database rows                                                   |
-| `sweep-stuck-webhook-events`    | Inbound events left unprocessed or transiently failed                                            |
+| Job                             | Boundary                                                                                                                                                                      |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `reconcile-payment-status`      | Razorpay payment lookup; `unknown_id` becomes unresolvable, then retired past an age bound; orders closed in the last 72 hours are read again and a capture there is refunded |
+| `reconcile-payout-status`       | RazorpayX payout status                                                                                                                                                       |
+| `handle-stuck-payouts`          | Payouts stuck in `PROCESSING` beyond a window                                                                                                                                 |
+| `reconcile-disputes`            | Gateway dispute status; writes a reconciliation note for manual review rather than moving status                                                                              |
+| `reconcile-refunds`             | Gateway refund status for local `PENDING` refunds                                                                                                                             |
+| `reconcile-orphaned-recordings` | Stream recordings for meetings that ended                                                                                                                                     |
+| `reconcile-document-storage`    | Supabase Storage objects against database rows                                                                                                                                |
+| `sweep-stuck-webhook-events`    | Inbound events left unprocessed or transiently failed                                                                                                                         |
 
 **Internal-cache reconcilers** re-derive a cached value from the system that authored it. `reconcile-ledgers` is the largest, covering about seventeen derivation families and writing a reconciliation report. `BillingAccount.walletBalance` exists only as a cache for an atomic debit guard, and this sweep asserts it against the ledger.
 

@@ -29,7 +29,7 @@ import {
 import type { TConsultantProfile } from "types/consultant";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { verificationStatusBadge } from "@/lib/labels/session-labels";
-import { useVerificationStatus } from "../../../hooks/useVerificationStatus";
+import { useVerificationStatus } from "@/hooks/useVerificationStatus";
 import { useSession } from "@/lib/auth-client";
 import {
   VERIFICATION_DOCUMENT_ISSUE_FIX,

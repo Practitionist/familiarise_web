@@ -28,6 +28,9 @@ export const PUBLIC_RECORDINGS_TAG = "recordings";
 
 const EXPERTS_DIRECTORY = "/explore/experts";
 const ORGANISATIONS_DIRECTORY = "/explore/enterprise/organisations";
+const PROGRAMS_DIRECTORY = "/explore/programs";
+/** Next data-cache tag of the curated program sections and topic counts. */
+const PROGRAMS_TAG = "programs";
 
 /**
  * A consultant entered, left, or changed on the public surfaces — verification
@@ -44,8 +47,11 @@ export function purgeExpertSurfaces(consultantProfileId?: string | null): void {
   // Product and replay cards carry the creator's name and avatar.
   revalidateTag(PUBLIC_PRODUCTS_TAG);
   revalidateTag(PUBLIC_RECORDINGS_TAG);
+  // A verification flip shows or hides the expert's programs (getCuratedPrograms, tag programs).
+  revalidateTag(PROGRAMS_TAG);
   revalidatePath("/");
   revalidatePath(EXPERTS_DIRECTORY);
+  revalidatePath(PROGRAMS_DIRECTORY);
   if (consultantProfileId) {
     revalidatePath(`${EXPERTS_DIRECTORY}/${consultantProfileId}`);
   }

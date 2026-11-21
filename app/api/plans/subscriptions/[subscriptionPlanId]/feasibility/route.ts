@@ -10,7 +10,8 @@ import {
   firstWeekPlaceable,
   PLAN_FEASIBILITY_WEEKS,
 } from "@/lib/booking/feasibility";
-import { isHiddenDraft } from "@/lib/api/plans/draft-access";
+import { canViewPlanDetail } from "@/lib/data/plan-viewable";
+import { publicProfileFacts } from "@/lib/profiles/public-profile";
 import { planBuyBlockedFor } from "@/lib/booking/plan-demand";
 import { leadMsFor } from "@/lib/booking/lead-time";
 import { applyRateLimit, checkoutContextLimiter } from "@/lib/rate-limit";
@@ -58,13 +59,22 @@ export async function GET(
       where: { id: subscriptionPlanId },
       select: {
         status: true,
+        visibility: true,
+        organizationId: true,
+        archivedAt: true,
         consultantProfileId: true,
         sessionsPerWeek: true,
         sessionDurationInHours: true,
-        consultantProfile: { select: { user: { select: { timezone: true } } } },
+        consultantProfile: {
+          select: {
+            ...publicProfileFacts,
+            user: { select: { timezone: true } },
+          },
+        },
       },
     });
-    if (!plan || (await isHiddenDraft(plan))) {
+    // The by-id plan read's rule: a plan its reader may not open is not found here either.
+    if (!plan || !(await canViewPlanDetail(plan, session))) {
       return NextResponse.json({ error: "Plan not found" }, { status: 404 });
     }
 

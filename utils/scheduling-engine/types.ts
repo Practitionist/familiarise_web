@@ -238,6 +238,7 @@ export type AllocationErrorCode =
   | "SUBSCRIPTION_UNPAID" // #1775 C-1 — a plan with no settled payment is never approved — 409
   | "CHECKOUT_IN_PROGRESS" // the buyer's own direct checkout is still being paid — 409
   | "TOO_CLOSE_TO_START" // an unpaid approval whose first session starts too soon to pay — 409
+  | "EXPERT_NOT_VERIFIED" // an unpaid request for an expert who is not verified is never approved — 409
   | "RESCHEDULE_NO_LONGER_OPEN" // the confirmed proposal was answered or expired mid-move — 409
   | "PROPOSAL_AWAITING_CLIENT" // the consultant's own proposal with times is still open — 409
   | "PROPOSE_TIMES_REQUIRED" // the expert's bare release of a paid session is answered by proposed times only — 409

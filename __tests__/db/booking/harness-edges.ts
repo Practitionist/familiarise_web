@@ -24,6 +24,15 @@ export function rateLimitMock(): object {
   };
 }
 
+/** The gateway barrel: no order is minted unless a case sets one, and a cancel answers nothing. */
+export function gatewayMock(): object {
+  return {
+    __esModule: true,
+    createPaymentIntent: jest.fn(),
+    cancelPaymentIntent: jest.fn(async () => undefined),
+  };
+}
+
 /** Chat access revocation does nothing. */
 export function chatRevocationMock(): object {
   return {
