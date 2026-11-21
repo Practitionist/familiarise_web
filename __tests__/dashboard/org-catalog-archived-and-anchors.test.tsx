@@ -144,7 +144,9 @@ describe("CatalogClient under ?status=archived", () => {
     <QueryClientProvider client={client}>
       <CatalogClient
         orgId="o1"
-        experts={[{ consultantProfileId: "cp1", name: "Expert" }]}
+        experts={[
+          { consultantProfileId: "cp1", name: "Expert", isVerified: true },
+        ]}
         materials={[]}
         materialsTotal={0}
         orgPlans={[]}

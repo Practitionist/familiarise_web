@@ -63,6 +63,7 @@ export default async function OrgCatalogPage({
   const experts = expertMemberships.map((m) => ({
     consultantProfileId: m.consultantProfileId as string,
     name: m.user.name ?? m.user.email,
+    isVerified: m.consultantProfile?.verificationStatus === "VERIFIED",
   }));
 
   return (
@@ -102,6 +103,7 @@ function readExperts(orgId: string) {
     },
     select: {
       consultantProfileId: true,
+      consultantProfile: { select: { verificationStatus: true } },
       user: { select: { name: true, email: true } },
     },
     orderBy: { createdAt: "asc" },
