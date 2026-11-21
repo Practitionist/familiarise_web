@@ -33,7 +33,7 @@ import type {
 import type { ConsultationPlan, SubscriptionPlan } from "@/schemas/plans";
 import { useToast } from "@/hooks/use-toast";
 import { useExpertShareHref } from "@/hooks/useExpertShareHref";
-import { useVerificationStatus } from "@/app/dashboard/consultant/[consultantId]/hooks/useVerificationStatus";
+import { useVerificationStatus } from "@/hooks/useVerificationStatus";
 import { useSession } from "@/lib/auth-client";
 import { useListParams } from "@/hooks/useListParams";
 import { EmptyState } from "@/components/dashboard/EmptyState";

@@ -74,6 +74,21 @@ jest.mock("../../lib/stream/access-revocation", () => ({
   revokeCollaboratorAccess: (...args: unknown[]) => mockRevoke(...args),
 }));
 
+// The rejected expert's unpaid sales end after commit, through their own module.
+jest.mock("../../lib/booking/unverified-expert-notices", () => ({
+  endUnverifiedExpertSales: jest.fn(async () => ({
+    payLinksClosed: 0,
+    requestsDeclined: 0,
+    trialHoldsReleased: 0,
+    seatsReleased: 0,
+    salesKept: 0,
+    ordersLive: 0,
+    ordersUnchecked: 0,
+    bells: [],
+    emails: [],
+  })),
+}));
+
 import prisma from "@/lib/prisma";
 import {
   applyBestEffortEffects,

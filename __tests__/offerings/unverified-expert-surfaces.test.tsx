@@ -9,6 +9,10 @@ import { render, screen } from "@testing-library/react";
 jest.mock("@/hooks/use-toast", () => ({
   useToast: () => ({ toast: jest.fn() }),
 }));
+// The share attribution reads the signed-in session, which this render has none of.
+jest.mock("@/hooks/useExpertShareHref", () => ({
+  appendExpertShareAttribution: (href: string) => href,
+}));
 const mockRevalidateTag = jest.fn();
 jest.mock("next/cache", () => ({
   revalidateTag: (tag: string) => mockRevalidateTag(tag),

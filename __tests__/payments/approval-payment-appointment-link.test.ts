@@ -112,10 +112,20 @@ jest.mock("../../lib/prisma", () => ({
     appointmentOccurrence: { findFirst: jest.fn(async () => null) },
     $transaction: jest.fn(async (fn: (tx: unknown) => unknown) =>
       fn({
+        // The claim's expert-standing read under a share lock; no row reads as standing.
+        $queryRaw: jest.fn(async () => []),
         payment: {
           updateMany: (...a: unknown[]) =>
             (prismaMockRef.payment.updateMany as jest.Mock)(...a),
-          create: mockTx.paymentCreate,
+          // The pre-mint claim (PENDING) lands on the client mock; a tombstone (EXPIRED) on the tx spy.
+          create: (args: { data: Record<string, unknown> }) =>
+            args.data.paymentStatus === "PENDING"
+              ? (
+                  jest.requireMock("../../lib/prisma") as {
+                    default: { payment: { create: jest.Mock } };
+                  }
+                ).default.payment.create(args)
+              : mockTx.paymentCreate(args),
         },
         paymentLeg: {
           updateMany: (...a: unknown[]) =>
@@ -140,7 +150,11 @@ jest.mock("../../lib/prisma", () => ({
           priceCurrency: Currency.INR,
           trialEnabled: true,
           trialPriceInPaise: 250_000,
-          consultantProfile: { verificationStatus: "VERIFIED" },
+          consultantProfile: {
+            id: "cp-1",
+            verificationStatus: "VERIFIED",
+            deletedAt: null,
+          },
         },
       })),
     },
@@ -237,7 +251,11 @@ function freshState(): State {
       title: "Career Clarity",
       price: 500_000,
       priceCurrency: Currency.INR,
-      consultantProfile: { verificationStatus: "VERIFIED" },
+      consultantProfile: {
+        id: "cp-1",
+        verificationStatus: "VERIFIED",
+        deletedAt: null,
+      },
     },
     appointmentPayments: [],
     consultationStatus: AppointmentStatus.APPROVED_PENDING_PAYMENT,
@@ -457,8 +475,10 @@ describe("the approval mint is durable before the gateway call", () => {
     state.consultationPlan = {
       ...state.consultationPlan,
       consultantProfile: {
+        id: "cp-1",
         acceptingRequests: false,
         verificationStatus: "VERIFIED",
+        deletedAt: null,
       },
     };
 
@@ -805,6 +825,11 @@ describe("approval pay-links charge the same tax as checkout (#1583 C-P0-01)", (
       title: "Career Clarity",
       price: 100_000,
       priceCurrency: Currency.INR,
+      consultantProfile: {
+        id: "cp-1",
+        verificationStatus: "VERIFIED",
+        deletedAt: null,
+      },
     };
   });
 
@@ -893,6 +918,11 @@ describe("approval pay-links charge the same tax as checkout (#1583 C-P0-01)", (
       title: "Career Clarity",
       price: BigInt("9007199254740993"),
       priceCurrency: Currency.INR,
+      consultantProfile: {
+        id: "cp-1",
+        verificationStatus: "VERIFIED",
+        deletedAt: null,
+      },
     };
 
     await expect(createApprovalPaymentIntent(mintParams())).rejects.toThrow(

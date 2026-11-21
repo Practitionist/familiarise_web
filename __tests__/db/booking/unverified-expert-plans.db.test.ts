@@ -6,6 +6,7 @@
 import { randomUUID } from "node:crypto";
 import { NextRequest } from "next/server";
 import type { ConsultantVerificationStatus } from "@prisma/client";
+import { z } from "zod";
 import prisma from "../../../lib/prisma";
 import { seedConsultee, seedHost, type SeededHost } from "./harness";
 
@@ -57,6 +58,9 @@ import {
   membersListQueryFromUrl,
 } from "../../../schemas/organizations";
 
+/** The ids a plan list answers with; parsed, so a contract change fails loudly. */
+const ListIdsSchema = z.object({ data: z.array(z.object({ id: z.string() })) });
+
 async function seedExpert(status: ConsultantVerificationStatus) {
   const host = await seedHost();
   await prisma.consultantProfile.update({
@@ -102,8 +106,7 @@ async function listedIds(
   const res = await list(
     new NextRequest(`https://x.test${path}?consultantId=${consultantId}`),
   );
-  const body = (await res.json()) as { data: { id: string }[] };
-  return body.data.map((p) => p.id);
+  return ListIdsSchema.parse(await res.json()).data.map((p) => p.id);
 }
 
 describe("an unverified expert's plans", () => {
@@ -331,10 +334,10 @@ describe("an unverified expert's plans", () => {
     viewAs(null);
     const stranger = await read();
 
-    expect(
-      ((await own.json()) as { data: { id: string }[] }).data.map((p) => p.id),
-    ).toEqual([plans.webinar.id]);
-    expect(((await stranger.json()) as { data: unknown[] }).data).toEqual([]);
+    const ids = async (res: Response) =>
+      ListIdsSchema.parse(await res.json()).data.map((p) => p.id);
+    expect(await ids(own)).toEqual([plans.webinar.id]);
+    expect(await ids(stranger)).toEqual([]);
     expect(own.headers.get("Cache-Control")).toBe("private, no-store");
     expect(stranger.headers.get("Cache-Control")).toBe("private, no-store");
   }, 30_000);

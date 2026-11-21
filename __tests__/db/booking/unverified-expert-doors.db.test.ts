@@ -31,6 +31,10 @@ jest.mock("../../../lib/payments/index", () => ({
   }),
   cancelPaymentIntent: jest.fn(async () => undefined),
 }));
+jest.mock("@sentry/nextjs", () => ({
+  ...jest.requireActual("@sentry/nextjs"),
+  captureException: jest.fn(),
+}));
 jest.mock("../../../lib/compliance/dpdp", () => ({
   __esModule: true,
   checkConsent: jest.fn(async () => true),
@@ -143,6 +147,7 @@ jest.mock("../../../lib/payments/pricing/derive-checkout-amount", () => {
 });
 
 import { POST as requestTrial } from "../../../app/api/trials/route";
+import { PATCH as patchSubscription } from "../../../app/api/bookings/subscriptions/[subscriptionId]/route";
 import { POST as requestForApproval } from "../../../app/api/scheduling/request-for-approval/route";
 import { mintApprovalPaymentAfterCommit } from "../../../lib/booking/approve-request";
 import { handleCheckout } from "../../../lib/payments/checkout";
@@ -537,6 +542,50 @@ describe("a reject that lands mid-sale is seen by the write", () => {
         where: { appointmentId: unpaid.appointmentId },
       }),
     ).toBe(0);
+  }, 30_000);
+});
+
+describe("an approval refused for an unverified expert", () => {
+  it("answers 409 and never reports the refusal to Sentry", async () => {
+    const host = await seedHost();
+    const request = await seedOneToOne(
+      "subscription",
+      host,
+      await seedConsultee(),
+      { startsAt: futureAt(7, 9), endsAt: futureAt(7, 10) },
+      {
+        status: "PENDING",
+        bookingSource: "REQUEST_SUBMITTED",
+        isTentative: true,
+      },
+    );
+    await setStatus(host, "PENDING_VERIFICATION");
+    sessionUser.current = {
+      id: host.userId,
+      role: "CONSULTANT",
+      consultantProfileId: host.consultantProfileId,
+      consulteeProfileId: null,
+    };
+    const sentry = jest.requireMock("@sentry/nextjs") as {
+      captureException: jest.Mock;
+    };
+    sentry.captureException.mockClear();
+
+    const res = await patchSubscription(
+      new NextRequest(
+        `https://x.test/api/bookings/subscriptions/${request.subscriptionId}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "APPROVED" }),
+        },
+      ),
+      { params: Promise.resolve({ subscriptionId: request.subscriptionId! }) },
+    );
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ code: "EXPERT_NOT_VERIFIED" });
+    expect(sentry.captureException).not.toHaveBeenCalled();
   }, 30_000);
 });
 

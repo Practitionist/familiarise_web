@@ -591,10 +591,13 @@ export async function PATCH(
         refund: rejectionRefund,
       });
     } catch (error) {
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "bookings" } },
-      );
+      // A rule refusal is the outer catch's 409, not a fault to capture.
+      if (!(error instanceof BookingRuleError)) {
+        Sentry.captureException(
+          error instanceof Error ? error : new Error(String(error)),
+          { tags: { subsystem: "bookings" } },
+        );
+      }
       console.error(
         "Transaction error:",
         error instanceof Error ? error.message : "Unknown error",

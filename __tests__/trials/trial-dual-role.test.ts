@@ -94,6 +94,8 @@ const membershipFindFirst = jest.fn(
 jest.mock("../../lib/prisma", () => {
   const count = jest.fn(async () => state.openRequests);
   const tx = {
+    // The expert-standing read under a share lock; no row reads as standing.
+    $queryRaw: jest.fn(async () => []),
     appointment: { create: jest.fn() },
     trial: {
       create: (...a: unknown[]) => trialCreate(...(a as [])),

@@ -139,6 +139,8 @@ jest.mock("../../lib/prisma", () => {
     availabilityWindowWeekly: jest.requireActual(
       "../fixtures/request-door-hours",
     ).namedWeeklyWindow,
+    // The expert-standing read under a share lock; no row reads as standing.
+    $queryRaw: jest.fn(async () => []),
     $transaction: jest.fn(async (fn: (tx: unknown) => unknown) => fn(db)),
   };
   return { __esModule: true, default: db };

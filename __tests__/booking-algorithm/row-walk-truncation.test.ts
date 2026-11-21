@@ -126,6 +126,8 @@ function consultationWithRow(
 }
 
 const mockTx = {
+  // The expert-standing read under a share lock; no row reads as standing.
+  $queryRaw: jest.fn(async () => []),
   consultation: {
     findUnique: jest.fn(),
     updateMany: jest.fn().mockResolvedValue({ count: 1 }),

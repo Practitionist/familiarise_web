@@ -130,6 +130,8 @@ jest.mock("../../lib/prisma", () => {
       count: (...a: unknown[]) => mockSubscriptionCount(...(a as [])),
     },
     trial: { count: (...a: unknown[]) => mockTrialCount(...(a as [])) },
+    // The expert-standing read under a share lock; no row reads as standing.
+    $queryRaw: jest.fn(async () => []),
     $transaction: jest.fn(async (fn: (tx: unknown) => unknown) => fn(db)),
   };
   return { __esModule: true, default: db };
