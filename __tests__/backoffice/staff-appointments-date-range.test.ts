@@ -89,23 +89,47 @@ it("takes the displayed occurrence from inside the same range it filters on", as
   expect(args.select.occurrences.where?.startsAt).toEqual(startsAtFilter());
 });
 
-describe("the Scheduled tab reads only live sessions", () => {
+describe("the Scheduled tab reads only standing sessions", () => {
   // A class whose Nov 18 session was cancelled, with its make-up on Nov 25.
   const nov18 = {
     gte: new Date("2026-11-18T00:00:00Z"),
     lte: new Date("2026-11-18T23:59:59Z"),
   };
-  const liveNov18 = {
-    deletedAt: null,
-    completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
-    startsAt: nov18,
+  const now = new Date("2026-11-17T12:00:00Z");
+  beforeEach(() => jest.useFakeTimers({ now, doNotFake: ["nextTick"] }));
+  afterEach(() => jest.useRealTimers());
+
+  const lapsedMove = (extra: object = {}) => ({
+    rescheduleRequests: {
+      some: {
+        status: { in: ["PENDING_REVIEW"] },
+        expiresAt: { lte: now },
+        ...extra,
+      },
+    },
+  });
+  // Live, or released by a move whose deadline has passed (reads restore it).
+  const standing = {
+    OR: [
+      {
+        deletedAt: null,
+        completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
+      },
+      {
+        isTentative: true,
+        completionStatus: "RESCHEDULED",
+        deletedAt: null,
+        appointment: lapsedMove(),
+      },
+    ],
   };
+  const standingNov18 = { startsAt: nov18, ...standing };
   type CountArgs = { where: { AND?: [{ occurrences?: { some: unknown } }] } };
   const countOccurrences = (call: number) =>
     (mockCount.mock.calls[call][0] as CountArgs).where.AND?.[0].occurrences
       ?.some;
 
-  it("matches, shows and counts a range only by its live sessions", async () => {
+  it("matches, shows and counts a range only by its standing sessions", async () => {
     await getStaffAppointments({
       scope: { kind: "all" },
       status: "scheduled",
@@ -116,28 +140,46 @@ describe("the Scheduled tab reads only live sessions", () => {
       where: CountArgs["where"];
       select: { occurrences: { where?: unknown } };
     };
-    expect(args.where.AND?.[0].occurrences?.some).toEqual(liveNov18);
-    expect(args.select.occurrences.where).toEqual(liveNov18);
+    expect(args.where.AND?.[0].occurrences?.some).toEqual(standingNov18);
+    expect(args.select.occurrences.where).toEqual(standingNov18);
     // Calls: list total, All, Scheduled, Completed, Issue.
-    expect(countOccurrences(2)).toEqual(liveNov18);
+    expect(countOccurrences(2)).toEqual(standingNov18);
     expect(countOccurrences(3)).toEqual({ startsAt: nov18 });
     expect(countOccurrences(4)).toEqual({ startsAt: nov18 });
   });
 
-  it("without a date range, lists, shows and counts only bookings with a live session", async () => {
+  it("without a date range, lists, shows and counts only bookings with a standing session", async () => {
     await getStaffAppointments({ scope: { kind: "all" }, status: "scheduled" });
-    const live = {
-      deletedAt: null,
-      completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
-    };
     const args = mockFindMany.mock.calls[0][0] as {
       where: CountArgs["where"];
       select: { occurrences: { where?: unknown } };
     };
-    expect(args.where.AND?.[0].occurrences?.some).toEqual(live);
-    expect(args.select.occurrences.where).toEqual(live);
-    expect(countOccurrences(2)).toEqual(live);
+    expect(args.where.AND?.[0].occurrences?.some).toEqual(standing);
+    expect(args.select.occurrences.where).toEqual(standing);
+    expect(countOccurrences(2)).toEqual(standing);
     expect(countOccurrences(3)).toBeUndefined();
+  });
+
+  it("lists and counts a consultation or plan a lapsed move left PENDING", async () => {
+    await getStaffAppointments({ scope: { kind: "all" }, status: "scheduled" });
+    const restoredToApproved = {
+      AND: [
+        {
+          OR: [
+            { consultationId: { not: null } },
+            { subscriptionId: { not: null } },
+          ],
+        },
+        lapsedMove({ originStatus: "APPROVED" }),
+      ],
+    };
+    type StatusArgs = { where: { AND: [unknown, { OR: unknown[] }] } };
+    const listStatus = (mockFindMany.mock.calls[0][0] as StatusArgs).where
+      .AND[1].OR;
+    const countStatus = (mockCount.mock.calls[2][0] as StatusArgs).where.AND[1]
+      .OR;
+    expect(listStatus).toContainEqual(restoredToApproved);
+    expect(countStatus).toContainEqual(restoredToApproved);
   });
 
   it("leaves the Issue tab's sessions unfiltered, so a cancelled booking still lists", async () => {
