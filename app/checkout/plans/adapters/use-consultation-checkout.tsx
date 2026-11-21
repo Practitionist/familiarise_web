@@ -42,7 +42,12 @@ import {
 } from "../components/PlanCheckoutShell";
 import { CheckoutTotalNotes } from "../components/CheckoutTotals";
 import { reportPaymentsError, type CheckoutApiError } from "../utils";
-import { loadErrorMessage, planIncludes, searchParamsKey } from "./shared";
+import {
+  loadErrorMessage,
+  planIncludes,
+  planLoadError,
+  searchParamsKey,
+} from "./shared";
 
 // price arrives as number: extended client + JSON serialization
 type ConsultationPlanWithConsultant = Omit<ConsultationPlan, "price"> & {
@@ -190,7 +195,7 @@ export function useConsultationCheckout(
       ]);
 
       if (!planRes.ok) {
-        throw new Error(`HTTP error! status: ${planRes.status}`);
+        throw planLoadError(planRes.status);
       }
       const data = await planRes.json();
       if (!data.data.consultantProfile?.user) {

@@ -83,8 +83,13 @@ jest.mock("../../lib/prisma", () => ({
         trialEnabled: true,
         trialDurationMinutes: 30,
         trialPriceInPaise: plan.trialPriceInPaise,
+        visibility: "PUBLIC",
+        organizationId: null,
+        archivedAt: null,
         consultantProfile: {
           acceptingRequests: plan.acceptingRequests,
+          verificationStatus: "VERIFIED",
+          deletedAt: null,
           maxOpenRequests: null,
           user: { id: "u-expert", name: "E" },
         },
@@ -95,7 +100,10 @@ jest.mock("../../lib/prisma", () => ({
         user: { id: "u-buyer", name: "B", image: null },
       })),
     },
-    $transaction: jest.fn(async (fn: (t: unknown) => unknown) => fn({})),
+    // The standing read under a share lock is the only tx call this suite meets.
+    $transaction: jest.fn(async (fn: (t: unknown) => unknown) =>
+      fn({ $queryRaw: jest.fn(async () => []) }),
+    ),
   },
 }));
 

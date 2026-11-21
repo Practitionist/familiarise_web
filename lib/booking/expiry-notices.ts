@@ -23,7 +23,7 @@ export interface RequestExpiredNotice {
   consultantName: string;
   consulteeName: string;
   planTitle: string;
-  appointmentType: "CONSULTATION" | "SUBSCRIPTION";
+  appointmentType: "CONSULTATION" | "SUBSCRIPTION" | "WEBINAR" | "CLASS";
   startsAt: Date | null;
   reason: string;
 }

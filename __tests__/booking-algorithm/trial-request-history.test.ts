@@ -77,6 +77,8 @@ jest.mock("../../lib/prisma", () => {
   };
   // The create runs in the booking transaction.
   db.$transaction = jest.fn(async (fn: (tx: unknown) => unknown) => fn(db));
+  // The expert-standing read under a share lock; no row reads as standing.
+  db.$queryRaw = jest.fn(async () => []);
   return { __esModule: true, default: db };
 });
 
@@ -163,8 +165,13 @@ beforeEach(() => {
     trialEnabled: true,
     trialDurationMinutes: 30,
     trialPriceInPaise: 0,
+    visibility: "PUBLIC",
+    organizationId: null,
+    archivedAt: null,
     consultantProfile: {
       maxOpenRequests: null,
+      verificationStatus: "VERIFIED",
+      deletedAt: null,
       user: { id: "expert-1", name: "Expert" },
     },
   });

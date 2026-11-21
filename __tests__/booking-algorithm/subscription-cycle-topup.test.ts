@@ -145,6 +145,8 @@ const subscription = {
 
 /** No `delete`, `deleteMany` or `appointmentOccurrence.deleteMany` anywhere. */
 const mockTx = {
+  // The expert-standing read under a share lock; no row reads as standing.
+  $queryRaw: jest.fn(async () => []),
   subscription: {
     findUnique: jest.fn().mockResolvedValue(subscription),
     updateMany: jest.fn().mockResolvedValue({ count: 1 }),

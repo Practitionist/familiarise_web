@@ -26,7 +26,7 @@ import {
   VerificationBanner,
 } from "@/components/verification/VerificationPendingOverlay";
 import type { VerificationStatus } from "@/components/verification/VerificationStatusBadge";
-import { useVerificationStatus } from "./hooks/useVerificationStatus";
+import { useVerificationStatus } from "@/hooks/useVerificationStatus";
 import {
   settingsSectionGroups,
   settingsSectionHref,
