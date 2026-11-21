@@ -29,6 +29,13 @@ export const moderationSideEffectsSchema = z
     sessionsRevoked: z.number().optional(),
     earningsHeld: z.number().optional(),
     profilesUnverified: z.number().optional(),
+    payLinksClosed: z.number().optional(),
+    requestsDeclined: z.number().optional(),
+    trialHoldsReleased: z.number().optional(),
+    seatsReleased: z.number().optional(),
+    salesKept: z.number().optional(),
+    unpaidSales: stepStatus.optional(),
+    unpaidSalesAttempts: z.number().optional(),
     reviewRemoved: z.boolean().optional(),
     banExpires: z.string().nullable().optional(),
     cancellations: z

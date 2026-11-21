@@ -40,6 +40,7 @@ import {
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { subscriptionUnpaidError } from "@/lib/booking/booking-rule-error";
+import { assertUnpaidApprovalVerified } from "@/lib/booking/approval-verification";
 import {
   SETTLED_CONSULTATION,
   SETTLED_SUBSCRIPTION,
@@ -205,6 +206,7 @@ export async function updateEventStatus(
     // ride the CAS WHERE; an unpaid row that already awaits payment keeps
     // its live link (self-edge), it is never re-stamped APPROVED.
     case "consultation":
+      await assertUnpaidApprovalVerified(tx, "consultation", eventId);
       return approveByMoney(
         eventId,
         (args) => transitionConsultationRequest(tx, args),
@@ -220,6 +222,7 @@ export async function updateEventStatus(
     // #1775 C-1 — a plan is paid at purchase: an unpaid one is refused,
     // never parked in APPROVED_PENDING_PAYMENT.
     case "subscription":
+      await assertUnpaidApprovalVerified(tx, "subscription", eventId);
       return approveByMoney(
         eventId,
         (args) => transitionSubscriptionRequest(tx, args),

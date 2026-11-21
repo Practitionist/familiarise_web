@@ -21,6 +21,15 @@ export function loadErrorMessage(error: unknown): string | null {
     : "An unexpected error occurred. Please try again.";
 }
 
+/** The plan read failed: a hidden or withdrawn plan is not bookable, never a raw status. */
+export function planLoadError(status: number): Error {
+  return new Error(
+    status === 404
+      ? "This plan isn't available to book right now. Browse other experts to find another."
+      : "We couldn't load this checkout. Please try again.",
+  );
+}
+
 /** The mock-pay failure copy webinars and classes share, worded for one noun. */
 export function eventMockErrorCopy(words: {
   noun: "webinar" | "class";

@@ -44,6 +44,7 @@ import {
 } from "@/lib/booking/booking-rule-error";
 import { assertNoLiveCheckoutHold } from "@/lib/booking/request-cohort";
 import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
+import { assertUnpaidApprovalVerified } from "@/lib/booking/approval-verification";
 import { isExclusionViolation } from "@/lib/db/pg-errors";
 import {
   assertHeldTimesStillFree,
@@ -345,6 +346,13 @@ export async function PATCH(
               }
             }
 
+            if (status === AppointmentStatus.APPROVED) {
+              await assertUnpaidApprovalVerified(
+                tx,
+                "subscription",
+                subscriptionId,
+              );
+            }
             // A decline, like an approval, waits for the buyer's own live
             // checkout to finish or lapse.
             if (status === AppointmentStatus.REJECTED) {
@@ -583,10 +591,13 @@ export async function PATCH(
         refund: rejectionRefund,
       });
     } catch (error) {
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "bookings" } },
-      );
+      // A rule refusal is the outer catch's 409, not a fault to capture.
+      if (!(error instanceof BookingRuleError)) {
+        Sentry.captureException(
+          error instanceof Error ? error : new Error(String(error)),
+          { tags: { subsystem: "bookings" } },
+        );
+      }
       console.error(
         "Transaction error:",
         error instanceof Error ? error.message : "Unknown error",

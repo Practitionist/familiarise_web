@@ -23,6 +23,10 @@
  * #1580 — the same queue carries a failed collaborator revocation
  * (`sideEffects.collaboratorRevocation`): the rows are REMOVED for good, so
  * the per-plan Stream removal is re-driven regardless of the ban's fate.
+ *
+ * A reject whose post-commit ending of the expert's unpaid sales failed
+ * (`sideEffects.unpaidSales`) is re-driven too, while the expert stays
+ * unverified; every ending is a CAS, so a re-run is safe.
  */
 import type {
   CollaboratorType,
@@ -35,6 +39,10 @@ import type { AccessRevocationRow } from "@/lib/stream/access-revocation";
 import type { PlanRef } from "@/lib/collaborators/team";
 import prisma, { type PrismaLike } from "@/lib/prisma";
 import { createRunFailureReporter } from "@/lib/observability/run-failures";
+import {
+  isPublicExpertProfile,
+  publicProfileFacts,
+} from "@/lib/profiles/public-profile";
 import { nextRetryAt } from "@/lib/retry/backoff";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { SWEEP_START_DEADLINE_MS } from "@/lib/cron/run-deadline";
@@ -67,6 +75,8 @@ export interface ModerationRetryResult {
   skipped: number;
   /** #1580 — collaborator Stream revocations that landed on this attempt. */
   collaboratorRecovered: number;
+  /** Rejected experts' unpaid sales ended on this attempt. */
+  unpaidSalesRecovered: number;
   /** #1593 — erasure requests whose owed Stream revocations were re-driven. */
   erasureRevocationsRecovered: number;
   /** Queued cancellation, collaborator and org-removal revocations that landed. */
@@ -105,11 +115,19 @@ const RETRYABLE_ACTIONS: ModerationActionType[] = [
 // `stream: "failed"` and `collaboratorRevocation: "failed"` are the queue; a
 // capped row is marked "gave_up" and so falls out of this selector by construction.
 const FAILED_ENFORCEMENT_WHERE: Prisma.ModerationActionWhereInput = {
-  actionType: { in: RETRYABLE_ACTIONS },
   OR: [
-    { sideEffects: { path: ["stream"], equals: "failed" } },
     {
-      sideEffects: { path: ["collaboratorRevocation"], equals: "failed" },
+      actionType: { in: RETRYABLE_ACTIONS },
+      OR: [
+        { sideEffects: { path: ["stream"], equals: "failed" } },
+        {
+          sideEffects: { path: ["collaboratorRevocation"], equals: "failed" },
+        },
+      ],
+    },
+    {
+      actionType: "PROFILE_UNVERIFIED",
+      sideEffects: { path: ["unpaidSales"], equals: "failed" },
     },
   ],
 };
@@ -170,6 +188,7 @@ type ActionRow = {
   id: string;
   actionType: ModerationActionType;
   createdAt: Date;
+  takenById: string | null;
   sideEffects: unknown;
   report: {
     id: string;
@@ -269,6 +288,7 @@ async function retryModerationEnforcementUnlocked(
       id: true,
       actionType: true,
       createdAt: true,
+      takenById: true,
       sideEffects: true,
       report: {
         select: {
@@ -293,6 +313,7 @@ async function retryModerationEnforcementUnlocked(
     gaveUp: 0,
     skipped: 0,
     collaboratorRecovered: 0,
+    unpaidSalesRecovered: 0,
     erasureRevocationsRecovered: 0,
     accessRevocationsRecovered: 0,
     streamUnconfigured: 0,
@@ -306,6 +327,9 @@ async function retryModerationEnforcementUnlocked(
       await retryOne(row, summary, budget, result);
     if (summary.collaboratorRevocation === "failed") {
       await retryCollaboratorRevocation(row, summary, budget, result);
+    }
+    if (summary.unpaidSales === "failed") {
+      await retryUnpaidSalesEnding(row, summary, budget, result);
     }
   }
 
@@ -850,6 +874,85 @@ async function retryCollaboratorRevocation(
   await writeSummary(row.id, summary).catch(captureRetryError);
   result.stillFailing++;
   result.errors.push(`${row.id}: collaborator-revoke ${failed.join(", ")}`);
+}
+
+/**
+ * Re-runs a reject's ending of the expert's unpaid sales. Skipped once the
+ * expert is verified again (their sales are live again); shares the budget above.
+ */
+async function retryUnpaidSalesEnding(
+  row: ActionRow,
+  summary: SideEffectSummary,
+  budget: Budget,
+  result: ModerationRetryResult,
+): Promise<void> {
+  const attempts = summary.unpaidSalesAttempts ?? 1;
+  const consultantProfileId = summary.unverifiedConsultantProfileId;
+  if (
+    !consultantProfileId ||
+    attempts >= budget.maxAttempts ||
+    row.createdAt < budget.giveUpOlderThan
+  ) {
+    summary.unpaidSales = "gave_up";
+    summary.errors = appendNote(
+      summary.errors,
+      "unpaidSales: gave up — out of retry budget",
+    );
+    await writeSummary(row.id, summary).catch(captureRetryError);
+    result.gaveUp++;
+    result.errors.push(`${row.id}: unpaid-sales ending gave up`);
+    runFailures.add(
+      "unpaid-sales-ending-gave-up",
+      new Error("Unpaid-sales ending gave up"),
+      { actionId: row.id },
+      { level: "error" },
+    );
+    return;
+  }
+
+  const profile = await prisma.consultantProfile.findUnique({
+    where: { id: consultantProfileId },
+    select: publicProfileFacts,
+  });
+  if (!profile || isPublicExpertProfile(profile)) {
+    summary.unpaidSales = "skipped";
+    summary.errors = appendNote(
+      summary.errors,
+      "unpaidSales: not retried — the expert is verified again",
+    );
+    await writeSummary(row.id, summary).catch(captureRetryError);
+    result.skipped++;
+    return;
+  }
+
+  summary.unpaidSalesAttempts = attempts + 1;
+  try {
+    // Lazy: the booking and gateway graph loads only for a row that needs it.
+    const { endUnverifiedExpertSales } =
+      await import("@/lib/booking/unverified-expert-notices");
+    // The learner notices are staged in their outboxes; the drain delivers them.
+    const outcome = await endUnverifiedExpertSales({
+      consultantProfileId,
+      actorUserId: row.takenById ?? row.report.targetUserId,
+    });
+    summary.payLinksClosed = outcome.payLinksClosed;
+    summary.requestsDeclined = outcome.requestsDeclined;
+    summary.trialHoldsReleased = outcome.trialHoldsReleased;
+    summary.seatsReleased = outcome.seatsReleased;
+    summary.salesKept = outcome.salesKept;
+    summary.unpaidSales = "ok";
+    await writeSummary(row.id, summary);
+    result.unpaidSalesRecovered++;
+  } catch (error) {
+    summary.unpaidSales = "failed";
+    summary.errors = appendNote(
+      summary.errors,
+      `unpaidSales: ${errMsg(error)} (attempt ${attempts + 1})`,
+    );
+    await writeSummary(row.id, summary).catch(captureRetryError);
+    result.stillFailing++;
+    result.errors.push(`${row.id}: unpaid-sales ending ${errMsg(error)}`);
+  }
 }
 
 async function cap(

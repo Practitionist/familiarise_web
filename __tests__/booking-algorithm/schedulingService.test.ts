@@ -111,6 +111,8 @@ import { UNPAID_SUBSCRIPTION } from "@/lib/booking/approve-request";
 
 function makeMockTx() {
   return {
+    // The expert-standing read under a share lock; no row reads as standing.
+    $queryRaw: jest.fn(async () => []),
     // #1065 — a released RESCHEDULED row makes the allocator look for the
     // preference request it answers; none here.
     rescheduleRequest: { findMany: jest.fn().mockResolvedValue([]) },

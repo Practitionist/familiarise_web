@@ -17,6 +17,7 @@ import { PaymentGateway, PaymentStatus, TrialStatus } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { reportSentryError } from "@/lib/observability/report";
 import { reconcileOrphanedPayLink } from "@/lib/booking/pay-link-persist";
+import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import { createApprovalPaymentIntent } from "@/lib/payments/operations/approval-payment";
 import { payLinkHref } from "@/lib/payments/pay-link-href";
 import {
@@ -172,11 +173,12 @@ export async function remintTrialPayLink(
       });
     });
   } catch (error) {
-    // Another mutation holds the appointment, or the lock service is down:
-    // the next read tries again; both are modelled, not faults.
+    // Another mutation holds the appointment, the lock service is down, or the
+    // expert is not verified: each is modelled, not a fault.
     const expected =
       error instanceof AppointmentBusyError ||
-      error instanceof BookingLockUnavailableError;
+      error instanceof BookingLockUnavailableError ||
+      error instanceof BookingRuleError;
     reportSentryError(error, {
       subsystem: "trials",
       op: "trial-pay-link-remint",

@@ -148,13 +148,26 @@ beforeEach(() => {
 });
 
 describe("retryModerationEnforcement", () => {
-  it("selects only the actions whose recorded Stream or collaborator outcome failed", async () => {
+  it("selects only the actions whose recorded Stream, collaborator or unpaid-sales outcome failed", async () => {
     await retryModerationEnforcement();
 
     expect(findMany.mock.calls[0][0].where).toMatchObject({
       OR: [
-        { sideEffects: { path: ["stream"], equals: "failed" } },
-        { sideEffects: { path: ["collaboratorRevocation"], equals: "failed" } },
+        {
+          OR: [
+            { sideEffects: { path: ["stream"], equals: "failed" } },
+            {
+              sideEffects: {
+                path: ["collaboratorRevocation"],
+                equals: "failed",
+              },
+            },
+          ],
+        },
+        {
+          actionType: "PROFILE_UNVERIFIED",
+          sideEffects: { path: ["unpaidSales"], equals: "failed" },
+        },
       ],
     });
   });

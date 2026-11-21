@@ -264,6 +264,24 @@ function sideEffectLines(sideEffects: ModerationSideEffects | null): string[] {
   if (sideEffects.profilesUnverified !== undefined) {
     lines.push(`profiles unverified: ${sideEffects.profilesUnverified}`);
   }
+  if (sideEffects.payLinksClosed !== undefined) {
+    lines.push(`unpaid links closed: ${sideEffects.payLinksClosed}`);
+  }
+  if (sideEffects.requestsDeclined !== undefined) {
+    lines.push(`requests declined: ${sideEffects.requestsDeclined}`);
+  }
+  if (sideEffects.trialHoldsReleased !== undefined) {
+    lines.push(`trial holds released: ${sideEffects.trialHoldsReleased}`);
+  }
+  if (sideEffects.seatsReleased !== undefined) {
+    lines.push(`unpaid seats released: ${sideEffects.seatsReleased}`);
+  }
+  if (sideEffects.salesKept) {
+    lines.push(`sales left open for their payment: ${sideEffects.salesKept}`);
+  }
+  if (sideEffects.unpaidSales === "failed") {
+    lines.push("unpaid sales: not ended");
+  }
   if (sideEffects.reviewRemoved) lines.push("review removed: yes");
   if (sideEffects.cancellations?.engagementsCancelled !== undefined) {
     lines.push(

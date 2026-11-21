@@ -1,5 +1,6 @@
 import { eventPlanDiscoverableWhere } from "@/lib/api/plans/visibility";
 import prisma from "@/lib/prisma";
+import { publicExpertProfileWhere } from "@/lib/profiles/public-profile";
 
 /** One sitemap file holds 50,000 URLs; the static routes use a few dozen. */
 const MAX_PLANS_PER_KIND = 5_000;
@@ -9,8 +10,8 @@ const SELLING_STATUSES = ["SCHEDULED"] as const;
 
 /**
  * The webinar and class plan ids a search engine should index: publicly
- * discoverable (the same filter as the marketplace list), owned by a profile
- * that is not erased, and still holding a session that has not finished.
+ * discoverable (the same filter as the marketplace list), owned by a verified
+ * profile that is not erased, and still holding a session that has not finished.
  */
 export async function listIndexableEventPlanIds(now: Date): Promise<{
   webinarPlanIds: string[];
@@ -27,7 +28,7 @@ export async function listIndexableEventPlanIds(now: Date): Promise<{
     ...eventPlanDiscoverableWhere(),
     OR: [
       { consultantProfile: null },
-      { consultantProfile: { deletedAt: null } },
+      { consultantProfile: publicExpertProfileWhere },
     ],
   };
   const [webinars, classes] = await Promise.all([

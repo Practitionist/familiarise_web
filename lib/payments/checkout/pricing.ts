@@ -6,11 +6,11 @@ import prisma from "@/lib/prisma";
 import type { CheckoutInput } from "@/schemas/checkout";
 import {
   type BookingMode,
+  type ConsultantVerificationStatus,
   type Currency,
   type OfferingPlanStatus,
   type OrgPlanVisibility,
 } from "@prisma/client";
-import { Refusal } from "@/lib/errors/refusal";
 import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
 import { getClassCapacity, getWebinarCapacity } from "@/lib/events/capacity";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
@@ -27,14 +27,13 @@ import {
   validateDiscountCurrency,
 } from "@/lib/payments/validation/currency-guards";
 import { DiscountExhaustedError } from "@/lib/payments/pricing/discount-exhausted-error";
-import {
-  MARKETPLACE_VISIBILITY,
-  planSaleRefusal,
-} from "@/lib/api/plans/visibility";
+import { planSaleRefusal } from "@/lib/api/plans/visibility";
 import { classEnrolmentFrom } from "@/lib/booking/class-enrolment";
 import {
   BookingRuleError,
   assertExpertTakesDirectCheckout,
+  assertExpertVerified,
+  assertPlanOnSale,
 } from "@/lib/booking/booking-rule-error";
 import { assertWindowMatchesPlanDuration } from "@/lib/booking/slot-validation";
 import {
@@ -114,7 +113,7 @@ export async function calculateAmountAndValidate(
         organizationId: string | null;
         status?: OfferingPlanStatus | null;
         consultantProfile: {
-          verificationStatus: string;
+          verificationStatus: ConsultantVerificationStatus;
           acceptingRequests: boolean;
           bookingMode: BookingMode;
         } | null;
@@ -135,39 +134,9 @@ export async function calculateAmountAndValidate(
           `${label} isn't available to book right now.`,
         );
       }
-      if (
-        p.consultantProfile &&
-        p.consultantProfile.verificationStatus !== "VERIFIED"
-      ) {
-        throw new BookingRuleError(
-          "EXPERT_NOT_VERIFIED",
-          `${label} isn't available to book until the expert is verified.`,
-        );
-      }
-      if (p.archivedAt) {
-        throw new BookingRuleError(
-          "PLAN_ARCHIVED",
-          `${label} is no longer offered, so it can't be booked.`,
-        );
-      }
-      // A non-marketplace plan sells only to its own org's sponsored buyers; a
-      // plan whose org was cleared (onDelete: SetNull) sells to no sponsor.
-      const sameOrg =
-        !!p.organizationId &&
-        !!validatedData.organizationId &&
-        p.organizationId === validatedData.organizationId;
-      if (!MARKETPLACE_VISIBILITY.includes(p.visibility) && !sameOrg) {
-        throw new Refusal({
-          code: "PLAN_NOT_AVAILABLE_TO_ORG",
-          httpStatus: 409,
-          userMessage: `${label} is only available to members of the organisation that offers it.`,
-          context: {
-            visibility: p.visibility,
-            planOrganizationId: p.organizationId,
-            buyerOrganizationId: validatedData.organizationId ?? null,
-          },
-        });
-      }
+      assertExpertVerified(p.consultantProfile, label);
+      // A non-marketplace plan sells only to its own org's sponsored buyers.
+      assertPlanOnSale(p, label, validatedData.organizationId);
     };
 
     switch (validatedData.appointmentType) {

@@ -14,7 +14,7 @@ import {
 import { findOrCreateTopics, transformTopicsToStrings } from "@/lib/topics";
 import { subscriptionPlanTotals } from "@/lib/booking/entitlement";
 import {
-  oneOnOnePlanListCacheControl,
+  oneOnOnePlanListCacheHeaders,
   oneOnOnePlanListWhere,
 } from "@/lib/api/plans/visibility";
 import { getMinTrialPriceInPaise } from "@/lib/trials/pricing-config";
@@ -89,9 +89,7 @@ export async function GET(request: NextRequest) {
       {
         status: 200,
         // Public marketplace list — CDN-cached like the sibling plan lists.
-        headers: {
-          "Cache-Control": oneOnOnePlanListCacheControl(consultantId),
-        },
+        headers: oneOnOnePlanListCacheHeaders(consultantId),
       },
     );
   } catch (error) {

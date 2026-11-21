@@ -10,10 +10,8 @@ import prisma from "@/lib/prisma";
 
 type PlanGate = NonNullable<Parameters<typeof canViewPlanDetail>[0]>;
 
-const PUBLIC_CACHE = publicCacheHeaders({
-  sMaxAge: 60,
-  staleWhileRevalidate: 300,
-});
+// No stale window: a plan a reject hides is no longer shared after a minute.
+const PUBLIC_CACHE = publicCacheHeaders({ sMaxAge: 60 });
 
 /** Anything that depends on who is asking: never stored by a shared cache. */
 const PRIVATE_NO_STORE = { "Cache-Control": "private, no-store" };

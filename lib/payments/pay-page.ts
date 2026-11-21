@@ -25,6 +25,11 @@ import {
 import { remintTrialPayLink } from "@/lib/trials/pay-link";
 import { goHref } from "@/lib/dashboard/go";
 import { consumerStateCodeSchema } from "@/schemas/checkout";
+import {
+  isPublicExpertProfile,
+  publicProfileFacts,
+} from "@/lib/profiles/public-profile";
+import { expertUnavailablePayMessage } from "@/lib/booking/closed-sale-copy";
 
 export interface PayPageOrder {
   orderId: string;
@@ -57,7 +62,15 @@ export type PayPageState =
       /** Pre-fills the state picker; mirrors the checkout tax context. */
       taxContext: { billingStateCode: string | null; isInternational: boolean };
     }
-  | { kind: "unpayable"; doneHref: string };
+  | { kind: "unpayable"; doneHref: string; message: string };
+
+/** Why an order cannot be paid, as the payer reads it; never the expert's standing. */
+export const UNPAYABLE_MESSAGE =
+  "This booking can no longer be paid for here. It may have been cancelled, or its payment window may have closed. You can request it again from the expert's page.";
+
+const EXPERT_FACTS = {
+  select: { consultantProfile: { select: publicProfileFacts } },
+} as const;
 
 const PAY_PAGE_SELECT = {
   id: true,
@@ -83,10 +96,20 @@ const PAY_PAGE_SELECT = {
   appointment: {
     select: {
       consultation: {
-        select: { id: true, status: true, pendingPaymentUrl: true },
+        select: {
+          id: true,
+          status: true,
+          pendingPaymentUrl: true,
+          consultationPlan: EXPERT_FACTS,
+        },
       },
       subscription: {
-        select: { id: true, status: true, pendingPaymentUrl: true },
+        select: {
+          id: true,
+          status: true,
+          pendingPaymentUrl: true,
+          subscriptionPlan: EXPERT_FACTS,
+        },
       },
       trial: {
         select: {
@@ -96,6 +119,7 @@ const PAY_PAGE_SELECT = {
           pendingPaymentUrl: true,
           paymentDueAt: true,
           subscriptionPlanId: true,
+          subscriptionPlan: EXPERT_FACTS,
           consulteeProfile: { select: { userId: true } },
           appointment: {
             select: {
@@ -143,6 +167,49 @@ function detailHref(row: PayPageRow): string {
   return consulteeId && row.appointmentId
     ? `/dashboard/consultee/${consulteeId}/appointments/${row.appointmentId}`
     : goHref("auto", "payments");
+}
+
+/** The booking's expert facts; never sent to the browser. */
+function expertOf(row: PayPageRow) {
+  const booking = row.appointment;
+  return (
+    booking?.consultation?.consultationPlan.consultantProfile ??
+    booking?.subscription?.subscriptionPlan.consultantProfile ??
+    booking?.trial?.subscriptionPlan.consultantProfile ??
+    null
+  );
+}
+
+/** The expert takes no bookings, so the order is never opened again, captured or not. */
+function expertUnavailable(row: PayPageRow): boolean {
+  const expert = expertOf(row);
+  return !!expert && !isPublicExpertProfile(expert);
+}
+
+/** The unpayable answer; an expert who takes no bookings is named as such, with no way back offered. */
+function unpayable(row: PayPageRow): PayPageState {
+  return {
+    kind: "unpayable",
+    doneHref: detailHref(row),
+    message: expertUnavailable(row)
+      ? // A real order may have been captured; only a never-minted one promises no charge.
+        expertUnavailablePayMessage(!isPreMintIntent(row.paymentIntent))
+      : UNPAYABLE_MESSAGE,
+  };
+}
+
+const ENDED_REQUEST = new Set<AppointmentStatus>([
+  AppointmentStatus.EXPIRED,
+  AppointmentStatus.REJECTED,
+  AppointmentStatus.CANCELLED,
+]);
+
+/** The request or trial behind the order has ended. */
+function bookingEnded(row: PayPageRow): boolean {
+  const { consultation, subscription, trial } = row.appointment ?? {};
+  if (consultation) return ENDED_REQUEST.has(consultation.status);
+  if (subscription) return ENDED_REQUEST.has(subscription.status);
+  return trial?.status === TrialStatus.CANCELLED;
 }
 
 function isLive(row: PayPageRow, now: Date): boolean {
@@ -251,8 +318,11 @@ export async function resolvePayPage(
   if (!row || row.deletedAt || row.userId !== viewerUserId) {
     return { kind: "not_found" };
   }
+  // A capture on a booking the expert can no longer take is refunded, not a paid booking.
   if (row.paymentStatus === PaymentStatus.SUCCEEDED) {
-    return { kind: "paid", href: detailHref(row) };
+    return expertUnavailable(row) && bookingEnded(row)
+      ? unpayable(row)
+      : { kind: "paid", href: detailHref(row) };
   }
   if (row.paymentGateway !== PaymentGateway.RAZORPAY) {
     // Another rail keeps its hosted link, exactly as before this page existed.
@@ -261,23 +331,19 @@ export async function resolvePayPage(
       row.appointment?.subscription?.pendingPaymentUrl;
     return hosted && /^https?:\/\//.test(hosted)
       ? { kind: "redirect", href: hosted }
-      : { kind: "unpayable", doneHref: detailHref(row) };
+      : unpayable(row);
   }
   if (isLive(row, now)) return openState(row);
 
   // A newer live order on the same booking wins over re-minting this one.
   const newer = await findLiveOrder(row, now);
   if (newer) return { kind: "redirect", href: `/checkout/pay/${newer.id}` };
-  if (!(await remint(row))) {
-    return { kind: "unpayable", doneHref: detailHref(row) };
-  }
+  if (!(await remint(row))) return unpayable(row);
   const live = await findLiveOrder(row, now);
-  if (!live) return { kind: "unpayable", doneHref: detailHref(row) };
+  if (!live) return unpayable(row);
   if (live.id !== row.id) {
     return { kind: "redirect", href: `/checkout/pay/${live.id}` };
   }
   const fresh = await readPayPageRow(row.id);
-  return fresh && isLive(fresh, now)
-    ? openState(fresh)
-    : { kind: "unpayable", doneHref: detailHref(row) };
+  return fresh && isLive(fresh, now) ? openState(fresh) : unpayable(row);
 }

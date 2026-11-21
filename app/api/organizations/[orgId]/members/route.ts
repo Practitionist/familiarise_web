@@ -17,6 +17,7 @@ import prisma from "@/lib/prisma";
 import {
   MEMBER_EXPERT_SELECT,
   buildOrgMembersQuery,
+  memberExpertOf,
   toRoleCounts,
 } from "@/lib/data/org-members-query";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
@@ -86,10 +87,14 @@ export async function GET(
   // #1527 — payout routing is finance data: `payouts.read` holders only.
   // members.manage ⊂ payouts.read, so every editor still receives it.
   const canSeePayout = hasOrgPermission(access.member.role, "payouts.read");
+  const rows = data.map((m) => ({
+    ...m,
+    consultantProfile: memberExpertOf(m.consultantProfile),
+  }));
   return NextResponse.json({
     data: canSeePayout
-      ? data
-      : data.map((m) => ({ ...m, payoutRecipient: undefined })),
+      ? rows
+      : rows.map((m) => ({ ...m, payoutRecipient: undefined })),
     meta: { total, page, perPage },
     counts: toRoleCounts(groups),
   });

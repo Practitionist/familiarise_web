@@ -103,6 +103,9 @@ export interface TransactionalEffectResult {
   expertUserId?: string;
   /** Whose public surfaces need purging once the transaction commits. */
   reviewRemovedConsultantProfileId?: string;
+  /** The rejected expert's profile, purged from the public surfaces after commit. */
+  unverifiedConsultantProfileId?: string;
+
   banExpires?: string | null;
   collaborationsRemoved?: PlanRef[];
   /** The seat holders' emails of a co-presenter who left; phase 2 stages them, never persisted. */
@@ -116,6 +119,16 @@ export interface TransactionalEffectResult {
 export type StepStatus = "ok" | "failed" | "skipped" | "gave_up";
 
 export interface SideEffectSummary extends TransactionalEffectResult {
+  /** A rejected expert's unpaid sales ended after commit, by kind. */
+  payLinksClosed?: number;
+  requestsDeclined?: number;
+  trialHoldsReleased?: number;
+  seatsReleased?: number;
+  /** Sales left open: a live payment holds them, or the gateway could not be asked. */
+  salesKept?: number;
+  /** "failed" queues the ending for the enforcement retry sweep. */
+  unpaidSales?: StepStatus;
+  unpaidSalesAttempts?: number;
   cancellations?: BulkCancelSummary;
   stream?: StepStatus;
   streamAttempts?: number;
@@ -510,13 +523,17 @@ async function unverifyProfiles(
 ): Promise<TransactionalEffectResult> {
   // Both fields: explore + the booking gate filter on verificationStatus,
   // while isVerified is the projected display flag.
-  const updated = await tx.consultantProfile.updateMany({
+  const updated = await tx.consultantProfile.updateManyAndReturn({
     where: { userId: targetUserId },
     data: { isVerified: false, verificationStatus: "REJECTED" },
+    select: { id: true },
   });
-  // Only a verified expert holds a place on a team.
+  const profileId = updated[0]?.id;
+  // Only a verified expert holds a place on a team. Their unpaid sales end in
+  // phase 2, once this profile write has committed and every sale writer sees it.
   return {
-    profilesUnverified: updated.count,
+    profilesUnverified: updated.length,
+    ...(profileId ? { unverifiedConsultantProfileId: profileId } : {}),
     ...(await endCollaborationsAsModeration(tx, targetUserId, staffUserId)),
   };
 }
@@ -678,10 +695,51 @@ export async function applyBestEffortEffects(
     );
   }
 
+  if (transactional.unverifiedConsultantProfileId) {
+    await runUnpaidSalesEnding(
+      transactional.unverifiedConsultantProfileId,
+      input.staffUserId,
+      summary,
+      errors,
+    );
+  }
+
   await runNotification(input, transactional, summary, errors);
 
   if (errors.length > 0) summary.errors = errors;
   return summary;
+}
+
+// Stop new, honour booked: the rejected expert's unpaid sales end; paid ones stay.
+async function runUnpaidSalesEnding(
+  consultantProfileId: string,
+  staffUserId: string,
+  summary: SideEffectSummary,
+  errors: string[],
+): Promise<void> {
+  try {
+    // Lazy: the booking and gateway graph loads only for a reject.
+    const { endUnverifiedExpertSales } =
+      await import("@/lib/booking/unverified-expert-notices");
+    const outcome = await endUnverifiedExpertSales({
+      consultantProfileId,
+      actorUserId: staffUserId,
+    });
+    summary.payLinksClosed = outcome.payLinksClosed;
+    summary.requestsDeclined = outcome.requestsDeclined;
+    summary.trialHoldsReleased = outcome.trialHoldsReleased;
+    summary.seatsReleased = outcome.seatsReleased;
+    summary.salesKept = outcome.salesKept;
+    summary.stagedBells?.push(...outcome.bells);
+    summary.stagedEmails?.push(...outcome.emails);
+    summary.unpaidSales = "ok";
+    summary.unpaidSalesAttempts = 1;
+  } catch (error) {
+    summary.unpaidSales = "failed";
+    summary.unpaidSalesAttempts = 1;
+    errors.push(`unpaidSales: ${errMsg(error)}`);
+    captureModerationError(error);
+  }
 }
 
 async function runBulkCancellations(

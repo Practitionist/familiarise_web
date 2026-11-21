@@ -83,6 +83,8 @@ const mockTrialCount = jest.fn(async () => 0);
 const mockProfile = {
   id: "cp_1",
   acceptingRequests: true,
+  verificationStatus: "VERIFIED",
+  deletedAt: null,
   bookingMode: "REQUEST" as "REQUEST" | "INSTANT",
   maxOpenRequests: null as number | null,
   user: { id: "user_consultant", name: "Olivia" },
@@ -112,6 +114,9 @@ jest.mock("../../lib/prisma", () => {
         id: "plan_1",
         title: "Plan",
         consultantProfileId: "cp_1",
+        visibility: "PUBLIC",
+        organizationId: null,
+        archivedAt: null,
         consultantProfile: mockProfile,
       })),
     },
@@ -134,6 +139,8 @@ jest.mock("../../lib/prisma", () => {
     availabilityWindowWeekly: jest.requireActual(
       "../fixtures/request-door-hours",
     ).namedWeeklyWindow,
+    // The expert-standing read under a share lock; no row reads as standing.
+    $queryRaw: jest.fn(async () => []),
     $transaction: jest.fn(async (fn: (tx: unknown) => unknown) => fn(db)),
   };
   return { __esModule: true, default: db };
