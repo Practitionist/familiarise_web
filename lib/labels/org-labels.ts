@@ -322,6 +322,11 @@ export const MEMBER_STATUS_TONE: Record<MemberStatus, Tone> = {
   ERASED: "neutral",
 };
 
+/** An expert member's badge: one who is not verified is not bookable yet. */
+export function expertVerificationLabel(isVerified: boolean): string {
+  return isVerified ? "Verified" : "Waiting for verification";
+}
+
 // ───────────────────────────── Zod narrowing schemas ─────────────────────────────
 //
 // Rather than ad-hoc `typeof v === "string" && arr.includes(v)` checks

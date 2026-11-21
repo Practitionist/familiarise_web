@@ -1,4 +1,10 @@
-import type { BookingMode } from "@prisma/client";
+import type {
+  BookingMode,
+  ConsultantVerificationStatus,
+  OrgPlanVisibility,
+} from "@prisma/client";
+import { MARKETPLACE_VISIBILITY } from "@/lib/api/plans/visibility";
+import { Refusal } from "@/lib/errors/refusal";
 
 /**
  * #1775 / #1780 — the booking-money refusals this train adds. Each is a state
@@ -106,6 +112,65 @@ export function assertExpertTakesDirectCheckout(
       "REQUEST_APPROVAL_REQUIRED",
       REQUEST_APPROVAL_REQUIRED_MESSAGE,
     );
+  }
+}
+
+/**
+ * An unverified expert takes no new booking or payment: checkout, its in-lock re-read, the
+ * trial and request doors, and every pay-link mint ask this. Booked sessions are untouched.
+ */
+export function assertExpertVerified(
+  profile: { verificationStatus: ConsultantVerificationStatus } | null,
+  label: string,
+): void {
+  if (profile && profile.verificationStatus !== "VERIFIED") {
+    throw expertNotVerifiedError(label);
+  }
+}
+
+/** The refusal every door answers for an expert who takes no new sale. */
+export function expertNotVerifiedError(label: string): BookingRuleError {
+  return new BookingRuleError(
+    "EXPERT_NOT_VERIFIED",
+    `${label} isn't available to book until the expert is verified.`,
+  );
+}
+
+/**
+ * A new sale of a plan that is archived, or kept to an organisation the buyer is not booking
+ * for, is refused. Checkout and the trial and request doors share it.
+ */
+export function assertPlanOnSale(
+  plan: {
+    archivedAt: Date | null;
+    visibility: OrgPlanVisibility;
+    organizationId: string | null;
+  },
+  label: string,
+  buyerOrganizationId: string | null | undefined,
+): void {
+  if (plan.archivedAt) {
+    throw new BookingRuleError(
+      "PLAN_ARCHIVED",
+      `${label} is no longer offered, so it can't be booked.`,
+    );
+  }
+  // A plan whose org was cleared (onDelete: SetNull) sells to no sponsor.
+  const sameOrg =
+    !!plan.organizationId &&
+    !!buyerOrganizationId &&
+    plan.organizationId === buyerOrganizationId;
+  if (!MARKETPLACE_VISIBILITY.includes(plan.visibility) && !sameOrg) {
+    throw new Refusal({
+      code: "PLAN_NOT_AVAILABLE_TO_ORG",
+      httpStatus: 409,
+      userMessage: `${label} is only available to members of the organisation that offers it.`,
+      context: {
+        visibility: plan.visibility,
+        planOrganizationId: plan.organizationId,
+        buyerOrganizationId: buyerOrganizationId ?? null,
+      },
+    });
   }
 }
 

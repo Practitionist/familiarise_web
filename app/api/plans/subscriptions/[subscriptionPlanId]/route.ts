@@ -50,6 +50,7 @@ import {
 } from "@/lib/booking/offering-delete";
 import { planConsultantSelect } from "@/lib/api/plans/consultant-projection";
 import { canViewPlanById } from "@/lib/data/plan-viewable";
+import { publicProfileFacts } from "@/lib/profiles/public-profile";
 import {
   SessionLookupFailedError,
   sessionLookupFailedResponse,
@@ -75,7 +76,9 @@ export async function GET(
     const subscriptionPlan = await prisma.subscriptionPlan.findUniqueOrThrow({
       where: { id: subscriptionPlanId },
       include: {
-        consultantProfile: { select: planConsultantSelect },
+        consultantProfile: {
+          select: { ...planConsultantSelect, ...publicProfileFacts },
+        },
         topics: true,
         faqs: { orderBy: { order: "asc" } },
         subscriptionContents: {

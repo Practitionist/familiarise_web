@@ -3,6 +3,7 @@
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import { assertPlanExpertStandsInTx } from "@/lib/booking/expert-standing";
 import { resolveCheckoutCancellationPolicyId } from "@/lib/payments/operations/cancellation-policy-store";
 import { seatPayerOrganizationId } from "@/lib/data/org-sponsored-seats";
 import { findSelfHoldAppointmentIds } from "@/lib/payments/checkout/self-hold";
@@ -58,6 +59,13 @@ export async function commitCheckout(input: CheckoutCommitInput) {
     await renewOrAbort(perAttemptTtl);
     return prisma.$transaction(
       async (tx) => {
+        // Every attempt re-reads the expert's standing with the write: a reject
+        // after the locked re-read refuses here, and the minted order is retired.
+        await assertPlanExpertStandsInTx(
+          tx,
+          validatedData.appointmentType,
+          validatedData.planId,
+        );
         // #785 B6 — re-check the INVOICE credit limit INSIDE the Serializable
         // tx. The pre-lock check ran on the global client before this tx, so
         // two concurrent disjoint-slot bookings (which take different per-slot

@@ -4,6 +4,7 @@ import { readByIds } from "@/lib/data/read-by-ids";
 import { toPlain } from "@/lib/data/serialize";
 import type { Prisma } from "@prisma/client";
 import { eventPlanDiscoverableWhere } from "@/lib/api/plans/visibility";
+import { publicExpertProfileWhere } from "@/lib/profiles/public-profile";
 import { generateProgramImageUrl } from "@/lib/explore/programs";
 import type {
   Program,
@@ -83,12 +84,19 @@ const planCollaboratorsInclude = {
   },
 };
 
-// #781 §B — soft-deleted profiles leave public surfaces. The owner relation is
-// nullable on Webinar/ClassPlan, so keep ownerless plans and drop only plans
-// whose owner is soft-deleted.
+// Only a verified, live owner's plans are listed. The owner relation is nullable on
+// Webinar/ClassPlan, so an ownerless plan stays.
 const liveConsultantWhere = {
-  OR: [{ consultantProfile: null }, { consultantProfile: { deletedAt: null } }],
+  OR: [
+    { consultantProfile: null },
+    { consultantProfile: publicExpertProfileWhere },
+  ],
 } satisfies Prisma.ClassPlanWhereInput & Prisma.WebinarPlanWhereInput;
+
+/** What the program catalog lists: discoverable plans of a verified, live owner or none. */
+export function listedProgramWhere() {
+  return { ...eventPlanDiscoverableWhere(), ...liveConsultantWhere };
+}
 
 // ---------------------------------------------------------------------------
 // Curated programs (Featured / Trending / Newest sections)
@@ -392,4 +400,35 @@ export const getTopicsWithCount = unstable_cache(
   },
   ["topics-with-count"],
   { revalidate: 300, tags: ["programs"] },
+);
+
+/** The programs hero figures: the plans the catalog lists, and the learners who have held a seat. */
+export const getProgramCounts = unstable_cache(
+  async () => {
+    const [publishedClassCount, publishedWebinarCount, learners] =
+      await Promise.all([
+        // The same plans the catalog below lists, so the headline matches it.
+        prisma.classPlan.count({ where: listedProgramWhere() }),
+        prisma.webinarPlan.count({ where: listedProgramWhere() }),
+        prisma.appointmentParticipant.findMany({
+          where: {
+            role: "CONSULTEE",
+            status: { in: ["CONFIRMED", "ATTENDED"] },
+            appointment: {
+              appointmentType: { in: ["WEBINAR", "CLASS"] },
+              deletedAt: null,
+            },
+          },
+          select: { userId: true },
+          distinct: ["userId"],
+        }),
+      ]);
+    return {
+      publishedClassCount,
+      publishedWebinarCount,
+      enrolledLearnerCount: learners.length,
+    };
+  },
+  ["program-stats"],
+  { revalidate: 3600, tags: ["programs"] },
 );

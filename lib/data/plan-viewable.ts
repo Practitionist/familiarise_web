@@ -3,7 +3,11 @@ import { reportSentryError } from "@/lib/observability/report";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import { isPlanViewable } from "@/lib/api/plans/visibility";
-import type { OfferingPlanStatus, OrgPlanVisibility } from "@prisma/client";
+import type {
+  ConsultantVerificationStatus,
+  OfferingPlanStatus,
+  OrgPlanVisibility,
+} from "@prisma/client";
 
 // Per-request memo so a layout and its page share one membership query.
 const hasActiveMembership = renderMemo(
@@ -28,6 +32,11 @@ export async function canViewPlanDetail(
     archivedAt?: Date | null;
     /** #1527 Q4 — select it on 1:1 and subscription plans so drafts 404. */
     status?: OfferingPlanStatus | null;
+    /** Select `publicProfileFacts` so an unverified expert's plan 404s. */
+    consultantProfile: {
+      verificationStatus: ConsultantVerificationStatus;
+      deletedAt: Date | null;
+    } | null;
   } | null,
   // Pass a session already fetched alongside the plan (e.g. via Promise.all
   // in the detail pages) so the gate doesn't serialize behind it. When

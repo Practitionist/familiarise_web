@@ -19,7 +19,7 @@ import {
   seedHost,
   seedOneToOne,
 } from "./harness";
-import { publishEveryHour, seedBuyer } from "./harness-host";
+import { publishEveryHour, seedPaidTrialHold } from "./harness-host";
 import { seedHeldSeat, seedWebinar } from "./harness-seats";
 import {
   consumedBy,
@@ -86,7 +86,6 @@ jest.mock("../../../utils/appointmentlock", () => {
 
 import { closeOrderForRequestAgain } from "../../../lib/booking/request-again";
 import { handlePaymentSuccess } from "../../../lib/payments/webhooks/handlers";
-import { bookTrialInTx } from "../../../lib/trials/book-trial";
 import { refundDoor } from "./harness-edges";
 
 const PRICE_PAISE = 80_000;
@@ -459,7 +458,6 @@ describe("Request again closes the old order first", () => {
   it("a paid trial's lapsed order closes, the trial is cancelled and its time is announced", async () => {
     const host = await seedHost();
     await publishEveryHour(host);
-    const buyer = await seedBuyer();
     const plan = await prisma.subscriptionPlan.create({
       data: {
         title: "Request again trial plan",
@@ -474,36 +472,11 @@ describe("Request again closes the old order first", () => {
         trialPriceInPaise: BigInt(20_000),
       },
     });
-    const startsAt = futureAt(5, 10);
-    const trial = await prisma.$transaction((tx) =>
-      bookTrialInTx(tx, {
-        consulteeProfileId: buyer.consulteeProfileId,
-        consultantProfileId: host.consultantProfileId,
-        subscriptionPlanId: plan.id,
-        organizationId: null,
-        consulteeUserId: buyer.userId,
-        consultantUserId: host.userId,
-        paid: true,
-        agreedPricePaise: 20_000,
-        startsAt,
-        endsAt: new Date(startsAt.getTime() + 30 * 60_000),
-      }),
+    const { buyer, trial, payment, startsAt } = await seedPaidTrialHold(
+      host,
+      plan.id,
+      new Date(Date.now() - 60_000),
     );
-    const payment = await prisma.payment.create({
-      data: {
-        amount: BigInt(20_000),
-        originalAmount: BigInt(20_000),
-        paymentMethod: "card",
-        paymentIntent: `order_dbtier_${randomUUID()}`,
-        paymentGateway: "RAZORPAY",
-        paymentStatus: "PENDING",
-        userId: buyer.userId,
-        appointmentId: trial.appointmentId,
-        isMockPayment: true,
-        expiresAt: new Date(Date.now() - 60_000),
-        legs: { create: [{ source: "CARD", amountPaise: BigInt(20_000) }] },
-      },
-    });
 
     const waiting = await seedConsultee();
     const interest = await prisma.windowBackupInterest.create({

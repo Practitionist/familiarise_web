@@ -67,7 +67,8 @@ export function classifyError(error: unknown): {
     error instanceof BookingRuleError &&
     (error.code === "SUBSCRIPTION_UNPAID" ||
       error.code === "CHECKOUT_IN_PROGRESS" ||
-      error.code === "TOO_CLOSE_TO_START")
+      error.code === "TOO_CLOSE_TO_START" ||
+      error.code === "EXPERT_NOT_VERIFIED")
   ) {
     return { errorCode: error.code, httpStatus: error.httpStatus };
   }

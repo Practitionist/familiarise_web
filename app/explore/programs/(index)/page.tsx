@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import {
   getCuratedPrograms,
   getTopicsWithCount,
+  getProgramCounts,
 } from "@/lib/data/explore-programs";
 import {
   emptyOnTransientDbError,
@@ -81,7 +82,7 @@ export default async function ExplorePrograms() {
     // #1490 — `null` now means "show no numbers", not "show the marketing
     // numbers": there are no placeholder figures left to fall back to. Routed
     // through the helper rather than a local catch so a real defect surfaces.
-    getCachedProgramCounts().catch(
+    getProgramCounts().catch(
       fallbackOnTransientDbError("program stats", null, { perRequest: true }),
     ),
     getViewerOrgs().catch(
@@ -124,34 +125,6 @@ export default async function ExplorePrograms() {
 // counts distinct LEARNERS holding a seat that was actually paid for and not
 // given back (CONFIRMED or ATTENDED), so one person across four webinars counts
 // once, and a held-but-unpaid seat does not count at all.
-const getCachedProgramCounts = unstable_cache(
-  async () => {
-    const [publishedClassCount, publishedWebinarCount, learners] =
-      await Promise.all([
-        prisma.classPlan.count({ where: { visibility: "PUBLIC" } }),
-        prisma.webinarPlan.count({ where: { visibility: "PUBLIC" } }),
-        prisma.appointmentParticipant.findMany({
-          where: {
-            role: "CONSULTEE",
-            status: { in: ["CONFIRMED", "ATTENDED"] },
-            appointment: {
-              appointmentType: { in: ["WEBINAR", "CLASS"] },
-              deletedAt: null,
-            },
-          },
-          select: { userId: true },
-          distinct: ["userId"],
-        }),
-      ]);
-    return {
-      publishedClassCount,
-      publishedWebinarCount,
-      enrolledLearnerCount: learners.length,
-    };
-  },
-  ["program-stats"],
-  { revalidate: 3600, tags: ["programs"] },
-);
 
 /** Every level that exists across both plan families.
  *

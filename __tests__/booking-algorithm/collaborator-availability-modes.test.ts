@@ -93,6 +93,8 @@ const MON_0930 = "2025-01-06T09:30:00.000Z";
 
 function makeMockTx() {
   return {
+    // The expert-standing read under a share lock; no row reads as standing.
+    $queryRaw: jest.fn(async () => []),
     class: {
       findUnique: jest.fn(),
       update: jest.fn(),
