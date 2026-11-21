@@ -29,7 +29,10 @@ import {
   isPublicExpertProfile,
   publicProfileFacts,
 } from "@/lib/profiles/public-profile";
-import { expertUnavailablePayMessage } from "@/lib/booking/closed-sale-copy";
+import {
+  expertUnavailablePayMessage,
+  lateCapturePayMessage,
+} from "@/lib/booking/closed-sale-copy";
 
 export interface PayPageOrder {
   orderId: string;
@@ -308,11 +311,29 @@ function openState(row: PayPageRow): PayPageState {
   };
 }
 
-/** A recorded capture: a refund when the expert can no longer take the booking, otherwise paid. */
+const NEVER_CONFIRMED = new Set<AppointmentStatus>([
+  AppointmentStatus.EXPIRED,
+  AppointmentStatus.REJECTED,
+]);
+
+/** A 1:1 or subscription booking that ended without ever confirming; a capture on it is refunded. */
+function neverConfirmed(row: PayPageRow): boolean {
+  const { consultation, subscription } = row.appointment ?? {};
+  const status = consultation?.status ?? subscription?.status;
+  return status !== undefined && NEVER_CONFIRMED.has(status);
+}
+
+/** A recorded capture: a refund on a booking that never confirmed or whose expert takes none, otherwise paid. */
 function capturedState(row: PayPageRow): PayPageState {
-  return expertUnavailable(row) && bookingEnded(row)
-    ? unpayable(row)
-    : { kind: "paid", href: detailHref(row) };
+  if (expertUnavailable(row) && bookingEnded(row)) return unpayable(row);
+  if (neverConfirmed(row)) {
+    return {
+      kind: "unpayable",
+      doneHref: detailHref(row),
+      message: lateCapturePayMessage(),
+    };
+  }
+  return { kind: "paid", href: detailHref(row) };
 }
 
 /** A dead Razorpay order: a newer live one wins, else the booking's own path re-mints it. */

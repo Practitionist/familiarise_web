@@ -463,6 +463,31 @@ describe("a moderation reject stops new sales and honours what is booked", () =>
     ).toMatchObject({ kind: "unpayable", message: PAY_PAGE_AFTER_ORDER });
   }, 60_000);
 
+  it.each(["EXPIRED", "REJECTED"] as const)(
+    "answers a capture on a %s booking as refunded, whoever the expert is",
+    async (status) => {
+      const host = await seedHost();
+      const link = await liveLink(host);
+      await prisma.consultation.update({
+        where: { id: link.request.consultationId! },
+        data: { status },
+      });
+      await prisma.payment.update({
+        where: { id: link.request.payment!.id },
+        data: { paymentStatus: "SUCCEEDED" },
+      });
+
+      expect(
+        await resolvePayPage(link.request.payment!.id, link.consultee.userId),
+      ).toMatchObject({
+        kind: "unpayable",
+        message:
+          "This booking closed before your payment arrived. If you were charged, the money is refunded automatically.",
+      });
+    },
+    60_000,
+  );
+
   it("keeps a sale whose order already holds a live payment, and confirms it when the capture lands", async () => {
     const host = await seedHost();
     const link = await liveLink(host);

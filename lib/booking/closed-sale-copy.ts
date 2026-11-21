@@ -19,3 +19,8 @@ export function closedRequestNotice(
 export function expertUnavailablePayMessage(orderExisted: boolean): string {
   return `This expert isn't taking bookings right now. ${moneyLine(orderExisted)}`;
 }
+
+/** The pay page for a capture on a booking that never confirmed: that capture is refunded. */
+export function lateCapturePayMessage(): string {
+  return `This booking closed before your payment arrived. ${moneyLine(true)}`;
+}
