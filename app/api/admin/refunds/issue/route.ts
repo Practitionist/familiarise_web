@@ -11,6 +11,7 @@ import {
 } from "@/lib/backoffice/refund-doors";
 import { assertRefundDoorOpen } from "@/lib/backoffice/refund-eligibility";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
+import { RefundReplayExpiredError } from "@/lib/payments/operations/refund";
 import { occurrenceRefundKey } from "@/lib/booking/class-sessions";
 
 /** 400 copy for a missing/malformed `idempotencyKey` (via withOpsAction). */
@@ -68,7 +69,7 @@ export const POST = withOpsAction(
   {
     mode: "gateway",
     target: ({ body }) => ({ kind: "Payment", id: body.paymentId }),
-    run: async ({ body, actor }) => {
+    run: async ({ body, actor, priced }) => {
       if (
         body.amountPaise !== undefined &&
         body.tierOverridePct !== undefined
@@ -86,6 +87,7 @@ export const POST = withOpsAction(
         dedupeKey,
         replayAmount(body),
       );
+      if (priced?.replay && !replay) throw new RefundReplayExpiredError();
       // A replayed override keeps the amount it sent, not one priced on today's balance.
       const override =
         body.tierOverridePct === undefined
@@ -116,6 +118,8 @@ export const POST = withOpsAction(
         // A partial ops refund is not a cancellation; one that returns the rest ends the seat.
         keepSeatIfPartial: true,
         settlesOwedByHand: true,
+        // Priced unheld as a replay, so the writer may only answer the stored refund.
+        replayOnly: priced?.replay === true,
       }).catch((err: unknown) =>
         refundInFlightOr(err, dedupeKey, {
           paymentId: body.paymentId,
@@ -144,7 +148,7 @@ export const POST = withOpsAction(
           replayAmount(body),
         );
         // A matching replay moves no money: the door answers the stored refund, unheld.
-        if (replay) return 0;
+        if (replay) return { amountPaise: 0, replay: true };
         if (body.tierOverridePct === undefined) {
           return body.amountPaise ?? refundablePaymentPaise(body.paymentId);
         }

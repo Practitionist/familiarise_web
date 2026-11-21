@@ -179,6 +179,8 @@ export type RefundInput = {
   keepSeat?: boolean;
   /** The seat stays live only while an explicit amount leaves part of the payment refundable. */
   keepSeatIfPartial?: boolean;
+  /** Answer only the refund already stored under `dedupeKey`; without one, refuse instead of refunding. */
+  replayOnly?: boolean;
 } & OwedMarkerInput;
 
 export type RefundResult = {
@@ -284,6 +286,17 @@ export class RefundKeyReusedError extends RefundValidationError {
   }
 }
 
+/** A request priced as a replay whose stored refund is gone: refunding now would skip its second approval. */
+export class RefundReplayExpiredError extends RefundValidationError {
+  constructor() {
+    super(
+      "The earlier refund under this key failed. Open the refund again to send a new one, which may need a second approval.",
+      "REFUND_REPLAY_EXPIRED",
+    );
+    this.name = "RefundReplayExpiredError";
+  }
+}
+
 /** A stored refund replays only for its own payment and, when the request names one, its own amount. */
 export function assertRefundReplayMatches(
   stored: { paymentId: string; amountPaise: number | bigint },
@@ -369,6 +382,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
   // #1780 — a key already spent answers with its refund, before any balance check.
   const deduped = await findDedupedRefund(input.dedupeKey, input);
   if (deduped) return deduped;
+  if (input.replayOnly) throw new RefundReplayExpiredError();
 
   // Read payment outside the tx for early validation (cheap read; the
   // Serializable tx re-reads + locks for the actual mutation).

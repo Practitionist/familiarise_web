@@ -163,6 +163,7 @@ import {
 import {
   findDedupedRefund,
   isDedupeKeyConflict,
+  RefundReplayExpiredError,
   RefundValidationError,
   refundPayment,
 } from "./refund";
@@ -350,6 +351,8 @@ async function refundBookingPaymentOnRail(
     keepSeat?: boolean;
     /** An explicit amount keeps the seat live only while part of the payment stays refundable; no amount ends it. */
     keepSeatIfPartial?: boolean;
+    /** Answer only the refund already stored under `dedupeKey`, never a fresh one. */
+    replayOnly?: boolean;
   } & OwedMarkerInput,
 ): Promise<RailOutcome> {
   // #781 §B — soft-deleted financial rows are retired; never refund them.
@@ -443,7 +446,12 @@ async function refundBookingPaymentOnRail(
  * lost unique race is that answer. `paymentId` is the persisted refund's.
  */
 async function withDedupe(
-  input: { paymentId: string; amountPaise?: number; dedupeKey?: string },
+  input: {
+    paymentId: string;
+    amountPaise?: number;
+    dedupeKey?: string;
+    replayOnly?: boolean;
+  },
   rail: FundingRail,
   run: () => Promise<BookingRefundResult>,
 ): Promise<{
@@ -457,7 +465,7 @@ async function withDedupe(
     result: await run(),
     paymentId: input.paymentId,
   });
-  if (!input.dedupeKey) return ran();
+  if (!input.dedupeKey && !input.replayOnly) return ran();
   const answered = async () => {
     const prior = await findDedupedRefund(input.dedupeKey, input);
     return prior
@@ -475,6 +483,7 @@ async function withDedupe(
   };
   const prior = await answered();
   if (prior) return prior;
+  if (input.replayOnly) throw new RefundReplayExpiredError();
   try {
     return await ran();
   } catch (err) {

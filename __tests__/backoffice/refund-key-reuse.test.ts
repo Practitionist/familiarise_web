@@ -37,7 +37,17 @@ jest.mock("../../lib/stream/access-revocation", () => ({
 }));
 
 type Spent = { id: string; paymentId: string; amountPaise: number };
-const mockStore = { spent: null as (Spent & { dedupeKey: string }) | null };
+const mockStore = {
+  spent: null as (Spent & { dedupeKey: string }) | null,
+  /** Key lookups that still find the spent refund before it fails and frees its key; null is every one. */
+  lookupsLeft: null as number | null,
+};
+const mockFindByKey = (dedupeKey?: string) => {
+  if (!dedupeKey || mockStore.spent?.dedupeKey !== dedupeKey) return null;
+  if (mockStore.lookupsLeft !== null && mockStore.lookupsLeft-- <= 0)
+    return null;
+  return { ...mockStore.spent, status: "SUCCEEDED" };
+};
 /** A ₹50 card seat (B, and A whose key is reused) and a credit-funded class seat (C). */
 const mockPayments: Record<string, Record<string, unknown>> = {
   "pay-A": { paymentIntent: "order_A", userId: "buyer-A" },
@@ -53,9 +63,7 @@ jest.mock("../../lib/prisma", () => ({
     user: { count: async () => 2 },
     refund: {
       findUnique: async ({ where }: { where: { dedupeKey?: string } }) =>
-        where.dedupeKey && mockStore.spent?.dedupeKey === where.dedupeKey
-          ? { ...mockStore.spent, status: "SUCCEEDED" }
-          : null,
+        mockFindByKey(where.dedupeKey),
       updateMany: async () => ({ count: 0 }),
     },
     payment: {
@@ -131,6 +139,7 @@ const noSeatEnded = () => {
 beforeEach(() => {
   jest.clearAllMocks();
   mockStore.spent = null;
+  mockStore.lookupsLeft = null;
 });
 
 describe("the issue door", () => {
@@ -200,6 +209,31 @@ describe("the issue door", () => {
       amountRefundedPaise: 3_000_000,
     });
   });
+
+  // Pricing, then the run's door check, then the writer's own lookup each read the key.
+  it.each([
+    ["before the run's door check", 1],
+    ["between the door check and the writer", 2],
+  ])(
+    "refuses an unheld replay whose ₹30,000 refund failed %s, refunding nothing",
+    async (_when, lookupsLeft) => {
+      spend(`ops:${KEY}`, {
+        id: "ref-D",
+        paymentId: "pay-D",
+        amountPaise: 3_000_000,
+      });
+      mockStore.lookupsLeft = lookupsLeft;
+
+      const res = await issueFor({ paymentId: "pay-D", tierOverridePct: 60 });
+
+      expect(res.status).toBe(409);
+      expect(await res.json()).toMatchObject({
+        code: "REFUND_REPLAY_EXPIRED",
+        error: expect.stringContaining("may need a second approval"),
+      });
+      noSeatEnded();
+    },
+  );
 
   it("replays a ladder override at the amount it sent, without re-pricing it", async () => {
     spend(`ops:${KEY}`, {
