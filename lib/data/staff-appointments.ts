@@ -5,6 +5,7 @@
  */
 
 import { withLapsedMoveRestored } from "@/lib/appointments/lapsed-move";
+import { liveOccurrenceWhere } from "@/lib/appointments/occurrences";
 import prisma from "@/lib/prisma";
 import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
 import { AppointmentsType, Prisma } from "@prisma/client";
@@ -172,6 +173,11 @@ export async function getStaffAppointments(
   if (occurrenceInRange) {
     baseWhere.occurrences = { some: occurrenceInRange };
   }
+  // Scheduled matches and shows only live sessions: a cancelled one never places a booking in range.
+  const scheduledOccurrence: Prisma.AppointmentOccurrenceWhereInput = {
+    ...liveOccurrenceWhere,
+    ...occurrenceInRange,
+  };
 
   // Handle search across multiple fields
   if (search) {
@@ -257,8 +263,12 @@ export async function getStaffAppointments(
   // #897 — AND the resolved status condition onto the base for the list query
   // so pagination + total reflect the filtered set.
   const statusCond = buildStatusWhere(status);
+  const scheduledBaseWhere: Prisma.AppointmentWhereInput = occurrenceInRange
+    ? { ...baseWhere, occurrences: { some: scheduledOccurrence } }
+    : baseWhere;
+  const isScheduled = status === "scheduled";
   const listWhere: Prisma.AppointmentWhereInput = statusCond
-    ? { AND: [baseWhere, statusCond] }
+    ? { AND: [isScheduled ? scheduledBaseWhere : baseWhere, statusCond] }
     : baseWhere;
 
   // One paginated list query + per-tab count queries. `total` drives
@@ -292,7 +302,7 @@ export async function getStaffAppointments(
           },
         },
         occurrences: {
-          where: occurrenceInRange,
+          where: isScheduled ? scheduledOccurrence : occurrenceInRange,
           orderBy: { startsAt: "asc" },
           take: 1,
           select: {
@@ -324,7 +334,9 @@ export async function getStaffAppointments(
     prisma.appointment.count({ where: listWhere }),
     prisma.appointment.count({ where: baseWhere }),
     prisma.appointment.count({
-      where: { AND: [baseWhere, buildStatusWhere("scheduled") ?? {}] },
+      where: {
+        AND: [scheduledBaseWhere, buildStatusWhere("scheduled") ?? {}],
+      },
     }),
     prisma.appointment.count({
       where: { AND: [baseWhere, buildStatusWhere("completed") ?? {}] },

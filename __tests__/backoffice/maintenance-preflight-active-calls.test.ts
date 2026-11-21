@@ -96,11 +96,36 @@ describe("maintenance preflight active calls", () => {
     expect(body.recommendation).toBe("RISKY");
   });
 
-  it("counts a room with an open presence row without asking Stream", async () => {
+  it("counts a room with an open presence row once, even when Stream also lists it", async () => {
     mockPrisma.meeting.findMany.mockResolvedValue([room("occurrence-a", true)]);
+    mockQueryCalls.mockResolvedValue(ongoing("occurrence-a"));
     const body = await (await GET()).json();
     expect(body.activeCalls).toBe(1);
-    expect(mockQueryCalls).not.toHaveBeenCalled();
+  });
+
+  it("counts a live call whose room a late end webhook already closed", async () => {
+    // No open room at all; Stream still lists the reconnected session.
+    mockQueryCalls.mockResolvedValue(ongoing("occurrence-reconnected-r1a"));
+    const body = await (await GET()).json();
+    expect(body.activeCalls).toBe(1);
+    expect(body.recommendation).toBe("RISKY");
+  });
+
+  it("counts a room once when Stream lists it under its rotated call id", async () => {
+    mockPrisma.meeting.findMany.mockResolvedValue([room("occurrence-x")]);
+    mockQueryCalls.mockResolvedValue(ongoing("occurrence-x-r2b"));
+    const body = await (await GET()).json();
+    expect(body.activeCalls).toBe(1);
+  });
+
+  it("warns and cautions when Stream fails with no open room to count", async () => {
+    mockQueryCalls.mockRejectedValue(new Error("Stream 503"));
+    const body = await (await GET()).json();
+    expect(body.activeCalls).toBe(0);
+    expect(body.recommendation).toBe("CAUTION");
+    expect(body.warnings).toEqual([
+      "Stream could not be checked, so a live call whose room is already closed may be missing",
+    ]);
   });
 
   it("does not count a provisioned room whose first join failed", async () => {
@@ -144,6 +169,10 @@ describe("maintenance preflight active calls", () => {
     mockPrisma.meeting.findMany.mockResolvedValue([room("occurrence-a")]);
     mockQueryCalls.mockResolvedValue({ ...ongoing("other"), next: "cursor" });
     const body = await (await GET()).json();
-    expect(body.activeCalls).toBe(1);
+    // The listed call and the unlisted room.
+    expect(body.activeCalls).toBe(2);
+    expect(body.warnings).toContain(
+      "1 open room(s) could not be checked with Stream and are counted as active",
+    );
   });
 });

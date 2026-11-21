@@ -4,7 +4,11 @@ import {
   createRunFailureReporter,
   type RunFailureReporter,
 } from "@/lib/observability/run-failures";
-import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
+import {
+  parseSlotIdFromCallId,
+  STREAM_CALL_TYPE,
+  toCallId,
+} from "@/lib/stream/call-cid";
 import {
   getStreamVideoClient,
   isStreamConfigured,
@@ -20,6 +24,13 @@ export interface ActiveCallCount {
   active: number;
   /** Rooms Stream could not confirm either way, counted as active. */
   unverified: number;
+  /** False when Stream could not be asked, so a live call whose room is closed may be missing. */
+  streamChecked: boolean;
+}
+
+/** One key per session, so a rotated `-r…` call id and its room's stored id count once. */
+function sessionKey(callId: string): string {
+  return parseSlotIdFromCallId(callId) ?? toCallId(callId);
 }
 
 class OngoingLookupTimeout extends Error {
@@ -62,8 +73,8 @@ async function readOngoingCallIds(failures: RunFailureReporter): Promise<{
 }
 
 /**
- * Counts rooms that may hold a live call: an open room with a fresh open presence
- * row, or one Stream lists as ongoing. Anything Stream cannot confirm counts as active.
+ * Counts sessions that may be live: an open room with a fresh open presence row, or
+ * any call Stream lists as ongoing, even when its room is closed. Unconfirmable rooms count as active.
  */
 export async function countActiveCalls(
   db: PrismaLike,
@@ -84,27 +95,43 @@ export async function countActiveCalls(
     },
   });
 
-  const present = rooms.filter((r) => r.presences.length > 0).length;
-  const uncertain = rooms.filter((r) => r.presences.length === 0);
-  if (uncertain.length === 0) return { active: present, unverified: 0 };
+  const present = new Set(
+    rooms
+      .filter((r) => r.presences.length > 0)
+      .map((r) => sessionKey(r.streamCallId)),
+  );
+  const uncertain = new Set(
+    rooms
+      .filter((r) => r.presences.length === 0)
+      .map((r) => sessionKey(r.streamCallId))
+      .filter((key) => !present.has(key)),
+  );
 
   const failures = createRunFailureReporter("stream");
   try {
     if (!isStreamConfigured()) throw new Error("Stream is not configured");
     const { ids, complete } = await readOngoingCallIds(failures);
-    const live = uncertain.filter((r) => ids.has(toCallId(r.streamCallId)));
-    const unverified = complete ? 0 : uncertain.length - live.length;
-    return { active: present + live.length + unverified, unverified };
+    const ongoing = new Set([...ids].map(sessionKey));
+    const live = [...ongoing].filter((key) => !present.has(key)).length;
+    const unverified = complete
+      ? 0
+      : [...uncertain].filter((key) => !ongoing.has(key)).length;
+    return {
+      active: present.size + live + unverified,
+      unverified,
+      streamChecked: true,
+    };
   } catch (error) {
     // The breaker already reported a Stream error into `failures`; only the timeout is unseen.
     if (error instanceof OngoingLookupTimeout) {
       failures.add("maintenance-preflight.ongoing-calls", error, {
-        rooms: uncertain.length,
+        rooms: uncertain.size,
       });
     }
     return {
-      active: present + uncertain.length,
-      unverified: uncertain.length,
+      active: present.size + uncertain.size,
+      unverified: uncertain.size,
+      streamChecked: false,
     };
   } finally {
     failures.flush();

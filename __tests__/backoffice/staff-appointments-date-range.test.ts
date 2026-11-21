@@ -88,3 +88,63 @@ it("takes the displayed occurrence from inside the same range it filters on", as
   expect(args.select.occurrences.take).toBe(1);
   expect(args.select.occurrences.where?.startsAt).toEqual(startsAtFilter());
 });
+
+describe("the Scheduled tab reads only live sessions", () => {
+  // A class whose Nov 18 session was cancelled, with its make-up on Nov 25.
+  const nov18 = {
+    gte: new Date("2026-11-18T00:00:00Z"),
+    lte: new Date("2026-11-18T23:59:59Z"),
+  };
+  const liveNov18 = {
+    deletedAt: null,
+    completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
+    startsAt: nov18,
+  };
+  type CountArgs = { where: { AND?: [{ occurrences?: { some: unknown } }] } };
+  const countOccurrences = (call: number) =>
+    (mockCount.mock.calls[call][0] as CountArgs).where.AND?.[0].occurrences
+      ?.some;
+
+  it("matches, shows and counts a range only by its live sessions", async () => {
+    await getStaffAppointments({
+      scope: { kind: "all" },
+      status: "scheduled",
+      dateFrom: "2026-11-18T00:00:00Z",
+      dateTo: "2026-11-18T23:59:59Z",
+    });
+    const args = mockFindMany.mock.calls[0][0] as {
+      where: CountArgs["where"];
+      select: { occurrences: { where?: unknown } };
+    };
+    expect(args.where.AND?.[0].occurrences?.some).toEqual(liveNov18);
+    expect(args.select.occurrences.where).toEqual(liveNov18);
+    // Calls: list total, All, Scheduled, Completed, Issue.
+    expect(countOccurrences(2)).toEqual(liveNov18);
+    expect(countOccurrences(3)).toEqual({ startsAt: nov18 });
+    expect(countOccurrences(4)).toEqual({ startsAt: nov18 });
+  });
+
+  it("shows a live session even without a date range", async () => {
+    await getStaffAppointments({ scope: { kind: "all" }, status: "scheduled" });
+    const args = mockFindMany.mock.calls[0][0] as {
+      select: { occurrences: { where?: unknown } };
+    };
+    expect(args.select.occurrences.where).toEqual({
+      deletedAt: null,
+      completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
+    });
+  });
+
+  it("leaves the Issue tab's sessions unfiltered, so a cancelled booking still lists", async () => {
+    await getStaffAppointments({
+      scope: { kind: "all" },
+      status: "issue",
+      dateFrom: "2026-11-18T00:00:00Z",
+      dateTo: "2026-11-18T23:59:59Z",
+    });
+    const args = mockFindMany.mock.calls[0][0] as {
+      select: { occurrences: { where?: unknown } };
+    };
+    expect(args.select.occurrences.where).toEqual({ startsAt: nov18 });
+  });
+});

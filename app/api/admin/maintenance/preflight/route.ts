@@ -50,6 +50,10 @@ export async function GET() {
     warnings.push(
       `${calls.unverified} open room(s) could not be checked with Stream and are counted as active`,
     );
+  if (!calls.streamChecked)
+    warnings.push(
+      "Stream could not be checked, so a live call whose room is already closed may be missing",
+    );
   if (activeCalls > 0)
     warnings.push(`${activeCalls} active video call(s) in progress`);
   if (pendingPayments > 0)
@@ -63,7 +67,11 @@ export async function GET() {
   let recommendation: "SAFE" | "CAUTION" | "RISKY";
   if (activeCalls > 0 || pendingPayments > 0 || openDisputes > 0) {
     recommendation = "RISKY";
-  } else if (upcomingAppointments > 0 || pendingPayouts > 0) {
+  } else if (
+    upcomingAppointments > 0 ||
+    pendingPayouts > 0 ||
+    !calls.streamChecked
+  ) {
     recommendation = "CAUTION";
   } else {
     recommendation = "SAFE";
