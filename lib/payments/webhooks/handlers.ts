@@ -336,12 +336,48 @@ export function lateCaptureRefundKeys(gatewayPaymentId: string): {
   };
 }
 
+/**
+ * Refunds a capture that landed after its hold was released, keyed on the gateway payment, and marks the
+ * payment Auto-refunded unless the gateway still holds the refund. Throws when the refund fails; the
+ * `Auto-refund pending:` marker then stays for `retry-auto-refunds`.
+ */
+export async function refundLateCapture(input: {
+  paymentId: string;
+  /** What the gateway still holds of the capture; omitted, the payment's whole refundable balance. */
+  amountPaise?: number;
+  releasedBy: string;
+  gatewayPaymentId?: string;
+  /** The caller reports a failure itself; see `RefundInput.failureReportedByCaller`. */
+  failureReportedByCaller?: boolean;
+}): Promise<void> {
+  const outcome = await refundBookingPayment({
+    paymentId: input.paymentId,
+    ...(input.failureReportedByCaller ? { failureReportedByCaller: true } : {}),
+    ...(input.amountPaise === undefined
+      ? {}
+      : { amountPaise: input.amountPaise }),
+    reason: `capture after hold release (${input.releasedBy})`,
+    initiatedByUserId: null,
+    ...(input.gatewayPaymentId
+      ? lateCaptureRefundKeys(input.gatewayPaymentId)
+      : {}),
+  });
+  if (outcome?.status !== "PENDING") {
+    await prisma.payment.update({
+      where: { id: input.paymentId },
+      data: {
+        description: `Auto-refunded: capture landed after the hold was released (${input.releasedBy}). Booking NOT confirmed.`,
+      },
+    });
+  }
+}
+
 export async function handlePaymentSuccess(
   paymentIntentId: string,
   rawMetadata: Record<string, string>,
   gatewayAmountPaise?: number,
   gatewayPaymentId?: string,
-  options?: { recover?: boolean },
+  options?: { recover?: boolean; deferLateCaptureRefund?: boolean },
 ): Promise<PaymentSuccessTxResult["outcome"] | null> {
   const recovering = options?.recover === true;
   const metadata = { ...normalizeLegacySlotKeys(rawMetadata) };
@@ -1274,19 +1310,13 @@ export async function handlePaymentSuccess(
 
   if (txResult.outcome === "captured_after_release") {
     try {
-      const outcome = await refundBookingPayment({
-        paymentId: txResult.paymentId,
-        amountPaise: gatewayAmountPaise,
-        reason: `capture after hold release (${txResult.releasedBy})`,
-        initiatedByUserId: null,
-        ...(gatewayPaymentId ? lateCaptureRefundKeys(gatewayPaymentId) : {}),
-      });
-      if (outcome?.status !== "PENDING") {
-        await prisma.payment.update({
-          where: { id: txResult.paymentId },
-          data: {
-            description: `Auto-refunded: capture landed after the hold was released (${txResult.releasedBy}). Booking NOT confirmed.`,
-          },
+      // A deferring caller refunds through `refundLateCapture` and reports the failure itself.
+      if (!options?.deferLateCaptureRefund) {
+        await refundLateCapture({
+          paymentId: txResult.paymentId,
+          amountPaise: gatewayAmountPaise,
+          releasedBy: txResult.releasedBy,
+          gatewayPaymentId,
         });
       }
     } catch (refundError) {

@@ -97,20 +97,79 @@ function stalePendingPaymentWhere(
 
 // Razorpay late authorisation polls the bank for up to 3 days, so an order we closed is re-read that long.
 const CLOSED_ORDER_REREAD_MS = 72 * 60 * 60 * 1000;
+// An order past its 72 hours still gets one read after them, if it comes within this grace.
+const CLOSED_ORDER_FINAL_READ_GRACE_MS = 24 * 60 * 60 * 1000;
 
 /**
- * Real gateway orders we closed (EXPIRED) with no capture recorded, closed since `since`.
- * `updatedAt` is never earlier than the close: every EXPIRED writer is a Prisma write, and the poll stamp is raw SQL.
+ * Real gateway orders we closed (EXPIRED) with no capture recorded: closed in the last 72 hours, or past
+ * them but not read since. `updatedAt` is never earlier than the close: every EXPIRED writer is a Prisma
+ * write, and the poll stamp is raw SQL.
  */
-function closedOrderRereadWhere(since: Date): Prisma.PaymentWhereInput {
+function closedOrderSql(now: Date): Prisma.Sql {
+  const horizon = new Date(now.getTime() - CLOSED_ORDER_REREAD_MS);
+  const floor = new Date(horizon.getTime() - CLOSED_ORDER_FINAL_READ_GRACE_MS);
+  return Prisma.sql`"paymentStatus" = 'EXPIRED'
+    AND "paymentGateway" = 'RAZORPAY'
+    AND starts_with("paymentIntent", ${RAZORPAY_ORDER_PREFIX})
+    AND "capturedAt" IS NULL
+    AND ("description" IS NULL OR NOT starts_with("description", ${MANUAL_RECOVERY_PREFIX}))
+    AND "updatedAt" >= ${floor}
+    AND (
+      "updatedAt" >= ${horizon}
+      OR "lastReconciledAt" IS NULL
+      OR "lastReconciledAt" < "updatedAt" + make_interval(secs => ${CLOSED_ORDER_REREAD_MS / 1000})
+    )`;
+}
+
+/** A superset of {@link closedOrderSql} for the idle probe. */
+function closedOrderProbeWhere(now: Date): Prisma.PaymentWhereInput {
   return {
     paymentStatus: PaymentStatus.EXPIRED,
     paymentGateway: PaymentGateway.RAZORPAY,
     paymentIntent: { startsWith: RAZORPAY_ORDER_PREFIX },
     capturedAt: null,
-    updatedAt: { gte: since },
+    updatedAt: {
+      gte: new Date(
+        now.getTime() -
+          CLOSED_ORDER_REREAD_MS -
+          CLOSED_ORDER_FINAL_READ_GRACE_MS,
+      ),
+    },
     AND: [reconcilableIntentWhere, notManualRecoveryWhere],
   };
+}
+
+/**
+ * Closed orders, first-come first-served: an order not read since its close queues at its close time,
+ * one already read at its last read, so new closes never displace a repeat read.
+ */
+async function readClosedOrderCohort(now: Date, limit: number) {
+  const ids = await prisma.$queryRaw<{ id: string }[]>`
+    SELECT id FROM "Payment"
+    WHERE ${closedOrderSql(now)}
+    ORDER BY GREATEST("lastReconciledAt", "updatedAt") ASC, id ASC
+    LIMIT ${limit}`;
+  if (ids.length === 0) return [];
+  const rows = await prisma.payment.findMany({
+    where: { id: { in: ids.map((r) => r.id) } },
+    include: {
+      user: { select: { email: true, name: true } },
+      appointment: { select: { id: true, appointmentType: true } },
+    },
+  });
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  return ids.flatMap((r) => byId.get(r.id) ?? []);
+}
+
+/** Alternates the lists so each gets its share of `limit`, a list with fewer rows giving its share to the other. */
+function interleave<T>(lists: T[][], limit: number): T[] {
+  const out: T[] = [];
+  for (let i = 0; out.length < limit; i++) {
+    const round = lists.map((l) => l[i]).filter((x) => x !== undefined);
+    if (round.length === 0) break;
+    out.push(...round);
+  }
+  return out.slice(0, limit);
 }
 
 /** PENDING rows past the orphan age; shared with the ticker's idle probe. */
@@ -142,7 +201,7 @@ export async function hasPaymentStatusReconcileWork(
         orphanPendingCandidateWhere(
           new Date(t - DEFAULT_ORPHAN_PENDING_MAX_AGE_MS),
         ),
-        closedOrderRereadWhere(new Date(t - CLOSED_ORDER_REREAD_MS)),
+        closedOrderProbeWhere(now),
       ],
     },
     select: { id: true },
@@ -293,6 +352,21 @@ const orderPaymentsSchema = z.object({
         id: z.string(),
         status: z.string(),
         amount: z.number().int().positive(),
+        amount_refunded: z.number().int().nonnegative().optional(),
+        notes: razorpayNotesSchema,
+      })
+      .passthrough(),
+  ),
+});
+
+const paymentRefundsSchema = z.object({
+  items: z.array(
+    z
+      .object({
+        id: z.string(),
+        amount: z.number().int().positive(),
+        currency: z.string(),
+        status: z.string(),
         notes: razorpayNotesSchema,
       })
       .passthrough(),
@@ -306,44 +380,44 @@ type ClosedOrderLookup =
       paymentId: string;
       notes: Record<string, string>;
       amountPaise: number;
+      /** Refunded at the gateway already, for example from the Razorpay dashboard. */
+      refundedPaise: number;
     }
   | { kind: "authorized" }
   | { kind: "nothing" }
   | { kind: "gateway_error"; detail: string };
+
+/** A Razorpay GET; `null` when the id is unknown (400 or 404). Throws when the gateway cannot answer. */
+async function razorpayGet(path: string, deadlineAt: number): Promise<unknown> {
+  const keyId = process.env.RAZORPAY_KEY_ID;
+  const keySecret = process.env.RAZORPAY_SECRET;
+  if (!keyId || !keySecret) {
+    throw new Error("Razorpay credentials not configured");
+  }
+  const credentials = Buffer.from(`${keyId}:${keySecret}`).toString("base64");
+  const res = await fetch(`https://api.razorpay.com/v1/${path}`, {
+    method: "GET",
+    headers: { Authorization: `Basic ${credentials}` },
+    signal: AbortSignal.timeout(Math.max(1, deadlineAt - Date.now())),
+  });
+  if (res.ok) return res.json();
+  const description = await razorpayErrorDescription(res);
+  if (res.status === 400 || res.status === 404) return null;
+  throw new Error(`${res.status} ${description}`);
+}
 
 /** GET /v1/orders/:id/payments for an order we closed; an id Razorpay does not know holds nothing. */
 async function readClosedOrder(
   orderId: string,
   deadlineAt: number,
 ): Promise<ClosedOrderLookup> {
-  const keyId = process.env.RAZORPAY_KEY_ID;
-  const keySecret = process.env.RAZORPAY_SECRET;
-  if (!keyId || !keySecret) {
-    return {
-      kind: "gateway_error",
-      detail: "Razorpay credentials not configured",
-    };
-  }
   try {
-    const res = await fetch(
-      `https://api.razorpay.com/v1/orders/${encodeURIComponent(orderId)}/payments`,
-      {
-        method: "GET",
-        headers: {
-          Authorization: `Basic ${Buffer.from(`${keyId}:${keySecret}`).toString("base64")}`,
-        },
-        signal: AbortSignal.timeout(Math.max(1, deadlineAt - Date.now())),
-      },
+    const body = await razorpayGet(
+      `orders/${encodeURIComponent(orderId)}/payments`,
+      deadlineAt,
     );
-    if (!res.ok) {
-      const description = await razorpayErrorDescription(res);
-      if (res.status === 400 || res.status === 404) return { kind: "nothing" };
-      return {
-        kind: "gateway_error",
-        detail: `${res.status} ${description}`,
-      };
-    }
-    const { items } = orderPaymentsSchema.parse(await res.json());
+    if (body === null) return { kind: "nothing" };
+    const { items } = orderPaymentsSchema.parse(body);
     const captured = items.find((p) => p.status === "captured");
     if (captured) {
       return {
@@ -351,6 +425,7 @@ async function readClosedOrder(
         paymentId: captured.id,
         notes: captured.notes,
         amountPaise: captured.amount,
+        refundedPaise: captured.amount_refunded ?? 0,
       };
     }
     return items.some((p) => p.status === "authorized")
@@ -362,6 +437,71 @@ async function readClosedOrder(
       detail: error instanceof Error ? error.message : String(error),
     };
   }
+}
+
+// Captures these notes route to settle rows other than a booking's Payment; a closed order never carries them.
+const NON_BOOKING_CAPTURE_TYPES: ReadonlySet<string> = new Set([
+  "credit_purchase",
+  "invoice_payment",
+  "recording_purchase",
+  "digital_product_purchase",
+]);
+
+/**
+ * Records a closed booking order's capture and refunds what the gateway still holds. Refunds already made at
+ * the gateway are recorded first by provider id, so only the rest is refunded. Returns false when another door
+ * recorded the capture first; throws when a gateway refund could not be recorded or the refund failed.
+ */
+async function refundClosedOrderCapture(
+  payment: { id: string; paymentIntent: string },
+  held: Extract<ClosedOrderLookup, { kind: "captured" }>,
+  deadlineAt: number,
+): Promise<boolean> {
+  // Dynamic, as Request again's re-check imports them: the capture handlers reach back into booking.
+  const { handlePaymentSuccess, refundLateCapture, settleAutoRefundMarker } =
+    await import("@/lib/payments/webhooks/handlers");
+  const { handleRefundCreated, DeferSignal } =
+    await import("@/app/api/webhooks/utils");
+  const outcome = await handlePaymentSuccess(
+    payment.paymentIntent,
+    held.notes,
+    held.amountPaise,
+    held.paymentId,
+    { deferLateCaptureRefund: true },
+  );
+  if (outcome !== "captured_after_release") return false;
+  if (held.refundedPaise > 0) {
+    const body = await razorpayGet(
+      `payments/${encodeURIComponent(held.paymentId)}/refunds`,
+      deadlineAt,
+    );
+    const { items } = paymentRefundsSchema.parse(body ?? { items: [] });
+    for (const refund of items) {
+      const recorded = await handleRefundCreated(
+        refund.id,
+        payment.paymentIntent,
+        refund.amount,
+        refund.currency,
+        refund.status,
+        held.paymentId,
+        refund.notes,
+      );
+      if (recorded instanceof DeferSignal) throw new Error(recorded.reason);
+    }
+  }
+  const owedPaise = held.amountPaise - held.refundedPaise;
+  if (owedPaise > 0) {
+    await refundLateCapture({
+      paymentId: payment.id,
+      amountPaise: owedPaise,
+      releasedBy: `payment ${PaymentStatus.EXPIRED}`,
+      gatewayPaymentId: held.paymentId,
+      failureReportedByCaller: true,
+    });
+  } else {
+    await settleAutoRefundMarker(payment.id);
+  }
+  return true;
 }
 
 /** Razorpay's error body is `{ error: { code, description } }`; tolerate anything else. */
@@ -469,30 +609,26 @@ async function reconcilePaymentStatusUnlocked(
   const orphanCandidateIds = new Set(orphanCandidates.map((p) => p.id));
 
   // Orders we closed: a capture there after a lost webhook is found here and refunded.
-  const closedOrders = await prisma.payment.findMany({
-    where: closedOrderRereadWhere(
-      new Date(Date.now() - CLOSED_ORDER_REREAD_MS),
-    ),
-    include: {
-      user: { select: { email: true, name: true } },
-      appointment: { select: { id: true, appointmentType: true } },
-    },
-    orderBy: [LEAST_RECENTLY_RECONCILED, { id: "asc" }],
-    take: limit,
-  });
+  const closedOrders = await readClosedOrderCohort(new Date(), limit);
   const closedOrderIds = new Set(closedOrders.map((p) => p.id));
 
-  const seen = new Set<string>();
-  const cohort = [...stalePendingPayments, ...orphanCandidates, ...closedOrders]
-    .filter((p) => {
-      if (seen.has(p.id)) return false;
-      seen.add(p.id);
-      return true;
-    })
-    .sort(compareLeastRecentlyReconciled)
-    .slice(0, limit);
+  const pendingCohort = [
+    ...stalePendingPayments,
+    ...orphanCandidates.filter(
+      (p) => !stalePendingPayments.some((s) => s.id === p.id),
+    ),
+  ].sort(compareLeastRecentlyReconciled);
+  // Pending work and closed orders share the limit half and half, so neither starves the other.
+  const cohort = interleave(
+    [
+      pendingCohort,
+      closedOrders.filter((p) => !pendingCohort.some((q) => q.id === p.id)),
+    ],
+    limit,
+  );
   let closedOrdersRead = 0;
   const lateCaptures: string[] = [];
+  const lateCaptureRefundFailures: string[] = [];
   let totalProcessed = 0;
 
   const razorpayConfigured = !!(
@@ -567,19 +703,40 @@ async function reconcilePaymentStatusUnlocked(
           skippedCount++;
           continue;
         }
-        // The handler's EXPIRED arm records the capture and refunds it; it needs no booking context.
+        const flow = held.notes.type;
+        if (
+          (flow && NON_BOOKING_CAPTURE_TYPES.has(flow)) ||
+          (flow === "overage_member" && payment.parentPaymentId !== null)
+        ) {
+          errors.push(
+            `Payment ${payment.id}: closed order ${payment.paymentIntent} holds a ${flow} capture no handler refunds here; refund by hand`,
+          );
+          continue;
+        }
         try {
-          await routeCapturedPayment({
-            orderId: payment.paymentIntent,
-            notes: held.notes,
-            amountPaise: held.amountPaise,
-            gatewayPaymentId: held.paymentId,
-          });
-          lateCaptures.push(payment.id);
-          reconciledCount++;
+          if (flow === "overage_member") {
+            // A replaced overage order's tombstone: its handler parks the capture and refunds it.
+            await routeCapturedPayment({
+              orderId: payment.paymentIntent,
+              notes: held.notes,
+              amountPaise: held.amountPaise,
+              gatewayPaymentId: held.paymentId,
+            });
+            reconciledCount++;
+          } else if (
+            await refundClosedOrderCapture(payment, held, gatewayDeadlineAt)
+          ) {
+            lateCaptures.push(payment.id);
+            reconciledCount++;
+          } else {
+            skippedCount++;
+          }
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          errors.push(`Payment ${payment.id}: ${msg}`);
+          errors.push(
+            `Payment ${payment.id}: late capture not refunded: ${msg}`,
+          );
+          lateCaptureRefundFailures.push(payment.id);
         }
         continue;
       }
@@ -891,6 +1048,19 @@ async function reconcilePaymentStatusUnlocked(
       err: new Error("UNSUPPORTED_GATEWAY_DEAD_LETTERED"),
       context: { paymentIds: deadLetteredIds },
     });
+  }
+
+  // One report per run for late captures left unrefunded; `retry-auto-refunds` drives each marker.
+  if (lateCaptureRefundFailures.length > 0) {
+    reportSentryMessage(
+      `reconcile-payment-status: ${lateCaptureRefundFailures.length} late capture(s) on closed orders not refunded`,
+      {
+        subsystem: "payments",
+        op: "reconcile-payment-status",
+        level: "error",
+        extra: { paymentIds: lateCaptureRefundFailures },
+      },
+    );
   }
 
   // One expected warning per run listing the ids, never one per row (#1757).

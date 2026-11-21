@@ -341,6 +341,8 @@ async function refundBookingPaymentOnRail(
     dedupeKey?: string;
     /** Sent to the gateway rail only; see `RefundInput.gatewayReceipt`. */
     gatewayReceipt?: string;
+    /** See `RefundInput.failureReportedByCaller`. */
+    failureReportedByCaller?: boolean;
     supportRecommendationId?: string;
     /**
      * #1780 row 4 — a per-session refund (a missed class session) leaves the

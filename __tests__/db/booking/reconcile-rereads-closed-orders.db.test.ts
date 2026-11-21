@@ -2,9 +2,12 @@
  * `reconcile-payment-status` re-reads orders we closed in the last 72 hours, on real Postgres:
  *  - a capture found on an order the expiry sweep closed is refunded once and confirms nothing;
  *  - a later webhook for the same capture refunds nothing more;
- *  - an order closed 80 hours ago, and a pre-mint placeholder, are never read;
- *  - an authorisation alone is left to the gateway;
- *  - the run takes the job's lock and reads at most `limit` orders, least recently read first.
+ *  - a refund already made at the gateway is recorded, and only the rest is refunded;
+ *  - an order gets one more read after its 72 hours, and none after that or past the grace;
+ *  - a pre-mint placeholder is never read, and an authorisation alone is left to the gateway;
+ *  - the run takes the job's lock, reads at most `limit` orders, and new closes never starve
+ *    a repeat read or pending work;
+ *  - refund failures fail the run and are reported once.
  */
 import { randomUUID } from "node:crypto";
 import prisma from "../../../lib/prisma";
@@ -44,6 +47,28 @@ jest.mock("../../../lib/stream/access-revocation", () =>
 jest.mock("../../../lib/rate-limit", () =>
   jest.requireActual("./harness-edges").rateLimitMock(),
 );
+/** Every report that would reach Sentry: not expected, not info. */
+const mockSentryReports: string[] = [];
+jest.mock("../../../lib/observability/report", () => {
+  const actual = jest.requireActual("../../../lib/observability/report");
+  const note = (
+    what: string,
+    opts?: { expected?: boolean; level?: string },
+  ) => {
+    if (!opts?.expected && opts?.level !== "info") mockSentryReports.push(what);
+  };
+  return {
+    ...actual,
+    reportSentryError: (error: unknown, opts: { expected?: boolean }) => {
+      note(error instanceof Error ? error.message : String(error), opts);
+      return actual.reportSentryError(error, opts);
+    },
+    reportSentryMessage: (message: string, opts: { expected?: boolean }) => {
+      note(message, opts);
+      return actual.reportSentryMessage(message, opts);
+    },
+  };
+});
 
 import { reconcilePaymentStatus } from "../../../scripts/payments/reconcile-payment-status";
 import { cleanupExpiredApprovalPendingPayments } from "../../../scripts/payments/cleanup-abandoned-payments";
@@ -51,16 +76,25 @@ import { handlePaymentSuccess } from "../../../lib/payments/webhooks/handlers";
 import { CronLockHeldError } from "../../../lib/cron/with-cron-lock";
 import { refundPayment } from "../../../lib/payments/operations/refund";
 import { refundDoor } from "./harness-edges";
+import { RefundError } from "../../../lib/payments/core/types";
 
 const PRICE_PAISE = 80_000;
 
-/** What Razorpay answers per order for `GET /v1/orders/:id/payments`; anything unlisted holds nothing. */
+/** What Razorpay answers per order (`/orders/:id/payments`) and per payment (`/payments/:id/refunds`). */
 const gatewayOrders = new Map<string, Array<Record<string, unknown>>>();
+const gatewayRefunds = new Map<string, Array<Record<string, unknown>>>();
+const ORDER_PAYMENTS = /\/v1\/orders\/([^/]+)\/payments$/;
+const PAYMENT_REFUNDS = /\/v1\/payments\/([^/]+)\/refunds$/;
 const mockFetch = jest.fn(async (input: string | URL) => {
   const url = String(input);
-  const payments = /\/v1\/orders\/([^/]+)\/payments$/.exec(url);
-  if (payments) {
-    const items = gatewayOrders.get(decodeURIComponent(payments[1])) ?? [];
+  const order = ORDER_PAYMENTS.exec(url)?.[1];
+  if (order) {
+    const items = gatewayOrders.get(decodeURIComponent(order)) ?? [];
+    return new Response(JSON.stringify({ items }), { status: 200 });
+  }
+  const payment = PAYMENT_REFUNDS.exec(url)?.[1];
+  if (payment) {
+    const items = gatewayRefunds.get(decodeURIComponent(payment)) ?? [];
     return new Response(JSON.stringify({ items }), { status: 200 });
   }
   return new Response(JSON.stringify({ status: "created" }), { status: 200 });
@@ -68,6 +102,10 @@ const mockFetch = jest.fn(async (input: string | URL) => {
 const readsOf = (orderId: string) =>
   mockFetch.mock.calls.filter(([input]) =>
     String(input).includes(`/orders/${orderId}/payments`),
+  ).length;
+const statusReadsOf = (orderId: string) =>
+  mockFetch.mock.calls.filter(([input]) =>
+    String(input).endsWith(`/orders/${orderId}`),
   ).length;
 
 const gatewayPaymentId = () =>
@@ -94,8 +132,8 @@ async function lapsedApproval() {
   );
 }
 
-/** A booking whose order we already closed `hoursAgo` hours ago. */
-async function closedOrder(hoursAgo: number) {
+/** A booking whose order we already closed `minutesAgo` minutes ago. */
+async function closedOrder(minutesAgo: number) {
   const startsAt = futureAt(5, 9);
   const request = await seedOneToOne(
     "consultation",
@@ -108,12 +146,32 @@ async function closedOrder(hoursAgo: number) {
       payment: { status: "EXPIRED", amount: PRICE_PAISE },
     },
   );
-  await closedAt(request.payment!.id, hoursAgo);
+  await closedAt(request.payment!.id, minutesAgo);
   return request;
 }
 
-const closedAt = (paymentId: string, hoursAgo: number) =>
-  prisma.$executeRaw`UPDATE "Payment" SET "updatedAt" = now() - make_interval(hours => ${hoursAgo}) WHERE id = ${paymentId}`;
+const HOUR = 60;
+const closedAt = (paymentId: string, minutesAgo: number) =>
+  prisma.$executeRaw`UPDATE "Payment" SET "updatedAt" = now() - make_interval(mins => ${minutesAgo}) WHERE id = ${paymentId}`;
+const lastReadAt = (paymentId: string, minutesAgo: number) =>
+  prisma.$executeRaw`UPDATE "Payment" SET "lastReconciledAt" = now() - make_interval(mins => ${minutesAgo}) WHERE id = ${paymentId}`;
+/** Moves a row's close and last read `minutes` into the past, as if that much time went by. */
+const timePasses = (paymentId: string, minutes: number) =>
+  prisma.$executeRaw`UPDATE "Payment" SET "updatedAt" = "updatedAt" - make_interval(mins => ${minutes}), "lastReconciledAt" = "lastReconciledAt" - make_interval(mins => ${minutes}) WHERE id = ${paymentId}`;
+const descriptionOf = async (paymentId: string) =>
+  (
+    await prisma.payment.findUniqueOrThrow({
+      where: { id: paymentId },
+      select: { description: true },
+    })
+  ).description;
+const consultationStatus = async (id: string) =>
+  (
+    await prisma.consultation.findUniqueOrThrow({
+      where: { id },
+      select: { status: true },
+    })
+  ).status;
 
 const captured = (id: string, amount = PRICE_PAISE) => ({
   id,
@@ -136,16 +194,18 @@ describe("reconcile-payment-status re-reads orders we closed", () => {
   });
   beforeEach(async () => {
     gatewayOrders.clear();
+    gatewayRefunds.clear();
     mockFetch.mockClear();
     mockCreateRefund.mockClear();
+    mockSentryReports.length = 0;
     // A gateway capture's booking refund is the real gateway refund; only the HTTP call is stubbed.
     refundDoor.refundBookingPayment
       .mockReset()
       .mockImplementation((input: Parameters<typeof refundPayment>[0]) =>
         refundPayment(input),
       );
-    // Rows other suites left behind were read most recently, so this test's rows come first.
-    await prisma.$executeRaw`UPDATE "Payment" SET "lastReconciledAt" = now()`;
+    // Rows earlier tests and suites left behind leave every cohort, so each test reads only its own.
+    await prisma.$executeRaw`UPDATE "Payment" SET "description" = 'REQUIRES_MANUAL_RECOVERY: parked by the closed-order suite' WHERE "paymentStatus" IN ('PENDING', 'EXPIRED') AND ("description" IS NULL OR NOT starts_with("description", 'REQUIRES_MANUAL_RECOVERY:'))`;
   });
 
   it("refunds a capture on an order the sweep closed an hour ago, once, and confirms nothing", async () => {
@@ -158,7 +218,7 @@ describe("reconcile-payment-status re-reads orders we closed", () => {
     });
     expect(closed.paymentStatus).toBe("EXPIRED");
     expect(closed.updatedAt.getTime()).toBeGreaterThan(Date.now() - 60_000);
-    await closedAt(request.payment!.id, 1);
+    await closedAt(request.payment!.id, HOUR);
     const payId = gatewayPaymentId();
     gatewayOrders.set(orderId, [captured(payId)]);
 
@@ -230,12 +290,17 @@ describe("reconcile-payment-status re-reads orders we closed", () => {
     expect(readsOf(orderId)).toBe(0);
   });
 
-  it("never reads an order closed 80 hours ago, or a pre-mint placeholder", async () => {
-    const old = await closedOrder(80);
+  it("never reads an order past the final-read grace, one already read after its 72 hours, or a pre-mint placeholder", async () => {
+    const old = await closedOrder(100 * HOUR);
     gatewayOrders.set(old.payment!.paymentIntent, [
       captured(gatewayPaymentId()),
     ]);
-    const placeholder = await closedOrder(1);
+    const finalReadDone = await closedOrder(80 * HOUR);
+    await lastReadAt(finalReadDone.payment!.id, 7 * HOUR);
+    gatewayOrders.set(finalReadDone.payment!.paymentIntent, [
+      captured(gatewayPaymentId()),
+    ]);
+    const placeholder = await closedOrder(HOUR);
     const premint = `premint_${randomUUID()}`;
     await prisma.payment.update({
       where: { id: placeholder.payment!.id },
@@ -246,12 +311,13 @@ describe("reconcile-payment-status re-reads orders we closed", () => {
     await reconcilePaymentStatus();
 
     expect(readsOf(old.payment!.paymentIntent)).toBe(0);
+    expect(readsOf(finalReadDone.payment!.paymentIntent)).toBe(0);
     expect(readsOf(premint)).toBe(0);
     expect(refundDoor.refundBookingPayment).not.toHaveBeenCalled();
   });
 
   it("leaves an authorisation alone: nothing is captured, recorded or refunded by us", async () => {
-    const request = await closedOrder(2);
+    const request = await closedOrder(2 * HOUR);
     const orderId = request.payment!.paymentIntent;
     gatewayOrders.set(orderId, [
       { ...captured(gatewayPaymentId()), status: "authorized" },
@@ -275,16 +341,15 @@ describe("reconcile-payment-status re-reads orders we closed", () => {
   });
 
   it("reads nothing while another run holds the lock, and at most `limit` orders a run, least recently read first", async () => {
+    // Never read since their close, they queue at their close time, oldest first.
     const orders = [
-      await closedOrder(3),
-      await closedOrder(3),
-      await closedOrder(3),
-    ]
-      .map((r) => r.payment!)
-      .sort((a, b) => (a.id < b.id ? -1 : 1));
-    // Read an hour ago: after the three never-read orders, before every other row.
-    const readEarlier = (await closedOrder(3)).payment!;
-    await prisma.$executeRaw`UPDATE "Payment" SET "lastReconciledAt" = now() - interval '1 hour' WHERE id = ${readEarlier.id}`;
+      await closedOrder(3 * HOUR),
+      await closedOrder(3 * HOUR),
+      await closedOrder(3 * HOUR),
+    ].map((r) => r.payment!);
+    // Read an hour ago, so it queues after the three.
+    const readEarlier = (await closedOrder(3 * HOUR)).payment!;
+    await lastReadAt(readEarlier.id, HOUR);
 
     const held = await prisma.systemJobExecution.create({
       data: {
@@ -313,5 +378,131 @@ describe("reconcile-payment-status re-reads orders we closed", () => {
     expect(
       [...orders, readEarlier].map((p) => readsOf(p.paymentIntent)),
     ).toEqual([0, 0, 1, 1]);
+  });
+  it("records a refund already made at the gateway and refunds only the rest, once", async () => {
+    const request = await closedOrder(HOUR);
+    const orderId = request.payment!.paymentIntent;
+    const payId = gatewayPaymentId();
+    gatewayOrders.set(orderId, [
+      { ...captured(payId), amount_refunded: 30_000 },
+    ]);
+    gatewayRefunds.set(payId, [
+      {
+        id: `rfnd_dash_${randomUUID().slice(0, 8)}`,
+        amount: 30_000,
+        currency: "INR",
+        status: "processed",
+        notes: {},
+      },
+    ]);
+
+    const run = await reconcilePaymentStatus();
+    await reconcilePaymentStatus();
+    await handlePaymentSuccess(
+      orderId,
+      request.captureMetadata,
+      PRICE_PAISE,
+      payId,
+    );
+
+    expect(run.errors).toEqual([]);
+    expect(run.lateCaptures).toEqual([request.payment!.id]);
+    expect(mockCreateRefund).toHaveBeenCalledTimes(1);
+    expect(mockCreateRefund).toHaveBeenCalledWith(
+      expect.objectContaining({ amount: 50_000 }),
+    );
+    expect(await refundedPaise(request.payment!.id)).toBe(PRICE_PAISE);
+    expect(await consultationStatus(request.consultationId!)).toBe("EXPIRED");
+  });
+
+  it("reads an order once more after its 72 hours, so a capture in the last interval is refunded, and then stops", async () => {
+    const capturedLate = (await closedOrder(71 * HOUR + 50)).payment!;
+    const stillAuthorised = (await closedOrder(71 * HOUR + 50)).payment!;
+    const lateId = gatewayPaymentId();
+    gatewayOrders.set(capturedLate.paymentIntent, [
+      { ...captured(lateId), status: "authorized" },
+    ]);
+    gatewayOrders.set(stillAuthorised.paymentIntent, [
+      { ...captured(gatewayPaymentId()), status: "authorized" },
+    ]);
+
+    await reconcilePaymentStatus();
+    // Fifteen minutes on, both are past their 72 hours; one was captured in between.
+    await timePasses(capturedLate.id, 15);
+    await timePasses(stillAuthorised.id, 15);
+    gatewayOrders.set(capturedLate.paymentIntent, [captured(lateId)]);
+    const finalRun = await reconcilePaymentStatus();
+
+    expect(finalRun.lateCaptures).toEqual([capturedLate.id]);
+    expect(mockCreateRefund).toHaveBeenCalledTimes(1);
+    expect(await refundedPaise(capturedLate.id)).toBe(PRICE_PAISE);
+    expect(readsOf(stillAuthorised.paymentIntent)).toBe(2);
+
+    await timePasses(stillAuthorised.id, 15);
+    mockFetch.mockClear();
+    await reconcilePaymentStatus();
+    expect(readsOf(stillAuthorised.paymentIntent)).toBe(0);
+  });
+
+  it("keeps reading an order already read, and pending work, while new closes keep arriving", async () => {
+    const polled = (await closedOrder(5 * HOUR)).payment!;
+    await lastReadAt(polled.id, HOUR);
+    gatewayOrders.set(polled.paymentIntent, [captured(gatewayPaymentId())]);
+    const pending = (await lapsedApproval()).payment!;
+    await prisma.$executeRaw`UPDATE "Payment" SET "createdAt" = now() - interval '30 minutes', "lastReconciledAt" = now() - interval '1 hour' WHERE id = ${pending.id}`;
+
+    const reads: number[] = [];
+    let firstRun = { polled: 0, pending: 0 };
+    for (let run = 0; run < 3; run++) {
+      await closedOrder(0);
+      await closedOrder(0);
+      await reconcilePaymentStatus({ limit: 2 });
+      reads.push(mockFetch.mock.calls.length);
+      if (run === 0) {
+        firstRun = {
+          polled: readsOf(polled.paymentIntent),
+          pending: statusReadsOf(pending.paymentIntent),
+        };
+      }
+      mockFetch.mockClear();
+    }
+
+    expect(firstRun).toEqual({ polled: 1, pending: 1 });
+    expect(await refundedPaise(polled.id)).toBe(PRICE_PAISE);
+    expect(reads.every((n) => n <= 2)).toBe(true);
+  });
+
+  it("fails the run and reports once when late-capture refunds fail, leaving each marker for the retry", async () => {
+    const first = (await closedOrder(HOUR)).payment!;
+    const second = (await closedOrder(HOUR)).payment!;
+    gatewayOrders.set(first.paymentIntent, [captured(gatewayPaymentId())]);
+    gatewayOrders.set(second.paymentIntent, [captured(gatewayPaymentId())]);
+    const noBalance = () =>
+      new RefundError(
+        "Your account does not have enough balance to carry out the refund operation",
+        "BAD_REQUEST_ERROR",
+        "RAZORPAY",
+      );
+    mockCreateRefund
+      .mockRejectedValueOnce(noBalance())
+      .mockRejectedValueOnce(noBalance());
+
+    const run = await reconcilePaymentStatus();
+
+    expect(run.success).toBe(false);
+    expect(run.lateCaptures).toEqual([]);
+    expect(run.errors).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(first.id),
+        expect.stringContaining(second.id),
+      ]),
+    );
+    expect(await descriptionOf(first.id)).toMatch(/^Auto-refund pending:/);
+    expect(await descriptionOf(second.id)).toMatch(/^Auto-refund pending:/);
+    expect(mockSentryReports).toEqual([
+      expect.stringContaining(
+        "2 late capture(s) on closed orders not refunded",
+      ),
+    ]);
   });
 });
