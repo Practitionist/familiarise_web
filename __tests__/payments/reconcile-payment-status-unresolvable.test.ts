@@ -32,7 +32,8 @@ jest.mock("../../lib/prisma", () => ({
   default: {
     $executeRaw: jest.fn().mockResolvedValue(1),
     payment: {
-      findMany: jest.fn(),
+      // The closed-order cohort is the third read; empty unless a test says otherwise.
+      findMany: jest.fn().mockResolvedValue([]),
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
     // #1822 Q-4 — the unresolvable-row report is now deduped via a
@@ -482,8 +483,11 @@ describe("reconcile-payment-status — permanent rows and pre-mint rows", () => 
     expect(body.errors).toEqual([expect.stringContaining("pay-1")]);
   });
 
-  it("excludes stamped and pre-mint rows from both cohorts, so neither is touched again", async () => {
-    findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+  it("excludes stamped and pre-mint rows from every cohort, so none is touched again", async () => {
+    findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
 
     await POST(request());
 
@@ -508,7 +512,7 @@ describe("reconcile-payment-status — permanent rows and pre-mint rows", () => 
         ]),
       );
     }
-    expect(findMany).toHaveBeenCalledTimes(2);
+    expect(findMany).toHaveBeenCalledTimes(3);
     expect(updateMany).not.toHaveBeenCalled();
   });
 });
@@ -560,6 +564,7 @@ describe("payment polling progress after interrupted runs", () => {
     (prisma.payment.findMany as jest.Mock)
       .mockReset()
       .mockResolvedValueOnce([pendingRow])
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce([]);
     mockFetch.mockClear();
     (prisma.$executeRaw as jest.Mock).mockClear();
@@ -573,6 +578,7 @@ describe("payment polling progress after interrupted runs", () => {
     (prisma.payment.findMany as jest.Mock)
       .mockReset()
       .mockResolvedValueOnce([pendingRow])
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce([]);
     mockFetch.mockReset().mockResolvedValue({
       ok: true,
@@ -598,6 +604,7 @@ describe("payment polling progress after interrupted runs", () => {
     (prisma.payment.findMany as jest.Mock)
       .mockReset()
       .mockResolvedValueOnce([timedOut, failed])
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce([]);
     mockFetch
       .mockReset()

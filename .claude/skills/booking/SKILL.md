@@ -362,8 +362,10 @@ throws so the expiries roll back; the answer is then 409 `ALREADY_PAID` when
 `NOT_CLOSABLE` otherwise. After the
 commit each closed order is re-read once, and a capture found goes through
 `handlePaymentSuccess` and is refunded; a later capture on the EXPIRED order is
-refunded
-(`docs/decisions/2026-11-20-request-again-closes-the-old-order.md`).
+refunded by its webhook or, if that is lost, by `reconcile-payment-status`,
+which re-reads every order closed in the last 72 hours
+(`docs/decisions/2026-11-20-request-again-closes-the-old-order.md`,
+`docs/decisions/2026-11-21-reconciler-rereads-closed-orders.md`).
 
 A manual Remind on an approved-but-unpaid request is offered and accepted
 under one predicate, `liveReminderPayment`
