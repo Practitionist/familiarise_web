@@ -47,8 +47,8 @@ it.each([
     expect(
       screen.getByText(
         profileIsPublic
-          ? /Public — it appears on their profile with the date\./
-          : /Public — it will appear on their profile once it is live\./,
+          ? /It appears on their profile with the date\./
+          : /It will appear on their profile once it is live\./,
       ),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "5 stars" }));

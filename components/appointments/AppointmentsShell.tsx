@@ -153,8 +153,40 @@ const EMPTY_COPY: Record<TabValue, Record<Viewer, EmptyCopy>> = {
   },
 };
 
-function emptyCopyOf(value: TabValue, viewer: Viewer): EmptyCopy {
-  return EMPTY_COPY[value][viewer];
+/** The learner's empty states as an operator reads them: about the learner, not to them. */
+const OPERATOR_LEARNER_EMPTY_COPY: Partial<Record<TabValue, EmptyCopy>> = {
+  upcoming: {
+    title: "No upcoming appointments",
+    description: "Sessions they book will show up here.",
+  },
+  waiting: {
+    title: "Nothing waiting on an expert",
+    description: "Requests they send stay here until the expert answers.",
+  },
+  inRequests: {
+    title: "No requests",
+    description: "Requests they send stay here until the expert answers.",
+  },
+  past: {
+    title: "No past appointments",
+    description: "Sessions they have attended will appear here.",
+  },
+  all: {
+    title: "No appointments found",
+    description: "Try clearing the filters.",
+  },
+};
+
+function emptyCopyOf(
+  value: TabValue,
+  viewer: Viewer,
+  operatorView: boolean,
+): EmptyCopy {
+  const operatorCopy =
+    operatorView && viewer === "consultee"
+      ? OPERATOR_LEARNER_EMPTY_COPY[value]
+      : undefined;
+  return operatorCopy ?? EMPTY_COPY[value][viewer];
 }
 
 /** `?tab=` → a tab this viewer has; legacy values land somewhere sensible. */
@@ -207,6 +239,8 @@ interface AppointmentsShellProps {
   footer?: ReactNode;
   /** A compact strip right under the next appointment (the learner's alerts). */
   afterHero?: ReactNode;
+  /** An operator reading a learner's list: empty states speak about them, not to them. */
+  operatorView?: boolean;
 }
 
 export function AppointmentsShell({
@@ -219,6 +253,7 @@ export function AppointmentsShell({
   requestsHref,
   footer,
   afterHero,
+  operatorView = false,
 }: AppointmentsShellProps) {
   const searchParams = useSearchParams();
   const { data: session } = useSession();
@@ -515,8 +550,10 @@ export function AppointmentsShell({
                   if (el) rowRefs.current.set(id, el);
                   else rowRefs.current.delete(id);
                 }}
-                emptyTitle={emptyCopyOf(value, viewer).title}
-                emptyDescription={emptyCopyOf(value, viewer).description}
+                emptyTitle={emptyCopyOf(value, viewer, operatorView).title}
+                emptyDescription={
+                  emptyCopyOf(value, viewer, operatorView).description
+                }
               />
             </TabsContent>
           ))

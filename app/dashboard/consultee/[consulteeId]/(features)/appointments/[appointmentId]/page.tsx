@@ -12,8 +12,7 @@ import {
 } from "@/lib/data/appointment-detail";
 import { managesGroupPlanAsNamedExpert } from "@/lib/enterprise/membership-guards";
 import DetailPageClient from "./DetailPageClient";
-import Link from "next/link";
-import { Button } from "@/components/ui/button";
+import { NoLongerRegistered } from "./NoLongerRegistered";
 import { viewerSeatReleased } from "@/lib/appointments/presentation-input";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
 import { getSession } from "@/lib/auth-server";
@@ -92,28 +91,5 @@ export default async function AppointmentDetailPage({
         operatorView={access.isInspecting}
       />
     </HydrationBoundary>
-  );
-}
-
-function NoLongerRegistered({
-  consulteeId,
-}: Readonly<{ consulteeId: string }>) {
-  return (
-    <div className="mx-auto max-w-md space-y-3 rounded-2xl border border-border bg-card p-6 text-center">
-      <h1 className="text-lg font-semibold text-foreground">
-        You are no longer registered for this event
-      </h1>
-      <p className="text-sm text-muted-foreground">
-        Your place was released. The booking is listed under Cancelled in your
-        appointments.
-      </p>
-      <Button asChild variant="outline" size="sm">
-        <Link
-          href={`/dashboard/consultee/${consulteeId}/appointments?tab=cancelled`}
-        >
-          Go to Appointments
-        </Link>
-      </Button>
-    </div>
   );
 }

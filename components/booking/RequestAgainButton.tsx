@@ -21,6 +21,7 @@ import {
   REQUEST_AGAIN_ALREADY_PAID,
   REQUEST_AGAIN_WARNING,
   REQUEST_AGAIN_LOCK_CODES,
+  REQUEST_AGAIN_SEAT_WARNING,
   RequestAgainAnswerSchema,
   requestAgainPath,
   type RequestAgainPaymentRow,
@@ -43,9 +44,12 @@ export function RequestAgainButton({
   variant = "outline",
   size = "sm",
   className,
+  seat = false,
 }: Readonly<{
   appointmentId: string | null;
   href: string;
+  /** A webinar or class seat: what closes is the held place and its order, not a payment link. */
+  seat?: boolean;
   /** The caller's own payment rows on the old booking. */
   payments: readonly RequestAgainPaymentRow[];
   children: ReactNode;
@@ -124,10 +128,12 @@ export function RequestAgainButton({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              Close your earlier payment link?
+              {seat
+                ? "Release your earlier place and payment?"
+                : "Close your earlier payment link?"}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              {REQUEST_AGAIN_WARNING}
+              {seat ? REQUEST_AGAIN_SEAT_WARNING : REQUEST_AGAIN_WARNING}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

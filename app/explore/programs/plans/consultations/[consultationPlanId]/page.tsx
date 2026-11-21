@@ -4,6 +4,7 @@ import { canViewPlanDetail } from "@/lib/data/plan-viewable";
 import { getSession } from "@/lib/auth-server";
 import { reportSentryError } from "@/lib/observability/report";
 import type { Metadata } from "next";
+import { hiddenPlanMetadata } from "@/lib/seo/event-plan-share";
 import { getConsultationPlanDetail } from "@/lib/data/plan-details";
 import { ConsultationDetails } from "./components/ConsultationDetails";
 
@@ -23,7 +24,7 @@ export async function generateMetadata({
   // #1527 Q4 — the page's own gate: a draft, archived or ORG_ONLY plan must
   // not leak its title through the tab or link previews.
   if (!plan || !(await canViewPlanDetail(plan, session))) {
-    return { title: "Consultation not found" };
+    return hiddenPlanMetadata();
   }
   const expert = plan.consultantProfile?.user?.name;
   return {

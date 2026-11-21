@@ -88,8 +88,8 @@
   }
 }
 
-/* Dock Details only when the case itself can also fit the conversation. */
-@container support-case (min-width: 64rem) {
+/* Dock Details beside the conversation once both fit (18rem panel plus a 28rem thread), so it never covers the message at desktop width. */
+@container support-case (min-width: 48rem) {
   .detailsPanel {
     position: static;
     width: 18rem;

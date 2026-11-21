@@ -157,3 +157,30 @@ it.each([
     expect(profileLinks(container)).toHaveLength(n);
   },
 );
+
+it("carries the refund a cancelled booking's own payment received, for the Resources card", async () => {
+  const row = consultationRow(expert("VERIFIED", null));
+  const { vm } = await vmFor({
+    ...row,
+    consultation: { ...row.consultation, status: "CANCELLED" },
+    payment: [
+      {
+        id: "pay_1",
+        userId: "u_daniel",
+        paymentIntent: "order_1",
+        amount: 50_000,
+        currency: "INR",
+        paymentStatus: "SUCCEEDED",
+        expiresAt: null,
+        refunds: [
+          {
+            amountPaise: 50_000,
+            status: "SUCCEEDED",
+            updatedAt: new Date("2026-11-19T00:00:00.000Z"),
+          },
+        ],
+      },
+    ],
+  });
+  expect(vm.refunded?.paise).toBe(50_000);
+});

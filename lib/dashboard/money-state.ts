@@ -43,6 +43,7 @@ import {
   BOOKING_STAGES,
   bookingStatus,
   expertApproval,
+  requestedAgainEdge,
   type BookingStage,
   type BookingStatusFacts,
   type HistoryEdgeInput,
@@ -840,6 +841,34 @@ function deriveNext(
   return none;
 }
 
+/** A lapsed hold ends at its window, unless the learner closed it by requesting again. */
+function lapsedTimelineEvent(
+  input: BookingPresentationInput,
+  viewer: Viewer,
+  holdExpiresAt: Date | null,
+): TimelineEvent {
+  const again = requestedAgainEdge({
+    history: input.history,
+    status: input.request?.status,
+  });
+  if (!again) {
+    return {
+      at: holdExpiresAt,
+      actor: "",
+      label: "Payment link expired",
+      done: true,
+    };
+  }
+  const p = input.names.payer;
+  return {
+    at: toDateOrNull(again.createdAt),
+    actor: p,
+    label:
+      viewer === "CONSULTEE" ? "You requested again" : `${p} requested again`,
+    done: true,
+  };
+}
+
 function deriveTimeline(
   input: BookingPresentationInput,
   booking: BookingStateKind,
@@ -922,12 +951,7 @@ function deriveTimeline(
       : booking === "CANCELLED"
         ? { at: null, actor: "", label: "Cancelled", done: true }
         : booking === "PAYMENT_LAPSED"
-          ? {
-              at: holdExpiresAt,
-              actor: "",
-              label: "Payment link expired",
-              done: true,
-            }
+          ? lapsedTimelineEvent(input, viewer, holdExpiresAt)
           : null;
   const refunds = refundTimeline(input);
 
