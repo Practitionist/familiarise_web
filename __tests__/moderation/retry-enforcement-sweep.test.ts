@@ -97,6 +97,7 @@ import { retryModerationEnforcement } from "../../scripts/cleanup/retry-moderati
 import prisma from "../../lib/prisma";
 import { applyStreamEnforcement } from "../../lib/moderation/side-effects";
 import { driveCollaboratorRevocation } from "../../lib/stream/collaborator-access";
+import { redriveAccessRevocation } from "../../lib/stream/access-revocation";
 import * as Sentry from "@sentry/nextjs";
 
 const findMany = prisma.moderationAction.findMany as jest.Mock;
@@ -113,6 +114,7 @@ const findUser = prisma.user.findUnique as jest.Mock;
 const enforce = applyStreamEnforcement as jest.Mock;
 const driveCollaboratorRevocationMock =
   driveCollaboratorRevocation as jest.Mock;
+const redrive = redriveAccessRevocation as jest.Mock;
 
 const failedBan = (overrides: Record<string, unknown> = {}) => ({
   id: "action-1",
@@ -188,6 +190,21 @@ describe("retryModerationEnforcement", () => {
       failedBan(),
       failedBan({ id: "action-2" }),
     ]);
+    outboxFindMany.mockResolvedValueOnce([
+      {
+        id: "revoke-1",
+        kind: "SEAT_ACCESS_REVOKE",
+        erasureRequestId: null,
+        userId: "u9",
+        counterpartUserId: null,
+        planType: "WEBINAR",
+        planId: "wp-9",
+        attempts: 0,
+        nextRetryAt: null,
+        createdAt: new Date(),
+        erasureRequest: null,
+      },
+    ]);
     enforce.mockImplementationOnce(async () => {
       now += 9_000;
     });
@@ -198,7 +215,17 @@ describe("retryModerationEnforcement", () => {
     }
 
     expect(enforce).toHaveBeenCalledTimes(1);
-    expect(outboxFindMany).toHaveBeenCalled();
+    // The drain still starts its due row in the time the action rows left it.
+    expect(redrive).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "SEAT_ACCESS_REVOKE", userId: "u9" }),
+      expect.anything(),
+    );
+    expect(outboxUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: "revoke-1" }),
+        data: expect.objectContaining({ status: "SUCCEEDED" }),
+      }),
+    );
   });
 
   it("records a failed standing read for one ending and goes on to the next row", async () => {

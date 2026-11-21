@@ -104,23 +104,34 @@ async function askGateway(
   return answers;
 }
 
+/** What the re-read after the close left unsettled, by order intent. */
+interface Recheck {
+  /** Not read, or captured without the handler refunding it. */
+  unread: string[];
+  /** A payment still in flight: it may capture after the close. */
+  live: string[];
+}
+
+type RecheckAnswer = "settled" | "unread" | "live";
+
 /**
  * A capture between the gateway check and the commit is refunded through the
- * capture handler; one it could not read or did not refund is returned.
+ * capture handler; only an empty order or a refunded capture is settled.
  */
-async function recheckClosedOrders(orders: GatewayCancel[]): Promise<string[]> {
+async function recheckClosedOrders(orders: GatewayCancel[]): Promise<Recheck> {
   const real = orders.filter(
     (o) =>
       o.gateway === PaymentGateway.RAZORPAY &&
       !isPreMintIntent(o.paymentIntent),
   );
-  const settled = await mapLimit(
+  const answers = await mapLimit(
     real,
     GATEWAY_READS_IN_FLIGHT,
-    async (order) => {
+    async (order): Promise<RecheckAnswer> => {
       try {
         const holding = await readRazorpayOrderHolding(order.paymentIntent);
-        if (holding.kind !== "captured") return true;
+        if (holding.kind === "empty") return "settled";
+        if (holding.kind === "live") return "live";
         // Dynamic: the capture handlers reach back into booking.
         const { handlePaymentSuccess } =
           await import("@/lib/payments/webhooks/handlers");
@@ -130,13 +141,15 @@ async function recheckClosedOrders(orders: GatewayCancel[]): Promise<string[]> {
           holding.amountPaise,
           holding.paymentId,
         );
-        return outcome === "captured_after_release";
+        return outcome === "captured_after_release" ? "settled" : "unread";
       } catch {
-        return false;
+        return "unread";
       }
     },
   );
-  return real.filter((_, i) => !settled[i]).map((o) => o.paymentIntent);
+  const intents = (answer: RecheckAnswer) =>
+    real.filter((_, i) => answers[i] === answer).map((o) => o.paymentIntent);
+  return { unread: intents("unread"), live: intents("live") };
 }
 
 /** Stages one learner's notice in the ending's transaction, so a closed sale is never left unannounced. */
@@ -260,7 +273,7 @@ export async function endUnverifiedExpertSales(args: {
   );
   if (ended.skipped) return skipped();
 
-  const unread = await recheckClosedOrders(ended.closedOrders);
+  const { unread, live } = await recheckClosedOrders(ended.closedOrders);
   let heldNoticesFailed = 0;
   for (const holdNotices of ended.holdNotices) {
     await flushBackupInterestNotices(holdNotices).catch(() => {
@@ -270,11 +283,12 @@ export async function endUnverifiedExpertSales(args: {
   const unsettled =
     answers.unchecked.length +
     unread.length +
+    live.length +
     ended.ordersChanged.length +
     heldNoticesFailed;
   if (unsettled > 0) {
     reportSentryMessage(
-      `REJECT_SALES_UNSETTLED: ${answers.unchecked.length} unchecked, ${unread.length} not re-read or not refunded, ${ended.ordersChanged.length} changed since the check, ${heldNoticesFailed} held-time notice(s) failed`,
+      `REJECT_SALES_UNSETTLED: ${answers.unchecked.length} unchecked, ${unread.length} not re-read or not refunded, ${live.length} still live after the close, ${ended.ordersChanged.length} changed since the check, ${heldNoticesFailed} held-time notice(s) failed`,
       {
         subsystem: "moderation",
         level: "warning",
@@ -282,6 +296,7 @@ export async function endUnverifiedExpertSales(args: {
           consultantProfileId: args.consultantProfileId,
           uncheckedOrderIds: answers.unchecked,
           unreadOrderIds: unread,
+          liveOrderIds: live,
           changedPaymentIds: ended.ordersChanged,
         },
       },

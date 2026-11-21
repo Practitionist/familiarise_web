@@ -536,6 +536,36 @@ describe("a moderation reject stops new sales and honours what is booked", () =>
     });
   }, 60_000);
 
+  it("reports a closed order still holding a live payment, which the closed-order reconciler can then re-read", async () => {
+    const host = await seedHost();
+    const link = await liveLink(host);
+    mockGateway.readRazorpayOrderHolding.mockResolvedValue({ kind: "live" });
+    const closedFrom = new Date();
+
+    await reject(host);
+
+    expect(mockReport.message).toHaveBeenCalledTimes(1);
+    expect(String(mockReport.message.mock.calls[0][0])).toContain(
+      "REJECT_SALES_UNSETTLED",
+    );
+    expect(mockReport.message.mock.calls[0][1]).toMatchObject({
+      extra: { liveOrderIds: [link.request.payment!.paymentIntent] },
+    });
+    // The closed-order cohort: an EXPIRED Razorpay order with no capture, closed in its window.
+    expect(
+      await prisma.payment.count({
+        where: {
+          id: link.request.payment!.id,
+          paymentStatus: "EXPIRED",
+          paymentGateway: "RAZORPAY",
+          paymentIntent: { startsWith: "order_" },
+          capturedAt: null,
+          updatedAt: { gte: closedFrom },
+        },
+      }),
+    ).toBe(1);
+  }, 60_000);
+
   it("never re-reads a closed pre-mint marker at the gateway", async () => {
     const host = await seedHost();
     const link = await liveLink(host);
