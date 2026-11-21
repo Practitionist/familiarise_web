@@ -70,11 +70,20 @@ it("keeps the published chip and share link for a verified expert", () => {
   expect(screen.getByText("Share link")).toBeTruthy();
 });
 
-it("shows neither chip nor share link while the expert's standing is unknown", () => {
+it("shows neither chip nor share link while the expert's standing is unknown, holding the chip's place", () => {
   card(null);
   expect(screen.queryByText("Published")).toBeNull();
   expect(screen.queryByText("Live once verified")).toBeNull();
   expect(screen.queryByText("Share link")).toBeNull();
+  // The same badge, invisible and empty, so the card does not shift when the chip lands.
+  expect(
+    screen.getByTestId("chip-placeholder").getAttribute("aria-hidden"),
+  ).toBe("true");
+});
+
+it("drops the placeholder once the standing is known", () => {
+  card(false);
+  expect(screen.queryByTestId("chip-placeholder")).toBeNull();
 });
 
 describe("the planner's listing state", () => {

@@ -56,27 +56,14 @@ jest.mock("../../../lib/rate-limit", () => ({
 jest.mock("../../../lib/novu/stage-then-attempt", () =>
   jest.requireActual("./harness-edges").noFlushMock(),
 );
-jest.mock("../../../lib/novu", () => {
-  const noop = jest.fn(async () => []);
-  return new Proxy(
-    {},
-    {
-      // Not a thenable: the mint loads these modules with a dynamic import.
-      get: (_target, prop) =>
-        prop === "then" ? undefined : prop === "__esModule" ? true : noop,
-    },
-  );
-});
-jest.mock("../../../lib/email", () => {
-  const noop = jest.fn(async () => ({ success: true }));
-  return new Proxy(
-    {},
-    {
-      get: (_target, prop) =>
-        prop === "then" ? undefined : prop === "__esModule" ? true : noop,
-    },
-  );
-});
+jest.mock("../../../lib/novu", () =>
+  jest.requireActual("../../fixtures/noop-module").noopModule(),
+);
+jest.mock("../../../lib/email", () =>
+  jest.requireActual("../../fixtures/noop-module").noopModule({
+    success: true,
+  }),
+);
 jest.mock("../../../lib/email/render", () => ({
   __esModule: true,
   renderEmail: async () => ({ html: "<p>rendered</p>", text: "rendered" }),
@@ -163,6 +150,41 @@ import {
   applyBestEffortEffects,
   applyTransactionalEffects,
 } from "../../../lib/moderation/side-effects";
+
+/** The gateway double, its call record cleared for the case about to run. */
+function clearedGateway(): { createPaymentIntent: jest.Mock } {
+  const gateway = jest.requireMock("../../../lib/payments/index") as {
+    createPaymentIntent: jest.Mock;
+  };
+  gateway.createPaymentIntent.mockClear();
+  return gateway;
+}
+
+/** A paid trial held for a verified expert whose pay-link order lapsed, and its re-mint. */
+async function lapsedPaidTrial() {
+  const host = await seedHost();
+  const plan = await seedTrialPlan(host, 50_000);
+  const { res, buyer } = await postTrial(host, plan.id);
+  expect(res.status).toBe(201);
+  const trial = await prisma.trial.findFirstOrThrow({
+    where: { subscriptionPlanId: plan.id },
+    select: { id: true, appointmentId: true },
+  });
+  await prisma.payment.updateMany({
+    where: { userId: buyer.userId },
+    data: { paymentStatus: "EXPIRED" },
+  });
+  const remint = () =>
+    createApprovalPaymentIntent({
+      userId: buyer.userId,
+      appointmentType: "TRIAL",
+      trialId: trial.id,
+      appointmentId: trial.appointmentId ?? undefined,
+      planId: plan.id,
+      paymentGateway: "RAZORPAY",
+    });
+  return { host, buyer, remint };
+}
 
 /** Runs a sale while the expert is rejected at `point`; resolves to its error or "done". */
 async function rejectingAt(
@@ -311,10 +333,7 @@ describe("an expert who is not verified takes no new booking", () => {
     const host = await seedHost();
     const plan = await seedTrialPlan(host, 50_000);
 
-    const gateway = jest.requireMock("../../../lib/payments/index") as {
-      createPaymentIntent: jest.Mock;
-    };
-    gateway.createPaymentIntent.mockClear();
+    const gateway = clearedGateway();
     const { res, buyer } = await postTrial(host, plan.id);
 
     expect(res.status).toBe(201);
@@ -468,10 +487,7 @@ describe("a reject that lands mid-sale is seen by the write", () => {
         },
       });
       const buyer = await seedBuyer();
-      const gateway = jest.requireMock("../../../lib/payments/index") as {
-        createPaymentIntent: jest.Mock;
-      };
-      gateway.createPaymentIntent.mockClear();
+      const gateway = clearedGateway();
 
       const outcome = await rejectingAt("locked-read", host, () =>
         handleCheckout(
@@ -518,33 +534,10 @@ describe("a reject that lands mid-sale is seen by the write", () => {
   );
 
   it("a trial mint whose expert is rejected after pricing mints no order", async () => {
-    const host = await seedHost();
-    const plan = await seedTrialPlan(host, 50_000);
-    const { res, buyer } = await postTrial(host, plan.id);
-    expect(res.status).toBe(201);
-    const trial = await prisma.trial.findFirstOrThrow({
-      where: { subscriptionPlanId: plan.id },
-      select: { id: true, appointmentId: true },
-    });
-    await prisma.payment.updateMany({
-      where: { userId: buyer.userId },
-      data: { paymentStatus: "EXPIRED" },
-    });
-    const gateway = jest.requireMock("../../../lib/payments/index") as {
-      createPaymentIntent: jest.Mock;
-    };
-    gateway.createPaymentIntent.mockClear();
+    const { host, buyer, remint } = await lapsedPaidTrial();
+    const gateway = clearedGateway();
 
-    const outcome = await rejectingAt("mint-pricing", host, () =>
-      createApprovalPaymentIntent({
-        userId: buyer.userId,
-        appointmentType: "TRIAL",
-        trialId: trial.id,
-        appointmentId: trial.appointmentId ?? undefined,
-        planId: plan.id,
-        paymentGateway: "RAZORPAY",
-      }),
-    );
+    const outcome = await rejectingAt("mint-pricing", host, () => remint());
 
     expect(outcome).toMatchObject({ code: "EXPERT_NOT_VERIFIED" });
     expect(gateway.createPaymentIntent).not.toHaveBeenCalled();
@@ -556,33 +549,10 @@ describe("a reject that lands mid-sale is seen by the write", () => {
   }, 30_000);
 
   it("a trial mint whose expert is rejected during the gateway call leaves no payable order", async () => {
-    const host = await seedHost();
-    const plan = await seedTrialPlan(host, 50_000);
-    const { res, buyer } = await postTrial(host, plan.id);
-    expect(res.status).toBe(201);
-    const trial = await prisma.trial.findFirstOrThrow({
-      where: { subscriptionPlanId: plan.id },
-      select: { id: true, appointmentId: true },
-    });
-    await prisma.payment.updateMany({
-      where: { userId: buyer.userId },
-      data: { paymentStatus: "EXPIRED" },
-    });
-    const gateway = jest.requireMock("../../../lib/payments/index") as {
-      createPaymentIntent: jest.Mock;
-    };
-    gateway.createPaymentIntent.mockClear();
+    const { host, buyer, remint } = await lapsedPaidTrial();
+    const gateway = clearedGateway();
 
-    const outcome = await rejectingAt("mint-gateway", host, () =>
-      createApprovalPaymentIntent({
-        userId: buyer.userId,
-        appointmentType: "TRIAL",
-        trialId: trial.id,
-        appointmentId: trial.appointmentId ?? undefined,
-        planId: plan.id,
-        paymentGateway: "RAZORPAY",
-      }),
-    );
+    const outcome = await rejectingAt("mint-gateway", host, () => remint());
 
     expect(outcome).toMatchObject({ code: "EXPERT_NOT_VERIFIED" });
     const minted = (await gateway.createPaymentIntent.mock.results[0]
@@ -827,28 +797,10 @@ describe("a moderation reject stops new sales and honours what is booked", () =>
   }, 30_000);
 
   it("refuses the re-mint of a rejected expert's paid trial whose order lapsed", async () => {
-    const host = await seedHost();
-    const plan = await seedTrialPlan(host, 50_000);
-    const { res, buyer } = await postTrial(host, plan.id);
-    expect(res.status).toBe(201);
-    const trial = await prisma.trial.findFirstOrThrow({
-      where: { subscriptionPlanId: plan.id },
-      select: { id: true, appointmentId: true },
-    });
-    await prisma.payment.updateMany({
-      where: { userId: buyer.userId },
-      data: { paymentStatus: "EXPIRED" },
-    });
+    const { host, buyer, remint } = await lapsedPaidTrial();
     await setStatus(host, "REJECTED");
 
-    const outcome = await createApprovalPaymentIntent({
-      userId: buyer.userId,
-      appointmentType: "TRIAL",
-      trialId: trial.id,
-      appointmentId: trial.appointmentId ?? undefined,
-      planId: plan.id,
-      paymentGateway: "RAZORPAY",
-    }).then(
+    const outcome = await remint().then(
       () => "minted",
       (error: unknown) => error,
     );

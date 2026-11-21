@@ -34,12 +34,12 @@ import {
   type CheckoutSearchParams,
 } from "../components/PlanCheckoutShell";
 import { CheckoutTotalNotes } from "../components/CheckoutTotals";
-import { reportPaymentsError } from "../utils";
 import {
   eventMockErrorCopy,
   loadErrorMessage,
   planIncludes,
-  planLoadError,
+  fetchCheckoutPlan,
+  useReportPlanLoadError,
   searchParamsKey,
 } from "./shared";
 
@@ -135,29 +135,15 @@ export function useWebinarCheckout(
     queryKey: checkoutPlanKey,
     ...WEBINAR_SEATS_FRESHNESS,
     retry: false,
-    queryFn: async (): Promise<PlanResponse> => {
-      const response = await fetch(`/api/plans/webinars/${planId}`);
-      if (!response.ok) {
-        throw planLoadError(response.status);
-      }
-      const data = await response.json();
-      if (!data.data?.consultantProfile?.user) {
-        throw new Error("Consultant details not found");
-      }
-      return data;
-    },
+    queryFn: () =>
+      fetchCheckoutPlan<PlanResponse>(`/api/plans/webinars/${planId}`),
   });
   const planData = checkoutPlanQuery.data ?? null;
   const planDetails = planData?.data;
   const consultantDetails = planDetails?.consultantProfile;
   const userDetails = consultantDetails?.user;
 
-  useEffect(() => {
-    if (checkoutPlanQuery.error) {
-      reportPaymentsError(checkoutPlanQuery.error);
-      console.error("Error fetching plan data:", checkoutPlanQuery.error);
-    }
-  }, [checkoutPlanQuery.error]);
+  useReportPlanLoadError(checkoutPlanQuery.error);
 
   // The instance being bought, not the plan's first one: ?eventId names it.
   const targetWebinar = validatedSearchParams?.eventId

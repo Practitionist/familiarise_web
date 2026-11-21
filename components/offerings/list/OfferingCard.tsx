@@ -193,8 +193,17 @@ export function OfferingCard({
             <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
               {OFFERING_TYPE_LABEL[row.type]}
             </span>
-            {chip && (
+            {chip ? (
               <StatusBadge label={chip.label} tone={chip.tone} size="sm" />
+            ) : (
+              // Holds the chip's place while the standing loads, so the card never shifts.
+              <span
+                aria-hidden="true"
+                data-testid="chip-placeholder"
+                className="invisible"
+              >
+                <StatusBadge label={"\u00a0"} tone="neutral" size="sm" />
+              </span>
             )}
             {row.trialEnabled && (
               <StatusBadge

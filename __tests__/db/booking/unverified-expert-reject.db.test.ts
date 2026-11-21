@@ -20,7 +20,7 @@ import {
 import {
   halfHourStarts,
   publishEveryHour,
-  seedBuyer,
+  seedPaidTrialHold,
   seedRequest,
 } from "./harness-host";
 import {
@@ -29,11 +29,9 @@ import {
   seedCheckoutConsumption,
 } from "./harness-consumed";
 
-jest.mock("../../../lib/payments/index", () => ({
-  __esModule: true,
-  createPaymentIntent: jest.fn(),
-  cancelPaymentIntent: jest.fn(async () => undefined),
-}));
+jest.mock("../../../lib/payments/index", () =>
+  jest.requireActual("./harness-edges").gatewayMock(),
+);
 jest.mock("../../../lib/novu", () =>
   jest.requireActual("../../fixtures/noop-module").noopModule(),
 );
@@ -120,7 +118,6 @@ import {
 import { handlePaymentSuccess } from "../../../lib/payments/webhooks/handlers";
 import { resolvePayPage } from "../../../lib/payments/pay-page";
 import { allocate } from "../../../lib/booking/allocation";
-import { bookTrialInTx } from "../../../lib/trials/book-trial";
 import { refundDoor } from "./harness-edges";
 import { seedHeldSeat, seedWebinar } from "./harness-seats";
 import { retryModerationEnforcement } from "../../../scripts/cleanup/retry-moderation-enforcement";
@@ -215,37 +212,11 @@ async function unpaidTrialHold(host: SeededHost) {
       trialPriceInPaise: BigInt(20_000),
     },
   });
-  const buyer = await seedBuyer();
-  const startsAt = futureAt(5, 10);
-  const trial = await prisma.$transaction((tx) =>
-    bookTrialInTx(tx, {
-      consulteeProfileId: buyer.consulteeProfileId,
-      consultantProfileId: host.consultantProfileId,
-      subscriptionPlanId: plan.id,
-      organizationId: null,
-      consulteeUserId: buyer.userId,
-      consultantUserId: host.userId,
-      paid: true,
-      agreedPricePaise: 20_000,
-      startsAt,
-      endsAt: new Date(startsAt.getTime() + 30 * 60_000),
-    }),
+  const { trial, payment } = await seedPaidTrialHold(
+    host,
+    plan.id,
+    new Date(Date.now() + HOUR_MS),
   );
-  const payment = await prisma.payment.create({
-    data: {
-      amount: BigInt(20_000),
-      originalAmount: BigInt(20_000),
-      paymentMethod: "card",
-      paymentIntent: `order_dbtier_${randomUUID()}`,
-      paymentGateway: "RAZORPAY",
-      paymentStatus: "PENDING",
-      userId: buyer.userId,
-      appointmentId: trial.appointmentId,
-      isMockPayment: true,
-      expiresAt: new Date(Date.now() + HOUR_MS),
-      legs: { create: [{ source: "CARD", amountPaise: BigInt(20_000) }] },
-    },
-  });
   return { trial, payment };
 }
 

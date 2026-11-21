@@ -243,20 +243,21 @@ async function expireOrders(
   ctx.out.closedOrders.push(...gatewayCancels);
 }
 
-async function closeApprovedLinks(
+/** The expert's 1:1 and subscription bookings matching `where`, each with its kind and plan. */
+async function oneOnOneSales(
   ctx: EndingContext,
   consultantProfileId: string,
-): Promise<void> {
-  const linked = { status: AppointmentStatus.APPROVED_PENDING_PAYMENT };
+  where: Prisma.ConsultationWhereInput & Prisma.SubscriptionWhereInput,
+) {
   const consultations = await ctx.tx.consultation.findMany({
-    where: { ...linked, consultationPlan: { consultantProfileId } },
+    where: { ...where, consultationPlan: { consultantProfileId } },
     select: { ...PARTIES, consultationPlan: PLAN },
   });
   const subscriptions = await ctx.tx.subscription.findMany({
-    where: { ...linked, subscriptionPlan: { consultantProfileId } },
+    where: { ...where, subscriptionPlan: { consultantProfileId } },
     select: { ...PARTIES, subscriptionPlan: PLAN },
   });
-  const rows = [
+  return [
     ...consultations.map((r) => ({
       kind: "consultation" as const,
       row: r,
@@ -268,6 +269,14 @@ async function closeApprovedLinks(
       plan: r.subscriptionPlan,
     })),
   ];
+}
+
+async function closeApprovedLinks(
+  ctx: EndingContext,
+  consultantProfileId: string,
+): Promise<void> {
+  const linked = { status: AppointmentStatus.APPROVED_PENDING_PAYMENT };
+  const rows = await oneOnOneSales(ctx, consultantProfileId, linked);
   for (const { kind, row, plan } of rows) {
     const orders = await clearedOrders(ctx, row.appointment?.id ?? null);
     if (!orders.closable) {
@@ -303,26 +312,7 @@ async function declineOpenRequests(
   consultantProfileId: string,
 ): Promise<void> {
   const open = { status: AppointmentStatus.PENDING, ...UNPAID_REQUEST };
-  const consultations = await ctx.tx.consultation.findMany({
-    where: { ...open, consultationPlan: { consultantProfileId } },
-    select: { ...PARTIES, consultationPlan: PLAN },
-  });
-  const subscriptions = await ctx.tx.subscription.findMany({
-    where: { ...open, subscriptionPlan: { consultantProfileId } },
-    select: { ...PARTIES, subscriptionPlan: PLAN },
-  });
-  const rows = [
-    ...consultations.map((r) => ({
-      kind: "consultation" as const,
-      row: r,
-      plan: r.consultationPlan,
-    })),
-    ...subscriptions.map((r) => ({
-      kind: "subscription" as const,
-      row: r,
-      plan: r.subscriptionPlan,
-    })),
-  ];
+  const rows = await oneOnOneSales(ctx, consultantProfileId, open);
   for (const { kind, row, plan } of rows) {
     const orders = await clearedOrders(ctx, row.appointment?.id ?? null);
     if (!orders.closable) {
