@@ -28,6 +28,12 @@ jest.mock("razorpay", () => {
   }));
 });
 
+const mockReportSentryError = jest.fn();
+jest.mock("@/lib/observability/report", () => ({
+  ...jest.requireActual("@/lib/observability/report"),
+  reportSentryError: (...a: unknown[]) => mockReportSentryError(...a),
+}));
+
 import { createRazorpayRefund } from "@/lib/payments/core/razorpay";
 import { RefundError } from "@/lib/payments/core/types";
 
@@ -335,5 +341,29 @@ describe("refund guards at the gateway boundary (#1584 P2-P0-01, P1-GW01b)", () 
     ).rejects.toMatchObject({ code: "INVALID_AMOUNT" });
     expect(rzp.ordersFetchPayments).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("network faults", () => {
+  const faultReports = () =>
+    mockReportSentryError.mock.calls.filter(
+      ([, opts]) => (opts as { expected?: boolean }).expected !== true,
+    );
+
+  it("are left to a caller that reports once per run, and reported here for any other caller", async () => {
+    fetchMock.mockRejectedValue(new TypeError("fetch failed"));
+    const params = {
+      paymentIntentId: "pay_network_fault",
+      amount: 5000,
+      idempotencyKey: "clx3k2j9a0000abcd1234efgh",
+    };
+
+    await expect(
+      createRazorpayRefund({ ...params, failureReportedByCaller: true }),
+    ).rejects.toThrow();
+    expect(faultReports()).toEqual([]);
+
+    await expect(createRazorpayRefund(params)).rejects.toThrow();
+    expect(faultReports()).toHaveLength(1);
   });
 });

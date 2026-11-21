@@ -111,6 +111,23 @@ export function buildConsultantNav(consultantId: string): DashboardNav {
   };
 }
 
+/**
+ * The expert nav with the header's public-page link: copying the signed share
+ * link, and gone while the expert is known not to be VERIFIED (that page answers 404).
+ */
+export function consultantNavWithPublicPage(
+  consultantId: string,
+  shareHref: string,
+  verificationStatus: string | null | undefined,
+): DashboardNav {
+  const built = buildConsultantNav(consultantId);
+  if (!built.pinnedCta) return built;
+  if (verificationStatus && verificationStatus !== "VERIFIED") {
+    return { ...built, pinnedCta: undefined };
+  }
+  return { ...built, pinnedCta: { ...built.pinnedCta, copyText: shareHref } };
+}
+
 export const CONSULTANT_PAGE_LABELS: Record<string, string> = {
   home: "Home",
   messages: "Messages",

@@ -140,6 +140,12 @@ const POST_APPROVAL = new Set<BookingStateKind>([
   "COMPLETED",
 ]);
 
+/** Only a booking still waiting on approval or payment holds its sessions; an ended one has released them. */
+const HOLDING_STATES = new Set<BookingStateKind>([
+  "REQUESTED",
+  "AWAITING_PAYMENT",
+]);
+
 /** Before confirmation a trial or a pay-first hold is cancelled; a submitted request is withdrawn. */
 function preApprovalCancelLabel(vm: AppointmentVM): string {
   if (vm.kind === "TRIAL") return "Cancel trial";
@@ -841,7 +847,7 @@ export function AppointmentDetailClient({
   const sessionsCard = !soleSession && (
     <Section
       title={
-        heldCount > 0 && !postApproval
+        heldCount > 0 && !postApproval && HOLDING_STATES.has(bookingState.state)
           ? `Sessions · ${heldCount} held`
           : "Sessions"
       }
@@ -1230,6 +1236,9 @@ export function AppointmentDetailClient({
         supportsDocuments={supportsDocuments(vm.kind)}
         hrefs={resourceHrefs}
         withheld={resourcesWithheld}
+        endedRefunded={
+          vm.bucket === "cancelled" && (vm.refunded?.paise ?? 0) > 0
+        }
       />
     </Section>
   );

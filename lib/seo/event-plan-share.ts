@@ -10,11 +10,6 @@ type SharePlan = {
   consultantProfile?: { user?: { name?: string | null } | null } | null;
 };
 
-const KIND_LABEL: Record<EventPlanKind, string> = {
-  webinar: "Webinar",
-  class: "Class",
-};
-
 const PATH_SEGMENT: Record<EventPlanKind, string> = {
   webinar: "webinars",
   class: "classes",
@@ -64,10 +59,10 @@ export function eventPlanMetadata(
   };
 }
 
-/** For a missing or hidden plan: no title of the plan, and not for the index. */
-export function hiddenEventPlanMetadata(kind: EventPlanKind): Metadata {
+/** For a missing or hidden plan of any kind: the page's own 404 title, and not for the index. */
+export function hiddenPlanMetadata(): Metadata {
   return {
-    title: `${KIND_LABEL[kind]} not found`,
+    title: "Page not found",
     robots: { index: false, follow: false },
   };
 }

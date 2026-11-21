@@ -28,13 +28,14 @@ export function viewedPerson(
 export function personalHomeTitle(
   person: ViewedPerson | null,
   viewerOwnsProfile: boolean,
+  owner: "learner" | "expert" = "learner",
 ): string | null {
   if (!person) return null;
   if (viewerOwnsProfile) {
     const first = person.name?.split(" ")[0];
     return first ? `Welcome back, ${first}` : "Welcome back";
   }
-  return person.name ? `${person.name}'s home` : "This learner's home";
+  return person.name ? `${person.name}'s home` : `This ${owner}'s home`;
 }
 
 interface ShellPerson {
