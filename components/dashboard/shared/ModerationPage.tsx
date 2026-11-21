@@ -244,6 +244,29 @@ function reportTitle(report: ModerationReport): {
   }
 }
 
+/** A reject's ending of the expert's unpaid sales, count by count. */
+const UNPAID_SALE_COUNTS = [
+  ["payLinksClosed", "unpaid links closed"],
+  ["requestsDeclined", "requests declined"],
+  ["trialHoldsReleased", "trial holds released"],
+  ["seatsReleased", "unpaid seats released"],
+] as const;
+
+function unpaidSalesLines(sideEffects: ModerationSideEffects): string[] {
+  const lines = UNPAID_SALE_COUNTS.flatMap(([key, label]) =>
+    sideEffects[key] === undefined ? [] : [`${label}: ${sideEffects[key]}`],
+  );
+  if (sideEffects.salesKept) {
+    lines.push(`sales left open for their payment: ${sideEffects.salesKept}`);
+  }
+  if (sideEffects.unpaidSales === "failed") {
+    lines.push("unpaid sales: not ended yet, the retry sweep re-runs it");
+  } else if (sideEffects.unpaidSales === "gave_up") {
+    lines.push("unpaid sales: retry gave up");
+  }
+  return lines;
+}
+
 /**
  * #1300 — the fixed-shape fields of `ModerationSideEffects`, rendered only
  * when the action actually wrote them. Reading the object's own keys (rather
@@ -264,6 +287,7 @@ function sideEffectLines(sideEffects: ModerationSideEffects | null): string[] {
   if (sideEffects.profilesUnverified !== undefined) {
     lines.push(`profiles unverified: ${sideEffects.profilesUnverified}`);
   }
+  lines.push(...unpaidSalesLines(sideEffects));
   if (sideEffects.reviewRemoved) lines.push("review removed: yes");
   if (sideEffects.cancellations?.engagementsCancelled !== undefined) {
     lines.push(

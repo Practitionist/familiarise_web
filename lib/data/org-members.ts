@@ -17,6 +17,7 @@ import prisma from "@/lib/prisma";
 import {
   MEMBER_EXPERT_SELECT,
   buildOrgMembersQuery,
+  memberExpertOf,
   toRoleCounts,
 } from "@/lib/data/org-members-query";
 import type {
@@ -76,7 +77,7 @@ export async function getOrgMembers(
       ...(opts.canSeePayout && { payoutRecipient: r.payoutRecipient }),
       createdAt: r.createdAt.toISOString(),
       user: r.user,
-      consultantProfile: r.consultantProfile,
+      consultantProfile: memberExpertOf(r.consultantProfile),
     })),
   };
 }

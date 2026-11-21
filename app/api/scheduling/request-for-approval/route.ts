@@ -51,7 +51,11 @@ import {
 } from "@/lib/booking/request-caps";
 import { planSaleRefusal } from "@/lib/api/plans/visibility";
 import { assertWindowMatchesPlanDuration } from "@/lib/booking/slot-validation";
-import { BookingRuleError } from "@/lib/booking/booking-rule-error";
+import {
+  BookingRuleError,
+  assertExpertVerified,
+  assertPlanOnSale,
+} from "@/lib/booking/booking-rule-error";
 import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
 import { REQUEST_NOT_OFFERED_MESSAGE } from "@/lib/booking/booking-mode";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
@@ -64,7 +68,9 @@ import {
 
 import { getSession } from "@/lib/auth-server";
 import { assertNotSelfBooking } from "@/lib/booking/self-booking";
+import { assertExpertStandsInTx } from "@/lib/booking/expert-standing";
 import { apiError } from "@/lib/errors/api-error";
+import { isRefusal } from "@/lib/errors/refusal";
 import * as Sentry from "@sentry/nextjs";
 
 const SUBMITTED_MESSAGE = "Request for approval submitted successfully";
@@ -320,13 +326,16 @@ export async function POST(req: NextRequest) {
             acceptingRequests: true,
             bookingMode: true,
             maxOpenRequests: true,
+            verificationStatus: true,
+            deletedAt: true,
             user: { select: { id: true } },
           },
         },
       },
     });
 
-    if (!consultationPlan) {
+    // A soft-deleted expert's plan answers as missing, as checkout does.
+    if (!consultationPlan || consultationPlan.consultantProfile.deletedAt) {
       return NextResponse.json(
         { error: "Consultation plan not found" },
         { status: 404 },
@@ -348,6 +357,21 @@ export async function POST(req: NextRequest) {
         },
         { status: 409 },
       );
+    }
+
+    // Checkout's sale gates: a verified expert, a plan on sale to this buyer.
+    try {
+      assertExpertVerified(
+        consultationPlan.consultantProfile,
+        "This consultation",
+      );
+      assertPlanOnSale(consultationPlan, "This consultation", organizationId);
+    } catch (error) {
+      if (error instanceof BookingRuleError) return bookingRuleResponse(error);
+      if (isRefusal(error)) {
+        return apiError({ tag: "[request-for-approval]", error });
+      }
+      throw error;
     }
 
     // #1703 D4 — the pause is a profile switch, so it is answered before any
@@ -534,8 +558,13 @@ export async function POST(req: NextRequest) {
         // budget sits well inside the 60 s slot lock held above.
         const consultation = await prisma.$transaction(
           async (tx) => {
-            // Mode, cap and availability are read on this transaction, after
+            // Standing, mode, cap and availability are read on this transaction, after
             // every lock, so the insert below commits against what they saw.
+            await assertExpertStandsInTx(
+              tx,
+              consultantProfileId,
+              "This consultation",
+            );
             const mode = await tx.consultantProfile.findUnique({
               where: { id: consultantProfileId },
               select: { bookingMode: true },
@@ -728,6 +757,9 @@ export async function POST(req: NextRequest) {
           return NextResponse.json(lockError.body, {
             status: lockError.httpStatus,
           });
+        }
+        if (lockError instanceof BookingRuleError) {
+          return bookingRuleResponse(lockError);
         }
         console.error(
           JSON.stringify({

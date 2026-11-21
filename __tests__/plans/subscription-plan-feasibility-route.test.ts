@@ -53,11 +53,20 @@ const week = (placeable: number) => ({
 beforeEach(() => {
   jest.clearAllMocks();
   (getSession as jest.Mock).mockResolvedValue({ user: { id: "buyer" } });
+  // The route's select: a published public plan of a verified expert.
   db.subscriptionPlan.findUnique.mockResolvedValue({
+    status: "PUBLISHED",
+    visibility: "PUBLIC",
+    organizationId: null,
+    archivedAt: null,
     consultantProfileId: "profile-1",
     sessionsPerWeek: 3,
     sessionDurationInHours: 1,
-    consultantProfile: { user: { timezone: "Asia/Kolkata" } },
+    consultantProfile: {
+      verificationStatus: "VERIFIED",
+      deletedAt: null,
+      user: { timezone: "Asia/Kolkata" },
+    },
   });
 });
 

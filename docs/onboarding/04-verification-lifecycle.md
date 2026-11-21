@@ -3,12 +3,12 @@ title: Verification lifecycle
 band: onboarding
 audience: sde1
 status: live
-last-reviewed: 2026-09-18
+last-reviewed: 2026-11-21
 ---
 
 # Verification lifecycle
 
-A consultant is listed on the marketplace and bookable only once platform staff have verified their identity and credentials (`ConsultantProfile.verificationStatus = VERIFIED`; `lib/data/explore-experts.ts` filters on it and `assertPlanPurchasable` in checkout refuses anything else). This document is the lifecycle of that verification as rebuilt on 2026-09-18: where documents live and who owns them, the one writer for a submission, the one writer for a decision, how the staff–consultant loop is bounded, and what the daily sweep does. The wizard's part (collecting the documents at step 3) is in [01-system-reference.md](01-system-reference.md) §7.
+A consultant is listed on the marketplace and bookable only once platform staff have verified their identity and credentials (`ConsultantProfile.verificationStatus = VERIFIED`; `lib/data/explore-experts.ts` filters on it and every booking door refuses anything else, as [What verification gates](#what-verification-gates) lists). This document is the lifecycle of that verification as rebuilt on 2026-09-18: where documents live and who owns them, the one writer for a submission, the one writer for a decision, how the staff–consultant loop is bounded, and what the daily sweep does. The wizard's part (collecting the documents at step 3) is in [01-system-reference.md](01-system-reference.md) §7.
 
 ## Two status columns
 
@@ -55,6 +55,19 @@ A request for more information is a round. Rounds are counted as request rows si
 
 `scripts/cleanup/sweep-verification.ts` runs daily at 03:20 UTC on the Netlify ticker (target `sweep-verification`) and through its HTTP twin `POST /api/cleanup/sweep-verification`. It deletes unlinked uploads older than 7 days — the row first, guarded on `verificationId` still being null, then the object, so a submission that links the row between the read and the delete keeps both and the worst case of a failed object removal is one orphaned object rather than a linked row whose file is gone. It sends the day-7 reminder with the `reminderSentAt` stamp and the outbox row committed in one transaction (a stamp without a row would silence the reminder for good), and it closes the day-14 stale requests with the profile update and the decision bell and email staged in the same per-row transaction. It imports the storage leaf module (`lib/supabase-storage-core`) rather than `lib/supabase`, which carries `server-only` and cannot load in a bare Node process (#1270).
 
+## What verification gates
+
+An expert who is not verified may build and publish plans and set their hours, so they are bookable the moment staff verify them, but nobody else can see or buy those plans. The rule has one predicate, `isPublicExpertProfile` (verified and not deleted), and its `where` form `publicExpertProfileWhere`, both in `lib/profiles/public-profile.ts`.
+
+| Surface             | What it does for an unverified expert                                                                                                                                                          | Where                                                                                                  |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Booking doors       | Checkout, its in-lock re-read, the free and paid trial, the 1:1 request and every approval or trial pay-link mint refuse with 409 `EXPERT_NOT_VERIFIED` and write nothing                      | `assertExpertVerified` in `lib/booking/booking-rule-error.ts`                                          |
+| Plan lists          | The 1:1, subscription, webinar and class list APIs, `/explore/programs` and the organisation member catalog leave the plans out; the 1:1 and subscription lists still show them to their owner | `oneOnOnePlanListWhere`, `buildPlanWhereClause`, `lib/data/explore-programs.ts`, `getOrgMemberCatalog` |
+| Plan pages          | A plan page and its by-id API answer 404 to everyone but the owner                                                                                                                             | `isPlanViewable` in `lib/api/plans/visibility.ts`                                                      |
+| Organisation roster | The admin's Members page reads "Waiting for verification"; the browser gets a boolean, never the status                                                                                        | `memberExpertOf` in `lib/data/org-members-query.ts`                                                    |
+
+A moderation reject (`PROFILE_UNVERIFIED`) sets the profile to `REJECTED`, so the same gates apply from that moment: new sales stop, plan rows are not unpublished, and paid sessions already booked still run. Right after it commits, the expert's unpaid sales end (`endUnverifiedExpertSales` in `lib/booking/unverified-expert-notices.ts`): the gateway is asked about every open order first, then an approved but unpaid 1:1 or subscription expires, an unanswered unpaid request is declined, and an unpaid trial hold or group seat is released, each with its open order expired and its checkout's spend returned. A live payment keeps its sale open; each closed order is read again after the commit and a capture found is refunded; each learner is told in neutral words. Sale writers re-read the expert's standing under a share lock (`assertExpertStandsInTx`), so a write in flight is never missed. An unpaid request can no longer be approved for an unverified expert (`assertUnpaidApprovalVerified` in `lib/booking/approval-verification.ts`, 409 `EXPERT_NOT_VERIFIED`), while a booking with a captured payment is still placed. The action route purges the expert's public profile after the commit (`purgeExpertSurfaces`). The owner's decisions are in [the decision record](../decisions/2026-11-21-unverified-experts-cannot-be-booked.md).
+
 ## Tests
 
-`__tests__/verification/sniff-mime.test.ts`, `upload-admission.test.ts`, `submit-request.test.ts` (CAS, ownership, empty request) and `review.test.ts` (reason codes, CAS, round cap) pin the rules above; `__tests__/maintenance/workflow-import-env.test.ts` and `cron-lock-registry.test.ts` keep the sweep loadable and locked.
+`__tests__/db/booking/unverified-expert-doors.db.test.ts` and `unverified-expert-plans.db.test.ts` pin what verification gates. `__tests__/verification/sniff-mime.test.ts`, `upload-admission.test.ts`, `submit-request.test.ts` (CAS, ownership, empty request) and `review.test.ts` (reason codes, CAS, round cap) pin the rules above; `__tests__/maintenance/workflow-import-env.test.ts` and `cron-lock-registry.test.ts` keep the sweep loadable and locked.

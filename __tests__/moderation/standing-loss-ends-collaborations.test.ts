@@ -74,7 +74,25 @@ jest.mock("../../lib/stream/access-revocation", () => ({
   revokeCollaboratorAccess: (...args: unknown[]) => mockRevoke(...args),
 }));
 
+// The rejected expert's unpaid sales end after commit, through their own module.
+jest.mock("../../lib/booking/unverified-expert-notices", () => ({
+  endUnverifiedExpertSales: jest.fn(async () => ({
+    payLinksClosed: 0,
+    requestsDeclined: 0,
+    trialHoldsReleased: 0,
+    seatsReleased: 0,
+    salesKept: 0,
+    skipped: false,
+    ordersLive: 0,
+    ordersUnchecked: 0,
+    complete: true,
+    bells: [],
+    emails: [],
+  })),
+}));
+
 import prisma from "@/lib/prisma";
+import { endUnverifiedExpertSales } from "@/lib/booking/unverified-expert-notices";
 import {
   applyBestEffortEffects,
   applyTransactionalEffects,
@@ -117,7 +135,12 @@ const tx = {
   consultantProfile: {
     findUnique: jest.fn(async () => ({ userId: "u1" })),
     updateMany: jest.fn(async () => ({ count: 1 })),
+    updateManyAndReturn: jest.fn(async () => [{ id: "cp-1" }]),
   },
+  // The expert has no unpaid sale open, so the reject ends none.
+  consultation: { findMany: jest.fn(async () => []) },
+  subscription: { findMany: jest.fn(async () => []) },
+  trial: { findMany: jest.fn(async () => []) },
   collaborator: {
     findMany: jest.fn(async ({ where }: { where: Where }) =>
       live(where).map(({ id }) => ({ id })),
@@ -230,6 +253,50 @@ describe("collaborations when an account loses its standing", () => {
       [[owed], "moderation.collaborationsRemoved"],
     ]);
     expect(summary).not.toHaveProperty("owedCohostEmails");
+  });
+
+  it("a failed Stream revocation leaves it queued and still ends the rejected expert's sales", async () => {
+    const transactional = await applyTransactionalEffects(
+      tx as never,
+      input("PROFILE_UNVERIFIED"),
+    );
+    mockRevoke.mockRejectedValueOnce(new Error("Stream down"));
+
+    const summary = await applyBestEffortEffects(
+      input("PROFILE_UNVERIFIED"),
+      transactional,
+    );
+
+    expect(summary.collaboratorRevocation).toBe("failed");
+    expect(endUnverifiedExpertSales).toHaveBeenCalledTimes(1);
+    expect(summary.unpaidSales).toBe("ok");
+  });
+
+  it("an ending that runs out of time stays queued for the retry sweep", async () => {
+    const transactional = await applyTransactionalEffects(
+      tx as never,
+      input("PROFILE_UNVERIFIED"),
+    );
+    (endUnverifiedExpertSales as jest.Mock).mockResolvedValueOnce({
+      payLinksClosed: 1,
+      requestsDeclined: 0,
+      trialHoldsReleased: 0,
+      seatsReleased: 0,
+      salesKept: 1,
+      ordersLive: 0,
+      ordersUnchecked: 0,
+      complete: false,
+      skipped: false,
+      bells: [],
+      emails: [],
+    });
+
+    const summary = await applyBestEffortEffects(
+      input("PROFILE_UNVERIFIED"),
+      transactional,
+    );
+
+    expect(summary).toMatchObject({ payLinksClosed: 1, unpaidSales: "failed" });
   });
 
   it("a time-limited suspension ends no collaboration", async () => {

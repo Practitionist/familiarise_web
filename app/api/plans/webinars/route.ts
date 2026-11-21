@@ -11,6 +11,8 @@ import {
 import {
   parsePlanFilters,
   buildPlanWhereClause,
+  isOwnerListView,
+  planListCacheHeaders,
   buildPlanOrderBy,
   paginatedResponse,
   rankAndPaginate,
@@ -34,7 +36,11 @@ export async function GET(request: NextRequest) {
 
     const filters = parsePlanFilters(searchParams);
     const { sort, page, limit, skip } = filters;
-    const where = buildPlanWhereClause(filters) as Prisma.WebinarPlanWhereInput;
+    const ownerView = await isOwnerListView(filters);
+    const headers = planListCacheHeaders(filters);
+    const where = buildPlanWhereClause(filters, {
+      ownerView,
+    }) as Prisma.WebinarPlanWhereInput;
     const orderBy = buildPlanOrderBy(sort) as
       Prisma.WebinarPlanOrderByWithRelationInput | undefined;
 
@@ -68,6 +74,7 @@ export async function GET(request: NextRequest) {
         skip,
         limit,
         page,
+        headers,
       );
     }
 
@@ -82,7 +89,7 @@ export async function GET(request: NextRequest) {
       prisma.webinarPlan.count({ where }),
     ]);
 
-    return paginatedResponse(webinarPlans, total, page, limit);
+    return paginatedResponse(webinarPlans, total, page, limit, headers);
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),

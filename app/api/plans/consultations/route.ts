@@ -8,7 +8,7 @@ import { assertPlanPriceWithinBounds } from "@/lib/payments/pricing/price-bounds
 import { planEditRefusal } from "@/lib/api/plans/plan-edit-guard";
 import { findOrCreateTopics, transformTopicsToStrings } from "@/lib/topics";
 import {
-  oneOnOnePlanListCacheControl,
+  oneOnOnePlanListCacheHeaders,
   oneOnOnePlanListWhere,
 } from "@/lib/api/plans/visibility";
 import { faqCreateNested, planContentInclude } from "@/lib/api/plans/content";
@@ -78,9 +78,7 @@ export async function GET(request: NextRequest) {
         // Public marketplace list — same convention as the sibling
         // webinars/classes lists (paginatedResponse): CDN-cached 60s with
         // background revalidation instead of hitting Postgres per visit.
-        headers: {
-          "Cache-Control": oneOnOnePlanListCacheControl(consultantId),
-        },
+        headers: oneOnOnePlanListCacheHeaders(consultantId),
       },
     );
   } catch (error) {

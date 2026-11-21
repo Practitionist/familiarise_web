@@ -1,6 +1,8 @@
 /** 1:1 seeds for the database tier: published hosts, plans, buyers and requests. */
+import { randomUUID } from "node:crypto";
 import prisma from "../../../lib/prisma";
 import {
+  futureAt,
   HOUR_MS,
   seedConsultee,
   type SeededConsultee,
@@ -58,6 +60,48 @@ export async function seedBuyer(): Promise<SeededConsultee> {
     data: { billingStateCode: "29" },
   });
   return buyer;
+}
+
+/** A paid trial holding its time five days out, with its 200-rupee card order PENDING until `expiresAt`. */
+export async function seedPaidTrialHold(
+  host: SeededHost,
+  subscriptionPlanId: string,
+  expiresAt: Date,
+) {
+  // Lazy: the trial booking graph loads only for suites that seed one.
+  const { bookTrialInTx } = await import("../../../lib/trials/book-trial");
+  const buyer = await seedBuyer();
+  const startsAt = futureAt(5, 10);
+  const trial = await prisma.$transaction((tx) =>
+    bookTrialInTx(tx, {
+      consulteeProfileId: buyer.consulteeProfileId,
+      consultantProfileId: host.consultantProfileId,
+      subscriptionPlanId,
+      organizationId: null,
+      consulteeUserId: buyer.userId,
+      consultantUserId: host.userId,
+      paid: true,
+      agreedPricePaise: 20_000,
+      startsAt,
+      endsAt: new Date(startsAt.getTime() + 30 * 60_000),
+    }),
+  );
+  const payment = await prisma.payment.create({
+    data: {
+      amount: BigInt(20_000),
+      originalAmount: BigInt(20_000),
+      paymentMethod: "card",
+      paymentIntent: `order_dbtier_${randomUUID()}`,
+      paymentGateway: "RAZORPAY",
+      paymentStatus: "PENDING",
+      userId: buyer.userId,
+      appointmentId: trial.appointmentId,
+      isMockPayment: true,
+      expiresAt,
+      legs: { create: [{ source: "CARD", amountPaise: BigInt(20_000) }] },
+    },
+  });
+  return { buyer, trial, payment, startsAt };
 }
 
 /** A consultation request awaiting its times (no appointment yet). */

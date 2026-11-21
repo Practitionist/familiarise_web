@@ -4,6 +4,7 @@ import { planBuyBlockedFor } from "@/lib/booking/plan-demand";
 import { seatHoldingParticipant } from "@/utils/scheduling-engine/occupancyPolicy";
 import { toPlain } from "@/lib/data/serialize";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
+import { publicProfileFacts } from "@/lib/profiles/public-profile";
 import {
   planCollaboratorScalars,
   planConsultantUserSelect,
@@ -62,6 +63,8 @@ export async function fetchWebinarPlanDetail(webinarPlanId: string) {
       consultantProfile: {
         select: {
           ...consultantPublicScalars,
+          // The detail gate hides an unverified expert's plan from all but its author.
+          ...publicProfileFacts,
           user: planConsultantUserSelect,
           domain: true,
           subDomains: true,
@@ -130,6 +133,8 @@ export async function fetchClassPlanDetail(classPlanId: string) {
       consultantProfile: {
         select: {
           ...consultantPublicScalars,
+          // The detail gate hides an unverified expert's plan from all but its author.
+          ...publicProfileFacts,
           user: planConsultantUserSelect,
           domain: true,
           subDomains: true,
@@ -204,6 +209,7 @@ export const getClassPlanDetail = cache(fetchClassPlanDetail);
 const planOwnerSelect = {
   select: {
     ...consultantPublicScalars,
+    ...publicProfileFacts,
     user: planConsultantUserSelect,
     domain: true,
     subDomains: true,

@@ -298,6 +298,26 @@ gate a concurrent writer walked through:
   route all call it, so a 6-hour window can no longer be sold at a 1-hour price.
 - A paused expert (`acceptingRequests = false`) refuses direct checkout and
   trials with 409 `NOT_ACCEPTING_BOOKINGS`; existing bookings are unaffected.
+- An expert who is not verified refuses direct checkout (pricing and the
+  in-lock re-read), trials, requests and every approval or trial pay-link mint
+  with 409 `EXPERT_NOT_VERIFIED` (`assertExpertVerified` in
+  `lib/booking/booking-rule-error.ts`); paid bookings already made are
+  unaffected, and plan rows are never unpublished for it. Approving an unpaid
+  request for them is refused too (`assertUnpaidApprovalVerified`). A
+  moderation reject ends their unpaid sales right after it commits, as Request
+  again closes an order (`endUnverifiedExpertSales`): the gateway is asked
+  first and a live payment keeps its sale open, then one transaction
+  (`endUnpaidSalesInTx`) expires approved links through `lapseApprovedRequest`,
+  declines unanswered unpaid requests and releases unpaid trial holds and group
+  seats, every open order expired by CAS with its spend returned, and stages
+  each learner notice in that transaction; each closed gateway order is
+  re-read after commit and a capture found is refunded. An unanswered first
+  read leaves its sale open; a failed re-read closed the sale but does not
+  know whether a capture landed, so it is reported as unresolved, as is a re-read that still finds a live payment. Never close
+  an unread order, and never treat a failed re-read as settled: until the
+  reconciler of #2934 runs, a webhook is the only automatic refund for it.
+  Every sale writer, including the pay-link fill after the gateway call,
+  re-reads standing under a share lock (`assertExpertStandsInTx`).
 - A review-first expert (`bookingMode = REQUEST`) refuses a direct consultation
   checkout with 409 `REQUEST_APPROVAL_REQUIRED` on every rail (card,
   zero-amount, organisation-funded), before any gateway order; plans, trials and

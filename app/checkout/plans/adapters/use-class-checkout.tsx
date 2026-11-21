@@ -32,11 +32,12 @@ import {
   type CheckoutSearchParams,
 } from "../components/PlanCheckoutShell";
 import { CheckoutTotalNotes } from "../components/CheckoutTotals";
-import { reportPaymentsError } from "../utils";
 import {
   eventMockErrorCopy,
   loadErrorMessage,
   planIncludes,
+  fetchCheckoutPlan,
+  useReportPlanLoadError,
   searchParamsKey,
 } from "./shared";
 
@@ -106,29 +107,15 @@ export function useClassCheckout(
     queryKey: ["checkout-plan", planId, searchParamsString],
     staleTime: 60_000,
     retry: false,
-    queryFn: async (): Promise<PlanResponse> => {
-      const response = await fetch(`/api/plans/classes/${planId}`);
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      const data = await response.json();
-      if (!data.data?.consultantProfile?.user) {
-        throw new Error("Consultant details not found");
-      }
-      return data;
-    },
+    queryFn: () =>
+      fetchCheckoutPlan<PlanResponse>(`/api/plans/classes/${planId}`),
   });
   const planData = checkoutPlanQuery.data ?? null;
   const planDetails = planData?.data;
   const consultantDetails = planDetails?.consultantProfile;
   const userDetails = consultantDetails?.user;
 
-  useEffect(() => {
-    if (checkoutPlanQuery.error) {
-      reportPaymentsError(checkoutPlanQuery.error);
-      console.error("Error fetching plan data:", checkoutPlanQuery.error);
-    }
-  }, [checkoutPlanQuery.error]);
+  useReportPlanLoadError(checkoutPlanQuery.error);
 
   // The batch named by ?eventId= (never silently another one), else the first
   // joinable batch; its card carries the late-join price.

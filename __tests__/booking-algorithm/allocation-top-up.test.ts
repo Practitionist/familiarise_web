@@ -183,6 +183,8 @@ function makeSubscription(
  */
 function makeNoDeleteTx() {
   return {
+    // The expert-standing read under a share lock; no row reads as standing.
+    $queryRaw: jest.fn(async () => []),
     subscription: {
       findUnique: jest.fn(),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
