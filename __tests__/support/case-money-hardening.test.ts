@@ -788,6 +788,31 @@ describe("refund execution correctness", () => {
     );
   });
 
+  it("refuses to recommend ending a 100% discount booking Ops already ended at ₹0", async () => {
+    mockStore.payment = {
+      ...mockStore.payment,
+      amount: 0,
+      originalAmount: 500_000,
+      paymentIntent: "free_discount",
+      creditUsages: [],
+      refunds: [{ amountPaise: 0, status: "SUCCEEDED" }],
+    };
+    mockStore.recommendations = [];
+
+    await expect(
+      performCaseAction("case-1", staff, {
+        action: "RECOMMEND_REFUND" as const,
+        clientActionId: "rec-ended",
+        expectedUpdatedAt: caseUpdatedAt.toISOString(),
+        paymentId: "pay-1",
+        amountPaise: 0,
+        reason: "Session not delivered",
+        releaseSeat: true,
+      }),
+    ).rejects.toMatchObject({ code: "ALREADY_FULLY_REFUNDED" });
+    expect(db.supportFinancialRecommendation.create).not.toHaveBeenCalled();
+  });
+
   it("gives a price-free seat no remedy: recommend, preview, pricing and approval all refuse", async () => {
     mockStore.payment = {
       ...mockStore.payment,

@@ -1294,11 +1294,9 @@ async function recommendRefundTx(
 ) {
   const linked = await linkedPayment(tx, caseId, input.paymentId);
   await assertRemovalOrder(tx, caseId, input.paymentId);
-  if (refundDoorRefusal(linked)?.code === "PRICE_FREE_PAYMENT")
-    throw new CaseActionError(
-      "PRICE_FREE_PAYMENT",
-      "This seat was free, so nothing was paid and there is nothing to refund.",
-    );
+  // The refund door's own answer, so a recommendation is never opened that approval must refuse.
+  const refusal = refundDoorRefusal(linked);
+  if (refusal) throw new CaseActionError(refusal.code, refusal.message);
   const creditFunded = linked.paymentIntent.startsWith("free_");
   if (
     (creditFunded && input.amountPaise !== 0) ||
