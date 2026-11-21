@@ -178,6 +178,8 @@ export type RefundInput = {
 
 export type RefundResult = {
   refundId: string;
+  /** The payment the persisted Refund row belongs to. */
+  paymentId: string;
   amountRefundedPaise: number;
   legsReversed: number;
   consultantEarningsReversed: number;
@@ -196,17 +198,22 @@ export type RefundResult = {
   settledOwed?: HandSettledOwed;
 };
 
+/** What a keyed refund request asks for: its payment, and the amount when it names one. */
+export type RefundReplayRequest = { paymentId: string; amountPaise?: number };
+
 /**
  * #1780 — the refund already recorded under `dedupeKey`, as a no-op result.
  * A FAILED or CANCELLED row moved no money, so its key is released for the retry.
+ * A key spent on another payment or amount throws {@link RefundKeyReusedError}.
  */
 export async function findDedupedRefund(
   dedupeKey: string | undefined,
+  request: RefundReplayRequest,
 ): Promise<RefundResult | null> {
   if (!dedupeKey) return null;
   const row = await prisma.refund.findUnique({
     where: { dedupeKey },
-    select: { id: true, amountPaise: true, status: true },
+    select: { id: true, paymentId: true, amountPaise: true, status: true },
   });
   if (!row) return null;
   if (
@@ -219,8 +226,10 @@ export async function findDedupedRefund(
     });
     return null;
   }
+  assertRefundReplayMatches(row, request);
   return {
     refundId: row.id,
+    paymentId: row.paymentId,
     amountRefundedPaise: Number(row.amountPaise),
     legsReversed: 0,
     consultantEarningsReversed: 0,
@@ -245,6 +254,33 @@ export class RefundValidationError extends Error {
     super(message);
     this.name = "RefundValidationError";
   }
+}
+
+/** A refund key already spent on another payment or amount: never replayed, answered 422. */
+export class RefundKeyReusedError extends RefundValidationError {
+  readonly httpStatus = 422;
+  constructor(request: RefundReplayRequest) {
+    super(
+      "This refund key was already used for a different payment or amount. Open the refund again to send a new one.",
+      "IDEMPOTENCY_KEY_REUSED",
+      { paymentId: request.paymentId },
+    );
+    this.name = "RefundKeyReusedError";
+  }
+}
+
+/** A stored refund replays only for its own payment and, when the request names one, its own amount. */
+export function assertRefundReplayMatches(
+  stored: { paymentId: string; amountPaise: number | bigint },
+  request: RefundReplayRequest,
+): void {
+  if (
+    stored.paymentId === request.paymentId &&
+    (request.amountPaise === undefined ||
+      Number(stored.amountPaise) === request.amountPaise)
+  )
+    return;
+  throw new RefundKeyReusedError(request);
 }
 
 /** True when the error is a Prisma unique-constraint violation (P2002). */
@@ -316,7 +352,7 @@ export function isModelledRefundRefusal(err: unknown): boolean {
  */
 export async function refundPayment(input: RefundInput): Promise<RefundResult> {
   // #1780 — a key already spent answers with its refund, before any balance check.
-  const deduped = await findDedupedRefund(input.dedupeKey);
+  const deduped = await findDedupedRefund(input.dedupeKey, input);
   if (deduped) return deduped;
 
   // Read payment outside the tx for early validation (cheap read; the
@@ -575,7 +611,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
   } catch (err) {
     // #1780 — a concurrent call with the same key won the unique; it is the refund.
     const winner = isDedupeKeyConflict(err)
-      ? await findDedupedRefund(input.dedupeKey)
+      ? await findDedupedRefund(input.dedupeKey, input)
       : null;
     if (winner) return winner;
     throw err;
@@ -833,6 +869,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
   if (gateway.status !== "SUCCEEDED") {
     return {
       refundId: boundRefundRowId,
+      paymentId: payment.id,
       amountRefundedPaise: requested,
       legsReversed: 0,
       consultantEarningsReversed: 0,
@@ -846,6 +883,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
 
   let settled: {
     refundId: string;
+    paymentId: string;
     amountRefundedPaise: number;
     legsReversed: number;
     consultantEarningsReversed: number;
@@ -889,6 +927,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
             });
             return {
               refundId: boundRefundRowId,
+              paymentId: payment.id,
               amountRefundedPaise: requested,
               legsReversed: 0,
               consultantEarningsReversed: 0,
@@ -959,6 +998,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
 
           return {
             refundId: boundRefundRowId,
+            paymentId: payment.id,
             amountRefundedPaise: requested,
             ...cascade,
             status: "SUCCEEDED" as const,
@@ -983,6 +1023,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     });
     settled = {
       refundId: boundRefundRowId,
+      paymentId: payment.id,
       amountRefundedPaise: requested,
       legsReversed: 0,
       consultantEarningsReversed: 0,

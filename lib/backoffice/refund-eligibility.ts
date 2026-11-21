@@ -12,6 +12,7 @@ import {
   fundingRailForIntent,
   isPriceFreePayment,
 } from "@/lib/payments/funding-rail";
+import { assertRefundReplayMatches } from "@/lib/payments/operations/refund";
 import {
   REFUNDABLE_BALANCE_SELECT,
   refundableBalancePaise,
@@ -113,17 +114,22 @@ export function refundDoorRefusal(
 
 /**
  * Refuses a refund the door may not take. A key whose refund already went
- * through passes, so the writer answers a retried click with that refund.
+ * through answers with that refund, so the writer replays a retried click; a
+ * key spent on another payment or amount throws IDEMPOTENCY_KEY_REUSED.
  */
 export async function assertRefundDoorOpen(
   paymentId: string,
   dedupeKey: string,
-): Promise<void> {
+  amountPaise?: number,
+): Promise<{ amountPaise: number } | null> {
   const spent = await prisma.refund.findUnique({
     where: { dedupeKey },
-    select: { status: true },
+    select: { paymentId: true, amountPaise: true, status: true },
   });
-  if (spent && RETURNED_REFUND_STATUSES.has(spent.status)) return;
+  if (spent && RETURNED_REFUND_STATUSES.has(spent.status)) {
+    assertRefundReplayMatches(spent, { paymentId, amountPaise });
+    return { amountPaise: Number(spent.amountPaise) };
+  }
   const payment = await prisma.payment.findUnique({
     where: { id: paymentId, deletedAt: null },
     select: REFUND_DOOR_SELECT,
@@ -133,4 +139,5 @@ export async function assertRefundDoorOpen(
   }
   const refusal = refundDoorRefusal(payment);
   if (refusal) throw new OpsRefusal(refusal.code, refusal.message);
+  return null;
 }

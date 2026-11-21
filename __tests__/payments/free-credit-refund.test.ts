@@ -48,7 +48,7 @@ const tx = {
     // The REFUNDED stamp's pre-read for event learner seats; a 1:1 seat has none.
     findMany: jest.fn().mockResolvedValue([]),
   },
-  referralCreditUsage: { findMany: jest.fn() },
+  referralCreditUsage: { findMany: jest.fn(), aggregate: jest.fn() },
   streamRevocationRetry: { updateMany: jest.fn(), createMany: jest.fn() },
   appointment: { findUnique: jest.fn() },
   appointmentOccurrence: { findMany: jest.fn(), count: jest.fn() },
@@ -193,6 +193,12 @@ import {
 } from "../../lib/payments/operations/booking-refund";
 
 const PAYMENT_ID = "pay-free-1";
+/** A ₹1,000 list price paid wholly in credit: the writer's payment read. */
+const CREDIT_FUNDED = {
+  paymentIntent: "free_1730000000_abc",
+  amount: 0,
+  originalAmount: 100_000,
+};
 
 /** ₹1,000 + ₹180 GST booking, fully covered by referral credits. */
 function freeCreditSettlement() {
@@ -235,6 +241,10 @@ beforeEach(() => {
   tx.payment.findUniqueOrThrow.mockResolvedValue(freeCreditSettlement());
   mockReverseCredits.mockResolvedValue(118_000);
   mockReverseUtilization.mockResolvedValue(undefined);
+  tx.referralCreditUsage.aggregate.mockResolvedValue({
+    _sum: { amount: 118_000 },
+    _count: { _all: 1 },
+  });
 });
 
 describe("refundBookingPayment — free_ credit rail (#1161)", () => {
@@ -246,6 +256,7 @@ describe("refundBookingPayment — free_ credit rail (#1161)", () => {
         currency: "INR",
         paymentStatus: "SUCCEEDED",
         paymentGateway: "RAZORPAY",
+        ...CREDIT_FUNDED,
       });
 
     const result = await refundBookingPayment({
@@ -364,6 +375,7 @@ describe("refundBookingPayment — free_ credit rail (#1161)", () => {
         currency: "INR",
         paymentStatus: "SUCCEEDED",
         paymentGateway: "RAZORPAY",
+        ...CREDIT_FUNDED,
       });
 
     await refundBookingPayment({
@@ -397,6 +409,7 @@ describe("refundBookingPayment — free_ credit rail (#1161)", () => {
         currency: "INR",
         paymentStatus: "SUCCEEDED",
         paymentGateway: "RAZORPAY",
+        ...CREDIT_FUNDED,
       });
     tx.refund.findFirst.mockResolvedValue({ id: "refund-row-already" });
 
@@ -411,6 +424,50 @@ describe("refundBookingPayment — free_ credit rail (#1161)", () => {
     expect(tx.refund.create).not.toHaveBeenCalled();
   });
 
+  const creditPayment = (over: Record<string, unknown>) =>
+    mockPaymentFindUnique
+      .mockResolvedValueOnce({ paymentIntent: "free_1730000000_abc" })
+      .mockResolvedValueOnce({
+        id: PAYMENT_ID,
+        currency: "INR",
+        paymentStatus: "SUCCEEDED",
+        paymentGateway: "RAZORPAY",
+        ...CREDIT_FUNDED,
+        ...over,
+      });
+
+  it("refuses a price-free seat: no ₹0 refund row and the seat stays live", async () => {
+    creditPayment({ originalAmount: 0 });
+
+    await expect(
+      refundBookingPayment({ paymentId: PAYMENT_ID, reason: "cancellation" }),
+    ).rejects.toMatchObject({ code: "PRICE_FREE_PAYMENT" });
+    expect(tx.refund.create).not.toHaveBeenCalled();
+    expect(tx.appointmentParticipant.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("refuses a credit booking whose credit already all came back, but reverses a 100% discount that spent none", async () => {
+    creditPayment({});
+    tx.referralCreditUsage.aggregate.mockResolvedValueOnce({
+      _sum: { amount: 0 },
+      _count: { _all: 1 },
+    });
+    await expect(
+      refundBookingPayment({ paymentId: PAYMENT_ID, reason: "cancellation" }),
+    ).rejects.toMatchObject({ code: "ALREADY_FULLY_REFUNDED" });
+    expect(tx.refund.create).not.toHaveBeenCalled();
+
+    creditPayment({});
+    tx.referralCreditUsage.aggregate.mockResolvedValueOnce({
+      _sum: { amount: null },
+      _count: { _all: 0 },
+    });
+    await expect(
+      refundBookingPayment({ paymentId: PAYMENT_ID, reason: "cancellation" }),
+    ).resolves.toMatchObject({ rail: "CREDITS" });
+    expect(tx.refund.create).toHaveBeenCalledTimes(1);
+  });
+
   it("skips the ledger settlement when no earnings rows exist — there is no journal to invert", async () => {
     mockPaymentFindUnique
       .mockResolvedValueOnce({ paymentIntent: "free_1730000000_abc" })
@@ -419,6 +476,7 @@ describe("refundBookingPayment — free_ credit rail (#1161)", () => {
         currency: "INR",
         paymentStatus: "SUCCEEDED",
         paymentGateway: "RAZORPAY",
+        ...CREDIT_FUNDED,
       });
     tx.payment.findUniqueOrThrow.mockResolvedValue({
       ...freeCreditSettlement(),
@@ -446,6 +504,7 @@ describe("refundBookingPayment — free_ credit rail (#1161)", () => {
         currency: "INR",
         paymentStatus: "SUCCEEDED",
         paymentGateway: "RAZORPAY",
+        ...CREDIT_FUNDED,
       });
     // A discount code shrank the credit funding below the shares + GST.
     tx.payment.findUniqueOrThrow.mockResolvedValue({
@@ -499,6 +558,7 @@ describe("free_ credit rail — org clawback + TDS reversal branches", () => {
         currency: "INR",
         paymentStatus: "SUCCEEDED",
         paymentGateway: "RAZORPAY",
+        ...CREDIT_FUNDED,
       });
   });
 

@@ -10,8 +10,10 @@ import { resolveBookingRefundContext } from "@/lib/booking/cancellation-scope";
 import { fundingRailForIntent } from "@/lib/payments/funding-rail";
 import { quoteBookingRefund } from "@/lib/payments/operations/cancellation-policy";
 import {
+  assertRefundReplayMatches,
   findDedupedRefund,
   RefundGatewayError,
+  type RefundReplayRequest,
 } from "@/lib/payments/operations/refund";
 import { handSettledOwedSchema } from "@/lib/payments/operations/refund-owed";
 import { OpsRefusal } from "./ops-refusal-error";
@@ -104,9 +106,13 @@ const SETTLED_OWED_METADATA = z.object({ settledOwed: handSettledOwedSchema });
  * flight, not failed: the row stays PENDING for the reconcile cron (#779).
  * The door answers that row, so the retry and the first call agree (QA #1824).
  */
-export async function refundInFlightOr(err: unknown, dedupeKey: string) {
+export async function refundInFlightOr(
+  err: unknown,
+  dedupeKey: string,
+  request: RefundReplayRequest,
+) {
   if (!(err instanceof RefundGatewayError)) throw err;
-  const row = await findDedupedRefund(dedupeKey).catch(() => null);
+  const row = await findDedupedRefund(dedupeKey, request).catch(() => null);
   if (!row) {
     throw new OpsRefusal(
       "GATEWAY_REFUND_FAILED",
@@ -193,11 +199,12 @@ export async function assertSessionRefundable(args: {
   );
   const prior = await prisma.refund.findUnique({
     where: { dedupeKey: args.dedupeKey },
-    select: { amountPaise: true, status: true },
+    select: { paymentId: true, amountPaise: true, status: true },
   });
   if (!prior || prior.status === "FAILED" || prior.status === "CANCELLED") {
     return;
   }
+  assertRefundReplayMatches(prior, { paymentId: args.paymentId });
   // A full refund resolves to the balance the first refund saw: today's plus its own amount.
   const asked =
     args.amountPaise ??

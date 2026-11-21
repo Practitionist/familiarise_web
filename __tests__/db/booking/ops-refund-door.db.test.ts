@@ -1,7 +1,8 @@
 /**
- * The Ops panel's "Issue refund" and the issue door read one eligibility on
- * real rows: a free seat, a credit booking already restored and a disputed
- * payment are refused before the refund writer runs; a refundable one opens.
+ * The Ops panel's "Issue refund", the issue door and the legacy admin door read
+ * one eligibility on real rows: a free seat, a credit booking already restored
+ * and a disputed payment are refused before the refund writer runs; a
+ * refundable one opens. A refund key replays only on the payment it was spent on.
  */
 import { randomUUID } from "node:crypto";
 import { NextRequest } from "next/server";
@@ -60,6 +61,8 @@ jest.mock("../../../lib/payments/webhooks/ensure-channels", () => ({
 import { handleCheckout } from "../../../lib/payments/checkout";
 import { readBookingOps } from "../../../lib/backoffice/booking-ops-read";
 import { POST as issueRefund } from "../../../app/api/admin/refunds/issue/route";
+import { POST as legacyRefund } from "../../../app/api/admin/refunds/route";
+import { findDedupedRefund } from "../../../lib/payments/operations/refund";
 
 beforeAll(async () => {
   mockAdmin.id = (await seedUser("ADMIN")).userId;
@@ -67,18 +70,35 @@ beforeAll(async () => {
 beforeEach(() => refundDoor.refundBookingPayment.mockClear());
 
 /** What the panel's link opens: a full refund through the issue door. */
-const issue = (paymentId: string) =>
+const issue = (paymentId: string, idempotencyKey: string = randomUUID()) =>
   issueRefund(
     new NextRequest("https://x.test/api/admin/refunds/issue", {
       method: "POST",
       body: JSON.stringify({
         paymentId,
-        idempotencyKey: randomUUID(),
+        idempotencyKey,
         reason: "learner asked for a refund",
       }),
     }),
     { params: Promise.resolve({}) },
   );
+
+/** The legacy admin door: its key rides the Idempotency-Key header. */
+const legacyIssue = (paymentId: string) =>
+  legacyRefund(
+    new NextRequest("https://x.test/api/admin/refunds", {
+      method: "POST",
+      headers: { "Idempotency-Key": `legacy-${randomUUID()}` },
+      body: JSON.stringify({ paymentId, reason: "learner asked for a refund" }),
+    }),
+    { params: Promise.resolve({}) },
+  );
+
+const seatStatus = (appointmentId: string, userId: string) =>
+  prisma.appointmentParticipant.findFirstOrThrow({
+    where: { appointmentId, userId },
+    select: { status: true },
+  });
 
 async function panelRow(webinar: SeededWebinar, paymentId: string) {
   const view = await readBookingOps(webinar.appointmentId);
@@ -233,4 +253,64 @@ it("a card seat opens the door until a live dispute or a lost chargeback blocks 
 
   expect((await issue(clean.id)).status).toBe(200);
   expect(refundDoor.refundBookingPayment).toHaveBeenCalledTimes(1);
+});
+
+it("the legacy admin door refuses a free seat the same way, with the seat untouched", async () => {
+  const webinar = await seedWebinar({ capacity: 20, price: 0 });
+  const buyer = await seedSeatBuyer();
+  await handleCheckout(
+    seatCheckoutInput(webinar, `free-seat-${randomUUID()}`),
+    buyer.userId,
+  );
+  const payment = await prisma.payment.findFirstOrThrow({
+    where: { userId: buyer.userId },
+    select: { id: true },
+  });
+
+  const res = await legacyIssue(payment.id);
+  expect(res.status).toBe(409);
+  expect(await res.json()).toMatchObject({ code: "PRICE_FREE_PAYMENT" });
+  expect(refundDoor.refundBookingPayment).not.toHaveBeenCalled();
+  expect(await seatStatus(webinar.appointmentId, buyer.userId)).toEqual({
+    status: "CONFIRMED",
+  });
+});
+
+it("a key spent on one buyer's refund answers 422 on another buyer's payment", async () => {
+  const webinar = await seedWebinar({ capacity: 20, price: 50_000 });
+  const a = await seedHeldSeat(webinar, {
+    status: "SUCCEEDED",
+    expiresAt: null,
+  });
+  const b = await seedHeldSeat(webinar, {
+    status: "SUCCEEDED",
+    expiresAt: null,
+  });
+  const key = randomUUID();
+  const spent = await prisma.refund.create({
+    data: {
+      paymentId: a.payment.id,
+      amountPaise: BigInt(50_000),
+      status: "SUCCEEDED",
+      refundId: `rfnd_dbtier_${randomUUID()}`,
+      dedupeKey: `ops:${key}`,
+      paymentGateway: "RAZORPAY",
+    },
+  });
+
+  const res = await issue(b.payment.id, key);
+  expect(res.status).toBe(422);
+  expect(await res.json()).toMatchObject({ code: "IDEMPOTENCY_KEY_REUSED" });
+  expect(refundDoor.refundBookingPayment).not.toHaveBeenCalled();
+  expect(await seatStatus(webinar.appointmentId, b.buyer.userId)).toEqual({
+    status: "CONFIRMED",
+  });
+
+  // The writer's own lookup binds the key the same way on real rows.
+  await expect(
+    findDedupedRefund(`ops:${key}`, { paymentId: b.payment.id }),
+  ).rejects.toMatchObject({ code: "IDEMPOTENCY_KEY_REUSED" });
+  await expect(
+    findDedupedRefund(`ops:${key}`, { paymentId: a.payment.id }),
+  ).resolves.toMatchObject({ refundId: spent.id, paymentId: a.payment.id });
 });

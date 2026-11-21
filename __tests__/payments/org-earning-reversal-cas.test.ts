@@ -114,7 +114,7 @@ const tx: Record<string, Record<string, jest.Mock>> = {
     // The REFUNDED stamp's pre-read for event learner seats; a 1:1 seat has none.
     findMany: jest.fn().mockResolvedValue([]),
   },
-  referralCreditUsage: { findMany: jest.fn() },
+  referralCreditUsage: { findMany: jest.fn(), aggregate: jest.fn() },
   streamRevocationRetry: { updateMany: jest.fn(), createMany: jest.fn() },
   appointment: { findUnique: jest.fn() },
   appointmentOccurrence: { findMany: jest.fn() },
@@ -715,6 +715,12 @@ beforeEach(() => {
     currency: "INR",
     paymentStatus: "SUCCEEDED",
     paymentGateway: "RAZORPAY",
+    amount: 0,
+    originalAmount: 100_000,
+  });
+  tx.referralCreditUsage.aggregate.mockResolvedValue({
+    _sum: { amount: 118_000 },
+    _count: { _all: 1 },
   });
 });
 

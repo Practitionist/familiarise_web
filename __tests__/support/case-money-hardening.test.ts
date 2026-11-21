@@ -157,6 +157,7 @@ import {
   CaseActionRequestSchema,
   performCaseAction,
   priceCaseRefundReview,
+  quoteCaseRefund,
 } from "../../lib/support/case-actions";
 
 const db = jest.mocked(prisma, { shallow: false });
@@ -223,10 +224,12 @@ beforeEach(() => {
   mockStore.payment = {
     id: "pay-1",
     amount: 1_000_000,
+    originalAmount: 1_000_000,
     paymentIntent: "pi_1",
     paymentStatus: "SUCCEEDED",
     refunds: [],
     disputes: [],
+    creditUsages: [],
   };
   db.supportCase.findFirst.mockResolvedValue(supportCase as never);
   db.supportCase.findUniqueOrThrow.mockResolvedValue(supportCase as never);
@@ -321,7 +324,9 @@ describe("bounded staff refunds", () => {
     mockStore.payment = {
       ...mockStore.payment,
       amount: 0,
+      originalAmount: 600_000,
       paymentIntent: "free_1",
+      creditUsages: [{ amount: 600_000 }],
     };
     mockStore.recommendations = [
       recommendation({ amountPaise: 0, payment: { paymentIntent: "free_1" } }),
@@ -734,6 +739,57 @@ describe("refund execution correctness", () => {
     expect(mockStore.events).toContainEqual(
       expect.objectContaining({ kind: "RECOMMENDATION_PROPOSED" }),
     );
+  });
+
+  it("gives a price-free seat no remedy: recommend, preview, pricing and approval all refuse", async () => {
+    mockStore.payment = {
+      ...mockStore.payment,
+      amount: 0,
+      originalAmount: 0,
+      paymentIntent: "free_seat",
+      creditUsages: [],
+    };
+    mockStore.recommendations = [];
+    await expect(
+      performCaseAction("case-1", staff, {
+        action: "RECOMMEND_REFUND" as const,
+        clientActionId: "rec-free",
+        expectedUpdatedAt: caseUpdatedAt.toISOString(),
+        paymentId: "pay-1",
+        amountPaise: 0,
+        reason: "Wants the seat refunded",
+        releaseSeat: true,
+      }),
+    ).rejects.toMatchObject({ code: "PRICE_FREE_PAYMENT" });
+
+    mockStore.recommendations = [
+      recommendation({
+        amountPaise: 0,
+        payment: { paymentIntent: "free_seat" },
+      }),
+    ];
+    expect(
+      (
+        await quoteCaseRefund(db as never, "case-1", {
+          id: "rec-1",
+          paymentId: "pay-1",
+        })
+      ).blocked,
+    ).toMatchObject({ code: "PRICE_FREE_PAYMENT" });
+    await expect(
+      priceCaseRefundReview(db as never, "case-1", admin, {
+        recommendationId: "rec-1",
+        approve: true,
+      }),
+    ).rejects.toMatchObject({ code: "PRICE_FREE_PAYMENT" });
+    await expect(
+      performCaseAction(
+        "case-1",
+        admin,
+        review(true, { expectedRefundablePaise: 0 }),
+      ),
+    ).rejects.toMatchObject({ code: "PRICE_FREE_PAYMENT" });
+    expect(refundBookingPayment).not.toHaveBeenCalled();
   });
 });
 

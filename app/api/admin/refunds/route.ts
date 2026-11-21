@@ -20,6 +20,16 @@ import {
   refundablePaymentPaise,
   refundInFlightOr,
 } from "@/lib/backoffice/refund-doors";
+import { assertRefundDoorOpen } from "@/lib/backoffice/refund-eligibility";
+
+/** One refund per dialog: a replay collapses on `Refund.dedupeKey @unique`, scoped to the admin and the payment. */
+function paymentRefundKey(
+  actorUserId: string,
+  paymentId: string,
+  idempotencyKey: string,
+): string {
+  return `admin-refund:${actorUserId}:${paymentId}:${idempotencyKey}`;
+}
 
 const RefundFiltersSchema = z.object({
   status: z.nativeEnum(RefundStatus).optional(),
@@ -173,12 +183,17 @@ const refundDoor = withOpsAction(
       }
       await assertMoneyOpsBudget(actor.userId);
 
-      if (body.paymentId) {
-        // A replay of one dialog collapses on `Refund.dedupeKey @unique`; a key
-        // reused for another payment or by another admin can never match it.
-        const dedupeKey = `admin-refund:${actor.userId}:${body.paymentId}:${body.idempotencyKey}`;
+      const { paymentId } = body;
+      if (paymentId) {
+        const dedupeKey = paymentRefundKey(
+          actor.userId,
+          paymentId,
+          body.idempotencyKey,
+        );
+        // The issue door's eligibility: a free seat, a spent credit or a live dispute never reaches the writer.
+        await assertRefundDoorOpen(paymentId, dedupeKey, body.amountPaise);
         const result = await refundBookingPayment({
-          paymentId: body.paymentId,
+          paymentId,
           amountPaise: body.amountPaise,
           reason: `admin refund: ${body.reason}`,
           initiatedByUserId: actor.userId,
@@ -186,7 +201,12 @@ const refundDoor = withOpsAction(
           // A partial admin refund is not a cancellation; one that returns the rest ends the seat.
           keepSeatIfPartial: true,
           settlesOwedByHand: true,
-        }).catch((err: unknown) => refundInFlightOr(err, dedupeKey));
+        }).catch((err: unknown) =>
+          refundInFlightOr(err, dedupeKey, {
+            paymentId,
+            amountPaise: body.amountPaise,
+          }),
+        );
         return {
           target: refundTarget(body),
           after: { ...result },
@@ -244,8 +264,14 @@ const refundDoor = withOpsAction(
     secondApprover: {
       route: "/api/admin/refunds",
       target: ({ body }) => refundTarget(body),
-      amountPaise: (body) => {
+      amountPaise: async (body, { actor }) => {
         if (body.paymentId) {
+          // A refund the door would refuse is never held for a second admin.
+          await assertRefundDoorOpen(
+            body.paymentId,
+            paymentRefundKey(actor.userId, body.paymentId, body.idempotencyKey),
+            body.amountPaise,
+          );
           return body.amountPaise ?? refundablePaymentPaise(body.paymentId);
         }
         if (body.classId) return refundableEventPaise("class", body.classId);

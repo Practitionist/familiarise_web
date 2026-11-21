@@ -1072,7 +1072,7 @@ export async function skipClassMakeUp(args: {
     });
     return { ...refunded, status: "SUCCEEDED" as const };
   } catch (err) {
-    return skipRefundInFlight(err, dedupeKey, payment.paymentIntent);
+    return skipRefundInFlight(err, dedupeKey, payment);
   }
 }
 
@@ -1085,14 +1085,16 @@ export async function skipClassMakeUp(args: {
 async function skipRefundInFlight(
   err: unknown,
   dedupeKey: string,
-  paymentIntent: string,
+  payment: { id: string; paymentIntent: string },
 ) {
-  const inFlight = await findDedupedRefund(dedupeKey).catch(() => null);
+  const inFlight = await findDedupedRefund(dedupeKey, {
+    paymentId: payment.id,
+  }).catch(() => null);
   if (inFlight) {
     return {
       refundId: inFlight.refundId,
       amountRefundedPaise: inFlight.amountRefundedPaise,
-      rail: fundingRailForIntent(paymentIntent),
+      rail: fundingRailForIntent(payment.paymentIntent),
       status: inFlight.status,
     };
   }

@@ -37,10 +37,14 @@ jest.mock("../../lib/payments/operations/refund", () => {
       this.name = "RefundGatewayError";
     }
   }
+  class RefundKeyReusedError extends RefundValidationError {
+    readonly httpStatus = 422;
+  }
   return {
     refundPayment: (...args: unknown[]) => refundPayment(...args),
     RefundValidationError,
     RefundGatewayError,
+    RefundKeyReusedError,
   };
 });
 jest.mock("../../lib/backoffice/refund-doors", () => ({
@@ -78,9 +82,23 @@ jest.mock("../../lib/observability/report", () => ({
 }));
 
 const opsLog = jest.fn(async (_a: unknown) => ({ id: "ops_1" }));
+/** The payment the door's real eligibility reads: a refundable card payment unless a test says otherwise. */
+const doorPayment = jest.fn(async (_a: unknown): Promise<unknown> => ({
+  paymentStatus: "SUCCEEDED",
+  paymentIntent: "order_card_1",
+  amount: 250_000,
+  originalAmount: 250_000,
+  refunds: [],
+  disputes: [],
+  creditUsages: [],
+}));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
-  default: { opsActionLog: { create: (a: unknown) => opsLog(a) } },
+  default: {
+    opsActionLog: { create: (a: unknown) => opsLog(a) },
+    refund: { findUnique: async () => null },
+    payment: { findUnique: (a: unknown) => doorPayment(a) },
+  },
 }));
 
 import { NextRequest } from "next/server";
@@ -176,6 +194,24 @@ describe("the door's own guards", () => {
     );
     expect(keys[0]).toBe(keys[1]);
     expect(keys[2]).not.toBe(keys[0]);
+  });
+
+  it("refuses a price-free seat before the writer, with the issue door's code", async () => {
+    doorPayment.mockResolvedValueOnce({
+      paymentStatus: "SUCCEEDED",
+      paymentIntent: "free_seat_1",
+      amount: 0,
+      originalAmount: 0,
+      refunds: [],
+      disputes: [],
+      creditUsages: [],
+    });
+
+    const res = await POST(refundRequest(SINGLE), ROUTE);
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("PRICE_FREE_PAYMENT");
+    expect(refundPayment).not.toHaveBeenCalled();
   });
 
   it("rejects a reason shorter than five characters", async () => {

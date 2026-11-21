@@ -92,5 +92,7 @@ it("answers the keyed refund as PENDING when the refund throws after reserving i
     rail: "GATEWAY",
     status: "PENDING",
   });
-  expect(findDedupedRefund).toHaveBeenCalledWith("occ:occ-src:pay:pay-1");
+  expect(findDedupedRefund).toHaveBeenCalledWith("occ:occ-src:pay:pay-1", {
+    paymentId: "pay-1",
+  });
 });

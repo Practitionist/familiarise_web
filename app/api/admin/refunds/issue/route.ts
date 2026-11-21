@@ -31,6 +31,14 @@ function issueDedupeKey(body: {
     : `ops:${body.idempotencyKey}`;
 }
 
+/** The amount a replay must match; a session key's amount is judged by assertSessionRefundable. */
+function replayAmount(body: {
+  amountPaise?: number;
+  occurrenceId?: string;
+}): number | undefined {
+  return body.occurrenceId ? undefined : body.amountPaise;
+}
+
 /**
  * #1771 K-5 — "Issue refund" and "Ladder override". A full refund (no
  * amount), a partial one, or the cancellation quote at an overridden tier;
@@ -73,11 +81,17 @@ export const POST = withOpsAction(
       }
       await assertMoneyOpsBudget(actor.userId);
       const dedupeKey = issueDedupeKey(body);
-      await assertRefundDoorOpen(body.paymentId, dedupeKey);
+      const replay = await assertRefundDoorOpen(
+        body.paymentId,
+        dedupeKey,
+        replayAmount(body),
+      );
+      // A replayed override keeps the amount it sent, not one priced on today's balance.
       const override =
         body.tierOverridePct === undefined
           ? null
-          : await ladderOverrideAmount(body.paymentId, body.tierOverridePct);
+          : (replay ??
+            (await ladderOverrideAmount(body.paymentId, body.tierOverridePct)));
       if (override && override.amountPaise <= 0) {
         throw new OpsRefusal(
           "NOTHING_TO_REFUND",
@@ -102,7 +116,12 @@ export const POST = withOpsAction(
         // A partial ops refund is not a cancellation; one that returns the rest ends the seat.
         keepSeatIfPartial: true,
         settlesOwedByHand: true,
-      }).catch((err: unknown) => refundInFlightOr(err, dedupeKey));
+      }).catch((err: unknown) =>
+        refundInFlightOr(err, dedupeKey, {
+          paymentId: body.paymentId,
+          amountPaise,
+        }),
+      );
       return {
         target: { kind: "Payment", id: body.paymentId },
         before: { tierOverridePct: body.tierOverridePct ?? null },
@@ -119,13 +138,18 @@ export const POST = withOpsAction(
       // A body naming both runs straight into the door's own refusal.
       amountPaise: async (body) => {
         // A refund the door would refuse is never held for a second admin.
-        await assertRefundDoorOpen(body.paymentId, issueDedupeKey(body));
+        const replay = await assertRefundDoorOpen(
+          body.paymentId,
+          issueDedupeKey(body),
+          replayAmount(body),
+        );
         if (body.tierOverridePct === undefined) {
           return body.amountPaise ?? refundablePaymentPaise(body.paymentId);
         }
         if (body.amountPaise !== undefined) return 0;
         return (
-          await ladderOverrideAmount(body.paymentId, body.tierOverridePct)
+          replay ??
+          (await ladderOverrideAmount(body.paymentId, body.tierOverridePct))
         ).amountPaise;
       },
     },

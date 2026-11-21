@@ -187,6 +187,7 @@ import {
   type FundingRail,
   isFreeCreditIntent,
   isInternalFundedIntent,
+  isPriceFreePayment,
 } from "@/lib/payments/funding-rail";
 
 /**
@@ -287,12 +288,15 @@ export async function refundBookingPayment(
     await import("@/lib/stream/access-revocation");
   const intent = {
     refundId: outcome.result.refundId,
-    payerUserId: outcome.payerUserId,
+    payerUserId: outcome.seat.payerUserId,
   };
   if (outcome.result.rail === "GATEWAY") {
     // The intent lands first, so a failed stamp is re-stamped by the sweep.
     await persistRefundRevocation(intent);
-    await markParticipantsRefunded(input.paymentId, input.initiatedByUserId);
+    await markParticipantsRefunded(
+      outcome.seat.paymentId,
+      input.initiatedByUserId,
+    );
   }
   await revokeRefundedSeatAccess(intent, outcome.intentGeneration);
   return outcome.result;
@@ -323,7 +327,8 @@ export async function restampRefundedSeats(
 /** The rail's result plus what the post-commit revocation needs. */
 type RailOutcome = {
   result: BookingRefundResult;
-  payerUserId: string;
+  /** The persisted refund's payment and its payer: the only seat the refund may end. */
+  seat: { paymentId: string; payerUserId: string };
   /** The rail's own decision that this refund ends the funded seat. */
   endsSeat: boolean;
   /** The revocation intent the refund's transaction wrote, or null when none was. */
@@ -362,7 +367,11 @@ async function refundBookingPaymentOnRail(
   }
   if (input.settlesOwedByHand)
     await refuseIfOwedAlreadySent(input.paymentId, payment.refundOwedKey);
-  const payerUserId = payment.userId;
+  // A replayed key matched this payment (findDedupedRefund), so its payer is this payment's.
+  const seatOf = (paymentId: string) => ({
+    paymentId,
+    payerUserId: payment.userId,
+  });
 
   if (isFreeCreditIntent(payment.paymentIntent)) {
     // The credits rail restores in full or not at all — honouring a partial
@@ -376,14 +385,14 @@ async function refundBookingPaymentOnRail(
     }
     // The credits rail always stamps the seat REFUNDED in its transaction.
     let generation = null as Date | null;
-    const result = await withDedupe(input, "CREDITS", async () => {
+    const keyed = await withDedupe(input, "CREDITS", async () => {
       const credits = await refundFreeCreditPayment(input);
       generation = credits.intentGeneration;
       return credits.result;
     });
     return {
-      result,
-      payerUserId,
+      result: keyed.result,
+      seat: seatOf(keyed.paymentId),
       endsSeat: true,
       intentGeneration: generation,
     };
@@ -401,7 +410,7 @@ async function refundBookingPaymentOnRail(
         ...(r.status ? { status: r.status } : {}),
         ...(r.settledOwed ? { settledOwed: r.settledOwed } : {}),
       },
-      payerUserId,
+      seat: seatOf(r.paymentId),
       endsSeat,
       intentGeneration: null,
     };
@@ -411,7 +420,7 @@ async function refundBookingPaymentOnRail(
     endsSeat: boolean;
     intentGeneration: Date | null;
   } | null;
-  const result = await withDedupe(input, "INTERNAL", async () => {
+  const keyed = await withDedupe(input, "INTERNAL", async () => {
     const internal = await refundInternalFundedPayment(input);
     decided = internal;
     return internal.result;
@@ -419,8 +428,8 @@ async function refundBookingPaymentOnRail(
   // A key already spent answers without the transaction, so the seat is decided as on the gateway rail.
   const endsSeat = decided?.endsSeat ?? !(await keepsSeat(input));
   return {
-    result,
-    payerUserId,
+    result: keyed.result,
+    seat: seatOf(keyed.paymentId),
     endsSeat,
     intentGeneration: decided?.intentGeneration ?? null,
   };
@@ -428,29 +437,38 @@ async function refundBookingPaymentOnRail(
 
 /**
  * #1780 — the in-ledger rails honour the same key as the gateway rail: a key
- * already spent answers with its refund, and a lost unique race is that answer.
+ * already spent on this payment (and amount) answers with its refund, and a
+ * lost unique race is that answer. `paymentId` is the persisted refund's.
  */
 async function withDedupe(
-  input: { dedupeKey?: string },
+  input: { paymentId: string; amountPaise?: number; dedupeKey?: string },
   rail: FundingRail,
   run: () => Promise<BookingRefundResult>,
-): Promise<BookingRefundResult> {
-  if (!input.dedupeKey) return run();
+): Promise<{ result: BookingRefundResult; paymentId: string }> {
+  // A fresh run writes its Refund row on the payment it read, input.paymentId.
+  const ran = async () => ({
+    result: await run(),
+    paymentId: input.paymentId,
+  });
+  if (!input.dedupeKey) return ran();
   const answered = async () => {
-    const prior = await findDedupedRefund(input.dedupeKey);
+    const prior = await findDedupedRefund(input.dedupeKey, input);
     return prior
       ? {
-          refundId: prior.refundId,
-          amountRefundedPaise: prior.amountRefundedPaise,
-          rail,
-          ...(prior.status ? { status: prior.status } : {}),
+          result: {
+            refundId: prior.refundId,
+            amountRefundedPaise: prior.amountRefundedPaise,
+            rail,
+            ...(prior.status ? { status: prior.status } : {}),
+          },
+          paymentId: prior.paymentId,
         }
       : null;
   };
   const prior = await answered();
   if (prior) return prior;
   try {
-    return await run();
+    return await ran();
   } catch (err) {
     const winner = isDedupeKeyConflict(err) ? await answered() : null;
     if (winner) return winner;
@@ -489,6 +507,9 @@ async function refundFreeCreditPayment(
       currency: true,
       paymentStatus: true,
       paymentGateway: true,
+      paymentIntent: true,
+      amount: true,
+      originalAmount: true,
     },
   });
   if (!payment) {
@@ -501,6 +522,19 @@ async function refundFreeCreditPayment(
     throw new RefundValidationError(
       `Payment ${input.paymentId} is not SUCCEEDED (status=${payment.paymentStatus}); cannot refund`,
       "PAYMENT_NOT_SUCCEEDED",
+    );
+  }
+  // A price-free seat paid nothing and spent no credit: a refund would only revoke it.
+  if (
+    isPriceFreePayment({
+      paymentIntent: payment.paymentIntent,
+      amountPaise: Number(payment.amount),
+      listPricePaise: Number(payment.originalAmount),
+    })
+  ) {
+    throw new RefundValidationError(
+      `Payment ${payment.id} is a price-free seat; there is nothing to refund`,
+      "PRICE_FREE_PAYMENT",
     );
   }
 
@@ -522,6 +556,19 @@ async function refundFreeCreditPayment(
         if (existing) {
           throw new RefundValidationError(
             `Payment ${payment.id} already has its credit restoration`,
+            "ALREADY_FULLY_REFUNDED",
+          );
+        }
+        // Credit spent and all of it already back: nothing is left to restore.
+        // No usage at all is a 100% discount, whose journal still reverses here.
+        const usages = await tx.referralCreditUsage.aggregate({
+          where: { paymentId: payment.id },
+          _sum: { amount: true },
+          _count: { _all: true },
+        });
+        if (usages._count._all > 0 && Number(usages._sum.amount ?? 0) <= 0) {
+          throw new RefundValidationError(
+            `Payment ${payment.id} has no credit left to restore`,
             "ALREADY_FULLY_REFUNDED",
           );
         }
@@ -688,7 +735,7 @@ export async function restoreSessionCredits(input: {
   let restoredPaise = 0;
   let notice: StagedRefundNotice | null = null;
   let createdRefundId = null as string | null;
-  const result = await withDedupe(input, "CREDITS", () =>
+  const { result } = await withDedupe(input, "CREDITS", () =>
     withSerializableRetry(() =>
       prisma.$transaction(
         async (tx) => {

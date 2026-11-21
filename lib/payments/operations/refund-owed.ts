@@ -1066,7 +1066,10 @@ export async function driveRefundOwed(
   opts: { initiatedByUserId?: string | null } = {},
 ): Promise<RefundOwedOutcome> {
   try {
-    const prior = await findDedupedRefund(marker.key);
+    // The marker's amount is a cap the drive may lower, so a replay matches on the payment.
+    const prior = await findDedupedRefund(marker.key, {
+      paymentId: marker.paymentId,
+    });
     if (prior) {
       if (prior.status !== "PENDING") await clearRefundOwed(marker);
       return {
@@ -1087,7 +1090,11 @@ export async function driveRefundOwed(
     return { kind: "refunded", refund };
   } catch (error) {
     if (error instanceof RefundValidationError) {
-      if (error.code === "ALREADY_FULLY_REFUNDED") {
+      // Nothing is owed on a price-free seat or a payment already made whole.
+      if (
+        error.code === "ALREADY_FULLY_REFUNDED" ||
+        error.code === "PRICE_FREE_PAYMENT"
+      ) {
         await clearRefundOwed(marker);
         return { kind: "settled" };
       }

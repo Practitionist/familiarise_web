@@ -694,6 +694,7 @@ describe("the access revocation a seat-ending refund owes", () => {
     });
     mockRefundPayment.mockResolvedValue({
       refundId: "refund-row-9",
+      paymentId: PAYMENT_ID,
       amountRefundedPaise: 100_000,
     });
 
@@ -724,6 +725,7 @@ describe("the access revocation a seat-ending refund owes", () => {
     });
     mockRefundPayment.mockResolvedValue({
       refundId: "refund-row-9",
+      paymentId: PAYMENT_ID,
       amountRefundedPaise: 100_000,
     });
     mockTransitionParticipant.mockRejectedValueOnce(new Error("db blip"));

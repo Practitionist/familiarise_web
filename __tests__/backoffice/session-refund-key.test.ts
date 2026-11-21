@@ -7,7 +7,11 @@
 const db = {
   occurrenceAppt: "apt-1",
   occurrenceStart: new Date("2026-10-08T10:00:00Z"),
-  prior: null as { amountPaise: number; status: string } | null,
+  prior: null as {
+    paymentId: string;
+    amountPaise: number;
+    status: string;
+  } | null,
   refunds: [] as { amountPaise: number; status: string }[],
 };
 jest.mock("../../lib/prisma", () => ({
@@ -59,7 +63,20 @@ it("refuses a foreign or pre-seat session, and a changed full refund, but replay
     code: "SESSION_BEFORE_SEAT",
   });
   db.occurrenceStart = new Date("2026-10-08T10:00:00Z");
-  const partial = { amountPaise: 10_000, status: "SUCCEEDED" };
+  // The session key spent on another payment never replays here.
+  db.prior = {
+    paymentId: "pay-other",
+    amountPaise: 10_000,
+    status: "SUCCEEDED",
+  };
+  await expect(ask(10_000)).rejects.toMatchObject({
+    code: "IDEMPOTENCY_KEY_REUSED",
+  });
+  const partial = {
+    paymentId: "pay-1",
+    amountPaise: 10_000,
+    status: "SUCCEEDED",
+  };
   db.prior = partial;
   db.refunds = [partial];
   await expect(ask(10_000)).resolves.toBeUndefined();
@@ -68,7 +85,7 @@ it("refuses a foreign or pre-seat session, and a changed full refund, but replay
     code: "SESSION_ALREADY_REFUNDED",
   });
 
-  const full = { amountPaise: 80_000, status: "SUCCEEDED" };
+  const full = { paymentId: "pay-1", amountPaise: 80_000, status: "SUCCEEDED" };
   db.prior = full;
   db.refunds = [full];
   await expect(ask()).resolves.toBeUndefined();
