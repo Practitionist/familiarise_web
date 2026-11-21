@@ -1925,7 +1925,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
     meta: {
       title: "Reconcile payment status",
       description:
-        "Query Razorpay for the actual status of stale pending payments",
+        "Query Razorpay for the actual status of stale pending payments and of orders closed in the last 72 hours",
       category: "Payments",
       manualRun: "inline",
     },
@@ -1952,10 +1952,15 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           unresolvableCount: r.unresolvableCount,
           retiredCount: r.retiredCount,
           deadLettered: r.deadLettered,
+          closedOrdersRead: r.closedOrdersRead,
+          lateCaptures: r.lateCaptures,
           errors: r.errors.slice(0, 5),
         }),
         needsAttention: (r) =>
-          r.succeededCount > 0 || r.unresolvableCount > 0 || r.retiredCount > 0,
+          r.succeededCount > 0 ||
+          r.unresolvableCount > 0 ||
+          r.retiredCount > 0 ||
+          r.lateCaptures.length > 0,
         failureMessage: "Failed to reconcile payment status",
       }),
   },
