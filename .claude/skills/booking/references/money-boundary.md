@@ -309,9 +309,15 @@ gate a concurrent writer walked through:
   first and a live payment keeps its sale open, then one transaction
   (`endUnpaidSalesInTx`) expires approved links through `lapseApprovedRequest`,
   declines unanswered unpaid requests and releases unpaid trial holds and group
-  seats, every open order expired by CAS with its spend returned; each closed
-  order is re-read after commit and a capture found is refunded. Every sale
-  writer re-reads standing under a share lock (`assertExpertStandsInTx`).
+  seats, every open order expired by CAS with its spend returned, and stages
+  each learner notice in that transaction; each closed gateway order is
+  re-read after commit and a capture found is refunded. An unanswered first
+  read leaves its sale open; a failed re-read closed the sale but does not
+  know whether a capture landed, so it is reported as unresolved. Never close
+  an unread order, and never treat a failed re-read as settled: until the
+  reconciler of #2934 runs, a webhook is the only automatic refund for it.
+  Every sale writer, including the pay-link fill after the gateway call,
+  re-reads standing under a share lock (`assertExpertStandsInTx`).
 - A review-first expert (`bookingMode = REQUEST`) refuses a direct consultation
   checkout with 409 `REQUEST_APPROVAL_REQUIRED` on every rail (card,
   zero-amount, organisation-funded), before any gateway order; plans, trials and
