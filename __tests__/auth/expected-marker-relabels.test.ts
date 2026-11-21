@@ -68,6 +68,7 @@ import { initSentry } from "../../sentry.shared.config";
 import { markExpected, isExpectedError } from "@/lib/observability/expected";
 import { reportSentryError } from "@/lib/observability/report";
 import { SessionLookupFailedError } from "@/lib/auth/session-lookup-error";
+import { SYNTHETIC_DSN } from "../fixtures/sentry-fake-transport";
 
 /** Let the SDK's async capture pipeline drain before asserting. */
 const flush = () => Sentry.flush(2000);
@@ -82,8 +83,7 @@ function eventFor(needle: string): ErrorEvent {
 }
 
 beforeAll(() => {
-  process.env.NEXT_PUBLIC_SENTRY_DSN =
-    "https://0000000000000000000000000000000@o0.ingest.sentry.io/0";
+  process.env.NEXT_PUBLIC_SENTRY_DSN = SYNTHETIC_DSN;
   process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT = "test";
   initSentry();
 });
