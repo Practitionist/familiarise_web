@@ -27,6 +27,8 @@ export interface BookingOpsView {
     /** Refunds that moved, or are moving, money. */
     refundedPaise: number;
     pendingRefundPaise: number;
+    /** The issue door's own answer (`refundDoorRefusal`): false when it would refuse this payment. */
+    refundable: boolean;
   }[];
   /** Event attendees whose removal still blocks a rejoin, for the lift door. */
   removedSeats: {
