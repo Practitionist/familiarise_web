@@ -82,7 +82,7 @@ If the update matches zero rows, something else already moved the row and this c
 
 ### 5. Exactly one writer for the payment capture
 
-A gateway card capture is confirmed by exactly one function, `handlePaymentSuccess()` in `lib/payments/webhooks/handlers.ts`. The webhook, the client verify route, the reconcile sweep and the admin recover door all call into it, so the checkout route and the console never confirm a capture themselves. A few rails write `SUCCEEDED` directly because no card capture is involved (the wallet, invoice, licence and free rows, overage side-payments and replay purchases); the money HLD (`02-money-system-hld.md`, section 1) lists all five writers.
+A gateway card capture is confirmed by exactly one function, `handlePaymentSuccess()` in `lib/payments/webhooks/handlers.ts`. The webhook, the client verify route, the reconcile sweep, the admin recover door and Request again's post-commit re-check all call into it, so the checkout route and the console never confirm a capture themselves. A few rails write `SUCCEEDED` directly because no card capture is involved (the wallet, invoice, licence and free rows, overage side-payments and replay purchases); the money HLD (`02-money-system-hld.md`, section 1) lists all five writers.
 
 This is what makes the money system auditable. There is one place to read when you want to know how a payment became confirmed.
 
