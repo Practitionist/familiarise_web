@@ -34,10 +34,17 @@ export const planConsultantSelect = {
   tags: { select: { id: true, name: true } },
 } satisfies Prisma.ConsultantProfileSelect;
 
-/** An accepted collaborator: the same, without the taxonomy relations. */
+/** An accepted collaborator on a list card: no user ids, and no taxonomy relations. */
 export const planCollaboratorConsultantSelect = {
   ...consultantPublicScalars,
-  user: planConsultantUserSelect,
+  userId: false,
+  user: {
+    select: {
+      name: true,
+      image: true,
+      workExperiences: planConsultantUserSelect.select.workExperiences,
+    },
+  },
 } satisfies Prisma.ConsultantProfileSelect;
 
 /**

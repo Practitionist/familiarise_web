@@ -35,11 +35,13 @@ const plan = {
   organizationId: null,
   archivedAt: null,
   consultantProfile: null,
+  collaborators: [],
 };
+const ref = { planType: "webinar" as const, planId: plan.id };
 
 describe("planDetailResponse", () => {
   it("answers 404 for a plan that does not exist", async () => {
-    const res = await planDetailResponse(null, "Webinar plan not found");
+    const res = await planDetailResponse(null, ref, "Webinar plan not found");
 
     expect(res.status).toBe(404);
     expect(res.headers.get("Cache-Control")).toBe("private, no-store");
@@ -52,7 +54,7 @@ describe("planDetailResponse", () => {
   it("serves a public plan from the shared cache without reading a session", async () => {
     mockCanView.mockResolvedValue(true);
 
-    const res = await planDetailResponse(plan, "not found");
+    const res = await planDetailResponse(plan, ref, "not found");
 
     expect(res.status).toBe(200);
     // At most a minute and never stale: a plan hidden by a reject stops being served within it.
@@ -68,7 +70,7 @@ describe("planDetailResponse", () => {
     mockGetSession.mockResolvedValue(session);
     mockCanView.mockImplementation(async (_p, s) => s !== null);
 
-    const res = await planDetailResponse(plan, "not found");
+    const res = await planDetailResponse(plan, ref, "not found");
 
     expect(res.status).toBe(200);
     expect(res.headers.get("Cache-Control")).toBe("private, no-store");
@@ -79,7 +81,7 @@ describe("planDetailResponse", () => {
     mockGetSession.mockResolvedValue({ user: { id: "stranger" } });
     mockCanView.mockResolvedValue(false);
 
-    const res = await planDetailResponse(plan, "Class plan not found");
+    const res = await planDetailResponse(plan, ref, "Class plan not found");
 
     expect(res.status).toBe(404);
     const body = await res.json();
@@ -93,7 +95,7 @@ describe("planDetailResponse", () => {
     mockGetSession.mockRejectedValue(new Error("auth down"));
     mockCanView.mockResolvedValue(false);
 
-    const res = await planDetailResponse(plan, "not found");
+    const res = await planDetailResponse(plan, ref, "not found");
 
     expect(res.status).toBe(404);
     expect(mockCanView).toHaveBeenLastCalledWith(plan, null);

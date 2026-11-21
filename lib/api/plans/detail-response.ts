@@ -2,6 +2,10 @@ import { NextResponse } from "next/server";
 import { publicCacheHeaders } from "@/lib/api/cdn-cache";
 import { getSession } from "@/lib/auth-server";
 import { requireApiAuth } from "@/lib/auth-helpers";
+import {
+  hidesTeamMembers,
+  planTeamForViewer,
+} from "@/lib/api/plans/public-team";
 import type { PlanRef } from "@/lib/collaborators/team";
 import { resolveCollaborationViewer } from "@/lib/collaborators/viewer";
 import { canViewPlanDetail } from "@/lib/data/plan-viewable";
@@ -20,12 +24,18 @@ const PRIVATE_NO_STORE = { "Cache-Control": "private, no-store" };
  * GET answer for a webinar or class plan by id, behind the same visibility gate
  * the detail pages apply. A plan anyone may see keeps the shared CDN cache; one
  * only this viewer may see (an owner's draft, an org-only plan) is never cached,
- * because the cache key ignores the session. A hidden plan answers exactly like
- * a missing one, and neither 404 is cacheable: the answer depends on the viewer,
- * and a host's default must not decide it.
+ * because the cache key ignores the session, and neither is a plan whose team
+ * holds a member only the plan's own people see. A hidden plan answers exactly
+ * like a missing one, and neither 404 is cacheable: the answer depends on the
+ * viewer, and a host's default must not decide it.
  */
-export async function planDetailResponse<T extends PlanGate>(
+export async function planDetailResponse<
+  T extends PlanGate & {
+    collaborators: Parameters<typeof planTeamForViewer>[0];
+  },
+>(
   plan: T | null,
+  ref: PlanRef,
   notFoundMessage: string,
 ): Promise<NextResponse> {
   const notFound = () =>
@@ -36,19 +46,27 @@ export async function planDetailResponse<T extends PlanGate>(
   if (!plan) return notFound();
 
   const publiclyViewable = await canViewPlanDetail(plan, null);
-  if (!publiclyViewable) {
-    const session = await getSession().catch((error) => {
-      reportSentryError(error, { subsystem: "plans", expected: true });
-      return null;
-    });
-    if (!(await canViewPlanDetail(plan, session))) return notFound();
+  const shared = publiclyViewable && !hidesTeamMembers(plan.collaborators);
+  const session = shared
+    ? null
+    : await getSession().catch((error) => {
+        reportSentryError(error, { subsystem: "plans", expected: true });
+        return null;
+      });
+  if (!publiclyViewable && !(await canViewPlanDetail(plan, session))) {
+    return notFound();
   }
+  const collaborators = await planTeamForViewer(
+    plan.collaborators,
+    ref,
+    session,
+  );
 
   return NextResponse.json(
-    { data: plan },
+    { data: { ...plan, collaborators } },
     {
       status: 200,
-      headers: publiclyViewable ? PUBLIC_CACHE : PRIVATE_NO_STORE,
+      headers: shared ? PUBLIC_CACHE : PRIVATE_NO_STORE,
     },
   );
 }
