@@ -7,6 +7,7 @@ import {
   planCollaboratorScalars,
   planConsultantSelect,
 } from "@/lib/api/plans/consultant-projection";
+import { publicExpertProfileWhere } from "@/lib/profiles/public-profile";
 import {
   parsePlanFilters,
   buildPlanWhereClause,
@@ -46,7 +47,11 @@ export async function GET(request: NextRequest) {
       topics: true,
       classContents: true,
       collaborators: {
-        where: { status: CollaboratorStatus.ACCEPTED },
+        // The owner's own list keeps the whole team; anyone else sees public profiles only.
+        where: {
+          status: CollaboratorStatus.ACCEPTED,
+          ...(!ownerView && { consultantProfile: publicExpertProfileWhere }),
+        },
         select: {
           ...planCollaboratorScalars,
           consultantProfile: { select: planCollaboratorConsultantSelect },

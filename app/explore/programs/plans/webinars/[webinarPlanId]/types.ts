@@ -26,7 +26,6 @@ export type TWebinarPlanData = Omit<
             include: {
               occurrences: true;
               _count: { select: { participants: true } };
-              payment: true;
             };
           };
         };

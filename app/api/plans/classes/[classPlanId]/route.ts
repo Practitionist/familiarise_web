@@ -21,6 +21,7 @@ export async function GET(
     const { classPlanId } = await params;
     return await planDetailResponse(
       await fetchClassPlanDetail(classPlanId),
+      { planType: "class", planId: classPlanId },
       "Class plan not found",
     );
   } catch (error) {
