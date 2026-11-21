@@ -42,7 +42,7 @@ Production and staging troubleshooting runbooks for our Razorpay + RazorpayX int
 3. **Check for Capture-Amount Parity Mismatch**:
    - In `handlePaymentSuccess` (`lib/payments/webhooks/handlers.ts`), if `capturedAmountPaise !== payment.amount`, the booking is refused and flagged for review/auto-refund.
 4. **Run the Payment Status Reconciler**:
-   - `scripts/payments/reconcile-payment-status.ts` polls `GET /v1/orders/:id` and `GET /v1/orders/:id/payments` for `PENDING` payments older than 5 minutes and drives `routeCapturedPayment` directly. It also reads `GET /v1/orders/:id/payments` for orders closed (`EXPIRED`) in the last 72 hours, so a capture that landed after the close is refunded even when its webhook was lost.
+   - `scripts/payments/reconcile-payment-status.ts` polls `GET /v1/orders/:id` and `GET /v1/orders/:id/payments` for `PENDING` payments older than 5 minutes and drives `routeCapturedPayment` directly. It also reads `GET /v1/orders/:id/payments` for orders closed (`EXPIRED`) in the last 72 hours, plus one read after them, so a capture that landed after the close is refunded even when its webhook was lost. That holds only while the job fleet runs: while it is paused, refund such a capture by hand from its order id (the `REQUEST_AGAIN_RECHECK_FAILED` report or the Razorpay dashboard).
 
 ---
 
