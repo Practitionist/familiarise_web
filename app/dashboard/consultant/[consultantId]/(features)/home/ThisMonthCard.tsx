@@ -171,12 +171,13 @@ export function ShareProfilePrompt({
   const [copied, setCopied] = useState(false);
   const href = `/explore/experts/${consultantId}`;
   const shareHref = useExpertShareHref(consultantId);
-  const session = useSession().data;
-  // The public page answers 404 until the owner is verified; null while that is unknown.
-  const listed = useOfferingsListed(
+  const { data: session, isPending: sessionPending } = useSession();
+  const ownerListed = useOfferingsListed(
     session?.user?.id,
     session?.user?.consultantProfileId === consultantId,
   );
+  // The public page answers 404 until the owner is verified; null while that is unknown.
+  const listed = sessionPending ? null : ownerListed;
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(

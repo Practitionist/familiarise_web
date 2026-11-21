@@ -26,8 +26,12 @@ jest.mock("next/navigation", () => ({
   usePathname: () => "/dashboard/organization/o1/catalog",
   useSearchParams: () => new URLSearchParams(),
 }));
+let mockSessionPending = false;
 jest.mock("../../lib/auth-client", () => ({
-  useSession: () => ({ data: { user: mockSessionUser } }),
+  useSession: () => ({
+    data: mockSessionPending ? null : { user: mockSessionUser },
+    isPending: mockSessionPending,
+  }),
 }));
 jest.mock("../../lib/navigation/history", () => ({ replaceUrl: jest.fn() }));
 
@@ -66,6 +70,7 @@ import type { TConsulteeEventsResponse } from "../../types/consultee-events";
 const originalFetch = global.fetch;
 afterEach(() => {
   global.fetch = originalFetch;
+  mockSessionPending = false;
 });
 
 function mockFetch(verificationStatus: string | "pending") {
@@ -112,6 +117,14 @@ describe("Share your page on an expert's Home", () => {
     expect(await screen.findByText("Copy link")).toBeInTheDocument();
     expect(screen.getByText("Open")).toBeInTheDocument();
     expect(screen.queryByText(/once you are verified/)).toBeNull();
+  });
+
+  it("shows neither the links nor the note while the session itself is loading", () => {
+    mockFetch("VERIFIED");
+    mockSessionPending = true;
+    renderPrompt();
+    expect(screen.queryByText("Copy link")).toBeNull();
+    expect(screen.queryByText("Open")).toBeNull();
   });
 
   it("shows neither the links nor the note while the standing is unknown", () => {
@@ -185,6 +198,32 @@ describe("Delivered by picker", () => {
     const ananya = options.find((o) => o.textContent?.includes("Ananya"));
     expect(ananya?.textContent).not.toContain("Waiting for verification");
     expect(ananya).not.toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("drops the creation links when the picked expert is no longer verified", () => {
+    const { CatalogClient } = jest.requireActual(
+      "../../app/dashboard/organization/[orgId]/catalog/CatalogClient",
+    ) as typeof import("../../app/dashboard/organization/[orgId]/catalog/CatalogClient");
+    mockFetch("VERIFIED");
+    const page = (isVerified: boolean) => (
+      <QueryClientProvider client={client()}>
+        <CatalogClient
+          orgId="o1"
+          experts={[{ consultantProfileId: "cp_a", name: "Ana", isVerified }]}
+          materials={[]}
+          materialsTotal={0}
+          orgPlans={[]}
+        />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(page(true));
+    expect(screen.getByRole("link", { name: /New webinar/ })).toHaveAttribute(
+      "href",
+      "/dashboard/organization/o1/catalog/webinar/new?expertId=cp_a",
+    );
+    rerender(page(false));
+    expect(screen.queryByRole("link", { name: /New webinar/ })).toBeNull();
+    expect(screen.queryByRole("link", { name: /New class/ })).toBeNull();
   });
 
   it("does not preselect a lone unverified expert", () => {

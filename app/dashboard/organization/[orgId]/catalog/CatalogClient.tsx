@@ -59,6 +59,11 @@ export function CatalogClient({
     pickable.length === 1 ? pickable[0].consultantProfileId : "",
   );
 
+  // A refresh can unverify the expert picked earlier; only a verified member stays selected.
+  const selectedId = pickable.some((e) => e.consultantProfileId === expertId)
+    ? expertId
+    : "";
+
   const queryKey = useMemo(() => ["org-catalog", orgId], [orgId]);
 
   const { data, isLoading, error } = useQuery<CatalogResponse>({
@@ -180,7 +185,7 @@ export function CatalogClient({
               >
                 Delivered by
               </label>
-              <Select value={expertId} onValueChange={setExpertId}>
+              <Select value={selectedId} onValueChange={setExpertId}>
                 <SelectTrigger id="catalog-expert">
                   <SelectValue placeholder="Choose an expert" />
                 </SelectTrigger>
@@ -206,10 +211,10 @@ export function CatalogClient({
             {/* Prefetching Links (Button asChild) instead of onClick
                 SPA-pushes. An anchor cannot be disabled, so the no-expert
                 state keeps a plain disabled Button with identical styling. */}
-            {expertId ? (
+            {selectedId ? (
               <Button asChild>
                 <Link
-                  href={`/dashboard/organization/${orgId}/catalog/webinar/new?expertId=${expertId}`}
+                  href={`/dashboard/organization/${orgId}/catalog/webinar/new?expertId=${selectedId}`}
                 >
                   <Plus className="mr-1.5 h-4 w-4" />
                   New webinar
@@ -221,10 +226,10 @@ export function CatalogClient({
                 New webinar
               </Button>
             )}
-            {expertId ? (
+            {selectedId ? (
               <Button asChild variant="outline">
                 <Link
-                  href={`/dashboard/organization/${orgId}/catalog/class/new?expertId=${expertId}`}
+                  href={`/dashboard/organization/${orgId}/catalog/class/new?expertId=${selectedId}`}
                 >
                   <Plus className="mr-1.5 h-4 w-4" />
                   New class
