@@ -768,10 +768,12 @@ export default function HomeTab({
             />
             <div>
               <p className="text-sm font-semibold text-foreground">
-                All caught up
+                {isOwner ? "All caught up" : "Nothing to show here"}
               </p>
               <p className="text-sm text-muted-foreground">
-                Nothing is waiting on you right now.
+                {isOwner
+                  ? "Nothing is waiting on you right now."
+                  : `Items only ${learner?.name ?? "the learner"} can see, such as rating prompts, support cases and renewals, are not shown.`}
               </p>
             </div>
           </div>

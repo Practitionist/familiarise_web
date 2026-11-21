@@ -9,6 +9,8 @@ import { Stat, StatRow } from "@/components/dashboard/Stat";
 import { Button } from "@/components/ui/button";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { useExpertShareHref } from "@/hooks/useExpertShareHref";
+import { useSession } from "@/lib/auth-client";
+import { useOfferingsListed } from "@/hooks/useVerificationStatus";
 import { SocialShareDialog } from "../reviews/SocialShareDialog";
 
 /** Round numbers worth a line of recognition; the next one ahead is shown. */
@@ -169,6 +171,12 @@ export function ShareProfilePrompt({
   const [copied, setCopied] = useState(false);
   const href = `/explore/experts/${consultantId}`;
   const shareHref = useExpertShareHref(consultantId);
+  const session = useSession().data;
+  // The public page answers 404 until the owner is verified; null while that is unknown.
+  const listed = useOfferingsListed(
+    session?.user?.id,
+    session?.user?.consultantProfileId === consultantId,
+  );
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(
@@ -186,19 +194,26 @@ export function ShareProfilePrompt({
       description="When a buyer first discovers and purchases from you through your shared link (?via=), their bookings with you use the personal-link platform fee rate instead of the Marketplace rate. Add your link to your bio, emails, and posts."
       variant="card"
     >
-      <div className="flex gap-2">
-        <Button size="sm" variant="outline" onClick={() => void copy()}>
-          {copied ? (
-            <Check className="mr-1.5 h-3.5 w-3.5" />
-          ) : (
-            <Copy className="mr-1.5 h-3.5 w-3.5" />
-          )}
-          {copied ? "Copied" : "Copy link"}
-        </Button>
-        <Button size="sm" variant="ghost" asChild>
-          <Link href={href}>Open</Link>
-        </Button>
-      </div>
+      {listed === false && (
+        <p className="text-sm text-muted-foreground">
+          Your page goes live for learners once you are verified.
+        </p>
+      )}
+      {listed === true && (
+        <div className="flex gap-2">
+          <Button size="sm" variant="outline" onClick={() => void copy()}>
+            {copied ? (
+              <Check className="mr-1.5 h-3.5 w-3.5" />
+            ) : (
+              <Copy className="mr-1.5 h-3.5 w-3.5" />
+            )}
+            {copied ? "Copied" : "Copy link"}
+          </Button>
+          <Button size="sm" variant="ghost" asChild>
+            <Link href={href}>Open</Link>
+          </Button>
+        </div>
+      )}
     </Section>
   );
 }

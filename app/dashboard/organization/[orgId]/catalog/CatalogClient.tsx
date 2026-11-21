@@ -22,6 +22,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { expertVerificationLabel } from "@/lib/labels/org-labels";
 import { isArchivedCatalogView } from "@/lib/dashboard/org-catalog-view";
 import { CatalogPanel } from "./CatalogPanel";
 import {
@@ -34,6 +35,8 @@ import type { CatalogResponse, CatalogRow, Kind } from "./types";
 interface Expert {
   consultantProfileId: string;
   name: string;
+  /** False while the expert waits for verification: learners cannot see their offerings yet. */
+  isVerified: boolean;
 }
 
 export function CatalogClient({
@@ -51,8 +54,9 @@ export function CatalogClient({
 }>) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const pickable = experts.filter((e) => e.isVerified);
   const [expertId, setExpertId] = useState<string>(
-    experts.length === 1 ? experts[0].consultantProfileId : "",
+    pickable.length === 1 ? pickable[0].consultantProfileId : "",
   );
 
   const queryKey = useMemo(() => ["org-catalog", orgId], [orgId]);
@@ -185,12 +189,19 @@ export function CatalogClient({
                     <SelectItem
                       key={e.consultantProfileId}
                       value={e.consultantProfileId}
+                      disabled={!e.isVerified}
                     >
                       {e.name}
+                      {!e.isVerified && ` · ${expertVerificationLabel(false)}`}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+              {pickable.length === 0 && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  No expert is verified yet; you can publish once one is.
+                </p>
+              )}
             </div>
             {/* Prefetching Links (Button asChild) instead of onClick
                 SPA-pushes. An anchor cannot be disabled, so the no-expert
