@@ -44,27 +44,6 @@ export interface ReportOpts {
   fingerprint?: string[];
 }
 
-type AfterCapture = () => unknown;
-
-let afterCapture: AfterCapture | null = null;
-
-/**
- * Installed by the server runtime on a serverless host (Netlify), where a
- * captured event must be flushed before the instance freezes. Runs after
- * every capture here; this module stays importable from client code.
- */
-export function setAfterCapture(hook: AfterCapture | null): void {
-  afterCapture = hook;
-}
-
-function runAfterCapture(): void {
-  try {
-    void afterCapture?.();
-  } catch {
-    // Delivery is best effort; a capture never throws.
-  }
-}
-
 function buildSentryCaptureContext(opts: ReportOpts) {
   const expected = opts.expected ?? false;
   // expected:true defaults to "info"; expected:false leaves level unset so
@@ -306,7 +285,6 @@ export function reportSentryError(error: unknown, opts: ReportOpts): string {
     tags,
     extra: { ...(opts.extra ?? {}), thrown: error },
   });
-  runAfterCapture();
   const id = typeof eventId === "string" ? eventId : "";
   if (id && !opts.expected && error && typeof error === "object") {
     reportedFaults.set(error, id);
@@ -333,6 +311,5 @@ export function reportSentryMessage(message: string, opts: ReportOpts): string {
     );
   }
   const eventId = Sentry.captureMessage(message, context);
-  runAfterCapture();
   return typeof eventId === "string" ? eventId : "";
 }
