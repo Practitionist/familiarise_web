@@ -1,19 +1,25 @@
 /**
- * Server exceptions reach Sentry from a Netlify function: every capture through
- * `reportSentryError` / `reportSentryMessage` schedules a bounded flush, which
- * rides `after()` inside a request and is awaited outside one, so the instance
- * cannot freeze with the event still queued. Off Netlify nothing is added.
+ * Server events reach Sentry from a Netlify function: on Netlify the server
+ * config registers a listener on the SDK client so every error or message
+ * event, whichever API captured it, schedules a bounded flush. The flush rides
+ * `after()` inside a request and is returned to await outside one, so the
+ * instance cannot freeze with the event still queued. Off Netlify nothing is
+ * added. The real-SDK timing proof is in serverless-sentry-flush-sdk.test.ts.
  */
 
-const captureException = jest.fn((..._args: unknown[]) => "evt");
-const captureMessage = jest.fn((..._args: unknown[]) => "evt");
-jest.mock("@sentry/core", () => ({
-  captureException: (...args: unknown[]) => captureException(...args),
-  captureMessage: (...args: unknown[]) => captureMessage(...args),
-}));
+type Listener = (event: { type?: string }) => void;
+const listeners = new Map<string, Listener[]>();
+let fakeClient: { on: jest.Mock } | undefined;
+const makeClient = () => ({
+  on: jest.fn((hook: string, listener: Listener) => {
+    listeners.set(hook, [...(listeners.get(hook) ?? []), listener]);
+    return () => undefined;
+  }),
+});
 const flush = jest.fn(async (_timeoutMs?: number) => true);
 jest.mock("@sentry/nextjs", () => ({
   flush: (timeoutMs?: number) => flush(timeoutMs),
+  getClient: () => fakeClient,
 }));
 const after = jest.fn();
 jest.mock("next/server", () => ({
@@ -21,17 +27,14 @@ jest.mock("next/server", () => ({
 }));
 jest.mock("../../sentry.shared.config", () => ({ initSentry: jest.fn() }));
 
-import {
-  reportSentryError,
-  setAfterCapture,
-} from "../../lib/observability/report";
 import { scheduleSentryFlush } from "../../lib/observability/serverless-flush";
 
 const ORIGINAL_NETLIFY = process.env.NETLIFY;
 
 beforeEach(() => {
   jest.clearAllMocks();
-  setAfterCapture(null);
+  listeners.clear();
+  fakeClient = makeClient();
 });
 
 afterAll(() => {
@@ -39,17 +42,18 @@ afterAll(() => {
   else process.env.NETLIFY = ORIGINAL_NETLIFY;
 });
 
-/** Boots the server Sentry config in a fresh registry and returns that registry's reporters. */
-async function loadServerRuntime(netlify: string | undefined) {
+/** Boots the server Sentry config in a fresh registry. */
+async function loadServerRuntime(netlify: string | undefined): Promise<void> {
   if (netlify === undefined) delete process.env.NETLIFY;
   else process.env.NETLIFY = netlify;
-  let report: typeof import("../../lib/observability/report") | undefined;
   await jest.isolateModulesAsync(async () => {
     await import("../../sentry.server.config");
-    report = await import("../../lib/observability/report");
   });
-  if (!report) throw new Error("report module did not load");
-  return report;
+}
+
+function emitPreprocess(event: { type?: string }): void {
+  for (const listener of listeners.get("preprocessEvent") ?? [])
+    listener(event);
 }
 
 describe("scheduleSentryFlush", () => {
@@ -107,43 +111,47 @@ describe("scheduleSentryFlush", () => {
   });
 });
 
-describe("the server runtime on Netlify flushes after every capture", () => {
-  it("schedules a flush after reportSentryError and reportSentryMessage", async () => {
-    const report = await loadServerRuntime("true");
-    jest.spyOn(console, "error").mockImplementation(() => {});
+describe("the server runtime on Netlify flushes after every server event", () => {
+  it("schedules a flush for error and message events", async () => {
+    await loadServerRuntime("true");
 
-    report.reportSentryError(new Error("ledger posting failed"), {
-      subsystem: "payments",
-    });
-    report.reportSentryMessage("checkout refused", {
-      subsystem: "payments",
-      level: "warning",
-    });
+    expect(fakeClient?.on).toHaveBeenCalledTimes(1);
+    emitPreprocess({});
+    emitPreprocess({ type: undefined });
 
-    expect(captureException).toHaveBeenCalledTimes(1);
-    expect(captureMessage).toHaveBeenCalledTimes(1);
     expect(after).toHaveBeenCalledTimes(2);
   });
 
-  it("adds no flush off Netlify", async () => {
-    const report = await loadServerRuntime(undefined);
-    jest.spyOn(console, "error").mockImplementation(() => {});
+  it("adds no flush for a transaction", async () => {
+    await loadServerRuntime("true");
 
-    report.reportSentryError(new Error("boom"), { subsystem: "payments" });
+    emitPreprocess({ type: "transaction" });
 
-    expect(captureException).toHaveBeenCalledTimes(1);
     expect(after).not.toHaveBeenCalled();
-    expect(flush).not.toHaveBeenCalled();
   });
 
-  it("a failing hook never breaks the capture", () => {
-    setAfterCapture(() => {
-      throw new Error("hook broke");
-    });
-    jest.spyOn(console, "error").mockImplementation(() => {});
+  it("registers nothing off Netlify", async () => {
+    await loadServerRuntime(undefined);
 
-    expect(
-      reportSentryError(new Error("boom"), { subsystem: "payments" }),
-    ).toBe("evt");
+    expect(fakeClient?.on).not.toHaveBeenCalled();
+  });
+
+  it("registers nothing when no client exists, as during next build", async () => {
+    const client = fakeClient;
+    fakeClient = undefined;
+
+    await expect(loadServerRuntime("true")).resolves.toBeUndefined();
+    expect(client?.on).not.toHaveBeenCalled();
+  });
+
+  it("the listener never throws when no request scope exists", async () => {
+    jest.spyOn(console, "warn").mockImplementation(() => {});
+    after.mockImplementationOnce(() => {
+      throw new Error("after() called outside a request scope");
+    });
+    await loadServerRuntime("true");
+
+    expect(() => emitPreprocess({})).not.toThrow();
+    expect(flush).toHaveBeenCalledWith(2_000);
   });
 });

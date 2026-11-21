@@ -39,6 +39,7 @@ import {
   setSentryOrgContext,
 } from "../../lib/observability/identity";
 import { reportSentryError } from "../../lib/observability/report";
+import { SYNTHETIC_DSN } from "../fixtures/sentry-fake-transport";
 
 /**
  * The disclosure is DEFAULT OFF (see `isSentryIdentityEnabled`). These suites
@@ -52,9 +53,6 @@ beforeAll(() => {
 afterAll(() => {
   delete process.env.SENTRY_IDENTITY_ENABLED;
 });
-
-const SYNTHETIC_DSN =
-  "https://0123456789abcdef0123456789abcdef@o0123456789abcdef.ingest.us.sentry.io/0123456789abcdef";
 
 type CapturedEvent = Sentry.Event & { event_id?: string };
 
