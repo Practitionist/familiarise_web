@@ -1,7 +1,10 @@
 import { z } from "zod";
 import { razorpayNotesSchema } from "@/schemas/webhooks/razorpay";
+import { mapGatewayRefundStatus } from "@/lib/payments/refund-status";
 
 const RAZORPAY_API = "https://api.razorpay.com/v1";
+// Razorpay's largest refund page; the default is 10.
+const REFUNDS_PAGE_SIZE = 100;
 
 /** Razorpay's error body is `{ error: { code, description } }`; tolerate anything else. */
 export async function razorpayErrorDescription(res: Response): Promise<string> {
@@ -56,32 +59,41 @@ const paymentRefundsSchema = z.object({
 });
 
 /**
- * Records every refund Razorpay holds against a capture (`GET /v1/payments/:id/refunds`) by its Razorpay id,
- * through the refund webhook's own handler, so the refundable balance nets them. Throws when one is not recorded.
+ * Records every refund Razorpay holds against a capture (`GET /v1/payments/:id/refunds`, every page) by its
+ * Razorpay id, through the refund webhook's own handler, so the refundable balance nets them. Throws when one is
+ * not read or recorded. Returns true while one of them is still pending at the gateway: it may yet fail, so the
+ * caller leaves the marker for a later run instead of settling it.
  */
 export async function recordGatewayRefunds(
   orderId: string,
   gatewayPaymentId: string,
   deadlineAt: number,
-): Promise<void> {
+): Promise<{ pendingAtGateway: boolean }> {
   // Dynamic: the refund handler reaches back into booking.
   const { handleRefundCreated, DeferSignal } =
     await import("@/app/api/webhooks/utils");
-  const body = await razorpayGet(
-    `payments/${encodeURIComponent(gatewayPaymentId)}/refunds`,
-    deadlineAt,
-  );
-  const { items } = paymentRefundsSchema.parse(body ?? { items: [] });
-  for (const refund of items) {
-    const recorded = await handleRefundCreated(
-      refund.id,
-      orderId,
-      refund.amount,
-      refund.currency,
-      refund.status,
-      gatewayPaymentId,
-      refund.notes,
+  let pendingAtGateway = false;
+  for (let skip = 0; ; skip += REFUNDS_PAGE_SIZE) {
+    const body = await razorpayGet(
+      `payments/${encodeURIComponent(gatewayPaymentId)}/refunds?count=${REFUNDS_PAGE_SIZE}&skip=${skip}`,
+      deadlineAt,
     );
-    if (recorded instanceof DeferSignal) throw new Error(recorded.reason);
+    const { items } = paymentRefundsSchema.parse(body ?? { items: [] });
+    for (const refund of items) {
+      const recorded = await handleRefundCreated(
+        refund.id,
+        orderId,
+        refund.amount,
+        refund.currency,
+        refund.status,
+        gatewayPaymentId,
+        refund.notes,
+      );
+      if (recorded instanceof DeferSignal) throw new Error(recorded.reason);
+      if (mapGatewayRefundStatus(refund.status) === "PENDING") {
+        pendingAtGateway = true;
+      }
+    }
+    if (items.length < REFUNDS_PAGE_SIZE) return { pendingAtGateway };
   }
 }

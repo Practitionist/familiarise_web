@@ -94,7 +94,7 @@ const PRICE_PAISE = 80_000;
 const gatewayOrders = new Map<string, Array<Record<string, unknown>>>();
 const gatewayRefunds = new Map<string, Array<Record<string, unknown>>>();
 const ORDER_PAYMENTS = /\/v1\/orders\/([^/]+)\/payments$/;
-const PAYMENT_REFUNDS = /\/v1\/payments\/([^/]+)\/refunds$/;
+const PAYMENT_REFUNDS = /\/v1\/payments\/([^/?]+)\/refunds(?:\?(.*))?$/;
 /** Payments whose refund list the gateway cannot serve right now. */
 const unreadableRefunds = new Set<string>();
 const mockFetch = jest.fn(async (input: string | URL) => {
@@ -104,12 +104,18 @@ const mockFetch = jest.fn(async (input: string | URL) => {
     const items = gatewayOrders.get(decodeURIComponent(order)) ?? [];
     return new Response(JSON.stringify({ items }), { status: 200 });
   }
-  const payment = PAYMENT_REFUNDS.exec(url)?.[1];
+  const [, payment, query] = PAYMENT_REFUNDS.exec(url) ?? [];
   if (payment) {
     if (unreadableRefunds.has(decodeURIComponent(payment))) {
       return new Response("{}", { status: 503 });
     }
-    const items = gatewayRefunds.get(decodeURIComponent(payment)) ?? [];
+    // Razorpay pages refunds: 10 unless `count` says otherwise, from `skip`.
+    const page = new URLSearchParams(query);
+    const skip = Number(page.get("skip") ?? 0);
+    const items = (gatewayRefunds.get(decodeURIComponent(payment)) ?? []).slice(
+      skip,
+      skip + Number(page.get("count") ?? 10),
+    );
     return new Response(JSON.stringify({ items }), { status: 200 });
   }
   return new Response(JSON.stringify({ status: "created" }), { status: 200 });
@@ -396,25 +402,73 @@ describe("reconcile-payment-status re-reads orders we closed", () => {
       [...orders, readEarlier].map((p) => readsOf(p.paymentIntent)),
     ).toEqual([0, 0, 1, 1]);
   });
-  /** A closed order captured at the gateway, ₹300 of it already refunded from the dashboard. */
-  async function partlyRefundedCapture() {
+  /** A closed order captured at the gateway, part of it already refunded from the dashboard (₹300 by default). */
+  async function partlyRefundedCapture(
+    refunds: { amount: number; status: string }[] = [
+      { amount: 30_000, status: "processed" },
+    ],
+  ) {
     const request = await closedOrder(HOUR);
     const orderId = request.payment!.paymentIntent;
     const payId = gatewayPaymentId();
     gatewayOrders.set(orderId, [
-      { ...captured(payId), amount_refunded: 30_000 },
-    ]);
-    gatewayRefunds.set(payId, [
       {
-        id: `rfnd_dash_${randomUUID().slice(0, 8)}`,
-        amount: 30_000,
-        currency: "INR",
-        status: "processed",
-        notes: {},
+        ...captured(payId),
+        amount_refunded: refunds.reduce((sum, r) => sum + r.amount, 0),
       },
     ]);
+    gatewayRefunds.set(
+      payId,
+      refunds.map((r) => ({
+        id: `rfnd_dash_${randomUUID().slice(0, 8)}`,
+        currency: "INR",
+        notes: {},
+        ...r,
+      })),
+    );
     return { request, orderId, payId };
   }
+
+  const refundCallsFor = (orderId: string) =>
+    mockCreateRefund.mock.calls.filter(
+      ([params]) =>
+        (params as { paymentIntentId?: string }).paymentIntentId === orderId,
+    );
+
+  it("records every gateway refund past Razorpay's first page before refunding the rest", async () => {
+    const { request, orderId } = await partlyRefundedCapture(
+      Array.from({ length: 11 }, () => ({
+        amount: 1_000,
+        status: "processed",
+      })),
+    );
+
+    const run = await reconcilePaymentStatus();
+
+    expect(run.errors).toEqual([]);
+    expect(refundCallsFor(orderId)).toEqual([
+      [expect.objectContaining({ amount: 69_000 })],
+    ]);
+    expect(await refundedPaise(request.payment!.id)).toBe(PRICE_PAISE);
+  });
+
+  it("leaves the marker while a gateway refund it imported is still pending, and refunds nothing over it", async () => {
+    const { request, orderId } = await partlyRefundedCapture([
+      { amount: 30_000, status: "pending" },
+    ]);
+    const paymentId = request.payment!.id;
+    unreadableRefunds.add(
+      (gatewayOrders.get(orderId)![0] as { id: string }).id,
+    );
+    await reconcilePaymentStatus();
+    unreadableRefunds.clear();
+    await closedAt(paymentId, 20);
+
+    await retryAutoRefunds();
+
+    expect(refundCallsFor(orderId)).toEqual([]);
+    expect(await descriptionOf(paymentId)).toMatch(/^Auto-refund pending:/);
+  });
 
   it("records a refund already made at the gateway and refunds only the rest, once", async () => {
     const { request, orderId, payId } = await partlyRefundedCapture();
@@ -552,11 +606,7 @@ describe("reconcile-payment-status re-reads orders we closed", () => {
     await closedAt(paymentId, 20);
     await retryAutoRefunds();
 
-    const refundCalls = mockCreateRefund.mock.calls.filter(
-      ([params]) =>
-        (params as { paymentIntentId?: string }).paymentIntentId === orderId,
-    );
-    expect(refundCalls).toEqual([
+    expect(refundCallsFor(orderId)).toEqual([
       [expect.objectContaining({ amount: 50_000 })],
     ]);
     expect(await refundedPaise(paymentId)).toBe(PRICE_PAISE);

@@ -478,11 +478,13 @@ async function retryOne(
     payment.gatewayPaymentId?.startsWith("pay_") &&
     !isMockPaymentId(payment.gatewayPaymentId)
   ) {
-    await recordGatewayRefunds(
+    const { pendingAtGateway } = await recordGatewayRefunds(
       payment.paymentIntent,
       payment.gatewayPaymentId,
       Date.now() + GATEWAY_REFUNDS_READ_TIMEOUT_MS,
     );
+    // The PENDING row now belongs to reconcile-refunds; the next run sees its outcome.
+    if (pendingAtGateway) return;
   }
 
   let settled = false;

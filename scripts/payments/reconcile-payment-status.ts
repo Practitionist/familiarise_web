@@ -448,11 +448,13 @@ async function refundClosedOrderCapture(
   );
   if (outcome !== "captured_after_release") return false;
   if (held.refundedPaise > 0) {
-    await recordGatewayRefunds(
+    const { pendingAtGateway } = await recordGatewayRefunds(
       payment.paymentIntent,
       held.paymentId,
       deadlineAt,
     );
+    // A gateway refund still in flight may fail: the marker stays for retry-auto-refunds.
+    if (pendingAtGateway) return true;
   }
   const owedPaise = held.amountPaise - held.refundedPaise;
   if (owedPaise > 0) {
