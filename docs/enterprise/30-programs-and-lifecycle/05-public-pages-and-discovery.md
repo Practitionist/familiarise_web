@@ -89,7 +89,9 @@ by-id API answer 404 to everyone but that expert. An organisation's invited
 experts are therefore verified by the platform before its members can book
 them; the admin's Members page shows "Waiting for verification" against one
 who is not. Organisation-owned webinar and class plans with no expert are not
-affected. The owner's decision is
+affected. The same rule keeps a collaborator who is not verified off a plan's
+public team list ([collaborator permissions](../../collaborators/02-permissions-and-roles.md)).
+The owner's decision is
 [the unverified-experts decision record](../../decisions/2026-11-21-unverified-experts-cannot-be-booked.md).
 
 ## The two discovery gates, drawn

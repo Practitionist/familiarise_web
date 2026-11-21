@@ -30,6 +30,9 @@ jest.mock("../../lib/auth-server", () => ({
   getSession: jest.fn(() => Promise.resolve(mockSession)),
 }));
 
+// The team projection imports the client; with no team it never queries.
+jest.mock("../../lib/prisma", () => ({ __esModule: true, default: {} }));
+
 const mockGetConsultationPlanDetail = jest.fn();
 const mockGetSubscriptionPlanDetail = jest.fn();
 const mockGetWebinarPlanDetail = jest.fn();
@@ -81,6 +84,7 @@ const hiddenPlan = {
   imageUrl: null,
   webinars: [],
   classes: [],
+  collaborators: [],
 };
 
 /** The slice of a detail page module these tests drive. */

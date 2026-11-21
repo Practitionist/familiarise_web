@@ -95,6 +95,8 @@ export async function fetchWebinarPlanDetail(webinarPlanId: string) {
           consultantProfile: {
             select: {
               ...consultantPublicScalars,
+              // `planTeamForViewer` lists a member to the public only when this is public.
+              ...publicProfileFacts,
               user: {
                 select: { id: true, name: true, image: true },
               },
@@ -168,6 +170,8 @@ export async function fetchClassPlanDetail(classPlanId: string) {
           consultantProfile: {
             select: {
               ...consultantPublicScalars,
+              // `planTeamForViewer` lists a member to the public only when this is public.
+              ...publicProfileFacts,
               user: {
                 select: { id: true, name: true, image: true },
               },

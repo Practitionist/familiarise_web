@@ -5,6 +5,7 @@ import { canViewPlanDetail } from "@/lib/data/plan-viewable";
 import { getSession } from "@/lib/auth-server";
 import { reportSentryError } from "@/lib/observability/report";
 import { getWebinarPlanDetail } from "@/lib/data/plan-details";
+import { planTeamForViewer } from "@/lib/api/plans/public-team";
 import {
   viewerSeatAppointmentIds,
   viewerWaitlistAppointmentIds,
@@ -68,18 +69,25 @@ export default async function WebinarDetailsPage({
     firstWebinarInstance?.appointment?.occurrences?.[0]?.startsAt;
   const appointmentId = firstWebinarInstance?.appointment?.id;
   const viewerUserId = session?.user?.id ?? null;
-  const [seated, waiting] = appointmentId
-    ? await Promise.all([
-        viewerSeatAppointmentIds(viewerUserId, [appointmentId]),
-        viewerWaitlistAppointmentIds(viewerUserId, [appointmentId]),
-      ])
-    : [[], []];
+  const [[seated, waiting], collaborators] = await Promise.all([
+    appointmentId
+      ? Promise.all([
+          viewerSeatAppointmentIds(viewerUserId, [appointmentId]),
+          viewerWaitlistAppointmentIds(viewerUserId, [appointmentId]),
+        ])
+      : [[], []],
+    planTeamForViewer(
+      webinarData.collaborators,
+      { planType: "webinar", planId: webinarPlanId },
+      session,
+    ),
+  ]);
 
   return (
     <>
       <PlanBreadcrumb plan={webinarData} />
       <WebinarDetails
-        plan={webinarData}
+        plan={{ ...webinarData, collaborators }}
         nextSession={nextSession}
         webinarId={firstWebinarInstance?.id}
         isRegistered={seated.length > 0}
