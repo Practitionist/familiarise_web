@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
+import { countActiveCalls } from "@/lib/meetings/active-calls";
 import prisma from "@/lib/prisma";
 
 /**
@@ -17,13 +18,14 @@ export async function GET() {
   const fourHoursFromNow = new Date(now.getTime() + 4 * 60 * 60 * 1000);
 
   const [
-    activeCalls,
+    calls,
     pendingPayments,
     upcomingAppointments,
     pendingPayouts,
     openDisputes,
   ] = await Promise.all([
-    prisma.meeting.count({ where: { endedAt: null } }),
+    // Presence and Stream decide; a moved schedule says nothing about who is in the room.
+    countActiveCalls(prisma, now),
     prisma.payment.count({ where: { paymentStatus: "PENDING" } }),
     prisma.appointmentOccurrence.count({
       where: {
@@ -42,7 +44,12 @@ export async function GET() {
     }),
   ]);
 
+  const activeCalls = calls.active;
   const warnings: string[] = [];
+  if (calls.unverified > 0)
+    warnings.push(
+      `${calls.unverified} open room(s) could not be checked with Stream and are counted as active`,
+    );
   if (activeCalls > 0)
     warnings.push(`${activeCalls} active video call(s) in progress`);
   if (pendingPayments > 0)

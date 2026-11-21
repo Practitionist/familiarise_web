@@ -17,6 +17,7 @@ import { refundStatusBadge } from "@/lib/labels/session-labels";
 import { OperatorTimeStack } from "@/lib/time/operator-time";
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
+import type { RefundStatus } from "@prisma/client";
 // `formatCurrencyAmount`, not the old major-unit formatter (deleted in #1396):
 // refunds carry paise. The old call had both halves wrong — a field the payload
 // has never contained, passed to the rupees formatter — so it rendered ₹NaN
@@ -59,6 +60,8 @@ export interface RefundsPageProps {
   queryKeyPrefix?: string;
   /** Operational panel rendered directly below DashboardHeader */
   beforeContent?: React.ReactNode;
+  /** The status a link opened the list on */
+  initialStatus?: RefundStatus;
 }
 
 export function RefundsPage({
@@ -67,11 +70,14 @@ export function RefundsPage({
   description = "View and track refund requests",
   queryKeyPrefix = "refunds",
   beforeContent,
+  initialStatus,
 }: RefundsPageProps) {
   const { basePath } = useBackofficeCapability();
   const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState<string>(
+    initialStatus ?? "all",
+  );
   const [gatewayFilter, setGatewayFilter] = useState("all");
   const [page, setPage] = useState(1);
 

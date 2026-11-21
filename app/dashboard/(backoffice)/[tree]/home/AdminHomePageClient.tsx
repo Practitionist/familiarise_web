@@ -26,6 +26,7 @@ import { Section } from "@/components/dashboard/Section";
 import { Stat, StatRow, StatSkeleton } from "@/components/dashboard/Stat";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import type { BackofficeSurface } from "@/lib/auth/backoffice-permissions";
+import { HOME_TILE_LIST_QUERY } from "@/lib/backoffice/money-list-schemas";
 import type { BackofficeBadgeKey } from "@/lib/dashboard/backoffice-nav";
 import { gatewayLabel } from "@/lib/labels/money-labels";
 import {
@@ -233,10 +234,10 @@ export default function AdminHomePageClient() {
               ) : (
                 <>
                   <Stat
-                    label="Payments"
+                    label="Succeeded payments"
                     value={stats?.totalPayments || 0}
                     hint={`${formatCurrencyAmount(stats?.totalPaymentsValue ?? 0, "INR")} total value`}
-                    href={`${basePath}/money/payments`}
+                    href={`${basePath}/money/payments${HOME_TILE_LIST_QUERY.payments}`}
                   />
                   <Stat
                     label="Pending payments"
@@ -247,13 +248,13 @@ export default function AdminHomePageClient() {
                     label="Refunds"
                     value={stats?.totalRefunds || 0}
                     hint={`${formatCurrencyAmount(stats?.totalRefundsValue ?? 0, "INR")} refunded`}
-                    href={`${basePath}/money/refunds`}
+                    href={`${basePath}/money/refunds${HOME_TILE_LIST_QUERY.refunds}`}
                   />
                   <Stat
                     label="Active disputes"
                     value={stats?.activeDisputes || 0}
                     hint={`${stats?.totalDisputes || 0} in total`}
-                    href={`${basePath}/money/disputes`}
+                    href={`${basePath}/money/disputes${HOME_TILE_LIST_QUERY.disputes}`}
                     tone={
                       (stats?.activeDisputes ?? 0) > 0 ? "critical" : "neutral"
                     }
