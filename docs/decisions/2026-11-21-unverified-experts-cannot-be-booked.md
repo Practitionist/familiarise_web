@@ -35,6 +35,9 @@ Priya Nair signs up as a career coach and publishes a 1:1 consultation at ₹1,5
 
 Review on 2026-11-21 also brought these surfaces in line with decision 3:
 
+- The subscription feasibility read (`GET /api/plans/subscriptions/[id]/feasibility`) applies the by-id read's `canViewPlanDetail`, so it answers 404 to anyone but the expert for a plan they may not open, and no longer reveals the expert's time zone.
+- The trial eligibility check without a plan id offers a trial only when a plan the reader can see has one, so `isEligible` agrees with `plansWithTrialEnabled`.
+- The planner shows neither the published chip nor a share link until the owner's standing has loaded (`useOfferingsListed` in `hooks/useVerificationStatus.ts`), so "Published" never flashes before "Live once verified".
 - The by-id webinar and class plan responses are shared for at most 60 seconds with no stale window, so a plan a reject hides stops being served within a minute (owner decision, 2026-11-21; `planDetailResponse` in `lib/api/plans/detail-response.ts`).
 
 - Trial eligibility (`GET /api/trials/check-eligibility`) lists and reads plans with the public filter for anyone but the owner.
