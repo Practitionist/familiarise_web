@@ -48,6 +48,7 @@ import {
   getProgramCounts,
 } from "../../../lib/data/explore-programs";
 import { GET as checkTrialEligibility } from "../../../app/api/trials/check-eligibility/route";
+import { GET as checkPlanFeasibility } from "../../../app/api/plans/subscriptions/[subscriptionPlanId]/feasibility/route";
 import { listIndexableEventPlanIds } from "../../../lib/data/indexable-plans";
 import { seedHeldSeat, seedWebinar } from "./harness-seats";
 import { stageSeatOpenedNotices } from "../../../lib/booking/event-waitlist";
@@ -57,6 +58,10 @@ import {
   MembersListResponseSchema,
   membersListQueryFromUrl,
 } from "../../../schemas/organizations";
+
+const EligibilitySchema = z.object({
+  data: z.object({ isEligible: z.boolean(), planTrialEnabled: z.boolean() }),
+});
 
 /** The ids a plan list answers with; parsed, so a contract change fails loudly. */
 const ListIdsSchema = z.object({ data: z.array(z.object({ id: z.string() })) });
@@ -268,10 +273,10 @@ describe("an unverified expert's plans", () => {
       consultantProfileId: null,
       role: "CONSULTEE",
     };
-    const check = async (withPlan: boolean) => {
+    const check = async (withPlan: boolean, expert = rejected) => {
       const query = new URLSearchParams({
         consulteeProfileId: learner.consulteeProfileId,
-        consultantProfileId: rejected.consultantProfileId,
+        consultantProfileId: expert.consultantProfileId,
         ...(withPlan ? { subscriptionPlanId: plan.id } : {}),
       });
       const res = await checkTrialEligibility(
@@ -285,8 +290,51 @@ describe("an unverified expert's plans", () => {
 
     expect(listed.body).not.toContain(plan.id);
     expect(listed.body).not.toContain("20000");
+    // With every trial plan hidden, the headline flag agrees with the empty list.
+    expect(EligibilitySchema.parse(JSON.parse(listed.body)).data).toEqual({
+      isEligible: false,
+      planTrialEnabled: false,
+    });
     expect(named.status).toBe(404);
     expect(named.body).not.toContain(plan.id);
+
+    const verified = await seedExpert("VERIFIED");
+    await prisma.subscriptionPlan.create({
+      data: {
+        title: "Listed trial plan",
+        price: BigInt(400_000),
+        consultantProfileId: verified.consultantProfileId,
+        trialEnabled: true,
+        trialDurationMinutes: 30,
+      },
+    });
+    const control = await check(false, verified);
+    expect(EligibilitySchema.parse(JSON.parse(control.body)).data).toEqual({
+      isEligible: true,
+      planTrialEnabled: true,
+    });
+  }, 30_000);
+
+  it("are not assessed for feasibility for anyone but the expert", async () => {
+    const hidden = await seedExpert("UNDER_REVIEW");
+    const { subscription } = await seedPlans(hidden, null);
+    const learner = await seedConsultee();
+    const feasibility = () =>
+      checkPlanFeasibility(
+        new NextRequest(
+          `https://x.test/api/plans/subscriptions/${subscription.id}/feasibility`,
+        ),
+        { params: Promise.resolve({ subscriptionPlanId: subscription.id }) },
+      );
+
+    mockSession.current = { id: learner.userId, consultantProfileId: null };
+    const stranger = await feasibility();
+    viewAs(hidden);
+    const owner = await feasibility();
+
+    expect(stranger.status).toBe(404);
+    expect(JSON.stringify(await stranger.json())).not.toContain("zone");
+    expect(owner.status).toBe(200);
   }, 30_000);
 
   it("are left out of the sitemap until the expert is verified", async () => {

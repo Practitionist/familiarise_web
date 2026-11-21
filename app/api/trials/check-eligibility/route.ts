@@ -116,6 +116,9 @@ export async function GET(request: NextRequest) {
       },
     });
 
+    // Without a plan, a trial is on offer only through a plan the reader can see.
+    if (!subscriptionPlanId)
+      planTrialEnabled = plansWithTrialEnabled.length > 0;
     const isEligible = !blockingTrial && planTrialEnabled && !planNotPublished;
     let reason: string | null = null;
     if (blockingTrial) {
@@ -124,7 +127,9 @@ export async function GET(request: NextRequest) {
     } else if (planNotPublished) {
       reason = "This plan isn't available to book right now.";
     } else if (!planTrialEnabled) {
-      reason = "This plan does not offer trials";
+      reason = subscriptionPlanId
+        ? "This plan does not offer trials"
+        : "This expert isn't offering a trial right now.";
     }
 
     return NextResponse.json({
