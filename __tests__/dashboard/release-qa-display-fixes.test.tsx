@@ -15,22 +15,19 @@ import {
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-const mockSessionUser: Record<string, unknown> = {
+const mockSessionUser = {
   id: "u_expert",
   role: "CONSULTANT",
-  timezone: "Asia/Kolkata",
-  consulteeProfileId: null,
   consultantProfileId: "cp_expert",
   organizationMemberships: [],
 };
 jest.mock("next/navigation", () => ({
-  useRouter: () => ({ push: jest.fn(), refresh: jest.fn() }),
-  useParams: () => ({}),
+  useRouter: () => ({ push: jest.fn() }),
   usePathname: () => "/dashboard/organization/o1/catalog",
   useSearchParams: () => new URLSearchParams(),
 }));
 jest.mock("../../lib/auth-client", () => ({
-  useSession: () => ({ data: { user: mockSessionUser }, isPending: false }),
+  useSession: () => ({ data: { user: mockSessionUser } }),
 }));
 jest.mock("../../lib/navigation/history", () => ({ replaceUrl: jest.fn() }));
 
@@ -213,12 +210,12 @@ describe("Delivered by picker", () => {
   });
 });
 
-const EMPTY_EVENTS: TConsulteeEventsResponse = {
+const NO_EVENTS: TConsulteeEventsResponse = {
+  trials: [],
+  classes: [],
+  webinars: [],
   consultations: [],
   subscriptions: [],
-  webinars: [],
-  classes: [],
-  trials: [],
 };
 
 describe("learner Home empty state", () => {
@@ -228,7 +225,7 @@ describe("learner Home empty state", () => {
         <HomeTab
           learner={{ userId: "u_learner", name: "Daniel Brown", image: null }}
           viewerOwnsProfile={viewerOwnsProfile}
-          eventsData={EMPTY_EVENTS}
+          eventsData={NO_EVENTS}
           consulteeId="cp_learner"
           viewerZone={{ zone: "Asia/Kolkata", own: viewerOwnsProfile }}
         />
