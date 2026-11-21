@@ -35,7 +35,7 @@ export const WALLET_REASON_LABEL = {
   REFUND: "Refund or chargeback",
   TOPUP_REFUND: "Top-up refunded",
   TOPUP_REFUND_SHORTFALL:
-    "Top-up refund the organisation still owes: already spent from the wallet",
+    "Refunded top-up already spent: added to the amount owed",
   INVOICE_REFUND: "Invoice refunded to wallet",
   OVERAGE_MEMBER_BILLED:
     "Returned to the wallet: a member is billed for their extra session",

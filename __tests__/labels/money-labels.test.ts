@@ -32,7 +32,9 @@ describe("money label maps", () => {
     expect(walletReasonLabel("WALLET_ADJUSTMENT")).toBe(
       "Adjustment by our team",
     );
-    expect(walletReasonLabel("TOPUP_REFUND_SHORTFALL")).toMatch(/still owes/);
+    expect(walletReasonLabel("TOPUP_REFUND_SHORTFALL")).toBe(
+      "Refunded top-up already spent: added to the amount owed",
+    );
   });
 
   it("reads gateway dispute codes as words and passes prose through", () => {
