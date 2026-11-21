@@ -321,6 +321,21 @@ async function adoptPreMintRow(
   return true;
 }
 
+/**
+ * One refund per late capture, keyed on the gateway payment: on our Refund row (`dedupeKey`) and at
+ * Razorpay (`receipt`, at most 40 chars, refused as a duplicate on the same payment).
+ */
+export function lateCaptureRefundKeys(gatewayPaymentId: string): {
+  dedupeKey: string;
+  gatewayReceipt?: string;
+} {
+  const receipt = `late_capture_${gatewayPaymentId}`;
+  return {
+    dedupeKey: `late-capture:${gatewayPaymentId}`,
+    ...(receipt.length <= 40 ? { gatewayReceipt: receipt } : {}),
+  };
+}
+
 export async function handlePaymentSuccess(
   paymentIntentId: string,
   rawMetadata: Record<string, string>,
@@ -1264,6 +1279,7 @@ export async function handlePaymentSuccess(
         amountPaise: gatewayAmountPaise,
         reason: `capture after hold release (${txResult.releasedBy})`,
         initiatedByUserId: null,
+        ...(gatewayPaymentId ? lateCaptureRefundKeys(gatewayPaymentId) : {}),
       });
       if (outcome?.status !== "PENDING") {
         await prisma.payment.update({

@@ -173,6 +173,8 @@ export type RefundInput = {
    * the first refund instead of moving money twice. Refund.dedupeKey is unique.
    */
   dedupeKey?: string;
+  /** Razorpay `receipt`: a second refund on the same gateway payment with it is refused. */
+  gatewayReceipt?: string;
   supportRecommendationId?: string;
 } & OwedMarkerInput;
 
@@ -649,6 +651,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       // debiting us twice. Unique per reservation, so two legitimate partial
       // refunds of the same amount still each get their own.
       idempotencyKey: reserved.id,
+      ...(input.gatewayReceipt ? { receipt: input.gatewayReceipt } : {}),
       // #676 B1 — the same id rides the gateway notes, so the refund WEBHOOK
       // (and the reconcile sweep) can bind a gateway refund back to its
       // PENDING reservation exactly, instead of amount+time-window guessing.

@@ -339,6 +339,8 @@ async function refundBookingPaymentOnRail(
     initiatedByUserId?: string | null;
     /** #1780 — one refund per key on every rail; a repeat returns the first. */
     dedupeKey?: string;
+    /** Sent to the gateway rail only; see `RefundInput.gatewayReceipt`. */
+    gatewayReceipt?: string;
     supportRecommendationId?: string;
     /**
      * #1780 row 4 — a per-session refund (a missed class session) leaves the
