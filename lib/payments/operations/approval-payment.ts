@@ -505,6 +505,12 @@ export async function createApprovalPaymentIntent(
     let filled: boolean;
     try {
       filled = await prisma.$transaction(async (tx) => {
+        // A reject that committed during the gateway call refuses the fill; the catch retires the order.
+        await assertExpertStandsInTx(
+          tx,
+          plan.expertProfileId,
+          MINT_LABEL[params.appointmentType],
+        );
         const cas = await tx.payment.updateMany({
           where: {
             id: paymentId,

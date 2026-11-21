@@ -4,11 +4,14 @@ import { blockingTrialWhere } from "@/lib/trials/eligibility";
 import { NextRequest, NextResponse } from "next/server";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 import {
-  eventPlanDiscoverableWhere,
   oneOnOnePlanDiscoverableWhere,
   planSaleRefusal,
 } from "@/lib/api/plans/visibility";
-import { publicExpertProfileWhere } from "@/lib/profiles/public-profile";
+import { canViewPlanDetail } from "@/lib/data/plan-viewable";
+import {
+  publicExpertProfileWhere,
+  publicProfileFacts,
+} from "@/lib/profiles/public-profile";
 
 /**
  * GET /api/trials/check-eligibility
@@ -48,12 +51,6 @@ export async function GET(request: NextRequest) {
 
   // Only the expert sees their own hidden plans; everyone else gets what the public lists show.
   const isOwner = consultantProfileId === session.user.consultantProfileId;
-  const listed = isOwner
-    ? {}
-    : {
-        ...eventPlanDiscoverableWhere(),
-        consultantProfile: publicExpertProfileWhere,
-      };
 
   try {
     // Only the pair's live or delivered trial blocks; ended ones stay as history.
@@ -77,17 +74,22 @@ export async function GET(request: NextRequest) {
 
     if (subscriptionPlanId) {
       const plan = await prisma.subscriptionPlan.findFirst({
-        where: { id: subscriptionPlanId, consultantProfileId, ...listed },
+        where: { id: subscriptionPlanId, consultantProfileId },
         select: {
           trialEnabled: true,
           trialDurationMinutes: true,
           trialPriceInPaise: true,
           title: true,
           status: true,
+          visibility: true,
+          organizationId: true,
+          archivedAt: true,
+          consultantProfile: { select: publicProfileFacts },
         },
       });
 
-      if (!plan) {
+      // The plan page's rule: an organisation's members see its organisation-only plans.
+      if (!plan || !(await canViewPlanDetail(plan, session))) {
         return NextResponse.json(
           { error: "Subscription plan not found" },
           { status: 404 },

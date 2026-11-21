@@ -1,14 +1,15 @@
 /**
  * Ends a rejected expert's unpaid sales after the reject commits, as Request
  * again closes an order: the gateway is asked about every open order first, the
- * cleared sales end in one transaction, and each closed order is read once more
- * so a capture that slipped in is refunded. Never throws on a gateway or notice
- * failure; what it could not settle is reported once.
+ * cleared sales end in one transaction with their learner notices staged, and
+ * each closed order is read once more so a capture that slipped in is refunded.
+ * Never throws on a gateway failure; what it could not settle is reported once.
  */
 
 import { Prisma, PaymentGateway } from "@prisma/client";
 
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
+import { mapLimit } from "@/lib/db/bounded";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { flushBackupInterestNotices } from "@/lib/booking/backup-interest";
 import { stageRequestEndedNotice } from "@/lib/booking/expiry-notices";
@@ -29,7 +30,17 @@ import type { StagedTrigger } from "@/lib/novu/outbox";
 import type { StagedEmailBundleEntry } from "@/lib/novu/stage-then-attempt";
 import { reportSentryMessage } from "@/lib/observability/report";
 import { readRazorpayOrderHolding } from "@/lib/payments/core/razorpay";
+import { isPreMintIntent } from "@/lib/payments/pre-mint-intent";
+import {
+  isPublicExpertProfile,
+  publicProfileFacts,
+} from "@/lib/profiles/public-profile";
 import { cancelPaymentIntent } from "@/scripts/payments/cleanup-abandoned-payments";
+
+/** Gateway reads stop starting this long after the ending began; the rest wait for another pass. */
+const GATEWAY_READ_BUDGET_MS = 15_000;
+/** Gateway reads in flight at once. */
+const GATEWAY_READS_IN_FLIGHT = 4;
 
 export interface UnverifiedExpertSalesOutcome extends Pick<
   EndedUnpaidSales,
@@ -38,11 +49,14 @@ export interface UnverifiedExpertSalesOutcome extends Pick<
   | "trialHoldsReleased"
   | "seatsReleased"
   | "salesKept"
+  | "skipped"
 > {
   /** Orders a live payment kept open; reconciliation confirms or refunds them. */
   ordersLive: number;
   /** Orders the gateway could not answer for; their sales were left open. */
   ordersUnchecked: number;
+  /** False while orders were left unread for time: another pass must end their sales. */
+  complete: boolean;
   bells: StagedTrigger[];
   emails: StagedEmailBundleEntry[];
 }
@@ -51,19 +65,29 @@ interface GatewayAnswers {
   cleared: Map<string, string>;
   live: string[];
   unchecked: string[];
+  /** Never read: the time budget ran out first. */
+  notRead: string[];
 }
 
 /** The abandoned-payment rule: an order closes only once its gateway holds no live payment. */
-async function askGateway(orders: OpenOrder[]): Promise<GatewayAnswers> {
+async function askGateway(
+  orders: OpenOrder[],
+  outOfTime: () => boolean,
+): Promise<GatewayAnswers> {
   const answers: GatewayAnswers = {
     cleared: new Map(),
     live: [],
     unchecked: [],
+    notRead: [],
   };
-  for (const order of orders) {
+  await mapLimit(orders, GATEWAY_READS_IN_FLIGHT, async (order) => {
     if (!isGatewayOrder(order)) {
       answers.cleared.set(order.paymentId, order.paymentIntent);
-      continue;
+      return;
+    }
+    if (outOfTime()) {
+      answers.notRead.push(order.paymentIntent);
+      return;
     }
     const answer = await cancelPaymentIntent(
       order.paymentIntent,
@@ -76,35 +100,48 @@ async function askGateway(orders: OpenOrder[]): Promise<GatewayAnswers> {
     } else {
       answers.unchecked.push(order.paymentIntent);
     }
-  }
+  });
   return answers;
 }
 
-/** A capture between the gateway check and the commit is refunded through the capture handler. */
+/**
+ * A capture between the gateway check and the commit is refunded through the
+ * capture handler; one it could not read or did not refund is returned.
+ */
 async function recheckClosedOrders(orders: GatewayCancel[]): Promise<string[]> {
-  const unread: string[] = [];
-  for (const order of orders) {
-    if (order.gateway !== PaymentGateway.RAZORPAY) continue;
-    try {
-      const holding = await readRazorpayOrderHolding(order.paymentIntent);
-      if (holding.kind !== "captured") continue;
-      // Dynamic: the capture handlers reach back into booking.
-      const { handlePaymentSuccess } =
-        await import("@/lib/payments/webhooks/handlers");
-      await handlePaymentSuccess(
-        order.paymentIntent,
-        {},
-        holding.amountPaise,
-        holding.paymentId,
-      );
-    } catch {
-      unread.push(order.paymentIntent);
-    }
-  }
-  return unread;
+  const real = orders.filter(
+    (o) =>
+      o.gateway === PaymentGateway.RAZORPAY &&
+      !isPreMintIntent(o.paymentIntent),
+  );
+  const settled = await mapLimit(
+    real,
+    GATEWAY_READS_IN_FLIGHT,
+    async (order) => {
+      try {
+        const holding = await readRazorpayOrderHolding(order.paymentIntent);
+        if (holding.kind !== "captured") return true;
+        // Dynamic: the capture handlers reach back into booking.
+        const { handlePaymentSuccess } =
+          await import("@/lib/payments/webhooks/handlers");
+        const outcome = await handlePaymentSuccess(
+          order.paymentIntent,
+          {},
+          holding.amountPaise,
+          holding.paymentId,
+        );
+        return outcome === "captured_after_release";
+      } catch {
+        return false;
+      }
+    },
+  );
+  return real.filter((_, i) => !settled[i]).map((o) => o.paymentIntent);
 }
 
+/** Stages one learner's notice in the ending's transaction, so a closed sale is never left unannounced. */
 async function stageLearnerNotice(
+  tx: Tx,
   sale: EndedSale,
   bells: StagedTrigger[],
   emails: StagedEmailBundleEntry[],
@@ -122,10 +159,10 @@ async function stageLearnerNotice(
         dashboardUrl,
       },
       `trial-cancelled:${sale.id}`,
-      { tx: prisma },
+      { tx },
     );
     bells.push(...staged.flatMap((b) => (b.staged ? [b.staged] : [])));
-    const rows = await stageTrialLifecycleEmail(prisma, {
+    const rows = await stageTrialLifecycleEmail(tx, {
       trialId: sale.id,
       userIds: [sale.learnerUserId],
       kind: "TRIAL_CANCELLED",
@@ -139,7 +176,7 @@ async function stageLearnerNotice(
     return;
   }
   const staged = await stageRequestEndedNotice(
-    prisma,
+    tx,
     {
       appointmentId: sale.appointmentId ?? sale.id,
       organizationId: sale.organizationId,
@@ -156,10 +193,34 @@ async function stageLearnerNotice(
   emails.push({ rows: staged.emails, emailType: "APPOINTMENT_CANCELLED" });
 }
 
+const skipped = (): UnverifiedExpertSalesOutcome => ({
+  payLinksClosed: 0,
+  requestsDeclined: 0,
+  trialHoldsReleased: 0,
+  seatsReleased: 0,
+  salesKept: 0,
+  skipped: true,
+  ordersLive: 0,
+  ordersUnchecked: 0,
+  complete: true,
+  bells: [],
+  emails: [],
+});
+
 export async function endUnverifiedExpertSales(args: {
   consultantProfileId: string;
   actorUserId: string;
+  /** Stops new gateway reads; defaults to a budget from now. */
+  outOfTime?: () => boolean;
 }): Promise<UnverifiedExpertSalesOutcome> {
+  const readUntil = Date.now() + GATEWAY_READ_BUDGET_MS;
+  const outOfTime = args.outOfTime ?? (() => Date.now() >= readUntil);
+  const standing = await prisma.consultantProfile.findUnique({
+    where: { id: args.consultantProfileId },
+    select: publicProfileFacts,
+  });
+  if (standing && isPublicExpertProfile(standing)) return skipped();
+
   const orders = await prisma.payment.findMany({
     where: openSaleOrdersWhere(args.consultantProfileId),
     select: {
@@ -171,15 +232,25 @@ export async function endUnverifiedExpertSales(args: {
   });
   const answers = await askGateway(
     orders.map((o) => ({ ...o, paymentId: o.id })),
+    outOfTime,
   );
-  const ended = await withSerializableRetry(() =>
+  const asked = new Set(orders.map((o) => o.id));
+  const { ended, bells, emails } = await withSerializableRetry(() =>
     prisma.$transaction(
-      (tx) =>
-        endUnpaidSalesInTx(tx, {
+      async (tx) => {
+        const ending = await endUnpaidSalesInTx(tx, {
           consultantProfileId: args.consultantProfileId,
           actorUserId: args.actorUserId,
           cleared: answers.cleared,
-        }),
+          asked,
+        });
+        const stagedBells: StagedTrigger[] = [];
+        const stagedEmails: StagedEmailBundleEntry[] = [];
+        for (const sale of ending.ended) {
+          await stageLearnerNotice(tx, sale, stagedBells, stagedEmails);
+        }
+        return { ended: ending, bells: stagedBells, emails: stagedEmails };
+      },
       {
         isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
         maxWait: 10_000,
@@ -187,24 +258,23 @@ export async function endUnverifiedExpertSales(args: {
       },
     ),
   );
+  if (ended.skipped) return skipped();
 
   const unread = await recheckClosedOrders(ended.closedOrders);
-  const bells: StagedTrigger[] = [];
-  const emails: StagedEmailBundleEntry[] = [];
-  const failedNotices: string[] = [];
+  let heldNoticesFailed = 0;
   for (const holdNotices of ended.holdNotices) {
     await flushBackupInterestNotices(holdNotices).catch(() => {
-      failedNotices.push("held-time");
+      heldNoticesFailed++;
     });
   }
-  for (const sale of ended.ended) {
-    await stageLearnerNotice(sale, bells, emails).catch(() => {
-      failedNotices.push(sale.id);
-    });
-  }
-  if (answers.unchecked.length + unread.length + failedNotices.length > 0) {
+  const unsettled =
+    answers.unchecked.length +
+    unread.length +
+    ended.ordersChanged.length +
+    heldNoticesFailed;
+  if (unsettled > 0) {
     reportSentryMessage(
-      `REJECT_SALES_UNSETTLED: ${answers.unchecked.length} unchecked, ${unread.length} not re-read, ${failedNotices.length} notice(s) failed`,
+      `REJECT_SALES_UNSETTLED: ${answers.unchecked.length} unchecked, ${unread.length} not re-read or not refunded, ${ended.ordersChanged.length} changed since the check, ${heldNoticesFailed} held-time notice(s) failed`,
       {
         subsystem: "moderation",
         level: "warning",
@@ -212,7 +282,7 @@ export async function endUnverifiedExpertSales(args: {
           consultantProfileId: args.consultantProfileId,
           uncheckedOrderIds: answers.unchecked,
           unreadOrderIds: unread,
-          failedNotices,
+          changedPaymentIds: ended.ordersChanged,
         },
       },
     );
@@ -223,8 +293,10 @@ export async function endUnverifiedExpertSales(args: {
     trialHoldsReleased: ended.trialHoldsReleased,
     seatsReleased: ended.seatsReleased,
     salesKept: ended.salesKept,
+    skipped: false,
     ordersLive: answers.live.length,
     ordersUnchecked: answers.unchecked.length,
+    complete: answers.notRead.length === 0,
     bells,
     emails,
   };

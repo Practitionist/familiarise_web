@@ -105,6 +105,9 @@ export interface TransactionalEffectResult {
   reviewRemovedConsultantProfileId?: string;
   /** The rejected expert's profile, purged from the public surfaces after commit. */
   unverifiedConsultantProfileId?: string;
+  /** "failed" queues the ending for the enforcement retry sweep; set in the reject's own transaction. */
+  unpaidSales?: StepStatus;
+  unpaidSalesAttempts?: number;
 
   banExpires?: string | null;
   collaborationsRemoved?: PlanRef[];
@@ -126,9 +129,6 @@ export interface SideEffectSummary extends TransactionalEffectResult {
   seatsReleased?: number;
   /** Sales left open: a live payment holds them, or the gateway could not be asked. */
   salesKept?: number;
-  /** "failed" queues the ending for the enforcement retry sweep. */
-  unpaidSales?: StepStatus;
-  unpaidSalesAttempts?: number;
   cancellations?: BulkCancelSummary;
   stream?: StepStatus;
   streamAttempts?: number;
@@ -394,7 +394,7 @@ async function applyActionEffects(
     case "USER_BANNED":
       return banOrSuspendUser(tx, input);
     case "PROFILE_UNVERIFIED":
-      return unverifyProfiles(tx, report.targetUserId, input.staffUserId);
+      return unverifyProfiles(tx, input);
     case "CONTENT_REMOVED":
       if (report.type !== "REVIEW") return {};
       return softDeleteReview(tx, report.reviewId);
@@ -518,9 +518,10 @@ async function endCollaborationsAsModeration(
 
 async function unverifyProfiles(
   tx: Tx,
-  targetUserId: string,
-  staffUserId: string,
+  input: ModerationSideEffectInput,
 ): Promise<TransactionalEffectResult> {
+  const targetUserId = input.report.targetUserId;
+  const { staffUserId } = input;
   // Both fields: explore + the booking gate filter on verificationStatus,
   // while isVerified is the projected display flag.
   const updated = await tx.consultantProfile.updateManyAndReturn({
@@ -530,10 +531,24 @@ async function unverifyProfiles(
   });
   const profileId = updated[0]?.id;
   // Only a verified expert holds a place on a team. Their unpaid sales end in
-  // phase 2, once this profile write has committed and every sale writer sees it.
+  // phase 2, once this profile write has committed and every sale writer sees it;
+  // the action row owes that ending from this commit on, so the sweep finds it.
+  const owed = profileId
+    ? {
+        unverifiedConsultantProfileId: profileId,
+        unpaidSales: "failed" as const,
+        unpaidSalesAttempts: 0,
+      }
+    : {};
+  if (profileId && input.actionId) {
+    await tx.moderationAction.update({
+      where: { id: input.actionId },
+      data: { sideEffects: owed },
+    });
+  }
   return {
     profilesUnverified: updated.length,
-    ...(profileId ? { unverifiedConsultantProfileId: profileId } : {}),
+    ...owed,
     ...(await endCollaborationsAsModeration(tx, targetUserId, staffUserId)),
   };
 }
@@ -686,6 +701,7 @@ export async function applyBestEffortEffects(
       input.report.targetUserId,
       transactional.collaborationsRemoved,
       summary,
+      errors,
     );
   }
   if (owedCohostEmails.length > 0) {
@@ -732,8 +748,16 @@ async function runUnpaidSalesEnding(
     summary.salesKept = outcome.salesKept;
     summary.stagedBells?.push(...outcome.bells);
     summary.stagedEmails?.push(...outcome.emails);
-    summary.unpaidSales = "ok";
     summary.unpaidSalesAttempts = 1;
+    if (outcome.skipped) {
+      summary.unpaidSales = "skipped";
+    } else if (outcome.complete) {
+      summary.unpaidSales = "ok";
+    } else {
+      // Orders left unread for time: the retry sweep ends the rest.
+      summary.unpaidSales = "failed";
+      errors.push("unpaidSales: orders left unread for time");
+    }
   } catch (error) {
     summary.unpaidSales = "failed";
     summary.unpaidSalesAttempts = 1;
@@ -761,16 +785,25 @@ async function runBulkCancellations(
 
 // The Stream side of the collaborations phase 1 ended. Their transaction wrote
 // each revocation, so whatever this attempt leaves the revocation sweep finishes.
+// A failure stays queued for the sweep and never stops the steps after it.
 async function runCollaboratorRevocations(
   targetUserId: string,
   plans: PlanRef[],
   summary: SideEffectSummary,
+  errors: string[],
 ): Promise<void> {
-  // Lazy: a static import would pull the Stream graph into every action.
-  const { revokeCollaboratorAccess } =
-    await import("@/lib/stream/access-revocation");
-  for (const ref of plans) await revokeCollaboratorAccess(ref, targetUserId);
-  summary.collaboratorRevocation = "ok";
+  try {
+    // Lazy: a static import would pull the Stream graph into every action.
+    const { revokeCollaboratorAccess } =
+      await import("@/lib/stream/access-revocation");
+    for (const ref of plans) await revokeCollaboratorAccess(ref, targetUserId);
+    summary.collaboratorRevocation = "ok";
+  } catch (error) {
+    summary.collaboratorRevocation = "failed";
+    summary.collaboratorRevocationAttempts = 1;
+    errors.push(`collaborator-revoke: ${errMsg(error)}`);
+    captureModerationError(error);
+  }
 }
 
 /**

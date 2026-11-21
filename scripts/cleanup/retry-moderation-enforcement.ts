@@ -45,7 +45,10 @@ import {
 } from "@/lib/profiles/public-profile";
 import { nextRetryAt } from "@/lib/retry/backoff";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
-import { SWEEP_START_DEADLINE_MS } from "@/lib/cron/run-deadline";
+import {
+  startDeadlineShare,
+  SWEEP_START_DEADLINE_MS,
+} from "@/lib/cron/run-deadline";
 import { reportSentryError } from "@/lib/observability/report";
 import { reportStandingFinding } from "@/lib/observability/standing-finding";
 import {
@@ -112,9 +115,16 @@ const RETRYABLE_ACTIONS: ModerationActionType[] = [
   "USER_REINSTATED",
 ];
 
+/** A reject's ending is left to its own phase 2 this long before the sweep takes it. */
+const UNPAID_SALES_GRACE_MS = 5 * 60_000;
+/** The action rows' share of the start window; the rest is the Stream drain's. */
+const ACTION_ROWS_START_SHARE = 0.5;
+
 // `stream: "failed"` and `collaboratorRevocation: "failed"` are the queue; a
 // capped row is marked "gave_up" and so falls out of this selector by construction.
-const FAILED_ENFORCEMENT_WHERE: Prisma.ModerationActionWhereInput = {
+const failedEnforcementWhere = (
+  now: Date,
+): Prisma.ModerationActionWhereInput => ({
   OR: [
     {
       actionType: { in: RETRYABLE_ACTIONS },
@@ -128,9 +138,10 @@ const FAILED_ENFORCEMENT_WHERE: Prisma.ModerationActionWhereInput = {
     {
       actionType: "PROFILE_UNVERIFIED",
       sideEffects: { path: ["unpaidSales"], equals: "failed" },
+      createdAt: { lt: new Date(now.getTime() - UNPAID_SALES_GRACE_MS) },
     },
   ],
-};
+});
 
 /** Owed revocations due now; a capped kind past the attempt budget already wrote its give-up. */
 function streamRevocationDueWhere(
@@ -166,7 +177,7 @@ export async function hasModerationRetryWork(
 ): Promise<boolean> {
   if (outOfTime()) return true;
   const action = await db.moderationAction.findFirst({
-    where: FAILED_ENFORCEMENT_WHERE,
+    where: failedEnforcementWhere(now),
     select: { id: true },
   });
   if (action) return true;
@@ -283,7 +294,7 @@ async function retryModerationEnforcementUnlocked(
   const giveUpOlderThan = new Date(Date.now() - giveUpAfterHours * 3_600_000);
 
   const rows = (await prisma.moderationAction.findMany({
-    where: FAILED_ENFORCEMENT_WHERE,
+    where: failedEnforcementWhere(new Date(runStartedAt)),
     select: {
       id: true,
       actionType: true,
@@ -320,9 +331,15 @@ async function retryModerationEnforcementUnlocked(
     errors: [],
   };
 
+  const rowsOutOfTime = startDeadlineShare(
+    ACTION_ROWS_START_SHARE,
+    runStartedAt,
+  );
   for (const row of rows) {
+    // An unstarted row stays failed and due; the drains below still get their start window.
+    if (rowsOutOfTime()) break;
     const summary = summaryOf(row);
-    const budget = { maxAttempts, giveUpOlderThan };
+    const budget = { maxAttempts, giveUpOlderThan, outOfTime: rowsOutOfTime };
     if (summary.stream === "failed")
       await retryOne(row, summary, budget, result);
     if (summary.collaboratorRevocation === "failed") {
@@ -743,7 +760,12 @@ async function finalizeCompletedErasureRequests(
   }
 }
 
-type Budget = { maxAttempts: number; giveUpOlderThan: Date };
+type Budget = {
+  maxAttempts: number;
+  giveUpOlderThan: Date;
+  /** Stops new gateway reads inside an ending. */
+  outOfTime: () => boolean;
+};
 
 async function retryOne(
   row: ActionRow,
@@ -910,10 +932,19 @@ async function retryUnpaidSalesEnding(
     return;
   }
 
-  const profile = await prisma.consultantProfile.findUnique({
-    where: { id: consultantProfileId },
-    select: publicProfileFacts,
-  });
+  let profile;
+  try {
+    profile = await prisma.consultantProfile.findUnique({
+      where: { id: consultantProfileId },
+      select: publicProfileFacts,
+    });
+  } catch (error) {
+    // Left as it is: still failed, still due, its attempts unspent.
+    result.errors.push(
+      `${row.id}: unpaid-sales standing read ${errMsg(error)}`,
+    );
+    return;
+  }
   if (!profile || isPublicExpertProfile(profile)) {
     summary.unpaidSales = "skipped";
     summary.errors = appendNote(
@@ -934,12 +965,26 @@ async function retryUnpaidSalesEnding(
     const outcome = await endUnverifiedExpertSales({
       consultantProfileId,
       actorUserId: row.takenById ?? row.report.targetUserId,
+      outOfTime: budget.outOfTime,
     });
     summary.payLinksClosed = outcome.payLinksClosed;
     summary.requestsDeclined = outcome.requestsDeclined;
     summary.trialHoldsReleased = outcome.trialHoldsReleased;
     summary.seatsReleased = outcome.seatsReleased;
     summary.salesKept = outcome.salesKept;
+    if (outcome.skipped) {
+      summary.unpaidSales = "skipped";
+      await writeSummary(row.id, summary);
+      result.skipped++;
+      return;
+    }
+    if (!outcome.complete) {
+      // Orders left unread for time; the next run ends the rest.
+      summary.unpaidSales = "failed";
+      await writeSummary(row.id, summary);
+      result.stillFailing++;
+      return;
+    }
     summary.unpaidSales = "ok";
     await writeSummary(row.id, summary);
     result.unpaidSalesRecovered++;

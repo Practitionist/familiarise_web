@@ -288,6 +288,7 @@ describe("an unverified expert's plans", () => {
     const listed = await check(false);
     const named = await check(true);
 
+    expect(listed.status).toBe(200);
     expect(listed.body).not.toContain(plan.id);
     expect(listed.body).not.toContain("20000");
     // With every trial plan hidden, the headline flag agrees with the empty list.
@@ -313,6 +314,62 @@ describe("an unverified expert's plans", () => {
       isEligible: true,
       planTrialEnabled: true,
     });
+  }, 30_000);
+
+  it("offer an organisation-only trial plan to the organisation's members only", async () => {
+    const org = await prisma.organization.create({
+      data: { name: "Database tier org", slug: `db-tier-${randomUUID()}` },
+    });
+    const expert = await seedExpert("VERIFIED");
+    const plan = await prisma.subscriptionPlan.create({
+      data: {
+        title: "Members' trial plan",
+        price: BigInt(400_000),
+        consultantProfileId: expert.consultantProfileId,
+        organizationId: org.id,
+        visibility: "ORG_ONLY",
+        trialEnabled: true,
+        trialDurationMinutes: 30,
+      },
+    });
+    const [member, outsider] = await Promise.all([
+      seedConsultee(),
+      seedConsultee(),
+    ]);
+    await prisma.membership.create({
+      data: {
+        userId: member.userId,
+        organizationId: org.id,
+        role: "LEARNER",
+        consulteeProfileId: member.consulteeProfileId,
+      },
+    });
+    const checkAs = async (learner: typeof member) => {
+      mockSession.current = {
+        id: learner.userId,
+        consulteeProfileId: learner.consulteeProfileId,
+        consultantProfileId: null,
+        role: "CONSULTEE",
+      };
+      const query = new URLSearchParams({
+        consulteeProfileId: learner.consulteeProfileId,
+        consultantProfileId: expert.consultantProfileId,
+        subscriptionPlanId: plan.id,
+      });
+      return checkTrialEligibility(
+        new NextRequest(`https://x.test/api/trials/check-eligibility?${query}`),
+      );
+    };
+
+    const asMember = await checkAs(member);
+    const asOutsider = await checkAs(outsider);
+
+    expect(asMember.status).toBe(200);
+    expect(EligibilitySchema.parse(await asMember.json()).data).toEqual({
+      isEligible: true,
+      planTrialEnabled: true,
+    });
+    expect(asOutsider.status).toBe(404);
   }, 30_000);
 
   it("are not assessed for feasibility for anyone but the expert", async () => {

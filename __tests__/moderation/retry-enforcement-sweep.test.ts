@@ -44,6 +44,7 @@ jest.mock("../../lib/prisma", () => ({
     user: {
       findUnique: jest.fn(async () => ({ banned: true, banExpires: null })),
     },
+    consultantProfile: { findUnique: jest.fn(async () => null) },
     // #1593 — the sweep also drains the erasure revocation outbox.
     streamRevocationRetry: {
       findMany: jest.fn(async () => []),
@@ -154,6 +155,14 @@ describe("retryModerationEnforcement", () => {
     expect(findMany.mock.calls[0][0].where).toMatchObject({
       OR: [
         {
+          actionType: {
+            in: [
+              "USER_BANNED",
+              "USER_SUSPENDED",
+              "CONTENT_REMOVED",
+              "USER_REINSTATED",
+            ],
+          },
           OR: [
             { sideEffects: { path: ["stream"], equals: "failed" } },
             {
@@ -170,6 +179,54 @@ describe("retryModerationEnforcement", () => {
         },
       ],
     });
+  });
+
+  it("stops starting action rows once its share of the run is spent, so the Stream drain still starts", async () => {
+    let now = 1_000_000;
+    const clock = jest.spyOn(Date, "now").mockImplementation(() => now);
+    findMany.mockResolvedValueOnce([
+      failedBan(),
+      failedBan({ id: "action-2" }),
+    ]);
+    enforce.mockImplementationOnce(async () => {
+      now += 9_000;
+    });
+    try {
+      await retryModerationEnforcement();
+    } finally {
+      clock.mockRestore();
+    }
+
+    expect(enforce).toHaveBeenCalledTimes(1);
+    expect(outboxFindMany).toHaveBeenCalled();
+  });
+
+  it("records a failed standing read for one ending and goes on to the next row", async () => {
+    (prisma.consultantProfile.findUnique as jest.Mock).mockRejectedValueOnce(
+      new Error("pool timeout"),
+    );
+    findMany.mockResolvedValueOnce([
+      failedBan({
+        id: "reject-1",
+        actionType: "PROFILE_UNVERIFIED",
+        sideEffects: {
+          unpaidSales: "failed",
+          unpaidSalesAttempts: 1,
+          unverifiedConsultantProfileId: "cp-1",
+        },
+      }),
+      failedBan({ id: "action-2" }),
+    ]);
+
+    const result = await retryModerationEnforcement();
+
+    expect(result.errors).toEqual(
+      expect.arrayContaining([expect.stringContaining("pool timeout")]),
+    );
+    expect(enforce).toHaveBeenCalledTimes(1);
+    expect(update).not.toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "reject-1" } }),
+    );
   });
 
   // #1580 — a failed per-plan Stream revocation is re-driven from the same

@@ -77,6 +77,30 @@ jest.mock("../../../lib/cron/with-cron-lock", () => ({
   ...jest.requireActual("../../../lib/cron/with-cron-lock"),
   withCronLock: (_job: string, _opts: unknown, fn: () => unknown) => fn(),
 }));
+/** Overrides the capture handler's answer for one case; null delegates to the real one. */
+const mockCapture = { answer: null as null | (() => Promise<unknown>) };
+jest.mock("../../../lib/payments/webhooks/handlers", () => {
+  const actual = jest.requireActual("../../../lib/payments/webhooks/handlers");
+  return {
+    ...actual,
+    handlePaymentSuccess: (...args: unknown[]) =>
+      mockCapture.answer
+        ? mockCapture.answer()
+        : actual.handlePaymentSuccess(...args),
+  };
+});
+/** Makes the learner notice's staging throw, as a failed outbox write would. */
+const mockStaging = { fail: false };
+jest.mock("../../../lib/booking/expiry-notices", () => {
+  const actual = jest.requireActual("../../../lib/booking/expiry-notices");
+  return {
+    ...actual,
+    stageRequestEndedNotice: (...args: unknown[]) => {
+      if (mockStaging.fail) throw new Error("outbox write failed");
+      return actual.stageRequestEndedNotice(...args);
+    },
+  };
+});
 const mockReport = { message: jest.fn() };
 jest.mock("../../../lib/observability/report", () => {
   const actual = jest.requireActual("../../../lib/observability/report");
@@ -100,6 +124,8 @@ import { bookTrialInTx } from "../../../lib/trials/book-trial";
 import { refundDoor } from "./harness-edges";
 import { seedHeldSeat, seedWebinar } from "./harness-seats";
 import { retryModerationEnforcement } from "../../../scripts/cleanup/retry-moderation-enforcement";
+import { endUnverifiedExpertSales } from "../../../lib/booking/unverified-expert-notices";
+import { endUnpaidSalesInTx } from "../../../lib/booking/unverified-expert-sales";
 
 const PRICE_PAISE = 80_000;
 /** The learner's notice: neutral, the expert named, no reason given; no charge promised once an order existed. */
@@ -257,12 +283,30 @@ beforeEach(() => {
     onlyFailed: false,
   });
   mockReport.message.mockClear();
+  mockCapture.answer = null;
+  mockStaging.fail = false;
 });
+
+const rejectedAs = (host: SeededHost) =>
+  prisma.consultantProfile.update({
+    where: { id: host.consultantProfileId },
+    data: { verificationStatus: "REJECTED" },
+  });
 
 describe("a moderation reject stops new sales and honours what is booked", () => {
   it("ends every unpaid sale in its transaction and leaves the paid ones", async () => {
     const host = await seedHost();
     const link = await liveLink(host);
+    // What the booking read at each gateway call: open before the close, ended at the re-read.
+    const seenAt: Record<string, string> = {};
+    mockGateway.cancelRazorpayOrder.mockImplementation(async () => {
+      seenAt.cancel = await statusOf.consultation(link.request.consultationId!);
+      return "no_live_payment";
+    });
+    mockGateway.readRazorpayOrderHolding.mockImplementation(async () => {
+      seenAt.reread = await statusOf.consultation(link.request.consultationId!);
+      return { kind: "empty", onlyFailed: false };
+    });
     const requester = await seedConsultee();
     const request = await seedOneToOne(
       "consultation",
@@ -366,6 +410,10 @@ describe("a moderation reject stops new sales and honours what is booked", () =>
     expect(mockGateway.readRazorpayOrderHolding).toHaveBeenCalledWith(
       link.request.payment!.paymentIntent,
     );
+    expect(seenAt).toEqual({
+      cancel: "APPROVED_PENDING_PAYMENT",
+      reread: "EXPIRED",
+    });
     expect(
       await prisma.bookingStatusHistory.count({
         where: { reason: "EXPERT_NOT_VERIFIED" },
@@ -409,6 +457,7 @@ describe("a moderation reject stops new sales and honours what is booked", () =>
       expect.objectContaining({ paymentId: link.request.payment!.id }),
     );
     // A recorded capture on the closed booking is a refund, never a paid booking.
+    expect(await statusOf.payment(link.request.payment!.id)).toBe("SUCCEEDED");
     expect(
       await resolvePayPage(link.request.payment!.id, link.consultee.userId),
     ).toMatchObject({ kind: "unpayable", message: PAY_PAGE_AFTER_ORDER });
@@ -464,10 +513,174 @@ describe("a moderation reject stops new sales and honours what is booked", () =>
 
     expect(summary).toMatchObject({ payLinksClosed: 0, salesKept: 1 });
     expect(await statusOf.payment(link.request.payment!.id)).toBe("PENDING");
+    expect(await statusOf.consultation(link.request.consultationId!)).toBe(
+      "APPROVED_PENDING_PAYMENT",
+    );
     expect(mockReport.message).toHaveBeenCalledTimes(1);
     expect(String(mockReport.message.mock.calls[0][0])).toContain(
       "REJECT_SALES_UNSETTLED",
     );
+  }, 60_000);
+
+  it("reports a capture the re-read found but the capture handler did not refund", async () => {
+    const host = await seedHost();
+    await liveLink(host);
+    mockGateway.readRazorpayOrderHolding.mockResolvedValue({
+      kind: "captured",
+      paymentId: `pay_${randomUUID()}`,
+      amountPaise: PRICE_PAISE,
+    });
+    mockCapture.answer = async () => null;
+
+    await reject(host);
+
+    expect(mockReport.message).toHaveBeenCalledTimes(1);
+    expect(mockReport.message.mock.calls[0][1]).toMatchObject({
+      extra: { unreadOrderIds: [expect.stringMatching(/^order_/)] },
+    });
+  }, 60_000);
+
+  it("never re-reads a closed pre-mint marker at the gateway", async () => {
+    const host = await seedHost();
+    const link = await liveLink(host);
+    await prisma.payment.update({
+      where: { id: link.request.payment!.id },
+      data: { paymentIntent: `premint_${randomUUID()}` },
+    });
+
+    const { summary } = await reject(host);
+
+    expect(summary).toMatchObject({ payLinksClosed: 1 });
+    expect(await statusOf.payment(link.request.payment!.id)).toBe("EXPIRED");
+    expect(mockGateway.readRazorpayOrderHolding).not.toHaveBeenCalled();
+    expect(mockReport.message).not.toHaveBeenCalled();
+  }, 60_000);
+
+  it("ends nothing for an expert verified again before the ending runs", async () => {
+    const host = await seedHost();
+    const link = await liveLink(host);
+
+    const outcome = await endUnverifiedExpertSales({
+      consultantProfileId: host.consultantProfileId,
+      actorUserId: link.consultee.userId,
+    });
+
+    expect(outcome).toMatchObject({ skipped: true, payLinksClosed: 0 });
+    expect(await statusOf.consultation(link.request.consultationId!)).toBe(
+      "APPROVED_PENDING_PAYMENT",
+    );
+    expect(mockGateway.cancelRazorpayOrder).not.toHaveBeenCalled();
+  }, 60_000);
+
+  it("closes what it read in time and leaves the rest open for another pass", async () => {
+    const host = await seedHost();
+    const link = await liveLink(host);
+    await rejectedAs(host);
+    const args = {
+      consultantProfileId: host.consultantProfileId,
+      actorUserId: link.consultee.userId,
+    };
+
+    const outOfTime = await endUnverifiedExpertSales({
+      ...args,
+      outOfTime: () => true,
+    });
+    expect(outOfTime).toMatchObject({ complete: false, payLinksClosed: 0 });
+    expect(await statusOf.payment(link.request.payment!.id)).toBe("PENDING");
+
+    const next = await endUnverifiedExpertSales(args);
+    expect(next).toMatchObject({ complete: true, payLinksClosed: 1 });
+    expect(await statusOf.payment(link.request.payment!.id)).toBe("EXPIRED");
+  }, 60_000);
+
+  it("closes no sale whose learner notice could not be staged", async () => {
+    const host = await seedHost();
+    const link = await liveLink(host);
+    await rejectedAs(host);
+    const args = {
+      consultantProfileId: host.consultantProfileId,
+      actorUserId: link.consultee.userId,
+    };
+    mockStaging.fail = true;
+
+    await expect(endUnverifiedExpertSales(args)).rejects.toThrow(
+      "outbox write failed",
+    );
+    expect(await statusOf.consultation(link.request.consultationId!)).toBe(
+      "APPROVED_PENDING_PAYMENT",
+    );
+    expect(await statusOf.payment(link.request.payment!.id)).toBe("PENDING");
+
+    mockStaging.fail = false;
+    await endUnverifiedExpertSales(args);
+    expect(await statusOf.consultation(link.request.consultationId!)).toBe(
+      "EXPIRED",
+    );
+    expect(await bellPayloads(link.consultee.userId)).toContain(
+      CLOSED_AFTER_ORDER,
+    );
+  }, 60_000);
+
+  it("names an order that changed after the gateway was asked, and keeps its sale", async () => {
+    const host = await seedHost();
+    const link = await liveLink(host);
+    await rejectedAs(host);
+    const paymentId = link.request.payment!.id;
+
+    // The snapshot saw a pre-mint marker; the row now holds a real order.
+    const ended = await prisma.$transaction((tx) =>
+      endUnpaidSalesInTx(tx, {
+        consultantProfileId: host.consultantProfileId,
+        actorUserId: link.consultee.userId,
+        cleared: new Map([[paymentId, `premint_${randomUUID()}`]]),
+        asked: new Set([paymentId]),
+      }),
+    );
+
+    expect(ended).toMatchObject({ salesKept: 1, ordersChanged: [paymentId] });
+    expect(await statusOf.payment(paymentId)).toBe("PENDING");
+  }, 60_000);
+
+  it("records the retry marker in the reject's own transaction", async () => {
+    const host = await seedHost();
+    const staff = await seedConsultee();
+    const reporter = await seedConsultee();
+    const report = await prisma.moderationReport.create({
+      data: {
+        type: "PROFILE",
+        reason: "OTHER",
+        status: "ACTION_TAKEN",
+        reportedById: reporter.userId,
+        targetUserId: host.userId,
+      },
+    });
+    const action = await prisma.moderationAction.create({
+      data: {
+        actionType: "PROFILE_UNVERIFIED",
+        reportId: report.id,
+        takenById: staff.userId,
+      },
+    });
+
+    // The worker stops after the commit: phase 2 never runs.
+    await prisma.$transaction(
+      (tx) =>
+        applyTransactionalEffects(tx, {
+          ...rejectInput(host, staff.userId),
+          actionId: action.id,
+        }),
+      { timeout: 30_000 },
+    );
+
+    const row = await prisma.moderationAction.findUniqueOrThrow({
+      where: { id: action.id },
+      select: { sideEffects: true },
+    });
+    expect(row.sideEffects).toMatchObject({
+      unverifiedConsultantProfileId: host.consultantProfileId,
+      unpaidSales: "failed",
+      unpaidSalesAttempts: 0,
+    });
   }, 60_000);
 
   it("releases an unpaid group seat and keeps the event and its paid seat", async () => {
@@ -573,7 +786,7 @@ describe("a moderation reject stops new sales and honours what is booked", () =>
 
   describe("when the ending fails after the reject commits", () => {
     /** A committed reject whose phase 2 never ended the sales, as the action row records it. */
-    async function failedEnding(host: SeededHost) {
+    async function failedEnding(host: SeededHost, ageMinutes?: number) {
       const reporter = await seedConsultee();
       const staff = await seedConsultee();
       const report = await prisma.moderationReport.create({
@@ -590,6 +803,7 @@ describe("a moderation reject stops new sales and honours what is booked", () =>
           actionType: "PROFILE_UNVERIFIED",
           reportId: report.id,
           takenById: staff.userId,
+          createdAt: new Date(Date.now() - (ageMinutes ?? 10) * 60_000),
           sideEffects: {
             profilesUnverified: 1,
             unverifiedConsultantProfileId: host.consultantProfileId,
@@ -663,6 +877,18 @@ describe("a moderation reject stops new sales and honours what is booked", () =>
       );
       expect(await sideEffectsOf(action.id)).toContain(
         '"unpaidSales":"skipped"',
+      );
+    }, 60_000);
+
+    it("leaves a marker just written to the reject's own phase 2", async () => {
+      const host = await seedHost();
+      await rejectedAs(host);
+      const action = await failedEnding(host, 0);
+
+      await retryModerationEnforcement();
+
+      expect(await sideEffectsOf(action.id)).toContain(
+        '"unpaidSales":"failed"',
       );
     }, 60_000);
   });

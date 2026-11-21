@@ -308,6 +308,33 @@ function openState(row: PayPageRow): PayPageState {
   };
 }
 
+/** A recorded capture: a refund when the expert can no longer take the booking, otherwise paid. */
+function capturedState(row: PayPageRow): PayPageState {
+  return expertUnavailable(row) && bookingEnded(row)
+    ? unpayable(row)
+    : { kind: "paid", href: detailHref(row) };
+}
+
+/** A dead Razorpay order: a newer live one wins, else the booking's own path re-mints it. */
+async function deadOrderState(
+  row: PayPageRow,
+  now: Date,
+): Promise<PayPageState> {
+  const newer = await findLiveOrder(row, now);
+  if (newer) return { kind: "redirect", href: `/checkout/pay/${newer.id}` };
+  if (!(await remint(row))) {
+    // The refusal may be the expert's standing changing since the read above.
+    return unpayable((await readPayPageRow(row.id)) ?? row);
+  }
+  const live = await findLiveOrder(row, now);
+  if (!live) return unpayable(row);
+  if (live.id !== row.id) {
+    return { kind: "redirect", href: `/checkout/pay/${live.id}` };
+  }
+  const fresh = await readPayPageRow(row.id);
+  return fresh && isLive(fresh, now) ? openState(fresh) : unpayable(row);
+}
+
 export async function resolvePayPage(
   paymentId: string,
   viewerUserId: string,
@@ -318,12 +345,7 @@ export async function resolvePayPage(
   if (!row || row.deletedAt || row.userId !== viewerUserId) {
     return { kind: "not_found" };
   }
-  // A capture on a booking the expert can no longer take is refunded, not a paid booking.
-  if (row.paymentStatus === PaymentStatus.SUCCEEDED) {
-    return expertUnavailable(row) && bookingEnded(row)
-      ? unpayable(row)
-      : { kind: "paid", href: detailHref(row) };
-  }
+  if (row.paymentStatus === PaymentStatus.SUCCEEDED) return capturedState(row);
   if (row.paymentGateway !== PaymentGateway.RAZORPAY) {
     // Another rail keeps its hosted link, exactly as before this page existed.
     const hosted =
@@ -334,16 +356,5 @@ export async function resolvePayPage(
       : unpayable(row);
   }
   if (isLive(row, now)) return openState(row);
-
-  // A newer live order on the same booking wins over re-minting this one.
-  const newer = await findLiveOrder(row, now);
-  if (newer) return { kind: "redirect", href: `/checkout/pay/${newer.id}` };
-  if (!(await remint(row))) return unpayable(row);
-  const live = await findLiveOrder(row, now);
-  if (!live) return unpayable(row);
-  if (live.id !== row.id) {
-    return { kind: "redirect", href: `/checkout/pay/${live.id}` };
-  }
-  const fresh = await readPayPageRow(row.id);
-  return fresh && isLive(fresh, now) ? openState(fresh) : unpayable(row);
+  return deadOrderState(row, now);
 }

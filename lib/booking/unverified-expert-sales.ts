@@ -15,6 +15,8 @@ import {
 } from "@prisma/client";
 
 import type { Tx } from "@/lib/prisma";
+import { readExpertStandingForShare } from "@/lib/booking/expert-standing";
+import { isPublicExpertProfile } from "@/lib/profiles/public-profile";
 import { lapseApprovedRequest } from "@/lib/booking/lapse-approved-request";
 import {
   expirePendingPaymentsInTx,
@@ -65,6 +67,10 @@ export interface EndedUnpaidSales {
   seatsReleased: number;
   /** Sales left open because an order of theirs was not cleared by the gateway. */
   salesKept: number;
+  /** Open orders the gateway was not asked about under their current intent. */
+  ordersChanged: string[];
+  /** The expert was verified again by the time the ending ran, so nothing ended. */
+  skipped: boolean;
   ended: EndedSale[];
   /** The real gateway orders this ending expired, re-read after commit. */
   closedOrders: GatewayCancel[];
@@ -146,6 +152,8 @@ interface EndingContext {
   actorUserId: string;
   /** Order id to the intent the gateway cleared; anything else keeps its sale open. */
   cleared: ReadonlyMap<string, string>;
+  /** Every order id the gateway step read, cleared or not. */
+  asked: ReadonlySet<string>;
   out: EndedUnpaidSales;
 }
 
@@ -200,6 +208,15 @@ async function clearedOrders(
   const closable = pending.every(
     (p) => ctx.cleared.get(p.id) === p.paymentIntent,
   );
+  for (const p of pending) {
+    const clearedIntent = ctx.cleared.get(p.id);
+    const changed =
+      !ctx.asked.has(p.id) ||
+      (clearedIntent !== undefined && clearedIntent !== p.paymentIntent);
+    if (changed && !ctx.out.ordersChanged.includes(p.id)) {
+      ctx.out.ordersChanged.push(p.id);
+    }
+  }
   const orderExisted = await ctx.tx.payment.count({
     where: {
       appointmentId,
@@ -514,6 +531,7 @@ export async function endUnpaidSalesInTx(
     consultantProfileId: string;
     actorUserId: string;
     cleared: ReadonlyMap<string, string>;
+    asked: ReadonlySet<string>;
   },
 ): Promise<EndedUnpaidSales> {
   const out: EndedUnpaidSales = {
@@ -522,14 +540,26 @@ export async function endUnpaidSalesInTx(
     trialHoldsReleased: 0,
     seatsReleased: 0,
     salesKept: 0,
+    ordersChanged: [],
+    skipped: false,
     ended: [],
     closedOrders: [],
     holdNotices: [],
   };
+  // Locked first, so a verification approval waits and a re-verified expert's sales stay.
+  const standing = await readExpertStandingForShare(
+    tx,
+    args.consultantProfileId,
+  );
+  if (standing && isPublicExpertProfile(standing)) {
+    out.skipped = true;
+    return out;
+  }
   const ctx: EndingContext = {
     tx,
     actorUserId: args.actorUserId,
     cleared: args.cleared,
+    asked: args.asked,
     out,
   };
   await closeApprovedLinks(ctx, args.consultantProfileId);

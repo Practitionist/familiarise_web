@@ -26,6 +26,7 @@ import { sessionUser } from "./harness-edges";
 jest.mock("../../../lib/payments/index", () => ({
   __esModule: true,
   createPaymentIntent: jest.fn(async () => {
+    await mockRejectIfAt("mint-gateway");
     const id = `order_${randomUUID()}`;
     return { id, client_secret: id };
   }),
@@ -87,7 +88,12 @@ jest.mock("../../../utils/contentValidation", () =>
 /** Where a test rejects the expert from another connection, mid-way through a sale. */
 const mockReject = {
   at: null as
-    null | "pricing" | "locked-read" | "request-lock" | "mint-pricing",
+    | null
+    | "pricing"
+    | "locked-read"
+    | "request-lock"
+    | "mint-pricing"
+    | "mint-gateway",
   profileId: null as string | null,
 };
 async function mockRejectIfAt(point: (typeof mockReject)["at"]) {
@@ -152,6 +158,7 @@ import { POST as requestForApproval } from "../../../app/api/scheduling/request-
 import { mintApprovalPaymentAfterCommit } from "../../../lib/booking/approve-request";
 import { handleCheckout } from "../../../lib/payments/checkout";
 import { createApprovalPaymentIntent } from "../../../lib/payments/operations/approval-payment";
+import { resolvePayPage } from "../../../lib/payments/pay-page";
 import {
   applyBestEffortEffects,
   applyTransactionalEffects,
@@ -304,6 +311,10 @@ describe("an expert who is not verified takes no new booking", () => {
     const host = await seedHost();
     const plan = await seedTrialPlan(host, 50_000);
 
+    const gateway = jest.requireMock("../../../lib/payments/index") as {
+      createPaymentIntent: jest.Mock;
+    };
+    gateway.createPaymentIntent.mockClear();
     const { res, buyer } = await postTrial(host, plan.id);
 
     expect(res.status).toBe(201);
@@ -315,6 +326,21 @@ describe("an expert who is not verified takes no new booking", () => {
     expect(
       await prisma.payment.count({
         where: { userId: buyer.userId, paymentStatus: "PENDING" },
+      }),
+    ).toBe(1);
+    // The pending row carries the order this request minted.
+    expect(gateway.createPaymentIntent).toHaveBeenCalledTimes(1);
+    const minted = (await gateway.createPaymentIntent.mock.results[0]
+      .value) as {
+      id: string;
+    };
+    expect(
+      await prisma.payment.count({
+        where: {
+          userId: buyer.userId,
+          paymentStatus: "PENDING",
+          paymentIntent: minted.id,
+        },
       }),
     ).toBe(1);
   }, 30_000);
@@ -442,6 +468,10 @@ describe("a reject that lands mid-sale is seen by the write", () => {
         },
       });
       const buyer = await seedBuyer();
+      const gateway = jest.requireMock("../../../lib/payments/index") as {
+        createPaymentIntent: jest.Mock;
+      };
+      gateway.createPaymentIntent.mockClear();
 
       const outcome = await rejectingAt("locked-read", host, () =>
         handleCheckout(
@@ -469,6 +499,20 @@ describe("a reject that lands mid-sale is seen by the write", () => {
           },
         }),
       ).toBe(0);
+      const minted = await Promise.all(
+        gateway.createPaymentIntent.mock.results.map(
+          async (r) => ((await r.value) as { id: string }).id,
+        ),
+      );
+      expect(minted).toHaveLength(price > 0 ? 1 : 0);
+      for (const orderId of minted) {
+        expect(
+          await prisma.payment.findFirst({
+            where: { paymentIntent: orderId },
+            select: { paymentStatus: true },
+          }),
+        ).toEqual({ paymentStatus: "EXPIRED" });
+      }
     },
     30_000,
   );
@@ -509,6 +553,80 @@ describe("a reject that lands mid-sale is seen by the write", () => {
         where: { userId: buyer.userId, paymentStatus: "PENDING" },
       }),
     ).toBe(0);
+  }, 30_000);
+
+  it("a trial mint whose expert is rejected during the gateway call leaves no payable order", async () => {
+    const host = await seedHost();
+    const plan = await seedTrialPlan(host, 50_000);
+    const { res, buyer } = await postTrial(host, plan.id);
+    expect(res.status).toBe(201);
+    const trial = await prisma.trial.findFirstOrThrow({
+      where: { subscriptionPlanId: plan.id },
+      select: { id: true, appointmentId: true },
+    });
+    await prisma.payment.updateMany({
+      where: { userId: buyer.userId },
+      data: { paymentStatus: "EXPIRED" },
+    });
+    const gateway = jest.requireMock("../../../lib/payments/index") as {
+      createPaymentIntent: jest.Mock;
+    };
+    gateway.createPaymentIntent.mockClear();
+
+    const outcome = await rejectingAt("mint-gateway", host, () =>
+      createApprovalPaymentIntent({
+        userId: buyer.userId,
+        appointmentType: "TRIAL",
+        trialId: trial.id,
+        appointmentId: trial.appointmentId ?? undefined,
+        planId: plan.id,
+        paymentGateway: "RAZORPAY",
+      }),
+    );
+
+    expect(outcome).toMatchObject({ code: "EXPERT_NOT_VERIFIED" });
+    const minted = (await gateway.createPaymentIntent.mock.results[0]
+      .value) as {
+      id: string;
+    };
+    expect(
+      await prisma.payment.count({
+        where: { userId: buyer.userId, paymentStatus: "PENDING" },
+      }),
+    ).toBe(0);
+    // The order minted during the call is recorded, never left payable.
+    expect(
+      await prisma.payment.findFirst({
+        where: { paymentIntent: minted.id },
+        select: { paymentStatus: true },
+      }),
+    ).toEqual({ paymentStatus: "EXPIRED" });
+  }, 30_000);
+
+  it("a pay link re-minted while its expert is rejected says the expert isn't taking bookings", async () => {
+    const host = await seedHost();
+    const plan = await seedTrialPlan(host, 50_000);
+    const { res, buyer } = await postTrial(host, plan.id);
+    expect(res.status).toBe(201);
+    const lapsed = await prisma.payment.findFirstOrThrow({
+      where: { userId: buyer.userId, paymentStatus: "PENDING" },
+      select: { id: true },
+    });
+    await prisma.payment.update({
+      where: { id: lapsed.id },
+      data: { expiresAt: new Date(Date.now() - 60_000) },
+    });
+
+    let state: unknown = null;
+    await rejectingAt("mint-pricing", host, async () => {
+      state = await resolvePayPage(lapsed.id, buyer.userId);
+    });
+
+    expect(state).toMatchObject({
+      kind: "unpayable",
+      message:
+        "This expert isn't taking bookings right now. If you were charged, the money is refunded automatically.",
+    });
   }, 30_000);
 
   it("a deleted expert whose status still reads VERIFIED takes no pay link", async () => {
