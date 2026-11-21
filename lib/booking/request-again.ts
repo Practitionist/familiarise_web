@@ -31,7 +31,6 @@ import {
 import { isPreMintIntent } from "@/lib/payments/pre-mint-intent";
 import { reportSentryMessage } from "@/lib/observability/report";
 import { softCancelTrialAppointmentInTx } from "@/lib/trials/cancellation";
-import { cancelPaymentIntent } from "@/scripts/payments/cleanup-abandoned-payments";
 import {
   renewAppointmentLock,
   withAppointmentLock,
@@ -134,6 +133,7 @@ async function readOwnedArm(
   } as const;
   const appt = await db.appointment.findUnique({
     where: { id: appointmentId },
+    relationLoadStrategy: "join",
     select: {
       consultation: request,
       subscription: request,
@@ -327,6 +327,8 @@ async function askGateway(order: {
   paymentIntent: string;
   paymentGateway: PaymentGateway;
 }): Promise<RazorpayOrderCancelResult> {
+  const { cancelPaymentIntent } =
+    await import("@/scripts/payments/cleanup-abandoned-payments");
   try {
     return await cancelPaymentIntent(order.paymentIntent, order.paymentGateway);
   } catch {

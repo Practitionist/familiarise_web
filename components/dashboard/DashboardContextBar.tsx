@@ -54,6 +54,8 @@ export interface DashboardContextBarProps {
   leadingSlot?: React.ReactNode;
   /** Right-aligned actions. Defaults to the notification inbox bell. */
   rightSlot?: React.ReactNode;
+  /** Name the identity at every width; otherwise only below md, where the sidebar is hidden. */
+  alwaysShowName?: boolean;
 }
 
 function normalizeCrumb(crumb: DashboardBreadcrumb): {
@@ -75,6 +77,7 @@ export function DashboardContextBar({
   leftLink,
   leadingSlot,
   rightSlot,
+  alwaysShowName = false,
 }: DashboardContextBarProps) {
   const FallbackIcon = identity.FallbackIcon ?? Building2;
 
@@ -105,7 +108,11 @@ export function DashboardContextBar({
             <FallbackIcon className="w-3.5 h-3.5 text-zinc-500" />
           )}
         </div>
-        <span className="md:hidden font-medium text-zinc-800 dark:text-zinc-100 truncate">
+        <span
+          className={`font-medium text-zinc-800 dark:text-zinc-100 truncate ${
+            alwaysShowName ? "max-w-24 sm:max-w-56" : "md:hidden"
+          }`}
+        >
           {identity.name}
         </span>
       </div>

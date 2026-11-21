@@ -80,11 +80,21 @@ async function sentBody() {
 }
 
 describe("InvoiceComposer due date", () => {
+  it("says the invoice is issued at once, on the button and under the reason", () => {
+    compose();
+    expect(
+      screen.getByText(/Issued immediately; the organisation sees it/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Create invoice" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("prefills the Net 30 India date and sends the terms-default instant", async () => {
     compose();
     const due = screen.getByLabelText("Due date (Net 30)");
     expect(due).toHaveValue("2026-12-21");
-    fireEvent.click(screen.getByRole("button", { name: "Create invoice" }));
+    fireEvent.click(screen.getByRole("button", { name: "Issue invoice" }));
     const body = await sentBody();
     expect(body.dueDate.toISOString()).toBe(DEFAULT_DUE);
   });
@@ -98,7 +108,7 @@ describe("InvoiceComposer due date", () => {
     );
     const submitAt = Date.parse("2026-11-20T18:31:00.000Z");
     nowSpy.mockReturnValue(submitAt);
-    fireEvent.click(screen.getByRole("button", { name: "Create invoice" }));
+    fireEvent.click(screen.getByRole("button", { name: "Issue invoice" }));
     const body = await sentBody();
     expect(body.dueDate.toISOString()).toBe(
       new Date(submitAt + 30 * 86_400_000).toISOString(),
@@ -110,7 +120,7 @@ describe("InvoiceComposer due date", () => {
     const due = screen.getByLabelText("Due date (Net 30)");
     fireEvent.change(due, { target: { value: "2026-12-22" } });
     fireEvent.change(due, { target: { value: "2026-12-21" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create invoice" }));
+    fireEvent.click(screen.getByRole("button", { name: "Issue invoice" }));
     const body = await sentBody();
     expect(body.dueDate.toISOString()).toBe("2026-12-21T00:00:00.000Z");
   });
@@ -120,7 +130,7 @@ describe("InvoiceComposer due date", () => {
     fireEvent.change(screen.getByLabelText("Due date (Net 30)"), {
       target: { value: "2026-12-05" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Create invoice" }));
+    fireEvent.click(screen.getByRole("button", { name: "Issue invoice" }));
     const body = await sentBody();
     expect(body.dueDate.toISOString()).toBe("2026-12-05T00:00:00.000Z");
   });

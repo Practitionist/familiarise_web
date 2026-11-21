@@ -41,6 +41,7 @@ import {
   calculatePricing,
   type PricingBreakdown,
 } from "../math";
+import { PLAN_UNAVAILABLE_MESSAGE } from "../adapters/shared";
 import { useHandleApiError } from "../use-handle-api-error";
 import { useCheckoutTaxContext } from "../useCheckoutTaxContext";
 import { useReferralPricing } from "../useReferralPricing";
@@ -181,10 +182,14 @@ export function CheckoutDetailRow({
 const LOAD_ERROR_BUTTON =
   "mt-5 inline-flex min-h-11 items-center rounded-lg bg-background px-4 py-2 text-sm font-medium text-foreground hover:bg-muted transition-colors";
 
-function LoadError({
+export function LoadError({
   message,
   recovery,
 }: Readonly<{ message: string; recovery: CheckoutErrorRecovery | null }>) {
+  const unavailable = !recovery && message === PLAN_UNAVAILABLE_MESSAGE;
+  let title = "Unable to load checkout";
+  if (recovery) title = recovery.title;
+  else if (unavailable) title = "This plan isn't available";
   return (
     <div className="col-span-full flex items-center justify-center min-h-screen bg-muted">
       <div
@@ -206,22 +211,27 @@ function LoadError({
             />
           </svg>
         </div>
-        <p className="font-semibold text-lg mb-2">
-          {recovery?.title ?? "Unable to load checkout"}
-        </p>
+        <p className="font-semibold text-lg mb-2">{title}</p>
         <p className="text-background/70 text-sm">{message}</p>
         {recovery ? (
           <Link href={recovery.href} className={LOAD_ERROR_BUTTON}>
             {recovery.label}
           </Link>
         ) : (
-          <button
-            type="button"
-            onClick={() => window.history.back()}
-            className={LOAD_ERROR_BUTTON}
-          >
-            Go back
-          </button>
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            {unavailable && (
+              <Link href="/explore/experts" className={LOAD_ERROR_BUTTON}>
+                Browse experts
+              </Link>
+            )}
+            <button
+              type="button"
+              onClick={() => window.history.back()}
+              className={LOAD_ERROR_BUTTON}
+            >
+              Go back
+            </button>
+          </div>
         )}
       </div>
     </div>

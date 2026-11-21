@@ -20,6 +20,7 @@ import { RequestAgainButton } from "../../components/booking/RequestAgainButton"
 import {
   openOrderPastWindow,
   REQUEST_AGAIN_ALREADY_PAID,
+  REQUEST_AGAIN_SEAT_WARNING,
   REQUEST_AGAIN_WARNING,
   RequestAgainParamsSchema,
   requestAgainPath,
@@ -49,13 +50,14 @@ const lapsed: Row[] = [
   { paymentStatus: "PENDING", expiresAt: new Date(Date.now() - 60_000) },
 ];
 
-function render(payments: Row[]) {
+function render(payments: Row[], seat = false) {
   act(() =>
     root.render(
       <RequestAgainButton
         appointmentId={BOOKING}
         href={HREF}
         payments={payments}
+        seat={seat}
       >
         Book again
       </RequestAgainButton>,
@@ -130,6 +132,16 @@ describe("RequestAgainButton", () => {
       true,
     );
     expect(mockRouter.push).toHaveBeenCalledWith(HREF);
+  });
+
+  it("a webinar or class seat names the place and order it releases, not a payment link", () => {
+    render(lapsed, true);
+    act(() => buttonNamed("Book again").click());
+    expect(document.body.textContent).toContain(
+      "Release your earlier place and payment?",
+    );
+    expect(document.body.textContent).toContain(REQUEST_AGAIN_SEAT_WARNING);
+    expect(document.body.textContent).not.toContain("payment link");
   });
 
   it("a capture that won first: says so and never starts the new request", async () => {

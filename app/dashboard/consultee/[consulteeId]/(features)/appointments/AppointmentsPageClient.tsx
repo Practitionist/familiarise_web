@@ -49,7 +49,7 @@ export default function AppointmentsPageClient({
     <DashboardErrorBoundary>
       <PageHeader
         title="Appointments"
-        description="Your consultations, subscriptions, webinars, and classes"
+        description={`${isOwner ? "Your" : "Their"} consultations, subscriptions, webinars, and classes`}
       />
       <IncidentRemedyBanner consulteeId={consulteeId} zone={viewerZone.zone} />
       <div>
@@ -72,6 +72,7 @@ export default function AppointmentsPageClient({
               adapter={adapter}
               viewerZone={viewerZone}
               afterHero={alerts}
+              operatorView={!isOwner}
             />
           </DisplayZoneProvider>
         )}
