@@ -45,6 +45,17 @@ jest.mock("../../lib/payments", () => ({
     };
   }),
 }));
+const mockStampSeat = jest.fn(async (..._a: unknown[]) => 1);
+jest.mock("../../lib/booking/participants", () => ({
+  ...jest.requireActual("../../lib/booking/participants"),
+  transitionParticipant: (...a: unknown[]) => mockStampSeat(...a),
+}));
+const mockRevoke = jest.fn(async (..._a: unknown[]) => undefined);
+jest.mock("../../lib/stream/access-revocation", () => ({
+  persistRefundRevocation: (...a: unknown[]) => mockRevoke(...a),
+  revokeRefundedSeatAccess: (...a: unknown[]) => mockRevoke(...a),
+  persistRefundRevocationInTx: jest.fn(async () => null),
+}));
 jest.mock("../../lib/email", () => ({
   ...jest.requireActual("../../lib/email"),
   prepareRefundProcessedEmail: jest.fn(async () => null),
@@ -94,10 +105,22 @@ jest.mock("../../lib/prisma", () => {
         mockState.refunds.push(row);
         return row;
       },
-      // A webhook that already settled the row leaves the settle claim nothing to flip.
-      updateMany: async ({ where }: { where: { status?: string } }) => ({
-        count: where.status === "PENDING" ? 0 : 1,
-      }),
+      // Filters by id and status, so a row a webhook already settled leaves the settle claim nothing to flip.
+      updateMany: async ({
+        where,
+        data,
+      }: {
+        where: { id?: string; status?: string };
+        data: Partial<RefundRow>;
+      }) => {
+        const rows = mockState.refunds.filter(
+          (r) =>
+            (!where.id || r.id === where.id) &&
+            (!where.status || r.status === where.status),
+        );
+        for (const r of rows) Object.assign(r, data);
+        return { count: rows.length };
+      },
       update: async ({
         where,
         data,
@@ -116,8 +139,13 @@ jest.mock("../../lib/prisma", () => {
 });
 
 import { refundPayment } from "../../lib/payments/operations/refund";
+import { refundBookingPayment } from "../../lib/payments/operations/booking-refund";
+import { decideRefundSeatTx } from "../../lib/payments/operations/refund-seat";
+import prisma from "../../lib/prisma";
 
 beforeEach(() => {
+  mockStampSeat.mockClear();
+  mockRevoke.mockClear();
   mockState.refunds = [];
   mockState.chargedBackPaise = 0;
   mockState.atGateway = null;
@@ -284,4 +312,68 @@ it("a refund with no amount, or with keepSeat, records its decision whatever the
   });
 
   expect([kept.endsSeat, ended.endsSeat]).toEqual([false, true]);
+});
+
+it("an ambiguous gateway error keeps the first request's intent, so a replay without keepSeat keeps the seat", async () => {
+  // Support's full ₹500 refund keeps the seat; the gateway call then drops with no answer.
+  mockState.atGateway = () => {
+    throw new Error("socket hang up");
+  };
+  await expect(
+    refundPayment({
+      paymentId: "pay-1",
+      reason: "support refund",
+      dedupeKey: "case-recommendation:rec-1",
+      keepSeat: true,
+    }),
+  ).rejects.toMatchObject({ code: "GATEWAY_REFUND_FAILED" });
+  expect(mockState.refunds[0]).toMatchObject({ status: "PENDING" });
+  expect(mockState.refunds[0]?.metadata).toMatchObject({
+    seatIntent: {
+      keepSeat: true,
+      keepSeatIfPartial: false,
+      amountNamed: false,
+    },
+  });
+  expect(mockState.refunds[0]?.metadata).not.toHaveProperty("seatDecision");
+
+  mockState.atGateway = null;
+  const replay = await refundBookingPayment({
+    paymentId: "pay-1",
+    reason: "support refund",
+    dedupeKey: "case-recommendation:rec-1",
+  });
+
+  expect(replay).toMatchObject({ refundId: mockState.refunds[0]?.id });
+  expect(mockStampSeat).not.toHaveBeenCalled();
+  expect(mockRevoke).not.toHaveBeenCalled();
+  expect(mockState.refunds[0]?.metadata).toMatchObject({ endsSeat: false });
+});
+
+it("decides from the row's stored intent, never the deciding caller's", async () => {
+  mockState.refunds.push({
+    id: "refund-1",
+    paymentId: "pay-1",
+    amountPaise: 50_000,
+    status: "SUCCEEDED",
+    dedupeKey: "k",
+    refundId: "rfnd_1",
+    metadata: {
+      seatIntent: {
+        keepSeat: true,
+        keepSeatIfPartial: false,
+        amountNamed: false,
+      },
+    },
+  });
+  const decided = await prisma.$transaction((tx) =>
+    decideRefundSeatTx(tx, {
+      refundRowId: "refund-1",
+      paymentId: "pay-1",
+      paymentPaise: 50_000,
+      intent: { keepSeat: false, keepSeatIfPartial: false, amountNamed: false },
+    }),
+  );
+
+  expect(decided).toBe(false);
 });

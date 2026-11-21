@@ -1,4 +1,7 @@
-/** The booking seat a refund ends, decided once its money is final and stored in the row's metadata. */
+/**
+ * The booking seat a refund ends. The reserving request's seat intent is stored on the row, and the
+ * decision is made from that intent once the money is final, then stored beside it.
+ */
 
 import type { Prisma } from "@prisma/client";
 import { z } from "zod";
@@ -15,19 +18,39 @@ export type SeatPolicy = {
   keepSeatIfPartial?: boolean;
 };
 
+const SEAT_INTENT = z.object({
+  keepSeat: z.boolean(),
+  keepSeatIfPartial: z.boolean(),
+  amountNamed: z.boolean(),
+});
+
+/** What the reserving request asked of the seat, stored as `Refund.metadata.seatIntent`. */
+export type SeatIntent = z.infer<typeof SEAT_INTENT>;
+
+export function seatIntentOf(policy: SeatPolicy): SeatIntent {
+  return {
+    keepSeat: policy.keepSeat === true,
+    keepSeatIfPartial: policy.keepSeatIfPartial === true,
+    amountNamed: policy.amountPaise !== undefined,
+  };
+}
+
 /** A refund ends the funded seat unless it keeps it, or keeps it while an explicit amount leaves a balance. */
 export function refundEndsSeat(
   policy: SeatPolicy,
   requestedPaise: number,
   refundablePaise: number,
 ): boolean {
-  return seatEndsLeaving(policy, refundablePaise - requestedPaise);
+  return seatEndsLeaving(
+    seatIntentOf(policy),
+    refundablePaise - requestedPaise,
+  );
 }
 
 /** The same rule, given what stays refundable once this refund is counted. */
-function seatEndsLeaving(policy: SeatPolicy, leftPaise: number): boolean {
-  const partial = policy.amountPaise !== undefined && leftPaise > 0;
-  return !policy.keepSeat && !(policy.keepSeatIfPartial && partial);
+function seatEndsLeaving(intent: SeatIntent, leftPaise: number): boolean {
+  const partial = intent.amountNamed && leftPaise > 0;
+  return !intent.keepSeat && !(intent.keepSeatIfPartial && partial);
 }
 
 const jsonObject = (
@@ -43,6 +66,16 @@ export function storedSeatDecision(
 ): boolean | undefined {
   const parsed = STORED_SEAT_DECISION.safeParse(metadata);
   return parsed.success ? parsed.data.endsSeat : undefined;
+}
+
+const STORED_SEAT_INTENT = z.object({ seatIntent: SEAT_INTENT });
+
+/** The reserving request's seat intent, or undefined on a row written before it was stored. */
+export function storedSeatIntent(
+  metadata: Prisma.JsonValue | null | undefined,
+): SeatIntent | undefined {
+  const parsed = STORED_SEAT_INTENT.safeParse(metadata);
+  return parsed.success ? parsed.data.seatIntent : undefined;
 }
 
 /** Written on a gateway reservation; the finalisation replaces it with `endsSeat`. */
@@ -68,9 +101,9 @@ export function withoutSeatMarker(
 }
 
 /**
- * Decides and stores a gateway refund's seat once its gateway answer is in, against the payment's
- * committed balance read through `tx`: a concurrent refund that failed meanwhile counts as refundable.
- * A decision already stored on the row wins.
+ * Decides and stores a refund's seat from the intent stored on its row (else `intent`), against the
+ * payment's committed balance read through `tx`: a concurrent refund that failed meanwhile counts as
+ * refundable. A decision already stored on the row wins.
  */
 export async function decideRefundSeatTx(
   tx: Pick<Tx, "refund" | "dispute">,
@@ -78,10 +111,11 @@ export async function decideRefundSeatTx(
     refundRowId: string;
     paymentId: string;
     paymentPaise: number;
-    policy: SeatPolicy;
+    /** The caller's own intent, used only for a row that stores none. */
+    intent?: SeatIntent;
   },
 ): Promise<boolean> {
-  // One read: the payment's refunds give the balance, and this row's stored decision.
+  // One read: the payment's refunds give the balance, and this row's stored intent and decision.
   const refunds = await tx.refund.findMany({
     where: { paymentId: args.paymentId },
     select: { id: true, amountPaise: true, status: true, metadata: true },
@@ -89,6 +123,9 @@ export async function decideRefundSeatTx(
   const row = refunds.find((r) => r.id === args.refundRowId);
   const stored = storedSeatDecision(row?.metadata);
   if (stored !== undefined) return stored;
+  const intent = storedSeatIntent(row?.metadata) ?? args.intent;
+  // No intent anywhere: keep the seat rather than guess.
+  if (!intent) return false;
   const chargedBack = await tx.dispute.aggregate({
     where: {
       paymentId: args.paymentId,
@@ -102,7 +139,7 @@ export async function decideRefundSeatTx(
     .reduce((sum, r) => sum + Number(r.amountPaise), 0);
   const leftPaise =
     args.paymentPaise - returnedPaise - sumPaise(chargedBack._sum.amountPaise);
-  const endsSeat = seatEndsLeaving(args.policy, leftPaise);
+  const endsSeat = seatEndsLeaving(intent, leftPaise);
   if (row) {
     await tx.refund.update({
       where: { id: row.id },

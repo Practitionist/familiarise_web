@@ -103,7 +103,10 @@ import {
   decideRefundSeatTx,
   SEAT_DECISION_PENDING,
   seatDecisionPending,
+  seatIntentOf,
   storedSeatDecision,
+  storedSeatIntent,
+  type SeatIntent,
 } from "./refund-seat";
 import {
   accumulatePaidConsultantClawback,
@@ -216,6 +219,8 @@ export type RefundResult = {
   endsSeat?: boolean;
   /** The reserving call is still deciding the seat: a replay applies no seat effect of its own. */
   seatPending?: true;
+  /** The reserving request's seat intent, when the row stores it but no decision yet. */
+  seatIntent?: SeatIntent;
 };
 
 /** What a keyed refund request asks for: its payment, and the amount when it names one. */
@@ -255,6 +260,8 @@ export async function findDedupedRefund(
   assertRefundReplayMatches(row, request);
   const endsSeat = storedSeatDecision(row.metadata);
   const seatPending = seatDecisionPending(row.metadata);
+  const seatIntent =
+    endsSeat === undefined ? storedSeatIntent(row.metadata) : undefined;
   return {
     refundId: row.id,
     paymentId: row.paymentId,
@@ -266,6 +273,7 @@ export async function findDedupedRefund(
     status: row.status === RefundStatus.SUCCEEDED ? "SUCCEEDED" : "PENDING",
     ...(endsSeat === undefined ? {} : { endsSeat }),
     ...(seatPending ? { seatPending: true as const } : {}),
+    ...(seatIntent ? { seatIntent } : {}),
   };
 }
 
@@ -635,6 +643,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
               metadata: {
                 initiatedByUserId: input.initiatedByUserId ?? null,
                 source: "app",
+                seatIntent: seatIntentOf(input),
                 ...SEAT_DECISION_PENDING,
                 ...(settledOwed ? { settledOwed } : {}),
               } as Prisma.InputJsonValue,
@@ -748,10 +757,11 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
         (err instanceof RefundError && err.code === GATEWAY_NOT_FOUND),
     });
     const gatewayError = err instanceof Error ? err.message : String(err);
-    // No seat marker: this call applies no seat effect, so a later replay judges the seat itself.
+    // No pending marker, since this call applies no seat effect; a later replay decides from the intent.
     const metadata = {
       initiatedByUserId: input.initiatedByUserId ?? null,
       source: "app",
+      seatIntent: seatIntentOf(input),
       ...(settledOwed ? { settledOwed } : {}),
       gateway_error: gatewayError,
     } as Prisma.InputJsonValue;
@@ -923,7 +933,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       refundRowId: boundRefundRowId,
       paymentId: payment.id,
       paymentPaise: payment.amount,
-      policy: input,
+      intent: seatIntentOf(input),
     });
   // An unreadable balance stores nothing; the booking wrapper then reads the balance itself.
   const decideSeatAfter = () =>

@@ -67,9 +67,36 @@ async function leavesRefundable(paymentId: string): Promise<boolean> {
 }
 
 /**
- * A refund whose row stores neither a seat decision nor the pending marker (written before either
- * existed, or left by an ambiguous gateway error): it ends the seat only when nothing is left to refund.
+ * The seat a refund ends: its stored decision; none while the reserving call still owns it; else the
+ * decision from the stored intent. Only a row from before the intent was stored reads the request.
  */
+async function replayedSeat(
+  input: { keepSeat?: boolean },
+  r: {
+    refundId: string;
+    paymentId: string;
+    endsSeat?: boolean;
+    seatPending?: true;
+    seatIntent?: SeatIntent;
+  },
+  paymentPaise: number,
+): Promise<boolean> {
+  if (r.endsSeat !== undefined) return r.endsSeat;
+  if (r.seatPending) return false;
+  if (!r.seatIntent) return legacyReplayEndsSeat(input, r.paymentId);
+  // An unreadable balance keeps the seat and stores nothing.
+  return prisma
+    .$transaction((tx) =>
+      decideRefundSeatTx(tx, {
+        refundRowId: r.refundId,
+        paymentId: r.paymentId,
+        paymentPaise,
+      }),
+    )
+    .catch(() => false);
+}
+
+/** A row with no seat decision, marker or intent ends the seat only when nothing is left to refund. */
 async function legacyReplayEndsSeat(
   input: { keepSeat?: boolean },
   paymentId: string,
@@ -168,9 +195,12 @@ import {
   refundPayment,
 } from "./refund";
 import {
+  decideRefundSeatTx,
   refundEndsSeat,
   seatDecisionPending,
+  seatIntentOf,
   storedSeatDecision,
+  type SeatIntent,
 } from "./refund-seat";
 // Late-bound cycle: refund-owed drives its markers through this module.
 import {
@@ -368,7 +398,12 @@ async function refundBookingPaymentOnRail(
   // #781 §B — soft-deleted financial rows are retired; never refund them.
   const payment = await prisma.payment.findUnique({
     where: { id: input.paymentId, deletedAt: null },
-    select: { paymentIntent: true, refundOwedKey: true, userId: true },
+    select: {
+      paymentIntent: true,
+      refundOwedKey: true,
+      userId: true,
+      amount: true,
+    },
   });
   if (!payment) {
     throw new RefundValidationError(
@@ -412,10 +447,7 @@ async function refundBookingPaymentOnRail(
   if (!isInternalFundedIntent(payment.paymentIntent)) {
     const r = await refundPayment(input);
     // Decided once the gateway answered and stored on the row; the caller stamps the seat after commit.
-    // A replay of a refund still in flight leaves the seat to the call that reserved it.
-    const endsSeat =
-      r.endsSeat ??
-      (r.seatPending ? false : await legacyReplayEndsSeat(input, r.paymentId));
+    const endsSeat = await replayedSeat(input, r, Number(payment.amount));
     return {
       result: {
         refundId: r.refundId,
@@ -442,10 +474,11 @@ async function refundBookingPaymentOnRail(
   // A key already spent answers without the transaction, with the decision its row stored.
   const endsSeat =
     decided?.endsSeat ??
-    keyed.endsSeat ??
-    (keyed.seatPending
-      ? false
-      : await legacyReplayEndsSeat(input, keyed.paymentId));
+    (await replayedSeat(
+      input,
+      { ...keyed, refundId: keyed.result.refundId },
+      Number(payment.amount),
+    ));
   return {
     result: keyed.result,
     seat: seatOf(keyed.paymentId),
@@ -475,6 +508,8 @@ async function withDedupe(
   endsSeat?: boolean;
   /** The reserving call still owns the replayed refund's seat. */
   seatPending?: true;
+  /** The reserving request's seat intent, when its row stores no decision yet. */
+  seatIntent?: SeatIntent;
 }> {
   // A fresh run writes its Refund row on the payment it read, input.paymentId.
   const ran = async () => ({
@@ -495,6 +530,7 @@ async function withDedupe(
           paymentId: prior.paymentId,
           endsSeat: prior.endsSeat,
           ...(prior.seatPending ? { seatPending: true as const } : {}),
+          ...(prior.seatIntent ? { seatIntent: prior.seatIntent } : {}),
         }
       : null;
   };
@@ -1522,6 +1558,7 @@ async function refundInternalFundedPayment(
             metadata: {
               initiatedByUserId: input.initiatedByUserId ?? null,
               source: "internal-funded",
+              seatIntent: seatIntentOf(input),
               endsSeat,
               ...(settledOwed ? { settledOwed } : {}),
             } as Prisma.InputJsonValue,
