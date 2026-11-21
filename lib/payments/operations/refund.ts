@@ -99,7 +99,12 @@ import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 // Late-bound cycle: reversal-engine imports applyRefundCascade from here.
 import { clawBackCompletedOrgPayout } from "./reversal-engine";
 import { retireSupersededPlaceholderTx } from "./refund-placeholder";
-import { decideRefundSeatTx, storedSeatDecision } from "./refund-seat";
+import {
+  decideRefundSeatTx,
+  SEAT_DECISION_PENDING,
+  seatDecisionPending,
+  storedSeatDecision,
+} from "./refund-seat";
 import {
   accumulatePaidConsultantClawback,
   applyPaidConsultantClawbacks,
@@ -207,8 +212,10 @@ export type RefundResult = {
   gatewayRefundId?: string;
   /** The owed refund this hand refund settled and cleared. */
   settledOwed?: HandSettledOwed;
-  /** The seat decision stored on the refund row; absent on a row written before it was stored. */
+  /** The seat decision stored on the refund row; absent while it is pending, or on a row from before it was stored. */
   endsSeat?: boolean;
+  /** The reserving call is still deciding the seat: a replay applies no seat effect of its own. */
+  seatPending?: true;
 };
 
 /** What a keyed refund request asks for: its payment, and the amount when it names one. */
@@ -247,6 +254,7 @@ export async function findDedupedRefund(
   }
   assertRefundReplayMatches(row, request);
   const endsSeat = storedSeatDecision(row.metadata);
+  const seatPending = seatDecisionPending(row.metadata);
   return {
     refundId: row.id,
     paymentId: row.paymentId,
@@ -257,6 +265,7 @@ export async function findDedupedRefund(
     clawbackInitiated: false,
     status: row.status === RefundStatus.SUCCEEDED ? "SUCCEEDED" : "PENDING",
     ...(endsSeat === undefined ? {} : { endsSeat }),
+    ...(seatPending ? { seatPending: true as const } : {}),
   };
 }
 
@@ -626,6 +635,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
               metadata: {
                 initiatedByUserId: input.initiatedByUserId ?? null,
                 source: "app",
+                ...SEAT_DECISION_PENDING,
                 ...(settledOwed ? { settledOwed } : {}),
               } as Prisma.InputJsonValue,
             },
@@ -738,6 +748,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
         (err instanceof RefundError && err.code === GATEWAY_NOT_FOUND),
     });
     const gatewayError = err instanceof Error ? err.message : String(err);
+    // No seat marker: this call applies no seat effect, so a later replay judges the seat itself.
     const metadata = {
       initiatedByUserId: input.initiatedByUserId ?? null,
       source: "app",

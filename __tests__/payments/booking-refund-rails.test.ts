@@ -998,6 +998,46 @@ describe("a replayed refund follows the seat decision stored on its row", () => 
     },
   );
 
+  it("a replay while the first call is still at the gateway answers its refund and touches no seat", async () => {
+    // Support's full refund kept the seat (keepSeat) and is in flight; this replay omits keepSeat.
+    mockPaymentFindUnique.mockResolvedValue({
+      paymentIntent: "pay_ABC",
+      userId: "payer-1",
+      amount: 50_000,
+      refunds: [{ amountPaise: 50_000, status: "PENDING" }],
+      disputes: [],
+    });
+    mockRefundPayment.mockResolvedValue({
+      refundId: "refund-row-1",
+      paymentId: PAYMENT_ID,
+      amountRefundedPaise: 50_000,
+      status: "PENDING",
+      seatPending: true,
+    });
+
+    await expect(
+      refundBookingPayment({
+        paymentId: PAYMENT_ID,
+        reason: "support refund",
+        dedupeKey: "case-recommendation:rec-1",
+      }),
+    ).resolves.toMatchObject({ refundId: "refund-row-1", status: "PENDING" });
+    expect(seatEnded()).toBe(false);
+    expect(mockPersistRefundRevocation).not.toHaveBeenCalled();
+    expect(mockRevokeRefundedSeatAccess).not.toHaveBeenCalled();
+  });
+
+  it("restamping skips a refund whose seat decision is still pending", async () => {
+    mockRefundFindUnique.mockResolvedValue({
+      status: "PENDING",
+      paymentId: PAYMENT_ID,
+      metadata: { seatDecision: "pending" },
+    });
+
+    await expect(restampRefundedSeats("refund-row-1")).resolves.toBe("skipped");
+    expect(mockTransitionParticipant).not.toHaveBeenCalled();
+  });
+
   it("restamping skips a refund whose stored decision kept the seat", async () => {
     mockRefundFindUnique.mockResolvedValue({
       status: "SUCCEEDED",

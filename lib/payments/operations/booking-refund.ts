@@ -67,8 +67,8 @@ async function leavesRefundable(paymentId: string): Promise<boolean> {
 }
 
 /**
- * A refund whose row stores no seat decision (written before it was stored, or its decision read
- * failed): the replay ends the seat only when nothing is left to refund.
+ * A refund whose row stores neither a seat decision nor the pending marker (written before either
+ * existed, or left by an ambiguous gateway error): it ends the seat only when nothing is left to refund.
  */
 async function legacyReplayEndsSeat(
   input: { keepSeat?: boolean },
@@ -167,7 +167,11 @@ import {
   RefundValidationError,
   refundPayment,
 } from "./refund";
-import { refundEndsSeat, storedSeatDecision } from "./refund-seat";
+import {
+  refundEndsSeat,
+  seatDecisionPending,
+  storedSeatDecision,
+} from "./refund-seat";
 // Late-bound cycle: refund-owed drives its markers through this module.
 import {
   claimOwedMarker,
@@ -302,7 +306,8 @@ export async function refundBookingPayment(
 
 /**
  * Re-applies a seat-ending refund's REFUNDED stamp, only while the refund stands as SUCCEEDED or
- * PENDING and its row did not record keeping the seat; a FAILED or CANCELLED refund moved no money.
+ * PENDING and its row records neither keeping the seat nor a pending decision; a FAILED or CANCELLED
+ * refund moved no money.
  */
 export async function restampRefundedSeats(
   refundId: string,
@@ -315,7 +320,8 @@ export async function restampRefundedSeats(
     !refund ||
     (refund.status !== RefundStatus.SUCCEEDED &&
       refund.status !== RefundStatus.PENDING) ||
-    storedSeatDecision(refund.metadata) === false
+    storedSeatDecision(refund.metadata) === false ||
+    seatDecisionPending(refund.metadata)
   ) {
     return "skipped";
   }
@@ -406,8 +412,10 @@ async function refundBookingPaymentOnRail(
   if (!isInternalFundedIntent(payment.paymentIntent)) {
     const r = await refundPayment(input);
     // Decided once the gateway answered and stored on the row; the caller stamps the seat after commit.
+    // A replay of a refund still in flight leaves the seat to the call that reserved it.
     const endsSeat =
-      r.endsSeat ?? (await legacyReplayEndsSeat(input, r.paymentId));
+      r.endsSeat ??
+      (r.seatPending ? false : await legacyReplayEndsSeat(input, r.paymentId));
     return {
       result: {
         refundId: r.refundId,
@@ -435,7 +443,9 @@ async function refundBookingPaymentOnRail(
   const endsSeat =
     decided?.endsSeat ??
     keyed.endsSeat ??
-    (await legacyReplayEndsSeat(input, keyed.paymentId));
+    (keyed.seatPending
+      ? false
+      : await legacyReplayEndsSeat(input, keyed.paymentId));
   return {
     result: keyed.result,
     seat: seatOf(keyed.paymentId),
@@ -463,6 +473,8 @@ async function withDedupe(
   paymentId: string;
   /** A replay's stored seat decision. */
   endsSeat?: boolean;
+  /** The reserving call still owns the replayed refund's seat. */
+  seatPending?: true;
 }> {
   // A fresh run writes its Refund row on the payment it read, input.paymentId.
   const ran = async () => ({
@@ -482,6 +494,7 @@ async function withDedupe(
           },
           paymentId: prior.paymentId,
           endsSeat: prior.endsSeat,
+          ...(prior.seatPending ? { seatPending: true as const } : {}),
         }
       : null;
   };

@@ -30,6 +30,11 @@ function seatEndsLeaving(policy: SeatPolicy, leftPaise: number): boolean {
   return !policy.keepSeat && !(policy.keepSeatIfPartial && partial);
 }
 
+const jsonObject = (
+  value: Prisma.JsonValue | null | undefined,
+): Prisma.JsonObject =>
+  value && typeof value === "object" && !Array.isArray(value) ? value : {};
+
 const STORED_SEAT_DECISION = z.object({ endsSeat: z.boolean() });
 
 /** The `endsSeat` decision a refund row's metadata recorded, or undefined while none is stored. */
@@ -40,10 +45,27 @@ export function storedSeatDecision(
   return parsed.success ? parsed.data.endsSeat : undefined;
 }
 
-const jsonObject = (
-  value: Prisma.JsonValue | null | undefined,
-): Prisma.JsonObject =>
-  value && typeof value === "object" && !Array.isArray(value) ? value : {};
+/** Written on a gateway reservation; the finalisation replaces it with `endsSeat`. */
+export const SEAT_DECISION_PENDING = { seatDecision: "pending" } as const;
+const PENDING_SEAT_DECISION = z.object({ seatDecision: z.literal("pending") });
+
+/** True while the call that reserved this refund still owns its seat decision and effects. */
+export function seatDecisionPending(
+  metadata: Prisma.JsonValue | null | undefined,
+): boolean {
+  return (
+    storedSeatDecision(metadata) === undefined &&
+    PENDING_SEAT_DECISION.safeParse(metadata).success
+  );
+}
+
+/** The metadata without the pending marker. */
+export function withoutSeatMarker(
+  metadata: Prisma.JsonValue | null | undefined,
+): Prisma.JsonObject {
+  const { seatDecision: _marker, ...rest } = jsonObject(metadata);
+  return rest;
+}
 
 /**
  * Decides and stores a gateway refund's seat once its gateway answer is in, against the payment's
@@ -84,7 +106,7 @@ export async function decideRefundSeatTx(
   if (row) {
     await tx.refund.update({
       where: { id: row.id },
-      data: { metadata: { ...jsonObject(row.metadata), endsSeat } },
+      data: { metadata: { ...withoutSeatMarker(row.metadata), endsSeat } },
     });
   }
   return endsSeat;

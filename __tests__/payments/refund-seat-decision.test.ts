@@ -174,6 +174,37 @@ it.each<[string, "PENDING" | "SUCCEEDED", () => void]>([
   },
 );
 
+it("a replay while the refund is at the gateway answers it as in flight, and the finalisation replaces the marker", async () => {
+  let inFlight: unknown = null;
+  let reserved: unknown = null;
+  // The replay omits keepSeat; it reads the reserved row before the gateway answers.
+  mockState.atGateway = () => {
+    reserved = { ...mockState.refunds[0]?.metadata };
+    inFlight = refundPayment({
+      paymentId: "pay-1",
+      reason: "support refund",
+      dedupeKey: "case-recommendation:rec-1",
+    });
+  };
+  const original = await refundPayment({
+    paymentId: "pay-1",
+    reason: "support refund",
+    dedupeKey: "case-recommendation:rec-1",
+    keepSeat: true,
+  });
+
+  expect(reserved).toMatchObject({ seatDecision: "pending" });
+
+  expect(await inFlight).toMatchObject({
+    refundId: original.refundId,
+    seatPending: true,
+  });
+  expect(await inFlight).not.toHaveProperty("endsSeat");
+  expect(original.endsSeat).toBe(false);
+  expect(mockState.refunds[0]?.metadata).toMatchObject({ endsSeat: false });
+  expect(mockState.refunds[0]?.metadata).not.toHaveProperty("seatDecision");
+});
+
 it("ends the seat when the concurrent refund is still out once this one is final", async () => {
   concurrentPending();
 
