@@ -263,9 +263,11 @@ export async function getStaffAppointments(
   // #897 — AND the resolved status condition onto the base for the list query
   // so pagination + total reflect the filtered set.
   const statusCond = buildStatusWhere(status);
-  const scheduledBaseWhere: Prisma.AppointmentWhereInput = occurrenceInRange
-    ? { ...baseWhere, occurrences: { some: scheduledOccurrence } }
-    : baseWhere;
+  // A booking whose every session is cancelled has nothing scheduled, with or without a range.
+  const scheduledBaseWhere: Prisma.AppointmentWhereInput = {
+    ...baseWhere,
+    occurrences: { some: scheduledOccurrence },
+  };
   const isScheduled = status === "scheduled";
   const listWhere: Prisma.AppointmentWhereInput = statusCond
     ? { AND: [isScheduled ? scheduledBaseWhere : baseWhere, statusCond] }

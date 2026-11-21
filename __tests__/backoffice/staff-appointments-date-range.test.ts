@@ -124,15 +124,20 @@ describe("the Scheduled tab reads only live sessions", () => {
     expect(countOccurrences(4)).toEqual({ startsAt: nov18 });
   });
 
-  it("shows a live session even without a date range", async () => {
+  it("without a date range, lists, shows and counts only bookings with a live session", async () => {
     await getStaffAppointments({ scope: { kind: "all" }, status: "scheduled" });
-    const args = mockFindMany.mock.calls[0][0] as {
-      select: { occurrences: { where?: unknown } };
-    };
-    expect(args.select.occurrences.where).toEqual({
+    const live = {
       deletedAt: null,
       completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
-    });
+    };
+    const args = mockFindMany.mock.calls[0][0] as {
+      where: CountArgs["where"];
+      select: { occurrences: { where?: unknown } };
+    };
+    expect(args.where.AND?.[0].occurrences?.some).toEqual(live);
+    expect(args.select.occurrences.where).toEqual(live);
+    expect(countOccurrences(2)).toEqual(live);
+    expect(countOccurrences(3)).toBeUndefined();
   });
 
   it("leaves the Issue tab's sessions unfiltered, so a cancelled booking still lists", async () => {
