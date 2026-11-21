@@ -1065,22 +1065,25 @@ export async function driveRefundOwed(
   marker: RefundOwedMarker,
   opts: { initiatedByUserId?: string | null } = {},
 ): Promise<RefundOwedOutcome> {
-  try {
-    // The marker's amount is a cap the drive may lower, so a replay matches on the payment.
+  // The marker's amount is a cap the drive may lower, so a replay matches on the payment.
+  const replayed = async (): Promise<RefundOwedOutcome | null> => {
     const prior = await findDedupedRefund(marker.key, {
       paymentId: marker.paymentId,
     });
-    if (prior) {
-      if (prior.status !== "PENDING") await clearRefundOwed(marker);
-      return {
-        kind: "replayed",
-        refund: {
-          refundId: prior.refundId,
-          amountRefundedPaise: prior.amountRefundedPaise,
-          status: prior.status,
-        },
-      };
-    }
+    if (!prior) return null;
+    if (prior.status !== "PENDING") await clearRefundOwed(marker);
+    return {
+      kind: "replayed",
+      refund: {
+        refundId: prior.refundId,
+        amountRefundedPaise: prior.amountRefundedPaise,
+        status: prior.status,
+      },
+    };
+  };
+  try {
+    const prior = await replayed();
+    if (prior) return prior;
     const refund = await refundUpToBalance(marker, opts);
     if (refund === null) {
       await clearRefundOwed(marker);
@@ -1103,6 +1106,11 @@ export async function driveRefundOwed(
       // An operator's hand refund cleared the marker, or reduced it for the next drive.
       if (error.code === "OWED_MARKER_SETTLED") return { kind: "settled" };
       if (error.code === "OWED_MARKER_CHANGED") return { kind: "blocked" };
+      // A racing drive clamped the cap and spent the key first: its refund is this marker's.
+      if (error.code === "IDEMPOTENCY_KEY_REUSED") {
+        const winner = await readOrNull(replayed);
+        if (winner) return winner;
+      }
     }
     // The drive's own refund is still PENDING (an ambiguous gateway answer, or
     // a settle that failed after the gateway took it): reconcile settles it by
