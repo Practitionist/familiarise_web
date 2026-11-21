@@ -124,7 +124,7 @@ describe("maintenance preflight active calls", () => {
     expect(body.activeCalls).toBe(0);
     expect(body.recommendation).toBe("CAUTION");
     expect(body.warnings).toEqual([
-      "Stream could not be checked, so a live call whose room is already closed may be missing",
+      "Stream could not be fully checked, so a live call whose room is already closed may be missing",
     ]);
   });
 
@@ -173,6 +173,16 @@ describe("maintenance preflight active calls", () => {
     expect(body.activeCalls).toBe(2);
     expect(body.warnings).toContain(
       "1 open room(s) could not be checked with Stream and are counted as active",
+    );
+  });
+
+  it("warns that a truncated page may hide calls even with no open rooms", async () => {
+    mockPrisma.meeting.findMany.mockResolvedValue([]);
+    mockQueryCalls.mockResolvedValue({ ...ongoing("other"), next: "cursor" });
+    const body = await (await GET()).json();
+    expect(body.activeCalls).toBe(1);
+    expect(body.warnings).toContain(
+      "Stream could not be fully checked, so a live call whose room is already closed may be missing",
     );
   });
 });

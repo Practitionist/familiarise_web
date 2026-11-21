@@ -52,7 +52,7 @@ export async function GET() {
     );
   if (!calls.streamChecked)
     warnings.push(
-      "Stream could not be checked, so a live call whose room is already closed may be missing",
+      "Stream could not be fully checked, so a live call whose room is already closed may be missing",
     );
   if (activeCalls > 0)
     warnings.push(`${activeCalls} active video call(s) in progress`);

@@ -24,7 +24,7 @@ export interface ActiveCallCount {
   active: number;
   /** Rooms Stream could not confirm either way, counted as active. */
   unverified: number;
-  /** False when Stream could not be asked, so a live call whose room is closed may be missing. */
+  /** False when Stream could not be asked or listed only part of its calls, so a live call may be missing. */
   streamChecked: boolean;
 }
 
@@ -119,7 +119,7 @@ export async function countActiveCalls(
     return {
       active: present.size + live + unverified,
       unverified,
-      streamChecked: true,
+      streamChecked: complete,
     };
   } catch (error) {
     // The breaker already reported a Stream error into `failures`; only the timeout is unseen.
