@@ -313,7 +313,8 @@ function MaterialsCard({ appointmentId }: Readonly<{ appointmentId: string }>) {
 function RecordingsCard({
   appointmentId,
   href,
-}: Readonly<{ appointmentId: string; href: string }>) {
+  endedRefunded,
+}: Readonly<{ appointmentId: string; href: string; endedRefunded: boolean }>) {
   const format = useZonedFormat();
   const day = (iso: string) => format(iso, "d MMM yyyy");
   const { data, error, isLoading, refetch } = useQuery({
@@ -331,7 +332,11 @@ function RecordingsCard({
       <CardError
         error={error}
         onRetry={() => void refetch()}
-        notFoundCopy="Recordings are available to this booking's attendees."
+        notFoundCopy={
+          endedRefunded
+            ? "Recordings are no longer available because this booking was cancelled and refunded."
+            : "Recordings are available to this booking's attendees."
+        }
       />
     );
   }
@@ -392,12 +397,15 @@ export function ResourceSnapshot({
   supportsDocuments,
   hrefs,
   withheld,
+  endedRefunded = false,
 }: Readonly<{
   appointmentId: string;
   supportsDocuments: boolean;
   hrefs: ResourceHrefs;
   /** Set when the three reads would only be refused: nothing is requested. */
   withheld: ResourcesWithheld | null;
+  /** The booking was cancelled and money came back: a refused recordings read says why. */
+  endedRefunded?: boolean;
 }>) {
   if (withheld) {
     return (
@@ -428,7 +436,11 @@ export function ResourceSnapshot({
       </Card>
       <div className="border-t border-border" />
       <Card title="Recordings" icon={Video}>
-        <RecordingsCard appointmentId={appointmentId} href={hrefs.recordings} />
+        <RecordingsCard
+          appointmentId={appointmentId}
+          href={hrefs.recordings}
+          endedRefunded={endedRefunded}
+        />
       </Card>
     </div>
   );

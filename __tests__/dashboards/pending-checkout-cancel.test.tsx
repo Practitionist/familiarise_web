@@ -84,3 +84,28 @@ it("renders Current total diff and advisory notice when quoteStaleReason is pres
   expect(host.textContent).toContain("Applicable tax changed");
   act(() => root.unmount());
 });
+
+it("past its window and still unpaid, says what the check does and where a paid booking shows", async () => {
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  await act(async () =>
+    root.render(
+      <PendingCheckoutClient
+        pending={{
+          ...pending,
+          expiresAt: new Date(Date.now() - 10 * 86_400_000),
+        }}
+      />,
+    ),
+  );
+
+  expect(host.textContent).toContain("Checking your payment");
+  expect(host.textContent).toContain(
+    "rechecks by itself for about two minutes",
+  );
+  expect(host.textContent).toContain(
+    "If you paid, the booking appears under Appointments.",
+  );
+  act(() => root.unmount());
+});

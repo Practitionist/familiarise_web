@@ -32,6 +32,12 @@ import { RatingCauseSelector } from "./RatingCauseSelector";
 /** The part of the review route's reply this form reads. */
 const ReviewSavedSchema = z.object({ profileIsPublic: z.boolean() });
 
+/** The cause only counts for a rating of 3 or less. */
+const effectiveCause = (
+  rating: number,
+  cause: RatingCause | null | undefined,
+) => (rating > 3 ? null : (cause ?? null));
+
 export interface ExistingReview {
   id: string;
   rating: number;
@@ -83,13 +89,22 @@ export function ReviewComposer({
     setRatingCause(existing?.ratingCause ?? null);
   }, [seedKey, existing]);
 
+  // An edit sends nothing until it differs from the saved review.
+  const unchanged = existing
+    ? rating === existing.rating &&
+      (text.trim() || null) === (existing.reviewDescription?.trim() || null) &&
+      anonymous === (existing.isAnonymous ?? false) &&
+      effectiveCause(rating, ratingCause) ===
+        effectiveCause(existing.rating, existing.ratingCause)
+    : false;
+
   const save = useMutation({
     mutationFn: async () => {
       const body = {
         rating,
         reviewDescription: text.trim() || null,
         isAnonymous: anonymous,
-        ratingCause: rating > 3 ? null : (ratingCause ?? null),
+        ratingCause: effectiveCause(rating, ratingCause),
       };
       const res = await fetch(`/api/user/reviews`, {
         method: "POST",
@@ -129,15 +144,20 @@ export function ReviewComposer({
   return (
     <div>
       {/* Verb-led so it reads as a form and never as a posted review. */}
-      <h4 className="text-sm font-medium text-foreground">
-        {existing ? "Edit your review of " : "Write a review of "}
-        {consultantName ?? "this expert"}
-      </h4>
+      <div className="flex flex-wrap items-center gap-2">
+        <h4 className="text-sm font-medium text-foreground">
+          {existing ? "Edit your review of " : "Write a review of "}
+          {consultantName ?? "this expert"}
+        </h4>
+        <span className="rounded-full border border-border bg-muted px-2 py-0.5 text-[11px] font-medium text-foreground">
+          Public
+        </span>
+      </div>
       <p className="mt-0.5 text-xs text-muted-foreground">
         {contextLine ? `${contextLine} · ` : ""}
         {profileIsPublic
-          ? "Public — it appears on their profile with the date."
-          : "Public — it will appear on their profile once it is live."}{" "}
+          ? "It appears on their profile with the date."
+          : "It will appear on their profile once it is live."}{" "}
         One review per expert; you can edit it after a later session.
       </p>
 
@@ -206,7 +226,7 @@ export function ReviewComposer({
       <div className="mt-3 flex items-center gap-2">
         <Button
           size="sm"
-          disabled={rating === 0 || save.isPending}
+          disabled={rating === 0 || save.isPending || unchanged}
           onClick={() => save.mutate()}
         >
           {existing ? "Update review" : "Post review"}
@@ -214,8 +234,8 @@ export function ReviewComposer({
         {/* No confirm-shaming on a low rating: "are you sure you only want to
             give 3 stars?" is a named dark pattern, and it manufactures the
             J-shape it pretends to measure. */}
-        <span className="text-xs text-muted-foreground">
-          You can edit this later.
+        <span className="text-xs text-muted-foreground" aria-live="polite">
+          {unchanged ? "Saved" : "You can edit this later."}
         </span>
       </div>
     </div>

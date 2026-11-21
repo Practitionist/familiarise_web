@@ -17,6 +17,10 @@ export const REQUEST_AGAIN_NOTE =
 export const REQUEST_AGAIN_WARNING =
   "Your earlier payment link will be closed, and a payment that reaches it after this is refunded automatically. If it was already paid, that booking is kept and no new request starts.";
 
+/** The same confirmation for a webinar or class seat, which holds a place and an order, not a link. */
+export const REQUEST_AGAIN_SEAT_WARNING =
+  "Your earlier place will be released, and a payment that reaches its order after this is refunded automatically. If it was already paid, that booking is kept and no new request starts.";
+
 /** The answer to a click that lost to a capture: nothing was closed. */
 export const REQUEST_AGAIN_ALREADY_PAID =
   "Your earlier payment went through, so that booking is confirmed. No new request was started.";

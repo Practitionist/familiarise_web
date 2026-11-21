@@ -232,6 +232,10 @@ export function InvoiceComposer({
               value={reason}
               onChange={(e) => setReason(e.target.value)}
             />
+            <p className="text-xs text-muted-foreground">
+              Issued immediately; the organisation sees it as soon as you
+              confirm.
+            </p>
           </div>
           {error && <p className="text-sm text-destructive">{error}</p>}
         </div>
@@ -240,7 +244,7 @@ export function InvoiceComposer({
             Cancel
           </Button>
           <Button onClick={createInvoice} disabled={pending}>
-            Create invoice
+            Issue invoice
           </Button>
         </ResponsiveModalFooter>
       </ResponsiveModalContent>

@@ -234,25 +234,30 @@ function ScheduleBody({
     <div className="space-y-4">
       {held.length > 0 && (
         <ul className="divide-y divide-amber-200/70 overflow-hidden rounded-xl border border-amber-200 bg-amber-50/60 dark:divide-amber-900/40 dark:border-amber-900/40 dark:bg-amber-950/20">
-          {held.map((row) => (
-            <li key={row.key} className="flex items-center gap-4 px-4 py-3">
-              <DayTile date={row.startsAt} format={format} />
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-foreground tabular-nums">
-                  <span className="sr-only">
-                    {format(row.startsAt, "EEEE d MMMM")},{" "}
-                  </span>
-                  {timeRangeLabel(format, row.startsAt, row.endsAt)}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  Held for this booking
-                </p>
-              </div>
-              <span className="text-xs font-medium text-amber-800 dark:text-amber-300">
-                {heldRowLabel ? heldRowLabel(row.vm) : "Held"}
-              </span>
-            </li>
-          ))}
+          {held.map((row) => {
+            const label = heldRowLabel ? heldRowLabel(row.vm) : "Held";
+            return (
+              <li key={row.key} className="flex items-center gap-4 px-4 py-3">
+                <DayTile date={row.startsAt} format={format} />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-foreground tabular-nums">
+                    <span className="sr-only">
+                      {format(row.startsAt, "EEEE d MMMM")},{" "}
+                    </span>
+                    {timeRangeLabel(format, row.startsAt, row.endsAt)}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {label.startsWith("Held")
+                      ? "Held for this booking"
+                      : "Was held for this booking"}
+                  </p>
+                </div>
+                <span className="text-xs font-medium text-amber-800 dark:text-amber-300">
+                  {label}
+                </span>
+              </li>
+            );
+          })}
         </ul>
       )}
 

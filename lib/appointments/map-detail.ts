@@ -261,6 +261,7 @@ export function mapAppointmentDetail(
     trialId: appointment.trial?.id ?? null,
     seatStatus: ownSeat?.status ?? null,
     paid: appointment.payment.some((p) => p.paymentStatus === "SUCCEEDED"),
+    refunded: listStatusFacts(appointment, occurrences).refunded,
     payDeadline: pendingDeadline ?? null,
     payLapsed: paymentsLapsed(appointment.payment),
     bookingSource:

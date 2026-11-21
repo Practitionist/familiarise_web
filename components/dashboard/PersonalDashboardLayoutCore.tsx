@@ -529,6 +529,7 @@ export function PersonalDashboardLayoutCore<P>({
         },
         badges: extras.badges ?? [],
         breadcrumbs,
+        alwaysShowName: operatorView,
       }}
       banner={banner}
       pathname={pathname}

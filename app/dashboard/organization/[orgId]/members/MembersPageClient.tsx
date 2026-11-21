@@ -452,7 +452,7 @@ export function MembersPageClient({ orgId }: { orgId: string }) {
           <FilterBar
             search={{
               label: "Search members by name or email",
-              placeholder: "Search name or email",
+              placeholder: "Search members",
               value: query.q ?? "",
               onChange: list.setQ,
             }}

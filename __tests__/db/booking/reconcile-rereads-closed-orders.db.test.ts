@@ -7,7 +7,9 @@
  *  - a pre-mint placeholder is never read, and an authorisation alone is left to the gateway;
  *  - the run takes the job's lock, reads at most `limit` orders, and new closes never starve
  *    a repeat read or pending work;
- *  - refund failures fail the run and are reported once.
+ *  - refund failures, network faults included, fail the run and are reported once;
+ *  - a marker left by a gateway refund that failed to import is retried for the rest only;
+ *  - `limit: 1` still reaches a closed order while pending work is due.
  */
 import { randomUUID } from "node:crypto";
 import prisma from "../../../lib/prisma";
@@ -22,8 +24,12 @@ import { refundedPaise } from "./harness-refunds";
 
 /** The gateway's refund call; everything else in the module stays real. */
 const mockCreateRefund = jest.fn(
-  async (params: { amount?: number; receipt?: string }) => ({
-    refundId: `rfnd_dbtier_${params.receipt ?? "none"}`,
+  async (params: {
+    amount?: number;
+    receipt?: string;
+    idempotencyKey?: string;
+  }) => ({
+    refundId: `rfnd_dbtier_${params.receipt ?? params.idempotencyKey}`,
     amount: params.amount ?? 0,
     currency: "INR",
     status: "SUCCEEDED" as const,
@@ -31,8 +37,11 @@ const mockCreateRefund = jest.fn(
 );
 jest.mock("../../../lib/payments/index", () => ({
   ...jest.requireActual("../../../lib/payments/index"),
-  createRefund: (params: { amount?: number; receipt?: string }) =>
-    mockCreateRefund(params),
+  createRefund: (params: {
+    amount?: number;
+    receipt?: string;
+    idempotencyKey?: string;
+  }) => mockCreateRefund(params),
 }));
 
 jest.mock("../../../lib/novu", () =>
@@ -77,6 +86,7 @@ import { CronLockHeldError } from "../../../lib/cron/with-cron-lock";
 import { refundPayment } from "../../../lib/payments/operations/refund";
 import { refundDoor } from "./harness-edges";
 import { RefundError } from "../../../lib/payments/core/types";
+import { retryAutoRefunds } from "../../../scripts/payments/retry-auto-refunds";
 
 const PRICE_PAISE = 80_000;
 
@@ -84,7 +94,9 @@ const PRICE_PAISE = 80_000;
 const gatewayOrders = new Map<string, Array<Record<string, unknown>>>();
 const gatewayRefunds = new Map<string, Array<Record<string, unknown>>>();
 const ORDER_PAYMENTS = /\/v1\/orders\/([^/]+)\/payments$/;
-const PAYMENT_REFUNDS = /\/v1\/payments\/([^/]+)\/refunds$/;
+const PAYMENT_REFUNDS = /\/v1\/payments\/([^/?]+)\/refunds(?:\?(.*))?$/;
+/** Payments whose refund list the gateway cannot serve right now. */
+const unreadableRefunds = new Set<string>();
 const mockFetch = jest.fn(async (input: string | URL) => {
   const url = String(input);
   const order = ORDER_PAYMENTS.exec(url)?.[1];
@@ -92,9 +104,18 @@ const mockFetch = jest.fn(async (input: string | URL) => {
     const items = gatewayOrders.get(decodeURIComponent(order)) ?? [];
     return new Response(JSON.stringify({ items }), { status: 200 });
   }
-  const payment = PAYMENT_REFUNDS.exec(url)?.[1];
+  const [, payment, query] = PAYMENT_REFUNDS.exec(url) ?? [];
   if (payment) {
-    const items = gatewayRefunds.get(decodeURIComponent(payment)) ?? [];
+    if (unreadableRefunds.has(decodeURIComponent(payment))) {
+      return new Response("{}", { status: 503 });
+    }
+    // Razorpay pages refunds: 10 unless `count` says otherwise, from `skip`.
+    const page = new URLSearchParams(query);
+    const skip = Number(page.get("skip") ?? 0);
+    const items = (gatewayRefunds.get(decodeURIComponent(payment)) ?? []).slice(
+      skip,
+      skip + Number(page.get("count") ?? 10),
+    );
     return new Response(JSON.stringify({ items }), { status: 200 });
   }
   return new Response(JSON.stringify({ status: "created" }), { status: 200 });
@@ -195,6 +216,7 @@ describe("reconcile-payment-status re-reads orders we closed", () => {
   beforeEach(async () => {
     gatewayOrders.clear();
     gatewayRefunds.clear();
+    unreadableRefunds.clear();
     mockFetch.mockClear();
     mockCreateRefund.mockClear();
     mockSentryReports.length = 0;
@@ -206,6 +228,7 @@ describe("reconcile-payment-status re-reads orders we closed", () => {
       );
     // Rows earlier tests and suites left behind leave every cohort, so each test reads only its own.
     await prisma.$executeRaw`UPDATE "Payment" SET "description" = 'REQUIRES_MANUAL_RECOVERY: parked by the closed-order suite' WHERE "paymentStatus" IN ('PENDING', 'EXPIRED') AND ("description" IS NULL OR NOT starts_with("description", 'REQUIRES_MANUAL_RECOVERY:'))`;
+    await prisma.$executeRaw`UPDATE "Payment" SET "description" = 'REQUIRES_MANUAL_RECOVERY: parked by the closed-order suite' WHERE starts_with("description", 'Auto-refund pending:')`;
   });
 
   it("refunds a capture on an order the sweep closed an hour ago, once, and confirms nothing", async () => {
@@ -379,22 +402,76 @@ describe("reconcile-payment-status re-reads orders we closed", () => {
       [...orders, readEarlier].map((p) => readsOf(p.paymentIntent)),
     ).toEqual([0, 0, 1, 1]);
   });
-  it("records a refund already made at the gateway and refunds only the rest, once", async () => {
+  /** A closed order captured at the gateway, part of it already refunded from the dashboard (₹300 by default). */
+  async function partlyRefundedCapture(
+    refunds: { amount: number; status: string }[] = [
+      { amount: 30_000, status: "processed" },
+    ],
+  ) {
     const request = await closedOrder(HOUR);
     const orderId = request.payment!.paymentIntent;
     const payId = gatewayPaymentId();
     gatewayOrders.set(orderId, [
-      { ...captured(payId), amount_refunded: 30_000 },
-    ]);
-    gatewayRefunds.set(payId, [
       {
-        id: `rfnd_dash_${randomUUID().slice(0, 8)}`,
-        amount: 30_000,
-        currency: "INR",
-        status: "processed",
-        notes: {},
+        ...captured(payId),
+        amount_refunded: refunds.reduce((sum, r) => sum + r.amount, 0),
       },
     ]);
+    gatewayRefunds.set(
+      payId,
+      refunds.map((r) => ({
+        id: `rfnd_dash_${randomUUID().slice(0, 8)}`,
+        currency: "INR",
+        notes: {},
+        ...r,
+      })),
+    );
+    return { request, orderId, payId };
+  }
+
+  const refundCallsFor = (orderId: string) =>
+    mockCreateRefund.mock.calls.filter(
+      ([params]) =>
+        (params as { paymentIntentId?: string }).paymentIntentId === orderId,
+    );
+
+  it("records every gateway refund past Razorpay's first page before refunding the rest", async () => {
+    const { request, orderId } = await partlyRefundedCapture(
+      Array.from({ length: 11 }, () => ({
+        amount: 1_000,
+        status: "processed",
+      })),
+    );
+
+    const run = await reconcilePaymentStatus();
+
+    expect(run.errors).toEqual([]);
+    expect(refundCallsFor(orderId)).toEqual([
+      [expect.objectContaining({ amount: 69_000 })],
+    ]);
+    expect(await refundedPaise(request.payment!.id)).toBe(PRICE_PAISE);
+  });
+
+  it("leaves the marker while a gateway refund it imported is still pending, and refunds nothing over it", async () => {
+    const { request, orderId } = await partlyRefundedCapture([
+      { amount: 30_000, status: "pending" },
+    ]);
+    const paymentId = request.payment!.id;
+    unreadableRefunds.add(
+      (gatewayOrders.get(orderId)![0] as { id: string }).id,
+    );
+    await reconcilePaymentStatus();
+    unreadableRefunds.clear();
+    await closedAt(paymentId, 20);
+
+    await retryAutoRefunds();
+
+    expect(refundCallsFor(orderId)).toEqual([]);
+    expect(await descriptionOf(paymentId)).toMatch(/^Auto-refund pending:/);
+  });
+
+  it("records a refund already made at the gateway and refunds only the rest, once", async () => {
+    const { request, orderId, payId } = await partlyRefundedCapture();
 
     const run = await reconcilePaymentStatus();
     await reconcilePaymentStatus();
@@ -485,7 +562,7 @@ describe("reconcile-payment-status re-reads orders we closed", () => {
       );
     mockCreateRefund
       .mockRejectedValueOnce(noBalance())
-      .mockRejectedValueOnce(noBalance());
+      .mockRejectedValueOnce(new TypeError("fetch failed"));
 
     const run = await reconcilePaymentStatus();
 
@@ -504,5 +581,47 @@ describe("reconcile-payment-status re-reads orders we closed", () => {
         "2 late capture(s) on closed orders not refunded",
       ),
     ]);
+    // The gateway client is told the run reports, so a network fault is not reported per row either.
+    expect(mockCreateRefund.mock.calls).toEqual([
+      [expect.objectContaining({ failureReportedByCaller: true })],
+      [expect.objectContaining({ failureReportedByCaller: true })],
+    ]);
+  });
+
+  it("retries a marker whose gateway refund failed to import by recording it and refunding only the rest, once", async () => {
+    const { request, orderId } = await partlyRefundedCapture();
+    const paymentId = request.payment!.id;
+    unreadableRefunds.add(
+      (gatewayOrders.get(orderId)![0] as { id: string }).id,
+    );
+    const run = await reconcilePaymentStatus();
+    expect(run.errors).toEqual([expect.stringContaining(paymentId)]);
+    expect(await descriptionOf(paymentId)).toMatch(/^Auto-refund pending:/);
+    expect(mockCreateRefund).not.toHaveBeenCalled();
+
+    // The gateway answers again; the retry runs past its grace.
+    unreadableRefunds.clear();
+    await closedAt(paymentId, 20);
+    await retryAutoRefunds();
+    await closedAt(paymentId, 20);
+    await retryAutoRefunds();
+
+    expect(refundCallsFor(orderId)).toEqual([
+      [expect.objectContaining({ amount: 50_000 })],
+    ]);
+    expect(await refundedPaise(paymentId)).toBe(PRICE_PAISE);
+    expect(await descriptionOf(paymentId)).toMatch(/^Auto-refunded:/);
+  });
+
+  it("reaches a closed order in one run at `limit: 1` while pending work is due", async () => {
+    const closed = (await closedOrder(HOUR)).payment!;
+    const pending = (await lapsedApproval()).payment!;
+    await prisma.$executeRaw`UPDATE "Payment" SET "createdAt" = now() - interval '30 minutes' WHERE id = ${pending.id}`;
+
+    const run = await reconcilePaymentStatus({ limit: 1 });
+
+    expect(run.closedOrdersRead).toBe(1);
+    expect(readsOf(closed.paymentIntent)).toBe(1);
+    expect(statusReadsOf(pending.paymentIntent)).toBe(1);
   });
 });

@@ -15,6 +15,9 @@ jest.mock("@/hooks/use-toast", () => ({
 jest.mock("@/hooks/useExpertShareHref", () => ({
   appendExpertShareAttribution: (href: string) => href,
 }));
+jest.mock("@/lib/auth-client", () => ({
+  useSession: () => ({ data: null, isPending: false }),
+}));
 const mockRevalidateTag = jest.fn();
 jest.mock("next/cache", () => ({
   revalidateTag: (tag: string) => mockRevalidateTag(tag),
@@ -24,6 +27,8 @@ jest.mock("next/cache", () => ({
 import { OfferingCard } from "@/components/offerings/list/OfferingCard";
 import { buildOfferingRows } from "@/components/offerings/list/offering-rows";
 import { planLoadError } from "@/app/checkout/plans/adapters/shared";
+import { LoadError } from "@/app/checkout/plans/components/PlanCheckoutShell";
+import { consultantNavWithPublicPage } from "@/lib/dashboard/nav/consultant";
 import { purgeExpertSurfaces } from "@/lib/data/public-cache";
 import { useOfferingsListed } from "@/hooks/useVerificationStatus";
 
@@ -150,6 +155,42 @@ it("answers a hidden plan's checkout with a plain sentence, never the status cod
     "This plan isn't available to book right now. Browse other experts to find another.",
   );
   expect(planLoadError(500).message).not.toMatch(/\d{3}/);
+});
+
+it("offers Browse experts beside Go back, under a title that is not a fault, for an unavailable plan", () => {
+  render(<LoadError message={planLoadError(404).message} recovery={null} />);
+  expect(screen.getByText("This plan isn't available")).toBeTruthy();
+  expect(
+    screen.getByRole("link", { name: "Browse experts" }).getAttribute("href"),
+  ).toBe("/explore/experts");
+  expect(screen.getByRole("button", { name: "Go back" })).toBeTruthy();
+});
+
+it("keeps Go back alone and the generic title for a load failure", () => {
+  render(<LoadError message={planLoadError(500).message} recovery={null} />);
+  expect(screen.getByText("Unable to load checkout")).toBeTruthy();
+  expect(screen.queryByRole("link", { name: "Browse experts" })).toBeNull();
+});
+
+describe("the expert header's public-page link", () => {
+  const nav = (status: string | null | undefined) =>
+    consultantNavWithPublicPage("cp-1", "/explore/experts/cp-1?via=t", status);
+
+  it("keeps the link and copies the share link for a verified expert", () => {
+    expect(nav("VERIFIED").pinnedCta).toMatchObject({
+      label: "View public page",
+      copyText: "/explore/experts/cp-1?via=t",
+    });
+  });
+
+  it("drops both controls while the expert is known not to be verified", () => {
+    expect(nav("UNDER_REVIEW").pinnedCta).toBeUndefined();
+    expect(nav("PENDING_VERIFICATION").pinnedCta).toBeUndefined();
+  });
+
+  it("keeps the link while the standing is still loading", () => {
+    expect(nav(undefined).pinnedCta?.label).toBe("View public page");
+  });
 });
 
 it("purges the program listings when an expert's standing changes", () => {

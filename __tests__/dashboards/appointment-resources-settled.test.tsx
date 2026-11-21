@@ -44,7 +44,11 @@ afterEach(() => {
   container.remove();
 });
 
-async function render(withheld: ResourcesWithheld | null, documents = true) {
+async function render(
+  withheld: ResourcesWithheld | null,
+  documents = true,
+  endedRefunded = false,
+) {
   // The app's client retries twice by default (providers/ReactQueryProvider.tsx).
   const client = new QueryClient({
     defaultOptions: { queries: { retry: 2, retryDelay: 0 } },
@@ -57,6 +61,7 @@ async function render(withheld: ResourcesWithheld | null, documents = true) {
           supportsDocuments={documents}
           hrefs={HREFS}
           withheld={withheld}
+          endedRefunded={endedRefunded}
         />
       </QueryClientProvider>,
     ),
@@ -105,5 +110,17 @@ describe("Resources on the booking page", () => {
       "Recordings are available to this booking's attendees.",
     );
     expect(container.querySelector(".animate-pulse")).toBeNull();
+  });
+
+  it("a refused Recordings read names the cancelled and refunded booking as the reason", async () => {
+    fetchMock.mockImplementation(async () => notFound());
+    await render(null, true, true);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(container.textContent).toContain(
+      "Recordings are no longer available because this booking was cancelled and refunded.",
+    );
+    expect(container.textContent).not.toContain("available to this booking's");
   });
 });
