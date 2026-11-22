@@ -18,7 +18,7 @@ import { OPEN_DISPUTE_WHERE } from "../../lib/backoffice/queue-predicates";
 const mockPrisma = {
   payment: { findMany: jest.fn(), count: jest.fn() },
   refund: { findMany: jest.fn(), count: jest.fn() },
-  dispute: { findMany: jest.fn(), count: jest.fn() },
+  dispute: { findMany: jest.fn(), count: jest.fn(), groupBy: jest.fn() },
 };
 
 jest.mock("../../lib/auth-helpers", () => ({
@@ -61,6 +61,7 @@ beforeEach(() => {
     model.findMany.mockResolvedValue([]);
     model.count.mockResolvedValue(0);
   }
+  mockPrisma.dispute.groupBy.mockResolvedValue([]);
 });
 
 it("opens Payments on SUCCEEDED, the set the tile counts", async () => {

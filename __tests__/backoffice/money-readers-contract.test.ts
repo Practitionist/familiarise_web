@@ -53,6 +53,7 @@ jest.mock("../../lib/prisma", () => ({
   default: {
     dispute: {
       count: async () => 1,
+      groupBy: async () => [],
       findMany: mockSpy("dispute", () => [
         {
           id: "d1",

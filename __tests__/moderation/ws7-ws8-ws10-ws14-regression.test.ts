@@ -2,6 +2,7 @@
  * @jest-environment node
  */
 import { NextRequest } from "next/server";
+import { disputeGroupBy } from "../fixtures/dispute-groupby";
 
 const mockModerationReport = {
   findFirst: jest.fn(),
@@ -30,6 +31,7 @@ const mockDispute = {
   findUnique: jest.fn(),
   findMany: jest.fn(),
   count: jest.fn(),
+  groupBy: jest.fn(),
 };
 const mockAppointment = {
   findMany: jest.fn(),
@@ -491,16 +493,9 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
       async ({ where }: { where?: Record<string, unknown> }) =>
         matching(where).length,
     );
-    // The urgent banner reads its rows; the page read (it pages with `take`) stays empty here.
-    mockDispute.findMany.mockImplementation(
-      async ({
-        where,
-        take,
-      }: {
-        where?: Record<string, unknown>;
-        take?: number;
-      }) => (take === undefined ? matching(where) : []),
-    );
+    // The urgent banner counts its groups; the page read stays empty here.
+    mockDispute.findMany.mockResolvedValue([]);
+    mockDispute.groupBy.mockImplementation(disputeGroupBy(fixtures));
 
     const req = new NextRequest("http://localhost/api/admin/disputes");
     const res = await getAdminDisputesListRoute(req);

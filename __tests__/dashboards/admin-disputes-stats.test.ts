@@ -15,6 +15,7 @@ import { NextRequest } from "next/server";
 import { GET } from "../../app/api/admin/disputes/route";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import prisma from "@/lib/prisma";
+import { disputeGroupBy } from "../fixtures/dispute-groupby";
 
 jest.mock("../../lib/auth-helpers", () => ({
   __esModule: true,
@@ -26,6 +27,7 @@ jest.mock("../../lib/prisma", () => ({
     dispute: {
       findMany: jest.fn(),
       count: jest.fn(),
+      groupBy: jest.fn(),
     },
   },
 }));
@@ -33,6 +35,7 @@ jest.mock("../../lib/prisma", () => ({
 const mockedAuth = requireBackofficeSurface as jest.Mock;
 const mockedFindMany = prisma.dispute.findMany as jest.Mock;
 const mockedCount = prisma.dispute.count as jest.Mock;
+const mockedGroupBy = prisma.dispute.groupBy as unknown as jest.Mock;
 
 function req(url: string) {
   return new NextRequest(url);
@@ -44,6 +47,7 @@ beforeEach(() => {
     session: { user: { id: "staff-1", role: "STAFF" } },
   });
   mockedFindMany.mockResolvedValue([]);
+  mockedGroupBy.mockResolvedValue([]);
 });
 
 describe("GET /api/admin/disputes — stats", () => {
@@ -105,9 +109,7 @@ describe("GET /api/admin/disputes — stats", () => {
         dueBy: new Date(Date.now() + day),
       },
     ];
-    mockedFindMany.mockImplementation(async ({ where }) =>
-      where?.dueBy ? urgent : [],
-    );
+    mockedGroupBy.mockImplementation(disputeGroupBy(urgent));
 
     const body = await (
       await GET(req("http://localhost/api/admin/disputes"))
@@ -130,5 +132,6 @@ describe("GET /api/admin/disputes — stats", () => {
     const res = await GET(req("http://localhost/api/admin/disputes"));
     expect(res.status).toBe(403);
     expect(mockedFindMany).not.toHaveBeenCalled();
+    expect(mockedGroupBy).not.toHaveBeenCalled();
   });
 });

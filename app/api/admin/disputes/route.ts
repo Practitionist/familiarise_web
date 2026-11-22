@@ -81,26 +81,49 @@ const EVIDENCE_BUCKET = {
   DISPUTE_NOT_OPEN: "notOpen",
 } as const satisfies Record<EvidenceRefusalCode, keyof UrgentEvidence>;
 
-/** The urgent disputes split by the evidence door's own answer, so the banner never promises what it refuses. */
-function urgentByEvidence(
-  urgent: {
-    status: DisputeStatus;
-    paymentGateway: string;
-    dueBy: Date | null;
-  }[],
-): UrgentEvidence {
-  const counts: UrgentEvidence = {
+const URGENT_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
+
+/**
+ * The open disputes due within three days, overdue included, counted by status and gateway and split by the
+ * evidence door's own answer, so the banner never promises what it refuses.
+ */
+async function urgentByEvidence(): Promise<{
+  total: number;
+  evidence: UrgentEvidence;
+}> {
+  const now = new Date();
+  const groups = (dueBy: Prisma.DateTimeNullableFilter) =>
+    prisma.dispute.groupBy({
+      by: ["status", "paymentGateway"],
+      where: {
+        ...OPEN_DISPUTE_WHERE,
+        status: { in: ACTIONABLE_OPEN_STATUSES },
+        dueBy,
+      },
+      _count: { _all: true },
+    });
+  const [overdue, dueSoon] = await Promise.all([
+    groups({ lt: now }),
+    groups({ gte: now, lte: new Date(now.getTime() + URGENT_WINDOW_MS) }),
+  ]);
+  const evidence: UrgentEvidence = {
     open: 0,
     deadlinePassed: 0,
     notOpen: 0,
     otherGateway: 0,
   };
-  const nowMs = Date.now();
-  for (const dispute of urgent) {
-    const refusal = evidenceRefusal(dispute, nowMs);
-    counts[refusal ? EVIDENCE_BUCKET[refusal] : "open"] += 1;
-  }
-  return counts;
+  let total = 0;
+  // A group's due date stands for its whole bucket: just past for the overdue ones, now for the rest.
+  const fold = (rows: typeof overdue, dueBy: Date) => {
+    for (const row of rows) {
+      const refusal = evidenceRefusal({ ...row, dueBy }, now.getTime());
+      evidence[refusal ? EVIDENCE_BUCKET[refusal] : "open"] += row._count._all;
+      total += row._count._all;
+    }
+  };
+  fold(overdue, new Date(now.getTime() - 1));
+  fold(dueSoon, now);
+  return { total, evidence };
 }
 
 async function loadDisputePage(params: {
@@ -231,16 +254,7 @@ export async function GET(req: NextRequest) {
     const [total, urgent, underReviewCount, wonCount, disputes] =
       await Promise.all([
         prisma.dispute.count({ where }),
-        prisma.dispute.findMany({
-          where: {
-            ...OPEN_DISPUTE_WHERE,
-            status: { in: ACTIONABLE_OPEN_STATUSES },
-            dueBy: {
-              lte: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000),
-            },
-          },
-          select: { status: true, paymentGateway: true, dueBy: true },
-        }),
+        urgentByEvidence(),
         prisma.dispute.count({ where: { status: "UNDER_REVIEW" } }),
         prisma.dispute.count({ where: { status: "WON" } }),
         loadDisputePage({ where, status, skip, limit, withEmail }),
@@ -269,8 +283,8 @@ export async function GET(req: NextRequest) {
         },
       })),
       total,
-      urgentDisputes: urgent.length,
-      urgentEvidence: urgentByEvidence(urgent),
+      urgentDisputes: urgent.total,
+      urgentEvidence: urgent.evidence,
       stats: { underReviewCount, wonCount },
       page,
       limit,
