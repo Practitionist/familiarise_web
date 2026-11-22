@@ -205,6 +205,7 @@ jest.mock("../../lib/stream-logger", () => ({
 jest.mock("../../schemas/webhooks/metadata", () => ({
   __esModule: true,
   normalizeLegacySlotKeys: (m: unknown) => m,
+  validateConfirmExistingMetadata: jest.fn(),
   validateWebhookMetadata: jest.fn(),
 }));
 

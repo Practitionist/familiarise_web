@@ -160,6 +160,8 @@ jest.mock("../../lib/enterprise/system-events", () => {
 const validateWebhookMetadata = jest.fn();
 jest.mock("../../schemas/webhooks/metadata", () => ({
   normalizeLegacySlotKeys: (m: unknown) => m,
+  validateConfirmExistingMetadata: (...a: unknown[]) =>
+    validateWebhookMetadata(...a),
   validateWebhookMetadata: (...a: unknown[]) => validateWebhookMetadata(...a),
 }));
 

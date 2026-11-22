@@ -182,6 +182,7 @@ jest.mock("../../lib/enterprise/system-events", () => {
 jest.mock("../../schemas/webhooks/metadata", () => ({
   __esModule: true,
   normalizeLegacySlotKeys: (m: unknown) => m,
+  validateConfirmExistingMetadata: jest.fn(),
   validateWebhookMetadata: jest.fn(),
 }));
 // #1846 — the legacy event creators now replay the checkout capacity gate, and

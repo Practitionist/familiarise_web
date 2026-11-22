@@ -160,6 +160,7 @@ jest.mock("../../lib/enterprise/system-events", () => {
 jest.mock("../../schemas/webhooks/metadata", () => ({
   __esModule: true,
   normalizeLegacySlotKeys: (m: unknown) => m,
+  validateConfirmExistingMetadata: jest.fn(),
   validateWebhookMetadata: jest.fn(),
 }));
 // #1846 — a capture can now be refused for a full room (the group-event

@@ -69,6 +69,7 @@ import {
 } from "@/lib/payments/ledger/unapplied-receipts";
 import {
   normalizeLegacySlotKeys,
+  validateConfirmExistingMetadata,
   validateWebhookMetadata,
 } from "@/schemas/webhooks/metadata";
 import { ZodError } from "zod";
@@ -703,23 +704,23 @@ export async function handlePaymentSuccess(
             return null; // Signal: already processed, skip Phase 2
           }
 
-          if (payment.appointmentId) {
-            if (!metadata.userId && payment.userId) {
-              metadata.userId = payment.userId;
-            }
-            if (!metadata.appointmentType) {
-              const existingAppt = await tx.appointment.findUnique({
-                where: { id: payment.appointmentId },
-                select: { appointmentType: true },
-              });
-              if (existingAppt?.appointmentType) {
-                metadata.appointmentType = existingAppt.appointmentType;
-              }
+          if (payment.appointmentId && !metadata.appointmentType) {
+            const existingAppt = await tx.appointment.findUnique({
+              where: { id: payment.appointmentId },
+              select: { appointmentType: true },
+            });
+            if (existingAppt?.appointmentType) {
+              metadata.appointmentType = existingAppt.appointmentType;
             }
           }
 
           try {
-            validateWebhookMetadata(metadata);
+            // An existing booking is confirmed from our rows; only creating one needs the full per-type notes.
+            if (payment.appointmentId) {
+              validateConfirmExistingMetadata(metadata);
+            } else {
+              validateWebhookMetadata(metadata);
+            }
           } catch (validationError) {
             if (recoverable) throw validationError;
             const errorMessage =

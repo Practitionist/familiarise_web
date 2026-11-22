@@ -150,6 +150,7 @@ jest.mock("../../lib/enterprise/system-events", () => {
 jest.mock("../../schemas/webhooks/metadata", () => ({
   __esModule: true,
   normalizeLegacySlotKeys: (m: unknown) => m,
+  validateConfirmExistingMetadata: jest.fn(),
   validateWebhookMetadata: jest.fn(),
 }));
 jest.mock("../../lib/events/capacity", () => ({
