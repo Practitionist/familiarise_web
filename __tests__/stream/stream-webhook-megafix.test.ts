@@ -628,7 +628,7 @@ describe("Stream Webhook Megafix Regression Suite", () => {
           endedReason: "session_ended",
           appointmentOccurrenceId: "occ-2",
         })
-        .mockResolvedValueOnce({ endedAt });
+        .mockResolvedValueOnce({ streamCallId: "call-ended", endedAt });
       (prisma.meeting.updateMany as jest.Mock).mockResolvedValue({ count: 0 });
       (prisma.meetingPresence.createMany as jest.Mock).mockResolvedValue({
         count: 1,

@@ -599,24 +599,35 @@ function supersedesRecordedEnd(recorded: Date | null, incoming: Date): boolean {
   return !recorded || incoming.getTime() > recorded.getTime();
 }
 
-/** Re-reads the room under its row lock and reopens a non-deliberate end the join postdates; returns the end that still holds. */
+type JoinRoom = { current: boolean; endedAt: Date | null };
+
+const PRIOR_SEGMENT: JoinRoom = { current: false, endedAt: null };
+
+/**
+ * Re-reads the room under its row lock and reopens a non-deliberate end the join postdates.
+ * A room rotated off the join's call id since it was resolved makes the join a prior segment's.
+ */
 async function settleRoomForJoin(
   tx: Tx,
   meetingId: string,
+  streamCallId: string,
   joinedAt: Date,
-): Promise<Date | null> {
+): Promise<JoinRoom> {
   await lockMeetingRow(tx, meetingId);
   const room = await tx.meeting.findUnique({
     where: { id: meetingId },
-    select: { endedAt: true, endedReason: true },
+    select: { streamCallId: true, endedAt: true, endedReason: true },
   });
-  if (!room?.endedAt) return null;
-  if (joinedAt <= room.endedAt || isDeliberateEnd(room)) return room.endedAt;
+  if (room?.streamCallId !== streamCallId) return PRIOR_SEGMENT;
+  if (!room.endedAt) return { current: true, endedAt: null };
+  if (joinedAt <= room.endedAt || isDeliberateEnd(room)) {
+    return { current: true, endedAt: room.endedAt };
+  }
   const reopened = await tx.meeting.updateMany({
     where: { id: meetingId, endedAt: room.endedAt },
     data: { endedAt: null, endedReason: null },
   });
-  return reopened.count > 0 ? null : room.endedAt;
+  return { current: true, endedAt: reopened.count > 0 ? null : room.endedAt };
 }
 
 /** `inCurrentRoom`: the join is to the live current segment, so the person is in the room now. */
@@ -662,9 +673,10 @@ export async function handleSessionParticipantJoined(
     // Touch rows in strict `Meeting -> MeetingPresence -> MeetingAttendance` order.
     await prisma.$transaction(async (tx) => {
       // A prior segment's join never reopens, or takes the end of, the current room.
-      const effectiveEndedAt = isCurrentSegment
-        ? await settleRoomForJoin(tx, meetingId, joinedAt)
-        : null;
+      const room = isCurrentSegment
+        ? await settleRoomForJoin(tx, meetingId, streamCallId, joinedAt)
+        : PRIOR_SEGMENT;
+      const effectiveEndedAt = room.endedAt;
 
       const { count: newSessions } = await tx.meetingPresence.createMany({
         data: [
@@ -707,7 +719,7 @@ export async function handleSessionParticipantJoined(
         },
         update: buildAttendanceJoinUpdate(
           newSessions,
-          isCurrentSegment && !effectiveEndedAt,
+          room.current && !effectiveEndedAt,
         ),
       });
 

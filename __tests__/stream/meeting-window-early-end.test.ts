@@ -224,6 +224,7 @@ describe("a join reopens a non-deliberate end (#1607)", () => {
     const stale = new Date("2026-09-13T10:00:30.000Z");
     db.meeting.findUnique.mockResolvedValue({
       id: "ms_1",
+      streamCallId: "slot_1",
       endedAt: stale,
       endedReason: "session_timeout",
     });
@@ -240,6 +241,7 @@ describe("a join reopens a non-deliberate end (#1607)", () => {
   it("ignores a late-delivered join that predates the end", async () => {
     db.meeting.findUnique.mockResolvedValue({
       id: "ms_1",
+      streamCallId: "slot_1",
       endedAt: new Date("2026-09-13T10:15:00.000Z"),
       endedReason: "session_timeout",
     });
@@ -253,6 +255,7 @@ describe("a join reopens a non-deliberate end (#1607)", () => {
   it("leaves a deliberate end alone", async () => {
     db.meeting.findUnique.mockResolvedValue({
       id: "ms_1",
+      streamCallId: "slot_1",
       endedAt: new Date("2026-09-13T10:30:00.000Z"),
       endedReason: "call_ended",
     });
@@ -310,7 +313,11 @@ describe("a newer session owns the room", () => {
     const endedAt = new Date("2026-09-13T10:20:00.000Z");
     db.meeting.findUnique
       .mockResolvedValueOnce({ ...session(null), streamCallId: "slot_1" })
-      .mockResolvedValueOnce({ endedAt, endedReason: "session_timeout" });
+      .mockResolvedValueOnce({
+        streamCallId: "slot_1",
+        endedAt,
+        endedReason: "session_timeout",
+      });
 
     await handleSessionParticipantJoined({
       call_cid: "default:slot_1",
@@ -325,5 +332,28 @@ describe("a newer session owns the room", () => {
       where: { id: "ms_1", endedAt },
       data: { endedAt: null, endedReason: null },
     });
+  });
+
+  it("a join whose call id the room rotated away from before its lock takes the prior-segment path", async () => {
+    db.meeting.findUnique
+      .mockResolvedValueOnce({ ...session(null), streamCallId: "slot_1" })
+      .mockResolvedValueOnce({
+        streamCallId: "slot_1-r1",
+        endedAt: new Date("2026-09-13T10:20:00.000Z"),
+        endedReason: "session_timeout",
+      });
+
+    await handleSessionParticipantJoined({
+      call_cid: "default:slot_1",
+      type: "call.session_participant_joined",
+      created_at: "2026-09-13T10:21:00.000Z",
+      session_id: "sess_2",
+      participant: { user: { id: "user_1" } },
+    });
+
+    expect(db.meeting.updateMany).not.toHaveBeenCalled();
+    const upsert = db.meetingAttendance.upsert.mock.calls[0][0];
+    expect(upsert.update).toEqual({ joinCount: { increment: 1 } });
+    expect(upsert.create.lastLeftAt).toBeUndefined();
   });
 });

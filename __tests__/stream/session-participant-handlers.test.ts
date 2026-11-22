@@ -61,6 +61,7 @@ describe("handleSessionParticipantJoined (STR-4)", () => {
   it("creates attendance with firstJoinedAt on first join (create branch)", async () => {
     mockFindUnique.mockResolvedValue({
       id: "ms_1",
+      streamCallId: "call_abc",
       appointmentOccurrenceId: "occ_1",
     });
 
@@ -105,6 +106,7 @@ describe("handleSessionParticipantJoined (STR-4)", () => {
   it("does not bump joinCount when the device session was already seen (#1746)", async () => {
     mockFindUnique.mockResolvedValue({
       id: "ms_1",
+      streamCallId: "call_abc",
       appointmentOccurrenceId: "occ_1",
     });
     mockPresenceCreate.mockResolvedValueOnce({ count: 0 });

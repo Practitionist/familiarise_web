@@ -78,7 +78,15 @@ async function seedRoom() {
       select: { id: true, lastLeftAt: true },
     }),
   });
-  return { meetingId: meeting.id, at, join, leave, sessionEnded, state };
+  return {
+    meetingId: meeting.id,
+    streamCallId,
+    at,
+    join,
+    leave,
+    sessionEnded,
+    state,
+  };
 }
 
 async function waitFor(done: () => Promise<boolean>): Promise<void> {
@@ -197,4 +205,41 @@ it("a rejoin that read the room before a late end took it reopens the room once 
     { userSessionId: second, leftAt: null, closedByEnd: false },
   ]);
   expect(attendance.lastLeftAt).toBeNull();
+});
+
+it("a join to a call the room rotated away from before its lock leaves the current room's attendance alone", async () => {
+  const room = await seedRoom();
+  const first = `dev-${randomUUID()}`;
+  const second = `dev-${randomUUID()}`;
+  await room.join(first, 0);
+  await room.leave(first, 0, 10);
+  await room.sessionEnded(11);
+
+  let rejoin: Promise<void> | undefined;
+  // The rejoin resolves the old call id, then waits on the room while the host reopens it on a new id.
+  await prisma.$transaction(
+    async (tx) => {
+      await tx.$executeRaw`SELECT 1 FROM "Meeting" WHERE id = ${room.meetingId} FOR UPDATE`;
+      rejoin = room.join(second, 12);
+      await waitFor(async () => (await lockWaiters()) >= 1);
+      await tx.meeting.update({
+        where: { id: room.meetingId },
+        data: {
+          streamCallId: `${room.streamCallId}-r1`,
+          endedAt: null,
+          endedReason: null,
+        },
+      });
+    },
+    { timeout: 20_000 },
+  );
+  await rejoin;
+
+  const { meeting, stays, attendance } = await room.state();
+  expect(meeting).toEqual({ endedAt: null, endedReason: null });
+  expect(stays).toEqual([
+    expect.objectContaining({ userSessionId: first, leftAt: room.at(10) }),
+    { userSessionId: second, leftAt: null, closedByEnd: false },
+  ]);
+  expect(attendance.lastLeftAt).toEqual(room.at(10));
 });
