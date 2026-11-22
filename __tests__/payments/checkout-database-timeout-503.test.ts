@@ -202,7 +202,9 @@ beforeEach(() => {
   calculateAmountAndValidate.mockImplementation(
     actualPricing.calculateAmountAndValidate,
   );
-  revalidateInsideLock.mockImplementation(actualRevalidate.revalidateInsideLock);
+  revalidateInsideLock.mockImplementation(
+    actualRevalidate.revalidateInsideLock,
+  );
 });
 
 afterEach(() => jest.restoreAllMocks());
@@ -219,6 +221,8 @@ describe("a database timeout before the booking commits answers a typed 503", ()
 
     const res = await POST(webinarCheckout());
 
+    // The pricing transaction passes no options, so Prisma's 5 s default applies.
+    expect($transaction.mock.calls[0]).toHaveLength(1);
     expect(res.status).toBe(503);
     expect(await res.json()).toMatchObject(DATABASE_BUSY_BODY);
     const context = soleCapture();
@@ -255,6 +259,10 @@ describe("a database timeout before the booking commits answers a typed 503", ()
 
     const res = await POST(consultationCheckout());
 
+    expect($transaction).toHaveBeenCalledWith(
+      expect.any(Function),
+      expect.objectContaining({ timeout: 25_000 }),
+    );
     expect(res.status).toBe(503);
     expect(await res.json()).toMatchObject(DATABASE_BUSY_BODY);
     expect(soleCapture().level).toBe("warning");

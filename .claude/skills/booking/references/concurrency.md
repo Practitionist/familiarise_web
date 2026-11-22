@@ -252,7 +252,12 @@ outside the transaction), as the cancel and reschedule routes do, so a replay
 never writes under a lapsed grant.
 
 Exhausted retries surface as a 409 — checkout answers `errorType:
-"SERIALIZATION_CONFLICT"` with `yourCardWasNotCharged: true` — never a 500. An
+"SERIALIZATION_CONFLICT"` with `yourCardWasNotCharged: true` — never a 500. A
+database timeout before the booking commits (an expired transaction, P2028, or
+the driver's `Query read timeout`; `isTransactionExpired` and
+`isQueryReadTimeout`) answers a 503 `DATABASE_BUSY` with the same body. A read
+timeout at the booking transaction stays a 500 without that claim, because the
+COMMIT it cut off may have landed. An
 exclusion-constraint violation is the backstop working, so it is a 409 too:
 detect it with `isExclusionViolation` from `lib/db/pg-errors.ts` (SQLSTATE
 `23P01` structurally, with a narrow text fallback only because Prisma does not
