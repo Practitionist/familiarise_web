@@ -9,26 +9,21 @@ import { scrubStringValue } from "@/lib/observability/sentry-scrubber";
 import {
   DEAD_LETTER_BELL_WHERE,
   DEAD_LETTER_EMAIL_WHERE,
+  PARKED_CAPTURE_WHERE,
+  parkedCaptureOrder,
+  parkedCaptureSince,
 } from "@/lib/backoffice/queue-predicates";
 import {
   DUNNABLE_ORG_STATUSES,
   MAX_REMINDERS,
   REMINDER_INTERVAL_MS,
 } from "@/lib/payments/billing/dunning-policy";
-import {
-  MANUAL_RECOVERY_PREFIX,
-  unreturnedCaptureWhere,
-} from "@/lib/payments/webhooks/auto-refund-marker";
 
 /** Oldest rows shown per queue, and newest rows when the queue holds more. */
 export const ATTENTION_ROW_CAP = 25;
 const LAST_ERROR_MAX_CHARS = 200;
 
-/** The gauged queues, and parked captures, which no sweep clears and so are listed at any age. */
-export type AttentionQueueKey = keyof PendingAges | "parkedCaptures";
-
-const limitOf = (key: AttentionQueueKey): number =>
-  key === "parkedCaptures" ? 0 : PENDING_AGE_LIMITS_MS[key];
+export type AttentionQueueKey = keyof PendingAges;
 
 export interface AttentionLink {
   label: string;
@@ -193,17 +188,12 @@ const SOURCES: readonly AttentionSource[] = [
     money: true,
     note: "A payment with a refund owed, pending or paid, or an open or lost dispute, is not listed here.",
     read: async (now) => {
-      const where: Prisma.PaymentWhereInput = {
-        paymentStatus: "SUCCEEDED",
-        deletedAt: null,
-        description: { startsWith: MANUAL_RECOVERY_PREFIX },
-        ...unreturnedCaptureWhere,
-      };
+      const where = PARKED_CAPTURE_WHERE;
       const { rows, total } = await windowOf(
         (order, take) =>
           prisma.payment.findMany({
             where,
-            orderBy: [{ createdAt: order }, { id: order }],
+            orderBy: parkedCaptureOrder(order),
             take,
             select: {
               id: true,
@@ -223,7 +213,7 @@ const SOURCES: readonly AttentionSource[] = [
             state: p.appointmentId
               ? "Parked, booking exists"
               : "Parked, no booking",
-            ageMs: now.getTime() - (p.capturedAt ?? p.createdAt).getTime(),
+            ageMs: now.getTime() - parkedCaptureSince(p).getTime(),
             attempts: null,
             lastError: lastError(p.description),
             links: [
@@ -598,7 +588,7 @@ export async function readNeedsAttention(
 ): Promise<AttentionQueue[]> {
   const queues: AttentionQueue[] = [];
   for (const source of SOURCES) {
-    const limitMs = limitOf(source.key);
+    const limitMs = PENDING_AGE_LIMITS_MS[source.key];
     let items: AttentionItems | null;
     try {
       items = await source.read(now, limitMs);

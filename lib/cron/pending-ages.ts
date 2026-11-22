@@ -2,6 +2,11 @@ import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import type { Tx } from "@/lib/prisma";
 import {
+  PARKED_CAPTURE_WHERE,
+  parkedCaptureOrder,
+  parkedCaptureSince,
+} from "@/lib/backoffice/queue-predicates";
+import {
   pendingAgesSchema,
   type PendingAges,
 } from "@/lib/observability/betterstack-telemetry";
@@ -24,6 +29,8 @@ export const PENDING_AGE_LIMITS_MS: Readonly<
   webhookEvents: HOUR_MS,
   emailRetries: HOUR_MS,
   notificationRetries: HOUR_MS,
+  // No sweep clears a parked capture, so every one is past due.
+  parkedCaptures: 0,
 };
 
 /** A dispute is due for attention this long before its evidence deadline. */
@@ -35,10 +42,13 @@ export const WEBHOOK_GIVE_UP_MS = 168 * HOUR_MS;
 const ageOf = (oldestDuePoint: Prisma.Sql, now: Date) =>
   Prisma.sql`GREATEST(0, COALESCE(EXTRACT(EPOCH FROM ${now}::timestamptz - (${oldestDuePoint})), 0))::int`;
 
+const sqlGaugesSchema = pendingAgesSchema.omit({ parkedCaptures: true });
+
 /**
- * Every watched queue's oldest-pending age in one statement, so the tick claim
- * pays one round trip; 0 means nothing is past its due point. `OrganizationInvoice`
- * and `WebhookEvent` keep UTC `timestamp` columns, read `AT TIME ZONE 'UTC'`.
+ * Every watched queue's oldest-pending age, 0 when nothing is past its due point:
+ * one statement, then the parked-capture queue's first row through the page's own
+ * `where`. `OrganizationInvoice` and `WebhookEvent` keep UTC `timestamp` columns,
+ * read `AT TIME ZONE 'UTC'`.
  */
 export async function readPendingAges(tx: Tx, now: Date): Promise<PendingAges> {
   const dunnable = Prisma.join([...DUNNABLE_ORG_STATUSES]);
@@ -101,5 +111,21 @@ export async function readPendingAges(tx: Tx, now: Date): Promise<PendingAges> {
         now,
       )} AS "notificationRetries"
   `);
-  return z.tuple([pendingAgesSchema]).parse(rows)[0];
+  const [ages] = z.tuple([sqlGaugesSchema]).parse(rows);
+  const parked = await tx.payment.findFirst({
+    where: PARKED_CAPTURE_WHERE,
+    orderBy: parkedCaptureOrder("asc"),
+    select: { capturedAt: true, createdAt: true },
+  });
+  return {
+    ...ages,
+    parkedCaptures: parked
+      ? Math.max(
+          0,
+          Math.round(
+            (now.getTime() - parkedCaptureSince(parked).getTime()) / 1000,
+          ),
+        )
+      : 0,
+  };
 }

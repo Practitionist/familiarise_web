@@ -182,7 +182,7 @@ describe("pending-age gauges", () => {
     notificationRetries: 0,
   };
 
-  it("returns the seven gauges after every probe finishes", async () => {
+  it("returns the gauges after every probe finishes", async () => {
     gaugeRows = () => [ages];
     const { idle, pendingAges } = await probeTick(
       due,
@@ -191,7 +191,8 @@ describe("pending-age gauges", () => {
     );
 
     expect(idle).toEqual(due);
-    expect(pendingAges).toEqual(ages);
+    // No parked capture: the fake finds no payment.
+    expect(pendingAges).toEqual({ ...ages, parkedCaptures: 0 });
   });
 
   it("keeps the idle answers and reports no gauges when the gauge read fails", async () => {
