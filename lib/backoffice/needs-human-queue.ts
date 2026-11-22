@@ -109,6 +109,8 @@ export const needsHumanItemSchema = z.object({
   endedReason: meetingEndReasonSchema.nullable(),
   /** Parked over 7 days; its booking's settlement is waiting on it. */
   aged: z.boolean(),
+  /** Stream's record of the call is not stored yet and Stream still holds it. */
+  canRereadAttendance: z.boolean(),
   booking: z.object({
     type: z.nativeEnum(AppointmentsType),
     title: z.string(),

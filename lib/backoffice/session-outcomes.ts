@@ -1,7 +1,8 @@
 /**
  * The ops side of session outcomes: overturn one session's verdict
- * (`session.set-outcome`), and page through the sessions only a human can
- * decide. A void's make-up or refund is money, so an overturn that would
+ * (`session.set-outcome`), read Stream's record of a session again
+ * (`session.reread-attendance`), and page through the sessions only a human
+ * can decide. A void's make-up or refund is money, so an overturn that would
  * un-void a session is refused once either has happened.
  */
 
@@ -14,9 +15,20 @@ import {
 import prisma, { type Tx } from "@/lib/prisma";
 import { onClassSessionVoided } from "@/lib/booking/class-sessions";
 import {
+  classifySessionOutcome,
   COMPLETION_FOR_OUTCOME,
   HOST_ATTRIBUTED_OUTCOMES,
 } from "@/lib/booking/session-outcome";
+import { readOutageWindows } from "@/lib/booking/session-outcome-sweep";
+import {
+  SESSION_HOSTS_SELECT,
+  sessionHostUserIds,
+} from "@/lib/booking/session-hosts";
+import {
+  SETTLE_MEETING_SELECT,
+  settleOccurrenceAttendance,
+  type AttendanceSettlement,
+} from "@/lib/meetings/settle-attendance";
 import { INCIDENT_REFUND_KEY_PREFIX } from "@/lib/booking/incident-keys";
 import { isAgedNeedsHuman, NEEDS_HUMAN } from "@/lib/booking/misses";
 import {
@@ -273,6 +285,84 @@ export async function overturnSessionOutcome(args: {
   );
 }
 
+/** Ops may ask Stream again until this many days after the session; Stream drops the detail after 90. */
+export const ATTENDANCE_REREAD_DAYS = 80;
+
+const rereadDeadline = (endsAt: Date) =>
+  new Date(endsAt.getTime() + ATTENDANCE_REREAD_DAYS * 86_400_000);
+
+export type AttendanceReread = {
+  result: AttendanceSettlement["kind"];
+  /** What the classifier makes of the stored record; ops apply it through `session.set-outcome`. */
+  verdict: {
+    outcome: OccurrenceOutcome;
+    deliveredMinutes: number | null;
+    lostMinutes: number | null;
+  } | null;
+};
+
+/**
+ * Runs the same settle step the sweep runs for one session and answers the
+ * verdict its stored record gives. It writes only the snapshot: the outcome,
+ * and any money it moves, stays with the set-outcome door.
+ */
+export async function rereadSessionAttendance(args: {
+  occurrenceId: string;
+  now?: Date;
+}): Promise<AttendanceReread> {
+  const now = args.now ?? new Date();
+  const occ = await prisma.appointmentOccurrence.findUnique({
+    where: { id: args.occurrenceId },
+    select: {
+      id: true,
+      startsAt: true,
+      endsAt: true,
+      meeting: {
+        select: { ...SETTLE_MEETING_SELECT, endedAt: true, endedReason: true },
+      },
+      appointment: { select: SESSION_HOSTS_SELECT },
+    },
+  });
+  if (!occ) throw new OpsRefusal("SESSION_NOT_FOUND", "No such session.", 404);
+  if (!occ.meeting) {
+    throw new OpsRefusal(
+      "SESSION_HAD_NO_CALL",
+      "This session had no video call, so Stream holds no record of it.",
+    );
+  }
+  if (now > rereadDeadline(occ.endsAt)) {
+    throw new OpsRefusal(
+      "STREAM_RECORD_GONE",
+      `Stream keeps a call's participant record for 90 days; a re-read is offered for ${ATTENDANCE_REREAD_DAYS}.`,
+    );
+  }
+  const settled = await settleOccurrenceAttendance(
+    { occurrenceId: occ.id, endsAt: occ.endsAt, meeting: occ.meeting },
+    { now },
+  );
+  if (settled.kind !== "settled")
+    return { result: settled.kind, verdict: null };
+  const verdict = classifySessionOutcome({
+    startsAt: occ.startsAt,
+    endsAt: occ.endsAt,
+    hostUserIds: sessionHostUserIds(occ.appointment),
+    intervals: settled.intervals,
+    meeting: {
+      endedAt: occ.meeting.endedAt,
+      endedReason: occ.meeting.endedReason,
+    },
+    maintenanceWindows: await readOutageWindows(prisma, occ.startsAt),
+  });
+  return {
+    result: "settled",
+    verdict: {
+      outcome: verdict.outcome,
+      deliveredMinutes: verdict.deliveredMinutes,
+      lostMinutes: verdict.lostMinutes,
+    },
+  };
+}
+
 const NEEDS_HUMAN_ROW_SELECT = {
   id: true,
   appointmentId: true,
@@ -283,7 +373,7 @@ const NEEDS_HUMAN_ROW_SELECT = {
   outcome: true,
   deliveredMinutes: true,
   lostMinutes: true,
-  meeting: { select: { endedReason: true } },
+  meeting: { select: { endedReason: true, attendanceSettledAt: true } },
   appointment: { select: APPOINTMENT_HEADLINE_SELECT },
 } satisfies Prisma.AppointmentOccurrenceSelect;
 
@@ -358,6 +448,10 @@ export async function readSessionsNeedingHuman({
       endedReason:
         meetingEndReasonSchema.safeParse(row.meeting?.endedReason).data ?? null,
       aged: isAgedNeedsHuman(row, now),
+      canRereadAttendance:
+        !!row.meeting &&
+        !row.meeting.attendanceSettledAt &&
+        now <= rereadDeadline(row.endsAt),
       booking: {
         type: row.appointment.appointmentType,
         title: headline.title,
