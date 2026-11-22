@@ -3,7 +3,7 @@
 import { SUPPORT_EMAIL } from "@/lib/company";
 import * as Sentry from "@sentry/nextjs";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/auth/PasswordInput";
 import { Label } from "@/components/ui/label";
 import { pendingToast, useToast } from "@/hooks/use-toast";
 import {
@@ -201,10 +201,9 @@ function ResetPasswordContent() {
           <form className="mt-8 space-y-6" onSubmit={handleResetPassword}>
             <div className="grid gap-2">
               <Label htmlFor="password">New Password</Label>
-              <Input
+              <PasswordInput
                 id="password"
                 name="password"
-                type="password"
                 autoComplete="new-password"
                 required
                 placeholder="New password"
@@ -217,10 +216,9 @@ function ResetPasswordContent() {
 
             <div className="grid gap-2">
               <Label htmlFor="confirm-password">Confirm New Password</Label>
-              <Input
+              <PasswordInput
                 id="confirm-password"
                 name="confirm-password"
-                type="password"
                 autoComplete="new-password"
                 required
                 placeholder="Confirm new password"

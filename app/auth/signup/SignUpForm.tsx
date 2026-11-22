@@ -12,7 +12,7 @@ import { setPendingReferral } from "@/lib/pending-referral";
 import { DisplayNameSchema } from "@/schemas/auth";
 import {
   PASSWORD_MIN_LENGTH,
-  PASSWORD_RULE_HINT,
+  PASSWORD_LENGTH_HINT,
   passwordTooLong,
 } from "@/lib/auth/password-rules";
 import { ReferralCodeField } from "./ReferralCodeField";
@@ -21,6 +21,7 @@ import {
   useReferralCodeCheck,
 } from "./useReferralCodeCheck";
 import { FieldError, invalidProps } from "@/components/ui/field-error";
+import { PasswordInput } from "@/components/auth/PasswordInput";
 import { AuthEmailField } from "../AuthEmailField";
 import {
   humanizeAuthError,
@@ -97,7 +98,6 @@ function SignUpContent() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [refCode, setRefCode] = useState(referralCode || "");
   const [ssoCheck, setSsoCheck] = useState<{
@@ -249,11 +249,6 @@ function SignUpContent() {
       });
       return;
     }
-    if (password !== confirmPassword) {
-      setFieldError({ password: "The two passwords don't match." });
-      toast({ title: "Passwords do not match", variant: "destructive" });
-      return;
-    }
     if (awaitingCaptcha(captcha)) {
       const copy = humanizeAuthError("signup", { code: "MISSING_RESPONSE" });
       setErrorAction(copy.action ?? null);
@@ -394,12 +389,10 @@ function SignUpContent() {
             <>
               <div className="grid gap-2 mt-4">
                 <Label htmlFor="password">Password</Label>
-                <Input
+                <PasswordInput
                   id="password"
                   name="password"
-                  type="password"
                   autoComplete="new-password"
-                  placeholder="••••••••"
                   value={password}
                   onChange={(e) => {
                     setPassword(e.target.value);
@@ -408,24 +401,17 @@ function SignUpContent() {
                   required
                   minLength={PASSWORD_MIN_LENGTH}
                   disabled={isLoading}
-                  {...invalidProps(fieldError.password, "password-error")}
+                  aria-invalid={fieldError.password ? true : undefined}
+                  aria-describedby={
+                    fieldError.password
+                      ? "password-error password-hint"
+                      : "password-hint"
+                  }
                 />
                 <FieldError id="password-error" message={fieldError.password} />
-                <p className="text-xs text-zinc-400">{PASSWORD_RULE_HINT}</p>
-              </div>
-              <div className="grid gap-2 mt-4">
-                <Label htmlFor="confirm-password">Confirm Password</Label>
-                <Input
-                  id="confirm-password"
-                  name="confirm-password"
-                  type="password"
-                  autoComplete="new-password"
-                  placeholder="••••••••"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  required
-                  disabled={isLoading}
-                />
+                <p id="password-hint" className="text-xs text-zinc-400">
+                  {PASSWORD_LENGTH_HINT}
+                </p>
               </div>
             </>
           )}

@@ -3,10 +3,10 @@
 import { SUPPORT_EMAIL } from "@/lib/company";
 import * as Sentry from "@sentry/nextjs";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { pendingToast, useToast } from "@/hooks/use-toast";
 import { FieldError, invalidProps } from "@/components/ui/field-error";
+import { PasswordInput } from "@/components/auth/PasswordInput";
 import { AuthEmailField } from "../AuthEmailField";
 import {
   humanizeAuthError,
@@ -414,10 +414,9 @@ function SignInContent() {
                   Forgot password?
                 </Link>
               </div>
-              <Input
+              <PasswordInput
                 id="password"
                 name="password"
-                type="password"
                 autoComplete="current-password"
                 value={password}
                 onChange={(e) => {
