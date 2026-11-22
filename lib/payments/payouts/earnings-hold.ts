@@ -141,9 +141,9 @@ export async function lastLiveOccurrenceEnd(
 }
 
 /**
- * Pull a reschedule's hold push back once its proposal ended with the original
- * sessions restored (withdraw, expiry, decline): every PENDING hold later than
- * what the restored sessions imply (plus the new-expert days) returns to it.
+ * Pull a reschedule's hold push back once its proposal ends, restored (withdraw,
+ * expiry, decline) or confirmed (auto-confirm, accept): every PENDING hold later
+ * than what the live sessions imply (plus the new-expert days) returns to it.
  * Never earlier than that; a NULL hold (an undelivered tranche) and a settled
  * subscription cycle's tranche are left alone.
  */
