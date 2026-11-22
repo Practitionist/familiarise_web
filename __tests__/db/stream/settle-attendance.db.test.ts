@@ -18,11 +18,11 @@ import {
 } from "../../../lib/meetings/settle-attendance";
 import { seedConsultee, seedHost, seedOneToOne } from "../booking/harness";
 import { seedWebinar } from "../booking/harness-seats";
-import { fakeStream, type FakeStay } from "./fake-stream";
+import { fakeStream, type FakeStay } from "./harness-stream";
 
 jest.mock(
   "../../../lib/stream-client",
-  () => jest.requireActual("./fake-stream").fakeStreamClient,
+  () => jest.requireActual("./harness-stream").fakeStreamClient,
 );
 
 const SEC = 1_000;

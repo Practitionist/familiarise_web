@@ -158,12 +158,33 @@ it("an occurrence no call of which ever had a session is no-session, not an empt
   expect(await read()).toEqual({ kind: "no-session" });
 });
 
+const DAY = 86_400_000;
+
 it.each([
-  [{ status: 404 }, "expired"],
-  [{ status: 503 }, "unavailable"],
-])("a participant read failing with %p is %s", async (failure, kind) => {
-  stream.failParticipants = failure;
-  expect(await read()).toEqual({ kind });
+  [1, "not-final"],
+  [91, "expired"],
+])(
+  "a 404 on participant detail for a session that ended %i day(s) ago is %s",
+  async (days, kind) => {
+    const endedAt = new Date(Date.now() - days * DAY).toISOString();
+    stream.sessions = new Map([
+      [
+        "default:occurrence-occ-1",
+        [{ ...ended("s1"), call_ended_at: endedAt }],
+      ],
+      [
+        "default:occurrence-occ-1-r2",
+        [{ ...ended("s3"), call_ended_at: endedAt }],
+      ],
+    ]);
+    stream.failParticipants = { status: 404 };
+    expect(await read()).toEqual({ kind });
+  },
+);
+
+it("a participant read failing with 503 is unavailable", async () => {
+  stream.failParticipants = { status: 503 };
+  expect(await read()).toEqual({ kind: "unavailable" });
 });
 
 it("a call list longer than one page is unavailable, since Stream refuses its cursor", async () => {

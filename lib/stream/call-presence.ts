@@ -26,7 +26,7 @@ export interface SettledStreamInterval {
  * - `read`: every session of every call has ended and was read in full.
  * - `no-session`: Stream affirms no call of the occurrence ever had a session.
  * - `not-final`: a session is still live, or Stream's counts disagree with the rows.
- * - `expired`: Stream no longer holds the detail (HTTP 404, past its 90 days).
+ * - `expired`: Stream no longer holds the detail (HTTP 404 on a session past its 90 days).
  * - `unavailable`: Stream could not be asked or did not answer.
  */
 export type SettledAttendanceRead =
@@ -39,6 +39,9 @@ export type SettledAttendanceRead =
 /** An occurrence has its original call id plus one per rotation; more than a page means we cannot list them all. */
 const OCCURRENCE_CALLS_PAGE = 25;
 const SESSIONS_PAGE = 100;
+
+/** Stream keeps per-device detail this long after a session ends; a 404 sooner is a detail not generated yet. */
+const PARTICIPANT_DETAIL_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 
 class NotFinal extends Error {}
 class Expired extends Error {}
@@ -105,9 +108,10 @@ async function listCallSessions(
 async function readSessionParticipants(
   client: VideoClient,
   callId: string,
-  sessionId: string,
+  session: { id: string; endedAt: Date },
   failures?: RunFailureReporter,
 ): Promise<SettledStreamInterval[]> {
+  const sessionId = session.id;
   const call = client.video.call(STREAM_CALL_TYPE, callId);
   const intervals: SettledStreamInterval[] = [];
   const seen = new Set<string>();
@@ -126,8 +130,11 @@ async function readSessionParticipants(
       failures,
     ).catch((error: unknown) => {
       // Past Stream's retention the detail is a 404, not an empty list.
-      if (streamHttpStatus(error) === 404) throw new Expired();
-      throw error;
+      if (streamHttpStatus(error) !== 404) throw error;
+      const age = Date.now() - session.endedAt.getTime();
+      throw age >= PARTICIPANT_DETAIL_RETENTION_MS
+        ? new Expired()
+        : new NotFinal("detail not available yet");
     });
     if (!page.session?.ended_at) throw new NotFinal("session not ended");
     total = page.total_participant_sessions;
@@ -189,7 +196,10 @@ export async function readSettledAttendance(args: {
           ...(await readSessionParticipants(
             client,
             callId,
-            session.call_session_id,
+            {
+              id: session.call_session_id,
+              endedAt: new Date(session.call_ended_at),
+            },
             args.failures,
           )),
         );

@@ -5,6 +5,7 @@ import {
   settleOccurrenceAttendance,
 } from "@/lib/meetings/settle-attendance";
 import { liveParticipant } from "@/lib/booking/participants";
+import { REJOIN_GRACE_MS } from "@/lib/appointments/occurrences";
 import {
   isPublicExpertProfile,
   publicProfileFacts,
@@ -131,8 +132,8 @@ export function heldOccurrence(userId: string) {
   };
 }
 
-/** Sessions settled on demand per page load; the sweep settles the rest within about 90 minutes of the end. */
-const ON_DEMAND_SETTLE_LIMIT = 3;
+/** One Stream read per page load keeps a Stream outage inside the request budget; the sweep settles the rest. */
+const ON_DEMAND_SETTLE_LIMIT = 1;
 
 /**
  * Stores Stream's record for this learner's recently ended sessions that the
@@ -151,8 +152,9 @@ export async function settleRecentAttendance(
       occurrence: {
         ...(appointmentId ? { appointmentId } : {}),
         deletedAt: null,
+        // A room still inside its rejoin grace cannot settle yet, so it never takes the one slot.
         endsAt: {
-          lt: now,
+          lt: new Date(now.getTime() - REJOIN_GRACE_MS),
           gt: new Date(now.getTime() - ATTENDANCE_SETTLE_WAIT_MS),
         },
         appointment: { participants: { some: { userId } } },

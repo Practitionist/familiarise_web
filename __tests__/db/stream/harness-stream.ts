@@ -1,7 +1,7 @@
 /**
  * A stand-in for Stream's video API for the database tier: the calls an
  * occurrence lists, each call's sessions and each session's device stays.
- * `jest.mock("../../../lib/stream-client", () => require("./fake-stream").fakeStreamClient)`.
+ * `jest.mock("../../../lib/stream-client", () => require("./harness-stream").fakeStreamClient)`.
  */
 
 export interface FakeStay {
