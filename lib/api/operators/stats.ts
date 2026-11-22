@@ -12,8 +12,15 @@
  */
 
 import prisma from "@/lib/prisma";
-import { PaymentStatus } from "@prisma/client";
+import { PaymentStatus, RefundStatus } from "@prisma/client";
 import { sumPaise } from "@/lib/payments/utils/money";
+import { OPEN_DISPUTE_WHERE } from "@/lib/backoffice/queue-predicates";
+
+const PAYMENT_TILE_STATUSES: PaymentStatus[] = [
+  PaymentStatus.SUCCEEDED,
+  PaymentStatus.PENDING,
+  PaymentStatus.EXPIRED,
+];
 
 export type OperatorDashboardStats = {
   totalPayments: number;
@@ -72,47 +79,42 @@ function fetchRecentRefunds() {
  */
 export async function getOperatorDashboardStats(): Promise<OperatorDashboardStats> {
   const [
-    totalPayments,
-    pendingPayments,
-    expiredPayments,
-    totalRefunds,
+    paymentTiles,
+    refundTile,
     activeDisputes,
     totalDisputes,
     recentPayments,
     recentRefunds,
-    paymentsAggregation,
-    pendingPaymentsAggregation,
-    refundsAggregation,
     gatewayStats,
   ] = await Promise.all([
-    prisma.payment.count(),
-    prisma.payment.count({ where: { paymentStatus: PaymentStatus.PENDING } }),
-    prisma.payment.count({ where: { paymentStatus: PaymentStatus.EXPIRED } }),
-    prisma.refund.count(),
-    prisma.dispute.count({
-      where: {
-        status: {
-          in: ["WARNING_NEEDS_RESPONSE", "NEEDS_RESPONSE", "UNDER_REVIEW"],
-        },
-      },
+    // One statement per tile set, so a tile's count and value share one snapshot.
+    prisma.payment.groupBy({
+      by: ["paymentStatus"],
+      where: { paymentStatus: { in: PAYMENT_TILE_STATUSES } },
+      _count: { _all: true },
+      _sum: { amount: true },
     }),
+    prisma.refund.aggregate({
+      where: { status: RefundStatus.SUCCEEDED },
+      _count: { _all: true },
+      _sum: { amountPaise: true },
+    }),
+    prisma.dispute.count({ where: OPEN_DISPUTE_WHERE }),
     prisma.dispute.count(),
     fetchRecentPayments(),
     fetchRecentRefunds(),
-    prisma.payment.aggregate({
-      _sum: { amount: true },
-      where: { paymentStatus: PaymentStatus.SUCCEEDED },
-    }),
-    prisma.payment.aggregate({
-      _sum: { amount: true },
-      where: { paymentStatus: PaymentStatus.PENDING },
-    }),
-    prisma.refund.aggregate({ _sum: { amountPaise: true } }),
     prisma.payment.groupBy({
       by: ["paymentGateway"],
       _count: true,
     }),
   ]);
+
+  const tile = (status: PaymentStatus) => {
+    const row = paymentTiles.find((r) => r.paymentStatus === status);
+    return { count: row?._count._all ?? 0, value: sumPaise(row?._sum.amount) };
+  };
+  const succeeded = tile(PaymentStatus.SUCCEEDED);
+  const pending = tile(PaymentStatus.PENDING);
 
   const formattedGatewayStats = gatewayStats.reduce(
     (acc, stat) => {
@@ -123,13 +125,13 @@ export async function getOperatorDashboardStats(): Promise<OperatorDashboardStat
   );
 
   return {
-    totalPayments,
-    totalPaymentsValue: sumPaise(paymentsAggregation._sum.amount),
-    pendingPayments,
-    pendingPaymentsValue: sumPaise(pendingPaymentsAggregation._sum.amount),
-    expiredPayments,
-    totalRefunds,
-    totalRefundsValue: sumPaise(refundsAggregation._sum?.amountPaise),
+    totalPayments: succeeded.count,
+    totalPaymentsValue: succeeded.value,
+    pendingPayments: pending.count,
+    pendingPaymentsValue: pending.value,
+    expiredPayments: tile(PaymentStatus.EXPIRED).count,
+    totalRefunds: refundTile._count._all,
+    totalRefundsValue: sumPaise(refundTile._sum.amountPaise),
     activeDisputes,
     totalDisputes,
     recentPayments,

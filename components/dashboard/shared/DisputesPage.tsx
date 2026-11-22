@@ -7,8 +7,10 @@ import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { TablePagination } from "@/components/dashboard/TablePagination";
 import {
   disputeListPageSchema,
+  OPEN_DISPUTES_FILTER,
   readListBody,
   type DisputeListItem,
+  type DisputeStatusFilter,
   type UrgentEvidence,
 } from "@/lib/backoffice/money-list-schemas";
 import { disputeStatus } from "@/lib/labels/backoffice-labels";
@@ -231,18 +233,23 @@ export interface DisputesPageProps {
   title?: string;
   /** Page description */
   description?: string;
+  /** The status filter a link opened the list on */
+  initialStatus?: DisputeStatusFilter;
 }
 
 export function DisputesPage({
   apiEndpoint = "/api/admin/disputes",
   title = "Disputes",
   description = "View and track payment disputes",
+  initialStatus,
 }: DisputesPageProps) {
   const { basePath, can } = useBackofficeCapability();
   const router = useRouter();
 
   const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState<string>(
+    initialStatus ?? "all",
+  );
   const [gatewayFilter, setGatewayFilter] = useState("all");
   const [page, setPage] = useState(1);
   const { data, isPending, isFetching, isError, refetch } = useQuery({
@@ -404,6 +411,7 @@ export function DisputesPage({
         }}
         selects={[
           statusSelect(statusFilter, setStatusFilter, [
+            { value: OPEN_DISPUTES_FILTER, label: "Open" },
             { value: "NEEDS_RESPONSE", label: "Needs Response" },
             {
               value: "WARNING_NEEDS_RESPONSE",

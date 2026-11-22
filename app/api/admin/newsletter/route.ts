@@ -10,6 +10,8 @@ import { NewsletterSource, NewsletterStatus } from "@prisma/client";
 import { z } from "zod";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { pageNumberSchema, pageSizeSchema } from "@/lib/backoffice/list-paging";
+import { opsActorOf, recordOpsAction } from "@/lib/backoffice/ops-action-log";
+import prisma from "@/lib/prisma";
 import {
   exportSubscribersCsv,
   listSubscribers,
@@ -44,6 +46,23 @@ export async function GET(request: NextRequest): Promise<Response> {
 
     if (format === "csv") {
       const csv = await exportSubscribersCsv(filters);
+      // A bulk export of subscriber emails leaves one audit row, or no file.
+      // The search text may be an email, so the row keeps only whether one was applied.
+      const actor = opsActorOf(auth.session);
+      await recordOpsAction(prisma, {
+        actorUserId: actor.userId,
+        actorRole: actor.role,
+        surface: "newsletter.manage",
+        action: "newsletter.export",
+        targetKind: "NewsletterSubscriberList",
+        targetId: "csv",
+        reason: "Subscriber CSV export",
+        after: {
+          status: filters.status ?? null,
+          source: filters.source ?? null,
+          searchApplied: Boolean(filters.search),
+        },
+      });
       return new Response(csv, {
         headers: {
           "Content-Type": "text/csv; charset=utf-8",
