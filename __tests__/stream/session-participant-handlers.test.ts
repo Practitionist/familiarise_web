@@ -36,22 +36,24 @@ it("a join clears only a non-deliberate, rejoinable end older than itself, on th
     session_id: "B",
   });
 
-  // The watermark moves first, so an older non-deliberate end can no longer stamp the call.
-  const [watermark] = db.meeting.updateMany.mock.calls[0];
-  expect(watermark).toEqual({
+  const at = new Date("2026-11-23T04:30:00.000Z");
+  const newerJoin = {
+    OR: [{ lastJoinedAt: null }, { lastJoinedAt: { lt: at } }],
+  };
+  // The session it names is recorded only after the last join and any recorded end.
+  expect(db.meeting.updateMany.mock.calls[0][0]).toEqual({
     where: {
       streamCallId: "occurrence-1",
-      OR: [
-        { lastJoinedAt: null },
-        { lastJoinedAt: { lt: new Date("2026-11-23T04:30:00.000Z") } },
-      ],
+      AND: [newerJoin, { OR: [{ endedAt: null }, { endedAt: { lt: at } }] }],
     },
-    data: {
-      lastJoinedAt: new Date("2026-11-23T04:30:00.000Z"),
-      lastStreamSessionId: "B",
-    },
+    data: { lastJoinedAt: at, lastStreamSessionId: "B" },
   });
-  const [{ where, data }] = db.meeting.updateMany.mock.calls[1];
+  // The watermark moves before the reopen.
+  expect(db.meeting.updateMany.mock.calls[1][0]).toEqual({
+    where: { streamCallId: "occurrence-1", ...newerJoin },
+    data: { lastJoinedAt: at },
+  });
+  const [{ where, data }] = db.meeting.updateMany.mock.calls[2];
   expect(where.streamCallId).toBe("occurrence-1");
   expect(where.endedAt).toEqual({ lt: new Date("2026-11-23T04:30:00.000Z") });
   expect(

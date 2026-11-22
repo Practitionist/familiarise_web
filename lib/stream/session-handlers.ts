@@ -435,16 +435,27 @@ export async function handleSessionParticipantJoined(
 ): Promise<void> {
   const streamCallId = toCallId(event.call_cid);
   const joinedAt = new Date(event.created_at);
-  // The watermark moves first, so an older non-deliberate end can no longer stamp this call.
+  const newerJoin = {
+    OR: [{ lastJoinedAt: null }, { lastJoinedAt: { lt: joinedAt } }],
+  };
+  // The session it names is recorded only when the join postdates the last join and any recorded end,
+  // so an earlier session's late join never replaces a later one's identity.
+  if (event.session_id) {
+    await prisma.meeting.updateMany({
+      where: {
+        streamCallId,
+        AND: [
+          newerJoin,
+          { OR: [{ endedAt: null }, { endedAt: { lt: joinedAt } }] },
+        ],
+      },
+      data: { lastJoinedAt: joinedAt, lastStreamSessionId: event.session_id },
+    });
+  }
+  // The watermark moves before the reopen, so an older non-deliberate end can no longer stamp this call.
   await prisma.meeting.updateMany({
-    where: {
-      streamCallId,
-      OR: [{ lastJoinedAt: null }, { lastJoinedAt: { lt: joinedAt } }],
-    },
-    data: {
-      lastJoinedAt: joinedAt,
-      ...(event.session_id ? { lastStreamSessionId: event.session_id } : {}),
-    },
+    where: { streamCallId, ...newerJoin },
+    data: { lastJoinedAt: joinedAt },
   });
   const { count } = await prisma.meeting.updateMany({
     where: {

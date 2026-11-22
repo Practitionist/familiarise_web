@@ -841,3 +841,52 @@ it("a complete snapshot that commits while the unreadable park waits on the sess
     }),
   ).toEqual({ completionStatus: "SCHEDULED", outcome: null });
 });
+
+it("a session our webhooks record after the settler loaded the room stops the stamp, and the next read waits for it", async () => {
+  const room = await seedConsultationRoom();
+  const s = room.startsAt;
+  const sessionTwo = {
+    id: "session-2",
+    live: false,
+    hiddenFromStats: true,
+    stays: [stay(room.learnerId, s, 40 * MIN, 60 * MIN)],
+  };
+  fakeStream.calls.set(room.streamCallId, {
+    occurrenceId: room.occurrenceId,
+    sessions: [
+      {
+        id: "session-1",
+        live: false,
+        stays: [stay(room.hostId, s, 0, 60 * MIN)],
+      },
+      sessionTwo,
+    ],
+  });
+  await prisma.meeting.update({
+    where: { id: room.meetingId },
+    data: { streamReportReadySessionIds: ["session-1"] },
+  });
+  const stale = await settleTarget(room);
+  // The join webhook records session-2 before the stale settler stamps.
+  await prisma.meeting.update({
+    where: { id: room.meetingId },
+    data: { lastStreamSessionId: "session-2" },
+  });
+  const now = new Date(room.endsAt.getTime() + 75 * MIN);
+
+  expect((await settleOccurrenceAttendance(stale, { now })).kind).not.toBe(
+    "settled",
+  );
+  expect(await settledAt(room.meetingId)).toBeNull();
+  expect(
+    await settleOccurrenceAttendance(await settleTarget(room), { now }),
+  ).toEqual({ kind: "not-final" });
+
+  sessionTwo.hiddenFromStats = false;
+  await announceReports(room.occurrenceId);
+  const settled = await settleOccurrenceAttendance(await settleTarget(room), {
+    now,
+  });
+  expect(settled.kind).toBe("settled");
+  expect(await stored(room.meetingId)).toHaveLength(2);
+});

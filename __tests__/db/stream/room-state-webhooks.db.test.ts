@@ -50,17 +50,19 @@ async function seedRoom() {
     meetingId: meeting.id,
     streamCallId,
     at,
-    join: (m: number, callId?: string) =>
+    join: (m: number, callId?: string, sessionId?: string) =>
       handleSessionParticipantJoined({
         call_cid: cid(callId),
         type: "call.session_participant_joined",
         created_at: at(m).toISOString(),
+        ...(sessionId ? { session_id: sessionId } : {}),
       }),
-    sessionEnded: (m: number) =>
+    sessionEnded: (m: number, sessionId?: string) =>
       handleSessionEnded({
         call_cid: cid(),
         type: "call.session_ended",
         created_at: at(m).toISOString(),
+        ...(sessionId ? { session_id: sessionId } : {}),
       }),
     hostEnded: (m: number, seconds = 0) =>
       handleCallEnded({
@@ -335,4 +337,27 @@ it("a rejoin that commits while a timeout's Stream lookup is in flight keeps the
     endedAt: null,
     endedReason: null,
   });
+});
+
+it("an earlier session's late join never replaces the session a later end recorded; a join after that end does", async () => {
+  const room = await seedRoom();
+  const identity = async () =>
+    (
+      await prisma.meeting.findUniqueOrThrow({
+        where: { id: room.meetingId },
+        select: { lastStreamSessionId: true },
+      })
+    ).lastStreamSessionId;
+
+  // B's end is recorded with no join webhook seen at all.
+  await room.sessionEnded(40, "B");
+  expect(await identity()).toBe("B");
+
+  // A's join, from before B ended, arrives late.
+  await room.join(10, undefined, "A");
+  expect(await identity()).toBe("B");
+
+  // C resumes the call after B's end.
+  await room.join(45, undefined, "C");
+  expect(await identity()).toBe("C");
 });
