@@ -340,3 +340,55 @@ it("a settle whose revocation intent fails rolls the SUCCEEDED flip back, and th
   });
   expect(await revocationIntents(rolledBack.id)).toBe(1);
 });
+
+it("a webhook row that settled before the live bind inherits the reservation's intent and ends the seat", async () => {
+  const webinar = await seedWebinar({ capacity: 20, price: 50_000 });
+  const { buyer, payment } = await seedHeldSeat(webinar, {
+    status: "SUCCEEDED",
+    expiresAt: null,
+  });
+  const gatewayId = `rfnd_dbtier_${randomUUID()}`;
+  // Razorpay's webhook lands first and, without our notes, records its own SUCCEEDED row.
+  mockCreateRefund.mockImplementationOnce(async (params) => {
+    await handleRefundCreated(
+      gatewayId,
+      payment.paymentIntent,
+      params.amount,
+      "INR",
+      "processed",
+    );
+    return {
+      refundId: gatewayId,
+      amount: params.amount,
+      currency: "INR",
+      status: "SUCCEEDED" as const,
+    };
+  });
+  const writer = jest.requireActual(
+    "../../../lib/payments/operations/booking-refund",
+  ) as typeof import("../../../lib/payments/operations/booking-refund");
+
+  // ₹250 of the ₹500, with no partial rule: the refund ends the seat. Both rows fit the payment until the bind.
+  await writer.refundBookingPayment({
+    paymentId: payment.id,
+    amountPaise: 25_000,
+    reason: "cancellation",
+    dedupeKey: `cancel:${randomUUID()}`,
+  });
+
+  const rows = await prisma.refund.findMany({
+    where: { paymentId: payment.id },
+    select: { id: true, refundId: true, status: true, metadata: true },
+  });
+  expect(rows).toEqual([
+    expect.objectContaining({
+      refundId: gatewayId,
+      status: "SUCCEEDED",
+      metadata: expect.objectContaining({ endsSeat: true }),
+    }),
+  ]);
+  expect(await seatOf(webinar.appointmentId, buyer.userId)).toEqual({
+    status: "REFUNDED",
+  });
+  expect(await revocationIntents(rows[0]?.id ?? "")).toBe(1);
+});

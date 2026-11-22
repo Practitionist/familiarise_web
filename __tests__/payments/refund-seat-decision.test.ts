@@ -22,6 +22,8 @@ const mockState = {
   chargedBackPaise: 0,
   /** What happens while this refund is at the gateway, before its answer. */
   atGateway: null as null | (() => void),
+  /** The gateway's answer: its refund id and settlement status. */
+  gatewayAnswer: { refundId: "", status: "PENDING" },
 };
 const live = () =>
   mockState.refunds.filter((r) => ["SUCCEEDED", "PENDING"].includes(r.status));
@@ -54,7 +56,7 @@ jest.mock("../../lib/novu/service", () => ({
 jest.mock("../../lib/payments", () => ({
   createRefund: jest.fn(async () => {
     mockState.atGateway?.();
-    return { refundId: "", amount: 0, currency: "INR", status: "PENDING" };
+    return { amount: 0, currency: "INR", ...mockState.gatewayAnswer };
   }),
 }));
 const mockStampSeat = jest.fn(async (..._a: unknown[]) => 1);
@@ -94,12 +96,40 @@ jest.mock("../../lib/prisma", () => {
       findUnique: async ({
         where,
       }: {
-        where: { id?: string; dedupeKey?: string };
+        where: { id?: string; dedupeKey?: string; refundId?: string };
       }) => {
         const row = mockState.refunds.find((r) =>
-          where.id ? r.id === where.id : r.dedupeKey === where.dedupeKey,
+          where.id
+            ? r.id === where.id
+            : where.refundId
+              ? r.refundId === where.refundId
+              : r.dedupeKey === where.dedupeKey,
         );
         return row ? { ...row, payment: paymentRow() } : null;
+      },
+      findUniqueOrThrow: async ({ where }: { where: { id: string } }) =>
+        mockState.refunds.find((r) => r.id === where.id),
+      update: async ({
+        where,
+        data,
+      }: {
+        where: { id: string };
+        data: Partial<RefundRow>;
+      }) => {
+        const row = mockState.refunds.find((r) => r.id === where.id);
+        if (row) Object.assign(row, data);
+        return row;
+      },
+      deleteMany: async ({
+        where,
+      }: {
+        where: { id: string; status: string };
+      }) => {
+        const before = mockState.refunds.length;
+        mockState.refunds = mockState.refunds.filter(
+          (r) => !(r.id === where.id && r.status === where.status),
+        );
+        return { count: before - mockState.refunds.length };
       },
       findMany: async () => live(),
       create: async ({ data }: { data: Omit<RefundRow, "id"> }) => {
@@ -119,10 +149,24 @@ jest.mock("../../lib/prisma", () => {
             (!where.id || r.id === where.id) &&
             (!where.status || r.status === where.status),
         );
+        // Refund.refundId is unique.
+        if (
+          data.refundId &&
+          mockState.refunds.some(
+            (r) => r.refundId === data.refundId && !rows.includes(r),
+          )
+        ) {
+          const { Prisma } = jest.requireActual("@prisma/client");
+          throw new Prisma.PrismaClientKnownRequestError("unique", {
+            code: "P2002",
+            clientVersion: "test",
+          });
+        }
         for (const r of rows) Object.assign(r, data);
         return { count: rows.length };
       },
     },
+    supportFinancialRecommendation: { updateMany: async () => ({ count: 0 }) },
     $transaction: (fn: (tx: unknown) => unknown) => fn(db),
   };
   return { __esModule: true, default: db };
@@ -141,6 +185,7 @@ beforeEach(() => {
   mockState.refunds = [];
   mockState.chargedBackPaise = 0;
   mockState.atGateway = null;
+  mockState.gatewayAnswer = { refundId: "", status: "PENDING" };
 });
 
 /** A refund row as its reservation wrote it, PENDING at the gateway. */
@@ -303,4 +348,51 @@ it("a ₹100 partial that kept the seat replays without an amount and keeps it",
   expect(mockState.refunds).toHaveLength(1);
   expect(mockStampSeat).not.toHaveBeenCalled();
   expect(mockRevoke).not.toHaveBeenCalled();
+});
+
+it("a webhook row that settled before our bind inherits the reservation's intent and decides the seat in the adoption", async () => {
+  // Razorpay's webhook recorded the refund as SUCCEEDED, with no intent, before our bind landed.
+  mockState.gatewayAnswer = { refundId: "rfnd_web", status: "SUCCEEDED" };
+  mockState.atGateway = () => {
+    mockState.refunds.push({
+      id: "refund-web",
+      paymentId: "pay-1",
+      amountPaise: 50_000,
+      status: "SUCCEEDED",
+      dedupeKey: null,
+      refundId: "rfnd_web",
+      metadata: {},
+    });
+  };
+
+  const refund = await refundPayment({
+    paymentId: "pay-1",
+    reason: "cancellation",
+    dedupeKey: "cancel:k",
+    bookingSeat: true,
+  });
+
+  expect(mockState.refunds.map((r) => r.id)).toEqual(["refund-web"]);
+  expect(row("refund-web")).toMatchObject({
+    dedupeKey: "cancel:k",
+    metadata: expect.objectContaining({
+      seatIntent: {
+        keepSeat: false,
+        keepSeatIfPartial: false,
+        amountNamed: false,
+      },
+      endsSeat: true,
+    }),
+  });
+  expect(mockStampSeat).toHaveBeenCalledTimes(1);
+  expect(mockIntentInTx).toHaveBeenCalledWith(expect.anything(), {
+    refundId: "refund-web",
+    payerUserId: "buyer-1",
+  });
+  // The booking door drives the revocation the adoption wrote.
+  expect(refund).toMatchObject({
+    refundId: "refund-web",
+    endsSeat: true,
+    revocationGeneration: new Date("2026-11-22T10:00:00Z"),
+  });
 });

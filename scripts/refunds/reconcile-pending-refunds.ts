@@ -813,8 +813,11 @@ async function bindGatewayRefundToPlaceholder(
       `Refund id collision across payments while reconciling ${placeholderRowId} -> ${gatewayRefund.refundId}`,
     );
   }
-  await prisma.$transaction((tx) =>
-    retireSupersededPlaceholderTx(tx, placeholder, winner.id),
+  await withSerializableRetry(() =>
+    prisma.$transaction(
+      (tx) => retireSupersededPlaceholderTx(tx, placeholder, winner.id),
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    ),
   );
   return "superseded";
 }

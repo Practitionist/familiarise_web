@@ -862,6 +862,8 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
   // surfacing the raw error — the placeholder is retired and every downstream
   // step (settle cascade, result mapping) targets the surviving row.
   let boundRefundRowId = reserved.id;
+  // The seat an adopted webhook row decided as it inherited the reservation's intent.
+  let adoptedSeat: SeatDecision | null = null;
   if (gateway.refundId && gateway.refundId !== reserved.refundId) {
     try {
       await prisma.refund.updateMany({
@@ -899,8 +901,11 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       if (winner.id === reserved.id) {
         boundRefundRowId = reserved.id;
       } else {
-        await prisma.$transaction((tx) =>
-          retireSupersededPlaceholderTx(tx, reserved, winner.id),
+        adoptedSeat = await withSerializableRetry(() =>
+          prisma.$transaction(
+            (tx) => retireSupersededPlaceholderTx(tx, reserved, winner.id),
+            { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+          ),
         );
         boundRefundRowId = winner.id;
         reportSentryMessage(
@@ -948,6 +953,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       clawbackInitiated: false,
       status: "PENDING" as const,
       gatewayRefundId: gateway.refundId || undefined,
+      ...seatFields(adoptedSeat ?? undefined),
       ...(settledOwed ? { settledOwed } : {}),
     };
   }
@@ -1126,7 +1132,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
   const { seat, ...rest } = settled;
   return {
     ...rest,
-    ...seatFields(seat),
+    ...seatFields(seat ?? adoptedSeat ?? undefined),
     ...(settledOwed ? { settledOwed } : {}),
   };
 }
