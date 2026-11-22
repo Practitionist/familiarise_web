@@ -1,8 +1,9 @@
 /**
  * The payout hold of a paid 1:1 through the real reschedule doors: an open
  * proposal holds the earnings a week past the released end, a confirmed move
- * (auto-confirm or the other side's accept) holds them to the new end plus the
- * hold hours, and a withdrawn, expired or declined one restores the old end's.
+ * (auto-confirm, the other side's accept, or the expert placing times over an
+ * open request) holds them to the new end plus the hold hours, and a
+ * withdrawn, expired or declined one restores the old end's.
  */
 import { randomUUID } from "node:crypto";
 import { NextRequest } from "next/server";
@@ -15,7 +16,7 @@ import {
   seedOneToOne,
   type SeededHost,
 } from "./harness";
-import { publishEveryHour } from "./harness-host";
+import { halfHourStarts, publishEveryHour } from "./harness-host";
 
 const sessionUser = { current: null as null | Record<string, unknown> };
 jest.mock("../../../lib/auth-helpers", () => ({
@@ -38,6 +39,7 @@ import { POST as reschedule } from "../../../app/api/appointments/[appointmentId
 import { POST as respond } from "../../../app/api/appointments/[appointmentId]/reschedule/respond/route";
 import { POST as withdraw } from "../../../app/api/appointments/[appointmentId]/reschedule/withdraw/route";
 import { expireRescheduleProposals } from "../../../scripts/appointments/expire-reschedule-proposals";
+import { allocate } from "../../../lib/booking/allocation";
 
 const DAY_MS = 24 * HOUR_MS;
 const HOLD_MS = 48 * HOUR_MS;
@@ -231,6 +233,35 @@ describe("the earnings hold across a reschedule's endings", () => {
       { action: "accept" },
     );
     expect(accepted.status).toBe(200);
+    const newEnd = new Date(b.newStart.getTime() + HOUR_MS);
+    expect(await b.holds()).toEqual(both(new Date(newEnd.getTime() + HOLD_MS)));
+  });
+
+  it("an 'any time works' request keeps the buffer; the expert's placed time holds to the new end plus 48 hours", async () => {
+    const b = await paidBooking();
+    b.asBuyer();
+    const opened = await post(
+      reschedule,
+      "/reschedule",
+      b.booking.appointmentId,
+    );
+    expect(opened.status).toBe(200);
+    expect(await b.holds()).toEqual(
+      both(new Date(b.oldEnd.getTime() + 7 * DAY_MS + HOLD_MS)),
+    );
+
+    const placed = await allocate({
+      eventType: "consultation",
+      eventId: b.booking.consultationId!,
+      mode: "manual",
+      slots: halfHourStarts(b.newStart),
+    });
+    expect(placed).toMatchObject({ success: true });
+    const request = await prisma.rescheduleRequest.findFirstOrThrow({
+      where: { appointmentId: b.booking.appointmentId },
+      select: { status: true },
+    });
+    expect(request.status).toBe("ACCEPTED");
     const newEnd = new Date(b.newStart.getTime() + HOUR_MS);
     expect(await b.holds()).toEqual(both(new Date(newEnd.getTime() + HOLD_MS)));
   });

@@ -51,6 +51,8 @@ jest.mock("../../utils/appointmentlock", () => ({
 
 import { tryAutoConfirmProposal } from "@/lib/booking/reschedule-auto-confirm";
 import { acceptProposal } from "@/lib/booking/reschedule-respond";
+import { resolveConsumedPreferenceRequests } from "@/lib/booking/allocation/preference";
+import type { Tx } from "@/lib/prisma";
 import type { ApprovalLock } from "@/utils/appointmentlock";
 
 const HOUR = 3_600_000;
@@ -147,6 +149,15 @@ function confirmingTx() {
         appointmentId: "appt-1",
       })),
       updateMany: jest.fn(async () => ({ count: 1 })),
+      // The open request the expert's placement answers, as its select reads it.
+      findMany: jest.fn(async () => [
+        {
+          id: "req-2",
+          initiatorRole: "CONSULTEE",
+          appointmentId: "appt-1",
+          _count: { proposedTimes: 0 },
+        },
+      ]),
     },
     bookingStatusHistory: { create: jest.fn(async () => ({})) },
     // The select restoreEarningsHold reads.
@@ -251,6 +262,22 @@ describe("a confirmed reschedule releases the reallocation buffer", () => {
         heldAppointmentLock: { key: "lock" } as ApprovalLock,
       }),
     ).toEqual({ done: true });
+    expect(holds(state.consultant)).toEqual(settled);
+    expect(holds(state.org)).toEqual({
+      "oe-PENDING": confirmed,
+      "oe-READY": buffered,
+    });
+  });
+
+  it("the expert placing times over an open request: the same holds once it is consumed", async () => {
+    await resolveConsumedPreferenceRequests(state.tx as unknown as Tx, [
+      "occ-old",
+    ]);
+    expect(state.tx.rescheduleRequest.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: "ACCEPTED" }),
+      }),
+    );
     expect(holds(state.consultant)).toEqual(settled);
     expect(holds(state.org)).toEqual({
       "oe-PENDING": confirmed,
