@@ -90,7 +90,6 @@ export default async function PayExistingOrderPage({
                   ...state.order,
                   holdExpiresAt: state.summary.expiresAt?.toISOString() ?? null,
                 }}
-                doneHref={state.doneHref}
                 description={state.summary.description ?? "Booking payment"}
                 needsBuyerState={state.needsBuyerState}
                 taxContext={state.taxContext}

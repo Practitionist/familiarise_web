@@ -16,6 +16,7 @@ import {
 import { CheckoutInput, checkoutResponseSchema } from "@/schemas/checkout";
 import { PaymentGateway } from "@prisma/client";
 import { fetchWithIdentity } from "@/lib/auth/identity-header";
+import { checkoutSuccessPath } from "@/lib/payments/pay-link-href";
 
 // #1396 — every checkout page and both gateway components caught an
 // unexpected error the same way; centralising it removed the repeated
@@ -448,9 +449,7 @@ export function createRazorpayCheckoutHandlers(
       // `Payment.paymentIntent` IS the Razorpay order id (the verify route
       // keys on `order_` for its sync branch), so that is the id to hand over.
       if (response.razorpay_order_id) {
-        const successUrl = `/checkout/checkout-success?payment_intent=${encodeURIComponent(
-          response.razorpay_order_id,
-        )}`;
+        const successUrl = checkoutSuccessPath(response.razorpay_order_id);
         if (navigate) navigate(successUrl);
         else window.location.href = successUrl;
         return;

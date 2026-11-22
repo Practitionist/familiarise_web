@@ -238,6 +238,16 @@ function CheckoutSuccessContent() {
           statusIcon: confirmedIcon,
           statusText: "Confirmed",
         };
+      case "TRIAL":
+        return {
+          title: "Trial Session Confirmed!",
+          description:
+            "Your payment has been processed successfully and your trial session is confirmed.",
+          nextSteps:
+            "You can find the session and its join link on your dashboard.",
+          statusIcon: confirmedIcon,
+          statusText: "Confirmed",
+        };
       case "SUBSCRIPTION":
         return {
           title: "Subscription Activated!",

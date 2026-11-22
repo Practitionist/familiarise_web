@@ -352,6 +352,8 @@ export function AppointmentDetailClient({
       const { data } = await res.json();
       return data;
     },
+    // The global default never refetches; a pay prompt must not outlive a payment made in another tab.
+    refetchOnWindowFocus: true,
   });
 
   // The consultant's two actions on an unpaid approval, which only a 1:1 can be;

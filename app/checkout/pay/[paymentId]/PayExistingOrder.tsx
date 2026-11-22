@@ -10,6 +10,7 @@ import RazorpayCheckout, {
   type ExistingRazorpayOrder,
 } from "@/app/checkout/components/RazorpayCheckout";
 import { useToast } from "@/hooks/use-toast";
+import { checkoutSuccessPath } from "@/lib/payments/pay-link-href";
 
 /**
  * #1775 P-1 — opens an order minted at approval (or trial request) in the
@@ -18,13 +19,11 @@ import { useToast } from "@/hooks/use-toast";
  */
 export function PayExistingOrder({
   order,
-  doneHref,
   description,
   needsBuyerState,
   taxContext,
 }: Readonly<{
   order: ExistingRazorpayOrder;
-  doneHref: string;
   description: string;
   needsBuyerState: boolean;
   taxContext: { billingStateCode: string | null; isInternational: boolean };
@@ -75,7 +74,8 @@ export function PayExistingOrder({
               title: "Payment received",
               description: "We're confirming your booking now.",
             });
-            router.push(doneHref);
+            // The booking page would render the pre-capture state; this step waits for it.
+            router.push(checkoutSuccessPath(order.orderId));
           }}
           onPaymentError={(error) => {
             toast({

@@ -12,18 +12,23 @@
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn() }),
 }));
+const mockQueryOptions: Record<string, unknown>[] = [];
 jest.mock("@tanstack/react-query", () => ({
-  useQuery: ({ queryKey }: { queryKey: readonly unknown[] }) => ({
-    data:
-      queryKey[0] === "reviewable-session" ? currentReviewable : currentDetail,
-    isLoading: false,
-    isError: false,
-    error: null,
-    refetch: jest.fn(),
-  }),
+  useQuery: (options: { queryKey: readonly unknown[] }) => {
+    mockQueryOptions.push(options);
+    return mockQueryResult(options.queryKey);
+  },
   useQueryClient: () => ({ invalidateQueries: jest.fn() }),
   useMutation: () => ({ mutate: jest.fn(), isPending: false }),
 }));
+const mockQueryResult = (queryKey: readonly unknown[]) => ({
+  data:
+    queryKey[0] === "reviewable-session" ? currentReviewable : currentDetail,
+  isLoading: false,
+  isError: false,
+  error: null,
+  refetch: jest.fn(),
+});
 jest.mock("../../lib/auth-client", () => ({
   useSession: () => ({
     data: {
@@ -240,6 +245,17 @@ describe("consultee · AWAITING_PAYMENT subscription", () => {
       html.indexOf("Withdraw request"),
     );
     expect(html).not.toContain("More actions");
+  });
+
+  it("re-reads the booking when the buyer comes back to the tab, so a pay prompt paid elsewhere does not stand", () => {
+    viewerId = "u-rachel";
+    currentDetail = subscriptionDetail({ status: "APPROVED_PENDING_PAYMENT" });
+    mockQueryOptions.length = 0;
+    render("consultee");
+    const detailQuery = mockQueryOptions.find(
+      (o) => (o.queryKey as unknown[])[0] === "appointment-detail",
+    );
+    expect(detailQuery).toMatchObject({ refetchOnWindowFocus: true });
   });
 });
 
