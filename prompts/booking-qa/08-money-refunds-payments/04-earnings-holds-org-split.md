@@ -19,7 +19,7 @@ Defaults read from code: platform fee 20 % (`PLATFORM_FEE_PERCENTAGE`; per payme
 - `Payment.hostOrganizationId` = LearnPro.
 - `OrganizationEarnings`: one row; `platformBpsApplied = 1000`, `orgBpsApplied = 1000`, `consultantBpsApplied = 8000` (or the rate card in force; record `rateCardIdApplied`); `platformFeePaise + orgSharePaise + consultantSharePaise = grossAmountPaise`.
 - OX is payout `SELF`: record whether OX also has a `ConsultantEarnings` row for the 80 % and that the expert share is not counted twice (org row + consultant row must not both pay OX).
-- `holdUntil` = session end + 48 h on both rows.
+- `holdUntil` = session end + 48 h on the `OrganizationEarnings` row. A `ConsultantEarnings` row for OX, if one exists, adds 3 days when OX counts as a new expert (first paid earning younger than 30 days or lifetime share under ₹10,000; record which).
 
 **Cross-check:** OH sees LearnPro's 10 %; OX sees their 80 %; neither sees the other's private split unless the page says why. Times in IST.
 
@@ -67,7 +67,16 @@ Defaults read from code: platform fee 20 % (`PLATFORM_FEE_PERCENTAGE`; per payme
 
 **Why it matters:** the new-expert hold is fraud control; it must apply once and stop after tenure.
 
-**Setup:** pick the persona with no `SUCCEEDED` earnings yet (check `SELECT count(*) FROM "ConsultantEarnings" e JOIN "Payment" p ON p.id = e."paymentId" WHERE e."consultantProfileId" = :cid AND p."paymentStatus" = 'SUCCEEDED'` for H3 and H4). If both have history older than 30 days and lifetime share ≥ ₹10,000, BLOCKED (can't make a new expert without new accounts).
+**Setup:** pick H3 or H4, whichever counts as a new expert by the code's test: no earning on a `SUCCEEDED` payment yet, or the first such earning younger than 30 days, or a lifetime share net of refunds under ₹10,000. For each candidate:
+
+```sql
+SELECT (SELECT min(e."createdAt") FROM "ConsultantEarnings" e JOIN "Payment" p ON p.id = e."paymentId"
+        WHERE e."consultantProfileId" = :cid AND p."paymentStatus" = 'SUCCEEDED') AS first_paid,
+       (SELECT coalesce(sum("consultantSharePaise" - "refundedShareAmount"), 0) FROM "ConsultantEarnings"
+        WHERE "consultantProfileId" = :cid AND status <> 'REFUNDED') AS lifetime_share_paise;
+```
+
+New when `first_paid` is null or after `now() - interval '30 days'`, or `lifetime_share_paise < 1000000`. Record which test qualified. If neither candidate qualifies, BLOCKED (can't make a new expert without new accounts).
 
 **Steps:** `[local]` book that expert once; R-04 earnings.
 

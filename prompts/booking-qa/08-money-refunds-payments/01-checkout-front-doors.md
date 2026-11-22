@@ -71,7 +71,7 @@ Journeys are owned elsewhere (CO-01, SU-23, WE-19, CL-27, TR-04, CO-25). These c
 1. As B2 (London) start the seat checkout and stop before paying. R-04 + seat row (`AppointmentParticipant`).
 2. Complete with Mock Pay.
 
-**Expect:** step 1: `Payment` `PENDING` with `expiresAt ≈ now + 15 min` (12-min gateway window + 3-min capture grace, `SEAT_CHECKOUT_HOLD_MS`; the checkout response's `holdExpiresAt` is the 12-minute gateway window, `Payment.expiresAt` the 15-minute one); seat `HELD`; capacity counter shows the seat taken. Step 2: payment `SUCCEEDED`, seat `CONFIRMED`, earnings `holdUntil = webinar end + 48 h`.
+**Expect:** step 1: `Payment` `PENDING` with `expiresAt ≈ now + 15 min` (12-min gateway window + 3-min capture grace, `SEAT_CHECKOUT_HOLD_MS`; the checkout response's `holdExpiresAt` is the 12-minute gateway window, `Payment.expiresAt` the 15-minute one); seat `HELD`; capacity counter shows the seat taken. Step 2: payment `SUCCEEDED`, seat `CONFIRMED`, earnings `holdUntil = webinar end + 48 h` (+3 days if H2 counts as a new expert: first paid earning younger than 30 days or lifetime share under ₹10,000; record which).
 
 **Cross-check:** H2's webinar card count, B2's appointments (time in London), B2's Payments row.
 
@@ -146,7 +146,7 @@ Journeys are owned elsewhere (CO-01, SU-23, WE-19, CL-27, TR-04, CO-25). These c
 2. R-04; re-read the `DiscountCode` row.
 3. Cancel with ≥ 24 h notice (preview first, then confirm).
 
-**Expect:** `Payment.discountCodeId` set; `originalAmount` = list; `amount` = list − discount plus tax as shown, where the discount is capped by the code's `maxDiscount` and by the platform-funded floor (`max(0, floor(list × fee bps / 10 000) − ceil(list × 3.54 %))`, with the ceiling plus GST when the platform is GST-registered; a 37 % code on a ₹500 plan at the 20 % fee charges ₹417.70, a discount of ₹82.30); `currentUses` +1 exactly once. The cancel quote and the `Refund.amountPaise` equal 100 % of `amount`, not `originalAmount`. Earnings: record whether `grossAmount` uses `originalAmount` (code: it does) and whether `consultantSharePaise` is cut by the discount; then report who bears the discount (platform or expert) and whether the earnings reversal on refund is proportional to what was refunded.
+**Expect:** `Payment.discountCodeId` set; `originalAmount` = list; `amount` = list − discount plus tax as shown, where the discount is capped by the code's `maxDiscount` and by the platform-funded floor (`max(0, floor(list × fee bps / 10 000) − ceil(charge ceiling × 3.54 %))`, where the charge ceiling is the list price, plus GST when the platform is GST-registered; record which regime is in force). Worked on a ₹500 plan at the 20 % fee with a 37 % code and no lower `maxDiscount`: unregistered, the gateway estimate is ₹17.70 and the cap ₹82.30, so the charge is ₹417.70; registered, the ceiling is ₹590, the estimate ₹20.89 and the cap ₹79.11; `currentUses` +1 exactly once. The cancel quote and the `Refund.amountPaise` equal 100 % of `amount`, not `originalAmount`. Earnings: record whether `grossAmount` uses `originalAmount` (code: it does) and whether `consultantSharePaise` is cut by the discount; then report who bears the discount (platform or expert) and whether the earnings reversal on refund is proportional to what was refunded.
 
 **Probe further:** apply an expired or used-up code: a typed refusal with copy that names the problem. Apply the code, go back, change the time, return: is the discount still applied once? Does `currentUses` move when the checkout is abandoned?
 

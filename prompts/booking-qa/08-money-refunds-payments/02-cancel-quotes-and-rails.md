@@ -32,7 +32,7 @@ The preview is `GET /api/appointments/[aid]/cancel/preview`. Its 1:1 body has `r
 
 **Steps:** within the same minute, call the preview for A, B and C. Then compute hours yourself from `hoursUntilNextSession`.
 
-**Expect:** A (≥ 24 h) 100 %; B (< 24 h) 50 %; C: 50 % while `hoursUntilNextSession ≥ 2`, then 0 % once the clock passes `startsAt − 2 h`. Call C's preview again after that moment and confirm it drops. The quote equals `amount × pct` floored to whole paise (₹8,474.09 at 50 % refunds 423704 paise), and the expert's reversed share is floored too; record both on an odd amount.
+**Expect:** A (≥ 24 h) 100 %; B (< 24 h) 50 %; C: 50 % while `hoursUntilNextSession ≥ 2`, then 0 % once the clock passes `startsAt − 2 h`. Call C's preview again after that moment and confirm it drops. The quote equals `amount × pct` floored to whole paise (₹8,474.09 at 50 % refunds 423704 paise); record it on an odd amount. These are previews only, so no share is reversed here; MO-30 checks the reversed share on the refunds that happen.
 
 **Probe further:** does the cancel dialog's sentence change at the same instant as the number? Does it say "50 % because it's less than 24 hours away" or just a figure?
 
