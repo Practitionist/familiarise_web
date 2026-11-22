@@ -348,9 +348,9 @@ function SignUpContent() {
   return (
     <div className="flex flex-1 flex-col justify-center bg-neutral-950 p-6 text-white md:w-1/2 md:p-12">
       <div className="mx-auto flex w-full max-w-md flex-col">
-        <h2 className="mb-2 text-fluid-3xl font-semibold tracking-tight">
+        <h1 className="mb-2 text-fluid-3xl font-semibold tracking-tight">
           Create your account
-        </h2>
+        </h1>
         <p className="mb-6 text-sm text-zinc-400 md:text-base">
           Enter your details below to get started.
         </p>

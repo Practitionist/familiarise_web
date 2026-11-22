@@ -124,6 +124,29 @@ export const getHomeReviews = unstable_cache(
   { revalidate: 3600, tags: ["reviews", "home"] },
 );
 
+/** The top-rated public reviews that have text, for the auth side panel. */
+export const getFeaturedReviews = unstable_cache(
+  async () => {
+    const reviews = await prisma.consultantReview.findMany({
+      where: {
+        rating: { gte: 4 },
+        deletedAt: null,
+        consultantProfile: { deletedAt: null },
+        AND: [
+          { reviewDescription: { not: null } },
+          { reviewDescription: { not: "" } },
+        ],
+      },
+      take: 5,
+      select: publicReviewSelect,
+      orderBy: [{ rating: "desc" }, { createdAt: "desc" }],
+    });
+    return toPlain(sanitisePublicReviews(reviews));
+  },
+  ["featured-reviews"],
+  { revalidate: 3600, tags: ["reviews"] },
+);
+
 /**
  * The real figures behind the landing hero and the category cards (#1490).
  *

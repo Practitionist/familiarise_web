@@ -369,9 +369,9 @@ function SignInContent() {
   return (
     <div className="flex flex-1 flex-col justify-center bg-neutral-950 p-6 text-white md:w-1/2 md:p-12">
       <div className="mx-auto flex w-full max-w-md flex-col">
-        <h2 className="mb-2 text-fluid-3xl font-semibold tracking-tight">
+        <h1 className="mb-2 text-fluid-3xl font-semibold tracking-tight">
           Sign in to your account
-        </h2>
+        </h1>
         {/* A guest bounced from checkout must see their selection survived. */}
         {isPurchaseReturn && (
           <div className="mb-4 rounded-md border border-emerald-600/60 bg-emerald-900/30 p-3">

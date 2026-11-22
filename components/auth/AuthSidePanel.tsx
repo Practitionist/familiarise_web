@@ -2,7 +2,7 @@ import Link from "next/link";
 import { BadgeCheck, Lock, Star, Zap, type LucideIcon } from "lucide-react";
 
 import { GlobeIcon } from "@/components/auth/auth-icons";
-import { getHomeReviews } from "@/lib/data/home";
+import { getFeaturedReviews } from "@/lib/data/home";
 
 const FEATURES: { icon: LucideIcon; title: string; description: string }[] = [
   {
@@ -21,7 +21,7 @@ const FEATURES: { icon: LucideIcon; title: string; description: string }[] = [
     icon: Lock,
     title: "Secure payments and recordings",
     description:
-      "Checkout through Razorpay with refunds built in, and sessions you can replay later.",
+      "Checkout through Razorpay with refunds built in, and replays of sessions that were recorded.",
   },
 ];
 
@@ -41,13 +41,14 @@ type PanelReview = {
   rating: number;
   author: string;
   expert: string | null;
+  edited: boolean;
 };
 
 /** The top-rated public review with text, or null; never blocks the auth form. */
 async function pickReview(): Promise<PanelReview | null> {
-  let reviews: Awaited<ReturnType<typeof getHomeReviews>>;
+  let reviews: Awaited<ReturnType<typeof getFeaturedReviews>>;
   try {
-    reviews = await getHomeReviews();
+    reviews = await getFeaturedReviews();
   } catch {
     return null;
   }
@@ -58,6 +59,7 @@ async function pickReview(): Promise<PanelReview | null> {
     rating: review.rating,
     author: review.consulteeProfile?.user?.name || "A Familiarise learner",
     expert: review.consultantProfile?.user?.name ?? null,
+    edited: Boolean(review.editedAt),
   };
 }
 
@@ -129,12 +131,12 @@ export async function AuthSidePanel({
                 {review.author}
               </span>
               {review.expert ? ` · Session with ${review.expert}` : null}
+              {review.edited ? " · Edited" : null}
             </figcaption>
           </figure>
         ) : (
           <p className="text-xs text-neutral-600 md:text-sm">
-            Reviews on Familiarise come only from people who attended a
-            completed session.
+            Only people who booked a session that took place can review it.
           </p>
         )}
       </div>

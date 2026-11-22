@@ -37,7 +37,7 @@ The Digital Personal Data Protection Act 2023, with the **Digital Personal Data 
 ### B2C (consumer marketplace)
 
 - **Applies on every consumer signup, every booking, every recording, every refund.** No exceptions.
-- Currently consumer signup at `app/auth/signup/SignUpForm.tsx` has **no granular consent** — just email/password.
+- Consumer account creation (`app/auth/signup/SignUpForm.tsx`) collects a name and an email and password, or uses a configured social provider, and records **no granular consent**. Consent and the optional marketing choice are recorded in the onboarding step that follows (`recordOnboardingConsent` in `utils/onboarding-completion.ts`), so verify each control in its own step.
 - Privacy policy page exists at `app/(pages)/privacy/page.tsx` but isn't linked from a consent gate.
 
 ### B2B (org-sponsored)
