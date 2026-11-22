@@ -61,9 +61,9 @@ occurrence count (#710).
 (`Meeting`, created lazily at "Start Call," not at confirmation, with the
 Stream call id `occurrence-<id>` or `occurrence-<id>-r<suffix>` after a
 rebuild). A confirmed occurrence without a meeting is a valid state.
-`MeetingAttendance` is keyed to the occurrence itself
-(`appointmentOccurrenceId`), so the "were you there" gate does not have to
-join through `Meeting`.
+Who attended is Stream's settled record of the call, stored as
+`MeetingPresence` rows keyed to the occurrence (`appointmentOccurrenceId`)
+once `Meeting.attendanceSettledAt` is set.
 
 **Trial.** A trial booking (`Trial`, `TrialStatus`), optionally
 org-attributed via `organizationId` — pure attribution for conversion

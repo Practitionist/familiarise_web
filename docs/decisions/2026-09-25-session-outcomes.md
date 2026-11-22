@@ -1,6 +1,6 @@
 # ADR: session outcomes — presence, voids and misses
 
-**Status:** accepted, 2026-09-25 · **Issue:** #1569 (with #1543, #1607, #1493 and #1746 item B)
+**Status:** accepted, 2026-09-25 · **Issue:** #1569 (with #1543, #1607, #1493 and #1746 item B) · Rule 1 and the call-report guard in rule 4 are superseded by [Session outcomes from Stream's settled record](2026-11-22-session-outcomes-from-settled-stream-record.md); rules 2, 3 and 5 onward stand.
 
 ## Context
 
@@ -10,7 +10,7 @@ Before this decision the platform recorded almost nothing about how a session ac
 
 ### 1. Presence is recorded per device
 
-A new `MeetingPresence` table holds one interval per Stream `user_session_id`, written by the participant join and leave webhooks. A leave whose join was lost rebuilds the interval from the leave's own `duration_seconds`, a replayed event is a no-op on the `(meetingId, userSessionId)` unique, and `MeetingAttendance.joinCount` now counts distinct device sessions rather than deliveries.
+A `MeetingPresence` table holds one interval per Stream `user_session_id`, unique on `(meetingId, userSessionId)`. Since 2026-11-22 its rows are Stream's settled participant record, stored once by `settleOccurrenceAttendance` after the call ends; no webhook writes them, and `MeetingAttendance` is retired.
 
 ### 2. One job decides, and one pure function reads the evidence
 
@@ -18,11 +18,11 @@ The hourly `auto-complete-appointments` slot pass, one hour after a session's bo
 
 ### 3. The void rule measures loss attributable to the host side
 
-The loss counts minutes inside the booked window, after the first learner arrived, in which no host-side person was present. The host side is the plan's consultant and every accepted collaborator. A user's devices are merged, reconnect gaps under two minutes are ignored, and up to 30 minutes that both sides spend together after the booked end are credited back. The session is voided when the loss reaches min(15 minutes, half the booked length). A late learner never voids a session, and minutes after the learner left first are the learner's own.
+The loss counts minutes inside the booked window, after the first learner arrived, in which no host-side person was present. The host side is the plan's consultant and every accepted collaborator. A user's devices are merged, reconnect gaps under five minutes (`RECONNECT_GRACE_MINUTES`) are ignored, and up to 30 minutes that both sides spend together after the booked end are credited back. The session is voided when the loss reaches min(15 minutes, half the booked length). A late learner never voids a session, and minutes after the learner left first are the learner's own.
 
 ### 4. A doubtful verdict never moves money
 
-An open interval, a Stream call report that saw more people than our rows, or maintenance overlapping a host-absent verdict gives `INCONCLUSIVE`. That parks the session `UNVERIFIED`, lists it for ops, and moves no money.
+An open interval, a session whose Stream record could not be read within 72 hours, or maintenance overlapping a host-absent verdict gives `INCONCLUSIVE`. That parks the session `UNVERIFIED`, lists it for ops, and moves no money.
 
 ### 5. A void is a miss with a remedy per shape
 
