@@ -154,8 +154,10 @@ const mockRevokeRefundedSeatAccess = jest.fn(
   async (_intent: RefundIntent, _generation?: Date | null) => undefined,
 );
 const mockPersistRefundRevocation = jest.fn(
-  async (_intent: RefundIntent) => undefined,
+  async (_intent: RefundIntent): Promise<Date | null> => PERSISTED_GENERATION,
 );
+/** The generation a post-commit intent write answers with. */
+const PERSISTED_GENERATION = new Date("2026-11-22T10:00:00Z");
 jest.mock("../../lib/stream/access-revocation", () => ({
   revokeRefundedSeatAccess: (intent: RefundIntent, generation?: Date | null) =>
     mockRevokeRefundedSeatAccess(intent, generation),
@@ -264,7 +266,7 @@ describe("refundBookingPayment", () => {
     });
     expect(mockRevokeRefundedSeatAccess).toHaveBeenCalledWith(
       { refundId: "r1", payerUserId: "payer-1" },
-      null,
+      PERSISTED_GENERATION,
     );
   });
 
@@ -689,7 +691,10 @@ describe("the access revocation a seat-ending refund owes", () => {
 
     const intent = { refundId: "refund-row-9", payerUserId: "payer-1" };
     expect(mockPersistRefundRevocation).toHaveBeenCalledWith(intent);
-    expect(mockRevokeRefundedSeatAccess).toHaveBeenCalledWith(intent, null);
+    expect(mockRevokeRefundedSeatAccess).toHaveBeenCalledWith(
+      intent,
+      PERSISTED_GENERATION,
+    );
     expect(order(mockPersistRefundRevocation)).toBeLessThan(
       order(mockTransitionParticipant),
     );
@@ -1080,6 +1085,22 @@ describe("a refund that settled while its seat decision was still pending", () =
         },
       },
     });
+  /** The revocation intent committed with the decision, and the post-commit drive of that generation. */
+  const intentWrittenWithDecision = () => {
+    expect(mockCommittedRetryRows).toEqual([
+      expect.objectContaining({
+        kind: "REFUND_ACCESS_REVOKE",
+        planId: "refund-row-1",
+        userId: "payer-1",
+      }),
+    ]);
+    const { nextRetryAt } = mockCommittedRetryRows[0] as { nextRetryAt: Date };
+    expect(mockPersistRefundRevocation).not.toHaveBeenCalled();
+    expect(mockRevokeRefundedSeatAccess).toHaveBeenCalledWith(
+      { refundId: "refund-row-1", payerUserId: "payer-1" },
+      nextRetryAt,
+    );
+  };
   beforeEach(() => {
     mockRefundFindMany.mockResolvedValue([interrupted]);
     mockRefundFindUnique.mockResolvedValue({
@@ -1095,11 +1116,25 @@ describe("a refund that settled while its seat decision was still pending", () =
 
     decisionStored();
     expect(seatEnded()).toBe(true);
-    expect(mockPersistRefundRevocation).toHaveBeenCalledWith({
-      refundId: "refund-row-1",
-      payerUserId: "payer-1",
-    });
-    expect(mockRevokeRefundedSeatAccess).toHaveBeenCalledTimes(1);
+    intentWrittenWithDecision();
+  });
+
+  it("a keep-seat decision writes no revocation intent", async () => {
+    mockRefundFindMany.mockResolvedValue([
+      {
+        ...interrupted,
+        metadata: {
+          ...interrupted.metadata,
+          seatIntent: { ...interrupted.metadata.seatIntent, keepSeat: true },
+        },
+      },
+    ]);
+
+    await expect(finaliseSettledRefundSeat("refund-row-1")).resolves.toBe(
+      "kept",
+    );
+    expect(mockCommittedRetryRows).toEqual([]);
+    expect(seatEnded()).toBe(false);
   });
 
   it("the revocation sweep's restamp decides it and stamps the seat", async () => {
@@ -1107,6 +1142,9 @@ describe("a refund that settled while its seat decision was still pending", () =
 
     decisionStored();
     expect(seatEnded()).toBe(true);
+    expect(mockCommittedRetryRows).toEqual([
+      expect.objectContaining({ kind: "REFUND_ACCESS_REVOKE" }),
+    ]);
   });
 
   it("a replay decides it instead of answering it as in flight", async () => {
@@ -1132,7 +1170,7 @@ describe("a refund that settled while its seat decision was still pending", () =
 
     decisionStored();
     expect(seatEnded()).toBe(true);
-    expect(mockRevokeRefundedSeatAccess).toHaveBeenCalledTimes(1);
+    intentWrittenWithDecision();
   });
 
   it("a row still at the gateway is left alone by the finaliser", async () => {

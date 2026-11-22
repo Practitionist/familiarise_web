@@ -106,6 +106,7 @@ import {
   seatIntentOf,
   storedSeatDecision,
   storedSeatIntent,
+  type SeatDecision,
   type SeatIntent,
 } from "./refund-seat";
 import {
@@ -193,6 +194,8 @@ export type RefundInput = {
   keepSeatIfPartial?: boolean;
   /** Answer only the refund already stored under `dedupeKey`; without one, refuse instead of refunding. */
   replayOnly?: boolean;
+  /** The booking seat's payer: a seat-ending decision writes their access revocation in its own transaction. */
+  seatPayerUserId?: string;
 } & OwedMarkerInput;
 
 export type RefundResult = {
@@ -221,7 +224,20 @@ export type RefundResult = {
   seatPending?: true;
   /** The reserving request's seat intent, when the row stores it but no decision yet. */
   seatIntent?: SeatIntent;
+  /** The access revocation the seat-ending decision's transaction wrote. */
+  revocationGeneration?: Date;
 };
+
+/** The result fields of a seat decision; nothing when it could not be made. */
+const seatFields = (seat: SeatDecision | undefined) =>
+  seat
+    ? {
+        endsSeat: seat.endsSeat,
+        ...(seat.revocationGeneration
+          ? { revocationGeneration: seat.revocationGeneration }
+          : {}),
+      }
+    : {};
 
 /** What a keyed refund request asks for: its payment, and the amount when it names one. */
 export type RefundReplayRequest = { paymentId: string; amountPaise?: number };
@@ -927,6 +943,11 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     }
   }
 
+  // Loaded before the transactions below, so no module load runs while one holds the connection.
+  const revocation = input.seatPayerUserId
+    ? await import("@/lib/stream/access-revocation")
+    : null;
+  const payerUserId = input.seatPayerUserId;
   // Decided once the gateway has answered, so a concurrent refund that failed meanwhile is refundable again.
   const decideSeat = (tx: Tx) =>
     decideRefundSeatTx(tx, {
@@ -934,6 +955,15 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       paymentId: payment.id,
       paymentPaise: payment.amount,
       intent: seatIntentOf(input),
+      ...(revocation && payerUserId
+        ? {
+            persistRevocation: (inTx: Tx) =>
+              revocation.persistRefundRevocationInTx(inTx, {
+                refundId: boundRefundRowId,
+                payerUserId,
+              }),
+          }
+        : {}),
     });
   // An unreadable balance stores nothing; the booking wrapper then reads the balance itself.
   const decideSeatAfter = () =>
@@ -949,7 +979,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     });
 
   if (gateway.status !== "SUCCEEDED") {
-    const endsSeat = await decideSeatAfter();
+    const seat = await decideSeatAfter();
     return {
       refundId: boundRefundRowId,
       paymentId: payment.id,
@@ -960,7 +990,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       clawbackInitiated: false,
       status: "PENDING" as const,
       gatewayRefundId: gateway.refundId || undefined,
-      ...(endsSeat === undefined ? {} : { endsSeat }),
+      ...seatFields(seat),
       ...(settledOwed ? { settledOwed } : {}),
     };
   }
@@ -975,7 +1005,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     clawbackInitiated: boolean;
     status: "SUCCEEDED" | "PENDING";
     gatewayRefundId: string | undefined;
-    endsSeat?: boolean;
+    seat?: SeatDecision;
   };
   let stagedBell: StagedTrigger | null = null;
   let stagedEmails: StagedRecipientEmail[] = [];
@@ -1004,7 +1034,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
             where: { id: boundRefundRowId, status: RefundStatus.PENDING },
             data: { status: RefundStatus.SUCCEEDED },
           });
-          const endsSeat = await decideSeat(tx);
+          const seat = await decideSeat(tx);
           if (settledClaim.count === 0) {
             casMiss();
             const current = await tx.refund.findUnique({
@@ -1024,7 +1054,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
                   ? ("SUCCEEDED" as const)
                   : ("PENDING" as const),
               gatewayRefundId: gateway.refundId || undefined,
-              endsSeat,
+              seat,
             };
           }
 
@@ -1090,7 +1120,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
             ...cascade,
             status: "SUCCEEDED" as const,
             gatewayRefundId: gateway.refundId || undefined,
-            endsSeat,
+            seat,
           };
         },
         {
@@ -1122,7 +1152,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
           ? ("SUCCEEDED" as const)
           : ("PENDING" as const),
       gatewayRefundId: gateway.refundId || undefined,
-      endsSeat: await decideSeatAfter(),
+      seat: await decideSeatAfter(),
     };
   }
 
@@ -1135,10 +1165,10 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     ),
   ]);
 
-  const { endsSeat, ...rest } = settled;
+  const { seat, ...rest } = settled;
   return {
     ...rest,
-    ...(endsSeat === undefined ? {} : { endsSeat }),
+    ...seatFields(seat),
     ...(settledOwed ? { settledOwed } : {}),
   };
 }

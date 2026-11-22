@@ -100,51 +100,81 @@ export function withoutSeatMarker(
   return rest;
 }
 
+/** A refund's seat decision, and the revocation intent its transaction wrote when it newly ended the seat. */
+export type SeatDecision = {
+  endsSeat: boolean;
+  revocationGeneration: Date | null;
+};
+
+const KEEP_SEAT: SeatDecision = { endsSeat: false, revocationGeneration: null };
+/** Re-reads after a lost decision write, so an unrelated metadata write cannot drop the decision. */
+const DECIDE_ATTEMPTS = 3;
+
 /**
  * Decides and stores a refund's seat from the intent stored on its row (else `intent`), against the
  * payment's committed balance read through `tx`: a concurrent refund that failed meanwhile counts as
- * refundable. A decision already stored on the row wins; only a SUCCEEDED or PENDING row is decided.
+ * refundable. Only a SUCCEEDED or PENDING row is decided, and a decision already stored wins: the
+ * write is conditional on the row being unchanged since this read. A newly stored seat-ending
+ * decision writes its revocation intent through `persistRevocation` in the same transaction.
  */
 export async function decideRefundSeatTx(
-  tx: Pick<Tx, "refund" | "dispute">,
+  tx: Tx,
   args: {
     refundRowId: string;
     paymentId: string;
     paymentPaise: number;
     /** The caller's own intent, used only for a row that stores none. */
     intent?: SeatIntent;
+    persistRevocation?: (tx: Tx) => Promise<Date>;
   },
-): Promise<boolean> {
-  // One read: the payment's refunds give the balance, and this row's stored intent and decision.
-  const refunds = await tx.refund.findMany({
-    where: { paymentId: args.paymentId },
-    select: { id: true, amountPaise: true, status: true, metadata: true },
-  });
-  const row = refunds.find((r) => r.id === args.refundRowId);
-  const stored = storedSeatDecision(row?.metadata);
-  if (stored !== undefined) return stored;
-  // A refund that moved no money (FAILED, CANCELLED) keeps the seat and stores nothing.
-  if (!row || !RETURNED_REFUND_STATUSES.has(row.status)) return false;
-  const intent = storedSeatIntent(row?.metadata) ?? args.intent;
-  // No intent anywhere: keep the seat rather than guess.
-  if (!intent) return false;
-  const chargedBack = await tx.dispute.aggregate({
-    where: {
-      paymentId: args.paymentId,
-      // The verdicts where the bank already pulled the money, as RETURNED_DISPUTE_STATUSES lists.
-      status: { in: ["LOST", "CHARGE_REFUNDED"] },
-    },
-    _sum: { amountPaise: true },
-  });
-  const returnedPaise = refunds
-    .filter((r) => RETURNED_REFUND_STATUSES.has(r.status))
-    .reduce((sum, r) => sum + Number(r.amountPaise), 0);
-  const leftPaise =
-    args.paymentPaise - returnedPaise - sumPaise(chargedBack._sum.amountPaise);
-  const endsSeat = seatEndsLeaving(intent, leftPaise);
-  await tx.refund.update({
-    where: { id: row.id },
-    data: { metadata: { ...withoutSeatMarker(row.metadata), endsSeat } },
-  });
-  return endsSeat;
+): Promise<SeatDecision> {
+  for (let attempt = 0; attempt < DECIDE_ATTEMPTS; attempt++) {
+    // One read: the payment's refunds give the balance, and this row's stored intent and decision.
+    const refunds = await tx.refund.findMany({
+      where: { paymentId: args.paymentId },
+      select: {
+        id: true,
+        amountPaise: true,
+        status: true,
+        metadata: true,
+        updatedAt: true,
+      },
+    });
+    const row = refunds.find((r) => r.id === args.refundRowId);
+    const stored = storedSeatDecision(row?.metadata);
+    if (stored !== undefined)
+      return { endsSeat: stored, revocationGeneration: null };
+    // A refund that moved no money (FAILED, CANCELLED) keeps the seat and stores nothing.
+    if (!row || !RETURNED_REFUND_STATUSES.has(row.status)) return KEEP_SEAT;
+    const intent = storedSeatIntent(row.metadata) ?? args.intent;
+    // No intent anywhere: keep the seat rather than guess.
+    if (!intent) return KEEP_SEAT;
+    const chargedBack = await tx.dispute.aggregate({
+      where: {
+        paymentId: args.paymentId,
+        // The verdicts where the bank already pulled the money, as RETURNED_DISPUTE_STATUSES lists.
+        status: { in: ["LOST", "CHARGE_REFUNDED"] },
+      },
+      _sum: { amountPaise: true },
+    });
+    const returnedPaise = refunds
+      .filter((r) => RETURNED_REFUND_STATUSES.has(r.status))
+      .reduce((sum, r) => sum + Number(r.amountPaise), 0);
+    const leftPaise =
+      args.paymentPaise -
+      returnedPaise -
+      sumPaise(chargedBack._sum.amountPaise);
+    const endsSeat = seatEndsLeaving(intent, leftPaise);
+    const won = await tx.refund.updateMany({
+      where: { id: row.id, updatedAt: row.updatedAt },
+      data: { metadata: { ...withoutSeatMarker(row.metadata), endsSeat } },
+    });
+    if (won.count === 0) continue;
+    const revocationGeneration =
+      endsSeat && args.persistRevocation
+        ? await args.persistRevocation(tx)
+        : null;
+    return { endsSeat, revocationGeneration };
+  }
+  return KEEP_SEAT;
 }

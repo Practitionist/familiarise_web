@@ -934,3 +934,38 @@ describe("a settled refund whose seat decision is still pending", () => {
     );
   });
 });
+
+describe("the run's last slice is kept for pending seat decisions", () => {
+  test("failure notices that take a second each stop early, so the seat pass still runs", async () => {
+    let clock = 1_000_000;
+    const now = jest.spyOn(Date, "now").mockImplementation(() => clock);
+    // Five owed-attempt failures: each claim is one update, and each takes a second here.
+    const failed = Array.from({ length: 5 }, (_, i) => ({
+      id: `row_failed_${i}`,
+      paymentId: "pay_1",
+      createdAt: new Date(2_000_000),
+      failedAt: null,
+      payment: { refundOwedKey: "k", refundOwedAt: new Date(0) },
+    }));
+    refundTable.findMany.mockImplementation(
+      async (query: { where: { status?: string; metadata?: unknown } }) =>
+        query.where.metadata
+          ? [{ id: "ref_interrupted" }]
+          : query.where.status === "FAILED"
+            ? failed
+            : [],
+    );
+    refundTable.updateMany.mockImplementation(async () => {
+      clock += 1_000;
+      return { count: 1 };
+    });
+    mockFinaliseSeat.mockResolvedValueOnce("ended");
+
+    // The run started 12 s ago: 4 s of its 16 s start budget are left.
+    const result = await reconcilePendingRefunds({ startedAt: clock - 12_000 });
+    now.mockRestore();
+
+    expect(mockFinaliseSeat).toHaveBeenCalledWith("ref_interrupted");
+    expect(result.seatsFinalised).toBe(1);
+  });
+});

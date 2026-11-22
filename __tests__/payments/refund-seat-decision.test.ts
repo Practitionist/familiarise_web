@@ -19,6 +19,8 @@ type RefundRow = {
   metadata: Record<string, unknown>;
 };
 const mockState = {
+  /** A concurrent decision that commits between this one's read and its write. */
+  raceDecision: null as null | boolean,
   refunds: [] as RefundRow[],
   chargedBackPaise: 0,
   /** What happens while this refund is at the gateway, before its answer. */
@@ -51,10 +53,16 @@ jest.mock("../../lib/booking/participants", () => ({
   transitionParticipant: (...a: unknown[]) => mockStampSeat(...a),
 }));
 const mockRevoke = jest.fn(async (..._a: unknown[]) => undefined);
+/** Stands in for the revocation-intent table: an intent written in a transaction records its refund. */
+const mockIntentInTx = jest.fn(
+  async (_tx: unknown, _intent: { refundId: string }) =>
+    new Date("2026-11-22T10:00:00Z"),
+);
 jest.mock("../../lib/stream/access-revocation", () => ({
   persistRefundRevocation: (...a: unknown[]) => mockRevoke(...a),
   revokeRefundedSeatAccess: (...a: unknown[]) => mockRevoke(...a),
-  persistRefundRevocationInTx: jest.fn(async () => null),
+  persistRefundRevocationInTx: (tx: unknown, intent: { refundId: string }) =>
+    mockIntentInTx(tx, intent),
 }));
 jest.mock("../../lib/email", () => ({
   ...jest.requireActual("../../lib/email"),
@@ -118,6 +126,13 @@ jest.mock("../../lib/prisma", () => {
             (!where.id || r.id === where.id) &&
             (!where.status || r.status === where.status),
         );
+        if (mockState.raceDecision !== null && data.metadata) {
+          // The other transaction stored its decision first, so this conditional write matches nothing.
+          for (const r of rows)
+            r.metadata = { ...r.metadata, endsSeat: mockState.raceDecision };
+          mockState.raceDecision = null;
+          return { count: 0 };
+        }
         for (const r of rows) Object.assign(r, data);
         return { count: rows.length };
       },
@@ -146,6 +161,8 @@ import prisma from "../../lib/prisma";
 beforeEach(() => {
   mockStampSeat.mockClear();
   mockRevoke.mockClear();
+  mockIntentInTx.mockClear();
+  mockState.raceDecision = null;
   mockState.refunds = [];
   mockState.chargedBackPaise = 0;
   mockState.atGateway = null;
@@ -375,7 +392,7 @@ it("decides from the row's stored intent, never the deciding caller's", async ()
     }),
   );
 
-  expect(decided).toBe(false);
+  expect(decided.endsSeat).toBe(false);
 });
 
 it("a FAILED refund stores no decision and keeps the seat", async () => {
@@ -404,6 +421,57 @@ it("a FAILED refund stores no decision and keeps the seat", async () => {
     }),
   );
 
-  expect(decided).toBe(false);
+  expect(decided.endsSeat).toBe(false);
   expect(mockState.refunds[0]?.metadata).toEqual(metadata);
+});
+
+it("a decision another transaction stored first wins, and this one writes nothing of its own", async () => {
+  const intent = {
+    keepSeat: false,
+    keepSeatIfPartial: false,
+    amountNamed: false,
+  };
+  mockState.refunds.push({
+    id: "refund-1",
+    paymentId: "pay-1",
+    amountPaise: 50_000,
+    status: "SUCCEEDED",
+    dedupeKey: null,
+    refundId: "rfnd_1",
+    metadata: { seatDecision: "pending", seatIntent: intent },
+  });
+  mockState.raceDecision = false;
+
+  const decided = await prisma.$transaction((tx) =>
+    decideRefundSeatTx(tx, {
+      refundRowId: "refund-1",
+      paymentId: "pay-1",
+      paymentPaise: 50_000,
+      persistRevocation: async () => new Date(),
+    }),
+  );
+
+  // This read would end the seat; the stored winner keeps it.
+  expect(decided).toEqual({ endsSeat: false, revocationGeneration: null });
+  expect(mockState.refunds[0]?.metadata).toMatchObject({ endsSeat: false });
+});
+
+it("the live path writes the seat-ending decision's revocation intent in the deciding transaction", async () => {
+  const refund = await refundBookingPayment({
+    paymentId: "pay-1",
+    reason: "cancellation",
+    dedupeKey: "cancel:k",
+  });
+
+  expect(mockIntentInTx).toHaveBeenCalledWith(expect.anything(), {
+    refundId: refund.refundId,
+    payerUserId: "buyer-1",
+  });
+  expect(mockState.refunds[0]?.metadata).toMatchObject({ endsSeat: true });
+  // Only the Stream drive runs after commit; no second intent write.
+  expect(mockRevoke).toHaveBeenCalledTimes(1);
+  expect(mockRevoke).toHaveBeenCalledWith(
+    { refundId: refund.refundId, payerUserId: "buyer-1" },
+    new Date("2026-11-22T10:00:00Z"),
+  );
 });

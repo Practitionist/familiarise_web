@@ -15,7 +15,10 @@ import {
   refundNoticeKind,
   refundNoticeOverride,
 } from "@/lib/payments/operations/refund-cause";
-import { startDeadline } from "@/lib/cron/run-deadline";
+import {
+  startDeadline,
+  SWEEP_START_DEADLINE_MS,
+} from "@/lib/cron/run-deadline";
 import {
   compareLeastRecentlyReconciled,
   LEAST_RECENTLY_RECONCILED,
@@ -680,8 +683,11 @@ async function reconcilePendingRefundsUnlocked(
     );
   }
 
+  // The failure notices stop early, so the seat pass always keeps the run's last slice.
+  const noticeDeadline = () =>
+    Date.now() >= startedAt + SWEEP_START_DEADLINE_MS - SEAT_SLICE_MS;
   try {
-    await notifyFailedRefundsUnlocked(limit, pastDeadline);
+    await notifyFailedRefundsUnlocked(limit, noticeDeadline);
   } catch (error) {
     errors.push(error instanceof Error ? error.message : String(error));
   }
@@ -848,6 +854,8 @@ async function attemptRefundNotice(
 
 // A SUCCEEDED refund still uncascaded this long after its last write is stranded.
 const STRANDED_AFTER_MS = 10 * 60 * 1000;
+/** The end of the run's start budget kept for settling pending seat decisions. */
+const SEAT_SLICE_MS = 2_000;
 const STRANDED_BATCH = 10;
 /** Stops starting new re-drives once the pass has run this long. */
 const STRANDED_BUDGET_MS = 8_000;

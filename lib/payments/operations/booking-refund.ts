@@ -66,17 +66,33 @@ async function leavesRefundable(paymentId: string): Promise<boolean> {
   }
 }
 
-/** Decides and stores a refund's seat from its stored intent; an unreadable balance keeps the seat. */
-function decideStoredSeat(
-  refundRowId: string,
-  paymentId: string,
+const KEEP_SEAT: SeatDecision = { endsSeat: false, revocationGeneration: null };
+
+/**
+ * Decides and stores a refund's seat from its stored intent; a seat-ending decision writes the payer's
+ * revocation intent in the same transaction. An unreadable balance keeps the seat.
+ */
+async function decideStoredSeat(
+  refund: { refundId: string; paymentId: string; payerUserId: string },
   paymentPaise: number,
-): Promise<boolean> {
+): Promise<SeatDecision> {
+  // Loaded before the transaction, so no module load runs while it holds the connection.
+  const { persistRefundRevocationInTx } =
+    await import("@/lib/stream/access-revocation");
   return prisma
     .$transaction((tx) =>
-      decideRefundSeatTx(tx, { refundRowId, paymentId, paymentPaise }),
+      decideRefundSeatTx(tx, {
+        refundRowId: refund.refundId,
+        paymentId: refund.paymentId,
+        paymentPaise,
+        persistRevocation: (inTx) =>
+          persistRefundRevocationInTx(inTx, {
+            refundId: refund.refundId,
+            payerUserId: refund.payerUserId,
+          }),
+      }),
     )
-    .catch(() => false);
+    .catch(() => KEEP_SEAT);
 }
 
 /**
@@ -93,14 +109,29 @@ async function replayedSeat(
     endsSeat?: boolean;
     seatPending?: true;
     seatIntent?: SeatIntent;
+    revocationGeneration?: Date;
   },
-  paymentPaise: number,
-): Promise<boolean> {
-  if (r.endsSeat !== undefined) return r.endsSeat;
-  if (r.seatPending && r.status !== "SUCCEEDED") return false;
+  payment: { userId: string; amountPaise: number },
+): Promise<SeatDecision> {
+  if (r.endsSeat !== undefined)
+    return {
+      endsSeat: r.endsSeat,
+      revocationGeneration: r.revocationGeneration ?? null,
+    };
+  if (r.seatPending && r.status !== "SUCCEEDED") return KEEP_SEAT;
   if (!r.seatPending && !r.seatIntent)
-    return legacyReplayEndsSeat(input, r.paymentId);
-  return decideStoredSeat(r.refundId, r.paymentId, paymentPaise);
+    return {
+      endsSeat: await legacyReplayEndsSeat(input, r.paymentId),
+      revocationGeneration: null,
+    };
+  return decideStoredSeat(
+    {
+      refundId: r.refundId,
+      paymentId: r.paymentId,
+      payerUserId: payment.userId,
+    },
+    payment.amountPaise,
+  );
 }
 
 /** A row with no seat decision, marker or intent ends the seat only when nothing is left to refund. */
@@ -207,6 +238,7 @@ import {
   seatDecisionPending,
   seatIntentOf,
   storedSeatDecision,
+  type SeatDecision,
   type SeatIntent,
 } from "./refund-seat";
 // Late-bound cycle: refund-owed drives its markers through this module.
@@ -334,6 +366,7 @@ export async function refundBookingPayment(
       intent,
       outcome.seat.paymentId,
       input.initiatedByUserId,
+      outcome.intentGeneration,
     );
     return outcome.result;
   }
@@ -341,17 +374,21 @@ export async function refundBookingPayment(
   return outcome.result;
 }
 
-/** A gateway refund's seat ending, after its commit: the intent lands first, so a failed stamp is re-stamped by the sweep. */
+/**
+ * A gateway refund's seat ending, after its commit. The revocation intent is the one the deciding
+ * transaction wrote, else it lands first here, so a failed stamp is re-stamped by the sweep.
+ */
 async function endGatewaySeat(
   intent: { refundId: string; payerUserId: string },
   paymentId: string,
   actorUserId: string | null | undefined,
+  written: Date | null,
 ): Promise<void> {
   const { persistRefundRevocation, revokeRefundedSeatAccess } =
     await import("@/lib/stream/access-revocation");
-  await persistRefundRevocation(intent);
+  const generation = written ?? (await persistRefundRevocation(intent));
   await markParticipantsRefunded(paymentId, actorUserId);
-  await revokeRefundedSeatAccess(intent, null);
+  await revokeRefundedSeatAccess(intent, generation);
 }
 
 /**
@@ -378,16 +415,17 @@ export async function finaliseSettledRefundSeat(
   ) {
     return "skipped";
   }
-  const endsSeat = await decideStoredSeat(
-    refundId,
-    refund.paymentId,
+  const intent = { refundId, payerUserId: refund.payment.userId };
+  const seat = await decideStoredSeat(
+    { ...intent, paymentId: refund.paymentId },
     Number(refund.payment.amount),
   );
-  if (!endsSeat) return "kept";
+  if (!seat.endsSeat) return "kept";
   await endGatewaySeat(
-    { refundId, payerUserId: refund.payment.userId },
+    intent,
     refund.paymentId,
     null,
+    seat.revocationGeneration,
   );
   return "ended";
 }
@@ -407,7 +445,7 @@ export async function restampRefundedSeats(
       status: true,
       paymentId: true,
       metadata: true,
-      payment: { select: { amount: true } },
+      payment: { select: { userId: true, amount: true } },
     },
   });
   if (
@@ -421,11 +459,16 @@ export async function restampRefundedSeats(
   if (
     seatDecisionPending(refund.metadata) &&
     (refund.status !== RefundStatus.SUCCEEDED ||
-      !(await decideStoredSeat(
-        refundId,
-        refund.paymentId,
-        Number(refund.payment?.amount ?? 0),
-      )))
+      !(
+        await decideStoredSeat(
+          {
+            refundId,
+            paymentId: refund.paymentId,
+            payerUserId: refund.payment.userId,
+          },
+          Number(refund.payment.amount),
+        )
+      ).endsSeat)
   ) {
     return "skipped";
   }
@@ -519,9 +562,16 @@ async function refundBookingPaymentOnRail(
   }
 
   if (!isInternalFundedIntent(payment.paymentIntent)) {
-    const r = await refundPayment(input);
+    // A seat-ending decision writes this payer's revocation intent in its own transaction.
+    const r = await refundPayment({
+      ...input,
+      seatPayerUserId: payment.userId,
+    });
     // Decided once the gateway answered and stored on the row; the caller stamps the seat after commit.
-    const endsSeat = await replayedSeat(input, r, Number(payment.amount));
+    const decision = await replayedSeat(input, r, {
+      userId: payment.userId,
+      amountPaise: Number(payment.amount),
+    });
     return {
       result: {
         refundId: r.refundId,
@@ -531,8 +581,8 @@ async function refundBookingPaymentOnRail(
         ...(r.settledOwed ? { settledOwed: r.settledOwed } : {}),
       },
       seat: seatOf(r.paymentId),
-      endsSeat,
-      intentGeneration: null,
+      endsSeat: decision.endsSeat,
+      intentGeneration: decision.revocationGeneration,
     };
   }
 
@@ -546,22 +596,23 @@ async function refundBookingPaymentOnRail(
     return internal.result;
   });
   // A key already spent answers without the transaction, with the decision its row stored.
-  const endsSeat =
-    decided?.endsSeat ??
-    (await replayedSeat(
-      input,
-      {
-        ...keyed,
-        refundId: keyed.result.refundId,
-        status: keyed.result.status,
-      },
-      Number(payment.amount),
-    ));
+  const replayed = decided
+    ? null
+    : await replayedSeat(
+        input,
+        {
+          ...keyed,
+          refundId: keyed.result.refundId,
+          status: keyed.result.status,
+        },
+        { userId: payment.userId, amountPaise: Number(payment.amount) },
+      );
   return {
     result: keyed.result,
     seat: seatOf(keyed.paymentId),
-    endsSeat,
-    intentGeneration: decided?.intentGeneration ?? null,
+    endsSeat: decided?.endsSeat ?? replayed?.endsSeat ?? false,
+    intentGeneration:
+      decided?.intentGeneration ?? replayed?.revocationGeneration ?? null,
   };
 }
 
