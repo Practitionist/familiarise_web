@@ -1115,7 +1115,7 @@ export async function driveRefundOwed(
     // The drive's own refund is still PENDING (an ambiguous gateway answer, or
     // a settle that failed after the gateway took it): reconcile settles it by
     // lookup, so the drive spends no attempt on it.
-    const inFlight = await pendingReservation(marker.key);
+    const inFlight = await pendingReservation(marker);
     if (inFlight) return { kind: "refunded", refund: inFlight };
     // The gateway has no such payment: retrying only adds FAILED refund rows.
     const permanent =
@@ -1155,15 +1155,22 @@ async function readOrNull<T>(read: () => Promise<T>): Promise<T | null> {
   }
 }
 
-/** The drive's own refund under the marker's key while it is still PENDING, else null. */
-async function pendingReservation(key: string): Promise<DrivenRefund | null> {
+/** The drive's own refund under the marker's key, on the marker's payment, while it is still PENDING, else null. */
+async function pendingReservation(
+  marker: Pick<RefundOwedMarker, "key" | "paymentId">,
+): Promise<DrivenRefund | null> {
   const row = await readOrNull(() =>
     prisma.refund.findUnique({
-      where: { dedupeKey: key },
-      select: { id: true, amountPaise: true, status: true },
+      where: { dedupeKey: marker.key },
+      select: { id: true, paymentId: true, amountPaise: true, status: true },
     }),
   );
-  if (row?.status !== RefundStatus.PENDING) return null;
+  // An incident key names no payment, so a row under it may belong to another payment.
+  if (
+    row?.status !== RefundStatus.PENDING ||
+    row.paymentId !== marker.paymentId
+  )
+    return null;
   return {
     refundId: row.id,
     amountRefundedPaise: Number(row.amountPaise),
