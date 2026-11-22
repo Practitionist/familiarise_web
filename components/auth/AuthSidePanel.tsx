@@ -9,13 +9,13 @@ const FEATURES: { icon: LucideIcon; title: string; description: string }[] = [
     icon: Zap,
     title: "Learn live",
     description:
-      "Classes, webinars and one-on-one sessions where you ask questions and get answers in real time.",
+      "Classes, webinars and private sessions where you ask questions and get answers in real time.",
   },
   {
     icon: BadgeCheck,
-    title: "Interviewed experts",
+    title: "Vetted experts",
     description:
-      "Our founder interviews every expert, and their employer is confirmed by work email or LinkedIn.",
+      "Every expert is vetted before they can take bookings, and their employer is confirmed by work email or LinkedIn.",
   },
   {
     icon: Lock,
