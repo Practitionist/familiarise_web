@@ -1,6 +1,6 @@
 # Booking QA suite
 
-Exhaustive, agent-run QA (819 cases) for everything that books time on Familiarise: consultations, subscriptions, webinars, classes and trials, from availability and the heat map through checkout, allocation, rescheduling, cancelling, refunds, background sweeps and every dashboard that reports them.
+Exhaustive, agent-run QA (821 cases) for everything that books time on Familiarise: consultations, subscriptions, webinars, classes and trials, from availability and the heat map through checkout, allocation, rescheduling, cancelling, refunds, background sweeps and every dashboard that reports them.
 
 Agents drive the product with the **Chrome DevTools MCP** (one browser instance, one tab) and read and seed data with the **Supabase MCP** (writes need owner approval). They report every outcome and every inconsistency, false statement, AI-slop copy, console or network error and missed chance to tell the user something useful. Developers fix from the report.
 
@@ -25,7 +25,7 @@ This suite replaces `prompts/booking-algorithm-tests/` (agents 001–020), which
 | [`05-webinars/`](05-webinars/) | `WE-01`–`WE-55` (55) | Create and publish, host time picker, seats and waitlist, buy, re-time a sold webinar, cancel by host and by buyer, completion. |
 | [`06-classes/`](06-classes/) | `CL-01`–`CL-74` (74) | Weekly-pattern scheduler, series generation, "Schedule now", sold-class series move, per-session cancel, make-up, late join, never-placed refunds at completion. |
 | [`07-trials/`](07-trials/) | `TR-01`–`TR-41` (41) | Free and paid trials, buyer-picked time, tentative hold and capture, reschedule once per side, expert cancel strike, capture after start, convert to subscription. |
-| [`08-money-refunds-payments/`](08-money-refunds-payments/) | `MO-01`–`MO-70` (70) | Checkout front doors, mock pay, cancel quotes and tiers, refund rows, credit notes, earnings and holds, refund owed, gateway failures, org rails, free credits. |
+| [`08-money-refunds-payments/`](08-money-refunds-payments/) | `MO-01`–`MO-72` (72) | Checkout front doors, mock pay, cancel quotes and tiers, refund rows, credit notes, earnings and holds, refund owed, gateway failures, org rails, free credits. |
 | [`09-concurrency-integrity/`](09-concurrency-integrity/) | `CC-01`–`CC-70` (70) | Races, duplicate submits, idempotency replay, two devices, stale clients, lock loss, illegal transitions, authz by URL, overlap invariant. |
 | [`10-timezones-dst-locale/`](10-timezones-dst-locale/) | `TZ-01`–`TZ-52` (52) | Cross-zone parties, DST transitions (US, UK, Australia), odd offsets (Kathmandu), browser vs profile zone, overnight windows, locale formatting. |
 | [`11-dashboards-roles-notifications/`](11-dashboards-roles-notifications/) | `DB-01`–`DB-63` (63) | Consultant, consultee, org (sponsor/host), staff and admin views of the same booking; dual role; bell notifications and emails; maintenance mode. |

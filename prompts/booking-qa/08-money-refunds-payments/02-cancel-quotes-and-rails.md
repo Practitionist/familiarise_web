@@ -32,7 +32,7 @@ The preview is `GET /api/appointments/[aid]/cancel/preview`. Its 1:1 body has `r
 
 **Steps:** within the same minute, call the preview for A, B and C. Then compute hours yourself from `hoursUntilNextSession`.
 
-**Expect:** A (≥ 24 h) 100 %; B (< 24 h) 50 %; C: 50 % while `hoursUntilNextSession ≥ 2`, then 0 % once the clock passes `startsAt − 2 h`. Call C's preview again after that moment and confirm it drops. The quote equals `round(amount × pct)`; record the rounding (paise) on an odd amount.
+**Expect:** A (≥ 24 h) 100 %; B (< 24 h) 50 %; C: 50 % while `hoursUntilNextSession ≥ 2`, then 0 % once the clock passes `startsAt − 2 h`. Call C's preview again after that moment and confirm it drops. The quote equals `amount × pct` floored to whole paise (₹8,474.09 at 50 % refunds 423704 paise), and the expert's reversed share is floored too; record both on an odd amount.
 
 **Probe further:** does the cancel dialog's sentence change at the same instant as the number? Does it say "50 % because it's less than 24 hours away" or just a figure?
 
@@ -83,10 +83,10 @@ The preview is `GET /api/appointments/[aid]/cancel/preview`. Its 1:1 body has `r
 
 **Steps:**
 
-1. As B2 call `GET …/cancel/preview?scope=seat`. Record the body.
-2. Owner-approved: move the webinar to start inside the window (window − 1 h). Call it again, then try to leave in the UI.
+1. As B2 call `GET /api/appointments/<id>/cancel/preview?scope=seat`. Record the body.
+2. Owner-approved: move the webinar to start inside the window (window − 1 h). Call it again, then try to leave in the UI (the leave is `DELETE /api/participants/webinar/<eventId>?userId=<B2>`).
 
-**Expect:** step 1: a full refund of B2's seat (record field names; this branch returns `quoteSeatLeave`). Step 2: the leave is refused with human copy naming the window (record the code). Without `?scope=seat`, B2's preview is `403` (attendees can't cancel the whole event).
+**Expect:** step 1: a full refund of B2's seat (record field names; this branch returns `quoteSeatLeave`). Step 2: the leave is refused with human copy naming the window (record the code). Without `?scope=seat`, B2's preview is `403` (attendees can't cancel the whole event), and the appointment cancel route answers `403` to a seat holder: a seat leaves only through the participants route.
 
 **Probe further:** after a re-time, free leave is WE-38/39; don't repeat. Does the seat dialog state the window in hours and in B2's local time ("until Tue 14:30 BST")?
 
@@ -96,7 +96,7 @@ The preview is `GET /api/appointments/[aid]/cancel/preview`. Its 1:1 body has `r
 
 **Setup:** B3's class seat (MO-05). Owner-approved: mark the first session `COMPLETED` in the past (only if CL-35 hasn't already covered leaving; otherwise reuse its numbers).
 
-**Steps:** `?scope=seat` preview as B3; then leave (if allowed at this notice).
+**Steps:** `?scope=seat` preview as B3; then leave through `DELETE /api/participants/class/<eventId>?userId=<B3>` (if allowed at this notice).
 
 **Expect:** the quote equals unit × sessions not yet held (unit = `amount / sessionsPurchased`, record rounding); the `Refund` row matches; `refundedShareAmount` on H2's earnings moves by the same fraction.
 

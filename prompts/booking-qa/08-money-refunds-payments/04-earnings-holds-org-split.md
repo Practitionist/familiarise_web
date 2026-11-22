@@ -4,7 +4,7 @@
 **Personas:** H1, H2, H3, OX (LearnPro expert, payout SELF), OH (LearnPro owner), OS, AD, ST.
 **Docs under test:** `lib/payments/payouts/{constants,earnings-hold,earnings-hold-ops}.ts`, `scripts/earnings/release-earnings.ts`, `docs/booking/` money pages.
 
-Defaults read from code: platform fee 20 % (`PLATFORM_FEE_PERCENTAGE`; per payment `platformFeeBps`), hold after the anchor 24 h for consultations and classes, 48 h for webinars, 168 h for subscriptions; anchor = later of capture and the last live session's end; +7 days for a new expert (first paid earning < 30 days old or lifetime share < ₹50,000). LearnPro's rate card is platform 10 % / org 10 % / consultant 80 % (seed).
+Defaults read from code: platform fee 20 % (`PLATFORM_FEE_PERCENTAGE`; per payment `platformFeeBps`), hold after the anchor 48 h for consultations and webinars, 24 h for classes, 168 h for subscriptions; anchor = later of capture and the last live session's end; +3 days for a new expert (first paid earning < 30 days old or lifetime share < ₹10,000). LearnPro's rate card is platform 10 % / org 10 % / consultant 80 % (seed).
 
 ## MO-43 — LearnPro-hosted booking: three shares that add up `[local]`
 
@@ -19,7 +19,7 @@ Defaults read from code: platform fee 20 % (`PLATFORM_FEE_PERCENTAGE`; per payme
 - `Payment.hostOrganizationId` = LearnPro.
 - `OrganizationEarnings`: one row; `platformBpsApplied = 1000`, `orgBpsApplied = 1000`, `consultantBpsApplied = 8000` (or the rate card in force; record `rateCardIdApplied`); `platformFeePaise + orgSharePaise + consultantSharePaise = grossAmountPaise`.
 - OX is payout `SELF`: record whether OX also has a `ConsultantEarnings` row for the 80 % and that the expert share is not counted twice (org row + consultant row must not both pay OX).
-- `holdUntil` = session end + 24 h on both rows.
+- `holdUntil` = session end + 48 h on both rows.
 
 **Cross-check:** OH sees LearnPro's 10 %; OX sees their 80 %; neither sees the other's private split unless the page says why. Times in IST.
 
@@ -63,15 +63,15 @@ Defaults read from code: platform fee 20 % (`PLATFORM_FEE_PERCENTAGE`; per payme
 
 **Probe further:** H1's Earnings "next release" date follows the move?
 
-## MO-47 — A new expert's earnings wait an extra week
+## MO-47 — A new expert's earnings wait three extra days
 
 **Why it matters:** the new-expert hold is fraud control; it must apply once and stop after tenure.
 
-**Setup:** pick the persona with no `SUCCEEDED` earnings yet (check `SELECT count(*) FROM "ConsultantEarnings" e JOIN "Payment" p ON p.id = e."paymentId" WHERE e."consultantProfileId" = :cid AND p."paymentStatus" = 'SUCCEEDED'` for H3 and H4). If both have history older than 30 days and lifetime share ≥ ₹50,000, BLOCKED (can't make a new expert without new accounts).
+**Setup:** pick the persona with no `SUCCEEDED` earnings yet (check `SELECT count(*) FROM "ConsultantEarnings" e JOIN "Payment" p ON p.id = e."paymentId" WHERE e."consultantProfileId" = :cid AND p."paymentStatus" = 'SUCCEEDED'` for H3 and H4). If both have history older than 30 days and lifetime share ≥ ₹10,000, BLOCKED (can't make a new expert without new accounts).
 
 **Steps:** `[local]` book that expert once; R-04 earnings.
 
-**Expect:** `holdUntil` = anchor + type hours + 7 days. Compare with H1's MO-01 row (no extra week if H1 isn't new).
+**Expect:** `holdUntil` = anchor + type hours + 3 days. Compare with H1's MO-01 row (no extra days if H1 isn't new).
 
 **Probe further:** does the new expert's Earnings page say why the first payouts take longer? If not, MISSED-OPPORTUNITY.
 

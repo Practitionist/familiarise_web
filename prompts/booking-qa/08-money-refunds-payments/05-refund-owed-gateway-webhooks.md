@@ -146,7 +146,7 @@ SELECT (SELECT count(*) FROM "LedgerTransaction" WHERE "idempotencyKey" = 'booki
 
 journals 1, earnings 1, legs 1, status `SUCCEEDED`; the occurrence non-tentative; one booked notification per party.
 
-**Probe further:** record every event id the owner posts in this folder, and retire only those at cleanup, never by prefix (another run's fixtures share it): `UPDATE "WebhookEvent" SET error = 'permanent: qa fixture', processed = true, "processedAt" = now() WHERE "eventId" IN ('qa-MO-63-1', 'qa-MO-63-2' /* plus the ids posted in MO-64 and MO-65 */);`.
+**Probe further:** record every event id the owner posts in this folder, and retire only those at cleanup, never by prefix (another run's fixtures share it): `UPDATE "WebhookEvent" SET error = 'permanent: qa fixture', processed = true, "processedAt" = now() WHERE "eventId" IN ('qa-MO-63-1', 'qa-MO-63-2' /* plus the ids posted in MO-64, MO-65, MO-70 and MO-71 */);`.
 
 ## MO-64 — Out-of-order events: `order.paid` first, a failure after success
 
@@ -222,7 +222,31 @@ journals 1, earnings 1, legs 1, status `SUCCEEDED`; the occurrence non-tentative
 
 **Probe further:** the retry button: does it reuse the same `clientIdempotencyKey`?
 
-## MO-70 — Folder money ledger and cleanup
+## MO-70 — A gateway-captured subscription purchase confirms, first purchase and renewal `[local]`
+
+**Why it matters:** a mock payment skips capture validation, so only a real capture proves that a subscription's order notes match what the webhook expects; a mismatch parks a charged sale for an operator.
+
+**Setup (BLOCKED on preview; local with test keys and the webhook secret, owner):** B1 starts a non-mock subscription checkout (first purchase) and stops before paying. Record the payment id, order id and amount. Repeat once for a renewal of an active subscription (the renewal checkout), as a second row.
+
+**Steps:** for each row, copy the notes from the order the app actually minted (read them from the created order at the gateway, or from the stored payment row's source; never hand-write them) into a signed `payment.captured` for that order with a fresh event id (`qa-MO-70-1`, `qa-MO-70-2`), and post it.
+
+**Expect:** the delivery answers `200`. For each payment: `paymentStatus = SUCCEEDED` and `description` carrying no `REQUIRES_MANUAL_RECOVERY` text; the subscription confirmed (first purchase active; renewal extended); exactly one `LedgerTransaction` with `idempotencyKey = 'booking:<paymentId>'`; one `ConsultantEarnings` row. Run MQ-1 and the MO-63 count query for each.
+
+**Probe further:** on `dev` before the fix for issue #2962 the expected result is the parked state (`SUCCEEDED` or captured with a `REQUIRES_MANUAL_RECOVERY` description, no booking, no journal, no earnings): record which state you see so the report says whether the fix is present. Retire the posted event ids at cleanup as in MO-63.
+
+## MO-71 — A gateway-captured paid trial confirms on the order minted at request time `[local]`
+
+**Why it matters:** a paid trial's order is minted when the trial is requested, before any pay-link visit; a capture on it must confirm the trial the same way a checkout capture does.
+
+**Setup (BLOCKED on preview; local with test keys and the webhook secret, owner):** TR-04's held paid trial (B1, ₹100), without Mock Pay (a pay link has no mock path). Record the trial id, the payment id and the order id.
+
+**Steps:** copy the notes from the order the app actually minted (read them from the created order at the gateway, or from the stored payment row's source; never hand-write them) into a signed `payment.captured` for that order with event id `qa-MO-71-1`, and post it.
+
+**Expect:** the delivery answers `200`; `paymentStatus = SUCCEEDED` with no `REQUIRES_MANUAL_RECOVERY` description; the trial confirmed and its occurrence non-tentative; one `LedgerTransaction` with `idempotencyKey = 'booking:<paymentId>'`; one `ConsultantEarnings` row (record its `holdUntil`, MO-48).
+
+**Probe further:** on `dev` before the fix for issue #2962 the expected result is the parked state (a `REQUIRES_MANUAL_RECOVERY` description, trial unconfirmed, no journal, no earnings): record which state you see. Retire the event id at cleanup as in MO-63.
+
+## MO-72 — Folder money ledger and cleanup
 
 **Why it matters:** refunds and ledger rows are append-only; the report must list what stays.
 
