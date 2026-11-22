@@ -1042,3 +1042,54 @@ describe("the webinar end backfill reads only the session that ended", () => {
     );
   });
 });
+
+describe("a late end of an older session backfills at its own end", () => {
+  const tx = (
+    prisma as unknown as { __tx: Record<string, Record<string, jest.Mock>> }
+  ).__tx;
+  beforeEach(() => {
+    jest.clearAllMocks();
+    tx.meeting.findUnique.mockReset();
+    tx.meeting.updateMany.mockReset().mockResolvedValue({ count: 1 });
+    tx.meetingPresence.createMany.mockReset().mockResolvedValue({ count: 1 });
+    tx.meetingAttendance.upsert.mockReset().mockResolvedValue({});
+    tx.meetingAttendance.updateMany.mockReset().mockResolvedValue({ count: 0 });
+    (getCallParticipantSessionsFromStream as jest.Mock).mockReset();
+  });
+
+  it("closes the older session's unknown leave at that event's stamp, not the room's later end", async () => {
+    const at = (m: number) => new Date(Date.UTC(2026, 9, 10, 9, m));
+    tx.meeting.findUnique.mockResolvedValueOnce({
+      id: "mtg-a",
+      streamCallId: "web-a",
+      appointmentOccurrenceId: "occ-a",
+      endedAt: at(30),
+      endedReason: "session_timeout",
+      occurrence: {
+        id: "occ-a",
+        startsAt: at(0),
+        endsAt: at(59),
+        appointment: { webinar: { id: "web-1" }, class: null },
+      },
+    });
+    (getCallParticipantSessionsFromStream as jest.Mock).mockResolvedValueOnce([
+      { userId: "u-a", userSessionId: "dev-a", joinedAt: at(0), leftAt: null },
+    ]);
+
+    await handleSessionEnded({
+      call_cid: "default:web-a",
+      type: "call.session_ended",
+      created_at: at(10).toISOString(),
+      session_id: "session-a",
+    });
+
+    expect(tx.meeting.updateMany).not.toHaveBeenCalled();
+    expect(getCallParticipantSessionsFromStream).toHaveBeenCalledWith(
+      "web-a",
+      "session-a",
+    );
+    expect(tx.meetingPresence.createMany.mock.calls.at(-1)?.[0].data).toEqual([
+      expect.objectContaining({ userSessionId: "dev-a", leftAt: at(10) }),
+    ]);
+  });
+});

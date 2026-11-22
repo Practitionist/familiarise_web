@@ -282,11 +282,8 @@ export async function handleSessionEnded(
     const endedAt = new Date(created_at);
 
     if (!endSupersedes(meeting, "session_timeout", endedAt)) {
-      await runBestEffortGroupReconciliation(
-        meeting,
-        meeting.endedAt ?? endedAt,
-        endedSessionId,
-      );
+      // The ended session backfills at its own end; the room's recorded end is left as it is.
+      await runBestEffortGroupReconciliation(meeting, endedAt, endedSessionId);
       streamLogger.info("Stale end event — a later end is already recorded", {
         sessionId: meeting.id,
         streamCallId,
@@ -378,11 +375,8 @@ export async function handleCallEnded(
     });
 
     if (!endSupersedes(meeting, endedReason, endedAt)) {
-      await runBestEffortGroupReconciliation(
-        meeting,
-        meeting.endedAt ?? endedAt,
-        endedSessionId,
-      );
+      // The ended session backfills at its own end; the room's recorded end is left as it is.
+      await runBestEffortGroupReconciliation(meeting, endedAt, endedSessionId);
       streamLogger.info("Stale end event — a later end is already recorded", {
         sessionId: meeting.id,
         streamCallId,
