@@ -324,7 +324,7 @@ function RecommendForm({
   const [amount, setAmount] = useState("");
   const [sessionsText, setSessionsText] = useState("");
   const [reason, setReason] = useState("");
-  const [releaseChosen, setReleaseSeat] = useState(false);
+  const [releaseChosen, setReleaseChosen] = useState(false);
   const releaseSeat = creditFunded || releaseChosen;
   const sessions = plan ? parseSessions(sessionsText, plan) : null;
   const sessionAmount =
@@ -355,7 +355,7 @@ function RecommendForm({
             setAmount("");
             setSessionsText("");
             setReason("");
-            setReleaseSeat(false);
+            setReleaseChosen(false);
           },
         );
       }}
@@ -409,7 +409,7 @@ function RecommendForm({
           checked={releaseSeat}
           disabled={creditFunded}
           aria-describedby={`${seatId}-hint`}
-          onChange={(event) => setReleaseSeat(event.target.checked)}
+          onChange={(event) => setReleaseChosen(event.target.checked)}
         />
         <div>
           <label htmlFor={seatId} className="font-medium">
