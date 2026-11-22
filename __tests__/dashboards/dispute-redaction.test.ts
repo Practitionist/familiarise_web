@@ -48,8 +48,10 @@ describe("dispute views by role", () => {
       await listDisputes(
         new NextRequest("http://localhost/api/admin/disputes?status=WON"),
       );
-      const { select } = (prisma.dispute.findMany as jest.Mock).mock
-        .calls[0][0];
+      // The page read; the urgent-banner read beside it selects no row fields.
+      const { select } = (prisma.dispute.findMany as jest.Mock).mock.calls
+        .map(([args]) => args)
+        .find((args) => args.take);
       expect(select).not.toHaveProperty("evidence");
       expect(select).not.toHaveProperty("internalNotes");
       expect(select).toMatchObject({

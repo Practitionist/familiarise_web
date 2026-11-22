@@ -6,7 +6,7 @@ import { findUserIssues } from "@/lib/observability/sentry-issues";
 import type {
   CaseBooking,
   CaseBookingFacts,
-  CasePayment,
+  StaffCasePayment,
   CaseWorkspace,
 } from "@/types/support-case";
 import { listStatusFacts } from "@/lib/appointments/list-status-facts";
@@ -20,6 +20,7 @@ import { PLAN_TITLE_SELECT, planTitle } from "./case-read";
 import { ticketTopic } from "./case-topic";
 import { effectiveResolutionDueAt, slaStateOf } from "./sla";
 import { readableCaseEvent } from "./case-event-copy";
+import { fundingRailForIntent } from "@/lib/payments/funding-rail";
 export const TIMELINE_LIMIT = 200;
 const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);
 
@@ -249,7 +250,7 @@ function caseStatusFacts(
 
 export async function readPayment(
   paymentId: string | null,
-): Promise<CasePayment | null> {
+): Promise<StaffCasePayment | null> {
   if (!paymentId) return null;
   const p = await prisma.payment.findUnique({
     where: { id: paymentId },
@@ -259,6 +260,7 @@ export async function readPayment(
       currency: true,
       paymentStatus: true,
       createdAt: true,
+      paymentIntent: true,
     },
   });
   return p
@@ -268,6 +270,7 @@ export async function readPayment(
         currency: p.currency,
         status: p.paymentStatus,
         createdAt: p.createdAt.toISOString(),
+        rail: fundingRailForIntent(p.paymentIntent),
       }
     : null;
 }

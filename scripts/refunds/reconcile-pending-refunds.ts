@@ -55,6 +55,7 @@ import { goHref } from "@/lib/dashboard/go";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { applyRefundCascade } from "../../lib/payments/operations/refund";
+import { settleRefundSeatTx } from "../../lib/payments/operations/refund-seat";
 import { retireSupersededPlaceholderTx } from "../../lib/payments/operations/refund-placeholder";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
 
@@ -495,6 +496,7 @@ async function reconcilePendingRefundsUnlocked(
                 refund.payment.amount,
                 refund.id,
               );
+              await settleRefundSeatTx(tx, refund.id);
               const notice = await notifyRefundProcessed(
                 refund.payment.userId,
                 {
@@ -765,6 +767,7 @@ async function bindGatewayRefundToPlaceholder(
             cascade.paymentAmountPaise,
             placeholderRowId,
           );
+          await settleRefundSeatTx(tx, placeholderRowId);
           const notice = await notifyRefundProcessed(
             cascade.userId,
             {
@@ -810,8 +813,11 @@ async function bindGatewayRefundToPlaceholder(
       `Refund id collision across payments while reconciling ${placeholderRowId} -> ${gatewayRefund.refundId}`,
     );
   }
-  await prisma.$transaction((tx) =>
-    retireSupersededPlaceholderTx(tx, placeholder, winner.id),
+  await withSerializableRetry(() =>
+    prisma.$transaction(
+      (tx) => retireSupersededPlaceholderTx(tx, placeholder, winner.id),
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    ),
   );
   return "superseded";
 }

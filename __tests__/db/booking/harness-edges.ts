@@ -59,3 +59,52 @@ export function noFlushMock(): object {
 export const refundDoor = jest.requireMock(
   "../../../lib/payments/operations/booking-refund",
 ) as { refundBookingPayment: jest.Mock };
+
+/** The back-office admin an Ops door suite acts as; a suite seeds the user and sets `id`. */
+export const opsAdmin = { id: "" };
+
+/** Back-office auth answers `opsAdmin`, freshly signed in, so step-up passes. */
+export function opsAdminAuthMock(): object {
+  return {
+    ...jest.requireActual("../../../lib/auth-helpers"),
+    requireBackofficeSurface: async () => ({
+      session: {
+        user: { id: opsAdmin.id, role: "ADMIN" },
+        session: { createdAt: new Date() },
+      },
+    }),
+  };
+}
+
+/** No money-ops budget is spent. */
+export function moneyBudgetMock(): object {
+  return {
+    __esModule: true,
+    assertMoneyOpsBudget: jest.fn(async () => undefined),
+  };
+}
+
+/** The gateway barrel for a checkout: every order gets a fresh id, and a cancel answers nothing. */
+export function orderGatewayMock(): object {
+  return {
+    __esModule: true,
+    createPaymentIntent: jest.fn(async () => ({
+      id: `order_${globalThis.crypto.randomUUID()}`,
+      client_secret: null,
+    })),
+    cancelPaymentIntent: jest.fn(async () => undefined),
+  };
+}
+
+/** Every consent check passes. */
+export function consentGrantedMock(): object {
+  return { __esModule: true, checkConsent: jest.fn(async () => true) };
+}
+
+/** Emails render to a fixed body, so staging never loads the templates. */
+export function renderedEmailMock(): object {
+  return {
+    __esModule: true,
+    renderEmail: async () => ({ html: "<p>rendered</p>", text: "rendered" }),
+  };
+}

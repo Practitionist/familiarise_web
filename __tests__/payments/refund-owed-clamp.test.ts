@@ -119,6 +119,46 @@ describe("a fixed-amount owed marker against a shrunken balance", () => {
   });
 });
 
+describe("two drives racing one clamped marker", () => {
+  it("the loser's amount mismatch answers the winner's settled refund and clears the marker", async () => {
+    // ₹800 owed on a ₹500 balance: the winner clamped to ₹500 and settled under the key.
+    const clamped = { ...marker, amountPaise: 80_000 };
+    mockFindDeduped.mockResolvedValueOnce(null).mockResolvedValueOnce({
+      refundId: "rf-clamped",
+      amountRefundedPaise: 50_000,
+      status: "SUCCEEDED",
+    });
+    mockRefundBookingPayment.mockRejectedValue(
+      new (
+        RefundValidationError as unknown as new (m: string, c: string) => Error
+      )("key reused", "IDEMPOTENCY_KEY_REUSED"),
+    );
+    const prisma = jest.requireMock("@/lib/prisma").default as {
+      payment: { updateMany: jest.Mock };
+    };
+    prisma.payment.updateMany.mockClear();
+
+    const outcome = await driveRefundOwed(clamped);
+
+    expect(outcome).toEqual({
+      kind: "replayed",
+      refund: {
+        refundId: "rf-clamped",
+        amountRefundedPaise: 50_000,
+        status: "SUCCEEDED",
+      },
+    });
+    expect(mockFindDeduped).toHaveBeenLastCalledWith(clamped.key, {
+      paymentId: clamped.paymentId,
+    });
+    expect(prisma.payment.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: clamped.paymentId, refundOwedKey: clamped.key },
+      }),
+    );
+  });
+});
+
 describe("a full credit restoration under a plan-end key", () => {
   const restore = {
     paymentId: "pay-credit",

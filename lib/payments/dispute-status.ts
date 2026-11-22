@@ -69,13 +69,34 @@ const ALLOWED: Record<DisputeStatus, DisputeStatus[]> = {
  * never blocks — Stripe's own rejection remains the backstop.
  */
 export interface EvidenceDeadlineInput {
-  status: DisputeStatus;
+  status: string;
   dueBy: Date | null;
   nowMs: number;
 }
 
 export function evidenceDeadlinePassed(input: EvidenceDeadlineInput): boolean {
   return !!input.dueBy && input.dueBy.getTime() < input.nowMs;
+}
+
+/** Why the Razorpay evidence door refuses a dispute. */
+export type EvidenceRefusalCode =
+  "NOT_RAZORPAY" | "EVIDENCE_DEADLINE_PASSED" | "DISPUTE_NOT_OPEN";
+
+/** Null when the evidence door takes this dispute; the door and the list banner both read it. */
+export function evidenceRefusal(
+  dispute: {
+    status: string;
+    paymentGateway: string;
+    dueBy: Date | null;
+  },
+  nowMs: number,
+): EvidenceRefusalCode | null {
+  if (dispute.paymentGateway !== "RAZORPAY") return "NOT_RAZORPAY";
+  if (evidenceDeadlinePassed({ ...dispute, nowMs })) {
+    return "EVIDENCE_DEADLINE_PASSED";
+  }
+  if (dispute.status !== "NEEDS_RESPONSE") return "DISPUTE_NOT_OPEN";
+  return null;
 }
 
 export function isLegalDisputeTransition(

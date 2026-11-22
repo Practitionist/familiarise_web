@@ -64,7 +64,14 @@ export async function readOwnSupportCase(
     canReply: !redact && canRead,
     viewerIsPresenter: isPresenter,
     createdAt: c.createdAt.toISOString(),
-    payment,
+    // The customer view carries the payment without its funding rail.
+    payment: payment && {
+      id: payment.id,
+      amount: payment.amount,
+      currency: payment.currency,
+      status: payment.status,
+      createdAt: payment.createdAt,
+    },
     organization: c.organization,
     timeline: messages.map((m) => ({
       id: m.id,

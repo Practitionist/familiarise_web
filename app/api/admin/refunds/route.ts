@@ -8,6 +8,7 @@ import { readPageParams } from "@/lib/backoffice/list-paging";
 import type { RefundListItem } from "@/lib/backoffice/money-list-schemas";
 import { BOOKING_TITLE_SELECT, bookingRefOf } from "@/lib/data/booking-title";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
+import { RefundReplayExpiredError } from "@/lib/payments/operations/refund";
 import {
   classSeriesLedgers,
   refundWholeEventPayments,
@@ -20,6 +21,16 @@ import {
   refundablePaymentPaise,
   refundInFlightOr,
 } from "@/lib/backoffice/refund-doors";
+import { assertRefundDoorOpen } from "@/lib/backoffice/refund-eligibility";
+
+/** One refund per dialog: a replay collapses on `Refund.dedupeKey @unique`, scoped to the admin and the payment. */
+function paymentRefundKey(
+  actorUserId: string,
+  paymentId: string,
+  idempotencyKey: string,
+): string {
+  return `admin-refund:${actorUserId}:${paymentId}:${idempotencyKey}`;
+}
 
 const RefundFiltersSchema = z.object({
   status: z.nativeEnum(RefundStatus).optional(),
@@ -155,7 +166,7 @@ const refundDoor = withOpsAction(
   {
     mode: "gateway",
     target: ({ body }) => refundTarget(body),
-    run: async ({ body, actor }) => {
+    run: async ({ body, actor, priced }) => {
       const targets = [body.paymentId, body.classId, body.webinarId];
       if (targets.filter(Boolean).length !== 1) {
         throw new OpsRefusal(
@@ -173,12 +184,22 @@ const refundDoor = withOpsAction(
       }
       await assertMoneyOpsBudget(actor.userId);
 
-      if (body.paymentId) {
-        // A replay of one dialog collapses on `Refund.dedupeKey @unique`; a key
-        // reused for another payment or by another admin can never match it.
-        const dedupeKey = `admin-refund:${actor.userId}:${body.paymentId}:${body.idempotencyKey}`;
+      const { paymentId } = body;
+      if (paymentId) {
+        const dedupeKey = paymentRefundKey(
+          actor.userId,
+          paymentId,
+          body.idempotencyKey,
+        );
+        // The issue door's eligibility: a free seat, a spent credit or a live dispute never reaches the writer.
+        const replay = await assertRefundDoorOpen(
+          paymentId,
+          dedupeKey,
+          body.amountPaise,
+        );
+        if (priced?.replay && !replay) throw new RefundReplayExpiredError();
         const result = await refundBookingPayment({
-          paymentId: body.paymentId,
+          paymentId,
           amountPaise: body.amountPaise,
           reason: `admin refund: ${body.reason}`,
           initiatedByUserId: actor.userId,
@@ -186,7 +207,14 @@ const refundDoor = withOpsAction(
           // A partial admin refund is not a cancellation; one that returns the rest ends the seat.
           keepSeatIfPartial: true,
           settlesOwedByHand: true,
-        }).catch((err: unknown) => refundInFlightOr(err, dedupeKey));
+          // Priced unheld as a replay, so the writer may only answer the stored refund.
+          replayOnly: priced?.replay === true,
+        }).catch((err: unknown) =>
+          refundInFlightOr(err, dedupeKey, {
+            paymentId,
+            amountPaise: body.amountPaise,
+          }),
+        );
         return {
           target: refundTarget(body),
           after: { ...result },
@@ -244,8 +272,16 @@ const refundDoor = withOpsAction(
     secondApprover: {
       route: "/api/admin/refunds",
       target: ({ body }) => refundTarget(body),
-      amountPaise: (body) => {
+      amountPaise: async (body, { actor }) => {
         if (body.paymentId) {
+          // A refund the door would refuse is never held for a second admin.
+          const replay = await assertRefundDoorOpen(
+            body.paymentId,
+            paymentRefundKey(actor.userId, body.paymentId, body.idempotencyKey),
+            body.amountPaise,
+          );
+          // A matching replay moves no money: the door answers the stored refund, unheld.
+          if (replay) return { amountPaise: 0, replay: true };
           return body.amountPaise ?? refundablePaymentPaise(body.paymentId);
         }
         if (body.classId) return refundableEventPaise("class", body.classId);
