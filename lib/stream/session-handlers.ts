@@ -13,6 +13,7 @@
 import prisma, { type Tx } from "@/lib/prisma";
 import { isDeliberateEnd } from "@/lib/appointments/occurrences";
 import {
+  END_REASON_POLICY,
   endBlocksRejoin,
   mapStreamCallEndedReason,
   recordedEndHolds,
@@ -20,7 +21,10 @@ import {
 } from "@/lib/meetings/end-reasons";
 import { parseSlotIdFromCallId, toCallId } from "@/lib/stream/call-cid";
 import { getCallParticipantSessionsFromStream } from "@/lib/stream/call-presence";
-import { closeSegmentPresences } from "@/lib/meetings/segment-presence";
+import {
+  closeSegmentPresences,
+  findStayAfterEnd,
+} from "@/lib/meetings/segment-presence";
 import { streamLogger } from "@/lib/stream-logger";
 
 export interface StreamSessionEndedEvent {
@@ -532,12 +536,33 @@ async function closeSegmentAttendance(
   });
 }
 
+/** Row lock on the room, taken first by every current-room join and non-deliberate end so each sees the other's commit. */
+async function lockMeetingRow(tx: Tx, meetingId: string): Promise<void> {
+  await tx.$executeRaw`SELECT 1 FROM "Meeting" WHERE id = ${meetingId} FOR UPDATE`;
+}
+
 function stampEnd(
   meeting: { id: string; streamCallId: string; endedAt: Date | null },
   endedAt: Date,
   endedReason: MeetingEndReason,
 ): Promise<boolean> {
   return prisma.$transaction(async (tx) => {
+    // A join after a non-deliberate end reopens the room, so a stay that joined after this end means a newer session owns it.
+    if (!END_REASON_POLICY[endedReason].deliberate) {
+      await lockMeetingRow(tx, meeting.id);
+      const newer = await findStayAfterEnd(tx, {
+        meetingId: meeting.id,
+        streamCallId: meeting.streamCallId,
+        endedAt,
+      });
+      if (newer) {
+        streamLogger.info("End not stamped — a newer session owns the room", {
+          sessionId: meeting.id,
+          endedReason,
+        });
+        return false;
+      }
+    }
     const { count } = await tx.meeting.updateMany({
       where: { id: meeting.id, endedAt: meeting.endedAt },
       data: { endedAt, endedReason, isRecording: false },
@@ -572,6 +597,26 @@ function clampLeaveToRoomEnd(
 
 function supersedesRecordedEnd(recorded: Date | null, incoming: Date): boolean {
   return !recorded || incoming.getTime() > recorded.getTime();
+}
+
+/** Re-reads the room under its row lock and reopens a non-deliberate end the join postdates; returns the end that still holds. */
+async function settleRoomForJoin(
+  tx: Tx,
+  meetingId: string,
+  joinedAt: Date,
+): Promise<Date | null> {
+  await lockMeetingRow(tx, meetingId);
+  const room = await tx.meeting.findUnique({
+    where: { id: meetingId },
+    select: { endedAt: true, endedReason: true },
+  });
+  if (!room?.endedAt) return null;
+  if (joinedAt <= room.endedAt || isDeliberateEnd(room)) return room.endedAt;
+  const reopened = await tx.meeting.updateMany({
+    where: { id: meetingId, endedAt: room.endedAt },
+    data: { endedAt: null, endedReason: null },
+  });
+  return reopened.count > 0 ? null : room.endedAt;
 }
 
 /** `inCurrentRoom`: the join is to the live current segment, so the person is in the room now. */
@@ -612,32 +657,14 @@ export async function handleSessionParticipantJoined(
     const { meeting, isCurrentSegment } = resolved;
     const meetingId = meeting.id;
     const joinedAt = new Date(created_at);
-
-    // A prior segment's join never reopens, or takes the end of, the current room.
-    const currentEndedAt = isCurrentSegment ? meeting.endedAt : null;
-    const reopensSession = Boolean(
-      currentEndedAt && joinedAt > currentEndedAt && !isDeliberateEnd(meeting),
-    );
     const userSessionId = presenceKey(event.session_id, participant, userId);
 
     // Touch rows in strict `Meeting -> MeetingPresence -> MeetingAttendance` order.
     await prisma.$transaction(async (tx) => {
-      let effectiveEndedAt = currentEndedAt;
-      if (reopensSession) {
-        const reopened = await tx.meeting.updateMany({
-          where: { id: meetingId, endedAt: meeting.endedAt },
-          data: { endedAt: null, endedReason: null },
-        });
-        if (reopened.count > 0) {
-          effectiveEndedAt = null;
-        } else {
-          const latest = await tx.meeting.findUnique({
-            where: { id: meeting.id },
-            select: { endedAt: true },
-          });
-          effectiveEndedAt = latest?.endedAt ?? meeting.endedAt ?? null;
-        }
-      }
+      // A prior segment's join never reopens, or takes the end of, the current room.
+      const effectiveEndedAt = isCurrentSegment
+        ? await settleRoomForJoin(tx, meetingId, joinedAt)
+        : null;
 
       const { count: newSessions } = await tx.meetingPresence.createMany({
         data: [

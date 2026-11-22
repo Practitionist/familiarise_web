@@ -23,8 +23,10 @@ jest.mock("../../lib/stream-logger", () => ({
 }));
 jest.mock("../../lib/prisma", () => {
   const client: Record<string, unknown> = {
+    $executeRaw: jest.fn().mockResolvedValue(1),
     meeting: { findUnique: jest.fn(), updateMany: jest.fn() },
     meetingPresence: {
+      findFirst: jest.fn().mockResolvedValue(null),
       createMany: jest.fn().mockResolvedValue({ count: 1 }),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
@@ -170,7 +172,7 @@ it("(c) a late join from the pre-reopen call keeps its own segment and never reo
   expect(row.leftAt).toBeUndefined();
 });
 
-it("an end stamp closes only its own segment's open rows, marked as assumed", async () => {
+it("an end stamp closes only its own segment's open rows that joined by the end, marked as assumed", async () => {
   db.meeting.findUnique.mockResolvedValue({
     id: "m-1",
     streamCallId: "occurrence-occ-1-r1",
@@ -188,6 +190,7 @@ it("an end stamp closes only its own segment's open rows, marked as assumed", as
     where: {
       meetingId: "m-1",
       leftAt: null,
+      joinedAt: { lte: at(60) },
       OR: [{ streamCallId: "occurrence-occ-1-r1" }, { streamCallId: null }],
     },
     data: { leftAt: at(60), closedByEnd: true },

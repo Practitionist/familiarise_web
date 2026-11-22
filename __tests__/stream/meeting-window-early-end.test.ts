@@ -11,6 +11,7 @@
  */
 jest.mock("../../lib/prisma", () => {
   const client: Record<string, unknown> = {
+    $executeRaw: jest.fn().mockResolvedValue(1),
     meeting: {
       findUnique: jest.fn(),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -22,6 +23,7 @@ jest.mock("../../lib/prisma", () => {
     meetingPresence: {
       createMany: jest.fn().mockResolvedValue({ count: 1 }),
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      findFirst: jest.fn().mockResolvedValue(null),
     },
   };
   client.$transaction = jest.fn((fn: (tx: unknown) => unknown) => fn(client));
@@ -48,8 +50,10 @@ import {
 } from "../../lib/stream/session-handlers";
 
 const db = prisma as unknown as {
+  $executeRaw: jest.Mock;
   meeting: { findUnique: jest.Mock; updateMany: jest.Mock };
   meetingAttendance: { upsert: jest.Mock };
+  meetingPresence: { findFirst: jest.Mock; updateMany: jest.Mock };
 };
 const mockTransition = transitionOccurrenceCompletion as jest.Mock;
 
@@ -257,5 +261,69 @@ describe("a join reopens a non-deliberate end (#1607)", () => {
 
     expect(db.meeting.updateMany).not.toHaveBeenCalled();
     expect(db.meetingAttendance.upsert).toHaveBeenCalled();
+  });
+});
+
+describe("a newer session owns the room", () => {
+  const live = () => ({ ...session(null), streamCallId: "slot_1" });
+  const lateEnd = {
+    call_cid: "default:slot_1",
+    type: "call.session_ended" as const,
+    created_at: "2026-09-13T10:20:00.000Z",
+  };
+
+  it("a late session_ended older than an open join neither stamps the room nor closes the join", async () => {
+    db.meeting.findUnique.mockResolvedValue(live());
+    db.meetingPresence.findFirst.mockResolvedValueOnce({ id: "p_new" });
+
+    await handleSessionEnded(lateEnd);
+
+    expect(db.meetingPresence.findFirst).toHaveBeenCalledWith({
+      where: {
+        meetingId: "ms_1",
+        leftAt: null,
+        joinedAt: { gt: new Date(lateEnd.created_at) },
+        OR: [{ streamCallId: "slot_1" }, { streamCallId: null }],
+      },
+      select: { id: true },
+    });
+    expect(db.meeting.updateMany).not.toHaveBeenCalled();
+    expect(db.meetingPresence.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("a host's end still ends a room someone joined after it was sent", async () => {
+    db.meeting.findUnique.mockResolvedValue(live());
+    db.meetingPresence.findFirst.mockResolvedValue({ id: "p_new" });
+
+    await handleCallEnded({ ...lateEnd, type: "call.ended" });
+
+    expect(db.meetingPresence.findFirst).not.toHaveBeenCalled();
+    expect(db.meeting.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ endedReason: "call_ended" }),
+      }),
+    );
+    db.meetingPresence.findFirst.mockResolvedValue(null);
+  });
+
+  it("a join re-reads the room under its row lock and reopens an end that landed after its first read", async () => {
+    const endedAt = new Date("2026-09-13T10:20:00.000Z");
+    db.meeting.findUnique
+      .mockResolvedValueOnce({ ...session(null), streamCallId: "slot_1" })
+      .mockResolvedValueOnce({ endedAt, endedReason: "session_timeout" });
+
+    await handleSessionParticipantJoined({
+      call_cid: "default:slot_1",
+      type: "call.session_participant_joined",
+      created_at: "2026-09-13T10:21:00.000Z",
+      session_id: "sess_2",
+      participant: { user: { id: "user_1" } },
+    });
+
+    expect(db.$executeRaw).toHaveBeenCalled();
+    expect(db.meeting.updateMany).toHaveBeenCalledWith({
+      where: { id: "ms_1", endedAt },
+      data: { endedAt: null, endedReason: null },
+    });
   });
 });

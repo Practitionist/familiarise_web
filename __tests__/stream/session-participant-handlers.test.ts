@@ -13,6 +13,7 @@
  */
 jest.mock("../../lib/prisma", () => {
   const client: Record<string, unknown> = {
+    $executeRaw: jest.fn().mockResolvedValue(1),
     meeting: { findUnique: jest.fn() },
     meetingAttendance: {
       upsert: jest.fn().mockResolvedValue({}),
