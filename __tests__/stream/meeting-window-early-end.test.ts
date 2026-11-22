@@ -123,7 +123,12 @@ describe("the last end wins (#1607)", () => {
     expect(db.meeting.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         // A concurrent call.ended moves endedAt, so this write then matches nothing.
-        where: { id: "ms_1", streamCallId: "slot_1", endedAt: read },
+        where: {
+          id: "ms_1",
+          streamCallId: "slot_1",
+          endedAt: read,
+          endedReason: "session_timeout",
+        },
         data: expect.objectContaining({
           endedAt: new Date("2026-09-13T11:02:00.000Z"),
         }),
@@ -190,7 +195,12 @@ describe("the last end wins (#1607)", () => {
 
     expect(db.meeting.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "ms_1", streamCallId: "slot_1", endedAt: read },
+        where: {
+          id: "ms_1",
+          streamCallId: "slot_1",
+          endedAt: read,
+          endedReason: "session_timeout",
+        },
         data: expect.objectContaining({ endedReason: "stream_ended" }),
       }),
     );
@@ -388,7 +398,12 @@ describe("a host end beats a non-deliberate end on the same call", () => {
     await hostEnd("2026-09-13T10:10:05.000Z");
 
     expect(db.meeting.updateMany).toHaveBeenLastCalledWith({
-      where: { id: "ms_1", streamCallId: "slot_1", endedAt: timeoutAt },
+      where: {
+        id: "ms_1",
+        streamCallId: "slot_1",
+        endedAt: timeoutAt,
+        endedReason: "session_timeout",
+      },
       data: {
         endedAt: new Date("2026-09-13T10:10:05.000Z"),
         endedReason: "call_ended",
@@ -426,7 +441,12 @@ describe("a host end beats a non-deliberate end on the same call", () => {
 
     expect(db.meeting.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "ms_1", streamCallId: "slot_1", endedAt: timeoutAt },
+        where: {
+          id: "ms_1",
+          streamCallId: "slot_1",
+          endedAt: timeoutAt,
+          endedReason: "session_timeout",
+        },
         data: expect.objectContaining({ endedReason: "call_ended" }),
       }),
     );

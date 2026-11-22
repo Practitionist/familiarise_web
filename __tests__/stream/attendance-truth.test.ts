@@ -294,7 +294,7 @@ it("an unwitnessed stay that joined after a host end is capped at its own join, 
     data: { leftAt: at(10), closedByEnd: true },
   });
   expect(db.meetingPresence.updateMany).toHaveBeenCalledWith({
-    where: { id: "p-late", leftAt: null },
+    where: { id: "p-late", leftAt: null, joinedAt: at(11) },
     data: { leftAt: at(11), closedByEnd: true },
   });
 });

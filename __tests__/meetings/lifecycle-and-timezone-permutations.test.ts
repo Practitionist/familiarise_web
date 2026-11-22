@@ -370,6 +370,7 @@ describe("Meeting lifecycle & timezone P&C unification (#2080)", () => {
             id: "mtg-perm-1",
             streamCallId: "occurrence-occ-perm-1",
             endedAt: null,
+            endedReason: null,
           },
           data: expect.objectContaining({
             endedReason: "call_ended",

@@ -342,7 +342,8 @@ async function persistStreamResolution(
   for (const late of slot.presences) {
     if (late.leftAt !== null || late.joinedAt <= cap) continue;
     await prisma.meetingPresence.updateMany({
-      where: { id: late.id, leftAt: null },
+      // CAS on the join read: a stay whose join moved stays open for the next run.
+      where: { id: late.id, leftAt: null, joinedAt: late.joinedAt },
       data: { leftAt: late.joinedAt, closedByEnd: true },
     });
   }

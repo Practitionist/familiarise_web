@@ -454,6 +454,7 @@ export async function recordMeetingEndedSynchronously(
           id: meeting.id,
           streamCallId: meeting.streamCallId,
           endedAt: meeting.endedAt,
+          endedReason: meeting.endedReason,
         },
         data: {
           endedAt,
@@ -537,11 +538,13 @@ async function lockMeetingRow(tx: Tx, meetingId: string): Promise<void> {
   await tx.$executeRaw`SELECT 1 FROM "Meeting" WHERE id = ${meetingId} FOR NO KEY UPDATE`;
 }
 
-/** Stamps the end on the room's current segment, compare-and-set on the end the caller read. */
+type RecordedEnd = { endedAt: Date | null; endedReason: string | null };
+
+/** Stamps the end on the room's current segment, compare-and-set on the end (stamp and reason) the caller read. */
 function casEnd(
   tx: Tx,
   meeting: { id: string; streamCallId: string },
-  expected: Date | null,
+  expected: RecordedEnd,
   endedAt: Date,
   endedReason: MeetingEndReason,
 ) {
@@ -549,14 +552,15 @@ function casEnd(
     where: {
       id: meeting.id,
       streamCallId: meeting.streamCallId,
-      endedAt: expected,
+      endedAt: expected.endedAt,
+      endedReason: expected.endedReason,
     },
     data: { endedAt, endedReason, isRecording: false },
   });
 }
 
 function stampEnd(
-  meeting: { id: string; streamCallId: string; endedAt: Date | null },
+  meeting: { id: string; streamCallId: string } & RecordedEnd,
   endedAt: Date,
   endedReason: MeetingEndReason,
 ): Promise<boolean> {
@@ -577,13 +581,7 @@ function stampEnd(
         return false;
       }
     }
-    let { count } = await casEnd(
-      tx,
-      meeting,
-      meeting.endedAt,
-      endedAt,
-      endedReason,
-    );
+    let { count } = await casEnd(tx, meeting, meeting, endedAt, endedReason);
     if (count === 0) {
       // Another end committed first: re-decide against it, on the same segment only.
       const room = await tx.meeting.findUnique({
@@ -594,13 +592,7 @@ function stampEnd(
         room?.streamCallId === meeting.streamCallId &&
         endSupersedes(room, endedReason, endedAt)
       ) {
-        ({ count } = await casEnd(
-          tx,
-          meeting,
-          room.endedAt,
-          endedAt,
-          endedReason,
-        ));
+        ({ count } = await casEnd(tx, meeting, room, endedAt, endedReason));
       }
     }
     if (count === 0) {

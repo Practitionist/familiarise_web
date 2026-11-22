@@ -335,3 +335,43 @@ it("a host end that loses the room to an earlier timeout still records the host'
     endedReason: "call_ended",
   });
 });
+
+it("a stale timeout never overwrites a host end that carries the same stamp as the timeout it read", async () => {
+  const room = await seedRoom();
+  await room.sessionEnded(10);
+  // The late end read {10:10, session_timeout}; the host's end lands at the same stamp before it writes.
+  const results = await raceOnRoom(
+    room.meetingId,
+    [() => room.sessionEnded(12)],
+    (tx) =>
+      tx.meeting.update({
+        where: { id: room.meetingId },
+        data: { endedReason: "call_ended" },
+      }),
+  );
+
+  expect(results.map((r) => r.status)).toEqual(["fulfilled"]);
+  expect(await room.meetingRow()).toMatchObject({
+    endedAt: room.at(10),
+    endedReason: "call_ended",
+  });
+});
+
+it("a host end that loses the room to a timeout with the same stamp still records the host's end", async () => {
+  const room = await seedRoom();
+  const results = await raceOnRoom(
+    room.meetingId,
+    [() => room.hostEnded(10)],
+    (tx) =>
+      tx.meeting.update({
+        where: { id: room.meetingId },
+        data: { endedAt: room.at(10), endedReason: "session_timeout" },
+      }),
+  );
+
+  expect(results.map((r) => r.status)).toEqual(["fulfilled"]);
+  expect(await room.meetingRow()).toMatchObject({
+    endedAt: room.at(10),
+    endedReason: "call_ended",
+  });
+});
