@@ -15,12 +15,20 @@ import {
   MAX_REMINDERS,
   REMINDER_INTERVAL_MS,
 } from "@/lib/payments/billing/dunning-policy";
+import {
+  MANUAL_RECOVERY_PREFIX,
+  unreturnedCaptureWhere,
+} from "@/lib/payments/webhooks/auto-refund-marker";
 
 /** Oldest rows shown per queue, and newest rows when the queue holds more. */
 export const ATTENTION_ROW_CAP = 25;
 const LAST_ERROR_MAX_CHARS = 200;
 
-export type AttentionQueueKey = keyof PendingAges;
+/** The gauged queues, and parked captures, which no sweep clears and so are listed at any age. */
+export type AttentionQueueKey = keyof PendingAges | "parkedCaptures";
+
+const limitOf = (key: AttentionQueueKey): number =>
+  key === "parkedCaptures" ? 0 : PENDING_AGE_LIMITS_MS[key];
 
 export interface AttentionLink {
   label: string;
@@ -175,6 +183,58 @@ const SOURCES: readonly AttentionSource[] = [
             },
           };
         }),
+        total,
+      );
+    },
+  },
+  {
+    key: "parkedCaptures",
+    label: "Captures parked for manual recovery",
+    money: true,
+    note: "A payment with a refund owed, pending or paid, or an open or lost dispute, is not listed here.",
+    read: async (now) => {
+      const where: Prisma.PaymentWhereInput = {
+        paymentStatus: "SUCCEEDED",
+        deletedAt: null,
+        description: { startsWith: MANUAL_RECOVERY_PREFIX },
+        ...unreturnedCaptureWhere,
+      };
+      const { rows, total } = await windowOf(
+        (order, take) =>
+          prisma.payment.findMany({
+            where,
+            orderBy: [{ createdAt: order }, { id: order }],
+            take,
+            select: {
+              id: true,
+              appointmentId: true,
+              description: true,
+              capturedAt: true,
+              createdAt: true,
+            },
+          }),
+        () => prisma.payment.count({ where }),
+      );
+      return splitWindow(
+        rows.map((p) => ({
+          key: p.createdAt.getTime(),
+          item: {
+            id: p.id,
+            state: p.appointmentId
+              ? "Parked, booking exists"
+              : "Parked, no booking",
+            ageMs: now.getTime() - (p.capturedAt ?? p.createdAt).getTime(),
+            attempts: null,
+            lastError: lastError(p.description),
+            links: [
+              {
+                label: "Payment",
+                path: `payments/${encodeURIComponent(p.id)}`,
+              },
+              tracePayment(p.id),
+            ],
+          },
+        })),
         total,
       );
     },
@@ -530,7 +590,7 @@ const SOURCES: readonly AttentionSource[] = [
 
 /**
  * The stuck items of every watched queue, read-only and in sequence for
- * `PG_POOL_MAX=1`: eight statements while each table fits the cap, two more
+ * `PG_POOL_MAX=1`: nine statements while each table fits the cap, two more
  * (newest rows and a count) for each table that overflows it.
  */
 export async function readNeedsAttention(
@@ -538,7 +598,7 @@ export async function readNeedsAttention(
 ): Promise<AttentionQueue[]> {
   const queues: AttentionQueue[] = [];
   for (const source of SOURCES) {
-    const limitMs = PENDING_AGE_LIMITS_MS[source.key];
+    const limitMs = limitOf(source.key);
     let items: AttentionItems | null;
     try {
       items = await source.read(now, limitMs);
