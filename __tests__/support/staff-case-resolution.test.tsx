@@ -166,6 +166,51 @@ describe("StaffCaseResolution", () => {
     qc.clear();
   });
 
+  it.each<[string, "CREDITS" | "GATEWAY", boolean]>([
+    ["forces the seat release for a credit-funded payment", "CREDITS", true],
+    ["leaves the seat release to staff on a card payment", "GATEWAY", false],
+  ])("%s", async (_case, rail, forced) => {
+    const qc = client();
+    qc.setQueryData(supportKeys.resolution("case_1"), resolution);
+    qc.setQueryData(supportKeys.workspace("case_1"), { updatedAt: FRESH });
+    render(
+      <QueryClientProvider client={qc}>
+        <StaffCaseResolution
+          caseId="case_1"
+          paymentId="pay_1"
+          paymentRail={rail}
+          basePath="/dashboard/admin"
+        />
+      </QueryClientProvider>,
+    );
+    fireEvent.click(screen.getByText("Financial review"));
+    const seat = screen.getByLabelText(
+      "Also release the customer's seat",
+    ) as HTMLInputElement;
+    expect(seat.checked).toBe(forced);
+    expect(seat.disabled).toBe(forced);
+    expect(
+      screen.queryByText(
+        "Credits always return the whole booking, so the seat is released.",
+      ) !== null,
+    ).toBe(forced);
+    fireEvent.change(screen.getByLabelText("Recommended refund in rupees"), {
+      target: { value: "0" },
+    });
+    fireEvent.change(
+      screen.getByLabelText("Reason for the refund recommendation"),
+      { target: { value: "Session not delivered" } },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Recommend refund" }));
+    await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(1));
+    expect(sentBody()).toMatchObject({
+      action: "RECOMMEND_REFUND",
+      paymentId: "pay_1",
+      releaseSeat: forced,
+    });
+    qc.clear();
+  });
+
   it("has no organization handover control", () => {
     const qc = client();
     qc.setQueryData(supportKeys.resolution("case_1"), resolution);
