@@ -12,8 +12,6 @@ import { Input } from "@/components/ui/input";
 import { COMPANY_INFO } from "@/lib/company";
 import { NEWSLETTER_NOTICE } from "@/lib/newsletter/notice";
 import { isChromeHidden } from "@/lib/navigation/public-chrome";
-import { EXPLORE_FIELDS } from "@/lib/navigation/public-nav";
-import { domainPath } from "@/lib/explore/domain-slug";
 
 interface FooterLink {
   label: string;
@@ -82,13 +80,6 @@ const FOOTER_COLUMNS: { heading: string; links: FooterLink[] }[] = [
     ],
   },
 ];
-
-// Internal-linking band. A marketplace's value is its long-tail catalog, so
-// these deep links are worth more here than another column of company pages.
-const EXPERTISE_LINKS: FooterLink[] = EXPLORE_FIELDS.map((name) => ({
-  label: name,
-  href: domainPath(name),
-}));
 
 const Footer: React.FC = () => {
   const pathname = useChromePathname();
@@ -238,24 +229,6 @@ const Footer: React.FC = () => {
               </ul>
             </div>
           ))}
-        </div>
-
-        {/* Expertise band — deep links into the catalog */}
-        <div className="mt-12 pt-8 border-t border-zinc-800">
-          <h3 className="text-[11px] font-medium uppercase tracking-wider text-zinc-400 mb-3">
-            Find an expert in
-          </h3>
-          <div className="flex flex-wrap gap-x-5 gap-y-2">
-            {EXPERTISE_LINKS.map((link) => (
-              <Link
-                key={link.label}
-                href={link.href}
-                className="text-sm text-zinc-400 hover:text-white transition-colors"
-              >
-                {link.label}
-              </Link>
-            ))}
-          </div>
         </div>
       </div>
 
