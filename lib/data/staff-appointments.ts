@@ -5,6 +5,11 @@
  */
 
 import { withLapsedMoveRestored } from "@/lib/appointments/lapsed-move";
+import {
+  lapsedMoveWhere,
+  lapsedReleaseWhere,
+} from "@/lib/appointments/lapsed-move-where";
+import { liveOccurrenceWhere } from "@/lib/appointments/occurrences";
 import prisma from "@/lib/prisma";
 import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
 import { AppointmentsType, Prisma } from "@prisma/client";
@@ -71,6 +76,7 @@ const PRICED_TRIAL = {
  */
 export function buildStatusWhere(
   status: string | null,
+  now: Date = new Date(),
 ): Prisma.AppointmentWhereInput | null {
   if (status === "scheduled") {
     // A confirmed 1:1 or plan is stored APPROVED; events and trials are SCHEDULED.
@@ -78,6 +84,18 @@ export function buildStatusWhere(
       OR: [
         { consultation: { status: "APPROVED" } },
         { subscription: { status: "APPROVED" } },
+        // A lapsed move reads its consultation or plan back at its origin status.
+        {
+          AND: [
+            {
+              OR: [
+                { consultationId: { not: null } },
+                { subscriptionId: { not: null } },
+              ],
+            },
+            lapsedMoveWhere(now, "APPROVED"),
+          ],
+        },
         { webinar: { status: "SCHEDULED" } },
         { class: { status: "SCHEDULED" } },
         { trial: { status: "SCHEDULED" } },
@@ -147,6 +165,7 @@ export async function getStaffAppointments(
   const page = params.page ?? 1;
   const limit = params.limit ?? 20;
   const offset = (page - 1) * limit;
+  const now = new Date();
 
   // Base where (type / org / date / search) — NOT status. #897: status is a
   // derived value (per-type sub-entity status + payment presence), so it's
@@ -158,15 +177,25 @@ export async function getStaffAppointments(
     baseWhere.appointmentType = type;
   }
 
-  // Filter by date at the database level using occurrences
-  if (dateFrom || dateTo) {
-    baseWhere.occurrences = {
-      some: {
-        ...(dateFrom && { startsAt: { gte: new Date(dateFrom) } }),
-        ...(dateTo && { startsAt: { lte: new Date(dateTo) } }),
-      },
-    };
+  // One range predicate both filters the rows and picks the occurrence each row displays.
+  // Both bounds share one `startsAt`: a second key would replace the first.
+  const occurrenceInRange: Prisma.AppointmentOccurrenceWhereInput | undefined =
+    dateFrom || dateTo
+      ? {
+          startsAt: {
+            ...(dateFrom && { gte: new Date(dateFrom) }),
+            ...(dateTo && { lte: new Date(dateTo) }),
+          },
+        }
+      : undefined;
+  if (occurrenceInRange) {
+    baseWhere.occurrences = { some: occurrenceInRange };
   }
+  // Scheduled matches and shows only standing sessions: live, or released by a move that lapsed.
+  const scheduledOccurrence: Prisma.AppointmentOccurrenceWhereInput = {
+    ...occurrenceInRange,
+    OR: [liveOccurrenceWhere, lapsedReleaseWhere(now)],
+  };
 
   // Handle search across multiple fields
   if (search) {
@@ -251,9 +280,15 @@ export async function getStaffAppointments(
 
   // #897 — AND the resolved status condition onto the base for the list query
   // so pagination + total reflect the filtered set.
-  const statusCond = buildStatusWhere(status);
+  const statusCond = buildStatusWhere(status, now);
+  // A booking whose every session is cancelled has nothing scheduled, with or without a range.
+  const scheduledBaseWhere: Prisma.AppointmentWhereInput = {
+    ...baseWhere,
+    occurrences: { some: scheduledOccurrence },
+  };
+  const isScheduled = status === "scheduled";
   const listWhere: Prisma.AppointmentWhereInput = statusCond
-    ? { AND: [baseWhere, statusCond] }
+    ? { AND: [isScheduled ? scheduledBaseWhere : baseWhere, statusCond] }
     : baseWhere;
 
   // One paginated list query + per-tab count queries. `total` drives
@@ -287,6 +322,7 @@ export async function getStaffAppointments(
           },
         },
         occurrences: {
+          where: isScheduled ? scheduledOccurrence : occurrenceInRange,
           orderBy: { startsAt: "asc" },
           take: 1,
           select: {
@@ -294,6 +330,9 @@ export async function getStaffAppointments(
             startsAt: true,
             endsAt: true,
             isTentative: true,
+            // Read by the lapsed-move restore below.
+            completionStatus: true,
+            deletedAt: true,
           },
         },
         payment: {
@@ -318,7 +357,9 @@ export async function getStaffAppointments(
     prisma.appointment.count({ where: listWhere }),
     prisma.appointment.count({ where: baseWhere }),
     prisma.appointment.count({
-      where: { AND: [baseWhere, buildStatusWhere("scheduled") ?? {}] },
+      where: {
+        AND: [scheduledBaseWhere, buildStatusWhere("scheduled", now) ?? {}],
+      },
     }),
     prisma.appointment.count({
       where: { AND: [baseWhere, buildStatusWhere("completed") ?? {}] },
@@ -340,7 +381,6 @@ export async function getStaffAppointments(
   const usersById = new Map(users.map((u) => [u.id, u]));
 
   // Format appointments for frontend
-  const now = new Date();
   const formattedAppointments = appointments.map((row) => {
     // A move past its deadline reads as the original until the sweep ends it.
     const apt = withLapsedMoveRestored(row, now);

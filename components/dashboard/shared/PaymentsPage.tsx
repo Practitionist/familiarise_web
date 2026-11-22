@@ -82,11 +82,15 @@ function renderInvoiceCell(payment: PaymentListItem) {
 
 const PAGE_SIZE = 20;
 
-export function PaymentsPage() {
+export function PaymentsPage({
+  initialStatus,
+}: Readonly<{ initialStatus?: PaymentStatus }> = {}) {
   // #1527 — a staff-tree row must link inside the staff tree.
   const { basePath } = useBackofficeCapability();
   const [page, setPage] = useState(1);
-  const [status, setStatus] = useState<PaymentStatus | undefined>();
+  const [status, setStatus] = useState<PaymentStatus | undefined>(
+    initialStatus,
+  );
   const [gateway, setGateway] = useState<PaymentGateway | undefined>();
   const [appointmentType, setAppointmentType] = useState<
     AppointmentsType | undefined
