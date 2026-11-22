@@ -475,4 +475,20 @@ describe("consultant no-show refunds", () => {
     expect(result.detected).toBe(0);
     expectNoShowSkipped(result);
   });
+
+  it("is not a no-show when the consultant joined only after the booked end, during the rejoin grace", async () => {
+    // The learner waited the whole hour; the consultant arrived at 11:05, inside the rejoin grace.
+    const late = noShowCandidate({ id: "pay-1", amount: 150000 });
+    late.appointment.occurrences[0].meeting.stays.push({
+      userId: CONSULTANT_USER,
+      joinedAt: new Date("2026-09-01T11:05:00Z"),
+      leftAt: new Date("2026-09-01T11:20:00Z"),
+    });
+    (prisma.consultation.findMany as jest.Mock).mockResolvedValue([late]);
+
+    const result = await detectConsultantNoShows();
+
+    expect(result.detected).toBe(0);
+    expectNoShowSkipped(result);
+  });
 });

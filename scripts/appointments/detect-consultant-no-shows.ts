@@ -333,6 +333,14 @@ export function evaluateConsultantNoShow(
   if (occurrences.some(isOpsOwnedSibling)) return null;
   const judged = judgedOccurrences(consultation, graceCutoff);
   if (judged.length === 0) return null;
+  // Any settled presence of the consultant on a judged call, even after the booked end, is not a no-show.
+  if (
+    judged.some((o) =>
+      (intervals.get(o.id) ?? []).some((i) => i.userId === consultantUserId),
+    )
+  ) {
+    return null;
+  }
 
   const outcomes = judged.map(
     (o) =>
