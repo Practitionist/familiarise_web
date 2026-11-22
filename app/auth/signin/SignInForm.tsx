@@ -28,21 +28,17 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useState, useEffect, useMemo, useCallback, Suspense } from "react";
 import { useSignedInRedirect } from "../useSignedInRedirect";
 import { stashPendingVerificationEmail } from "../pending-verification";
-import { AuthFormSkeleton } from "../AuthFormSkeleton";
+import { AuthFormColumnSkeleton } from "../AuthFormSkeleton";
 
-export function SignInForm({
-  sidePanel,
-}: Readonly<{ sidePanel: React.ReactNode }>) {
+export function SignInForm() {
   return (
-    <Suspense fallback={<AuthFormSkeleton />}>
-      <SignInContent sidePanel={sidePanel} />
+    <Suspense fallback={<AuthFormColumnSkeleton />}>
+      <SignInContent />
     </Suspense>
   );
 }
 
-function SignInContent({
-  sidePanel,
-}: Readonly<{ sidePanel: React.ReactNode }>) {
+function SignInContent() {
   const router = useRouter();
   const { toast } = useToast();
   const searchParams = useSearchParams();
@@ -116,12 +112,12 @@ function SignInContent({
   useSignedInRedirect(session?.user, refetchSession, signedInTarget);
 
   if (isPending) {
-    return <AuthFormSkeleton />;
+    return <AuthFormColumnSkeleton />;
   }
 
   if (session?.user) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-neutral-950">
+      <div className="flex flex-1 items-center justify-center bg-neutral-950 md:w-1/2">
         <p className="text-white">Redirecting…</p>
       </div>
     );
@@ -371,175 +367,171 @@ function SignInContent({
   const errorTarget = errorAction ? actionTargets[errorAction] : undefined;
 
   return (
-    <div className="flex min-h-screen flex-col md:flex-row">
-      {sidePanel}
-      <div className="flex flex-1 flex-col justify-center bg-neutral-950 p-6 text-white md:w-1/2 md:p-12">
-        <div className="mx-auto flex w-full max-w-md flex-col">
-          <h2 className="mb-2 text-fluid-3xl font-semibold tracking-tight">
-            Sign in to your account
-          </h2>
-          {/* A guest bounced from checkout must see their selection survived. */}
-          {isPurchaseReturn && (
-            <div className="mb-4 rounded-md border border-emerald-600/60 bg-emerald-900/30 p-3">
-              <p className="text-sm text-emerald-300">
-                You&apos;re almost there — sign in to continue your booking.
-                Your selection is saved and will resume right where you left
-                off.
-              </p>
-            </div>
-          )}
-          {wasRevokedElsewhere && (
-            <div className="mb-4 rounded-md border border-sky-600/60 bg-sky-900/30 p-3">
-              <p className="text-sm text-sky-300">
-                You were signed out — on this device or another one. Sign in
-                again to continue.
-              </p>
-            </div>
-          )}
-          <p className="mb-6 text-sm text-zinc-400 md:text-base">
-            Enter your email and password below to sign in.
-          </p>
-          <form onSubmit={handleEmailSignIn}>
-            <AuthEmailField
-              value={email}
-              onChange={(v) => {
-                setEmail(v);
-                setFieldError((f) => ({ ...f, email: undefined }));
-              }}
-              onBlur={handleEmailBlur}
-              disabled={isLoading || ssoChecking}
-              error={fieldError.email}
-            />
-            {!ssoCheck?.enforceSSO && (
-              <div className="grid gap-2 mt-4">
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="password">Password</Label>
-                  <Link
-                    href="/auth/forgot-password"
-                    className="text-sm font-medium text-zinc-300 underline-offset-4 hover:text-white hover:underline"
-                  >
-                    Forgot password?
-                  </Link>
-                </div>
-                <Input
-                  id="password"
-                  name="password"
-                  type="password"
-                  autoComplete="current-password"
-                  value={password}
-                  onChange={(e) => {
-                    setPassword(e.target.value);
-                    setFieldError((f) => ({ ...f, password: undefined }));
-                  }}
-                  required
-                  disabled={isLoading}
-                  {...invalidProps(fieldError.password, "password-error")}
-                />
-                <FieldError id="password-error" message={fieldError.password} />
-              </div>
-            )}
-            {ssoCheck?.enforceSSO ? (
-              <Button
-                type="button"
-                className="mt-4 w-full bg-white text-black hover:bg-white/90"
-                onClick={handleSSOSignIn}
-              >
-                Sign in with {ssoCheck.organizationName} SSO &rarr;
-              </Button>
-            ) : (
-              <Button
-                type="submit"
-                className="mt-4 w-full bg-white text-black hover:bg-white/90"
-                disabled={isLoading || passkeyBusy}
-              >
-                {isLoading ? "Signing In..." : "Sign In with Email"}
-              </Button>
-            )}
-            {ssoCheck && !ssoCheck.enforceSSO && (
-              <Button
-                type="button"
-                variant="outline"
-                className="mt-2 w-full"
-                onClick={handleSSOSignIn}
-                disabled={isLoading}
-              >
-                Sign in with {ssoCheck.organizationName} SSO &rarr;
-              </Button>
-            )}
-            {/* The toast carried the copy; this is only the next step. */}
-            <AuthErrorAffordance
-              action={errorAction ?? undefined}
-              target={errorTarget}
-            />
-          </form>
+    <div className="flex flex-1 flex-col justify-center bg-neutral-950 p-6 text-white md:w-1/2 md:p-12">
+      <div className="mx-auto flex w-full max-w-md flex-col">
+        <h2 className="mb-2 text-fluid-3xl font-semibold tracking-tight">
+          Sign in to your account
+        </h2>
+        {/* A guest bounced from checkout must see their selection survived. */}
+        {isPurchaseReturn && (
+          <div className="mb-4 rounded-md border border-emerald-600/60 bg-emerald-900/30 p-3">
+            <p className="text-sm text-emerald-300">
+              You&apos;re almost there — sign in to continue your booking. Your
+              selection is saved and will resume right where you left off.
+            </p>
+          </div>
+        )}
+        {wasRevokedElsewhere && (
+          <div className="mb-4 rounded-md border border-sky-600/60 bg-sky-900/30 p-3">
+            <p className="text-sm text-sky-300">
+              You were signed out — on this device or another one. Sign in again
+              to continue.
+            </p>
+          </div>
+        )}
+        <p className="mb-6 text-sm text-zinc-400 md:text-base">
+          Enter your email and password below to sign in.
+        </p>
+        <form onSubmit={handleEmailSignIn}>
+          <AuthEmailField
+            value={email}
+            onChange={(v) => {
+              setEmail(v);
+              setFieldError((f) => ({ ...f, email: undefined }));
+            }}
+            onBlur={handleEmailBlur}
+            disabled={isLoading || ssoChecking}
+            error={fieldError.email}
+          />
           {!ssoCheck?.enforceSSO && (
-            <>
-              <Button
-                type="button"
-                variant="outline"
-                className="mt-3 w-full border-white/20 bg-transparent text-white hover:bg-white/10 hover:text-white"
-                onClick={() => void handlePasskeySignIn()}
-                disabled={isLoading || passkeyBusy}
-              >
-                {passkeyBusy
-                  ? "Waiting for your passkey…"
-                  : "Staff: sign in with a passkey"}
-              </Button>
-              {/* Always shown: the corporate SSO button remains even with no social providers. */}
-              <div className="relative my-6">
-                <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-white/15" />
-                </div>
-                <div className="relative flex justify-center text-sm">
-                  <span className="bg-neutral-950 px-2 text-zinc-400">
-                    OR CONTINUE WITH
-                  </span>
-                </div>
+            <div className="grid gap-2 mt-4">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="password">Password</Label>
+                <Link
+                  href="/auth/forgot-password"
+                  className="text-sm font-medium text-zinc-300 underline-offset-4 hover:text-white hover:underline"
+                >
+                  Forgot password?
+                </Link>
               </div>
-              <SocialLoginButtons
-                callbackURL={callbackUrl || "/dashboard"}
-                newUserCallbackURL={onboardingUrl}
-                errorCallbackURL={signInUrl}
-                isLoading={isLoading}
-                ssoEnforced={false}
-                onSSOClick={handleManualSSOClick}
-                ssoChecking={ssoChecking}
+              <Input
+                id="password"
+                name="password"
+                type="password"
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => {
+                  setPassword(e.target.value);
+                  setFieldError((f) => ({ ...f, password: undefined }));
+                }}
+                required
+                disabled={isLoading}
+                {...invalidProps(fieldError.password, "password-error")}
               />
-            </>
+              <FieldError id="password-error" message={fieldError.password} />
+            </div>
           )}
-          <p className="mt-6 text-xs text-zinc-400">
-            Don't have an account?{" "}
-            <Link
-              href={signUpUrl}
-              className="font-medium text-white underline-offset-4 hover:underline"
+          {ssoCheck?.enforceSSO ? (
+            <Button
+              type="button"
+              className="mt-4 w-full bg-white text-black hover:bg-white/90"
+              onClick={handleSSOSignIn}
             >
-              Sign up
-            </Link>
-          </p>
-          <p className="mt-2 text-xs text-zinc-400">
-            By clicking continue, you agree to our{" "}
-            <Link
-              href="/terms"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="font-medium text-zinc-300 underline-offset-4 hover:text-white hover:underline"
+              Sign in with {ssoCheck.organizationName} SSO &rarr;
+            </Button>
+          ) : (
+            <Button
+              type="submit"
+              className="mt-4 w-full bg-white text-black hover:bg-white/90"
+              disabled={isLoading || passkeyBusy}
             >
-              Terms of Service
-            </Link>{" "}
-            and{" "}
-            <Link
-              href="/privacy"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="font-medium text-zinc-300 underline-offset-4 hover:text-white hover:underline"
+              {isLoading ? "Signing In..." : "Sign In with Email"}
+            </Button>
+          )}
+          {ssoCheck && !ssoCheck.enforceSSO && (
+            <Button
+              type="button"
+              variant="outline"
+              className="mt-2 w-full"
+              onClick={handleSSOSignIn}
+              disabled={isLoading}
             >
-              Privacy Policy
-            </Link>
-            .
-          </p>
-        </div>
-        <div />
+              Sign in with {ssoCheck.organizationName} SSO &rarr;
+            </Button>
+          )}
+          {/* The toast carried the copy; this is only the next step. */}
+          <AuthErrorAffordance
+            action={errorAction ?? undefined}
+            target={errorTarget}
+          />
+        </form>
+        {!ssoCheck?.enforceSSO && (
+          <>
+            <Button
+              type="button"
+              variant="outline"
+              className="mt-3 w-full border-white/20 bg-transparent text-white hover:bg-white/10 hover:text-white"
+              onClick={() => void handlePasskeySignIn()}
+              disabled={isLoading || passkeyBusy}
+            >
+              {passkeyBusy
+                ? "Waiting for your passkey…"
+                : "Staff: sign in with a passkey"}
+            </Button>
+            {/* Always shown: the corporate SSO button remains even with no social providers. */}
+            <div className="relative my-6">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-white/15" />
+              </div>
+              <div className="relative flex justify-center text-sm">
+                <span className="bg-neutral-950 px-2 text-zinc-400">
+                  OR CONTINUE WITH
+                </span>
+              </div>
+            </div>
+            <SocialLoginButtons
+              callbackURL={callbackUrl || "/dashboard"}
+              newUserCallbackURL={onboardingUrl}
+              errorCallbackURL={signInUrl}
+              isLoading={isLoading}
+              ssoEnforced={false}
+              onSSOClick={handleManualSSOClick}
+              ssoChecking={ssoChecking}
+            />
+          </>
+        )}
+        <p className="mt-6 text-xs text-zinc-400">
+          Don't have an account?{" "}
+          <Link
+            href={signUpUrl}
+            className="font-medium text-white underline-offset-4 hover:underline"
+          >
+            Sign up
+          </Link>
+        </p>
+        <p className="mt-2 text-xs text-zinc-400">
+          By clicking continue, you agree to our{" "}
+          <Link
+            href="/terms"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium text-zinc-300 underline-offset-4 hover:text-white hover:underline"
+          >
+            Terms of Service
+          </Link>{" "}
+          and{" "}
+          <Link
+            href="/privacy"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium text-zinc-300 underline-offset-4 hover:text-white hover:underline"
+          >
+            Privacy Policy
+          </Link>
+          .
+        </p>
       </div>
+      <div />
     </div>
   );
 }

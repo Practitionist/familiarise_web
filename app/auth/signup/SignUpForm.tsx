@@ -47,7 +47,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useSignedInRedirect } from "../useSignedInRedirect";
 import { stashPendingVerificationEmail } from "../pending-verification";
-import { AuthFormSkeleton } from "../AuthFormSkeleton";
+import { AuthFormColumnSkeleton } from "../AuthFormSkeleton";
 
 /**
  * A thrown Better Auth `APIError` keeps `{ code, message }` in `body`; the
@@ -78,19 +78,15 @@ function thrownAuthError(error: unknown): {
   };
 }
 
-export function SignUpForm({
-  sidePanel,
-}: Readonly<{ sidePanel: React.ReactNode }>) {
+export function SignUpForm() {
   return (
-    <Suspense fallback={<AuthFormSkeleton />}>
-      <SignUpContent sidePanel={sidePanel} />
+    <Suspense fallback={<AuthFormColumnSkeleton />}>
+      <SignUpContent />
     </Suspense>
   );
 }
 
-function SignUpContent({
-  sidePanel,
-}: Readonly<{ sidePanel: React.ReactNode }>) {
+function SignUpContent() {
   const { toast } = useToast();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -173,12 +169,12 @@ function SignUpContent({
   }, [callbackError, toast]);
 
   if (isPending) {
-    return <AuthFormSkeleton />;
+    return <AuthFormColumnSkeleton />;
   }
 
   if (session?.user) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-neutral-950">
+      <div className="flex flex-1 items-center justify-center bg-neutral-950 md:w-1/2">
         <p className="text-white">Redirecting…</p>
       </div>
     );
@@ -355,201 +351,195 @@ function SignUpContent({
   const showReferralField = !referralCode || refParamCheck.state === "invalid";
 
   return (
-    <div className="flex min-h-screen flex-col md:flex-row">
-      {sidePanel}
-      <div className="flex flex-1 flex-col justify-center bg-neutral-950 p-6 text-white md:w-1/2 md:p-12">
-        <div className="mx-auto flex w-full max-w-md flex-col">
-          <h2 className="mb-2 text-fluid-3xl font-semibold tracking-tight">
-            Create your account
-          </h2>
-          <p className="mb-6 text-sm text-zinc-400 md:text-base">
-            Enter your details below to get started.
-          </p>
-          <form onSubmit={handleSignUp}>
-            <div className="grid gap-2">
-              <Label htmlFor="name">Name</Label>
-              <Input
-                id="name"
-                name="name"
-                autoComplete="name"
-                placeholder="Your Name"
-                type="text"
-                value={name}
-                onChange={(e) => {
-                  setName(e.target.value);
-                  setFieldError((f) => ({ ...f, name: undefined }));
-                }}
-                required
-                disabled={isLoading}
-                {...invalidProps(fieldError.name, "name-error")}
-              />
-              <FieldError id="name-error" message={fieldError.name} />
-            </div>
-            <AuthEmailField
-              value={email}
-              onChange={(v) => {
-                setEmail(v);
-                setFieldError((f) => ({ ...f, email: undefined }));
+    <div className="flex flex-1 flex-col justify-center bg-neutral-950 p-6 text-white md:w-1/2 md:p-12">
+      <div className="mx-auto flex w-full max-w-md flex-col">
+        <h2 className="mb-2 text-fluid-3xl font-semibold tracking-tight">
+          Create your account
+        </h2>
+        <p className="mb-6 text-sm text-zinc-400 md:text-base">
+          Enter your details below to get started.
+        </p>
+        <form onSubmit={handleSignUp}>
+          <div className="grid gap-2">
+            <Label htmlFor="name">Name</Label>
+            <Input
+              id="name"
+              name="name"
+              autoComplete="name"
+              placeholder="Your Name"
+              type="text"
+              value={name}
+              onChange={(e) => {
+                setName(e.target.value);
+                setFieldError((f) => ({ ...f, name: undefined }));
               }}
-              onBlur={handleEmailBlur}
-              disabled={isLoading || ssoChecking}
-              error={fieldError.email}
-              className="grid gap-2 mt-4"
+              required
+              disabled={isLoading}
+              {...invalidProps(fieldError.name, "name-error")}
             />
-            {!ssoCheck?.enforceSSO && (
-              <>
-                <div className="grid gap-2 mt-4">
-                  <Label htmlFor="password">Password</Label>
-                  <Input
-                    id="password"
-                    name="password"
-                    type="password"
-                    autoComplete="new-password"
-                    placeholder="••••••••"
-                    value={password}
-                    onChange={(e) => {
-                      setPassword(e.target.value);
-                      setFieldError((f) => ({ ...f, password: undefined }));
-                    }}
-                    required
-                    minLength={PASSWORD_MIN_LENGTH}
-                    disabled={isLoading}
-                    {...invalidProps(fieldError.password, "password-error")}
-                  />
-                  <FieldError
-                    id="password-error"
-                    message={fieldError.password}
-                  />
-                  <p className="text-xs text-zinc-400">{PASSWORD_RULE_HINT}</p>
-                </div>
-                <div className="grid gap-2 mt-4">
-                  <Label htmlFor="confirm-password">Confirm Password</Label>
-                  <Input
-                    id="confirm-password"
-                    name="confirm-password"
-                    type="password"
-                    autoComplete="new-password"
-                    placeholder="••••••••"
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    required
-                    disabled={isLoading}
-                  />
-                </div>
-              </>
-            )}
-            {showReferralField && !ssoCheck?.enforceSSO && (
-              <ReferralCodeField
-                value={refCode}
-                onChange={setRefCode}
-                disabled={isLoading}
-              />
-            )}
-            {!showReferralField && !ssoCheck?.enforceSSO && (
-              <output
-                className={cn(
-                  "mt-4 block rounded-md border p-3 text-sm",
-                  refParamCheck.state === "valid"
-                    ? "border-green-700 bg-green-900/30 text-green-400"
-                    : "border-white/15 bg-white/5 text-zinc-400",
-                )}
-              >
-                Referral code{" "}
-                <span className="font-semibold">{referralCode}</span>
-                {refParamCheck.state === "idle"
-                  ? " will be checked when your account is set up."
-                  : `: ${referralCheckText(refParamCheck)}`}
-              </output>
-            )}
-            {!ssoCheck?.enforceSSO && <TurnstileWidget handle={captcha} />}
-            {!ssoCheck?.enforceSSO && (
-              <Button
-                type="submit"
-                className="mt-4 w-full bg-white text-black hover:bg-white/90"
-                disabled={isLoading}
-              >
-                {isLoading ? "Creating Account..." : "Create Account"}
-              </Button>
-            )}
-            {/* The toast carried the copy; this is only the next step. */}
-            <AuthErrorAffordance
-              action={errorAction ?? undefined}
-              target={errorTarget}
-            />
-          </form>
-
-          {ssoCheck?.enforceSSO && (
-            <div className="mt-4 rounded-md border border-white/15 bg-white/5 p-4">
-              <p className="mb-3 text-sm text-zinc-400">
-                Your organization requires SSO sign-in. Use the button below to
-                authenticate.
-              </p>
-              <Button
-                type="button"
-                className="w-full bg-white text-black hover:bg-white/90"
-                onClick={handleSSOSignIn}
-              >
-                Sign in with {ssoCheck.organizationName} SSO &rarr;
-              </Button>
-            </div>
-          )}
-
-          {!ssoCheck?.enforceSSO && socialProviders.length > 0 && (
+            <FieldError id="name-error" message={fieldError.name} />
+          </div>
+          <AuthEmailField
+            value={email}
+            onChange={(v) => {
+              setEmail(v);
+              setFieldError((f) => ({ ...f, email: undefined }));
+            }}
+            onBlur={handleEmailBlur}
+            disabled={isLoading || ssoChecking}
+            error={fieldError.email}
+            className="grid gap-2 mt-4"
+          />
+          {!ssoCheck?.enforceSSO && (
             <>
-              <div className="relative my-6">
-                <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-white/15" />
-                </div>
-                <div className="relative flex justify-center text-sm">
-                  <span className="bg-neutral-950 px-2 text-zinc-400">
-                    OR CONTINUE WITH
-                  </span>
-                </div>
+              <div className="grid gap-2 mt-4">
+                <Label htmlFor="password">Password</Label>
+                <Input
+                  id="password"
+                  name="password"
+                  type="password"
+                  autoComplete="new-password"
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    setFieldError((f) => ({ ...f, password: undefined }));
+                  }}
+                  required
+                  minLength={PASSWORD_MIN_LENGTH}
+                  disabled={isLoading}
+                  {...invalidProps(fieldError.password, "password-error")}
+                />
+                <FieldError id="password-error" message={fieldError.password} />
+                <p className="text-xs text-zinc-400">{PASSWORD_RULE_HINT}</p>
               </div>
-
-              <SocialLoginButtons
-                callbackURL={safeCallbackUrl || "/dashboard"}
-                newUserCallbackURL={onboardingUrl}
-                errorCallbackURL={signUpUrl}
-                isLoading={isLoading}
-                ssoEnforced={false}
-              />
+              <div className="grid gap-2 mt-4">
+                <Label htmlFor="confirm-password">Confirm Password</Label>
+                <Input
+                  id="confirm-password"
+                  name="confirm-password"
+                  type="password"
+                  autoComplete="new-password"
+                  placeholder="••••••••"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  required
+                  disabled={isLoading}
+                />
+              </div>
             </>
           )}
+          {showReferralField && !ssoCheck?.enforceSSO && (
+            <ReferralCodeField
+              value={refCode}
+              onChange={setRefCode}
+              disabled={isLoading}
+            />
+          )}
+          {!showReferralField && !ssoCheck?.enforceSSO && (
+            <output
+              className={cn(
+                "mt-4 block rounded-md border p-3 text-sm",
+                refParamCheck.state === "valid"
+                  ? "border-green-700 bg-green-900/30 text-green-400"
+                  : "border-white/15 bg-white/5 text-zinc-400",
+              )}
+            >
+              Referral code{" "}
+              <span className="font-semibold">{referralCode}</span>
+              {refParamCheck.state === "idle"
+                ? " will be checked when your account is set up."
+                : `: ${referralCheckText(refParamCheck)}`}
+            </output>
+          )}
+          {!ssoCheck?.enforceSSO && <TurnstileWidget handle={captcha} />}
+          {!ssoCheck?.enforceSSO && (
+            <Button
+              type="submit"
+              className="mt-4 w-full bg-white text-black hover:bg-white/90"
+              disabled={isLoading}
+            >
+              {isLoading ? "Creating Account..." : "Create Account"}
+            </Button>
+          )}
+          {/* The toast carried the copy; this is only the next step. */}
+          <AuthErrorAffordance
+            action={errorAction ?? undefined}
+            target={errorTarget}
+          />
+        </form>
 
-          <p className="mt-6 text-xs text-zinc-400">
-            Already have an account?{" "}
-            <Link
-              href={signInUrl}
-              className="font-medium text-white underline-offset-4 hover:underline"
+        {ssoCheck?.enforceSSO && (
+          <div className="mt-4 rounded-md border border-white/15 bg-white/5 p-4">
+            <p className="mb-3 text-sm text-zinc-400">
+              Your organization requires SSO sign-in. Use the button below to
+              authenticate.
+            </p>
+            <Button
+              type="button"
+              className="w-full bg-white text-black hover:bg-white/90"
+              onClick={handleSSOSignIn}
             >
-              Sign in
-            </Link>
-          </p>
-          <p className="mt-2 text-xs text-zinc-400">
-            By clicking Create Account, you agree to our{" "}
-            <Link
-              href="/terms"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="font-medium text-zinc-300 underline-offset-4 hover:text-white hover:underline"
-            >
-              Terms of Service
-            </Link>{" "}
-            and{" "}
-            <Link
-              href="/privacy"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="font-medium text-zinc-300 underline-offset-4 hover:text-white hover:underline"
-            >
-              Privacy Policy
-            </Link>
-            .
-          </p>
-        </div>
-        <div />
+              Sign in with {ssoCheck.organizationName} SSO &rarr;
+            </Button>
+          </div>
+        )}
+
+        {!ssoCheck?.enforceSSO && socialProviders.length > 0 && (
+          <>
+            <div className="relative my-6">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-white/15" />
+              </div>
+              <div className="relative flex justify-center text-sm">
+                <span className="bg-neutral-950 px-2 text-zinc-400">
+                  OR CONTINUE WITH
+                </span>
+              </div>
+            </div>
+
+            <SocialLoginButtons
+              callbackURL={safeCallbackUrl || "/dashboard"}
+              newUserCallbackURL={onboardingUrl}
+              errorCallbackURL={signUpUrl}
+              isLoading={isLoading}
+              ssoEnforced={false}
+            />
+          </>
+        )}
+
+        <p className="mt-6 text-xs text-zinc-400">
+          Already have an account?{" "}
+          <Link
+            href={signInUrl}
+            className="font-medium text-white underline-offset-4 hover:underline"
+          >
+            Sign in
+          </Link>
+        </p>
+        <p className="mt-2 text-xs text-zinc-400">
+          By clicking Create Account, you agree to our{" "}
+          <Link
+            href="/terms"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium text-zinc-300 underline-offset-4 hover:text-white hover:underline"
+          >
+            Terms of Service
+          </Link>{" "}
+          and{" "}
+          <Link
+            href="/privacy"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium text-zinc-300 underline-offset-4 hover:text-white hover:underline"
+          >
+            Privacy Policy
+          </Link>
+          .
+        </p>
       </div>
+      <div />
     </div>
   );
 }
