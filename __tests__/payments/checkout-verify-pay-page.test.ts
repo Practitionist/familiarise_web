@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 
-// A paid trial returns through the success page: verify names its state only once the held time is booked.
+// Every order the pay page opens returns through the success page: verify names its state only once the capture booked it.
 
 jest.mock("../../lib/auth-helpers", () => ({
   requireApiAuth: jest.fn(async () => ({
@@ -35,9 +35,16 @@ import { NextRequest } from "next/server";
 import { GET } from "../../app/api/checkout/verify/route";
 
 const startsAt = new Date(Date.now() + 2 * 24 * 3600_000);
+const requestedAt = new Date(Date.now() - 24 * 3600_000);
 
-/** The verify read's shape for a trial: no request row, one held occurrence. */
-function trialPayment(paymentStatus: string, isTentative: boolean) {
+type Kind = "TRIAL" | "CONSULTATION" | "SUBSCRIPTION";
+
+/** The verify read's shape for each booking the pay page serves; a trial has no request row. */
+function payPageOrder(kind: Kind, paymentStatus: string, captured: boolean) {
+  const request = {
+    status: captured ? "APPROVED" : "APPROVED_PENDING_PAYMENT",
+    requestedAt,
+  };
   return {
     id: "pay-1",
     userId: "buyer",
@@ -52,10 +59,16 @@ function trialPayment(paymentStatus: string, isTentative: boolean) {
     createdAt: new Date(Date.now() - 600_000),
     expiresAt: new Date(Date.now() + 23 * 3600_000),
     appointment: {
-      id: "appt-trial",
-      appointmentType: "TRIAL",
-      consultation: null,
-      subscription: null,
+      id: "appt-1",
+      appointmentType: kind,
+      consultation:
+        kind === "CONSULTATION"
+          ? { ...request, consultationPlan: { title: "Career call" } }
+          : null,
+      subscription:
+        kind === "SUBSCRIPTION"
+          ? { ...request, subscriptionPlan: { title: "Six weeks" } }
+          : null,
       webinar: null,
       class: null,
       occurrences: [
@@ -63,7 +76,7 @@ function trialPayment(paymentStatus: string, isTentative: boolean) {
           id: "occ-1",
           startsAt,
           endsAt: new Date(startsAt.getTime() + 1800_000),
-          isTentative,
+          isTentative: !captured,
           deletedAt: null,
           completionStatus: "SCHEDULED",
         },
@@ -81,27 +94,37 @@ const verify = async () => {
   return { status: res.status, body: await res.json() };
 };
 
-it("keeps the poll waiting while the trial's capture has not landed", async () => {
-  paymentFindUnique.mockResolvedValue(trialPayment("PENDING", true));
-  expect(await verify()).toMatchObject({
-    status: 400,
-    body: { status: "PENDING" },
-  });
-});
+const KINDS: Kind[] = ["TRIAL", "CONSULTATION", "SUBSCRIPTION"];
 
-it("names no state while the paid trial's time is still a hold", async () => {
-  paymentFindUnique.mockResolvedValue(trialPayment("SUCCEEDED", true));
+it.each(KINDS)(
+  "%s: keeps the poll waiting while the capture has not landed",
+  async (kind) => {
+    paymentFindUnique.mockResolvedValue(payPageOrder(kind, "PENDING", false));
+    expect(await verify()).toMatchObject({
+      status: 400,
+      body: { status: "PENDING" },
+    });
+  },
+);
+
+it("TRIAL: names no state while the paid time is still a hold", async () => {
+  paymentFindUnique.mockResolvedValue(
+    payPageOrder("TRIAL", "SUCCEEDED", false),
+  );
   const { body } = await verify();
   expect(body.status).toBe("SUCCEEDED");
   expect(body.bookingState).toBeUndefined();
 });
 
-it("answers CONFIRMED and PAID once the capture booked the trial's time", async () => {
-  paymentFindUnique.mockResolvedValue(trialPayment("SUCCEEDED", false));
-  const { body } = await verify();
-  expect(body).toMatchObject({
-    appointmentType: "TRIAL",
-    bookingState: "CONFIRMED",
-    moneyState: "PAID",
-  });
-});
+it.each(KINDS)(
+  "%s: answers CONFIRMED and PAID once the capture booked it",
+  async (kind) => {
+    paymentFindUnique.mockResolvedValue(payPageOrder(kind, "SUCCEEDED", true));
+    const { body } = await verify();
+    expect(body).toMatchObject({
+      appointmentType: kind,
+      bookingState: "CONFIRMED",
+      moneyState: "PAID",
+    });
+  },
+);
