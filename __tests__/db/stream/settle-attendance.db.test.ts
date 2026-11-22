@@ -890,3 +890,76 @@ it("a session our webhooks record after the settler loaded the room stops the st
   expect(settled.kind).toBe("settled");
   expect(await stored(room.meetingId)).toHaveLength(2);
 });
+
+/** A room from before Stream's announcements and our room-state webhook fields existed. */
+async function seedPreRolloutRoom(completionStatus: "COMPLETED" | "SCHEDULED") {
+  const room = await seedConsultationRoom(80);
+  if (completionStatus === "COMPLETED") {
+    await prisma.appointmentOccurrence.update({
+      where: { id: room.occurrenceId },
+      data: {
+        completionStatus: "COMPLETED",
+        outcome: "HELD",
+        completedAt: room.endsAt,
+      },
+    });
+  }
+  // Stream holds a complete, ended record, but no report id or session identity was ever stored for it.
+  fakeStream.calls.set(room.streamCallId, {
+    occurrenceId: room.occurrenceId,
+    sessions: [
+      {
+        id: "old-session",
+        live: false,
+        stays: [
+          stay(room.hostId, room.startsAt, 0, 60 * MIN),
+          stay(room.learnerId, room.startsAt, 0, 60 * MIN),
+        ],
+      },
+    ],
+  });
+  return room;
+}
+
+it("an occurrence decided before the rollout keeps its outcome: the sweep's write moves only SCHEDULED rows and stores no record", async () => {
+  const room = await seedPreRolloutRoom("COMPLETED");
+
+  const decision = await decideSlotOutcome(await loadSlot(room.occurrenceId), {
+    now: new Date(room.endsAt.getTime() + 80 * HOUR),
+    outages: [],
+  });
+
+  expect(decision).toMatchObject({ kind: "written", moved: false });
+  expect(
+    await prisma.appointmentOccurrence.findUniqueOrThrow({
+      where: { id: room.occurrenceId },
+      select: { completionStatus: true, outcome: true },
+    }),
+  ).toEqual({ completionStatus: "COMPLETED", outcome: "HELD" });
+  expect(await settledAt(room.meetingId)).toBeNull();
+});
+
+it("an occurrence still undecided at the rollout cannot be corroborated, so it defers and then parks INCONCLUSIVE for ops at 72 hours", async () => {
+  const room = await seedPreRolloutRoom("SCHEDULED");
+  const slot = await loadSlot(room.occurrenceId);
+
+  expect(
+    await decideSlotOutcome(slot, {
+      now: new Date(room.endsAt.getTime() + 7 * HOUR),
+      outages: [],
+    }),
+  ).toEqual({ kind: "deferred", reason: "attendance-unsettled" });
+
+  expect(
+    await decideSlotOutcome(slot, {
+      now: new Date(room.endsAt.getTime() + 73 * HOUR),
+      outages: [],
+    }),
+  ).toMatchObject({
+    kind: "written",
+    to: "UNVERIFIED",
+    moved: true,
+    verdict: { outcome: "INCONCLUSIVE", hostAttributed: false },
+  });
+  expect(await settledAt(room.meetingId)).toBeNull();
+});
