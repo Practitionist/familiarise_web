@@ -4,6 +4,36 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import type { ExpertStatKey, IPublicStat } from "@/lib/data/public-stats";
 
+const CONSTELLATION_PATHS = [
+  "M90 140 L260 230 L420 120 L560 260",
+  "M260 230 L200 420 L340 560 L180 720",
+  "M1350 150 L1180 240 L1040 130 L900 250",
+  "M1180 240 L1250 430 L1100 580 L1270 740",
+  "M340 560 L520 800 L760 860 L960 790 L1100 580",
+  "M420 120 L720 60 L1040 130",
+];
+
+const CONSTELLATION_NODES: [number, number, number][] = [
+  [90, 140, 2.5],
+  [260, 230, 3.5],
+  [420, 120, 2.5],
+  [560, 260, 2],
+  [200, 420, 3],
+  [340, 560, 2.5],
+  [180, 720, 2],
+  [1350, 150, 2.5],
+  [1180, 240, 3.5],
+  [1040, 130, 2.5],
+  [900, 250, 2],
+  [1250, 430, 3],
+  [1100, 580, 2.5],
+  [1270, 740, 2],
+  [520, 800, 2],
+  [760, 860, 2.5],
+  [960, 790, 2],
+  [720, 60, 2.5],
+];
+
 function AnimatedNumber({
   value,
   suffix = "",
@@ -26,18 +56,32 @@ export function HeroSection({
 }) {
   return (
     <section className="relative min-h-[95vh] flex items-center bg-black overflow-hidden">
-      {/* Static radial gradient accents (avoids heavy blurred keyframe orbs on mobile GPUs) */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-1/4 left-1/4 w-[600px] h-[600px] rounded-full bg-[radial-gradient(circle_at_center,_rgba(39,39,42,0.45)_0%,_transparent_70%)]" />
-        <div className="absolute top-1/3 right-1/4 w-[500px] h-[500px] rounded-full bg-[radial-gradient(circle_at_center,_rgba(63,63,70,0.3)_0%,_transparent_70%)]" />
-        <div className="absolute bottom-1/4 left-1/2 w-[700px] h-[700px] rounded-full bg-[radial-gradient(circle_at_center,_rgba(39,39,42,0.35)_0%,_transparent_70%)]" />
-      </div>
-
-      {/* Grid pattern overlay */}
-      <div className="absolute inset-0 grid-pattern opacity-30" />
-
-      {/* Spotlight effect */}
-      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[600px] bg-[radial-gradient(ellipse_at_top,_rgba(39,39,42,0.25)_0%,_transparent_70%)] pointer-events-none" />
+      {/* Static constellation of nodes and lines framing the text; one inline SVG. */}
+      <svg
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 h-full w-full"
+        viewBox="0 0 1440 900"
+        preserveAspectRatio="xMidYMid slice"
+      >
+        <g stroke="rgba(255,255,255,0.14)" strokeWidth="1" fill="none">
+          {CONSTELLATION_PATHS.map((d) => (
+            <path key={d} d={d} />
+          ))}
+        </g>
+        <g fill="rgba(255,255,255,0.35)">
+          {CONSTELLATION_NODES.map(([cx, cy, r]) => (
+            <circle key={`${cx}-${cy}`} cx={cx} cy={cy} r={r} />
+          ))}
+        </g>
+      </svg>
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0"
+        style={{
+          background:
+            "radial-gradient(ellipse 45% 40% at 50% 45%, rgba(0,0,0,0.85), transparent 75%)",
+        }}
+      />
 
       <div className="container mx-auto px-4 md:px-6 relative z-10 py-20 md:py-32">
         <div className="max-w-4xl mx-auto text-center">
