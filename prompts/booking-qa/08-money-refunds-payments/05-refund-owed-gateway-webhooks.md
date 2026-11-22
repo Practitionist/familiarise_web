@@ -133,7 +133,7 @@ VALUES (gen_random_uuid(), :amount, 'INR', 'PENDING', 'pending_qa-MO-59', 'cance
 
 **Setup (BLOCKED on preview; local with test keys and the webhook secret, owner; salvaged from old 018 Phase 1):** B1 starts a non-mock S-08 checkout. Record the payment id, order id and amount.
 
-**Steps:** owner posts a signed `payment.captured` for the order with event id `qa-MO-63-1`; then the identical delivery again; then the same capture under a new event id `qa-MO-63-2`.
+**Steps:** owner posts a signed `payment.captured` for the order with event id `qa-MO-63-1` (sent as the `x-razorpay-event-id` header, as every event id in this folder is); then the identical delivery again; then the same capture under a new event id `qa-MO-63-2`.
 
 **Expect:** all three answer `200`. After all three:
 
@@ -146,7 +146,13 @@ SELECT (SELECT count(*) FROM "LedgerTransaction" WHERE "idempotencyKey" = 'booki
 
 journals 1, earnings 1, legs 1, status `SUCCEEDED`; the occurrence non-tentative; one booked notification per party.
 
-**Probe further:** record every event id the owner posts in this folder, and retire only those at cleanup, never by prefix (another run's fixtures share it): `UPDATE "WebhookEvent" SET error = 'permanent: qa fixture', processed = true, "processedAt" = now() WHERE "eventId" IN ('qa-MO-63-1', 'qa-MO-63-2' /* plus the ids posted in MO-64, MO-65, MO-70 and MO-71 */);`.
+**Probe further:** the route stores `WebhookEvent."eventId"` as `<event type>:<entity id>:<event id>` (for example `payment.captured:pay_…:qa-MO-63-1`), taking the event id from the header only when it is 1 to 64 letters, digits, `_` or `-`, and a body hash otherwise; confirm each posted delivery's row exists under its `qa-` id before cleanup. Record every event id and entity id the owner posts in this folder, and retire only those, never by prefix (another run's fixtures share the ids). The match is on the last part and the entity together, so a real gateway event, which ends in its own `evt_` id, can never match:
+
+```sql
+UPDATE "WebhookEvent" SET error = 'permanent: qa fixture', processed = true, "processedAt" = now()
+WHERE split_part("eventId", ':', 3) IN ('qa-MO-63-1', 'qa-MO-63-2' /* plus the ids posted in MO-64, MO-65, MO-70 and MO-71 */)
+  AND split_part("eventId", ':', 2) IN (:postedEntityIds);
+```
 
 ## MO-64 — Out-of-order events: `order.paid` first, a failure after success
 
@@ -285,6 +291,6 @@ FROM "ConsultantEarnings" WHERE "paymentId" = :pid;
 
 **Why it matters:** refunds and ledger rows are append-only; the report must list what stays.
 
-**Steps:** list every payment, refund, credit note, ledger transaction and earnings row this folder created (MO-29's query plus MQ-1 per payment). Cancel live bookings through the product. Delete only mock-payment graphs (R-09 order). Retire synthetic `WebhookEvent` rows. Clear QA-ONLY markers (`refundOwed*` to null) only after their case's assertions, and restore any shifted `holdUntil`, refund status or occurrence time.
+**Steps:** list every payment, refund, credit note, ledger transaction and earnings row this folder created (MO-29's query plus MQ-1 per payment). Cancel live bookings through the product. Delete only mock-payment graphs (R-09 order). Retire synthetic `WebhookEvent` rows with MO-63's query. Clear QA-ONLY markers (`refundOwed*` to null) only after their case's assertions, and restore any shifted `holdUntil`, refund status or occurrence time.
 
 **Expect:** a ledger table in the report: id, type, amount (₹), status, kept/deleted, why.
