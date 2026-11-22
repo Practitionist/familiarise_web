@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import { NextRequest } from "next/server";
 import prisma from "../../../lib/prisma";
 import { seedUser } from "../seed";
-import { refundDoor } from "./harness-edges";
+import { opsAdmin, refundDoor } from "./harness-edges";
 import {
   seatCheckoutInput,
   seedHeldSeat,
@@ -17,42 +17,27 @@ import {
   type SeededWebinar,
 } from "./harness-seats";
 
-const mockAdmin = { id: "" };
-jest.mock("../../../lib/auth-helpers", () => ({
-  ...jest.requireActual("../../../lib/auth-helpers"),
-  requireBackofficeSurface: async () => ({
-    session: {
-      user: { id: mockAdmin.id, role: "ADMIN" },
-      session: { createdAt: new Date() },
-    },
-  }),
-}));
-jest.mock("../../../lib/backoffice/money-limit", () => ({
-  __esModule: true,
-  assertMoneyOpsBudget: jest.fn(async () => undefined),
-}));
-jest.mock("../../../lib/payments/index", () => ({
-  __esModule: true,
-  createPaymentIntent: jest.fn(async () => ({
-    id: `order_${randomUUID()}`,
-    client_secret: null,
-  })),
-  cancelPaymentIntent: jest.fn(async () => undefined),
-}));
-jest.mock("../../../lib/compliance/dpdp", () => ({
-  __esModule: true,
-  checkConsent: jest.fn(async () => true),
-}));
+jest.mock("../../../lib/auth-helpers", () =>
+  jest.requireActual("./harness-edges").opsAdminAuthMock(),
+);
+jest.mock("../../../lib/backoffice/money-limit", () =>
+  jest.requireActual("./harness-edges").moneyBudgetMock(),
+);
+jest.mock("../../../lib/payments/index", () =>
+  jest.requireActual("./harness-edges").orderGatewayMock(),
+);
+jest.mock("../../../lib/compliance/dpdp", () =>
+  jest.requireActual("./harness-edges").consentGrantedMock(),
+);
 jest.mock("../../../lib/rate-limit", () =>
   jest.requireActual("./harness-edges").rateLimitMock(),
 );
 jest.mock("../../../lib/novu/stage-then-attempt", () =>
   jest.requireActual("./harness-edges").noFlushMock(),
 );
-jest.mock("../../../lib/email/render", () => ({
-  __esModule: true,
-  renderEmail: async () => ({ html: "<p>rendered</p>", text: "rendered" }),
-}));
+jest.mock("../../../lib/email/render", () =>
+  jest.requireActual("./harness-edges").renderedEmailMock(),
+);
 jest.mock("../../../lib/payments/webhooks/ensure-channels", () => ({
   __esModule: true,
   ensureChannelsForAppointment: jest.fn(async () => undefined),
@@ -65,7 +50,7 @@ import { POST as legacyRefund } from "../../../app/api/admin/refunds/route";
 import { findDedupedRefund } from "../../../lib/payments/operations/refund";
 
 beforeAll(async () => {
-  mockAdmin.id = (await seedUser("ADMIN")).userId;
+  opsAdmin.id = (await seedUser("ADMIN")).userId;
 });
 beforeEach(() => refundDoor.refundBookingPayment.mockClear());
 
@@ -105,8 +90,8 @@ async function panelRow(webinar: SeededWebinar, paymentId: string) {
   return view?.payments.find((p) => p.id === paymentId);
 }
 
-/** A credit-funded ₹500 seat; `restored` adds the ₹0 refund row the credits rail writes. */
-async function creditSeat(webinar: SeededWebinar, restored: boolean) {
+/** A buyer's ₹0 payment on a ₹500 list price, credit- or discount-funded, with no seat row yet. */
+async function zeroPaidSeatPayment(webinar: SeededWebinar) {
   const buyer = await seedSeatBuyer();
   const payment = await prisma.payment.create({
     data: {
@@ -121,6 +106,56 @@ async function creditSeat(webinar: SeededWebinar, restored: boolean) {
       isMockPayment: true,
     },
   });
+  return { buyer, payment };
+}
+
+/** The buyer's seat row; an ended one also has the ₹0 refund row the credits rail writes. */
+async function seatEndedOrLive(
+  webinar: SeededWebinar,
+  userId: string,
+  paymentId: string,
+  ended: boolean,
+) {
+  if (ended) {
+    await prisma.refund.create({
+      data: {
+        paymentId,
+        amountPaise: BigInt(0),
+        status: "SUCCEEDED",
+        refundId: `credits_${randomUUID()}`,
+        paymentGateway: "RAZORPAY",
+      },
+    });
+  }
+  await prisma.appointmentParticipant.create({
+    data: {
+      appointmentId: webinar.appointmentId,
+      userId,
+      role: "CONSULTEE",
+      status: ended ? "REFUNDED" : "CONFIRMED",
+      paymentId,
+    },
+  });
+}
+
+/** A seat on a free webinar, checked out through the real checkout. */
+async function freeSeat() {
+  const webinar = await seedWebinar({ capacity: 20, price: 0 });
+  const buyer = await seedSeatBuyer();
+  await handleCheckout(
+    seatCheckoutInput(webinar, `free-seat-${randomUUID()}`),
+    buyer.userId,
+  );
+  const payment = await prisma.payment.findFirstOrThrow({
+    where: { userId: buyer.userId },
+    select: { id: true },
+  });
+  return { webinar, buyer, payment };
+}
+
+/** A credit-funded ₹500 seat; `restored` adds the ₹0 refund row the credits rail writes. */
+async function creditSeat(webinar: SeededWebinar, restored: boolean) {
+  const { buyer, payment } = await zeroPaidSeatPayment(webinar);
   const credit = await prisma.referralCredit.create({
     data: {
       userId: buyer.userId,
@@ -142,40 +177,12 @@ async function creditSeat(webinar: SeededWebinar, restored: boolean) {
       restoredAmount: BigInt(restored ? 50_000 : 0),
     },
   });
-  if (restored) {
-    await prisma.refund.create({
-      data: {
-        paymentId: payment.id,
-        amountPaise: BigInt(0),
-        status: "SUCCEEDED",
-        refundId: `credits_${randomUUID()}`,
-        paymentGateway: "RAZORPAY",
-      },
-    });
-  }
-  await prisma.appointmentParticipant.create({
-    data: {
-      appointmentId: webinar.appointmentId,
-      userId: buyer.userId,
-      role: "CONSULTEE",
-      status: restored ? "REFUNDED" : "CONFIRMED",
-      paymentId: payment.id,
-    },
-  });
+  await seatEndedOrLive(webinar, buyer.userId, payment.id, restored);
   return payment;
 }
 
 it("a free seat offers no refund, and the door refuses it with the seat untouched", async () => {
-  const webinar = await seedWebinar({ capacity: 20, price: 0 });
-  const buyer = await seedSeatBuyer();
-  await handleCheckout(
-    seatCheckoutInput(webinar, `free-seat-${randomUUID()}`),
-    buyer.userId,
-  );
-  const payment = await prisma.payment.findFirstOrThrow({
-    where: { userId: buyer.userId },
-    select: { id: true },
-  });
+  const { webinar, buyer, payment } = await freeSeat();
 
   expect(await panelRow(webinar, payment.id)).toMatchObject({
     refundable: false,
@@ -256,16 +263,7 @@ it("a card seat opens the door until a live dispute or a lost chargeback blocks 
 });
 
 it("the legacy admin door refuses a free seat the same way, with the seat untouched", async () => {
-  const webinar = await seedWebinar({ capacity: 20, price: 0 });
-  const buyer = await seedSeatBuyer();
-  await handleCheckout(
-    seatCheckoutInput(webinar, `free-seat-${randomUUID()}`),
-    buyer.userId,
-  );
-  const payment = await prisma.payment.findFirstOrThrow({
-    where: { userId: buyer.userId },
-    select: { id: true },
-  });
+  const { webinar, buyer, payment } = await freeSeat();
 
   const res = await legacyIssue(payment.id);
   expect(res.status).toBe(409);
@@ -318,40 +316,8 @@ it("a key spent on one buyer's refund answers 422 on another buyer's payment", a
 it("a 100% discount booking opens the door as a ₹0 refund, once", async () => {
   const webinar = await seedWebinar({ capacity: 20, price: 50_000 });
   const discountSeat = async (ended: boolean) => {
-    const buyer = await seedSeatBuyer();
-    const payment = await prisma.payment.create({
-      data: {
-        amount: BigInt(0),
-        originalAmount: BigInt(50_000),
-        paymentMethod: "credits",
-        paymentIntent: `free_dbtier_${randomUUID()}`,
-        paymentGateway: "RAZORPAY",
-        paymentStatus: "SUCCEEDED",
-        userId: buyer.userId,
-        appointmentId: webinar.appointmentId,
-        isMockPayment: true,
-      },
-    });
-    if (ended) {
-      await prisma.refund.create({
-        data: {
-          paymentId: payment.id,
-          amountPaise: BigInt(0),
-          status: "SUCCEEDED",
-          refundId: `credits_${randomUUID()}`,
-          paymentGateway: "RAZORPAY",
-        },
-      });
-    }
-    await prisma.appointmentParticipant.create({
-      data: {
-        appointmentId: webinar.appointmentId,
-        userId: buyer.userId,
-        role: "CONSULTEE",
-        status: ended ? "REFUNDED" : "CONFIRMED",
-        paymentId: payment.id,
-      },
-    });
+    const { buyer, payment } = await zeroPaidSeatPayment(webinar);
+    await seatEndedOrLive(webinar, buyer.userId, payment.id, ended);
     return payment;
   };
   const live = await discountSeat(false);

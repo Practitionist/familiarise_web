@@ -42,25 +42,7 @@ jest.mock("../../lib/booking/subscription-cycle", () => ({
 }));
 
 const tx = {
-  appointmentParticipant: {
-    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-    findFirst: jest.fn(),
-    // The REFUNDED stamp's pre-read for event learner seats; a 1:1 seat has none.
-    findMany: jest.fn().mockResolvedValue([]),
-  },
-  referralCreditUsage: { findMany: jest.fn(), aggregate: jest.fn() },
-  streamRevocationRetry: { updateMany: jest.fn(), createMany: jest.fn() },
-  appointment: { findUnique: jest.fn() },
-  appointmentOccurrence: { findMany: jest.fn(), count: jest.fn() },
-  refund: {
-    findFirst: jest.fn(),
-    create: jest.fn(),
-    update: jest.fn(),
-    updateMany: jest.fn(async (...a: unknown[]) => {
-      tx.refund.update(...a);
-      return { count: 1 };
-    }),
-  },
+  ...creditRailTxBase(),
   payment: {
     findUniqueOrThrow: jest.fn(),
     // No owed-refund marker on the payment: the operator's return settles nothing.
@@ -191,14 +173,13 @@ import {
   refundBookingPayment,
   restoreSessionCredits,
 } from "../../lib/payments/operations/booking-refund";
+import {
+  CREDIT_FUNDED,
+  creditRailTxBase,
+  creditStillConsumed,
+} from "../fixtures/credit-rail-tx";
 
 const PAYMENT_ID = "pay-free-1";
-/** A ₹1,000 list price paid wholly in credit: the writer's payment read. */
-const CREDIT_FUNDED = {
-  paymentIntent: "free_1730000000_abc",
-  amount: 0,
-  originalAmount: 100_000,
-};
 
 /** ₹1,000 + ₹180 GST booking, fully covered by referral credits. */
 function freeCreditSettlement() {
@@ -241,10 +222,7 @@ beforeEach(() => {
   tx.payment.findUniqueOrThrow.mockResolvedValue(freeCreditSettlement());
   mockReverseCredits.mockResolvedValue(118_000);
   mockReverseUtilization.mockResolvedValue(undefined);
-  tx.referralCreditUsage.aggregate.mockResolvedValue({
-    _sum: { amount: 118_000 },
-    _count: { _all: 1 },
-  });
+  creditStillConsumed(tx.referralCreditUsage);
 });
 
 describe("refundBookingPayment — free_ credit rail (#1161)", () => {

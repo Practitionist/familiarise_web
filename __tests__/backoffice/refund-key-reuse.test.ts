@@ -9,17 +9,12 @@
  */
 
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
-jest.mock("../../lib/auth-helpers", () => ({
-  requireBackofficeSurface: jest.fn(async () => ({
-    session: {
-      user: { id: "admin_1", role: "ADMIN" },
-      session: { createdAt: new Date() },
-    },
-  })),
-}));
-jest.mock("../../lib/backoffice/money-limit", () => ({
-  assertMoneyOpsBudget: jest.fn(),
-}));
+jest.mock("../../lib/auth-helpers", () =>
+  jest.requireActual("../fixtures/ops-door-mocks").adminSurfaceModule(),
+);
+jest.mock("../../lib/backoffice/money-limit", () =>
+  jest.requireActual("../fixtures/ops-door-mocks").moneyBudgetModule(),
+);
 jest.mock("../../lib/db/serializable-retry", () => ({
   withSerializableRetry: (fn: () => unknown) => fn(),
 }));

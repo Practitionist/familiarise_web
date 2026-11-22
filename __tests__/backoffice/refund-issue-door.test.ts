@@ -9,21 +9,15 @@
  */
 
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
-jest.mock("../../lib/auth-helpers", () => ({
-  requireBackofficeSurface: jest.fn(async () => ({
-    session: {
-      user: { id: "admin_1", role: "ADMIN" },
-      session: { createdAt: new Date() },
-    },
-  })),
-}));
-jest.mock("../../lib/backoffice/money-limit", () => ({
-  assertMoneyOpsBudget: jest.fn(),
-}));
-// Eligibility has its own suite on real rows; this one pins the door's other contract.
-jest.mock("../../lib/backoffice/refund-eligibility", () => ({
-  assertRefundDoorOpen: jest.fn(async () => undefined),
-}));
+jest.mock("../../lib/auth-helpers", () =>
+  jest.requireActual("../fixtures/ops-door-mocks").adminSurfaceModule(),
+);
+jest.mock("../../lib/backoffice/money-limit", () =>
+  jest.requireActual("../fixtures/ops-door-mocks").moneyBudgetModule(),
+);
+jest.mock("../../lib/backoffice/refund-eligibility", () =>
+  jest.requireActual("../fixtures/ops-door-mocks").openRefundDoorModule(),
+);
 const create = jest.fn(async (_a: unknown) => ({ id: "row" }));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,

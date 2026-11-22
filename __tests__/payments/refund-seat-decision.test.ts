@@ -349,20 +349,23 @@ it("a ₹100 partial that kept the seat replays without an amount and keeps it",
   expect(mockRevoke).not.toHaveBeenCalled();
 });
 
+/** While our call is at the gateway, Razorpay's webhook records the ₹500 refund as its own SUCCEEDED row. */
+const webhookSettlesFirst = () => {
+  mockState.refunds.push({
+    id: "refund-web",
+    paymentId: "pay-1",
+    amountPaise: 50_000,
+    status: "SUCCEEDED",
+    dedupeKey: null,
+    refundId: "rfnd_web",
+    metadata: {},
+  });
+};
+
 it("a webhook row that settled before our bind inherits the reservation's intent and decides the seat in the adoption", async () => {
   // Razorpay's webhook recorded the refund as SUCCEEDED, with no intent, before our bind landed.
   mockState.gatewayAnswer = { refundId: "rfnd_web", status: "SUCCEEDED" };
-  mockState.atGateway = () => {
-    mockState.refunds.push({
-      id: "refund-web",
-      paymentId: "pay-1",
-      amountPaise: 50_000,
-      status: "SUCCEEDED",
-      dedupeKey: null,
-      refundId: "rfnd_web",
-      metadata: {},
-    });
-  };
+  mockState.atGateway = webhookSettlesFirst;
 
   const refund = await refundPayment({
     paymentId: "pay-1",
@@ -417,17 +420,7 @@ it.each<[string, "SUCCEEDED" | "FAILED", boolean]>([
 
 it("answers SUCCEEDED when the gateway says PENDING but the adopted webhook row already settled", async () => {
   mockState.gatewayAnswer = { refundId: "rfnd_web", status: "PENDING" };
-  mockState.atGateway = () => {
-    mockState.refunds.push({
-      id: "refund-web",
-      paymentId: "pay-1",
-      amountPaise: 50_000,
-      status: "SUCCEEDED",
-      dedupeKey: null,
-      refundId: "rfnd_web",
-      metadata: {},
-    });
-  };
+  mockState.atGateway = webhookSettlesFirst;
 
   await expect(
     refundPayment({
