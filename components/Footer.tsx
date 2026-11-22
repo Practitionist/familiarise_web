@@ -6,6 +6,7 @@ import { useChromePathname } from "@/lib/navigation/use-chrome-pathname";
 import { MessageSquare } from "lucide-react";
 
 import { BrandWordmark } from "@/components/brand/BrandWordmark";
+import { BRAND_NAME } from "@/lib/brand";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { COMPANY_INFO } from "@/lib/company";
@@ -289,6 +290,19 @@ const Footer: React.FC = () => {
             ) : null}
           </p>
         </div>
+      </div>
+
+      {/* Decorative full-width wordmark; sized from Sora's ~5.23em width at this tracking so it spans the viewport. */}
+      <div
+        aria-hidden="true"
+        className="relative z-10 select-none overflow-hidden px-4 pt-4 md:px-6"
+      >
+        <p
+          translate="no"
+          className="whitespace-nowrap bg-gradient-to-b from-zinc-100 via-zinc-500 to-zinc-950 bg-clip-text text-center font-display text-[calc((100vw-3rem)/5.4)] font-semibold leading-[0.85] tracking-[-0.03em] text-transparent"
+        >
+          {BRAND_NAME}
+        </p>
       </div>
     </footer>
   );
