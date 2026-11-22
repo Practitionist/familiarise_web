@@ -10,8 +10,10 @@ import { resolveBookingRefundContext } from "@/lib/booking/cancellation-scope";
 import { fundingRailForIntent } from "@/lib/payments/funding-rail";
 import { quoteBookingRefund } from "@/lib/payments/operations/cancellation-policy";
 import {
+  assertRefundReplayMatches,
   findDedupedRefund,
   RefundGatewayError,
+  type RefundReplayRequest,
 } from "@/lib/payments/operations/refund";
 import { handSettledOwedSchema } from "@/lib/payments/operations/refund-owed";
 import { OpsRefusal } from "./ops-refusal-error";
@@ -104,9 +106,13 @@ const SETTLED_OWED_METADATA = z.object({ settledOwed: handSettledOwedSchema });
  * flight, not failed: the row stays PENDING for the reconcile cron (#779).
  * The door answers that row, so the retry and the first call agree (QA #1824).
  */
-export async function refundInFlightOr(err: unknown, dedupeKey: string) {
+export async function refundInFlightOr(
+  err: unknown,
+  dedupeKey: string,
+  request: RefundReplayRequest,
+) {
   if (!(err instanceof RefundGatewayError)) throw err;
-  const row = await findDedupedRefund(dedupeKey).catch(() => null);
+  const row = await findDedupedRefund(dedupeKey, request).catch(() => null);
   if (!row) {
     throw new OpsRefusal(
       "GATEWAY_REFUND_FAILED",
@@ -178,8 +184,8 @@ async function assertSessionOnPayment(paymentId: string, occurrenceId: string) {
 }
 
 /**
- * #1834 — a session key refunds once. A retry that resolves to the first
- * refund's amount replays it; any other amount is refused, never deduped.
+ * A session key refunds once. A retry with no amount, or with the stored amount, replays it on its payment, even
+ * after it ended the seat; a different amount is a reused key (422 `IDEMPOTENCY_KEY_REUSED`), never deduped.
  */
 export async function assertSessionRefundable(args: {
   paymentId: string;
@@ -187,27 +193,19 @@ export async function assertSessionRefundable(args: {
   dedupeKey: string;
   amountPaise: number | undefined;
 }): Promise<void> {
-  const payment = await assertSessionOnPayment(
-    args.paymentId,
-    args.occurrenceId,
-  );
   const prior = await prisma.refund.findUnique({
     where: { dedupeKey: args.dedupeKey },
-    select: { amountPaise: true, status: true },
+    select: { paymentId: true, amountPaise: true, status: true },
   });
   if (!prior || prior.status === "FAILED" || prior.status === "CANCELLED") {
+    await assertSessionOnPayment(args.paymentId, args.occurrenceId);
     return;
   }
-  // A full refund resolves to the balance the first refund saw: today's plus its own amount.
-  const asked =
-    args.amountPaise ??
-    refundableBalancePaise(Number(payment.amount), payment) +
-      Number(prior.amountPaise);
-  if (asked === Number(prior.amountPaise)) return;
-  throw new OpsRefusal(
-    "SESSION_ALREADY_REFUNDED",
-    "This session was already refunded at a different amount. Issue any further refund without the session link.",
-  );
+  // The key names the session and payment, so the stored refund is judged without the seat.
+  assertRefundReplayMatches(prior, {
+    paymentId: args.paymentId,
+    amountPaise: args.amountPaise,
+  });
 }
 
 /** What a full refund of this payment would return now; 0 when it is unknown. */

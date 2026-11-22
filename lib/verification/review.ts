@@ -52,7 +52,8 @@ export type ReviewRefusalCode =
   | "ALREADY_DECIDED"
   | "ROUND_CAP"
   | "ISSUE_REQUIRED"
-  | "DOCUMENT_NOT_ON_REQUEST";
+  | "DOCUMENT_NOT_ON_REQUEST"
+  | "NO_DOCUMENTS";
 
 export interface ReviewVerificationDecided {
   consultantProfileId: string;
@@ -74,6 +75,7 @@ export const REVIEW_REFUSAL_STATUS: Record<ReviewRefusalCode, number> = {
   ROUND_CAP: 409,
   ISSUE_REQUIRED: 400,
   DOCUMENT_NOT_ON_REQUEST: 400,
+  NO_DOCUMENTS: 409,
 };
 
 /** Request status → profile status. NEEDS_INFO returns the profile to the pre-review default. */
@@ -197,9 +199,17 @@ export async function reviewVerificationTx(
       status: true,
       consultantProfileId: true,
       consultantProfile: { select: { userId: true } },
+      _count: { select: { documents: true } },
     },
   });
   if (!verification) throw refuse("NOT_FOUND", "Verification not found");
+  // An approval vouches for documents the reviewer read; the modal mirrors this.
+  if (input.status === "APPROVED" && verification._count.documents === 0) {
+    throw refuse(
+      "NO_DOCUMENTS",
+      "This request has no documents, so it cannot be approved. Use Request Changes to ask for them.",
+    );
+  }
 
   const round = await countAnsweredRounds(tx, verification.consultantProfileId);
   if (input.status === "NEEDS_INFO" && round >= MAX_NEEDS_INFO_ROUNDS) {

@@ -214,7 +214,7 @@ export function BookingOpsPanel({
                   ? ` · ${formatCurrencyAmount(p.pendingRefundPaise, p.currency)} refund pending`
                   : ""}
               </span>
-              {can("refunds.manage") && (
+              {can("refunds.manage") && p.refundable && (
                 <Button size="sm" variant="outline" asChild>
                   <Link
                     href={`${basePath}/money/refunds?door=issue&paymentId=${encodeURIComponent(p.id)}`}

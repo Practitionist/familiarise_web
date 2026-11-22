@@ -18,7 +18,7 @@ import { OPEN_DISPUTE_WHERE } from "../../lib/backoffice/queue-predicates";
 const mockPrisma = {
   payment: { findMany: jest.fn(), count: jest.fn() },
   refund: { findMany: jest.fn(), count: jest.fn() },
-  dispute: { findMany: jest.fn(), count: jest.fn() },
+  dispute: { findMany: jest.fn(), count: jest.fn(), groupBy: jest.fn() },
 };
 
 jest.mock("../../lib/auth-helpers", () => ({
@@ -61,6 +61,7 @@ beforeEach(() => {
     model.findMany.mockResolvedValue([]);
     model.count.mockResolvedValue(0);
   }
+  mockPrisma.dispute.groupBy.mockResolvedValue([]);
 });
 
 it("opens Payments on SUCCEEDED, the set the tile counts", async () => {
@@ -93,8 +94,11 @@ it("opens Disputes on the open set the Active disputes tile counts", async () =>
     where: OPEN_DISPUTE_WHERE,
   });
   // The open/closed page split keeps the open set instead of overwriting it.
-  for (const [args] of mockPrisma.dispute.count.mock.calls.slice(4))
-    expect(args.where.AND[0]).toEqual(OPEN_DISPUTE_WHERE);
+  const splits = mockPrisma.dispute.count.mock.calls
+    .map(([args]) => args.where)
+    .filter((where) => Array.isArray(where?.AND));
+  expect(splits.length).toBeGreaterThan(0);
+  for (const where of splits) expect(where.AND[0]).toEqual(OPEN_DISPUTE_WHERE);
 });
 
 it("ignores a status the list does not know", async () => {

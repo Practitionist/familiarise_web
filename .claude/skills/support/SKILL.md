@@ -96,7 +96,7 @@ The code still has the rules described above until these land; don't build again
 - `support-sla-sweep` is not in `/api/admin/system-jobs/run`; re-run via `POST /api/cleanup/support-sla-sweep` with `CRON_SECRET`.
 - The platform cancel door has no `secondApprover`; support refunds do.
 - `familiarise-support` is a Stream-only user (no `User` row); keep it in `getExcludedUserIds()` in `scripts/stream/stream-sync.ts`.
-- `releaseSeat` only marks the funded participant `REFUNDED` (no session, recording or document access; group seats resell). It never cancels the booking; that is the platform cancel door. The credits rail always releases the seat.
+- `releaseSeat` only marks the funded participant `REFUNDED` (no session, recording or document access; group seats resell). It never cancels the booking; that is the platform cancel door. The credits rail always releases the seat, so a credit-funded recommendation must set `releaseSeat` (400 `SEAT_RELEASE_REQUIRED` otherwise). A recommendation is refused on the same blockers as its preview (`supportRefundBlocker`: door refusal, then a live chargeback).
 - Customer copy must never promise that a reply reopens a case.
 - Show the requester's reply-by line (`describeWait()`) only while a first reply is owed: not resolved or closed, and no `acknowledgedAt`. `SupportRequestView` and `useSupportThread()` (`waitingLine`) both gate it.
 - Host organizations are booking parties only through captured payments (`CAPTURED_PAYMENT_WHERE` in `lib/support/evidence-parties.ts`).

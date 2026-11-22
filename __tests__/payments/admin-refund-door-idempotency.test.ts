@@ -24,17 +24,12 @@ import { readFileSync } from "fs";
 import path from "path";
 
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
-jest.mock("../../lib/auth-helpers", () => ({
-  requireBackofficeSurface: jest.fn(async () => ({
-    session: {
-      user: { id: "admin_1", role: "ADMIN" },
-      session: { createdAt: new Date() },
-    },
-  })),
-}));
-jest.mock("../../lib/backoffice/money-limit", () => ({
-  assertMoneyOpsBudget: jest.fn(),
-}));
+jest.mock("../../lib/auth-helpers", () =>
+  jest.requireActual("../fixtures/ops-door-mocks").adminSurfaceModule(),
+);
+jest.mock("../../lib/backoffice/money-limit", () =>
+  jest.requireActual("../fixtures/ops-door-mocks").moneyBudgetModule(),
+);
 const create = jest.fn(async (_a: unknown) => ({ id: "row" }));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
@@ -44,6 +39,9 @@ jest.mock("../../lib/prisma", () => ({
     payment: { findUnique: async () => null },
   },
 }));
+jest.mock("../../lib/backoffice/refund-eligibility", () =>
+  jest.requireActual("../fixtures/ops-door-mocks").openRefundDoorModule(),
+);
 // Rest-typed so the `jest.mock` facades below can forward a `unknown[]`
 // spread into them (TS2556 otherwise: a spread argument must have a tuple
 // type or be passed to a rest parameter).
