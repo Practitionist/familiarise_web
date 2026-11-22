@@ -132,6 +132,7 @@ jest.mock("@sentry/core", () => jest.requireMock("@sentry/nextjs"));
 
 import { NextRequest } from "next/server";
 import { Prisma } from "@prisma/client";
+import { DriverAdapterError } from "@prisma/driver-adapter-utils";
 import { POST } from "../../app/api/checkout/route";
 import {
   busyRetryToast,
@@ -195,6 +196,7 @@ function soleCapture(): { level?: string; tags?: Record<string, string> } {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  $transaction.mockReset();
   jest.spyOn(console, "log").mockImplementation(() => {});
   jest.spyOn(console, "error").mockImplementation(() => {});
   jest.spyOn(console, "warn").mockImplementation(() => {});
@@ -305,7 +307,49 @@ describe("what keeps its answer", () => {
       retryAfter: 2,
       yourCardWasNotCharged: true,
     });
+    const context = soleCapture();
+    expect(context.level).toBe("warning");
+    expect(context.tags?.expected).toBe("true");
   });
+
+  it.each([
+    [
+      "a statement (P2034)",
+      () =>
+        new Prisma.PrismaClientKnownRequestError("write conflict", {
+          code: "P2034",
+          clientVersion: "7.10.1",
+        }),
+    ],
+    [
+      "the COMMIT (unmapped TransactionWriteConflict)",
+      () => new DriverAdapterError({ kind: "TransactionWriteConflict" }),
+    ],
+  ])(
+    "a serialization conflict at %s that exhausts the booking retries answers 409",
+    async (_at, conflict) => {
+      calculateAmountAndValidate.mockResolvedValueOnce(PRICED);
+      revalidateInsideLock.mockResolvedValueOnce(null);
+      $transaction.mockImplementation(async () => {
+        throw conflict();
+      });
+
+      const res = await POST(consultationCheckout());
+
+      // One attempt plus the three Serializable retries, each rolled back.
+      expect($transaction).toHaveBeenCalledTimes(4);
+      expect(res.status).toBe(409);
+      expect(await res.json()).toMatchObject({
+        errorType: "SERIALIZATION_CONFLICT",
+        retryAfter: 2,
+        yourCardWasNotCharged: true,
+      });
+      const context = soleCapture();
+      expect(context.level).toBe("warning");
+      expect(context.tags?.expected).toBe("true");
+      expect(cancelPaymentIntent).toHaveBeenCalledWith("order_1");
+    },
+  );
 
   it("an unrelated failure still answers 500 and is reported as a fault", async () => {
     calculateAmountAndValidate.mockResolvedValueOnce(PRICED);
