@@ -5,12 +5,14 @@ import { useState } from "react";
 
 interface Attendance {
   bookedMinutes: number;
+  /** False until Stream's record of the call is stored, about an hour after it ends. */
+  settled: boolean;
   seats: { userId: string; name: string | null; presentMinutes: number }[];
 }
 
 /**
- * #1569 B-4 — the host's "who attended" list for one session, read from the
- * per-device presence rows; fetched only when opened.
+ * The host's "who attended" list for one session, read from Stream's stored
+ * record of the call; fetched only when opened.
  */
 export function SessionAttendance({
   appointmentId,
@@ -37,13 +39,17 @@ export function SessionAttendance({
       <summary className="cursor-pointer">Who attended</summary>
       {query.isError && <p>Attendance could not be loaded.</p>}
       {query.data?.seats.length === 0 && <p>No learners hold this session.</p>}
+      {query.data && !query.data.settled && query.data.seats.length > 0 && (
+        <p>Attendance appears about an hour after the session ends.</p>
+      )}
       <ul className="mt-1 space-y-0.5">
-        {query.data?.seats.map((s) => (
-          <li key={s.userId}>
-            {s.name ?? "A learner"}: {s.presentMinutes} of{" "}
-            {query.data.bookedMinutes} minutes
-          </li>
-        ))}
+        {query.data?.settled &&
+          query.data.seats.map((s) => (
+            <li key={s.userId}>
+              {s.name ?? "A learner"}: {s.presentMinutes} of{" "}
+              {query.data.bookedMinutes} minutes
+            </li>
+          ))}
       </ul>
     </details>
   );

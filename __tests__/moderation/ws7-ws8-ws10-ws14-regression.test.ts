@@ -79,6 +79,8 @@ jest.mock("../../lib/prisma", () => ({
     get supportCase() {
       return mockSupportCase;
     },
+    // No ended room is waiting for Stream's record.
+    meeting: { findMany: async () => [] },
     $transaction: (...args: unknown[]) => mockTransaction(...args),
   },
 }));
@@ -396,7 +398,7 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
               endsAt: new Date("2026-10-01T11:00:00Z"),
               completionStatus: "UNVERIFIED",
               outcome: null,
-              attendances: [],
+              presences: [],
             },
           ],
           supportThreads: [],
@@ -428,7 +430,7 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
     );
     expect(body.evidencePack.supportHistory.ticketCount).toBe(1);
     expect(body.evidencePack.supportHistory.openCount).toBe(1);
-    expect(body.payment.appointment.occurrences[0].attendances).toBeUndefined();
+    expect(body.payment.appointment.occurrences[0].presences).toBeUndefined();
     expect(body.payment.appointment.supportThreads).toBeUndefined();
     expect(body.payment.appointment.supportCases).toBeUndefined();
   });

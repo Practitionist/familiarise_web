@@ -1,169 +1,206 @@
 /**
- * Ask Stream who was actually in a call.
- *
- * #1280 — the consultant no-show detector decides on the ABSENCE of a
- * `MeetingAttendance` row. Those rows are written by
- * `call.session_participant_joined` webhooks, and each party's row arrives in
- * its own delivery, potentially to a different Netlify instance. Lose only the
- * consultant's and the predicate "consultee has a row, consultant does not" is
- * satisfied exactly — the booking is CAS-cancelled and refunded in full against
- * a consultant who attended. It is idempotent, so it will not double-refund, but
- * reversing it means manually re-charging a customer.
- *
- * That this has not happened yet is luck: the webhook endpoint rejected every
- * delivery for months, so there are no attendance rows at all and the detector
- * has never had a candidate. It becomes live the moment attendance starts
- * working.
- *
- * Stream holds the same fact independently, and does not depend on our webhook
- * pipeline having worked. `report.participants.unique` is the count of distinct
- * participants in the session — so two, in a 1:1 consultation, means both
- * parties were there whatever our rows say.
+ * Stream's own record of who was in an occurrence's calls, read once the calls
+ * have ended. Every call id the occurrence used (the current one plus each
+ * rotation Stream lists under `custom.occurrenceId`) and every session of each
+ * call is read, and the answer is typed: a failure is never an empty list.
  */
+import type { RunFailureReporter } from "@/lib/observability/run-failures";
 import {
   getStreamVideoClient,
+  isStreamConfigured,
+  streamHttpStatus,
   withStreamCircuitBreaker,
 } from "@/lib/stream-client";
 import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
-import { streamLogger } from "@/lib/stream-logger";
 
-export interface StreamParticipantSessionInterval {
+/** One device stay, as Stream recorded it; `streamCallId` is the call it belongs to. */
+export interface SettledStreamInterval {
   userId: string;
   userSessionId: string;
+  streamCallId: string;
   joinedAt: Date;
-  leftAt: Date | null;
-}
-
-export interface CallPresenceEvidence {
-  /** Distinct participants Stream saw in the session. */
-  unique: number;
-  /** Most participants present at the same moment, when Stream reports it. */
-  maxConcurrent: number | null;
-  /** Stream session ID when available from the call report. */
-  sessionId?: string | null;
+  leftAt: Date;
 }
 
 /**
- * What Stream says about attendance for a call, or `null` when it cannot say.
- *
- * `null` is NOT "nobody attended". It means Stream has no report — the call
- * never had a session, or the report has aged out (they expire at roughly six
- * months, while call *stats* are retained far longer). Callers deciding money
- * must treat `null` as "no evidence" and refuse to act, never as absence.
+ * - `read`: every session of every call has ended and was read in full.
+ * - `no-session`: Stream affirms no call of the occurrence ever had a session.
+ * - `not-final`: a session is still live, or Stream's counts disagree with the rows.
+ * - `expired`: Stream no longer holds the detail (HTTP 404, past its 90 days).
+ * - `unavailable`: Stream could not be asked or did not answer.
  */
-export async function getCallPresenceEvidence(
-  streamCallId: string,
-): Promise<CallPresenceEvidence | null> {
-  try {
-    const client = getStreamVideoClient();
-    const call = client.video.call(STREAM_CALL_TYPE, toCallId(streamCallId));
-    const response = await withStreamCircuitBreaker(() => call.getCallReport());
-    const participants = response.report?.participants;
-    if (!participants) return null;
-    return {
-      unique: participants.unique,
-      maxConcurrent: participants.max_concurrent ?? null,
-      ...(response.session_id ? { sessionId: response.session_id } : {}),
-    };
-  } catch (error) {
-    // A missing report and a Stream outage are indistinguishable here, and both
-    // mean the same thing to a caller about to move money: we do not know.
-    streamLogger.warn("No Stream presence evidence for call", {
-      streamCallId,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return null;
+export type SettledAttendanceRead =
+  | { kind: "read"; intervals: SettledStreamInterval[] }
+  | { kind: "no-session" }
+  | { kind: "not-final" }
+  | { kind: "expired" }
+  | { kind: "unavailable" };
+
+/** An occurrence has its original call id plus one per rotation; more than a page means we cannot list them all. */
+const OCCURRENCE_CALLS_PAGE = 25;
+const SESSIONS_PAGE = 100;
+
+class NotFinal extends Error {}
+class Expired extends Error {}
+
+const toDate = (value: Date | string | undefined | null): Date | null =>
+  value ? new Date(value) : null;
+
+type VideoClient = ReturnType<typeof getStreamVideoClient>;
+
+async function listOccurrenceCallIds(
+  client: VideoClient,
+  occurrenceId: string,
+  currentCallId: string,
+  failures?: RunFailureReporter,
+): Promise<string[]> {
+  const page = await withStreamCircuitBreaker(
+    () =>
+      client.video.queryCalls({
+        filter_conditions: { "custom.occurrenceId": { $eq: occurrenceId } },
+        limit: OCCURRENCE_CALLS_PAGE,
+      }),
+    undefined,
+    failures,
+  );
+  // Stream refuses the queryCalls cursor, so a second page means the list is not complete.
+  if (page.next) throw new Error("more calls than one page");
+  const ids = new Set([toCallId(currentCallId)]);
+  for (const entry of page.calls) {
+    if (entry.call.type === STREAM_CALL_TYPE) ids.add(entry.call.id);
   }
+  return [...ids];
 }
 
-type StreamParticipantSessionRow = {
-  user_id?: string | null;
-  user_session_id?: string | null;
-  joined_at?: string | Date | null;
-  left_at?: string | Date | null;
-  duration_in_seconds?: number | null;
-};
-
-function toParticipantSessionInterval(
-  row: StreamParticipantSessionRow,
-  resolvedSessionId: string,
-): StreamParticipantSessionInterval | null {
-  if (!row.user_id) return null;
-  const leftAt = row.left_at ? new Date(row.left_at) : null;
-  let joinedAt: Date | null = null;
-  if (row.joined_at) {
-    joinedAt = new Date(row.joined_at);
-  } else if (leftAt && typeof row.duration_in_seconds === "number") {
-    joinedAt = new Date(
-      leftAt.getTime() - Math.max(0, row.duration_in_seconds) * 1000,
-    );
-  }
-  if (!joinedAt) return null;
-  return {
-    userId: row.user_id,
-    userSessionId: row.user_session_id || `${resolvedSessionId}:${row.user_id}`,
-    joinedAt,
-    leftAt,
-  };
-}
-
-async function fetchParticipantSessionPages(
-  call: ReturnType<ReturnType<typeof getStreamVideoClient>["video"]["call"]>,
-  resolvedSessionId: string,
-): Promise<StreamParticipantSessionInterval[]> {
-  const intervals: StreamParticipantSessionInterval[] = [];
-  const seenCursors = new Set<string>();
-  let nextCursor: string | undefined;
-
+async function listCallSessions(
+  client: VideoClient,
+  callId: string,
+  failures?: RunFailureReporter,
+) {
+  const sessions = [];
+  const seen = new Set<string>();
+  let next: string | undefined;
   do {
-    const query = nextCursor
-      ? { session: resolvedSessionId, next: nextCursor }
-      : { session: resolvedSessionId };
-    const response = await withStreamCircuitBreaker(() =>
-      call.queryCallParticipantSessions(query),
+    const cursor = next;
+    const page = await withStreamCircuitBreaker(
+      () =>
+        client.video.queryCallSessionStats({
+          filter_conditions: {
+            call_cid: { $eq: `${STREAM_CALL_TYPE}:${callId}` },
+          },
+          limit: SESSIONS_PAGE,
+          ...(cursor ? { next: cursor } : {}),
+        }),
+      undefined,
+      failures,
     );
-    const rows = response.participants_sessions ?? [];
-    for (const row of rows) {
-      const interval = toParticipantSessionInterval(row, resolvedSessionId);
-      if (interval) intervals.push(interval);
-    }
-    const candidateNext = response.next || undefined;
-    if (!candidateNext || seenCursors.has(candidateNext)) {
-      break;
-    }
-    seenCursors.add(candidateNext);
-    nextCursor = candidateNext;
-  } while (nextCursor);
+    sessions.push(...page.call_stats);
+    next = page.next && !seen.has(page.next) ? page.next : undefined;
+    if (next) seen.add(next);
+  } while (next);
+  return sessions;
+}
 
+/** Every device stay of one ended session; refuses a partial or still-open answer. */
+async function readSessionParticipants(
+  client: VideoClient,
+  callId: string,
+  sessionId: string,
+  failures?: RunFailureReporter,
+): Promise<SettledStreamInterval[]> {
+  const call = client.video.call(STREAM_CALL_TYPE, callId);
+  const intervals: SettledStreamInterval[] = [];
+  const seen = new Set<string>();
+  let rows = 0;
+  let total = 0;
+  let next: string | undefined;
+  do {
+    const cursor = next;
+    const page = await withStreamCircuitBreaker(
+      () =>
+        call.queryCallParticipantSessions({
+          session: sessionId,
+          ...(cursor ? { next: cursor } : {}),
+        }),
+      undefined,
+      failures,
+    ).catch((error: unknown) => {
+      // Past Stream's retention the detail is a 404, not an empty list.
+      if (streamHttpStatus(error) === 404) throw new Expired();
+      throw error;
+    });
+    if (!page.session?.ended_at) throw new NotFinal("session not ended");
+    total = page.total_participant_sessions;
+    for (const row of page.participants_sessions) {
+      rows++;
+      const leftAt = toDate(row.left_at);
+      if (!leftAt) throw new NotFinal("a stay has no leave");
+      const joinedAt =
+        toDate(row.joined_at) ??
+        (typeof row.duration_in_seconds === "number"
+          ? new Date(leftAt.getTime() - row.duration_in_seconds * 1000)
+          : null);
+      if (!joinedAt) throw new NotFinal("a stay has no join");
+      if (!row.user_id) continue;
+      intervals.push({
+        userId: row.user_id,
+        userSessionId: row.user_session_id || `${sessionId}:${row.user_id}`,
+        streamCallId: callId,
+        joinedAt,
+        leftAt,
+      });
+    }
+    next = page.next && !seen.has(page.next) ? page.next : undefined;
+    if (next) seen.add(next);
+  } while (next);
+  // Filters change only the list, never the total, so the count guards against a partial page.
+  if (rows !== total) throw new NotFinal("rows and total disagree");
   return intervals;
 }
 
-/**
- * Stream's own per-device record of a call's latest session: the attendance
- * witness for lost participant webhooks. It outlives the call report's
- * participant summary. `null` means Stream could not say (unreachable, or no
- * session), never "nobody attended"; an empty array is a session with no one in it.
- */
-export async function getCallParticipantSessionsFromStream(
-  streamCallId: string,
-  sessionId?: string | null,
-): Promise<StreamParticipantSessionInterval[] | null> {
+/** Reads Stream's settled participant record for every call and session of one occurrence. */
+export async function readSettledAttendance(args: {
+  occurrenceId: string;
+  currentCallId: string;
+  failures?: RunFailureReporter;
+}): Promise<SettledAttendanceRead> {
+  if (!isStreamConfigured()) return { kind: "unavailable" };
+  const client = getStreamVideoClient();
   try {
-    const client = getStreamVideoClient();
-    const call = client.video.call(STREAM_CALL_TYPE, toCallId(streamCallId));
-    let resolvedSessionId = sessionId ?? null;
-    if (!resolvedSessionId) {
-      const report = await withStreamCircuitBreaker(() => call.getCallReport());
-      resolvedSessionId = report.session_id || report.session?.id || null;
+    const callIds = await listOccurrenceCallIds(
+      client,
+      args.occurrenceId,
+      args.currentCallId,
+      args.failures,
+    );
+    const intervals: SettledStreamInterval[] = [];
+    let sessions = 0;
+    for (const callId of callIds) {
+      for (const session of await listCallSessions(
+        client,
+        callId,
+        args.failures,
+      )) {
+        sessions++;
+        if (!session.call_ended_at || session.counts.live_sessions > 0) {
+          return { kind: "not-final" };
+        }
+        intervals.push(
+          ...(await readSessionParticipants(
+            client,
+            callId,
+            session.call_session_id,
+            args.failures,
+          )),
+        );
+      }
     }
-    if (!resolvedSessionId) return null;
-
-    return await fetchParticipantSessionPages(call, resolvedSessionId);
+    return sessions === 0
+      ? { kind: "no-session" }
+      : { kind: "read", intervals };
   } catch (error) {
-    streamLogger.warn("Failed to query Stream participant sessions", {
-      streamCallId,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return null;
+    if (error instanceof NotFinal) return { kind: "not-final" };
+    if (error instanceof Expired) return { kind: "expired" };
+    return { kind: "unavailable" };
   }
 }

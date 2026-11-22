@@ -1,4 +1,9 @@
 import prisma, { type Tx } from "@/lib/prisma";
+import {
+  ATTENDANCE_SETTLE_WAIT_MS,
+  SETTLE_MEETING_SELECT,
+  settleOccurrenceAttendance,
+} from "@/lib/meetings/settle-attendance";
 import { liveParticipant } from "@/lib/booking/participants";
 import {
   isPublicExpertProfile,
@@ -97,37 +102,14 @@ export function heldOccurrence(userId: string) {
     completionStatus: {
       notIn: ["CANCELLED", "RESCHEDULED"] as OccurrenceCompletionStatus[],
     },
-    // Not "the call happened" — "YOU were at the call". A COMPLETED slot the
-    // user never joined used to qualify, so a no-show could rate a session they
-    // did not attend and it fed the consultant's quality signal. Two ways in:
+    // Not "the call happened" — "YOU were at the call". Two ways in:
     OR: [
-      // 1. You were demonstrably there, AND the call is over. This cannot key
-      //    on `completionStatus` alone: that only flips when the
-      //    call.session_ended webhook lands, which fires after the LAST
-      //    participant leaves plus an inactivity timeout — so a post-call
-      //    prompt keyed on it shows nothing to whoever leaves first.
-      //
-      //    The attendance row alone is not enough either: it is written when a
-      //    participant JOINS, so on its own this qualified a slot that was
-      //    still running, and a consultee could rate mid-call — moving the
-      //    consultant's public ranking before the session had finished, since
-      //    the review route recomputes the published score immediately.
-      //    Testing `endedAt` rather than the clock keeps the property above:
-      //    the host closing the room releases everyone, including whoever left
-      //    first. The booked window is the fallback when nothing closed it.
-      //
-      //    #1554 — attendance is keyed to the call itself
-      //    (MeetingAttendance.appointmentOccurrenceId), so no Meeting join.
+      // 1. Stream's settled record of the call shows you in it. The record is
+      //    stored only once nobody can rejoin or reopen the room, so a learner
+      //    can never rate a call that is still running.
       {
-        AND: [
-          { attendances: { some: { userId } } },
-          {
-            OR: [
-              { meeting: { endedAt: { not: null } } },
-              { endsAt: { lt: new Date() } },
-            ],
-          },
-        ],
+        meeting: { attendanceSettledAt: { not: null } },
+        presences: { some: { userId } },
       },
       // 2. Nobody COULD have recorded it. UNVERIFIED means "past, with no
       //    Meeting", which is what an offline session looks like —
@@ -147,6 +129,48 @@ export function heldOccurrence(userId: string) {
       },
     ],
   };
+}
+
+/** Sessions settled on demand per page load; the sweep settles the rest within about 90 minutes of the end. */
+const ON_DEMAND_SETTLE_LIMIT = 3;
+
+/**
+ * Stores Stream's record for this learner's recently ended sessions that the
+ * sweep has not settled yet, so the rating prompt appears soon after a call.
+ * A session Stream cannot answer for yet is left for a later page load.
+ */
+export async function settleRecentAttendance(
+  userId: string,
+  appointmentId?: string,
+  now: Date = new Date(),
+): Promise<void> {
+  const rooms = await prisma.meeting.findMany({
+    where: {
+      endedAt: { not: null },
+      attendanceSettledAt: null,
+      occurrence: {
+        ...(appointmentId ? { appointmentId } : {}),
+        deletedAt: null,
+        endsAt: {
+          lt: now,
+          gt: new Date(now.getTime() - ATTENDANCE_SETTLE_WAIT_MS),
+        },
+        appointment: { participants: { some: { userId } } },
+      },
+    },
+    select: {
+      ...SETTLE_MEETING_SELECT,
+      occurrence: { select: { id: true, endsAt: true } },
+    },
+    orderBy: { occurrence: { endsAt: "desc" } },
+    take: ON_DEMAND_SETTLE_LIMIT,
+  });
+  for (const { occurrence, ...meeting } of rooms) {
+    await settleOccurrenceAttendance(
+      { occurrenceId: occurrence.id, endsAt: occurrence.endsAt, meeting },
+      { now },
+    );
+  }
 }
 
 /** A review row, reduced to what the score needs. */
@@ -1001,6 +1025,7 @@ export async function listReviewableSessions(
   consultantProfileId?: string,
   options?: { unreviewedOnly?: boolean },
 ): Promise<ReviewableSession[]> {
+  await settleRecentAttendance(userId);
   const rows = await loadReviewableAppointments(
     consulteeProfileId,
     userId,
@@ -1024,6 +1049,7 @@ export async function resolveReviewableSession(
   userId: string,
   appointmentId: string,
 ): Promise<ReviewableSession | null> {
+  await settleRecentAttendance(userId, appointmentId);
   const rows = await loadReviewableAppointments(
     consulteeProfileId,
     userId,

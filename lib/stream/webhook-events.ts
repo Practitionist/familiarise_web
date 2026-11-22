@@ -7,9 +7,7 @@
  * which runs as a bare tsx process and cannot load any of that.
  *
  * One list, two consumers — so the code that HANDLES an event and the script
- * that SUBSCRIBES to it can never drift. #1134 found them four apart: the live
- * hook carried six event types while the dispatcher handled ten, so
- * MeetingAttendance and every chat moderation flag were dead code.
+ * that SUBSCRIBES to it can never drift.
  */
 export const HANDLED_EVENT_TYPES = [
   // Recording events
@@ -20,9 +18,8 @@ export const HANDLED_EVENT_TYPES = [
   // Session events
   "call.session_ended",
   "call.ended",
-  // STR-4 — per-attendee presence (unblocks #471 no-show / #472 overrun)
+  // Room state only: a join after a non-deliberate end reopens the room. Attendance comes from Stream's settled record.
   "call.session_participant_joined",
-  "call.session_participant_left",
   // #1270 — `user.flagged` / `message.flagged` were removed deliberately, and
   // NOT replaced with a chat hook. Three reasons: the in-app report button
   // already writes the ModerationReport itself via POST /api/report, so the

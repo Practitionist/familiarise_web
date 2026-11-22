@@ -178,6 +178,7 @@ jest.mock("../../lib/novu", () => ({
 jest.mock("../../lib/reviews", () => ({
   recomputeConsultantRating: jest.fn().mockResolvedValue(undefined),
   heldOccurrence: jest.fn().mockReturnValue({}),
+  settleRecentAttendance: jest.fn().mockResolvedValue(undefined),
 }));
 
 import prisma from "@/lib/prisma";

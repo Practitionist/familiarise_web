@@ -15,7 +15,11 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
 import { appointmentRaterRole } from "@/lib/data/appointment-detail";
-import { heldOccurrence, resolveRatingCausePatch } from "@/lib/reviews";
+import {
+  heldOccurrence,
+  resolveRatingCausePatch,
+  settleRecentAttendance,
+} from "@/lib/reviews";
 import { AppointmentIdParams } from "@/schemas/support";
 import { RatingCauseSchema } from "@/schemas/enums";
 import { parseRouteParams, supportError } from "@/lib/api/support-http";
@@ -90,6 +94,7 @@ export async function GET(
     // Which calls of this booking the caller may rate at all, so the timeline
     // offers stars only where a rating would be accepted rather than erroring
     // after the click.
+    if (!asProvider) await settleRecentAttendance(auth.userId, appointmentId);
     const rateable = asProvider
       ? []
       : await prisma.appointmentOccurrence.findMany({
@@ -208,6 +213,7 @@ export async function POST(
     // caller could rate a call from a booking they merely have access to the
     // id of. Without one the rating is about the whole booking, which still
     // needs at least one held call to rate at all.
+    await settleRecentAttendance(auth.userId, appointmentId);
     const slot = await prisma.appointmentOccurrence.findFirst({
       where: {
         ...(body.data.occurrenceId ? { id: body.data.occurrenceId } : {}),

@@ -7,7 +7,8 @@
  *  - a `call.ended` before the booked start is `ended_early`, and the slot stays SCHEDULED
  *  - #1569 D2 — an end webhook never completes the slot; the end + 1 h sweep decides
  *  - the last end wins; an older or replayed event never moves `endedAt` backwards
- *  - a participant joining clears a non-deliberate end, never a deliberate one
+ *  - each end is a compare-and-set on the call id and the end (stamp and reason) it read
+ * A join's reopen is pinned in session-participant-handlers and the database tier.
  */
 jest.mock("../../lib/prisma", () => {
   const client: Record<string, unknown> = {
@@ -15,16 +16,7 @@ jest.mock("../../lib/prisma", () => {
       findUnique: jest.fn(),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
-    meetingAttendance: {
-      upsert: jest.fn().mockResolvedValue({}),
-      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
-    },
-    meetingPresence: {
-      createMany: jest.fn().mockResolvedValue({ count: 1 }),
-      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
-    },
   };
-  client.$transaction = jest.fn((fn: (tx: unknown) => unknown) => fn(client));
   return { __esModule: true, default: client };
 });
 jest.mock("../../lib/booking/transitions", () => ({
@@ -44,12 +36,10 @@ import { transitionOccurrenceCompletion } from "../../lib/booking/transitions";
 import {
   handleCallEnded,
   handleSessionEnded,
-  handleSessionParticipantJoined,
 } from "../../lib/stream/session-handlers";
 
 const db = prisma as unknown as {
   meeting: { findUnique: jest.Mock; updateMany: jest.Mock };
-  meetingAttendance: { upsert: jest.Mock };
 };
 const mockTransition = transitionOccurrenceCompletion as jest.Mock;
 
@@ -59,6 +49,7 @@ const ENDS = new Date("2026-09-13T11:00:00.000Z");
 function session(endedAt: Date | null, endedReason: string | null = null) {
   return {
     id: "ms_1",
+    streamCallId: "slot_1",
     appointmentOccurrenceId: "slot_1",
     endedAt,
     endedReason,
@@ -117,8 +108,13 @@ describe("the last end wins (#1607)", () => {
 
     expect(db.meeting.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        // A concurrent call.ended moves endedAt, so this write then matches nothing.
-        where: { id: "ms_1", endedAt: read },
+        // A concurrent end moves the stamp or reason, so this write then matches nothing.
+        where: {
+          id: "ms_1",
+          streamCallId: "slot_1",
+          endedAt: read,
+          endedReason: "session_timeout",
+        },
         data: expect.objectContaining({
           endedAt: new Date("2026-09-13T11:02:00.000Z"),
         }),
@@ -185,7 +181,12 @@ describe("the last end wins (#1607)", () => {
 
     expect(db.meeting.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "ms_1", endedAt: read },
+        where: {
+          id: "ms_1",
+          streamCallId: "slot_1",
+          endedAt: read,
+          endedReason: "session_timeout",
+        },
         data: expect.objectContaining({ endedReason: "stream_ended" }),
       }),
     );
@@ -204,58 +205,5 @@ describe("the last end wins (#1607)", () => {
 
     expect(db.meeting.updateMany).not.toHaveBeenCalled();
     expect(mockTransition).not.toHaveBeenCalled();
-  });
-});
-
-describe("a join reopens a non-deliberate end (#1607)", () => {
-  const joined = {
-    call_cid: "default:slot_1",
-    type: "call.session_participant_joined" as const,
-    created_at: "2026-09-13T10:02:00.000Z",
-    session_id: "sess_2",
-    participant: { user: { id: "user_1" } },
-  };
-
-  it("clears a timeout end, compare-and-set on the end it read", async () => {
-    const stale = new Date("2026-09-13T10:00:30.000Z");
-    db.meeting.findUnique.mockResolvedValue({
-      id: "ms_1",
-      endedAt: stale,
-      endedReason: "session_timeout",
-    });
-
-    await handleSessionParticipantJoined(joined);
-
-    expect(db.meeting.updateMany).toHaveBeenCalledWith({
-      where: { id: "ms_1", endedAt: stale },
-      data: { endedAt: null, endedReason: null },
-    });
-    expect(db.meetingAttendance.upsert).toHaveBeenCalled();
-  });
-
-  it("ignores a late-delivered join that predates the end", async () => {
-    db.meeting.findUnique.mockResolvedValue({
-      id: "ms_1",
-      endedAt: new Date("2026-09-13T10:15:00.000Z"),
-      endedReason: "session_timeout",
-    });
-
-    await handleSessionParticipantJoined(joined);
-
-    expect(db.meeting.updateMany).not.toHaveBeenCalled();
-    expect(db.meetingAttendance.upsert).toHaveBeenCalled();
-  });
-
-  it("leaves a deliberate end alone", async () => {
-    db.meeting.findUnique.mockResolvedValue({
-      id: "ms_1",
-      endedAt: new Date("2026-09-13T10:30:00.000Z"),
-      endedReason: "call_ended",
-    });
-
-    await handleSessionParticipantJoined(joined);
-
-    expect(db.meeting.updateMany).not.toHaveBeenCalled();
-    expect(db.meetingAttendance.upsert).toHaveBeenCalled();
   });
 });

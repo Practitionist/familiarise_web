@@ -3,212 +3,49 @@
  */
 
 /**
- * STR-4 — per-attendee presence handlers. Verifies the join/leave webhook
- * handlers resolve the Meeting by streamCallId and upsert a
- * MeetingAttendance row keyed on [meetingId, userId]:
- *  - first join stamps firstJoinedAt (create branch)
- *  - rejoin only increments joinCount (update branch, firstJoinedAt untouched)
- *  - leave stamps lastLeftAt
- *  - missing session / missing user id are skipped, not thrown
+ * The join webhook keeps room state only: a join to the current call after a
+ * non-deliberate end clears the end, and nothing about who joined is written.
+ * The compare-and-set itself runs on real Postgres in
+ * `__tests__/db/stream/room-state-webhooks.db.test.ts`.
  */
-jest.mock("../../lib/prisma", () => {
-  const client: Record<string, unknown> = {
-    meeting: { findUnique: jest.fn() },
-    meetingAttendance: {
-      upsert: jest.fn().mockResolvedValue({}),
-      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-    },
-    meetingPresence: {
-      createMany: jest.fn().mockResolvedValue({ count: 1 }),
-      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
-    },
-  };
-  client.$transaction = jest.fn((fn: (tx: unknown) => unknown) => fn(client));
-  return { __esModule: true, default: client };
-});
-jest.mock("../../lib/stream-logger", () => ({
-  streamLogger: {
-    debug: jest.fn(),
-    info: jest.fn(),
-    warn: jest.fn(),
-    error: jest.fn(),
+jest.mock("../../lib/prisma", () => ({
+  __esModule: true,
+  default: {
+    meeting: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+    meetingPresence: { createMany: jest.fn(), updateMany: jest.fn() },
   },
+}));
+jest.mock("../../lib/stream-logger", () => ({
+  streamLogger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn() },
 }));
 
 import prisma from "../../lib/prisma";
-import {
-  handleSessionParticipantJoined,
-  handleSessionParticipantLeft,
-} from "../../lib/stream/session-handlers";
+import { END_REASON_POLICY } from "../../lib/meetings/end-reasons";
+import { handleSessionParticipantJoined } from "../../lib/stream/session-handlers";
 
-const mockFindUnique = (
-  prisma as unknown as { meeting: { findUnique: jest.Mock } }
-).meeting.findUnique;
-const mockUpsert = (
-  prisma as unknown as { meetingAttendance: { upsert: jest.Mock } }
-).meetingAttendance.upsert;
-const mockAttendanceUpdateMany = (
-  prisma as unknown as { meetingAttendance: { updateMany: jest.Mock } }
-).meetingAttendance.updateMany;
-const mockPresenceCreate = (
-  prisma as unknown as { meetingPresence: { createMany: jest.Mock } }
-).meetingPresence.createMany;
+const db = prisma as unknown as {
+  meeting: { updateMany: jest.Mock };
+  meetingPresence: { createMany: jest.Mock; updateMany: jest.Mock };
+};
 
-beforeEach(() => jest.clearAllMocks());
-
-describe("handleSessionParticipantJoined (STR-4)", () => {
-  it("creates attendance with firstJoinedAt on first join (create branch)", async () => {
-    mockFindUnique.mockResolvedValue({
-      id: "ms_1",
-      appointmentOccurrenceId: "occ_1",
-    });
-
-    await handleSessionParticipantJoined({
-      call_cid: "default:call_abc",
-      type: "call.session_participant_joined",
-      created_at: "2026-06-16T10:00:00.000Z",
-      session_id: "sess_1",
-      participant: { user: { id: "user_1" }, user_session_id: "dev_1" },
-    });
-
-    // Resolved by the call id stripped from call_cid ("default:call_abc")
-    expect(mockFindUnique).toHaveBeenCalledWith({
-      where: { streamCallId: "call_abc" },
-      select: {
-        id: true,
-        endedAt: true,
-        endedReason: true,
-        appointmentOccurrenceId: true,
-      },
-    });
-
-    const arg = mockUpsert.mock.calls[0][0];
-    expect(arg.where).toEqual({
-      meetingId_userId: { meetingId: "ms_1", userId: "user_1" },
-    });
-    // #1554 — the row names the call it belongs to, so the rating gate reads
-    // "you were at THIS call" straight off the occurrence.
-    expect(arg.create).toMatchObject({
-      meetingId: "ms_1",
-      appointmentOccurrenceId: "occ_1",
-      userId: "user_1",
-      firstJoinedAt: new Date("2026-06-16T10:00:00.000Z"),
-    });
-    // A new device session bumps the counter and clears lastLeftAt, never resets firstJoinedAt.
-    expect(arg.update).toEqual({
-      joinCount: { increment: 1 },
-      lastLeftAt: null,
-    });
+it("a join clears only a non-deliberate end older than itself, on the current call, and writes no attendance", async () => {
+  await handleSessionParticipantJoined({
+    call_cid: "default:occurrence-1",
+    type: "call.session_participant_joined",
+    created_at: "2026-11-23T04:30:00.000Z",
   });
 
-  it("does not bump joinCount when the device session was already seen (#1746)", async () => {
-    mockFindUnique.mockResolvedValue({
-      id: "ms_1",
-      appointmentOccurrenceId: "occ_1",
-    });
-    mockPresenceCreate.mockResolvedValueOnce({ count: 0 });
-    await handleSessionParticipantJoined({
-      call_cid: "default:call_abc",
-      type: "call.session_participant_joined",
-      created_at: "2026-06-16T10:00:00.000Z",
-      session_id: "sess_1",
-      participant: { user: { id: "user_1" }, user_session_id: "dev_1" },
-    });
-    expect(mockUpsert.mock.calls[0][0].update).toEqual({});
-  });
-
-  it("skips when meeting session does not exist (no throw)", async () => {
-    mockFindUnique.mockResolvedValue(null);
-
-    await expect(
-      handleSessionParticipantJoined({
-        call_cid: "default:missing",
-        type: "call.session_participant_joined",
-        created_at: "2026-06-16T10:00:00.000Z",
-        session_id: "sess_1",
-        participant: { user: { id: "user_1" } },
-      }),
-    ).resolves.toBeUndefined();
-
-    expect(mockUpsert).not.toHaveBeenCalled();
-  });
-
-  it("skips when participant user id is missing", async () => {
-    // Cast on purpose: this exercises the defensive guard for a malformed
-    // payload that the event type would otherwise forbid.
-    await handleSessionParticipantJoined({
-      call_cid: "default:call_abc",
-      type: "call.session_participant_joined",
-      created_at: "2026-06-16T10:00:00.000Z",
-      session_id: "sess_1",
-      participant: { user: {} },
-    } as unknown as Parameters<typeof handleSessionParticipantJoined>[0]);
-
-    expect(mockFindUnique).not.toHaveBeenCalled();
-    expect(mockUpsert).not.toHaveBeenCalled();
-  });
-});
-
-describe("handleSessionParticipantLeft (STR-4)", () => {
-  it("stamps lastLeftAt on leave (update branch)", async () => {
-    mockFindUnique.mockResolvedValue({ id: "ms_1" });
-
-    await handleSessionParticipantLeft({
-      call_cid: "default:call_abc",
-      type: "call.session_participant_left",
-      created_at: "2026-06-16T10:30:00.000Z",
-      session_id: "sess_1",
-      duration_seconds: 1800,
-      participant: { user: { id: "user_1" } },
-    });
-
-    const arg = mockUpsert.mock.calls[0][0];
-    expect(arg.where).toEqual({
-      meetingId_userId: { meetingId: "ms_1", userId: "user_1" },
-    });
-    expect(arg.update).toEqual({
-      joinCount: { increment: 1 },
-    });
-    expect(mockAttendanceUpdateMany).toHaveBeenCalledWith({
-      where: {
-        meetingId: "ms_1",
-        userId: "user_1",
-        OR: [
-          { lastLeftAt: null },
-          { lastLeftAt: { lt: new Date("2026-06-16T10:30:00.000Z") } },
-        ],
-      },
-      data: { lastLeftAt: new Date("2026-06-16T10:30:00.000Z") },
-    });
-    // #1569 — join lost, leave arrives: one closed interval rebuilt from duration_seconds.
-    expect(mockPresenceCreate.mock.calls[0][0].data).toEqual([
-      expect.objectContaining({
-        userSessionId: "sess_1:user_1",
-        joinedAt: new Date("2026-06-16T10:00:00.000Z"),
-        leftAt: new Date("2026-06-16T10:30:00.000Z"),
-      }),
-    ]);
-    expect(arg.create).toMatchObject({
-      meetingId: "ms_1",
-      userId: "user_1",
-      firstJoinedAt: new Date("2026-06-16T10:00:00.000Z"),
-      lastLeftAt: new Date("2026-06-16T10:30:00.000Z"),
-    });
-  });
-
-  it("skips when meeting session does not exist (no throw)", async () => {
-    mockFindUnique.mockResolvedValue(null);
-
-    await expect(
-      handleSessionParticipantLeft({
-        call_cid: "default:missing",
-        type: "call.session_participant_left",
-        created_at: "2026-06-16T10:30:00.000Z",
-        session_id: "sess_1",
-        participant: { user: { id: "user_1" } },
-      }),
-    ).resolves.toBeUndefined();
-
-    expect(mockUpsert).not.toHaveBeenCalled();
-  });
+  const [{ where, data }] = db.meeting.updateMany.mock.calls[0];
+  expect(where.streamCallId).toBe("occurrence-1");
+  expect(where.endedAt).toEqual({ lt: new Date("2026-11-23T04:30:00.000Z") });
+  expect(
+    where.endedReason.in.every(
+      (r: keyof typeof END_REASON_POLICY) => !END_REASON_POLICY[r].deliberate,
+    ),
+  ).toBe(true);
+  expect(where.endedReason.in).toContain("session_timeout");
+  expect(where.endedReason.in).not.toContain("call_ended");
+  expect(data).toEqual({ endedAt: null, endedReason: null });
+  expect(db.meetingPresence.createMany).not.toHaveBeenCalled();
+  expect(db.meetingPresence.updateMany).not.toHaveBeenCalled();
 });

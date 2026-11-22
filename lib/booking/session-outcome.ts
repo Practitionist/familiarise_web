@@ -1,17 +1,18 @@
 /**
- * #1569 — what happened in one booked session, decided from presence alone.
+ * What happened in one booked session, decided from presence alone.
  *
  * The end + 1 h slot pass in `auto-complete-appointments` is the only writer of
- * the verdict (D2), and the consultation no-show detector reads the same
- * function, so the two jobs never hold different opinions (#1504).
+ * the verdict, and the consultation no-show detector reads the same function,
+ * so the two jobs never hold different opinions. Its intervals are Stream's
+ * settled participant record, stored by `settleOccurrenceAttendance`.
  *
- * The void rule (D1): count the minutes inside the booked window, after the
- * first learner arrived, in which no host-side person (the plan's consultant
- * or any accepted collaborator) was present. A user's devices are merged,
- * reconnect gaps under two minutes are ignored, and minutes that both sides
- * spend together after the booked end (up to 30) are credited back. The
- * session is void when that loss reaches min(15, booked / 2). Minutes the
- * learner lost on their own (late, or left before the host did) never count.
+ * The void rule: count the minutes inside the booked window, after the first
+ * learner arrived, in which no host-side person (the plan's consultant or any
+ * accepted collaborator) was present. A user's devices are merged, reconnect
+ * gaps under five minutes (`RECONNECT_GRACE_MINUTES`) are ignored, and minutes
+ * that both sides spend together after the booked end (up to 30) are credited
+ * back. The session is void when that loss reaches min(15, booked / 2). Minutes
+ * the learner lost on their own (late, or left before the host did) never count.
  */
 
 import type { OccurrenceOutcome } from "@prisma/client";
@@ -51,8 +52,6 @@ export interface SessionOutcomeInput {
     endedReason: string | null;
     endedByUserId?: string | null;
   } | null;
-  /** Stream's call report; null means "no evidence", never "nobody came". */
-  report: { unique: number } | null;
   maintenanceWindows: readonly OutageWindow[];
 }
 
@@ -218,14 +217,8 @@ function earlyVerdict(
   input: SessionOutcomeInput,
 ): SessionOutcomeVerdict | null {
   if (!input.meeting) return verdict("OFFLINE");
-  // An open interval is a live overrun (the sweep defers those) or a leave neither
-  // a webhook nor Stream's participant sessions confirmed; it never moves money.
+  // A stay with no leave is never judged; a settled snapshot holds none, so this never moves money.
   if (input.intervals.some((i) => i.leftAt === null)) {
-    return verdict("INCONCLUSIVE");
-  }
-  const seen = new Set(input.intervals.map((i) => i.userId));
-  // Stream saw someone our rows did not: a lost delivery, so our minutes are wrong.
-  if (input.report && input.report.unique > seen.size) {
     return verdict("INCONCLUSIVE");
   }
   if (input.intervals.length === 0) return verdict("NOBODY_JOINED");

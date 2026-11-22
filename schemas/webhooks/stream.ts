@@ -74,24 +74,9 @@ export const streamCallEndedSchema = streamCallBaseEventSchema.extend({
   ended_by_user_id: z.string().nullish(),
 });
 
-// Handlers need only the app user id (participant.user.id) and the session id.
-const streamParticipantSchema = z.object({
-  user: z.object({ id: z.string() }),
-  user_session_id: z.string().optional(),
-  role: z.string().optional(),
-});
-
+// The join reopens the room only, so who joined is neither read nor stored.
 const streamSessionParticipantJoinedSchema = streamCallBaseEventSchema.extend({
   type: z.literal("call.session_participant_joined"),
-  session_id: z.string(),
-  participant: streamParticipantSchema,
-});
-
-const streamSessionParticipantLeftSchema = streamCallBaseEventSchema.extend({
-  type: z.literal("call.session_participant_left"),
-  session_id: z.string(),
-  duration_seconds: z.number().optional(),
-  participant: streamParticipantSchema,
 });
 
 // Message `text` is deliberately undeclared, so no message content is ever parsed or stored.
@@ -132,6 +117,5 @@ export const STREAM_EVENT_SCHEMAS = {
   "call.session_ended": streamSessionEndedSchema,
   "call.ended": streamCallEndedSchema,
   "call.session_participant_joined": streamSessionParticipantJoinedSchema,
-  "call.session_participant_left": streamSessionParticipantLeftSchema,
   "user.unread_message_reminder": streamUnreadMessageReminderSchema,
 } satisfies Record<HandledEventType, z.ZodTypeAny>;

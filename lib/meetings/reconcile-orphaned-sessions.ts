@@ -14,7 +14,6 @@ import {
 } from "@/lib/observability/run-failures";
 import { resolveRoomEndsAt } from "@/lib/meetings/duration-cap";
 import type { MeetingEndReason } from "@/lib/meetings/end-reasons";
-import { closeSegmentPresences } from "@/lib/meetings/segment-presence";
 
 export interface ReconciliationResult {
   processed: number;
@@ -138,24 +137,15 @@ async function reconcileSingleOrphanedSession(
     if (!resolved) return;
     const { endedAt, endedReason } = resolved;
 
-    const closeMeetingAndPresence = async (
-      db: Pick<typeof prisma, "meeting" | "meetingPresence">,
-    ) => {
-      const updated = await db.meeting.updateMany({
-        where: { id: session.id, endedAt: null },
-        data: { endedAt, endedReason },
-      });
-
-      if (updated.count !== 0) {
-        await closeSegmentPresences(db, {
-          meetingId: session.id,
-          streamCallId: session.streamCallId,
-          endedAt,
-        });
-      }
-    };
-
-    await prisma.$transaction((tx) => closeMeetingAndPresence(tx));
+    // The call id it asked Stream about: a room reopened on a new call since is not this one.
+    await prisma.meeting.updateMany({
+      where: {
+        id: session.id,
+        streamCallId: session.streamCallId,
+        endedAt: null,
+      },
+      data: { endedAt, endedReason },
+    });
 
     result.details.push(
       `Session ${session.id} (call: ${session.streamCallId}): ${endedReason}`,

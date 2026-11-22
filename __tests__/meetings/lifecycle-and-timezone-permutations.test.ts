@@ -5,11 +5,6 @@
 const mockGetSession = jest.fn();
 const mockMeetingFindUnique = jest.fn();
 const mockMeetingUpdateMany = jest.fn();
-const mockAttendanceUpsert = jest.fn();
-const mockAttendanceUpdateMany = jest.fn();
-const mockPresenceFindFirst = jest.fn();
-const mockPresenceCreate = jest.fn();
-const mockPresenceUpdateMany = jest.fn();
 const mockParticipantFindFirst = jest.fn();
 const mockParticipantUpdateMany = jest.fn();
 const mockOccurrenceFindFirst = jest.fn();
@@ -56,15 +51,6 @@ jest.mock("../../lib/prisma", () => {
     meeting: {
       findUnique: (...args: unknown[]) => mockMeetingFindUnique(...args),
       updateMany: (...args: unknown[]) => mockMeetingUpdateMany(...args),
-    },
-    meetingAttendance: {
-      upsert: (...args: unknown[]) => mockAttendanceUpsert(...args),
-      updateMany: (...args: unknown[]) => mockAttendanceUpdateMany(...args),
-    },
-    meetingPresence: {
-      findFirst: (...args: unknown[]) => mockPresenceFindFirst(...args),
-      create: (...args: unknown[]) => mockPresenceCreate(...args),
-      updateMany: (...args: unknown[]) => mockPresenceUpdateMany(...args),
     },
     appointmentParticipant: {
       findFirst: (...args: unknown[]) => mockParticipantFindFirst(...args),
@@ -168,11 +154,6 @@ describe("Meeting lifecycle & timezone P&C unification (#2080)", () => {
     jest.clearAllMocks();
     mockGetSession.mockResolvedValue({ user: { id: "host-user-1" } });
     mockMeetingUpdateMany.mockResolvedValue({ count: 1 });
-    mockAttendanceUpsert.mockResolvedValue({});
-    mockAttendanceUpdateMany.mockResolvedValue({ count: 1 });
-    mockPresenceFindFirst.mockResolvedValue(null);
-    mockPresenceCreate.mockResolvedValue({});
-    mockPresenceUpdateMany.mockResolvedValue({ count: 1 });
     mockParticipantFindFirst.mockResolvedValue(null);
     mockParticipantUpdateMany.mockResolvedValue({ count: 0 });
     mockOccurrenceFindFirst.mockResolvedValue(null);
@@ -366,7 +347,12 @@ describe("Meeting lifecycle & timezone P&C unification (#2080)", () => {
       expect(mockEnd).toHaveBeenCalledTimes(1);
       expect(mockMeetingUpdateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: "mtg-perm-1", endedAt: null },
+          where: {
+            id: "mtg-perm-1",
+            streamCallId: "occurrence-occ-perm-1",
+            endedAt: null,
+            endedReason: null,
+          },
           data: expect.objectContaining({
             endedReason: "call_ended",
           }),

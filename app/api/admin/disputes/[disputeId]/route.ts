@@ -78,12 +78,12 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
                     endsAt: true,
                     completionStatus: true,
                     outcome: true,
-                    attendances: {
-                      select: {
-                        userId: true,
-                        firstJoinedAt: true,
-                        lastLeftAt: true,
+                    // Stream's settled record: one row per device stay.
+                    presences: {
+                      where: {
+                        meeting: { attendanceSettledAt: { not: null } },
                       },
+                      select: { userId: true },
                     },
                   },
                 },
@@ -111,7 +111,10 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
     const appt = dispute.payment?.appointment ?? null;
     const occurrences = appt?.occurrences ?? [];
-    const allAttendances = occurrences.flatMap((o) => o.attendances);
+    // One per person per session, however many devices they joined from.
+    const allAttendances = occurrences.flatMap((o) => [
+      ...new Set(o.presences.map((p) => p.userId)),
+    ]);
     const supportCases = appt?.supportCases ?? [];
 
     const mergedSupportThreads = [

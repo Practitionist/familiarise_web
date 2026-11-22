@@ -36,7 +36,6 @@ jest.mock("../../lib/stream/session-handlers", () => ({
   handleCallEnded: (...a: unknown[]) => mockHandleCallEnded(...a),
   handleSessionParticipantJoined: (...a: unknown[]) =>
     mockHandleSessionParticipantJoined(...a),
-  handleSessionParticipantLeft: jest.fn(),
 }));
 
 import { scrubStreamEventForStorage } from "../../lib/stream/webhook-payload-scrub";
@@ -94,16 +93,11 @@ describe("scrubStreamEventForStorage", () => {
   );
 
   it("keeps the ids, timestamps and reasons the handlers read", () => {
+    // The join only reopens the room, so who joined is not kept at all.
     expect(scrubStreamEventForStorage(JOINED.type, JOINED)).toEqual({
       type: JOINED.type,
       call_cid: JOINED.call_cid,
       created_at: JOINED.created_at,
-      session_id: "sess-1",
-      participant: {
-        user_session_id: "us-1",
-        role: "user",
-        user: { id: "u1" },
-      },
     });
     expect(
       scrubStreamEventForStorage(CALL_ENDED.type, CALL_ENDED),
@@ -136,9 +130,10 @@ describe("a scrubbed payload still drives the handlers (sweeper re-drive)", () =
     );
 
     expect(mockHandleSessionParticipantJoined).toHaveBeenCalledTimes(1);
-    expect(mockHandleSessionParticipantJoined.mock.calls[0][0]).toMatchObject({
-      session_id: "sess-1",
-      participant: { user: { id: "u1" } },
+    expect(mockHandleSessionParticipantJoined.mock.calls[0][0]).toEqual({
+      type: JOINED.type,
+      call_cid: JOINED.call_cid,
+      created_at: JOINED.created_at,
     });
     expect(mockMarkProcessed).toHaveBeenCalledWith("evt-1", undefined, {
       claimedAt: null,

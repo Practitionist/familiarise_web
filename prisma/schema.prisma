@@ -5648,9 +5648,9 @@ model Meeting {
   maintenanceWindow             MaintenanceWindow? @relation(fields: [maintenanceWindowId], references: [id], onDelete: Restrict)
 
   recordings        Recording[]
-  attendances       MeetingAttendance[] // STR-4 (#689) — per-participant join/leave audit
+  attendances       MeetingAttendance[] // Retired: nothing writes it; dropped at the next schema step
   recordingConsents RecordingConsent[] // #1134 P1-7
-  presences         MeetingPresence[] // #1569 — per-device join/leave intervals
+  presences         MeetingPresence[] // Stream's settled per-device record, written once with attendanceSettledAt
 
   occurrence              AppointmentOccurrence @relation(fields: [appointmentOccurrenceId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   appointmentOccurrenceId String                @unique
@@ -5732,8 +5732,7 @@ model MeetingAttendance {
   id                      String                @id @default(cuid())
   meeting                 Meeting               @relation(fields: [meetingId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   meetingId               String
-  // #1554 — the call this attendance belongs to, stamped by the participant
-  // webhook so the rating gate reads "you were at THIS call" without a join.
+  // Retired: nothing writes it and only the retention prune deletes from it; dropped at the next schema step.
   occurrence              AppointmentOccurrence @relation(fields: [appointmentOccurrenceId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   appointmentOccurrenceId String
   userId                  String
@@ -5761,11 +5760,11 @@ model MeetingPresence {
   /// Stream user id, which equals User.id; stored plain like MeetingAttendance.userId.
   userId                  String
   userSessionId           String
-  /// The Stream call (room segment) this device stay belongs to; null on rows written before segments were recorded.
+  /// The Stream call this device stay belongs to; set on every settled row.
   streamCallId            String?
   joinedAt                DateTime              @db.Timestamptz
   leftAt                  DateTime?             @db.Timestamptz
-  /// True while leftAt is a room end stamp rather than a leave Stream reported; the outcome sweep resolves it from Stream.
+  /// Retired: always false on a settled row; dropped at the next schema step.
   closedByEnd             Boolean               @default(false)
 
   createdAt DateTime @default(now()) @db.Timestamptz

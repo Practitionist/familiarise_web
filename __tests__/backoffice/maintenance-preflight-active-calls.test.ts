@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 
-/** Preflight decides "is a call live" from room presence and Stream, never the schedule. */
+/** Preflight decides "is a call live" from Stream and the open rooms, never the schedule. */
 
 import { GET } from "../../app/api/admin/maintenance/preflight/route";
 
@@ -40,10 +40,7 @@ jest.mock("../../lib/observability/report", () => ({
 }));
 
 /** One row of the open-room read, in the shape its `select` returns. */
-const room = (streamCallId: string, openPresence = false) => ({
-  streamCallId,
-  presences: openPresence ? [{ id: `p-${streamCallId}` }] : [],
-});
+const room = (streamCallId: string) => ({ streamCallId });
 const ongoing = (...ids: string[]) => ({
   calls: ids.map((id) => ({ call: { id, type: "default" } })),
 });
@@ -58,7 +55,7 @@ describe("maintenance preflight active calls", () => {
     mockQueryCalls.mockResolvedValue(ongoing());
   });
 
-  it("reads every open room with its fresh open presence, not a schedule window", async () => {
+  it("reads every open room, not a schedule window", async () => {
     jest.useFakeTimers().setSystemTime(NOW);
     try {
       await GET();
@@ -67,17 +64,7 @@ describe("maintenance preflight active calls", () => {
     }
     expect(mockPrisma.meeting.findMany).toHaveBeenCalledWith({
       where: { endedAt: null },
-      select: {
-        streamCallId: true,
-        presences: {
-          where: {
-            leftAt: null,
-            joinedAt: { gte: new Date("2026-11-17T22:00:00.000Z") },
-          },
-          select: { id: true },
-          take: 1,
-        },
-      },
+      select: { streamCallId: true },
     });
   });
 
@@ -96,8 +83,8 @@ describe("maintenance preflight active calls", () => {
     expect(body.recommendation).toBe("RISKY");
   });
 
-  it("counts a room with an open presence row once, even when Stream also lists it", async () => {
-    mockPrisma.meeting.findMany.mockResolvedValue([room("occurrence-a", true)]);
+  it("counts an open room once when Stream also lists it", async () => {
+    mockPrisma.meeting.findMany.mockResolvedValue([room("occurrence-a")]);
     mockQueryCalls.mockResolvedValue(ongoing("occurrence-a"));
     const body = await (await GET()).json();
     expect(body.activeCalls).toBe(1);

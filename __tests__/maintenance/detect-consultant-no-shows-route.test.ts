@@ -95,7 +95,7 @@ describe("POST /api/cleanup/detect-consultant-no-shows", () => {
       success: true,
       detected: 2,
       refunded: 2,
-      contradicted: 0,
+      unsettled: 0,
       errors: [],
       timestamp: "2026-09-13T00:00:00.000Z",
     });
@@ -122,7 +122,7 @@ describe("POST /api/cleanup/detect-consultant-no-shows", () => {
       success: true,
       detected: 0,
       refunded: 0,
-      contradicted: 0,
+      unsettled: 0,
       errors: [],
       timestamp: "2026-09-13T00:00:00.000Z",
     });
