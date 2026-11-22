@@ -1297,8 +1297,17 @@ export async function scrubUser(
   );
   vendorFailures.push(...notificationFailures);
 
-  // Last, so a purge failure cannot skip the steps above: cached testimonials carry the reviewer's name.
-  purgeReviewSurfaces();
+  // Last, so a purge failure cannot skip the steps above: cached testimonials carry the reviewer's and expert's names.
+  const reviewCount =
+    (await prisma.consultantReview?.count?.({
+      where: {
+        OR: [
+          { consulteeProfile: { userId } },
+          { consultantProfile: { userId } },
+        ],
+      },
+    })) ?? 0;
+  if (reviewCount > 0) purgeReviewSurfaces();
 
   return {
     scrubbed: true,
