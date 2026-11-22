@@ -23,6 +23,7 @@ import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import { fundingRailForIntent } from "@/lib/payments/funding-rail";
 import {
   findDedupedRefund,
+  RefundKeyReusedError,
   RefundValidationError,
 } from "@/lib/payments/operations/refund";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
@@ -1072,7 +1073,10 @@ export async function skipClassMakeUp(args: {
     });
     return { ...refunded, status: "SUCCEEDED" as const };
   } catch (err) {
-    return skipRefundInFlight(err, dedupeKey, payment);
+    return skipRefundInFlight(err, dedupeKey, {
+      ...payment,
+      skipPaise: Number(ledger.unitPaise),
+    });
   }
 }
 
@@ -1085,10 +1089,18 @@ export async function skipClassMakeUp(args: {
 async function skipRefundInFlight(
   err: unknown,
   dedupeKey: string,
-  payment: { id: string; paymentIntent: string },
+  payment: { id: string; paymentIntent: string; skipPaise: number },
 ) {
+  // The key holds another amount (an operator's session refund): that refund is not this skip.
+  if (err instanceof RefundKeyReusedError) {
+    throw new BookingRuleError(
+      "MAKEUP_NOT_SKIPPABLE",
+      "This session can no longer be refunded.",
+    );
+  }
   const inFlight = await findDedupedRefund(dedupeKey, {
     paymentId: payment.id,
+    amountPaise: payment.skipPaise,
   }).catch(() => null);
   if (inFlight) {
     return {

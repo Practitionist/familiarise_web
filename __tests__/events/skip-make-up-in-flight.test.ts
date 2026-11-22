@@ -12,10 +12,14 @@ jest.mock("../../lib/payments/operations/booking-refund", () => ({
   refundBookingPayment: (...a: unknown[]) => refundBookingPayment(...a),
 }));
 const findDedupedRefund = jest.fn();
-jest.mock("../../lib/payments/operations/refund", () => ({
-  findDedupedRefund: (...a: unknown[]) => findDedupedRefund(...a),
-  RefundValidationError: class extends Error {},
-}));
+jest.mock("../../lib/payments/operations/refund", () => {
+  class RefundValidationError extends Error {}
+  return {
+    findDedupedRefund: (...a: unknown[]) => findDedupedRefund(...a),
+    RefundValidationError,
+    RefundKeyReusedError: class extends RefundValidationError {},
+  };
+});
 jest.mock("../../lib/enterprise/system-events", () => {
   const recordSystemError = jest.fn();
   return {
@@ -94,5 +98,28 @@ it("answers the keyed refund as PENDING when the refund throws after reserving i
   });
   expect(findDedupedRefund).toHaveBeenCalledWith("occ:occ-src:pay:pay-1", {
     paymentId: "pay-1",
+    amountPaise: 10_000,
   });
+});
+
+it("refuses the skip when an operator's other-amount refund already holds the session key", async () => {
+  const { RefundKeyReusedError } = jest.requireMock(
+    "../../lib/payments/operations/refund",
+  ) as { RefundKeyReusedError: new () => Error };
+  refundBookingPayment.mockRejectedValue(new RefundKeyReusedError());
+  // The operator's ₹50 session refund under the same occurrence key.
+  findDedupedRefund.mockResolvedValue({
+    refundId: "rf-ops",
+    amountRefundedPaise: 5_000,
+    status: "SUCCEEDED",
+  });
+
+  await expect(
+    skipClassMakeUp({
+      appointmentId: "appt-1",
+      sourceOccurrenceId: "occ-src",
+      userId: "u-1",
+    }),
+  ).rejects.toMatchObject({ code: "MAKEUP_NOT_SKIPPABLE" });
+  expect(findDedupedRefund).not.toHaveBeenCalled();
 });
