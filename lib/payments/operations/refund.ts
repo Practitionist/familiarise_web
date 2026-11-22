@@ -862,8 +862,8 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
   // surfacing the raw error — the placeholder is retired and every downstream
   // step (settle cascade, result mapping) targets the surviving row.
   let boundRefundRowId = reserved.id;
-  // The seat an adopted webhook row decided as it inherited the reservation's intent.
-  let adoptedSeat: SeatDecision | null = null;
+  // An adopted webhook row's status, and the seat it decided as it inherited the reservation's intent.
+  let adopted: { status: RefundStatus; seat: SeatDecision } | null = null;
   if (gateway.refundId && gateway.refundId !== reserved.refundId) {
     try {
       await prisma.refund.updateMany({
@@ -901,7 +901,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       if (winner.id === reserved.id) {
         boundRefundRowId = reserved.id;
       } else {
-        adoptedSeat = await withSerializableRetry(() =>
+        adopted = await withSerializableRetry(() =>
           prisma.$transaction(
             (tx) => retireSupersededPlaceholderTx(tx, reserved, winner.id),
             { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
@@ -951,9 +951,13 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       consultantEarningsReversed: 0,
       organizationEarningsReversed: 0,
       clawbackInitiated: false,
-      status: "PENDING" as const,
+      // An adopted webhook row may already have settled.
+      status:
+        adopted?.status === RefundStatus.SUCCEEDED
+          ? ("SUCCEEDED" as const)
+          : ("PENDING" as const),
       gatewayRefundId: gateway.refundId || undefined,
-      ...seatFields(adoptedSeat ?? undefined),
+      ...seatFields(adopted?.seat),
       ...(settledOwed ? { settledOwed } : {}),
     };
   }
@@ -1132,7 +1136,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
   const { seat, ...rest } = settled;
   return {
     ...rest,
-    ...seatFields(seat ?? adoptedSeat ?? undefined),
+    ...seatFields(seat ?? adopted?.seat),
     ...(settledOwed ? { settledOwed } : {}),
   };
 }

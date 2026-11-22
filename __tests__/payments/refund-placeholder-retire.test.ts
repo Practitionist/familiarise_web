@@ -93,7 +93,7 @@ describe("retireSupersededPlaceholderTx", () => {
         { ...placeholder, metadata: { seatIntent: intent } },
         "w-1",
       ),
-    ).resolves.toMatchObject({ endsSeat: true });
+    ).resolves.toMatchObject({ seat: { endsSeat: true } });
     expect(tx.refund.updateMany).toHaveBeenCalledWith({
       where: { id: "w-1", status: "SUCCEEDED" },
       data: { metadata: { seatIntent: intent, endsSeat: true } },

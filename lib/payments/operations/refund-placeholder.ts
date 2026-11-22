@@ -1,4 +1,4 @@
-import type { Prisma } from "@prisma/client";
+import type { Prisma, RefundStatus } from "@prisma/client";
 import type { Tx } from "@/lib/prisma";
 import { settleRefundSeatTx, type SeatDecision } from "./refund-seat";
 
@@ -20,10 +20,10 @@ export async function retireSupersededPlaceholderTx(
     metadata: Prisma.JsonValue | null;
   },
   winnerId: string,
-): Promise<SeatDecision | null> {
+): Promise<{ status: RefundStatus; seat: SeatDecision } | null> {
   const winner = await tx.refund.findUniqueOrThrow({
     where: { id: winnerId },
-    select: { metadata: true },
+    select: { metadata: true, status: true },
   });
   await tx.supportFinancialRecommendation.updateMany({
     where: { refundId: placeholder.id },
@@ -54,5 +54,8 @@ export async function retireSupersededPlaceholderTx(
     },
   });
   // Runs in the caller's Serializable transaction; a PENDING winner is decided by its own settle.
-  return settleRefundSeatTx(tx, winnerId);
+  return {
+    status: winner.status,
+    seat: await settleRefundSeatTx(tx, winnerId),
+  };
 }

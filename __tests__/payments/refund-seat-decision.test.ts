@@ -414,3 +414,31 @@ it.each<[string, "SUCCEEDED" | "FAILED", boolean]>([
     expect(mockStampSeat).toHaveBeenCalledTimes(ends ? 1 : 0);
   },
 );
+
+it("answers SUCCEEDED when the gateway says PENDING but the adopted webhook row already settled", async () => {
+  mockState.gatewayAnswer = { refundId: "rfnd_web", status: "PENDING" };
+  mockState.atGateway = () => {
+    mockState.refunds.push({
+      id: "refund-web",
+      paymentId: "pay-1",
+      amountPaise: 50_000,
+      status: "SUCCEEDED",
+      dedupeKey: null,
+      refundId: "rfnd_web",
+      metadata: {},
+    });
+  };
+
+  await expect(
+    refundPayment({
+      paymentId: "pay-1",
+      reason: "cancellation",
+      dedupeKey: "cancel:k",
+      bookingSeat: true,
+    }),
+  ).resolves.toMatchObject({
+    refundId: "refund-web",
+    status: "SUCCEEDED",
+    endsSeat: true,
+  });
+});
