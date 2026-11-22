@@ -259,35 +259,12 @@ const Footer: React.FC = () => {
         </div>
       </div>
 
-      {/* Bottom Bar — legal-entity details (name, CIN, registered office,
-          contact) render beside the copyright line on every page. */}
+      {/* Bottom bar. The CIN, registered office and contact email are on the grievance page and the policy pages' company details. */}
       <div className="border-t border-zinc-800 relative z-10">
-        <div className="container mx-auto px-4 md:px-6 py-6 space-y-2 text-center md:text-left">
+        <div className="container mx-auto px-4 md:px-6 py-6 text-center md:text-left">
           <p className="text-sm text-zinc-400">
             © {new Date().getFullYear()} Familiarise, operated by{" "}
             {COMPANY_INFO.name}. All rights reserved.
-          </p>
-          <p className="text-xs text-zinc-400 leading-relaxed">
-            CIN: {COMPANY_INFO.cin} · Registered office:{" "}
-            {COMPANY_INFO.registeredAddress} · Email:{" "}
-            <a
-              href={`mailto:${COMPANY_INFO.email}`}
-              className="underline hover:text-white transition-colors"
-            >
-              {COMPANY_INFO.email}
-            </a>
-            {COMPANY_INFO.phone ? (
-              <>
-                {" "}
-                · Phone:{" "}
-                <a
-                  href={`tel:${COMPANY_INFO.phone}`}
-                  className="underline hover:text-white transition-colors"
-                >
-                  {COMPANY_INFO.phone}
-                </a>
-              </>
-            ) : null}
           </p>
         </div>
       </div>
