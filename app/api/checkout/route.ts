@@ -24,7 +24,6 @@ import { WalletInsufficientFundsError } from "@/lib/api/organizations/wallet";
 import { DomainVerificationRequiredError } from "@/lib/enterprise/governance";
 import { checkoutLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { ZodError } from "zod";
-import { Prisma } from "@prisma/client";
 import {
   checkoutRequestFingerprint,
   replayByIdempotencyKey,
@@ -37,6 +36,7 @@ import {
   isExclusionViolation,
   isQueryReadTimeout,
   isTransactionExpired,
+  isWriteConflict,
 } from "@/lib/db/pg-errors";
 import {
   EXPERT_VIA_COOKIE,
@@ -387,14 +387,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // #1319 — an exhausted serialization retry (P2034 or 40P01 ×4) means the tx
-    // never committed: nothing was charged and a retry will see the sibling's
-    // state. classifyError is message-only and would label it 500.
-    if (
-      (error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === "P2034") ||
-      isDeadlock(error)
-    ) {
+    // An exhausted serialization retry (40001 at a statement or at COMMIT, or
+    // 40P01) never committed: nothing was charged and a retry sees the sibling's state.
+    if (isWriteConflict(error) || isDeadlock(error)) {
       countCheckoutConflict("SERIALIZATION_CONFLICT");
       reportSentryError(error, {
         subsystem: "checkout",

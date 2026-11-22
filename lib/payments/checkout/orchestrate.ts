@@ -42,7 +42,10 @@ import {
   seatGatewayDeadline,
 } from "@/lib/payments/constants";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
-import { isQueryReadTimeout, isTransactionExpired } from "@/lib/db/pg-errors";
+import {
+  isQueryReadTimeout,
+  isRolledBackTransaction,
+} from "@/lib/db/pg-errors";
 import { getExchangeRates } from "@/lib/currency";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { asWelcomeDiscountConflict } from "@/lib/referrals/attribution";
@@ -859,8 +862,9 @@ export async function handleCheckout(
         );
       }
       const dbError = asSeatPaymentConflict(asWelcomeDiscountConflict(caught));
-      // An expired transaction never sent COMMIT, so nothing here was booked; the route answers it.
-      const transactionExpired = isTransactionExpired(dbError);
+      // A conflict Postgres aborted or a transaction Prisma expired booked
+      // nothing; it passes through typed for the route to answer and report.
+      const rolledBack = isRolledBackTransaction(dbError);
       console.error("Failed to create payment record:", dbError);
       // Classification for Sentry tagging ONLY — deliberately NOT the same
       // list `preservedMessages` below uses for the rethrow decision, so
@@ -924,7 +928,7 @@ export async function handleCheckout(
             // "ended" match "unintended", tagging real faults as routine.
             new RegExp(`\\b${msg}\\b`, "i").test(dbError.message),
           ));
-      if (!transactionExpired) {
+      if (!rolledBack) {
         reportSentryError(dbError, {
           subsystem: "payments",
           expected: isModelledOutcome,
@@ -984,7 +988,7 @@ export async function handleCheckout(
       // #837 — WalletFrozenError carries httpStatus=409 + an actionable reason;
       // don't let it collapse into the generic "Failed to record payment
       // information" below. Rethrow so the route surfaces the 409.
-      if (dbError instanceof WalletFrozenError || transactionExpired) {
+      if (dbError instanceof WalletFrozenError || rolledBack) {
         throw dbError;
       }
 
@@ -1076,8 +1080,8 @@ export async function handleCheckout(
     );
     // #1583 C-P1-04 — the same-key collision the inner catch let through.
     const isKeyCollision = isUniqueViolationOn(error, "clientIdempotencyKey");
-    // A bare database timeout is answered and reported once, by the route.
-    if (!isTransactionExpired(error) && !isQueryReadTimeout(error)) {
+    // A bare rollback or database timeout is answered and reported once, by the route.
+    if (!isRolledBackTransaction(error) && !isQueryReadTimeout(error)) {
       reportSentryError(error, {
         subsystem: "payments",
         expected:

@@ -105,6 +105,16 @@ export function isTransactionExpired(error: unknown): boolean {
 }
 
 /**
+ * The transaction certainly did not commit: Postgres aborted it on a write
+ * conflict or a deadlock, or Prisma rolled it back past its timeout.
+ */
+export function isRolledBackTransaction(error: unknown): boolean {
+  return (
+    isWriteConflict(error) || isDeadlock(error) || isTransactionExpired(error)
+  );
+}
+
+/**
  * node-postgres stopped waiting past `query_timeout` (PG_QUERY_TIMEOUT_MS). The
  * cut is client-side: the server may still finish the statement, a COMMIT included.
  */
