@@ -8,18 +8,38 @@ import {
   handleSessionParticipantJoined,
   handleSessionParticipantLeft,
 } from "../../../lib/stream/session-handlers";
+import type { StreamParticipantSessionInterval } from "../../../lib/stream/call-presence";
 import {
   futureAt,
   seedConsultee,
   seedHost,
   seedOneToOne,
 } from "../booking/harness";
+import { seedWebinar } from "../booking/harness-seats";
+
+/** What Stream answers for a call's participant sessions; the group end backfill reads it. */
+const mockStreamSessions: { rows: StreamParticipantSessionInterval[] | null } =
+  {
+    rows: null,
+  };
+jest.mock("../../../lib/stream/call-presence", () => ({
+  ...jest.requireActual("../../../lib/stream/call-presence"),
+  getCallParticipantSessionsFromStream: async () => mockStreamSessions.rows,
+}));
 
 const MIN = 60_000;
 
-async function seedRoom() {
+async function seedOccurrence(kind: "consultation" | "webinar") {
   const startsAt = futureAt(2, 10);
   const learner = await seedConsultee();
+  if (kind === "webinar") {
+    const webinar = await seedWebinar({ capacity: 20, startsAt });
+    const occurrence = await prisma.appointmentOccurrence.findFirstOrThrow({
+      where: { appointmentId: webinar.appointmentId },
+      select: { id: true },
+    });
+    return { startsAt, learner, occurrenceId: occurrence.id };
+  }
   const booking = await seedOneToOne(
     "consultation",
     await seedHost(),
@@ -27,9 +47,14 @@ async function seedRoom() {
     { startsAt, endsAt: new Date(startsAt.getTime() + 60 * MIN) },
     { status: "APPROVED", isTentative: false },
   );
-  const streamCallId = `occurrence-${booking.occurrenceId}`;
+  return { startsAt, learner, occurrenceId: booking.occurrenceId };
+}
+
+async function seedRoom(kind: "consultation" | "webinar" = "consultation") {
+  const { startsAt, learner, occurrenceId } = await seedOccurrence(kind);
+  const streamCallId = `occurrence-${occurrenceId}`;
   const meeting = await prisma.meeting.create({
-    data: { streamCallId, appointmentOccurrenceId: booking.occurrenceId },
+    data: { streamCallId, appointmentOccurrenceId: occurrenceId },
   });
   const at = (m: number) => new Date(startsAt.getTime() + m * MIN);
   const cid = `default:${streamCallId}`;
@@ -56,11 +81,12 @@ async function seedRoom() {
         user_session_id: userSessionId,
       },
     });
-  const sessionEnded = (m: number) =>
+  const sessionEnded = (m: number, sessionId?: string) =>
     handleSessionEnded({
       call_cid: cid,
       type: "call.session_ended",
       created_at: at(m).toISOString(),
+      session_id: sessionId,
     });
   const hostEnded = (m: number, seconds = 0) =>
     handleCallEnded({
@@ -92,6 +118,7 @@ async function seedRoom() {
     }),
   });
   return {
+    learnerId: learner.userId,
     meetingId: meeting.id,
     streamCallId,
     at,
@@ -374,4 +401,71 @@ it("a host end that loses the room to a timeout with the same stamp still record
     endedAt: room.at(10),
     endedReason: "call_ended",
   });
+});
+
+it("a webinar session's end never closes the next session's stay with its own end, so that session's join finds the room and the stay open", async () => {
+  const room = await seedRoom("webinar");
+  const device = `dev-${randomUUID()}`;
+  // Stream already reports the 12-minute stay of the next session on the same call.
+  mockStreamSessions.rows = [
+    {
+      userId: room.learnerId,
+      userSessionId: device,
+      joinedAt: room.at(12),
+      leftAt: null,
+    },
+  ];
+  try {
+    await room.sessionEnded(10, "session-a");
+    await room.join(device, 12);
+  } finally {
+    mockStreamSessions.rows = null;
+  }
+
+  const { meeting, stays, attendance } = await room.state();
+  expect(meeting).toMatchObject({ endedAt: null, endedReason: null });
+  expect(stays).toEqual([
+    { userSessionId: device, leftAt: null, closedByEnd: false },
+  ]);
+  expect(attendance.lastLeftAt).toBeNull();
+});
+
+it("a join repairs its own device row left closed before it joined", async () => {
+  const room = await seedRoom();
+  const device = `dev-${randomUUID()}`;
+  await room.sessionEnded(10);
+  const occurrence = await prisma.meeting.findUniqueOrThrow({
+    where: { id: room.meetingId },
+    select: { appointmentOccurrenceId: true },
+  });
+  await prisma.meetingPresence.create({
+    data: {
+      meetingId: room.meetingId,
+      appointmentOccurrenceId: occurrence.appointmentOccurrenceId,
+      userId: room.learnerId,
+      userSessionId: device,
+      streamCallId: room.streamCallId,
+      joinedAt: room.at(12),
+      leftAt: room.at(10),
+      closedByEnd: true,
+    },
+  });
+  await prisma.meetingAttendance.create({
+    data: {
+      meetingId: room.meetingId,
+      appointmentOccurrenceId: occurrence.appointmentOccurrenceId,
+      userId: room.learnerId,
+      firstJoinedAt: room.at(12),
+      lastLeftAt: room.at(10),
+    },
+  });
+
+  await room.join(device, 12);
+
+  const { meeting, stays, attendance } = await room.state();
+  expect(meeting).toMatchObject({ endedAt: null, endedReason: null });
+  expect(stays).toEqual([
+    { userSessionId: device, leftAt: null, closedByEnd: false },
+  ]);
+  expect(attendance.lastLeftAt).toBeNull();
 });

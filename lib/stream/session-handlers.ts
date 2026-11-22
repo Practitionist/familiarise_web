@@ -31,6 +31,8 @@ export interface StreamSessionEndedEvent {
   call_cid: string;
   type: "call.session_ended";
   created_at: string;
+  /** The Stream session that ended; a later session of the same call has its own id. */
+  session_id?: string;
   call?: {
     id: string;
     type: string;
@@ -47,6 +49,7 @@ export interface StreamCallEndedEvent {
     type: string;
     created_by_user_id?: string | null;
     ended_by_user_id?: string | null;
+    session?: { id: string } | null;
   };
   user?: {
     id: string;
@@ -145,8 +148,8 @@ function summarizeParticipantIntervals(
 }
 
 /**
- * Backfills webinar/class participant presence and attendance rows missed during end-of-call bursts,
- * preserving `Meeting -> MeetingPresence -> MeetingAttendance` lock ordering.
+ * Backfills webinar/class presence and attendance rows missed during end-of-call bursts, from the
+ * ended Stream session only; a stay that began after the end belongs to a later session and is left out.
  */
 export async function reconcileWebinarAttendance(
   meeting: {
@@ -155,15 +158,18 @@ export async function reconcileWebinarAttendance(
     appointmentOccurrenceId: string;
   } & GroupSessionCandidate,
   endedAt: Date,
+  sessionId: string | null,
 ): Promise<void> {
   const slotOfAppointment = meeting.occurrence?.appointment;
   if (!slotOfAppointment?.webinar && !slotOfAppointment?.class) {
     return;
   }
 
-  const intervals = await getCallParticipantSessionsFromStream(
+  const reported = await getCallParticipantSessionsFromStream(
     meeting.streamCallId,
+    sessionId,
   );
+  const intervals = reported?.filter((i) => i.joinedAt <= endedAt);
   if (!intervals?.length) return;
 
   const summaryByUser = summarizeParticipantIntervals(intervals, endedAt);
@@ -228,9 +234,10 @@ async function runBestEffortGroupReconciliation(
     appointmentOccurrenceId: string;
   } & GroupSessionCandidate,
   endedAt: Date,
+  sessionId: string | null,
 ): Promise<void> {
   try {
-    await reconcileWebinarAttendance(meeting, endedAt);
+    await reconcileWebinarAttendance(meeting, endedAt, sessionId);
   } catch (reconcileErr) {
     streamLogger.warn(
       "Webinar attendance backfill failed; end stamp preserved",
@@ -251,6 +258,7 @@ export async function handleSessionEnded(
   event: StreamSessionEndedEvent,
 ): Promise<void> {
   const { call_cid, created_at } = event;
+  const endedSessionId = event.session_id ?? null;
   const streamCallId = toCallId(call_cid);
 
   streamLogger.info("Session ended", {
@@ -277,6 +285,7 @@ export async function handleSessionEnded(
       await runBestEffortGroupReconciliation(
         meeting,
         meeting.endedAt ?? endedAt,
+        endedSessionId,
       );
       streamLogger.info("Stale end event — a later end is already recorded", {
         sessionId: meeting.id,
@@ -292,7 +301,7 @@ export async function handleSessionEnded(
     const stamped = await stampEnd(meeting, endedAt, "session_timeout");
     if (!stamped) return;
 
-    await runBestEffortGroupReconciliation(meeting, endedAt);
+    await runBestEffortGroupReconciliation(meeting, endedAt, endedSessionId);
 
     if (!bookedTimeIsOver) {
       streamLogger.info(
@@ -335,6 +344,7 @@ export async function handleCallEnded(
   event: StreamCallEndedEvent,
 ): Promise<void> {
   const { call_cid, created_at } = event;
+  const endedSessionId = event.call?.session?.id ?? null;
   const endedByUserId = extractEndedByUserId(event);
   const hasEndedByUser = Boolean(endedByUserId);
   const streamCallId = toCallId(call_cid);
@@ -371,6 +381,7 @@ export async function handleCallEnded(
       await runBestEffortGroupReconciliation(
         meeting,
         meeting.endedAt ?? endedAt,
+        endedSessionId,
       );
       streamLogger.info("Stale end event — a later end is already recorded", {
         sessionId: meeting.id,
@@ -382,7 +393,7 @@ export async function handleCallEnded(
 
     if (!(await stampEnd(meeting, endedAt, endedReason))) return;
 
-    await runBestEffortGroupReconciliation(meeting, endedAt);
+    await runBestEffortGroupReconciliation(meeting, endedAt, endedSessionId);
 
     const slotStartTime = meeting.occurrence.startsAt;
     if (slotStartTime) {
@@ -666,16 +677,18 @@ async function settleRoomForJoin(
   return { current: true, endedAt: reopened.count > 0 ? null : room.endedAt };
 }
 
-/** `inCurrentRoom`: the join is to the live current segment, so the person is in the room now. */
+/** `inCurrentRoom`: the join is to the live current segment; `repairedStay`: it reopened its own wrongly closed device row. */
 function buildAttendanceJoinUpdate(
   newSessions: number,
   inCurrentRoom: boolean,
+  repairedStay = false,
 ): { joinCount?: { increment: number }; lastLeftAt?: null } {
-  if (newSessions <= 0) return {};
-  if (!inCurrentRoom) {
-    return { joinCount: { increment: newSessions } };
-  }
-  return { joinCount: { increment: newSessions }, lastLeftAt: null };
+  return {
+    ...(newSessions > 0 ? { joinCount: { increment: newSessions } } : {}),
+    ...(inCurrentRoom && (newSessions > 0 || repairedStay)
+      ? { lastLeftAt: null }
+      : {}),
+  };
 }
 
 export async function handleSessionParticipantJoined(
@@ -731,6 +744,7 @@ export async function handleSessionParticipantJoined(
         skipDuplicates: true,
       });
 
+      let repairedStay = false;
       if (newSessions === 0) {
         await tx.meetingPresence.updateMany({
           where: {
@@ -740,6 +754,18 @@ export async function handleSessionParticipantJoined(
           },
           data: { joinedAt },
         });
+        // A device row closed before it joined was a wrong assumed close; a join to the live room reopens it.
+        if (room.current && !effectiveEndedAt) {
+          const repaired = await tx.meetingPresence.updateMany({
+            where: {
+              meetingId,
+              userSessionId,
+              leftAt: { lt: prisma.meetingPresence.fields.joinedAt },
+            },
+            data: { leftAt: null, closedByEnd: false },
+          });
+          repairedStay = repaired.count > 0;
+        }
       }
 
       await tx.meetingAttendance.upsert({
@@ -756,6 +782,7 @@ export async function handleSessionParticipantJoined(
         update: buildAttendanceJoinUpdate(
           newSessions,
           room.current && !effectiveEndedAt,
+          repairedStay,
         ),
       });
 

@@ -49,6 +49,7 @@ const streamRecordingStoppedSchema = streamCallBaseEventSchema.extend({
 
 const streamSessionEndedSchema = streamCallBaseEventSchema.extend({
   type: z.literal("call.session_ended"),
+  session_id: z.string().optional(),
   call: z
     .object({
       id: z.string(),
@@ -66,6 +67,7 @@ export const streamCallEndedSchema = streamCallBaseEventSchema.extend({
       type: z.string(),
       created_by_user_id: z.string().nullish(),
       ended_by_user_id: z.string().nullish(),
+      session: z.object({ id: z.string() }).nullish(),
     })
     .optional(),
   // Stream sends `user: null` when the call ends without an acting user (server end, timeout).

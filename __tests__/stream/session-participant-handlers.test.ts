@@ -20,6 +20,7 @@ jest.mock("../../lib/prisma", () => {
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     meetingPresence: {
+      fields: { joinedAt: "MeetingPresence.joinedAt" },
       createMany: jest.fn().mockResolvedValue({ count: 1 }),
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     },

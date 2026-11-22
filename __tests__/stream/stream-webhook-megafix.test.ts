@@ -983,3 +983,62 @@ describe("Stream Webhook Megafix Regression Suite", () => {
     });
   });
 });
+
+describe("the webinar end backfill reads only the session that ended", () => {
+  const tx = (
+    prisma as unknown as { __tx: Record<string, Record<string, jest.Mock>> }
+  ).__tx;
+  beforeEach(() => {
+    jest.clearAllMocks();
+    tx.meeting.findUnique.mockReset();
+    tx.meeting.updateMany.mockReset().mockResolvedValue({ count: 1 });
+    tx.meetingPresence.findFirst.mockReset().mockResolvedValue(null);
+    tx.meetingPresence.createMany.mockReset().mockResolvedValue({ count: 1 });
+    tx.meetingPresence.updateMany.mockReset().mockResolvedValue({ count: 0 });
+    tx.meetingAttendance.upsert.mockReset().mockResolvedValue({});
+    tx.meetingAttendance.updateMany.mockReset().mockResolvedValue({ count: 0 });
+    (getCallParticipantSessionsFromStream as jest.Mock).mockReset();
+  });
+
+  it("asks Stream for the ended session and writes no stay or attendance that began after the end", async () => {
+    const at = (m: number) => new Date(Date.UTC(2026, 9, 10, 9, m));
+    tx.meeting.findUnique.mockResolvedValueOnce({
+      id: "mtg-a",
+      streamCallId: "web-a",
+      appointmentOccurrenceId: "occ-a",
+      endedAt: null,
+      endedReason: null,
+      occurrence: {
+        id: "occ-a",
+        startsAt: at(0),
+        endsAt: at(59),
+        appointment: { webinar: { id: "web-1" }, class: null },
+      },
+    });
+    (getCallParticipantSessionsFromStream as jest.Mock).mockResolvedValueOnce([
+      { userId: "u-a", userSessionId: "dev-a", joinedAt: at(0), leftAt: at(9) },
+      { userId: "u-b", userSessionId: "dev-b", joinedAt: at(12), leftAt: null },
+    ]);
+
+    await handleSessionEnded({
+      call_cid: "default:web-a",
+      type: "call.session_ended",
+      created_at: at(10).toISOString(),
+      session_id: "session-a",
+    });
+
+    expect(getCallParticipantSessionsFromStream).toHaveBeenCalledWith(
+      "web-a",
+      "session-a",
+    );
+    expect(tx.meetingPresence.createMany.mock.calls.at(-1)?.[0].data).toEqual([
+      expect.objectContaining({ userSessionId: "dev-a", leftAt: at(9) }),
+    ]);
+    expect(tx.meetingAttendance.upsert).toHaveBeenCalledTimes(1);
+    expect(tx.meetingAttendance.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ userId: "u-a" }),
+      }),
+    );
+  });
+});
