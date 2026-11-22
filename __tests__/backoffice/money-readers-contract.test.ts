@@ -53,6 +53,7 @@ jest.mock("../../lib/prisma", () => ({
   default: {
     dispute: {
       count: async () => 1,
+      groupBy: async () => [],
       findMany: mockSpy("dispute", () => [
         {
           id: "d1",
@@ -229,6 +230,10 @@ beforeEach(() => {
   mockViewer.role = "STAFF";
 });
 
+/** The page read; the urgent-banner read beside it takes no page. */
+const disputePageCall = () =>
+  mockCalls.dispute.find((args) => (args as { take?: number }).take);
+
 describe("disputes list", () => {
   it("names the buyer and booking and withholds the email from staff", async () => {
     const page = disputeListPageSchema.parse(
@@ -239,7 +244,7 @@ describe("disputes list", () => {
       booking: { title: "Career coaching", type: "CONSULTATION" },
     });
     const select = (
-      mockCalls.dispute[0] as {
+      disputePageCall() as {
         select: {
           payment: { select: { user: { select: { email: boolean } } } };
         };
@@ -252,7 +257,7 @@ describe("disputes list", () => {
     mockViewer.role = "ADMIN";
     await get(disputesGet, "/api/admin/disputes?status=WON");
     const select = (
-      mockCalls.dispute[0] as {
+      disputePageCall() as {
         select: {
           payment: { select: { user: { select: { email: boolean } } } };
         };
@@ -358,7 +363,7 @@ it("ties on the pay-by date and creation break by id, so payout pages never over
 
 it("disputes order each page with an id tie-break", async () => {
   await get(disputesGet, "/api/admin/disputes?status=WON");
-  expect((mockCalls.dispute[0] as { orderBy: unknown[] }).orderBy).toEqual([
+  expect((disputePageCall() as { orderBy: unknown[] }).orderBy).toEqual([
     { createdAt: "desc" },
     { id: "desc" },
   ]);

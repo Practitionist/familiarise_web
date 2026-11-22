@@ -9,7 +9,8 @@ import prisma from "@/lib/prisma";
 import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
 import { applyRateLimit, moneyOpsLimiter } from "@/lib/rate-limit";
 import {
-  evidenceDeadlinePassed,
+  evidenceRefusal,
+  type EvidenceRefusalCode,
   isLegalDisputeTransition,
   mapDisputeStatus,
 } from "@/lib/payments/dispute-status";
@@ -188,6 +189,24 @@ type EvidenceDispute = {
   dueBy: Date | null;
 };
 
+const EVIDENCE_REFUSALS: Record<
+  EvidenceRefusalCode,
+  { message: string; status: number }
+> = {
+  NOT_RAZORPAY: {
+    message: "This form contests Razorpay disputes only.",
+    status: 400,
+  },
+  EVIDENCE_DEADLINE_PASSED: {
+    message: "The evidence deadline for this dispute has passed.",
+    status: 410,
+  },
+  DISPUTE_NOT_OPEN: {
+    message: "Razorpay only takes evidence on an open dispute.",
+    status: 409,
+  },
+};
+
 /** Razorpay takes evidence only on an `open` dispute, before its deadline. */
 async function openRazorpayDispute(id: string): Promise<EvidenceDispute> {
   const dispute = await prisma.dispute.findUnique({
@@ -203,31 +222,10 @@ async function openRazorpayDispute(id: string): Promise<EvidenceDispute> {
   if (!dispute) {
     throw new OpsRefusal("DISPUTE_NOT_FOUND", "Dispute not found.", 404);
   }
-  if (dispute.paymentGateway !== "RAZORPAY") {
-    throw new OpsRefusal(
-      "NOT_RAZORPAY",
-      "This form contests Razorpay disputes only.",
-      400,
-    );
-  }
-  if (
-    evidenceDeadlinePassed({
-      status: dispute.status,
-      dueBy: dispute.dueBy,
-      nowMs: Date.now(),
-    })
-  ) {
-    throw new OpsRefusal(
-      "EVIDENCE_DEADLINE_PASSED",
-      "The evidence deadline for this dispute has passed.",
-      410,
-    );
-  }
-  if (dispute.status !== "NEEDS_RESPONSE") {
-    throw new OpsRefusal(
-      "DISPUTE_NOT_OPEN",
-      "Razorpay only takes evidence on an open dispute.",
-    );
+  const refusal = evidenceRefusal(dispute, Date.now());
+  if (refusal) {
+    const { message, status } = EVIDENCE_REFUSALS[refusal];
+    throw new OpsRefusal(refusal, message, status);
   }
   return dispute;
 }

@@ -491,6 +491,26 @@ describe("a drive whose own refund is still PENDING", () => {
     expect(mockRows.get("p1")!.refundOwedAttempts).toBe(2);
     expect(mockRecordSystemError).not.toHaveBeenCalled();
   });
+
+  it("does not take another payment's PENDING refund under the same key as its own", async () => {
+    seat("p1", 10_000);
+    const owed = marker("p1", 5_000);
+    // An incident key names no payment: a sibling payment's refund took it while this drive ran.
+    mockRefundBookingPayment.mockImplementationOnce(async () => {
+      mockRefunds.push({
+        id: "rf_other",
+        paymentId: "p2",
+        dedupeKey: owed.key,
+        amountPaise: 5_000,
+        status: "PENDING",
+      });
+      throw new Error("cascade transaction failed");
+    });
+
+    expect(await driveRefundOwed({ ...owed, attempts: 0 })).toMatchObject({
+      kind: "failed",
+    });
+  });
 });
 
 describe("a drive's own refund confirmed FAILED", () => {

@@ -100,6 +100,13 @@ import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 import { clawBackCompletedOrgPayout } from "./reversal-engine";
 import { retireSupersededPlaceholderTx } from "./refund-placeholder";
 import {
+  seatIntentOf,
+  settleRefundSeatTx,
+  storedSeatDecision,
+  storedSeatIntent,
+  type SeatDecision,
+} from "./refund-seat";
+import {
   accumulatePaidConsultantClawback,
   applyPaidConsultantClawbacks,
   type PendingConsultantClawback,
@@ -178,10 +185,20 @@ export type RefundInput = {
   /** The caller reports a failed gateway refund itself, once per run, so neither this door nor the gateway client does. */
   failureReportedByCaller?: boolean;
   supportRecommendationId?: string;
+  /** The booking seat stays live whatever is returned. */
+  keepSeat?: boolean;
+  /** The seat stays live while any of the payment is still refundable once this refund settles. */
+  keepSeatIfPartial?: boolean;
+  /** Answer only the refund already stored under `dedupeKey`; without one, refuse instead of refunding. */
+  replayOnly?: boolean;
+  /** The refund may end the payment's booking seat: its seat intent is stored, and its settle decides. */
+  bookingSeat?: boolean;
 } & OwedMarkerInput;
 
 export type RefundResult = {
   refundId: string;
+  /** The payment the persisted Refund row belongs to. */
+  paymentId: string;
   amountRefundedPaise: number;
   legsReversed: number;
   consultantEarningsReversed: number;
@@ -198,19 +215,47 @@ export type RefundResult = {
   gatewayRefundId?: string;
   /** The owed refund this hand refund settled and cleared. */
   settledOwed?: HandSettledOwed;
+  /** The seat decision stored when the refund settled; absent while it is PENDING or kept no intent. */
+  endsSeat?: boolean;
+  /** A SUCCEEDED row from before the seat intent was stored, with no decision: a replay decides it. */
+  legacySeat?: true;
+  /** The access revocation this call's settle wrote when it ended the seat. */
+  revocationGeneration?: Date;
 };
+
+/** The result fields of a seat decision; nothing when it could not be made. */
+const seatFields = (seat: SeatDecision | undefined) =>
+  seat
+    ? {
+        endsSeat: seat.endsSeat,
+        ...(seat.revocationGeneration
+          ? { revocationGeneration: seat.revocationGeneration }
+          : {}),
+      }
+    : {};
+
+/** What a keyed refund request asks for: its payment, and the amount when it names one. */
+export type RefundReplayRequest = { paymentId: string; amountPaise?: number };
 
 /**
  * #1780 — the refund already recorded under `dedupeKey`, as a no-op result.
  * A FAILED or CANCELLED row moved no money, so its key is released for the retry.
+ * A key spent on another payment or amount throws {@link RefundKeyReusedError}.
  */
 export async function findDedupedRefund(
   dedupeKey: string | undefined,
+  request: RefundReplayRequest,
 ): Promise<RefundResult | null> {
   if (!dedupeKey) return null;
   const row = await prisma.refund.findUnique({
     where: { dedupeKey },
-    select: { id: true, amountPaise: true, status: true },
+    select: {
+      id: true,
+      paymentId: true,
+      amountPaise: true,
+      status: true,
+      metadata: true,
+    },
   });
   if (!row) return null;
   if (
@@ -223,14 +268,23 @@ export async function findDedupedRefund(
     });
     return null;
   }
+  assertRefundReplayMatches(row, request);
+  const endsSeat = storedSeatDecision(row.metadata);
+  const legacySeat =
+    row.status === RefundStatus.SUCCEEDED &&
+    endsSeat === undefined &&
+    storedSeatIntent(row.metadata) === undefined;
   return {
     refundId: row.id,
+    paymentId: row.paymentId,
     amountRefundedPaise: Number(row.amountPaise),
     legsReversed: 0,
     consultantEarningsReversed: 0,
     organizationEarningsReversed: 0,
     clawbackInitiated: false,
     status: row.status === RefundStatus.SUCCEEDED ? "SUCCEEDED" : "PENDING",
+    ...(endsSeat === undefined ? {} : { endsSeat }),
+    ...(legacySeat ? { legacySeat: true as const } : {}),
   };
 }
 
@@ -249,6 +303,44 @@ export class RefundValidationError extends Error {
     super(message);
     this.name = "RefundValidationError";
   }
+}
+
+/** A refund key already spent on another payment or amount: never replayed, answered 422. */
+export class RefundKeyReusedError extends RefundValidationError {
+  readonly httpStatus = 422;
+  constructor(request: RefundReplayRequest) {
+    super(
+      "This refund key was already used for a different payment or amount. Open the refund again to send a new one.",
+      "IDEMPOTENCY_KEY_REUSED",
+      { paymentId: request.paymentId },
+    );
+    this.name = "RefundKeyReusedError";
+  }
+}
+
+/** A request priced as a replay whose stored refund is gone: refunding now would skip its second approval. */
+export class RefundReplayExpiredError extends RefundValidationError {
+  constructor() {
+    super(
+      "The earlier refund under this key failed. Open the refund again to send a new one, which may need a second approval.",
+      "REFUND_REPLAY_EXPIRED",
+    );
+    this.name = "RefundReplayExpiredError";
+  }
+}
+
+/** A stored refund replays only for its own payment and, when the request names one, its own amount. */
+export function assertRefundReplayMatches(
+  stored: { paymentId: string; amountPaise: number | bigint },
+  request: RefundReplayRequest,
+): void {
+  if (
+    stored.paymentId === request.paymentId &&
+    (request.amountPaise === undefined ||
+      Number(stored.amountPaise) === request.amountPaise)
+  )
+    return;
+  throw new RefundKeyReusedError(request);
 }
 
 /** True when the error is a Prisma unique-constraint violation (P2002). */
@@ -320,8 +412,9 @@ export function isModelledRefundRefusal(err: unknown): boolean {
  */
 export async function refundPayment(input: RefundInput): Promise<RefundResult> {
   // #1780 — a key already spent answers with its refund, before any balance check.
-  const deduped = await findDedupedRefund(input.dedupeKey);
+  const deduped = await findDedupedRefund(input.dedupeKey, input);
   if (deduped) return deduped;
+  if (input.replayOnly) throw new RefundReplayExpiredError();
 
   // Read payment outside the tx for early validation (cheap read; the
   // Serializable tx re-reads + locks for the actual mutation).
@@ -469,6 +562,13 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
   // Prisma error instead of being retried into the correct answer (either a
   // successful reservation or a typed AMOUNT_EXCEEDS_REFUNDABLE rejection).
   let settledOwed = null as HandSettledOwed | null;
+  // A booking-seat refund stores its request's seat intent, which its settle decides from.
+  const appMetadata = () => ({
+    initiatedByUserId: input.initiatedByUserId ?? null,
+    source: "app",
+    ...(input.bookingSeat ? { seatIntent: seatIntentOf(input) } : {}),
+    ...(settledOwed ? { settledOwed } : {}),
+  });
   const reserveRefund = () =>
     withSerializableRetry(() =>
       prisma.$transaction(
@@ -558,11 +658,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
               paymentGateway: payment.paymentGateway,
               exchangeRateAtRefund: payment.exchangeRateAtCheckout,
               displayCurrency: payment.displayCurrencyAtCheckout,
-              metadata: {
-                initiatedByUserId: input.initiatedByUserId ?? null,
-                source: "app",
-                ...(settledOwed ? { settledOwed } : {}),
-              } as Prisma.InputJsonValue,
+              metadata: appMetadata() as Prisma.InputJsonValue,
             },
           });
         },
@@ -579,7 +675,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
   } catch (err) {
     // #1780 — a concurrent call with the same key won the unique; it is the refund.
     const winner = isDedupeKeyConflict(err)
-      ? await findDedupedRefund(input.dedupeKey)
+      ? await findDedupedRefund(input.dedupeKey, input)
       : null;
     if (winner) return winner;
     throw err;
@@ -673,10 +769,9 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
         (err instanceof RefundError && err.code === GATEWAY_NOT_FOUND),
     });
     const gatewayError = err instanceof Error ? err.message : String(err);
+    // Keeps the seat intent, so the webhook or reconcile settle of an ambiguous refund still decides.
     const metadata = {
-      initiatedByUserId: input.initiatedByUserId ?? null,
-      source: "app",
-      ...(settledOwed ? { settledOwed } : {}),
+      ...appMetadata(),
       gateway_error: gatewayError,
     } as Prisma.InputJsonValue;
     // A definitive refusal created no gateway refund, so the reservation is
@@ -767,6 +862,8 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
   // surfacing the raw error — the placeholder is retired and every downstream
   // step (settle cascade, result mapping) targets the surviving row.
   let boundRefundRowId = reserved.id;
+  // An adopted webhook row's status, and the seat it decided as it inherited the reservation's intent.
+  let adopted: { status: RefundStatus; seat: SeatDecision } | null = null;
   if (gateway.refundId && gateway.refundId !== reserved.refundId) {
     try {
       await prisma.refund.updateMany({
@@ -804,8 +901,11 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       if (winner.id === reserved.id) {
         boundRefundRowId = reserved.id;
       } else {
-        await prisma.$transaction((tx) =>
-          retireSupersededPlaceholderTx(tx, reserved, winner.id),
+        adopted = await withSerializableRetry(() =>
+          prisma.$transaction(
+            (tx) => retireSupersededPlaceholderTx(tx, reserved, winner.id),
+            { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+          ),
         );
         boundRefundRowId = winner.id;
         reportSentryMessage(
@@ -841,22 +941,30 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     }
   }
 
+  // Still PENDING at the gateway: the webhook or reconcile settle decides the seat.
   if (gateway.status !== "SUCCEEDED") {
     return {
       refundId: boundRefundRowId,
+      paymentId: payment.id,
       amountRefundedPaise: requested,
       legsReversed: 0,
       consultantEarningsReversed: 0,
       organizationEarningsReversed: 0,
       clawbackInitiated: false,
-      status: "PENDING" as const,
+      // An adopted webhook row may already have settled.
+      status:
+        adopted?.status === RefundStatus.SUCCEEDED
+          ? ("SUCCEEDED" as const)
+          : ("PENDING" as const),
       gatewayRefundId: gateway.refundId || undefined,
+      ...seatFields(adopted?.seat),
       ...(settledOwed ? { settledOwed } : {}),
     };
   }
 
   let settled: {
     refundId: string;
+    paymentId: string;
     amountRefundedPaise: number;
     legsReversed: number;
     consultantEarningsReversed: number;
@@ -864,6 +972,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     clawbackInitiated: boolean;
     status: "SUCCEEDED" | "PENDING";
     gatewayRefundId: string | undefined;
+    seat?: SeatDecision;
   };
   let stagedBell: StagedTrigger | null = null;
   let stagedEmails: StagedRecipientEmail[] = [];
@@ -892,6 +1001,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
             where: { id: boundRefundRowId, status: RefundStatus.PENDING },
             data: { status: RefundStatus.SUCCEEDED },
           });
+          // Another writer settled the row, and its settle decided the seat.
           if (settledClaim.count === 0) {
             casMiss();
             const current = await tx.refund.findUnique({
@@ -900,6 +1010,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
             });
             return {
               refundId: boundRefundRowId,
+              paymentId: payment.id,
               amountRefundedPaise: requested,
               legsReversed: 0,
               consultantEarningsReversed: 0,
@@ -934,6 +1045,9 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
               `🔄 Restored ${restoredCredits} referral credits for app-initiated refund on payment ${input.paymentId}`,
             );
           }
+          const seat = await settleRefundSeatTx(tx, boundRefundRowId, {
+            actorUserId: input.initiatedByUserId,
+          });
 
           if (receiptArgs) {
             if (typeof tx.notificationOutbox?.upsert === "function") {
@@ -970,10 +1084,12 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
 
           return {
             refundId: boundRefundRowId,
+            paymentId: payment.id,
             amountRefundedPaise: requested,
             ...cascade,
             status: "SUCCEEDED" as const,
             gatewayRefundId: gateway.refundId || undefined,
+            seat,
           };
         },
         {
@@ -994,6 +1110,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     });
     settled = {
       refundId: boundRefundRowId,
+      paymentId: payment.id,
       amountRefundedPaise: requested,
       legsReversed: 0,
       consultantEarningsReversed: 0,
@@ -1016,7 +1133,12 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     ),
   ]);
 
-  return settledOwed ? { ...settled, settledOwed } : settled;
+  const { seat, ...rest } = settled;
+  return {
+    ...rest,
+    ...seatFields(seat ?? adopted?.seat),
+    ...(settledOwed ? { settledOwed } : {}),
+  };
 }
 
 /** The refund a fully-refunded booking owes on one CHARGE_MEMBER side-payment. */

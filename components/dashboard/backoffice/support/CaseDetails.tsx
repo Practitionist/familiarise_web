@@ -136,6 +136,7 @@ export function CaseDetails({ data }: Readonly<{ data: CaseWorkspace }>) {
       <StaffCaseResolution
         caseId={data.caseId}
         paymentId={data.payment?.id}
+        paymentRail={data.payment?.rail}
         basePath={basePath}
       />
       {can("supportChat.read") && <CaseChatPanel caseId={data.caseId} />}
