@@ -33,9 +33,25 @@ it("a join clears only a non-deliberate, rejoinable end older than itself, on th
     call_cid: "default:occurrence-1",
     type: "call.session_participant_joined",
     created_at: "2026-11-23T04:30:00.000Z",
+    session_id: "B",
   });
 
-  const [{ where, data }] = db.meeting.updateMany.mock.calls[0];
+  // The watermark moves first, so an older non-deliberate end can no longer stamp the call.
+  const [watermark] = db.meeting.updateMany.mock.calls[0];
+  expect(watermark).toEqual({
+    where: {
+      streamCallId: "occurrence-1",
+      OR: [
+        { lastJoinedAt: null },
+        { lastJoinedAt: { lt: new Date("2026-11-23T04:30:00.000Z") } },
+      ],
+    },
+    data: {
+      lastJoinedAt: new Date("2026-11-23T04:30:00.000Z"),
+      lastStreamSessionId: "B",
+    },
+  });
+  const [{ where, data }] = db.meeting.updateMany.mock.calls[1];
   expect(where.streamCallId).toBe("occurrence-1");
   expect(where.endedAt).toEqual({ lt: new Date("2026-11-23T04:30:00.000Z") });
   expect(

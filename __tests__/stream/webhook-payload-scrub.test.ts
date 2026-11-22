@@ -93,11 +93,12 @@ describe("scrubStreamEventForStorage", () => {
   );
 
   it("keeps the ids, timestamps and reasons the handlers read", () => {
-    // The join only reopens the room, so who joined is not kept at all.
+    // The join is room state only, so who joined is not kept at all; the session it names is.
     expect(scrubStreamEventForStorage(JOINED.type, JOINED)).toEqual({
       type: JOINED.type,
       call_cid: JOINED.call_cid,
       created_at: JOINED.created_at,
+      session_id: "sess-1",
     });
     expect(
       scrubStreamEventForStorage(CALL_ENDED.type, CALL_ENDED),
@@ -134,6 +135,7 @@ describe("a scrubbed payload still drives the handlers (sweeper re-drive)", () =
       type: JOINED.type,
       call_cid: JOINED.call_cid,
       created_at: JOINED.created_at,
+      session_id: "sess-1",
     });
     expect(mockMarkProcessed).toHaveBeenCalledWith("evt-1", undefined, {
       claimedAt: null,

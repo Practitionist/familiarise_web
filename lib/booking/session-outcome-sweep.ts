@@ -184,6 +184,19 @@ async function slotEvidence(
     : { kind: "wait" };
 }
 
+/**
+ * Takes the occurrence row, then the room row, and re-reads the stamp: a
+ * snapshot that committed before this point wins over an unreadable park.
+ * NO KEY UPDATE leaves the presence inserts' foreign-key checks free.
+ */
+async function settledSinceRead(tx: Tx, occurrenceId: string) {
+  await tx.$executeRaw`SELECT 1 FROM "AppointmentOccurrence" WHERE id = ${occurrenceId} FOR NO KEY UPDATE`;
+  const rooms = await tx.$queryRaw<{ settled: Date | null }[]>`
+    SELECT "attendanceSettledAt" AS settled FROM "Meeting"
+    WHERE "appointmentOccurrenceId" = ${occurrenceId} FOR NO KEY UPDATE`;
+  return Boolean(rooms[0]?.settled);
+}
+
 async function writeSlotOutcomeTransaction(
   slot: OutcomeSlot,
   presences: readonly PresenceInterval[],
@@ -195,6 +208,14 @@ async function writeSlotOutcomeTransaction(
 ): Promise<boolean> {
   const txResult = await prisma.$transaction(
     async (tx) => {
+      if (requireUnsettled && (await settledSinceRead(tx, slot.id))) {
+        return {
+          applied: false,
+          noShow: null,
+          missedRecording: null,
+          voided: null,
+        };
+      }
       const count = await transitionOccurrenceCompletion(tx, {
         // voidedAt: null — a re-run never re-stamps a void.
         where: {

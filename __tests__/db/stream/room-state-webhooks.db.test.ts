@@ -313,3 +313,26 @@ it("a timeout with no newer session on the call still ends the room", async () =
     endedReason: "session_timeout",
   });
 });
+
+it("a rejoin that commits while a timeout's Stream lookup is in flight keeps the room open", async () => {
+  const room = await seedRoom();
+  // Stream answers "idle call" for A's timeout lookup; B's join lands before that answer returns.
+  fakeStream.calls.set(room.streamCallId, {
+    occurrenceId: "unused",
+    sessions: [{ id: "A", live: false, stays: [] }],
+  });
+  let release: () => void = () => undefined;
+  fakeStream.getGate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const lateEnd = room.sessionEnded(20);
+  await waitFor(async () => fakeStream.gets >= 1);
+  await room.join(22);
+  release();
+  await lateEnd;
+
+  expect(await room.room()).toMatchObject({
+    endedAt: null,
+    endedReason: null,
+  });
+});

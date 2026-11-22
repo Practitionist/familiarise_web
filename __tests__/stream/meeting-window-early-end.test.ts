@@ -114,6 +114,11 @@ describe("the last end wins (#1607)", () => {
           streamCallId: "slot_1",
           endedAt: read,
           endedReason: "session_timeout",
+          // A join newer than a non-deliberate end blocks it.
+          OR: [
+            { lastJoinedAt: null },
+            { lastJoinedAt: { lte: expect.any(Date) } },
+          ],
         },
         data: expect.objectContaining({
           endedAt: new Date("2026-09-13T11:02:00.000Z"),
@@ -186,6 +191,11 @@ describe("the last end wins (#1607)", () => {
           streamCallId: "slot_1",
           endedAt: read,
           endedReason: "session_timeout",
+          // A join newer than a non-deliberate end blocks it.
+          OR: [
+            { lastJoinedAt: null },
+            { lastJoinedAt: { lte: expect.any(Date) } },
+          ],
         },
         data: expect.objectContaining({ endedReason: "stream_ended" }),
       }),

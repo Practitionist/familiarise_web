@@ -12,6 +12,8 @@ import {
 } from "../../../lib/booking/session-outcome-sweep";
 import { readSessionAttendance } from "../../../lib/booking/session-attendance";
 import { rereadSessionAttendance } from "../../../lib/backoffice/session-outcomes";
+import { recordMeetingEndedSynchronously } from "../../../lib/stream/session-handlers";
+import { Prisma } from "@prisma/client";
 import {
   SETTLE_MEETING_SELECT,
   settleOccurrenceAttendance,
@@ -107,6 +109,17 @@ const settledAt = async (meetingId: string) =>
     })
   ).attendanceSettledAt;
 
+/** Records Stream's `call.stats_report_ready` for every ended session the fake Stream holds for this occurrence. */
+async function announceReports(occurrenceId: string) {
+  const ids = [...fakeStream.calls.values()]
+    .filter((call) => call.occurrenceId === occurrenceId)
+    .flatMap((call) => call.sessions.filter((s) => !s.live).map((s) => s.id));
+  await prisma.meeting.update({
+    where: { appointmentOccurrenceId: occurrenceId },
+    data: { streamReportReadySessionIds: ids },
+  });
+}
+
 beforeEach(() => fakeStream.reset());
 
 it("the record's worked example: Hannah 2 min late, Priya's 3-minute drop merged, is HELD with 58 delivered and Priya ATTENDED", async () => {
@@ -127,6 +140,7 @@ it("the record's worked example: Hannah 2 min late, Priya's 3-minute drop merged
     ],
   });
   const now = new Date(room.endsAt.getTime() + 75 * MIN);
+  await announceReports(room.occurrenceId);
 
   const decision = await decideSlotOutcome(await loadSlot(room.occurrenceId), {
     now,
@@ -172,6 +186,7 @@ it("a rotated room is read under every call id: the current one plus the earlier
       { id: "b", live: false, stays: [stay(room.hostId, s, 0, 60 * MIN)] },
     ],
   });
+  await announceReports(room.occurrenceId);
 
   const settled = await settleOccurrenceAttendance(await settleTarget(room), {
     now: new Date(room.endsAt.getTime() + 75 * MIN),
@@ -223,6 +238,7 @@ it("a webinar whose first session's joins no webhook ever saw, and whose second 
     ],
   });
 
+  await announceReports(occurrence.id);
   const decision = await decideSlotOutcome(await loadSlot(occurrence.id), {
     now: new Date(webinar.endsAt.getTime() + 75 * MIN),
     outages: [],
@@ -278,6 +294,7 @@ it("a live session stores nothing; once it ends a retry stores Stream's rows in 
 
   session.live = false;
   session.stays[1] = stay(room.learnerId, s, 0, 60 * MIN);
+  await announceReports(room.occurrenceId);
   const settled = await settleOccurrenceAttendance(await settleTarget(room), {
     now,
   });
@@ -309,6 +326,7 @@ it("two settlers racing store one snapshot, and a settled room is answered witho
     ],
   });
   const now = new Date(room.endsAt.getTime() + 75 * MIN);
+  await announceReports(room.occurrenceId);
   const target = await settleTarget(room);
 
   const [first, second] = await Promise.all([
@@ -326,7 +344,7 @@ it("two settlers racing store one snapshot, and a settled room is answered witho
   expect(fakeStream.requests).toBe(asked);
 });
 
-it("a call no one joined settles with zero rows only an hour past the booked end, then reads NOBODY_JOINED", async () => {
+it("a call no one joined settles with zero rows only once the report fallback has passed, then reads NOBODY_JOINED", async () => {
   const room = await seedConsultationRoom();
   // The call exists at Stream and never had a session.
   fakeStream.calls.set(room.streamCallId, {
@@ -343,7 +361,7 @@ it("a call no one joined settles with zero rows only an hour past the booked end
   expect(await settledAt(room.meetingId)).toBeNull();
 
   const decision = await decideSlotOutcome(await loadSlot(room.occurrenceId), {
-    now: new Date(room.endsAt.getTime() + 65 * MIN),
+    now: new Date(room.endsAt.getTime() + 6 * HOUR + 35 * MIN),
     outages: [],
   });
   expect(decision).toMatchObject({
@@ -391,6 +409,7 @@ it("Stream unreachable defers for 72 hours, then parks INCONCLUSIVE; the ops re-
       },
     ],
   });
+  await announceReports(room.occurrenceId);
   const reread = await rereadSessionAttendance({
     occurrenceId: room.occurrenceId,
   });
@@ -456,6 +475,7 @@ it("a learner who left in one session and rejoined in a newer one still open is 
 
   sessionB.live = false;
   sessionB.stays[0] = stay(room.learnerId, s, 30 * MIN, 60 * MIN);
+  await announceReports(room.occurrenceId);
   await settleOccurrenceAttendance(await settleTarget(room), { now });
   expect(await view()).toMatchObject({
     settled: true,
@@ -520,6 +540,7 @@ it("a call whose current session is not yet in session stats is not final; once 
   expect(await settledAt(room.meetingId)).toBeNull();
 
   sessionB.hiddenFromStats = false;
+  await announceReports(room.occurrenceId);
   const decision = await decideSlotOutcome(await loadSlot(room.occurrenceId), {
     now,
     outages: [],
@@ -546,6 +567,8 @@ it("detail with fewer stays than session stats counts is not final: the sweep de
     occurrenceId: room.occurrenceId,
     sessions: [session],
   });
+  // The report is announced, so only the short detail can hold the record back.
+  await announceReports(room.occurrenceId);
   const now = new Date(room.endsAt.getTime() + 75 * MIN);
 
   expect(
@@ -589,6 +612,7 @@ it("a settler holding a stale room never stamps once the room was extended past 
       },
     ],
   });
+  await announceReports(room.occurrenceId);
   const stale = await settleTarget(room);
   // Extend committed after the settler read the room: the rejoin window now runs to the end + 45 minutes.
   await prisma.meeting.update({
@@ -638,4 +662,182 @@ it("a sweep whose Stream read fails never parks a room another settler stored me
     to: "COMPLETED",
     verdict: { outcome: "HELD" },
   });
+});
+
+/** Backends of this database parked on a lock. */
+const lockWaiters = async () => {
+  const [{ waiting }] = await prisma.$queryRaw<{ waiting: number }[]>(
+    Prisma.sql`SELECT count(*)::int AS waiting FROM pg_stat_activity
+      WHERE datname = current_database() AND wait_event_type = 'Lock'`,
+  );
+  return waiting;
+};
+
+async function waitFor(done: () => Promise<boolean>): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (!(await done())) {
+    if (Date.now() > deadline)
+      throw new Error("The race never reached its step");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+/** A pre-start device test in A, then the real hour in B on the same reusable call, now idle. */
+function stageIdleCallWithLaggingStats(room: Room) {
+  const s = room.startsAt;
+  const sessionB = {
+    id: "B",
+    live: false,
+    hiddenFromStats: true,
+    stays: [
+      stay(room.hostId, s, 0, 60 * MIN),
+      stay(room.learnerId, s, 0, 60 * MIN),
+    ],
+  };
+  fakeStream.calls.set(room.streamCallId, {
+    occurrenceId: room.occurrenceId,
+    sessions: [
+      {
+        id: "A",
+        live: false,
+        stays: [stay(room.hostId, s, -12 * MIN, -10 * MIN)],
+      },
+      sessionB,
+    ],
+  });
+  return sessionB;
+}
+
+it("an idle call whose stats list only the device-test session and no report has arrived defers; once B's report arrives and stats list it, the sweep is HELD", async () => {
+  const room = await seedConsultationRoom();
+  const sessionB = stageIdleCallWithLaggingStats(room);
+  const now = new Date(room.endsAt.getTime() + 75 * MIN);
+
+  expect(
+    await settleOccurrenceAttendance(await settleTarget(room), { now }),
+  ).toEqual({ kind: "not-final" });
+  expect(await settledAt(room.meetingId)).toBeNull();
+
+  sessionB.hiddenFromStats = false;
+  await announceReports(room.occurrenceId);
+  expect(
+    await decideSlotOutcome(await loadSlot(room.occurrenceId), {
+      now,
+      outages: [],
+    }),
+  ).toMatchObject({ kind: "written", verdict: { outcome: "HELD" } });
+});
+
+it("a ready report for the device test never stands in for a session our webhooks saw that stats do not list yet", async () => {
+  const room = await seedConsultationRoom();
+  stageIdleCallWithLaggingStats(room);
+  await prisma.meeting.update({
+    where: { id: room.meetingId },
+    data: { streamReportReadySessionIds: ["A"], lastStreamSessionId: "B" },
+  });
+
+  expect(
+    await settleOccurrenceAttendance(await settleTarget(room), {
+      now: new Date(room.endsAt.getTime() + 75 * MIN),
+    }),
+  ).toEqual({ kind: "not-final" });
+  expect(await settledAt(room.meetingId)).toBeNull();
+});
+
+it("past the fallback a session with no report settles only when our webhooks corroborate the stats list", async () => {
+  const room = await seedConsultationRoom(10);
+  const sessionB = stageIdleCallWithLaggingStats(room);
+  sessionB.hiddenFromStats = false;
+  const late = new Date(room.endsAt.getTime() + 7 * HOUR);
+
+  // Nothing but stats names a session: completeness cannot be shown.
+  expect(
+    await settleOccurrenceAttendance(await settleTarget(room), { now: late }),
+  ).toEqual({ kind: "not-final" });
+
+  await prisma.meeting.update({
+    where: { id: room.meetingId },
+    data: { lastStreamSessionId: "B" },
+  });
+  expect(
+    await decideSlotOutcome(await loadSlot(room.occurrenceId), {
+      now: late,
+      outages: [],
+    }),
+  ).toMatchObject({ kind: "written", verdict: { outcome: "HELD" } });
+});
+
+it("a pre-start end's reserved replacement call, never created at Stream, does not hide the original call: nobody returned, so the session is NOBODY_JOINED", async () => {
+  const room = await seedConsultationRoom(80);
+  await prisma.meeting.update({
+    where: { id: room.meetingId },
+    data: { endedAt: null, endedReason: null },
+  });
+  // The original call exists and never had a session; the rotation reserves an id nothing created.
+  fakeStream.calls.set(room.streamCallId, {
+    occurrenceId: room.occurrenceId,
+    sessions: [],
+  });
+  const ended = await recordMeetingEndedSynchronously(
+    room.streamCallId,
+    new Date(room.startsAt.getTime() - 5 * MIN),
+  );
+  expect(ended).toMatchObject({ kind: "recorded", endedReason: "ended_early" });
+
+  expect(
+    await decideSlotOutcome(await loadSlot(room.occurrenceId), {
+      now: new Date(room.endsAt.getTime() + 73 * HOUR),
+      outages: [],
+    }),
+  ).toMatchObject({
+    kind: "written",
+    verdict: { outcome: "NOBODY_JOINED" },
+  });
+});
+
+it("a complete snapshot that commits while the unreadable park waits on the session wins: the session stays SCHEDULED for the next pass", async () => {
+  const room = await seedConsultationRoom(80);
+  const slot = await loadSlot(room.occurrenceId);
+  fakeStream.failStatus = 503;
+  let park: Promise<unknown> | undefined;
+  let snapshot: Promise<unknown> | undefined;
+  await prisma.$transaction(
+    async (tx) => {
+      // Something else holds the session row, as a concurrent writer would.
+      await tx.$executeRaw`SELECT 1 FROM "AppointmentOccurrence" WHERE id = ${room.occurrenceId} FOR NO KEY UPDATE`;
+      park = decideSlotOutcome(slot, {
+        now: new Date(room.endsAt.getTime() + 80 * HOUR),
+        outages: [],
+      });
+      await waitFor(async () => (await lockWaiters()) >= 1);
+      // Ops stores a complete two-person record on another connection meanwhile.
+      snapshot = prisma.$transaction([
+        prisma.meeting.update({
+          where: { id: room.meetingId },
+          data: { attendanceSettledAt: new Date() },
+        }),
+        prisma.meetingPresence.createMany({
+          data: [room.hostId, room.learnerId].map((userId) => ({
+            meetingId: room.meetingId,
+            appointmentOccurrenceId: room.occurrenceId,
+            userId,
+            userSessionId: `${userId}-device`,
+            streamCallId: room.streamCallId,
+            joinedAt: room.startsAt,
+            leftAt: room.endsAt,
+          })),
+        }),
+      ]);
+      await snapshot;
+    },
+    { timeout: 20_000 },
+  );
+  await park;
+
+  expect(
+    await prisma.appointmentOccurrence.findUniqueOrThrow({
+      where: { id: room.occurrenceId },
+      select: { completionStatus: true, outcome: true },
+    }),
+  ).toEqual({ completionStatus: "SCHEDULED", outcome: null });
 });

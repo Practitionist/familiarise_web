@@ -15,8 +15,12 @@ import { readSettledAttendance } from "@/lib/stream/call-presence";
 /** How long past the booked end a session Stream cannot answer for waits before the sweep parks it UNVERIFIED for ops. */
 export const ATTENDANCE_SETTLE_WAIT_MS = 72 * 60 * 60 * 1000;
 
-/** An empty session list is believed only this long past the booked end; right after a start it may be transient. */
-export const EMPTY_RECORD_TRUSTED_AFTER_MS = 60 * 60 * 1000;
+/**
+ * How long past the room end a session with no `call.stats_report_ready` is
+ * read anyway, if our webhooks or the call corroborate the session list; an
+ * empty record is believed only from then too.
+ */
+export const REPORT_READY_FALLBACK_MS = 6 * 60 * 60 * 1000;
 
 export interface SettleTarget {
   occurrenceId: string;
@@ -26,6 +30,9 @@ export interface SettleTarget {
     streamCallId: string;
     extendedSeconds: number;
     attendanceSettledAt: Date | null;
+    endedReason: string | null;
+    streamReportReadySessionIds: string[];
+    lastStreamSessionId: string | null;
   };
 }
 
@@ -78,15 +85,24 @@ export async function settleOccurrenceAttendance(
   }
   if (now < attendanceReadableAt(target)) return { kind: "too-early" };
 
+  const fallback =
+    now.getTime() >=
+    resolveRoomEndsAt(target.endsAt, meeting.extendedSeconds).getTime() +
+      REPORT_READY_FALLBACK_MS;
   const read = await readSettledAttendance({
     occurrenceId: target.occurrenceId,
     currentCallId: meeting.streamCallId,
+    readySessionIds: meeting.streamReportReadySessionIds,
+    lastKnownSessionId: meeting.lastStreamSessionId,
+    fallback,
+    // A pre-start end reserves a replacement id that no join may have created yet.
+    currentCallReserved: meeting.endedReason === "ended_early",
     failures: opts.failures,
     deadlineAt: opts.deadlineAt,
   });
   if (read.kind === "no-session") {
-    if (now.getTime() < target.endsAt.getTime() + EMPTY_RECORD_TRUSTED_AFTER_MS)
-      return { kind: "too-early" };
+    // No session can announce a ready report, so an empty record waits for the fallback.
+    if (!fallback) return { kind: "too-early" };
   } else if (read.kind !== "read") {
     return settledMeanwhile(meeting.id, read.kind);
   }
@@ -165,4 +181,7 @@ export const SETTLE_MEETING_SELECT = {
   streamCallId: true,
   extendedSeconds: true,
   attendanceSettledAt: true,
+  endedReason: true,
+  streamReportReadySessionIds: true,
+  lastStreamSessionId: true,
 } as const;

@@ -14,7 +14,11 @@ import {
   recordedEndHolds,
   type MeetingEndReason,
 } from "@/lib/meetings/end-reasons";
-import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
+import {
+  parseSlotIdFromCallId,
+  STREAM_CALL_TYPE,
+  toCallId,
+} from "@/lib/stream/call-cid";
 import { streamLogger } from "@/lib/stream-logger";
 import {
   getStreamVideoClient,
@@ -26,6 +30,7 @@ export interface StreamSessionEndedEvent {
   call_cid: string;
   type: "call.session_ended";
   created_at: string;
+  session_id?: string;
   call?: {
     id: string;
     type: string;
@@ -42,6 +47,7 @@ export interface StreamCallEndedEvent {
     type: string;
     created_by_user_id?: string | null;
     ended_by_user_id?: string | null;
+    session?: { id: string } | null;
   };
   user?: {
     id: string;
@@ -55,6 +61,14 @@ export interface StreamSessionParticipantJoinedEvent {
   call_cid: string;
   type: "call.session_participant_joined";
   created_at: string;
+  session_id?: string;
+}
+
+export interface StreamStatsReportReadyEvent {
+  call_cid: string;
+  type: "call.stats_report_ready" | "call.report_ready";
+  created_at: string;
+  session_id: string;
 }
 
 export function extractEndedByUserId(
@@ -116,7 +130,12 @@ export async function handleSessionEnded(
     const slotEndsAt = meeting.occurrence.endsAt;
     const bookedTimeIsOver = !slotEndsAt || endedAt >= new Date(slotEndsAt);
 
-    const stamped = await stampEnd(meeting, endedAt, "session_timeout");
+    const stamped = await stampEnd(
+      meeting,
+      endedAt,
+      "session_timeout",
+      event.session_id ?? null,
+    );
     if (!stamped) return;
 
     if (!bookedTimeIsOver) {
@@ -201,7 +220,15 @@ export async function handleCallEnded(
       return;
     }
 
-    if (!(await stampEnd(meeting, endedAt, endedReason))) return;
+    if (
+      !(await stampEnd(
+        meeting,
+        endedAt,
+        endedReason,
+        event.call?.session?.id ?? null,
+      ))
+    )
+      return;
 
     const slotStartTime = meeting.occurrence.startsAt;
     if (slotStartTime) {
@@ -318,6 +345,7 @@ function casEnd(
   expected: RecordedEnd,
   endedAt: Date,
   endedReason: MeetingEndReason,
+  sessionId: string | null,
 ) {
   return prisma.meeting.updateMany({
     where: {
@@ -325,8 +353,17 @@ function casEnd(
       streamCallId: meeting.streamCallId,
       endedAt: expected.endedAt,
       endedReason: expected.endedReason,
+      // A join newer than a non-deliberate end means a newer session holds the room.
+      ...(!END_REASON_POLICY[endedReason].deliberate && {
+        OR: [{ lastJoinedAt: null }, { lastJoinedAt: { lte: endedAt } }],
+      }),
     },
-    data: { endedAt, endedReason, isRecording: false },
+    data: {
+      endedAt,
+      endedReason,
+      isRecording: false,
+      ...(sessionId ? { lastStreamSessionId: sessionId } : {}),
+    },
   });
 }
 
@@ -334,8 +371,15 @@ async function stampEnd(
   meeting: { id: string; streamCallId: string } & RecordedEnd,
   endedAt: Date,
   endedReason: MeetingEndReason,
+  sessionId: string | null = null,
 ): Promise<boolean> {
-  let { count } = await casEnd(meeting, meeting, endedAt, endedReason);
+  let { count } = await casEnd(
+    meeting,
+    meeting,
+    endedAt,
+    endedReason,
+    sessionId,
+  );
   if (count === 0) {
     // Another end committed first: re-decide against it, on the same call only.
     const room = await prisma.meeting.findUnique({
@@ -346,7 +390,13 @@ async function stampEnd(
       room?.streamCallId === meeting.streamCallId &&
       endSupersedes(room, endedReason, endedAt)
     ) {
-      ({ count } = await casEnd(meeting, room, endedAt, endedReason));
+      ({ count } = await casEnd(
+        meeting,
+        room,
+        endedAt,
+        endedReason,
+        sessionId,
+      ));
     }
   }
   if (count === 0) {
@@ -385,6 +435,17 @@ export async function handleSessionParticipantJoined(
 ): Promise<void> {
   const streamCallId = toCallId(event.call_cid);
   const joinedAt = new Date(event.created_at);
+  // The watermark moves first, so an older non-deliberate end can no longer stamp this call.
+  await prisma.meeting.updateMany({
+    where: {
+      streamCallId,
+      OR: [{ lastJoinedAt: null }, { lastJoinedAt: { lt: joinedAt } }],
+    },
+    data: {
+      lastJoinedAt: joinedAt,
+      ...(event.session_id ? { lastStreamSessionId: event.session_id } : {}),
+    },
+  });
   const { count } = await prisma.meeting.updateMany({
     where: {
       streamCallId,
@@ -398,4 +459,27 @@ export async function handleSessionParticipantJoined(
       streamCallId,
     });
   }
+}
+
+/** Records that Stream announced one session's stats report ready; attendance for it settles only after this. */
+export async function handleStatsReportReady(
+  event: StreamStatsReportReadyEvent,
+): Promise<void> {
+  const callId = toCallId(event.call_cid);
+  // A rotated-away call's report belongs to the same occurrence's room.
+  const occurrenceId = parseSlotIdFromCallId(callId);
+  const { count } = await prisma.meeting.updateMany({
+    where: {
+      OR: [
+        { streamCallId: callId },
+        ...(occurrenceId ? [{ appointmentOccurrenceId: occurrenceId }] : []),
+      ],
+      NOT: { streamReportReadySessionIds: { has: event.session_id } },
+    },
+    data: { streamReportReadySessionIds: { push: event.session_id } },
+  });
+  streamLogger.info("Stream stats report ready", {
+    streamCallId: callId,
+    recorded: count > 0,
+  });
 }

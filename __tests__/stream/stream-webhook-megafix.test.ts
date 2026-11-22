@@ -355,7 +355,8 @@ describe("Stream Webhook Megafix Regression Suite", () => {
 
   describe("3. Exact handled-event subscription & wildcard drift pruning", () => {
     it("ignores legacy webhook_events wildcard when webhook_url is empty, and clears active legacy webhook_url on apply", async () => {
-      expect(DESIRED_EVENT_TYPES).toHaveLength(8);
+      expect(DESIRED_EVENT_TYPES).toHaveLength(9);
+      expect(DESIRED_EVENT_TYPES).toContain("call.stats_report_ready");
       expect(DESIRED_EVENT_TYPES).toEqual(HANDLED_EVENT_TYPES);
       expect(DESIRED_EVENT_TYPES).not.toContain("call.session_started");
 

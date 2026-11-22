@@ -336,9 +336,10 @@ sequenceDiagram
 | `call.session_ended`              | A participant's session ended        | `handleSessionEnded()`             |
 | `call.ended`                      | The entire call has ended            | `handleCallEnded()`                |
 | `call.session_participant_joined` | A participant joined the call        | `handleSessionParticipantJoined()` |
+| `call.stats_report_ready`         | A session's stats report is ready    | `handleStatsReportReady()`         |
 | `user.unread_message_reminder`    | A user has unread chat messages      | `handleUnreadMessageReminder()`    |
 
-`DESIRED_EVENT_TYPES` (`lib/stream/webhook-events.ts`) contains exactly the eight handled events above. The seven `call.*` events ride the `video` hook and `user.unread_message_reminder` rides a separate `chat` hook, because Stream scopes each V2 event hook to one product; both hooks deliver to the same route, which verifies every delivery with the same `X-Signature` HMAC. The reminder builds the chat unread digest described in [04. Chat Implementation](./04-chat-implementation.md#unread-message-digest). `call.session_started` is excluded from webhook subscriptions (`scripts/stream/ensure-webhook-subscription.ts` prunes extra events, empty-array wildcards `[]`, `"*"` wildcards on V2 hooks, and active legacy V1 `webhook_url` wildcards as drift) and acknowledged with `ignored: true` without writing a database receipt if delivered.
+`DESIRED_EVENT_TYPES` (`lib/stream/webhook-events.ts`) contains exactly the nine handled events above. The eight `call.*` events ride the `video` hook and `user.unread_message_reminder` rides a separate `chat` hook, because Stream scopes each V2 event hook to one product; both hooks deliver to the same route, which verifies every delivery with the same `X-Signature` HMAC. The reminder builds the chat unread digest described in [04. Chat Implementation](./04-chat-implementation.md#unread-message-digest). `call.session_started` is excluded from webhook subscriptions (`scripts/stream/ensure-webhook-subscription.ts` prunes extra events, empty-array wildcards `[]`, `"*"` wildcards on V2 hooks, and active legacy V1 `webhook_url` wildcards as drift) and acknowledged with `ignored: true` without writing a database receipt if delivered.
 
 ### End Events, Asymmetric Webhook Lookup & `endedAt` Convergence
 

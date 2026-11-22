@@ -20,6 +20,8 @@ export const HANDLED_EVENT_TYPES = [
   "call.ended",
   // Room state only: a join after a rejoinable timeout reopens the room. Attendance comes from Stream's settled record.
   "call.session_participant_joined",
+  // Stream's finality signal for one session's attendance; the settle step waits for it.
+  "call.stats_report_ready",
   // #1270 — `user.flagged` / `message.flagged` were removed deliberately, and
   // NOT replaced with a chat hook. Three reasons: the in-app report button
   // already writes the ModerationReport itself via POST /api/report, so the
@@ -39,6 +41,16 @@ export function isHandledEventType(t: string): t is HandledEventType {
 }
 
 export const DESIRED_EVENT_TYPES = [...HANDLED_EVENT_TYPES] as const;
+
+/** Stream subscribes to `call.stats_report_ready` but documents its payload `type` as `call.report_ready`; both mean the one handled event. */
+const STREAM_EVENT_TYPE_ALIASES: Readonly<Record<string, HandledEventType>> = {
+  "call.report_ready": "call.stats_report_ready",
+};
+
+/** The handled name for a delivered `type`, so an alias is stored, deduplicated and re-driven as the event it names. */
+export function canonicalStreamEventType(type: string): string {
+  return STREAM_EVENT_TYPE_ALIASES[type] ?? type;
+}
 
 export type DesiredEventType = (typeof DESIRED_EVENT_TYPES)[number];
 

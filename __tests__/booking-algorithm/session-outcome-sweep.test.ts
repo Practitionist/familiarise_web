@@ -58,6 +58,9 @@ jest.mock("../../lib/prisma", () => {
     failedEmail: { create: jest.fn().mockResolvedValue({ id: "fe-1" }) },
     emailSuppression: { findMany: jest.fn().mockResolvedValue([]) },
   };
+  // The unreadable park locks the rows and re-reads the stamp: still unsettled here.
+  client.$executeRaw = jest.fn().mockResolvedValue(1);
+  client.$queryRaw = jest.fn().mockResolvedValue([{ settled: null }]);
   client.$transaction = jest.fn((fn: (tx: unknown) => unknown) => fn(client));
   return { __esModule: true, default: client };
 });

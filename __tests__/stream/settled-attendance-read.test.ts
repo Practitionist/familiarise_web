@@ -89,10 +89,25 @@ const stay = (user: string, from: string, to: string): Row => ({
   left_at: `2026-11-23T${to}:00Z`,
 });
 
-const read = () =>
+/** Every session's report announced ready, as Stream does once its data is final. */
+const READY: {
+  readySessionIds: string[];
+  lastKnownSessionId: string | null;
+  fallback: boolean;
+  currentCallReserved: boolean;
+} = {
+  readySessionIds: ["s1", "s2", "s3"],
+  lastKnownSessionId: null,
+  fallback: false,
+  currentCallReserved: false,
+};
+
+const read = (overrides: Partial<typeof READY> = {}) =>
   readSettledAttendance({
     occurrenceId: "occ-1",
     currentCallId: "occurrence-occ-1-r2",
+    ...READY,
+    ...overrides,
   });
 
 beforeEach(() => {
@@ -176,7 +191,7 @@ it.each([
 
 it("an occurrence no call of which ever had a session is no-session, not an empty read", async () => {
   stream.sessions = new Map();
-  expect(await read()).toEqual({ kind: "no-session" });
+  expect(await read({ readySessionIds: [] })).toEqual({ kind: "no-session" });
 });
 
 const DAY = 86_400_000;
@@ -199,7 +214,7 @@ it.each([
       ],
     ]);
     stream.failParticipants = { status: 404 };
-    expect(await read()).toEqual({ kind });
+    expect(await read({ readySessionIds: ["s1", "s3"] })).toEqual({ kind });
   },
 );
 
@@ -225,8 +240,30 @@ it("a read past its deadline is unavailable and stops asking Stream", async () =
     await readSettledAttendance({
       occurrenceId: "occ-1",
       currentCallId: "occurrence-occ-1-r2",
+      ...READY,
       deadlineAt: started + 50,
     }),
   ).toEqual({ kind: "unavailable" });
   expect(Date.now() - started).toBeLessThan(2_000);
+});
+
+it("a session whose report is not announced is not final until the fallback, and then only when our webhooks corroborate the list", async () => {
+  const unannounced = { readySessionIds: ["s1", "s3"] };
+  expect(await read(unannounced)).toEqual({ kind: "not-final" });
+  expect(await read({ ...unannounced, fallback: true })).toEqual({
+    kind: "not-final",
+  });
+  expect(
+    (await read({ ...unannounced, fallback: true, lastKnownSessionId: "s2" }))
+      .kind,
+  ).toBe("read");
+});
+
+it("a session announced or seen elsewhere that stats do not list keeps the record not final", async () => {
+  expect(await read({ lastKnownSessionId: "s9" })).toEqual({
+    kind: "not-final",
+  });
+  expect(
+    await read({ readySessionIds: [...READY.readySessionIds, "s9"] }),
+  ).toEqual({ kind: "not-final" });
 });

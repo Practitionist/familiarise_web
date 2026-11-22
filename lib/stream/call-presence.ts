@@ -1,8 +1,9 @@
 /**
  * Stream's own record of who was in an occurrence's calls, read once the calls
- * have ended. Every call id the occurrence used (the current one plus each
- * rotation Stream lists under `custom.occurrenceId`) and every session of each
- * call is read, and the answer is typed: a failure is never an empty list.
+ * have ended and Stream has announced each session's report ready. Every call
+ * id the occurrence used (the current one plus each rotation Stream lists under
+ * `custom.occurrenceId`) and every session of each call is read, and the answer
+ * is typed: a failure is never an empty list.
  */
 import type { RunFailureReporter } from "@/lib/observability/run-failures";
 import {
@@ -25,7 +26,8 @@ export interface SettledStreamInterval {
 /**
  * - `read`: every session of every call has ended and was read in full.
  * - `no-session`: Stream affirms no call of the occurrence ever had a session.
- * - `not-final`: a session is still live, or Stream's counts disagree with the rows.
+ * - `not-final`: a session is still live, its report is not announced ready,
+ *   a session known elsewhere is missing from the list, or the counts disagree.
  * - `expired`: Stream no longer holds the detail (HTTP 404 on a session past its 90 days).
  * - `unavailable`: Stream could not be asked or did not answer.
  */
@@ -106,6 +108,8 @@ async function listOccurrenceCalls(
   reader: Reader,
   occurrenceId: string,
   currentCallId: string,
+  /** The room's call id is a pre-start replacement no join has provisioned yet. */
+  currentCallReserved: boolean,
 ): Promise<OccurrenceCall[]> {
   const page = await ask(reader, () =>
     reader.client.video.queryCalls({
@@ -124,10 +128,14 @@ async function listOccurrenceCalls(
   const current = toCallId(currentCallId);
   if (!calls.has(current)) {
     // The room's own call must be accounted for even when the listing missed it.
-    const { call } = await ask(reader, () =>
+    const fetched = await ask(reader, () =>
       reader.client.video.call(STREAM_CALL_TYPE, current).get(),
-    );
-    calls.set(current, toOccurrenceCall(call));
+    ).catch((error: unknown) => {
+      // A reserved replacement was never created, so it holds no session; any other 404 stays doubt.
+      if (currentCallReserved && streamHttpStatus(error) === 404) return null;
+      throw error;
+    });
+    if (fetched) calls.set(current, toOccurrenceCall(fetched.call));
   }
   return [...calls.values()];
 }
@@ -226,12 +234,22 @@ async function readSessionParticipants(
 
 /**
  * Reads Stream's settled participant record for every call and session of one
- * occurrence. With `deadlineAt` (epoch ms) every request must answer by then;
- * a read that runs out of time is `unavailable` and returns nothing partial.
+ * occurrence. A session is read only once its report is announced ready
+ * (`readySessionIds`), or, with `fallback`, once the room end is long past; and
+ * every session known elsewhere (announced ready, named by the call, or seen by
+ * our room-state webhooks) must appear in session stats. With `deadlineAt`
+ * (epoch ms) every request must answer by then; a read that runs out of time
+ * is `unavailable` and returns nothing partial.
  */
 export async function readSettledAttendance(args: {
   occurrenceId: string;
   currentCallId: string;
+  readySessionIds: readonly string[];
+  /** The latest session the room-state webhooks saw on the room's call. */
+  lastKnownSessionId: string | null;
+  /** The room end is far enough past that a session with no ready announcement may be read. */
+  fallback: boolean;
+  currentCallReserved: boolean;
   failures?: RunFailureReporter;
   deadlineAt?: number;
 }): Promise<SettledAttendanceRead> {
@@ -241,31 +259,55 @@ export async function readSettledAttendance(args: {
     failures: args.failures,
     deadlineAt: args.deadlineAt,
   };
+  const ready = new Set(args.readySessionIds);
   try {
     const calls = await listOccurrenceCalls(
       reader,
       args.occurrenceId,
       args.currentCallId,
+      args.currentCallReserved,
     );
-    const intervals: SettledStreamInterval[] = [];
-    let sessions = 0;
+    const known = new Set(ready);
+    if (args.lastKnownSessionId) known.add(args.lastKnownSessionId);
+    const listedByCall = new Map<
+      string,
+      Awaited<ReturnType<typeof listCallSessions>>
+    >();
     for (const call of calls) {
       const listed = await listCallSessions(reader, call.id);
       // A session the call itself names but stats do not list yet, or one still running, is not final.
-      if (
-        call.currentSessionId &&
-        (!call.currentSessionEnded ||
-          !listed.some((s) => s.call_session_id === call.currentSessionId))
-      ) {
-        return { kind: "not-final" };
+      if (call.currentSessionId) {
+        known.add(call.currentSessionId);
+        if (!call.currentSessionEnded) return { kind: "not-final" };
       }
+      listedByCall.set(call.id, listed);
+    }
+    const listedIds = new Set(
+      [...listedByCall.values()].flat().map((s) => s.call_session_id),
+    );
+    // Stats may lag: a session we know of from any other source must be listed before the record is complete.
+    for (const id of known) {
+      if (!listedIds.has(id)) return { kind: "not-final" };
+    }
+    const corroborated =
+      args.lastKnownSessionId !== null ||
+      calls.some((call) => call.currentSessionId !== null);
+    const intervals: SettledStreamInterval[] = [];
+    for (const [callId, listed] of listedByCall) {
       for (const session of listed) {
-        sessions++;
         if (!session.call_ended_at || session.counts.live_sessions > 0) {
           return { kind: "not-final" };
         }
+        // Without its ready announcement a session is read only in the fallback, and only when
+        // our webhooks or the call itself name a session that stats list (checked above).
+        if (
+          !ready.has(session.call_session_id) &&
+          (!args.fallback || !corroborated)
+        ) {
+          return { kind: "not-final" };
+        }
         intervals.push(
-          ...(await readSessionParticipants(reader, call.id, {
+          ...(await readSessionParticipants(reader, callId, {
             id: session.call_session_id,
             endedAt: new Date(session.call_ended_at),
             counts: session.counts,
@@ -273,7 +315,7 @@ export async function readSettledAttendance(args: {
         );
       }
     }
-    return sessions === 0
+    return listedIds.size === 0
       ? { kind: "no-session" }
       : { kind: "read", intervals };
   } catch (error) {

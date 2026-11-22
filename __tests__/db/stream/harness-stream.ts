@@ -38,11 +38,17 @@ export const fakeStream = {
   failStatus: null as number | null,
   /** When set, every request hangs and never answers. */
   stall: false,
+  /** When set, `call.get()` takes its answer at once but returns it only once this settles. */
+  getGate: null as Promise<void> | null,
+  /** How many `call.get()` requests have taken their answer. */
+  gets: 0,
   requests: 0,
   reset() {
     this.calls.clear();
     this.failStatus = null;
     this.stall = false;
+    this.getGate = null;
+    this.gets = 0;
     this.requests = 0;
   },
 };
@@ -127,7 +133,10 @@ export const fakeStreamClient = {
           const call = fakeStream.calls.get(callId);
           if (!call)
             throw Object.assign(new Error("not found"), { status: 404 });
-          return { call: callResponse(callId, call) };
+          const answer = { call: callResponse(callId, call) };
+          fakeStream.gets++;
+          if (fakeStream.getGate) await fakeStream.getGate;
+          return answer;
         },
         queryCallParticipantSessions: async (req: { session: string }) => {
           await guard();

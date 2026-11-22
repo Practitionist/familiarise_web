@@ -20,9 +20,11 @@ import {
   handleSessionEnded,
   handleCallEnded,
   handleSessionParticipantJoined,
+  handleStatsReportReady,
   StreamSessionEndedEvent,
   StreamCallEndedEvent,
   StreamSessionParticipantJoinedEvent,
+  StreamStatsReportReadyEvent,
 } from "@/lib/stream/session-handlers";
 import { handleUnreadMessageReminder } from "@/lib/stream/chat/unread-digest";
 import {
@@ -143,6 +145,10 @@ const EVENT_HANDLERS = {
     STREAM_EVENT_SCHEMAS["call.session_participant_joined"],
     (e) =>
       handleSessionParticipantJoined(e as StreamSessionParticipantJoinedEvent),
+  ),
+  "call.stats_report_ready": entry(
+    STREAM_EVENT_SCHEMAS["call.stats_report_ready"],
+    (e) => handleStatsReportReady(e as StreamStatsReportReadyEvent),
   ),
   "user.unread_message_reminder": entry(
     STREAM_EVENT_SCHEMAS["user.unread_message_reminder"],
