@@ -299,10 +299,9 @@ function rawRefundReasonLabel(raw: string): string | undefined {
 /**
  * Why a payment failed, as the sentence after "did not go through".
  *
- * `payment.description` is merchant-set prose in most flows but carries a
- * gateway code (`card_declined`, …) often enough that the bell must not
- * print it raw. Code-shaped input is mapped or spaced out; prose a human
- * wrote passes through verbatim.
+ * The gateway's failure reason is either a code (`card_declined`, …) or its
+ * own customer-facing prose. Codes are mapped or spaced out; prose passes
+ * through verbatim.
  */
 const PAYMENT_FAILURE_REASON_LABEL: Record<string, string> = {
   card_declined: "your card was declined",

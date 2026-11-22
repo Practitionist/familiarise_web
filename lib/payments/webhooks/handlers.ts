@@ -1656,7 +1656,6 @@ export async function handlePaymentFailure(
         appointmentId: true,
         amount: true,
         currency: true,
-        description: true,
         expiresAt: true,
         user: { select: { email: true, name: true } },
       },
@@ -1668,7 +1667,7 @@ export async function handlePaymentFailure(
       prePayment.appointmentId
     ) {
       preRenderedFailedEmail = await preparePaymentFailedEmail(
-        prePayment,
+        { ...prePayment, failureReason },
         prisma,
       );
     }
@@ -1694,7 +1693,6 @@ export async function handlePaymentFailure(
         appointmentId: true,
         amount: true,
         currency: true,
-        description: true,
         expiresAt: true,
         user: { select: { email: true, name: true } },
         appointment: {
@@ -1813,7 +1811,7 @@ export async function handlePaymentFailure(
 
     const failedEmail = await stagePaymentFailedEmail(
       tx,
-      payment,
+      { ...payment, failureReason },
       preRenderedFailedEmail,
     );
 
