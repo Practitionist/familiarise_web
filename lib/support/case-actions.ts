@@ -32,6 +32,7 @@ import {
   isDiscountFreeBooking,
   REFUND_DOOR_SELECT,
   refundDoorRefusal,
+  type RefundDoorPayment,
   type RefundDoorRefusal,
 } from "@/lib/backoffice/refund-eligibility";
 import {
@@ -546,6 +547,30 @@ const DOOR_BLOCK_REASON: Record<RefundDoorRefusal["code"], string> = {
   REFUND_BLOCKED_BY_DISPUTE: "A gateway chargeback is active",
 };
 
+const INACTIVE_DISPUTE_STATUSES: ReadonlySet<string> = new Set(
+  DISPUTE_INACTIVE_FOR_GATING,
+);
+
+/** What stops Support refunding a payment: the refund door's refusal, then a live chargeback, which Support waits out on every rail. */
+function supportRefundBlocker(
+  payment: RefundDoorPayment,
+): { code: string; message: string; reason: string } | null {
+  const refusal = refundDoorRefusal(payment);
+  if (refusal) return { ...refusal, reason: DOOR_BLOCK_REASON[refusal.code] };
+  if (
+    payment.disputes.some(
+      (dispute) => !INACTIVE_DISPUTE_STATUSES.has(dispute.status),
+    )
+  )
+    return {
+      code: "REFUND_BLOCKED_BY_DISPUTE",
+      message:
+        "This payment has an active chargeback. Wait for its outcome before recommending a refund.",
+      reason: DOOR_BLOCK_REASON.REFUND_BLOCKED_BY_DISPUTE,
+    };
+  return null;
+}
+
 /** The preview's line for a 100% discount booking, which an approval ends at ₹0. */
 const DISCOUNT_FREE_NOTE =
   "This booking was free with a discount code; ending it returns no money but reverses the expert's earnings.";
@@ -612,7 +637,7 @@ export async function quoteCaseRefund(
     .filter((other) => !isLiveRefund(other.refund))
     .reduce((sum, other) => sum + Number(other.amountPaise), 0);
   let blocked: { code: string; reason: string } | null = null;
-  const refusal = refundDoorRefusal(payment);
+  const blocker = supportRefundBlocker(payment);
   if (
     !(await removalCaseRefundsPaymentTx(
       tx,
@@ -621,18 +646,7 @@ export async function quoteCaseRefund(
     ))
   )
     blocked = AFTER_REMOVAL_BLOCK;
-  else if (refusal)
-    blocked = { code: refusal.code, reason: DOOR_BLOCK_REASON[refusal.code] };
-  // Support also waits out a dispute on the in-ledger rails, which the door does not.
-  else if (
-    payment.disputes.some(
-      (dispute) => !DISPUTE_INACTIVE_FOR_GATING.includes(dispute.status),
-    )
-  )
-    blocked = {
-      code: "REFUND_BLOCKED_BY_DISPUTE",
-      reason: "A gateway chargeback is active",
-    };
+  else if (blocker) blocked = { code: blocker.code, reason: blocker.reason };
   return {
     refundablePaise: Math.max(
       0,
@@ -1294,10 +1308,17 @@ async function recommendRefundTx(
 ) {
   const linked = await linkedPayment(tx, caseId, input.paymentId);
   await assertRemovalOrder(tx, caseId, input.paymentId);
-  // The refund door's own answer, so a recommendation is never opened that approval must refuse.
-  const refusal = refundDoorRefusal(linked);
-  if (refusal) throw new CaseActionError(refusal.code, refusal.message);
+  // The quote's own blockers, so a recommendation is never opened that approval must refuse.
+  const blocker = supportRefundBlocker(linked);
+  if (blocker) throw new CaseActionError(blocker.code, blocker.message);
   const creditFunded = linked.paymentIntent.startsWith("free_");
+  // The credits rail returns a booking whole, so approving it always ends the seat.
+  if (creditFunded && !input.releaseSeat)
+    throw new CaseActionError(
+      "SEAT_RELEASE_REQUIRED",
+      "A booking paid with credits is returned whole, so approving this refund ends the booking. Tick release seat to continue.",
+      400,
+    );
   if (
     (creditFunded && input.amountPaise !== 0) ||
     (!creditFunded && input.amountPaise <= 0)

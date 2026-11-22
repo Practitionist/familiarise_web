@@ -764,6 +764,7 @@ describe("refund execution correctness", () => {
     mockStore.recommendations = [
       recommendation({
         amountPaise: 0,
+        releaseSeat: true,
         payment: { paymentIntent: "free_discount" },
       }),
     ];
@@ -786,6 +787,56 @@ describe("refund execution correctness", () => {
     expect(refundBookingPayment).toHaveBeenCalledWith(
       expect.not.objectContaining({ amountPaise: expect.anything() }),
     );
+    expect(refundBookingPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ keepSeat: false }),
+    );
+  });
+
+  it("refuses a credit-funded recommendation that would keep the seat, since the credits rail ends it", async () => {
+    mockStore.payment = {
+      ...mockStore.payment,
+      amount: 0,
+      originalAmount: 500_000,
+      paymentIntent: "free_discount",
+      creditUsages: [],
+    };
+    mockStore.recommendations = [];
+
+    await expect(
+      performCaseAction("case-1", staff, {
+        action: "RECOMMEND_REFUND" as const,
+        clientActionId: "rec-keep",
+        expectedUpdatedAt: caseUpdatedAt.toISOString(),
+        paymentId: "pay-1",
+        amountPaise: 0,
+        reason: "Session not delivered",
+        releaseSeat: false,
+      }),
+    ).rejects.toMatchObject({ code: "SEAT_RELEASE_REQUIRED", status: 400 });
+    expect(db.supportFinancialRecommendation.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses to recommend an org-funded refund while a chargeback is live, as the preview blocks it", async () => {
+    // The refund door gates disputes on the gateway rail only; Support waits them out on every rail.
+    mockStore.payment = {
+      ...mockStore.payment,
+      paymentIntent: "org_wallet_1_a",
+      disputes: [{ amountPaise: 1_000_000, status: "OPEN" }],
+    };
+    mockStore.recommendations = [];
+
+    await expect(
+      performCaseAction("case-1", staff, {
+        action: "RECOMMEND_REFUND" as const,
+        clientActionId: "rec-disputed",
+        expectedUpdatedAt: caseUpdatedAt.toISOString(),
+        paymentId: "pay-1",
+        amountPaise: 100_000,
+        reason: "Late start",
+        releaseSeat: false,
+      }),
+    ).rejects.toMatchObject({ code: "REFUND_BLOCKED_BY_DISPUTE" });
+    expect(db.supportFinancialRecommendation.create).not.toHaveBeenCalled();
   });
 
   it("refuses to recommend ending a 100% discount booking Ops already ended at ₹0", async () => {

@@ -306,6 +306,12 @@ async function refundBookingPaymentOnRail(
         "INVALID_AMOUNT",
       );
     }
+    if (input.keepSeat === true) {
+      throw new RefundValidationError(
+        `Payment ${input.paymentId} is credit-funded; returning it ends the booking, so the seat cannot be kept`,
+        "INVALID_AMOUNT",
+      );
+    }
     // The credits rail always returns everything and stamps the seat REFUNDED in its transaction, so a replay ends it too.
     let generation = null as Date | null;
     const keyed = await withDedupe(input, "CREDITS", async () => {

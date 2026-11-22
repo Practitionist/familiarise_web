@@ -466,6 +466,29 @@ describe("refundBookingPayment — free_ credit rail (#1161)", () => {
       refundBookingPayment({ paymentId: PAYMENT_ID, reason: "cancellation" }),
     ).resolves.toMatchObject({ rail: "CREDITS" });
     expect(tx.refund.create).toHaveBeenCalledTimes(1);
+    // The discount spent no credit, but its booking journal still reverses and the seat ends.
+    expect(mockPostLedgerTxn).toHaveBeenCalledTimes(1);
+    expect(tx.appointmentParticipant.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: "REFUNDED" }),
+      }),
+    );
+  });
+
+  it("refuses to keep the seat: returning a credit booking ends it", async () => {
+    creditPayment({});
+
+    await expect(
+      refundBookingPayment({
+        paymentId: PAYMENT_ID,
+        reason: "support refund",
+        keepSeat: true,
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_AMOUNT" });
+    expect(tx.refund.create).not.toHaveBeenCalled();
+    expect(tx.appointmentParticipant.updateMany).not.toHaveBeenCalled();
+    // The refusal came before the rail read the payment a second time.
+    mockPaymentFindUnique.mockReset();
   });
 
   it("skips the ledger settlement when no earnings rows exist — there is no journal to invert", async () => {
