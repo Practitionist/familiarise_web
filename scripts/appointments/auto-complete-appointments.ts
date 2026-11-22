@@ -1258,13 +1258,15 @@ async function drainRounds(
     maxParents: number;
     maxSlotOutcomes: number;
     pastDeadline: () => boolean;
+    slotsPastDeadline: () => boolean;
   },
   slotRun: SlotRun,
   parents: ParentPassState[],
   allErrors: string[],
   classEnd: ClassEndSettlement,
 ): Promise<number> {
-  const { maxParents, maxSlotOutcomes, pastDeadline } = bites;
+  const { maxParents, maxSlotOutcomes, pastDeadline, slotsPastDeadline } =
+    bites;
   const slotSeen: string[] = [];
   let slotsOpen = true;
   let rounds = 0;
@@ -1275,12 +1277,13 @@ async function drainRounds(
       const bite = await completeIndividualSlots(
         maxSlotOutcomes,
         slotSeen,
-        pastDeadline,
+        slotsPastDeadline,
         slotRun,
       );
       allErrors.push(...bite.errors);
       slotSeen.push(...bite.read);
-      slotsOpen = bite.read.length === maxSlotOutcomes;
+      // Past its share the slot pass closes, so the parent passes get the rest; unread sessions wait for the next run.
+      slotsOpen = bite.read.length === maxSlotOutcomes && !slotsPastDeadline();
     }
     for (const pass of parents) {
       if (!startable(pass)) continue;
@@ -1324,6 +1327,8 @@ export async function autoCompleteAppointments(opts?: {
     pastDeadline: startDeadline(startedAt),
     // A class's commit holds every seat's stamps, so none starts after half the start budget.
     classesPastDeadline: startDeadlineShare(0.5, startedAt),
+    // Each session may spend several Stream reads settling, so sessions stop at half the budget too.
+    slotsPastDeadline: startDeadlineShare(0.5, startedAt),
   };
   return withCronLock(
     "auto-complete-appointments",
@@ -1339,9 +1344,10 @@ async function autoCompleteAppointmentsUnlocked(
   deadlines: {
     pastDeadline: () => boolean;
     classesPastDeadline: () => boolean;
+    slotsPastDeadline: () => boolean;
   },
 ): Promise<AutoCompleteResult> {
-  const { pastDeadline, classesPastDeadline } = deadlines;
+  const { pastDeadline, classesPastDeadline, slotsPastDeadline } = deadlines;
   const allErrors: string[] = [];
 
   console.log("🔄 Starting auto-complete appointments scan...");
@@ -1369,7 +1375,7 @@ async function autoCompleteAppointmentsUnlocked(
   let rounds = 0;
   try {
     rounds = await drainRounds(
-      { maxParents, maxSlotOutcomes, pastDeadline },
+      { maxParents, maxSlotOutcomes, pastDeadline, slotsPastDeadline },
       slotRun,
       parents,
       allErrors,

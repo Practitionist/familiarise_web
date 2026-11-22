@@ -49,70 +49,123 @@ class Expired extends Error {}
 const toDate = (value: Date | string | undefined | null): Date | null =>
   value ? new Date(value) : null;
 
-type VideoClient = ReturnType<typeof getStreamVideoClient>;
+/** One read's Stream client, run reporter and the instant by which every request must have answered. */
+interface Reader {
+  client: ReturnType<typeof getStreamVideoClient>;
+  failures?: RunFailureReporter;
+  deadlineAt?: number;
+}
 
-async function listOccurrenceCallIds(
-  client: VideoClient,
+class DeadlineExceeded extends Error {}
+
+/** One Stream request through the breaker, abandoned once the read's deadline passes. */
+async function ask<T>(reader: Reader, op: () => Promise<T>): Promise<T> {
+  if (reader.deadlineAt === undefined) {
+    return withStreamCircuitBreaker(op, undefined, reader.failures);
+  }
+  const remaining = reader.deadlineAt - Date.now();
+  if (remaining <= 0) throw new DeadlineExceeded();
+  const request = withStreamCircuitBreaker(op, undefined, reader.failures);
+  // A request that answers after the deadline is dropped, not reported as unhandled.
+  request.catch(() => undefined);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expiry = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new DeadlineExceeded()), remaining);
+  });
+  return Promise.race([request, expiry]).finally(() => clearTimeout(timer));
+}
+
+/** The next page's cursor; a cursor seen before means the listing is looping, so the read is not final. */
+function nextCursor(next: string | undefined, seen: Set<string>) {
+  if (!next) return undefined;
+  if (seen.has(next)) throw new NotFinal("cursor repeated");
+  seen.add(next);
+  return next;
+}
+
+/** A call the occurrence used, with the session Stream names as its current one (none once the call is idle). */
+interface OccurrenceCall {
+  id: string;
+  currentSessionId: string | null;
+  currentSessionEnded: boolean;
+}
+
+type CallFields = {
+  id: string;
+  current_session_id?: string;
+  session?: { ended_at?: Date | string | null } | null;
+};
+
+const toOccurrenceCall = (call: CallFields): OccurrenceCall => ({
+  id: call.id,
+  currentSessionId: call.current_session_id || null,
+  currentSessionEnded: Boolean(call.session?.ended_at),
+});
+
+async function listOccurrenceCalls(
+  reader: Reader,
   occurrenceId: string,
   currentCallId: string,
-  failures?: RunFailureReporter,
-): Promise<string[]> {
-  const page = await withStreamCircuitBreaker(
-    () =>
-      client.video.queryCalls({
-        filter_conditions: { "custom.occurrenceId": { $eq: occurrenceId } },
-        limit: OCCURRENCE_CALLS_PAGE,
-      }),
-    undefined,
-    failures,
+): Promise<OccurrenceCall[]> {
+  const page = await ask(reader, () =>
+    reader.client.video.queryCalls({
+      filter_conditions: { "custom.occurrenceId": { $eq: occurrenceId } },
+      limit: OCCURRENCE_CALLS_PAGE,
+    }),
   );
   // Stream refuses the queryCalls cursor, so a second page means the list is not complete.
   if (page.next) throw new Error("more calls than one page");
-  const ids = new Set([toCallId(currentCallId)]);
+  const calls = new Map<string, OccurrenceCall>();
   for (const entry of page.calls) {
-    if (entry.call.type === STREAM_CALL_TYPE) ids.add(entry.call.id);
+    if (entry.call.type === STREAM_CALL_TYPE) {
+      calls.set(entry.call.id, toOccurrenceCall(entry.call));
+    }
   }
-  return [...ids];
+  const current = toCallId(currentCallId);
+  if (!calls.has(current)) {
+    // The room's own call must be accounted for even when the listing missed it.
+    const { call } = await ask(reader, () =>
+      reader.client.video.call(STREAM_CALL_TYPE, current).get(),
+    );
+    calls.set(current, toOccurrenceCall(call));
+  }
+  return [...calls.values()];
 }
 
-async function listCallSessions(
-  client: VideoClient,
-  callId: string,
-  failures?: RunFailureReporter,
-) {
+async function listCallSessions(reader: Reader, callId: string) {
   const sessions = [];
   const seen = new Set<string>();
   let next: string | undefined;
   do {
     const cursor = next;
-    const page = await withStreamCircuitBreaker(
-      () =>
-        client.video.queryCallSessionStats({
-          filter_conditions: {
-            call_cid: { $eq: `${STREAM_CALL_TYPE}:${callId}` },
-          },
-          limit: SESSIONS_PAGE,
-          ...(cursor ? { next: cursor } : {}),
-        }),
-      undefined,
-      failures,
+    const page = await ask(reader, () =>
+      reader.client.video.queryCallSessionStats({
+        filter_conditions: {
+          call_cid: { $eq: `${STREAM_CALL_TYPE}:${callId}` },
+        },
+        limit: SESSIONS_PAGE,
+        ...(cursor ? { next: cursor } : {}),
+      }),
     );
     sessions.push(...page.call_stats);
-    next = page.next && !seen.has(page.next) ? page.next : undefined;
-    if (next) seen.add(next);
+    next = nextCursor(page.next, seen);
   } while (next);
   return sessions;
 }
 
 /** Every device stay of one ended session; refuses a partial or still-open answer. */
 async function readSessionParticipants(
-  client: VideoClient,
+  reader: Reader,
   callId: string,
-  session: { id: string; endedAt: Date },
-  failures?: RunFailureReporter,
+  session: {
+    id: string;
+    endedAt: Date;
+    /** Session stats' own counts: device stays and distinct people. */
+    counts: { sessions: number; participants: number };
+  },
 ): Promise<SettledStreamInterval[]> {
   const sessionId = session.id;
-  const call = client.video.call(STREAM_CALL_TYPE, callId);
+  const call = reader.client.video.call(STREAM_CALL_TYPE, callId);
   const intervals: SettledStreamInterval[] = [];
   const seen = new Set<string>();
   let rows = 0;
@@ -120,14 +173,11 @@ async function readSessionParticipants(
   let next: string | undefined;
   do {
     const cursor = next;
-    const page = await withStreamCircuitBreaker(
-      () =>
-        call.queryCallParticipantSessions({
-          session: sessionId,
-          ...(cursor ? { next: cursor } : {}),
-        }),
-      undefined,
-      failures,
+    const page = await ask(reader, () =>
+      call.queryCallParticipantSessions({
+        session: sessionId,
+        ...(cursor ? { next: cursor } : {}),
+      }),
     ).catch((error: unknown) => {
       // Past Stream's retention the detail is a 404, not an empty list.
       if (streamHttpStatus(error) !== 404) throw error;
@@ -148,7 +198,7 @@ async function readSessionParticipants(
           ? new Date(leftAt.getTime() - row.duration_in_seconds * 1000)
           : null);
       if (!joinedAt) throw new NotFinal("a stay has no join");
-      if (!row.user_id) continue;
+      if (!row.user_id) throw new NotFinal("a stay names no user");
       intervals.push({
         userId: row.user_id,
         userSessionId: row.user_session_id || `${sessionId}:${row.user_id}`,
@@ -157,51 +207,69 @@ async function readSessionParticipants(
         leftAt,
       });
     }
-    next = page.next && !seen.has(page.next) ? page.next : undefined;
-    if (next) seen.add(next);
+    next = nextCursor(page.next, seen);
   } while (next);
   // Filters change only the list, never the total, so the count guards against a partial page.
   if (rows !== total) throw new NotFinal("rows and total disagree");
+  // A repeated row would pass the count and then vanish on insert; session stats must agree too.
+  const stays = new Set(intervals.map((i) => i.userSessionId));
+  const people = new Set(intervals.map((i) => i.userId));
+  if (stays.size !== rows) throw new NotFinal("a stay is repeated");
+  if (
+    stays.size < session.counts.sessions ||
+    people.size < session.counts.participants
+  ) {
+    throw new NotFinal("fewer stays than session stats count");
+  }
   return intervals;
 }
 
-/** Reads Stream's settled participant record for every call and session of one occurrence. */
+/**
+ * Reads Stream's settled participant record for every call and session of one
+ * occurrence. With `deadlineAt` (epoch ms) every request must answer by then;
+ * a read that runs out of time is `unavailable` and returns nothing partial.
+ */
 export async function readSettledAttendance(args: {
   occurrenceId: string;
   currentCallId: string;
   failures?: RunFailureReporter;
+  deadlineAt?: number;
 }): Promise<SettledAttendanceRead> {
   if (!isStreamConfigured()) return { kind: "unavailable" };
-  const client = getStreamVideoClient();
+  const reader: Reader = {
+    client: getStreamVideoClient(),
+    failures: args.failures,
+    deadlineAt: args.deadlineAt,
+  };
   try {
-    const callIds = await listOccurrenceCallIds(
-      client,
+    const calls = await listOccurrenceCalls(
+      reader,
       args.occurrenceId,
       args.currentCallId,
-      args.failures,
     );
     const intervals: SettledStreamInterval[] = [];
     let sessions = 0;
-    for (const callId of callIds) {
-      for (const session of await listCallSessions(
-        client,
-        callId,
-        args.failures,
-      )) {
+    for (const call of calls) {
+      const listed = await listCallSessions(reader, call.id);
+      // A session the call itself names but stats do not list yet, or one still running, is not final.
+      if (
+        call.currentSessionId &&
+        (!call.currentSessionEnded ||
+          !listed.some((s) => s.call_session_id === call.currentSessionId))
+      ) {
+        return { kind: "not-final" };
+      }
+      for (const session of listed) {
         sessions++;
         if (!session.call_ended_at || session.counts.live_sessions > 0) {
           return { kind: "not-final" };
         }
         intervals.push(
-          ...(await readSessionParticipants(
-            client,
-            callId,
-            {
-              id: session.call_session_id,
-              endedAt: new Date(session.call_ended_at),
-            },
-            args.failures,
-          )),
+          ...(await readSessionParticipants(reader, call.id, {
+            id: session.call_session_id,
+            endedAt: new Date(session.call_ended_at),
+            counts: session.counts,
+          })),
         );
       }
     }

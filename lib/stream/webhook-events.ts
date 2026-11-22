@@ -18,7 +18,7 @@ export const HANDLED_EVENT_TYPES = [
   // Session events
   "call.session_ended",
   "call.ended",
-  // Room state only: a join after a non-deliberate end reopens the room. Attendance comes from Stream's settled record.
+  // Room state only: a join after a rejoinable timeout reopens the room. Attendance comes from Stream's settled record.
   "call.session_participant_joined",
   // #1270 — `user.flagged` / `message.flagged` were removed deliberately, and
   // NOT replaced with a chat hook. Three reasons: the in-app report button

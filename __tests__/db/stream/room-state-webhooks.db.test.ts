@@ -17,6 +17,14 @@ import {
   seedHost,
   seedOneToOne,
 } from "../booking/harness";
+import { fakeStream } from "./harness-stream";
+
+jest.mock(
+  "../../../lib/stream-client",
+  () => jest.requireActual("./harness-stream").fakeStreamClient,
+);
+
+beforeEach(() => fakeStream.reset());
 
 const MIN = 60_000;
 
@@ -229,5 +237,79 @@ it("a stale timeout never overwrites a host end that carries the same stamp as t
   expect(await room.room()).toMatchObject({
     endedAt: room.at(10),
     endedReason: "call_ended",
+  });
+});
+
+it("a join never reopens a room Stream sealed, which no participant may rejoin", async () => {
+  const room = await seedRoom();
+  await prisma.meeting.update({
+    where: { id: room.meetingId },
+    data: { endedAt: room.at(20), endedReason: "stream_ended" },
+  });
+  await room.join(22);
+  expect(await room.room()).toMatchObject({
+    endedAt: room.at(20),
+    endedReason: "stream_ended",
+  });
+});
+
+it("a host's end of the old call never stamps a room that rotated before the end took it", async () => {
+  const room = await seedRoom();
+  const rotated = `${room.streamCallId}-r1`;
+  const results = await raceOnRoom(
+    room.meetingId,
+    [() => room.hostEnded(40)],
+    (tx) =>
+      tx.meeting.update({
+        where: { id: room.meetingId },
+        data: { streamCallId: rotated },
+      }),
+  );
+
+  expect(results.map((r) => r.status)).toEqual(["fulfilled"]);
+  expect(await room.room()).toEqual({
+    streamCallId: rotated,
+    endedAt: null,
+    endedReason: null,
+  });
+});
+
+it.each(["join first", "late end first"] as const)(
+  "a late timeout of an earlier session never ends a room a newer session on the same call holds (%s)",
+  async (order) => {
+    const room = await seedRoom();
+    // Session A timed out at 20; Stream already runs session B, which began at 22.
+    fakeStream.calls.set(room.streamCallId, {
+      occurrenceId: "unused",
+      currentSessionId: "B",
+      sessions: [
+        { id: "A", live: false, stays: [] },
+        { id: "B", live: true, stays: [], startedAt: room.at(22) },
+      ],
+    });
+    if (order === "join first") {
+      await room.join(22);
+      await room.sessionEnded(20);
+    } else {
+      await room.sessionEnded(20);
+      await room.join(22);
+    }
+    expect(await room.room()).toMatchObject({
+      endedAt: null,
+      endedReason: null,
+    });
+  },
+);
+
+it("a timeout with no newer session on the call still ends the room", async () => {
+  const room = await seedRoom();
+  fakeStream.calls.set(room.streamCallId, {
+    occurrenceId: "unused",
+    sessions: [{ id: "A", live: false, stays: [] }],
+  });
+  await room.sessionEnded(20);
+  expect(await room.room()).toMatchObject({
+    endedAt: room.at(20),
+    endedReason: "session_timeout",
   });
 });

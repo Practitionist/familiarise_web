@@ -16,7 +16,7 @@ One row per held call. The table below lists its columns.
 | `appointmentId` (`Cascade`)                                            | The purchase this call belongs to.                                                                                                                                                                                                                                 |
 | `consultantProfileId?`                                                 | Denormalized from the appointment for the DB-level overlap guard (#440). Nullable for attendee (webinar/class) rows, which the partial-index guard excludes; many same-window rows per event are legitimate there.                                                 |
 | `meeting`                                                              | The `Meeting` row for this call, if one has been created.                                                                                                                                                                                                          |
-| `attendances`                                                          | Retired `MeetingAttendance` rows; nothing writes or reads them, and the relation goes when the table is dropped at the next schema step. Who attended is read from `presences`, Stream's settled record.                                                           |
+| `attendances`                                                          | Retired `MeetingAttendance` rows; nothing writes them, and only the rating gate's pre-rollout arm and the retention prune read them, until the table is dropped at the next schema step. Who attended is read from `presences`, Stream's settled record.           |
 | `deletedAt?`                                                           | Soft-delete tombstone (#676), mirroring `Appointment.deletedAt`.                                                                                                                                                                                                   |
 
 The table below lists the occurrence row's indexes and sidecar constraints.
@@ -114,7 +114,7 @@ The table below lists the row's indexes.
 
 ## `MeetingAttendance`
 
-Retired. It was a per-person join and leave summary written by the participant webhooks; nothing writes or reads it now except the three-year retention prune, and the owner drops the table at the next schema step. Attendance is the `MeetingPresence` rows that `settleOccurrenceAttendance` stores from Stream's settled record.
+Retired. It was a per-person join and leave summary written by the participant webhooks; nothing writes it now. The rating gate still reads it for sessions held before the settled record (so every session the earlier rule accepted stays rateable), and the three-year retention prune deletes from it; the owner drops the table at the next schema step, which ends that arm. Attendance is the `MeetingPresence` rows that `settleOccurrenceAttendance` stores from Stream's settled record.
 
 ## `MeetingPresence`
 

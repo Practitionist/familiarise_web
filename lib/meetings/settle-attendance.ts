@@ -61,7 +61,12 @@ function readStoredAttendance(meetingId: string): Promise<PresenceInterval[]> {
 /** Idempotent: a settled room answers its stored rows without asking Stream again. */
 export async function settleOccurrenceAttendance(
   target: SettleTarget,
-  opts: { now?: Date; failures?: RunFailureReporter } = {},
+  opts: {
+    now?: Date;
+    failures?: RunFailureReporter;
+    /** Epoch ms by which every Stream request must answer; past it nothing is stored. */
+    deadlineAt?: number;
+  } = {},
 ): Promise<AttendanceSettlement> {
   const now = opts.now ?? new Date();
   const { meeting } = target;
@@ -77,6 +82,7 @@ export async function settleOccurrenceAttendance(
     occurrenceId: target.occurrenceId,
     currentCallId: meeting.streamCallId,
     failures: opts.failures,
+    deadlineAt: opts.deadlineAt,
   });
   if (read.kind === "no-session") {
     if (now.getTime() < target.endsAt.getTime() + EMPTY_RECORD_TRUSTED_AFTER_MS)
@@ -86,13 +92,19 @@ export async function settleOccurrenceAttendance(
   }
   const rows = read.kind === "read" ? read.intervals : [];
 
-  await prisma.$transaction(async (tx) => {
-    // The stamp first: a second settler that loses this compare-and-set writes nothing.
+  const stamped = await prisma.$transaction(async (tx) => {
+    // The stamp first, on the room exactly as read: a second settler, or a room
+    // rotated or extended since the read, makes this compare-and-set miss and writes nothing.
     const { count } = await tx.meeting.updateMany({
-      where: { id: meeting.id, attendanceSettledAt: null },
+      where: {
+        id: meeting.id,
+        attendanceSettledAt: null,
+        streamCallId: meeting.streamCallId,
+        extendedSeconds: meeting.extendedSeconds,
+      },
       data: { attendanceSettledAt: now },
     });
-    if (count === 0) return;
+    if (count === 0) return false;
     // Rows stored before the room settled are not Stream's record; the snapshot replaces them.
     await tx.meetingPresence.deleteMany({ where: { meetingId: meeting.id } });
     if (rows.length === 0) return;
@@ -108,8 +120,29 @@ export async function settleOccurrenceAttendance(
       })),
       skipDuplicates: true,
     });
+    return true;
   });
+  if (!stamped) return settleAfterLostStamp(target, now);
   return { kind: "settled", intervals: await readStoredAttendance(meeting.id) };
+}
+
+/** A missed stamp is another settler's snapshot, or a room that changed since the read: judge the room afresh. */
+async function settleAfterLostStamp(
+  target: SettleTarget,
+  now: Date,
+): Promise<AttendanceSettlement> {
+  const fresh = await prisma.meeting.findUnique({
+    where: { id: target.meeting.id },
+    select: SETTLE_MEETING_SELECT,
+  });
+  if (!fresh) return { kind: "unavailable" };
+  if (fresh.attendanceSettledAt) {
+    return { kind: "settled", intervals: await readStoredAttendance(fresh.id) };
+  }
+  // The room moved under the read; the next run reads it again from its current state.
+  return now < attendanceReadableAt({ ...target, meeting: fresh })
+    ? { kind: "too-early" }
+    : { kind: "not-final" };
 }
 
 /** The Meeting fields a settle needs, for callers' Prisma selects. */

@@ -3,8 +3,7 @@
  */
 
 // The rating prompt settles at most one of the learner's ended rooms per page
-// load, and only one already past its rejoin grace, so a Stream outage costs a
-// page one read at most.
+// load, only one already past its rejoin grace, and within one deadline.
 const findMany = jest.fn();
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
@@ -16,7 +15,10 @@ jest.mock("../../lib/meetings/settle-attendance", () => ({
   settleOccurrenceAttendance: (...a: unknown[]) => settle(...(a as [])),
 }));
 
-import { settleRecentAttendance } from "@/lib/reviews";
+import {
+  ON_DEMAND_SETTLE_BUDGET_MS,
+  settleRecentAttendance,
+} from "@/lib/reviews";
 
 it("reads one ended room past its rejoin grace and settles it", async () => {
   const now = new Date("2026-11-23T07:00:00Z");
@@ -31,6 +33,7 @@ it("reads one ended room past its rejoin grace and settles it", async () => {
     { ...meeting, occurrence: { id: "occ-1", endsAt } },
   ]);
 
+  const before = Date.now();
   await settleRecentAttendance("learner-1", "apt-1", now);
 
   const [query] = findMany.mock.calls[0];
@@ -44,8 +47,17 @@ it("reads one ended room past its rejoin grace and settles it", async () => {
       appointment: { participants: { some: { userId: "learner-1" } } },
     },
   });
-  expect(settle).toHaveBeenCalledWith(
-    { occurrenceId: "occ-1", endsAt, meeting },
-    { now },
+  // One deadline bounds the whole Stream read, leaving the request time for its own queries.
+  const [target, opts] = settle.mock.calls[0] as unknown as [
+    unknown,
+    { now: Date; deadlineAt: number },
+  ];
+  expect(target).toEqual({ occurrenceId: "occ-1", endsAt, meeting });
+  expect(opts.now).toBe(now);
+  expect(opts.deadlineAt).toBeGreaterThanOrEqual(
+    before + ON_DEMAND_SETTLE_BUDGET_MS,
+  );
+  expect(opts.deadlineAt).toBeLessThanOrEqual(
+    Date.now() + ON_DEMAND_SETTLE_BUDGET_MS,
   );
 });

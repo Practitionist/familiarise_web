@@ -5732,7 +5732,7 @@ model MeetingAttendance {
   id                      String                @id @default(cuid())
   meeting                 Meeting               @relation(fields: [meetingId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   meetingId               String
-  // Retired: nothing writes it and only the retention prune deletes from it; dropped at the next schema step.
+  // Retired: nothing writes it; read only by the rating gate's pre-rollout arm and the retention prune; dropped at the next schema step.
   occurrence              AppointmentOccurrence @relation(fields: [appointmentOccurrenceId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   appointmentOccurrenceId String
   userId                  String

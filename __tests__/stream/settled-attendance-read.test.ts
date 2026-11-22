@@ -17,7 +17,7 @@ type Row = {
 type Session = {
   call_session_id: string;
   call_ended_at?: string;
-  counts: { live_sessions: number };
+  counts: { live_sessions: number; sessions: number; participants: number };
 };
 
 const stream = {
@@ -28,6 +28,10 @@ const stream = {
   totals: new Map<string, number>(),
   sessionEnded: true,
   failParticipants: null as null | { status: number },
+  /** A cursor the session listing returns on every page. */
+  sessionsNext: undefined as string | undefined,
+  /** When set, the call listing never answers. */
+  stall: false,
 };
 
 jest.mock("../../lib/stream-client", () => ({
@@ -36,17 +40,24 @@ jest.mock("../../lib/stream-client", () => ({
   streamHttpStatus: (e: { status?: number }) => e?.status ?? null,
   getStreamVideoClient: () => ({
     video: {
-      queryCalls: async () => ({
-        calls: stream.calls.map((call) => ({ call })),
-        next: stream.callsNext,
-      }),
+      queryCalls: () =>
+        stream.stall
+          ? new Promise(() => undefined)
+          : Promise.resolve({
+              calls: stream.calls.map((call) => ({ call })),
+              next: stream.callsNext,
+            }),
       queryCallSessionStats: async (req: {
         filter_conditions: { call_cid: { $eq: string } };
       }) => ({
         call_stats:
           stream.sessions.get(req.filter_conditions.call_cid.$eq) ?? [],
+        next: stream.sessionsNext,
       }),
       call: (_type: string, callId: string) => ({
+        get: async () => ({
+          call: { id: callId, type: "default", current_session_id: "" },
+        }),
         queryCallParticipantSessions: async (req: { session: string }) => {
           if (stream.failParticipants) throw stream.failParticipants;
           const rows = stream.rows.get(`${callId}/${req.session}`) ?? [];
@@ -69,7 +80,7 @@ import { readSettledAttendance } from "../../lib/stream/call-presence";
 const ended = (id: string): Session => ({
   call_session_id: id,
   call_ended_at: "2026-11-23T05:35:00Z",
-  counts: { live_sessions: 0 },
+  counts: { live_sessions: 0, sessions: 1, participants: 1 },
 });
 const stay = (user: string, from: string, to: string): Row => ({
   user_id: user,
@@ -98,6 +109,8 @@ beforeEach(() => {
   ]);
   stream.totals = new Map();
   stream.sessionEnded = true;
+  stream.sessionsNext = undefined;
+  stream.stall = false;
   stream.failParticipants = null;
 });
 
@@ -106,7 +119,9 @@ it("reads every session of the current call and of each earlier call Stream list
   expect(answer.kind).toBe("read");
   if (answer.kind !== "read") return;
   expect(
-    answer.intervals.map((i) => [i.userId, i.streamCallId, i.userSessionId]),
+    answer.intervals
+      .map((i) => [i.userId, i.streamCallId, i.userSessionId])
+      .sort(),
   ).toEqual([
     ["hannah", "occurrence-occ-1-r2", "hannah-04:32"],
     ["priya", "occurrence-occ-1", "priya-04:30"],
@@ -119,7 +134,10 @@ it.each([
     "a session still live",
     () => {
       stream.sessions.set("default:occurrence-occ-1", [
-        { ...ended("s1"), counts: { live_sessions: 1 } },
+        {
+          ...ended("s1"),
+          counts: { live_sessions: 1, sessions: 1, participants: 1 },
+        },
       ]);
     },
   ],
@@ -127,7 +145,10 @@ it.each([
     "a session with no end",
     () => {
       stream.sessions.set("default:occurrence-occ-1", [
-        { call_session_id: "s1", counts: { live_sessions: 0 } },
+        {
+          call_session_id: "s1",
+          counts: { live_sessions: 0, sessions: 1, participants: 1 },
+        },
       ]);
     },
   ],
@@ -190,4 +211,22 @@ it("a participant read failing with 503 is unavailable", async () => {
 it("a call list longer than one page is unavailable, since Stream refuses its cursor", async () => {
   stream.callsNext = "cursor";
   expect(await read()).toEqual({ kind: "unavailable" });
+});
+
+it("a session listing whose cursor repeats is not final, never a complete list", async () => {
+  stream.sessionsNext = "same-cursor";
+  expect(await read()).toEqual({ kind: "not-final" });
+});
+
+it("a read past its deadline is unavailable and stops asking Stream", async () => {
+  stream.stall = true;
+  const started = Date.now();
+  expect(
+    await readSettledAttendance({
+      occurrenceId: "occ-1",
+      currentCallId: "occurrence-occ-1-r2",
+      deadlineAt: started + 50,
+    }),
+  ).toEqual({ kind: "unavailable" });
+  expect(Date.now() - started).toBeLessThan(2_000);
 });

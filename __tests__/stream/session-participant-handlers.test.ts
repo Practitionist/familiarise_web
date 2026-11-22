@@ -28,7 +28,7 @@ const db = prisma as unknown as {
   meetingPresence: { createMany: jest.Mock; updateMany: jest.Mock };
 };
 
-it("a join clears only a non-deliberate end older than itself, on the current call, and writes no attendance", async () => {
+it("a join clears only a non-deliberate, rejoinable end older than itself, on the current call, and writes no attendance", async () => {
   await handleSessionParticipantJoined({
     call_cid: "default:occurrence-1",
     type: "call.session_participant_joined",
@@ -40,11 +40,14 @@ it("a join clears only a non-deliberate end older than itself, on the current ca
   expect(where.endedAt).toEqual({ lt: new Date("2026-11-23T04:30:00.000Z") });
   expect(
     where.endedReason.in.every(
-      (r: keyof typeof END_REASON_POLICY) => !END_REASON_POLICY[r].deliberate,
+      (r: keyof typeof END_REASON_POLICY) =>
+        !END_REASON_POLICY[r].deliberate && END_REASON_POLICY[r].rejoinable,
     ),
   ).toBe(true);
-  expect(where.endedReason.in).toContain("session_timeout");
-  expect(where.endedReason.in).not.toContain("call_ended");
+  expect([...where.endedReason.in].sort()).toEqual([
+    "ended_early",
+    "session_timeout",
+  ]);
   expect(data).toEqual({ endedAt: null, endedReason: null });
   expect(db.meetingPresence.createMany).not.toHaveBeenCalled();
   expect(db.meetingPresence.updateMany).not.toHaveBeenCalled();

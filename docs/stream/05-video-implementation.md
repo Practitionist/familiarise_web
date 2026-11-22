@@ -178,7 +178,7 @@ Rotating `Meeting.streamCallId` from segment 1 (`occurrence-<uuid>`) to segment 
 - **Artifact Events (`call.recording_ready`, `call.recording_failed`)**:
   - Query exact `where: { streamCallId }` first, **then fall back to `where: { appointmentOccurrenceId }`** extracted via `parseOccurrenceIdFromCallId(call_cid)`.
   - **Why**: Composite MP4 transcoding (`recording_ready`) from segment 1 arrives asynchronously **after** segment 2 is already live. Falling back to `appointmentOccurrenceId` guarantees zero orphaned recordings.
-- **The join event (`call.session_participant_joined`)**: strict `where: { streamCallId }`; it only clears a non-deliberate end older than the join, because Stream resumed that call. Attendance for every segment comes from Stream's settled record, which lists every call id of the occurrence.
+- **The join event (`call.session_participant_joined`)**: strict `where: { streamCallId }`; it only clears a non-deliberate, rejoinable end older than the join, because Stream resumed that call. Attendance for every segment comes from Stream's settled record, which lists every call id of the occurrence.
 - **Termination Events (`call.ended`, `call.session_ended`)**:
   - Match **strictly and exclusively on `where: { streamCallId }`** with **zero fallback to `appointmentOccurrenceId`**.
   - **Why**: A delayed `call.ended` or 5-minute SFU inactivity `call.session_ended` webhook from closed segment 1 carries `call_cid = "default:occurrence-<uuid>"`. Because `Meeting.streamCallId` is now `"occurrence-<uuid>-r<base36>"`, strict equality misses cleanly (`null`) and drops the stale termination event without closing the live reopened room.

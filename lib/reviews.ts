@@ -103,7 +103,7 @@ export function heldOccurrence(userId: string) {
     completionStatus: {
       notIn: ["CANCELLED", "RESCHEDULED"] as OccurrenceCompletionStatus[],
     },
-    // Not "the call happened" — "YOU were at the call". Two ways in:
+    // Not "the call happened" — "YOU were at the call". Three ways in:
     OR: [
       // 1. Stream's settled record of the call shows you in it. The record is
       //    stored only once nobody can rejoin or reopen the room, so a learner
@@ -128,12 +128,29 @@ export function heldOccurrence(userId: string) {
           },
         ],
       },
+      // 3. A call held before attendance came from Stream's record, with your
+      //    MeetingAttendance row and a closed room. Nothing writes those rows now,
+      //    so this keeps every session the earlier rule accepted and admits no new one.
+      {
+        AND: [
+          { attendances: { some: { userId } } },
+          {
+            OR: [
+              { meeting: { endedAt: { not: null } } },
+              { endsAt: { lt: new Date() } },
+            ],
+          },
+        ],
+      },
     ],
   };
 }
 
-/** One Stream read per page load keeps a Stream outage inside the request budget; the sweep settles the rest. */
+/** One room per page load; the sweep settles the rest. */
 const ON_DEMAND_SETTLE_LIMIT = 1;
+
+/** The whole on-demand Stream read must answer within this, leaving the request's own queries room inside the ~26 s function limit. */
+export const ON_DEMAND_SETTLE_BUDGET_MS = 8_000;
 
 /**
  * Stores Stream's record for this learner's recently ended sessions that the
@@ -167,10 +184,11 @@ export async function settleRecentAttendance(
     orderBy: { occurrence: { endsAt: "desc" } },
     take: ON_DEMAND_SETTLE_LIMIT,
   });
+  const deadlineAt = Date.now() + ON_DEMAND_SETTLE_BUDGET_MS;
   for (const { occurrence, ...meeting } of rooms) {
     await settleOccurrenceAttendance(
       { occurrenceId: occurrence.id, endsAt: occurrence.endsAt, meeting },
-      { now },
+      { now, deadlineAt },
     );
   }
 }

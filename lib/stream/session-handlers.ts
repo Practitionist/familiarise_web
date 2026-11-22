@@ -1,7 +1,7 @@
 /**
  * Stream call lifecycle webhooks, which keep room state only: `call.session_ended`
  * and `call.ended` stamp `Meeting.endedAt` and `endedReason`, and a join to the
- * current call after a non-deliberate end clears them, because Stream resumed
+ * current call after a non-deliberate, rejoinable end clears them, because Stream resumed
  * the room. Attendance is never written here; the outcome sweep reads Stream's
  * settled record (`settleOccurrenceAttendance`).
  */
@@ -14,8 +14,13 @@ import {
   recordedEndHolds,
   type MeetingEndReason,
 } from "@/lib/meetings/end-reasons";
-import { toCallId } from "@/lib/stream/call-cid";
+import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
 import { streamLogger } from "@/lib/stream-logger";
+import {
+  getStreamVideoClient,
+  isStreamConfigured,
+  withStreamCircuitBreaker,
+} from "@/lib/stream-client";
 
 export interface StreamSessionEndedEvent {
   call_cid: string;
@@ -96,6 +101,14 @@ export async function handleSessionEnded(
         sessionId: meeting.id,
         streamCallId,
         previousEndedAt: meeting.endedAt,
+      });
+      return;
+    }
+
+    if (await newerSessionHolds(streamCallId, endedAt)) {
+      streamLogger.info("Stale timeout — a newer session holds the room", {
+        sessionId: meeting.id,
+        streamCallId,
       });
       return;
     }
@@ -275,6 +288,28 @@ export async function recordMeetingEndedSynchronously(
   return { kind: "recorded", endedReason, streamCallId: meeting.streamCallId };
 }
 
+/**
+ * True when Stream is running a session on this call that began after `endedAt`,
+ * so a timeout delivered late belongs to an earlier session. A failed read
+ * answers false, which stamps the timeout as before.
+ */
+async function newerSessionHolds(
+  streamCallId: string,
+  endedAt: Date,
+): Promise<boolean> {
+  if (!isStreamConfigured()) return false;
+  try {
+    const { call } = await withStreamCircuitBreaker(() =>
+      getStreamVideoClient().video.call(STREAM_CALL_TYPE, streamCallId).get(),
+    );
+    const session = call.session;
+    if (!session || session.ended_at || !session.started_at) return false;
+    return new Date(session.started_at).getTime() > endedAt.getTime();
+  } catch {
+    return false;
+  }
+}
+
 type RecordedEnd = { endedAt: Date | null; endedReason: string | null };
 
 /** Stamps the end on the room's current call, compare-and-set on the call id and the end (stamp and reason) the caller read. */
@@ -334,13 +369,15 @@ function endSupersedes(
   return incomingAt.getTime() > recorded.endedAt.getTime();
 }
 
-/** The ends a later join may undo: Stream resumes the call after them, and no person closed it. */
+/** The ends a later join may undo: no person closed the room and its policy lets participants rejoin it. */
 const REOPENABLE_END_REASONS = MEETING_END_REASONS.filter(
-  (reason) => !END_REASON_POLICY[reason].deliberate,
+  (reason) =>
+    !END_REASON_POLICY[reason].deliberate &&
+    END_REASON_POLICY[reason].rejoinable,
 );
 
 /**
- * A join to the current call after a non-deliberate end means Stream resumed
+ * A join to the current call after a non-deliberate, rejoinable end means Stream resumed
  * the room, so the end is cleared; Extend, recording and seat adds need an open room.
  */
 export async function handleSessionParticipantJoined(
