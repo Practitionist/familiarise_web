@@ -72,6 +72,7 @@ import type { Db } from "@/lib/prisma";
 import {
   purgeDigitalProductSurfaces,
   purgeRecordingSurfaces,
+  purgeReviewSurfaces,
 } from "@/lib/data/public-cache";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { revokeAllUserSessions } from "@/lib/auth/session-revoke";
@@ -1295,6 +1296,18 @@ export async function scrubUser(
     now,
   );
   vendorFailures.push(...notificationFailures);
+
+  // Last, so a purge failure cannot skip the steps above: cached testimonials carry the reviewer's and expert's names.
+  const reviewCount =
+    (await prisma.consultantReview?.count?.({
+      where: {
+        OR: [
+          { consulteeProfile: { userId } },
+          { consultantProfile: { userId } },
+        ],
+      },
+    })) ?? 0;
+  if (reviewCount > 0) purgeReviewSurfaces();
 
   return {
     scrubbed: true,

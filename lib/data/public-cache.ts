@@ -59,11 +59,15 @@ export function purgeExpertSurfaces(consultantProfileId?: string | null): void {
 
 /**
  * A review was written, edited, or removed. Reviews are rendered as testimonials
- * on the landing page and drive the denormalized `rating` that orders the
- * directory, so both the review tag and the expert surfaces have to go.
+ * on the landing page and the auth side panel, and drive the denormalized
+ * `rating` that orders the directory, so both the review tag and the expert
+ * surfaces have to go.
  */
 export function purgeReviewSurfaces(consultantProfileId?: string | null): void {
   revalidateTag("reviews");
+  // The sign-in and sign-up side panels show a featured review.
+  revalidatePath("/auth/signin");
+  revalidatePath("/auth/signup");
   purgeExpertSurfaces(consultantProfileId);
 }
 

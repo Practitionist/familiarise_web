@@ -5,7 +5,7 @@ description: Next.js App Router best practices for this repo (Next 15.5, React 1
 
 # Next.js App Router best practices
 
-This is the rulebook for writing `app/` code here. Every rule names what enforces it. External claims carry a source link so the next person can re-check them. The sources describe the current Next.js documentation, which is a newer major than this repo, so every version-sensitive claim below was matched against the `/docs/15/` pages. The installed version is `next` 15.5.28 (`package.json`, `node_modules/next/package.json`), with `react` 18.3.1. No documentation ships inside `node_modules/next/dist/docs` for this version, so the web docs are the reference.
+This is the rulebook for writing `app/` code here. Every rule names what enforces it. External claims carry a source link so the next person can re-check them. The sources describe the current Next.js documentation, which is a newer major than this repo, so every version-sensitive claim below was matched against the `/docs/15/` pages. The installed version is `next` 15.5.29 (`package.json`, `node_modules/next/package.json`), with `react` 18.3.1. No documentation ships inside `node_modules/next/dist/docs` for this version, so the web docs are the reference.
 
 This skill does not repeat the neighbouring skills. For the measured rendering and caching traps on Netlify (static vs ISR vs dynamic, the `revalidate` ceiling, route-table symbols, how to verify), read `.claude/skills/maintenance/references/nextjs-netlify-caching.md`. For function limits, cold starts and the hosting platform, read `.claude/skills/deployment/SKILL.md`. For serverless-only failures (the `PG_POOL_MAX=1` deadlock, react-pdf), read `.claude/skills/maintenance/references/serverless-gotchas.md`. For Core Web Vitals and bundle rules, read `.claude/skills/performance/SKILL.md`.
 
@@ -24,6 +24,22 @@ Layouts and pages are Server Components by default. Add `"use client"` only for 
 Reading a request-scoped value anywhere in the server render tree opts the whole route out of the Full Route Cache: `cookies()`, `headers()`, `draftMode()` and the `searchParams` prop ([Caching in Next.js](https://nextjs.org/docs/15/app/guides/caching)). In Next 15 these are async, so `await cookies()`, `await params` and `await searchParams` ([Next.js 15](https://nextjs.org/blog/next-15)). A `fetch` with `cache: "no-store"`, `export const dynamic = "force-dynamic"` or `revalidate = 0` has the same effect. The read can sit three imports deep. `getSession()` in `lib/auth-server.ts` awaits `headers()` and `cookies()`, so any page that awaits it is dynamic. `maintenance/references/nextjs-netlify-caching.md` ("Step 2") lists how to trace and verify this. Do not call `getSession()` in a public ISR page. Resolve the viewer in a client-only component instead.
 
 A `searchParams` prop makes the page dynamic. `app/explore/products/(index)/page.tsx` accepts it for the `tab` value and is therefore a dynamic route, which is a deliberate trade for that page. Do not add `searchParams` to a page that carries `export const revalidate`, because the revalidate value becomes inert.
+
+### Choosing a rendering class
+
+Pick the class from who sees the page, not from what is convenient:
+
+| The page shows                                                            | Class                 | How                                                                                                                                                |
+| ------------------------------------------------------------------------- | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The same thing to every visitor (landing, explore, auth chrome)           | Static or ISR         | `export const revalidate = <seconds>` plus a tag or path purge after writes. Viewer state (session, "Redirecting…") comes from a client component. |
+| Something that depends on the viewer, their role, organisation or money   | Dynamic               | Read the session on the server (`getSession()`); this alone makes the route dynamic, so no route config is needed.                                 |
+| Public data that must never be stale, with nothing request-scoped to read | Dynamic, by exception | `export const dynamic = "force-dynamic"`, with a one-line comment saying why ISR plus a purge is not enough.                                       |
+
+Partial Prerendering is not an option on 15.x without Cache Components (section 3), so a page is one class as a whole.
+
+### Client hooks that force client rendering
+
+In a static or ISR route, a Client Component that calls `useSearchParams()` is client-side rendered up to the nearest `<Suspense>` boundary, and the prerendered HTML holds only that boundary's fallback. Without a boundary the build fails ([useSearchParams](https://nextjs.org/docs/15/app/api-reference/functions/use-search-params), [missing Suspense with CSR bailout](https://nextjs.org/docs/messages/missing-suspense-with-csr-bailout)). Keep the boundary around the smallest leaf that reads the hook, and render everything server-side outside it. If you pass server UI into the boundary as a prop, it never reaches the HTML. Reference: `app/auth/signin/page.tsx` renders `AuthSidePanel` beside `SignInForm`, and only the form column sits under the Suspense fallback.
 
 ## 2. Streaming and status codes
 
@@ -53,6 +69,15 @@ A layout that reads uncached or runtime data makes navigation wait for it, becau
 - `redirect()` works during render in Client Components but not in event handlers, where `useRouter().push` is the tool.
 - For a Route Handler, return `NextResponse.json({ error }, { status: 404 })` for an API caller. `notFound()` is for pages.
 
+### Skeletons and `loading.tsx`
+
+`loading.tsx` is a Suspense fallback for a segment. It shows while the server renders that segment, both on a hard load of a dynamic route and on client navigation before the route's payload arrives ([loading.js](https://nextjs.org/docs/15/app/api-reference/file-conventions/loading)).
+
+- **Dynamic routes that wait on data:** add one, subject to the 404 rules above.
+- **Static or ISR routes:** it never shows on a hard load, because the HTML is already built, and on navigation only until the prefetched payload lands. Keep one only if it costs nothing. The auth pages keep theirs.
+- **Client-side gates** (a `useSession()` pending state, a `useSearchParams()` boundary): use a skeleton of only the part that waits, not the whole page. `AuthFormColumnSkeleton` covers the form column and leaves the server-rendered side panel visible.
+- **Match the anatomy.** A skeleton uses the same breakpoints and column widths as the page it stands in for, or the layout jumps when the page arrives.
+
 ## 3. Data fetching and caching
 
 | Need                                                         | Tool                                                 | Scope                                                                                                             | Enforcer                                                                                                                      |
@@ -70,9 +95,20 @@ Rules:
 - **Effective `revalidate` is the minimum.** A short `unstable_cache` window deep in the data layer caps the whole route. See "Step 2b" of the caching reference.
 - **Cache keys must include every closed-over variable.** `unstable_cache` keys by function arguments and `keyParts`. Pass the id as an argument.
 
+### Which tool reads, which tool writes
+
+| Job                                                                     | Tool                                                                                 |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Read data for a page                                                    | A Server Component reading Prisma directly, wrapped in `cache()` or `unstable_cache` |
+| Read viewer-specific data in an interactive client island               | A `GET` Route Handler fetched from the client                                        |
+| A mutation from this app's own UI (a form, a button)                    | A Server Action (`"use server"` in `actions/**`)                                     |
+| A webhook, a cron, a mobile or third-party caller, or a cacheable `GET` | A Route Handler                                                                      |
+
+Server Actions are `POST` endpoints that anyone can call with the right request, so they are untrusted entry points ([Server Actions guide](https://nextjs.org/docs/app/guides/server-actions)). Each action resolves the session, rate-limits and `safeParse`s its input itself, as `completeOnboardingGateAction` in `actions/onboarding-gate.action.ts` does. Never use one to read data: it is a `POST`, it cannot be cached, and the client runs actions one at a time.
+
 ### `"use cache"` and Cache Components
 
-Not enabled here. `next.config.mjs` sets neither `experimental.useCache` nor `cacheComponents`, and `rg -n "use cache" app lib components` finds no directive. On Next 15 the directive is experimental and badged Canary ([use cache](https://nextjs.org/docs/15/app/api-reference/directives/use-cache)), and the `unstable_cache` page says that API "will be replaced by `use cache` when it reaches stability". Do not add the directive or the flags. The Netlify runtime lists Cache Components as supported ([Netlify Next.js overview](https://docs.netlify.com/build/frameworks/framework-setup-guides/nextjs/overview/)), but adopting it is a migration of the data layer and the layout rules in section 2, which needs its own decision, not a drive-by edit. Likewise, Partial Prerendering is not available without it, so a Suspense island still cannot keep a route static.
+Not enabled here. `next.config.mjs` sets neither `experimental.useCache` nor `cacheComponents`, and `rg -n "use cache" app lib components` finds no directive. On Next 15 the directive is experimental and badged Canary ([use cache](https://nextjs.org/docs/15/app/api-reference/directives/use-cache)), and the `unstable_cache` page says that API "will be replaced by `use cache` when it reaches stability". Do not add the directive or the flags. The Netlify runtime lists Cache Components as supported ([Netlify Next.js overview](https://docs.netlify.com/build/frameworks/framework-setup-guides/nextjs/overview/)), but adopting it is a migration of the data layer and the layout rules in section 2, which needs its own decision, not a drive-by edit. Likewise, Partial Prerendering is not available without it, so a Suspense island still cannot keep a route static. Next 16 makes Cache Components a stable opt-in that turns on Partial Prerendering ([Next.js 16](https://nextjs.org/blog/next-16)). Adopting it is part of a 16.x upgrade, not a 15.x change.
 
 ## 4. Route handlers and middleware
 
@@ -117,7 +153,7 @@ Details live in the deployment and maintenance skills. The facts that bite App R
 ## 7. Checklist before a PR touching `app/`
 
 1. **Server by default.** Is every new `"use client"` a small leaf? Are props serialisable? Does any secret-bearing module import `server-only`?
-2. **Rendering class.** Did you classify the route (static, ISR, dynamic) and trace its import graph for `cookies()`, `headers()`, `searchParams` and `getSession()`? An ISR page must read none of them.
+2. **Rendering class.** Did you classify the route (static, ISR, dynamic) and trace its import graph for `cookies()`, `headers()`, `searchParams` and `getSession()`? An ISR page must read none of them. Is server-rendered UI outside every `useSearchParams()` Suspense boundary?
 3. **404 and 403 behaviour.** Does a new public dynamic segment check existence in its own `layout.tsx`? Is there no `loading.tsx` on any ancestor? Is the index page inside an `(index)` group? Did you extend both `not-found-layouts` tests?
 4. **Control flow.** Are `notFound()`, `redirect()` and `permanentRedirect()` outside `try/catch` and awaited?
 5. **Caching.** No viewer-specific data in `unstable_cache` or ISR. Every write that an anonymous visitor can see calls a purge helper from `lib/data/public-cache.ts` after the commit. Cache keys carry every variable.
@@ -140,7 +176,9 @@ Details live in the deployment and maintenance skills. The facts that bite App R
 - [Caching in Next.js (v15)](https://nextjs.org/docs/15/app/guides/caching)
 - [unstable_cache (v15)](https://nextjs.org/docs/15/app/api-reference/functions/unstable_cache)
 - [use cache (v15, Canary)](https://nextjs.org/docs/15/app/api-reference/directives/use-cache)
-- [Next.js 15 release notes](https://nextjs.org/blog/next-15)
+- [Next.js 15 release notes](https://nextjs.org/blog/next-15) and [Next.js 16 release notes](https://nextjs.org/blog/next-16)
+- [useSearchParams (v15)](https://nextjs.org/docs/15/app/api-reference/functions/use-search-params) and [missing Suspense with CSR bailout](https://nextjs.org/docs/messages/missing-suspense-with-csr-bailout)
+- [Server Actions guide](https://nextjs.org/docs/app/guides/server-actions)
 - [loading.js and its status-code section](https://nextjs.org/docs/15/app/api-reference/file-conventions/loading)
 - [notFound](https://nextjs.org/docs/15/app/api-reference/functions/not-found) and [redirect](https://nextjs.org/docs/15/app/api-reference/functions/redirect)
 - [route.js (v15)](https://nextjs.org/docs/15/app/api-reference/file-conventions/route) and [middleware.js (v15)](https://nextjs.org/docs/15/app/api-reference/file-conventions/middleware)
