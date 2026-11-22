@@ -604,3 +604,38 @@ it("a settler holding a stale room never stamps once the room was extended past 
   expect(await settledAt(room.meetingId)).toBeNull();
   expect(await stored(room.meetingId)).toEqual([]);
 });
+
+it("a sweep whose Stream read fails never parks a room another settler stored meanwhile; it classifies the stored rows", async () => {
+  const room = await seedConsultationRoom(80);
+  const slot = await loadSlot(room.occurrenceId);
+  // Ops stored Stream's record after the sweep loaded the room; Stream is now down for the sweep.
+  await prisma.$transaction([
+    prisma.meeting.update({
+      where: { id: room.meetingId },
+      data: { attendanceSettledAt: new Date() },
+    }),
+    prisma.meetingPresence.createMany({
+      data: [room.hostId, room.learnerId].map((userId) => ({
+        meetingId: room.meetingId,
+        appointmentOccurrenceId: room.occurrenceId,
+        userId,
+        userSessionId: `${userId}-device`,
+        streamCallId: room.streamCallId,
+        joinedAt: room.startsAt,
+        leftAt: room.endsAt,
+      })),
+    }),
+  ]);
+  fakeStream.failStatus = 503;
+
+  const decision = await decideSlotOutcome(slot, {
+    now: new Date(room.endsAt.getTime() + 73 * HOUR),
+    outages: [],
+  });
+
+  expect(decision).toMatchObject({
+    kind: "written",
+    to: "COMPLETED",
+    verdict: { outcome: "HELD" },
+  });
+});

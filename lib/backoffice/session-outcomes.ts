@@ -373,7 +373,7 @@ const NEEDS_HUMAN_ROW_SELECT = {
   outcome: true,
   deliveredMinutes: true,
   lostMinutes: true,
-  meeting: { select: { endedReason: true, attendanceSettledAt: true } },
+  meeting: { select: { endedReason: true } },
   appointment: { select: APPOINTMENT_HEADLINE_SELECT },
 } satisfies Prisma.AppointmentOccurrenceSelect;
 
@@ -448,10 +448,8 @@ export async function readSessionsNeedingHuman({
       endedReason:
         meetingEndReasonSchema.safeParse(row.meeting?.endedReason).data ?? null,
       aged: isAgedNeedsHuman(row, now),
-      canRereadAttendance:
-        !!row.meeting &&
-        !row.meeting.attendanceSettledAt &&
-        now <= rereadDeadline(row.endsAt),
+      // Stays offered once settled: a settled re-read only recomputes the verdict from the stored rows.
+      canRereadAttendance: !!row.meeting && now <= rereadDeadline(row.endsAt),
       booking: {
         type: row.appointment.appointmentType,
         title: headline.title,

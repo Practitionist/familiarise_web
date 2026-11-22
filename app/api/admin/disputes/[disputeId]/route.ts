@@ -16,6 +16,20 @@ interface RouteParams {
   }>;
 }
 
+/** Attendance evidence in words; a session still waiting on Stream's record is pending, never absence. */
+function attendanceSummary(present: number, pending: number): string {
+  const pendingNote =
+    pending > 0
+      ? ` Attendance for ${pending} session(s) is still being read from Stream, so absence cannot be inferred for them yet.`
+      : "";
+  if (present > 0) {
+    return `${present} participant attendance telemetry record(s) logged across session occurrences.${pendingNote}`;
+  }
+  return pending > 0
+    ? pendingNote.trim()
+    : "No meeting attendance telemetry records were recorded for this booking.";
+}
+
 export async function GET(req: NextRequest, { params }: RouteParams) {
   try {
     const auth = await requireBackofficeSurface("disputes.read");
@@ -78,6 +92,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
                     endsAt: true,
                     completionStatus: true,
                     outcome: true,
+                    meeting: { select: { attendanceSettledAt: true } },
                     // Stream's settled record: one row per device stay.
                     presences: {
                       where: {
@@ -111,6 +126,10 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
     const appt = dispute.payment?.appointment ?? null;
     const occurrences = appt?.occurrences ?? [];
+    // A call whose Stream record is not stored yet says nothing about who attended.
+    const pendingSessions = occurrences.filter(
+      (o) => o.meeting && !o.meeting.attendanceSettledAt,
+    ).length;
     // One per person per session, however many devices they joined from.
     const allAttendances = occurrences.flatMap((o) => [
       ...new Set(o.presences.map((p) => p.userId)),
@@ -156,10 +175,8 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       attendance: {
         presentCount: allAttendances.length,
         recordsFound: allAttendances.length > 0,
-        summary:
-          allAttendances.length > 0
-            ? `${allAttendances.length} participant attendance telemetry record(s) logged across session occurrences.`
-            : "No meeting attendance telemetry records were recorded for this booking.",
+        pendingSessions,
+        summary: attendanceSummary(allAttendances.length, pendingSessions),
       },
       supportHistory: {
         ticketCount: mergedSupportThreads.length,

@@ -1,6 +1,7 @@
 import prisma, { type Tx } from "@/lib/prisma";
 import {
   ATTENDANCE_SETTLE_WAIT_MS,
+  attendanceReadableAt,
   SETTLE_MEETING_SELECT,
   settleOccurrenceAttendance,
 } from "@/lib/meetings/settle-attendance";
@@ -149,17 +150,21 @@ export function heldOccurrence(userId: string) {
 /** One room per page load; the sweep settles the rest. */
 const ON_DEMAND_SETTLE_LIMIT = 1;
 
+/** Candidate rooms read per page load; an extended room may not be readable yet, so a few are checked for one that is. */
+const ON_DEMAND_CANDIDATES = 5;
+
 /** The whole on-demand Stream read must answer within this, leaving the request's own queries room inside the ~26 s function limit. */
 export const ON_DEMAND_SETTLE_BUDGET_MS = 8_000;
 
 /**
  * Stores Stream's record for this learner's recently ended sessions that the
  * sweep has not settled yet, so the rating prompt appears soon after a call.
- * A session Stream cannot answer for yet is left for a later page load.
+ * `occurrenceId` names the session a request is about; otherwise the newest
+ * readable room is taken. A session Stream cannot answer for yet is left for a later page load.
  */
 export async function settleRecentAttendance(
   userId: string,
-  appointmentId?: string,
+  scope: { appointmentId?: string; occurrenceId?: string } = {},
   now: Date = new Date(),
 ): Promise<void> {
   const rooms = await prisma.meeting.findMany({
@@ -167,9 +172,10 @@ export async function settleRecentAttendance(
       endedAt: { not: null },
       attendanceSettledAt: null,
       occurrence: {
-        ...(appointmentId ? { appointmentId } : {}),
+        ...(scope.appointmentId ? { appointmentId: scope.appointmentId } : {}),
+        ...(scope.occurrenceId ? { id: scope.occurrenceId } : {}),
         deletedAt: null,
-        // A room still inside its rejoin grace cannot settle yet, so it never takes the one slot.
+        // Inside the base rejoin grace no room is readable; an extension is checked below.
         endsAt: {
           lt: new Date(now.getTime() - REJOIN_GRACE_MS),
           gt: new Date(now.getTime() - ATTENDANCE_SETTLE_WAIT_MS),
@@ -182,14 +188,20 @@ export async function settleRecentAttendance(
       occurrence: { select: { id: true, endsAt: true } },
     },
     orderBy: { occurrence: { endsAt: "desc" } },
-    take: ON_DEMAND_SETTLE_LIMIT,
+    take: ON_DEMAND_CANDIDATES,
   });
+  // A room still inside its extended rejoin grace never takes the one slot.
+  const readable = rooms
+    .map(({ occurrence, ...meeting }) => ({
+      occurrenceId: occurrence.id,
+      endsAt: occurrence.endsAt,
+      meeting,
+    }))
+    .filter((target) => attendanceReadableAt(target) <= now)
+    .slice(0, ON_DEMAND_SETTLE_LIMIT);
   const deadlineAt = Date.now() + ON_DEMAND_SETTLE_BUDGET_MS;
-  for (const { occurrence, ...meeting } of rooms) {
-    await settleOccurrenceAttendance(
-      { occurrenceId: occurrence.id, endsAt: occurrence.endsAt, meeting },
-      { now, deadlineAt },
-    );
+  for (const target of readable) {
+    await settleOccurrenceAttendance(target, { now, deadlineAt });
   }
 }
 
@@ -1069,7 +1081,7 @@ export async function resolveReviewableSession(
   userId: string,
   appointmentId: string,
 ): Promise<ReviewableSession | null> {
-  await settleRecentAttendance(userId, appointmentId);
+  await settleRecentAttendance(userId, { appointmentId });
   const rows = await loadReviewableAppointments(
     consulteeProfileId,
     userId,

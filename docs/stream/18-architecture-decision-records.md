@@ -253,7 +253,7 @@ Example. Hannah hosts a 10:00–11:00 IST consultation with Priya. Hannah joins 
 
 ### Consequences
 
-- A lost, late or reordered webhook can no longer change a verdict, because no webhook writes the evidence.
+- A lost, late or reordered participant webhook can no longer change the stored attendance intervals, because no webhook writes them. The end webhooks still supply `Meeting.endedAt` and `endedReason`, which the classifier's host-end and outage rules read; those writes are compare-and-set on the call id and the recorded end.
 - A session settles at the earliest an hour after its booked end, and up to 72 hours later when Stream is unreadable; money never moves on a read that is not final.
 - The stored record keeps the three-year evidence retention, well past Stream's 90 days.
 

@@ -34,10 +34,10 @@ it("reads one ended room past its rejoin grace and settles it", async () => {
   ]);
 
   const before = Date.now();
-  await settleRecentAttendance("learner-1", "apt-1", now);
+  await settleRecentAttendance("learner-1", { appointmentId: "apt-1" }, now);
 
   const [query] = findMany.mock.calls[0];
-  expect(query.take).toBe(1);
+  expect(query.take).toBe(5);
   expect(query.where).toMatchObject({
     endedAt: { not: null },
     attendanceSettledAt: null,
@@ -60,4 +60,41 @@ it("reads one ended room past its rejoin grace and settles it", async () => {
   expect(opts.deadlineAt).toBeLessThanOrEqual(
     Date.now() + ON_DEMAND_SETTLE_BUDGET_MS,
   );
+});
+
+it("passes over a room still inside its extended rejoin grace, and scopes to a named session", async () => {
+  settle.mockClear();
+  const now = new Date("2026-11-23T07:00:00Z");
+  const extended = {
+    id: "m-new",
+    streamCallId: "occurrence-new",
+    // Booked end 06:20 plus 15 minutes: readable only from 07:05.
+    extendedSeconds: 900,
+    attendanceSettledAt: null,
+    occurrence: { id: "occ-new", endsAt: new Date("2026-11-23T06:20:00Z") },
+  };
+  const ready = {
+    id: "m-old",
+    streamCallId: "occurrence-old",
+    extendedSeconds: 0,
+    attendanceSettledAt: null,
+    occurrence: { id: "occ-old", endsAt: new Date("2026-11-23T05:00:00Z") },
+  };
+  findMany.mockResolvedValue([extended, ready]);
+
+  await settleRecentAttendance(
+    "learner-1",
+    { appointmentId: "apt-1", occurrenceId: "occ-old" },
+    now,
+  );
+
+  expect(findMany.mock.calls.at(-1)[0].where.occurrence).toMatchObject({
+    appointmentId: "apt-1",
+    id: "occ-old",
+  });
+  expect(settle).toHaveBeenCalledTimes(1);
+  expect(settle.mock.calls[0]).toEqual([
+    expect.objectContaining({ occurrenceId: "occ-old" }),
+    expect.anything(),
+  ]);
 });

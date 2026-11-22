@@ -88,7 +88,7 @@ export async function settleOccurrenceAttendance(
     if (now.getTime() < target.endsAt.getTime() + EMPTY_RECORD_TRUSTED_AFTER_MS)
       return { kind: "too-early" };
   } else if (read.kind !== "read") {
-    return { kind: read.kind };
+    return settledMeanwhile(meeting.id, read.kind);
   }
   const rows = read.kind === "read" ? read.intervals : [];
 
@@ -124,6 +124,20 @@ export async function settleOccurrenceAttendance(
   });
   if (!stamped) return settleAfterLostStamp(target, now);
   return { kind: "settled", intervals: await readStoredAttendance(meeting.id) };
+}
+
+/** A read that could not settle still answers a snapshot another settler stored meanwhile. */
+async function settledMeanwhile(
+  meetingId: string,
+  kind: "not-final" | "expired" | "unavailable",
+): Promise<AttendanceSettlement> {
+  const room = await prisma.meeting.findUnique({
+    where: { id: meetingId },
+    select: { attendanceSettledAt: true },
+  });
+  return room?.attendanceSettledAt
+    ? { kind: "settled", intervals: await readStoredAttendance(meetingId) }
+    : { kind };
 }
 
 /** A missed stamp is another settler's snapshot, or a room that changed since the read: judge the room afresh. */

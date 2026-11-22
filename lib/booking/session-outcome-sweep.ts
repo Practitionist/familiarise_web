@@ -190,6 +190,8 @@ async function writeSlotOutcomeTransaction(
   to: OccurrenceCompletionStatus,
   verdict: SessionOutcomeVerdict,
   now: Date,
+  /** An unreadable verdict writes only while the room is still unsettled. */
+  requireUnsettled = false,
 ): Promise<boolean> {
   const txResult = await prisma.$transaction(
     async (tx) => {
@@ -200,6 +202,10 @@ async function writeSlotOutcomeTransaction(
           isTentative: false,
           deletedAt: null,
           voidedAt: null,
+          // A snapshot stored since the read decides instead; the next run classifies it.
+          ...(requireUnsettled && {
+            meeting: { is: { attendanceSettledAt: null } },
+          }),
         },
         to,
         fromIn: [OccurrenceCompletionStatus.SCHEDULED],
@@ -404,6 +410,7 @@ export async function decideSlotOutcome(
     to,
     verdict,
     ctx.now,
+    evidence.kind === "unreadable",
   );
   if (moved && evidence.kind === "unreadable") ctx.onUnreadable?.(slot.id);
   return { kind: "written", to, verdict, moved };

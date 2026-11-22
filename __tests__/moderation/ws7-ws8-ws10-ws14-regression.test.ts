@@ -435,6 +435,83 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
     expect(body.payment.appointment.supportCases).toBeUndefined();
   });
 
+  test("GET /api/admin/disputes/[disputeId] reports a session waiting on Stream's record as pending attendance, never as absence", async () => {
+    mockRequireBackofficeSurface.mockResolvedValue({
+      session: { user: { id: "admin-1", role: "ADMIN" } },
+    });
+
+    mockDispute.findUnique.mockResolvedValue({
+      id: "disp-1",
+      disputeId: "rzp_disp_1",
+      amountPaise: 150000,
+      currency: "INR",
+      status: "NEEDS_RESPONSE",
+      reason: "Service not rendered",
+      paymentGateway: "RAZORPAY",
+      paymentId: "pay-1",
+      dueBy: new Date("2026-10-12T00:00:00Z"),
+      isChargeRefundable: true,
+      evidence: null,
+      evidenceSubmittedAt: null,
+      createdAt: new Date("2026-10-10T00:00:00Z"),
+      updatedAt: new Date("2026-10-10T00:00:00Z"),
+      payment: {
+        id: "pay-1",
+        paymentIntent: "pi_1",
+        paymentStatus: "SUCCEEDED",
+        amount: 150000,
+        currency: "INR",
+        paymentMethod: "CARD",
+        createdAt: new Date("2026-10-01T09:00:00Z"),
+        user: { id: "user-1", name: "Customer One", email: "c1@example.com" },
+        appointment: {
+          id: "appt-1",
+          appointmentType: "CONSULTATION",
+          createdAt: new Date("2026-10-01T09:00:00Z"),
+          occurrences: [
+            {
+              id: "occ-1",
+              startsAt: new Date("2026-10-01T10:00:00Z"),
+              endsAt: new Date("2026-10-01T11:00:00Z"),
+              completionStatus: "UNVERIFIED",
+              outcome: null,
+              meeting: { attendanceSettledAt: null },
+              presences: [],
+            },
+          ],
+          supportThreads: [],
+          supportCases: [
+            {
+              id: "case-1",
+              status: "OPEN",
+              category: "billing",
+              referenceNumber: "FAM-2026-000001",
+              priority: "HIGH",
+              createdAt: new Date("2026-10-02T09:00:00Z"),
+            },
+          ],
+        },
+      },
+    });
+
+    const req = new NextRequest("http://localhost/api/admin/disputes/disp-1");
+    const res = await getAdminDisputeRoute(req, {
+      params: Promise.resolve({ disputeId: "disp-1" }),
+    });
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body.evidencePack.attendance).toMatchObject({
+      presentCount: 0,
+      pendingSessions: 1,
+    });
+    expect(body.evidencePack.attendance.summary).toContain(
+      "still being read from Stream",
+    );
+    expect(body.evidencePack.attendance.summary).not.toContain(
+      "No meeting attendance telemetry records were recorded",
+    );
+  });
+
   test("counts urgentDisputes strictly across ACTIONABLE_OPEN_STATUSES (SFR-05-20)", async () => {
     mockRequireBackofficeSurface.mockResolvedValue({
       session: { user: { id: "admin-1", role: "ADMIN" } },

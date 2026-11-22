@@ -94,7 +94,8 @@ export async function GET(
     // Which calls of this booking the caller may rate at all, so the timeline
     // offers stars only where a rating would be accepted rather than erroring
     // after the click.
-    if (!asProvider) await settleRecentAttendance(auth.userId, appointmentId);
+    if (!asProvider)
+      await settleRecentAttendance(auth.userId, { appointmentId });
     const rateable = asProvider
       ? []
       : await prisma.appointmentOccurrence.findMany({
@@ -213,7 +214,11 @@ export async function POST(
     // caller could rate a call from a booking they merely have access to the
     // id of. Without one the rating is about the whole booking, which still
     // needs at least one held call to rate at all.
-    await settleRecentAttendance(auth.userId, appointmentId);
+    // The session being rated is the one settled, so an older unsettled call is not passed over.
+    await settleRecentAttendance(auth.userId, {
+      appointmentId,
+      occurrenceId: body.data.occurrenceId,
+    });
     const slot = await prisma.appointmentOccurrence.findFirst({
       where: {
         ...(body.data.occurrenceId ? { id: body.data.occurrenceId } : {}),

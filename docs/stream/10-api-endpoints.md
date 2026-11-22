@@ -149,9 +149,9 @@ Admits an entitled participant to an existing Stream call and upserts the caller
 
 ### POST /api/meetings/[meetingId]/end
 
-Ends a Stream call for everyone (host-only). Calls `call.end()` on Stream inside `withStreamCircuitBreaker` and synchronously invokes `recordMeetingEndedSynchronously` (`lib/stream/session-handlers.ts`) using CAS (`where: { id: meeting.id, endedAt: meeting.endedAt }`):
+Ends a Stream call for everyone (host-only). Calls `call.end()` on Stream inside `withStreamCircuitBreaker` and synchronously invokes `recordMeetingEndedSynchronously` (`lib/stream/session-handlers.ts`) by compare-and-set on the call id and the end it read (`where: { id, streamCallId, endedAt, endedReason }`):
 
-- **Pre-Start Device Check (`endedAt < startsAt`)**: Classifies as `"ended_early"`, keeps `AppointmentOccurrence` scheduled (`SCHEDULED`), and immediately rotates `Meeting.streamCallId` to a fresh `occurrence-<uuid>-r<base36>` id, closing the old segment's open presence and attendance rows. `ended_early` is rejoinable, so the next join makes the provisioner build a clean room and clear the end stamp.
+- **Pre-Start Device Check (`endedAt < startsAt`)**: Classifies as `"ended_early"`, keeps `AppointmentOccurrence` scheduled (`SCHEDULED`), and immediately rotates `Meeting.streamCallId` to a fresh `occurrence-<uuid>-r<base36>` id; it writes no attendance. `ended_early` is rejoinable, so the next join makes the provisioner build a clean room and clear the end stamp.
 - **Live Session Termination (`endedAt >= startsAt`)**: Stamps `endedAt = now`, `endedReason = "call_ended"`, and `isRecording = false` by compare-and-set on the call id and the end it read, and prevents unauthorized rejoin. It writes no attendance.
 - **Deliberate-End Guard**: `recordMeetingEndedSynchronously` returns `{ kind: "not_found" | "already_ended" | "recorded" }` and never overwrites a deliberate end (`recordedEndHolds`, driven by `END_REASON_POLICY`). `already_ended` still answers `200`.
 - **Error Propagation**: Returns HTTP `404` with `code: "MEETING_NOT_FOUND"` when no `Meeting` matched the call, HTTP `503` if Stream's circuit breaker is open, and HTTP `500` (never a false `200 OK`) if database state persistence throws an unexpected error.
