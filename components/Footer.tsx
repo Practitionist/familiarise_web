@@ -40,9 +40,9 @@ const FOOTER_COLUMNS: { heading: string; links: FooterLink[] }[] = [
     heading: "Solutions",
     links: [
       { label: "College students", href: "/use-cases/college-students" },
-      { label: "Early-career pros", href: "/use-cases/early-career" },
+      { label: "Early career professionals", href: "/use-cases/early-career" },
       { label: "Career switchers", href: "/use-cases/career-switchers" },
-      { label: "Long-term mentorship", href: "/use-cases/mentorship" },
+      { label: "Ongoing mentorship", href: "/use-cases/mentorship" },
     ],
   },
   {
@@ -214,8 +214,8 @@ const Footer: React.FC = () => {
               </div>
             </Link>
             <p className="text-zinc-400 text-sm leading-relaxed max-w-xs">
-              Live classes, webinars, tutoring and 1-on-1 sessions with experts
-              interviewed by our founder.
+              Live classes, webinars, tutoring and private sessions with vetted
+              experts who do the work every day.
             </p>
           </div>
 
