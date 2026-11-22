@@ -31,7 +31,10 @@ import {
   notifyPaymentSuccess,
   type StagedTrigger,
 } from "@/lib/novu";
-import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
+import {
+  failureReasonLabel,
+  planTitleOrSessionLabel,
+} from "@/lib/novu/humanize";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import { notificationScope } from "@/lib/novu/workflows";
 import { reportSentryError } from "@/lib/observability/report";
@@ -363,8 +366,9 @@ export interface PaymentFailedInput {
   appointmentId: string | null;
   amount: number;
   currency: string;
-  description: string | null;
   user: { email: string | null; name: string | null };
+  /** The gateway's reason (a code or its prose), never the plan description. */
+  failureReason?: string | null;
 }
 
 export async function preparePaymentFailedEmail(
@@ -432,7 +436,7 @@ export async function preparePaymentFailedEmail(
       amount: payment.amount,
       currency: payment.currency,
       retryUrl,
-      failureReason: payment.description || "Payment could not be processed",
+      failureReason: sentence(failureReasonLabel(payment.failureReason)),
       expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000),
     });
   } catch (error) {
@@ -440,6 +444,10 @@ export async function preparePaymentFailedEmail(
     console.error("Failed to render payment failure email:", error);
     return null;
   }
+}
+
+function sentence(clause: string): string {
+  return clause.charAt(0).toUpperCase() + clause.slice(1);
 }
 
 export async function stagePaymentFailedEmail(

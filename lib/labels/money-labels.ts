@@ -6,9 +6,10 @@
 import type {
   DisputeStatus,
   LedgerAccountKind,
+  LedgerDirection,
+  LedgerTransactionKind,
   PaymentGateway,
   PayoutMethod,
-  WalletReason,
 } from "@prisma/client";
 
 import { formatStatusLabel } from "./session-labels";
@@ -27,12 +28,57 @@ export const PAYOUT_METHOD_LABEL: Record<PayoutMethod, string> = {
 };
 
 /** Why an organisation wallet balance moved, in the words its admins use. */
-export const WALLET_REASON_LABEL: Record<WalletReason, string> = {
+export const WALLET_REASON_LABEL = {
   TOPUP: "Top-up",
   BOOKING: "Session booked",
-  REFUND: "Refund",
-  ADJUSTMENT: "Adjustment by our team",
-};
+  OVERAGE_SURCHARGE: "Extra-session surcharge",
+  REFUND: "Refund or chargeback",
+  TOPUP_REFUND: "Top-up refunded",
+  TOPUP_REFUND_SHORTFALL:
+    "Refunded top-up already spent: added to the amount owed",
+  INVOICE_REFUND: "Invoice refunded to wallet",
+  OVERAGE_MEMBER_BILLED:
+    "Returned to the wallet: a member is billed for their extra session",
+  OVERAGE_MEMBER_UNPAID:
+    "Paid by the wallet: a member's extra-session charge went unpaid",
+  WALLET_ADJUSTMENT: "Adjustment by our team",
+} as const satisfies Record<string, string>;
+
+export type WalletEntryReason = keyof typeof WALLET_REASON_LABEL;
+
+/** Key prefix of the part of a top-up refund the wallet could not cover, booked as owed by the org. */
+export const TOPUP_REFUND_SHORTFALL_KEY_PREFIX = "topup-refund-shortfall:";
+
+/** The stored facts that name one line on an organisation's WALLET journal. */
+export interface WalletJournalLine {
+  direction: LedgerDirection;
+  transaction: { kind: LedgerTransactionKind; idempotencyKey: string };
+}
+
+/**
+ * A wallet line's reason from its posting's subtype (idempotency-key prefix) and direction.
+ * An unlisted kind passes through and is title-cased by `walletReasonLabel`.
+ */
+export function walletEntryReason(
+  line: WalletJournalLine,
+): WalletEntryReason | LedgerTransactionKind {
+  const { kind, idempotencyKey } = line.transaction;
+  if (kind === "BOOKING" && idempotencyKey.startsWith("overage-accrual:")) {
+    return "OVERAGE_SURCHARGE";
+  }
+  if (
+    kind === "TOPUP_REFUND" &&
+    idempotencyKey.startsWith(TOPUP_REFUND_SHORTFALL_KEY_PREFIX)
+  ) {
+    return "TOPUP_REFUND_SHORTFALL";
+  }
+  if (kind === "OVERAGE_MEMBER") {
+    return line.direction === "CREDIT"
+      ? "OVERAGE_MEMBER_BILLED"
+      : "OVERAGE_MEMBER_UNPAID";
+  }
+  return kind;
+}
 
 export const DISPUTE_STATUS_LABEL: Record<DisputeStatus, string> = {
   WARNING_NEEDS_RESPONSE: "Early warning, needs a response",

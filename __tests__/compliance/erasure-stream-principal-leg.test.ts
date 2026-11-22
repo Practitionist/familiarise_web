@@ -33,9 +33,11 @@ jest.mock("../../lib/stream/recording-stream-delete", () => ({
 
 const mockPurge = jest.fn();
 const mockPurgeProduct = jest.fn();
+const mockPurgeReviews = jest.fn();
 jest.mock("../../lib/data/public-cache", () => ({
   purgeRecordingSurfaces: (slugs: string[]) => mockPurge(slugs),
   purgeDigitalProductSurfaces: (p: unknown) => mockPurgeProduct(p),
+  purgeReviewSurfaces: () => mockPurgeReviews(),
 }));
 
 const mockRevokeUserToken = jest.fn(async () => ({}));
@@ -320,6 +322,36 @@ describe("erasure purges the public replays cache", () => {
       slug: "pack",
     });
     expect(mockPurge).not.toHaveBeenCalled();
+  });
+
+  it("purges the review surfaces when the erased user has reviews", async () => {
+    const reviewCount = jest.fn(async () => 1);
+    await scrubUser(
+      { ...dbWithReplays, consultantReview: { count: reviewCount } } as never,
+      "u-erased-1",
+    );
+
+    expect(reviewCount).toHaveBeenCalledWith({
+      where: {
+        OR: [
+          { consulteeProfile: { userId: "u-erased-1" } },
+          { consultantProfile: { userId: "u-erased-1" } },
+        ],
+      },
+    });
+    expect(mockPurgeReviews).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not purge the review surfaces when the user has no reviews", async () => {
+    await scrubUser(
+      {
+        ...dbWithReplays,
+        consultantReview: { count: jest.fn(async () => 0) },
+      } as never,
+      "u-erased-1",
+    );
+
+    expect(mockPurgeReviews).not.toHaveBeenCalled();
   });
 
   it("does not purge products when the transaction throws", async () => {
