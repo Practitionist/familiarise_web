@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Hero background: C, outlined expert field names</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: #000;
+        font-family: Sora, system-ui, sans-serif;
+      }
+      .hero {
+        position: relative;
+        min-height: 95vh;
+        display: flex;
+        align-items: center;
+        overflow: hidden;
+        background: #000;
+      }
+      .layer {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+      }
+      .content {
+        position: relative;
+        z-index: 10;
+        max-width: 56rem;
+        margin: 0 auto;
+        padding: 5rem 1rem;
+        text-align: center;
+      }
+      .badge {
+        display: inline-flex;
+        gap: 0.5rem;
+        padding: 0.5rem 1rem;
+        border-radius: 9999px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(255, 255, 255, 0.05);
+        color: #a1a1aa;
+        font-size: 0.875rem;
+        margin-bottom: 2rem;
+      }
+      h1 {
+        color: #fff;
+        font-weight: 700;
+        font-size: clamp(2.5rem, 6vw, 4.5rem);
+        line-height: 1.15;
+        letter-spacing: -0.025em;
+        margin: 0 0 1.5rem;
+      }
+      .silver {
+        background: linear-gradient(
+          90deg,
+          #71717a,
+          #a1a1aa,
+          #d4d4d8,
+          #a1a1aa,
+          #71717a
+        );
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+      }
+      .muted {
+        color: #a1a1aa;
+      }
+      p.sub {
+        color: #a1a1aa;
+        font-size: 1.2rem;
+        line-height: 1.6;
+        max-width: 42rem;
+        margin: 0 auto 2.5rem;
+      }
+      .ctas {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 1rem;
+        justify-content: center;
+      }
+      .btn {
+        height: 3.5rem;
+        padding: 0 2rem;
+        border-radius: 0.75rem;
+        display: inline-flex;
+        align-items: center;
+        font-weight: 500;
+      }
+      .primary {
+        background: #fff;
+        color: #000;
+      }
+      .secondary {
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        color: #fff;
+      }
+      .fields {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        transform: rotate(-6deg) scale(1.1);
+        user-select: none;
+      }
+      .fields p {
+        margin: 0;
+        white-space: nowrap;
+        font-weight: 700;
+        line-height: 1.15;
+        letter-spacing: -0.025em;
+        color: transparent;
+        font-size: clamp(48px, 7vw, 112px);
+        -webkit-text-stroke: 1px rgba(255, 255, 255, 0.12);
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Hero background option C, outlined expert field names. Same values as the option's pull request; open this file in a browser to view it. -->
+    <section class="hero">
+      <div class="layer fields">
+        <p style="margin-left: 0vw">
+          TECHNOLOGY · BUSINESS · CREATIVE ARTS · EDUCATION · HEALTH · PERSONAL
+          DEVELOPMENT · TECHNOLOGY · BUSINESS · CREATIVE ARTS · EDUCATION ·
+          HEALTH · PERSONAL DEVELOPMENT
+        </p>
+        <p style="margin-left: -8vw">
+          BUSINESS · CREATIVE ARTS · EDUCATION · HEALTH · PERSONAL DEVELOPMENT ·
+          TECHNOLOGY · BUSINESS · CREATIVE ARTS · EDUCATION · HEALTH · PERSONAL
+          DEVELOPMENT · TECHNOLOGY
+        </p>
+        <p style="margin-left: -16vw">
+          CREATIVE ARTS · EDUCATION · HEALTH · PERSONAL DEVELOPMENT · TECHNOLOGY
+          · BUSINESS · CREATIVE ARTS · EDUCATION · HEALTH · PERSONAL DEVELOPMENT
+          · TECHNOLOGY · BUSINESS
+        </p>
+        <p style="margin-left: 0vw">
+          EDUCATION · HEALTH · PERSONAL DEVELOPMENT · TECHNOLOGY · BUSINESS ·
+          CREATIVE ARTS · EDUCATION · HEALTH · PERSONAL DEVELOPMENT · TECHNOLOGY
+          · BUSINESS · CREATIVE ARTS
+        </p>
+        <p style="margin-left: -8vw">
+          HEALTH · PERSONAL DEVELOPMENT · TECHNOLOGY · BUSINESS · CREATIVE ARTS
+          · EDUCATION · HEALTH · PERSONAL DEVELOPMENT · TECHNOLOGY · BUSINESS ·
+          CREATIVE ARTS · EDUCATION
+        </p>
+      </div>
+      <div
+        class="layer"
+        style="
+          background: radial-gradient(
+            ellipse 45% 40% at 50% 45%,
+            rgba(0, 0, 0, 0.85),
+            transparent 75%
+          );
+        "
+      ></div>
+      <div class="content">
+        <div class="badge">
+          &#10022; Every expert is vetted before they take a booking
+        </div>
+        <h1>
+          Learn live from <span class="silver">people who do the work</span
+          ><br /><span class="muted">in your field</span>
+        </h1>
+        <p class="sub">
+          Join live classes and webinars, or book tutoring and private sessions
+          with working professionals. Book, pay and learn in one place.
+        </p>
+        <div class="ctas">
+          <span class="btn primary">Find Your Expert &rarr;</span
+          ><span class="btn secondary">Become an Expert &rarr;</span>
+        </div>
+      </div>
+    </section>
+  </body>
+</html>
