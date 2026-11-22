@@ -247,6 +247,9 @@ it.each<[string, "processed" | "failed", string]>([
     expect(await seatOf(webinar.appointmentId, buyer.userId)).toEqual({
       status: "CONFIRMED",
     });
+    expect(await rowOf(payment.id, 40_000)).toMatchObject({
+      status: "PENDING",
+    });
 
     await handleRefundCreated(
       gatewayId,
@@ -255,6 +258,10 @@ it.each<[string, "processed" | "failed", string]>([
       "INR",
       event,
     );
+
+    expect(await rowOf(payment.id, 40_000)).toMatchObject({
+      status: event === "processed" ? "SUCCEEDED" : "FAILED",
+    });
 
     const settled = await rowOf(payment.id, 40_000);
     expect(await seatOf(webinar.appointmentId, buyer.userId)).toEqual({
@@ -425,6 +432,9 @@ it.each<[string, "processed" | "failed", string]>([
     expect(await seatOf(webinar.appointmentId, buyer.userId)).toEqual({
       status: "CONFIRMED",
     });
+    expect(await rowOf(payment.id, 40_000)).toMatchObject({
+      status: "PENDING",
+    });
 
     await handleRefundCreated(
       gatewayId,
@@ -433,6 +443,10 @@ it.each<[string, "processed" | "failed", string]>([
       "INR",
       event,
     );
+
+    expect(await rowOf(payment.id, 40_000)).toMatchObject({
+      status: event === "processed" ? "SUCCEEDED" : "FAILED",
+    });
 
     expect(await seatOf(webinar.appointmentId, buyer.userId)).toEqual({
       status: seat,

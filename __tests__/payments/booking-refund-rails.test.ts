@@ -54,7 +54,7 @@ type CreatedRefund = {
   amountPaise: number;
   metadata: Record<string, unknown>;
 };
-/** The settle hook's read of the row the internal rail created and flipped, against its prior refunds. */
+/** The settle hook's read of the row the internal rail created, against its prior refunds. */
 const mockSettleRow = jest.fn(async (): Promise<unknown> => {
   const created = (
     mockRefundCreate.mock.calls.at(-1)?.[0] as
@@ -64,10 +64,19 @@ const mockSettleRow = jest.fn(async (): Promise<unknown> => {
   const prior = ((await mockRefundFindMany()) ?? []) as {
     amountPaise: number;
   }[];
-  return settledRow(
-    created.metadata,
-    [...prior, created].map((r) => r.amountPaise),
+  // The row is created PENDING and reads SUCCEEDED only once the rail's status write flipped it.
+  const flipped = mockRefundUpdate.mock.calls.some(
+    ([args]) =>
+      (args as { data?: { status?: string } } | undefined)?.data?.status ===
+      "SUCCEEDED",
   );
+  return {
+    ...settledRow(
+      created.metadata,
+      [...prior, created].map((r) => r.amountPaise),
+    ),
+    status: flipped ? "SUCCEEDED" : "PENDING",
+  };
 });
 /** A SUCCEEDED row on the ₹1,000 payment, its payment's SUCCEEDED refunds and lost chargebacks. */
 function settledRow(
