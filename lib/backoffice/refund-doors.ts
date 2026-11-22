@@ -184,9 +184,8 @@ async function assertSessionOnPayment(paymentId: string, occurrenceId: string) {
 }
 
 /**
- * #1834 — a session key refunds once. A retry that resolves to the first
- * refund's amount replays it, even after that refund ended the seat; any
- * other amount is refused, never deduped.
+ * A session key refunds once. A retry with no amount, or with the stored amount, replays it on its payment, even
+ * after it ended the seat; a different amount is a reused key (422 `IDEMPOTENCY_KEY_REUSED`), never deduped.
  */
 export async function assertSessionRefundable(args: {
   paymentId: string;
@@ -202,22 +201,11 @@ export async function assertSessionRefundable(args: {
     await assertSessionOnPayment(args.paymentId, args.occurrenceId);
     return;
   }
-  assertRefundReplayMatches(prior, { paymentId: args.paymentId });
   // The key names the session and payment, so the stored refund is judged without the seat.
-  const payment = await prisma.payment.findUnique({
-    where: { id: args.paymentId, deletedAt: null },
-    select: { amount: true, ...REFUNDABLE_BALANCE_SELECT },
+  assertRefundReplayMatches(prior, {
+    paymentId: args.paymentId,
+    amountPaise: args.amountPaise,
   });
-  // A full refund resolves to the balance the first refund saw: today's plus its own amount.
-  const asked =
-    args.amountPaise ??
-    (payment ? refundableBalancePaise(Number(payment.amount), payment) : 0) +
-      Number(prior.amountPaise);
-  if (asked === Number(prior.amountPaise)) return;
-  throw new OpsRefusal(
-    "SESSION_ALREADY_REFUNDED",
-    "This session was already refunded at a different amount. Issue any further refund without the session link.",
-  );
 }
 
 /** What a full refund of this payment would return now; 0 when it is unknown. */
