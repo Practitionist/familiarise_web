@@ -1918,7 +1918,8 @@ async function executeApprovedRefund(
     initiatedByUserId: actor.userId,
     dedupeKey,
     supportRecommendationId: recommendation.id,
-    keepSeat: !recommendation.releaseSeat,
+    // The credits rail returns the whole booking, so it ends the seat whatever an older approval recorded.
+    keepSeat: rail !== "CREDITS" && !recommendation.releaseSeat,
     settlesOwedByHand: true,
   }).catch((error: unknown) =>
     refundInFlightOr(error, dedupeKey, {

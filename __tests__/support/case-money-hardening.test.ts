@@ -792,6 +792,34 @@ describe("refund execution correctness", () => {
     );
   });
 
+  it("executes a credit recommendation approved without releaseSeat as a seat-ending refund", async () => {
+    // Approved before recommendations had to release the seat on the credits rail.
+    mockStore.payment = {
+      ...mockStore.payment,
+      amount: 0,
+      originalAmount: 500_000,
+      paymentIntent: "free_discount",
+      creditUsages: [],
+    };
+    mockStore.recommendations = [
+      recommendation({
+        amountPaise: 0,
+        releaseSeat: false,
+        payment: { paymentIntent: "free_discount" },
+      }),
+    ];
+
+    await performCaseAction(
+      "case-1",
+      admin,
+      review(true, { expectedRefundablePaise: 0 }),
+    );
+
+    expect(refundBookingPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ keepSeat: false }),
+    );
+  });
+
   it("refuses a credit-funded recommendation that would keep the seat, since the credits rail ends it", async () => {
     mockStore.payment = {
       ...mockStore.payment,
