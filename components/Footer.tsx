@@ -259,6 +259,19 @@ const Footer: React.FC = () => {
         </div>
       </div>
 
+      {/* Decorative full-width wordmark; sized from Sora's ~5.23em width at this tracking so it spans the viewport. */}
+      <div
+        aria-hidden="true"
+        className="relative z-10 select-none overflow-hidden px-4 pb-6 md:px-6"
+      >
+        <p
+          translate="no"
+          className="whitespace-nowrap bg-gradient-to-b from-zinc-100 via-zinc-500 to-zinc-950 bg-clip-text text-center font-display text-[calc((100vw-3rem)/5.4)] font-semibold leading-[0.85] tracking-[-0.03em] text-transparent"
+        >
+          {BRAND_NAME}
+        </p>
+      </div>
+
       {/* Bottom bar. The CIN, registered office and contact email are on the grievance page and the policy pages' company details. */}
       <div className="border-t border-zinc-800 relative z-10">
         <div className="container mx-auto px-4 md:px-6 py-6 text-center md:text-left">
@@ -267,19 +280,6 @@ const Footer: React.FC = () => {
             {COMPANY_INFO.name}. All rights reserved.
           </p>
         </div>
-      </div>
-
-      {/* Decorative full-width wordmark; sized from Sora's ~5.23em width at this tracking so it spans the viewport. */}
-      <div
-        aria-hidden="true"
-        className="relative z-10 select-none overflow-hidden px-4 pt-4 md:px-6"
-      >
-        <p
-          translate="no"
-          className="whitespace-nowrap bg-gradient-to-b from-zinc-100 via-zinc-500 to-zinc-950 bg-clip-text text-center font-display text-[calc((100vw-3rem)/5.4)] font-semibold leading-[0.85] tracking-[-0.03em] text-transparent"
-        >
-          {BRAND_NAME}
-        </p>
       </div>
     </footer>
   );
