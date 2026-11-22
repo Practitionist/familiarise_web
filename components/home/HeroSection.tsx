@@ -3,6 +3,12 @@ import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
 import type { ExpertStatKey, IPublicStat } from "@/lib/data/public-stats";
+import { EXPLORE_FIELDS } from "@/lib/navigation/public-nav";
+
+const FIELD_ROWS = Array.from({ length: 5 }, (_, i) => {
+  const rotated = [...EXPLORE_FIELDS.slice(i), ...EXPLORE_FIELDS.slice(0, i)];
+  return [...rotated, ...rotated].join(" · ").toUpperCase();
+});
 
 function AnimatedNumber({
   value,
@@ -26,18 +32,33 @@ export function HeroSection({
 }) {
   return (
     <section className="relative min-h-[95vh] flex items-center bg-black overflow-hidden">
-      {/* Static radial gradient accents (avoids heavy blurred keyframe orbs on mobile GPUs) */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-1/4 left-1/4 w-[600px] h-[600px] rounded-full bg-[radial-gradient(circle_at_center,_rgba(39,39,42,0.45)_0%,_transparent_70%)]" />
-        <div className="absolute top-1/3 right-1/4 w-[500px] h-[500px] rounded-full bg-[radial-gradient(circle_at_center,_rgba(63,63,70,0.3)_0%,_transparent_70%)]" />
-        <div className="absolute bottom-1/4 left-1/2 w-[700px] h-[700px] rounded-full bg-[radial-gradient(circle_at_center,_rgba(39,39,42,0.35)_0%,_transparent_70%)]" />
+      {/* Outlined expert fields on a tilt, darkened behind the text so the headline stays readable. */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 flex -rotate-6 scale-110 select-none flex-col justify-center"
+      >
+        {FIELD_ROWS.map((row, i) => (
+          <p
+            key={row}
+            className="whitespace-nowrap font-bold leading-[1.15] tracking-tight text-transparent"
+            style={{
+              fontSize: "clamp(48px, 7vw, 112px)",
+              WebkitTextStroke: "1px rgba(255,255,255,0.12)",
+              marginLeft: `${-(i % 3) * 8}vw`,
+            }}
+          >
+            {row}
+          </p>
+        ))}
       </div>
-
-      {/* Grid pattern overlay */}
-      <div className="absolute inset-0 grid-pattern opacity-30" />
-
-      {/* Spotlight effect */}
-      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[600px] bg-[radial-gradient(ellipse_at_top,_rgba(39,39,42,0.25)_0%,_transparent_70%)] pointer-events-none" />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0"
+        style={{
+          background:
+            "radial-gradient(ellipse 45% 40% at 50% 45%, rgba(0,0,0,0.85), transparent 75%)",
+        }}
+      />
 
       <div className="container mx-auto px-4 md:px-6 relative z-10 py-20 md:py-32">
         <div className="max-w-4xl mx-auto text-center">
