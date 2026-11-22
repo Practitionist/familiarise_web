@@ -45,11 +45,15 @@ const mockStore = {
   spent: null as (Spent & { dedupeKey: string }) | null,
   /** Key lookups that still find the spent refund before it fails and frees its key; null is every one. */
   lookupsLeft: null as number | null,
+  /** The spent refund failed: it no longer counts against its payment's balance. */
+  failed: false,
 };
 const mockFindByKey = (dedupeKey?: string) => {
   if (!dedupeKey || mockStore.spent?.dedupeKey !== dedupeKey) return null;
-  if (mockStore.lookupsLeft !== null && mockStore.lookupsLeft-- <= 0)
+  if (mockStore.lookupsLeft !== null && mockStore.lookupsLeft-- <= 0) {
+    mockStore.failed = true;
     return null;
+  }
   return { ...mockStore.spent, status: "SUCCEEDED" };
 };
 /** A ₹50 card seat (B, and A whose key is reused) and a credit-funded class seat (C). */
@@ -81,7 +85,7 @@ jest.mock("../../lib/prisma", () => ({
               originalAmount: 5_000,
               // The spent refund counts against its own payment's balance.
               refunds:
-                mockStore.spent?.paymentId === where.id
+                mockStore.spent?.paymentId === where.id && !mockStore.failed
                   ? [
                       {
                         amountPaise: mockStore.spent.amountPaise,
@@ -130,6 +134,7 @@ jest.mock("../../lib/prisma", () => ({
 import { NextRequest } from "next/server";
 import { POST as issue } from "../../app/api/admin/refunds/issue/route";
 import { POST as credits } from "../../app/api/admin/refunds/credits/route";
+import { POST as legacy } from "../../app/api/admin/refunds/route";
 import { refundBookingPayment } from "../../lib/payments/operations/booking-refund";
 
 const KEY = "11111111-2222-4333-8444-555555555555";
@@ -168,6 +173,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockStore.spent = null;
   mockStore.lookupsLeft = null;
+  mockStore.failed = false;
 });
 
 describe("the issue door", () => {
@@ -319,3 +325,45 @@ it.each(["pay-B", "pay-C"])(
     noSeatEnded();
   },
 );
+
+describe("the legacy refund door", () => {
+  const legacyFor = (body: Record<string, unknown>) =>
+    legacy(
+      new NextRequest("https://x.test/api/admin/refunds", {
+        method: "POST",
+        headers: { "idempotency-key": KEY },
+        body: JSON.stringify({ reason: "learner asked for a refund", ...body }),
+      }),
+      ROUTE,
+    );
+  const legacyKey = `admin-refund:admin_1:pay-D:${KEY}`;
+
+  it("answers a no-amount replay of a ₹50,000 refund with the stored refund, unheld", async () => {
+    spend(legacyKey, {
+      id: "ref-D",
+      paymentId: "pay-D",
+      amountPaise: 5_000_000,
+    });
+
+    const res = await legacyFor({ paymentId: "pay-D" });
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).result).toMatchObject({ refundId: "ref-D" });
+  });
+
+  it("refuses an unheld no-amount replay whose stored refund failed before the run, refunding nothing", async () => {
+    spend(legacyKey, {
+      id: "ref-D",
+      paymentId: "pay-D",
+      amountPaise: 5_000_000,
+    });
+    // Pricing finds the stored refund; it fails and frees its key before the run's door check.
+    mockStore.lookupsLeft = 1;
+
+    const res = await legacyFor({ paymentId: "pay-D" });
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ code: "REFUND_REPLAY_EXPIRED" });
+    noSeatEnded();
+  });
+});

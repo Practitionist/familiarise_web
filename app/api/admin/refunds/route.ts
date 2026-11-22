@@ -8,6 +8,7 @@ import { readPageParams } from "@/lib/backoffice/list-paging";
 import type { RefundListItem } from "@/lib/backoffice/money-list-schemas";
 import { BOOKING_TITLE_SELECT, bookingRefOf } from "@/lib/data/booking-title";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
+import { RefundReplayExpiredError } from "@/lib/payments/operations/refund";
 import {
   classSeriesLedgers,
   refundWholeEventPayments,
@@ -165,7 +166,7 @@ const refundDoor = withOpsAction(
   {
     mode: "gateway",
     target: ({ body }) => refundTarget(body),
-    run: async ({ body, actor }) => {
+    run: async ({ body, actor, priced }) => {
       const targets = [body.paymentId, body.classId, body.webinarId];
       if (targets.filter(Boolean).length !== 1) {
         throw new OpsRefusal(
@@ -191,7 +192,12 @@ const refundDoor = withOpsAction(
           body.idempotencyKey,
         );
         // The issue door's eligibility: a free seat, a spent credit or a live dispute never reaches the writer.
-        await assertRefundDoorOpen(paymentId, dedupeKey, body.amountPaise);
+        const replay = await assertRefundDoorOpen(
+          paymentId,
+          dedupeKey,
+          body.amountPaise,
+        );
+        if (priced?.replay && !replay) throw new RefundReplayExpiredError();
         const result = await refundBookingPayment({
           paymentId,
           amountPaise: body.amountPaise,
@@ -201,6 +207,8 @@ const refundDoor = withOpsAction(
           // A partial admin refund is not a cancellation; one that returns the rest ends the seat.
           keepSeatIfPartial: true,
           settlesOwedByHand: true,
+          // Priced unheld as a replay, so the writer may only answer the stored refund.
+          replayOnly: priced?.replay === true,
         }).catch((err: unknown) =>
           refundInFlightOr(err, dedupeKey, {
             paymentId,
@@ -267,11 +275,13 @@ const refundDoor = withOpsAction(
       amountPaise: async (body, { actor }) => {
         if (body.paymentId) {
           // A refund the door would refuse is never held for a second admin.
-          await assertRefundDoorOpen(
+          const replay = await assertRefundDoorOpen(
             body.paymentId,
             paymentRefundKey(actor.userId, body.paymentId, body.idempotencyKey),
             body.amountPaise,
           );
+          // A matching replay moves no money: the door answers the stored refund, unheld.
+          if (replay) return { amountPaise: 0, replay: true };
           return body.amountPaise ?? refundablePaymentPaise(body.paymentId);
         }
         if (body.classId) return refundableEventPaise("class", body.classId);
