@@ -5637,6 +5637,9 @@ model Meeting {
   extendedSeconds Int @default(0)
   extensionsUsed  Int @default(0)
 
+  /// When Stream's final participant record was stored as this room's MeetingPresence rows; set once, by compare-and-set.
+  attendanceSettledAt DateTime? @db.Timestamptz
+
   /// Set after a maintenance channel freeze succeeds; cleared after unfreeze succeeds.
   maintenanceChannelFrozenAt    DateTime?          @db.Timestamptz
   /// Recovery includes meetings whose freeze acknowledgement was lost.
