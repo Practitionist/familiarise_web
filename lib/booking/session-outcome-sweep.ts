@@ -85,6 +85,8 @@ export interface OutcomeContext {
   onUnreadable?: (occurrenceId: string) => void;
   /** The run's Stream failure reporter, flushed once per run. */
   failures?: RunFailureReporter;
+  /** Epoch ms by which every Stream request of a settle must answer, so in-flight work fits the run. */
+  settleDeadlineAt?: number;
 }
 
 export type SlotDecision =
@@ -171,7 +173,7 @@ async function slotEvidence(
   }
   const settled = await settleOccurrenceAttendance(
     { occurrenceId: slot.id, endsAt: slot.endsAt, meeting },
-    { now: ctx.now, failures: ctx.failures },
+    { now: ctx.now, failures: ctx.failures, deadlineAt: ctx.settleDeadlineAt },
   );
   if (settled.kind === "settled") {
     return { kind: "intervals", intervals: settled.intervals };

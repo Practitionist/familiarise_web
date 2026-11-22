@@ -160,6 +160,8 @@ Once `call.end()` executes on `default:occurrence-<uuid>`, Stream permanently ma
        id: meeting.id,
        streamCallId: meeting.streamCallId,
        endedAt: meeting.endedAt,
+       // A room whose attendance settled meanwhile stays closed.
+       attendanceSettledAt: null,
      },
      data: {
        streamCallId: nextCallId,

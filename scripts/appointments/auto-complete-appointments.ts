@@ -39,7 +39,11 @@ import { notifyAppointmentCompleted } from "../../lib/novu/service";
 import { notificationScope } from "../../lib/novu/workflows";
 import { notificationHref } from "../../lib/novu/resolve-href";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
-import { startDeadline, startDeadlineShare } from "@/lib/cron/run-deadline";
+import {
+  startDeadline,
+  startDeadlineShare,
+  SWEEP_START_DEADLINE_MS,
+} from "@/lib/cron/run-deadline";
 import {
   EVENT_ALLOWED_FROM,
   REQUEST_ALLOWED_FROM,
@@ -1131,7 +1135,7 @@ async function decideOneSlot(
   slot: OutcomeSlot,
   ctx: Omit<
     Parameters<typeof decideSlotOutcome>[1],
-    "onUnreadable" | "failures"
+    "onUnreadable" | "failures" | "settleDeadlineAt"
   >,
   run: SlotRun,
   settle: { wrappers: Set<string>; decidedHosts: Set<string> },
@@ -1140,6 +1144,7 @@ async function decideOneSlot(
     ...ctx,
     onUnreadable: (id) => run.unreadable.push(id),
     failures: run.streamFailures,
+    settleDeadlineAt: run.settleDeadlineAt,
   });
   if (tallyDecision(run.tally, decision) && slot.appointment.subscriptionId) {
     settle.wrappers.add(slot.appointmentId);
@@ -1158,6 +1163,8 @@ interface SlotRun {
   unreadable: string[];
   /** Stream read failures across every bite, reported once. */
   streamFailures: RunFailureReporter;
+  /** Every session's Stream reads must answer by the end of the run's start budget. */
+  settleDeadlineAt: number;
   menteeFailures: RunFailureReporter;
 }
 
@@ -1329,6 +1336,8 @@ export async function autoCompleteAppointments(opts?: {
     classesPastDeadline: startDeadlineShare(0.5, startedAt),
     // Each session may spend several Stream reads settling, so sessions stop at half the budget too.
     slotsPastDeadline: startDeadlineShare(0.5, startedAt),
+    // A session started near that cutoff still finishes its Stream reads inside the ticker's abort.
+    settleDeadlineAt: startedAt + SWEEP_START_DEADLINE_MS,
   };
   return withCronLock(
     "auto-complete-appointments",
@@ -1345,6 +1354,7 @@ async function autoCompleteAppointmentsUnlocked(
     pastDeadline: () => boolean;
     classesPastDeadline: () => boolean;
     slotsPastDeadline: () => boolean;
+    settleDeadlineAt: number;
   },
 ): Promise<AutoCompleteResult> {
   const { pastDeadline, classesPastDeadline, slotsPastDeadline } = deadlines;
@@ -1362,6 +1372,7 @@ async function autoCompleteAppointmentsUnlocked(
     tally: { completed: 0, unverified: 0, voided: 0, deferred: 0 },
     unreadable: [],
     streamFailures: createRunFailureReporter("stream"),
+    settleDeadlineAt: deadlines.settleDeadlineAt,
     menteeFailures: createRunFailureReporter("bookings"),
   };
   const parents: ParentPassState[] = PARENT_PASSES.map((pass) => ({

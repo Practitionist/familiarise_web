@@ -384,6 +384,8 @@ describe("Meeting lifecycle & timezone P&C unification (#2080)", () => {
           id: "mtg-perm-1",
           streamCallId: "occurrence-occ-perm-1",
           endedAt: expect.any(Date),
+          // A room settled while the reopen waited on Stream stays closed.
+          attendanceSettledAt: null,
         },
         data: {
           streamCallId: body.streamCallId,

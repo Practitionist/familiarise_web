@@ -324,6 +324,8 @@ export async function POST(
         id: meeting.id,
         streamCallId: meeting.streamCallId,
         endedAt: meeting.endedAt,
+        // A room whose attendance settled while this waited on Stream stays closed; its record names only the old call.
+        attendanceSettledAt: null,
       },
       data: {
         streamCallId: nextCallId,

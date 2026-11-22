@@ -121,7 +121,7 @@ Retired. It was a per-person join and leave summary written by the participant w
 
 ## `MeetingPresence`
 
-Stream's settled participant record of a call, one row per device stay, written only by `settleOccurrenceAttendance` in the transaction that sets `Meeting.attendanceSettledAt`. The classifier, the no-show detector, the rating gate and the attendance views read it. The table below lists its columns.
+Stream's settled participant record of a call, one row per device stay, written only by `settleOccurrenceAttendance` in the transaction that sets `Meeting.attendanceSettledAt`. The classifier, the no-show detector, the rating gate and the attendance views read it. The table below lists its columns. Rows written by the retired webhook mirror can still exist on a room that never settled, so a reader trusts these rows only when the room's `Meeting.attendanceSettledAt` is set, as `heldOccurrence` (`lib/reviews.ts`), the dispute route, the sponsored-seat list and the host attendance view do.
 
 | Column                                 | Why it exists                                                                                            |
 | -------------------------------------- | -------------------------------------------------------------------------------------------------------- |

@@ -10,6 +10,7 @@ import {
   handleCallEnded,
   handleSessionEnded,
   handleSessionParticipantJoined,
+  recordMeetingEndedSynchronously,
 } from "../../../lib/stream/session-handlers";
 import {
   futureAt,
@@ -276,32 +277,37 @@ it("a host's end of the old call never stamps a room that rotated before the end
   });
 });
 
-it.each(["join first", "late end first"] as const)(
-  "a late timeout of an earlier session never ends a room a newer session on the same call holds (%s)",
-  async (order) => {
-    const room = await seedRoom();
-    // Session A timed out at 20; Stream already runs session B, which began at 22.
-    fakeStream.calls.set(room.streamCallId, {
-      occurrenceId: "unused",
-      currentSessionId: "B",
-      sessions: [
-        { id: "A", live: false, stays: [] },
-        { id: "B", live: true, stays: [], startedAt: room.at(22) },
-      ],
-    });
-    if (order === "join first") {
-      await room.join(22);
-      await room.sessionEnded(20);
-    } else {
-      await room.sessionEnded(20);
-      await room.join(22);
-    }
-    expect(await room.room()).toMatchObject({
-      endedAt: null,
-      endedReason: null,
-    });
-  },
-);
+/** Session A timed out at 20; Stream already runs session B on the same call, which began at 22. */
+function stageNewerSession(room: Awaited<ReturnType<typeof seedRoom>>) {
+  fakeStream.calls.set(room.streamCallId, {
+    occurrenceId: "unused",
+    currentSessionId: "B",
+    sessions: [
+      { id: "A", live: false, stays: [] },
+      { id: "B", live: true, stays: [], startedAt: room.at(22) },
+    ],
+  });
+}
+
+const OPEN = { endedAt: null, endedReason: null };
+
+it("a late timeout of an earlier session never ends a room a newer session holds, when B's join is delivered first", async () => {
+  const room = await seedRoom();
+  stageNewerSession(room);
+  await room.join(22);
+  await room.sessionEnded(20);
+  expect(await room.room()).toMatchObject(OPEN);
+});
+
+it("a late timeout of an earlier session never closes the room even for a moment, when it is delivered before B's join", async () => {
+  const room = await seedRoom();
+  stageNewerSession(room);
+  await room.sessionEnded(20);
+  // Checked before the join, which would otherwise repair a transient close.
+  expect(await room.room()).toMatchObject(OPEN);
+  await room.join(22);
+  expect(await room.room()).toMatchObject(OPEN);
+});
 
 it("a timeout with no newer session on the call still ends the room", async () => {
   const room = await seedRoom();
@@ -360,4 +366,37 @@ it("an earlier session's late join never replaces the session a later end record
   // C resumes the call after B's end.
   await room.join(45, undefined, "C");
   expect(await identity()).toBe("C");
+});
+
+it("a host's pre-start end still rotates the call when Stream's end webhook stamped the same call first", async () => {
+  const room = await seedRoom();
+  let ended:
+    Awaited<ReturnType<typeof recordMeetingEndedSynchronously>> | undefined;
+  const results = await raceOnRoom(
+    room.meetingId,
+    [
+      async () => {
+        ended = await recordMeetingEndedSynchronously(
+          room.streamCallId,
+          room.at(-5),
+        );
+      },
+    ],
+    // The call.ended webhook for the same device-test call lands first and rotates nothing.
+    (tx) =>
+      tx.meeting.update({
+        where: { id: room.meetingId },
+        data: { endedAt: room.at(-5, -1), endedReason: "ended_early" },
+      }),
+  );
+
+  expect(results.map((r) => r.status)).toEqual(["fulfilled"]);
+  const after = await room.room();
+  expect(after.streamCallId).not.toBe(room.streamCallId);
+  expect(after.endedReason).toBe("ended_early");
+  expect(ended).toEqual({
+    kind: "recorded",
+    endedReason: "ended_early",
+    streamCallId: after.streamCallId,
+  });
 });

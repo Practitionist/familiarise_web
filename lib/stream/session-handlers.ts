@@ -293,20 +293,39 @@ export async function recordMeetingEndedSynchronously(
 
   if (endedBeforeStart) {
     const nextStreamCallId = `occurrence-${meeting.occurrence.id}-r${endedAt.getTime().toString(36)}`;
-    const rotated = await prisma.meeting.updateMany({
-      where: {
-        id: meeting.id,
-        streamCallId: meeting.streamCallId,
-        endedAt: meeting.endedAt,
-        endedReason: meeting.endedReason,
-      },
-      data: {
-        endedAt,
-        endedReason,
-        streamCallId: nextStreamCallId,
-        isRecording: false,
-      },
-    });
+    const rotate = (expected: RecordedEnd, at: Date) =>
+      prisma.meeting.updateMany({
+        where: {
+          id: meeting.id,
+          streamCallId: meeting.streamCallId,
+          endedAt: expected.endedAt,
+          endedReason: expected.endedReason,
+        },
+        data: {
+          endedAt: at,
+          endedReason,
+          streamCallId: nextStreamCallId,
+          isRecording: false,
+        },
+      });
+    let rotated = await rotate(meeting, endedAt);
+    if (rotated.count === 0) {
+      // The end webhook may have stamped this call first; rotate on top of a non-deliberate end, never a deliberate one.
+      const room = await prisma.meeting.findUnique({
+        where: { id: meeting.id },
+        select: { streamCallId: true, endedAt: true, endedReason: true },
+      });
+      if (!room || room.streamCallId !== meeting.streamCallId) {
+        return {
+          kind: "already_ended",
+          streamCallId: room?.streamCallId ?? meeting.streamCallId,
+        };
+      }
+      if (recordedEndHolds(room, endedReason)) return alreadyEnded;
+      const at =
+        room.endedAt && room.endedAt > endedAt ? room.endedAt : endedAt;
+      rotated = await rotate(room, at);
+    }
     if (rotated.count === 0) return alreadyEnded;
     return { kind: "recorded", endedReason, streamCallId: nextStreamCallId };
   }
