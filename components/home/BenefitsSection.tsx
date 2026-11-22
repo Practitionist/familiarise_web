@@ -38,7 +38,7 @@ export function BenefitsSection({ images }: BenefitsSectionProps) {
             <h2 className="text-fluid-4xl font-bold text-foreground mb-6 tracking-tight">
               Learn live from{" "}
               <span className="text-muted-foreground">
-                founder-interviewed experts
+                working professionals
               </span>
             </h2>
             <p className="text-lg text-muted-foreground mb-8">

@@ -39,7 +39,7 @@ export const revalidate = 300;
 export const metadata: Metadata = {
   title: "Find experts and mentors | Familiarise",
   description:
-    "Browse founder-interviewed experts across technology, business, design and more. Compare ratings, experience and prices, then book a session.",
+    "Browse vetted experts across technology, business, design and more. Compare ratings, experience and prices, then book a session.",
   alternates: { canonical: "/explore/experts" },
 };
 

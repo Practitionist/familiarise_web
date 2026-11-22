@@ -25,9 +25,9 @@ export const viewport: Viewport = {
 
 const SITE_URL = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
 const SITE_DESCRIPTION =
-  "Book one-on-one sessions with founder-interviewed experts, or join live classes and webinars. Book, pay in INR and join over built-in video on Familiarise.";
+  "Book private sessions with vetted experts who do the work every day, or join live classes and webinars. Book, pay in INR and join on our own video platform.";
 const SITE_TITLE =
-  "Familiarise | 1-on-1 Sessions with Founder-Interviewed Experts, Live Classes & Webinars";
+  "Familiarise | Learn Live from Vetted Experts: Private Sessions, Classes & Webinars";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
