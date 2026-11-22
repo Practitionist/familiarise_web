@@ -69,10 +69,10 @@ const presence = (userId: string, leftAt: number, closedByEnd = false) => ({
   leftAt: at(leftAt),
   closedByEnd,
 });
-const slot = (
-  presences: ReturnType<typeof presence>[],
-  endedAt: Date | null = at(60),
-): OutcomeSlot =>
+type Stay = Omit<ReturnType<typeof presence>, "leftAt"> & {
+  leftAt: Date | null;
+};
+const slot = (presences: Stay[], endedAt: Date | null = at(60)): OutcomeSlot =>
   ({
     id: "occ-1",
     appointmentId: "apt-1",
@@ -271,4 +271,30 @@ it("(g) a prior segment's late leave never stamps the current room's attendance 
   expect(db.meetingAttendance.updateMany).not.toHaveBeenCalledWith(
     expect.objectContaining({ data: { lastLeftAt: expect.any(Date) } }),
   );
+});
+
+it("an unwitnessed stay that joined after a host end is capped at its own join, never before it", async () => {
+  sessions.mockResolvedValue(null);
+  const late = {
+    ...presence("learner", 0),
+    id: "p-late",
+    joinedAt: at(11),
+    leftAt: null,
+  };
+  const s = slot([presence("host", 10), late], at(10));
+  (s.meeting as { endedReason: string }).endedReason = "call_ended";
+  const d = await decide(s);
+  expect(d).toMatchObject({ verdict: { outcome: "INCONCLUSIVE" } });
+  expect(db.meetingPresence.updateMany).toHaveBeenCalledWith({
+    where: {
+      appointmentOccurrenceId: "occ-1",
+      leftAt: null,
+      joinedAt: { lte: at(10) },
+    },
+    data: { leftAt: at(10), closedByEnd: true },
+  });
+  expect(db.meetingPresence.updateMany).toHaveBeenCalledWith({
+    where: { id: "p-late", leftAt: null },
+    data: { leftAt: at(11), closedByEnd: true },
+  });
 });

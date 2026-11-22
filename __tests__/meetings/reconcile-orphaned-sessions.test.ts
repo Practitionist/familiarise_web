@@ -85,7 +85,7 @@ it("atomically closes the meeting and its segment presences through the transact
     expect.objectContaining({ take: BATCH_SIZE, orderBy: { id: "asc" } }),
   );
   expect(mockMeetingUpdateMany).toHaveBeenCalledWith({
-    where: { id: "a", endedAt: null },
+    where: { id: "a", streamCallId: "call-a", endedAt: null },
     data: { endedAt, endedReason: "reconciled" },
   });
   expect(mockPresenceUpdateMany).toHaveBeenCalledWith(

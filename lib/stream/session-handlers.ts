@@ -273,10 +273,7 @@ export async function handleSessionEnded(
 
     const endedAt = new Date(created_at);
 
-    if (
-      recordedEndHolds(meeting, "session_timeout") ||
-      !supersedesRecordedEnd(meeting.endedAt, endedAt)
-    ) {
+    if (!endSupersedes(meeting, "session_timeout", endedAt)) {
       await runBestEffortGroupReconciliation(
         meeting,
         meeting.endedAt ?? endedAt,
@@ -370,10 +367,7 @@ export async function handleCallEnded(
       streamReason: event.reason,
     });
 
-    if (
-      recordedEndHolds(meeting, endedReason) ||
-      !supersedesRecordedEnd(meeting.endedAt, endedAt)
-    ) {
+    if (!endSupersedes(meeting, endedReason, endedAt)) {
       await runBestEffortGroupReconciliation(
         meeting,
         meeting.endedAt ?? endedAt,
@@ -449,19 +443,18 @@ export async function recordMeetingEndedSynchronously(
   const endedBeforeStart = !!slotStartsAt && endedAt < new Date(slotStartsAt);
   const endedReason = endedBeforeStart ? "ended_early" : "call_ended";
 
-  if (
-    recordedEndHolds(meeting, endedReason) ||
-    !supersedesRecordedEnd(meeting.endedAt, endedAt)
-  ) {
-    return alreadyEnded;
-  }
+  if (!endSupersedes(meeting, endedReason, endedAt)) return alreadyEnded;
 
   if (endedBeforeStart) {
     const nextStreamCallId = `occurrence-${meeting.occurrence.id}-r${endedAt.getTime().toString(36)}`;
     // The rotated-away segment closes its presence and attendance like any other end.
     const rotated = await prisma.$transaction(async (tx) => {
       const updated = await tx.meeting.updateMany({
-        where: { id: meeting.id, endedAt: meeting.endedAt },
+        where: {
+          id: meeting.id,
+          streamCallId: meeting.streamCallId,
+          endedAt: meeting.endedAt,
+        },
         data: {
           endedAt,
           endedReason,
@@ -536,9 +529,30 @@ async function closeSegmentAttendance(
   });
 }
 
-/** Row lock on the room, taken first by every current-room join and non-deliberate end so each sees the other's commit. */
+/**
+ * Row lock on the room, taken first by every current-room join and non-deliberate end so each
+ * sees the other's commit. NO KEY UPDATE leaves the presence and attendance foreign-key checks free.
+ */
 async function lockMeetingRow(tx: Tx, meetingId: string): Promise<void> {
-  await tx.$executeRaw`SELECT 1 FROM "Meeting" WHERE id = ${meetingId} FOR UPDATE`;
+  await tx.$executeRaw`SELECT 1 FROM "Meeting" WHERE id = ${meetingId} FOR NO KEY UPDATE`;
+}
+
+/** Stamps the end on the room's current segment, compare-and-set on the end the caller read. */
+function casEnd(
+  tx: Tx,
+  meeting: { id: string; streamCallId: string },
+  expected: Date | null,
+  endedAt: Date,
+  endedReason: MeetingEndReason,
+) {
+  return tx.meeting.updateMany({
+    where: {
+      id: meeting.id,
+      streamCallId: meeting.streamCallId,
+      endedAt: expected,
+    },
+    data: { endedAt, endedReason, isRecording: false },
+  });
 }
 
 function stampEnd(
@@ -563,10 +577,32 @@ function stampEnd(
         return false;
       }
     }
-    const { count } = await tx.meeting.updateMany({
-      where: { id: meeting.id, endedAt: meeting.endedAt },
-      data: { endedAt, endedReason, isRecording: false },
-    });
+    let { count } = await casEnd(
+      tx,
+      meeting,
+      meeting.endedAt,
+      endedAt,
+      endedReason,
+    );
+    if (count === 0) {
+      // Another end committed first: re-decide against it, on the same segment only.
+      const room = await tx.meeting.findUnique({
+        where: { id: meeting.id },
+        select: { streamCallId: true, endedAt: true, endedReason: true },
+      });
+      if (
+        room?.streamCallId === meeting.streamCallId &&
+        endSupersedes(room, endedReason, endedAt)
+      ) {
+        ({ count } = await casEnd(
+          tx,
+          meeting,
+          room.endedAt,
+          endedAt,
+          endedReason,
+        ));
+      }
+    }
     if (count === 0) {
       streamLogger.info(
         "End not stamped — the room's end changed concurrently",
@@ -595,8 +631,16 @@ function clampLeaveToRoomEnd(
   return endBlocksRejoin(meeting) || joinedAt <= endedAt ? endedAt : leftAt;
 }
 
-function supersedesRecordedEnd(recorded: Date | null, incoming: Date): boolean {
-  return !recorded || incoming.getTime() > recorded.getTime();
+/** True when an incoming end replaces the recorded one: a deliberate end beats a non-deliberate one whatever their stamps; otherwise the later end wins. */
+function endSupersedes(
+  recorded: { endedAt: Date | null; endedReason: string | null },
+  incoming: MeetingEndReason,
+  incomingAt: Date,
+): boolean {
+  if (!recorded.endedAt) return true;
+  if (recordedEndHolds(recorded, incoming)) return false;
+  if (END_REASON_POLICY[incoming].deliberate) return true;
+  return incomingAt.getTime() > recorded.endedAt.getTime();
 }
 
 type JoinRoom = { current: boolean; endedAt: Date | null };
@@ -783,7 +827,7 @@ export async function handleSessionParticipantLeft(
       ? clampLeaveToRoomEnd(meeting, joinedAt, leftAt)
       : leftAt;
 
-    // Acquire row locks in strict `Meeting -> MeetingPresence -> MeetingAttendance` order.
+    // A leave takes no room lock: it touches `MeetingPresence` then `MeetingAttendance`, the order every writer uses.
     await prisma.$transaction(async (tx) => {
       const { count: newSessions } = await tx.meetingPresence.createMany({
         data: [

@@ -1,8 +1,9 @@
 /** A late session end on real Postgres: a newer session keeps the room live and its stays open, whichever webhook commits first. */
 import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
-import prisma from "../../../lib/prisma";
+import prisma, { type Tx } from "../../../lib/prisma";
 import {
+  handleCallEnded,
   handleSessionEnded,
   handleSessionParticipantJoined,
   handleSessionParticipantLeft,
@@ -61,10 +62,22 @@ async function seedRoom() {
       type: "call.session_ended",
       created_at: at(m).toISOString(),
     });
+  const hostEnded = (m: number, seconds = 0) =>
+    handleCallEnded({
+      call_cid: cid,
+      type: "call.ended",
+      created_at: new Date(at(m).getTime() + seconds * 1000).toISOString(),
+      user: { id: learner.userId },
+    });
+  const meetingRow = () =>
+    prisma.meeting.findUniqueOrThrow({
+      where: { id: meeting.id },
+      select: { endedAt: true, endedReason: true, streamCallId: true },
+    });
   const state = async () => ({
     meeting: await prisma.meeting.findUniqueOrThrow({
       where: { id: meeting.id },
-      select: { endedAt: true, endedReason: true },
+      select: { endedAt: true, endedReason: true, streamCallId: true },
     }),
     stays: await prisma.meetingPresence.findMany({
       where: { meetingId: meeting.id },
@@ -85,6 +98,8 @@ async function seedRoom() {
     join,
     leave,
     sessionEnded,
+    hostEnded,
+    meetingRow,
     state,
   };
 }
@@ -113,7 +128,7 @@ it("a session end after every join still ends the room and closes its stays as a
   await room.sessionEnded(30);
 
   const { meeting, stays, attendance } = await room.state();
-  expect(meeting).toEqual({
+  expect(meeting).toMatchObject({
     endedAt: room.at(30),
     endedReason: "session_timeout",
   });
@@ -133,7 +148,7 @@ it("a late session end older than a committed rejoin leaves the room live and th
   await room.sessionEnded(11);
 
   const { meeting, stays, attendance } = await room.state();
-  expect(meeting).toEqual({ endedAt: null, endedReason: null });
+  expect(meeting).toMatchObject({ endedAt: null, endedReason: null });
   expect(stays).toEqual([
     { userSessionId: first, leftAt: room.at(10), closedByEnd: false },
     { userSessionId: second, leftAt: null, closedByEnd: false },
@@ -199,7 +214,7 @@ it("a rejoin that read the room before a late end took it reopens the room once 
   await Promise.all([lateEnd, rejoin]);
 
   const { meeting, stays, attendance } = await room.state();
-  expect(meeting).toEqual({ endedAt: null, endedReason: null });
+  expect(meeting).toMatchObject({ endedAt: null, endedReason: null });
   expect(stays).toEqual([
     expect.objectContaining({ userSessionId: first, leftAt: room.at(10) }),
     { userSessionId: second, leftAt: null, closedByEnd: false },
@@ -236,10 +251,87 @@ it("a join to a call the room rotated away from before its lock leaves the curre
   await rejoin;
 
   const { meeting, stays, attendance } = await room.state();
-  expect(meeting).toEqual({ endedAt: null, endedReason: null });
+  expect(meeting).toMatchObject({ endedAt: null, endedReason: null });
   expect(stays).toEqual([
     expect.objectContaining({ userSessionId: first, leftAt: room.at(10) }),
     { userSessionId: second, leftAt: null, closedByEnd: false },
   ]);
   expect(attendance.lastLeftAt).toEqual(room.at(10));
+});
+
+/** Holds the room row, starts each racer once the previous one waits on a lock, then lets them run. */
+async function raceOnRoom(
+  meetingId: string,
+  racers: (() => Promise<unknown>)[],
+  whileHeld?: (tx: Tx) => Promise<unknown>,
+) {
+  const started: Promise<unknown>[] = [];
+  await prisma.$transaction(
+    async (tx) => {
+      await tx.$executeRaw`SELECT 1 FROM "Meeting" WHERE id = ${meetingId} FOR UPDATE`;
+      for (const racer of racers) {
+        const before = await lockWaiters();
+        started.push(racer());
+        await waitFor(async () => (await lockWaiters()) > before);
+      }
+      await whileHeld?.(tx);
+    },
+    { timeout: 20_000 },
+  );
+  return Promise.allSettled(started);
+}
+
+it("a join and a leave for the same device, racing on the room, both complete", async () => {
+  const room = await seedRoom();
+  const device = `dev-${randomUUID()}`;
+  // The join queues on the room lock; the leave inserts the stay and queues on its key lock.
+  const results = await raceOnRoom(room.meetingId, [
+    () => room.join(device, 12),
+    () => room.leave(device, 12, 20),
+  ]);
+
+  expect(results.map((r) => r.status)).toEqual(["fulfilled", "fulfilled"]);
+  expect((await room.state()).stays).toEqual([
+    { userSessionId: device, leftAt: room.at(20), closedByEnd: false },
+  ]);
+});
+
+it("an end of the old call never stamps a room that rotated to a new call id before the end took it", async () => {
+  const room = await seedRoom();
+  const rotated = `${room.streamCallId}-r1`;
+  const results = await raceOnRoom(
+    room.meetingId,
+    [() => room.sessionEnded(53)],
+    (tx) =>
+      tx.meeting.update({
+        where: { id: room.meetingId },
+        data: { streamCallId: rotated },
+      }),
+  );
+
+  expect(results.map((r) => r.status)).toEqual(["fulfilled"]);
+  expect(await room.meetingRow()).toEqual({
+    streamCallId: rotated,
+    endedAt: null,
+    endedReason: null,
+  });
+});
+
+it("a host end that loses the room to an earlier timeout still records the host's end", async () => {
+  const room = await seedRoom();
+  const results = await raceOnRoom(
+    room.meetingId,
+    [() => room.hostEnded(10, 5)],
+    (tx) =>
+      tx.meeting.update({
+        where: { id: room.meetingId },
+        data: { endedAt: room.at(10), endedReason: "session_timeout" },
+      }),
+  );
+
+  expect(results.map((r) => r.status)).toEqual(["fulfilled"]);
+  expect(await room.meetingRow()).toMatchObject({
+    endedAt: new Date(room.at(10).getTime() + 5000),
+    endedReason: "call_ended",
+  });
 });

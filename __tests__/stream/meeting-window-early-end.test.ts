@@ -63,6 +63,7 @@ const ENDS = new Date("2026-09-13T11:00:00.000Z");
 function session(endedAt: Date | null, endedReason: string | null = null) {
   return {
     id: "ms_1",
+    streamCallId: "slot_1",
     appointmentOccurrenceId: "slot_1",
     endedAt,
     endedReason,
@@ -122,7 +123,7 @@ describe("the last end wins (#1607)", () => {
     expect(db.meeting.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         // A concurrent call.ended moves endedAt, so this write then matches nothing.
-        where: { id: "ms_1", endedAt: read },
+        where: { id: "ms_1", streamCallId: "slot_1", endedAt: read },
         data: expect.objectContaining({
           endedAt: new Date("2026-09-13T11:02:00.000Z"),
         }),
@@ -189,7 +190,7 @@ describe("the last end wins (#1607)", () => {
 
     expect(db.meeting.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "ms_1", endedAt: read },
+        where: { id: "ms_1", streamCallId: "slot_1", endedAt: read },
         data: expect.objectContaining({ endedReason: "stream_ended" }),
       }),
     );
@@ -355,5 +356,79 @@ describe("a newer session owns the room", () => {
     const upsert = db.meetingAttendance.upsert.mock.calls[0][0];
     expect(upsert.update).toEqual({ joinCount: { increment: 1 } });
     expect(upsert.create.lastLeftAt).toBeUndefined();
+  });
+});
+
+describe("a host end beats a non-deliberate end on the same call", () => {
+  beforeEach(() => {
+    db.meeting.findUnique.mockReset();
+    db.meeting.updateMany.mockReset().mockResolvedValue({ count: 1 });
+  });
+  const hostEnd = (createdAt: string) =>
+    handleCallEnded({
+      call_cid: "default:slot_1",
+      type: "call.ended",
+      created_at: createdAt,
+      user: { id: "host_1" },
+    });
+
+  it("a host end that loses its CAS to a timeout re-reads the room and records the host's end", async () => {
+    const timeoutAt = new Date("2026-09-13T10:10:00.000Z");
+    db.meeting.findUnique
+      .mockResolvedValueOnce(session(null))
+      .mockResolvedValueOnce({
+        streamCallId: "slot_1",
+        endedAt: timeoutAt,
+        endedReason: "session_timeout",
+      });
+    db.meeting.updateMany
+      .mockResolvedValueOnce({ count: 0 })
+      .mockResolvedValueOnce({ count: 1 });
+
+    await hostEnd("2026-09-13T10:10:05.000Z");
+
+    expect(db.meeting.updateMany).toHaveBeenLastCalledWith({
+      where: { id: "ms_1", streamCallId: "slot_1", endedAt: timeoutAt },
+      data: {
+        endedAt: new Date("2026-09-13T10:10:05.000Z"),
+        endedReason: "call_ended",
+        isRecording: false,
+      },
+    });
+  });
+
+  it("a timeout that loses its CAS to a host end leaves the host's end", async () => {
+    db.meeting.findUnique
+      .mockResolvedValueOnce(session(null))
+      .mockResolvedValueOnce({
+        streamCallId: "slot_1",
+        endedAt: new Date("2026-09-13T10:10:05.000Z"),
+        endedReason: "call_ended",
+      });
+    db.meeting.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    await handleSessionEnded({
+      call_cid: "default:slot_1",
+      type: "call.session_ended",
+      created_at: "2026-09-13T10:10:00.000Z",
+    });
+
+    expect(db.meeting.updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("a host end replaces a recorded timeout even when the timeout's stamp is later", async () => {
+    const timeoutAt = new Date("2026-09-13T10:10:05.000Z");
+    db.meeting.findUnique.mockResolvedValue(
+      session(timeoutAt, "session_timeout"),
+    );
+
+    await hostEnd("2026-09-13T10:10:00.000Z");
+
+    expect(db.meeting.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "ms_1", streamCallId: "slot_1", endedAt: timeoutAt },
+        data: expect.objectContaining({ endedReason: "call_ended" }),
+      }),
+    );
   });
 });

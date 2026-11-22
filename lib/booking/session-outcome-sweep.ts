@@ -298,7 +298,8 @@ function resolvePresencesFromStream(
 /**
  * Persists what Stream answered, outside the outcome transaction: reported leaves
  * replace assumed closes (CAS on the assumption), closed missing stays are
- * inserted, and a still-open row is capped at the room end, marked as assumed.
+ * inserted, and a still-open row is capped at the room end (at its own join if it
+ * began later), marked as assumed.
  */
 async function persistStreamResolution(
   slot: OutcomeSlot,
@@ -326,10 +327,23 @@ async function persistStreamResolution(
       skipDuplicates: true,
     });
   }
+  const cap = meeting.endedAt ?? slot.endsAt;
   if (slot.presences.some((p) => p.leftAt === null)) {
     await prisma.meetingPresence.updateMany({
-      where: { appointmentOccurrenceId: slot.id, leftAt: null },
-      data: { leftAt: meeting.endedAt ?? slot.endsAt, closedByEnd: true },
+      where: {
+        appointmentOccurrenceId: slot.id,
+        leftAt: null,
+        joinedAt: { lte: cap },
+      },
+      data: { leftAt: cap, closedByEnd: true },
+    });
+  }
+  // A stay that began after the room end closes where it began: zero minutes, never an inverted interval.
+  for (const late of slot.presences) {
+    if (late.leftAt !== null || late.joinedAt <= cap) continue;
+    await prisma.meetingPresence.updateMany({
+      where: { id: late.id, leftAt: null },
+      data: { leftAt: late.joinedAt, closedByEnd: true },
     });
   }
 }

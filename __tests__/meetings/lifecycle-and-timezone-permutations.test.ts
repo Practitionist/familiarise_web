@@ -366,7 +366,11 @@ describe("Meeting lifecycle & timezone P&C unification (#2080)", () => {
       expect(mockEnd).toHaveBeenCalledTimes(1);
       expect(mockMeetingUpdateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: "mtg-perm-1", endedAt: null },
+          where: {
+            id: "mtg-perm-1",
+            streamCallId: "occurrence-occ-perm-1",
+            endedAt: null,
+          },
           data: expect.objectContaining({
             endedReason: "call_ended",
           }),

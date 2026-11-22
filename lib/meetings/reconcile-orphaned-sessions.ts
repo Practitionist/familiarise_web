@@ -142,7 +142,11 @@ async function reconcileSingleOrphanedSession(
       db: Pick<typeof prisma, "meeting" | "meetingPresence">,
     ) => {
       const updated = await db.meeting.updateMany({
-        where: { id: session.id, endedAt: null },
+        where: {
+          id: session.id,
+          streamCallId: session.streamCallId,
+          endedAt: null,
+        },
         data: { endedAt, endedReason },
       });
 
