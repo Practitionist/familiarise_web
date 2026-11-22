@@ -81,6 +81,15 @@ jest.mock("../../lib/payments/operations/refund", () => ({
 jest.mock("../../lib/payments/ledger/post", () => ({
   postLedgerTxn: jest.fn().mockResolvedValue({ created: true }),
 }));
+const mockStampSeat = jest.fn(async (..._a: unknown[]) => 1);
+jest.mock("../../lib/booking/participants", () => ({
+  ...jest.requireActual("../../lib/booking/participants"),
+  transitionParticipant: (...a: unknown[]) => mockStampSeat(...a),
+}));
+const mockIntentInTx = jest.fn(async (..._a: unknown[]) => new Date());
+jest.mock("../../lib/stream/revocation-intents", () => ({
+  persistRefundRevocationInTx: (...a: unknown[]) => mockIntentInTx(...a),
+}));
 
 import prisma from "../../lib/prisma";
 import type { RefundStatus } from "@prisma/client";
@@ -91,6 +100,8 @@ interface RefundRow {
   refundId: string;
   status: RefundStatus;
   paymentId: string;
+  amountPaise?: number;
+  metadata?: Record<string, unknown>;
 }
 
 /** The one Payment the stubbed database holds, keyed by both of its ids. */
@@ -146,9 +157,39 @@ function txStub() {
     },
     orgAuditLog: { create: jest.fn(async () => ({})) },
     refund: {
+      // By gateway id for the handler; by row id, with its payment, for the seat settle.
       findUnique: jest.fn(
-        async ({ where }: { where: { refundId: string } }) =>
-          store.refunds.find((r) => r.refundId === where.refundId) ?? null,
+        async ({ where }: { where: { refundId?: string; id?: string } }) => {
+          if (where.refundId)
+            return (
+              store.refunds.find((r) => r.refundId === where.refundId) ?? null
+            );
+          const row = store.refunds.find((r) => r.id === where.id);
+          return row
+            ? {
+                ...row,
+                payment: {
+                  amount: PAYMENT_ROW.amount,
+                  userId: PAYMENT_ROW.userId,
+                  refunds: store.refunds.map((r) => ({
+                    amountPaise: r.amountPaise ?? 0,
+                    status: r.status,
+                  })),
+                  disputes: [],
+                },
+              }
+            : null;
+        },
+      ),
+      // The reservation a refund's notes name, while it still holds its placeholder id.
+      findFirst: jest.fn(
+        async ({ where }: { where: { id: string; amountPaise: number } }) =>
+          store.refunds.find(
+            (r) =>
+              r.id === where.id &&
+              r.amountPaise === where.amountPaise &&
+              r.refundId.startsWith("pending_"),
+          ) ?? null,
       ),
       create: jest.fn(async ({ data }: { data: Omit<RefundRow, "id"> }) => {
         const created: RefundRow = {
@@ -320,6 +361,78 @@ describe("handleRefundCreated status transition guard", () => {
 
     expect(applyRefundCascade).not.toHaveBeenCalled();
     expect(store.refunds).toHaveLength(1);
+  });
+});
+
+describe("a booking refund's seat is decided as its webhook settles it", () => {
+  const fullRefundIntent = {
+    seatIntent: {
+      keepSeat: false,
+      keepSeatIfPartial: false,
+      amountNamed: false,
+    },
+  };
+
+  test("a reservation left PENDING by a gateway timeout ends its seat in the webhook's transaction", async () => {
+    // The ₹500 refund reached Razorpay, but the HTTP call timed out: the row kept its placeholder id.
+    store.refunds.push({
+      id: "row_1",
+      refundId: "pending_row_1",
+      status: "PENDING",
+      paymentId: "pay_1",
+      amountPaise: 50_000,
+      metadata: { source: "app", ...fullRefundIntent },
+    });
+    const used: TxStub[] = [];
+    (prisma as unknown as { $transaction: TransactionFn }).$transaction = (
+      fn,
+    ) => {
+      const tx = txStub();
+      used.push(tx);
+      return fn(tx);
+    };
+
+    await handleRefundCreated(
+      "rfnd_1",
+      "order_1",
+      50_000,
+      "INR",
+      "processed",
+      undefined,
+      { reservationId: "row_1" },
+    );
+
+    expect(store.refunds[0]).toMatchObject({
+      refundId: "rfnd_1",
+      status: "SUCCEEDED",
+      metadata: expect.objectContaining({ endsSeat: true }),
+    });
+    expect(mockStampSeat).toHaveBeenCalledWith(
+      used[0],
+      { paymentId: "pay_1" },
+      "REFUNDED",
+      { history: { reason: "refunded", actorUserId: null } },
+    );
+    expect(mockIntentInTx).toHaveBeenCalledWith(used[0], {
+      refundId: "row_1",
+      payerUserId: "user_1",
+    });
+  });
+
+  test("a dashboard refund with no stored intent leaves the seat alone", async () => {
+    store.refunds.push({
+      id: "row_1",
+      refundId: "rfnd_1",
+      status: "PENDING",
+      paymentId: "pay_1",
+      amountPaise: 50_000,
+    });
+
+    await handleRefundCreated("rfnd_1", "order_1", 50_000, "INR", "processed");
+
+    expect(store.refunds[0].status).toBe("SUCCEEDED");
+    expect(mockStampSeat).not.toHaveBeenCalled();
+    expect(mockIntentInTx).not.toHaveBeenCalled();
   });
 });
 

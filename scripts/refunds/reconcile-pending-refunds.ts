@@ -15,10 +15,7 @@ import {
   refundNoticeKind,
   refundNoticeOverride,
 } from "@/lib/payments/operations/refund-cause";
-import {
-  startDeadline,
-  SWEEP_START_DEADLINE_MS,
-} from "@/lib/cron/run-deadline";
+import { startDeadline } from "@/lib/cron/run-deadline";
 import {
   compareLeastRecentlyReconciled,
   LEAST_RECENTLY_RECONCILED,
@@ -58,6 +55,7 @@ import { goHref } from "@/lib/dashboard/go";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { applyRefundCascade } from "../../lib/payments/operations/refund";
+import { settleRefundSeatTx } from "../../lib/payments/operations/refund-seat";
 import { retireSupersededPlaceholderTx } from "../../lib/payments/operations/refund-placeholder";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
 
@@ -90,8 +88,6 @@ export interface RefundReconciliationResult {
   redriveFailedCount: number;
   /** Rows that reached the re-drive cap this run and left the cohort for an operator. */
   redriveDeadLettered: number;
-  /** Settled refunds whose pending seat decision this run made from their stored intent. */
-  seatsFinalised: number;
   errors: string[];
   timestamp: string;
 }
@@ -120,16 +116,7 @@ function realIdPendingRefundWhere(
   };
 }
 
-/** SUCCEEDED refunds whose reserving call never stored a seat decision; shared with the idle probe. */
-function settledSeatPendingWhere(updatedBefore: Date): Prisma.RefundWhereInput {
-  return {
-    status: RefundStatus.SUCCEEDED,
-    metadata: { path: ["seatDecision"], equals: "pending" },
-    updatedAt: { lt: updatedBefore },
-  };
-}
-
-/** True when any pass of the run (pending, stranded cascade, failure notice, seat) has a row. */
+/** True when any pass of the run (pending, stranded cascade, failure notice) has a row. */
 export async function hasPendingRefundWork(
   db: PrismaLike,
   now: Date,
@@ -143,7 +130,6 @@ export async function hasPendingRefundWork(
         placeholderRefundWhere(thresholdDate),
         realIdPendingRefundWhere(thresholdDate),
         FAILED_REFUND_NOTICE_WHERE,
-        settledSeatPendingWhere(new Date(now.getTime() - STRANDED_AFTER_MS)),
       ],
     },
     select: { id: true },
@@ -510,6 +496,7 @@ async function reconcilePendingRefundsUnlocked(
                 refund.payment.amount,
                 refund.id,
               );
+              await settleRefundSeatTx(tx, refund.id);
               const notice = await notifyRefundProcessed(
                 refund.payment.userId,
                 {
@@ -683,18 +670,11 @@ async function reconcilePendingRefundsUnlocked(
     );
   }
 
-  // The failure notices stop early, so the seat pass always keeps the run's last slice.
-  const noticeDeadline = () =>
-    Date.now() >= startedAt + SWEEP_START_DEADLINE_MS - SEAT_SLICE_MS;
   try {
-    await notifyFailedRefundsUnlocked(limit, noticeDeadline);
+    await notifyFailedRefundsUnlocked(limit, pastDeadline);
   } catch (error) {
     errors.push(error instanceof Error ? error.message : String(error));
   }
-
-  const seatsFinalised = pastDeadline()
-    ? 0
-    : await finaliseSettledSeats(limit, pastDeadline);
 
   return {
     success: errors.length === 0,
@@ -707,7 +687,6 @@ async function reconcilePendingRefundsUnlocked(
     redrivenCount: backstop.redriven,
     redriveFailedCount: backstop.failed,
     redriveDeadLettered: backstop.deadLettered.length,
-    seatsFinalised,
     errors,
     timestamp: new Date().toISOString(),
   };
@@ -788,6 +767,7 @@ async function bindGatewayRefundToPlaceholder(
             cascade.paymentAmountPaise,
             placeholderRowId,
           );
+          await settleRefundSeatTx(tx, placeholderRowId);
           const notice = await notifyRefundProcessed(
             cascade.userId,
             {
@@ -854,8 +834,6 @@ async function attemptRefundNotice(
 
 // A SUCCEEDED refund still uncascaded this long after its last write is stranded.
 const STRANDED_AFTER_MS = 10 * 60 * 1000;
-/** The end of the run's start budget kept for settling pending seat decisions. */
-const SEAT_SLICE_MS = 2_000;
 const STRANDED_BATCH = 10;
 /** Stops starting new re-drives once the pass has run this long. */
 const STRANDED_BUDGET_MS = 8_000;
@@ -977,40 +955,6 @@ async function redriveStrandedRefunds(
     );
   }
   return pass;
-}
-
-/**
- * Decides the seat of refunds that settled (by webhook or this job) while their reserving call never
- * stored a decision, and ends it as the live path does. A row that fails stays marked for the next run.
- */
-async function finaliseSettledSeats(
-  limit: number | undefined,
-  pastDeadline: () => boolean,
-): Promise<number> {
-  const due = await prisma.refund.findMany({
-    where: settledSeatPendingWhere(new Date(Date.now() - STRANDED_AFTER_MS)),
-    select: { id: true },
-    orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
-    take: Math.min(limit ?? STRANDED_BATCH, STRANDED_BATCH),
-  });
-  if (due.length === 0) return 0;
-  const { finaliseSettledRefundSeat } =
-    await import("@/lib/payments/operations/booking-refund");
-  let finalised = 0;
-  for (const refund of due) {
-    if (pastDeadline()) break;
-    try {
-      if ((await finaliseSettledRefundSeat(refund.id)) !== "skipped") {
-        finalised++;
-      }
-    } catch (error) {
-      console.error(
-        `Error finalising the seat of refund ${refund.id}:`,
-        error instanceof Error ? error.message : String(error),
-      );
-    }
-  }
-  return finalised;
 }
 
 /**

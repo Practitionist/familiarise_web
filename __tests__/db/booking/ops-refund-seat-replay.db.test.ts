@@ -1,12 +1,12 @@
 /**
- * The issue door's partial refund keeps the webinar seat, and resending its key
- * with no amount replays that refund with the seat still live: the real refund
- * writer stores the seat decision on the row once the gateway answers, and the
- * replay reads it back.
+ * A booking refund decides its seat once, as its row settles SUCCEEDED, whichever path settles it:
+ * the live refund writer or the refund webhook. Only settled refunds count as returned, and the
+ * decision, the REFUNDED stamp and the revocation intent commit with the settle or not at all.
  */
 import { randomUUID } from "node:crypto";
 import { NextRequest } from "next/server";
 import prisma from "../../../lib/prisma";
+import { handleRefundCreated } from "../../../app/api/webhooks/utils";
 import { seedUser } from "../seed";
 import { refundDoor } from "./harness-edges";
 import { seedHeldSeat, seedWebinar } from "./harness-seats";
@@ -29,7 +29,7 @@ const mockCreateRefund = jest.fn(async (params: { amount: number }) => ({
   refundId: `rfnd_dbtier_${randomUUID()}`,
   amount: params.amount,
   currency: "INR",
-  status: "SUCCEEDED" as const,
+  status: "SUCCEEDED" as "SUCCEEDED" | "PENDING",
 }));
 jest.mock("../../../lib/payments/index", () => ({
   __esModule: true,
@@ -53,10 +53,17 @@ jest.mock("../../../lib/rate-limit", () =>
 );
 const mockRevokeSeat = jest.fn(async () => undefined);
 jest.mock("../../../lib/stream/access-revocation", () => ({
-  persistRefundRevocation: jest.fn(async () => undefined),
-  persistRefundRevocationInTx: jest.fn(async () => null),
   revokeRefundedSeatAccess: () => mockRevokeSeat(),
 }));
+/** The real in-transaction intent writer, which a case can make fail once. */
+const mockIntentInTx = jest.fn();
+jest.mock("../../../lib/stream/revocation-intents", () => {
+  const actual = jest.requireActual("../../../lib/stream/revocation-intents");
+  return {
+    ...actual,
+    persistRefundRevocationInTx: (...a: unknown[]) => mockIntentInTx(...a),
+  };
+});
 
 import { POST as issueRefund } from "../../../app/api/admin/refunds/issue/route";
 
@@ -66,6 +73,11 @@ beforeAll(async () => {
 beforeEach(() => {
   mockCreateRefund.mockClear();
   mockRevokeSeat.mockClear();
+  mockIntentInTx.mockReset();
+  mockIntentInTx.mockImplementation(
+    jest.requireActual("../../../lib/stream/revocation-intents")
+      .persistRefundRevocationInTx,
+  );
   const writer = jest.requireActual(
     "../../../lib/payments/operations/booking-refund",
   ) as { refundBookingPayment: (...a: unknown[]) => unknown };
@@ -179,4 +191,152 @@ it("keeps the seat when a concurrent ₹400 refund fails while this ₹100 one i
       select: { status: true },
     }),
   ).toEqual({ status: "CONFIRMED" });
+});
+
+/** The gateway accepts the refund and answers PENDING under this id. */
+const gatewayPending = (refundId: string) =>
+  mockCreateRefund.mockImplementationOnce(async (params) => ({
+    refundId,
+    amount: params.amount,
+    currency: "INR",
+    status: "PENDING" as const,
+  }));
+const seatOf = (appointmentId: string, userId: string) =>
+  prisma.appointmentParticipant.findFirstOrThrow({
+    where: { appointmentId, userId },
+    select: { status: true },
+  });
+const rowOf = (paymentId: string, amountPaise: number) =>
+  prisma.refund.findFirstOrThrow({
+    where: { paymentId, amountPaise: BigInt(amountPaise) },
+    select: { id: true, status: true, metadata: true, cascadedAt: true },
+  });
+const revocationIntents = (refundRowId: string) =>
+  prisma.streamRevocationRetry.count({
+    where: { kind: "REFUND_ACCESS_REVOKE", planId: refundRowId },
+  });
+
+it.each<[string, "processed" | "failed", string]>([
+  ["its webhook settle ends the seat", "processed", "REFUNDED"],
+  ["its failure leaves the seat kept", "failed", "CONFIRMED"],
+])(
+  "a ₹100 partial that settles while a ₹400 refund is PENDING keeps the ₹500 seat; then %s",
+  async (_case, event, seat) => {
+    const webinar = await seedWebinar({ capacity: 20, price: 50_000 });
+    const { buyer, payment } = await seedHeldSeat(webinar, {
+      status: "SUCCEEDED",
+      expiresAt: null,
+    });
+    const gatewayId = `rfnd_dbtier_${randomUUID()}`;
+    gatewayPending(gatewayId);
+    await issue({
+      paymentId: payment.id,
+      idempotencyKey: randomUUID(),
+      amountPaise: 40_000,
+    });
+    await issue({
+      paymentId: payment.id,
+      idempotencyKey: randomUUID(),
+      amountPaise: 10_000,
+    });
+
+    expect(await rowOf(payment.id, 10_000)).toMatchObject({
+      status: "SUCCEEDED",
+      metadata: expect.objectContaining({ endsSeat: false }),
+    });
+    expect(await seatOf(webinar.appointmentId, buyer.userId)).toEqual({
+      status: "CONFIRMED",
+    });
+
+    await handleRefundCreated(
+      gatewayId,
+      payment.paymentIntent,
+      40_000,
+      "INR",
+      event,
+    );
+
+    const settled = await rowOf(payment.id, 40_000);
+    expect(await seatOf(webinar.appointmentId, buyer.userId)).toEqual({
+      status: seat,
+    });
+    expect(await revocationIntents(settled.id)).toBe(
+      event === "processed" ? 1 : 0,
+    );
+  },
+);
+
+it("a full refund whose gateway call timed out ends the seat when the webhook settles its reservation", async () => {
+  const webinar = await seedWebinar({ capacity: 20, price: 50_000 });
+  const { buyer, payment } = await seedHeldSeat(webinar, {
+    status: "SUCCEEDED",
+    expiresAt: null,
+  });
+  // Razorpay took the refund, but the HTTP call dropped before it answered.
+  mockCreateRefund.mockImplementationOnce(async () => {
+    throw new Error("socket hang up");
+  });
+  await issue({ paymentId: payment.id, idempotencyKey: randomUUID() });
+  const reservation = await rowOf(payment.id, 50_000);
+  expect(reservation).toMatchObject({ status: "PENDING" });
+  expect(await seatOf(webinar.appointmentId, buyer.userId)).toEqual({
+    status: "CONFIRMED",
+  });
+
+  await handleRefundCreated(
+    `rfnd_dbtier_${randomUUID()}`,
+    payment.paymentIntent,
+    50_000,
+    "INR",
+    "processed",
+    undefined,
+    { reservationId: reservation.id },
+  );
+
+  expect(await rowOf(payment.id, 50_000)).toMatchObject({
+    status: "SUCCEEDED",
+    metadata: expect.objectContaining({ endsSeat: true }),
+  });
+  expect(await seatOf(webinar.appointmentId, buyer.userId)).toEqual({
+    status: "REFUNDED",
+  });
+  expect(await revocationIntents(reservation.id)).toBe(1);
+});
+
+it("a settle whose revocation intent fails rolls the SUCCEEDED flip back, and the next settle decides", async () => {
+  const webinar = await seedWebinar({ capacity: 20, price: 50_000 });
+  const { buyer, payment } = await seedHeldSeat(webinar, {
+    status: "SUCCEEDED",
+    expiresAt: null,
+  });
+  const gatewayId = `rfnd_dbtier_${randomUUID()}`;
+  gatewayPending(gatewayId);
+  await issue({ paymentId: payment.id, idempotencyKey: randomUUID() });
+  mockIntentInTx.mockRejectedValueOnce(new Error("revocation table down"));
+  const settle = () =>
+    handleRefundCreated(
+      gatewayId,
+      payment.paymentIntent,
+      50_000,
+      "INR",
+      "processed",
+    );
+
+  await expect(settle()).rejects.toThrow("revocation table down");
+  const rolledBack = await rowOf(payment.id, 50_000);
+  expect(rolledBack).toMatchObject({ status: "PENDING", cascadedAt: null });
+  expect(rolledBack.metadata).not.toHaveProperty("endsSeat");
+  expect(await seatOf(webinar.appointmentId, buyer.userId)).toEqual({
+    status: "CONFIRMED",
+  });
+
+  await settle();
+  expect(await rowOf(payment.id, 50_000)).toMatchObject({
+    status: "SUCCEEDED",
+    metadata: expect.objectContaining({ endsSeat: true }),
+  });
+  expect(await seatOf(webinar.appointmentId, buyer.userId)).toEqual({
+    status: "REFUNDED",
+  });
+  expect(await revocationIntents(rolledBack.id)).toBe(1);
 });

@@ -1,14 +1,18 @@
 /**
  * The booking seat a refund ends. The reserving request's seat intent is stored on the row, and the
- * decision is made from that intent once the money is final, then stored beside it.
+ * refund decides from it once, in the transaction that settles it as SUCCEEDED, storing `endsSeat`.
  */
 
-import type { Prisma } from "@prisma/client";
+import { RefundStatus, type Prisma } from "@prisma/client";
 import { z } from "zod";
 
 import type { Tx } from "@/lib/prisma";
-import { RETURNED_REFUND_STATUSES } from "@/lib/payments/refundable-balance";
-import { sumPaise } from "@/lib/payments/utils/money";
+import { transitionParticipant } from "@/lib/booking/participants";
+import {
+  REFUNDABLE_BALANCE_SELECT,
+  RETURNED_DISPUTE_STATUSES,
+} from "@/lib/payments/refundable-balance";
+import { persistRefundRevocationInTx } from "@/lib/stream/revocation-intents";
 
 export type SeatPolicy = {
   amountPaise?: number;
@@ -35,19 +39,16 @@ export function seatIntentOf(policy: SeatPolicy): SeatIntent {
   };
 }
 
-/** A refund ends the funded seat unless it keeps it, or keeps it while an explicit amount leaves a balance. */
-export function refundEndsSeat(
-  policy: SeatPolicy,
-  requestedPaise: number,
-  refundablePaise: number,
-): boolean {
-  return seatEndsLeaving(
-    seatIntentOf(policy),
-    refundablePaise - requestedPaise,
-  );
+/** A row from before the intent was stored ends the seat only once nothing is left to refund. */
+export function legacySeatIntent(keepSeat: boolean | undefined): SeatIntent {
+  return {
+    keepSeat: keepSeat === true,
+    keepSeatIfPartial: true,
+    amountNamed: true,
+  };
 }
 
-/** The same rule, given what stays refundable once this refund is counted. */
+/** A refund ends the seat unless it keeps it, or keeps it while an explicit amount leaves a balance. */
 function seatEndsLeaving(intent: SeatIntent, leftPaise: number): boolean {
   const partial = intent.amountNamed && leftPaise > 0;
   return !intent.keepSeat && !(intent.keepSeatIfPartial && partial);
@@ -78,103 +79,75 @@ export function storedSeatIntent(
   return parsed.success ? parsed.data.seatIntent : undefined;
 }
 
-/** Written on a gateway reservation; the finalisation replaces it with `endsSeat`. */
-export const SEAT_DECISION_PENDING = { seatDecision: "pending" } as const;
-const PENDING_SEAT_DECISION = z.object({ seatDecision: z.literal("pending") });
+/** The history row of an event learner seat a refund ends; a 1:1 seat gets none. */
+export const refundedSeat = (actorUserId: string | null | undefined) => ({
+  history: { reason: "refunded" as const, actorUserId: actorUserId ?? null },
+});
 
-/** True while the call that reserved this refund still owns its seat decision and effects. */
-export function seatDecisionPending(
-  metadata: Prisma.JsonValue | null | undefined,
-): boolean {
-  return (
-    storedSeatDecision(metadata) === undefined &&
-    PENDING_SEAT_DECISION.safeParse(metadata).success
-  );
-}
-
-/** The metadata without the pending marker. */
-export function withoutSeatMarker(
-  metadata: Prisma.JsonValue | null | undefined,
-): Prisma.JsonObject {
-  const { seatDecision: _marker, ...rest } = jsonObject(metadata);
-  return rest;
-}
-
-/** A refund's seat decision, and the revocation intent its transaction wrote when it newly ended the seat. */
+/** A settled refund's seat decision, and the revocation intent its transaction wrote when it ended the seat. */
 export type SeatDecision = {
   endsSeat: boolean;
   revocationGeneration: Date | null;
 };
 
 const KEEP_SEAT: SeatDecision = { endsSeat: false, revocationGeneration: null };
-/** Re-reads after a lost decision write, so an unrelated metadata write cannot drop the decision. */
-const DECIDE_ATTEMPTS = 3;
 
 /**
- * Decides and stores a refund's seat from the intent stored on its row (else `intent`), against the
- * payment's committed balance read through `tx`: a concurrent refund that failed meanwhile counts as
- * refundable. Only a SUCCEEDED or PENDING row is decided, and a decision already stored wins: the
- * write is conditional on the row being unchanged since this read. A newly stored seat-ending
- * decision writes its revocation intent through `persistRevocation` in the same transaction.
+ * Decides a SUCCEEDED refund's seat once, in the Serializable transaction that settled it, counting only SUCCEEDED
+ * refunds and lost chargebacks; ending it stamps the seat REFUNDED and writes the payer's revocation intent there too.
  */
-export async function decideRefundSeatTx(
+export async function settleRefundSeatTx(
   tx: Tx,
-  args: {
-    refundRowId: string;
-    paymentId: string;
-    paymentPaise: number;
-    /** The caller's own intent, used only for a row that stores none. */
-    intent?: SeatIntent;
-    persistRevocation?: (tx: Tx) => Promise<Date>;
-  },
+  refundRowId: string,
+  opts: {
+    actorUserId?: string | null;
+    fallbackIntent?: SeatIntent;
+  } = {},
 ): Promise<SeatDecision> {
-  for (let attempt = 0; attempt < DECIDE_ATTEMPTS; attempt++) {
-    // One read: the payment's refunds give the balance, and this row's stored intent and decision.
-    const refunds = await tx.refund.findMany({
-      where: { paymentId: args.paymentId },
-      select: {
-        id: true,
-        amountPaise: true,
-        status: true,
-        metadata: true,
-        updatedAt: true,
+  const row = await tx.refund.findUnique({
+    where: { id: refundRowId },
+    select: {
+      status: true,
+      paymentId: true,
+      metadata: true,
+      payment: {
+        select: { amount: true, userId: true, ...REFUNDABLE_BALANCE_SELECT },
       },
-    });
-    const row = refunds.find((r) => r.id === args.refundRowId);
-    const stored = storedSeatDecision(row?.metadata);
-    if (stored !== undefined)
-      return { endsSeat: stored, revocationGeneration: null };
-    // A refund that moved no money (FAILED, CANCELLED) keeps the seat and stores nothing.
-    if (!row || !RETURNED_REFUND_STATUSES.has(row.status)) return KEEP_SEAT;
-    const intent = storedSeatIntent(row.metadata) ?? args.intent;
-    // No intent anywhere: keep the seat rather than guess.
-    if (!intent) return KEEP_SEAT;
-    const chargedBack = await tx.dispute.aggregate({
-      where: {
-        paymentId: args.paymentId,
-        // The verdicts where the bank already pulled the money, as RETURNED_DISPUTE_STATUSES lists.
-        status: { in: ["LOST", "CHARGE_REFUNDED"] },
-      },
-      _sum: { amountPaise: true },
-    });
-    const returnedPaise = refunds
-      .filter((r) => RETURNED_REFUND_STATUSES.has(r.status))
-      .reduce((sum, r) => sum + Number(r.amountPaise), 0);
-    const leftPaise =
-      args.paymentPaise -
-      returnedPaise -
-      sumPaise(chargedBack._sum.amountPaise);
-    const endsSeat = seatEndsLeaving(intent, leftPaise);
-    const won = await tx.refund.updateMany({
-      where: { id: row.id, updatedAt: row.updatedAt },
-      data: { metadata: { ...withoutSeatMarker(row.metadata), endsSeat } },
-    });
-    if (won.count === 0) continue;
-    const revocationGeneration =
-      endsSeat && args.persistRevocation
-        ? await args.persistRevocation(tx)
-        : null;
-    return { endsSeat, revocationGeneration };
+    },
+  });
+  if (!row || row.status !== RefundStatus.SUCCEEDED) return KEEP_SEAT;
+  const stored = storedSeatDecision(row.metadata);
+  if (stored !== undefined)
+    return { endsSeat: stored, revocationGeneration: null };
+  const intent = storedSeatIntent(row.metadata) ?? opts.fallbackIntent;
+  // A refund no booking door asked for (a dashboard refund, a capture auto-refund) leaves the seat alone.
+  if (!intent) return KEEP_SEAT;
+  const { payment } = row;
+  const returnedPaise =
+    payment.refunds
+      .filter((r) => r.status === RefundStatus.SUCCEEDED)
+      .reduce((sum, r) => sum + r.amountPaise, 0) +
+    payment.disputes
+      .filter((d) => RETURNED_DISPUTE_STATUSES.has(d.status))
+      .reduce((sum, d) => sum + d.amountPaise, 0);
+  const endsSeat = seatEndsLeaving(intent, payment.amount - returnedPaise);
+  const stamped = await tx.refund.updateMany({
+    where: { id: refundRowId, status: RefundStatus.SUCCEEDED },
+    data: { metadata: { ...jsonObject(row.metadata), endsSeat } },
+  });
+  if (stamped.count !== 1) {
+    throw new Error(`Refund ${refundRowId} left SUCCEEDED while settling`);
   }
-  return KEEP_SEAT;
+  if (!endsSeat) return KEEP_SEAT;
+  await transitionParticipant(
+    tx,
+    { paymentId: row.paymentId },
+    "REFUNDED",
+    refundedSeat(opts.actorUserId),
+  );
+  const revocationGeneration = await persistRefundRevocationInTx(tx, {
+    refundId: refundRowId,
+    payerUserId: payment.userId,
+  });
+  return { endsSeat, revocationGeneration };
 }

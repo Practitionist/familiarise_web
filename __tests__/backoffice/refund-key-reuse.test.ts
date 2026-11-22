@@ -28,12 +28,16 @@ jest.mock("../../lib/booking/participants", () => ({
   ...jest.requireActual("../../lib/booking/participants"),
   transitionParticipant: (...a: unknown[]) => mockTransitionParticipant(...a),
 }));
-const mockPersistRevocation = jest.fn(async (_i: unknown) => undefined);
+const mockPersistRevocation = jest.fn(
+  async (_tx: unknown, _i: unknown) => new Date("2026-11-22T10:00:00Z"),
+);
+jest.mock("../../lib/stream/revocation-intents", () => ({
+  persistRefundRevocationInTx: (tx: unknown, i: unknown) =>
+    mockPersistRevocation(tx, i),
+}));
 const mockRevokeSeat = jest.fn(async (_i: unknown, _g: unknown) => undefined);
 jest.mock("../../lib/stream/access-revocation", () => ({
-  persistRefundRevocation: (i: unknown) => mockPersistRevocation(i),
   revokeRefundedSeatAccess: (i: unknown, g: unknown) => mockRevokeSeat(i, g),
-  persistRefundRevocationInTx: jest.fn(async () => null),
 }));
 
 type Spent = { id: string; paymentId: string; amountPaise: number };
@@ -95,7 +99,31 @@ jest.mock("../../lib/prisma", () => ({
           : null;
       },
     },
-    $transaction: (fn: (tx: unknown) => unknown) => fn({}),
+    // A replayed row from before the seat intent was stored is settled here, against its own payment.
+    $transaction: (fn: (tx: unknown) => unknown) =>
+      fn({
+        refund: {
+          findUnique: async ({ where }: { where: { id: string } }) => {
+            const spent = mockStore.spent;
+            if (spent?.id !== where.id) return null;
+            const payment = mockPayments[spent.paymentId];
+            return {
+              status: "SUCCEEDED",
+              paymentId: spent.paymentId,
+              metadata: null,
+              payment: {
+                amount: 5_000,
+                ...payment,
+                refunds: [
+                  { amountPaise: spent.amountPaise, status: "SUCCEEDED" },
+                ],
+                disputes: [],
+              },
+            };
+          },
+          updateMany: async () => ({ count: 1 }),
+        },
+      }),
   },
 }));
 
@@ -174,10 +202,14 @@ describe("the issue door", () => {
       "REFUNDED",
       expect.anything(),
     );
-    expect(mockPersistRevocation).toHaveBeenCalledWith({
+    expect(mockPersistRevocation).toHaveBeenCalledWith(expect.anything(), {
       refundId: "ref-B",
       payerUserId: "buyer-B",
     });
+    expect(mockRevokeSeat).toHaveBeenCalledWith(
+      { refundId: "ref-B", payerUserId: "buyer-B" },
+      new Date("2026-11-22T10:00:00Z"),
+    );
   });
 
   it("refuses the same key with a different explicit amount", async () => {

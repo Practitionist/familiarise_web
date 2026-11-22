@@ -91,17 +91,19 @@ jest.mock("../../lib/payments/operations/refund", () => ({
 jest.mock("../../lib/referrals/service", () => ({
   reverseCreditsForPayment: jest.fn().mockResolvedValue(0),
 }));
+const mockSettleSeat = jest.fn(async (..._a: unknown[]) => ({
+  endsSeat: false,
+  revocationGeneration: null,
+}));
+jest.mock("../../lib/payments/operations/refund-seat", () => ({
+  settleRefundSeatTx: (...a: unknown[]) => mockSettleSeat(...a),
+}));
 jest.mock("../../lib/cron/with-cron-lock", () => ({
   // Passthrough — the lock machinery has its own suite; these tests own the
   // matcher semantics.
   withCronLock: (_key: string, _opts: unknown, fn: () => Promise<unknown>) =>
     fn(),
   LONG_JOB_TTL_MS: 35 * 60_000,
-}));
-
-const mockFinaliseSeat = jest.fn(async (_refundId: string) => "skipped");
-jest.mock("../../lib/payments/operations/booking-refund", () => ({
-  finaliseSettledRefundSeat: (refundId: string) => mockFinaliseSeat(refundId),
 }));
 
 import { Prisma } from "@prisma/client";
@@ -113,7 +115,6 @@ import { notifyRefundFailed } from "../../lib/novu/service";
 import { reverseCreditsForPayment } from "../../lib/referrals/service";
 import { stageRefundFailedEmail } from "../../lib/email";
 import {
-  hasPendingRefundWork,
   reconcilePendingRefunds,
   notifyFailedRefunds,
 } from "../../scripts/refunds/reconcile-pending-refunds";
@@ -213,6 +214,11 @@ describe("reconcilePendingRefunds placeholder matching", () => {
     );
     // Never failed while a match existed.
     expect(result.failedCount).toBe(0);
+    // The bind settles the row, so it decides the seat in the same transaction.
+    expect(mockSettleSeat).toHaveBeenCalledWith(
+      expect.objectContaining({ refund: refundTable }),
+      "res_1",
+    );
   });
 
   test("FAILs a >24h placeholder only when the listing succeeded and no reservation match exists", async () => {
@@ -393,6 +399,11 @@ describe("reconcilePendingRefunds real-id PENDING polling", () => {
       expect.objectContaining({ amount: 10_000, currency: "INR" }),
       expect.objectContaining({ entityRef: "payment:pay-9" }),
     );
+    // The poll settles the row, so it decides the seat in the same transaction.
+    expect(mockSettleSeat).toHaveBeenCalledWith(
+      expect.objectContaining({ refund: refundTable }),
+      "row_9",
+    );
   });
 
   test("a row another writer already settled is neither re-marked nor re-notified", async () => {
@@ -426,6 +437,7 @@ describe("reconcilePendingRefunds real-id PENDING polling", () => {
     expect(result.reconciledCount).toBe(0);
     expect(result.skippedCount).toBe(1);
     expect(mockNotifyRefundProcessed).not.toHaveBeenCalled();
+    expect(mockSettleSeat).not.toHaveBeenCalled();
   });
 
   test("a still-settling real-id refund is never aged out locally", async () => {
@@ -610,13 +622,9 @@ describe("reconcilePendingRefunds — failed-refund notice", () => {
 
     await reconcilePendingRefunds();
 
-    // Pending, real-id and failure-notice passes, then the pending-seat pass.
-    expect(refundTable.findMany).toHaveBeenCalledTimes(4);
+    expect(refundTable.findMany).toHaveBeenCalledTimes(3);
     expect(refundTable.findMany.mock.calls[2][0]).toMatchObject({
       where: { status: "FAILED", failedNotifiedAt: null },
-    });
-    expect(refundTable.findMany.mock.calls[3][0]).toMatchObject({
-      where: { status: "SUCCEEDED" },
     });
     expect(refundTable.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -893,79 +901,4 @@ test("notice staging failure preserves completed polling counters and returns an
       expect.stringContaining("notice staging unavailable"),
     ]),
   );
-});
-
-describe("a settled refund whose seat decision is still pending", () => {
-  const seatPending = {
-    status: "SUCCEEDED",
-    metadata: { path: ["seatDecision"], equals: "pending" },
-  };
-
-  test("is selected by the run and the idle probe, and finalised from its stored intent", async () => {
-    refundTable.findMany.mockImplementation(
-      async (query: { where: { metadata?: unknown } }) =>
-        query.where.metadata ? [{ id: "ref_interrupted" }] : [],
-    );
-    mockFinaliseSeat.mockResolvedValueOnce("ended");
-
-    const result = await reconcilePendingRefunds();
-
-    expect(refundTable.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: expect.objectContaining(seatPending) }),
-    );
-    expect(mockFinaliseSeat).toHaveBeenCalledWith("ref_interrupted");
-    expect(result).toMatchObject({ seatsFinalised: 1, success: true });
-
-    const findFirst = jest.fn(async () => null);
-    await hasPendingRefundWork(
-      {
-        refund: { findFirst },
-        $queryRaw: jest.fn(async () => []),
-      } as unknown as Parameters<typeof hasPendingRefundWork>[0],
-      new Date(),
-      () => false,
-    );
-    expect(findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: {
-          OR: expect.arrayContaining([expect.objectContaining(seatPending)]),
-        },
-      }),
-    );
-  });
-});
-
-describe("the run's last slice is kept for pending seat decisions", () => {
-  test("failure notices that take a second each stop early, so the seat pass still runs", async () => {
-    let clock = 1_000_000;
-    const now = jest.spyOn(Date, "now").mockImplementation(() => clock);
-    // Five owed-attempt failures: each claim is one update, and each takes a second here.
-    const failed = Array.from({ length: 5 }, (_, i) => ({
-      id: `row_failed_${i}`,
-      paymentId: "pay_1",
-      createdAt: new Date(2_000_000),
-      failedAt: null,
-      payment: { refundOwedKey: "k", refundOwedAt: new Date(0) },
-    }));
-    refundTable.findMany.mockImplementation(
-      async (query: { where: { status?: string; metadata?: unknown } }) =>
-        query.where.metadata
-          ? [{ id: "ref_interrupted" }]
-          : query.where.status === "FAILED"
-            ? failed
-            : [],
-    );
-    refundTable.updateMany.mockImplementation(async () => {
-      clock += 1_000;
-      return { count: 1 };
-    });
-    mockFinaliseSeat.mockResolvedValueOnce("ended");
-
-    // The run started 12 s ago: 4 s of its 16 s start budget are left.
-    const result = await reconcilePendingRefunds({ startedAt: clock - 12_000 });
-    now.mockRestore();
-
-    expect(mockFinaliseSeat).toHaveBeenCalledWith("ref_interrupted");
-    expect(result.seatsFinalised).toBe(1);
-  });
 });
