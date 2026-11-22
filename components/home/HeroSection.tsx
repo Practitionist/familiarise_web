@@ -26,18 +26,22 @@ export function HeroSection({
 }) {
   return (
     <section className="relative min-h-[95vh] flex items-center bg-black overflow-hidden">
-      {/* Static radial gradient accents (avoids heavy blurred keyframe orbs on mobile GPUs) */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-1/4 left-1/4 w-[600px] h-[600px] rounded-full bg-[radial-gradient(circle_at_center,_rgba(39,39,42,0.45)_0%,_transparent_70%)]" />
-        <div className="absolute top-1/3 right-1/4 w-[500px] h-[500px] rounded-full bg-[radial-gradient(circle_at_center,_rgba(63,63,70,0.3)_0%,_transparent_70%)]" />
-        <div className="absolute bottom-1/4 left-1/2 w-[700px] h-[700px] rounded-full bg-[radial-gradient(circle_at_center,_rgba(39,39,42,0.35)_0%,_transparent_70%)]" />
-      </div>
-
-      {/* Grid pattern overlay */}
-      <div className="absolute inset-0 grid-pattern opacity-30" />
-
-      {/* Spotlight effect */}
-      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[600px] bg-[radial-gradient(ellipse_at_top,_rgba(39,39,42,0.25)_0%,_transparent_70%)] pointer-events-none" />
+      {/* Static silver glows over the faint line grid; plain gradients, no blur filters. */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0"
+        style={{
+          background: [
+            "radial-gradient(ellipse 40% 35% at 22% 30%, rgba(161,161,170,0.28), transparent 70%)",
+            "radial-gradient(ellipse 35% 30% at 78% 32%, rgba(212,212,216,0.18), transparent 70%)",
+            "radial-gradient(ellipse 50% 32% at 50% 88%, rgba(113,113,122,0.26), transparent 70%)",
+          ].join(", "),
+        }}
+      />
+      <div
+        aria-hidden="true"
+        className="absolute inset-0 grid-pattern opacity-30"
+      />
 
       <div className="container mx-auto px-4 md:px-6 relative z-10 py-20 md:py-32">
         <div className="max-w-4xl mx-auto text-center">
