@@ -12,6 +12,7 @@ import {
 } from "@/lib/booking/seat-history";
 import { lastRemovalKind } from "@/lib/booking/seat-trail-copy";
 import { isPriceFreePayment } from "@/lib/payments/funding-rail";
+import { REFUND_DOOR_SELECT, refundDoorRefusal } from "./refund-eligibility";
 import { CONDUCT_REMOVAL_CATEGORY } from "@/lib/support/case-topic";
 import { conductRemovalStands } from "@/lib/support/conduct-removal-state";
 import type { BookingOpsView } from "./booking-ops-types";
@@ -48,16 +49,7 @@ export async function readBookingOps(
         where: { deletedAt: null },
         orderBy: { createdAt: "desc" },
         take: PAYMENTS_SHOWN,
-        select: {
-          id: true,
-          paymentStatus: true,
-          amount: true,
-          currency: true,
-          refunds: {
-            where: { status: { in: ["SUCCEEDED", "PENDING"] } },
-            select: { amountPaise: true, status: true },
-          },
-        },
+        select: { id: true, currency: true, ...REFUND_DOOR_SELECT },
       },
       participants: {
         where: {
@@ -119,6 +111,7 @@ export async function readBookingOps(
       // Only settled refunds read as refunded; PENDING is still in flight.
       refundedPaise: sumRefunds(p.refunds, "SUCCEEDED"),
       pendingRefundPaise: sumRefunds(p.refunds, "PENDING"),
+      refundable: refundDoorRefusal(p) === null,
     })),
     removedSeats: seats.flatMap((seat) => {
       const trail = trails.get(seat.id) ?? [];

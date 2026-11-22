@@ -73,11 +73,12 @@ const base = {
   reviewerId: "staff1",
 };
 
-function primeOpenRequest(round = 0) {
+function primeOpenRequest(round = 0, documents = 1) {
   tx.consultantProfileVerification.findUnique.mockResolvedValue({
     status: "PENDING",
     consultantProfileId: "cp1",
     consultantProfile: { userId: "u1" },
+    _count: { documents },
   });
   tx.consultantProfileVerification.findFirst.mockResolvedValue(null);
   tx.consultantProfileVerification.count.mockResolvedValue(round);
@@ -128,6 +129,26 @@ describe("reviewVerification", () => {
       where: { id: "cp1" },
       data: { verificationStatus: "VERIFIED", isVerified: true },
     });
+  });
+
+  it("refuses to approve a request with no documents, but lets it be sent back", async () => {
+    primeOpenRequest(0, 0);
+    const approved = await reviewVerification({ ...base, status: "APPROVED" });
+    expect(approved).toMatchObject({
+      ok: false,
+      code: "NO_DOCUMENTS",
+      httpStatus: 409,
+      name: "OpsRefusal",
+    });
+    expect(tx.consultantProfileVerification.updateMany).not.toHaveBeenCalled();
+    expect(tx.consultantProfile.update).not.toHaveBeenCalled();
+
+    primeOpenRequest(0, 0);
+    const sentBack = await reviewVerification({
+      ...base,
+      status: "NEEDS_INFO",
+    });
+    expect(sentBack).toMatchObject({ ok: true });
   });
 
   it("refuses to decide an already-decided row", async () => {

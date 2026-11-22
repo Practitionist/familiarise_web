@@ -1,4 +1,5 @@
 import type { SupportChannel, SupportPriority } from "@prisma/client";
+import type { FundingRail } from "@/lib/payments/funding-rail";
 
 import type { UserSentryIssues } from "@/lib/observability/sentry-issues-types";
 import type { CaseTopic } from "@/lib/support/case-topic";
@@ -104,6 +105,11 @@ export interface CasePayment {
   createdAt: string;
 }
 
+/** The staff view also names how the payment was funded: a credit-funded refund always returns the whole booking. */
+export interface StaffCasePayment extends CasePayment {
+  rail: FundingRail;
+}
+
 export interface CaseDuplicateRef {
   id: string;
   reference: string;
@@ -158,7 +164,7 @@ export interface CaseWorkspace {
     joinedAt: string;
   };
   booking: CaseBooking | null;
-  payment: CasePayment | null;
+  payment: StaffCasePayment | null;
   organization: { id: string; name: string } | null;
   pastCases: { key: string; subject: string; status: string; at: string }[];
   sentryIssues?: UserSentryIssues;

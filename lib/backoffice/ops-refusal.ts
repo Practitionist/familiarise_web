@@ -10,6 +10,7 @@ import {
 } from "@/lib/cron/cron-lock-errors";
 import {
   RefundGatewayError,
+  RefundKeyReusedError,
   RefundValidationError,
 } from "@/lib/payments/operations/refund";
 import { IllegalEarningStatusTransitionError } from "@/lib/payments/payouts/earning-status";
@@ -39,6 +40,8 @@ export function refusalResponse(err: unknown): NextResponse | null {
     );
   if (err instanceof BookingRuleError)
     return body(err.code, err.message, err.httpStatus);
+  if (err instanceof RefundKeyReusedError)
+    return body(err.code, err.message, err.httpStatus, err.detail);
   if (err instanceof RefundValidationError)
     return body(err.code, err.message, 409, err.detail);
   // Already paged inside refundPayment; the operator gets the code, not a 500.

@@ -53,7 +53,9 @@ export async function refundIncidentSeat(
   seat: IncidentRefundSeat,
 ): Promise<IncidentRefundOutcome> {
   const marker = incidentRefundMarker(seat);
-  const prior = await findDedupedRefund(marker.key);
+  const prior = await findDedupedRefund(marker.key, {
+    paymentId: marker.paymentId,
+  });
   if (prior) return { kind: "done", refundedPaise: prior.amountRefundedPaise };
 
   const claim = await prisma.$transaction(async (tx) => {

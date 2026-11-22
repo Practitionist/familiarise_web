@@ -91,7 +91,12 @@ export interface OpsDoorContext<B> {
   params: Record<string, string>;
   /** The audit row's id, known up front so a refund can key on `ops:<id>`. */
   opsActionId: string;
+  /** How the second-approver check priced a request that runs unheld; absent on an approved proposal. */
+  priced?: PricedRequest;
 }
+
+/** A door's second-approver price; a replay of a request already carried out moves nothing. */
+export type PricedRequest = { amountPaise: number; replay: boolean };
 
 export interface OpsDoorResult {
   target: { kind: string; id: string };
@@ -132,11 +137,11 @@ export interface SecondApprover<B> {
   /** The door's route; the approve door dispatches a stored proposal on it. */
   route: string;
   target: (ctx: OpsDoorContext<B>) => { kind: string; id: string };
-  /** What the door would move, in paise; Infinity when unbounded. */
+  /** What the door would move, in paise (Infinity when unbounded), or a priced replay. */
   amountPaise: (
     body: B & { reason: string },
     ctx: OpsDoorContext<B>,
-  ) => number | Promise<number>;
+  ) => number | PricedRequest | Promise<number | PricedRequest>;
 }
 
 interface OpsActionOptions<B> {
@@ -320,23 +325,24 @@ export function withOpsAction<S extends z.ZodRawShape>(
     const action = actionFor(ctx.body);
     try {
       if (options.secondApprover) {
-        const proposed = await proposeIfRequired(
+        const held = await proposeIfRequired(
           options.secondApprover,
           surface,
           action,
           ctx,
         );
-        if (proposed) {
+        if ("proposal" in held) {
           return NextResponse.json(
             {
-              proposalId: proposed.id,
+              proposalId: held.proposal.id,
               status: "PROPOSED",
-              expiresAt: proposed.expiresAt.toISOString(),
+              expiresAt: held.proposal.expiresAt.toISOString(),
               opsActionId: ctx.opsActionId,
             },
             { status: 202 },
           );
         }
+        ctx.priced = held.priced;
       }
       const result = await execute(ctx, action);
       return NextResponse.json(
@@ -392,23 +398,28 @@ export function withOpsAction<S extends z.ZodRawShape>(
   });
 }
 
-/** Holds the door as a PROPOSED row when F10 needs a second ADMIN; null runs it now. */
+/** Holds the door as a PROPOSED row when F10 needs a second ADMIN; otherwise answers how it was priced. */
 async function proposeIfRequired<B>(
   secondApprover: SecondApprover<B>,
   surface: BackofficeSurface,
   action: string,
   ctx: OpsDoorContext<B>,
-): Promise<{ id: string; expiresAt: Date } | null> {
-  const amountPaise = await secondApprover.amountPaise(ctx.body, ctx);
-  if (!(await requiresSecondApprover(prisma, amountPaise))) return null;
+): Promise<
+  { proposal: { id: string; expiresAt: Date } } | { priced: PricedRequest }
+> {
+  const price = await secondApprover.amountPaise(ctx.body, ctx);
+  const priced =
+    typeof price === "number" ? { amountPaise: price, replay: false } : price;
+  const { amountPaise } = priced;
+  if (!(await requiresSecondApprover(prisma, amountPaise))) return { priced };
   const target = secondApprover.target(ctx);
   // A JSON round-trip, not a clone: the row holds exactly what the replay re-parses.
   const requestBody: Prisma.InputJsonValue = JSON.parse(
     JSON.stringify(ctx.body),
   );
   try {
-    return await prisma.$transaction(async (tx) => {
-      const proposal = await openProposal(tx, {
+    const proposal = await prisma.$transaction(async (tx) => {
+      const opened = await openProposal(tx, {
         action,
         route: secondApprover.route,
         target,
@@ -429,13 +440,14 @@ async function proposeIfRequired<B>(
         targetId: target.id,
         reason: ctx.body.reason,
         after: {
-          proposalId: proposal.id,
+          proposalId: opened.id,
           action,
           amountPaise: Number.isFinite(amountPaise) ? amountPaise : null,
         },
       });
-      return proposal;
+      return opened;
     });
+    return { proposal };
   } catch (err) {
     if (isUniqueViolation(err)) {
       throw new OpsRefusal(
