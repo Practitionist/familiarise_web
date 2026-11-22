@@ -107,11 +107,11 @@ describe("the consultee grid poll", () => {
     expect(fetchMock.mock.calls[1][1].headers).toMatchObject({
       "X-Availability-If-None-Match": '"v1"',
     });
-    const cached = client.getQueryData(
+    const cached = client.getQueryData<{ data: unknown }>(
       availabilityQueryKey("cp-1", START, END, "UTC"),
     );
-    expect(cached).toEqual(grid);
-    expect(seen.at(-1)).toBe(cached);
+    expect(cached).toEqual({ data: grid, quota: null, leadMs: null });
+    expect(seen.at(-1)).toBe(cached?.data);
 
     visibility = "hidden";
     await act(async () => jest.advanceTimersByTimeAsync(5 * 60_000));

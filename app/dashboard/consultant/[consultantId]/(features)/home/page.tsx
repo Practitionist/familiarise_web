@@ -5,6 +5,7 @@ import {
   dehydrate,
 } from "@tanstack/react-query";
 import HomePageClient from "./HomePageClient";
+import { OperatorHomeHeader } from "./OperatorHomeHeader";
 import { HomeSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import { NeedsYouCard } from "@/components/dashboard/NeedsYouCard";
@@ -12,7 +13,7 @@ import { getSession } from "@/lib/auth-server";
 import { getConsultantDashboard } from "@/lib/data/consultant-dashboard";
 import { getNeedsYouSummary } from "@/lib/data/needs-you";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
-import { getViewerZone } from "@/lib/time/viewer-zone-server";
+import { getPersonalViewerZone } from "@/lib/time/viewer-zone-server";
 
 type PageProps = {
   params: Promise<{ consultantId: string }>;
@@ -39,12 +40,9 @@ export default async function HomePage({ params }: Readonly<PageProps>) {
   // and getSession is React.cache'd per render, so both share one entry.
   const session = await getSession();
   // An ADMIN/STAFF inspecting someone else's dashboard would otherwise be
-  // greeted by their OWN name, since the session is the viewer's. The owner's
-  // name lives in the layout's cached profile, which is not available here
-  // without another round trip — so inspectors get a neutral title instead.
-  const firstName = access.isInspecting
-    ? null
-    : session?.user?.name?.split(" ")[0];
+  // greeted by their OWN name, since the session is the viewer's. Inspectors
+  // get OperatorHomeHeader, which names the expert from the layout's cached profile.
+  const firstName = session?.user?.name?.split(" ")[0];
 
   // Everything below streams. Measured before this change: the first byte
   // already arrived at ~0.4s, but the response did not complete until ~4.9s
@@ -56,10 +54,14 @@ export default async function HomePage({ params }: Readonly<PageProps>) {
       {/* Real text, rendered server-side outside every boundary. A skeleton
           cannot trigger FCP — it has no text, image or SVG — which is why the
           first pass moved the shell to 458ms and left FCP at ~6s anyway. */}
-      <DashboardHeader
-        title={firstName ? `Welcome back, ${firstName}` : "Welcome back"}
-        subtitle="Here's what's happening with your appointments today"
-      />
+      {access.isInspecting ? (
+        <OperatorHomeHeader consultantId={consultantId} />
+      ) : (
+        <DashboardHeader
+          title={firstName ? `Welcome back, ${firstName}` : "Welcome back"}
+          subtitle="Here's what's happening with your appointments today"
+        />
+      )}
       {/* fallback={null}, not a skeleton: NeedsYouCard renders nothing for a
           consultant with no org contexts, so a placeholder would flash a card
           that then vanishes. */}
@@ -111,7 +113,7 @@ async function DashboardSection({
   const queryClient = new QueryClient();
   // Read here and passed down exactly as the Appointments page does, so Home
   // and Appointments show one clock time for one session (#1703).
-  const viewerZone = await getViewerZone();
+  const viewerZone = await getPersonalViewerZone("consultant", consultantId);
   // Swallow, don't rethrow: a read failure should degrade to a client-side
   // fetch rather than surfacing the Suspense error boundary for the whole tab.
   await queryClient

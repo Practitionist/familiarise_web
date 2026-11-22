@@ -7,7 +7,6 @@ import prisma, { type Tx } from "@/lib/prisma";
 import {
   AppointmentStatus,
   OccurrenceCompletionStatus,
-  PaymentStatus,
   Prisma,
 } from "@prisma/client";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
@@ -24,11 +23,20 @@ import {
   transitionSubscriptionRequest,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import {
+  expirePendingPaymentsInTx,
+  type GatewayCancel,
+} from "@/lib/booking/pending-payment-expiry";
+import {
+  REQUEST_AGAIN_NOTE,
+  REQUESTED_AGAIN_REASON,
+} from "@/lib/booking/request-again-rules";
 
 /**
  * #1775 — one approved-but-unpaid request lapsing, whoever asks for it: the
- * 7-day sweep (`PAYMENT_LAPSED`) or the consultant's Withdraw
- * (`WITHDRAWN_BY_CONSULTANT`). The request CAS carries the money predicate in
+ * 7-day sweep (`PAYMENT_LAPSED`), the consultant's Withdraw
+ * (`WITHDRAWN_BY_CONSULTANT`) or the learner's Request again
+ * (`REQUESTED_AGAIN`). The request CAS carries the money predicate in
  * its WHERE, so a capture that already flipped the row through the single
  * writer matches zero rows and nothing below runs. The open pay order is
  * tombstoned by status — Razorpay orders cannot be voided, and a capture that
@@ -43,7 +51,11 @@ import { IllegalTransitionError } from "@/lib/enterprise/transitions";
  * *declining*, which this is not, so CANCELLED is the only honest third option.
  */
 export type LapseReason =
-  "PAYMENT_LAPSED" | "WITHDRAWN_BY_CONSULTANT" | "TOO_CLOSE_TO_PAY";
+  | "PAYMENT_LAPSED"
+  | "WITHDRAWN_BY_CONSULTANT"
+  | "TOO_CLOSE_TO_PAY"
+  | typeof REQUESTED_AGAIN_REASON
+  | "EXPERT_UNAVAILABLE";
 
 /**
  * The terminal status each reason earns. EXPIRED is reserved for a lapsed
@@ -56,6 +68,19 @@ const LAPSED_TO: Record<LapseReason, AppointmentStatus> = {
   WITHDRAWN_BY_CONSULTANT: AppointmentStatus.CANCELLED,
   // The pay window closed before it could open: a window that ran out.
   TOO_CLOSE_TO_PAY: AppointmentStatus.EXPIRED,
+  // The learner closes a window that already ran out before requesting again.
+  [REQUESTED_AGAIN_REASON]: AppointmentStatus.EXPIRED,
+  // The expert takes no bookings (moderation rejected them): the unpaid link can no longer be paid.
+  EXPERT_UNAVAILABLE: AppointmentStatus.EXPIRED,
+};
+
+/** The engagement-reversal note each reason leaves on the organisation's usage row. */
+const LAPSE_NOTE: Record<LapseReason, string> = {
+  PAYMENT_LAPSED: "Approved request lapsed unpaid",
+  WITHDRAWN_BY_CONSULTANT: "Approval withdrawn by the expert before payment",
+  TOO_CLOSE_TO_PAY: "Approval released: too close to the session to pay",
+  [REQUESTED_AGAIN_REASON]: REQUEST_AGAIN_NOTE,
+  EXPERT_UNAVAILABLE: "Approval lapsed: the expert is not taking bookings",
 };
 
 export interface LapseApprovedRequestArgs {
@@ -73,6 +98,8 @@ export type LapseOutcome =
       moved: 1;
       appointmentId: string | null;
       holdNotices?: StagedBackupInterestNotices;
+      /** The orders this lapse expired, for a caller that cancels them after commit. */
+      gatewayCancels?: GatewayCancel[];
     };
 
 // The unpaid arm of the approval decision (#1775 B-9), one copy for every
@@ -138,14 +165,12 @@ export async function lapseApprovedRequest(
     data: { deletedAt: new Date() },
     allowZero: true,
   });
-  // Only a still-PENDING order expires; a capture that raced this write keeps
-  // its SUCCEEDED row (the request CAS above already lost to it).
-  await tx.payment.updateMany({
-    where: {
-      appointmentId: appointment.id,
-      paymentStatus: PaymentStatus.PENDING,
-    },
-    data: { paymentStatus: PaymentStatus.EXPIRED },
+  // Each still-PENDING order is claimed by CAS and gives back what its checkout
+  // consumed. A Razorpay "cancel" only reads the order, so none is called; a late
+  // capture on the EXPIRED row is refunded.
+  const { gatewayCancels } = await expirePendingPaymentsInTx(tx, {
+    appointmentId: appointment.id,
+    reason: LAPSE_NOTE[args.reason],
   });
   const hasHoldNotices =
     (holdNotices?.bells?.length ?? 0) > 0 ||
@@ -153,6 +178,7 @@ export async function lapseApprovedRequest(
   return {
     moved: 1,
     appointmentId: appointment.id,
+    ...(gatewayCancels.length > 0 ? { gatewayCancels } : {}),
     ...(hasHoldNotices && holdNotices ? { holdNotices } : {}),
   };
 }

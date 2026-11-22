@@ -11,7 +11,7 @@ import {
 } from "@/lib/data/viewer-seats";
 import {
   eventPlanMetadata,
-  hiddenEventPlanMetadata,
+  hiddenPlanMetadata,
 } from "@/lib/seo/event-plan-share";
 import { ClassDetails } from "./components/ClassDetails";
 import { generateProgramImageUrl } from "@/lib/explore/programs";
@@ -32,7 +32,7 @@ export async function generateMetadata({
   // The page's own gate: a draft, archived or ORG_ONLY plan must not leak its
   // title through the tab or a link preview.
   if (!plan || !(await canViewPlanDetail(plan, session))) {
-    return hiddenEventPlanMetadata("class");
+    return hiddenPlanMetadata();
   }
   return eventPlanMetadata(plan, "class");
 }

@@ -22,7 +22,16 @@
  * public surface through one constant keeps the gate auditable.
  */
 
-import type { OfferingPlanStatus, OrgPlanVisibility } from "@prisma/client";
+import type {
+  ConsultantVerificationStatus,
+  OfferingPlanStatus,
+  OrgPlanVisibility,
+} from "@prisma/client";
+import {
+  isPublicExpertProfile,
+  publicExpertProfileWhere,
+} from "@/lib/profiles/public-profile";
+import { publicCacheHeaders } from "@/lib/api/cdn-cache";
 
 /**
  * Visibility values that are safe to show on the public marketplace.
@@ -91,20 +100,34 @@ export function oneOnOnePlanListWhere(
   const isOwner = !!consultantId && consultantId === viewerConsultantProfileId;
   return {
     ...(consultantId ? { consultantProfileId: consultantId } : {}),
+    // Only the owner sees plans while their profile is unverified or deleted.
     ...(isOwner
       ? marketplaceVisibilityWhere()
-      : oneOnOnePlanDiscoverableWhere()),
+      : {
+          ...oneOnOnePlanDiscoverableWhere(),
+          consultantProfile: publicExpertProfileWhere,
+        }),
   };
 }
 
+/** Every query key the 1:1 and subscription list GETs read. */
+const ONE_ON_ONE_LIST_QUERY = ["page", "limit", "consultantId"] as const;
+
 /**
  * #1527 Q4 — a list filtered to one consultant may be the owner's view with
- * drafts in it, so it must never be served from a shared CDN entry.
+ * drafts in it, so it is never shared. The unfiltered list is, keyed on every
+ * query it reads so no page or filter is answered with another's entry.
  */
-export function oneOnOnePlanListCacheControl(consultantId: string | null) {
+export function oneOnOnePlanListCacheHeaders(
+  consultantId: string | null,
+): Record<string, string> {
   return consultantId
-    ? "private, no-store"
-    : "public, s-maxage=60, stale-while-revalidate=300";
+    ? { "Cache-Control": "private, no-store" }
+    : publicCacheHeaders({
+        sMaxAge: 60,
+        staleWhileRevalidate: 300,
+        varyQuery: ONE_ON_ONE_LIST_QUERY,
+      });
 }
 
 /**
@@ -145,6 +168,11 @@ export async function isPlanViewable(
     consultantProfileId?: string | null;
     /** #1527 Q4 — present on 1:1 and subscription plans only. */
     status?: OfferingPlanStatus | null;
+    /** The owner's public facts; null for an ownerless webinar or class plan. */
+    consultantProfile: {
+      verificationStatus: ConsultantVerificationStatus;
+      deletedAt: Date | null;
+    } | null;
   } | null,
   viewerUserId: string | null | undefined,
   findActiveMembership: (args: {
@@ -169,7 +197,9 @@ export async function isPlanViewable(
     plan.consultantProfileId === viewerConsultantProfileId;
   if (isOwner) return true;
 
-  // #1527 Q4 — a draft is visible to its author only.
+  // An unverified or deleted expert's plan, like a draft, is visible to its author only.
+  if (plan.consultantProfile && !isPublicExpertProfile(plan.consultantProfile))
+    return false;
   if (planSaleRefusal(plan)) return false;
   if (plan.archivedAt) return false;
   if (MARKETPLACE_VISIBILITY.includes(plan.visibility)) return true;

@@ -14,7 +14,7 @@ import { createConsulteeQueries } from "@/lib/dashboard-queries";
 import { useConsulteeAppointmentsAdapter } from "@/components/appointments/consultee/ConsulteeAppointmentsAdapter";
 import { IncidentRemedyBanner } from "@/components/appointments/consultee/IncidentRemedyBanner";
 import { MyAlerts } from "@/components/appointments/consultee/MyAlerts";
-import { useSession } from "@/lib/auth-client";
+import { useUser } from "../../UserContext";
 
 export default function AppointmentsPageClient({
   consulteeId,
@@ -34,17 +34,22 @@ export default function AppointmentsPageClient({
   const adapter = useConsulteeAppointmentsAdapter();
 
   const zone = viewerZone.zone;
-  const viewerId = useSession().data?.user?.id ?? null;
+  // The route's learner decides which reschedule proposals are theirs, whoever is viewing.
+  const { userDetails, learner } = useUser();
+  const learnerUserId = learner?.userId ?? null;
+  const isOwner = userDetails?.consulteeProfileId === consulteeId;
   const vms = useMemo(
-    () => mapConsulteeEvents(eventsData, new Date(), zone, viewerId),
-    [eventsData, zone, viewerId],
+    () => mapConsulteeEvents(eventsData, new Date(), zone, learnerUserId),
+    [eventsData, zone, learnerUserId],
   );
+  // The alerts read the signed-in viewer's own waitlists.
+  const alerts = isOwner ? <MyAlerts viewerZone={viewerZone} /> : null;
 
   return (
     <DashboardErrorBoundary>
       <PageHeader
         title="Appointments"
-        description="Your consultations, subscriptions, webinars, and classes"
+        description={`${isOwner ? "Your" : "Their"} consultations, subscriptions, webinars, and classes`}
       />
       <IncidentRemedyBanner consulteeId={consulteeId} zone={viewerZone.zone} />
       <div>
@@ -53,7 +58,7 @@ export default function AppointmentsPageClient({
         ) : error ? (
           <>
             {/* The alerts read their own endpoints, so they stay usable. */}
-            <MyAlerts viewerZone={viewerZone} />
+            {alerts}
             <ErrorState
               title="Couldn't load appointments"
               error={error}
@@ -66,7 +71,8 @@ export default function AppointmentsPageClient({
               vms={vms}
               adapter={adapter}
               viewerZone={viewerZone}
-              afterHero={<MyAlerts viewerZone={viewerZone} />}
+              afterHero={alerts}
+              operatorView={!isOwner}
             />
           </DisplayZoneProvider>
         )}

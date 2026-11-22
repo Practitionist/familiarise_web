@@ -77,6 +77,8 @@ const db = {
   /** The newest miss's void outcome, or null when it is a host cancel. */
   lastMissVoid: null as string | null,
   flagged: null as Record<string, unknown> | null,
+  /** The plan's team, as the recipients helper reads it. */
+  team: [] as string[],
   occurrenceCreate: jest.fn(),
   /** The class wrapper's row lock the miss ledger takes. */
   rowLock: jest.fn(async (..._a: unknown[]) => 1),
@@ -108,6 +110,15 @@ jest.mock("../../lib/prisma", () => {
       findFirst: async () => null,
     },
     consultantProfile: { findMany: async () => [] },
+    collaborator: {
+      // Answers the recipients read only; the batch and calendar reads see no co-host.
+      findMany: async (args: {
+        select: { consultantProfile?: { select: { userId?: boolean } } };
+      }) =>
+        args.select.consultantProfile?.select.userId
+          ? db.team.map((userId) => ({ consultantProfile: { userId } }))
+          : [],
+    },
     class: {
       updateMany: async () => ({ count: 1 }),
       // The free leave a make-up opens is read back after it is written.
@@ -166,6 +177,7 @@ beforeEach(() => {
   db.missGapDays = 0;
   db.lastMissVoid = null;
   db.flagged = null;
+  db.team = [];
   db.sourceProfile = null;
   hostFree.current = true;
 });
@@ -329,6 +341,72 @@ it("makes up on the source ordinal; a second make-up and a late one are refused"
   await expect(
     scheduleClassMakeUp(hosted, "occ-5", inDays(15)),
   ).rejects.toMatchObject({ code: "MAKEUP_WINDOW_LAPSED" });
+});
+
+it("tells the plan's team of a cancelled session and of its make-up, once and never as a required notice", async () => {
+  // "u-1" also holds a seat, so the seat's bell is the one it gets.
+  db.team = ["u-cohost", "u-1"];
+  const { stageBell } = jest.requireMock("../../lib/novu/stage-bell") as {
+    stageBell: jest.Mock;
+  };
+  const teamBells = () =>
+    stageBell.mock.calls
+      .map(([, bell]) => bell)
+      .filter((bell) => bell.recipients.includes("u-cohost"));
+
+  await cancelClassSession(hosted, "occ-4", "u-host");
+  expect(teamBells()).toEqual([
+    expect.objectContaining({
+      workflowId: "class-session-cancelled",
+      recipients: ["u-cohost"],
+    }),
+  ]);
+  expect(teamBells()[0]).not.toHaveProperty("required");
+  // The team's own sentence: no make-up deadline or refund is promised to it.
+  expect(teamBells()[0].payload).toMatchObject({ forTeam: true });
+
+  stageBell.mockClear();
+  db.occurrenceCreate.mockResolvedValue({ id: "occ-make-up" });
+  await scheduleClassMakeUp(
+    hosted,
+    "occ-5",
+    new Date(
+      Math.ceil((cancelledAt.getTime() + 5 * 86_400_000) / 1_800_000) *
+        1_800_000,
+    ),
+  );
+  expect(teamBells()).toEqual([
+    expect.objectContaining({
+      workflowId: "class-makeup-scheduled",
+      recipients: ["u-cohost"],
+    }),
+  ]);
+  // The free-leave offer is the seats' alone.
+  expect(teamBells()[0].payload).not.toHaveProperty("leaveBy");
+});
+
+it("tells the plan's team that a session did not count, in its own sentence and not as a required notice", async () => {
+  db.team = ["u-cohost", "u-1"];
+  const { stageBell } = jest.requireMock("../../lib/novu/stage-bell") as {
+    stageBell: jest.Mock;
+  };
+  stageBell.mockClear();
+
+  await relabel("occ-3");
+
+  const toTeam = stageBell.mock.calls
+    .map(([, bell]) => bell)
+    .filter((bell) => bell.recipients.includes("u-cohost"));
+  expect(toTeam).toEqual([
+    expect.objectContaining({
+      workflowId: "class-session-cancelled",
+      recipients: ["u-cohost"],
+      dedupeKey: "occ-void:occ-3:team",
+      payload: expect.objectContaining({ forTeam: true, voided: true }),
+    }),
+  ]);
+  expect(toTeam[0]).not.toHaveProperty("required");
+  expect(toTeam[0].payload).not.toHaveProperty("makeUpBy");
 });
 
 it("refuses a make-up onto host time any other booking holds, and takes the host's atoms first", async () => {

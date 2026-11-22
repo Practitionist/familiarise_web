@@ -104,6 +104,10 @@ export const NOVU_WORKFLOWS = {
   COLLABORATOR_WITHDRAWN: "collaborator-withdrawn",
   COLLABORATOR_DECLINED: "collaborator-declined",
   COLLABORATOR_INVITE_EXPIRED: "collaborator-invite-expired",
+  COLLABORATOR_TERMS_CHANGED: "collaborator-terms-changed",
+  COLLABORATOR_INVITE_EXPIRING: "collaborator-invite-expiring",
+  PLAN_COHOST_JOINED: "plan-cohost-joined",
+  PLAN_COHOST_LEFT: "plan-cohost-left",
 
   // Platform Compliance
   COMPLIANCE_DEADLINE_ALERT: "compliance-deadline-alert",
@@ -626,9 +630,21 @@ export type CollaboratorNoticePayload = {
   planTitle: string;
   planType: string;
   collaboratorName: string;
-  ownerName: string;
+  /** Who invited or removed the collaborator; absent when no person is known. */
+  ownerName?: string;
   role: string;
   revenueSharePercentage: number;
+  /** When a pending invitation lapses, as text. */
+  expiresOn?: string;
+  /** True when the row ended as an invitation and never held a place on the team. */
+  pendingInvite?: boolean;
+  dashboardUrl: string;
+};
+
+/** What a plan's seat holders read when its named co-presenter changes. */
+export type PlanCohostChangePayload = {
+  planTitle: string;
+  sentence: string;
   dashboardUrl: string;
 };
 

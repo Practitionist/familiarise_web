@@ -11,6 +11,9 @@ import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import {
   assertClassEnrolmentOpen,
   alreadyHeldSeatError,
+  findPriorSeatPayment,
+  seatRegistrationFor,
+  stampRecordedSeat,
 } from "@/lib/payments/checkout/seats";
 
 /**
@@ -159,14 +162,20 @@ export async function handleClassCheckout(
   // Class participants attend every session on the consultant's occurrences;
   // the seat is one participant row on the wrapper (#1554), never new rows.
   // #1852 — the seat carries its own payer org (see handleWebinarCheckout).
+  // Read before the revive, which would make a left seat look held again.
+  const priorSeat = await findPriorSeatPayment(tx, userId, wrapper.id);
   await recordParticipants(tx, wrapper.id, [{ userId, role: "CONSULTEE" }], {
     status: _skipPayment ? "CONFIRMED" : "HELD",
     organizationId: payerOrganizationId,
+    seatRegistration: seatRegistrationFor(priorSeat, userId, "CLASS"),
   });
   // #1780 row 2 — the seat keeps the refund window it was sold under; #1819 —
   // and the sessions it paid for, which fix its refund unit.
-  await tx.appointmentParticipant.updateMany({
-    where: { appointmentId: wrapper.id, userId },
+  await stampRecordedSeat(tx, {
+    appointmentId: wrapper.id,
+    userId,
+    status: _skipPayment ? "CONFIRMED" : "HELD",
+    kind: "CLASS",
     data: {
       refundWindowHours: plan.refundWindowHours,
       sessionsPurchased: enrolment.remaining,
@@ -183,5 +192,6 @@ export async function handleClassCheckout(
     slotsLinked: sessions.length,
     engagementsConsumed: boughtSessions.length,
     engagementIds: boughtSessions.map((session) => session.id),
+    priorSeat,
   };
 }

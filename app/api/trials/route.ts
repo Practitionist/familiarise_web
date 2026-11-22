@@ -11,6 +11,7 @@ import { persistTrialPayLink } from "@/lib/trials/pay-link";
 import {
   bookTrialInTx,
   lockTrialPick,
+  TrialDailyLimitError,
   TrialPairHeldError,
   TrialTimeRefusedError,
 } from "@/lib/trials/book-trial";
@@ -26,7 +27,6 @@ import { z } from "zod";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { CreateTrialSchema } from "@/schemas/trials";
 import { requireApiAuth } from "@/lib/auth-helpers";
-import { spendTrialRequest, trialRequestRefusal } from "@/lib/rate-limit";
 import {
   resolveOrgScope,
   scopeToPlanHostWhere,
@@ -36,11 +36,17 @@ import { isExclusionViolation } from "@/lib/db/pg-errors";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import { planSaleRefusal } from "@/lib/api/plans/visibility";
-import { BookingRuleError } from "@/lib/booking/booking-rule-error";
+import {
+  BookingRuleError,
+  assertExpertVerified,
+  assertPlanOnSale,
+} from "@/lib/booking/booking-rule-error";
 import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
 import { assertRequestLeadFits } from "@/lib/booking/lead-time";
+import { slotStartRefusal } from "@/lib/payments/utils/slot-validation";
 import { assertWindowMatchesPlanDuration } from "@/lib/booking/slot-validation";
 import { assertNotSelfBooking } from "@/lib/booking/self-booking";
+import { assertExpertStandsInTx } from "@/lib/booking/expert-standing";
 import { capacityRefusal } from "@/lib/booking/request-caps";
 import { apiError } from "@/lib/errors/api-error";
 import { isRefusal, Refusal } from "@/lib/errors/refusal";
@@ -352,13 +358,16 @@ export async function POST(request: NextRequest) {
             id: true,
             acceptingRequests: true,
             maxOpenRequests: true,
+            verificationStatus: true,
+            deletedAt: true,
             user: { select: { id: true, name: true } },
           },
         },
       },
     });
 
-    if (!subscriptionPlan) {
+    // A soft-deleted expert's plan answers as missing, as checkout does.
+    if (!subscriptionPlan || subscriptionPlan.consultantProfile.deletedAt) {
       return NextResponse.json(
         { error: "Subscription plan not found" },
         { status: 404 },
@@ -387,6 +396,16 @@ export async function POST(request: NextRequest) {
         },
         { status: 409 },
       );
+    }
+
+    // Checkout's sale gates: a verified expert, a plan on sale to this buyer.
+    try {
+      assertExpertVerified(subscriptionPlan.consultantProfile, "This trial");
+      assertPlanOnSale(subscriptionPlan, "This trial", organizationId);
+    } catch (error) {
+      if (error instanceof BookingRuleError) return bookingRuleResponse(error);
+      if (isRefusal(error)) return apiError({ tag: "[trials.POST]", error });
+      throw error;
     }
 
     // A paused expert takes no new booking, a trial included.
@@ -422,11 +441,14 @@ export async function POST(request: NextRequest) {
       if (error instanceof BookingRuleError) return bookingRuleResponse(error);
       throw error;
     }
-
-    // 3 trials per 24 hours per caller, privileged included: read here without
-    // spending one, and spent only once a trial is created.
-    const rl = await trialRequestRefusal(session.user.id);
-    if (rl) return rl;
+    // The 1:1 edge every buyer door shares: the half-hour grid and the booking horizon.
+    const edge = slotStartRefusal(startsAt);
+    if (edge) {
+      return NextResponse.json(
+        { error: edge.message, code: edge.code },
+        { status: 400 },
+      );
+    }
 
     // An earlier ended trial stays as it is; only one that holds the pair refuses.
     const blockingTrial = await prisma.trial.findFirst({
@@ -557,6 +579,12 @@ export async function POST(request: NextRequest) {
         const booked = await prisma
           .$transaction(
             async (tx) => {
+              // Read under a share lock, so a reject that lands meanwhile waits for this write.
+              await assertExpertStandsInTx(
+                tx,
+                consultantProfileId,
+                "This trial",
+              );
               const atCapacity = await capacityRefusal(
                 tx,
                 subscriptionPlan.consultantProfile,
@@ -604,6 +632,28 @@ export async function POST(request: NextRequest) {
       }
     } catch (error) {
       if (isRefusal(error)) return apiError({ tag: "[trials.POST]", error });
+      if (error instanceof BookingRuleError) return bookingRuleResponse(error);
+      if (error instanceof TrialDailyLimitError) {
+        const retryAfter = Math.max(
+          1,
+          Math.ceil((error.retryAt.getTime() - Date.now()) / 1000),
+        );
+        return NextResponse.json(
+          {
+            error: error.message,
+            code: "RATE_LIMITED",
+            retryAfterSeconds: retryAfter,
+            retryAt: error.retryAt.toISOString(),
+          },
+          {
+            status: 429,
+            headers: {
+              "X-RateLimit-Remaining": "0",
+              "Retry-After": String(retryAfter),
+            },
+          },
+        );
+      }
       if (error instanceof TrialTimeRefusedError) {
         return NextResponse.json(
           { error: error.message, code: error.code },
@@ -650,7 +700,6 @@ export async function POST(request: NextRequest) {
         { status: 409 },
       );
     }
-    await spendTrialRequest(session.user.id);
 
     if (staged) {
       await flushNotificationsAfter(

@@ -19,8 +19,12 @@ const mockState: {
   onAdd: (ids: string[]) => void;
   onCreate: () => void;
   failRemainder: boolean;
+  collabEnded: boolean;
+  onRemove: (ids: string[]) => void | Promise<void>;
 } = {
+  onRemove: () => undefined,
   failRemainder: false,
+  collabEnded: false,
   channelExists: true,
   meetings: [],
   adds: [],
@@ -33,6 +37,7 @@ const mockAppointmentFindUnique = jest.fn();
 const mockEventFindUnique = jest.fn();
 const mockParticipantFindMany = jest.fn();
 const mockIntentCreateMany = jest.fn();
+const mockIntentSettle = jest.fn(async (_args: unknown) => ({ count: 0 }));
 
 const memberIds = (spec: unknown[] = []) =>
   spec.map((m) =>
@@ -51,11 +56,20 @@ jest.mock("@/lib/prisma", () => ({
     },
     webinar: { findUnique: (args: unknown) => mockEventFindUnique(args) },
     class: { findUnique: (args: unknown) => mockEventFindUnique(args) },
-    collaborator: { findFirst: async () => null },
+    // The roster's collaborator is on the team at the re-check unless a test ends it.
+    collaborator: {
+      findFirst: async (args: {
+        where: { consultantProfile?: { userId?: string } };
+      }) =>
+        args.where.consultantProfile?.userId === "collab" &&
+        !mockState.collabEnded
+          ? { id: "c-1" }
+          : null,
+    },
     user: { findMany: async () => [] },
     meeting: { findMany: async () => mockState.meetings },
     streamRevocationRetry: {
-      updateMany: async () => ({ count: 0 }),
+      updateMany: (args: unknown) => mockIntentSettle(args),
       createMany: (args: unknown) => mockIntentCreateMany(args),
       findMany: async () => [],
     },
@@ -77,6 +91,7 @@ jest.mock("@/lib/stream-client", () => ({
         return {};
       },
       removeMembers: async (ids: string[]) => {
+        await mockState.onRemove(ids);
         ids.forEach((id) => mockChat.delete(id));
         return {};
       },
@@ -138,6 +153,10 @@ jest.mock("@/lib/stream/dm-eligibility", () => ({
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 
 import { ensureChannelsForAppointment } from "@/lib/payments/webhooks/ensure-channels";
+import {
+  redriveAccessRevocation,
+  revokeEndedSeatAccess,
+} from "@/lib/stream/access-revocation";
 import { addUserToEventChannel } from "@/lib/stream/event-channel-service";
 import { DmNotPermittedError } from "@/lib/stream/dm-eligibility";
 import {
@@ -255,7 +274,9 @@ describe("event chat and call membership follows seats holding access", () => {
     mockState.adds = [];
     mockState.onAdd = () => undefined;
     mockState.onCreate = () => undefined;
+    mockState.onRemove = () => undefined;
     mockState.failRemainder = false;
+    mockState.collabEnded = false;
     mockAppointmentUpdateMany.mockResolvedValue({ count: 1 });
   });
 
@@ -280,6 +301,29 @@ describe("event chat and call membership follows seats holding access", () => {
         (c) => c[1],
       );
       expect(dmUsers).toEqual(["stays", "newcomer"]);
+      expect(mockIntentCreateMany).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["WEBINAR", "CLASS"] as const)(
+    "a %s learner who left a free seat and rejoined is granted again on the same payment",
+    async (kind) => {
+      const freePayment = pay({ amountPaise: 0, isMockPayment: true });
+      // The rejoin revived the left row in place: CONFIRMED again, unmarked, same ₹0 payment.
+      const seats = [
+        ...seatsWith(pay()),
+        {
+          ...seat("rejoined", "CONFIRMED", freePayment),
+          removedByUserId: null,
+        },
+      ];
+      arrange(kind, seats);
+
+      await ensureChannelsForAppointment("appt-1");
+
+      expect(mockState.adds).toContain("rejoined");
+      expect(mockChat).toContain("rejoined");
+      expect(mockCall).toContain("rejoined");
       expect(mockIntentCreateMany).not.toHaveBeenCalled();
     },
   );
@@ -435,6 +479,23 @@ describe("event chat and call membership follows seats holding access", () => {
 
     expect([...mockChat].sort()).toEqual(["collab", "host", "newcomer"]);
   });
+  it("a first join that creates the channel takes back a collaborator removed meanwhile", async () => {
+    arrange("CLASS", seatsWith(pay()));
+    mockState.channelExists = false;
+    mockState.onCreate = () => {
+      mockState.collabEnded = true;
+    };
+
+    await addUserToEventChannel("class", "event-1", "newcomer");
+
+    expect(mockChat.has("collab")).toBe(false);
+    expect(mockIntentCreateMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({ kind: "COLLAB_REVOKE", userId: "collab" }),
+      ],
+      skipDuplicates: true,
+    });
+  });
   it("a first join whose remainder add throws still takes back an ended seat from the first chunk", async () => {
     const seats = [
       ...seatsWith(pay()),
@@ -513,5 +574,162 @@ describe("event chat and call membership follows seats holding access", () => {
 
     expect(mockState.adds).toEqual([]);
     expect(mockChat).not.toContain("stays");
+  });
+
+  it("a leave's revoker that a rejoin overtakes mid-removal gives the rejoined learner chat and the call back", async () => {
+    const seats = [
+      ...seatsWith(pay()),
+      seat(
+        "rejoiner",
+        "CANCELLED",
+        pay({ amountPaise: 0, isMockPayment: true }),
+      ),
+    ];
+    arrange("WEBINAR", seats);
+    // The rejoin commits and its grant lands while the leave's chat removal is in flight.
+    mockState.onRemove = (ids) => {
+      if (!ids.includes("rejoiner")) return;
+      const row = seats.find((s) => s.userId === "rejoiner");
+      if (row) row.status = "CONFIRMED";
+      mockChat.add("rejoiner");
+      mockCall.add("rejoiner");
+    };
+
+    await revokeEndedSeatAccess("appt-1", ["rejoiner"], new Date());
+
+    expect(mockChat).toContain("rejoiner");
+    expect(mockCall).toContain("rejoiner");
+  });
+
+  it("a revoker whose budget runs out before its re-check leaves the rejoiner owed, and the sweep gives access back", async () => {
+    const seats = [
+      ...seatsWith(pay()),
+      seat(
+        "rejoiner",
+        "CANCELLED",
+        pay({ amountPaise: 0, isMockPayment: true }),
+      ),
+    ];
+    arrange("WEBINAR", seats);
+    const realNow = Date.now.bind(Date);
+    let shiftMs = 0;
+    const clock = jest
+      .spyOn(Date, "now")
+      .mockImplementation(() => realNow() + shiftMs);
+    // The rejoin lands mid-removal, and the removal spends the request's whole budget.
+    mockState.onRemove = (ids) => {
+      if (!ids.includes("rejoiner")) return;
+      const row = seats.find((s) => s.userId === "rejoiner");
+      if (row) row.status = "CONFIRMED";
+      mockChat.add("rejoiner");
+      shiftMs = 60 * 60 * 1000;
+    };
+
+    await revokeEndedSeatAccess("appt-1", ["rejoiner"], new Date());
+
+    // No re-check or re-sync past the budget, and the intent is not settled.
+    expect(mockState.adds).not.toContain("rejoiner");
+    expect(mockIntentSettle).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ userId: { in: ["rejoiner"] } }),
+      }),
+    );
+
+    clock.mockRestore();
+    mockState.onRemove = () => undefined;
+    await expect(
+      redriveAccessRevocation({
+        kind: "SEAT_ACCESS_REVOKE",
+        userId: "rejoiner",
+        planId: "appt-1",
+        planType: null,
+        counterpartUserId: null,
+        createdAt: new Date(),
+      }),
+    ).resolves.toBeNull();
+    expect(mockChat).toContain("rejoiner");
+    expect(mockCall).toContain("rejoiner");
+  });
+
+  it("a chat removal that lands after its budget and the re-grant keeps the intent owed and re-arms it, so the sweep gives chat back", async () => {
+    jest.useFakeTimers({
+      doNotFake: ["nextTick", "queueMicrotask", "setImmediate"],
+    });
+    try {
+      const seats = [
+        ...seatsWith(pay()),
+        seat(
+          "rejoiner",
+          "CANCELLED",
+          pay({ amountPaise: 0, isMockPayment: true }),
+        ),
+      ];
+      arrange("WEBINAR", seats);
+      let land: () => void = () => undefined;
+      // The rejoin commits while the leave's event-channel removal hangs at Stream.
+      mockState.onRemove = (ids) => {
+        if (!ids.includes("rejoiner")) return;
+        mockState.onRemove = () => undefined;
+        const row = seats.find((s) => s.userId === "rejoiner");
+        if (row) row.status = "CONFIRMED";
+        return new Promise<void>((resolve) => {
+          land = resolve;
+        });
+      };
+      const settledRejoiner = () =>
+        mockIntentSettle.mock.calls.some(([args]) => {
+          const { where, data } = args as {
+            where: { userId?: { in?: string[] } };
+            data: { status?: string };
+          };
+          return (
+            data.status === "SUCCEEDED" &&
+            (where.userId?.in ?? []).includes("rejoiner")
+          );
+        });
+
+      const revoking = revokeEndedSeatAccess(
+        "appt-1",
+        ["rejoiner"],
+        new Date(),
+      );
+      // The chat slice is half the request's 8-second budget.
+      await jest.advanceTimersByTimeAsync(4_000);
+      await revoking;
+
+      expect(mockChat).toContain("rejoiner");
+      expect(settledRejoiner()).toBe(false);
+
+      mockIntentCreateMany.mockClear();
+      // The removal Stream was still holding lands after the re-grant.
+      land();
+      await jest.advanceTimersByTimeAsync(0);
+      expect(mockChat).not.toContain("rejoiner");
+      expect(mockIntentCreateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: [
+            expect.objectContaining({
+              kind: "SEAT_ACCESS_REVOKE",
+              userId: "rejoiner",
+              planId: "appt-1",
+            }),
+          ],
+        }),
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+
+    await expect(
+      redriveAccessRevocation({
+        kind: "SEAT_ACCESS_REVOKE",
+        userId: "rejoiner",
+        planId: "appt-1",
+        planType: null,
+        counterpartUserId: null,
+        createdAt: new Date(),
+      }),
+    ).resolves.toBeNull();
+    expect(mockChat).toContain("rejoiner");
   });
 });

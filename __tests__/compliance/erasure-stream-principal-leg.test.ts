@@ -14,8 +14,8 @@ jest.mock("../../lib/api/organizations/seat-count", () => ({
 jest.mock("../../lib/observability/report", () => ({
   reportSentryError: jest.fn(),
 }));
-jest.mock("../../lib/collaborators/service", () => ({
-  revokeCollaboratorAccess: jest.fn(async () => ({ success: true })),
+jest.mock("../../lib/stream/collaborator-access", () => ({
+  driveCollaboratorRevocation: jest.fn(async () => null),
 }));
 jest.mock("../../lib/novu/client", () => ({
   isNovuConfigured: () => true,
@@ -74,7 +74,7 @@ const tx = {
   consulteeProfile: { updateMany: jest.fn(async () => ({ count: 0 })) },
   trial: { updateMany: jest.fn(async () => ({ count: 0 })) },
   consultation: { updateMany: jest.fn(async () => ({ count: 0 })) },
-  collaborator: { updateManyAndReturn: jest.fn(async () => []) },
+  collaborator: { findMany: jest.fn(async () => []) },
   session: { deleteMany: jest.fn(async () => ({ count: 0 })) },
   account: { deleteMany: jest.fn(async () => ({ count: 0 })) },
   appointmentWaitlist: { deleteMany: jest.fn(async () => ({ count: 0 })) },

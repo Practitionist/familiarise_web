@@ -109,11 +109,7 @@ export default async function PayExistingOrderPage({
             <div className="space-y-4">
               <div className="flex gap-3 rounded-xl border border-border bg-muted/50 p-4">
                 <AlertCircle className="h-5 w-5 shrink-0 text-muted-foreground" />
-                <p className="text-sm text-muted-foreground">
-                  This booking can no longer be paid for here. It may have been
-                  cancelled, or its payment window may have closed. You can
-                  request it again from the expert&apos;s page.
-                </p>
+                <p className="text-sm text-muted-foreground">{state.message}</p>
               </div>
               <Button asChild variant="outline" className="w-full">
                 <Link href={state.doneHref}>Go to your booking</Link>

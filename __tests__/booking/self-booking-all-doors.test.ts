@@ -9,6 +9,8 @@
  * Collaborators are boundary-mocked as in consultant-request-gate.test.ts.
  */
 
+import { requestDoorProfile } from "../fixtures/request-door-db";
+
 jest.mock("../../lib/auth-server", () => ({
   getSession: jest.fn(async () => ({ user: mockSessionUser })),
 }));
@@ -80,69 +82,36 @@ const mockOrgMembership = { status: "ACTIVE", role: "LEARNER" };
 const mockConsultationCount = jest.fn(async () => 0);
 const mockSubscriptionCount = jest.fn(async () => 0);
 const mockTrialCount = jest.fn(async () => 0);
-const mockProfile = {
-  id: "cp_1",
-  acceptingRequests: true,
-  bookingMode: "REQUEST" as "REQUEST" | "INSTANT",
-  maxOpenRequests: null as number | null,
-  user: { id: "user_consultant", name: "Olivia" },
-};
+const mockProfile = requestDoorProfile();
 jest.mock("../../lib/booking/allocation/coverage", () =>
   jest.requireActual("../fixtures/request-door-hours"),
 );
-jest.mock("../../lib/prisma", () => {
-  const created = () => ({
-    id: "req_1",
-    requestedAt: new Date(),
-    consultationPlan: { title: "Plan", consultantProfile: mockProfile },
-    requestedBy: { user: { name: "Sam" } },
-    appointment: { id: "apt_1", organizationId: null, occurrences: [] },
-  });
-  const db: Record<string, unknown> = {
-    consulteeProfile: {
-      findUnique: jest.fn(async () => ({ id: "cs_1", user: {} })),
+jest.mock("../../lib/prisma", () => ({
+  __esModule: true,
+  default: jest.requireActual("../fixtures/request-door-db").requestDoorDb(
+    () => mockProfile,
+    {
+      consultation: (...a: unknown[]) => mockConsultationCount(...(a as [])),
+      subscription: (...a: unknown[]) => mockSubscriptionCount(...(a as [])),
+      trial: (...a: unknown[]) => mockTrialCount(...(a as [])),
     },
-    consultantProfile: {
-      findUnique: jest.fn(async () => ({
-        bookingMode: mockProfile.bookingMode,
-      })),
+    {
+      organization: {
+        findUnique: jest.fn(async () => ({
+          canSponsor: true,
+          status: "ACTIVE",
+        })),
+      },
+      membership: { findUnique: jest.fn(async () => mockOrgMembership) },
     },
-    consultationPlan: {
-      findFirst: jest.fn(async () => ({
-        id: "plan_1",
-        title: "Plan",
-        consultantProfileId: "cp_1",
-        consultantProfile: mockProfile,
-      })),
-    },
-    consultation: {
-      count: (...a: unknown[]) => mockConsultationCount(...(a as [])),
-      create: jest.fn(async () => created()),
-      findUnique: jest.fn(async () => null),
-    },
-    subscription: {
-      count: (...a: unknown[]) => mockSubscriptionCount(...(a as [])),
-    },
-    trial: { count: (...a: unknown[]) => mockTrialCount(...(a as [])) },
-    organization: {
-      findUnique: jest.fn(async () => ({
-        canSponsor: true,
-        status: "ACTIVE",
-      })),
-    },
-    membership: { findUnique: jest.fn(async () => mockOrgMembership) },
-    availabilityWindowWeekly: jest.requireActual(
-      "../fixtures/request-door-hours",
-    ).namedWeeklyWindow,
-    $transaction: jest.fn(async (fn: (tx: unknown) => unknown) => fn(db)),
-  };
-  return { __esModule: true, default: db };
-});
+  ),
+}));
 
 import { NextRequest } from "next/server";
 import { POST } from "../../app/api/scheduling/request-for-approval/route";
 import { assertNotSelfBooking } from "../../lib/booking/self-booking";
 import { isRefusal } from "../../lib/errors/refusal";
+import { freezeDateAt } from "../fixtures/frozen-date";
 
 function request(extra: Record<string, unknown> = {}) {
   return new NextRequest("https://x.test/api/scheduling/request-for-approval", {
@@ -161,12 +130,17 @@ function request(extra: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  // The 2030 fixtures sit a few weeks ahead, inside the booking horizon.
+  freezeDateAt("2029-12-10T00:00:00.000Z");
   jest.spyOn(console, "log").mockImplementation(() => {});
   jest.spyOn(console, "warn").mockImplementation(() => {});
   mockSessionUser.consultantProfileId = undefined;
   mockOrgMembership.role = "LEARNER";
 });
-afterEach(() => jest.restoreAllMocks());
+afterEach(() => {
+  jest.useRealTimers();
+  jest.restoreAllMocks();
+});
 
 describe("assertNotSelfBooking", () => {
   const refusalOf = (fn: () => void) => {

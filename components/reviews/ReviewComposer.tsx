@@ -3,7 +3,7 @@
 /**
  * #705 — the ONE public-review form.
  *
- * Shared by the profile page, the post-call sheet and nothing else. It exists
+ * Shared by the expert's profile and the booking's detail page. It exists
  * as its own component because the alternative is three copies drifting apart,
  * and this form carries constraints that must not drift: everyone is asked
  * identically after every held session, with no sentiment gate and no
@@ -21,12 +21,22 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { RatingCause } from "@prisma/client";
 import { Star } from "lucide-react";
+import { z } from "zod";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { throwSupportError } from "@/lib/support/error-copy";
 
 import { RatingCauseSelector } from "./RatingCauseSelector";
+
+/** The part of the review route's reply this form reads. */
+const ReviewSavedSchema = z.object({ profileIsPublic: z.boolean() });
+
+/** The cause only counts for a rating of 3 or less. */
+const effectiveCause = (
+  rating: number,
+  cause: RatingCause | null | undefined,
+) => (rating > 3 ? null : (cause ?? null));
 
 export interface ExistingReview {
   id: string;
@@ -41,6 +51,7 @@ export function ReviewComposer({
   consultantName,
   contextLine,
   existing,
+  profileIsPublic,
   invalidateKeys,
   onSaved,
   compact = false,
@@ -51,6 +62,8 @@ export function ReviewComposer({
   /** Small line under the heading, e.g. the session title. */
   contextLine?: string;
   existing: ExistingReview | null;
+  /** Whether the expert's public profile is served; the line under the heading follows it. */
+  profileIsPublic: boolean;
   /** Query keys to refresh once the write lands. */
   invalidateKeys: readonly (readonly unknown[])[];
   onSaved?: () => void;
@@ -76,13 +89,22 @@ export function ReviewComposer({
     setRatingCause(existing?.ratingCause ?? null);
   }, [seedKey, existing]);
 
+  // An edit sends nothing until it differs from the saved review.
+  const unchanged = existing
+    ? rating === existing.rating &&
+      (text.trim() || null) === (existing.reviewDescription?.trim() || null) &&
+      anonymous === (existing.isAnonymous ?? false) &&
+      effectiveCause(rating, ratingCause) ===
+        effectiveCause(existing.rating, existing.ratingCause)
+    : false;
+
   const save = useMutation({
     mutationFn: async () => {
       const body = {
         rating,
         reviewDescription: text.trim() || null,
         isAnonymous: anonymous,
-        ratingCause: rating > 3 ? null : (ratingCause ?? null),
+        ratingCause: effectiveCause(rating, ratingCause),
       };
       const res = await fetch(`/api/user/reviews`, {
         method: "POST",
@@ -90,12 +112,16 @@ export function ReviewComposer({
         body: JSON.stringify({ ...body, appointmentId }),
       });
       if (!res.ok) await throwSupportError(res, "review save");
-      return res.json();
+      return ReviewSavedSchema.parse(await res.json());
     },
-    onSuccess: async () => {
+    onSuccess: async ({ profileIsPublic }) => {
+      const name = consultantName ?? "the expert";
       toast({
         title: existing ? "Review updated" : "Thanks for your review",
-        description: `It appears on ${consultantName ?? "the expert"}'s profile.`,
+        // An unverified expert's public profile is not served yet.
+        description: profileIsPublic
+          ? `It appears on ${name}'s profile.`
+          : `Saved. It will appear on ${name}'s public profile once that profile is live.`,
       });
       // AWAITED: until this resolves `existing` is still null and the button
       // still reads "Post review", so a second press would POST again and take
@@ -118,14 +144,21 @@ export function ReviewComposer({
   return (
     <div>
       {/* Verb-led so it reads as a form and never as a posted review. */}
-      <h4 className="text-sm font-medium text-foreground">
-        {existing ? "Edit your review of " : "Write a review of "}
-        {consultantName ?? "this expert"}
-      </h4>
+      <div className="flex flex-wrap items-center gap-2">
+        <h4 className="text-sm font-medium text-foreground">
+          {existing ? "Edit your review of " : "Write a review of "}
+          {consultantName ?? "this expert"}
+        </h4>
+        <span className="rounded-full border border-border bg-muted px-2 py-0.5 text-[11px] font-medium text-foreground">
+          Public
+        </span>
+      </div>
       <p className="mt-0.5 text-xs text-muted-foreground">
         {contextLine ? `${contextLine} · ` : ""}
-        Public — it appears on their profile with the date. One review per
-        expert; you can edit it after a later session.
+        {profileIsPublic
+          ? "It appears on their profile with the date."
+          : "It will appear on their profile once it is live."}{" "}
+        One review per expert; you can edit it after a later session.
       </p>
 
       <div className="mt-3 flex items-center gap-1">
@@ -193,7 +226,7 @@ export function ReviewComposer({
       <div className="mt-3 flex items-center gap-2">
         <Button
           size="sm"
-          disabled={rating === 0 || save.isPending}
+          disabled={rating === 0 || save.isPending || unchanged}
           onClick={() => save.mutate()}
         >
           {existing ? "Update review" : "Post review"}
@@ -201,8 +234,8 @@ export function ReviewComposer({
         {/* No confirm-shaming on a low rating: "are you sure you only want to
             give 3 stars?" is a named dark pattern, and it manufactures the
             J-shape it pretends to measure. */}
-        <span className="text-xs text-muted-foreground">
-          You can edit this later.
+        <span className="text-xs text-muted-foreground" aria-live="polite">
+          {unchanged ? "Saved" : "You can edit this later."}
         </span>
       </div>
     </div>

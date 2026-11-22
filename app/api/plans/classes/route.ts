@@ -4,11 +4,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { CollaboratorStatus, PlanEmailSupport, Prisma } from "@prisma/client";
 import {
   planCollaboratorConsultantSelect,
+  planCollaboratorScalars,
   planConsultantSelect,
 } from "@/lib/api/plans/consultant-projection";
 import {
   parsePlanFilters,
   buildPlanWhereClause,
+  isOwnerListView,
+  planListCacheHeaders,
   buildPlanOrderBy,
   paginatedResponse,
   rankAndPaginate,
@@ -30,7 +33,11 @@ export async function GET(request: NextRequest) {
 
     const filters = parsePlanFilters(searchParams);
     const { sort, page, limit, skip } = filters;
-    const where = buildPlanWhereClause(filters) as Prisma.ClassPlanWhereInput;
+    const ownerView = await isOwnerListView(filters);
+    const headers = planListCacheHeaders(filters);
+    const where = buildPlanWhereClause(filters, {
+      ownerView,
+    }) as Prisma.ClassPlanWhereInput;
     const orderBy = buildPlanOrderBy(sort) as
       Prisma.ClassPlanOrderByWithRelationInput | undefined;
 
@@ -40,7 +47,8 @@ export async function GET(request: NextRequest) {
       classContents: true,
       collaborators: {
         where: { status: CollaboratorStatus.ACCEPTED },
-        include: {
+        select: {
+          ...planCollaboratorScalars,
           consultantProfile: { select: planCollaboratorConsultantSelect },
         },
       },
@@ -64,6 +72,7 @@ export async function GET(request: NextRequest) {
         skip,
         limit,
         page,
+        headers,
       );
     }
 
@@ -78,7 +87,7 @@ export async function GET(request: NextRequest) {
       prisma.classPlan.count({ where }),
     ]);
 
-    return paginatedResponse(classPlans, total, page, limit);
+    return paginatedResponse(classPlans, total, page, limit, headers);
   } catch (error) {
     reportSentryError(error, {
       subsystem: "plans",

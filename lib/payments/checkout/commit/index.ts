@@ -3,6 +3,7 @@
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import { assertPlanExpertStandsInTx } from "@/lib/booking/expert-standing";
 import { resolveCheckoutCancellationPolicyId } from "@/lib/payments/operations/cancellation-policy-store";
 import { seatPayerOrganizationId } from "@/lib/data/org-sponsored-seats";
 import { findSelfHoldAppointmentIds } from "@/lib/payments/checkout/self-hold";
@@ -20,6 +21,11 @@ import { recordSynchronousEarnings } from "@/lib/payments/checkout/commit/ledger
 import { settleCheckoutLegs } from "@/lib/payments/checkout/commit/payment-legs";
 import { writeCheckoutPayment } from "@/lib/payments/checkout/commit/payment-row";
 import type { CheckoutCommitInput } from "@/lib/payments/checkout/commit/types";
+import type { PriorSeatPayment } from "@/lib/payments/checkout/seats";
+import {
+  readSeatJoin,
+  stageFreeSeatNoticeTx,
+} from "@/lib/payments/checkout/free-seat-notice";
 import { stageCreditsApplied } from "@/lib/referrals/referral-notify";
 
 /**
@@ -40,6 +46,7 @@ export async function commitCheckout(input: CheckoutCommitInput) {
     isOrgInvoicedPayment,
     isOrgSponsoredPayment,
     isZeroAmountPayment,
+    preparedSeatNotice,
   } = input;
   const {
     amount,
@@ -52,6 +59,13 @@ export async function commitCheckout(input: CheckoutCommitInput) {
     await renewOrAbort(perAttemptTtl);
     return prisma.$transaction(
       async (tx) => {
+        // Every attempt re-reads the expert's standing with the write: a reject
+        // after the locked re-read refuses here, and the minted order is retired.
+        await assertPlanExpertStandsInTx(
+          tx,
+          validatedData.appointmentType,
+          validatedData.planId,
+        );
         // #785 B6 — re-check the INVOICE credit limit INSIDE the Serializable
         // tx. The pre-lock check ran on the global client before this tx, so
         // two concurrent disjoint-slot bookings (which take different per-slot
@@ -90,6 +104,8 @@ export async function commitCheckout(input: CheckoutCommitInput) {
           consultantProfileId?: string | null;
           organizationId?: string | null;
         } | null = null;
+        let priorSeat: PriorSeatPayment | null = null;
+        let eventPricePaise: number | null = null;
 
         const skipPayment =
           isMockPayment || isZeroAmountPayment || isOrgSponsoredPayment;
@@ -192,6 +208,8 @@ export async function commitCheckout(input: CheckoutCommitInput) {
             }
             createdAppointment = webinarResult.appointment;
             bookedPlan = webinarResult.plan;
+            priorSeat = webinarResult.priorSeat;
+            eventPricePaise = webinarResult.amount;
             engagementsForCap = 1;
             break;
           }
@@ -224,6 +242,8 @@ export async function commitCheckout(input: CheckoutCommitInput) {
             }
             createdAppointment = classResult.appointment || null;
             bookedPlan = classResult.plan;
+            priorSeat = classResult.priorSeat;
+            eventPricePaise = classResult.amount;
             engagementsForCap = classResult.engagementsConsumed;
             classEngagementIds = classResult.engagementIds;
             break;
@@ -235,11 +255,49 @@ export async function commitCheckout(input: CheckoutCommitInput) {
             );
         }
 
+        // A free seat's booked notice is keyed on the join this commit wrote.
+        const seatJoin =
+          isZeroAmountPayment &&
+          createdAppointment &&
+          (validatedData.appointmentType === "WEBINAR" ||
+            validatedData.appointmentType === "CLASS")
+            ? await readSeatJoin(tx, createdAppointment.id, userId)
+            : null;
         const payment = await writeCheckoutPayment(tx, input, {
           createdAppointment,
           bookedPlan,
           skipPayment,
+          priorSeat,
+          eventPricePaise,
         });
+        // No capture follows a free seat, so its booked notice commits with the join here.
+        const seatNotice =
+          seatJoin &&
+          createdAppointment &&
+          (validatedData.appointmentType === "WEBINAR" ||
+            validatedData.appointmentType === "CLASS")
+            ? await stageFreeSeatNoticeTx(tx, {
+                appointmentId: createdAppointment.id,
+                userId,
+                appointmentType: validatedData.appointmentType,
+                join: seatJoin,
+                prepared: preparedSeatNotice,
+              })
+            : null;
+        // A rejoined free seat revived on its earlier payment, whose legs and earnings already exist.
+        if (payment.rejoined) {
+          return {
+            appointmentId: createdAppointment?.id,
+            paymentId: payment.id,
+            reusedPaymentIntent: payment.reusedPaymentIntent,
+            seatNotice,
+            holdExpiresAt: payment.expiresAt,
+            creditsApplied: 0,
+            creditNotices: {},
+            capNearBell: null,
+            overageBell: null,
+          };
+        }
         const { capNearBell, overageBell } = await recordCheckoutUtilization(
           tx,
           input,
@@ -270,6 +328,8 @@ export async function commitCheckout(input: CheckoutCommitInput) {
         return {
           appointmentId: createdAppointment?.id,
           paymentId: payment.id,
+          reusedPaymentIntent: null as string | null,
+          seatNotice,
           holdExpiresAt: payment.expiresAt,
           creditsApplied: actualCreditsApplied,
           creditNotices,

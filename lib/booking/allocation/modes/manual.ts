@@ -34,7 +34,6 @@ import type { FreedWindow } from "@/lib/booking/class-series";
 import {
   AllocationValidationError,
   AllocationNotFoundError,
-  SlotShortageError,
 } from "@/utils/scheduling-engine/errors";
 import { stageAllocationNotices } from "@/lib/booking/allocation/notify";
 import { checkoutInProgressError } from "@/lib/booking/request-cohort";
@@ -53,10 +52,12 @@ import {
   holdUntilPaid,
 } from "@/lib/booking/allocation/event-data";
 import {
+  assertPickedSessionCount,
   confirmedIntervalsOf,
   heldIntervalStartsOf,
   releasedSessionCountOf,
   releasedOccurrenceIdsOf,
+  sessionsLabel,
   topUpTargetSessions,
   resolveAllocationModeAndPastSlots,
   tentativeSlotCountOf,
@@ -78,7 +79,10 @@ import {
 } from "@/lib/booking/reschedule-proposals";
 import { resolveConsumedPreferenceRequests } from "@/lib/booking/allocation/preference";
 import { findIdempotentAllocation } from "@/lib/booking/allocation/idempotency";
-import { assertCollaboratorsFree } from "@/lib/booking/allocation/collaborators";
+import {
+  assertCollaboratorsFree,
+  lockPlanForAllocation,
+} from "@/lib/booking/allocation/collaborators";
 import { createAppointments } from "@/lib/booking/allocation/commit/create-appointments";
 import { deleteExistingAppointments } from "@/lib/booking/allocation/commit/release-tentative";
 import {
@@ -383,33 +387,27 @@ export async function manualAllocate(
           );
         }
       } else if (isTopUp) {
-        // #1766 & #1692 Item 4 — this cycle's batch; the held sessions stay put.
+        // This cycle's batch; the held sessions stay put.
         const topUpTotalSessions = topUpTargetSessions(
           eventType,
           config,
           existingConfirmedSessionCount,
           slotsPerCall,
         );
-        const cycleTarget = topUpTotalSessions - existingConfirmedSessionCount;
-        const requiredTopUpSlots = cycleTarget * slotsPerCall;
-        if (slots.length > requiredTopUpSlots) {
-          throw new AllocationValidationError(
-            `This cycle takes ${sessionsLabel(cycleTarget)}. Pick no more than that.`,
-            "VALIDATION_ERROR",
-            { atoms: slots.length, requiredAtoms: requiredTopUpSlots },
-          );
-        }
-        if (slots.length < requiredTopUpSlots) {
-          if (!allowPartial) {
-            throw new SlotShortageError(
-              `This cycle takes ${sessionsLabel(cycleTarget)}; you picked ${sessionsLabel(Math.floor(slots.length / slotsPerCall))}.`,
-              Math.floor(slots.length / slotsPerCall),
-              cycleTarget,
-            );
-          }
-          const placedSessions =
-            existingConfirmedSessionCount +
-            Math.floor(slots.length / slotsPerCall);
+        const cycleTarget = Math.max(
+          0,
+          topUpTotalSessions - existingConfirmedSessionCount,
+        );
+        const pickedSessions = assertPickedSessionCount({
+          subject: "This cycle",
+          pickedAtoms: slots.length,
+          owedSessions: cycleTarget,
+          slotsPerCall,
+          allowPartial,
+          bonusAllowed: eventType === "class",
+        });
+        if (slots.length < cycleTarget * slotsPerCall) {
+          const placedSessions = existingConfirmedSessionCount + pickedSessions;
           manualPartialInfo = {
             partial: placedSessions < topUpTotalSessions,
             placedSessions,
@@ -432,30 +430,24 @@ export async function manualAllocate(
           );
         }
       } else if (
-        config.schedulingPeriodStartsAt &&
-        config.schedulingPeriodEndsAt
+        (config.schedulingPeriodStartsAt && config.schedulingPeriodEndsAt) ||
+        // A class is sized by its plan total, with or without a period.
+        (eventType === "class" && (config.totalSessions ?? 0) > 0)
       ) {
         const requiredSlots = ScheduleCalculationService.calculateRequiredSlots(
           eventType,
           config,
         );
-        if (slots.length > requiredSlots) {
-          throw new AllocationValidationError(
-            `This ${eventType} takes ${sessionsLabel(Math.ceil(requiredSlots / slotsPerCall))}. Pick no more than that.`,
-            "VALIDATION_ERROR",
-            { atoms: slots.length, requiredAtoms: requiredSlots },
-          );
-        }
+        const requiredSessions = Math.ceil(requiredSlots / slotsPerCall);
+        const placedSessions = assertPickedSessionCount({
+          subject: `This ${eventType}`,
+          pickedAtoms: slots.length,
+          owedSessions: requiredSessions,
+          slotsPerCall,
+          allowPartial,
+          bonusAllowed: false,
+        });
         if (slots.length < requiredSlots) {
-          const placedSessions = Math.floor(slots.length / slotsPerCall);
-          const requiredSessions = Math.ceil(requiredSlots / slotsPerCall);
-          if (!allowPartial) {
-            throw new SlotShortageError(
-              `This ${eventType} takes ${sessionsLabel(requiredSessions)}; you picked ${sessionsLabel(placedSessions)}.`,
-              placedSessions,
-              requiredSessions,
-            );
-          }
           manualPartialInfo = {
             partial: placedSessions < requiredSessions,
             placedSessions,
@@ -502,15 +494,13 @@ export async function manualAllocate(
     }
     // Lock order: consultant → consultee → slot batch over every busy profile.
     // Picked times never wait: a held one is a typed 409 naming the times.
-    slotGrant = await lockPickedSlots(
-      slots,
-      await allocationBatchProfiles({
-        eventType,
-        planId,
-        consultantProfileId,
-        consulteeUserId,
-      }),
-    );
+    const batchProfiles = await allocationBatchProfiles({
+      eventType,
+      planId,
+      consultantProfileId,
+      consulteeUserId,
+    });
+    slotGrant = await lockPickedSlots(slots, batchProfiles);
 
     // SHORT write-only transaction (see autoAllocate for the rationale).
     return await bookingTransaction(
@@ -526,6 +516,8 @@ export async function manualAllocate(
           slotStrings,
         );
         if (lockedReplay) return lockedReplay;
+        // The plan row, before any read of the team (see autoAllocate).
+        await lockPlanForAllocation(tx, eventType, planId, batchProfiles);
         // A sold webinar or class is re-timed, never re-planned.
         if (!isTopUp) await assertGroupEventUnsoldInTx(tx, eventType, eventId);
         // #1766 — see autoAllocate: a stale tab must not append twice.
@@ -691,9 +683,4 @@ export async function manualAllocate(
     if (consulteeLock) await unlockConsulteeBooking(consulteeLock);
     await unlockAutoAllocate(lock);
   }
-}
-
-/** "1 session" / "3 sessions". */
-function sessionsLabel(count: number): string {
-  return `${count} session${count === 1 ? "" : "s"}`;
 }

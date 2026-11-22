@@ -38,6 +38,8 @@
  * reason string.
  */
 
+import { fromOperatorWallTime } from "@/lib/time/operator-zone";
+
 const CLEARTAX_BASE_URLS = {
   sandbox: "https://einv-apisandbox.cleartax.co/v0.1",
   production: "https://einv-api.cleartax.co/v0.1",
@@ -78,6 +80,11 @@ function clearTaxHeaders(): Record<string, string> {
     Authorization: `Bearer ${process.env.CLEARTAX_GSP_TOKEN ?? ""}`,
     gstin: process.env.PLATFORM_GSTIN ?? "",
   };
+}
+
+/** The IRP's AckDt ("2026-10-20 21:15:00") is an India wall time; null when malformed. */
+function parseAckDate(ackDt: string): Date | null {
+  return fromOperatorWallTime(ackDt.trim().replace(" ", "T"));
 }
 
 /**
@@ -153,7 +160,7 @@ export async function generateIrn(params: {
     return {
       irn: data.data.Irn,
       ackNumber: data.data.AckNo ? String(data.data.AckNo) : null,
-      ackDate: data.data.AckDt ? new Date(data.data.AckDt) : null,
+      ackDate: data.data.AckDt ? parseAckDate(data.data.AckDt) : null,
       signedQrPayload: data.data.SignedQRCode ?? null,
       status: "GENERATED",
       reason: "OK",

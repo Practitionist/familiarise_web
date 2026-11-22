@@ -2,15 +2,16 @@ import { NextResponse } from "next/server";
 import { publicCacheHeaders } from "@/lib/api/cdn-cache";
 import { getSession } from "@/lib/auth-server";
 import { requireApiAuth } from "@/lib/auth-helpers";
+import type { PlanRef } from "@/lib/collaborators/team";
+import { resolveCollaborationViewer } from "@/lib/collaborators/viewer";
 import { canViewPlanDetail } from "@/lib/data/plan-viewable";
 import { reportSentryError } from "@/lib/observability/report";
+import prisma from "@/lib/prisma";
 
 type PlanGate = NonNullable<Parameters<typeof canViewPlanDetail>[0]>;
 
-const PUBLIC_CACHE = publicCacheHeaders({
-  sMaxAge: 60,
-  staleWhileRevalidate: 300,
-});
+// No stale window: a plan a reject hides is no longer shared after a minute.
+const PUBLIC_CACHE = publicCacheHeaders({ sMaxAge: 60 });
 
 /** Anything that depends on who is asking: never stored by a shared cache. */
 const PRIVATE_NO_STORE = { "Cache-Control": "private, no-store" };
@@ -52,29 +53,29 @@ export async function planDetailResponse<T extends PlanGate>(
   );
 }
 
-type EditorGate = {
-  consultantProfile: { userId: string } | null;
-  collaborators: { consultantProfile: { userId: string } | null }[];
-};
-
 /**
- * The host's editor read of a webinar or class plan: never stored by any
- * cache, and only for the plan's owner or an ACCEPTED co-host. Anyone else
- * gets the same 404 as a missing plan.
+ * The editor read of a webinar or class plan: never stored by any cache, and
+ * only for the plan's manager or an accepted collaborator. Anyone else gets
+ * the same 404 as a missing plan, and the plan is not loaded for them.
  */
-export async function planEditorResponse<T extends EditorGate>(
+export async function planEditorResponse<T>(
+  ref: PlanRef,
   load: () => Promise<T | null>,
   notFoundMessage: string,
 ): Promise<NextResponse> {
   const auth = await requireApiAuth();
   if (auth.error) return auth.error;
-  const userId = auth.session.user.id;
-  const plan = await load();
-  const hosts =
-    plan !== null &&
-    (plan.consultantProfile?.userId === userId ||
-      plan.collaborators.some((c) => c.consultantProfile?.userId === userId));
-  if (!hosts) {
+  const { viewer } = await resolveCollaborationViewer(
+    prisma,
+    ref,
+    auth.session.user.id,
+  );
+  const onThePlan =
+    viewer.kind === "manager" ||
+    viewer.kind === "presenter" ||
+    viewer.kind === "crew";
+  const plan = onThePlan ? await load() : null;
+  if (!plan) {
     return NextResponse.json(
       { error: notFoundMessage },
       { status: 404, headers: PRIVATE_NO_STORE },

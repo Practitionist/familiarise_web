@@ -9,6 +9,7 @@
  */
 
 import { AppointmentStatus } from "@prisma/client";
+import { REQUESTED_AGAIN_REASON } from "@/lib/booking/request-again-rules";
 
 export const LAPSED_PAY_LINK_VISIBLE_MS = 7 * 24 * 60 * 60 * 1000;
 export const LAPSED_PAY_LINK_LIMIT = 3;
@@ -31,7 +32,14 @@ export interface ExpiredRequestRow {
   title: string;
   consultantName: string;
   consultantProfileId: string;
-  history: { fromStatus: string; toStatus: string; createdAt: Date }[];
+  /** False when the expert's public page would 404 (not VERIFIED, or deleted). */
+  expertPublic: boolean;
+  history: {
+    fromStatus: string;
+    toStatus: string;
+    reason?: string | null;
+    createdAt: Date;
+  }[];
 }
 
 /** Pure: keep the pay-link lapses of the last 7 d, newest first, capped. */
@@ -49,6 +57,10 @@ export function toLapsedPayLinks(
     if (!edge) continue;
     if (edge.fromStatus !== AppointmentStatus.APPROVED_PENDING_PAYMENT)
       continue;
+    // The learner closed this link to request again; there is nothing left to prompt.
+    if (edge.reason === REQUESTED_AGAIN_REASON) continue;
+    // Request again links to the expert's public page, which must exist.
+    if (!row.expertPublic) continue;
     const at = edge.createdAt.getTime();
     if (at < cutoff) continue;
     lapsed.push({

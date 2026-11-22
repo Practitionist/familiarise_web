@@ -550,11 +550,24 @@ export function getAnchorTime(
   return upcoming?.startsAt ?? live[live.length - 1]?.startsAt ?? null;
 }
 
+/** Calendar days from `now` to `anchor` in `zone`; every future-relative label counts days with it. */
+export function calendarDaysUntil(
+  anchor: Date,
+  zone: string,
+  now = new Date(),
+): number {
+  // Zone-local dates read as UTC dates, so no DST hour skews the count.
+  const dayIndex = (at: Date) =>
+    Date.parse(`${formatInViewerZone(at, zone, "yyyy-MM-dd")}T00:00:00Z`) /
+    86_400_000;
+  return dayIndex(anchor) - dayIndex(now);
+}
+
 /**
  * Short human proximity label for an upcoming anchor ("in 45 min", "Today",
- * "Tomorrow", "in 5 days"), with days counted in the viewer's `zone`. Returns
- * null for past/absent anchors — rows show the absolute time regardless; this
- * is the urgency accent next to it.
+ * "Tomorrow", "in 8 days", "in 2 weeks"), with days counted in the viewer's
+ * `zone`: days up to 13, then whole weeks rounded down. Null for past/absent
+ * anchors; rows show the absolute time regardless.
  */
 export function getProximityLabel(
   anchor: Date | null,
@@ -568,16 +581,11 @@ export function getProximityLabel(
   const diffMinutes = Math.floor(diffMs / 60_000);
   if (diffMinutes < 60) return `in ${Math.max(diffMinutes, 1)} min`;
 
-  // Calendar days between the two zone-local dates, read as UTC dates so no DST hour skews them.
-  const dayIndex = (at: Date) =>
-    Date.parse(`${formatInViewerZone(at, zone, "yyyy-MM-dd")}T00:00:00Z`) /
-    86_400_000;
-  const dayDiff = dayIndex(anchor) - dayIndex(now);
+  const dayDiff = calendarDaysUntil(anchor, zone, now);
   if (dayDiff === 0) return "Today";
   if (dayDiff === 1) return "Tomorrow";
-  if (dayDiff < 7) return `in ${dayDiff} days`;
-  const weeks = Math.ceil(dayDiff / 7);
-  return `in ${weeks} ${weeks === 1 ? "week" : "weeks"}`;
+  if (dayDiff < 14) return `in ${dayDiff} days`;
+  return `in ${Math.floor(dayDiff / 7)} weeks`;
 }
 
 /** Held when the outcome is recorded or the host ended the call; past-but-undecided is told apart. */
@@ -605,6 +613,8 @@ type ChipVM = Pick<AppointmentVM, "status" | "kind"> &
       | "payLapsed"
       | "reschedule"
       | "refunded"
+      | "unpaidLinkSeen"
+      | "history"
     >
   >;
 
@@ -623,6 +633,8 @@ function rowBookingStatus(vm: ChipVM, role: "consultee" | "consultant") {
       payLapsed: vm.payLapsed,
       reschedule: vm.reschedule,
       refunded: vm.refunded,
+      unpaidLinkSeen: vm.unpaidLinkSeen,
+      history: vm.history,
       sessions:
         vm.occurrences && live ? listSessions(vm.occurrences, live) : undefined,
     },

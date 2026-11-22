@@ -26,7 +26,12 @@ import {
 import { normalizeStatus } from "./status";
 import { trialMeta } from "./trial-labels";
 import { payablePaymentId } from "@/lib/payments/pay-link-href";
-import { paymentsLapsed } from "./list-status-facts";
+import {
+  bucketFactsOf,
+  listStatusFacts,
+  paymentsLapsed,
+  trialHoldFacts,
+} from "./list-status-facts";
 import {
   sortOccurrences,
   toDate,
@@ -122,10 +127,13 @@ function eventOf(appointment: TDetailAppointment): {
 }
 
 export function mapAppointmentDetail(
-  detail: TAppointmentDetail,
+  /** `rosterVisible` from `scopeAppointmentDetail`: every attendee's seat was sent. */
+  detail: TAppointmentDetail & { rosterVisible?: boolean },
   role: Role,
   now: Date = new Date(),
   viewerConsultantId?: string,
+  /** The signed-in user: their own seat is the only one a learner's view reads. */
+  viewerUserId?: string | null,
 ): { vm: AppointmentVM } {
   const { appointment } = detail;
   const facts = eventOf(appointment);
@@ -167,6 +175,7 @@ export function mapAppointmentDetail(
                   ? "Registered attendees"
                   : "Enrolled learners",
               image: facts.consultant.image,
+              audience: true,
             }));
 
   const rawOccurrences: OccurrenceLike[] = all
@@ -186,12 +195,38 @@ export function mapAppointmentDetail(
       (a, b) => toDate(a.startsAt).getTime() - toDate(b.startsAt).getTime(),
     );
 
-  // A learner's read is scoped to their own seat and payments.
+  // The viewer's own seat only: a scoped roster holds just theirs, a whole one (plan
+  // manager, presenter, staff) is matched by user id, and with no id there is none.
   const group = !!appointment.webinar || !!appointment.class;
   const ownSeat =
     role === "consultee" && group
-      ? appointment.participants.find((p) => p.role === "CONSULTEE")
+      ? appointment.participants.find(
+          (p) =>
+            p.role === "CONSULTEE" &&
+            (detail.rosterVisible ? p.userId === viewerUserId : true),
+        )
       : undefined;
+  // The list's own facts and input, so the page files the booking in the list's tab.
+  const holdFacts = appointment.trial
+    ? trialHoldFacts({
+        paymentDueAt: appointment.trial.paymentDueAt,
+        appointment,
+      })
+    : listStatusFacts(appointment, occurrences, {
+        side: role === "consultee" ? "REQUESTER" : "CONSULTANT",
+      });
+  const bucketInput = bucketFactsOf(
+    {
+      kind: appointment.trial ? "TRIAL" : appointment.appointmentType,
+      source:
+        appointment.consultation?.bookingSource ??
+        appointment.subscription?.bookingSource ??
+        null,
+      seatStatus: ownSeat?.status ?? null,
+    },
+    holdFacts,
+    now,
+  );
   const pendingDeadline = appointment.payment
     .filter((p) => p.paymentStatus === "PENDING" && p.expiresAt)
     .map((p) => toDate(p.expiresAt!))
@@ -204,8 +239,12 @@ export function mapAppointmentDetail(
     title: facts.title,
     counterpart,
     consultantProfileId: facts.consultantProfileId,
+    expertProfileIsPublic: detail.expertProfileIsPublic,
     status: facts.status,
-    ...deriveBucket({ status: facts.status, occurrences, now }, role),
+    ...deriveBucket(
+      { status: facts.status, occurrences, ...bucketInput },
+      role,
+    ),
     nextAt: getAnchorTime(occurrences, now),
     occurrences,
     group: isGroup
@@ -222,6 +261,7 @@ export function mapAppointmentDetail(
     trialId: appointment.trial?.id ?? null,
     seatStatus: ownSeat?.status ?? null,
     paid: appointment.payment.some((p) => p.paymentStatus === "SUCCEEDED"),
+    refunded: listStatusFacts(appointment, occurrences).refunded,
     payDeadline: pendingDeadline ?? null,
     payLapsed: paymentsLapsed(appointment.payment),
     bookingSource:

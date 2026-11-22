@@ -21,7 +21,6 @@ import {
   Video,
   MessageSquare,
   Receipt,
-  Star,
   Users,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -53,7 +52,10 @@ import {
 import type { AppointmentVM } from "@/lib/appointments/view-model";
 import { bookingPayHref } from "@/lib/appointments/trial-checkout-href";
 import { isExternalPayHref } from "@/lib/payments/pay-link-href";
-import type { TAppointmentDetail } from "@/lib/data/appointment-detail";
+import type {
+  TAppointmentDetail,
+  TScopedAppointmentDetail,
+} from "@/lib/data/appointment-detail";
 import {
   paymentStatusBadge,
   paymentStatusDot,
@@ -113,9 +115,15 @@ import { LazyAppointmentChatSheet } from "../LazyAppointmentChatSheet";
 import { caseKeyOf } from "@/lib/support/case-key";
 import { AppointmentSupportStatusCard } from "@/components/support/AppointmentSupportStatusCard";
 import { SessionRatingRow } from "@/components/reviews/SessionRatingRow";
+import { SessionReviewCard } from "@/components/reviews/SessionReviewCard";
 import { useSessionFeedback } from "@/hooks/useSessionFeedback";
-import { ResourceSnapshot, type ResourceHrefs } from "./ResourceSnapshot";
+import {
+  ResourceSnapshot,
+  type ResourceHrefs,
+  type ResourcesWithheld,
+} from "./ResourceSnapshot";
 import { cn } from "@/utils/tailwind";
+import { SeatTrailNote } from "./SeatTrailNote";
 
 const PARTICIPANTS_PREVIEW = 5;
 
@@ -130,6 +138,12 @@ const POST_APPROVAL = new Set<BookingStateKind>([
   "AWAITING_ALLOCATION",
   "BEING_MOVED",
   "COMPLETED",
+]);
+
+/** Only a booking still waiting on approval or payment holds its sessions; an ended one has released them. */
+const HOLDING_STATES = new Set<BookingStateKind>([
+  "REQUESTED",
+  "AWAITING_PAYMENT",
 ]);
 
 /** Before confirmation a trial or a pay-first hold is cancelled; a submitted request is withdrawn. */
@@ -295,6 +309,8 @@ interface AppointmentDetailClientProps {
   renderNotices?: (vm: AppointmentVM) => ReactNode;
   /** `<tree>/support/requests` — "Get help" opens this booking's request page (#1527). */
   supportRequestsBase: string;
+  /** Staff viewing someone else's personal dashboard: the owner-only resource reads are not sent. */
+  operatorView: boolean;
 }
 
 export function AppointmentDetailClient({
@@ -309,6 +325,7 @@ export function AppointmentDetailClient({
   renderExtraActions,
   renderNotices,
   supportRequestsBase,
+  operatorView,
 }: AppointmentDetailClientProps) {
   const format = useZonedFormat();
   const { data: session } = useSession();
@@ -329,7 +346,7 @@ export function AppointmentDetailClient({
     refetch,
   } = useQuery({
     queryKey: ["appointment-detail", appointmentId] as const,
-    queryFn: async (): Promise<TAppointmentDetail> => {
+    queryFn: async (): Promise<TScopedAppointmentDetail> => {
       const res = await fetch(`/api/appointments/${appointmentId}`);
       if (!res.ok) await throwSupportError(res, "appointment detail load");
       const { data } = await res.json();
@@ -356,7 +373,13 @@ export function AppointmentDetailClient({
   });
 
   const mapped = detail
-    ? mapAppointmentDetail(detail, role, new Date(), consultantId)
+    ? mapAppointmentDetail(
+        detail,
+        role,
+        new Date(),
+        consultantId,
+        session?.user?.id ?? null,
+      )
     : null;
   // #1540 — which calls of this booking the viewer has already rated, in ONE
   // request; #1554 made the booking one Appointment, so that is one row.
@@ -516,6 +539,10 @@ export function AppointmentDetailClient({
   const groupCountLine = usesSessionProgress
     ? presentation.sessionProgress
     : `${vm.group?.total ?? 0} session${vm.group?.total === 1 ? "" : "s"}`;
+  const headerFacts = [
+    vm.meta,
+    vm.group && vm.group.total > 0 ? groupCountLine : null,
+  ].filter((fact): fact is string => Boolean(fact));
   // The consultant's answer to a request, through the Requests page's own
   // mutations (request-decision.ts); no times → the allocator sets them.
   const request =
@@ -559,7 +586,12 @@ export function AppointmentDetailClient({
     0,
     participants.length - PARTICIPANTS_PREVIEW,
   );
-  const manageHref = participantsHref?.(detail) ?? null;
+  // The roster and the seat payments are drawn only when the detail carries
+  // them whole; a list withheld from this viewer is not an empty list.
+  const { rosterVisible, paymentsVisible } = detail;
+  const manageHref = rosterVisible
+    ? (participantsHref?.(detail) ?? null)
+    : null;
   // A group event's money is one row per attendee. The host reads it as a
   // status on each seat plus a total; an attendee's `payments` is already
   // just their own (scopeAppointmentDetail).
@@ -662,7 +694,7 @@ export function AppointmentDetailClient({
   // Each overflow action is placed where it belongs on the page; items the
   // page already covers (Resources, Participants, the Set schedule button) drop.
   const coveredKeys = new Set<string>(["documents"]);
-  if (manageHref) coveredKeys.add("participants");
+  if (manageHref || !rosterVisible) coveredKeys.add("participants");
   if (action.kind === "schedule") coveredKeys.add("timings");
   const placed = overflow.filter((item) => !coveredKeys.has(item.key));
   const chatItems = placed.filter((item) => item.chat && !item.destructive);
@@ -693,14 +725,6 @@ export function AppointmentDetailClient({
         {scheduleItems.map(renderActionButton)}
       </div>
     ) : null;
-  // The review invite follows the outcome: a session this learner attended.
-  const showReviewCard =
-    role === "consultee" &&
-    !!vm.consultantProfileId &&
-    (bookingState.state === "COMPLETED" ||
-      detail.appointment.occurrences.some((o) =>
-        sessionFeedback.rateable.has(o.id),
-      ));
   const showProgress =
     !!vm.group && vm.group.total > 0 && postApproval && !usesSessionProgress;
   const hasDetails =
@@ -823,7 +847,7 @@ export function AppointmentDetailClient({
   const sessionsCard = !soleSession && (
     <Section
       title={
-        heldCount > 0 && !postApproval
+        heldCount > 0 && !postApproval && HOLDING_STATES.has(bookingState.state)
           ? `Sessions · ${heldCount} held`
           : "Sessions"
       }
@@ -935,7 +959,7 @@ export function AppointmentDetailClient({
     </Section>
   );
 
-  const participantsCard = role === "consultant" && (
+  const participantsCard = role === "consultant" && rosterVisible && (
     <Section
       title={
         participants.length > 0
@@ -1035,126 +1059,131 @@ export function AppointmentDetailClient({
     showBreakdown || creditNotes.length > 0 || ownCoPays.length > 0;
   const paidReceipt = paidRow ? receiptHref(paidRow) : null;
 
-  const paymentCard = (
-    <Section title={showSeatSummary ? "Payments" : "Payment"}>
-      {showSeatSummary ? (
-        payments.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            No seat has been paid for yet.
-          </p>
-        ) : (
-          <dl className="space-y-1.5 text-sm">
-            <div className="flex items-baseline justify-between gap-3">
-              <dt className="text-muted-foreground">Seats paid</dt>
-              <dd className="font-medium text-foreground tabular-nums">
-                {paidSeats} of {participants.length} seat
-                {participants.length === 1 ? "" : "s"} paid
-              </dd>
-            </div>
-            <div className="flex items-baseline justify-between gap-3">
-              <dt className="text-muted-foreground">Collected</dt>
-              <dd className="font-medium text-foreground tabular-nums">
-                {seatSummary.collectedPaise === 0 &&
-                freeSeats > 0 &&
-                paidSeats === 0
-                  ? "Nothing — every paid seat was free"
-                  : `${formatCurrencyAmount(
-                      seatSummary.collectedPaise,
-                      seatSummary.currency,
-                    )} collected`}
-              </dd>
-            </div>
-            {seatRows
-              .filter(([, count]) => count > 0)
-              .map(([label, count]) => (
-                <div
-                  key={label}
-                  className="flex items-baseline justify-between gap-3"
-                >
-                  <dt className="text-muted-foreground">{label}</dt>
-                  <dd className="text-foreground tabular-nums">{count}</dd>
-                </div>
-              ))}
-          </dl>
-        )
-      ) : (
-        <div className="space-y-3">
-          <div className="space-y-1">
-            <p className="text-sm font-medium text-foreground">
-              {moneyState.line}
+  // A group event's seat money is drawn only for a viewer who is sent it.
+  const paymentCard =
+    showSeatSummary && !paymentsVisible ? null : (
+      <Section title={showSeatSummary ? "Payments" : "Payment"}>
+        {showSeatSummary ? (
+          payments.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No seat has been paid for yet.
             </p>
-            {moneyState.detail && (
-              <p className="text-xs text-muted-foreground tabular-nums">
-                {moneyState.detail}
+          ) : (
+            <dl className="space-y-1.5 text-sm">
+              <div className="flex items-baseline justify-between gap-3">
+                <dt className="text-muted-foreground">Seats paid</dt>
+                <dd className="font-medium text-foreground tabular-nums">
+                  {paidSeats} of {participants.length} seat
+                  {participants.length === 1 ? "" : "s"} paid
+                </dd>
+              </div>
+              <div className="flex items-baseline justify-between gap-3">
+                <dt className="text-muted-foreground">Collected</dt>
+                <dd className="font-medium text-foreground tabular-nums">
+                  {seatSummary.collectedPaise === 0 &&
+                  freeSeats > 0 &&
+                  paidSeats === 0
+                    ? "Nothing — every paid seat was free"
+                    : `${formatCurrencyAmount(
+                        seatSummary.collectedPaise,
+                        seatSummary.currency,
+                      )} collected`}
+                </dd>
+              </div>
+              {seatRows
+                .filter(([, count]) => count > 0)
+                .map(([label, count]) => (
+                  <div
+                    key={label}
+                    className="flex items-baseline justify-between gap-3"
+                  >
+                    <dt className="text-muted-foreground">{label}</dt>
+                    <dd className="text-foreground tabular-nums">{count}</dd>
+                  </div>
+                ))}
+            </dl>
+          )
+        ) : (
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-foreground">
+                {moneyState.line}
               </p>
+              {moneyState.detail && (
+                <p className="text-xs text-muted-foreground tabular-nums">
+                  {moneyState.detail}
+                </p>
+              )}
+            </div>
+            {role === "consultee" && isGroup && (
+              <SeatTrailNote appointmentId={appointmentId} />
+            )}
+            {(paidReceipt || role === "consultee") && (
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs">
+                {paidReceipt && (
+                  <a
+                    href={paidReceipt}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 font-medium text-foreground underline underline-offset-4"
+                  >
+                    <Receipt className="h-3.5 w-3.5" />
+                    View receipt
+                  </a>
+                )}
+                {role === "consultee" && (
+                  <button
+                    type="button"
+                    className="font-medium text-muted-foreground underline underline-offset-4 hover:text-foreground"
+                    onClick={() => openHelp("PAYMENT_STATUS")}
+                  >
+                    {hasOwnCharge
+                      ? "Problem with this charge"
+                      : "Problem with this booking"}
+                  </button>
+                )}
+              </div>
+            )}
+            {hasPaymentDetails && (
+              <details className="group border-t border-border pt-3">
+                <summary className="flex cursor-pointer list-none items-center justify-between text-xs font-medium text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
+                  Payment details
+                  <ChevronDown className="h-3.5 w-3.5 transition-transform group-open:rotate-180" />
+                </summary>
+                <div className="mt-2 space-y-2">
+                  {showBreakdown && paidRow && (
+                    <p className="text-xs text-muted-foreground tabular-nums">
+                      Paid with{" "}
+                      {formatFundingBreakdown(
+                        paidBreakdown,
+                        paidRow.currency ?? "INR",
+                      )}
+                    </p>
+                  )}
+                  {/* A refund's credit note sits beside the charge it reverses. */}
+                  {paidRow &&
+                    creditNotes.map((note) => (
+                      <a
+                        key={note.id}
+                        href={`/api/payments/${paidRow.id}/credit-note/${note.id}/pdf`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="block text-xs font-medium text-foreground underline underline-offset-4"
+                      >
+                        Credit note {note.creditNoteNumber}
+                      </a>
+                    ))}
+                  {/* A co-pay the viewer paid themselves keeps its own receipt. */}
+                  {ownCoPays.map((c) => (
+                    <MoneyLine key={c.id} payment={c} />
+                  ))}
+                </div>
+              </details>
             )}
           </div>
-          {(paidReceipt || role === "consultee") && (
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs">
-              {paidReceipt && (
-                <a
-                  href={paidReceipt}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 font-medium text-foreground underline underline-offset-4"
-                >
-                  <Receipt className="h-3.5 w-3.5" />
-                  View receipt
-                </a>
-              )}
-              {role === "consultee" && (
-                <button
-                  type="button"
-                  className="font-medium text-muted-foreground underline underline-offset-4 hover:text-foreground"
-                  onClick={() => openHelp("PAYMENT_STATUS")}
-                >
-                  {hasOwnCharge
-                    ? "Problem with this charge"
-                    : "Problem with this booking"}
-                </button>
-              )}
-            </div>
-          )}
-          {hasPaymentDetails && (
-            <details className="group border-t border-border pt-3">
-              <summary className="flex cursor-pointer list-none items-center justify-between text-xs font-medium text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
-                Payment details
-                <ChevronDown className="h-3.5 w-3.5 transition-transform group-open:rotate-180" />
-              </summary>
-              <div className="mt-2 space-y-2">
-                {showBreakdown && paidRow && (
-                  <p className="text-xs text-muted-foreground tabular-nums">
-                    Paid with{" "}
-                    {formatFundingBreakdown(
-                      paidBreakdown,
-                      paidRow.currency ?? "INR",
-                    )}
-                  </p>
-                )}
-                {/* A refund's credit note sits beside the charge it reverses. */}
-                {paidRow &&
-                  creditNotes.map((note) => (
-                    <a
-                      key={note.id}
-                      href={`/api/payments/${paidRow.id}/credit-note/${note.id}/pdf`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="block text-xs font-medium text-foreground underline underline-offset-4"
-                    >
-                      Credit note {note.creditNoteNumber}
-                    </a>
-                  ))}
-                {/* A co-pay the viewer paid themselves keeps its own receipt. */}
-                {ownCoPays.map((c) => (
-                  <MoneyLine key={c.id} payment={c} />
-                ))}
-              </div>
-            </details>
-          )}
-        </div>
-      )}
-    </Section>
-  );
+        )}
+      </Section>
+    );
 
   const detailsCard = hasDetails && (
     <Section title="Details">
@@ -1196,12 +1225,20 @@ export function AppointmentDetailClient({
     </Section>
   );
 
+  // Every resource route refuses a closed (soft-deleted) booking and a non-party.
+  let resourcesWithheld: ResourcesWithheld | null = null;
+  if (operatorView) resourcesWithheld = "operator";
+  else if (detail.appointment.deletedAt) resourcesWithheld = "closed";
   const resourcesCard = (
     <Section title="Resources">
       <ResourceSnapshot
         appointmentId={appointmentId}
         supportsDocuments={supportsDocuments(vm.kind)}
         hrefs={resourceHrefs}
+        withheld={resourcesWithheld}
+        endedRefunded={
+          vm.bucket === "cancelled" && (vm.refunded?.paise ?? 0) > 0
+        }
       />
     </Section>
   );
@@ -1317,27 +1354,35 @@ export function AppointmentDetailClient({
           <h1 className="mt-2 text-xl font-semibold leading-tight tracking-tight text-foreground sm:text-2xl">
             {vm.title}
           </h1>
-          <div className="mt-3 flex items-center gap-2.5 text-sm text-muted-foreground">
-            <Avatar className="h-7 w-7 shrink-0 border border-border">
-              <AvatarImage
-                src={vm.counterpart.image ?? undefined}
-                alt={vm.counterpart.name}
-              />
-              <AvatarFallback className="text-[11px] font-medium">
-                {initials(vm.counterpart.name) || "?"}
-              </AvatarFallback>
-            </Avatar>
-            {/* The kind is a fact about the booking, so it reads in the
+          {vm.counterpart.audience ? (
+            // A host's webinar or class has no one person to be "with".
+            headerFacts.length > 0 && (
+              <p className="mt-3 text-sm text-muted-foreground">
+                {headerFacts.join(" · ")}
+              </p>
+            )
+          ) : (
+            <div className="mt-3 flex items-center gap-2.5 text-sm text-muted-foreground">
+              <Avatar className="h-7 w-7 shrink-0 border border-border">
+                <AvatarImage
+                  src={vm.counterpart.image ?? undefined}
+                  alt={vm.counterpart.name}
+                />
+                <AvatarFallback className="text-[11px] font-medium">
+                  {initials(vm.counterpart.name) || "?"}
+                </AvatarFallback>
+              </Avatar>
+              {/* The kind is a fact about the booking, so it reads in the
                 eyebrow rather than as a second chip beside the status. */}
-            <p className="min-w-0">
-              with{" "}
-              <span className="font-medium text-foreground">
-                {vm.counterpart.name}
-              </span>
-              {vm.meta ? ` · ${vm.meta}` : ""}
-              {vm.group && vm.group.total > 0 ? ` · ${groupCountLine}` : ""}
-            </p>
-          </div>
+              <p className="min-w-0">
+                with{" "}
+                <span className="font-medium text-foreground">
+                  {vm.counterpart.name}
+                </span>
+                {headerFacts.map((fact) => ` · ${fact}`).join("")}
+              </p>
+            </div>
+          )}
 
           {vm.nextAt && (
             <div className="mt-5 flex flex-wrap items-center gap-4 rounded-xl border border-border/80 bg-muted/40 p-4">
@@ -1484,30 +1529,12 @@ export function AppointmentDetailClient({
                 readOnly={adapter.readOnly}
               />
             )}
-            {/* The public review lives on the expert's profile; this card only
-                links there, and waits until a session has actually run. */}
-            {showReviewCard && (
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-card px-5 py-4 shadow-sm">
-                <div className="flex min-w-0 items-start gap-3">
-                  <Star className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-foreground">
-                      Reviewed this expert?
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      Share a public review on {vm.counterpart.name}&apos;s
-                      profile.
-                    </p>
-                  </div>
-                </div>
-                <Button variant="outline" size="sm" asChild>
-                  <Link
-                    href={`/explore/experts/${vm.consultantProfileId}#reviews`}
-                  >
-                    Write or update your review
-                  </Link>
-                </Button>
-              </div>
+            {/* The review route decides whether this learner may review this session. */}
+            {role === "consultee" && (
+              <SessionReviewCard
+                appointmentId={appointmentId}
+                consultantName={vm.counterpart.name}
+              />
             )}
             {sessionsCard}
             {participantsCard}

@@ -18,6 +18,7 @@ export function bookTrialModule(): object {
     ),
     TrialTimeRefusedError: class extends Error {},
     TrialPairHeldError: class extends Error {},
+    TrialDailyLimitError: class extends Error {},
   };
 }
 

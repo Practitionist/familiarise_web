@@ -52,8 +52,8 @@ export const RequestForApprovalSchema = z
       path: ["startsAt"],
     },
   )
-  // #1583 E-P1-03 — the grid and the lead time are refused at the edge, with
-  // a typed code the route lifts out of `params`.
+  // The grid, the lead time and the booking horizon are refused at the edge,
+  // with a typed code the route lifts out of `params`.
   .superRefine((data, ctx) => {
     const start = new Date(data.startsAt);
     if (Number.isNaN(start.getTime())) return;

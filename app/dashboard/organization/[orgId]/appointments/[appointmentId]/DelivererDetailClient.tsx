@@ -45,6 +45,8 @@ export function DelivererDetailClient({
       supportRequestsBase={`/dashboard/organization/${orgId}/support/requests`}
       joinWindowMs={CONSULTANT_JOIN_WINDOW_MS}
       consultantId={consultantId}
+      // The org page admits only the booking's own learner or expert.
+      operatorView={false}
       resourceHrefs={{
         documents: `/dashboard/organization/${orgId}/appointments/${appointmentId}/documents`,
         recordings: `/dashboard/organization/${orgId}/appointments/${appointmentId}/recordings`,

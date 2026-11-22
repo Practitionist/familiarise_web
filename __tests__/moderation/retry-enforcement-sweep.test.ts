@@ -44,6 +44,7 @@ jest.mock("../../lib/prisma", () => ({
     user: {
       findUnique: jest.fn(async () => ({ banned: true, banExpires: null })),
     },
+    consultantProfile: { findUnique: jest.fn(async () => null) },
     // #1593 — the sweep also drains the erasure revocation outbox.
     streamRevocationRetry: {
       findMany: jest.fn(async () => []),
@@ -71,8 +72,8 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
   CronLockHeldError: class extends Error {},
 }));
 
-jest.mock("../../lib/collaborators/service", () => ({
-  revokeCollaboratorAccess: jest.fn(async () => ({ success: true })),
+jest.mock("../../lib/stream/collaborator-access", () => ({
+  driveCollaboratorRevocation: jest.fn(async () => null),
 }));
 
 let mockStreamConfigured = true;
@@ -95,7 +96,8 @@ jest.mock("../../lib/moderation/side-effects", () => ({
 import { retryModerationEnforcement } from "../../scripts/cleanup/retry-moderation-enforcement";
 import prisma from "../../lib/prisma";
 import { applyStreamEnforcement } from "../../lib/moderation/side-effects";
-import { revokeCollaboratorAccess } from "../../lib/collaborators/service";
+import { driveCollaboratorRevocation } from "../../lib/stream/collaborator-access";
+import { redriveAccessRevocation } from "../../lib/stream/access-revocation";
 import * as Sentry from "@sentry/nextjs";
 
 const findMany = prisma.moderationAction.findMany as jest.Mock;
@@ -110,7 +112,9 @@ const vendorOutboxCount = prisma.vendorErasureRetry.count as jest.Mock;
 const erasureRequestUpdateMany = prisma.erasureRequest.updateMany as jest.Mock;
 const findUser = prisma.user.findUnique as jest.Mock;
 const enforce = applyStreamEnforcement as jest.Mock;
-const revokeCollaboratorAccessMock = revokeCollaboratorAccess as jest.Mock;
+const driveCollaboratorRevocationMock =
+  driveCollaboratorRevocation as jest.Mock;
+const redrive = redriveAccessRevocation as jest.Mock;
 
 const failedBan = (overrides: Record<string, unknown> = {}) => ({
   id: "action-1",
@@ -143,19 +147,113 @@ beforeEach(() => {
   outboxCount.mockResolvedValue(0);
   outboxUpdate.mockResolvedValue({});
   outboxUpdateMany.mockResolvedValue({ count: 1 });
-  revokeCollaboratorAccessMock.mockResolvedValue({ success: true });
+  driveCollaboratorRevocationMock.mockResolvedValue(null);
 });
 
 describe("retryModerationEnforcement", () => {
-  it("selects only the actions whose recorded Stream or collaborator outcome failed", async () => {
+  it("selects only the actions whose recorded Stream, collaborator or unpaid-sales outcome failed", async () => {
     await retryModerationEnforcement();
 
     expect(findMany.mock.calls[0][0].where).toMatchObject({
       OR: [
-        { sideEffects: { path: ["stream"], equals: "failed" } },
-        { sideEffects: { path: ["collaboratorRevocation"], equals: "failed" } },
+        {
+          actionType: {
+            in: [
+              "USER_BANNED",
+              "USER_SUSPENDED",
+              "CONTENT_REMOVED",
+              "USER_REINSTATED",
+            ],
+          },
+          OR: [
+            { sideEffects: { path: ["stream"], equals: "failed" } },
+            {
+              sideEffects: {
+                path: ["collaboratorRevocation"],
+                equals: "failed",
+              },
+            },
+          ],
+        },
+        {
+          actionType: "PROFILE_UNVERIFIED",
+          sideEffects: { path: ["unpaidSales"], equals: "failed" },
+        },
       ],
     });
+  });
+
+  it("stops starting action rows once its share of the run is spent, so the Stream drain still starts", async () => {
+    let now = 1_000_000;
+    const clock = jest.spyOn(Date, "now").mockImplementation(() => now);
+    findMany.mockResolvedValueOnce([
+      failedBan(),
+      failedBan({ id: "action-2" }),
+    ]);
+    outboxFindMany.mockResolvedValueOnce([
+      {
+        id: "revoke-1",
+        kind: "SEAT_ACCESS_REVOKE",
+        erasureRequestId: null,
+        userId: "u9",
+        counterpartUserId: null,
+        planType: "WEBINAR",
+        planId: "wp-9",
+        attempts: 0,
+        nextRetryAt: null,
+        createdAt: new Date(),
+        erasureRequest: null,
+      },
+    ]);
+    enforce.mockImplementationOnce(async () => {
+      now += 9_000;
+    });
+    try {
+      await retryModerationEnforcement();
+    } finally {
+      clock.mockRestore();
+    }
+
+    expect(enforce).toHaveBeenCalledTimes(1);
+    // The drain still starts its due row in the time the action rows left it.
+    expect(redrive).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "SEAT_ACCESS_REVOKE", userId: "u9" }),
+      expect.anything(),
+    );
+    expect(outboxUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: "revoke-1" }),
+        data: expect.objectContaining({ status: "SUCCEEDED" }),
+      }),
+    );
+  });
+
+  it("records a failed standing read for one ending and goes on to the next row", async () => {
+    (prisma.consultantProfile.findUnique as jest.Mock).mockRejectedValueOnce(
+      new Error("pool timeout"),
+    );
+    findMany.mockResolvedValueOnce([
+      failedBan({
+        id: "reject-1",
+        actionType: "PROFILE_UNVERIFIED",
+        sideEffects: {
+          unpaidSales: "failed",
+          unpaidSalesAttempts: 1,
+          unverifiedConsultantProfileId: "cp-1",
+        },
+      }),
+      failedBan({ id: "action-2" }),
+    ]);
+
+    const result = await retryModerationEnforcement();
+
+    expect(result.errors).toEqual(
+      expect.arrayContaining([expect.stringContaining("pool timeout")]),
+    );
+    expect(enforce).toHaveBeenCalledTimes(1);
+    expect(update).not.toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "reject-1" } }),
+    );
   });
 
   // #1580 — a failed per-plan Stream revocation is re-driven from the same
@@ -174,10 +272,10 @@ describe("retryModerationEnforcement", () => {
 
     const result = await retryModerationEnforcement();
 
-    expect(revokeCollaboratorAccess).toHaveBeenCalledWith(
-      "webinar",
-      "wp-1",
+    expect(driveCollaboratorRevocation).toHaveBeenCalledWith(
+      { planType: "webinar", planId: "wp-1" },
       "u1",
+      Number.POSITIVE_INFINITY,
     );
     expect(enforce).not.toHaveBeenCalled();
     expect(update.mock.calls[0][0].data.sideEffects).toMatchObject({
@@ -318,10 +416,10 @@ describe("retryModerationEnforcement", () => {
 
     const result = await retryModerationEnforcement();
 
-    expect(revokeCollaboratorAccess).toHaveBeenCalledWith(
-      "class",
-      "cp-9",
+    expect(driveCollaboratorRevocation).toHaveBeenCalledWith(
+      { planType: "class", planId: "cp-9" },
       "u-erased",
+      Number.POSITIVE_INFINITY,
     );
     expect(outboxUpdate).toHaveBeenCalledWith({
       where: { id: "retry-1" },
@@ -368,6 +466,7 @@ describe("retryModerationEnforcement", () => {
               "REFUND_ACCESS_REVOKE",
               "ERASURE_REVOKE",
               "CONDUCT_CALL_BLOCK",
+              "COLLAB_REVOKE",
             ],
           },
         },
@@ -586,7 +685,7 @@ describe("retryModerationEnforcement", () => {
     );
     // Another leg is still owed, so the erasure request stays open.
     outboxCount.mockResolvedValue(1);
-    revokeCollaboratorAccessMock.mockRejectedValue(new Error("stream down"));
+    driveCollaboratorRevocationMock.mockRejectedValue(new Error("stream down"));
 
     const before = Date.now();
     const first = await retryModerationEnforcement();

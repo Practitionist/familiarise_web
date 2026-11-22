@@ -366,16 +366,17 @@ export async function getStaffAppointments(
       else displayStatus = statusStr;
     }
 
-    // A free booking has no payment to be pending.
-    const free =
-      !payment &&
-      (apt.trial
-        ? trialPricePaise(apt.trial) === 0
-        : Number(
-            apt.consultation?.consultationPlan.price ??
-              apt.subscription?.subscriptionPlan.price ??
-              -1,
-          ) === 0);
+    // Free: a ₹0 payment, or no payment on a booking priced at zero.
+    let free: boolean;
+    if (payment) free = Number(payment.amount) === 0;
+    else if (apt.trial) free = trialPricePaise(apt.trial) === 0;
+    else
+      free =
+        Number(
+          apt.consultation?.consultationPlan.price ??
+            apt.subscription?.subscriptionPlan.price ??
+            -1,
+        ) === 0;
     // A removed booking is listed as removed, never hidden.
     const removed = apt.deletedAt !== null;
     const hasIssue =

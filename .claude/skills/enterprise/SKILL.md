@@ -14,6 +14,8 @@ This is the index for the parts of the organisation subsystem that touch money a
 
 In the organization dashboard, Billing sits in the Sponsor group (tabs Invoices & usage, Wallet & licence, Purchase orders, with Payment disputes and Member spend under More) and Payouts in the Host group (Runs & earnings, Payout account, Rate cards & routing). A merged tab stacks the old panels unchanged, and an unknown `?tab=` opens the page's first tab (retired values are not aliased); link to the current tab values only. The tree and tab values live in `docs/dashboard/information-architecture.md`.
 
+An organisation's invited experts are verified by the platform before its members can book them: `getOrgMemberCatalog` lists only plans whose expert is verified (`publicExpertProfileWhere`), and the Members page shows "Waiting for verification" against an expert who is not (`memberExpertOf`, a boolean only). Decision record: `docs/decisions/2026-11-21-unverified-experts-cannot-be-booked.md`.
+
 ## Non-negotiables
 
 1. **Same Money Spine, Unlocked 7-Axis Permutation Engine**: An organisation's booking runs through the same checkout, price derivation, GST calculation, single writer, and double-entry ledger as a personal booking; only the funding legs and entitlement metering differ. Every `(FundingSource × ProgramType × OverageBehavior × overageSurchargeBps)` permutation (`WALLET × LICENSED_SEAT`, `LICENSE × CREDIT_POOL`, `PERSONAL × (CREDIT_POOL | LICENSED_SEAT)`, `CHARGE_MEMBER` parent-linked side-payment (`recordMemberOverageCharge`) with earnings hold, `WALLET × CHARGE_ORG` with surcharge + GST, and `LICENSE × CHARGE_ORG` child invoice accrual) is supported end-to-end in the engine **without backend HTTP 400 refusal walls**.

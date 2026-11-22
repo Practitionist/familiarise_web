@@ -76,6 +76,9 @@ interface RawAvailabilityApiSlot {
   type: "WEEKLY" | "CUSTOM";
   tooSoon?: boolean;
   limitReached?: boolean;
+  outsideCoHostHours?: boolean;
+  outsideCoHostHoursOf?: string[];
+  beyondHorizon?: boolean;
   dayOfWeek?: string;
   localStartTime?: string;
   localEndTime?: string;
@@ -711,9 +714,13 @@ export class AllocationService {
               },
             }
           : undefined;
+      // With no validator of its own (the first read of a mount) the browser
+      // revalidates its stored copy with the server instead of painting it.
       const response = await fetch(
         url,
-        bypassHttpCache ? { cache: "no-store" } : conditional,
+        bypassHttpCache
+          ? { cache: "no-store" }
+          : (conditional ?? { cache: "no-cache" }),
       );
       // 304 — the marker says nothing this grid reads has changed. The caller
       // keeps the state it already has; no body was sent to parse.

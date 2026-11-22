@@ -26,7 +26,11 @@ import {
   ScheduleValidationService,
   isOccupiedByLiveAppointment,
 } from "@/utils/scheduling-engine/ScheduleValidationService";
-import { OCCUPYING_OCCURRENCE_WHERE } from "@/utils/scheduling-engine/occupancyPolicy";
+import {
+  BEING_MOVED_COUNTS,
+  buildConsultantOccupancyWhere,
+  OCCUPYING_OCCURRENCE_WHERE,
+} from "@/utils/scheduling-engine/occupancyPolicy";
 import {
   ScheduleType,
   DayOfWeek,
@@ -53,17 +57,23 @@ const mockPrisma = {
   subscription: {
     findUnique: jest.fn().mockResolvedValue(null),
   },
+  // Whether the consultee is an expert too.
+  consultantProfile: {
+    findUnique: jest.fn().mockResolvedValue(null),
+  },
 };
 
 let service: ScheduleValidationService;
 
 beforeEach(() => {
   jest.useFakeTimers();
-  jest.setSystemTime(new Date("2025-01-01T00:00:00Z"));
+  // A month before the June 2025 fixtures: inside the 90-day booking horizon.
+  jest.setSystemTime(new Date("2025-05-01T00:00:00Z"));
   service = new ScheduleValidationService(mockPrisma as never);
   mockPrisma.appointment.findFirst.mockResolvedValue(null);
   mockPrisma.appointment.findMany.mockResolvedValue([]);
   mockPrisma.appointmentOccurrence.findMany.mockResolvedValue([]);
+  mockPrisma.consultantProfile.findUnique.mockReset().mockResolvedValue(null);
 });
 
 afterEach(() => {
@@ -328,6 +338,7 @@ describe("checkSlotAvailability", () => {
         some: {
           userId: { in: ["user-1"] },
           status: { in: ["HELD", "CONFIRMED", "ATTENDED"] },
+          role: { not: "COLLABORATOR" },
           NOT: expect.objectContaining({ status: "HELD" }),
         },
       },
@@ -460,6 +471,78 @@ describe("checkSlotAvailability", () => {
     const result = await service.checkSlotAvailability(slots, "user-1");
     expect(result.isValid).toBe(false);
     expect(result.errors[0]).toContain("already booked");
+  });
+
+  it("a dead hold never hides a live booking on the same time", async () => {
+    const slots = futureSlots(1);
+    const occurrences = [
+      {
+        startsAt: slots[0],
+        endsAt: new Date(slots[0].getTime() + 30 * 60 * 1000),
+      },
+    ];
+    mockPrisma.appointment.findMany.mockResolvedValue([
+      {
+        id: "dead-hold",
+        occurrences,
+        consultation: { status: "APPROVED_PENDING_PAYMENT" },
+        participants: [],
+        payment: [{ paymentStatus: "EXPIRED" }],
+      },
+      {
+        id: "live-booking",
+        occurrences,
+        consultation: { status: "APPROVED" },
+        participants: [],
+        payment: [{ paymentStatus: "SUCCEEDED" }],
+      },
+    ]);
+
+    const result = await service.checkSlotAvailability(slots, "user-1");
+    expect(result.isValid).toBe(false);
+    expect(result.conflicts?.[0]?.appointmentId).toBe("live-booking");
+  });
+
+  it("an unanswered request past its hold window frees its time unless the booking is being moved", async () => {
+    const slots = futureSlots(1);
+    const lapsedRequest = (counts: {
+      rescheduleRequests: number;
+      occurrences: number;
+    }) => ({
+      id: "old-request",
+      occurrences: [
+        {
+          startsAt: slots[0],
+          endsAt: new Date(slots[0].getTime() + 30 * 60 * 1000),
+        },
+      ],
+      consultation: {
+        status: "PENDING",
+        bookingSource: "REQUEST_SUBMITTED",
+        requestedAt: new Date(Date.now() - 49 * 60 * 60 * 1000),
+      },
+      participants: [],
+      payment: [],
+      _count: counts,
+    });
+
+    mockPrisma.appointment.findMany.mockResolvedValue([
+      lapsedRequest({ rescheduleRequests: 0, occurrences: 0 }),
+    ]);
+    expect((await service.checkSlotAvailability(slots, "user-1")).isValid).toBe(
+      true,
+    );
+
+    mockPrisma.appointment.findMany.mockResolvedValue([
+      lapsedRequest({ rescheduleRequests: 1, occurrences: 0 }),
+    ]);
+    expect((await service.checkSlotAvailability(slots, "user-1")).isValid).toBe(
+      false,
+    );
+
+    const { select } = mockPrisma.appointment.findMany.mock.calls[0][0];
+    expect(select.consultation.select.requestedAt).toBe(true);
+    expect(select._count).toBe(BEING_MOVED_COUNTS);
   });
 });
 
@@ -1107,6 +1190,42 @@ describe("#676 AE-1: validate threads consulteeUserId into the conflict scan", (
     expect(
       JSON.stringify(mockPrisma.appointment.findMany.mock.calls),
     ).toContain("consultee-ae1");
+  });
+
+  const validateFor = (consulteeUserId: string) =>
+    service.validate(
+      "consultation",
+      "event-1",
+      futureSlots(2, "2025-06-02T10:00:00Z"),
+      weeklyConsultant,
+      { durationInHours: 1 },
+      undefined,
+      { consulteeUserId },
+    );
+  const conflictReach = () => {
+    const { calls } = mockPrisma.appointment.findMany.mock;
+    return reachOrOf(calls[calls.length - 1][0]);
+  };
+
+  it("a buyer who is an expert is busy on their own calendar too: hosted sessions and co-host seats", async () => {
+    mockPrisma.consultantProfile.findUnique.mockResolvedValue({
+      id: "cp-buyer",
+    });
+    await validateFor("consultee-ae1");
+
+    expect(mockPrisma.consultantProfile.findUnique).toHaveBeenCalledWith({
+      where: { userId: "consultee-ae1" },
+      select: { id: true },
+    });
+    // The same occupancy checkout and the grid read for an expert buyer.
+    expect(conflictReach()).toContainEqual(
+      buildConsultantOccupancyWhere("cp-buyer", "consultee-ae1", new Date()),
+    );
+  });
+
+  it("a buyer who is not an expert adds no calendar of their own", async () => {
+    await validateFor("consultee-ae1");
+    expect(JSON.stringify(conflictReach())).not.toContain("collaborators");
   });
 
   it("does NOT add a consultee to the scan for group events", async () => {

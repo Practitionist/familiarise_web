@@ -11,6 +11,7 @@
  * learner's own cancel records no strike. An operator who is not a party is
  * refused on DELETE and on every PATCH status. From 15 minutes before the start
  * nothing is cancelled, and the PATCH no longer cancels a scheduled trial.
+ * A click made on an unpaid screen never cancels a trial that has since been paid.
  */
 
 const state = {
@@ -183,7 +184,14 @@ jest.mock("../../lib/prisma", () => ({
 
 import { NextRequest } from "next/server";
 import type { TrialRefundOutcome } from "../../lib/trials/cancellation";
+import { readRefundQuoteChanged } from "../../lib/appointments/cancel-requote";
 import { DELETE, PATCH } from "../../app/api/trials/[trialId]/route";
+import { GET as previewGET } from "../../app/api/trials/[trialId]/cancel/preview/route";
+import { CancelRefundPreviewSchema } from "../../schemas/appointments";
+import {
+  TrialCancelBodySchema,
+  trialCancelRequest,
+} from "../../schemas/trials";
 
 const ctx = { params: Promise.resolve({ trialId: "trial-1" }) };
 const del = (body: unknown = {}) =>
@@ -454,5 +462,92 @@ describe("an operator who is not a party", () => {
     expect(res.status).toBe(403);
     expect((await res.json()).code).toBe("PLATFORM_CANCEL_DOOR_REQUIRED");
     expect(transitionTrial).not.toHaveBeenCalled();
+  });
+});
+
+describe("the learner's click binds the paid state the dialog showed", () => {
+  const asLearner = () => {
+    state.session = {
+      id: "u-learner",
+      role: "CONSULTEE",
+      consultantProfileId: null,
+      consulteeProfileId: "cee-1",
+    };
+  };
+
+  it("an unpaid screen whose payment has since landed is re-quoted, even at a ₹0 tier", async () => {
+    asLearner();
+    state.hoursAhead = 0.5;
+    const res = await del({ confirmedRefundPaise: 0, expectedPaid: false });
+    expect(res.status).toBe(409);
+    const body: unknown = await res.json();
+    expect(body).toMatchObject({
+      code: "REFUND_QUOTE_CHANGED",
+      error: expect.stringMatching(/payment just went through/i),
+      quote: { estimatedRefundPaise: 0, paymentId: "pay-1" },
+    });
+    expect(readRefundQuoteChanged(body)).toEqual({
+      code: "REFUND_QUOTE_CHANGED",
+      refundPaise: 0,
+      refundPct: 0,
+      creditRestoresInFull: false,
+    });
+    expect(transitionTrial).not.toHaveBeenCalled();
+    expect(stampRefundOwed).not.toHaveBeenCalled();
+    expect(refundCancelledTrial).not.toHaveBeenCalled();
+  });
+
+  it("an unpaid screen on a trial still unpaid cancels", async () => {
+    asLearner();
+    state.trialStatus = "AWAITING_PAYMENT";
+    state.paid = false;
+    const res = await del({ confirmedRefundPaise: 0, expectedPaid: false });
+    expect(res.status).toBe(200);
+    expect(calls).toContain("cancel");
+    expect(stampRefundOwed).not.toHaveBeenCalled();
+  });
+
+  it("a paid screen echoes the preview's paid state and cancels on its quote as before", async () => {
+    asLearner();
+    state.hoursAhead = 48;
+    const preview = CancelRefundPreviewSchema.parse(
+      await (await previewGET(new Request("http://localhost"), ctx)).json(),
+    );
+    if (preview.paid === false) throw new Error("expected a paid quote");
+    expect(preview.expectedPaid).toBe(true);
+    const { body } = trialCancelRequest("trial-1", preview);
+    expect(TrialCancelBodySchema.parse(body)).toEqual({
+      confirmedRefundPaise: 50_000,
+      expectedPaid: true,
+    });
+    const res = await del(body);
+    expect(res.status).toBe(200);
+    expect(stampRefundOwed).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ amountPaise: 50_000 }),
+    );
+  });
+});
+
+describe("the cancel body is validated", () => {
+  it("a supplied body that fails the schema answers 400 and nothing moves", async () => {
+    const res = await del({ confirmedRefundPaise: 0, expectedPaid: "false" });
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("VALIDATION_FAILED");
+    expect(transitionTrial).not.toHaveBeenCalled();
+    expect(stampRefundOwed).not.toHaveBeenCalled();
+  });
+
+  it("a bodyless DELETE still reads as an absent confirmation", async () => {
+    state.trialStatus = "AWAITING_PAYMENT";
+    state.paid = false;
+    const res = await DELETE(
+      new NextRequest("http://localhost/api/trials/trial-1", {
+        method: "DELETE",
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    expect(calls).toContain("cancel");
   });
 });

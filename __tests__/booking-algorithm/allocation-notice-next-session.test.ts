@@ -5,9 +5,13 @@
 // Invariant: the booked notice after a top-up names the next live session, never a past or cancelled one.
 
 import "./setup";
-import { notifyAppointmentBooked } from "@/lib/novu";
+import {
+  notifyAppointmentBooked,
+  notifyAppointmentPartiallyScheduled,
+} from "@/lib/novu";
 import { stageAllocationNotices } from "@/lib/booking/allocation/notify";
 import type { Tx } from "@/lib/prisma";
+import { matchesWhere, type Where } from "../fixtures/mem-db";
 
 const DAY = 24 * 3600_000;
 const row = (offsetDays: number, completionStatus: string) => ({
@@ -92,4 +96,81 @@ it("keys each placement batch apart, so week two is not deduplicated into week o
     ([, , opts]) => opts.dedupeKey,
   );
   expect(keys[0]).not.toEqual(keys[1]);
+});
+
+describe("a webinar or class allocation tells the team, read from the plan", () => {
+  const user = (id: string) => ({ id, name: id });
+  // The former collaborator still has a live staff row; the current one has none.
+  const SEATS = [
+    { role: "CONSULTANT", status: "CONFIRMED", user: user("host") },
+    { role: "CONSULTEE", status: "CONFIRMED", user: user("learner") },
+    { role: "COLLABORATOR", status: "CONFIRMED", user: user("left-the-team") },
+  ];
+  const TEAM = [
+    {
+      webinarPlanId: "plan-1",
+      classPlanId: "plan-1",
+      status: "ACCEPTED",
+      consultantProfile: { deletedAt: null, userId: "on-the-team" },
+    },
+    {
+      webinarPlanId: "plan-1",
+      classPlanId: "plan-1",
+      status: "REMOVED",
+      consultantProfile: { deletedAt: null, userId: "left-the-team" },
+    },
+  ];
+  const event = async (args: {
+    select: { appointment: { select: { participants: { where: Where } } } };
+  }) => {
+    const plan = {
+      id: "plan-1",
+      title: "Open session",
+      consultantProfile: { user: user("host") },
+    };
+    return {
+      webinarPlan: plan,
+      classPlan: plan,
+      appointment: {
+        id: "appt-1",
+        organizationId: null,
+        participants: SEATS.filter((seat) =>
+          matchesWhere(seat, args.select.appointment.select.participants.where),
+        ),
+        occurrences: [row(5, "SCHEDULED")],
+      },
+    };
+  };
+  const groupTx = {
+    webinar: { findUnique: event },
+    class: { findUnique: event },
+    collaborator: {
+      findMany: async ({ where }: { where: Where }) =>
+        TEAM.filter((member) => matchesWhere(member, where)),
+    },
+  } as unknown as Tx;
+
+  it.each(["webinar", "class"] as const)(
+    "sends the %s notice to the host, the learners and the current team only",
+    async (eventType) => {
+      (notifyAppointmentBooked as jest.Mock).mockClear();
+      (notifyAppointmentPartiallyScheduled as jest.Mock).mockClear();
+      await stageAllocationNotices(groupTx, eventType, "event-1", {
+        partial: true,
+      });
+
+      const [recipients, payload] = (notifyAppointmentBooked as jest.Mock).mock
+        .calls[0];
+      expect([...recipients].sort()).toEqual([
+        "host",
+        "learner",
+        "on-the-team",
+      ]);
+      expect(payload.consulteeName).toBe("learner");
+      // What happens to the unplaced sessions is the learners' notice alone.
+      expect(
+        (notifyAppointmentPartiallyScheduled as jest.Mock).mock.calls[0][0],
+      ).toEqual(["learner"]);
+    },
+  );
 });

@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { apiErrorSchema, errorMessageFromBody } from "@/lib/fetch-helpers";
 import { payPagePath } from "@/lib/payments/pay-link-href";
+import { RequestAgainButton } from "@/components/booking/RequestAgainButton";
 import type { PendingCheckout } from "@/lib/data/pending-checkout";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
@@ -151,7 +152,7 @@ export function PendingCheckoutClient({
               The payment window for {pending.planTitle} has ended.{" "}
               {checksExhausted
                 ? "If you paid, your payments page will show it once it settles. If you did not, the hold is released shortly and nothing is charged."
-                : "We are checking whether a payment came through."}
+                : "We are checking whether a payment came through, and this page rechecks by itself for about two minutes. If you paid, the booking appears under Appointments."}
             </p>
             <Button asChild variant="outline" className="w-full">
               <Link href={detailsHref}>Go to your payments</Link>
@@ -179,9 +180,18 @@ export function PendingCheckoutClient({
                 : `The payment window for ${pending.planTitle} has closed, so the hold on your booking was released.`}{" "}
               You can book again whenever you are ready.
             </p>
-            <Button asChild className="w-full">
-              <Link href="/explore">Book again</Link>
-            </Button>
+            <RequestAgainButton
+              appointmentId={pending.appointmentId}
+              href="/explore"
+              payments={[
+                { paymentStatus: pending.status, expiresAt: pending.expiresAt },
+              ]}
+              variant="default"
+              size="default"
+              className="w-full"
+            >
+              Book again
+            </RequestAgainButton>
           </CardContent>
         </Card>
       </main>

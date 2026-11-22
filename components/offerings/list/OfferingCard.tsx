@@ -33,6 +33,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { formatRole } from "@/components/collaborators/format";
 import { useToast } from "@/hooks/use-toast";
 import { appendExpertShareAttribution } from "@/hooks/useExpertShareHref";
 import type { OfferingStat } from "@/lib/offerings/stats";
@@ -43,14 +44,6 @@ import {
   publicOfferingHref,
   type OfferingRow,
 } from "./offering-rows";
-
-const COLLABORATOR_ROLE_LABEL: Record<string, string> = {
-  HOST: "Host",
-  CO_HOST: "Co-host",
-  MODERATOR: "Moderator",
-  CO_INSTRUCTOR: "Co-instructor",
-  TEACHING_ASSISTANT: "Teaching assistant",
-};
 
 const ORG_GOVERNED_HINT = "Managed by your organisation";
 
@@ -68,7 +61,15 @@ export interface OfferingCardProps {
   join?: { canJoin: boolean; isJoining: boolean; onJoin: () => void };
   onArchiveToggle?: () => Promise<unknown>;
   onDelete?: () => Promise<unknown>;
+  /** False while the expert is unverified (learners can neither open nor book it); null while unknown. */
+  listed?: boolean | null;
 }
+
+/** The chip a published offering shows while learners cannot see it yet. */
+const LIVE_ONCE_VERIFIED = {
+  label: "Live once verified",
+  tone: "caution",
+} as const;
 
 function formatStart(date: Date | null): string {
   if (!date) return "Not scheduled yet";
@@ -100,16 +101,23 @@ export function OfferingCard({
   join,
   onArchiveToggle,
   onDelete,
+  listed = true,
 }: Readonly<OfferingCardProps>) {
   const { toast } = useToast();
   const [confirm, setConfirm] = useState<"archive" | "delete" | null>(null);
   const [restoring, setRestoring] = useState(false);
 
   const owned = !row.isCollaborated;
+  // A share link to a page learners cannot open yet would only 404.
   const baseShareHref =
-    row.planId && !row.isDraft && !row.isArchived
+    listed === true && row.planId && !row.isDraft && !row.isArchived
       ? publicOfferingHref(row.type, row.planId)
       : null;
+  // An unknown standing shows no published chip, so neither answer flashes.
+  let chip: { label: string; tone: typeof row.status.tone } | null = row.status;
+  if (row.status.label === "Published" && listed !== true) {
+    chip = listed === false ? LIVE_ONCE_VERIFIED : null;
+  }
   let shareHref = baseShareHref;
   if (baseShareHref && owned) {
     shareHref = appendExpertShareAttribution(
@@ -185,11 +193,18 @@ export function OfferingCard({
             <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
               {OFFERING_TYPE_LABEL[row.type]}
             </span>
-            <StatusBadge
-              label={row.status.label}
-              tone={row.status.tone}
-              size="sm"
-            />
+            {chip ? (
+              <StatusBadge label={chip.label} tone={chip.tone} size="sm" />
+            ) : (
+              // Holds the chip's place while the standing loads, so the card never shifts.
+              <span
+                aria-hidden="true"
+                data-testid="chip-placeholder"
+                className="invisible"
+              >
+                <StatusBadge label={"\u00a0"} tone="neutral" size="sm" />
+              </span>
+            )}
             {row.trialEnabled && (
               <StatusBadge
                 label={row.trialIsFree ? "Free trial" : "Trial available"}
@@ -207,10 +222,7 @@ export function OfferingCard({
             <WaitingCountBadge count={row.waitingCount} />
             {row.isCollaborated && row.collaboratorRole && (
               <StatusBadge
-                label={
-                  COLLABORATOR_ROLE_LABEL[row.collaboratorRole] ??
-                  "Collaborator"
-                }
+                label={formatRole(row.collaboratorRole)}
                 tone="info"
                 size="sm"
               />

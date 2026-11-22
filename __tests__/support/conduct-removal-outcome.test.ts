@@ -33,3 +33,12 @@ it("tells the learner of either outcome as a required removed-seat notice", () =
   }
   expect(removalDecisionNotice("OVERTURNED").message).toMatch(/not given back/);
 });
+
+it("says an overturned price-free seat can register again, and any other that support will help", () => {
+  expect(removalDecisionNotice("OVERTURNED", "REGISTER").message).toMatch(
+    /you can register for this event again/,
+  );
+  expect(removalDecisionNotice("OVERTURNED", "SUPPORT").message).toMatch(
+    /support will help you rejoin this event/,
+  );
+});

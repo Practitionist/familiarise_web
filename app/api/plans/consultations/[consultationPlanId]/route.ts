@@ -29,6 +29,7 @@ import {
 import { planConsultantSelect } from "@/lib/api/plans/consultant-projection";
 import { freezeConsultationPrice } from "@/lib/booking/sold-terms";
 import { canViewPlanById } from "@/lib/data/plan-viewable";
+import { publicProfileFacts } from "@/lib/profiles/public-profile";
 import {
   SessionLookupFailedError,
   sessionLookupFailedResponse,
@@ -45,7 +46,9 @@ export async function GET(
     const consultationPlan = await prisma.consultationPlan.findUniqueOrThrow({
       where: { id: consultationPlanId },
       include: {
-        consultantProfile: { select: planConsultantSelect },
+        consultantProfile: {
+          select: { ...planConsultantSelect, ...publicProfileFacts },
+        },
         topics: true,
         faqs: { orderBy: { order: "asc" } },
       },

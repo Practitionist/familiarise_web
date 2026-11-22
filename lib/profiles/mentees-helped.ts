@@ -57,11 +57,7 @@
  * has to be right on day one.
  */
 
-import type {
-  OccurrenceCompletionStatus,
-  ParticipantRole,
-  Prisma,
-} from "@prisma/client";
+import type { OccurrenceCompletionStatus, Prisma } from "@prisma/client";
 
 import type { Tx } from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
@@ -122,26 +118,10 @@ function deliveredOccurrence(now: Date): {
 }
 
 /**
- * The roles a live seat can hold that still count as somebody being served.
- *
- * Typed rather than inlined, because an array literal with no annotation
- * widens to `string[]` and `EnumParticipantRoleFilter.in` only takes
- * `ParticipantRole[]` — the same reason `LIVE_PARTICIPANT_STATUSES` is a typed
- * const next door in `lib/booking/participants.ts`.
- */
-const ATTENDEE_SEAT_ROLES: ParticipantRole[] = ["CONSULTEE", "COLLABORATOR"];
-
-/**
- * A live seat held by somebody who was actually served.
- *
- * `hostSideUserIds` carries the consultant and every ACCEPTED collaborator on
- * their group plans. Both must be excluded: the consultant's own roster row is
- * written with role CONSULTANT (so the role filter drops it), but an ACCEPTED
- * collaborator is written with role COLLABORATOR — indistinguishable from a
- * paying attendee by role alone. #1580 C-P0-2 already excludes them from
- * RATING the host as a consultee of their own event; the same reasoning applies
- * to a public count of people served, or a consultant could raise their own
- * figure by adding collaborators to a roster.
+ * A live learner seat held by somebody who was actually served. The host's own
+ * row and a collaborator's are never one; `hostSideUserIds` also drops the
+ * consultant and their accepted collaborators should they hold a learner seat,
+ * so nobody raises their own public figure.
  *
  * The return type is declared rather than inferred: Prisma's `Exact<>` around
  * the `participants` filter rejects an inferred anonymous object whose `AND`
@@ -153,7 +133,7 @@ function attendeeSeat(
   return {
     AND: [
       liveParticipant(),
-      { role: { in: ATTENDEE_SEAT_ROLES } },
+      { role: "CONSULTEE" },
       { userId: { notIn: hostSideUserIds } },
     ],
   };

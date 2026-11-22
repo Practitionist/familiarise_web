@@ -20,10 +20,10 @@ import type {
 } from "@prisma/client";
 import { EarningStatus, EarningsHoldReason } from "@prisma/client";
 import prisma, { type Tx } from "@/lib/prisma";
-import {
-  removeCollaboratorStanding,
-  type CollaborationRef,
-} from "@/lib/collaborators/standing";
+import { endCollaborationsForUser } from "@/lib/collaborators/ending";
+import { sendOwedCohostEmails } from "@/lib/collaborators/notifications";
+import type { PlanRef } from "@/lib/collaborators/team";
+import type { OwedCohostEmails } from "@/lib/email/senders/collaborators";
 import { recomputeConsultantRating } from "@/lib/reviews";
 import {
   getStreamChatClient,
@@ -103,8 +103,16 @@ export interface TransactionalEffectResult {
   expertUserId?: string;
   /** Whose public surfaces need purging once the transaction commits. */
   reviewRemovedConsultantProfileId?: string;
+  /** The rejected expert's profile, purged from the public surfaces after commit. */
+  unverifiedConsultantProfileId?: string;
+  /** "failed" queues the ending for the enforcement retry sweep; set in the reject's own transaction. */
+  unpaidSales?: StepStatus;
+  unpaidSalesAttempts?: number;
+
   banExpires?: string | null;
-  collaborationsRemoved?: CollaborationRef[];
+  collaborationsRemoved?: PlanRef[];
+  /** The seat holders' emails of a co-presenter who left; phase 2 stages them, never persisted. */
+  owedCohostEmails?: OwedCohostEmails[];
   stagedBells?: StagedTrigger[];
   stagedEmails?: StagedEmailBundleEntry[];
   /** Revoked sessions for the access log; phase 2 stamps them, never persisted. */
@@ -114,6 +122,13 @@ export interface TransactionalEffectResult {
 export type StepStatus = "ok" | "failed" | "skipped" | "gave_up";
 
 export interface SideEffectSummary extends TransactionalEffectResult {
+  /** A rejected expert's unpaid sales ended after commit, by kind. */
+  payLinksClosed?: number;
+  requestsDeclined?: number;
+  trialHoldsReleased?: number;
+  seatsReleased?: number;
+  /** Sales left open: a live payment holds them, or the gateway could not be asked. */
+  salesKept?: number;
   cancellations?: BulkCancelSummary;
   stream?: StepStatus;
   streamAttempts?: number;
@@ -379,7 +394,7 @@ async function applyActionEffects(
     case "USER_BANNED":
       return banOrSuspendUser(tx, input);
     case "PROFILE_UNVERIFIED":
-      return unverifyProfiles(tx, report.targetUserId);
+      return unverifyProfiles(tx, input);
     case "CONTENT_REMOVED":
       if (report.type !== "REVIEW") return {};
       return softDeleteReview(tx, report.reviewId);
@@ -405,7 +420,7 @@ async function banOrSuspendUser(
   tx: Tx,
   input: ModerationSideEffectInput,
 ): Promise<TransactionalEffectResult> {
-  const { actionType, report, notes, suspensionDays } = input;
+  const { actionType, report, notes, suspensionDays, staffUserId } = input;
   const banExpires =
     actionType === "USER_SUSPENDED"
       ? new Date(Date.now() + (suspensionDays ?? 7) * 86_400_000)
@@ -439,14 +454,13 @@ async function banOrSuspendUser(
     if (earningsHeld !== undefined) result.earningsHeld = earningsHeld;
   }
 
-  // #1580 C-P0-4 — a moderated account otherwise stays an ACCEPTED collaborator
-  // in every split, roster and recording; the flip is shared with erasure.
-  const collaborationsRemoved = await removeCollaboratorStanding(
-    tx,
-    report.targetUserId,
-  );
-  if (collaborationsRemoved.length > 0) {
-    result.collaborationsRemoved = collaborationsRemoved;
+  // A ban is permanent, so it ends every collaboration. A suspension has an
+  // end date: the account cannot sign in meanwhile and keeps its place.
+  if (actionType === "USER_BANNED") {
+    Object.assign(
+      result,
+      await endCollaborationsAsModeration(tx, report.targetUserId, staffUserId),
+    );
   }
   return result;
 }
@@ -480,17 +494,63 @@ async function holdBannedConsultantEarnings(
   return placed.length;
 }
 
-async function unverifyProfiles(
+/**
+ * Ends the user's collaborations; returns the plans whose team they were on
+ * and the seat holders' emails owed for a co-presenter among them.
+ */
+async function endCollaborationsAsModeration(
   tx: Tx,
   targetUserId: string,
+  staffUserId: string,
+): Promise<
+  Pick<TransactionalEffectResult, "collaborationsRemoved" | "owedCohostEmails">
+> {
+  const ended = await endCollaborationsForUser(tx, targetUserId, {
+    endedByUserId: staffUserId,
+  });
+  const teams = ended.filter((e) => e.wasOnTeam).map((e) => e.ref);
+  const owed = ended.flatMap((e) => e.notices.learnerEmails ?? []);
+  return {
+    ...(teams.length > 0 ? { collaborationsRemoved: teams } : {}),
+    ...(owed.length > 0 ? { owedCohostEmails: owed } : {}),
+  };
+}
+
+async function unverifyProfiles(
+  tx: Tx,
+  input: ModerationSideEffectInput,
 ): Promise<TransactionalEffectResult> {
+  const targetUserId = input.report.targetUserId;
+  const { staffUserId } = input;
   // Both fields: explore + the booking gate filter on verificationStatus,
   // while isVerified is the projected display flag.
-  const updated = await tx.consultantProfile.updateMany({
+  const updated = await tx.consultantProfile.updateManyAndReturn({
     where: { userId: targetUserId },
     data: { isVerified: false, verificationStatus: "REJECTED" },
+    select: { id: true },
   });
-  return { profilesUnverified: updated.count };
+  const profileId = updated[0]?.id;
+  // Only a verified expert holds a place on a team. Their unpaid sales end in
+  // phase 2, once this profile write has committed and every sale writer sees it;
+  // the action row owes that ending from this commit on, so the sweep finds it.
+  const owed = profileId
+    ? {
+        unverifiedConsultantProfileId: profileId,
+        unpaidSales: "failed" as const,
+        unpaidSalesAttempts: 0,
+      }
+    : {};
+  if (profileId && input.actionId) {
+    await tx.moderationAction.update({
+      where: { id: input.actionId },
+      data: { sideEffects: owed },
+    });
+  }
+  return {
+    profilesUnverified: updated.length,
+    ...owed,
+    ...(await endCollaborationsAsModeration(tx, targetUserId, staffUserId)),
+  };
 }
 
 async function softDeleteReview(
@@ -616,7 +676,11 @@ export async function applyBestEffortEffects(
   transactional: TransactionalEffectResult,
 ): Promise<SideEffectSummary> {
   const { actionType } = input;
-  const { stagedSessionEnds = [], ...committed } = transactional;
+  const {
+    stagedSessionEnds = [],
+    owedCohostEmails = [],
+    ...committed
+  } = transactional;
   // The ban or suspension has committed; a failed log write cannot undo it.
   await stampSessionEnds(stagedSessionEnds);
   const summary: SideEffectSummary = {
@@ -640,11 +704,66 @@ export async function applyBestEffortEffects(
       errors,
     );
   }
+  if (owedCohostEmails.length > 0) {
+    await sendOwedCohostEmails(
+      owedCohostEmails,
+      "moderation.collaborationsRemoved",
+    );
+  }
+
+  if (transactional.unverifiedConsultantProfileId) {
+    await runUnpaidSalesEnding(
+      transactional.unverifiedConsultantProfileId,
+      input.staffUserId,
+      summary,
+      errors,
+    );
+  }
 
   await runNotification(input, transactional, summary, errors);
 
   if (errors.length > 0) summary.errors = errors;
   return summary;
+}
+
+// Stop new, honour booked: the rejected expert's unpaid sales end; paid ones stay.
+async function runUnpaidSalesEnding(
+  consultantProfileId: string,
+  staffUserId: string,
+  summary: SideEffectSummary,
+  errors: string[],
+): Promise<void> {
+  try {
+    // Lazy: the booking and gateway graph loads only for a reject.
+    const { endUnverifiedExpertSales } =
+      await import("@/lib/booking/unverified-expert-notices");
+    const outcome = await endUnverifiedExpertSales({
+      consultantProfileId,
+      actorUserId: staffUserId,
+    });
+    summary.payLinksClosed = outcome.payLinksClosed;
+    summary.requestsDeclined = outcome.requestsDeclined;
+    summary.trialHoldsReleased = outcome.trialHoldsReleased;
+    summary.seatsReleased = outcome.seatsReleased;
+    summary.salesKept = outcome.salesKept;
+    summary.stagedBells?.push(...outcome.bells);
+    summary.stagedEmails?.push(...outcome.emails);
+    summary.unpaidSalesAttempts = 1;
+    if (outcome.skipped) {
+      summary.unpaidSales = "skipped";
+    } else if (outcome.complete) {
+      summary.unpaidSales = "ok";
+    } else {
+      // Orders left unread for time: the retry sweep ends the rest.
+      summary.unpaidSales = "failed";
+      errors.push("unpaidSales: orders left unread for time");
+    }
+  } catch (error) {
+    summary.unpaidSales = "failed";
+    summary.unpaidSalesAttempts = 1;
+    errors.push(`unpaidSales: ${errMsg(error)}`);
+    captureModerationError(error);
+  }
 }
 
 async function runBulkCancellations(
@@ -664,34 +783,26 @@ async function runBulkCancellations(
   }
 }
 
-// #1580 C-P0-4 — the Stream side of the rows phase 1 moved to REMOVED. The ban
-// notification already went out, so the per-plan removal Novu is skipped.
+// The Stream side of the collaborations phase 1 ended. Their transaction wrote
+// each revocation, so whatever this attempt leaves the revocation sweep finishes.
+// A failure stays queued for the sweep and never stops the steps after it.
 async function runCollaboratorRevocations(
   targetUserId: string,
-  plans: CollaborationRef[],
+  plans: PlanRef[],
   summary: SideEffectSummary,
   errors: string[],
 ): Promise<void> {
-  const failed: string[] = [];
-  // Lazy: a static import would pull the auth + email graph into every action.
-  const { revokeCollaboratorAccess } =
-    await import("@/lib/collaborators/service");
-  for (const { planType, planId } of plans) {
-    try {
-      const { success } = await revokeCollaboratorAccess(
-        planType,
-        planId,
-        targetUserId,
-      );
-      if (!success) failed.push(`${planType}:${planId}`);
-    } catch (error) {
-      failed.push(`${planType}:${planId}`);
-      captureModerationError(error);
-    }
-  }
-  summary.collaboratorRevocation = failed.length === 0 ? "ok" : "failed";
-  if (failed.length > 0) {
-    errors.push(`collaborator-revoke: ${failed.join(", ")}`);
+  try {
+    // Lazy: a static import would pull the Stream graph into every action.
+    const { revokeCollaboratorAccess } =
+      await import("@/lib/stream/access-revocation");
+    for (const ref of plans) await revokeCollaboratorAccess(ref, targetUserId);
+    summary.collaboratorRevocation = "ok";
+  } catch (error) {
+    summary.collaboratorRevocation = "failed";
+    summary.collaboratorRevocationAttempts = 1;
+    errors.push(`collaborator-revoke: ${errMsg(error)}`);
+    captureModerationError(error);
   }
 }
 

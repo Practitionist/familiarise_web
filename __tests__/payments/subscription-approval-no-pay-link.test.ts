@@ -94,6 +94,12 @@ it("the pay page never re-mints a lapsed subscription order", async () => {
         id: "sub-1",
         status: "APPROVED_PENDING_PAYMENT",
         pendingPaymentUrl: null,
+        subscriptionPlan: {
+          consultantProfile: {
+            verificationStatus: "VERIFIED",
+            deletedAt: null,
+          },
+        },
       },
     },
   });

@@ -321,12 +321,63 @@ async function adoptPreMintRow(
   return true;
 }
 
+/**
+ * One refund per late capture, keyed on the gateway payment: on our Refund row (`dedupeKey`) and at
+ * Razorpay (`receipt`, at most 40 chars, refused as a duplicate on the same payment).
+ */
+export function lateCaptureRefundKeys(gatewayPaymentId: string): {
+  dedupeKey: string;
+  gatewayReceipt?: string;
+} {
+  const receipt = `late_capture_${gatewayPaymentId}`;
+  return {
+    dedupeKey: `late-capture:${gatewayPaymentId}`,
+    ...(receipt.length <= 40 ? { gatewayReceipt: receipt } : {}),
+  };
+}
+
+/**
+ * Refunds a capture that landed after its hold was released, keyed on the gateway payment, and marks the
+ * payment Auto-refunded unless the gateway still holds the refund. Throws when the refund fails; the
+ * `Auto-refund pending:` marker then stays for `retry-auto-refunds`.
+ */
+export async function refundLateCapture(input: {
+  paymentId: string;
+  /** What the gateway still holds of the capture; omitted, the payment's whole refundable balance. */
+  amountPaise?: number;
+  releasedBy: string;
+  gatewayPaymentId?: string;
+  /** The caller reports a failure itself; see `RefundInput.failureReportedByCaller`. */
+  failureReportedByCaller?: boolean;
+}): Promise<void> {
+  const outcome = await refundBookingPayment({
+    paymentId: input.paymentId,
+    ...(input.failureReportedByCaller ? { failureReportedByCaller: true } : {}),
+    ...(input.amountPaise === undefined
+      ? {}
+      : { amountPaise: input.amountPaise }),
+    reason: `capture after hold release (${input.releasedBy})`,
+    initiatedByUserId: null,
+    ...(input.gatewayPaymentId
+      ? lateCaptureRefundKeys(input.gatewayPaymentId)
+      : {}),
+  });
+  if (outcome?.status !== "PENDING") {
+    await prisma.payment.update({
+      where: { id: input.paymentId },
+      data: {
+        description: `Auto-refunded: capture landed after the hold was released (${input.releasedBy}). Booking NOT confirmed.`,
+      },
+    });
+  }
+}
+
 export async function handlePaymentSuccess(
   paymentIntentId: string,
   rawMetadata: Record<string, string>,
   gatewayAmountPaise?: number,
   gatewayPaymentId?: string,
-  options?: { recover?: boolean },
+  options?: { recover?: boolean; deferLateCaptureRefund?: boolean },
 ): Promise<PaymentSuccessTxResult["outcome"] | null> {
   const recovering = options?.recover === true;
   const metadata = { ...normalizeLegacySlotKeys(rawMetadata) };
@@ -368,6 +419,7 @@ export async function handlePaymentSuccess(
   try {
     preplannedEarnings = await planEarningsForPayment(
       { paymentIntent: paymentIntentId },
+      new Date(),
       metadata.appointmentType,
     );
   } catch {
@@ -695,11 +747,13 @@ export async function handlePaymentSuccess(
               errorMessage,
             );
 
+            // The parked row keeps its capture time: its recovery splits the seat by the team at this instant.
             const recoveryStamped = await tx.payment.updateMany({
               where: { id: payment.id, paymentStatus: PaymentStatus.PENDING },
               data: {
                 paymentStatus: PaymentStatus.SUCCEEDED,
                 ...capturedGatewayId,
+                capturedAt: new Date(),
                 description: `REQUIRES_MANUAL_RECOVERY: Metadata validation failed: ${errorMessage}. Customer charged but appointment NOT created.`,
               },
             });
@@ -736,6 +790,11 @@ export async function handlePaymentSuccess(
             return null;
           }
 
+          // The capture instant: stamped on the payment, and the time its
+          // split reads the team at. A recovered capture keeps its own.
+          const capturedAt = recoverable
+            ? (payment.capturedAt ?? payment.createdAt)
+            : new Date();
           const confirmed = recoverable
             ? { count: 1 }
             : await tx.payment.updateMany({
@@ -743,7 +802,7 @@ export async function handlePaymentSuccess(
                 data: {
                   paymentStatus: PaymentStatus.SUCCEEDED,
                   ...capturedGatewayId,
-                  capturedAt: new Date(),
+                  capturedAt,
                 },
               });
           if (confirmed.count === 0) {
@@ -1000,6 +1059,7 @@ export async function handlePaymentSuccess(
                 await createEarningsFromPayment({
                   payment: resolvedInTx.paymentForEarnings,
                   appointmentType: resolvedInTx.earningsAppointmentType,
+                  teamAt: capturedAt,
                   tx,
                   preplanned: preplannedEarnings ?? undefined,
                 });
@@ -1250,18 +1310,13 @@ export async function handlePaymentSuccess(
 
   if (txResult.outcome === "captured_after_release") {
     try {
-      const outcome = await refundBookingPayment({
-        paymentId: txResult.paymentId,
-        amountPaise: gatewayAmountPaise,
-        reason: `capture after hold release (${txResult.releasedBy})`,
-        initiatedByUserId: null,
-      });
-      if (outcome?.status !== "PENDING") {
-        await prisma.payment.update({
-          where: { id: txResult.paymentId },
-          data: {
-            description: `Auto-refunded: capture landed after the hold was released (${txResult.releasedBy}). Booking NOT confirmed.`,
-          },
+      // A deferring caller refunds through `refundLateCapture` and reports the failure itself.
+      if (!options?.deferLateCaptureRefund) {
+        await refundLateCapture({
+          paymentId: txResult.paymentId,
+          amountPaise: gatewayAmountPaise,
+          releasedBy: txResult.releasedBy,
+          gatewayPaymentId,
         });
       }
     } catch (refundError) {
@@ -1388,9 +1443,13 @@ export async function handlePaymentSuccess(
       );
 
       if (resolved) {
+        // A retry splits by the capture the row carries, never by now.
         await createEarningsFromPayment({
           payment: resolved.paymentForEarnings,
           appointmentType: resolved.earningsAppointmentType,
+          teamAt:
+            resolved.paymentForEarnings.capturedAt ??
+            resolved.paymentForEarnings.createdAt,
         });
 
         console.log(
@@ -1879,7 +1938,11 @@ async function confirmSeatAfterCapture(
   ) {
     await transitionParticipant(tx, args.casWhere, "CANCELLED");
   }
-  if ((await transitionParticipant(tx, args.casWhere, "CONFIRMED")) > 0) {
+  if (
+    (await transitionParticipant(tx, args.casWhere, "CONFIRMED", {
+      history: { reason: "registered", actorUserId: args.userId },
+    })) > 0
+  ) {
     await markEventWaitlistBooked(
       tx,
       args.appointmentId,

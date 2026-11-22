@@ -4,7 +4,7 @@ import {
   patchCollaborator,
 } from "@/lib/api/collaborations/member-handlers";
 
-// Thin wrapper: the bodies are shared with the class twin (#1580 C-P2-7).
+// The webinar and class routes share these handlers; only the plan type differs.
 type Ctx = { params: Promise<{ planId: string; id: string }> };
 
 export const PATCH = (req: NextRequest, ctx: Ctx) =>

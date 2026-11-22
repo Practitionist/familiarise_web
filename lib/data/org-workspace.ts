@@ -24,6 +24,7 @@ import type {
 } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { sumPaise } from "@/lib/payments/utils/money";
+import { describeAuditRows } from "@/lib/enterprise/audit-describe";
 
 /* ------------------------------------------------------------------ *
  * GET /api/organizations                                              *
@@ -112,8 +113,11 @@ export interface CurrencyTotal {
   paise: number;
 }
 
+/** Headline totals over the ACTIVE organisations the caller owns. */
 export interface WorkspaceBillingSummary {
-  orgsOwned: number;
+  activeOrgs: number;
+  /** Owned organisations in any other status; listed per org, never totalled. */
+  inactiveOrgs: number;
   totalActiveMembers: number;
   /** One entry per currency (#1527) — never summed across currencies. */
   outstandingByCurrency: CurrencyTotal[];
@@ -174,7 +178,8 @@ export async function getWorkspaceBillingRollup(
   if (orgIds.length === 0) {
     return {
       summary: {
-        orgsOwned: 0,
+        activeOrgs: 0,
+        inactiveOrgs: 0,
         totalActiveMembers: 0,
         outstandingByCurrency: [],
         walletByCurrency: [],
@@ -213,7 +218,7 @@ export async function getWorkspaceBillingRollup(
     memberAgg.map((row) => [row.organizationId, row._count._all]),
   );
 
-  const perOrg = ownedMemberships.map((m) => {
+  const rows = ownedMemberships.map((m) => {
     const ba = m.organization.billingAccount;
     const inv = ba ? invoiceByBA.get(ba.id) : undefined;
     return {
@@ -230,18 +235,25 @@ export async function getWorkspaceBillingRollup(
     };
   });
 
+  // The headline totals count ACTIVE orgs only; the rest follow them in the per-org list.
+  const active = rows.filter((o) => o.organizationStatus === "ACTIVE");
+  const perOrg = [
+    ...active,
+    ...rows.filter((o) => o.organizationStatus !== "ACTIVE"),
+  ];
   // #1527 — one total per currency: a USD org's paise are not rupees.
   const summary = {
-    orgsOwned: ownedMemberships.length,
-    totalActiveMembers: perOrg.reduce((sum, o) => sum + o.activeMembers, 0),
-    outstandingByCurrency: totalsByCurrency(perOrg, (o) => o.outstandingPaise),
-    walletByCurrency: totalsByCurrency(perOrg, (o) => o.walletBalancePaise),
+    activeOrgs: active.length,
+    inactiveOrgs: rows.length - active.length,
+    totalActiveMembers: active.reduce((sum, o) => sum + o.activeMembers, 0),
+    outstandingByCurrency: totalsByCurrency(active, (o) => o.outstandingPaise),
+    walletByCurrency: totalsByCurrency(active, (o) => o.walletBalancePaise),
   };
 
   return { summary, perOrg };
 }
 
-/** Sum per currency, largest first; zero totals are dropped. */
+/** Sum per currency, largest first; zero totals are dropped unless every one is zero. */
 function totalsByCurrency<T extends { currency: string }>(
   rows: T[],
   pick: (row: T) => number,
@@ -253,10 +265,15 @@ function totalsByCurrency<T extends { currency: string }>(
       (byCurrency.get(row.currency) ?? 0) + pick(row),
     );
   }
-  return [...byCurrency.entries()]
-    .filter(([, paise]) => paise !== 0)
-    .map(([currency, paise]) => ({ currency, paise }))
-    .sort((a, b) => b.paise - a.paise);
+  const totals = [...byCurrency.entries()].map(([currency, paise]) => ({
+    currency,
+    paise,
+  }));
+  const nonZero = totals.filter((t) => t.paise !== 0);
+  // All zero: one zero per billing currency, so the headline still names it.
+  return (nonZero.length > 0 ? nonZero : totals).sort(
+    (a, b) => b.paise - a.paise,
+  );
 }
 
 /* ------------------------------------------------------------------ *
@@ -301,10 +318,12 @@ export interface WorkspaceActivityPage {
  * One page of the cross-org audit feed (latest-first, cursor on id).
  * Mirrors GET /api/org-workspace/[id]/activity. `createdAt` is
  * pre-stringified to ISO so the hydrated cache matches the client's
- * `ActivityResponse` (which types it as a string).
+ * `ActivityResponse` (which types it as a string). Descriptions are in
+ * words, with dates in `zone`.
  */
 export async function getWorkspaceActivity(
   userId: string,
+  zone: string,
   cursor: string | null,
   limit: number = WORKSPACE_ACTIVITY_DEFAULT_LIMIT,
   filters?: WorkspaceActivityFilters,
@@ -364,9 +383,11 @@ export async function getWorkspaceActivity(
       id: true,
       organizationId: true,
       actorMembershipId: true,
+      targetMembershipId: true,
       category: true,
       action: true,
       description: true,
+      details: true,
       createdAt: true,
     },
   });
@@ -390,8 +411,9 @@ export async function getWorkspaceActivity(
       })
     : [];
   const actorById = new Map(actors.map((a) => [a.id, a]));
+  const descriptions = await describeAuditRows(slice, zone);
 
-  const data = slice.map((r) => {
+  const data = slice.map((r, i) => {
     const org = orgById.get(r.organizationId);
     const actor = r.actorMembershipId
       ? actorById.get(r.actorMembershipId)
@@ -403,7 +425,7 @@ export async function getWorkspaceActivity(
       organizationSlug: org?.slug ?? null,
       category: r.category,
       action: r.action,
-      description: r.description,
+      description: descriptions[i] ?? r.description,
       createdAt: r.createdAt.toISOString(),
       actorName: actor?.user?.name ?? actor?.user?.email ?? null,
     };

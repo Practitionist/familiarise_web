@@ -7,7 +7,10 @@ import {
   PARTY_USER_SELECT,
   PROFILE_WITH_USER_SELECT,
 } from "@/lib/booking/list-selects";
-import { liveParticipant } from "@/lib/booking/participants";
+import {
+  liveParticipant,
+  NOT_COLLABORATOR_ROW,
+} from "@/lib/booking/participants";
 import { getSession } from "@/lib/auth-server";
 import { CLASS_PREFIX, WEBINAR_PREFIX } from "@/lib/stream-channel-ids";
 import { bookingOrgId, getDmChannelId } from "@/lib/stream-utils";
@@ -451,7 +454,12 @@ export async function GET(request: NextRequest) {
                   // Holds a seat, hosts, or is an accepted collaborator.
                   {
                     appointment: {
-                      participants: { some: liveParticipant(userId) },
+                      participants: {
+                        some: {
+                          ...liveParticipant(userId),
+                          ...NOT_COLLABORATOR_ROW,
+                        },
+                      },
                     },
                   },
                   { webinarPlan: { consultantProfile: { userId } } },
@@ -495,7 +503,12 @@ export async function GET(request: NextRequest) {
                 OR: [
                   {
                     appointment: {
-                      participants: { some: liveParticipant(userId) },
+                      participants: {
+                        some: {
+                          ...liveParticipant(userId),
+                          ...NOT_COLLABORATOR_ROW,
+                        },
+                      },
                     },
                   },
                   { classPlan: { consultantProfile: { userId } } },

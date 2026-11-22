@@ -112,10 +112,20 @@ jest.mock("../../lib/prisma", () => ({
     appointmentOccurrence: { findFirst: jest.fn(async () => null) },
     $transaction: jest.fn(async (fn: (tx: unknown) => unknown) =>
       fn({
+        // The claim's expert-standing read under a share lock; no row reads as standing.
+        $queryRaw: jest.fn(async () => []),
         payment: {
           updateMany: (...a: unknown[]) =>
             (prismaMockRef.payment.updateMany as jest.Mock)(...a),
-          create: mockTx.paymentCreate,
+          // The pre-mint claim (PENDING) lands on the client mock; a tombstone (EXPIRED) on the tx spy.
+          create: (args: { data: Record<string, unknown> }) =>
+            args.data.paymentStatus === "PENDING"
+              ? (
+                  jest.requireMock("../../lib/prisma") as {
+                    default: { payment: { create: jest.Mock } };
+                  }
+                ).default.payment.create(args)
+              : mockTx.paymentCreate(args),
         },
         paymentLeg: {
           updateMany: (...a: unknown[]) =>
@@ -140,6 +150,11 @@ jest.mock("../../lib/prisma", () => ({
           priceCurrency: Currency.INR,
           trialEnabled: true,
           trialPriceInPaise: 250_000,
+          consultantProfile: {
+            id: "cp-1",
+            verificationStatus: "VERIFIED",
+            deletedAt: null,
+          },
         },
       })),
     },
@@ -185,6 +200,24 @@ jest.mock("../../lib/payments/checkout/gateway-intent", () => ({
     mockTombstone(input),
 }));
 
+// The credit return on a re-mint is pinned by who it is called with and when.
+const mockReverseCredits = jest.fn(
+  async (_paymentId: string, _tx: unknown) => 0,
+);
+jest.mock("../../lib/referrals/service", () => ({
+  ...jest.requireActual("../../lib/referrals/service"),
+  reverseCreditsForPayment: (paymentId: string, tx: unknown) =>
+    mockReverseCredits(paymentId, tx),
+}));
+
+const mockReturnDiscountUse = jest.fn(
+  async (_tx: unknown, _paymentId: string) => undefined,
+);
+jest.mock("../../lib/payments/checkout/discount-use", () => ({
+  returnDiscountUse: (tx: unknown, paymentId: string) =>
+    mockReturnDiscountUse(tx, paymentId),
+}));
+
 // Direct checkout's pricing refuses a review-first expert; the pay link must never reach it.
 jest.mock("../../lib/payments/checkout/pricing", () => ({
   __esModule: true,
@@ -218,6 +251,11 @@ function freshState(): State {
       title: "Career Clarity",
       price: 500_000,
       priceCurrency: Currency.INR,
+      consultantProfile: {
+        id: "cp-1",
+        verificationStatus: "VERIFIED",
+        deletedAt: null,
+      },
     },
     appointmentPayments: [],
     consultationStatus: AppointmentStatus.APPROVED_PENDING_PAYMENT,
@@ -436,7 +474,12 @@ describe("the approval mint is durable before the gateway call", () => {
   it("still mints for a paused expert: an approved request stays payable", async () => {
     state.consultationPlan = {
       ...state.consultationPlan,
-      consultantProfile: { acceptingRequests: false },
+      consultantProfile: {
+        id: "cp-1",
+        acceptingRequests: false,
+        verificationStatus: "VERIFIED",
+        deletedAt: null,
+      },
     };
 
     const result = await createApprovalPaymentIntent(mintParams());
@@ -782,6 +825,11 @@ describe("approval pay-links charge the same tax as checkout (#1583 C-P0-01)", (
       title: "Career Clarity",
       price: 100_000,
       priceCurrency: Currency.INR,
+      consultantProfile: {
+        id: "cp-1",
+        verificationStatus: "VERIFIED",
+        deletedAt: null,
+      },
     };
   });
 
@@ -870,6 +918,11 @@ describe("approval pay-links charge the same tax as checkout (#1583 C-P0-01)", (
       title: "Career Clarity",
       price: BigInt("9007199254740993"),
       priceCurrency: Currency.INR,
+      consultantProfile: {
+        id: "cp-1",
+        verificationStatus: "VERIFIED",
+        deletedAt: null,
+      },
     };
 
     await expect(createApprovalPaymentIntent(mintParams())).rejects.toThrow(
@@ -990,3 +1043,144 @@ it("types the exists and already-paid refusals with their codes", () => {
 
 // Priced and invoiced as a GST-registered platform.
 runAsRegisteredPlatform();
+
+describe("a re-mint returns the credit the replaced order used", () => {
+  const livePretaxRow = () => ({
+    id: "pay-pretax",
+    paymentStatus: PaymentStatus.PENDING,
+    paymentIntent: "order_pretax",
+    amount: 500_000,
+    currency: Currency.INR,
+    expiresAt: new Date(Date.now() + 60_000),
+  });
+
+  it("returns it in the re-mint's own transaction, before the tombstone takes the old order", async () => {
+    state.appointmentPayments = [livePretaxRow()];
+
+    await createApprovalPaymentIntent(mintParams());
+
+    expect(mockReverseCredits).toHaveBeenCalledTimes(1);
+    const [paymentId, tx] = mockReverseCredits.mock.calls[0];
+    expect(paymentId).toBe("pay-pretax");
+    expect(tx).toHaveProperty("referralCreditUsage");
+    expect(mockReverseCredits.mock.invocationCallOrder[0]).toBeGreaterThan(
+      mockedPaymentUpdate.mock.invocationCallOrder[0],
+    );
+    expect(mockReverseCredits.mock.invocationCallOrder[0]).toBeLessThan(
+      mockTx.paymentCreate.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("returns nothing when the re-mint CAS loses", async () => {
+    state.appointmentPayments = [livePretaxRow()];
+    state.remintCasCount = 0;
+    state.remintFreshRow = {
+      paymentStatus: PaymentStatus.SUCCEEDED,
+      paymentIntent: "order_pretax",
+      amount: 500_000,
+      currency: Currency.INR,
+    };
+
+    await expect(createApprovalPaymentIntent(mintParams())).rejects.toThrow(
+      /already been paid/,
+    );
+    expect(mockReverseCredits).not.toHaveBeenCalled();
+  });
+});
+
+describe("a full-price re-mint drops the old order's discount code", () => {
+  const codedRow = (paymentStatus: PaymentStatus) => ({
+    id: "pay-coded",
+    paymentStatus,
+    paymentIntent: "order_coded",
+    amount: 450_000,
+    currency: Currency.INR,
+    discountCodeId: "code-1",
+    expiresAt:
+      paymentStatus === PaymentStatus.PENDING
+        ? new Date(Date.now() + 60_000)
+        : null,
+  });
+  const clearCall = () =>
+    mockedPaymentUpdate.mock.calls.find(
+      ([q]) => q.data && "discountCodeId" in q.data,
+    )?.[0];
+
+  it("returns a still-PENDING order's use on the CAS win and clears the code from the row", async () => {
+    state.appointmentPayments = [codedRow(PaymentStatus.PENDING)];
+
+    await createApprovalPaymentIntent(mintParams());
+
+    expect(mockedPaymentUpdate.mock.calls[0][0].where).toMatchObject({
+      id: "pay-coded",
+      paymentStatus: PaymentStatus.PENDING,
+      discountCodeId: "code-1",
+    });
+    expect(mockReturnDiscountUse).toHaveBeenCalledTimes(1);
+    expect(mockReturnDiscountUse.mock.calls[0][1]).toBe("pay-coded");
+    expect(mockReturnDiscountUse.mock.calls[0][0]).toHaveProperty("payment");
+    const clear = clearCall();
+    expect(clear).toMatchObject({
+      where: { id: "pay-coded", discountCodeId: "code-1" },
+      data: { discountCodeId: null },
+    });
+    expect(clear?.where.paymentIntent).toMatch(/^premint_/);
+    expect(mockReturnDiscountUse.mock.invocationCallOrder[0]).toBeLessThan(
+      mockTx.paymentCreate.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("clears the code from a dead row without returning the use its exit already gave back", async () => {
+    state.appointmentPayments = [codedRow(PaymentStatus.EXPIRED)];
+
+    await createApprovalPaymentIntent(mintParams());
+
+    expect(mockReturnDiscountUse).not.toHaveBeenCalled();
+    expect(clearCall()).toMatchObject({ data: { discountCodeId: null } });
+  });
+
+  it("does nothing to the code when the re-mint CAS loses", async () => {
+    state.appointmentPayments = [codedRow(PaymentStatus.PENDING)];
+    state.remintCasCount = 0;
+    state.remintFreshRow = {
+      paymentStatus: PaymentStatus.SUCCEEDED,
+      paymentIntent: "order_coded",
+      amount: 450_000,
+      currency: Currency.INR,
+    };
+
+    await expect(createApprovalPaymentIntent(mintParams())).rejects.toThrow(
+      /already been paid/,
+    );
+    expect(mockReturnDiscountUse).not.toHaveBeenCalled();
+    expect(clearCall()).toBeUndefined();
+  });
+});
+
+describe("a full-price re-mint drops the old order's welcome discount", () => {
+  it.each([PaymentStatus.PENDING, PaymentStatus.EXPIRED])(
+    "clears welcomeDiscountPaise in the re-mint CAS itself (%s row)",
+    async (paymentStatus) => {
+      state.appointmentPayments = [
+        {
+          id: "pay-welcome",
+          paymentStatus,
+          paymentIntent: "order_welcome",
+          amount: 450_000,
+          currency: Currency.INR,
+          welcomeDiscountPaise: 50_000,
+          expiresAt:
+            paymentStatus === PaymentStatus.PENDING
+              ? new Date(Date.now() + 60_000)
+              : null,
+        },
+      ];
+
+      await createApprovalPaymentIntent(mintParams());
+
+      const [{ where, data }] = mockedPaymentUpdate.mock.calls[0];
+      expect(where).toMatchObject({ id: "pay-welcome", paymentStatus });
+      expect(data).toHaveProperty("welcomeDiscountPaise", null);
+    },
+  );
+});

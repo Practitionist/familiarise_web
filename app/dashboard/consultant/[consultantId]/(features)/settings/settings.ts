@@ -382,18 +382,31 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   },
 ];
 
-/** The sections in nav order, grouped under their titles. */
-export function settingsSectionGroups(): {
+/** Sections that read the signed-in viewer's own account, so only the owner opens them. */
+const SELF_ONLY: ReadonlySet<SettingsSectionKey> = new Set([
+  "account",
+  "notifications",
+]);
+
+export type SettingsHubSection = SettingsSection & { show: boolean };
+
+/** The sections in nav order, grouped under their titles; "Your …" copy and self-only sections for the owner only. */
+export function settingsSectionGroups(viewerOwnsProfile = true): {
   title: string;
-  sections: SettingsSection[];
+  sections: SettingsHubSection[];
 }[] {
-  const groups: { title: string; sections: SettingsSection[] }[] = [];
+  const groups: { title: string; sections: SettingsHubSection[] }[] = [];
   for (const section of SETTINGS_SECTIONS) {
+    const entry = {
+      ...section,
+      description: viewerOwnsProfile ? section.description : "",
+      show: viewerOwnsProfile || !SELF_ONLY.has(section.key),
+    };
     const last = groups[groups.length - 1];
     if (last?.title === section.group) {
-      last.sections.push(section);
+      last.sections.push(entry);
     } else {
-      groups.push({ title: section.group, sections: [section] });
+      groups.push({ title: section.group, sections: [entry] });
     }
   }
   return groups;

@@ -1,6 +1,7 @@
 /**
  * A class re-plan never turns a mid-checkout (HELD) seat into a paid one: the
- * Payment pins the one class wrapper, and the re-seat skips a live row.
+ * Payment pins the one class wrapper, and the re-seat skips a live row. It
+ * carries learner seats only: a staff row never comes back as a learner.
  */
 
 import "./setup";
@@ -12,7 +13,10 @@ jest.mock("../../lib/payments/payouts/earnings-hold", () => ({
 
 import { deleteExistingAppointments } from "@/lib/booking/allocation/commit/release-tentative";
 import { createAppointments } from "@/lib/booking/allocation/commit/create-appointments";
-import { reconnectEnrolledUsers } from "@/lib/booking/allocation/commit/reconnect-enrolled";
+import {
+  collectEventParticipantIds,
+  reconnectEnrolledUsers,
+} from "@/lib/booking/allocation/commit/reconnect-enrolled";
 import { paidParticipant } from "@/lib/booking/participants";
 import type { Tx } from "@/lib/prisma";
 import {
@@ -24,6 +28,7 @@ import {
 
 const HOST = "host-user";
 const LEARNER = "held-learner";
+const COLLABORATOR = "collaborator-user";
 const DAY_MS = 86_400_000;
 const at = (days: number, minutes = 0) =>
   new Date(Date.now() + days * DAY_MS + minutes * 60_000);
@@ -43,37 +48,36 @@ const session = (
   deletedAt: null,
 });
 
-function classWorld(sessions: Row[]) {
+const HELD_SEAT_PAYMENT: Row = {
+  id: "pay-held",
+  appointmentId: "apt-1",
+  paymentStatus: "PENDING",
+  description: null,
+  refundOwedKey: null,
+  refunds: [],
+};
+const seat = (userId: string, role: string, extra: Row = {}): Row => ({
+  appointmentId: "apt-1",
+  userId,
+  role,
+  status: "CONFIRMED",
+  paymentId: null,
+  ...extra,
+});
+
+function classWorld(
+  sessions: Row[],
+  opts: { payments?: Row[]; seats?: Row[] } = {},
+) {
   const appointments: Row[] = [
     { id: "apt-1", classId: "class-1", cancellationPolicyId: null },
   ];
   const occurrences: Row[] = [...sessions];
-  const payments: Row[] = [
-    {
-      id: "pay-held",
-      appointmentId: "apt-1",
-      paymentStatus: "PENDING",
-      description: null,
-      refundOwedKey: null,
-      refunds: [],
-    },
-  ];
+  const payments: Row[] = opts.payments ?? [HELD_SEAT_PAYMENT];
   const participants = memTable(
-    [
-      {
-        appointmentId: "apt-1",
-        userId: HOST,
-        role: "CONSULTANT",
-        status: "CONFIRMED",
-        paymentId: null,
-      },
-      {
-        appointmentId: "apt-1",
-        userId: LEARNER,
-        role: "CONSULTEE",
-        status: "HELD",
-        paymentId: "pay-held",
-      },
+    opts.seats ?? [
+      seat(HOST, "CONSULTANT"),
+      seat(LEARNER, "CONSULTEE", { status: "HELD", paymentId: "pay-held" }),
     ],
     "seat",
     { unique: [["appointmentId", "userId"]] },
@@ -144,6 +148,22 @@ function classWorld(sessions: Row[]) {
         removeWhere(participants.rows, (s) => !ids.has(s.appointmentId));
         removeWhere(occurrences, (o) => !ids.has(o.appointmentId));
         return { count: removeWhere(appointments, (a) => !ids.has(a.id)) };
+      },
+      create: async (args: {
+        data: Row & { occurrences: { create: Row[] } };
+      }) => {
+        const { occurrences: written, ...wrapper } = args.data;
+        const id = `apt-${appointments.length + 2}`;
+        appointments.push({ id, ...wrapper });
+        const rows = written.create.map((row, i) => ({
+          id: `occ-new-${i + 1}`,
+          appointmentId: id,
+          completionStatus: "SCHEDULED",
+          deletedAt: null,
+          ...row,
+        }));
+        occurrences.push(...rows);
+        return { id, ...wrapper, occurrences: rows };
       },
       update: async (args: {
         where: { id: string };
@@ -252,5 +272,83 @@ describe("class reallocation keeps a HELD seat held", () => {
     expect(freed.enrolledUserIds).toContain(LEARNER);
     expect(world.occurrences.map((o) => o.id)).toEqual(["occ-new-1"]);
     expectSeatStillHeld(world);
+  });
+});
+
+describe("a re-plan carries learner seats only", () => {
+  const staffedSeats = () => [
+    seat(HOST, "CONSULTANT"),
+    seat(LEARNER, "CONSULTEE"),
+    seat(COLLABORATOR, "COLLABORATOR"),
+  ];
+  const learnerSeats = (world: ReturnType<typeof classWorld>) =>
+    world.participants.rows.filter((s) => s.role === "CONSULTEE");
+
+  it("re-seats the learner and never the collaborator when the payment-free wrapper is replaced", async () => {
+    const world = classWorld(
+      [
+        session("occ-a", 1, 7, "SCHEDULED"),
+        session("occ-b", 2, 8, "SCHEDULED"),
+      ],
+      { payments: [], seats: staffedSeats() },
+    );
+    expect(learnerSeats(world)).toHaveLength(1);
+
+    await replan(world, false);
+
+    // The old wrapper went with its rows; the new one seats the learner again.
+    expect(world.appointments.map((a) => a.id)).toEqual(["apt-2"]);
+    expect(
+      world.participants.rows.filter((s) => s.userId === COLLABORATOR),
+    ).toEqual([]);
+    expect(learnerSeats(world)).toEqual([
+      expect.objectContaining({
+        appointmentId: "apt-2",
+        userId: LEARNER,
+        status: "CONFIRMED",
+      }),
+    ]);
+  });
+
+  it.each([
+    ["an in-progress re-plan", false, true],
+    ["a reschedule's released sessions", true, false],
+  ])(
+    "collects only learner seats from %s",
+    async (_, onlyTentative, inProgress) => {
+      const world = classWorld(
+        [
+          {
+            ...session("occ-a", 1, 7, "RESCHEDULED"),
+            isTentative: true,
+          },
+        ],
+        { payments: [], seats: staffedSeats() },
+      );
+      const freed = await deleteExistingAppointments(
+        world.tx as unknown as Tx,
+        "class",
+        "class-1",
+        onlyTentative,
+        inProgress,
+      );
+      expect(freed.enrolledUserIds).toEqual([LEARNER]);
+    },
+  );
+
+  it("reads only learner seats off the surviving sessions for a top-up", async () => {
+    const appointment = {
+      classId: "class-1",
+      occurrences: [{ isTentative: false, deletedAt: null }],
+    };
+    const participants = memTable(
+      staffedSeats().map((row) => ({ ...row, appointment })),
+    );
+    const ids = await collectEventParticipantIds(
+      { appointmentParticipant: participants } as unknown as Tx,
+      "class",
+      "class-1",
+    );
+    expect(ids).toEqual([LEARNER]);
   });
 });

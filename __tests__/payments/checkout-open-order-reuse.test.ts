@@ -54,8 +54,15 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     $transaction: jest.fn(
+      // The expert-standing read under a share lock; no row reads as standing.
+      // Non-enumerable, so assertions on the tx client itself are unchanged.
       async (fn: (tx: typeof txClient) => unknown, _opts?: unknown) =>
-        fn(txClient),
+        fn(
+          Object.defineProperty(txClient, "$queryRaw", {
+            value: jest.fn(async () => []),
+            configurable: true,
+          }),
+        ),
     ),
     payment: {
       // #1220-triage — the reuse lookup fetches the newest scope-matching
@@ -398,8 +405,13 @@ beforeEach(() => {
     },
     appointmentParticipant: {
       createMany: jest.fn().mockResolvedValue({ count: 1 }),
+      // A seat confirmed at birth returns its row, for its SEAT history row.
+      createManyAndReturn: jest.fn(async ({ data }: { data: object[] }) =>
+        data.map((row, i) => ({ id: `seat-${i}`, ...row })),
+      ),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
+    bookingStatusHistory: { createMany: jest.fn(async () => ({ count: 1 })) },
     consulteeProfile: {
       findUnique: jest.fn(async () => ({ userId: "user_1" })),
     },

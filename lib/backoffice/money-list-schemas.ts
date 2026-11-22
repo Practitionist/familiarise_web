@@ -186,6 +186,15 @@ export const orgPayoutListPageSchema = z.object({
   pagination: offsetPagination,
 });
 
+/** The expert an Earnings link opens on (`?consultantProfileId=`); anything else is no filter. */
+export const earningsExpertParam = z
+  .string()
+  .trim()
+  .min(1)
+  .max(64)
+  .optional()
+  .catch(undefined);
+
 /** One expert earning, with the payment it came from and who paid for what. */
 export const earningListItemSchema = z.object({
   id: z.string(),

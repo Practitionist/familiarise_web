@@ -198,7 +198,7 @@ describe("StaffCaseResolution", () => {
     fireEvent.change(screen.getByLabelText("Explanation for the customer"), {
       target: { value: "We will rebook your session at no cost." },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Review decision" }));
+    fireEvent.click(screen.getByRole("button", { name: "Record decision" }));
     const dialog = await screen.findByRole("alertdialog", {
       name: "Record this decision?",
     });
@@ -264,6 +264,21 @@ describe("StaffCaseResolution lifecycle", () => {
     const qc = renderWith({ isAppeal: true });
     expect(outcomeOptions()).toEqual(["UPHELD", "OVERTURNED"]);
     qc.clear();
+  });
+
+  it("names the removal itself on a first-instance conduct removal", () => {
+    const qc = renderWith({ reviewsRemoval: true });
+    const select = screen.getByLabelText("Decision outcome");
+    expect(
+      Array.from((select as HTMLSelectElement).options).map((o) => o.text),
+    ).toEqual(["Removal upheld", "Removal overturned"]);
+    qc.clear();
+    cleanup();
+    const appeal = renderWith({ reviewsRemoval: true, isAppeal: true });
+    expect(
+      screen.getByRole("option", { name: "Original decision upheld" }),
+    ).toBeInTheDocument();
+    appeal.clear();
   });
 
   it("hides the decision on a problem record", () => {

@@ -5,12 +5,17 @@
  */
 export function publicCacheHeaders(opts: {
   sMaxAge: number;
-  staleWhileRevalidate: number;
+  /** Omit when a stale copy must never be served, e.g. a response a reject can revoke. */
+  staleWhileRevalidate?: number;
   /** Every query key the route reads; omit only when it reads none. */
   varyQuery?: readonly string[];
 }): Record<string, string> {
+  const stale =
+    opts.staleWhileRevalidate === undefined
+      ? ""
+      : `, stale-while-revalidate=${opts.staleWhileRevalidate}`;
   const headers: Record<string, string> = {
-    "Cache-Control": `public, s-maxage=${opts.sMaxAge}, stale-while-revalidate=${opts.staleWhileRevalidate}`,
+    "Cache-Control": `public, s-maxage=${opts.sMaxAge}${stale}`,
   };
   if (opts.varyQuery?.length) {
     headers["Netlify-Vary"] = `query=${opts.varyQuery.join("|")}`;

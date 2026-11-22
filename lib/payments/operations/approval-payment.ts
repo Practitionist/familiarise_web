@@ -23,6 +23,7 @@ import {
 import { detectBuyerCountry } from "@/lib/payments/tax/buyer-country";
 import { appointmentTypeToServiceType } from "@/lib/payments/tax/tax-engine";
 import { tombstoneAbortedGatewayOrder } from "@/lib/payments/checkout/gateway-intent";
+import { returnDiscountUse } from "@/lib/payments/checkout/discount-use";
 import { tombstonePriorIntent } from "@/lib/payments/operations/prior-intent-tombstone";
 import { reportSentryError } from "@/lib/observability/report";
 import {
@@ -45,6 +46,12 @@ import {
 } from "@/utils/appointmentlock";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import { liveOccurrenceWhere } from "@/lib/appointments/occurrences";
+import { expertNotVerifiedError } from "@/lib/booking/booking-rule-error";
+import { assertExpertStandsInTx } from "@/lib/booking/expert-standing";
+import {
+  isPublicExpertProfile,
+  publicProfileFacts,
+} from "@/lib/profiles/public-profile";
 import {
   agreedConsultationPricePaise,
   agreedTrialPricePaise,
@@ -445,6 +452,7 @@ export async function createApprovalPaymentIntent(
             holdExpiresAt,
             description,
             consumerStateCode,
+            expertProfileId: plan.expertProfileId,
             paymentGateway: params.paymentGateway,
             appointmentType: params.appointmentType,
           })
@@ -454,6 +462,7 @@ export async function createApprovalPaymentIntent(
             holdExpiresAt,
             description,
             consumerStateCode,
+            expertProfileId: plan.expertProfileId,
           });
     if ("settled" in claim) return claim.settled;
     const paymentId = claim.paymentId;
@@ -496,6 +505,12 @@ export async function createApprovalPaymentIntent(
     let filled: boolean;
     try {
       filled = await prisma.$transaction(async (tx) => {
+        // A reject that committed during the gateway call refuses the fill; the catch retires the order.
+        await assertExpertStandsInTx(
+          tx,
+          plan.expertProfileId,
+          MINT_LABEL[params.appointmentType],
+        );
         const cas = await tx.payment.updateMany({
           where: {
             id: paymentId,
@@ -570,6 +585,8 @@ interface PreMintFields {
   description: string;
   /** The buyer's GST state from their profile; null when abroad or none is saved. */
   consumerStateCode: string | null;
+  /** The expert whose standing the claim re-reads under a share lock. */
+  expertProfileId: string;
 }
 
 /** Either the row the order will be written onto, or an answer that needs no new order. */
@@ -580,43 +597,51 @@ async function createPreMintRow(
   fields: PreMintFields,
 ): Promise<MintClaim> {
   try {
-    const created = await prisma.payment.create({
-      data: {
-        // `amount` carries GST like checkout; `originalAmount` stays the list
-        // price, which is what earnings read as the base.
-        amount: fields.amount,
-        originalAmount: fields.originalAmount,
-        taxAmount: fields.taxAmount,
-        buyerCountry: fields.buyerCountry,
-        isInternational: fields.isInternational,
-        gstRegime: fields.gstRegime,
-        consumerStateCode: fields.consumerStateCode,
-        currency: fields.currency,
-        description: fields.description,
-        paymentMethod: "card",
-        paymentIntent: fields.preMintIntent,
-        paymentGateway: params.paymentGateway,
-        paymentStatus: PaymentStatus.PENDING,
-        organizationId: params.organizationId ?? null,
-        userId: params.userId,
-        expiresAt: fields.holdExpiresAt,
-        isMockPayment: false,
-        // The request-time appointment anchors capture to the new flow
-        // (confirm the existing row, never create a twin). Null only
-        // when the caller genuinely had no appointment to offer.
-        appointmentId: params.appointmentId ?? null,
-        clientIdempotencyKey: `approval:${globalThis.crypto.randomUUID()}`,
-        // Always CARD: the approval flow charges the buyer even when an org is
-        // tagged. Nested so a Payment can never exist legless.
-        legs: {
-          create: {
-            source: "CARD",
-            amountPaise: fields.amount,
-            sourceRef: fields.preMintIntent,
+    const created = await prisma.$transaction(async (tx) => {
+      // A reject that lands after pricing waits for this claim, then ends what it wrote.
+      await assertExpertStandsInTx(
+        tx,
+        fields.expertProfileId,
+        MINT_LABEL[params.appointmentType],
+      );
+      return tx.payment.create({
+        data: {
+          // `amount` carries GST like checkout; `originalAmount` stays the list
+          // price, which is what earnings read as the base.
+          amount: fields.amount,
+          originalAmount: fields.originalAmount,
+          taxAmount: fields.taxAmount,
+          buyerCountry: fields.buyerCountry,
+          isInternational: fields.isInternational,
+          gstRegime: fields.gstRegime,
+          consumerStateCode: fields.consumerStateCode,
+          currency: fields.currency,
+          description: fields.description,
+          paymentMethod: "card",
+          paymentIntent: fields.preMintIntent,
+          paymentGateway: params.paymentGateway,
+          paymentStatus: PaymentStatus.PENDING,
+          organizationId: params.organizationId ?? null,
+          userId: params.userId,
+          expiresAt: fields.holdExpiresAt,
+          isMockPayment: false,
+          // The request-time appointment anchors capture to the new flow
+          // (confirm the existing row, never create a twin). Null only
+          // when the caller genuinely had no appointment to offer.
+          appointmentId: params.appointmentId ?? null,
+          clientIdempotencyKey: `approval:${globalThis.crypto.randomUUID()}`,
+          // Always CARD: the approval flow charges the buyer even when an org is
+          // tagged. Nested so a Payment can never exist legless.
+          legs: {
+            create: {
+              source: "CARD",
+              amountPaise: fields.amount,
+              sourceRef: fields.preMintIntent,
+            },
           },
         },
-      },
-      select: { id: true },
+        select: { id: true },
+      });
     });
     return { paymentId: created.id };
   } catch (err) {
@@ -640,12 +665,20 @@ async function claimRowForRemint(
     appointmentType: CreateApprovalPaymentParams["appointmentType"];
   },
 ): Promise<MintClaim> {
+  // Loaded here, before the transaction: the referral service pulls in the notification client.
+  const { reverseCreditsForPayment } = await import("@/lib/referrals/service");
   const claimed = await prisma.$transaction(async (tx) => {
+    await assertExpertStandsInTx(
+      tx,
+      fields.expertProfileId,
+      MINT_LABEL[fields.appointmentType],
+    );
     const cas = await tx.payment.updateMany({
       where: {
         id: existing.id,
         paymentStatus: existing.paymentStatus,
         paymentIntent: existing.paymentIntent,
+        discountCodeId: existing.discountCodeId,
       },
       data: {
         paymentIntent: fields.preMintIntent,
@@ -664,9 +697,32 @@ async function claimRowForRemint(
         paymentGateway: fields.paymentGateway,
         gatewayPaymentId: null,
         capturedAt: null,
+        // A pay link applies no welcome discount; clearing it frees the buyer's one live welcome slot.
+        welcomeDiscountPaise: null,
       },
     });
     if (cas.count !== 1) return false;
+    // The new order charges the full price, so the credit the old one used goes back now.
+    await reverseCreditsForPayment(existing.id, tx);
+    if (existing.discountCodeId) {
+      // A PENDING order's use is still counted; an EXPIRED or FAILED one gave it back when it ended.
+      if (existing.paymentStatus === PaymentStatus.PENDING) {
+        await returnDiscountUse(tx, existing.id);
+      }
+      const cleared = await tx.payment.updateMany({
+        where: {
+          id: existing.id,
+          paymentIntent: fields.preMintIntent,
+          discountCodeId: existing.discountCodeId,
+        },
+        data: { discountCodeId: null },
+      });
+      if (cleared.count !== 1) {
+        throw new Error(
+          `Re-mint of payment ${existing.id} could not drop discount code ${existing.discountCodeId}`,
+        );
+      }
+    }
     if (fields.consumerStateCode) {
       // A state already on the row was declared by the buyer and is never overwritten.
       await tx.payment.updateMany({
@@ -766,7 +822,8 @@ interface ApprovalAmount {
   isInternational: boolean;
   gstRegime: GstRegime;
   currency: Currency;
-  plan: { title: string };
+  /** `expertProfileId` is the plan's expert, whose standing every claim re-reads. */
+  plan: { title: string; expertProfileId: string };
 }
 
 /**
@@ -836,6 +893,9 @@ async function calculateAmount(
             trialPriceInPaise: true,
             trialEnabled: true,
             priceCurrency: true,
+            consultantProfile: {
+              select: { id: true, ...publicProfileFacts },
+            },
           },
         },
       },
@@ -845,6 +905,10 @@ async function calculateAmount(
       throw new Error("Trial not found");
     }
     const plan = trial.subscriptionPlan;
+    // Every mint and re-mint prices here, so an unverified or deleted expert's link is never issued.
+    if (!isPublicExpertProfile(plan.consultantProfile)) {
+      throw expertNotVerifiedError(MINT_LABEL.TRIAL);
+    }
     if (!plan.trialEnabled) {
       throw new Error("This plan does not offer trials");
     }
@@ -865,7 +929,10 @@ async function calculateAmount(
         params.appointmentType,
       )),
       currency,
-      plan: { title: `${plan.title} — trial` },
+      plan: {
+        title: `${plan.title} — trial`,
+        expertProfileId: plan.consultantProfile.id,
+      },
     };
   }
 
@@ -875,7 +942,12 @@ async function calculateAmount(
     select: {
       agreedPricePaise: true,
       consultationPlan: {
-        select: { title: true, price: true, priceCurrency: true },
+        select: {
+          title: true,
+          price: true,
+          priceCurrency: true,
+          consultantProfile: { select: { id: true, ...publicProfileFacts } },
+        },
       },
     },
   });
@@ -884,6 +956,9 @@ async function calculateAmount(
     throw new Error("Consultation not found");
   }
   const plan = consultation.consultationPlan;
+  if (!isPublicExpertProfile(plan.consultantProfile)) {
+    throw expertNotVerifiedError(MINT_LABEL.CONSULTATION);
+  }
 
   const currency = plan.priceCurrency;
   // Every stage below treats the amount as INR paise, so a non-INR plan must refuse here.
@@ -896,9 +971,17 @@ async function calculateAmount(
       params.appointmentType,
     )),
     currency,
-    plan: { title: plan.title },
+    plan: { title: plan.title, expertProfileId: plan.consultantProfile.id },
   };
 }
+
+const MINT_LABEL: Record<
+  CreateApprovalPaymentParams["appointmentType"],
+  string
+> = {
+  CONSULTATION: "This consultation",
+  TRIAL: "This trial",
+};
 
 /**
  * Build metadata for webhook processing
@@ -964,6 +1047,8 @@ export interface ExistingApprovalPayment {
   paymentIntent: string;
   /** Moves to the tombstone with the old order on a re-mint. */
   gatewayPaymentId: string | null;
+  /** A checkout's code; a pay link applies none, so a re-mint drops it. */
+  discountCodeId: string | null;
   paymentGateway: PaymentGateway;
   amount: number;
   /** The frozen pricing state; a live row is reused only when all of it matches. */
@@ -1020,6 +1105,7 @@ const EXISTING_PAYMENT_SELECT = {
   paymentStatus: true,
   paymentIntent: true,
   gatewayPaymentId: true,
+  discountCodeId: true,
   paymentGateway: true,
   amount: true,
   originalAmount: true,
@@ -1113,6 +1199,7 @@ export async function findExistingLivePayment(params: {
       paymentStatus: payment.paymentStatus,
       paymentIntent: payment.paymentIntent,
       gatewayPaymentId: payment.gatewayPaymentId,
+      discountCodeId: payment.discountCodeId,
       paymentGateway: payment.paymentGateway,
       amount: payment.amount,
       originalAmount: payment.originalAmount,

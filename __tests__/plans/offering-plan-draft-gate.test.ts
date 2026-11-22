@@ -39,6 +39,10 @@ describe("#1527 Q4 — offering plan drafts", () => {
       archivedAt: null,
       consultantProfileId: "cp1",
       status: "DRAFT" as const,
+      consultantProfile: {
+        verificationStatus: "VERIFIED" as const,
+        deletedAt: null,
+      },
     };
     await expect(isPlanViewable(draft, "u1", member, "cp1")).resolves.toBe(
       true,

@@ -3,6 +3,7 @@
 import type { CheckoutInput } from "@/schemas/checkout";
 import type { calculateAmountAndValidate } from "@/lib/payments/checkout/pricing";
 import type { OrgFundingGate } from "@/lib/payments/checkout/org-funding";
+import type { PreparedSeatNotice } from "@/lib/payments/checkout/free-seat-notice";
 
 export interface CheckoutCommitInput {
   validatedData: CheckoutInput;
@@ -28,4 +29,6 @@ export interface CheckoutCommitInput {
   exchangeRateAtCheckout: number | null;
   exhaustedBell: { programAssignmentId: string | null };
   priced: Awaited<ReturnType<typeof calculateAmountAndValidate>>;
+  /** A free event seat's booked notice, rendered before the commit opens; null otherwise. */
+  preparedSeatNotice: PreparedSeatNotice | null;
 }

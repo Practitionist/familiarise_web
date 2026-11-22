@@ -5,7 +5,7 @@
 import {
   eventPlanMetadata,
   eventPlanPath,
-  hiddenEventPlanMetadata,
+  hiddenPlanMetadata,
 } from "@/lib/seo/event-plan-share";
 
 const plan = {
@@ -64,10 +64,10 @@ describe("eventPlanMetadata", () => {
   });
 });
 
-describe("hiddenEventPlanMetadata", () => {
-  it("names no plan and asks to stay out of the index", () => {
-    const meta = hiddenEventPlanMetadata("webinar");
-    expect(meta.title).toBe("Webinar not found");
+describe("hiddenPlanMetadata", () => {
+  it("titles the tab as the page's own 404 and asks to stay out of the index", () => {
+    const meta = hiddenPlanMetadata();
+    expect(meta.title).toBe("Page not found");
     expect(meta.robots).toEqual({ index: false, follow: false });
   });
 });

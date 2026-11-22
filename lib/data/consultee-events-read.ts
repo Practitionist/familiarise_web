@@ -19,10 +19,12 @@ import prisma from "@/lib/prisma";
 import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
 import type { Prisma } from "@prisma/client";
 import type { Scope } from "@/lib/api/scope/parse";
+import { expiredEdgeInclude } from "@/lib/appointments/list-status-facts";
 import { scopeToWhereOrgId } from "@/lib/api/scope/parse";
 import { toPlain } from "@/lib/data/serialize";
 import { withLapsedRequestRestored } from "@/lib/appointments/lapsed-move";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
+import { planCollaboratorScalars } from "@/lib/api/plans/consultant-projection";
 import type { TConsulteeEventsResponse } from "@/types/consultee-events";
 
 /**
@@ -175,6 +177,7 @@ export async function readConsulteeEvents(
           appointment: {
             include: {
               rescheduleRequests: liveProposalInclude,
+              statusHistory: expiredEdgeInclude,
               occurrences: {
                 orderBy: { startsAt: "asc" },
                 include: {
@@ -220,6 +223,7 @@ export async function readConsulteeEvents(
           appointment: {
             include: {
               rescheduleRequests: liveProposalInclude,
+              statusHistory: expiredEdgeInclude,
               occurrences: {
                 orderBy: { startsAt: "asc" },
                 include: {
@@ -264,7 +268,8 @@ export async function readConsulteeEvents(
               },
               collaborators: {
                 where: { status: "ACCEPTED" },
-                include: {
+                select: {
+                  ...planCollaboratorScalars,
                   consultantProfile: {
                     select: {
                       ...consultantPublicScalars,
@@ -332,7 +337,8 @@ export async function readConsulteeEvents(
               },
               collaborators: {
                 where: { status: "ACCEPTED" },
-                include: {
+                select: {
+                  ...planCollaboratorScalars,
                   consultantProfile: {
                     select: {
                       ...consultantPublicScalars,

@@ -16,6 +16,7 @@
  * helpers over the result, which is what the component does.
  */
 
+import { matchesWhere, type Where } from "../fixtures/mem-db";
 import { GET } from "../../app/api/dashboard/consultant/[consultantId]/planner/route";
 import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
@@ -515,5 +516,79 @@ describe("planner GET projects consultantProfile", () => {
       id: "cp-1",
       userId: "u-1",
     });
+  });
+
+  it("lists an organisation's plan for its named expert only while an active expert of that organisation", async () => {
+    const stored = (standing: string) => [
+      {
+        id: "w-personal",
+        webinarPlanId: "wp-personal",
+        webinarPlan: {
+          id: "wp-personal",
+          consultantProfileId: "cp-1",
+          organizationId: null,
+          organization: null,
+          collaborators: [],
+          topics: [],
+        },
+        appointment: null,
+      },
+      {
+        id: "w-org",
+        webinarPlanId: "wp-org",
+        webinarPlan: {
+          id: "wp-org",
+          consultantProfileId: "cp-1",
+          organizationId: "org-1",
+          organization: {
+            memberships: [
+              { consultantProfileId: "cp-1", status: standing, role: "EXPERT" },
+            ],
+          },
+          collaborators: [],
+          topics: [],
+        },
+        appointment: null,
+      },
+    ];
+    const listedAs = async (standing: string) => {
+      db.webinar.findMany.mockImplementation(async (args: { where: Where }) =>
+        stored(standing).filter((row) => matchesWhere(row, args.where)),
+      );
+      const res = await GET(new Request("http://localhost/api/x"), {
+        params: Promise.resolve({ consultantId: "cp-1" }),
+      });
+      const body = await res.json();
+      return body.data.webinars.map((w: { id: string }) => w.id);
+    };
+
+    expect(await listedAs("ACTIVE")).toEqual(["w-personal", "w-org"]);
+    expect(await listedAs("SUSPENDED")).toEqual(["w-personal"]);
+  });
+
+  it("counts a webinar's seats and sends nobody's id, and a collaborator's old row is not a seat", async () => {
+    db.webinar.findMany.mockResolvedValueOnce([
+      {
+        id: "w-1",
+        webinarPlanId: "wp-1",
+        webinarPlan: { id: "wp-1", topics: [] },
+        appointment: {
+          id: "appt-w-1",
+          participants: [{ userId: "buyer-a" }, { userId: "buyer-b" }],
+          occurrences: [],
+        },
+      },
+    ]);
+    db.appointmentWaitlist.groupBy.mockResolvedValueOnce([]);
+    const res = await GET(new Request("http://localhost/api/x"), {
+      params: Promise.resolve({ consultantId: "cp-1" }),
+    });
+    const body = await res.json();
+    expect(body.data.participantCounts["w-1"]).toBe(2);
+    expect(body.data.webinars[0].appointment.participants).toEqual([]);
+    const [webinarQuery] = db.webinar.findMany.mock.calls[0];
+    expect(
+      webinarQuery.include.appointment.include.participants.where,
+    ).toMatchObject({ role: { not: "COLLABORATOR" } });
   });
 });

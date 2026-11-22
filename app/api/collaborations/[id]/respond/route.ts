@@ -1,91 +1,46 @@
-import { BookingLockUnavailableError } from "@/utils/appointmentlock";
-import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
-import { getSession } from "@/lib/auth-server";
-import prisma from "@/lib/prisma";
 import {
-  CollaboratorIneligibleError,
+  collaborationErrorResponse,
+  parseBody,
+  parseParams,
+  unauthorized,
+} from "@/lib/api/collaborations/http";
+import { getSession } from "@/lib/auth-server";
+import {
+  CollaborationError,
   respondToInvitation,
 } from "@/lib/collaborators/service";
-import { readJsonBody } from "@/lib/api/parse";
+import prisma from "@/lib/prisma";
+import {
+  collaborationParamsSchema,
+  respondToInvitationSchema,
+} from "@/schemas/collaborators";
 
+/** The invited expert accepts, naming the terms they saw, or declines. */
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
     const session = await getSession();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const { id } = await params;
-    const read = await readJsonBody(req);
-    if (read.error) return read.error;
-    const body = read.body;
-    const { response, planType } = body;
-
-    if (!response || !["ACCEPTED", "DECLINED"].includes(response)) {
-      return NextResponse.json(
-        { error: "Response must be ACCEPTED or DECLINED" },
-        { status: 400 },
-      );
-    }
-
-    if (!planType || !["webinar", "class"].includes(planType)) {
-      return NextResponse.json(
-        { error: "planType must be webinar or class" },
-        { status: 400 },
-      );
-    }
-
-    const consultantProfile = await prisma.consultantProfile.findFirst({
-      where: { userId: session.user.id },
+    if (!session?.user?.id) return unauthorized();
+    const { id } = parseParams(collaborationParamsSchema, await params);
+    const body = await parseBody(req, respondToInvitationSchema);
+    const profile = await prisma.consultantProfile.findFirst({
+      where: { userId: session.user.id, deletedAt: null },
+      select: { id: true },
     });
-
-    if (!consultantProfile) {
-      return NextResponse.json(
-        { error: "Consultant profile not found" },
-        { status: 404 },
-      );
+    if (!profile) {
+      throw new CollaborationError("NOT_FOUND", "Invitation not found.");
     }
-
-    const collab = await respondToInvitation(
-      planType,
-      id,
-      consultantProfile.id,
-      response,
-    );
-
-    if (!collab) {
-      return NextResponse.json(
-        { error: "Unable to respond to invitation" },
-        { status: 400 },
-      );
-    }
-
-    return NextResponse.json({ data: collab });
+    const data = await respondToInvitation({
+      ...body,
+      collaboratorId: id,
+      consultantProfileId: profile.id,
+      userId: session.user.id,
+    });
+    return NextResponse.json({ data });
   } catch (error) {
-    if (error instanceof BookingLockUnavailableError) {
-      return NextResponse.json(
-        { error: error.message, code: error.code },
-        { status: error.httpStatus },
-      );
-    }
-    if (error instanceof CollaboratorIneligibleError) {
-      return NextResponse.json(
-        { error: error.message },
-        { status: error.httpStatus },
-      );
-    }
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "collaborations" } },
-    );
-    console.error("Error responding to collaboration:", error);
-    return NextResponse.json(
-      { error: "Failed to respond to invitation" },
-      { status: 500 },
-    );
+    return collaborationErrorResponse(error, "invitation.respond");
   }
 }

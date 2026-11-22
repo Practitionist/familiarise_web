@@ -36,7 +36,7 @@ interface CapturedCreate {
 
 const capturedOrgEarnings: CapturedCreate[] = [];
 
-jest.mock("../../lib/collaborators/service", () => ({
+jest.mock("../../lib/collaborators/revenue-split", () => ({
   calculateRevenueSplit: jest.fn().mockResolvedValue([]),
 }));
 jest.mock("../../lib/api/organizations/rate-card", () => ({

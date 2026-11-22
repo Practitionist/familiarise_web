@@ -27,7 +27,10 @@ import {
   type SideEffectSummary,
 } from "@/lib/moderation/side-effects";
 import * as Sentry from "@sentry/nextjs";
-import { purgeReviewSurfaces } from "@/lib/data/public-cache";
+import {
+  purgeExpertSurfaces,
+  purgeReviewSurfaces,
+} from "@/lib/data/public-cache";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 
 const VALID_ACTIONS: ModerationActionType[] = [
@@ -285,6 +288,10 @@ export const POST = withOpsAction(
       if (transactional.reviewRemovedConsultantProfileId) {
         purgeReviewSurfaces(transactional.reviewRemovedConsultantProfileId);
       }
+      // A rejected expert's cached profile must stop offering trials and requests.
+      if (transactional.unverifiedConsultantProfileId) {
+        purgeExpertSurfaces(transactional.unverifiedConsultantProfileId);
+      }
 
       let sideEffects: SideEffectSummary = transactional;
       try {
@@ -298,11 +305,13 @@ export const POST = withOpsAction(
           { tags: { subsystem: "moderation" } },
         );
       }
-      // Session ends carry IPs and phase 2 has stamped them; never persist them.
+      // Session ends carry IPs and phase 2 has stamped them; never persist
+      // them, nor the seat holders phase 2 mails.
       const {
         stagedBells,
         stagedEmails,
         stagedSessionEnds,
+        owedCohostEmails,
         ...persistedSideEffects
       } = sideEffects;
       await persistActionSideEffects(action.id, persistedSideEffects);

@@ -29,7 +29,9 @@ import {
 } from "@/components/appointments/consultee/ConsulteeAppointmentsAdapter";
 import { DisplayZoneProvider } from "@/lib/time/zoned-format";
 import { seatLapsedOrReleased } from "@/lib/appointments/status";
+import { isGroupKind } from "@/lib/appointments/kind-capabilities";
 import { IncidentRemedyBanner } from "@/components/appointments/consultee/IncidentRemedyBanner";
+import { RequestAgainButton } from "@/components/booking/RequestAgainButton";
 
 /** Sessions worth putting in a calendar: booked (not held), live, not over. */
 function calendarSessions(vm: AppointmentVM) {
@@ -106,7 +108,7 @@ function readSubscriptionRenewal(sub: object | null | undefined): {
   return { id, status, deletedAt };
 }
 
-function UnpaidRequestedBookingControls({
+export function UnpaidRequestedBookingControls({
   appointmentId,
   initialNotes,
 }: Readonly<{
@@ -163,10 +165,10 @@ function UnpaidRequestedBookingControls({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <span className="font-medium text-foreground">
-            Unpaid booking request
-          </span>
-          <span className="ml-1.5 text-muted-foreground">
-            — You can edit your note before the expert responds.
+            Unpaid booking request.
+          </span>{" "}
+          <span className="text-muted-foreground">
+            You can edit your note before the expert responds.
           </span>
         </div>
         <div className="flex items-center gap-2">
@@ -216,9 +218,11 @@ function UnpaidRequestedBookingControls({
 }
 
 function deriveConsulteeActionMeta(vm: AppointmentVM) {
+  // Both next steps open the expert's public profile, which 404s until it is served.
+  const profileLinkable =
+    Boolean(vm.consultantProfileId) && vm.expertProfileIsPublic === true;
   const canRebook =
-    Boolean(vm.consultantProfileId) &&
-    (vm.bucket === "past" || vm.bucket === "cancelled");
+    profileLinkable && (vm.bucket === "past" || vm.bucket === "cancelled");
   const seatGone = seatLapsedOrReleased(vm);
   const canAddToCalendar = !seatGone && calendarSessions(vm).length > 0;
   const expertName = vm.counterpart.name || "Expert";
@@ -259,7 +263,7 @@ function deriveConsulteeActionMeta(vm: AppointmentVM) {
   const isCompletedOneOnOne =
     vm.kind === "CONSULTATION" &&
     (vm.status === "COMPLETED" || vm.bucket === "past") &&
-    Boolean(vm.consultantProfileId);
+    profileLinkable;
 
   const isPendingRequestEntity =
     rawConsultation?.status === "PENDING" || rawSub?.status === "PENDING";
@@ -275,6 +279,8 @@ function deriveConsulteeActionMeta(vm: AppointmentVM) {
 
   const initialRequestNotes =
     rawConsultation?.requestNotes ?? rawSub?.requestNotes ?? "";
+  // A late capture could still confirm this booking, so rebooking may close its order first.
+  const rebookPayments = rawAppt?.payment ?? [];
 
   return {
     canRebook,
@@ -289,10 +295,11 @@ function deriveConsulteeActionMeta(vm: AppointmentVM) {
     isCompletedOneOnOne,
     isUnpaidRequested,
     initialRequestNotes,
+    rebookPayments,
   };
 }
 
-function ConsulteeExtraActions({
+export function ConsulteeExtraActions({
   vm,
   consulteeId,
   appointmentId,
@@ -315,6 +322,7 @@ function ConsulteeExtraActions({
     canRenewSubscription,
     showLowSessionRenewalNudge,
     isCompletedOneOnOne,
+    rebookPayments,
   } = deriveConsulteeActionMeta(vm);
 
   return (
@@ -362,22 +370,30 @@ function ConsulteeExtraActions({
         </Button>
       )}
       {canRebook && (
-        <Button variant="outline" size="sm" asChild>
-          <Link href={`/explore/experts/${vm.consultantProfileId}`}>
-            <RotateCcw className="mr-1.5 h-4 w-4" />
-            Book again
-          </Link>
-        </Button>
+        <RequestAgainButton
+          appointmentId={vm.appointmentId}
+          href={`/explore/experts/${vm.consultantProfileId}`}
+          payments={rebookPayments}
+          seat={isGroupKind(vm.kind)}
+        >
+          <RotateCcw className="mr-1.5 h-4 w-4" />
+          Book again
+        </RequestAgainButton>
       )}
     </>
   );
 }
 
 /** A trial's next step with its expert: quiet before the session, prominent once it is completed. */
-function TrialContinueCard({ vm }: Readonly<{ vm: AppointmentVM }>) {
+export function TrialContinueCard({ vm }: Readonly<{ vm: AppointmentVM }>) {
   const live = vm.status === "SCHEDULED" || vm.status === "AWAITING_PAYMENT";
   const completed = vm.status === "COMPLETED";
-  if (vm.kind !== "TRIAL" || !vm.consultantProfileId || !(live || completed)) {
+  if (
+    vm.kind !== "TRIAL" ||
+    !vm.consultantProfileId ||
+    vm.expertProfileIsPublic !== true ||
+    !(live || completed)
+  ) {
     return null;
   }
   const expertName = vm.counterpart.name || "your expert";
@@ -467,11 +483,14 @@ export default function DetailPageClient({
   consulteeId,
   appointmentId,
   viewerZone,
+  operatorView,
 }: Readonly<{
   consulteeId: string;
   appointmentId: string;
   /** Server-read viewer zone, so SSR and hydration agree. */
   viewerZone: string;
+  /** Staff viewing this learner's booking. */
+  operatorView: boolean;
 }>) {
   const adapter = useConsulteeAppointmentsAdapter();
 
@@ -484,6 +503,7 @@ export default function DetailPageClient({
         backHref={`/dashboard/consultee/${consulteeId}/appointments`}
         supportRequestsBase={`/dashboard/consultee/${consulteeId}/support/requests`}
         joinWindowMs={CONSULTEE_JOIN_WINDOW_MS}
+        operatorView={operatorView}
         renderExtraActions={(vm, { openChat }) => {
           const hasOverflowMessageAction = adapter
             .overflowItems(vm)

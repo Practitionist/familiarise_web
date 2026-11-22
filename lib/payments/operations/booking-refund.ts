@@ -82,9 +82,36 @@ async function keepsSeat(input: {
   return leavesRefundable(input.paymentId);
 }
 
-async function markParticipantsRefunded(paymentId: string): Promise<void> {
+/** An event learner seat the refund ends gets a `refunded` row; a 1:1 seat gets none. */
+const refundedSeat = (actorUserId: string | null | undefined) => ({
+  history: { reason: "refunded" as const, actorUserId: actorUserId ?? null },
+});
+
+/** The REFUNDED stamp and its SEAT row commit together, read and written on one transaction. */
+function stampSeatsRefunded(
+  paymentId: string,
+  actorUserId: string | null | undefined,
+): Promise<number> {
+  return withSerializableRetry(() =>
+    prisma.$transaction(
+      (tx) =>
+        transitionParticipant(
+          tx,
+          { paymentId },
+          "REFUNDED",
+          refundedSeat(actorUserId),
+        ),
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    ),
+  );
+}
+
+async function markParticipantsRefunded(
+  paymentId: string,
+  actorUserId?: string | null,
+): Promise<void> {
   try {
-    await transitionParticipant(prisma, { paymentId }, "REFUNDED");
+    await stampSeatsRefunded(paymentId, actorUserId);
   } catch (error) {
     // Shadow table: never let it fail a refund that already went through.
     console.warn(
@@ -265,7 +292,7 @@ export async function refundBookingPayment(
   if (outcome.result.rail === "GATEWAY") {
     // The intent lands first, so a failed stamp is re-stamped by the sweep.
     await persistRefundRevocation(intent);
-    await markParticipantsRefunded(input.paymentId);
+    await markParticipantsRefunded(input.paymentId, input.initiatedByUserId);
   }
   await revokeRefundedSeatAccess(intent, outcome.intentGeneration);
   return outcome.result;
@@ -289,11 +316,7 @@ export async function restampRefundedSeats(
   ) {
     return "skipped";
   }
-  await transitionParticipant(
-    prisma,
-    { paymentId: refund.paymentId },
-    "REFUNDED",
-  );
+  await stampSeatsRefunded(refund.paymentId, null);
   return "stamped";
 }
 
@@ -316,6 +339,10 @@ async function refundBookingPaymentOnRail(
     initiatedByUserId?: string | null;
     /** #1780 — one refund per key on every rail; a repeat returns the first. */
     dedupeKey?: string;
+    /** Sent to the gateway rail only; see `RefundInput.gatewayReceipt`. */
+    gatewayReceipt?: string;
+    /** See `RefundInput.failureReportedByCaller`. */
+    failureReportedByCaller?: boolean;
     supportRecommendationId?: string;
     /**
      * #1780 row 4 — a per-session refund (a missed class session) leaves the
@@ -560,7 +587,12 @@ async function refundFreeCreditPayment(
           reason: input.reason,
         });
 
-        await transitionParticipant(tx, { paymentId: payment.id }, "REFUNDED");
+        await transitionParticipant(
+          tx,
+          { paymentId: payment.id },
+          "REFUNDED",
+          refundedSeat(input.initiatedByUserId),
+        );
         const intentGeneration = await persistRefundRevocationInTx(tx, {
           refundId: refundRow.id,
           payerUserId: payment.userId,
@@ -1450,6 +1482,7 @@ async function refundInternalFundedPayment(
             tx,
             { paymentId: payment.id },
             "REFUNDED",
+            refundedSeat(input.initiatedByUserId),
           );
           // Commits with the seat stamp, so a refunded seat always has its revocation owed.
           intentGeneration = await persistRefundRevocationInTx(tx, {

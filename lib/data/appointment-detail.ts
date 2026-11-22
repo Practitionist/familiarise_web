@@ -12,9 +12,17 @@
  */
 
 import { moveHasLapsed } from "@/lib/appointments/lapsed-move";
+import type { Session } from "@/lib/auth";
 import prisma from "@/lib/prisma";
-import { liveParticipant } from "@/lib/booking/participants";
+import {
+  liveParticipant,
+  NOT_COLLABORATOR_ROW,
+} from "@/lib/booking/participants";
 import { liveReminderPayment } from "@/lib/booking/payment-reminder-eligibility";
+import {
+  isPublicExpertProfile,
+  publicProfileFacts,
+} from "@/lib/profiles/public-profile";
 import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
 import type {
   AppointmentFeedbackRole,
@@ -22,6 +30,7 @@ import type {
   RefundStatus,
 } from "@prisma/client";
 import { toPlain } from "@/lib/data/serialize";
+import { isPreMintIntent } from "@/lib/payments/pre-mint-intent";
 import {
   bookingAnomalies,
   scheduleAnomalyReport,
@@ -49,6 +58,18 @@ const slotsInclude = {
 const consultantProfileSelect = {
   select: { id: true, userId: true, user: userSelect },
 } as const;
+
+// The plan's expert, plus the facts that say whether their public profile is served.
+const hostProfileSelect = {
+  select: { ...consultantProfileSelect.select, ...publicProfileFacts },
+} as const;
+
+/** The detail ships the boolean, never the verification status it was read from. */
+function withoutProfileFacts<
+  T extends { verificationStatus: unknown; deletedAt: unknown },
+>({ verificationStatus: _status, deletedAt: _deletedAt, ...profile }: T) {
+  return profile;
+}
 
 const consulteeProfileSelect = {
   select: { id: true, userId: true, user: userSelect },
@@ -173,7 +194,7 @@ async function loadAppointmentDetail(appointmentId: string) {
       consultation: {
         include: {
           consultationPlan: {
-            include: { consultantProfile: consultantProfileSelect },
+            include: { consultantProfile: hostProfileSelect },
           },
           requestedBy: consultationPayerSelect,
         },
@@ -181,7 +202,7 @@ async function loadAppointmentDetail(appointmentId: string) {
       subscription: {
         include: {
           subscriptionPlan: {
-            include: { consultantProfile: consultantProfileSelect },
+            include: { consultantProfile: hostProfileSelect },
           },
           requestedBy: consulteeProfileSelect,
         },
@@ -190,7 +211,7 @@ async function loadAppointmentDetail(appointmentId: string) {
         include: {
           webinarPlan: {
             include: {
-              consultantProfile: consultantProfileSelect,
+              consultantProfile: hostProfileSelect,
               collaborators: collaboratorsInclude,
             },
           },
@@ -200,7 +221,7 @@ async function loadAppointmentDetail(appointmentId: string) {
         include: {
           classPlan: {
             include: {
-              consultantProfile: consultantProfileSelect,
+              consultantProfile: hostProfileSelect,
               collaborators: collaboratorsInclude,
             },
           },
@@ -212,7 +233,7 @@ async function loadAppointmentDetail(appointmentId: string) {
           // The trial's delivering expert, who answers its reschedules.
           consultantProfile: consultantProfileSelect,
           subscriptionPlan: {
-            include: { consultantProfile: consultantProfileSelect },
+            include: { consultantProfile: hostProfileSelect },
           },
         },
       },
@@ -226,6 +247,8 @@ async function loadAppointmentDetail(appointmentId: string) {
           expiresAt: true,
           // #1775 C-5 — the 48 h allocate-or-refund clock.
           capturedAt: true,
+          // Read only to say whether a gateway order ever existed; never shipped.
+          paymentIntent: true,
           deletedAt: true,
           // Which rail funded the row (lib/appointments/payment-display.ts):
           // an org-funded booking shows its sponsor and no amount.
@@ -279,7 +302,7 @@ async function loadAppointmentDetail(appointmentId: string) {
       },
       // #1554 — the roster: every live seat holder, with display fields.
       participants: {
-        where: liveParticipant(),
+        where: { ...liveParticipant(), ...NOT_COLLABORATOR_ROW },
         select: { userId: true, role: true, status: true, user: userSelect },
       },
     },
@@ -319,15 +342,72 @@ async function loadAppointmentDetail(appointmentId: string) {
           new Date(),
         )
       : null;
+  const { subscription, webinar, trial } = appointment;
+  const cls = appointment.class;
+  // The expert the booking page names and links to, as `mapAppointmentDetail` picks them.
+  const host =
+    trial?.subscriptionPlan.consultantProfile ??
+    consultation?.consultationPlan.consultantProfile ??
+    subscription?.subscriptionPlan.consultantProfile ??
+    webinar?.webinarPlan.consultantProfile ??
+    cls?.classPlan.consultantProfile ??
+    null;
   const detail = toPlain({
     reminderExpiresAt: reminder?.expiresAt.toISOString() ?? null,
+    expertProfileIsPublic: host ? isPublicExpertProfile(host) : false,
     appointment: {
       ...appointment,
+      payment: appointment.payment.map(({ paymentIntent, ...p }) => ({
+        ...p,
+        gatewayOrderMinted: !isPreMintIntent(paymentIntent),
+      })),
       consultation: consultation && {
         ...consultation,
+        consultationPlan: {
+          ...consultation.consultationPlan,
+          consultantProfile: withoutProfileFacts(
+            consultation.consultationPlan.consultantProfile,
+          ),
+        },
         requestedBy: {
           ...consultation.requestedBy,
           user: withoutEmail(consultation.requestedBy.user),
+        },
+      },
+      subscription: subscription && {
+        ...subscription,
+        subscriptionPlan: {
+          ...subscription.subscriptionPlan,
+          consultantProfile: withoutProfileFacts(
+            subscription.subscriptionPlan.consultantProfile,
+          ),
+        },
+      },
+      trial: trial && {
+        ...trial,
+        subscriptionPlan: {
+          ...trial.subscriptionPlan,
+          consultantProfile: withoutProfileFacts(
+            trial.subscriptionPlan.consultantProfile,
+          ),
+        },
+      },
+      webinar: webinar && {
+        ...webinar,
+        webinarPlan: {
+          ...webinar.webinarPlan,
+          consultantProfile:
+            webinar.webinarPlan.consultantProfile &&
+            withoutProfileFacts(webinar.webinarPlan.consultantProfile),
+        },
+      },
+      class: cls && {
+        ...cls,
+        classPlan: {
+          ...cls.classPlan,
+          consultantProfile:
+            cls.classPlan.consultantProfile &&
+            withoutProfileFacts(cls.classPlan.consultantProfile),
         },
       },
       statusHistory: appointment.statusHistory.map(
@@ -397,65 +477,117 @@ export function canAccessAppointment(
   return [...consulteeUserIds, ...consultantUserIds].includes(userId);
 }
 
-/**
- * What a given viewer may see of the money. A webinar's ten attendees each
- * have a Payment on the same appointment, and the read above returns all of
- * them; an attendee must get only their own. The host (plan consultant or
- * accepted collaborator) and platform staff see every seat.
- *
- * Only group kinds are scoped. A 1:1 booking has one payment that belongs to
- * the booking whoever made it — a sponsoring organisation's admin, say — and
- * the attending consultee must still see it (the 2026-09-12 QA pass found a
- * sponsored consultation rendering no payment at all). An org-paid seat on a
- * group event stays attributed to its payer until the AppointmentParticipant
- * reader flip (#1319 A9), which carries the seat→payment edge.
- */
-function canSeeFullGroupRoster(
-  userId: string,
-  detail: TAppointmentDetail,
-): boolean {
+/** An accepted presenter on the webinar or class plan. */
+function isPresenter(userId: string, detail: TAppointmentDetail): boolean {
   const { appointment } = detail;
-  const primaryOwnerUserIds = [
-    appointment.consultation?.consultationPlan?.consultantProfile?.userId,
-    appointment.subscription?.subscriptionPlan?.consultantProfile?.userId,
-    appointment.webinar?.webinarPlan?.consultantProfile?.userId,
-    appointment.class?.classPlan?.consultantProfile?.userId,
-    appointment.trial?.subscriptionPlan?.consultantProfile?.userId,
-  ];
-  if (primaryOwnerUserIds.includes(userId)) return true;
-
-  const presenterCollaboratorUserIds = [
+  return [
     ...(appointment.webinar?.webinarPlan?.collaborators ?? []),
     ...(appointment.class?.classPlan?.collaborators ?? []),
-  ]
-    .filter((c) => c.tier === "PRESENTER")
-    .map((c) => c.consultantProfile?.userId);
-
-  return presenterCollaboratorUserIds.includes(userId);
+  ].some(
+    (c) => c.tier === "PRESENTER" && c.consultantProfile?.userId === userId,
+  );
 }
 
+/**
+ * Whether the withdraw route would accept this viewer for the booking's open
+ * reschedule, asked of the route's own authority so the page never offers a
+ * Withdraw the route refuses.
+ */
+export async function viewerMayWithdrawReschedule(
+  detail: TAppointmentDetail,
+  session: Session | null,
+): Promise<boolean> {
+  const open = detail.appointment.rescheduleRequests[0];
+  if (!open || !session) return false;
+  // Loaded on use: the withdraw module carries the booking locks and the
+  // notifier, which a plain read never needs.
+  const { rescheduleWithdrawAuthority } =
+    await import("@/lib/booking/reschedule-withdraw");
+  const authority = await rescheduleWithdrawAuthority(
+    {
+      initiatedById: open.initiatedById,
+      initiatorRole: open.initiatorRole,
+      appointment: detail.appointment,
+    },
+    session,
+  );
+  return authority.allowed;
+}
+
+/** Who is reading a booking's detail. */
+export type DetailViewer = {
+  userId: string;
+  /** Platform staff: every row, receipts included. */
+  privileged?: boolean;
+  /** {@link viewerMayWithdrawReschedule} for this viewer; absent reads as no. */
+  mayWithdrawReschedule?: boolean;
+  /**
+   * The viewer manages the webinar or class plan as its named expert
+   * (`managesGroupPlanAsNamedExpert`): on an organisation's plan, only while
+   * an active expert of that organisation.
+   */
+  managesGroupPlan: boolean;
+};
+
+/** Which of a booking's lists the scoped detail carries whole, and what this viewer may do. */
+export type DetailVisibility = {
+  /** Every attendee's seat is in `participants`. */
+  rosterVisible: boolean;
+  /** Every attendee's payment is in `payment`. */
+  paymentsVisible: boolean;
+  appointment: {
+    /** The withdraw route accepts this viewer for the open reschedule. */
+    rescheduleRequests: { viewerMayWithdraw: boolean }[];
+  };
+};
+
+/** A booking's detail as one viewer receives it. */
+export type TScopedAppointmentDetail = TAppointmentDetail & DetailVisibility;
+
+/**
+ * What a given viewer may see of a booking's seats and money. A webinar's ten
+ * attendees each have a Payment on the same appointment, and the read above
+ * returns all of them. The expert who manages the plan and platform staff see
+ * every seat and every payment; a presenter sees every seat and no attendee's
+ * payment; everyone else sees only their own rows.
+ *
+ * Only group kinds are scoped. A 1:1 booking has one payment that belongs to
+ * the booking whoever made it (a sponsoring organisation's admin, say), and
+ * the attending consultee must still see it.
+ *
+ * The answer names what it carries, so a screen tells a list it was not sent
+ * from a list that is empty.
+ */
 export function scopeAppointmentDetail<T extends TAppointmentDetail>(
   detail: T,
-  viewerUserId: string,
-  privileged = false,
-): T {
+  viewer: DetailViewer,
+): T & DetailVisibility {
   const { webinarId, classId, payment, participants } = detail.appointment;
+  const privileged = viewer.privileged === true;
   const isGroup = !!webinarId || !!classId;
-  const everySeat =
-    !isGroup || privileged || canSeeFullGroupRoster(viewerUserId, detail);
-  const rows = everySeat
+  const everyPayment = !isGroup || privileged || viewer.managesGroupPlan;
+  const everySeat = everyPayment || isPresenter(viewer.userId, detail);
+  const rows = everyPayment
     ? payment
-    : payment.filter((p) => p.userId === viewerUserId);
+    : payment.filter((p) => p.userId === viewer.userId);
   const scopedParticipants = everySeat
     ? participants
-    : participants.filter((p) => p.userId === viewerUserId);
+    : participants.filter((p) => p.userId === viewer.userId);
   return {
     ...detail,
+    rosterVisible: everySeat,
+    paymentsVisible: everyPayment,
     appointment: {
       ...detail.appointment,
+      rescheduleRequests: detail.appointment.rescheduleRequests.map(
+        (request) => ({
+          ...request,
+          viewerMayWithdraw: viewer.mayWithdrawReschedule === true,
+        }),
+      ),
       participants: scopedParticipants,
       payment: rows.map((p) =>
-        privileged || p.userId === viewerUserId ? p : withoutReceipt(p),
+        privileged || p.userId === viewer.userId ? p : withoutReceipt(p),
       ),
     },
   };

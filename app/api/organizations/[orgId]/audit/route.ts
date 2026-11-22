@@ -20,11 +20,10 @@ import { z } from "zod";
 import { OrgAuditCategory, Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
-import {
-  sanitizeAuditDescription,
-  sanitizeAuditDetails,
-} from "@/lib/enterprise/audit-sanitize";
+import { sanitizeAuditDetails } from "@/lib/enterprise/audit-sanitize";
+import { describeAuditRows } from "@/lib/enterprise/audit-describe";
 import { auditRowScope } from "@/lib/enterprise/audit-visibility";
+import { resolveViewerZone } from "@/lib/time/viewer-zone";
 
 // Derived from Prisma so a new category (WEBHOOK) can't drift out of the
 // filter again (#1527 3c); the row scope still applies the money/ops split.
@@ -149,6 +148,7 @@ export async function GET(
     take: q.limit + 1, // peek one extra to detect if more exist
     select: {
       id: true,
+      organizationId: true,
       category: true,
       action: true,
       description: true,
@@ -198,18 +198,18 @@ export async function GET(
     members.map((m) => [m.id, { role: m.role, user: m.user }]),
   );
 
-  // Read-side scrub — strip engineering-noise patterns from the
-  // description column AND drop sensitive keys from `details` before
-  // the row ships to org-visible surfaces. This catches legacy rows
-  // written before the call-site discipline landed, plus any future
-  // regression. The raw payload remains in the DB for compliance;
-  // only the projection is sanitized. See lib/enterprise/audit-sanitize.ts.
+  // Descriptions in words (names, money, viewer-zone dates) and `details`
+  // without engineering keys; the stored row stays as written.
+  const descriptions = await describeAuditRows(
+    pageRows,
+    resolveViewerZone({ userTimezone: access.session.user.timezone }),
+  );
   return NextResponse.json({
-    rows: pageRows.map((r) => ({
+    rows: pageRows.map((r, i) => ({
       id: r.id,
       category: r.category,
       action: r.action,
-      description: sanitizeAuditDescription(r.description),
+      description: descriptions[i] ?? r.description,
       details: sanitizeAuditDetails(r.details),
       createdAt: r.createdAt.toISOString(),
       actor: r.actorMembershipId

@@ -83,7 +83,7 @@ A programme caps how much it sponsors per cycle: a `LICENSED_SEAT` programme by 
 `computeOverage` (`lib/payments/billing/overage.ts`) is a pure function shared by the pre-checkout preview and the at-checkout recorder, so the two cannot disagree:
 
 1. **Covered and marginal.** For a credit pool, covered is the smaller of the price, the remaining budget and any per-engagement cap; the rest is marginal. For licensed seats, if the seats left cover the engagements the booking consumes, nothing is marginal; otherwise the over-cap engagements are priced at the per-engagement price, optionally capped by `priceCapPerEngagementPaise`, and never more than the price. Here "price" is the tax-inclusive amount of the booking.
-2. **Surcharge.** `basePaise` is that marginal. `surchargePaise = floor(basePaise x overageSurchargeBps / 10000)`. `marginalPaise = basePaise + surchargePaise`. The surcharge is the only part of an overage that carries new GST, because the base is a slice of a price whose GST the booking journal already posted.
+2. **Surcharge.** `basePaise` is that marginal. `surchargePaise = floor(basePaise x overageSurchargeBps / 10000)`. `marginalPaise = basePaise + surchargePaise`. The surcharge is the only part of an overage that carries new GST, because the base is a slice of a price whose GST the booking journal already posted. How that GST should be divided between the organisation's invoice and a member's document when the member pays is an open question for the accountant ([open GST questions](../60-tax/06-open-gst-questions-for-the-accountant.md)).
 3. **Circuit breaker.** If `maxOveragePerCyclePaise` is set and the cycle's overage so far plus this marginal exceeds it, the decision is `BLOCK` whatever the behaviour. Checkout then throws `PROGRAM_CAP_EXHAUSTED` (HTTP 402) and the whole booking transaction rolls back, so nothing is booked and no money moves.
 4. **Behaviour.** `BLOCK` refuses (`PROGRAM_SESSION_CAP_REACHED`, 402, with a bell to the assignee and organisation operators). `CHARGE_MEMBER` lets the booking proceed and charges the member. `CHARGE_ORG` lets it proceed and charges the organisation. An unknown value fails safe to `BLOCK`.
 
@@ -144,6 +144,7 @@ A `PENDING` member overage counts toward the per-cycle ceiling, so two jobs reti
 
 - [Worked examples](05-worked-examples.md) put numbers through each rail, including a circuit-breaker refusal.
 - [Invoices](04-invoices-purchase-orders-and-dunning.md) for the rollup that bills `CHARGE_ORG` overage.
+- [Open GST questions for the accountant](../60-tax/06-open-gst-questions-for-the-accountant.md) for the member-paid overage tax question.
 
 ## Deprecated & Superseded Approaches
 

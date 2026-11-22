@@ -95,8 +95,6 @@ export const streamRecordingSyncLimiter = makeLimiter(
   "5 m",
   "rl:stream-recording-sync",
 );
-/** 3 per 24 hours — POST /api/trials */
-export const trialRequestLimiter = makeLimiter(3, "24 h", "rl:trial-request");
 /** 10 per hour — POST /api/scheduling/request-for-approval */
 export const requestApprovalLimiter = makeLimiter(
   10,
@@ -190,6 +188,12 @@ export const orgWalletTopUpLimiter = makeLimiter(
 );
 /** 20 per hour per org — POST /api/organizations/[orgId]/invitations */
 export const orgInviteLimiter = makeLimiter(20, "1 h", "rl:org-invite");
+/** 10 per hour per inviting user — POST /api/collaborations/{webinar,class}/[planId] */
+export const collaboratorInviteLimiter = makeLimiter(
+  10,
+  "1 h",
+  "rl:collab-invite",
+);
 /** 5 per minute per org — outbound webhook CRUD + secret rotation */
 export const orgWebhookLimiter = makeLimiter(5, "1 m", "rl:org-webhook");
 /** 1 per 24h per org — POST /api/organizations/[orgId]/data-exports */
@@ -290,63 +294,6 @@ export async function applyRateLimit(
       expected: false,
     });
     return null;
-  }
-}
-
-/**
- * The trial limiter read without spending a request: a 429 carrying when the
- * caller may retry, or null (also when Redis is slow or down: fail-open).
- */
-export async function trialRequestRefusal(
-  identifier: string,
-): Promise<NextResponse | null> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    const peek = await Promise.race([
-      trialRequestLimiter.getRemaining(identifier),
-      new Promise<null>((resolve) => {
-        timer = setTimeout(() => resolve(null), LIMITER_TIMEOUT_MS);
-      }),
-    ]);
-    if (!peek || peek.remaining > 0) return null;
-    const retryAfter = retryAfterSeconds(peek.reset);
-    return NextResponse.json(
-      {
-        error: "You've reached today's trial request limit.",
-        code: "RATE_LIMITED",
-        retryAfterSeconds: retryAfter,
-        retryAt: new Date(Date.now() + retryAfter * 1000).toISOString(),
-      },
-      {
-        status: 429,
-        headers: {
-          "X-RateLimit-Remaining": "0",
-          "Retry-After": String(retryAfter),
-        },
-      },
-    );
-  } catch (error) {
-    captureThrottled("rate-limit:trialRequestRefusal", error, {
-      subsystem: "rate-limit",
-      op: "trialRequestRefusal",
-      expected: false,
-    });
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/** Spends one trial request; called only once a trial has been created. */
-export async function spendTrialRequest(identifier: string): Promise<void> {
-  try {
-    await trialRequestLimiter.limit(identifier);
-  } catch (error) {
-    captureThrottled("rate-limit:spendTrialRequest", error, {
-      subsystem: "rate-limit",
-      op: "spendTrialRequest",
-      expected: false,
-    });
   }
 }
 

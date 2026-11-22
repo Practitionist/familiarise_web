@@ -34,6 +34,9 @@ export const ownStrikesSchema = z.object({
     z.object({
       at: z.string(),
       cause: z.enum(["EXPERT_CANCEL", "CONSULTANT_NO_SHOW"]),
+      /** The booking's plan and its earliest named session; null on a strike that names no session. */
+      planTitle: z.string().nullable(),
+      sessionAt: z.string().nullable(),
     }),
   ),
 });

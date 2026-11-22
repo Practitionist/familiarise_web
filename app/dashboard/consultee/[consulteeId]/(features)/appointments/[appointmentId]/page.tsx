@@ -8,12 +8,14 @@ import prisma from "@/lib/prisma";
 import {
   readAppointmentDetail,
   scopeAppointmentDetail,
+  viewerMayWithdrawReschedule,
 } from "@/lib/data/appointment-detail";
+import { managesGroupPlanAsNamedExpert } from "@/lib/enterprise/membership-guards";
 import DetailPageClient from "./DetailPageClient";
-import Link from "next/link";
-import { Button } from "@/components/ui/button";
+import { NoLongerRegistered } from "./NoLongerRegistered";
 import { viewerSeatReleased } from "@/lib/appointments/presentation-input";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
+import { getSession } from "@/lib/auth-server";
 import { getViewerZone } from "@/lib/time/viewer-zone-server";
 
 type PageProps = {
@@ -27,7 +29,7 @@ export default async function AppointmentDetailPage({
   // Ownership is enforced HERE, not by the layout: the layout is a client
   // component, so its check runs after this server render has already read
   // and streamed the data. See lib/auth/personal-dashboard-access.ts.
-  await requirePersonalProfileAccess("consultee", consulteeId);
+  const access = await requirePersonalProfileAccess("consultee", consulteeId);
 
   const [detail, profile] = await Promise.all([
     readAppointmentDetail(appointmentId),
@@ -66,7 +68,18 @@ export default async function AppointmentDetailPage({
   // other attendee's money before the refetch replaced it.
   queryClient.setQueryData(
     ["appointment-detail", appointmentId],
-    scopeAppointmentDetail(detail, profile.userId),
+    scopeAppointmentDetail(detail, {
+      userId: profile.userId,
+      managesGroupPlan: await managesGroupPlanAsNamedExpert(
+        prisma,
+        appointment,
+        profile.userId,
+      ),
+      mayWithdrawReschedule: await viewerMayWithdrawReschedule(
+        detail,
+        await getSession(),
+      ),
+    }),
   );
 
   return (
@@ -75,30 +88,8 @@ export default async function AppointmentDetailPage({
         consulteeId={consulteeId}
         appointmentId={appointmentId}
         viewerZone={viewerZone.zone}
+        operatorView={access.isInspecting}
       />
     </HydrationBoundary>
-  );
-}
-
-function NoLongerRegistered({
-  consulteeId,
-}: Readonly<{ consulteeId: string }>) {
-  return (
-    <div className="mx-auto max-w-md space-y-3 rounded-2xl border border-border bg-card p-6 text-center">
-      <h1 className="text-lg font-semibold text-foreground">
-        You are no longer registered for this event
-      </h1>
-      <p className="text-sm text-muted-foreground">
-        Your place was released. The booking is listed under Cancelled in your
-        appointments.
-      </p>
-      <Button asChild variant="outline" size="sm">
-        <Link
-          href={`/dashboard/consultee/${consulteeId}/appointments?tab=cancelled`}
-        >
-          Go to Appointments
-        </Link>
-      </Button>
-    </div>
   );
 }

@@ -18,7 +18,10 @@
  */
 
 import prisma from "@/lib/prisma";
-import { liveParticipant } from "@/lib/booking/participants";
+import {
+  liveParticipant,
+  NOT_COLLABORATOR_ROW,
+} from "@/lib/booking/participants";
 import { ORG_FUNDED_PAYMENT_METHODS } from "@/lib/payments/org-funded";
 import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
 import { readOrgOwnerUserIds } from "@/lib/enterprise/related-party";
@@ -113,7 +116,11 @@ function attendedArms(uid: string): Prisma.AppointmentWhereInput[] {
   return [
     { consultation: { requestedBy: { userId: uid } } },
     { subscription: { requestedBy: { userId: uid } } },
-    { participants: { some: liveParticipant(uid) } },
+    {
+      participants: {
+        some: { ...liveParticipant(uid), ...NOT_COLLABORATOR_ROW },
+      },
+    },
   ];
 }
 

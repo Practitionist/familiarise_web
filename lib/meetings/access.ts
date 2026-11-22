@@ -3,8 +3,13 @@ import { Prisma } from "@prisma/client";
 import { settleLapsedProposal } from "@/lib/booking/reschedule-lapse";
 import { isReleasedForReschedule } from "@/utils/scheduling-engine/types";
 import prisma from "@/lib/prisma";
-import { liveParticipant, paidParticipant } from "@/lib/booking/participants";
-import { isPresenterRole } from "@/lib/collaborators/roles";
+import {
+  liveParticipant,
+  NOT_COLLABORATOR_ROW,
+  paidParticipant,
+} from "@/lib/booking/participants";
+import { isPresenterRole, isSpeakingCrew } from "@/lib/collaborators/roles";
+import { planWhere, type PlanRef } from "@/lib/collaborators/team";
 import { checkConsent } from "@/lib/compliance/dpdp";
 import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
 import {
@@ -60,6 +65,10 @@ interface MeetingResolved {
   canReopen?: boolean;
   /** An accepted presenter collaborator on a webinar or class plan, not the plan owner. */
   coPresenter?: boolean;
+  /** An accepted speaking-crew collaborator: a participant who publishes audio and video on joining. */
+  speakingCrew?: boolean;
+  /** Set when access rests on an accepted collaboration alone: the plan it is on. */
+  collaboratorOf?: PlanRef;
   streamCallId: string;
   meetingId: string;
   appointment: MeetingAppointment;
@@ -313,6 +322,7 @@ export async function resolveMeetingAccess(
     where: {
       appointmentId: appointment.id,
       ...(isGroupEvent ? paidParticipant(userId) : liveParticipant(userId)),
+      ...NOT_COLLABORATOR_ROW,
     },
     select: { id: true },
   });
@@ -331,7 +341,11 @@ export async function resolveMeetingAccess(
   const grant = async (
     role: Exclude<MeetingRole, null>,
     message: string,
-    coPresenter = false,
+    staff: {
+      coPresenter?: boolean;
+      speakingCrew?: boolean;
+      collaboratorOf?: PlanRef;
+    } = {},
   ): Promise<MeetingAccess> => {
     const bookingStatus =
       appointment.consultation?.status ??
@@ -413,7 +427,9 @@ export async function resolveMeetingAccess(
       role,
       message,
       reason: "granted",
-      ...(coPresenter ? { coPresenter } : {}),
+      ...(staff.coPresenter ? { coPresenter: true } : {}),
+      ...(staff.speakingCrew ? { speakingCrew: true } : {}),
+      ...(staff.collaboratorOf ? { collaboratorOf: staff.collaboratorOf } : {}),
       streamCallId,
       meetingId,
       appointment,
@@ -433,21 +449,32 @@ export async function resolveMeetingAccess(
   if (userProfile?.consultantProfileId) {
     const webinarPlanId = appointment.webinar?.webinarPlan?.id;
     const classPlanId = appointment.class?.classPlan?.id;
+    const plan: PlanRef | null = webinarPlanId
+      ? { planType: "webinar", planId: webinarPlanId }
+      : classPlanId
+        ? { planType: "class", planId: classPlanId }
+        : null;
 
-    if (webinarPlanId || classPlanId) {
+    if (plan) {
       const collab = await prisma.collaborator.findFirst({
         where: {
           consultantProfileId: userProfile.consultantProfileId,
           status: "ACCEPTED",
           consultantProfile: { deletedAt: null },
-          ...(webinarPlanId ? { webinarPlanId } : { classPlanId }),
+          ...planWhere(plan),
         },
         select: { id: true, role: true },
       });
       if (collab) {
         return isPresenterRole(collab.role)
-          ? grant("host", "Access granted as accepted co-presenter", true)
-          : grant("participant", "Access granted as accepted collaborator");
+          ? grant("host", "Access granted as accepted co-presenter", {
+              coPresenter: true,
+              collaboratorOf: plan,
+            })
+          : grant("participant", "Access granted as accepted collaborator", {
+              speakingCrew: isSpeakingCrew(collab.role),
+              collaboratorOf: plan,
+            });
       }
     }
   }

@@ -1,6 +1,7 @@
 "use client";
 
 import { use, useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 
 import { BreadcrumbOverrideProvider } from "@/components/dashboard/breadcrumb-override";
 import {
@@ -10,7 +11,7 @@ import {
 } from "@/components/dashboard/PersonalDashboardLayoutCore";
 import { consultantFetchers } from "@/lib/dashboard-queries";
 import {
-  buildConsultantNav,
+  consultantNavWithPublicPage,
   CONSULTANT_OFFERING_TYPE_SEGMENTS,
   CONSULTANT_PAGE_LABELS,
   CONSULTANT_PATHLESS_SEGMENTS,
@@ -26,7 +27,7 @@ import {
   VerificationBanner,
 } from "@/components/verification/VerificationPendingOverlay";
 import type { VerificationStatus } from "@/components/verification/VerificationStatusBadge";
-import { useVerificationStatus } from "./hooks/useVerificationStatus";
+import { useVerificationStatus } from "@/hooks/useVerificationStatus";
 import {
   settingsSectionGroups,
   settingsSectionHref,
@@ -138,12 +139,18 @@ export default function ConsultantDashboardLayout(props: Readonly<PageProps>) {
 function ConsultantLayoutInner({ children, params }: Readonly<PageProps>) {
   const { consultantId } = use(params);
   const shareHref = useExpertShareHref(consultantId);
-  const nav = useMemo(() => {
-    const built = buildConsultantNav(consultantId);
-    return built.pinnedCta
-      ? { ...built, pinnedCta: { ...built.pinnedCta, copyText: shareHref } }
-      : built;
-  }, [consultantId, shareHref]);
+  // The layout core reads this key too; the public page is live only once verified.
+  const { data: profile } = useQuery({
+    queryKey: ["consultant-data", consultantId],
+    queryFn: () => consultantFetchers.details(consultantId),
+    staleTime: 5 * 60 * 1000,
+  });
+  const verificationStatus = profile?.verificationStatus;
+  const nav = useMemo(
+    () =>
+      consultantNavWithPublicPage(consultantId, shareHref, verificationStatus),
+    [consultantId, shareHref, verificationStatus],
+  );
   const settingsGroups = useMemo(
     () =>
       settingsSectionGroups().map((group) => ({

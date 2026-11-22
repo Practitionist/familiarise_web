@@ -89,8 +89,11 @@ jest.mock("../../../utils/appointmentlock", () => ({
   AppointmentBusyError: class extends Error {},
   BookingLockUnavailableError: class extends Error {},
   withAppointmentLock: async (_id: string, fn: () => Promise<unknown>) => fn(),
-  withEventCheckoutLock: async (_key: unknown, fn: () => Promise<unknown>) =>
-    fn(),
+  renewAppointmentLock: async () => undefined,
+  withEventCheckoutLock: async (
+    _key: unknown,
+    fn: (renew: () => Promise<void>) => Promise<unknown>,
+  ) => fn(async () => undefined),
 }));
 jest.mock("../../../lib/booking/participants", () => ({
   __esModule: true,

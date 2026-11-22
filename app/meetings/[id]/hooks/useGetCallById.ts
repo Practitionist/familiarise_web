@@ -18,6 +18,8 @@ import {
 export interface MeetingAccessResult {
   hasAccess: boolean;
   role: "host" | "participant" | null;
+  /** A host-side presenter who is not the plan's host. */
+  coPresenter?: boolean;
   message: string;
   code?: "CONSENT_REQUIRED" | "TOO_EARLY" | "SESSION_ENDED";
   startsAt?: string | null;
@@ -337,6 +339,7 @@ export const useGetCallById = (callId: string) => {
           callType: string;
           callId: string;
           role: "host" | "participant";
+          coPresenter?: boolean;
         };
 
         if (cancelled) return;
@@ -364,6 +367,7 @@ export const useGetCallById = (callId: string) => {
         setAccess({
           hasAccess: true,
           role: data.role,
+          coPresenter: data.coPresenter === true,
           message: "Access granted",
         });
         previousCall.current = callInstance;

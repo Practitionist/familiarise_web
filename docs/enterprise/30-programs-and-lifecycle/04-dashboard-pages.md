@@ -146,13 +146,16 @@ A few additional surfaces are not in the org-scoped tree:
   `Settings`: both collided head-on with the per-org dashboard's entries of the
   same name, and an operator moving between the two layers had no way to tell
   which one they were looking at.
-  - `/home` — "Overview". Cross-org stats row + grid of orgs you OWN (showing live `walletBalance`, low-wallet warning, dunning suspension, or pending verification badges) + "+ New organization" CTA.
+  - `/home` — "Overview". Cross-org stats row + grid of orgs you OWN (showing live `walletBalance`, low-wallet warning, dunning suspension, or pending verification badges) + "+ New organization" CTA. Organisations that are not active sit in the same collapsed "Not active" group as on Spend.
   - `/activity` — cross-org audit feed aggregating `OrgAuditLog` rows
     across all owned orgs with `<FilterBar>` organization and category filters (including `WEBHOOK`). Cursor-paginated. Distinct from per-org
     `/audit` which scopes to one org and supports rich filters.
   - `/billing` — labelled **"Spend"**. Cross-org outstanding invoices +
     wallet balance roll-up using `StatRow`/`Stat`. Distinct from per-org `/billing`, which mutates
-    one org's wallet and invoices. Read-only.
+    one org's wallet and invoices. Read-only. The headline totals and the
+    Overview stats count ACTIVE organisations only; a deactivated, suspended
+    or unverified organisation is listed with its status in a collapsed
+    "Not active" group below the table and adds nothing to the totals.
   - `/settings` — renders through `SettingsLayout` (`WORKSPACE_SETTINGS_SECTIONS` in `lib/dashboard/nav/workspace.ts`):
     - `/settings/account` — personal Account details, Sign-in & security, Privacy & data, and Consent (`<AccountSettings />`), reached from the avatar menu's "Account settings" entry.
     - `/settings/landing`, `/settings/notifications`, `/settings/account` — the default landing org (persisted via `PATCH /api/org-workspace/[orgWorkspaceId]/settings`), the operator's personal notification panel (`PUT /api/novu/preferences`) and account security, reached from the avatar menu's "All organizations settings" entry.
@@ -250,7 +253,25 @@ Points the table compresses:
   opens with `purchaseOrders.read` and Payment disputes with `disputes.read`,
   both the same four finance readers. Member spend also needs PERSONAL funding.
   Mutations are `billing.manage` and `purchaseOrders.manage` (OWNER,
-  BILLING_ADMIN).
+  BILLING_ADMIN). A reader without `billing.manage` (MAINTAINER, MANAGER) sees
+  one line naming the role that can pay or request an invoice
+  (`rolesHoldingLabel` in `lib/labels/org-labels.ts`, read from the permission
+  matrix) and pointing at Ask us. Draft invoices are listed, exported and
+  opened only by a role with `billing.manage`; for anyone else the server
+  leaves them out and answers 404 by id (`visibleInvoiceWhere` in
+  `lib/enterprise/invoice-visibility.ts`), and a usage row billed on a draft
+  reads "On an invoice not yet issued". A void or cancelled invoice shows no
+  due date, nor does a draft (`shownDueDate`). The Purchase orders tab tells the same readers
+  which role can add, edit or cancel a PO, and its Linked column counts in
+  words ("1 contract · 3 invoices"), drafts counted only for a role with
+  `billing.manage`, as in the billing account's invoice count.
+- **Billing figures.** "Pending charges · N bookings not yet invoiced" counts
+  SUCCEEDED payments with no `billableToOrgInvoiceId`. A Usage charges row
+  reads the same field: a booking charge names the invoice its payment was
+  billed on ("WIPRO-2026-0004 · Void"), and says "Not yet invoiced" only under
+  that predicate (`lib/data/org-receivables.ts`). "Outstanding" counts issued
+  and overdue invoices, whether or not they are past due; "Unpaid balance" is the `ORG_RECEIVABLE` ledger
+  balance, every charge not yet paid whether invoiced or not.
 - **Payouts.** Three tabs. A BILLING_ADMIN cannot read the member list, so the
   Expert routing section on the Rate cards & routing tab is where it decides
   where experts are paid.
@@ -263,7 +284,10 @@ Points the table compresses:
   withdrawing are the member's own acts; the operator's button only records a
   withdrawal request the member then sees in Account settings.
 - **Audit.** The categories a role may filter by follow `audit.read.ops` and
-  `audit.read.money`; the CSV export needs `dataExports.people`.
+  `audit.read.money`; the CSV export needs `dataExports.people`. A draft
+  invoice's generation row (`INVOICE_GENERATED`, status `DRAFT`) reaches the
+  Audit page, its CSV and Home Activity only for a role with `billing.manage`
+  (`auditRowScope` in `lib/enterprise/audit-visibility.ts`).
 - **Support cases.** OWNER, MAINTAINER, BILLING_ADMIN, MANAGER and SUPPORT read
   and raise org-owned cases; the other roles see a pointer to their own
   appointment instead.

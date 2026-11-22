@@ -13,11 +13,13 @@
  * because the orgId is the entire authorisation boundary here.
  *
  * Archived plans are excluded — withdrawn from sale means withdrawn for members
- * too; the row survives only to resolve past bookings.
+ * too; the row survives only to resolve past bookings. So is any plan whose
+ * expert is not verified: an organisation's invited experts are verified first.
  */
 
 import prisma from "@/lib/prisma";
 import type { CoveredPlanType, Currency } from "@prisma/client";
+import { publicExpertProfileWhere } from "@/lib/profiles/public-profile";
 
 const CARD_SELECT = {
   id: true,
@@ -29,12 +31,18 @@ const CARD_SELECT = {
   visibility: true,
 } as const;
 
-// Members see everything their org owns, including ORG_ONLY. The only gate is
-// the archive one.
+// Members see everything their org owns, including ORG_ONLY, that is not
+// archived and has a verified expert.
 const memberVisibleWhere = (orgId: string) => ({
   organizationId: orgId,
   archivedAt: null,
 });
+
+// A 1:1 plan always has an expert; an org may own a webinar or class plan alone.
+const verifiedExpertWhere = { consultantProfile: publicExpertProfileWhere };
+const verifiedOrNoExpertWhere = {
+  OR: [{ consultantProfile: null }, verifiedExpertWhere],
+};
 
 export type OrgCatalogEntry = {
   id: string;
@@ -56,15 +64,21 @@ export async function getOrgMemberCatalog(
   const [consultations, subscriptions, webinars, classes] = await Promise.all([
     // #1527 Q4 — 1:1 and subscription drafts stay with their author.
     prisma.consultationPlan.findMany({
-      where: { ...where, status: "PUBLISHED" },
+      where: { ...where, ...verifiedExpertWhere, status: "PUBLISHED" },
       select: CARD_SELECT,
     }),
     prisma.subscriptionPlan.findMany({
-      where: { ...where, status: "PUBLISHED" },
+      where: { ...where, ...verifiedExpertWhere, status: "PUBLISHED" },
       select: CARD_SELECT,
     }),
-    prisma.webinarPlan.findMany({ where, select: CARD_SELECT }),
-    prisma.classPlan.findMany({ where, select: CARD_SELECT }),
+    prisma.webinarPlan.findMany({
+      where: { ...where, ...verifiedOrNoExpertWhere },
+      select: CARD_SELECT,
+    }),
+    prisma.classPlan.findMany({
+      where: { ...where, ...verifiedOrNoExpertWhere },
+      select: CARD_SELECT,
+    }),
   ]);
 
   const tag = (

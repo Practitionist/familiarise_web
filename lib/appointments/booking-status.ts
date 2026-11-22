@@ -12,6 +12,7 @@ import { isShortNotice } from "@/lib/booking/lead-time";
 import { eventStatusBadge } from "@/lib/labels/session-labels";
 import { toneClass, type Tone } from "@/lib/ui/tone";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { REQUESTED_AGAIN_REASON } from "@/lib/booking/request-again-rules";
 
 /** Where the booking is in its life; several stages share one word. */
 export const BOOKING_STAGES = [
@@ -182,9 +183,17 @@ function isHostEvent(f: BookingStatusFacts, viewer: StatusViewer): boolean {
 }
 
 /** The latest edge into the booking's current status. */
-function edgeInto(f: BookingStatusFacts, status: string) {
+function edgeInto(f: Pick<BookingStatusFacts, "history">, status: string) {
   const edges = (f.history ?? []).filter((e) => upper(e.toStatus) === status);
   return edges.at(-1) ?? null;
+}
+
+/** The edge that closed this booking because the learner requested again, if that is how it ended. */
+export function requestedAgainEdge(
+  f: Pick<BookingStatusFacts, "history" | "status">,
+): HistoryEdgeInput | null {
+  const edge = edgeInto(f, upper(f.status));
+  return edge?.reason === REQUESTED_AGAIN_REASON ? edge : null;
 }
 
 /** Why an EXPIRED or CANCELLED booking ended, read off its history edge. */
@@ -398,6 +407,12 @@ function reasonOf(
     case "COMPLETED":
       return f.completedNote ?? "";
     case "PAYMENT_LAPSED":
+      // The learner closed the lapsed link themselves to book again.
+      if (requestedAgainEdge(f)) {
+        return isLearner
+          ? "You closed this payment link and requested again."
+          : "The learner closed this payment link and requested again.";
+      }
       return "Payment was not completed in time.";
     default:
       return endedReason(cause, f, viewer, consultant, payer, day);
@@ -454,6 +469,8 @@ function endedReason(
       if (mine) who = " by you";
       else if (by === "CONSULTANT") who = ` by ${consultant}`;
       else if (by === "REQUESTER") who = ` by ${payer}`;
+      // With no history edge or date there is no reason to give; the chip already says Cancelled.
+      if (!who && !at) return "";
       return `Cancelled${who}${at ? ` on ${day(at)}` : ""}.`;
     }
   }

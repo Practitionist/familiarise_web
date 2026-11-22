@@ -26,6 +26,7 @@ import { requireOrgAccess } from "@/lib/auth-helpers";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { assertWalletFundingSwitchable } from "@/lib/api/organizations/wallet";
 import { recordBillingAccountUpdate } from "@/lib/enterprise/billing-account-audit";
+import { visibleInvoiceWhere } from "@/lib/enterprise/invoice-visibility";
 
 // PROJECT is reserved in the Prisma enum for v2 project-billing; the
 // API layer rejects it so callers can't quietly land a BillingAccount
@@ -82,7 +83,7 @@ export async function GET(
           subscription: true,
           _count: {
             select: {
-              invoices: true,
+              invoices: { where: visibleInvoiceWhere(access.member.role) },
               contracts: true,
               walletTopUps: true,
             },

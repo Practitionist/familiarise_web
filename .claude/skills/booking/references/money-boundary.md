@@ -175,7 +175,13 @@ consultee-initiated requests that really moved sessions (not withdrawn, not
 restored), and timed from the request's `createdAt`. An expert's reschedule never
 lowers the buyer's refund. A released session whose original time passed with no
 replacement counts as full notice (past every tier), unless the consultee
-released it, in which case the recorded floor still applies. A booking with no live session left gets no notice
+released it, in which case the recorded floor still applies. A plan cancel
+prices one start per session on the calendar (`scheduledStarts`): each confirmed
+session, and each session released for a move, at its original start and capped
+by the same floor, before and after it gets a new time. A released session is
+never "never scheduled", so releasing a session and then cancelling the plan
+cannot refund it at 100 %; an expert's release or unanswered proposal leaves the
+session priced at its original start. A booking with no live session left gets no notice
 figure at all, so it never falls back to the floor; the window refuses it first
 (`resolveBookingRefundContext` in `lib/booking/cancellation-scope.ts`). Preview
 and POST resolve the actor through one function, `resolveCancelActor`
@@ -292,6 +298,26 @@ gate a concurrent writer walked through:
   route all call it, so a 6-hour window can no longer be sold at a 1-hour price.
 - A paused expert (`acceptingRequests = false`) refuses direct checkout and
   trials with 409 `NOT_ACCEPTING_BOOKINGS`; existing bookings are unaffected.
+- An expert who is not verified refuses direct checkout (pricing and the
+  in-lock re-read), trials, requests and every approval or trial pay-link mint
+  with 409 `EXPERT_NOT_VERIFIED` (`assertExpertVerified` in
+  `lib/booking/booking-rule-error.ts`); paid bookings already made are
+  unaffected, and plan rows are never unpublished for it. Approving an unpaid
+  request for them is refused too (`assertUnpaidApprovalVerified`). A
+  moderation reject ends their unpaid sales right after it commits, as Request
+  again closes an order (`endUnverifiedExpertSales`): the gateway is asked
+  first and a live payment keeps its sale open, then one transaction
+  (`endUnpaidSalesInTx`) expires approved links through `lapseApprovedRequest`,
+  declines unanswered unpaid requests and releases unpaid trial holds and group
+  seats, every open order expired by CAS with its spend returned, and stages
+  each learner notice in that transaction; each closed gateway order is
+  re-read after commit and a capture found is refunded. An unanswered first
+  read leaves its sale open; a failed re-read closed the sale but does not
+  know whether a capture landed, so it is reported as unresolved, as is a re-read that still finds a live payment. Never close
+  an unread order, and never treat a failed re-read as settled: until the
+  reconciler of #2934 runs, a webhook is the only automatic refund for it.
+  Every sale writer, including the pay-link fill after the gateway call,
+  re-reads standing under a share lock (`assertExpertStandsInTx`).
 - A review-first expert (`bookingMode = REQUEST`) refuses a direct consultation
   checkout with 409 `REQUEST_APPROVAL_REQUIRED` on every rail (card,
   zero-amount, organisation-funded), before any gateway order; plans, trials and
@@ -367,9 +393,33 @@ placeholder, at the order's exact amount and currency, and moves the CARD leg's
 `@@unique([userId, appointmentId])`, so `findPriorSeatPayment` and
 `assertSeatRemintable` (`lib/payments/checkout/seats.ts`) re-mint an EXPIRED or FAILED row in place
 and tombstone its old intent in the same transaction. A PENDING row answers
-`PAYMENT_ALREADY_EXISTS`; a fully refunded seat answers `SEAT_REBUY_UNSUPPORTED`
-until the schema batch makes the unique re-buyable **(planned)**. Both are typed
-refusals, never a 500.
+`PAYMENT_ALREADY_EXISTS`; a removed seat, a fully refunded seat and a left
+credit-funded or paid seat answer `SEAT_REBUY_UNSUPPORTED` (paid rebuy is
+**planned**). All are typed refusals, never a 500. A price-free seat its holder
+left (`priorSeatStanding` answers `REJOINABLE`) revives on its earlier
+`SUCCEEDED` ₹0 payment: no payment insert, no re-mint, no tombstone, and the
+commit skips the legs, the utilisation meter and the synchronous earnings, so a
+rejoin moves no money and writes no money row. Its booked notice is staged in
+the commit's own transaction (`stageFreeSeatNoticeTx`), keyed on the join's own SEAT
+row (`readSeatJoin`), so the notice commits or rolls back with the seat. A removed seat refuses
+before its EXPIRED, FAILED or PENDING row is looked at, so a removal outlasts
+its lapsed checkout, and the rejoin gate reads the event price under the lock.
+
+**A conduct removal refunds only the order it ended.** The re-mint keeps the
+`Payment` id, so a removal case never trusts the seat's current order. The
+removal records the seat's paid gateway order id (`paymentIntent`) on the case's
+`CREATED` event, and a joined removal on its `REOPENED` event, as `fromValue`
+`removal-order:<order id>`. The lapse (`stampRemovalRefundTx`), the refund-first
+gate of an overturn or appeal (`removalRefundOutstandingTx`) and support's
+recommendation, review and execution (`removalCaseRefundsPaymentTx`, refusing
+`PAYMENT_AFTER_REMOVAL`) act on the seat's payment only while it still carries
+that order; the old order's own late capture lands on its tombstone and is
+auto-refunded there. A case from before the record falls back to the seat's
+history: a `registered` or `rejoined` SEAT row after its latest removal means the
+seat was bought again (a re-bought seat's capture writes `registered` in
+`handlePaymentSuccess`), so the case owes nothing on the current order. An order
+unpaid at the removal that captures later, with no re-mint, is still the case's
+to refund.
 
 ## 10. A refund owed is never lost, and the quote is bound to the click
 
@@ -669,7 +719,12 @@ back while the session can still be re-booked; it waits for the plan end.
 
 ## 14. A class settles its never-placed sessions when it completes
 
-A class completes once every placed session has ended and been decided
+A class completes once every placed session has ended and been decided and the
+class is finished: every sold session is placed (counted by ordinal; a
+host-cancelled session counts as answered for), or its scheduling period has
+ended (`classIsFinished` in `lib/booking/class-completion.ts`, checked inside
+the completing transaction after the status compare-and-set). A class between
+batches stays `SCHEDULED` and nothing is refunded
 (`completeClasses` in `scripts/appointments/auto-complete-appointments.ts`), and
 the same transaction that moves it to COMPLETED stamps class-end settlement
 (`stampClassEndRefundsOwed` in `lib/payments/operations/event-refunds.ts`).
@@ -728,3 +783,10 @@ and reverses the refunded share.
   never-placed sessions were neither delivered nor refunded and the earnings
   released in full. Class-end settlement owes them now.
 - A pending 1:1 request or trial priced from the live plan at approval, with a live pay-link re-minted at the new amount: replaced by `agreedPricePaise` read through `agreedConsultationPricePaise` / `agreedTrialPricePaise`.
+- **A released plan session quoted as never scheduled.** A plan cancel left a
+  session released for a move out of the on-the-calendar list, so it came back
+  at 100 % whatever notice the learner gave. It is priced at its original start,
+  capped by the learner's release notice.
+- **A class completed one hour after its last placed session.** It closed a
+  class between batches and refunded the sessions not yet placed.
+  `classIsFinished` decides now.

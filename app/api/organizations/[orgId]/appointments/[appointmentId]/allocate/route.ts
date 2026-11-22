@@ -33,6 +33,7 @@ import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import { allocate } from "@/lib/booking/allocation";
+import { slotStartsSchema } from "@/schemas/slotAllocation/validationSchemas";
 
 const OVERRIDE_REASON_MESSAGE =
   "Give a reason of at least 5 characters for placing this booking.";
@@ -40,7 +41,7 @@ const OVERRIDE_REASON_MESSAGE =
 const AllocateOrgBookingBodySchema = z
   .object({
     isAuto: z.boolean().optional().default(true),
-    slots: z.array(z.string().datetime()).min(1).optional(),
+    slots: slotStartsSchema.min(1).optional(),
     overrideReason: z
       .string({
         required_error: OVERRIDE_REASON_MESSAGE,
@@ -185,8 +186,16 @@ export async function POST(
           code: result.errorCode,
           placeableSessions: result.placeableSessions,
           requiredSessions: result.requiredSessions,
+          takenSlotStarts: result.takenSlotStarts,
+          retryAfterSeconds: result.retryAfterSeconds,
         },
-        { status: result.httpStatus ?? 409 },
+        {
+          status: result.httpStatus ?? 409,
+          headers:
+            result.retryAfterSeconds === undefined
+              ? undefined
+              : { "Retry-After": String(result.retryAfterSeconds) },
+        },
       );
     }
 

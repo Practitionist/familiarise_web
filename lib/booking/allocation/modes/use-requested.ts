@@ -61,7 +61,10 @@ import {
   guardAllocationInTx,
 } from "@/lib/booking/allocation/guards";
 import { findIdempotentAllocation } from "@/lib/booking/allocation/idempotency";
-import { assertCollaboratorsFree } from "@/lib/booking/allocation/collaborators";
+import {
+  assertCollaboratorsFree,
+  lockPlanForAllocation,
+} from "@/lib/booking/allocation/collaborators";
 import { bookingTransaction } from "@/lib/db/booking-transaction";
 
 /**
@@ -285,15 +288,13 @@ export async function useRequestedSlots(
       );
     }
     // Lock order: consultant → consultee → slot batch over every busy profile.
-    slotGrant = await lockPickedSlots(
-      requestedSlots,
-      await allocationBatchProfiles({
-        eventType,
-        planId,
-        consultantProfileId,
-        consulteeUserId,
-      }),
-    );
+    const batchProfiles = await allocationBatchProfiles({
+      eventType,
+      planId,
+      consultantProfileId,
+      consulteeUserId,
+    });
+    slotGrant = await lockPickedSlots(requestedSlots, batchProfiles);
 
     return await bookingTransaction(
       async (tx) => {
@@ -312,6 +313,8 @@ export async function useRequestedSlots(
           true,
         );
         if (lockedReplay) return lockedReplay;
+        // The plan row, before any read of the team (see autoAllocate).
+        await lockPlanForAllocation(tx, eventType, planId, batchProfiles);
 
         // #1692 — the reads above ran before the advisory lock, so re-read
         // the rows behind it: a writer that replaced or flipped them in the

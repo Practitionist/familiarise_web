@@ -190,7 +190,7 @@ export function SessionRatingRow({
             >
               <Star
                 className={
-                  "h-3.5 w-3.5 " +
+                  "h-5 w-5 " +
                   ((hover || rating) >= n
                     ? "fill-foreground text-foreground"
                     : "text-muted-foreground/50")
@@ -199,6 +199,9 @@ export function SessionRatingRow({
             </button>
           ))}
         </div>
+        <span className="text-[11px] text-muted-foreground" aria-hidden>
+          Not public; shared with the expert
+        </span>
 
         {rating > 0 && !noteOpen && (
           <button

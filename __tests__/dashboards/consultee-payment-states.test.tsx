@@ -58,6 +58,7 @@ const expiredRow = (
   title: "Career chat",
   consultantName: "Asha Rao",
   consultantProfileId: "cp-1",
+  expertPublic: true,
   history: [{ fromStatus, toStatus: "EXPIRED", createdAt }],
 });
 

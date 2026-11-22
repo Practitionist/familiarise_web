@@ -4,7 +4,10 @@ import type { AppointmentsType, Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { isDeadOccurrence } from "@/lib/appointments/occurrences";
 import { resolvePlanOwnerIds } from "@/lib/booking/plan-owners";
-import { liveParticipant } from "@/lib/booking/participants";
+import {
+  liveParticipant,
+  NOT_COLLABORATOR_ROW,
+} from "@/lib/booking/participants";
 import { isPresenterRole } from "@/lib/collaborators/roles";
 import { getSession } from "@/lib/auth-server";
 import { isPrivileged } from "@/lib/auth-helpers";
@@ -61,7 +64,7 @@ const appointmentAccessSelect = (userId: string) =>
     appointmentType: true,
     organizationId: true,
     participants: {
-      where: liveParticipant(userId),
+      where: { ...liveParticipant(userId), ...NOT_COLLABORATOR_ROW },
       select: { id: true },
       take: 1,
     },

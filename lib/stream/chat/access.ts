@@ -1,5 +1,8 @@
 import prisma from "@/lib/prisma";
-import { liveParticipant } from "@/lib/booking/participants";
+import {
+  liveParticipant,
+  NOT_COLLABORATOR_ROW,
+} from "@/lib/booking/participants";
 import {
   dmEligibleStatusFilter,
   excludeNonDmDirectBooking,
@@ -39,7 +42,9 @@ export async function verifyEventAccess(
             {
               appointment: {
                 deletedAt: null,
-                participants: { some: liveParticipant(userId) },
+                participants: {
+                  some: { ...liveParticipant(userId), ...NOT_COLLABORATOR_ROW },
+                },
               },
             },
           ],
@@ -68,7 +73,9 @@ export async function verifyEventAccess(
             {
               appointment: {
                 deletedAt: null,
-                participants: { some: liveParticipant(userId) },
+                participants: {
+                  some: { ...liveParticipant(userId), ...NOT_COLLABORATOR_ROW },
+                },
               },
             },
           ],

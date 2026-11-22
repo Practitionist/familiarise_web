@@ -23,6 +23,10 @@
  * #1580 — the same queue carries a failed collaborator revocation
  * (`sideEffects.collaboratorRevocation`): the rows are REMOVED for good, so
  * the per-plan Stream removal is re-driven regardless of the ban's fate.
+ *
+ * A reject whose post-commit ending of the expert's unpaid sales failed
+ * (`sideEffects.unpaidSales`) is re-driven too, while the expert stays
+ * unverified; every ending is a CAS, so a re-run is safe.
  */
 import type {
   CollaboratorType,
@@ -32,11 +36,19 @@ import type {
   StreamRevocationKind,
 } from "@prisma/client";
 import type { AccessRevocationRow } from "@/lib/stream/access-revocation";
+import type { PlanRef } from "@/lib/collaborators/team";
 import prisma, { type PrismaLike } from "@/lib/prisma";
 import { createRunFailureReporter } from "@/lib/observability/run-failures";
+import {
+  isPublicExpertProfile,
+  publicProfileFacts,
+} from "@/lib/profiles/public-profile";
 import { nextRetryAt } from "@/lib/retry/backoff";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
-import { SWEEP_START_DEADLINE_MS } from "@/lib/cron/run-deadline";
+import {
+  startDeadlineShare,
+  SWEEP_START_DEADLINE_MS,
+} from "@/lib/cron/run-deadline";
 import { reportSentryError } from "@/lib/observability/report";
 import { reportStandingFinding } from "@/lib/observability/standing-finding";
 import {
@@ -66,6 +78,8 @@ export interface ModerationRetryResult {
   skipped: number;
   /** #1580 — collaborator Stream revocations that landed on this attempt. */
   collaboratorRecovered: number;
+  /** Rejected experts' unpaid sales ended on this attempt. */
+  unpaidSalesRecovered: number;
   /** #1593 — erasure requests whose owed Stream revocations were re-driven. */
   erasureRevocationsRecovered: number;
   /** Queued cancellation, collaborator and org-removal revocations that landed. */
@@ -101,17 +115,33 @@ const RETRYABLE_ACTIONS: ModerationActionType[] = [
   "USER_REINSTATED",
 ];
 
+/** A reject's ending is left to its own phase 2 this long before the sweep takes it. */
+const UNPAID_SALES_GRACE_MS = 5 * 60_000;
+/** The action rows' share of the start window; the rest is the Stream drain's. */
+const ACTION_ROWS_START_SHARE = 0.5;
+
 // `stream: "failed"` and `collaboratorRevocation: "failed"` are the queue; a
 // capped row is marked "gave_up" and so falls out of this selector by construction.
-const FAILED_ENFORCEMENT_WHERE: Prisma.ModerationActionWhereInput = {
-  actionType: { in: RETRYABLE_ACTIONS },
+const failedEnforcementWhere = (
+  now: Date,
+): Prisma.ModerationActionWhereInput => ({
   OR: [
-    { sideEffects: { path: ["stream"], equals: "failed" } },
     {
-      sideEffects: { path: ["collaboratorRevocation"], equals: "failed" },
+      actionType: { in: RETRYABLE_ACTIONS },
+      OR: [
+        { sideEffects: { path: ["stream"], equals: "failed" } },
+        {
+          sideEffects: { path: ["collaboratorRevocation"], equals: "failed" },
+        },
+      ],
+    },
+    {
+      actionType: "PROFILE_UNVERIFIED",
+      sideEffects: { path: ["unpaidSales"], equals: "failed" },
+      createdAt: { lt: new Date(now.getTime() - UNPAID_SALES_GRACE_MS) },
     },
   ],
-};
+});
 
 /** Owed revocations due now; a capped kind past the attempt budget already wrote its give-up. */
 function streamRevocationDueWhere(
@@ -147,7 +177,7 @@ export async function hasModerationRetryWork(
 ): Promise<boolean> {
   if (outOfTime()) return true;
   const action = await db.moderationAction.findFirst({
-    where: FAILED_ENFORCEMENT_WHERE,
+    where: failedEnforcementWhere(now),
     select: { id: true },
   });
   if (action) return true;
@@ -169,6 +199,7 @@ type ActionRow = {
   id: string;
   actionType: ModerationActionType;
   createdAt: Date;
+  takenById: string | null;
   sideEffects: unknown;
   report: {
     id: string;
@@ -263,11 +294,12 @@ async function retryModerationEnforcementUnlocked(
   const giveUpOlderThan = new Date(Date.now() - giveUpAfterHours * 3_600_000);
 
   const rows = (await prisma.moderationAction.findMany({
-    where: FAILED_ENFORCEMENT_WHERE,
+    where: failedEnforcementWhere(new Date(runStartedAt)),
     select: {
       id: true,
       actionType: true,
       createdAt: true,
+      takenById: true,
       sideEffects: true,
       report: {
         select: {
@@ -292,19 +324,29 @@ async function retryModerationEnforcementUnlocked(
     gaveUp: 0,
     skipped: 0,
     collaboratorRecovered: 0,
+    unpaidSalesRecovered: 0,
     erasureRevocationsRecovered: 0,
     accessRevocationsRecovered: 0,
     streamUnconfigured: 0,
     errors: [],
   };
 
+  const rowsOutOfTime = startDeadlineShare(
+    ACTION_ROWS_START_SHARE,
+    runStartedAt,
+  );
   for (const row of rows) {
+    // An unstarted row stays failed and due; the drains below still get their start window.
+    if (rowsOutOfTime()) break;
     const summary = summaryOf(row);
-    const budget = { maxAttempts, giveUpOlderThan };
+    const budget = { maxAttempts, giveUpOlderThan, outOfTime: rowsOutOfTime };
     if (summary.stream === "failed")
       await retryOne(row, summary, budget, result);
     if (summary.collaboratorRevocation === "failed") {
       await retryCollaboratorRevocation(row, summary, budget, result);
+    }
+    if (summary.unpaidSales === "failed") {
+      await retryUnpaidSalesEnding(row, summary, budget, result);
     }
   }
 
@@ -381,11 +423,11 @@ async function executeErasureRevocationRow(
   deps: {
     principalPrefix: string;
     eraseStreamPrincipalFootprint: (userId: string) => Promise<void>;
-    revokeCollaboratorAccess: (
-      planType: "webinar" | "class",
-      planId: string,
+    driveCollaboratorRevocation: (
+      ref: PlanRef,
       userId: string,
-    ) => Promise<{ success: boolean }>;
+      deadlineMs: number,
+    ) => Promise<string | null>;
   },
 ): Promise<string | null> {
   if (row.planId.startsWith(deps.principalPrefix)) {
@@ -399,12 +441,11 @@ async function executeErasureRevocationRow(
   if (!row.planType) return "Erasure retry has no plan type";
   const planType = row.planType === "WEBINAR" ? "webinar" : "class";
   try {
-    const { success } = await deps.revokeCollaboratorAccess(
-      planType,
-      row.planId,
+    return await deps.driveCollaboratorRevocation(
+      { planType, planId: row.planId },
       row.erasureRequest.userId,
+      Number.POSITIVE_INFINITY,
     );
-    return success ? null : "Collaborator Stream access not fully revoked";
   } catch (error_) {
     return errMsg(error_);
   }
@@ -503,7 +544,8 @@ function canStartRevocationRow(
   const isSeatKind =
     kind === "SEAT_ACCESS_REVOKE" ||
     kind === "REFUND_ACCESS_REVOKE" ||
-    kind === "CONDUCT_CALL_BLOCK";
+    kind === "CONDUCT_CALL_BLOCK" ||
+    kind === "COLLAB_REVOKE";
   return !isSeatKind || remainingMs >= MIN_SEAT_REVOCATION_SLICE_MS;
 }
 
@@ -583,14 +625,14 @@ async function drainErasureRevocations(
 
   const { STREAM_PRINCIPAL_PLAN_ID_PREFIX, eraseStreamPrincipalFootprint } =
     await import("@/lib/compliance/erasure/scrub-user");
-  const { revokeCollaboratorAccess } =
-    await import("@/lib/collaborators/service");
+  const { driveCollaboratorRevocation } =
+    await import("@/lib/stream/collaborator-access");
   const { redriveAccessRevocation } =
     await import("@/lib/stream/access-revocation");
   const deps = {
     principalPrefix: STREAM_PRINCIPAL_PLAN_ID_PREFIX,
     eraseStreamPrincipalFootprint,
-    revokeCollaboratorAccess,
+    driveCollaboratorRevocation,
     redriveAccessRevocation,
   };
   for (const row of rows) {
@@ -718,7 +760,12 @@ async function finalizeCompletedErasureRequests(
   }
 }
 
-type Budget = { maxAttempts: number; giveUpOlderThan: Date };
+type Budget = {
+  maxAttempts: number;
+  giveUpOlderThan: Date;
+  /** Stops new gateway reads inside an ending. */
+  outOfTime: () => boolean;
+};
 
 async function retryOne(
   row: ActionRow,
@@ -782,7 +829,7 @@ async function retryOne(
 }
 
 /**
- * #1580 — re-run `revokeCollaboratorAccess` for every plan the action flipped.
+ * Re-drives the collaborator revocation for every plan the action flipped.
  * Always applicable: the rows are REMOVED whatever became of the ban, and the
  * Stream removal is idempotent. Shares the attempt and age budget above.
  */
@@ -816,18 +863,18 @@ async function retryCollaboratorRevocation(
     return;
   }
 
-  // Lazy, as in side-effects.ts: the service pulls Stream and Novu.
-  const { revokeCollaboratorAccess } =
-    await import("@/lib/collaborators/service");
+  // Lazy, as in side-effects.ts: only a row with plans needs Stream.
+  const { driveCollaboratorRevocation } =
+    await import("@/lib/stream/collaborator-access");
   const failed: string[] = [];
   for (const { planType, planId } of plans) {
     try {
-      const { success } = await revokeCollaboratorAccess(
-        planType,
-        planId,
+      const error = await driveCollaboratorRevocation(
+        { planType, planId },
         row.report.targetUserId,
+        Number.POSITIVE_INFINITY,
       );
-      if (!success) failed.push(`${planType}:${planId}`);
+      if (error) failed.push(`${planType}:${planId}`);
     } catch (error) {
       failed.push(`${planType}:${planId} (${errMsg(error)})`);
     }
@@ -849,6 +896,108 @@ async function retryCollaboratorRevocation(
   await writeSummary(row.id, summary).catch(captureRetryError);
   result.stillFailing++;
   result.errors.push(`${row.id}: collaborator-revoke ${failed.join(", ")}`);
+}
+
+/**
+ * Re-runs a reject's ending of the expert's unpaid sales. Skipped once the
+ * expert is verified again (their sales are live again); shares the budget above.
+ */
+async function retryUnpaidSalesEnding(
+  row: ActionRow,
+  summary: SideEffectSummary,
+  budget: Budget,
+  result: ModerationRetryResult,
+): Promise<void> {
+  const attempts = summary.unpaidSalesAttempts ?? 1;
+  const consultantProfileId = summary.unverifiedConsultantProfileId;
+  if (
+    !consultantProfileId ||
+    attempts >= budget.maxAttempts ||
+    row.createdAt < budget.giveUpOlderThan
+  ) {
+    summary.unpaidSales = "gave_up";
+    summary.errors = appendNote(
+      summary.errors,
+      "unpaidSales: gave up — out of retry budget",
+    );
+    await writeSummary(row.id, summary).catch(captureRetryError);
+    result.gaveUp++;
+    result.errors.push(`${row.id}: unpaid-sales ending gave up`);
+    runFailures.add(
+      "unpaid-sales-ending-gave-up",
+      new Error("Unpaid-sales ending gave up"),
+      { actionId: row.id },
+      { level: "error" },
+    );
+    return;
+  }
+
+  let profile;
+  try {
+    profile = await prisma.consultantProfile.findUnique({
+      where: { id: consultantProfileId },
+      select: publicProfileFacts,
+    });
+  } catch (error) {
+    // Left as it is: still failed, still due, its attempts unspent.
+    result.errors.push(
+      `${row.id}: unpaid-sales standing read ${errMsg(error)}`,
+    );
+    return;
+  }
+  if (!profile || isPublicExpertProfile(profile)) {
+    summary.unpaidSales = "skipped";
+    summary.errors = appendNote(
+      summary.errors,
+      "unpaidSales: not retried — the expert is verified again",
+    );
+    await writeSummary(row.id, summary).catch(captureRetryError);
+    result.skipped++;
+    return;
+  }
+
+  summary.unpaidSalesAttempts = attempts + 1;
+  try {
+    // Lazy: the booking and gateway graph loads only for a row that needs it.
+    const { endUnverifiedExpertSales } =
+      await import("@/lib/booking/unverified-expert-notices");
+    // The learner notices are staged in their outboxes; the drain delivers them.
+    const outcome = await endUnverifiedExpertSales({
+      consultantProfileId,
+      actorUserId: row.takenById ?? row.report.targetUserId,
+      outOfTime: budget.outOfTime,
+    });
+    summary.payLinksClosed = outcome.payLinksClosed;
+    summary.requestsDeclined = outcome.requestsDeclined;
+    summary.trialHoldsReleased = outcome.trialHoldsReleased;
+    summary.seatsReleased = outcome.seatsReleased;
+    summary.salesKept = outcome.salesKept;
+    if (outcome.skipped) {
+      summary.unpaidSales = "skipped";
+      await writeSummary(row.id, summary);
+      result.skipped++;
+      return;
+    }
+    if (!outcome.complete) {
+      // Orders left unread for time; the next run ends the rest.
+      summary.unpaidSales = "failed";
+      await writeSummary(row.id, summary);
+      result.stillFailing++;
+      return;
+    }
+    summary.unpaidSales = "ok";
+    await writeSummary(row.id, summary);
+    result.unpaidSalesRecovered++;
+  } catch (error) {
+    summary.unpaidSales = "failed";
+    summary.errors = appendNote(
+      summary.errors,
+      `unpaidSales: ${errMsg(error)} (attempt ${attempts + 1})`,
+    );
+    await writeSummary(row.id, summary).catch(captureRetryError);
+    result.stillFailing++;
+    result.errors.push(`${row.id}: unpaid-sales ending ${errMsg(error)}`);
+  }
 }
 
 async function cap(

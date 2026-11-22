@@ -695,7 +695,9 @@ describe("Exhaustive Dual-Channel Notification & Template Parity", () => {
         },
         consultantProfile: {
           updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+          updateManyAndReturn: jest.fn().mockResolvedValue([]),
         },
+        collaborator: { findMany: jest.fn().mockResolvedValue([]) },
       };
 
       const txSummary = await applyTransactionalEffects(mockTx as never, {

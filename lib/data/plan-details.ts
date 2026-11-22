@@ -4,7 +4,11 @@ import { planBuyBlockedFor } from "@/lib/booking/plan-demand";
 import { seatHoldingParticipant } from "@/utils/scheduling-engine/occupancyPolicy";
 import { toPlain } from "@/lib/data/serialize";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
-import { planConsultantUserSelect } from "@/lib/api/plans/consultant-projection";
+import { publicProfileFacts } from "@/lib/profiles/public-profile";
+import {
+  planCollaboratorScalars,
+  planConsultantUserSelect,
+} from "@/lib/api/plans/consultant-projection";
 
 /**
  * Server-side data access for the four plan detail pages.
@@ -59,6 +63,8 @@ export async function fetchWebinarPlanDetail(webinarPlanId: string) {
       consultantProfile: {
         select: {
           ...consultantPublicScalars,
+          // The detail gate hides an unverified expert's plan from all but its author.
+          ...publicProfileFacts,
           user: planConsultantUserSelect,
           domain: true,
           subDomains: true,
@@ -84,7 +90,8 @@ export async function fetchWebinarPlanDetail(webinarPlanId: string) {
           status: "ACCEPTED" as const,
           consultantProfile: { deletedAt: null },
         },
-        include: {
+        select: {
+          ...planCollaboratorScalars,
           consultantProfile: {
             select: {
               ...consultantPublicScalars,
@@ -126,6 +133,8 @@ export async function fetchClassPlanDetail(classPlanId: string) {
       consultantProfile: {
         select: {
           ...consultantPublicScalars,
+          // The detail gate hides an unverified expert's plan from all but its author.
+          ...publicProfileFacts,
           user: planConsultantUserSelect,
           domain: true,
           subDomains: true,
@@ -154,7 +163,8 @@ export async function fetchClassPlanDetail(classPlanId: string) {
           status: "ACCEPTED" as const,
           consultantProfile: { deletedAt: null },
         },
-        include: {
+        select: {
+          ...planCollaboratorScalars,
           consultantProfile: {
             select: {
               ...consultantPublicScalars,
@@ -199,6 +209,7 @@ export const getClassPlanDetail = cache(fetchClassPlanDetail);
 const planOwnerSelect = {
   select: {
     ...consultantPublicScalars,
+    ...publicProfileFacts,
     user: planConsultantUserSelect,
     domain: true,
     subDomains: true,

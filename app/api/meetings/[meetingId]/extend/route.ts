@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import prisma from "@/lib/prisma";
+import { NOT_COLLABORATOR_ROW } from "@/lib/booking/participants";
 import { guardMeetingRoute } from "@/lib/meetings/route-guard";
 import {
   MAX_MEETING_EXTENSIONS,
@@ -59,6 +60,7 @@ function buildConflictScope(
               "HELD" | "CONFIRMED" | "ATTENDED"
             )[],
           },
+          ...NOT_COLLABORATOR_ROW,
         },
       },
     },
@@ -408,7 +410,10 @@ export async function POST(
             appointment: {
               select: {
                 participants: {
-                  where: { status: { in: ["HELD", "CONFIRMED", "ATTENDED"] } },
+                  where: {
+                    status: { in: ["HELD", "CONFIRMED", "ATTENDED"] },
+                    ...NOT_COLLABORATOR_ROW,
+                  },
                   select: { userId: true },
                 },
                 webinar: {

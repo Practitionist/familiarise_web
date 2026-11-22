@@ -33,6 +33,7 @@ import type {
 import type { ConsultationPlan, SubscriptionPlan } from "@/schemas/plans";
 import { useToast } from "@/hooks/use-toast";
 import { useExpertShareHref } from "@/hooks/useExpertShareHref";
+import { useOfferingsListed } from "@/hooks/useVerificationStatus";
 import { useSession } from "@/lib/auth-client";
 import { useListParams } from "@/hooks/useListParams";
 import { EmptyState } from "@/components/dashboard/EmptyState";
@@ -364,6 +365,9 @@ export function EventManagementDashboard({
     type === "subscription",
   );
   const expertShareHref = useExpertShareHref(consultantId);
+  // The owner's own standing: unverified, their published offerings are hidden from learners.
+  const ownsPlanner = session?.user?.consultantProfileId === consultantId;
+  const listed = useOfferingsListed(session?.user?.id, ownsPlanner);
 
   const archive: Record<
     OfferingPlanType,
@@ -443,6 +447,7 @@ export function EventManagementDashboard({
         ? `${basePath}/offerings/${row.type}/new?from=${planId}`
         : null,
       shareAttributionHref: expertShareHref,
+      listed,
       // A published class can't be sold until its sessions have times.
       scheduleHref:
         (row.type === "webinar" || row.type === "class") &&

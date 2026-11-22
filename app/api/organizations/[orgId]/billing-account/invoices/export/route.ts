@@ -10,12 +10,15 @@
 import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+import { visibleInvoiceWhere } from "@/lib/enterprise/invoice-visibility";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { keysetCsvStream, keysetWhere } from "@/lib/csv/keyset-export";
+import { formatInvoiceDate } from "@/lib/time/invoice-date";
 
 const INVOICE_EXPORT_COLUMNS = 14;
+// Issue and due dates are India calendar dates; paid_at is the payment's UTC instant.
 const INVOICE_EXPORT_HEADER =
-  "invoice_number,status,currency,subtotal_paise,igst_paise,cgst_paise,sgst_paise,total_paise,issued_at,due_date,paid_at,purchase_order_id,contract_id,id\n";
+  "invoice_number,status,currency,subtotal_paise,igst_paise,cgst_paise,sgst_paise,total_paise,issue_date_ist,due_date_ist,paid_at,purchase_order_id,contract_id,id\n";
 
 export async function GET(
   req: NextRequest,
@@ -66,7 +69,10 @@ export async function GET(
       }),
     fetchPage: async (cursor, take) => {
       const rows = await prisma.organizationInvoice.findMany({
-        where: keysetWhere({ organizationId: orgId }, cursor),
+        where: keysetWhere(
+          { organizationId: orgId, ...visibleInvoiceWhere(access.member.role) },
+          cursor,
+        ),
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
         take,
         select: {
@@ -107,8 +113,8 @@ export async function GET(
       r.cgstPaise.toString(),
       r.sgstPaise.toString(),
       r.totalPaise.toString(),
-      r.issuedAt?.toISOString() ?? "",
-      r.dueDate?.toISOString() ?? "",
+      r.issuedAt ? formatInvoiceDate(r.issuedAt) : "",
+      r.dueDate ? formatInvoiceDate(r.dueDate) : "",
       r.paidAt?.toISOString() ?? "",
       r.purchaseOrderId ?? "",
       r.contractId ?? "",

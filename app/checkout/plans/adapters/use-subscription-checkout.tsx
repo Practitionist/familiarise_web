@@ -38,7 +38,12 @@ import { firstCycleWindow } from "@/lib/booking/entitlement";
 import { CheckoutTotalNotes } from "../components/CheckoutTotals";
 import { reportPaymentsError } from "../utils";
 import { firstCycleLines } from "./first-cycle-lines";
-import { loadErrorMessage, planIncludes, searchParamsKey } from "./shared";
+import {
+  loadErrorMessage,
+  planIncludes,
+  planLoadError,
+  searchParamsKey,
+} from "./shared";
 
 // price arrives as number: extended client + JSON serialization
 type SubscriptionPlanWithConsultant = Omit<SubscriptionPlan, "price"> & {
@@ -103,7 +108,7 @@ export function useSubscriptionCheckout(
     queryFn: async (): Promise<SubscriptionResponse> => {
       const response = await fetch(`/api/plans/subscriptions/${planId}`);
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        throw planLoadError(response.status);
       }
       const data = await response.json();
       if (!data.data.consultantProfile?.user) {

@@ -46,6 +46,7 @@ From [Official Razorpay Idempotent Refunds Docs](https://razorpay.com/docs/api/r
    - **Payload mismatch (`409 Conflict`)**: `"Different request with the same idempotency key has already been processed."` Retrying will never succeed; `postRefund` immediately throws `RefundError(..., "REFUND_IDEMPOTENCY_KEY_REUSED")`.
 3. **`receipt` Field Quirk**:
    - If `receipt` is passed on `POST /v1/payments/:id/refund`, Razorpay treats `receipt` as an additional idempotency key scoped to that `payment_id` and rejects duplicates with `400 BAD_REQUEST_ERROR`.
+   - **Where we send one**: only the late-capture refund in `handlePaymentSuccess` (`lateCaptureRefundKeys`), as `late_capture_<pay_id>` alongside `Refund.dedupeKey` `late-capture:<pay_id>`, so the webhook, `reconcile-payment-status` and the Request-again re-check converge on one refund. A duplicate is a definitive refusal (`BAD_REQUEST_ERROR`), so the second reservation is marked `FAILED` and moves no money. The header stays the reservation id: keyed on the payment id, a retry after a definitive refusal would carry a new `notes.reservationId` and hit the payload-mismatch `409` for good.
 
 ---
 

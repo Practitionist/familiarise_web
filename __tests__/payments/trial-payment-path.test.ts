@@ -11,7 +11,6 @@
  *  - a TRIAL intent without a trialId is rejected before it reaches the gateway
  *  - webhook metadata validates for TRIAL (an unhandled type routes to
  *    CRITICAL_PAYMENT_WITHOUT_APPOINTMENT — learner charged, trial unscheduled)
- *  - the payment deadline is 24h, clamped to the session start
  *  - only live/delivered trials block a re-request; lapsed ones free the pair
  *  - AWAITING_PAYMENT occupies its slot, so nobody can book over a trial that
  *    is mid-payment
@@ -20,8 +19,6 @@
 import { AppointmentsType, TrialStatus } from "@prisma/client";
 
 import {
-  computeTrialPaymentDueAt,
-  TRIAL_PAYMENT_WINDOW_MS,
   TRIAL_REQUEST_BLOCKING_STATUSES,
   TRIAL_REQUEST_FREEING_STATUSES,
 } from "../../lib/trials/eligibility";
@@ -31,35 +28,6 @@ import { buildOccupiedAppointmentFilter } from "../../utils/scheduling-engine/oc
 const CUID = "clw0000000000000000000000";
 const PLAN_CUID = "clw1111111111111111111111";
 const TRIAL_CUID = "clw2222222222222222222222";
-
-describe("trial payment deadline", () => {
-  it("is 24h from acceptance when the session is further out", () => {
-    const acceptedAt = new Date("2026-01-01T00:00:00.000Z");
-    const sessionStart = new Date("2026-01-05T00:00:00.000Z");
-
-    const due = computeTrialPaymentDueAt(acceptedAt, sessionStart);
-
-    expect(due.getTime()).toBe(acceptedAt.getTime() + TRIAL_PAYMENT_WINDOW_MS);
-  });
-
-  it("clamps to the session start when the slot is sooner than 24h", () => {
-    const acceptedAt = new Date("2026-01-01T00:00:00.000Z");
-    // Three hours out — the link must not outlive the session it pays for.
-    const sessionStart = new Date("2026-01-01T03:00:00.000Z");
-
-    const due = computeTrialPaymentDueAt(acceptedAt, sessionStart);
-
-    expect(due).toEqual(sessionStart);
-  });
-
-  it("falls back to the full window when there is no session time", () => {
-    const acceptedAt = new Date("2026-01-01T00:00:00.000Z");
-
-    const due = computeTrialPaymentDueAt(acceptedAt, null);
-
-    expect(due.getTime()).toBe(acceptedAt.getTime() + TRIAL_PAYMENT_WINDOW_MS);
-  });
-});
 
 describe("trial re-request eligibility", () => {
   it("classifies every trial status exactly once: live or delivered blocks, CANCELLED frees", () => {

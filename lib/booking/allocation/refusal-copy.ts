@@ -2,6 +2,7 @@
 // strings (times as ISO, counts) are developer detail: they ride `details`
 // to logs and Sentry, never the response.
 
+import { SLOT_TOO_FAR_MESSAGE } from "@/lib/payments/utils/slot-validation";
 import {
   AllocationConflictError,
   AllocationValidationError,
@@ -20,6 +21,7 @@ const COPY_BY_TAG: Record<string, string> = {
     "These times put too many sessions on one day. Spread them across more days.",
   TOO_SOON:
     "One of these times has passed or starts too soon to confirm. Pick a later time.",
+  TOO_FAR: SLOT_TOO_FAR_MESSAGE,
   OUTSIDE_PLAN_WEEK:
     "A subscription is scheduled one plan week at a time. Pick times inside the open week shown on the calendar.",
   PLAN_WEEK_FULL:
