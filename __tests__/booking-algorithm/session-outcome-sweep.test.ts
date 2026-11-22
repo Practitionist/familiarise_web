@@ -51,6 +51,14 @@ jest.mock("../../lib/prisma", () => {
       }),
     },
     recording: { findFirst: async () => recording.current },
+    // The end fields the sweep re-reads after settling: the room as the fixture ended it.
+    meeting: {
+      findUnique: async () => ({
+        endedAt: new Date(Date.UTC(2026, 8, 25, 11, 0)),
+        endedReason: "call_ended",
+        attendanceSettledAt: null,
+      }),
+    },
     appointmentParticipant: {
       updateMany: (...a: unknown[]) => seatUpdate(...a),
     },

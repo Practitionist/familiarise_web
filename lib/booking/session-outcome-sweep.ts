@@ -32,7 +32,7 @@ import {
   settleOccurrenceAttendance,
 } from "@/lib/meetings/settle-attendance";
 import type { RunFailureReporter } from "@/lib/observability/run-failures";
-import { isPastNoShowHandoff } from "./attendance";
+import { isPastNoShowHandoff, NO_SHOW_GRACE_MINUTES } from "./attendance";
 import {
   classifySessionOutcome,
   COMPLETION_FOR_OUTCOME,
@@ -145,6 +145,31 @@ export async function readOutageWindows(
   ];
 }
 
+type RoomEnd = {
+  endedAt: Date | null;
+  endedReason: string | null;
+  attendanceSettledAt: Date | null;
+};
+
+const readRoomEnd = (meetingId: string): Promise<RoomEnd | null> =>
+  prisma.meeting.findUnique({
+    where: { id: meetingId },
+    select: { endedAt: true, endedReason: true, attendanceSettledAt: true },
+  });
+
+/**
+ * When the detector's handoff clock starts: the booked end, or, for a record
+ * stored later than the detector's grace allows, that much before the stamp,
+ * so the detector always gets its runs on the settled record.
+ */
+function noShowHandoffAnchor(endsAt: Date, settledAt: Date | null): Date {
+  if (!settledAt) return endsAt;
+  const fromStamp = new Date(
+    settledAt.getTime() - NO_SHOW_GRACE_MINUTES * 60_000,
+  );
+  return fromStamp > endsAt ? fromStamp : endsAt;
+}
+
 /** A session no one could read: no host attribution and no money moves. */
 const UNREADABLE_VERDICT: SessionOutcomeVerdict = {
   outcome: "INCONCLUSIVE",
@@ -205,9 +230,10 @@ async function writeSlotOutcomeTransaction(
   to: OccurrenceCompletionStatus,
   verdict: SessionOutcomeVerdict,
   now: Date,
-  /** An unreadable verdict writes only while the room is still unsettled. */
-  requireUnsettled = false,
+  /** The room's end as classified, and whether an unreadable verdict needs the room still unsettled. */
+  fence: { room: RoomEnd | null; requireUnsettled: boolean },
 ): Promise<boolean> {
+  const { requireUnsettled } = fence;
   const txResult = await prisma.$transaction(
     async (tx) => {
       if (requireUnsettled && (await settledSinceRead(tx, slot.id))) {
@@ -225,9 +251,15 @@ async function writeSlotOutcomeTransaction(
           isTentative: false,
           deletedAt: null,
           voidedAt: null,
-          // A snapshot stored since the read decides instead; the next run classifies it.
-          ...(requireUnsettled && {
-            meeting: { is: { attendanceSettledAt: null } },
+          // An end or a snapshot stored since the classification decides instead; the next run classifies it.
+          ...(fence.room && {
+            meeting: {
+              is: {
+                endedAt: fence.room.endedAt,
+                endedReason: fence.room.endedReason,
+                ...(requireUnsettled && { attendanceSettledAt: null }),
+              },
+            },
           }),
         },
         to,
@@ -404,6 +436,8 @@ export async function decideSlotOutcome(
     return { kind: "deferred", reason: "attendance-unsettled" };
   }
   const presences = evidence.kind === "intervals" ? evidence.intervals : [];
+  // The end fields are read after the settle, so an end that committed during the Stream reads is the one judged.
+  const room = meeting ? await readRoomEnd(meeting.id) : null;
   const verdict =
     evidence.kind === "unreadable"
       ? UNREADABLE_VERDICT
@@ -412,8 +446,8 @@ export async function decideSlotOutcome(
           endsAt: slot.endsAt,
           hostUserIds: sessionHostUserIds(slot.appointment),
           intervals: presences,
-          meeting: meeting
-            ? { endedAt: meeting.endedAt, endedReason: meeting.endedReason }
+          meeting: room
+            ? { endedAt: room.endedAt, endedReason: room.endedReason }
             : null,
           maintenanceWindows: ctx.outages,
         });
@@ -421,7 +455,13 @@ export async function decideSlotOutcome(
   if (verdict.outcome === "HOST_ABSENT" && slot.appointment.consultationId) {
     // D5 — the detector cancels and refunds a consultation host no-show; one it
     // declined parks UNVERIFIED for ops after the handoff instead of voiding.
-    if (!isPastNoShowHandoff(slot.endsAt, ctx.now, ctx.outages)) {
+    if (
+      !isPastNoShowHandoff(
+        noShowHandoffAnchor(slot.endsAt, room?.attendanceSettledAt ?? null),
+        ctx.now,
+        ctx.outages,
+      )
+    ) {
       return { kind: "deferred", reason: "no-show-detector" };
     }
     to = OccurrenceCompletionStatus.UNVERIFIED;
@@ -433,7 +473,7 @@ export async function decideSlotOutcome(
     to,
     verdict,
     ctx.now,
-    evidence.kind === "unreadable",
+    { room, requireUnsettled: evidence.kind === "unreadable" },
   );
   if (moved && evidence.kind === "unreadable") ctx.onUnreadable?.(slot.id);
   return { kind: "written", to, verdict, moved };

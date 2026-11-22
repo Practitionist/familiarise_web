@@ -300,13 +300,21 @@ it("a live session stores nothing; once it ends a retry stores Stream's rows in 
   });
   expect(settled.kind).toBe("settled");
   expect(await settledAt(room.meetingId)).toEqual(now);
-  expect(await stored(room.meetingId)).toEqual([
-    expect.objectContaining({ userId: room.hostId, leftAt: expect.any(Date) }),
-    expect.objectContaining({
-      userId: room.learnerId,
-      leftAt: expect.any(Date),
-    }),
-  ]);
+  // Both stays joined at the same instant, so their order is not part of the contract.
+  const rows = await stored(room.meetingId);
+  expect(rows).toHaveLength(2);
+  expect(rows).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        userId: room.hostId,
+        leftAt: expect.any(Date),
+      }),
+      expect.objectContaining({
+        userId: room.learnerId,
+        leftAt: expect.any(Date),
+      }),
+    ]),
+  );
 });
 
 it("two settlers racing store one snapshot, and a settled room is answered without asking Stream again", async () => {

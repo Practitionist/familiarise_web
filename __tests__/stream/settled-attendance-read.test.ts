@@ -148,22 +148,26 @@ it.each([
   [
     "a session still live",
     () => {
+      // s2 stays listed, so only s1's liveness can make the record not final.
       stream.sessions.set("default:occurrence-occ-1", [
         {
           ...ended("s1"),
           counts: { live_sessions: 1, sessions: 1, participants: 1 },
         },
+        ended("s2"),
       ]);
     },
   ],
   [
     "a session with no end",
     () => {
+      // s2 stays listed, so only s1's missing end can make the record not final.
       stream.sessions.set("default:occurrence-occ-1", [
         {
           call_session_id: "s1",
           counts: { live_sessions: 0, sessions: 1, participants: 1 },
         },
+        ended("s2"),
       ]);
     },
   ],
@@ -266,4 +270,19 @@ it("a session announced or seen elsewhere that stats do not list keeps the recor
   expect(
     await read({ readySessionIds: [...READY.readySessionIds, "s9"] }),
   ).toEqual({ kind: "not-final" });
+});
+
+it("an expired session whose detail comes back as an empty list, with its total kept, is expired", async () => {
+  const old = new Date(Date.now() - 91 * 86_400_000).toISOString();
+  stream.sessions = new Map([
+    ["default:occurrence-occ-1", [{ ...ended("s1"), call_ended_at: old }]],
+    ["default:occurrence-occ-1-r2", [{ ...ended("s3"), call_ended_at: old }]],
+  ]);
+  stream.rows.set("occurrence-occ-1/s1", []);
+  stream.totals.set("occurrence-occ-1/s1", 1);
+  stream.rows.set("occurrence-occ-1-r2/s3", []);
+  stream.totals.set("occurrence-occ-1-r2/s3", 1);
+  expect(await read({ readySessionIds: ["s1", "s3"] })).toEqual({
+    kind: "expired",
+  });
 });

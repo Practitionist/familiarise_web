@@ -217,6 +217,14 @@ async function readSessionParticipants(
     }
     next = nextCursor(page.next, seen);
   } while (next);
+  // Stream's docs say expired detail is an empty list with the total kept; live checks saw a 404 (handled above).
+  if (
+    rows === 0 &&
+    total > 0 &&
+    Date.now() - session.endedAt.getTime() >= PARTICIPANT_DETAIL_RETENTION_MS
+  ) {
+    throw new Expired();
+  }
   // Filters change only the list, never the total, so the count guards against a partial page.
   if (rows !== total) throw new NotFinal("rows and total disagree");
   // A repeated row would pass the count and then vanish on insert; session stats must agree too.
