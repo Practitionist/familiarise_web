@@ -185,7 +185,7 @@ export async function settleRecentAttendance(
     },
     select: {
       ...SETTLE_MEETING_SELECT,
-      occurrence: { select: { id: true, endsAt: true } },
+      occurrence: { select: { id: true, startsAt: true, endsAt: true } },
     },
     orderBy: { occurrence: { endsAt: "desc" } },
     take: ON_DEMAND_CANDIDATES,
@@ -194,6 +194,7 @@ export async function settleRecentAttendance(
   const readable = rooms
     .map(({ occurrence, ...meeting }) => ({
       occurrenceId: occurrence.id,
+      startsAt: occurrence.startsAt,
       endsAt: occurrence.endsAt,
       meeting,
     }))

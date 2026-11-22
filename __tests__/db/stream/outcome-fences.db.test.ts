@@ -1,9 +1,11 @@
 /**
  * The outcome written from a settled record on real Postgres: it is classified
- * with the room's end as it stands after the settle, and a consultant no-show
- * settled late still reaches the detector before the sweep parks it.
+ * with the room's end as it stands after the settle, an end that commits while
+ * the write waits leaves the session for a fresh decision, and a consultant
+ * no-show settled late still reaches the detector before the sweep parks it.
  */
 import { randomUUID } from "node:crypto";
+import { Prisma } from "@prisma/client";
 import prisma from "../../../lib/prisma";
 import {
   decideSlotOutcome,
@@ -149,6 +151,126 @@ it("a consultant no-show whose record settles only at the six-hour fallback is l
     outages: [],
   });
   expect(decision).toEqual({ kind: "deferred", reason: "no-show-detector" });
+
+  await detectConsultantNoShows();
+  expect(
+    await prisma.consultation.findUniqueOrThrow({
+      where: { id: room.consultationId! },
+      select: { status: true },
+    }),
+  ).toEqual({ status: "CANCELLED" });
+});
+
+/** Backends of this database parked on a lock. */
+const lockWaiters = async () => {
+  const [{ waiting }] = await prisma.$queryRaw<{ waiting: number }[]>(
+    Prisma.sql`SELECT count(*)::int AS waiting FROM pg_stat_activity
+      WHERE datname = current_database() AND wait_event_type = 'Lock'`,
+  );
+  return waiting;
+};
+
+async function waitFor(done: () => Promise<boolean>): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (!(await done())) {
+    if (Date.now() > deadline)
+      throw new Error("The race never reached its step");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+it("a host's deliberate end that commits while the outcome write waits on the session leaves it SCHEDULED for a fresh decision", async () => {
+  const room = await seedPaidConsultation(3);
+  const halfway = new Date(room.startsAt.getTime() + 30 * MIN);
+  fakeStream.calls.set(room.streamCallId, {
+    occurrenceId: room.occurrenceId,
+    sessions: [
+      {
+        id: "S",
+        live: false,
+        stays: [
+          stay(room.hostId, room.startsAt, 0, 30 * MIN),
+          stay(room.learnerId, room.startsAt, 0, 30 * MIN),
+        ],
+      },
+    ],
+  });
+  await prisma.meeting.update({
+    where: { id: room.meetingId },
+    data: {
+      endedAt: halfway,
+      endedReason: "session_timeout",
+      streamReportReadySessionIds: ["S"],
+    },
+  });
+  const slot = await loadSlot(room.occurrenceId);
+  let write: Promise<unknown> | undefined;
+  await prisma.$transaction(
+    async (tx) => {
+      // Something else holds the session row while the sweep classifies a timeout.
+      await tx.$executeRaw`SELECT 1 FROM "AppointmentOccurrence" WHERE id = ${room.occurrenceId} FOR NO KEY UPDATE`;
+      write = decideSlotOutcome(slot, {
+        now: new Date(room.endsAt.getTime() + 75 * MIN),
+        outages: [],
+      });
+      await waitFor(async () => (await lockWaiters()) >= 1);
+      // The host's "End for everyone" at the same moment commits on another connection.
+      await prisma.meeting.update({
+        where: { id: room.meetingId },
+        data: { endedReason: "call_ended" },
+      });
+    },
+    { timeout: 20_000 },
+  );
+  await write;
+
+  expect(
+    await prisma.appointmentOccurrence.findUniqueOrThrow({
+      where: { id: room.occurrenceId },
+      select: { completionStatus: true, outcome: true },
+    }),
+  ).toEqual({ completionStatus: "SCHEDULED", outcome: null });
+});
+
+it("a learner's announced device check never settles a consultant no-show early; at the six-hour fallback the detector refunds it", async () => {
+  const room = await seedPaidConsultation(7);
+  // A: the learner's device check before the start, announced. B: the hour the learner waited, not yet in stats.
+  const sessionB = {
+    id: "B",
+    live: false,
+    hiddenFromStats: true,
+    stays: [stay(room.learnerId, room.startsAt, 0, 60 * MIN)],
+  };
+  fakeStream.calls.set(room.streamCallId, {
+    occurrenceId: room.occurrenceId,
+    sessions: [
+      {
+        id: "A",
+        live: false,
+        stays: [stay(room.learnerId, room.startsAt, -12 * MIN, -10 * MIN)],
+      },
+      sessionB,
+    ],
+  });
+  await prisma.meeting.update({
+    where: { id: room.meetingId },
+    data: { streamReportReadySessionIds: ["A"], lastStreamSessionId: "A" },
+  });
+
+  expect(
+    await decideSlotOutcome(await loadSlot(room.occurrenceId), {
+      now: new Date(room.endsAt.getTime() + 75 * MIN),
+      outages: [],
+    }),
+  ).toEqual({ kind: "deferred", reason: "attendance-unsettled" });
+
+  sessionB.hiddenFromStats = false;
+  expect(
+    await decideSlotOutcome(await loadSlot(room.occurrenceId), {
+      now: new Date(),
+      outages: [],
+    }),
+  ).toEqual({ kind: "deferred", reason: "no-show-detector" });
 
   await detectConsultantNoShows();
   expect(

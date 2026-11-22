@@ -337,7 +337,12 @@ export async function rereadSessionAttendance(args: {
     );
   }
   const settled = await settleOccurrenceAttendance(
-    { occurrenceId: occ.id, endsAt: occ.endsAt, meeting: occ.meeting },
+    {
+      occurrenceId: occ.id,
+      startsAt: occ.startsAt,
+      endsAt: occ.endsAt,
+      meeting: occ.meeting,
+    },
     { now },
   );
   if (settled.kind !== "settled")

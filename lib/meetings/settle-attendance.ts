@@ -24,6 +24,8 @@ export const REPORT_READY_FALLBACK_MS = 6 * 60 * 60 * 1000;
 
 export interface SettleTarget {
   occurrenceId: string;
+  /** The booked start: before the fallback, an announced session must have ended after it. */
+  startsAt: Date;
   endsAt: Date;
   meeting: {
     id: string;
@@ -93,6 +95,7 @@ export async function settleOccurrenceAttendance(
     occurrenceId: target.occurrenceId,
     currentCallId: meeting.streamCallId,
     readySessionIds: meeting.streamReportReadySessionIds,
+    bookedStartsAt: target.startsAt,
     lastKnownSessionId: meeting.lastStreamSessionId,
     fallback,
     // A pre-start end reserves a replacement id that no join may have created yet.

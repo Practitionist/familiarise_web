@@ -22,6 +22,7 @@ import {
 
 it("reads one ended room past its rejoin grace and settles it", async () => {
   const now = new Date("2026-11-23T07:00:00Z");
+  const startsAt = new Date("2026-11-23T04:30:00Z");
   const endsAt = new Date("2026-11-23T05:30:00Z");
   const meeting = {
     id: "m-1",
@@ -30,7 +31,7 @@ it("reads one ended room past its rejoin grace and settles it", async () => {
     attendanceSettledAt: null,
   };
   findMany.mockResolvedValue([
-    { ...meeting, occurrence: { id: "occ-1", endsAt } },
+    { ...meeting, occurrence: { id: "occ-1", startsAt, endsAt } },
   ]);
 
   const before = Date.now();
@@ -52,7 +53,12 @@ it("reads one ended room past its rejoin grace and settles it", async () => {
     unknown,
     { now: Date; deadlineAt: number },
   ];
-  expect(target).toEqual({ occurrenceId: "occ-1", endsAt, meeting });
+  expect(target).toEqual({
+    occurrenceId: "occ-1",
+    startsAt,
+    endsAt,
+    meeting,
+  });
   expect(opts.now).toBe(now);
   expect(opts.deadlineAt).toBeGreaterThanOrEqual(
     before + ON_DEMAND_SETTLE_BUDGET_MS,

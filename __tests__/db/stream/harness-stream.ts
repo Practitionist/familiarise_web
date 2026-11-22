@@ -64,6 +64,17 @@ async function guard() {
 }
 
 const ENDED_AT = "2026-01-01T00:00:00.000Z";
+const IDLE_TIMEOUT_MS = 5 * 60_000;
+
+/** Stream ends an idle session 300 seconds after its last leave. */
+function endedAtOf(s: FakeSession): string {
+  const lastLeave = Math.max(
+    ...s.stays.map((st) => st.leftAt?.getTime() ?? -Infinity),
+  );
+  return Number.isFinite(lastLeave)
+    ? new Date(lastLeave + IDLE_TIMEOUT_MS).toISOString()
+    : ENDED_AT;
+}
 
 /** A call as Stream's call listing and `call.get()` describe it. */
 function callResponse(id: string, call: FakeCall) {
@@ -80,7 +91,7 @@ function callResponse(id: string, call: FakeCall) {
           ...(current.startedAt
             ? { started_at: current.startedAt.toISOString() }
             : {}),
-          ...(current.live ? {} : { ended_at: ENDED_AT }),
+          ...(current.live ? {} : { ended_at: endedAtOf(current) }),
         }
       : null,
   };
@@ -122,7 +133,7 @@ export const fakeStreamClient = {
             .filter((s) => !s.hiddenFromStats)
             .map((s) => ({
               call_session_id: s.id,
-              ...(s.live ? {} : { call_ended_at: ENDED_AT }),
+              ...(s.live ? {} : { call_ended_at: endedAtOf(s) }),
               counts: { ...countsOf(s), live_sessions: s.live ? 1 : 0 },
             })),
         };
@@ -152,7 +163,9 @@ export const fakeStreamClient = {
               ...(s.leftAt ? { left_at: s.leftAt.toISOString() } : {}),
             })),
             total_participant_sessions: stays.length,
-            session: session?.live ? {} : { ended_at: ENDED_AT },
+            session: session?.live
+              ? {}
+              : { ended_at: session ? endedAtOf(session) : ENDED_AT },
           };
         },
       }),

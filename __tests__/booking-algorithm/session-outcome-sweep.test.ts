@@ -56,6 +56,7 @@ jest.mock("../../lib/prisma", () => {
       findUnique: async () => ({
         endedAt: new Date(Date.UTC(2026, 8, 25, 11, 0)),
         endedReason: "call_ended",
+        streamCallId: "c",
         attendanceSettledAt: null,
       }),
     },
@@ -66,9 +67,16 @@ jest.mock("../../lib/prisma", () => {
     failedEmail: { create: jest.fn().mockResolvedValue({ id: "fe-1" }) },
     emailSuppression: { findMany: jest.fn().mockResolvedValue([]) },
   };
-  // The unreadable park locks the rows and re-reads the stamp: still unsettled here.
+  // Every write locks the rows and re-reads the room's end: unchanged and unsettled here.
   client.$executeRaw = jest.fn().mockResolvedValue(1);
-  client.$queryRaw = jest.fn().mockResolvedValue([{ settled: null }]);
+  client.$queryRaw = jest.fn().mockResolvedValue([
+    {
+      endedAt: new Date(Date.UTC(2026, 8, 25, 11, 0)),
+      endedReason: "call_ended",
+      streamCallId: "c",
+      settledAt: null,
+    },
+  ]);
   client.$transaction = jest.fn((fn: (tx: unknown) => unknown) => fn(client));
   return { __esModule: true, default: client };
 });

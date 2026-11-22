@@ -92,11 +92,13 @@ const stay = (user: string, from: string, to: string): Row => ({
 /** Every session's report announced ready, as Stream does once its data is final. */
 const READY: {
   readySessionIds: string[];
+  bookedStartsAt: Date;
   lastKnownSessionId: string | null;
   fallback: boolean;
   currentCallReserved: boolean;
 } = {
   readySessionIds: ["s1", "s2", "s3"],
+  bookedStartsAt: new Date("2026-11-23T04:30:00Z"),
   lastKnownSessionId: null,
   fallback: false,
   currentCallReserved: false,
@@ -218,7 +220,12 @@ it.each([
       ],
     ]);
     stream.failParticipants = { status: 404 };
-    expect(await read({ readySessionIds: ["s1", "s3"] })).toEqual({ kind });
+    expect(
+      await read({
+        readySessionIds: ["s1", "s3"],
+        bookedStartsAt: new Date(Date.parse(endedAt) - DAY / 24),
+      }),
+    ).toEqual({ kind });
   },
 );
 
@@ -282,7 +289,10 @@ it("an expired session whose detail comes back as an empty list, with its total 
   stream.totals.set("occurrence-occ-1/s1", 1);
   stream.rows.set("occurrence-occ-1-r2/s3", []);
   stream.totals.set("occurrence-occ-1-r2/s3", 1);
-  expect(await read({ readySessionIds: ["s1", "s3"] })).toEqual({
-    kind: "expired",
-  });
+  expect(
+    await read({
+      readySessionIds: ["s1", "s3"],
+      bookedStartsAt: new Date(Date.parse(old) - DAY / 24),
+    }),
+  ).toEqual({ kind: "expired" });
 });

@@ -148,13 +148,19 @@ export async function readOutageWindows(
 type RoomEnd = {
   endedAt: Date | null;
   endedReason: string | null;
+  streamCallId: string;
   attendanceSettledAt: Date | null;
 };
 
 const readRoomEnd = (meetingId: string): Promise<RoomEnd | null> =>
   prisma.meeting.findUnique({
     where: { id: meetingId },
-    select: { endedAt: true, endedReason: true, attendanceSettledAt: true },
+    select: {
+      endedAt: true,
+      endedReason: true,
+      streamCallId: true,
+      attendanceSettledAt: true,
+    },
   });
 
 /**
@@ -197,7 +203,12 @@ async function slotEvidence(
     return { kind: "intervals", intervals: [] };
   }
   const settled = await settleOccurrenceAttendance(
-    { occurrenceId: slot.id, endsAt: slot.endsAt, meeting },
+    {
+      occurrenceId: slot.id,
+      startsAt: slot.startsAt,
+      endsAt: slot.endsAt,
+      meeting,
+    },
     { now: ctx.now, failures: ctx.failures, deadlineAt: ctx.settleDeadlineAt },
   );
   if (settled.kind === "settled") {
@@ -212,16 +223,36 @@ async function slotEvidence(
 }
 
 /**
- * Takes the occurrence row, then the room row, and re-reads the stamp: a
- * snapshot that committed before this point wins over an unreadable park.
- * NO KEY UPDATE leaves the presence inserts' foreign-key checks free.
+ * Takes the occurrence row, then the room row, and re-reads the room's end: an
+ * end, a rotation or (for an unreadable park) a snapshot that committed since
+ * the classification wins. NO KEY UPDATE leaves the presence inserts' FK checks free.
  */
-async function settledSinceRead(tx: Tx, occurrenceId: string) {
+async function roomChangedSinceRead(
+  tx: Tx,
+  occurrenceId: string,
+  room: RoomEnd,
+  requireUnsettled: boolean,
+): Promise<boolean> {
   await tx.$executeRaw`SELECT 1 FROM "AppointmentOccurrence" WHERE id = ${occurrenceId} FOR NO KEY UPDATE`;
-  const rooms = await tx.$queryRaw<{ settled: Date | null }[]>`
-    SELECT "attendanceSettledAt" AS settled FROM "Meeting"
-    WHERE "appointmentOccurrenceId" = ${occurrenceId} FOR NO KEY UPDATE`;
-  return Boolean(rooms[0]?.settled);
+  const rows = await tx.$queryRaw<
+    {
+      endedAt: Date | null;
+      endedReason: string | null;
+      streamCallId: string;
+      settledAt: Date | null;
+    }[]
+  >`
+    SELECT "endedAt", "endedReason", "streamCallId", "attendanceSettledAt" AS "settledAt"
+    FROM "Meeting" WHERE "appointmentOccurrenceId" = ${occurrenceId} FOR NO KEY UPDATE`;
+  const current = rows[0];
+  if (!current) return true;
+  return (
+    (current.endedAt?.getTime() ?? null) !==
+      (room.endedAt?.getTime() ?? null) ||
+    current.endedReason !== room.endedReason ||
+    current.streamCallId !== room.streamCallId ||
+    (requireUnsettled && current.settledAt !== null)
+  );
 }
 
 async function writeSlotOutcomeTransaction(
@@ -230,13 +261,16 @@ async function writeSlotOutcomeTransaction(
   to: OccurrenceCompletionStatus,
   verdict: SessionOutcomeVerdict,
   now: Date,
-  /** The room's end as classified, and whether an unreadable verdict needs the room still unsettled. */
+  /** The room's end as classified (re-checked under lock), and whether an unreadable verdict needs the room still unsettled. */
   fence: { room: RoomEnd | null; requireUnsettled: boolean },
 ): Promise<boolean> {
   const { requireUnsettled } = fence;
   const txResult = await prisma.$transaction(
     async (tx) => {
-      if (requireUnsettled && (await settledSinceRead(tx, slot.id))) {
+      if (
+        fence.room &&
+        (await roomChangedSinceRead(tx, slot.id, fence.room, requireUnsettled))
+      ) {
         return {
           applied: false,
           noShow: null,
@@ -251,16 +285,6 @@ async function writeSlotOutcomeTransaction(
           isTentative: false,
           deletedAt: null,
           voidedAt: null,
-          // An end or a snapshot stored since the classification decides instead; the next run classifies it.
-          ...(fence.room && {
-            meeting: {
-              is: {
-                endedAt: fence.room.endedAt,
-                endedReason: fence.room.endedReason,
-                ...(requireUnsettled && { attendanceSettledAt: null }),
-              },
-            },
-          }),
         },
         to,
         fromIn: [OccurrenceCompletionStatus.SCHEDULED],

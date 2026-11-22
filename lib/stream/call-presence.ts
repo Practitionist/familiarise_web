@@ -27,7 +27,8 @@ export interface SettledStreamInterval {
  * - `read`: every session of every call has ended and was read in full.
  * - `no-session`: Stream affirms no call of the occurrence ever had a session.
  * - `not-final`: a session is still live, its report is not announced ready,
- *   a session known elsewhere is missing from the list, or the counts disagree.
+ *   a session known elsewhere is missing from the list, the counts disagree, or
+ *   (before the fallback) no announced session ended after the booked start.
  * - `expired`: Stream no longer holds the detail (HTTP 404 on a session past its 90 days).
  * - `unavailable`: Stream could not be asked or did not answer.
  */
@@ -245,7 +246,9 @@ async function readSessionParticipants(
  * occurrence. A session is read only once its report is announced ready
  * (`readySessionIds`), or, with `fallback`, once the room end is long past; and
  * every session known elsewhere (announced ready, named by the call, or seen by
- * our room-state webhooks) must appear in session stats. With `deadlineAt`
+ * our room-state webhooks) must appear in session stats. Before the fallback, at
+ * least one announced session must have ended after `bookedStartsAt`, so an
+ * early device check cannot stand in for the booked window. With `deadlineAt`
  * (epoch ms) every request must answer by then; a read that runs out of time
  * is `unavailable` and returns nothing partial.
  */
@@ -253,6 +256,7 @@ export async function readSettledAttendance(args: {
   occurrenceId: string;
   currentCallId: string;
   readySessionIds: readonly string[];
+  bookedStartsAt: Date;
   /** The latest session the room-state webhooks saw on the room's call. */
   lastKnownSessionId: string | null;
   /** The room end is far enough past that a session with no ready announcement may be read. */
@@ -300,6 +304,18 @@ export async function readSettledAttendance(args: {
     const corroborated =
       args.lastKnownSessionId !== null ||
       calls.some((call) => call.currentSessionId !== null);
+    // An early device check cannot stand in for the booked window.
+    const coversBookedWindow = [...listedByCall.values()]
+      .flat()
+      .some(
+        (s) =>
+          ready.has(s.call_session_id) &&
+          s.call_ended_at !== undefined &&
+          new Date(s.call_ended_at) > args.bookedStartsAt,
+      );
+    if (listedIds.size > 0 && !args.fallback && !coversBookedWindow) {
+      return { kind: "not-final" };
+    }
     const intervals: SettledStreamInterval[] = [];
     for (const [callId, listed] of listedByCall) {
       for (const session of listed) {

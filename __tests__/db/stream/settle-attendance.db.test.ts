@@ -91,7 +91,12 @@ async function settleTarget(room: Room) {
     where: { id: room.meetingId },
     select: SETTLE_MEETING_SELECT,
   });
-  return { occurrenceId: room.occurrenceId, endsAt: room.endsAt, meeting };
+  return {
+    occurrenceId: room.occurrenceId,
+    startsAt: room.startsAt,
+    endsAt: room.endsAt,
+    meeting,
+  };
 }
 
 const stored = (meetingId: string) =>
@@ -750,6 +755,63 @@ it("a ready report for the device test never stands in for a session our webhook
     }),
   ).toEqual({ kind: "not-final" });
   expect(await settledAt(room.meetingId)).toBeNull();
+});
+
+it("an announced device check that ended before the booked start never freezes an idle call: the first read is not final, and once B is listed and announced the sweep is HELD", async () => {
+  const room = await seedConsultationRoom();
+  const sessionB = stageIdleCallWithLaggingStats(room);
+  // Our webhooks saw only A, and only A's report has arrived.
+  await prisma.meeting.update({
+    where: { id: room.meetingId },
+    data: { streamReportReadySessionIds: ["A"], lastStreamSessionId: "A" },
+  });
+  const now = new Date(room.endsAt.getTime() + 75 * MIN);
+
+  expect(
+    await settleOccurrenceAttendance(await settleTarget(room), { now }),
+  ).toEqual({ kind: "not-final" });
+  expect(await settledAt(room.meetingId)).toBeNull();
+
+  sessionB.hiddenFromStats = false;
+  await announceReports(room.occurrenceId);
+  expect(
+    await decideSlotOutcome(await loadSlot(room.occurrenceId), {
+      now,
+      outages: [],
+    }),
+  ).toMatchObject({ kind: "written", verdict: { outcome: "HELD" } });
+});
+
+it("a room whose only session is an announced device check is not final until the six-hour fallback, then settles as NOBODY_JOINED", async () => {
+  const room = await seedConsultationRoom(10);
+  fakeStream.calls.set(room.streamCallId, {
+    occurrenceId: room.occurrenceId,
+    sessions: [
+      {
+        id: "A",
+        live: false,
+        stays: [stay(room.hostId, room.startsAt, -12 * MIN, -10 * MIN)],
+      },
+    ],
+  });
+  await prisma.meeting.update({
+    where: { id: room.meetingId },
+    data: { streamReportReadySessionIds: ["A"], lastStreamSessionId: "A" },
+  });
+
+  expect(
+    await settleOccurrenceAttendance(await settleTarget(room), {
+      now: new Date(room.endsAt.getTime() + 5 * HOUR),
+    }),
+  ).toEqual({ kind: "not-final" });
+  expect(await settledAt(room.meetingId)).toBeNull();
+
+  expect(
+    await decideSlotOutcome(await loadSlot(room.occurrenceId), {
+      now: new Date(room.endsAt.getTime() + 7 * HOUR),
+      outages: [],
+    }),
+  ).toMatchObject({ kind: "written", verdict: { outcome: "NOBODY_JOINED" } });
 });
 
 it("past the fallback a session with no report settles only when our webhooks corroborate the stats list", async () => {
