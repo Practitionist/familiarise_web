@@ -97,20 +97,6 @@ export const trialMetadataSchema = baseMetadataSchema.extend({
 });
 
 /**
- * A capture on a booking that already exists reads only its type and, for a
- * trial, the trial it pays for; the rest of the booking is already in our rows.
- */
-const confirmExistingMetadataSchema = z
-  .object({
-    appointmentType: z.nativeEnum(AppointmentsType),
-    trialId: z.string().cuid().optional(),
-  })
-  .refine(
-    (data) => data.appointmentType !== AppointmentsType.TRIAL || !!data.trialId,
-    { message: "A trial capture must name its trialId", path: ["trialId"] },
-  );
-
-/**
  * #679 transition dual-read — REMOVE after 2026-07-12.
  *
  * Razorpay persists checkout metadata as order `notes`; orders created
@@ -138,24 +124,6 @@ export function normalizeLegacySlotKeys(
   return out;
 }
 
-/** The notes without their empty values: an empty note is an absent field. */
-function presentNotes(
-  rawMetadata: Record<string, string>,
-): Record<string, string> {
-  const present: Record<string, string> = {};
-  for (const [key, value] of Object.entries(rawMetadata)) {
-    if (value !== "") present[key] = value;
-  }
-  return present;
-}
-
-/** Validate the notes of a capture whose booking already exists. */
-export function validateConfirmExistingMetadata(
-  rawMetadata: Record<string, string>,
-) {
-  return confirmExistingMetadataSchema.parse(presentNotes(rawMetadata));
-}
-
 /**
  * Validate webhook metadata based on appointment type
  *
@@ -174,7 +142,11 @@ export function validateWebhookMetadata(rawMetadata: Record<string, string>) {
   // long as they are payable; stripping here is what makes those replays land.
   // It runs before the legacy-key normalization so an empty legacy key cannot
   // shadow a real new-key value either.
-  const metadata = normalizeLegacySlotKeys(presentNotes(rawMetadata));
+  const present: Record<string, string> = {};
+  for (const [key, value] of Object.entries(rawMetadata)) {
+    if (value !== "") present[key] = value;
+  }
+  const metadata = normalizeLegacySlotKeys(present);
   // First parse appointmentType to determine which schema to use
   const { appointmentType } = baseMetadataSchema.parse(metadata);
 

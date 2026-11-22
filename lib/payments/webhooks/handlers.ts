@@ -69,7 +69,6 @@ import {
 } from "@/lib/payments/ledger/unapplied-receipts";
 import {
   normalizeLegacySlotKeys,
-  validateConfirmExistingMetadata,
   validateWebhookMetadata,
 } from "@/schemas/webhooks/metadata";
 import { ZodError } from "zod";
@@ -393,10 +392,15 @@ export async function handlePaymentSuccess(
         paymentStatus: true,
         amount: true,
         gatewayPaymentId: true,
+        appointment: { select: { appointmentType: true } },
       },
     });
     if (existing === null) {
       preMintAdoption = await verifiedPreMintAdoption(paymentIntentId);
+    }
+    // A booking that exists names its own type; the notes name it only for one the capture creates.
+    if (existing?.appointment) {
+      metadata.appointmentType = existing.appointment.appointmentType;
     }
     if (
       existing?.paymentStatus === PaymentStatus.SUCCEEDED &&
@@ -417,6 +421,7 @@ export async function handlePaymentSuccess(
   }
 
   let preplannedEarnings: PreplannedEarningsContext | null = null;
+  const plannedForType = metadata.appointmentType;
   try {
     preplannedEarnings = await planEarningsForPayment(
       { paymentIntent: paymentIntentId },
@@ -704,35 +709,59 @@ export async function handlePaymentSuccess(
             return null; // Signal: already processed, skip Phase 2
           }
 
-          if (payment.appointmentId && !metadata.appointmentType) {
-            const existingAppt = await tx.appointment.findUnique({
+          let refusal: {
+            error: unknown;
+            reason: string;
+            outcome: string;
+          } | null = null;
+          if (payment.appointmentId) {
+            // A booking that exists is confirmed from its own rows, never from the notes.
+            const booked = await tx.appointment.findUnique({
               where: { id: payment.appointmentId },
-              select: { appointmentType: true },
+              select: {
+                appointmentType: true,
+                trial: { select: { id: true } },
+              },
             });
-            if (existingAppt?.appointmentType) {
-              metadata.appointmentType = existingAppt.appointmentType;
+            if (booked) {
+              metadata.appointmentType = booked.appointmentType;
+              delete metadata.trialId;
+              if (booked.appointmentType === AppointmentsType.TRIAL) {
+                if (booked.trial) {
+                  metadata.trialId = booked.trial.id;
+                } else {
+                  const reason = `Trial booking ${payment.appointmentId} has no trial`;
+                  refusal = {
+                    error: new Error(reason),
+                    reason,
+                    outcome: "booking NOT confirmed",
+                  };
+                }
+              }
+            }
+          } else {
+            try {
+              validateWebhookMetadata(metadata);
+            } catch (validationError) {
+              if (recoverable) throw validationError;
+              const errorMessage =
+                validationError instanceof ZodError
+                  ? validationError.errors
+                      .map((e) => `${e.path.join(".")}: ${e.message}`)
+                      .join("; ")
+                  : validationError instanceof Error
+                    ? validationError.message
+                    : String(validationError);
+              refusal = {
+                error: validationError,
+                reason: `Metadata validation failed: ${errorMessage}`,
+                outcome: "appointment NOT created",
+              };
             }
           }
 
-          try {
-            // An existing booking is confirmed from our rows; only creating one needs the full per-type notes.
-            if (payment.appointmentId) {
-              validateConfirmExistingMetadata(metadata);
-            } else {
-              validateWebhookMetadata(metadata);
-            }
-          } catch (validationError) {
-            if (recoverable) throw validationError;
-            const errorMessage =
-              validationError instanceof ZodError
-                ? validationError.errors
-                    .map((e) => `${e.path.join(".")}: ${e.message}`)
-                    .join("; ")
-                : validationError instanceof Error
-                  ? validationError.message
-                  : String(validationError);
-
-            reportSentryError(validationError, {
+          if (refusal) {
+            reportSentryError(refusal.error, {
               subsystem: "payments",
               level: "fatal",
               contexts: {
@@ -744,8 +773,8 @@ export async function handlePaymentSuccess(
               },
             });
             console.error(
-              `❌ Metadata validation failed for payment ${paymentIntentId}:`,
-              errorMessage,
+              `❌ Capture parked for payment ${paymentIntentId}:`,
+              refusal.reason,
             );
 
             // The parked row keeps its capture time: its recovery splits the seat by the team at this instant.
@@ -755,7 +784,7 @@ export async function handlePaymentSuccess(
                 paymentStatus: PaymentStatus.SUCCEEDED,
                 ...capturedGatewayId,
                 capturedAt: new Date(),
-                description: `REQUIRES_MANUAL_RECOVERY: Metadata validation failed: ${errorMessage}. Customer charged but appointment NOT created.`,
+                description: `REQUIRES_MANUAL_RECOVERY: ${refusal.reason}. Customer charged but ${refusal.outcome}.`,
               },
             });
             if (recoveryStamped.count === 0) {
@@ -764,7 +793,7 @@ export async function handlePaymentSuccess(
                 paymentId: payment.id,
                 orderId: paymentIntentId,
                 observedStatus: payment.paymentStatus,
-                reason: `metadata validation failed: ${errorMessage}`,
+                reason: refusal.reason,
               });
             } else {
               await parkCapture();
@@ -780,7 +809,7 @@ export async function handlePaymentSuccess(
                 user_email: payment.user.email,
                 amount: payment.amount,
                 currency: payment.currency,
-                error: errorMessage,
+                error: refusal.reason,
                 action_required:
                   "IMMEDIATE: Manual appointment creation or full refund required",
                 dashboard_url: `${getAppUrl()}/dashboard/admin/payments/${payment.id}`,
@@ -790,6 +819,11 @@ export async function handlePaymentSuccess(
 
             return null;
           }
+          // A forecast made for another type than the booking's is not used.
+          const preplanned =
+            plannedForType === metadata.appointmentType
+              ? preplannedEarnings
+              : null;
 
           // The capture instant: stamped on the payment, and the time its
           // split reads the team at. A recovered capture keeps its own.
@@ -1050,7 +1084,7 @@ export async function handlePaymentSuccess(
             await tx.$executeRaw`SAVEPOINT sp_phase1_earnings`;
             try {
               const resolvedInTx =
-                preplannedEarnings?.resolvedPayment ??
+                preplanned?.resolvedPayment ??
                 (await resolvePaymentForEarnings(
                   { id: payment.id },
                   metadata.appointmentType,
@@ -1062,7 +1096,7 @@ export async function handlePaymentSuccess(
                   appointmentType: resolvedInTx.earningsAppointmentType,
                   teamAt: capturedAt,
                   tx,
-                  preplanned: preplannedEarnings ?? undefined,
+                  preplanned: preplanned ?? undefined,
                 });
                 earningsCreatedInPhase1 = true;
                 console.log(
@@ -1090,7 +1124,7 @@ export async function handlePaymentSuccess(
             await recordReferralCaptureInSavepoint(tx, {
               paymentId: payment.id,
               consultantProfileId: async () =>
-                preplannedEarnings?.resolvedPayment.consultantProfileId ??
+                preplanned?.resolvedPayment.consultantProfileId ??
                 (
                   await resolvePaymentForEarnings(
                     { id: payment.id },

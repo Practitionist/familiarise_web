@@ -160,8 +160,6 @@ jest.mock("../../lib/enterprise/system-events", () => {
 const validateWebhookMetadata = jest.fn();
 jest.mock("../../schemas/webhooks/metadata", () => ({
   normalizeLegacySlotKeys: (m: unknown) => m,
-  validateConfirmExistingMetadata: (...a: unknown[]) =>
-    validateWebhookMetadata(...a),
   validateWebhookMetadata: (...a: unknown[]) => validateWebhookMetadata(...a),
 }));
 
@@ -346,7 +344,11 @@ describe("#1695 — a capture whose hold is already gone is claimed and refunded
   });
 
   it("refunds a capture on a trial the unpaid-trial sweep already cancelled, without confirming its slot", async () => {
-    appointmentFindUnique.mockResolvedValue({ id: "appt1" });
+    appointmentFindUnique.mockResolvedValue({
+      id: "appt1",
+      appointmentType: "TRIAL",
+      trial: { id: "trial1" },
+    });
     trialUpdateMany.mockResolvedValue({ count: 0 });
     trialFindUnique.mockResolvedValue({ status: "CANCELLED" });
     refundBookingPayment.mockResolvedValue({ rail: "GATEWAY" });
