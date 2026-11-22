@@ -187,7 +187,7 @@ export type RefundInput = {
   supportRecommendationId?: string;
   /** The booking seat stays live whatever is returned. */
   keepSeat?: boolean;
-  /** The seat stays live only while an explicit amount leaves part of the payment refundable. */
+  /** The seat stays live while any of the payment is still refundable once this refund settles. */
   keepSeatIfPartial?: boolean;
   /** Answer only the refund already stored under `dedupeKey`; without one, refuse instead of refunding. */
   replayOnly?: boolean;

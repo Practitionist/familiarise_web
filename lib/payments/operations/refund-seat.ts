@@ -15,17 +15,15 @@ import {
 import { persistRefundRevocationInTx } from "@/lib/stream/revocation-intents";
 
 export type SeatPolicy = {
-  amountPaise?: number;
   /** The seat stays live whatever is returned. */
   keepSeat?: boolean;
-  /** The seat stays live only while an explicit amount leaves part of the payment refundable. */
+  /** The seat stays live while any of the payment is still refundable once this refund settles. */
   keepSeatIfPartial?: boolean;
 };
 
 const SEAT_INTENT = z.object({
   keepSeat: z.boolean(),
   keepSeatIfPartial: z.boolean(),
-  amountNamed: z.boolean(),
 });
 
 /** What the reserving request asked of the seat, stored as `Refund.metadata.seatIntent`. */
@@ -35,7 +33,6 @@ export function seatIntentOf(policy: SeatPolicy): SeatIntent {
   return {
     keepSeat: policy.keepSeat === true,
     keepSeatIfPartial: policy.keepSeatIfPartial === true,
-    amountNamed: policy.amountPaise !== undefined,
   };
 }
 
@@ -44,14 +41,12 @@ export function legacySeatIntent(keepSeat: boolean | undefined): SeatIntent {
   return {
     keepSeat: keepSeat === true,
     keepSeatIfPartial: true,
-    amountNamed: true,
   };
 }
 
-/** A refund ends the seat unless it keeps it, or keeps it while an explicit amount leaves a balance. */
+/** A refund ends the seat unless it keeps it, or keeps it while settled money leaves a balance, named amount or not. */
 function seatEndsLeaving(intent: SeatIntent, leftPaise: number): boolean {
-  const partial = intent.amountNamed && leftPaise > 0;
-  return !intent.keepSeat && !(intent.keepSeatIfPartial && partial);
+  return !intent.keepSeat && !(intent.keepSeatIfPartial && leftPaise > 0);
 }
 
 const jsonObject = (

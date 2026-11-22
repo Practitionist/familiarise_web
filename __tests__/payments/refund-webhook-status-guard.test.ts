@@ -369,7 +369,6 @@ describe("a booking refund's seat is decided as its webhook settles it", () => {
     seatIntent: {
       keepSeat: false,
       keepSeatIfPartial: false,
-      amountNamed: false,
     },
   };
 

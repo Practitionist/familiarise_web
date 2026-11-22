@@ -392,3 +392,50 @@ it("a webhook row that settled before the live bind inherits the reservation's i
   });
   expect(await revocationIntents(rows[0]?.id ?? "")).toBe(1);
 });
+
+it.each<[string, "processed" | "failed", string]>([
+  ["its webhook settle ends the seat", "processed", "REFUNDED"],
+  ["its failure leaves the seat kept", "failed", "CONFIRMED"],
+])(
+  "an Ops Full refund beside a PENDING ₹400 sends ₹100 and keeps the ₹500 seat; then %s",
+  async (_case, event, seat) => {
+    const webinar = await seedWebinar({ capacity: 20, price: 50_000 });
+    const { buyer, payment } = await seedHeldSeat(webinar, {
+      status: "SUCCEEDED",
+      expiresAt: null,
+    });
+    const gatewayId = `rfnd_dbtier_${randomUUID()}`;
+    gatewayPending(gatewayId);
+    await issue({
+      paymentId: payment.id,
+      idempotencyKey: randomUUID(),
+      amountPaise: 40_000,
+    });
+    // A second operator issues Full: no amount, so the reservation sends what the ₹400 left.
+    const full = await issue({
+      paymentId: payment.id,
+      idempotencyKey: randomUUID(),
+    });
+    expect(full.status).toBe(200);
+
+    expect(await rowOf(payment.id, 10_000)).toMatchObject({
+      status: "SUCCEEDED",
+      metadata: expect.objectContaining({ endsSeat: false }),
+    });
+    expect(await seatOf(webinar.appointmentId, buyer.userId)).toEqual({
+      status: "CONFIRMED",
+    });
+
+    await handleRefundCreated(
+      gatewayId,
+      payment.paymentIntent,
+      40_000,
+      "INR",
+      event,
+    );
+
+    expect(await seatOf(webinar.appointmentId, buyer.userId)).toEqual({
+      status: seat,
+    });
+  },
+);

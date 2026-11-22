@@ -66,7 +66,6 @@ describe("retireSupersededPlaceholderTx", () => {
     const intent = {
       keepSeat: false,
       keepSeatIfPartial: false,
-      amountNamed: false,
     };
     const tx = {
       ...fakeTx(1, null),

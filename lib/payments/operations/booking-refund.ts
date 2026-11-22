@@ -268,7 +268,7 @@ async function refundBookingPaymentOnRail(
      * seat live; every other refund marks the funded seat REFUNDED.
      */
     keepSeat?: boolean;
-    /** An explicit amount keeps the seat live only while part of the payment stays refundable; no amount ends it. */
+    /** The seat stays live while any of the payment is still refundable once this refund settles, amount named or not. */
     keepSeatIfPartial?: boolean;
     /** Answer only the refund already stored under `dedupeKey`, never a fresh one. */
     replayOnly?: boolean;

@@ -239,7 +239,6 @@ it("an ambiguous gateway error keeps the intent on the PENDING row; a replay tou
     seatIntent: {
       keepSeat: false,
       keepSeatIfPartial: false,
-      amountNamed: false,
     },
   });
   expect(own?.metadata).not.toHaveProperty("endsSeat");
@@ -277,8 +276,8 @@ it.each<[string, "SUCCEEDED" | "FAILED", boolean]>([
 ])(
   "a ₹100 partial that settles while a ₹400 refund is PENDING keeps the seat; if the ₹400 then %s",
   async (_case, outcome, ends) => {
-    reserved("r-400", 40_000, { amountPaise: 40_000, keepSeatIfPartial: true });
-    reserved("r-100", 10_000, { amountPaise: 10_000, keepSeatIfPartial: true });
+    reserved("r-400", 40_000, { keepSeatIfPartial: true });
+    reserved("r-100", 10_000, { keepSeatIfPartial: true });
 
     expect((await settle("r-100")).seat?.endsSeat).toBe(false);
     expect(row("r-100")?.metadata).toMatchObject({ endsSeat: false });
@@ -295,7 +294,7 @@ it.each<[string, "SUCCEEDED" | "FAILED", boolean]>([
 
 it("counts a lost chargeback toward the returned total", async () => {
   mockState.chargedBackPaise = 40_000;
-  reserved("r-100", 10_000, { amountPaise: 10_000, keepSeatIfPartial: true });
+  reserved("r-100", 10_000, { keepSeatIfPartial: true });
 
   expect((await settle("r-100")).seat?.endsSeat).toBe(true);
 });
@@ -334,7 +333,7 @@ it("a stored decision is answered as is, and nothing is applied again", async ()
 });
 
 it("a ₹100 partial that kept the seat replays without an amount and keeps it", async () => {
-  reserved("r-100", 10_000, { amountPaise: 10_000, keepSeatIfPartial: true });
+  reserved("r-100", 10_000, { keepSeatIfPartial: true });
   await settle("r-100");
 
   await expect(
@@ -379,7 +378,6 @@ it("a webhook row that settled before our bind inherits the reservation's intent
       seatIntent: {
         keepSeat: false,
         keepSeatIfPartial: false,
-        amountNamed: false,
       },
       endsSeat: true,
     }),
@@ -396,3 +394,23 @@ it("a webhook row that settled before our bind inherits the reservation's intent
     revocationGeneration: new Date("2026-11-22T10:00:00Z"),
   });
 });
+
+it.each<[string, "SUCCEEDED" | "FAILED", boolean]>([
+  ["its settle ends the seat", "SUCCEEDED", true],
+  ["the seat stays kept", "FAILED", false],
+])(
+  "an Ops Full refund that sends the ₹100 left beside a PENDING ₹400 keeps the seat; if the ₹400 then %s",
+  async (_case, outcome, ends) => {
+    reserved("r-400", 40_000, { keepSeatIfPartial: true });
+    // Full: no amount named, so the reservation sent what the PENDING ₹400 left.
+    reserved("r-full", 10_000, { keepSeatIfPartial: true });
+
+    expect((await settle("r-full")).seat?.endsSeat).toBe(false);
+    expect(mockStampSeat).not.toHaveBeenCalled();
+
+    const other = row("r-400");
+    if (other && outcome === "FAILED") other.status = "FAILED";
+    expect((await settle("r-400")).seat?.endsSeat ?? false).toBe(ends);
+    expect(mockStampSeat).toHaveBeenCalledTimes(ends ? 1 : 0);
+  },
+);
