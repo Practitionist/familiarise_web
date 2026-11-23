@@ -197,7 +197,7 @@ it("files on the session the turn names over the default one", async () => {
   expect(cases.rows[0]).toMatchObject({ scopeKey: "OCCURRENCE:occ-earlier" });
 });
 
-it("keeps the first terminal's reason when a later answer on the same case differs", async () => {
+it("lets a later 'I was there' replace a neutral first answer, but never turns a counted reason around", async () => {
   jest.mocked(buildSupportContext).mockResolvedValue(context(true));
   await runSupportTurn("appointment", "host", { category: "NO_SHOW" });
   await runSupportTurn("appointment", "host", { chosenOptionId: "client" });
@@ -207,14 +207,19 @@ it("keeps the first terminal's reason when a later answer on the same case diffe
     flowReason: "attendee_no_show",
   });
 
-  // The same session's open case takes the second report; its reason stands.
+  // The neutral first answer gives way, so the dispute reaches the window-close pass.
   await runSupportTurn("appointment", "host", { category: "NO_SHOW" });
   await runSupportTurn("appointment", "host", { chosenOptionId: "attended" });
   expect(cases.rows).toHaveLength(1);
   expect(noShow).toMatchObject({
     activeChannel: "HUMAN",
-    flowReason: "attendee_no_show",
+    flowReason: "provider_attended",
   });
+
+  // A counted reason then stands against a later neutral answer.
+  await runSupportTurn("appointment", "host", { category: "NO_SHOW" });
+  await runSupportTurn("appointment", "host", { chosenOptionId: "client" });
+  expect(noShow.flowReason).toBe("provider_attended");
 });
 
 it("stores no reason for a terminal outside the no-show intent", async () => {

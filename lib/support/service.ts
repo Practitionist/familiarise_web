@@ -16,6 +16,7 @@ import type {
 } from "@prisma/client";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
+import { CLASSIFIED_REPORT_REASONS } from "@/lib/booking/outcome-reports";
 import { seatOrganizationId } from "@/lib/booking/participants";
 import { stripCallbackTags } from "@/lib/validation/phone";
 import { buildSupportContext } from "./context";
@@ -539,7 +540,10 @@ async function openBookingThread(
   return supportCase;
 }
 
-/** A NO_SHOW terminal's reason, kept once by CAS from null so a later answer cannot turn a report around. */
+/**
+ * A NO_SHOW terminal's reason, by CAS: it fills an empty reason or replaces one that counts for no verdict,
+ * so a later "I was there" is not lost behind a neutral first answer, while a counted reason is never turned around.
+ */
 async function recordFlowReasonTx(
   tx: Tx,
   caseId: string,
@@ -549,7 +553,13 @@ async function recordFlowReasonTx(
   const parsed = SupportFlowReasonEnum.safeParse(reason);
   if (category !== "NO_SHOW" || !parsed.success) return;
   await tx.supportCase.updateMany({
-    where: { id: caseId, flowReason: null },
+    where: {
+      id: caseId,
+      OR: [
+        { flowReason: null },
+        { flowReason: { notIn: CLASSIFIED_REPORT_REASONS } },
+      ],
+    },
     data: { flowReason: parsed.data },
   });
 }
