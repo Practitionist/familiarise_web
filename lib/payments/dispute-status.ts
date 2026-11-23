@@ -99,6 +99,27 @@ export function evidenceRefusal(
   return null;
 }
 
+/** Razorpay's first-round phases; any other phase re-challenges a decided dispute. */
+const FIRST_ROUND_DISPUTE_PHASES = new Set([
+  "fraud",
+  "retrieval",
+  "chargeback",
+]);
+
+/**
+ * True when an event on a terminal dispute reports another status (or an
+ * unmapped one) or a phase past the first round; a same-status redelivery is not.
+ */
+export function isTerminalDisputeChange(
+  stored: DisputeStatus,
+  incoming: DisputeStatus | null,
+  phase: string | null | undefined,
+): boolean {
+  if (!TERMINAL_DISPUTE_STATUSES.includes(stored)) return false;
+  if (incoming !== stored) return true;
+  return !!phase && !FIRST_ROUND_DISPUTE_PHASES.has(phase.toLowerCase());
+}
+
 export function isLegalDisputeTransition(
   from: DisputeStatus,
   to: DisputeStatus,
