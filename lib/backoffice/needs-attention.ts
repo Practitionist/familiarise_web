@@ -150,7 +150,8 @@ const RETRYING = ["PENDING", "RETRY"] as const;
  * refunds cover the payment, at least one made outside the app: every app door stamps `metadata.source`.
  */
 const REFUNDED_LIVE_BOOKINGS = Prisma.sql`
-  SELECT p.id, max(r."createdAt") AS "refundedAt"
+  SELECT p.id, max(r."createdAt") AS "refundedAt",
+    (sum(r."amountPaise") FILTER (WHERE (r.metadata ->> 'source') IS NULL))::bigint AS "outsidePaise"
   FROM "Payment" p
   JOIN "Refund" r ON r."paymentId" = p.id
     AND r.status = 'SUCCEEDED' AND r."deletedAt" IS NULL
@@ -172,7 +173,11 @@ const REFUNDED_LIVE_BOOKINGS = Prisma.sql`
   HAVING sum(r."amountPaise") >= p.amount`;
 
 const refundedLiveRowsSchema = z.array(
-  z.object({ id: z.string(), refundedAt: z.date() }),
+  z.object({
+    id: z.string(),
+    refundedAt: z.date(),
+    outsidePaise: z.bigint().transform(Number),
+  }),
 );
 const countRowSchema = z.tuple([z.object({ total: z.number() })]);
 
@@ -198,7 +203,9 @@ type RefundedLivePayment = Awaited<
 async function readRefundedLiveBookings(
   order: Prisma.SortOrder,
   take: number,
-): Promise<{ payment: RefundedLivePayment; refundedAt: Date }[]> {
+): Promise<
+  { payment: RefundedLivePayment; refundedAt: Date; outsidePaise: number }[]
+> {
   const dir = Prisma.raw(order === "asc" ? "ASC" : "DESC");
   const selected = refundedLiveRowsSchema.parse(
     await prisma.$queryRaw(
@@ -214,17 +221,26 @@ async function readRefundedLiveBookings(
   );
   return selected.flatMap((s) => {
     const payment = payments.get(s.id);
-    return payment ? [{ payment, refundedAt: s.refundedAt }] : [];
+    return payment
+      ? [{ payment, refundedAt: s.refundedAt, outsidePaise: s.outsidePaise }]
+      : [];
   });
 }
 
 const SEAT_TYPES = new Set<string>(["WEBINAR", "CLASS"]);
 
 /** What happened and what to do: a seat ends with the host, any other booking through the platform cancel. */
-function refundedLiveSentence(p: RefundedLivePayment): string {
+function refundedLiveSentence(
+  p: RefundedLivePayment,
+  outsidePaise: number,
+): string {
   const who = p.user.name?.trim() || "A buyer";
   const booking = p.appointment ? bookingTitleOf(p.appointment) : "a booking";
-  const refunded = `${who} was refunded ${formatCurrencyAmount(p.amount, "INR")} in full outside the app for ${booking}`;
+  const total = formatCurrencyAmount(p.amount, "INR");
+  const refunded =
+    outsidePaise >= p.amount
+      ? `${who} was refunded ${total} in full outside the app for ${booking}`
+      : `${who} was refunded ${total} in full for ${booking}, ${formatCurrencyAmount(outsidePaise, "INR")} of it outside the app`;
   return p.appointment && SEAT_TYPES.has(p.appointment.appointmentType)
     ? `${refunded}, and their seat is still confirmed. If the seat should end, ask the host to remove them; no further refund is due.`
     : `${refunded}, and the booking is still live. If it should end, cancel it from the booking's Ops actions; no further refund is due.`;
@@ -330,7 +346,7 @@ const SOURCES: readonly AttentionSource[] = [
     key: "refundedLiveBookings",
     label: "Refunded in full outside the app, booking still live",
     money: true,
-    note: "A refund made from the app is not listed here, and a booking leaves the list once it is cancelled or its sessions are over.",
+    note: "A payment refunded in full only from the app is not listed here, and a booking leaves the list once it is cancelled or its sessions are over.",
     read: async (now) => {
       const { rows, total } = await windowOf(
         readRefundedLiveBookings,
@@ -342,11 +358,11 @@ const SOURCES: readonly AttentionSource[] = [
           )[0].total,
       );
       return splitWindow(
-        rows.map(({ payment: p, refundedAt }) => ({
+        rows.map(({ payment: p, refundedAt, outsidePaise }) => ({
           key: refundedAt.getTime(),
           item: {
             id: p.id,
-            state: refundedLiveSentence(p),
+            state: refundedLiveSentence(p, outsidePaise),
             ageMs: now.getTime() - refundedAt.getTime(),
             attempts: null,
             lastError: null,
