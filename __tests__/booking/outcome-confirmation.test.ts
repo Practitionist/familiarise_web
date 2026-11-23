@@ -25,6 +25,9 @@ jest.mock("../../utils/appointmentlock", () => ({
     async (_id: string, fn: () => Promise<unknown>) => fn(),
   ),
 }));
+jest.mock("../../lib/cron/with-cron-lock", () => ({
+  readJobCheckpoint: jest.fn(async () => null),
+}));
 jest.mock("../../lib/booking/class-sessions", () => ({
   onClassSessionVoided: jest.fn(),
 }));
@@ -46,6 +49,7 @@ import {
   setSessionOutcome,
 } from "@/lib/backoffice/session-outcomes";
 import { PAYOUT_CONSTANTS } from "@/lib/payments/payouts/constants";
+import { readJobCheckpoint } from "@/lib/cron/with-cron-lock";
 
 type Table = ReturnType<typeof memTable>;
 const occurrences = prisma.appointmentOccurrence as unknown as Table;
@@ -144,7 +148,12 @@ describe("the window-close pass", () => {
       verdict("open", { outcomeAt: hoursAgo(47) }),
     );
     const run = await confirmClosedOutcomes(NOW, () => false);
-    expect(run).toEqual({ confirmed: 1, weak: 2, errors: [] });
+    expect(run).toEqual({
+      confirmed: 1,
+      weak: 2,
+      errors: [],
+      checkpoint: null,
+    });
     expect(row("strong").outcomeConfirmedAt).toEqual(NOW);
     expect(row("strong").outcomeAt).toEqual(hoursAgo(50));
     for (const id of ["weak", "unsettled", "open"]) {
@@ -185,20 +194,46 @@ describe("the window-close pass", () => {
     }
   });
 
-  it("reaches an older strong verdict behind more than three pages of newer weak ones", async () => {
-    for (let i = 0; i < 350; i++) {
+  it("resumes from the stored cursor, so runs that each read one page reach an older strong verdict and then wrap", async () => {
+    for (let i = 0; i < 250; i++) {
       occurrences.rows.push(
         verdict(
           `weak-${String(i).padStart(3, "0")}`,
-          { outcomeAt: hoursAgo(49) },
+          // Distinct times: the in-memory table compares dates by identity, not value.
+          { outcomeAt: new Date(hoursAgo(49).getTime() - i * 1000) },
           { attendanceCorroboratedSessionIds: ["s-2"] },
         ),
       );
     }
     occurrences.rows.push(verdict("old-strong", { outcomeAt: hoursAgo(52) }));
-    const run = await confirmClosedOutcomes(NOW, () => false);
-    expect(run).toMatchObject({ confirmed: 1, weak: 350 });
+    // The in-memory table ignores order and take; page it the way Postgres does.
+    const read = occurrences.findMany.getMockImplementation()!;
+    occurrences.findMany.mockImplementation(async (args) => {
+      const rows = (await read(args)) as Row[];
+      const ordered = [...rows].sort(
+        (a, b) =>
+          (b.outcomeAt as Date).getTime() - (a.outcomeAt as Date).getTime() ||
+          String(a.id).localeCompare(String(b.id), "en"),
+      );
+      return ordered.slice(0, (args as unknown as { take: number }).take);
+    });
+    const onePage = () => {
+      let checks = 0;
+      return () => checks++ > 0;
+    };
+    let stored: string | null = null;
+    jest.mocked(readJobCheckpoint).mockImplementation(async () => stored);
+    const runs = [];
+    for (let i = 0; i < 4; i++) {
+      const run = await confirmClosedOutcomes(NOW, onePage());
+      stored = run.checkpoint;
+      runs.push(run);
+    }
+    expect(runs.map((r) => r.confirmed)).toEqual([0, 0, 1, 0]);
     expect(row("old-strong").outcomeConfirmedAt).toEqual(NOW);
+    // The third run reached the end, so the fourth starts again from the newest.
+    expect(runs[2].checkpoint).toBeNull();
+    expect(runs[3].checkpoint).not.toBeNull();
   });
 
   it("starts nothing past its deadline", async () => {

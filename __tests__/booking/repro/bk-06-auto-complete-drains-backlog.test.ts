@@ -12,6 +12,7 @@ const BITE = 25;
 const BACKLOG = 100;
 let queue: Slot[] = [];
 const decided: string[] = [];
+const confirmDeadlines: boolean[] = [];
 
 jest.mock("../../../lib/prisma", () => ({
   __esModule: true,
@@ -27,7 +28,10 @@ jest.mock("../../../lib/booking/session-outcome-sweep", () => ({
   readOutageWindows: async () => [],
   alertStaleNeedsHuman: async () => undefined,
   escalateAgedNeedsHuman: async () => 0,
-  confirmClosedOutcomes: async () => ({ confirmed: 0, weak: 0, errors: [] }),
+  confirmClosedOutcomes: async (_now: Date, pastDeadline: () => boolean) => {
+    confirmDeadlines.push(pastDeadline());
+    return { confirmed: 0, weak: 0, errors: [], checkpoint: null };
+  },
   decideSlotOutcome: async (slot: Slot) => {
     decided.push(slot.id);
     queue = queue.filter((s) => s.id !== slot.id);
@@ -60,6 +64,7 @@ import { calls, resetDouble } from "./checkout-harness/setup";
 
 beforeEach(() => {
   decided.length = 0;
+  confirmDeadlines.length = 0;
   queue = Array.from({ length: BACKLOG }, (_, i) => ({
     id: `slot-${i}`,
     startsAt: new Date(Date.now() - 5 * 3600_000),
@@ -99,6 +104,20 @@ describe("autoCompleteAppointments backlog", () => {
 
     // Sessions settle from Stream, so they get half the 16 s start budget, as classes do.
     expect(decided).toHaveLength(8);
+  });
+
+  it("measures the window-close pass's share from the request's start, so a slow start leaves it no time", async () => {
+    // Setup and the lock took 5 s, past the pass's quarter of the 16 s budget.
+    const startedAt = Date.now() - 5000;
+
+    await autoCompleteAppointments({
+      maxParents: BITE,
+      maxSlotOutcomes: BITE,
+      startedAt,
+    });
+
+    expect(confirmDeadlines).toEqual([true]);
+    expect(decided.length).toBeGreaterThan(0);
   });
 
   it("re-reads parents while the slot pass is still draining", async () => {

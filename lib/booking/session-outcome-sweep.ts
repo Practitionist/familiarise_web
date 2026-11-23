@@ -7,6 +7,9 @@
  */
 
 import { OccurrenceCompletionStatus, type Prisma } from "@prisma/client";
+import { z } from "zod";
+
+import { readJobCheckpoint } from "@/lib/cron/with-cron-lock";
 
 import prisma, { type Tx } from "@/lib/prisma";
 import {
@@ -829,6 +832,28 @@ export interface OutcomeConfirmRun {
   /** Judged weak this run: left unconfirmed on the needs-human list for ops. */
   weak: number;
   errors: string[];
+  /** Where the next run resumes, or null once the scan reached the end and wraps to the newest. */
+  checkpoint: string | null;
+}
+
+/** The job whose run trail keeps the pass's cursor between runs. */
+const CONFIRM_CHECKPOINT_JOB = "auto-complete-appointments";
+
+const confirmCursorSchema = z
+  .string()
+  .regex(/^[^|]+\|[^|]+$/)
+  .transform((raw) => {
+    const [at, id] = raw.split("|");
+    return { outcomeAt: new Date(at), id };
+  })
+  .refine((k) => !Number.isNaN(k.outcomeAt.getTime()));
+
+const encodeCursor = (k: Keyset) => `${k.outcomeAt.toISOString()}|${k.id}`;
+
+/** A stored cursor the trail kept, or null to start from the newest verdict. */
+function decodeCursor(raw: string | null): Keyset | null {
+  const parsed = confirmCursorSchema.safeParse(raw);
+  return parsed.success ? parsed.data : null;
 }
 
 type Keyset = { outcomeAt: Date; id: string };
@@ -901,28 +926,43 @@ export async function confirmClosedOutcomes(
   now: Date,
   pastDeadline: () => boolean,
 ): Promise<OutcomeConfirmRun> {
-  const run: OutcomeConfirmRun = { confirmed: 0, weak: 0, errors: [] };
+  const run: OutcomeConfirmRun = {
+    confirmed: 0,
+    weak: 0,
+    errors: [],
+    checkpoint: null,
+  };
   const where = unconfirmedClosedVerdictWhere(now);
+  // Resumes where the last run stopped, so a weak backlog cannot hide older verdicts run after run.
   let after: Keyset | null = null;
   try {
+    after = decodeCursor(await readJobCheckpoint(CONFIRM_CHECKPOINT_JOB));
     while (!pastDeadline()) {
+      // "query", not a join: a join reads nested timestamps in the session zone.
       const rows: ConfirmRow[] = await prisma.appointmentOccurrence.findMany({
-        relationLoadStrategy: "join",
+        relationLoadStrategy: "query",
         where: afterKeyset(where, after),
         select: CONFIRM_SELECT,
         orderBy: [{ outcomeAt: "desc" }, { id: "asc" }],
         take: OUTCOME_CONFIRM_PAGE,
       });
       const last = rows.at(-1);
-      if (!last?.outcomeAt) break;
+      if (!last?.outcomeAt) {
+        after = null;
+        break;
+      }
+      if (!(await confirmPage(rows, where, now, run))) break;
       after = { outcomeAt: last.outcomeAt, id: last.id };
-      const complete = await confirmPage(rows, where, now, run);
-      if (!complete || rows.length < OUTCOME_CONFIRM_PAGE) break;
+      if (rows.length < OUTCOME_CONFIRM_PAGE) {
+        after = null;
+        break;
+      }
     }
   } catch (error) {
     run.errors.push(
       `Failed to confirm closed session outcomes: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
+  run.checkpoint = after ? encodeCursor(after) : null;
   return run;
 }

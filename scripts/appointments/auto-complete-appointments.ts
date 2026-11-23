@@ -316,6 +316,8 @@ export interface AutoCompleteResult {
   classEndCreditSeatsEscalated: number;
   errors: string[];
   timestamp: string;
+  /** The window-close pass's resume cursor, kept by the run trail. */
+  checkpoint: string | null;
 }
 
 /**
@@ -1322,6 +1324,9 @@ async function drainRounds(
 // Locked at the core so every entry shares one mutual exclusion; fail-closed
 // because the class pass stamps refunds owed.
 //
+/** The window-close pass's share of the start budget, so a weak backlog never starves the drain. */
+const OUTCOME_CONFIRM_BUDGET_SHARE = 0.25;
+
 // `maxParents` and `maxSlotOutcomes` are bite sizes: the run loops bites until
 // every pass reads a short cohort or `startedAt` + SWEEP_START_DEADLINE_MS passes.
 export async function autoCompleteAppointments(opts?: {
@@ -1347,6 +1352,11 @@ export async function autoCompleteAppointments(opts?: {
     slotsPastDeadline: startDeadlineShare(0.5, startedAt),
     // A session started near that cutoff still finishes its Stream reads inside the ticker's abort.
     settleDeadlineAt: startedAt + SWEEP_START_DEADLINE_MS,
+    // From the request's start, like the shares above, so a slow start cannot push it into the drain's time.
+    confirmPastDeadline: startDeadlineShare(
+      OUTCOME_CONFIRM_BUDGET_SHARE,
+      startedAt,
+    ),
   };
   return withCronLock(
     "auto-complete-appointments",
@@ -1356,9 +1366,6 @@ export async function autoCompleteAppointments(opts?: {
   );
 }
 
-/** The window-close pass's share of the start budget, so a weak backlog never starves the drain. */
-const OUTCOME_CONFIRM_BUDGET_SHARE = 0.25;
-
 async function autoCompleteAppointmentsUnlocked(
   maxParents: number,
   maxSlotOutcomes: number,
@@ -1367,6 +1374,7 @@ async function autoCompleteAppointmentsUnlocked(
     classesPastDeadline: () => boolean;
     slotsPastDeadline: () => boolean;
     settleDeadlineAt: number;
+    confirmPastDeadline: () => boolean;
   },
 ): Promise<AutoCompleteResult> {
   const { pastDeadline, classesPastDeadline, slotsPastDeadline } = deadlines;
@@ -1396,12 +1404,14 @@ async function autoCompleteAppointmentsUnlocked(
   }));
   const classEnd: ClassEndSettlement = { owed: 0, owedPaise: 0, escalated: 0 };
   let rounds = 0;
+  let checkpoint: string | null = null;
   try {
     // Before the drain, which can spend the whole budget, and before the alerts, so a confirmed verdict is not counted as waiting.
     const confirms = await confirmClosedOutcomes(
       new Date(),
-      startDeadlineShare(OUTCOME_CONFIRM_BUDGET_SHARE),
+      deadlines.confirmPastDeadline,
     );
+    checkpoint = confirms.checkpoint ?? null;
     allErrors.push(...confirms.errors);
     console.log(
       `   Closed verdicts: ${confirms.confirmed} confirmed, ${confirms.weak} left for ops`,
@@ -1479,6 +1489,8 @@ async function autoCompleteAppointmentsUnlocked(
     classEndCreditSeatsEscalated: classEnd.escalated,
     errors: allErrors,
     timestamp: new Date().toISOString(),
+    // The run trail keeps it for the window-close pass's next run.
+    checkpoint,
   };
 }
 
