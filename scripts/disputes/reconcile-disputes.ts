@@ -259,8 +259,8 @@ async function reconcileDisputesUnlocked(opts: {
     gatewayDispute: Awaited<ReturnType<typeof getRazorpayDispute>>,
     payment: { id: string; amount: number },
   ): Promise<boolean> {
-    const settlement = VERDICT_STATUSES.has(newStatus)
-      ? (await import("@/app/api/webhooks/utils")).settleDisputeVerdict
+    const verdicts = VERDICT_STATUSES.has(newStatus)
+      ? await import("@/app/api/webhooks/utils")
       : null;
     const outcome = await withSerializableRetry(() =>
       prisma.$transaction(
@@ -275,8 +275,8 @@ async function reconcileDisputesUnlocked(opts: {
             },
           });
           if (count === 0) return null;
-          return settlement
-            ? settlement(
+          return verdicts
+            ? verdicts.settleDisputeVerdict(
                 tx,
                 {
                   id: dispute.id,
@@ -288,7 +288,7 @@ async function reconcileDisputesUnlocked(opts: {
                 newStatus,
                 gatewayDispute.amountDeductedPaise,
               )
-            : { consultantClawbackPage: null };
+            : { consultantClawbackPage: null, deductionMismatch: null };
         },
         {
           isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
@@ -298,6 +298,9 @@ async function reconcileDisputesUnlocked(opts: {
       ),
     );
     if (!outcome) return false;
+    if (outcome.deductionMismatch && verdicts) {
+      await verdicts.recordDeductionMismatch(outcome.deductionMismatch);
+    }
     const page = outcome.consultantClawbackPage;
     if (page) {
       void recordSystemErrorSafe({
