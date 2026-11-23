@@ -291,6 +291,9 @@ export async function overturnSessionOutcome(args: {
 /** Ops may ask Stream again until this many days after the session; Stream drops the detail after 90. */
 export const ATTENDANCE_REREAD_DAYS = 80;
 
+/** The re-read's whole Stream read must answer within this, leaving the request its ops audit write inside the ~26 s edge limit. */
+export const REREAD_SETTLE_BUDGET_MS = 12_000;
+
 const rereadDeadline = (endsAt: Date) =>
   new Date(endsAt.getTime() + ATTENDANCE_REREAD_DAYS * 86_400_000);
 
@@ -312,8 +315,11 @@ export type AttendanceReread = {
 export async function rereadSessionAttendance(args: {
   occurrenceId: string;
   now?: Date;
+  /** Epoch ms by which every Stream read must answer; defaults to the request's budget. */
+  deadlineAt?: number;
 }): Promise<AttendanceReread> {
   const now = args.now ?? new Date();
+  const deadlineAt = args.deadlineAt ?? Date.now() + REREAD_SETTLE_BUDGET_MS;
   const occ = await prisma.appointmentOccurrence.findUnique({
     where: { id: args.occurrenceId },
     select: {
@@ -339,7 +345,7 @@ export async function rereadSessionAttendance(args: {
   }
   const settled = await settleOccurrenceAttendance(
     { occurrenceId: occ.id, endsAt: occ.endsAt, meeting: occ.meeting },
-    { now },
+    { now, deadlineAt },
   );
   if (settled.kind !== "settled")
     return { result: settled.kind, verdict: null };

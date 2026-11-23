@@ -233,7 +233,7 @@ it("a session listing whose cursor repeats is not final, never a complete list",
   expect(await read()).toEqual({ kind: "not-final" });
 });
 
-it("a read past its deadline is unavailable and stops asking Stream", async () => {
+it("a read past its deadline is out-of-time and stops asking Stream", async () => {
   stream.stall = true;
   const started = Date.now();
   expect(
@@ -243,7 +243,7 @@ it("a read past its deadline is unavailable and stops asking Stream", async () =
       ...READY,
       deadlineAt: started + 50,
     }),
-  ).toEqual({ kind: "unavailable" });
+  ).toEqual({ kind: "out-of-time" });
   expect(Date.now() - started).toBeLessThan(2_000);
 });
 

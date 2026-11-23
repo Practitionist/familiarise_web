@@ -207,6 +207,8 @@ async function slotEvidence(
   if (settled.kind === "settled") {
     return { kind: "intervals", intervals: settled.intervals };
   }
+  // A read cut short by this run's deadline says nothing about Stream: always try again.
+  if (settled.kind === "out-of-time") return { kind: "wait" };
   // Past Stream's retention nothing will come back; anything else is retried until the wait ends.
   const waited =
     ctx.now.getTime() - slot.endsAt.getTime() >= ATTENDANCE_SETTLE_WAIT_MS;

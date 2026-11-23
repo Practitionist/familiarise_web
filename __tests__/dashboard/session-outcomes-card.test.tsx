@@ -173,4 +173,7 @@ it("the re-read door posts a reason the route's schema accepts, and words what S
   expect(rereadToast({ result: "unavailable", verdict: null })).toMatch(
     /did not answer/,
   );
+  expect(rereadToast({ result: "out-of-time", verdict: null })).toBe(
+    "Stream took too long to answer, so nothing was stored; read it again.",
+  );
 });

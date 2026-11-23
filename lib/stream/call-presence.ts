@@ -30,6 +30,7 @@ export interface SettledStreamInterval {
  *   corroborated, a session known elsewhere is missing from the list, or the counts disagree.
  * - `expired`: Stream no longer holds the detail (HTTP 404 on a session past its 90 days).
  * - `unavailable`: Stream could not be asked or did not answer.
+ * - `out-of-time`: the caller's deadline passed first; nothing is known about Stream.
  */
 export type SettledAttendanceRead =
   | {
@@ -41,7 +42,8 @@ export type SettledAttendanceRead =
   | { kind: "no-session" }
   | { kind: "not-final" }
   | { kind: "expired" }
-  | { kind: "unavailable" };
+  | { kind: "unavailable" }
+  | { kind: "out-of-time" };
 
 /** An occurrence has its original call id plus one per rotation; more than a page means we cannot list them all. */
 const OCCURRENCE_CALLS_PAGE = 25;
@@ -252,7 +254,7 @@ async function readSessionParticipants(
  * session without its ready announcement is read only when our webhooks or the
  * call name a session. Callers ask only six hours past the room end. With `deadlineAt`
  * (epoch ms) every request must answer by then; a read that runs out of time
- * is `unavailable` and returns nothing partial.
+ * is `out-of-time` and returns nothing partial.
  */
 export async function readSettledAttendance(args: {
   occurrenceId: string;
@@ -334,6 +336,7 @@ export async function readSettledAttendance(args: {
   } catch (error) {
     if (error instanceof NotFinal) return { kind: "not-final" };
     if (error instanceof Expired) return { kind: "expired" };
+    if (error instanceof DeadlineExceeded) return { kind: "out-of-time" };
     return { kind: "unavailable" };
   }
 }

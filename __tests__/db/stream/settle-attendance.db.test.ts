@@ -463,8 +463,8 @@ it("a learner who left in one session and rejoined in a newer one still open is 
   });
 });
 
-it("a read that runs past its deadline stores nothing, so the sweep settles it later", async () => {
-  const room = await seedConsultationRoom();
+it("a read that runs past its deadline stores nothing and is retried, never parked, even past 72 hours", async () => {
+  const room = await seedConsultationRoom(80);
   fakeStream.calls.set(room.streamCallId, {
     occurrenceId: room.occurrenceId,
     sessions: [
@@ -475,16 +475,32 @@ it("a read that runs past its deadline stores nothing, so the sweep settles it l
       },
     ],
   });
+  await announceReports(room.occurrenceId);
   fakeStream.stall = true;
+  const now = new Date(room.endsAt.getTime() + 80 * HOUR);
 
-  const settled = await settleOccurrenceAttendance(await settleTarget(room), {
-    now: new Date(room.endsAt.getTime() + READ_AT),
-    deadlineAt: Date.now() + 100,
-  });
-
-  expect(settled).toEqual({ kind: "unavailable" });
-  expect(await settledAt(room.meetingId)).toBeNull();
+  expect(
+    await settleOccurrenceAttendance(await settleTarget(room), {
+      now,
+      deadlineAt: Date.now() + 100,
+    }),
+  ).toEqual({ kind: "out-of-time" });
   expect(await stored(room.meetingId)).toEqual([]);
+
+  expect(
+    await decideSlotOutcome(await loadSlot(room.occurrenceId), {
+      now,
+      outages: [],
+      settleDeadlineAt: Date.now() + 100,
+    }),
+  ).toEqual({ kind: "deferred", reason: "attendance-unsettled" });
+  expect(await settledAt(room.meetingId)).toBeNull();
+  expect(
+    await prisma.appointmentOccurrence.findUniqueOrThrow({
+      where: { id: room.occurrenceId },
+      select: { completionStatus: true },
+    }),
+  ).toEqual({ completionStatus: "SCHEDULED" });
 });
 
 it("a call whose current session is not yet in session stats is not final; once it is, the sweep reads both sessions and the session is HELD", async () => {
@@ -997,3 +1013,20 @@ it("a session Stream lists as ending later than the room recorded gets its own s
     ).kind,
   ).toBe("settled");
 });
+
+it("an ops re-read that runs past its deadline answers out-of-time and stores nothing", async () => {
+  const room = await seedConsultationRoom(80);
+  fakeStream.calls.set(room.streamCallId, {
+    occurrenceId: room.occurrenceId,
+    sessions: [],
+  });
+  fakeStream.stall = true;
+
+  expect(
+    await rereadSessionAttendance({
+      occurrenceId: room.occurrenceId,
+      deadlineAt: Date.now() + 100,
+    }),
+  ).toEqual({ result: "out-of-time", verdict: null });
+  expect(await settledAt(room.meetingId)).toBeNull();
+}, 10_000);

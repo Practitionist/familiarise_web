@@ -43,7 +43,8 @@ export type AttendanceSettlement =
   | { kind: "too-early" }
   | { kind: "not-final" }
   | { kind: "expired" }
-  | { kind: "unavailable" };
+  | { kind: "unavailable" }
+  | { kind: "out-of-time" };
 
 /**
  * No settle reads Stream before this: `ATTENDANCE_SETTLE_DELAY_MS` after the
@@ -157,7 +158,7 @@ export async function settleOccurrenceAttendance(
 /** A read that could not settle still answers a snapshot another settler stored meanwhile. */
 async function settledMeanwhile(
   meetingId: string,
-  kind: "not-final" | "expired" | "unavailable",
+  kind: "not-final" | "expired" | "unavailable" | "out-of-time",
 ): Promise<AttendanceSettlement> {
   const room = await prisma.meeting.findUnique({
     where: { id: meetingId },

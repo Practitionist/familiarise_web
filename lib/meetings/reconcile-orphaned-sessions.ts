@@ -152,27 +152,26 @@ async function reconcileSingleOrphanedSession(
     const { endedAt, endedReason, sessionId } = resolved;
 
     // The call id it asked Stream about: a room reopened on a new call since is not this one.
-    const unended = {
-      id: session.id,
-      streamCallId: session.streamCallId,
-      endedAt: null,
-    };
-    // Stream's session is written only while the room holds the session and join read before the lookup.
-    const withSession = sessionId
-      ? await prisma.meeting.updateMany({
-          where: {
-            ...unended,
-            lastStreamSessionId: session.lastStreamSessionId,
-            lastJoinedAt: session.lastJoinedAt,
-          },
-          data: { endedAt, endedReason, lastStreamSessionId: sessionId },
-        })
-      : { count: 0 };
-    if (withSession.count === 0) {
-      await prisma.meeting.updateMany({
-        where: unended,
-        data: { endedAt, endedReason },
-      });
+    // A join or a session recorded since the lookup means the room may be live again: leave it for the next run.
+    const closed = await prisma.meeting.updateMany({
+      where: {
+        id: session.id,
+        streamCallId: session.streamCallId,
+        endedAt: null,
+        lastStreamSessionId: session.lastStreamSessionId,
+        lastJoinedAt: session.lastJoinedAt,
+      },
+      data: {
+        endedAt,
+        endedReason,
+        ...(sessionId && { lastStreamSessionId: sessionId }),
+      },
+    });
+    if (closed.count === 0) {
+      result.details.push(
+        `Session ${session.id} (call: ${session.streamCallId}): rejoined during the lookup`,
+      );
+      return;
     }
 
     result.details.push(

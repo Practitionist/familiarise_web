@@ -15,6 +15,7 @@ const rereadAnswerSchema = z.object({
     "not-final",
     "expired",
     "unavailable",
+    "out-of-time",
   ]),
   verdict: z
     .object({
@@ -33,6 +34,8 @@ const NOT_STORED: Record<
     "Stream still shows the call as live or incomplete; try again later.",
   expired: "Stream no longer holds this call's record.",
   unavailable: "Stream did not answer; try again in a few minutes.",
+  "out-of-time":
+    "Stream took too long to answer, so nothing was stored; read it again.",
 };
 
 /** How the toast words the re-read's answer. */

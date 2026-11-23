@@ -68,8 +68,15 @@ it("closes the room on the call id it asked Stream about, and nothing else", asy
   expect(mockMeetingFindMany).toHaveBeenCalledWith(
     expect.objectContaining({ take: BATCH_SIZE, orderBy: { id: "asc" } }),
   );
+  // The close holds only while the room still has the session and join it read before asking Stream.
   expect(mockMeetingUpdateMany).toHaveBeenCalledWith({
-    where: { id: "a", streamCallId: "call-a", endedAt: null },
+    where: {
+      id: "a",
+      streamCallId: "call-a",
+      endedAt: null,
+      lastStreamSessionId: "s-early",
+      lastJoinedAt: null,
+    },
     data: { endedAt, endedReason: "reconciled" },
   });
   expect(result).toMatchObject({
@@ -102,19 +109,15 @@ it("records the session Stream names on the call with the end it reconciles", as
   });
 });
 
-it("closes the room without the session id when a newer join recorded one during the lookup", async () => {
+it("leaves the room open when a join landed during the lookup, for the next run to recheck", async () => {
   mockMeetingFindMany.mockResolvedValueOnce([meeting("a")]);
+  // An idle session Stream still runs: no participants, no end.
   mockCallGet.mockResolvedValueOnce({
-    call: { session: { id: "s-late", ended_at: endedAt.toISOString() } },
+    call: { session: { id: "s-live", participants: [] } },
   });
-  mockMeetingUpdateMany
-    .mockResolvedValueOnce({ count: 0 })
-    .mockResolvedValueOnce({ count: 1 });
+  mockMeetingUpdateMany.mockResolvedValueOnce({ count: 0 });
   await reconcileOrphanedSessions();
-  expect(mockMeetingUpdateMany).toHaveBeenLastCalledWith({
-    where: { id: "a", streamCallId: "call-a", endedAt: null },
-    data: { endedAt, endedReason: "reconciled" },
-  });
+  expect(mockMeetingUpdateMany).toHaveBeenCalledTimes(1);
 });
 
 it("persists rotation past an unchanged active head and reaches the tail on the next invocation", async () => {
