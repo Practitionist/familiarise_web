@@ -12,6 +12,7 @@ import type { EventType } from "@/utils/scheduling-engine/types";
 import { allocate } from "@/lib/booking/allocation";
 import { closeConfirmedProposal } from "@/lib/booking/reschedule-confirm";
 import { stageNoticesForFreedWindows } from "@/lib/booking/backup-interest";
+import { restoreEarningsHold } from "@/lib/payments/payouts/earnings-hold";
 import {
   mayAutoConfirm,
   needsOtherSideAcceptance,
@@ -119,6 +120,8 @@ export async function tryAutoConfirmProposal(
             where: { id: request.id },
             to: "AUTO_ACCEPTED",
           });
+          // The reallocation buffer lasts only while the proposal is open.
+          await restoreEarningsHold(tx, request.appointmentId);
           await stageNoticesForFreedWindows(
             tx,
             moved.consultantProfileId,

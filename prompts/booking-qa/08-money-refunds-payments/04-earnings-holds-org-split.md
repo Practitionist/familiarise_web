@@ -57,9 +57,9 @@ Defaults read from code: platform fee 20 % (`PLATFORM_FEE_PERCENTAGE`; per payme
 
 **Setup:** MO-01's booking (Wed D+2). Record `holdUntil`.
 
-**Steps:** B1 reschedules it to a later day with a free time (CO-46 path, auto-confirm). Read `holdUntil` again. Then H1 reschedules it earlier (CO-60, B1 accepts). Read again.
+**Steps:** B1 reschedules it to a later day with a free time (CO-46 path, auto-confirm). Read `holdUntil` again. Then H1 reschedules it earlier (CO-60); read `holdUntil` while the proposal is open, then B1 accepts and read again.
 
-**Expect:** `holdUntil` = new session end + 24 h after each move (the allocator and `replaceOccurrence` recompute it). An unchanged `holdUntil` after a move is a BUG P1 (money released before delivery).
+**Expect:** while a proposal is open, `holdUntil` = max(released session end + 7 days, latest proposed end) + 48 h. Once a move is confirmed (auto-confirm or accept), `holdUntil` = new session end + 48 h, on the consultant and the organisation earnings alike (plus the new-expert days if H1 is new; never before capture + 48 h). A hold left at old end + 7 days + 48 h after a confirmed move is a BUG P2 (payout a week late); a hold before the new end + 48 h is a BUG P1 (money released before delivery). A withdrawn, expired or declined proposal puts it back to old end + 48 h.
 
 **Probe further:** H1's Earnings "next release" date follows the move?
 
